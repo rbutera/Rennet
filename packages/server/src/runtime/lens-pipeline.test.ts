@@ -4036,7 +4036,8 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     const designTurn = captures.find((c) => c.prompt?.includes("design.md"))?.prompt ?? "";
     expect(designTurn).toContain("PROMPT_FILE:prompts/design.md"); // the lens prompt
     expect(designTurn).toContain("ps-1"); // the inlined DeltaPacket (patchset id)
-    expect(designTurn).toContain("hostSchema"); // the host board schema
+    // The board schema travels ONCE, as the SDK `outputFormat` (#737); never as prompt text.
+    expect(designTurn).not.toContain("hostSchema");
   });
 
   it("council-routes each seat to the right model (claude-only scenario)", async () => {
@@ -6457,7 +6458,6 @@ describe("renderDrafterPrompt — the inventory travels, the diff content does n
       RANGE_PACKET,
       undefined,
       DESIGN_ARTIFACTS,
-      undefined,
       {
         number: 2,
         dispatchedAsks: [],
@@ -6467,7 +6467,9 @@ describe("renderDrafterPrompt — the inventory travels, the diff content does n
     expect(prompt).toContain('"number":2');
   });
 
-  it("keeps the worker's verbatim turn diff out of ordinary lens prompts", () => {
+  it("keeps the worker's verbatim turn diff out of every drafter prompt", () => {
+    // The classified round-report path carries a measured evidence manifest (#727);
+    // no drafter prompt embeds the raw diff any more (#737).
     const WORKER_DIFF = "+const WORKER_DIFF_SENTINEL = 7;";
     const round = {
       number: 2,
@@ -6484,7 +6486,6 @@ describe("renderDrafterPrompt — the inventory travels, the diff content does n
       RANGE_PACKET,
       undefined,
       undefined,
-      undefined,
       round,
     );
     expect(lens).not.toContain(SECRET(WORKER_DIFF));
@@ -6494,21 +6495,17 @@ describe("renderDrafterPrompt — the inventory travels, the diff content does n
       RANGE_PACKET,
       undefined,
       undefined,
-      undefined,
       round,
-      {
-        omitTaskLayer: true,
-        includeWorkerDiff: true,
-      },
+      { omitTaskLayer: true },
     );
-    expect(report).toContain(SECRET(WORKER_DIFF));
+    expect(report).not.toContain(SECRET(WORKER_DIFF));
+    expect(report).toContain('"commitRange":{"from":"c0","to":"c1"}');
   });
 
   it("omits the task layer for the legacy report seat", () => {
     const prompt = renderDrafterPrompt(
       "report instructions",
       RANGE_PACKET,
-      undefined,
       undefined,
       undefined,
       undefined,

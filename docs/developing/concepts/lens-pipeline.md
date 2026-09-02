@@ -35,9 +35,10 @@ states.
 
 The prompts live in `packages/prompts` (`@rennet/prompts`), one markdown file
 per lens plus the reviewer-voice file and the round-report classifier prompt.
-The package exports a typed manifest. Lens
-drafters receive the board schema separately; the landed-round report seat
-receives a much smaller classification schema instead.
+The package exports a typed manifest. The board schema is never prompt text:
+each lens seat's session is bound to it once, as the harness's structured-output
+format, and the landed-round report seat is bound to a much smaller
+classification schema instead.
 
 ## The drafting flow
 
@@ -70,7 +71,8 @@ and calls board regeneration through this runtime.
    only the successor patchset id, the durable dispatched asks, the worker's
    changed paths and observed commit range, and the round's **evidence manifest**
    (see the classifier evidence contract below). It does not receive the full
-   DeltaPacket, the all-kind board schema, or the verbatim diff. Each ask is
+   DeltaPacket or the verbatim diff, and its session is bound to the narrow
+   classification schema rather than the all-kind board schema. Each ask is
    reduced to its durable id, path, instruction, and optional source anchor, so
    stale prior-diff context cannot compete with the coding turn's measured
    evidence. The host sorts the outcomes and builds the document, section,
@@ -82,11 +84,12 @@ and calls board regeneration through this runtime.
    this path. The resulting board is both the reviewer's greeting and the lens
    drafters' input. Here, **legacy caller** means an injected pipeline caller that
    supplies the older round context without an exact worker receipt. It retains
-   the generic drafting path (and the verbatim diff) for compatibility. A live
-   durable coding round always carries the receipt and never selects that path.
+   the generic drafting path for compatibility. A live durable coding round
+   always carries the receipt and never selects that path.
 1. **Draft.** One agent per lens receives the delta context and its lens
-   prompt, plus the host board schema derived once from the frozen
-   `DraftBoardSchema`, and returns a structured board. Each drafting instruction
+   prompt and returns a structured board. The host board schema, derived once
+   from the frozen `DraftBoardSchema`, binds the seat's session as its
+   structured-output format and is not repeated in the prompt. Each drafting instruction
    requires a document envelope with an authored title, a short Markdown
    introduction, and a measure. The target owns the final measure: Design is
    `structured`; Sequence, Decisions, Flagged, and Noise are `reading`. The host

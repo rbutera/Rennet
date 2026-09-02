@@ -61,7 +61,9 @@ Rennet-shaped.
 
 Rennet declares **one host schema**, at board creation, covering every board. It
 lives at `packages/protocol/src/board/schema.ts` — not in `@wboard/*` — and it is
-the reason the protocol needs no review vocabulary of its own.
+the reason the protocol needs no review vocabulary of its own. A drafting seat
+meets the same schema once, as its session's structured-output format; it is
+never sent as prompt text.
 
 The schema declares a closed palette of thirteen kinds: the typed lens outputs
 (`finding`, `decision`, `requirement`, `noise_verdict`, `order_step`,
