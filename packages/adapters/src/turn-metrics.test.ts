@@ -1,7 +1,9 @@
+import type { GenerationUsage } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import {
   createMetricsCollector,
   extractClaudeUsage,
+  mergeGenerationUsage,
   summarizeUsage,
   type TurnMetric,
 } from "./turn-metrics";
@@ -94,6 +96,7 @@ describe("summarizeUsage (#737)", () => {
     const usage = summarizeUsage([metric({}), metric({ attempt: 1, status: "failed" })]);
     expect(usage).toEqual({
       turns: 2,
+      unmeasuredTurns: 0,
       inputTokens: 200,
       outputTokens: 40,
       cacheReadTokens: 60,
@@ -110,9 +113,60 @@ describe("summarizeUsage (#737)", () => {
     expect(usage.reportedUsd).toBeNull();
   });
 
+  it("reports no dollar figure when a metered turn carried tokens but no price", () => {
+    const usage = summarizeUsage([
+      metric({}),
+      metric({ usage: { ...(metric({}).usage as object), reportedUsd: null } as never }),
+    ]);
+    expect(usage.totalTokens).toBe(310);
+    expect(usage.reportedUsd).toBeNull();
+  });
+
   it("reports no dollar figure when a turn carried no usage, and null for no turns", () => {
-    expect(summarizeUsage([metric({}), metric({ usage: null })]).reportedUsd).toBeNull();
+    const oneUnmeasured = summarizeUsage([metric({}), metric({ usage: null })]);
+    expect(oneUnmeasured.reportedUsd).toBeNull();
+    expect(oneUnmeasured.unmeasuredTurns).toBe(1);
+    expect(oneUnmeasured.turns).toBe(2);
+    expect(oneUnmeasured.totalTokens).toBe(155);
     expect(summarizeUsage([]).reportedUsd).toBeNull();
     expect(summarizeUsage([]).turns).toBe(0);
+  });
+});
+
+describe("mergeGenerationUsage (#741 review)", () => {
+  const usage = (over: Partial<GenerationUsage> = {}): GenerationUsage => ({
+    turns: 2,
+    unmeasuredTurns: 0,
+    inputTokens: 100,
+    outputTokens: 10,
+    cacheReadTokens: 5,
+    cacheCreationTokens: 1,
+    totalTokens: 116,
+    reportedUsd: 0.5,
+    ...over,
+  });
+
+  it("adds a repeat attempt to the prior total and keeps a price only when both priced", () => {
+    expect(
+      mergeGenerationUsage(usage(), usage({ turns: 1, totalTokens: 50, inputTokens: 40 })),
+    ).toEqual(
+      usage({
+        turns: 3,
+        totalTokens: 166,
+        inputTokens: 140,
+        outputTokens: 20,
+        cacheReadTokens: 10,
+        cacheCreationTokens: 2,
+        reportedUsd: 1,
+      }),
+    );
+    expect(mergeGenerationUsage(usage({ reportedUsd: null }), usage())?.reportedUsd).toBeNull();
+    expect(mergeGenerationUsage(usage(), usage({ reportedUsd: null }))?.reportedUsd).toBeNull();
+  });
+
+  it("passes a lone side through and yields nothing for two absences", () => {
+    expect(mergeGenerationUsage(undefined, usage())).toEqual(usage());
+    expect(mergeGenerationUsage(usage(), undefined)).toEqual(usage());
+    expect(mergeGenerationUsage(undefined, undefined)).toBeUndefined();
   });
 });

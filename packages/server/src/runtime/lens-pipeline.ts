@@ -1236,8 +1236,12 @@ export type DesignCoverageMapper = (request: DesignCoverageRequest) => Promise<{
 export function createDesignCoverageMapper(
   port: HarnessPort,
   repoRoot: string,
+  collector?: MetricsCollector,
 ): DesignCoverageMapper {
-  const turn = createCoverageTurn(port, { cwd: repoRoot });
+  const turn = createCoverageTurn(port, {
+    cwd: repoRoot,
+    ...(collector === undefined ? {} : { collector }),
+  });
   return async (request) => {
     const result = await runCoverageMapping({
       ...request,

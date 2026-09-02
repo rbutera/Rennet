@@ -153,11 +153,4 @@ describe("createCodexSwarmTurn records usage (#737)", () => {
       expect.objectContaining({ status: "failed", usage: null, error: "codex died" }),
     ]);
   });
-
-  it("records nothing without a collector (positive control for the tap)", async () => {
-    const collector = createMetricsCollector();
-    const executor: CodexExecutor = () => Promise.resolve({ output: {} });
-    await createCodexSwarmTurn(executor, "m", "medium", {}, { cwd: "/repo" })("p", 0);
-    expect(collector.metrics).toHaveLength(0);
-  });
 });

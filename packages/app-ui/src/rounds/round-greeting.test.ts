@@ -6,6 +6,7 @@ import { usageNote } from "./round-greeting";
 describe("usageNote", () => {
   const base = {
     turns: 7,
+    unmeasuredTurns: 0,
     inputTokens: 10_000,
     outputTokens: 2_345,
     cacheReadTokens: 0,
@@ -25,6 +26,12 @@ describe("usageNote", () => {
       "Spent 12.3K tokens across 7 seat turns · $0.419",
     );
     expect(usageNote({ ...base, reportedUsd: 12.5 })).toContain("$12.50");
+  });
+
+  it("names unmeasured turns so a partial sum is never read as the whole", () => {
+    expect(usageNote({ ...base, unmeasuredTurns: 2 })).toBe(
+      "Spent 12.3K tokens across 7 seat turns (2 unmeasured)",
+    );
   });
 
   it("singularises one turn", () => {

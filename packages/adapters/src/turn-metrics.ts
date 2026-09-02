@@ -131,6 +131,7 @@ export function createMetricsCollector(): MetricsCollector {
 export function summarizeUsage(metrics: readonly TurnMetric[]): GenerationUsage {
   const sum = {
     turns: metrics.length,
+    unmeasuredTurns: 0,
     inputTokens: 0,
     outputTokens: 0,
     cacheReadTokens: 0,
@@ -141,6 +142,7 @@ export function summarizeUsage(metrics: readonly TurnMetric[]): GenerationUsage 
   for (const metric of metrics) {
     const usage = metric.usage;
     if (usage === null) {
+      sum.unmeasuredTurns += 1;
       usd = null;
       continue;
     }
@@ -156,6 +158,32 @@ export function summarizeUsage(metrics: readonly TurnMetric[]): GenerationUsage 
     else usd = null;
   }
   return { ...sum, reportedUsd: metrics.length === 0 ? null : usd };
+}
+
+/**
+ * Combine a prior attempt's durable usage with the current attempt's (#741 review): a
+ * re-drafting attempt adds to what the generation already spent, it does not replace
+ * it. Either side `null` on price ⇒ `null`; both absent ⇒ absent.
+ */
+export function mergeGenerationUsage(
+  prior: GenerationUsage | undefined,
+  current: GenerationUsage | undefined,
+): GenerationUsage | undefined {
+  if (prior === undefined) return current;
+  if (current === undefined) return prior;
+  return {
+    turns: prior.turns + current.turns,
+    unmeasuredTurns: prior.unmeasuredTurns + current.unmeasuredTurns,
+    inputTokens: prior.inputTokens + current.inputTokens,
+    outputTokens: prior.outputTokens + current.outputTokens,
+    cacheReadTokens: prior.cacheReadTokens + current.cacheReadTokens,
+    cacheCreationTokens: prior.cacheCreationTokens + current.cacheCreationTokens,
+    totalTokens: prior.totalTokens + current.totalTokens,
+    reportedUsd:
+      prior.reportedUsd === null || current.reportedUsd === null
+        ? null
+        : prior.reportedUsd + current.reportedUsd,
+  };
 }
 
 export interface InstrumentedRunTurnOptions {

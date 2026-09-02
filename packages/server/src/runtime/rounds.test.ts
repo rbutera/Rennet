@@ -2529,6 +2529,16 @@ describe("createRoundsRuntime", () => {
     expect(durable).toBeDefined();
     expect(durable?.coverage).toEqual({ state: "complete", violations: 0 });
 
+    // Spend rides the same durable record (#737), and it is the LAST write that a reader
+    // finds: the final settle used to erase it (#741 review). The scripted harness reports
+    // no usage on its result frames, so every turn is honestly unmeasured, never zero.
+    expect(durable?.usage).toBeDefined();
+    expect(durable?.usage?.turns).toBeGreaterThan(0);
+    expect(durable?.usage?.unmeasuredTurns).toBe(durable?.usage?.turns);
+    expect(durable?.usage?.reportedUsd).toBeNull();
+    const lastWriteOfThisGeneration = writes.filter(({ id }) => id === durable?.id).at(-1);
+    expect(lastWriteOfThisGeneration?.usage).toEqual(durable?.usage);
+
     // Per-phase timings ride the same durable record, versioned from day one.
     const timed = durable?.timings;
     expect(timed?.version).toBe(1);
