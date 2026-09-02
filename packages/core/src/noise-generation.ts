@@ -413,17 +413,66 @@ function buildEnvelope(
   };
 }
 
-/** A compact, model-facing serialisation of the offered hunks and their lines. */
-function renderPayload(manifest: OfferedManifest, patchsetId: string): string {
-  const hunks = manifest.occurrences
-    .filter((occurrence) => occurrence.kind === "hunk")
-    .map((occurrence) => ({
+/**
+ * UTF-8 ceiling on the noise seat's hunk payload (#737). Whole hunks are kept in
+ * offered order until the next one would cross it; every omitted hunk is NAMED so
+ * the seat reads it from the checkout it is standing in. Same magnitude as the
+ * round-evidence manifest bound. The payload is re-sent on every retry, so the
+ * bound is per attempt.
+ */
+export const NOISE_PAYLOAD_MAX_BYTES = 262_144;
+
+const PAYLOAD_ENCODER = new TextEncoder();
+
+/**
+ * A compact, model-facing serialisation of the offered hunks and their lines,
+ * bounded by `maxBytes` over the `{ patchsetId, hunks }` body. Compact JSON: an
+ * indent is a ~30% surcharge no reader sees.
+ */
+export function renderPayload(
+  manifest: OfferedManifest,
+  patchsetId: string,
+  maxBytes: number = NOISE_PAYLOAD_MAX_BYTES,
+): string {
+  const kept: Array<{
+    id: string;
+    additions: readonly string[];
+    deletions: readonly string[];
+    context: readonly string[];
+  }> = [];
+  const omittedHunkIds: string[] = [];
+  // The envelope with an empty hunk list; each kept hunk adds its bytes plus a comma.
+  let bytes = PAYLOAD_ENCODER.encode(JSON.stringify({ patchsetId, hunks: [] })).length;
+  for (const occurrence of manifest.occurrences) {
+    if (occurrence.kind !== "hunk") continue;
+    const hunk = {
       id: occurrence.id,
       additions: occurrence.sides?.additions ?? [],
       deletions: occurrence.sides?.deletions ?? [],
       context: occurrence.sides?.context ?? [],
-    }));
-  return JSON.stringify({ patchsetId, hunks }, null, 2);
+    };
+    const hunkBytes =
+      PAYLOAD_ENCODER.encode(JSON.stringify(hunk)).length + (kept.length > 0 ? 1 : 0);
+    if (omittedHunkIds.length > 0 || bytes + hunkBytes > maxBytes) {
+      omittedHunkIds.push(hunk.id);
+      continue;
+    }
+    kept.push(hunk);
+    bytes += hunkBytes;
+  }
+  return JSON.stringify(
+    omittedHunkIds.length === 0
+      ? { patchsetId, hunks: kept }
+      : {
+          patchsetId,
+          hunks: kept,
+          truncated: {
+            omittedHunkIds,
+            readWith:
+              "These offered hunks did not fit the payload bound. Read them with `git diff` in your working directory; they are still valid ids to classify.",
+          },
+        },
+  );
 }
 
 /** Format a validation report into the machine-readable text fed back on retry. */

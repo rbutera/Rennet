@@ -39,6 +39,8 @@ import {
   validateDraft,
 } from "@rennet/core";
 import {
+  expandPromptPartials,
+  INVESTIGATE_PARTIAL_FILE,
   LENS_PROMPT_FILES,
   REVIEW_DRAFT_VOICE_FILE,
   ROUND_REPORT_FILE,
@@ -188,7 +190,8 @@ let cachedDesignDraftSchema: unknown;
 /**
  * The JSON-schema view of the frozen `DraftBoardSchema`, derived once (never
  * hand-authored — reconciliation 2/F4). Passed to the harness session as the
- * output schema AND inlined into the drafter prompt as the host schema (D1). A
+ * output schema (the SDK `outputFormat`) and NEVER inlined into the prompt: the
+ * schema travels once (#737; the double-send was ~9.8 KB per turn). A
  * derivation failure falls back to a permissive object schema so a runtime
  * quirk never blocks drafting (Rule Zero).
  */
@@ -865,20 +868,14 @@ export function renderDrafterPrompt(
   packet: DeltaPacket,
   reportBoard?: DraftBoard,
   designArtifacts?: DesignArtifactSet,
-  hostSchema: unknown = boardOutputSchema(),
   round?: RoundDraftContext,
   options?: {
     /**
      * Drop the reviewed-range task layer. The legacy round-report seat verifies
-     * the exact TURN diff (`round.worker.diff`), and telling it to read the
-     * whole branch range would name a second, contradicting range.
+     * the exact TURN diff, and telling it to read the whole branch range would
+     * name a second, contradicting range.
      */
     readonly omitTaskLayer?: boolean;
-    /**
-     * Carry the worker's verbatim turn diff. Report classification only — it is
-     * uncapped, and every other seat reads content from the checkout.
-     */
-    readonly includeWorkerDiff?: boolean;
   },
 ): string {
   // The hunk INDEX travels (coverage is taught-or-skipped over these exact
@@ -894,7 +891,6 @@ export function renderDrafterPrompt(
   }));
   const context = JSON.stringify({
     deltaPacket: { ...packet, hunks: { hunks: hunkIndex } },
-    hostSchema,
     // On rounds the round-report drafts FIRST and is the lens drafters' input (D3/R58).
     ...(reportBoard === undefined ? {} : { roundReport: reportBoard }),
     ...(designArtifacts === undefined ? {} : { designArtifacts }),
@@ -904,21 +900,19 @@ export function renderDrafterPrompt(
           round: {
             number: round.number,
             dispatchedAsks: round.dispatchedAsks,
-            // The worker's verbatim turn diff is UNCAPPED (a big coding turn can
-            // dwarf the reviewed range) and belongs to the report-classification
-            // boundary alone. Ordinary lenses get the worker's identity and
-            // shape and read the content from the checkout like everything else.
+            // The worker's verbatim turn diff never rides here: the classified
+            // round-report path carries a measured evidence manifest (#727), and
+            // every drafter gets the worker's identity and shape and reads the
+            // content from the checkout like everything else.
             ...(round.worker === undefined
               ? {}
-              : options?.includeWorkerDiff === true
-                ? { worker: round.worker }
-                : {
-                    worker: {
-                      outcome: round.worker.outcome,
-                      changedPaths: round.worker.changedPaths,
-                      commitRange: round.worker.commitRange,
-                    },
-                  }),
+              : {
+                  worker: {
+                    outcome: round.worker.outcome,
+                    changedPaths: round.worker.changedPaths,
+                    commitRange: round.worker.commitRange,
+                  },
+                }),
           },
         }),
   });
@@ -2482,12 +2476,10 @@ async function runLegacyRoundReport(
     deps.deltaPacket,
     undefined,
     undefined,
-    boardOutputSchema(),
     deps.round,
-    // The report verifies the exact turn diff (`round.worker.diff`) — it keeps
-    // the diff, and the reviewed-range task line would name a second,
-    // contradicting range.
-    { omitTaskLayer: true, includeWorkerDiff: true },
+    // The reviewed-range task line would name a second, contradicting range
+    // for a report seat.
+    { omitTaskLayer: true },
   );
   const ctx = deps.lintContextFor("report");
   const validated = await draftOneLens(
@@ -3553,7 +3545,10 @@ async function draftLensBoard(
       absence: "no-material",
     };
   }
-  const promptText = await deps.readPrompt(LENS_PROMPT_FILES[lens]);
+  const promptText = expandPromptPartials(
+    await deps.readPrompt(LENS_PROMPT_FILES[lens]),
+    await deps.readPrompt(INVESTIGATE_PARTIAL_FILE),
+  );
   const semanticDesignAbsence =
     lens === "design" && deps.designArtifacts !== undefined && deps.designArtifacts !== null;
   const basePrompt = renderDrafterPrompt(
@@ -3561,7 +3556,6 @@ async function draftLensBoard(
     deps.deltaPacket,
     reportBoard,
     lens === "design" ? (deps.designArtifacts ?? undefined) : undefined,
-    semanticDesignAbsence ? designDraftOutputSchema() : boardOutputSchema(),
     deps.round,
   );
   const baseCtx = deps.lintContextFor(lens);

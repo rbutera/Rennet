@@ -16,6 +16,7 @@ import {
   isCodingRoundDisposition,
   sha256Hex,
 } from "@rennet/protocol";
+import { HANDOFF_NO_GIT_RULE } from "./handoff-compose";
 import type { HarnessEvent, HarnessInProcessTool } from "./harness";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -200,8 +201,7 @@ export function renderHandoffPrompt(tasks: readonly HandoffTask[]): string {
     "Rules, in order of importance:",
     "1. Address ONLY the items listed below. Do not make unrelated changes, do not refactor",
     "   beyond what is asked, do not reformat untouched code.",
-    "2. Do NOT commit, do NOT push, do NOT run git. Just edit the files; the review harness",
-    "   captures your result and re-reviews it.",
+    ...HANDOFF_NO_GIT_RULE,
     "3. If an item cannot be done as asked, leave that file unchanged and say why in your",
     "   final message — never guess or half-apply it.",
     "",

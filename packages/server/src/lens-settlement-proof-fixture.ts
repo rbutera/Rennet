@@ -207,23 +207,6 @@ export function lensSettlementScriptedHarnessPlan(
         output: { facts: {}, guidanceRules: [] },
       },
       {
-        id: "knowledge-worker",
-        kind: "structured",
-        promptIncludes: "You are ONE worker in a partitioned swarm;",
-        output: { statements: [] },
-      },
-      {
-        id: "knowledge-verify",
-        kind: "structured",
-        promptIncludes: "You are the VERIFY/SYNTHESIS seat",
-        output: { verdicts: [], crossCutting: [] },
-      },
-      {
-        id: "post-process",
-        kind: "echo-board",
-        promptIncludes: "# Post-process pass — board prose editor",
-      },
-      {
         id: "sequence",
         kind: "structured",
         promptIncludes: "You draft the Sequence board for a code change under review.",

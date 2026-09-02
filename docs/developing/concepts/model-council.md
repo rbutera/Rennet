@@ -28,9 +28,10 @@ composition, comment refinement, orchestration, and adjudication.
 The lens drafting pipeline runs five: `lens-draft` (the drafting seat for the
 Design, Sequence, and Decisions lenses), `lens-draft-flagged` (the dual seat —
 Claude and Codex on the same instructions, reconciled by cross-model
-concurrence), `lens-draft-noise` (the noise lens), `board-post-process` (the
-editor pass that reshapes and de-slops board prose between the lint loop and the
-immutability gate), and `round-report`. The last is a single-turn
+concurrence), `lens-draft-noise` (the noise lens), `board-post-process` (a
+reserved role: the catalogue names it and a pick resolves for it, but no
+production turn runs it — the lens scheduler supplies no model-backed
+post-process transform), and `round-report`. The last is a single-turn
 classifier for landed coding rounds, not another full board drafter. It receives
 the successor patchset id, durable asks, and exact worker receipt. The host builds
 and verifies the report board from its classification. The Flagged dual-seat

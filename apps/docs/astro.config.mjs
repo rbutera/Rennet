@@ -147,6 +147,10 @@ export default defineConfig({
                     label: "Performance audit (2026-08-31)",
                     link: "/developing/plans/perf-audit-2026-08-31/",
                   },
+                  {
+                    label: "Token efficiency plan (#737)",
+                    link: "/developing/plans/token-efficiency-737/",
+                  },
                 ],
               },
               {

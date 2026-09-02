@@ -34,10 +34,17 @@ failure, cancellation, and daemon interruption remain explicit, retryable sessio
 states.
 
 The prompts live in `packages/prompts` (`@rennet/prompts`), one markdown file
-per lens plus the reviewer-voice file and the round-report classifier prompt.
-The package exports a typed manifest. Lens
-drafters receive the board schema separately; the landed-round report seat
-receives a much smaller classification schema instead.
+per lens plus the reviewer-voice file, the round-report classifier prompt, and
+one shared partial: the "Investigate before you draft" section every lens file
+carries at a `{{investigate-before-you-draft}}` marker line, spliced in when
+the pipeline reads the prompt so five files cannot drift apart on it.
+The package exports a typed manifest. Noise has two instruction sets on
+purpose: `noise.md` drives the Noise lens board seat, and the `NOISE_CONTRACT`
+prompt contract drives the RSP noise-document runner behind the noise index;
+they emit different shapes to different validators. The board schema is never prompt text:
+each lens seat's session is bound to it once, as the harness's structured-output
+format, and the landed-round report seat is bound to a much smaller
+classification schema instead.
 
 ## The drafting flow
 
@@ -70,7 +77,8 @@ and calls board regeneration through this runtime.
    only the successor patchset id, the durable dispatched asks, the worker's
    changed paths and observed commit range, and the round's **evidence manifest**
    (see the classifier evidence contract below). It does not receive the full
-   DeltaPacket, the all-kind board schema, or the verbatim diff. Each ask is
+   DeltaPacket or the verbatim diff, and its session is bound to the narrow
+   classification schema rather than the all-kind board schema. Each ask is
    reduced to its durable id, path, instruction, and optional source anchor, so
    stale prior-diff context cannot compete with the coding turn's measured
    evidence. The host sorts the outcomes and builds the document, section,
@@ -82,11 +90,12 @@ and calls board regeneration through this runtime.
    this path. The resulting board is both the reviewer's greeting and the lens
    drafters' input. Here, **legacy caller** means an injected pipeline caller that
    supplies the older round context without an exact worker receipt. It retains
-   the generic drafting path (and the verbatim diff) for compatibility. A live
-   durable coding round always carries the receipt and never selects that path.
+   the generic drafting path for compatibility. A live durable coding round
+   always carries the receipt and never selects that path.
 1. **Draft.** One agent per lens receives the delta context and its lens
-   prompt, plus the host board schema derived once from the frozen
-   `DraftBoardSchema`, and returns a structured board. Each drafting instruction
+   prompt and returns a structured board. The host board schema, derived once
+   from the frozen `DraftBoardSchema`, binds the seat's session as its
+   structured-output format and is not repeated in the prompt. Each drafting instruction
    requires a document envelope with an authored title, a short Markdown
    introduction, and a measure. The target owns the final measure: Design is
    `structured`; Sequence, Decisions, Flagged, and Noise are `reading`. The host
@@ -504,13 +513,28 @@ When the file or span cannot be found, the model works from the note and its
 metadata and says so — it never substitutes a different code location that
 looks close enough.
 
+Every other interpolation into a seat prompt declares its bound at the call
+site too: the round-report evidence manifest is measured against its 256 KiB
+ceiling before any seat runs, and the RSP noise seat's hunk payload keeps whole
+hunks under the same 256 KiB and names the ids it left out. Unbounded
+interpolation is a bug.
+
+A tripwire keeps the drafter prompt itself honest. The `lens-pipeline`
+prompt-budget test assembles every lens's drafter prompt against the real
+capture fixture and asserts its UTF-8 size under a per-lens budget: a fixed
+cost measured when the test was pinned plus ten percent, plus a packet share of
+about 550 bytes per file row and 275 per hunk row. A prompt that grows on
+purpose raises its budget in the same change and says so in the pull request;
+one that grows by accident reddens the test instead of waiting for the next
+audit.
+
 ## Three layers carry every rule
 
 The schema makes good structure the only expressible structure (a finding's
 kind, severity, cited code, and concurrence are typed fields, so a claim in the
 wrong shape fails to parse, not merely reads badly); the lint makes the
-mechanical rules guarantees; the prompts and the post-process editor carry what
-only judgment can check. A rule that lives in a prompt alone is a wish.
+mechanical rules guarantees; the prompts carry what only judgment can check. A
+rule that lives in a prompt alone is a wish.
 
 ## Honest states
 
@@ -665,8 +689,7 @@ candidate, lint requires every retained artifact in that candidate in both the
 header roll-up and a named region without forcing nearby candidates into the
 board. Reverse checks require every source requirement, scenario, and task once
 and in source order, verify proposal anatomy and derived header values, and make
-bounded discovery visible. The prose post-process cannot drop or rewrite a
-source-linked subtree. Source lines resolve against the reviewed file or the
+bounded discovery visible. Source lines resolve against the reviewed file or the
 retained artifact text, and requirement scenario refs resolve only to narrative
 scenario regions.
 
@@ -717,4 +740,4 @@ completion, and an unbound or absent ledger leaves the plan's static marks in ch
 - [Delta and generations](./delta-rereview-and-lineage.md) — what carries from
   one generation of boards to the next.
 - [The Model Council](./model-council.md) — how seats are assigned to the
-  drafting, reconciliation, and post-process jobs.
+  drafting, reconciliation, and classification jobs.
