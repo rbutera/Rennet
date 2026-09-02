@@ -1227,3 +1227,57 @@ describe("round-machine — arbitrary depth holds by construction (C14 §8, D7)"
     for (const phases of walkRounds(4)) expect(phases).toEqual(EXPECTED_ROUND_PHASES);
   });
 });
+
+describe("generation usage rides the lens frame (#737)", () => {
+  const USAGE = {
+    turns: 3,
+    inputTokens: 1000,
+    outputTokens: 200,
+    cacheReadTokens: 300,
+    cacheCreationTokens: 0,
+    totalTokens: 1500,
+    reportedUsd: null,
+  };
+  const reportingState = () =>
+    advance(
+      initialRoundState,
+      operationEvent(6, {
+        phase: "report-drafting",
+        workspace: WORKSPACE,
+        worker: WORKER,
+        gate: GATE,
+        commits: { status: "done", count: 2 },
+        report: { status: "handed-off", reportBoardId: "report-9", generation: "gen-9" },
+      }),
+    );
+
+  it("lands the frame's usage on the state and replaces it with a later frame's", () => {
+    const composing = advance(reportingState(), {
+      type: "lens",
+      operationId: OPERATION_BASE.operationId,
+      operationRevision: 6,
+      lanes: [{ id: "noise", label: "Noise", status: "drafted" }],
+      usage: USAGE,
+    });
+    expect(composing).toMatchObject({ phase: "composing", usage: { totalTokens: 1500 } });
+    // Cumulative on the server: a later frame REPLACES, it is never summed twice here.
+    const later = advance(composing, {
+      type: "lens",
+      operationId: OPERATION_BASE.operationId,
+      operationRevision: 6,
+      lanes: [{ id: "noise", label: "Noise", status: "drafted" }],
+      usage: { ...USAGE, turns: 5, totalTokens: 2600 },
+    });
+    expect(later).toMatchObject({ usage: { turns: 5, totalTokens: 2600 } });
+    // A frame that carries none keeps the last honest figure (same rule as coverage).
+    const none = advance(later, {
+      type: "lens",
+      operationId: OPERATION_BASE.operationId,
+      operationRevision: 6,
+      lanes: [{ id: "noise", label: "Noise", status: "done", verdict: "reworked" }],
+    });
+    expect(none).toMatchObject({ usage: { turns: 5, totalTokens: 2600 } });
+    // Positive control: a state that never saw a usage frame carries none.
+    expect("usage" in reportingState() ? reportingState().usage : undefined).toBeUndefined();
+  });
+});

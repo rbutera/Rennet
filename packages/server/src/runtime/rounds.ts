@@ -35,7 +35,12 @@
 // behavior. This runtime only wires the seams.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { type DesignArtifactSet, WhiteboardClient } from "@rennet/adapters";
+import {
+  createMetricsCollector,
+  type DesignArtifactSet,
+  summarizeUsage,
+  WhiteboardClient,
+} from "@rennet/adapters";
 import type {
   CodexExecutor,
   DeltaPacket,
@@ -1024,6 +1029,11 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
     // ── The generation's durable reveal state (#725 D4/7.2) ──
     // Per-lane settlements, the explicit coverage state and the per-phase timings, all
     // keyed to THIS drafting attempt's reserved board slots.
+    // The generation's spend tap (#737): every seat turn the pipeline runs records here,
+    // and the sum rides the lens frame while drafting and lands on the durable generation.
+    const collector = createMetricsCollector();
+    const usageSoFar = () =>
+      collector.metrics.length === 0 ? {} : { usage: summarizeUsage(collector.metrics) };
     const reveal = {
       lensBoards: {} as Partial<Record<LensKind, string>>,
       absentLenses: {
@@ -1071,6 +1081,7 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
           : {
               timings: { version: GENERATION_TIMINGS_VERSION, phases: [...reveal.timings] },
             }),
+        ...usageSoFar(),
       });
       return true;
     };
@@ -1084,6 +1095,8 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
               // Coverage rides the SAME frame as the lanes, so the surface can never show
               // settled boards from one moment and a coverage state from another.
               ...(reveal.coverage === undefined ? {} : { coverage: reveal.coverage }),
+              // Spend rides the same frame for the same reason (#737).
+              ...usageSoFar(),
             });
           });
     // Time-to-first-core-board is measured from the moment the REVIEWER's wait began, which
@@ -1199,6 +1212,7 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
         ? {}
         : { designArtifactFailure: input.designArtifactFailure }),
       readPrompt: deps.readPrompt,
+      collector,
       whiteboard,
       boardIdFor,
       ...(reusableRoundReport === undefined ? {} : { reusableRoundReport }),

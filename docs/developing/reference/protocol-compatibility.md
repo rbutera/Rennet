@@ -232,6 +232,14 @@ and never on the field's presence. A generation or a daemon without either field
 coverage or duration: an absent coverage state means **unknown**, never "coverage
 passed", and the surfaces render no coverage line at all rather than a default one.
 
+The generation's **usage** follows the same rule again. It sums every seat turn the
+pipeline ran for that generation, retries included, on either harness: a turn count,
+the four token counts, their total, and `reportedUsd`. The dollar figure is `null`
+unless every turn ran on a metered credential and the provider priced it; a
+subscription session shows tokens and no invented price. It rides the lens progress
+frame beside `coverage` as a cumulative figure and lands on the durable generation as
+the final one. Absent means **not measured**, never free.
+
 The durable round operation's `report-drafting` phase gained a second projected
 report state, `handed-off`, beside `drafting`. It appears once the report's durable
 handoff exists — the boundary after which the lens drafters run — so a client can

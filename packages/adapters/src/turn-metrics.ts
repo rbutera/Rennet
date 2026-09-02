@@ -24,8 +24,8 @@
  * synthetic result frame, so the parse is verified independent of a live turn.
  */
 
-import type { HarnessPort, HarnessTurnResult } from "@rennet/core";
-import type { RspDocType } from "@rennet/protocol";
+import { type HarnessPort, type HarnessTurnResult, METERED_API_KEY_SOURCES } from "@rennet/core";
+import type { GenerationUsage, RspDocType } from "@rennet/protocol";
 import { bodyJsonSchema } from "@rennet/protocol";
 
 /** Token accounting extracted from a Claude Agent SDK `result` frame's `usage`. */
@@ -118,6 +118,44 @@ export function createMetricsCollector(): MetricsCollector {
       return metrics;
     },
   };
+}
+
+/**
+ * Sum a collector's turns into the generation's usage record (#737). Every recorded
+ * turn counts — a failed turn that reached a result frame still billed its prompt.
+ * `reportedUsd` is summed only when EVERY turn ran on a metered credential and
+ * carried a figure; one subscription (`oauth`/`none`) or unpriced turn makes the
+ * whole sum `null`, because a partial dollar total would read as the price of the
+ * generation when it is not.
+ */
+export function summarizeUsage(metrics: readonly TurnMetric[]): GenerationUsage {
+  const sum = {
+    turns: metrics.length,
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheReadTokens: 0,
+    cacheCreationTokens: 0,
+    totalTokens: 0,
+  };
+  let usd: number | null = 0;
+  for (const metric of metrics) {
+    const usage = metric.usage;
+    if (usage === null) {
+      usd = null;
+      continue;
+    }
+    sum.inputTokens += usage.inputTokens;
+    sum.outputTokens += usage.outputTokens;
+    sum.cacheReadTokens += usage.cacheReadTokens;
+    sum.cacheCreationTokens += usage.cacheCreationTokens;
+    sum.totalTokens += usage.totalTokens;
+    const metered =
+      metric.apiKeySource !== null &&
+      (METERED_API_KEY_SOURCES as readonly string[]).includes(metric.apiKeySource);
+    if (usd !== null && metered && usage.reportedUsd !== null) usd += usage.reportedUsd;
+    else usd = null;
+  }
+  return { ...sum, reportedUsd: metrics.length === 0 ? null : usd };
 }
 
 export interface InstrumentedRunTurnOptions {

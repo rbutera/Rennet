@@ -350,6 +350,12 @@ usage record. Those zeros therefore do not prove that the turn consumed no
 tokens. Provider-reported and derived dollar values remain separate and stay
 `null` when no amount is available.
 
+The lens pipeline's seat turns feed a second, fuller tap: the turn-metrics
+collector reads `usage` and `total_cost_usd` off the Claude result frame's raw
+native record, and the Codex seat maps its token record onto the same shape with
+no price. The generation sums that collector into its durable `usage`, so what a
+review cost is a number on the round rather than a figure parsed and dropped.
+
 There is no hosted Rennet backend. The daemon starts local harness processes on a
 loopback transport where a subprocess needs MCP access. Review context still
 reaches the provider used by the selected harness.

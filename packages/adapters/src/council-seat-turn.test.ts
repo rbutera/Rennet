@@ -1,4 +1,5 @@
 import type {
+  CodexExecutor,
   HarnessDescriptor,
   HarnessEvent,
   HarnessHealth,
@@ -8,7 +9,8 @@ import type {
   SessionSpec,
 } from "@rennet/core";
 import { describe, expect, it } from "vitest";
-import { councilSeatTurn } from "./council-seat-turn";
+import { councilSeatTurn, createCodexSwarmTurn } from "./council-seat-turn";
+import { createMetricsCollector } from "./turn-metrics";
 
 function endedEvent(outcome: SessionOutcome): HarnessEvent {
   return {
@@ -88,5 +90,74 @@ describe("councilSeatTurn — the Claude branch", () => {
       ephemeral: true,
     });
     expect(state.closed).toBe(true);
+  });
+});
+
+describe("createCodexSwarmTurn records usage (#737)", () => {
+  it("records one metric per turn with Codex tokens and no dollar figure", async () => {
+    const collector = createMetricsCollector();
+    const executor: CodexExecutor = () =>
+      Promise.resolve({
+        output: { elements: [] },
+        model: "gpt-5.6-terra",
+        tokens: { input: 40, output: 8, cacheRead: 2, cacheWrite: 0, reasoning: null, total: 50 },
+      });
+    const runTurn = createCodexSwarmTurn(
+      executor,
+      "gpt-5.6-terra",
+      "medium",
+      {},
+      {
+        cwd: "/repo",
+        collector,
+        label: "board.lens-draft-flagged",
+      },
+    );
+    const result = await runTurn("prompt", 1);
+    expect(result.status).toBe("emitted");
+    expect(collector.metrics).toEqual([
+      expect.objectContaining({
+        label: "board.lens-draft-flagged",
+        attempt: 1,
+        model: "gpt-5.6-terra",
+        apiKeySource: null,
+        status: "emitted",
+        usage: {
+          inputTokens: 40,
+          outputTokens: 8,
+          cacheReadTokens: 2,
+          cacheCreationTokens: 0,
+          totalTokens: 50,
+          reportedUsd: null,
+        },
+      }),
+    ]);
+  });
+
+  it("records a failed metric with null usage when the executor throws", async () => {
+    const collector = createMetricsCollector();
+    const executor: CodexExecutor = () => Promise.reject(new Error("codex died"));
+    const runTurn = createCodexSwarmTurn(
+      executor,
+      "gpt-5.6-terra",
+      "medium",
+      {},
+      {
+        cwd: "/repo",
+        collector,
+      },
+    );
+    const result = await runTurn("prompt", 0);
+    expect(result.status).toBe("failed");
+    expect(collector.metrics).toEqual([
+      expect.objectContaining({ status: "failed", usage: null, error: "codex died" }),
+    ]);
+  });
+
+  it("records nothing without a collector (positive control for the tap)", async () => {
+    const collector = createMetricsCollector();
+    const executor: CodexExecutor = () => Promise.resolve({ output: {} });
+    await createCodexSwarmTurn(executor, "m", "medium", {}, { cwd: "/repo" })("p", 0);
+    expect(collector.metrics).toHaveLength(0);
   });
 });

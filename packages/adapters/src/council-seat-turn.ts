@@ -13,6 +13,7 @@ import type {
   CouncilJobId,
   CouncilModel,
   CouncilResolveContext,
+  RspTokenUsage,
 } from "@rennet/protocol";
 import { extractClaudeUsage, type MetricsCollector } from "./turn-metrics";
 
@@ -196,11 +197,15 @@ export function createCodexSwarmTurn(
   model: string,
   effort: string,
   outputSchema: unknown,
-  options: Pick<SwarmTurnOptions, "signal" | "cwd" | "onProviderSettled" | "outputByteCap"> &
+  options: Pick<
+    SwarmTurnOptions,
+    "signal" | "cwd" | "onProviderSettled" | "outputByteCap" | "collector" | "label"
+  > &
     Pick<CodexExecRequest, "mcpServers">,
   now: () => number = Date.now,
 ): RunTurn {
-  return async function runTurn(prompt: string): Promise<HarnessTurnResult> {
+  const label = options.label ?? "council.seat";
+  return async function runTurn(prompt: string, attempt: number): Promise<HarnessTurnResult> {
     const started = now();
     const settleProvider = (outcome: ProviderTurnSettlement["outcome"]): void => {
       try {
@@ -212,6 +217,37 @@ export function createCodexSwarmTurn(
       } catch {
         // Diagnostics never change the provider result they describe.
       }
+    };
+    // The same tap the Claude leg feeds (#737): a Codex turn is spend too. Codex reports
+    // tokens with no dollar figure and no credential source, so `reportedUsd` is null and
+    // the generation sum stays honest about it.
+    const record = (
+      status: "emitted" | "failed",
+      observedModel: string | null,
+      tokens: RspTokenUsage | undefined,
+      error?: string,
+    ): void => {
+      options.collector?.record({
+        label,
+        docType: "review.hypothesis",
+        attempt,
+        model: observedModel,
+        apiKeySource: null,
+        status,
+        latencyMs: now() - started,
+        usage:
+          tokens === undefined
+            ? null
+            : {
+                inputTokens: tokens.input,
+                outputTokens: tokens.output,
+                cacheReadTokens: tokens.cacheRead,
+                cacheCreationTokens: tokens.cacheWrite,
+                totalTokens: tokens.total,
+                reportedUsd: null,
+              },
+        ...(error === undefined ? {} : { error }),
+      });
     };
     try {
       const result = await executor({
@@ -225,6 +261,7 @@ export function createCodexSwarmTurn(
         ...(options.signal === undefined ? {} : { signal: options.signal }),
       });
       settleProvider("completed");
+      record("emitted", result.model ?? model, result.tokens);
       return {
         status: "emitted",
         body: result.output,
@@ -232,7 +269,9 @@ export function createCodexSwarmTurn(
       };
     } catch (error) {
       settleProvider("threw");
-      return { status: "failed", message: error instanceof Error ? error.message : String(error) };
+      const message = error instanceof Error ? error.message : String(error);
+      record("failed", null, undefined, message);
+      return { status: "failed", message };
     }
   };
 }
@@ -305,6 +344,8 @@ export function councilSeatTurn(
         {
           cwd: deps.repoRoot,
           ...(deps.outputByteCap === undefined ? {} : { outputByteCap: deps.outputByteCap }),
+          ...(deps.label === undefined ? {} : { label: deps.label }),
+          ...(deps.collector === undefined ? {} : { collector: deps.collector }),
           // Board-pipeline jobs use only their inlined prompt and
           // native repository tools. Codex starts configured MCP servers eagerly,
           // so suppress them for those jobs while unrelated Council work inherits.
