@@ -1278,6 +1278,7 @@ describe("generation usage rides the lens frame (#737)", () => {
     });
     expect(none).toMatchObject({ usage: { turns: 5, totalTokens: 2600 } });
     // Positive control: a state that never saw a usage frame carries none.
-    expect("usage" in reportingState() ? reportingState().usage : undefined).toBeUndefined();
+    const untouched = reportingState();
+    expect("usage" in untouched ? untouched.usage : undefined).toBeUndefined();
   });
 });
