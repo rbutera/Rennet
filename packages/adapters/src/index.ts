@@ -658,6 +658,7 @@ export {
   extractClaudeUsage,
   type InstrumentedRunTurnOptions,
   type MetricsCollector,
+  summarizeUsage,
   type TurnMetric,
 } from "./turn-metrics";
 export { type DraftOp, WhiteboardClient } from "./whiteboard-client";

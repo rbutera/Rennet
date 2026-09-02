@@ -1,5 +1,6 @@
 import type {
   GenerationCoverage,
+  GenerationUsage,
   LaneRow,
   LensLane,
   RoundEvent,
@@ -78,6 +79,8 @@ type LegacyRoundState =
        *  the lanes and is rendered explicitly: coverage never gates a board's reveal, so
        *  the surface has to be able to say "pending" beside boards already on screen. */
       readonly coverage?: GenerationCoverage;
+      /** What the generation's seat turns cost so far (#737); rides the lens frame. */
+      readonly usage?: GenerationUsage;
       readonly report?: RoundReportBoard;
     }
   | {
@@ -96,6 +99,8 @@ type LegacyRoundState =
        *  (a round that composed nothing per-lens) honestly carries no lanes. */
       readonly lanes?: readonly LensLane[];
       readonly coverage?: GenerationCoverage;
+      /** What the generation's seat turns cost so far (#737); rides the lens frame. */
+      readonly usage?: GenerationUsage;
     }
   | { readonly phase: "unchanged" }
   | { readonly phase: "failed"; readonly reason: string };
@@ -139,6 +144,8 @@ type DurableRoundState =
       readonly reportProgressRevision: number;
       readonly lanes: readonly LensLane[];
       readonly coverage?: GenerationCoverage;
+      /** What the generation's seat turns cost so far (#737); rides the lens frame. */
+      readonly usage?: GenerationUsage;
       readonly report?: RoundReportBoard;
     })
   | (DurableRoundRows & {
@@ -148,6 +155,8 @@ type DurableRoundState =
       readonly reportProgressRevision?: number;
       readonly lanes?: readonly LensLane[];
       readonly coverage?: GenerationCoverage;
+      /** What the generation's seat turns cost so far (#737); rides the lens frame. */
+      readonly usage?: GenerationUsage;
       readonly report?: RoundReportBoard;
     })
   | (DurableRoundRows & {
@@ -157,6 +166,8 @@ type DurableRoundState =
       readonly reportProgressRevision?: number;
       readonly lanes?: readonly LensLane[];
       readonly coverage?: GenerationCoverage;
+      /** What the generation's seat turns cost so far (#737); rides the lens frame. */
+      readonly usage?: GenerationUsage;
       readonly report?: RoundReportBoard;
     })
   | (DurableRoundRows & { readonly phase: "unchanged" })
@@ -700,6 +711,7 @@ export function advance(state: RoundState, event: RoundEvent): RoundState {
           : {}),
         ...(state.lanes === undefined ? {} : { lanes: state.lanes }),
         ...(state.coverage === undefined ? {} : { coverage: state.coverage }),
+        ...(state.usage === undefined ? {} : { usage: state.usage }),
         ...(state.report === undefined ? {} : { report: state.report }),
       };
     }
@@ -776,6 +788,7 @@ export function advance(state: RoundState, event: RoundEvent): RoundState {
       // coverage (or an older one) leaves the last honest state standing rather than
       // silently reverting the surface to "no coverage reported".
       const coverage = event.coverage === undefined ? {} : { coverage: event.coverage };
+      const usage = event.usage === undefined ? {} : { usage: event.usage };
       if (state.phase === "reporting" && event.operationRevision === state.reportProgressRevision) {
         return {
           ...state,
@@ -783,16 +796,17 @@ export function advance(state: RoundState, event: RoundEvent): RoundState {
           reportBoardId: state.reportBoardId,
           lanes: event.lanes,
           ...coverage,
+          ...usage,
         };
       }
       if (state.phase === "composing" && event.operationRevision === state.reportProgressRevision) {
-        return { ...state, lanes: event.lanes, ...coverage };
+        return { ...state, lanes: event.lanes, ...coverage, ...usage };
       }
       if (
         (state.phase === "verifying" || state.phase === "composed") &&
         state.reportProgressRevision === event.operationRevision
       ) {
-        return { ...state, lanes: event.lanes, ...coverage };
+        return { ...state, lanes: event.lanes, ...coverage, ...usage };
       }
     }
     return state;
@@ -828,6 +842,7 @@ export function advance(state: RoundState, event: RoundEvent): RoundState {
     const report = "report" in state ? state.report : undefined;
     const lanes = state.phase === "composing" ? state.lanes : undefined;
     const coverage = "coverage" in state ? state.coverage : undefined;
+    const usage = "usage" in state ? state.usage : undefined;
     return {
       phase: "composed",
       newGeneration: event.generation,
@@ -835,6 +850,7 @@ export function advance(state: RoundState, event: RoundEvent): RoundState {
       ...(report === undefined ? {} : { report }),
       ...(lanes === undefined ? {} : { lanes }),
       ...(coverage === undefined ? {} : { coverage }),
+      ...(usage === undefined ? {} : { usage }),
     };
   }
   switch (state.phase) {
@@ -871,6 +887,7 @@ export function advance(state: RoundState, event: RoundEvent): RoundState {
             reportBoardId: state.reportBoardId,
             lanes: event.lanes,
             ...(event.coverage === undefined ? {} : { coverage: event.coverage }),
+            ...(event.usage === undefined ? {} : { usage: event.usage }),
             ...(state.report === undefined ? {} : { report: state.report }),
           }
         : state;
@@ -880,6 +897,7 @@ export function advance(state: RoundState, event: RoundEvent): RoundState {
             ...state,
             lanes: event.lanes,
             ...(event.coverage === undefined ? {} : { coverage: event.coverage }),
+            ...(event.usage === undefined ? {} : { usage: event.usage }),
           }
         : state;
     case "composed":

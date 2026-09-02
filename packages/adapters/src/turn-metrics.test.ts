@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { createMetricsCollector, extractClaudeUsage, type TurnMetric } from "./turn-metrics";
+import {
+  createMetricsCollector,
+  extractClaudeUsage,
+  summarizeUsage,
+  type TurnMetric,
+} from "./turn-metrics";
 
 describe("extractClaudeUsage", () => {
   it("parses the usage block off a Claude result frame and sums total", () => {
@@ -62,5 +67,52 @@ describe("createMetricsCollector", () => {
     expect(collector.metrics).toHaveLength(2);
     expect(collector.metrics[0]?.attempt).toBe(0);
     expect(collector.metrics[1]?.attempt).toBe(1);
+  });
+});
+
+describe("summarizeUsage (#737)", () => {
+  const metric = (over: Partial<TurnMetric>): TurnMetric => ({
+    label: "board.lens-draft",
+    docType: "review.hypothesis",
+    attempt: 0,
+    model: "claude-x",
+    apiKeySource: "user",
+    status: "emitted",
+    latencyMs: 10,
+    usage: {
+      inputTokens: 100,
+      outputTokens: 20,
+      cacheReadTokens: 30,
+      cacheCreationTokens: 5,
+      totalTokens: 155,
+      reportedUsd: 0.01,
+    },
+    ...over,
+  });
+
+  it("sums every turn, retries and failures included, and prices only an all-metered run", () => {
+    const usage = summarizeUsage([metric({}), metric({ attempt: 1, status: "failed" })]);
+    expect(usage).toEqual({
+      turns: 2,
+      inputTokens: 200,
+      outputTokens: 40,
+      cacheReadTokens: 60,
+      cacheCreationTokens: 10,
+      totalTokens: 310,
+      reportedUsd: 0.02,
+    });
+  });
+
+  it("reports no dollar figure when any turn ran on a subscription credential", () => {
+    // Positive control above: the same two turns priced to 0.02 when both were metered.
+    const usage = summarizeUsage([metric({}), metric({ apiKeySource: "none" })]);
+    expect(usage.totalTokens).toBe(310);
+    expect(usage.reportedUsd).toBeNull();
+  });
+
+  it("reports no dollar figure when a turn carried no usage, and null for no turns", () => {
+    expect(summarizeUsage([metric({}), metric({ usage: null })]).reportedUsd).toBeNull();
+    expect(summarizeUsage([]).reportedUsd).toBeNull();
+    expect(summarizeUsage([]).turns).toBe(0);
   });
 });

@@ -1,4 +1,5 @@
 import type {
+  GenerationUsage,
   RoundLedgerRecord,
   RoundReportBoard as RoundReportBoardModel,
   RoundRunReceipt,
@@ -160,6 +161,23 @@ function finishSteps(state: RoundState, lanes: readonly LensLane[]): readonly La
   return NO_STEPS;
 }
 
+/**
+ * The one line that says what the generation cost (#737). Tokens always; a dollar figure
+ * only when every seat turn was metered and priced — a subscription session shows tokens
+ * and no invented price. Compact notation: "12.3K tokens", never a wall of digits.
+ */
+export function usageNote(usage: GenerationUsage): string {
+  const tokens = new Intl.NumberFormat("en", {
+    notation: "compact",
+    maximumFractionDigits: 1,
+  }).format(usage.totalTokens);
+  const price =
+    usage.reportedUsd === null
+      ? ""
+      : ` \u00b7 $${usage.reportedUsd.toFixed(usage.reportedUsd < 1 ? 3 : 2)}`;
+  return `Spent ${tokens} tokens across ${usage.turns} seat turn${usage.turns === 1 ? "" : "s"}${price}`;
+}
+
 /** The lens drafters reworking beneath the report — rows from the machine's `composing`
  *  state (folded `onProgress`, never a wall clock). Every `RowStatus` renders through the SAME
  *  `StatusIcon` the run route uses (finding 5), so a queued or failed drafter reads honestly
@@ -172,10 +190,12 @@ function RegenerationProgress({
   state,
   lanes,
   coverage,
+  usage,
 }: {
   readonly state: RoundState;
   readonly lanes: readonly LensLane[];
   readonly coverage?: GenerationCoverage;
+  readonly usage?: GenerationUsage;
 }) {
   const steps = finishSteps(state, lanes);
   return (
@@ -225,6 +245,15 @@ function RegenerationProgress({
           {coverageNote(coverage)}
         </span>
       )}
+      {usage !== undefined && (
+        <span
+          data-testid="generation-usage"
+          data-turns={usage.turns}
+          className="flex items-center gap-1.5 pt-1 text-12-5 text-muted-foreground"
+        >
+          {usageNote(usage)}
+        </span>
+      )}
       {steps.map((step) => (
         <span
           key={step.id}
@@ -269,6 +298,7 @@ export function RoundGreeting({
         ? (state.lanes ?? NO_LANES)
         : NO_LANES;
   const coverage = "coverage" in state ? state.coverage : undefined;
+  const usage = "usage" in state ? state.usage : undefined;
   const regenerating = state.phase === "composing" || state.phase === "composed";
   return (
     <section
@@ -282,6 +312,7 @@ export function RoundGreeting({
           state={state}
           lanes={lanes}
           {...(coverage === undefined ? {} : { coverage })}
+          {...(usage === undefined ? {} : { usage })}
         />
       )}
       {canRevealNewBoards(state) && (

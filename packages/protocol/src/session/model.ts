@@ -290,6 +290,26 @@ export const GenerationTimingsSchema = z.object({
 });
 export type GenerationTimings = z.infer<typeof GenerationTimingsSchema>;
 
+/**
+ * What one generation's provider turns cost (#737). Summed over every seat turn the
+ * lens pipeline ran for this generation, retries included — a retry is a new cold
+ * session that re-bills its whole prompt, so it counts in full. `reportedUsd` is the
+ * provider's own figure summed, and it is `null` unless EVERY turn ran on a metered
+ * credential and reported one: a subscription session pays no per-token price, so the
+ * round shows tokens and no invented dollar amount. Cumulative while the generation
+ * runs (it rides the `lens` frame beside `coverage`), final on the durable record.
+ */
+export const GenerationUsageSchema = z.object({
+  turns: z.number().int().nonnegative(),
+  inputTokens: z.number().int().nonnegative(),
+  outputTokens: z.number().int().nonnegative(),
+  cacheReadTokens: z.number().int().nonnegative(),
+  cacheCreationTokens: z.number().int().nonnegative(),
+  totalTokens: z.number().int().nonnegative(),
+  reportedUsd: z.number().nonnegative().nullable(),
+});
+export type GenerationUsage = z.infer<typeof GenerationUsageSchema>;
+
 export const GenerationSchema = z.object({
   id,
   patchsetId: id,
@@ -318,6 +338,10 @@ export const GenerationSchema = z.object({
   coverage: GenerationCoverageSchema.optional(),
   /** Per-phase durable timings for this generation (#725 D4). Append-only and versioned. */
   timings: GenerationTimingsSchema.optional(),
+  /** What this generation's seat turns cost (#737). Append-only beside the timings:
+   *  generations written before this field carry none, and absent means "not measured",
+   *  never "free". */
+  usage: GenerationUsageSchema.optional(),
   status: z.enum(["live", "frozen"]),
 });
 export type Generation = z.infer<typeof GenerationSchema>;
@@ -2077,6 +2101,8 @@ const LegacyRoundLensEventSchema = z.object({
    *  lane snapshot rather than a sixth event type: one frame, one fold, and a reveal
    *  that can never show lanes and coverage from two different moments. */
   coverage: GenerationCoverageSchema.optional(),
+  /** Cumulative seat spend so far, riding the same frame as the lanes (#737). */
+  usage: GenerationUsageSchema.optional(),
   operationId: z.never().optional(),
   operationRevision: z.never().optional(),
   seq,
@@ -2086,6 +2112,8 @@ const ScopedRoundLensEventSchema = z.object({
   type: z.literal("lens"),
   lanes: z.array(LensLaneSchema),
   coverage: GenerationCoverageSchema.optional(),
+  /** Cumulative seat spend so far, riding the same frame as the lanes (#737). */
+  usage: GenerationUsageSchema.optional(),
   operationId: id,
   operationRevision: z.number().int().nonnegative(),
   seq,

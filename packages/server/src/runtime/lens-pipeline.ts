@@ -1,7 +1,12 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
-import type { DesignArtifactSet, ProviderTurnSettlement, WhiteboardClient } from "@rennet/adapters";
+import type {
+  DesignArtifactSet,
+  MetricsCollector,
+  ProviderTurnSettlement,
+  WhiteboardClient,
+} from "@rennet/adapters";
 import { councilSeatTurn, createCoverageTurn } from "@rennet/adapters";
 import {
   assertCoverage,
@@ -1282,6 +1287,12 @@ export interface LensPipelineDeps {
   readonly mapDesignCoverage?: DesignCoverageMapper;
   /** Read a prompt file's text (node fs seam; hermetic in tests). */
   readonly readPrompt: PromptReader;
+  /**
+   * The generation's spend tap (#737). Every provider turn this pipeline runs — board,
+   * report, repair, on either harness — records one metric here; the caller sums it
+   * onto the generation. Absent, nothing is measured and the round shows no number.
+   */
+  readonly collector?: MetricsCollector;
   /** The sole board-op writer (B04). */
   readonly whiteboard: Pick<WhiteboardClient, "apply">;
   /** The board id one lens's ops land on (caller mints via `createRennetBoard`). */
@@ -1680,6 +1691,7 @@ function resolveBoardSeatDetails(
       codexExecutor: deps.codexExecutor,
       repoRoot: deps.repoRoot,
       label: `board.${jobId}`,
+      ...(deps.collector === undefined ? {} : { collector: deps.collector }),
       // The classifier's raw response cap rides the session spec, so the adapter
       // rejects an oversized response at the transport boundary — core only ever
       // sees decoded values, so a core-side check would already be too late. The

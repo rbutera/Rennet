@@ -281,6 +281,15 @@ record, so no label can absorb another phase's time and the
 measuring anything a second time. `lens` is discriminated on the record: the four
 lane-scoped phases require it, the generation-wide ones forbid it.
 
+**Spend is durable beside the timings.** Every provider turn the pipeline runs
+records one metric into the generation's collector: tokens and, when the
+provider gave one, its price. The sum rides the lens progress frame while the
+generation drafts and lands on the generation as `usage` when it settles. The
+round shows it as one line under the lane rows. A price appears only when every
+turn was metered; a subscription session shows tokens and no invented dollar
+figure. Retries count in full, because a retry is a new cold session re-sending
+its whole prompt.
+
 Two of those records are measured from a boundary the pipeline does not own.
 `first-core-board` starts from the moment the **reviewer's** wait began — the
 captured input becoming ready on an initial generation, the round landing and
