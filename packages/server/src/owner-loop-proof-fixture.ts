@@ -269,27 +269,10 @@ export function ownerLoopScriptedHarnessPlan(
         output: { facts: {}, guidanceRules: [] },
       },
       {
-        id: "knowledge-worker",
-        kind: "structured",
-        promptIncludes: "You are ONE worker in a partitioned swarm;",
-        output: { statements: [] },
-      },
-      {
-        id: "knowledge-verify",
-        kind: "structured",
-        promptIncludes: "You are the VERIFY/SYNTHESIS seat",
-        output: { verdicts: [], crossCutting: [] },
-      },
-      {
         id: "design-coverage",
         kind: "coverage",
         promptIncludes: "You are mapping OpenSpec requirements to the code changes",
         implementationPath: OWNER_LOOP_SOURCE,
-      },
-      {
-        id: "post-process",
-        kind: "echo-board",
-        promptIncludes: "# Post-process pass — board prose editor",
       },
       {
         id: "design",
@@ -325,14 +308,13 @@ export function ownerLoopScriptedHarnessPlan(
         id: "report-round-one",
         kind: "structured",
         promptIncludes: ["# Round report — classification instructions", OWNER_LOOP_ROUND_ONE_BODY],
-        promptExcludes: [OWNER_LOOP_ROUND_TWO_BODY, "# Post-process pass — board prose editor"],
+        promptExcludes: [OWNER_LOOP_ROUND_TWO_BODY],
         output: reportClassification("round-one"),
       },
       {
         id: "report-round-two",
         kind: "structured",
         promptIncludes: ["# Round report — classification instructions", OWNER_LOOP_ROUND_TWO_BODY],
-        promptExcludes: "# Post-process pass — board prose editor",
         output: reportClassification("round-two"),
       },
       {

@@ -39,6 +39,8 @@ import {
   validateDraft,
 } from "@rennet/core";
 import {
+  expandPromptPartials,
+  INVESTIGATE_PARTIAL_FILE,
   LENS_PROMPT_FILES,
   REVIEW_DRAFT_VOICE_FILE,
   ROUND_REPORT_FILE,
@@ -3543,7 +3545,10 @@ async function draftLensBoard(
       absence: "no-material",
     };
   }
-  const promptText = await deps.readPrompt(LENS_PROMPT_FILES[lens]);
+  const promptText = expandPromptPartials(
+    await deps.readPrompt(LENS_PROMPT_FILES[lens]),
+    await deps.readPrompt(INVESTIGATE_PARTIAL_FILE),
+  );
   const semanticDesignAbsence =
     lens === "design" && deps.designArtifacts !== undefined && deps.designArtifacts !== null;
   const basePrompt = renderDrafterPrompt(

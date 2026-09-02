@@ -34,8 +34,14 @@ failure, cancellation, and daemon interruption remain explicit, retryable sessio
 states.
 
 The prompts live in `packages/prompts` (`@rennet/prompts`), one markdown file
-per lens plus the reviewer-voice file and the round-report classifier prompt.
-The package exports a typed manifest. The board schema is never prompt text:
+per lens plus the reviewer-voice file, the round-report classifier prompt, and
+one shared partial: the "Investigate before you draft" section every lens file
+carries at a `{{investigate-before-you-draft}}` marker line, spliced in when
+the pipeline reads the prompt so five files cannot drift apart on it.
+The package exports a typed manifest. Noise has two instruction sets on
+purpose: `noise.md` drives the Noise lens board seat, and the `NOISE_CONTRACT`
+prompt contract drives the RSP noise-document runner behind the noise index;
+they emit different shapes to different validators. The board schema is never prompt text:
 each lens seat's session is bound to it once, as the harness's structured-output
 format, and the landed-round report seat is bound to a much smaller
 classification schema instead.
@@ -518,8 +524,8 @@ interpolation is a bug.
 The schema makes good structure the only expressible structure (a finding's
 kind, severity, cited code, and concurrence are typed fields, so a claim in the
 wrong shape fails to parse, not merely reads badly); the lint makes the
-mechanical rules guarantees; the prompts and the post-process editor carry what
-only judgment can check. A rule that lives in a prompt alone is a wish.
+mechanical rules guarantees; the prompts carry what only judgment can check. A
+rule that lives in a prompt alone is a wish.
 
 ## Honest states
 
@@ -674,8 +680,7 @@ candidate, lint requires every retained artifact in that candidate in both the
 header roll-up and a named region without forcing nearby candidates into the
 board. Reverse checks require every source requirement, scenario, and task once
 and in source order, verify proposal anatomy and derived header values, and make
-bounded discovery visible. The prose post-process cannot drop or rewrite a
-source-linked subtree. Source lines resolve against the reviewed file or the
+bounded discovery visible. Source lines resolve against the reviewed file or the
 retained artifact text, and requirement scenario refs resolve only to narrative
 scenario regions.
 
@@ -726,4 +731,4 @@ completion, and an unbound or absent ledger leaves the plan's static marks in ch
 - [Delta and generations](./delta-rereview-and-lineage.md) — what carries from
   one generation of boards to the next.
 - [The Model Council](./model-council.md) — how seats are assigned to the
-  drafting, reconciliation, and post-process jobs.
+  drafting, reconciliation, and classification jobs.

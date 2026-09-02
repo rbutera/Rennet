@@ -9,6 +9,15 @@ import type {
 } from "@rennet/protocol";
 import { sha256Hex } from "@rennet/protocol";
 
+/**
+ * The one rule both handoff prompts share verbatim: the coding agent edits, the
+ * review harness captures. Shared so the two prompts cannot drift on it (#737).
+ */
+export const HANDOFF_NO_GIT_RULE = [
+  "2. Do NOT commit, do NOT push, do NOT run git. Just edit the files; the review harness",
+  "   captures your result and re-reviews it.",
+] as const;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Handoff-bundle composition (issue #72, Model Council job M24) — the light-tier
 // AUTHORING step over the mechanical bundle (`buildHandoffBundle`, #18). It turns N
@@ -217,8 +226,7 @@ export function renderComposedPrompt(tasks: readonly ComposedTask[]): string {
     "",
     "Rules, in order of importance:",
     "1. Address ONLY the tasks listed below. Do not make unrelated changes.",
-    "2. Do NOT commit, do NOT push, do NOT run git. Just edit the files; the review harness",
-    "   captures your result and re-reviews it.",
+    ...HANDOFF_NO_GIT_RULE,
     "3. If a task cannot be done as asked, leave those files unchanged and say why in your final",
     "   message — never guess or half-apply it.",
     "",

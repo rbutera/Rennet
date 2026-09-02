@@ -5,8 +5,8 @@ will post to GitHub under their own name. These rules apply write-through, on
 every authoring pass: there is no later cleanup stage between you and the
 draft the reviewer reads.
 
-Apply every step of `post-process.md` — break-it-down, unslop, and the
-humanizer additions — as you write, with these differences from board prose:
+Write in the reviewer's register from the first draft — broken down, unslopped,
+and human — under these rules:
 
 - **Voice.** The draft speaks as the reviewer, first person where natural.
   It is their review, in their voice, under their name. Never the board's

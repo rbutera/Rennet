@@ -3,9 +3,11 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
+  expandPromptPartials,
+  INVESTIGATE_PARTIAL_FILE,
   LENS_KINDS,
   LENS_PROMPT_FILES,
-  POST_PROCESS_FILE,
+  PROMPT_PARTIAL_MARKER,
   REVIEW_DRAFT_VOICE_FILE,
   ROUND_REPORT_FILE,
 } from "./index.js";
@@ -26,18 +28,24 @@ describe("lens prompt manifest", () => {
     }
   });
 
-  it("carries the post-process pass with the unslop skill body verbatim", () => {
-    const text = readFileSync(join(srcDir, POST_PROCESS_FILE), "utf8");
-    expect(text.replace(/\s+/g, " ")).toContain("Never touch typed data");
-    // Spot-checks that the skill body arrived verbatim, not paraphrased.
-    expect(text).toContain("Removing patterns is half the job.");
-    expect(text).toContain("Em dash overuse.");
-    expect(text).toContain("Say the concrete thing.");
-    // The two steps wrapped around it.
-    expect(text).toContain("break it down");
-    expect(text).toContain("humanizer additions");
-    expect(text).toContain("Never add or remove it");
-    expect(text.replace(/\s+/g, " ")).toContain("never change `document.measure`");
+  it("every lens prompt carries the investigate marker exactly once, not the section body", () => {
+    for (const kind of LENS_KINDS) {
+      const text = readFileSync(join(srcDir, LENS_PROMPT_FILES[kind]), "utf8");
+      expect(text.split(PROMPT_PARTIAL_MARKER), `${kind} prompt`).toHaveLength(2);
+      expect(text).not.toContain("## Investigate before you draft");
+    }
+  });
+
+  it("expandPromptPartials splices the shared partial and refuses a prompt without the marker", () => {
+    const partial = readFileSync(join(srcDir, INVESTIGATE_PARTIAL_FILE), "utf8");
+    expect(partial).toMatch(/^## Investigate before you draft\n/);
+    expect(partial.replace(/\s+/g, " ")).toContain("only what you actually read earns a citation");
+    const out = expandPromptPartials(`# T\n\n${PROMPT_PARTIAL_MARKER}\n\n## Next`, partial);
+    expect(out).toContain("## Investigate before you draft");
+    expect(out).toContain("earns a\ncitation.\n\n## Next");
+    expect(out).not.toContain(PROMPT_PARTIAL_MARKER);
+    // Positive control: a prompt that lost its marker is a bug, not a silent omission.
+    expect(() => expandPromptPartials("# T\n\n## Next", partial)).toThrow(/marker/);
   });
 
   it("keeps the Design prompt on one candidate and one canonical scenario owner", () => {
@@ -138,7 +146,7 @@ describe("lens prompt manifest", () => {
   it("carries the review-draft voice rules", () => {
     const text = readFileSync(join(srcDir, REVIEW_DRAFT_VOICE_FILE), "utf8");
     expect(text.length).toBeGreaterThan(500);
-    expect(text).toContain("post-process.md");
+    expect(text).not.toContain("post-process"); // #737: the file it cited is gone
     expect(text.replace(/\s+/g, " ")).toContain("under their own name");
   });
 

@@ -18,7 +18,7 @@ export type LensKind = (typeof LENS_KINDS)[number];
  * (paths and bytes) stay in `@rennet/prompts` — these ids are what manifests
  * and job tables cite.
  */
-export const PROMPT_IDS = [...LENS_KINDS, "report", "post-process", "review-draft-voice"] as const;
+export const PROMPT_IDS = [...LENS_KINDS, "report", "review-draft-voice"] as const;
 
 export type PromptId = (typeof PROMPT_IDS)[number];
 

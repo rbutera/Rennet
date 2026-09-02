@@ -39,11 +39,25 @@ export const LENS_PROMPT_FILES: Record<LensKind, string> = {
 export const ROUND_REPORT_FILE = "prompts/report.md";
 
 /**
- * Frozen prompt file for the optional post-processing Council role. It contains
- * prose-only editing rules for explicit callers; the production lens scheduler
- * and classified round-report path do not invoke it.
+ * The one shared lens-prompt partial: the "Investigate before you draft" section
+ * every lens file carries at the {@link PROMPT_PARTIAL_MARKER} line. One file, so
+ * the five lens prompts cannot drift apart on it (#737).
  */
-export const POST_PROCESS_FILE = "prompts/post-process.md";
+export const INVESTIGATE_PARTIAL_FILE = "prompts/investigate-before-you-draft.md";
+
+/** The marker line a lens prompt carries where the shared partial is spliced in. */
+export const PROMPT_PARTIAL_MARKER = "{{investigate-before-you-draft}}";
+
+/**
+ * Splice the shared partial into a lens prompt at its marker line. A prompt
+ * without the marker is a bug (the section would silently vanish), so it throws.
+ */
+export function expandPromptPartials(text: string, partial: string): string {
+  if (!text.includes(PROMPT_PARTIAL_MARKER)) {
+    throw new Error(`lens prompt is missing the ${PROMPT_PARTIAL_MARKER} marker`);
+  }
+  return text.replace(PROMPT_PARTIAL_MARKER, partial.trimEnd());
+}
 
 /**
  * Writing rules the orchestrator applies when authoring or reworking the living
