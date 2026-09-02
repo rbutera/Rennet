@@ -425,13 +425,7 @@ describe("runNoiseAngle — the live noise runner (issue #34)", () => {
 // ── The payload byte bound (#737) ────────────────────────────────────────────
 
 describe("renderPayload byte bound", () => {
-  const bodyBytes = (text: string): number => {
-    const parsed = JSON.parse(text) as { patchsetId: string; hunks: unknown[] };
-    return Buffer.byteLength(
-      JSON.stringify({ patchsetId: parsed.patchsetId, hunks: parsed.hunks }),
-      "utf8",
-    );
-  };
+  const bytes = (text: string): number => Buffer.byteLength(text, "utf8");
 
   it("is compact JSON and carries no truncation marker below the bound", () => {
     const text = renderPayload(MANIFEST, "ps_1");
@@ -442,7 +436,7 @@ describe("renderPayload byte bound", () => {
     );
   });
 
-  it("keeps whole hunks in offered order up to the bound and names every omitted id", () => {
+  it("bounds the WHOLE text, keeps whole hunks in offered order, and counts the omitted", () => {
     const big: Patchset = {
       ...PATCHSET,
       files: Array.from({ length: 40 }, (_, i) =>
@@ -460,20 +454,35 @@ describe("renderPayload byte bound", () => {
     };
     const manifest = buildOfferedManifest(decompose(big));
     const all = manifest.occurrences.filter((o) => o.kind === "hunk").map((o) => o.id);
-    const bound = 2_000;
-    const text = renderPayload(manifest, "ps_big", bound);
-    expect(bodyBytes(text)).toBeLessThanOrEqual(bound);
-    const parsed = JSON.parse(text) as {
-      hunks: { id: string }[];
-      truncated: { omittedHunkIds: string[]; readWith: string };
-    };
-    const kept = parsed.hunks.map((h) => h.id);
-    expect(kept.length).toBeGreaterThan(0);
-    expect(all.slice(0, kept.length)).toEqual(kept);
-    expect(parsed.truncated.omittedHunkIds).toEqual(all.slice(kept.length));
-    expect(parsed.truncated.readWith).toContain("git diff");
-    // Positive control: the bound actually bit — the unbounded payload is larger.
-    expect(parsed.truncated.omittedHunkIds.length).toBeGreaterThan(0);
-    expect(bodyBytes(renderPayload(manifest, "ps_big"))).toBeGreaterThan(bound);
+    for (const bound of [600, 2_000, 10_000]) {
+      const text = renderPayload(manifest, "ps_big", bound);
+      expect(bytes(text), `bound ${bound}`).toBeLessThanOrEqual(bound);
+      const parsed = JSON.parse(text) as {
+        hunks: { id: string }[];
+        truncated?: { omittedHunks: number; readWith: string };
+      };
+      const kept = parsed.hunks.map((h) => h.id);
+      expect(all.slice(0, kept.length)).toEqual(kept);
+      expect(parsed.truncated?.omittedHunks).toBe(all.length - kept.length);
+      expect(parsed.truncated?.readWith).toContain("normal review");
+    }
+    // Positive control: the bound actually bit — unbounded, the payload is far larger
+    // and carries every hunk with no marker.
+    const full = JSON.parse(renderPayload(manifest, "ps_big")) as { hunks: unknown[] };
+    expect(full.hunks).toHaveLength(all.length);
+    expect(bytes(renderPayload(manifest, "ps_big"))).toBeGreaterThan(10_000);
+  });
+
+  it("degrades to the marker-only floor and never below it", () => {
+    const total = MANIFEST.occurrences.filter((o) => o.kind === "hunk").length;
+    // A bound nothing fits under yields the floor: envelope plus marker, every hunk counted.
+    const floor = renderPayload(MANIFEST, "ps_1", 0);
+    const parsed = JSON.parse(floor) as { hunks: unknown[]; truncated: { omittedHunks: number } };
+    expect(parsed.hunks).toHaveLength(0);
+    expect(parsed.truncated.omittedHunks).toBe(total);
+    // The floor's own size as the bound reproduces it exactly; one byte more still fits
+    // no hunk (the smallest is far larger than one byte), so the text is unchanged.
+    expect(renderPayload(MANIFEST, "ps_1", bytes(floor))).toBe(floor);
+    expect(renderPayload(MANIFEST, "ps_1", bytes(floor) + 1)).toBe(floor);
   });
 });
