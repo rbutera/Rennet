@@ -225,7 +225,11 @@ Three things follow from the thread being persistent.
   with no turn row and no stream item at all (the Design seat, drive 1.6 second run) is
   given two minutes by a timer that runs independently of the stream, then the wait gives
   up naming the session state. The timer is not checked behind the next stream item,
-  because a silent stream has none.
+  because a silent stream has none. The start itself is held to the same bound: the
+  pre-read and the `thread.turn.start` dispatch race the seat's abort signal and a
+  two-minute deadline, so a sidecar whose socket is up but whose command handling has
+  stalled releases the seat with a reason instead of holding it on an RPC that never
+  answers.
 
 Because the SDK fixes `outputFormat` when a query is constructed and offers no in-session
 setter, a seat thread's contract is decided by its first turn. A later turn asking for a
@@ -300,7 +304,10 @@ the end of it, never dropped, so the last thing a seat did before going quiet is
 lane shows. The read throttle keeps its own clock, separate from the publish one — a
 re-read that produces an unchanged line publishes nothing, and keying the read on the
 publish time made a run of identical events re-read the thread on every one of them. The
-idle tick re-projects the last snapshot against a fresh clock and costs no RPC at all.
+idle tick re-projects the last snapshot against a fresh clock and costs no RPC at all. A
+publish that throws (the lane store or its persistence refusing the line) is contained in
+the watcher and reported through its error sink, because that publish also runs from the
+idle interval and the trailing timer, where an uncaught throw is a daemon crash.
 
 A lane holds one entry per seat (`LensLane.seats`: seat id, provider, thread, latest
 line), addressed by seat id, because Flagged runs a Claude seat and a Codex seat on one
