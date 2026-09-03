@@ -197,6 +197,13 @@ export function lensBoardsFromResolutions(byLens: LensBoardResolutions): LensBoa
   return LENS_KINDS.flatMap<LensBoardEntry>((lens) => {
     const resolution = byLens[lens];
     if (resolution.status === "valid") return [{ lens, board: resolution.board }];
+    // A Design lane that settled `no-spec` has no tab at all (session-bound-workspace D6):
+    // this branch has no specification, so there is nothing to open and an empty board
+    // would be a lie. Every other absence stays selectable so its reason is reachable —
+    // including Design's legacy `no-material`, which older generations still carry.
+    if (resolution.status === "absent" && lens === "design" && resolution.reason === "no-spec") {
+      return [];
+    }
     if (resolution.status === "absent") return [{ lens, absence: resolution.reason }];
     if (resolution.status === "failed") return [{ lens, failure: resolution.reason }];
     return [];

@@ -143,6 +143,8 @@ function absenceAccessibleStatus(reason: NonNullable<LensBoardEntry["absence"]>)
   switch (reason) {
     case "no-material":
       return "no applicable specification found";
+    case "no-spec":
+      return "no spec found for this branch";
     case "no-decisions":
       return "no material decisions found";
     case "no-findings":
