@@ -39,6 +39,9 @@ export interface DaemonConfig {
   /** This daemon's own server bundle — what a WSL daemon UPDATE delivers into the distro
    *  (C17, #534). `spawnDaemon` passes the entry it launched; absent ⇒ no bundle to deliver. */
   readonly hostBundlePath?: string;
+  /** The vendored T3 Code server bundle the sidecar runs (t3code-sidecar-chat). Absent ⇒ the
+   *  chat engine reports `degraded` naming the missing bundle. */
+  readonly t3BundlePath?: string;
 }
 
 /**
@@ -59,6 +62,7 @@ export function resolveDaemonConfig(
       "server-version": { type: "string" },
       "ui-dist": { type: "string" },
       "host-bundle": { type: "string" },
+      "t3-bundle": { type: "string" },
     },
   });
   const dataDir = values["data-dir"] ?? env.RENNET_USER_DATA ?? defaultDataDir();
@@ -68,6 +72,7 @@ export function resolveDaemonConfig(
     env,
     uiDist: values["ui-dist"],
     hostBundlePath: values["host-bundle"],
+    t3BundlePath: values["t3-bundle"],
   };
 }
 
@@ -100,6 +105,7 @@ export async function runDaemon(
     githubCliToken: () => resolveGitHubCliToken(forgeDetectionDeps),
     uiDist: config.uiDist,
     hostBundlePath: config.hostBundlePath,
+    t3BundlePath: config.t3BundlePath,
   });
 
   const info: DaemonInfo = {

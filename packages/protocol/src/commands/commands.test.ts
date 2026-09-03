@@ -57,6 +57,7 @@ const ABSORBED_IDS = [
   "attention.acknowledge",
   "benchmarks.list",
   "board.read",
+  "chat.t3Session",
   "daemon.reconnect",
   "daemon.status",
   "daemon.update",
@@ -182,7 +183,7 @@ const MENU_INVENTORY: readonly string[] = [];
 describe("command registry invariants (#465)", () => {
   it("matches the recorded command snapshot (settings.setRepoLocus demoted, #476)", () => {
     expect(Object.keys(commands).sort()).toEqual([...ABSORBED_IDS]);
-    expect(ABSORBED_IDS).toHaveLength(106);
+    expect(ABSORBED_IDS).toHaveLength(107);
   });
 
   it("every row carries label, exposure, and locus with today's uniform values", () => {

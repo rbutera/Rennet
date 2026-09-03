@@ -3,6 +3,7 @@ import { appHandlers } from "./app";
 import { askHandlers } from "./ask";
 import { attentionHandlers } from "./attention";
 import { boardHandlers } from "./board";
+import { chatHandlers } from "./chat";
 import { daemonHandlers } from "./daemon";
 import { deviceHandlers } from "./device";
 import { flaggedHandlers } from "./flagged";
@@ -76,6 +77,7 @@ export function buildDispatchTable(rt: DispatchRuntime) {
     ...askHandlers(rt),
     ...attentionHandlers(rt),
     ...boardHandlers(rt),
+    ...chatHandlers(rt),
     ...daemonHandlers(rt),
     ...deviceHandlers(rt),
     ...flaggedHandlers(rt),

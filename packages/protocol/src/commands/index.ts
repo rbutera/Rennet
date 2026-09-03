@@ -79,6 +79,8 @@ import {
   sidebarSessionSchema,
   sourceSchema,
   symbolInspectionSchema,
+  t3SessionSchema,
+  t3SidecarStatusSchema,
   themePackSchema,
 } from "../wire";
 
@@ -496,7 +498,18 @@ const definitions = {
   // that does not answer carries `reachable: false` with NO version — never a guessed one.
   "daemon.status": {
     input: z.object({}),
-    output: z.object({ hosts: z.array(daemonHostStatusSchema) }),
+    output: z.object({
+      hosts: z.array(daemonHostStatusSchema),
+      /** The owned T3 Code sidecar's state; absent when this daemon composed none. */
+      t3Sidecar: t3SidecarStatusSchema.optional(),
+    }),
+  },
+  // Broker T3 Code sidecar access to a client (t3code-sidecar-chat, 2.4). The daemon starts
+  // the sidecar on first ask and hands back the origin, WS URL, bearer, and a pairing URL;
+  // the client never reads the credential file. Loopback clients only — never remote-exposed.
+  "chat.t3Session": {
+    input: z.object({}),
+    output: t3SessionSchema,
   },
   // Re-attempt the handshake to ONE host's daemon (C17 cluster 5, #533) — the operation behind
   // the host card's Reconnect button. The same per-host handshake `daemon.status` polls, run on

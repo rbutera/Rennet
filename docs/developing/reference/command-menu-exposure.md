@@ -105,6 +105,7 @@ still goes through the one seam; only the label is hand-written.
 | `daemon.status` | Read the environments surface drives for itself. |
 | `daemon.reconnect` | Needs the host being reconnected. |
 | `daemon.update` | Needs the host being updated. |
+| `chat.t3Session` | Brokers T3 sidecar access to the chat slot; nothing for a person to pick. |
 
 ### github
 

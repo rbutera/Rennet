@@ -3187,3 +3187,37 @@ export const publicProjectionSchemas = {
   "projected-repository-choose-output": projectedRepositoryChooseOutputSchema,
 } as const;
 export type PublicProjectionName = keyof typeof publicProjectionSchemas;
+
+/**
+ * The T3 Code sidecar the daemon owns (t3code-sidecar-chat): what `daemon.status` carries to
+ * the connection bar. `off` until a client asks for it, `starting` while it boots, `ready`,
+ * or `degraded` with the reason named. Telemetry is always off and its only egress is the
+ * coding harness's own provider traffic; both are stated here so the UI can say so without
+ * inventing it.
+ */
+export const t3SidecarStatusSchema = z.object({
+  state: z.enum(["off", "starting", "ready", "degraded"]),
+  /** Why it is degraded: bundle missing, spawn failed, exited. */
+  detail: z.string().optional(),
+  /** The loopback port when ready. */
+  port: z.number().int().positive().optional(),
+  /** The vendored snapshot's upstream commit the running bundle was built from. */
+  upstreamCommit: z.string(),
+  telemetry: z.literal("off"),
+});
+export type T3SidecarStatus = z.infer<typeof t3SidecarStatusSchema>;
+
+/**
+ * A brokered sidecar session for a client (`chat.t3Session`). The daemon owns the token
+ * file; a client gets the origin, the WebSocket URL, the bearer to open it with, the
+ * sidecar's environment id, and, when the sidecar minted one, a pairing URL an embedded
+ * T3 UI can consume to set its own session cookie.
+ */
+export const t3SessionSchema = z.object({
+  origin: z.string(),
+  wsUrl: z.string(),
+  accessToken: z.string(),
+  environmentId: z.string(),
+  pairingUrl: z.string().optional(),
+});
+export type T3Session = z.infer<typeof t3SessionSchema>;

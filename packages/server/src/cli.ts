@@ -36,6 +36,7 @@ import { createBenchmarkRecording } from "./benchmark-store";
 import { defaultDataDir, runDaemon } from "./daemon";
 import { readDaemonFile, removeDaemonFile } from "./daemon-file";
 import { findHealthyDaemon } from "./supervise";
+import { type StopSidecarOutcome, stopSidecar } from "./t3/sidecar";
 
 export interface CliIo {
   out(line: string): void;
@@ -50,6 +51,8 @@ const defaultIo: CliIo = {
 export interface CliDeps {
   readonly probe: typeof findHealthyDaemon;
   readonly kill: (pid: number, signal: "SIGTERM") => void;
+  /** Stop the owned T3 Code sidecar after the daemon (t3code-sidecar-chat). Defaults to the real one. */
+  readonly stopSidecar?: (dataDir: string) => Promise<StopSidecarOutcome>;
 }
 
 const defaultDeps: CliDeps = {
@@ -57,6 +60,7 @@ const defaultDeps: CliDeps = {
   kill: (pid, signal) => {
     process.kill(pid, signal);
   },
+  stopSidecar,
 };
 
 const HELP = [
@@ -319,6 +323,26 @@ async function status(dataDir: string, io: CliIo, deps: CliDeps): Promise<number
 
 /** SIGTERM the claimed pid and wait (bounded) for the claim to clear. No prompt. */
 async function stop(dataDir: string, io: CliIo, deps: CliDeps): Promise<number> {
+  const code = await stopDaemon(dataDir, io, deps);
+  // The sidecar step comes after the daemon (t3code-sidecar-chat, 2.6): a clean daemon
+  // shutdown already signalled its child; this reaps a survivor and clears its claim.
+  try {
+    const sidecar = await (deps.stopSidecar ?? stopSidecar)(dataDir);
+    if (sidecar.kind === "stopped") io.out("stopped T3 sidecar");
+    if (sidecar.kind === "timeout") {
+      io.err(
+        `sent SIGTERM to T3 sidecar pid ${sidecar.pid} but it is still running; the next start will reap it`,
+      );
+    }
+  } catch (error) {
+    io.err(
+      `failed to stop the T3 sidecar: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  return code;
+}
+
+async function stopDaemon(dataDir: string, io: CliIo, deps: CliDeps): Promise<number> {
   const verdict = await deps.probe(dataDir);
   if (verdict.kind === "absent") {
     io.out("not running");

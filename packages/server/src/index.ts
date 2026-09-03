@@ -50,6 +50,18 @@ export {
   spawnDaemon,
   waitForHealthy,
 } from "./supervise";
+// The T3 Code sidecar (t3code-sidecar-chat): the claim/probe/stop primitives a launcher
+// needs (tray Quit, `rennet stop`), never the credential.
+export {
+  findHealthySidecar,
+  readSidecarClaim,
+  resolveSidecarBundle,
+  type SidecarClaim,
+  type SidecarVerdict,
+  type StopSidecarOutcome,
+  stopSidecar,
+} from "./t3/sidecar";
+export { createT3SidecarSupervisor, type T3SidecarSupervisor } from "./t3/supervisor";
 // The loopback WS transport primitive (#378). `createRennetServer` already starts a
 // listener; this is exported so the transport can be exercised in isolation — a real
 // listener over a stub dispatch — by the app-layer contract test (the only layer that

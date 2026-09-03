@@ -11,13 +11,13 @@
 
 ## 2. Sidecar supervisor
 
-- [ ] 2.1 Add `t3-sidecar.json` claim read/write/remove beside `daemon-file.ts`, with probe-before-trust and stale-claim removal
-- [ ] 2.2 Implement spawn of the vendored bundle: `serve --host 127.0.0.1 --port 0 --no-browser --base-dir <dataDir>/t3 --bootstrap-fd 3`, token piped into fd 3, telemetry-off env, relay and Clerk keys stripped
-- [ ] 2.3 Seed the sidecar's provider settings with the absolute `claude` and `codex` paths from Rennet's discovery before spawn
-- [ ] 2.4 Exchange the bootstrap token at `/oauth/token`, store the session token owner-only; expose `chat.t3Session` that brokers a browser-session credential and the WebSocket URL to clients
-- [ ] 2.5 Boot-time handshake and method check; report `ready` or `degraded` with the missing method named in `/health` and the connection bar
-- [ ] 2.6 Extend `stopOwnedDaemon` and `rennet stop` with the sidecar SIGTERM step, bounded wait, claim clear, timeout logged; serialize through `chainDaemonOp`
-- [ ] 2.7 Tests: claim adoption, stale claim, credential absent from argv and env, provider seeding, stop ordering, `~/.t3` untouched; each with a positive control
+- [x] 2.1 Add `t3-sidecar.json` claim read/write/remove beside `daemon-file.ts`, with probe-before-trust and stale-claim removal
+- [x] 2.2 Implement spawn of the vendored bundle: `serve --mode desktop --host 127.0.0.1 --port <free port> --no-browser --base-dir <dataDir>/t3 --bootstrap-fd 3`, token piped into fd 3, telemetry-off env, relay and Clerk keys stripped
+- [x] 2.3 Seed the sidecar's provider settings with the absolute `claude` and `codex` paths from Rennet's discovery before spawn
+- [x] 2.4 Exchange the bootstrap token at `/oauth/token`, store the session token owner-only; expose `chat.t3Session` that brokers a browser-session credential and the WebSocket URL to clients
+- [x] 2.5 Boot-time handshake and method check; report `ready` or `degraded` with the missing method named in `/health` and the connection bar (handshake = runtime record + well-known probe + token exchange + bearer verification; `daemon.status.t3Sidecar` carries `ready`/`degraded` with the reason. The method check is compile-time: the daemon client and the sidecar are built from one snapshot, so a fold that drops a method fails typecheck, not boot. Connection-bar copy is 5.3)
+- [x] 2.6 Extend `stopOwnedDaemon` and `rennet stop` with the sidecar SIGTERM step, bounded wait, claim clear, timeout logged; serialize through `chainDaemonOp`
+- [x] 2.7 Tests: claim adoption, stale claim, credential absent from argv and env, provider seeding, stop ordering, `~/.t3` untouched; each with a positive control
 
 ## 3. Daemon-side RPC module
 

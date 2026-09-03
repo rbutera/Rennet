@@ -325,6 +325,7 @@ import { SessionTurnLoop } from "./session/turn-loop";
 import { createSettingsComposition } from "./settings";
 import { findHealthyDaemon } from "./supervise";
 import { createLiveSymbolLookup, reviewPinnedToHead } from "./symbol-lookup-live";
+import { createT3SidecarSupervisor } from "./t3/supervisor";
 import { startWsListener, type WsListener } from "./ws-listener";
 import { createWslRunner } from "./wsl-daemon";
 import { ensureWslDaemon, probeWslDaemon } from "./wsl-supervisor";
@@ -1052,6 +1053,8 @@ export interface RennetServerOptions {
    * way), so a WSL update reports that plainly instead of shipping the wrong file.
    */
   readonly hostBundlePath?: string;
+  /** The vendored T3 Code server bundle for the owned sidecar (t3code-sidecar-chat); absent ⇒ `degraded`. */
+  readonly t3BundlePath?: string;
   /**
    * Test-composition seam for a hermetic harness. The production daemon never supplies it.
    * The port is routed BY ITS DESCRIPTOR: a `claude-code` port is the Claude seat and
@@ -1207,6 +1210,28 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     locusForRepo,
   );
   const watcher = new RepoWatcher();
+
+  // The owned T3 Code sidecar (t3code-sidecar-chat): composed here, started on the first
+  // `chat.t3Session`, adopted from a previous daemon when it still answers, stopped with the
+  // daemon. Its provider binaries are the SAME absolute paths Rennet's discovery resolved,
+  // so a GUI-launched daemon with launchd's PATH still gives it a working `claude`/`codex`.
+  const t3Sidecar = createT3SidecarSupervisor({
+    dataDir,
+    env,
+    bundlePath: options.t3BundlePath,
+    // The sidecar runs on the host, so this is the host's own discovery (the same probe
+    // `harness.detect` discloses), not a review's locus-threaded harness.
+    resolveBinaries: async () => {
+      const [claude, codex] = await Promise.all([
+        discoverClaude(defaultDiscoveryDeps(), CLAUDE_TESTED_RANGE).catch(() => null),
+        discoverCodex(defaultCodexDiscoveryDeps(), {}).catch(() => null),
+      ]);
+      return {
+        ...(claude?.chosen ? { claude: claude.chosen.path } : {}),
+        ...(codex?.chosen ? { codex: codex.chosen.path } : {}),
+      };
+    },
+  });
 
   // Composition root for the Claude harness. This binds the REAL
   // @anthropic-ai/claude-agent-sdk query() (via createClaudeHarness) to the
@@ -4001,6 +4026,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   };
 
   dispatch = createDispatch({
+    t3Sidecar,
     service,
     allowedRoots,
     askLog: askLogStore,
@@ -4868,6 +4894,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // The WS listener closes last, dropping every client socket.
     if (didShutdown) return;
     didShutdown = true;
+    t3Sidecar.stopSync();
     for (const controller of sessionPreparations.values()) {
       controller.abort("Rennet is shutting down.");
     }

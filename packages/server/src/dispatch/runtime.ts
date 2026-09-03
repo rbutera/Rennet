@@ -83,6 +83,7 @@ import {
   type ReviewIntelligenceSession,
 } from "../review-intelligence-session";
 import type { SettingsComposition } from "../settings";
+import type { T3SidecarSupervisor } from "../t3/supervisor";
 
 /**
  * The command router (issue #54), extracted from the electron main so it can be
@@ -103,6 +104,8 @@ export interface DispatchDeps {
   readonly service: ReviewService;
   /** Device pairing (mint code / exchange for token / list / revoke). Server-side secret store. */
   readonly pairing: PairingCommands;
+  /** The owned T3 Code sidecar (t3code-sidecar-chat); absent when no vendored bundle was composed. */
+  readonly t3Sidecar?: T3SidecarSupervisor;
   /**
    * Push-token registry for `device.registerPush` (issue #383 M1). Present only when the
    * daemon wired the attention system; a connection's authenticated `ctx.deviceId` keys the
