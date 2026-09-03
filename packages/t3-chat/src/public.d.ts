@@ -12,11 +12,3 @@ export interface T3NativeChatProps {
 
 /** Rung two: T3 Code's `ChatView`, mounted natively for the session's bound thread. */
 export declare const T3NativeChat: LazyExoticComponent<(props: T3NativeChatProps) => JSX.Element>;
-
-export declare function sidecarWsBaseUrl(session: Pick<T3Session, "wsUrl">): string;
-export declare function sidecarThreadPath(
-  session: Pick<T3Session, "environmentId" | "threadId">,
-): string;
-export declare function sidecarRegistration(
-  session: Pick<T3Session, "origin" | "wsUrl" | "accessToken" | "environmentId">,
-): unknown;

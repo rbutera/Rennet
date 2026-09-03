@@ -123,6 +123,12 @@ Rung two's environment registration persists in the renderer's IndexedDB under T
 catalog (the same store T3's hosted app uses for paired machines), keyed by one stable
 connection id, so a refreshed bearer replaces the entry rather than adding one.
 
+Measured on 2026-09-03 (renderer production build, raw bytes before gzip): the chunks
+loaded at startup grew from 1,822 KB to 1,846 KB, the lazy T3 payload is 3,122 KB of
+script plus a 380 KB stylesheet, and the on-disk renderer grew from 2.4 MB to 21.6 MB
+because `@pierre/diffs` splits every Shiki grammar into its own on-demand chunk and
+`heic-to` (2.9 MB, loaded only when a HEIC image is attached) rides along.
+
 ## The handoff exit
 
 "Hand to coding agent" on a project whose engine is `t3` dispatches the composed work
