@@ -697,7 +697,7 @@ describe("awaitTurnSettled", () => {
 
 describe("withStartBound: a turn start is held to a deadline and a signal", () => {
   it("gives up on a start the sidecar never answers, naming the step", async () => {
-    const never = () => new Promise<never>(() => {});
+    const never = () => new Promise<never>(() => undefined);
     await expect(
       withStartBound(never, { timeoutMs: 30 }, "T3 thread t did not accept"),
     ).rejects.toThrow(/did not accept within 0 s/);
@@ -705,7 +705,7 @@ describe("withStartBound: a turn start is held to a deadline and a signal", () =
 
   it("lets an abort release the start while the RPC is still out", async () => {
     const controller = new AbortController();
-    const never = () => new Promise<never>(() => {});
+    const never = () => new Promise<never>(() => undefined);
     const start = withStartBound(never, { signal: controller.signal, timeoutMs: 5_000 }, "x");
     controller.abort();
     await expect(start).rejects.toThrow(/aborted/);
