@@ -320,7 +320,10 @@ function Speech({ lane, voice }: { readonly lane: LensLane; readonly voice: Voic
       <span
         data-speech={speech.quiet ? "quiet" : "live"}
         className={cn(
-          "line-clamp-3 font-serif text-13 leading-snug",
+          // Wrap ANYWHERE: a live line is often a git command carrying a full sha or a
+          // path with no break opportunity, and a token that will not wrap runs across the
+          // neighbouring reader (drive 1.6, second run).
+          "line-clamp-3 font-serif text-13 leading-snug [overflow-wrap:anywhere]",
           register === "failed"
             ? "text-danger"
             : speech.quiet
