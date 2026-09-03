@@ -2,6 +2,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { WhiteboardClient } from "@rennet/adapters";
+import { DELTA_MARK_BASIS } from "@rennet/core";
 import type { DraftBoard } from "@rennet/protocol";
 import { describe, expect, it, vi } from "vitest";
 import { createBoardsRuntime } from "../boards/boards-runtime";
@@ -37,6 +38,7 @@ const board: DraftBoard = {
         gist: "Two decisions, one requirement.",
         children: ["d1", "r1", "nested", "c1", "c2"],
         delta: "reworked",
+        delta_basis: DELTA_MARK_BASIS,
       },
     },
     {
@@ -145,6 +147,44 @@ describe("projectLensBoard — the persisted board, read back", () => {
     expect(countKeys).toEqual(["decisions", "requirements", "files", "findings"]);
     expect(countKeys).not.toContain("decision");
     expect(countKeys).not.toContain("section");
+  });
+
+  it("strips marks minted before the citation basis, and says so, rather than serving them as current", () => {
+    // A board persisted under the id-keyed marks (session-bound-workspace D5) carries
+    // `delta` with no basis. Shown as current, it would badge a section for the wrong
+    // reason; the projection shows no mark and names why.
+    const legacy = projectLensBoard(
+      [
+        {
+          id: "s",
+          kind: "section",
+          data: { author, title: "Old", children: [], delta: "reworked" },
+        },
+      ],
+      { lens: "noise", generation: "g", boardId: "b" },
+    );
+    expect(legacy.sections[0]?.delta).toBeUndefined();
+    expect(legacy.elements[0]?.data).not.toHaveProperty("delta");
+    expect(legacy.marksStripped).toBe("pre-citation-basis");
+    // Control: the same mark stamped with the current basis is served, and nothing is said.
+    const current = projectLensBoard(
+      [
+        {
+          id: "s",
+          kind: "section",
+          data: {
+            author,
+            title: "Old",
+            children: [],
+            delta: "reworked",
+            delta_basis: DELTA_MARK_BASIS,
+          },
+        },
+      ],
+      { lens: "noise", generation: "g", boardId: "b" },
+    );
+    expect(current.sections[0]?.delta).toBe("reworked");
+    expect(current.marksStripped).toBeUndefined();
   });
 
   it("falls back to the section's own title when the board carries no gist", () => {

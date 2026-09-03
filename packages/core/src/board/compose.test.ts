@@ -1,7 +1,13 @@
 import type { DraftBoard } from "@rennet/protocol";
 import { parseDraft } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
-import { carriedElementIds, isCarriedForward, removedSectionIds, stampDeltas } from "./compose";
+import {
+  carriedElementIds,
+  DELTA_MARK_BASIS,
+  isCarriedForward,
+  removedSectionIds,
+  stampDeltas,
+} from "./compose";
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
 // Every board is built through `parseDraft` so the inputs are schema-valid by
@@ -170,7 +176,7 @@ describe("stampDeltas — marks key on (path, side, start, end)", () => {
   const deltaOf = (board: DraftBoard, id: string) =>
     (board.elements.find((el) => el.id === id)?.data as { delta?: unknown } | undefined)?.delta;
 
-  it("a regenerated board citing the same lines under the successor patchset carries the mark", () => {
+  it("a regenerated board citing the same lines under the successor patchset carries the mark (ids kept; reminted ids below)", () => {
     const previous = citing("ps-1", "src/auth.ts", 11, 12);
     const current = citing("ps-2", "src/auth.ts", 11, 12);
     expect(deltaOf(stampDeltas(previous, current), "s1")).toBeUndefined();
@@ -185,5 +191,83 @@ describe("stampDeltas — marks key on (path, side, start, end)", () => {
     expect(deltaOf(stampDeltas(previous, citing("ps-2", "src/other.ts", 11, 12)), "s1")).toBe(
       "reworked",
     );
+  });
+});
+
+// ── D5: a mark keys on content and citations, never on element ids ───────────
+// The test above keeps every id stable, so it cannot see the case a regeneration
+// actually produces: a seat drafting afresh mints NEW ids for the same content.
+
+describe("stampDeltas — marks survive reminted ids", () => {
+  const withIds = (
+    sectionId: string,
+    refId: string,
+    over: { title?: string; start?: number; symbol?: string } = {},
+  ) =>
+    draft([
+      {
+        id: sectionId,
+        kind: "section",
+        data: { author, title: over.title ?? "Auth", children: [refId] },
+      },
+      {
+        id: refId,
+        kind: "code_ref",
+        data: {
+          author,
+          patchset_id: "ps-1",
+          path: "src/auth.ts",
+          side: "head",
+          start_line: over.start ?? 11,
+          end_line: (over.start ?? 11) + 1,
+          ...(over.symbol === undefined ? {} : { symbol: over.symbol }),
+        },
+      },
+    ]);
+  const dataOf = (board: DraftBoard, id: string) =>
+    board.elements.find((el) => el.id === id)?.data as
+      | { delta?: unknown; delta_basis?: unknown }
+      | undefined;
+
+  it("a regenerated board with every id reminted, citing the same lines, carries no mark", () => {
+    const previous = withIds("s1", "c1");
+    const current = withIds("s9", "c9");
+    const stamped = stampDeltas(previous, current);
+    expect(dataOf(stamped, "s9")?.delta).toBeUndefined();
+    // …and the previous section is not read as REMOVED either: same content, new id.
+    expect(removedSectionIds(previous, current)).toEqual([]);
+    expect(isCarriedForward(previous, stamped)).toBe(true);
+  });
+
+  it("a RETITLED section citing the same range is reworked, not a removal and a new section", () => {
+    const previous = withIds("s1", "c1");
+    const current = withIds("s9", "c9", { title: "Authentication" });
+    // The signature differs (new title), the id differs (reminted), the title differs.
+    // The shared citation is the ONLY thing left saying this is the same section, so this
+    // is the case the citation keying exists for — without it the reader sees one section
+    // vanish and an unrelated one appear.
+    expect(dataOf(stampDeltas(previous, current), "s9")?.delta).toBe("reworked");
+    expect(removedSectionIds(previous, current)).toEqual([]);
+  });
+
+  it("control: reminted ids with a changed symbol on the same range is reworked, not carried", () => {
+    const previous = withIds("s1", "c1", { symbol: "login" });
+    const stamped = stampDeltas(previous, withIds("s9", "c9", { symbol: "logout" }));
+    expect(dataOf(stamped, "s9")?.delta).toBe("reworked");
+  });
+
+  it("control: reminted ids under a new title citing a new range is new, and the old section removed", () => {
+    const previous = withIds("s1", "c1");
+    const current = withIds("s9", "c9", { title: "Tokens", start: 40 });
+    expect(dataOf(stampDeltas(previous, current), "s9")?.delta).toBe("new");
+    expect(removedSectionIds(previous, current)).toEqual(["s1"]);
+  });
+
+  it("stamps every mark with the citation basis, and a carried section with neither", () => {
+    const fresh = stampDeltas(undefined, withIds("s1", "c1"));
+    expect(dataOf(fresh, "s1")).toMatchObject({ delta: "new", delta_basis: DELTA_MARK_BASIS });
+    const carried = stampDeltas(withIds("s1", "c1"), fresh);
+    expect(dataOf(carried, "s1")).not.toHaveProperty("delta");
+    expect(dataOf(carried, "s1")).not.toHaveProperty("delta_basis");
   });
 });
