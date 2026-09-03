@@ -125,7 +125,12 @@ export interface T3Client {
    */
   readonly waitForTurnSettled: (
     threadId: string,
-    options?: { readonly signal?: AbortSignal; readonly settlementGraceMs?: number },
+    options?: {
+      readonly signal?: AbortSignal;
+      readonly settlementGraceMs?: number;
+      /** How long a requested turn may take to APPEAR before the wait gives up. */
+      readonly startTimeoutMs?: number;
+    },
   ) => Promise<TurnOutcome>;
   readonly readTurnDiff: (threadId: string, turnId: string) => Promise<TurnDiff>;
   readonly close: () => Promise<void>;
@@ -297,6 +302,21 @@ export async function connectT3(options: T3ClientOptions): Promise<T3Client> {
       // lifecycle one can land first. This is how long we keep reading for the activity
       // AFTER the turn has settled before answering without it.
       const graceMs = options.settlementGraceMs ?? 3_000;
+      // A provider stream that dies BEFORE its turn registers (drive 1.6, 2026-09-03: every
+      // Claude seat, "Claude runtime stream failed.") leaves no turn at all: T3 stops the
+      // session with `lastError` and, by upstream design, emits no turn lifecycle. Waiting
+      // on `latestTurn` alone then never returns and the lane spins forever. So a session
+      // that has stopped or errored with no turn in flight settles the wait as a failed
+      // turn carrying that error, and a turn that never appears at all gives up after
+      // `startTimeoutMs` with a message that says so.
+      const startTimeoutMs = options.startTimeoutMs ?? 120_000;
+      const startedWaitingAt = Date.now();
+      const sessionFailure = (thread: OrchestrationThread | undefined): string | undefined => {
+        const session = thread?.session;
+        if (!session || session.activeTurnId !== null) return undefined;
+        if (session.status !== "stopped" && session.status !== "error") return undefined;
+        return session.lastError ?? undefined;
+      };
       try {
         let thread: OrchestrationThread | undefined;
         let settledAtMs: number | undefined;
@@ -311,7 +331,23 @@ export async function connectT3(options: T3ClientOptions): Promise<T3Client> {
             thread = await readThread(threadId);
           }
           const latest = thread?.latestTurn;
-          if (!latest || latest.state === "running") continue;
+          if (!latest || latest.state === "running") {
+            const failure = sessionFailure(thread);
+            if (failure !== undefined && (!latest || latest.state !== "running")) {
+              return {
+                turnId: latest?.turnId ?? `${threadId}:session`,
+                state: "error",
+                thread: thread as OrchestrationThread,
+                errorMessage: failure,
+              };
+            }
+            if (!latest && Date.now() - startedWaitingAt > startTimeoutMs) {
+              throw new Error(
+                `T3 thread ${threadId} never started the requested turn within ${Math.round(startTimeoutMs / 1000)} s (session ${thread?.session?.status ?? "unknown"})`,
+              );
+            }
+            continue;
+          }
           const settlement = readTurnSettlement(thread as OrchestrationThread, latest.turnId);
           settledAtMs ??= Date.now();
           if (settlement === undefined && Date.now() - settledAtMs < graceMs) continue;

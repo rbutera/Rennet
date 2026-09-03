@@ -55,7 +55,10 @@ describe.skipIf(!bundle)("t3 client over the vendored sidecar", () => {
       bundlePath: bundle as string,
       upstreamCommit: "test",
       env: { ...process.env, HOME: join(root, "home") },
-      binaries: {},
+      // No real harness is ever started by this suite; `claude` is pointed at a binary
+      // that exits at once so a turn on the Claude provider fails at the stream, which is
+      // exactly the shape the settle wait must not hang on.
+      binaries: { claude: "/usr/bin/false" },
       readyTimeoutMs: 30_000,
     });
     client = await connectT3({
@@ -81,6 +84,21 @@ describe.skipIf(!bundle)("t3 client over the vendored sidecar", () => {
       }).then((c) => c.probe()),
     ).rejects.toThrow();
   }, 20_000);
+
+  it("settles a turn whose provider stream dies before the turn registers, instead of waiting forever", async () => {
+    // Drive 1.6 (2026-09-03): T3 stops the session with `lastError` and emits no turn
+    // lifecycle when the Claude stream fails at start; `latestTurn` stays null.
+    const projectId = await client.ensureProject(repo, "fixture");
+    const threadId = await client.createThread({
+      projectId,
+      title: "dead claude",
+      modelSelection: modelSelection("claudeAgent", "claude-sonnet-5"),
+    });
+    await client.startTurn({ threadId, text: "say hi", outputSchema: { type: "object" } });
+    const outcome = await client.waitForTurnSettled(threadId, { startTimeoutMs: 15_000 });
+    expect(outcome.state).toBe("error");
+    expect(outcome.errorMessage).toMatch(/stream failed|Claude/i);
+  }, 30_000);
 
   it("creates ONE project when six seats ask for the same checkout at once", async () => {
     // Drive 1.6 (2026-09-03): the seats fan out together, and a read-then-create per
