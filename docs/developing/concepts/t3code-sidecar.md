@@ -341,6 +341,45 @@ the bundle was built from. The set of RPC methods Rennet calls is checked at bui
 not at boot: the daemon-side client and the sidecar are built from the same vendored
 snapshot, so a fold that removes a method fails the typecheck before it can ship.
 
+## Measured: one generation on a 74-file branch
+
+Task 1.6 of `t3-lens-threads`, run three times on 2026-09-03 against Rennet's own
+`feat/cm-w1-import-edges` (74 files) from the packaged app with an isolated data dir, all
+six seats on the sidecar, Claude seats on Opus 4.8 at high effort, Codex seats on GPT-5.6.
+The numbers below are the third run (v0.6.9, the first build carrying the scoped waits of
+#764), read from the generation record's `timings.phases`; the earlier runs are in the
+same shape for comparison. Wall clock from branch pick to the last board was fourteen
+minutes, of which the capture and scout took about ninety seconds.
+
+| Seat | Draft (v0.6.9) | Repair (v0.6.9) | Draft (v0.6.8, run 2) |
+| --- | --- | --- | --- |
+| Noise (Codex, low) | 62 s | 11 s | 66 s |
+| Flagged / Codex (high) | 310 s | 10 s | 267 s |
+| Flagged / Claude (Opus, high) | 325 s | 9 s | 400 s |
+| Sequence (Opus, high) | 316 s | 51 s | 278 s |
+| Decisions (Opus, high) | 309 s | 232 s | 452 s |
+| Design (Opus, high) | start dropped, 120 s timeout | 1 s (no draft to repair) | start dropped, never settled |
+
+The first core board (Flagged) reached the bench at 336 s; the whole generation settled at
+541 s. On v0.6.8 every repair "settled" in tens of milliseconds because the wait answered
+with the previous turn; on v0.6.9 the repairs are real follow-up turns on the same thread,
+which is what the pointer-only repair was built for.
+
+Two things the run found. The Design seat, the first of six to dispatch, had its
+`thread.turn.start` accepted and dropped by a sidecar that had come up two hundred
+milliseconds earlier, in both runs that used a fresh sidecar; the two-minute start timer
+settled the lane honestly and the repair turn on the same thread ran fine, so the thread
+was healthy and only the first command was lost. That is a startup-order defect in the
+vendored engine, tracked separately. And the Decisions seat drafted a board with no
+reachable `decision` element even after a repair, which the pipeline reports as a lens
+failure rather than an empty board.
+
+The ephemeral-session baseline the task named (`benchmarks.jsonl` on Rai's machine) was
+not available on the host these runs used; the comparison here is between the two
+sidecar builds. On the same branch the ephemeral legs ran on 2026-09-03 the core lenses
+were still drafting past eight minutes, so the thread-backed seats are not slower, and
+their repairs no longer re-send the base prompt.
+
 ## Stopping
 
 The daemon's own shutdown sends SIGTERM to the sidecar it spawned and clears the claim.

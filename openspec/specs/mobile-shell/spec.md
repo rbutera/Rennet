@@ -61,12 +61,17 @@ Review detail SHALL lead with the delta digest and its new, resolved, and carrie
 
 ### Requirement: Pushes land on the decision surface
 
-The app SHALL register for push notifications with each paired daemon, and a received push SHALL deep-link to the surface its taxonomy entry names (review finished → that review's digest; needs-you → the review's ask context; failure → the review's error state; publish-ready → the publish preview; processing → project detail). Opening the linked surface SHALL clear the attention flag. A notification settings screen SHALL present the closed taxonomy as per-event switches.
+The app SHALL register for push notifications with each paired daemon, and a received push SHALL deep-link to the surface its taxonomy entry names (review finished → that review's digest; needs-you → the review's digest, because the phone has no conversation surface; failure → the review's error state; publish-ready → the publish preview; processing → project detail). Opening the linked surface SHALL clear the attention flag. A notification settings screen SHALL present the closed taxonomy as per-event switches. A push SHALL NOT carry answer chips, because no phone surface can send an answer.
 
 #### Scenario: backgrounded push deep-links
 
 - **WHEN** a "review finished" push arrives while the app is backgrounded and the user taps it
 - **THEN** the app opens directly on that review's delta digest and the attention flag clears
+
+#### Scenario: an ask push lands on the review
+
+- **WHEN** an ask-pending push arrives and the user taps it
+- **THEN** the app opens that review's digest, and the notification offers no answer action
 
 ### Requirement: The app consumes only the projection
 
@@ -76,29 +81,6 @@ Every read and write SHALL use the projected client contract with the device tok
 
 - **WHEN** a review's finding names a file
 - **THEN** the app shows the repo reference display name and relative path, never a host-absolute path
-
-### Requirement: A live turn is watchable and stoppable
-
-The app SHALL render a running turn's ask stream as a typed timeline that follows the live tail, offers a return-to-tail control when the user scrolls up, and shows a visible Stop that interrupts the turn. Entering the screen SHALL paint persisted turn state first (reattach), then follow the live stream; a mid-turn network change SHALL NOT lose the stream (the runtime rebinds) or render the turn as hung.
-
-#### Scenario: stream survives backgrounding mid-turn
-
-- **WHEN** the user backgrounds the app during a streaming turn, switches networks, and returns
-- **THEN** the timeline catches up and continues live without a consumer re-subscribe, and no event renders twice
-
-#### Scenario: stop is one visible tap
-
-- **WHEN** the user taps Stop during a running turn
-- **THEN** the turn interrupts and the timeline states the interrupted outcome truthfully
-
-### Requirement: Asks are answered with decision plus direction
-
-An ask SHALL render its question, answer chips, and an optional free-text field. A chip, text, or both SHALL compose into one reply. While a turn runs, the primary send action SHALL interrupt it and a secondary send action SHALL submit without interrupting. Drafts SHALL persist per review across navigation.
-
-#### Scenario: chip plus redirection in one reply
-
-- **WHEN** the user taps an answer chip and adds free text before sending
-- **THEN** exactly one reply carries both the decision and the direction
 
 ### Requirement: Posting is one un-ceremonied tap
 
@@ -122,3 +104,4 @@ The app SHALL start a team-PR review from a pasted PR link and an own-branch pre
 
 - **WHEN** an Android user shares a GitHub PR URL to Rennet from another app
 - **THEN** the app opens on the kickoff surface with the link applied and the review starts on the daemon
+

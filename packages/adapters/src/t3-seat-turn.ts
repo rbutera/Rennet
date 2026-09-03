@@ -281,9 +281,11 @@ export function createT3SeatTurn(
       settled: T3SettledTurn | null,
       error?: string,
     ): void => {
+      // The seat rides on the settle line as it does on the start line: three lenses share
+      // the `board.lens-draft` label, and without it their timings cannot be told apart.
       logSeat(
         label,
-        `${status} attempt=${attempt} in ${now() - started} ms${error === undefined ? "" : ` (${error})`}`,
+        `${status} attempt=${attempt} seat=${seat} in ${now() - started} ms${error === undefined ? "" : ` (${error})`}`,
       );
       options.collector?.record({
         label,
