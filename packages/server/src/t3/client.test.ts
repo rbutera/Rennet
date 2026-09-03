@@ -11,6 +11,7 @@ import {
   type OrchestrationThreadStreamItem,
   readTurnSettlement,
   type T3Client,
+  withStartBound,
 } from "./client";
 import { type RunningSidecar, resolveSidecarBundle, spawnSidecar, stopSidecar } from "./sidecar";
 import {
@@ -730,5 +731,26 @@ describe("awaitTurnSettled", () => {
     await awaitTurnSettled("t", p.deps, { signal: controller.signal });
     expect(added).toHaveBeenCalledTimes(1);
     expect(removed).toHaveBeenCalledWith("abort", added.mock.calls[0]?.[1]);
+  });
+});
+
+describe("withStartBound: a turn start is held to a deadline and a signal", () => {
+  it("gives up on a start the sidecar never answers, naming the step", async () => {
+    const never = () => new Promise<never>(() => undefined);
+    await expect(
+      withStartBound(never, { timeoutMs: 30 }, "T3 thread t did not accept"),
+    ).rejects.toThrow(/did not accept within 0 s/);
+  });
+
+  it("lets an abort release the start while the RPC is still out", async () => {
+    const controller = new AbortController();
+    const never = () => new Promise<never>(() => undefined);
+    const start = withStartBound(never, { signal: controller.signal, timeoutMs: 5_000 }, "x");
+    controller.abort();
+    await expect(start).rejects.toThrow(/aborted/);
+  });
+
+  it("passes an answered start through untouched", async () => {
+    await expect(withStartBound(async () => 42, { timeoutMs: 1_000 }, "x")).resolves.toBe(42);
   });
 });
