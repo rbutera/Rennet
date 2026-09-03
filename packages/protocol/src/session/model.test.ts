@@ -690,6 +690,28 @@ describe("session/ durable shapes (#466/#457)", () => {
   // The verdict is bound to the state that can HAVE one. These are the states the old
   // bag-of-optionals row admitted and this union refuses: a settled lens lane with no
   // verdict, a failed lane with no reason, and an unstarted lane already carrying a verdict.
+  it("binds `latest` to the running lane only, and lets `thread` ride every state", () => {
+    const base = { id: "design", label: "Design" };
+    const thread = { environmentId: "env-1", threadId: "thread-1" };
+    const latest = { kind: "tool", text: "reading src/foo.ts", at: 1 };
+    expect(LensLaneSchema.safeParse({ ...base, status: "running", thread, latest }).success).toBe(
+      true,
+    );
+    expect(LensLaneSchema.safeParse({ ...base, status: "running" }).success).toBe(true);
+    // A settled lane has nothing in flight: `latest` is not a field there.
+    expect(
+      LensLaneSchema.safeParse({ ...base, status: "done", verdict: "reworked", thread, latest })
+        .success,
+    ).toBe(true);
+    expect(
+      LensLaneSchema.parse({ ...base, status: "done", verdict: "reworked", thread, latest }),
+    ).not.toHaveProperty("latest");
+    expect(
+      LensLaneSchema.safeParse({ ...base, status: "running", latest: { kind: "nap", text: "" } })
+        .success,
+    ).toBe(false);
+  });
+
   it("makes an unverdicted settled lens lane unrepresentable", () => {
     const base = { id: "design", label: "Design" };
     expect(LensLaneSchema.safeParse({ ...base, status: "done" }).success).toBe(false);

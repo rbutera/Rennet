@@ -1937,21 +1937,46 @@ export const LaneVerdictSchema = z.enum(["carrying-forward", "reworked"]);
 export type LaneVerdict = z.infer<typeof LaneVerdictSchema>;
 
 /**
+ * The T3 thread a lens seat runs on (t3-lens-threads): the address the surface uses to
+ * open that seat's transcript read-only. Present from the moment the seat's thread
+ * exists and kept on every later state, so a settled lens still opens its transcript.
+ */
+export const LaneThreadRefSchema = z.object({ environmentId: z.string(), threadId: z.string() });
+export type LaneThreadRef = z.infer<typeof LaneThreadRefSchema>;
+
+/**
+ * The newest thing a running seat is doing, projected from its thread in plain words:
+ * a tool call in flight ("reading src/foo.ts"), the last sentence of the agent's own
+ * text, or `idle` when the thread has been quiet (the text then says for how long). `at`
+ * is the daemon's clock when the projection was made, so a stale line can be told from
+ * a fresh one.
+ */
+export const LaneLatestSchema = z.object({
+  kind: z.enum(["tool", "text", "idle"]),
+  text: z.string(),
+  at: z.number(),
+});
+export type LaneLatest = z.infer<typeof LaneLatestSchema>;
+
+const lensLaneBase = { ...laneBase, thread: LaneThreadRefSchema.optional() };
+
+/**
  * One lens drafter's lane in the regeneration block. Same discipline as {@link
  * LaneRowSchema}, with the verdict bound to the state that can HAVE one: `queued` and
  * `running` carry no verdict because none has been computed; `drafted` is the real window
  * between a board's draft landing and its arrival (cross-lens coverage runs in between,
  * and the verdict rides the arrival); `done` REQUIRES the verdict; `absent` records a
  * successful no-material result; `failed` requires the drafter's reason. There is no
- * representable "settled lane with no verdict".
+ * representable "settled lane with no verdict". Only `running` carries `latest`: a settled
+ * lane has nothing in flight.
  */
 export const LensLaneSchema = z.discriminatedUnion("status", [
-  z.object({ ...laneBase, status: z.literal("queued") }),
-  z.object({ ...laneBase, status: z.literal("running") }),
-  z.object({ ...laneBase, status: z.literal("drafted") }),
-  z.object({ ...laneBase, status: z.literal("done"), verdict: LaneVerdictSchema }),
-  z.object({ ...laneBase, status: z.literal("absent"), reason: z.string() }),
-  z.object({ ...laneBase, status: z.literal("failed"), reason: z.string() }),
+  z.object({ ...lensLaneBase, status: z.literal("queued") }),
+  z.object({ ...lensLaneBase, status: z.literal("running"), latest: LaneLatestSchema.optional() }),
+  z.object({ ...lensLaneBase, status: z.literal("drafted") }),
+  z.object({ ...lensLaneBase, status: z.literal("done"), verdict: LaneVerdictSchema }),
+  z.object({ ...lensLaneBase, status: z.literal("absent"), reason: z.string() }),
+  z.object({ ...lensLaneBase, status: z.literal("failed"), reason: z.string() }),
 ]);
 export type LensLane = z.infer<typeof LensLaneSchema>;
 
