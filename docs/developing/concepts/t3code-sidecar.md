@@ -206,8 +206,15 @@ sends one, since a seat drafts and repairs against a single board schema.
 
 The seam is two functions. `packages/adapters/src/t3-seat-turn.ts` builds the seat's
 `runTurn` and knows nothing about `effect`; `create-server.ts` fills it from the
-supervisor. A daemon with no vendored bundle resolves no seat runtime and the board seats
-fall back to the ephemeral Claude/Codex legs unchanged.
+supervisor.
+
+**T3 is a board seat's only backend.** A daemon that cannot bring the sidecar up — no
+vendored bundle, a spawn failure — answers with the reason instead of a runtime, and every
+board seat of that generation fails as `T3 sidecar unavailable: <detail>`, which the bench
+speaks in the failed reader's own voice. There is no fallback to the ephemeral
+Claude/Codex legs: those still run every non-board job (the project scout, the repo map,
+the delta digest), but a lens drafted on one would have no thread, no transcript, no live
+line and no same-thread repair, and nothing on screen would say so.
 
 **Archiving a session is how threads are pruned.** Transcripts are the product while a
 review is live, so nothing expires on a timer; `session.archive` is the act that ends

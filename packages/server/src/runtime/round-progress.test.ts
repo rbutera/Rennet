@@ -1327,3 +1327,106 @@ describe("runRound emits the real regeneration progress (C15 3.1/3.3)", () => {
     for (const lane of settled.lanes) expect(verdictOf(settled.lanes, lane.id)).toBe("reworked");
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// T3 is a board seat's ONLY backend (review finding 1). The daemon used to turn a sidecar
+// that would not start into `null` and hand the board jobs back to the ephemeral
+// Claude/Codex legs — which drafts the boards, but without the thread, the transcript, the
+// live line or the same-thread repair, and says nothing about losing any of them. The lane
+// now fails with the sidecar's own reason, which the bench already speaks.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("a board seat has one backend (review finding 1)", () => {
+  let root: string;
+  let boards: BoardsRuntime;
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), "t3-only-backend-"));
+    boards = createBoardsRuntime(root);
+  });
+  afterEach(() => rmSync(root, { recursive: true, force: true }));
+
+  /** The ephemeral Claude leg, counting every session a board seat would have opened. */
+  function countingClaudePort(opened: string[]): HarnessPort {
+    const inner = fakeClaudePort((lens) => sectioned(lens, "same"));
+    return {
+      ...inner,
+      createSession: (spec: Parameters<HarnessPort["createSession"]>[0]) => {
+        opened.push("createSession");
+        return inner.createSession(spec);
+      },
+    } as unknown as HarnessPort;
+  }
+
+  const runWith = async (
+    opened: string[],
+    resolveT3Seats?: Parameters<typeof createRoundsRuntime>[0]["resolveT3Seats"],
+  ): Promise<{ events: RoundEvent[]; error: unknown }> => {
+    const events: RoundEvent[] = [];
+    let error: unknown;
+    const run = createRoundsRuntime({
+      resolveClaudePort: async () => countingClaudePort(opened),
+      resolveCodexExecutor: async () => null as CodexExecutor | null,
+      boardsRuntimeFor: () => ({
+        service: boards.service,
+        createRennetBoard: boards.createRennetBoard,
+      }),
+      readPrompt,
+      ...(resolveT3Seats === undefined ? {} : { resolveT3Seats }),
+    }).runRound({
+      session: { ...session, id: "t3-backend-session" } as SessionModel,
+      repoRoot: root,
+      asksDispatched: [],
+      runWorkers: async () => ({ commitRange: { from: "c0", to: "c1" }, patchsetId: "ps-landed" }),
+      onProgress: (event) => events.push(event),
+      ...assembleRoundCollation({ patchset: patchset(), dossier: [] }),
+    });
+    await run.catch((thrown: unknown) => {
+      error = thrown;
+    });
+    return { events, error };
+  };
+
+  const settledLanes = (events: readonly RoundEvent[]): readonly LensLane[] => {
+    const last = [...events].reverse().find((event) => event.type === "lens");
+    if (last?.type !== "lens") throw new Error("no lens lanes were emitted");
+    return last.lanes;
+  };
+
+  it("fails every lane with the sidecar's reason and opens no ephemeral board session", async () => {
+    const opened: string[] = [];
+    const { events, error } = await runWith(opened, () =>
+      Promise.reject(new Error("the vendored T3 Code server bundle is not built")),
+    );
+
+    // The load-bearing half: the ephemeral leg was RESOLVED (the port is real and the
+    // council still routes to it), and no board seat ever asked it for a session.
+    expect(opened).toEqual([]);
+    // A generation with no boards at all is a failed round, and it says why.
+    expect(String(error)).toContain("T3 sidecar unavailable");
+    const lanes = settledLanes(events);
+    expect(lanes.map((lane) => lane.id)).toEqual([
+      "design",
+      "sequence",
+      "decisions",
+      "flagged",
+      "noise",
+    ]);
+    for (const lane of lanes) {
+      expect(lane.status).toBe("failed");
+      expect(lane.status === "failed" ? lane.reason : "").toContain(
+        "T3 sidecar unavailable: the vendored T3 Code server bundle is not built",
+      );
+    }
+  });
+
+  it("positive control: the same run with no sidecar composed at all still drafts", async () => {
+    // No `resolveT3Seats` dep is the direct-call shape every pipeline test uses — nobody
+    // composed a sidecar, so nothing was lost and the ephemeral legs still run. If the
+    // assertions above passed for some other reason (a broken fixture, a run that drafts
+    // nothing at all), this run would open no session and settle no lane either.
+    const opened: string[] = [];
+    const { events, error } = await runWith(opened);
+    expect(error).toBeUndefined();
+    expect(opened.length).toBeGreaterThan(0);
+    for (const lane of settledLanes(events)) expect(lane.status).not.toBe("failed");
+  });
+});

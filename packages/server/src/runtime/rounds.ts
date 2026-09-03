@@ -612,8 +612,11 @@ export interface RoundsRuntimeDeps {
   /** The locus-aware codex utility executor probe (null when no `codex` resolves). */
   readonly resolveCodexExecutor: (repoRoot: string) => Promise<CodexExecutor | null>;
   /**
-   * The T3 sidecar's seat runtime for one generation (t3-lens-threads). `null` ⇒ this
-   * daemon has no sidecar, and the board seats fall back to the ephemeral legs.
+   * The T3 sidecar's seat runtime for one generation (t3-lens-threads). Every board seat
+   * runs on it — T3 is their only backend — so a daemon that cannot bring the sidecar up
+   * answers `{ unavailable: <detail> }` and the lanes FAIL with that reason. The dep being
+   * absent altogether is the direct-call shape (no sidecar was ever composed), which keeps
+   * the ephemeral legs; there is no path from a sidecar failure to one.
    */
   readonly resolveT3Seats?: (input: {
     readonly repoRoot: string;
@@ -621,7 +624,7 @@ export interface RoundsRuntimeDeps {
     readonly branch: string;
     /** The session that owns the generation, so archiving it can delete these threads. */
     readonly sessionId: string;
-  }) => Promise<T3SeatRuntime | null>;
+  }) => Promise<T3SeatRuntime | { readonly unavailable: string }>;
   /** B04's boards runtime for a repo — the sole board-op writer (`WhiteboardClient`
    *  over its `service`) and the board minter (`createRennetBoard`). */
   readonly boardsRuntimeFor: (
@@ -1082,16 +1085,24 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
       deps.resolveClaudePort(input.repoRoot),
       deps.resolveCodexExecutor(input.repoRoot),
     ]);
-    // t3-lens-threads — the sidecar's seat runtime for THIS generation. Absent (no
-    // vendored bundle, or a direct-call test) leaves the ephemeral legs in place.
-    const t3Runtime = await deps
+    // t3-lens-threads — the sidecar's seat runtime for THIS generation. A resolver that
+    // rejects is the same answer as one that says `unavailable`: the daemon has a sidecar
+    // and could not bring it up, so the board seats FAIL with the reason rather than
+    // dropping to the ephemeral legs (review finding 1). Only a caller with no resolver at
+    // all — a direct-call test — leaves those legs in place.
+    const t3Resolved = await deps
       .resolveT3Seats?.({
         repoRoot: input.draftingRoot ?? input.repoRoot,
         generationId: attemptGeneration.id,
         branch: input.deltaPacket.patchset.repository.baseRef,
         sessionId: input.session.id,
       })
-      .catch(() => null);
+      .catch((error: unknown) => ({
+        unavailable: error instanceof Error ? error.message : String(error),
+      }));
+    const t3Runtime = t3Resolved !== undefined && "seam" in t3Resolved ? t3Resolved : undefined;
+    const t3Unavailable =
+      t3Resolved !== undefined && "unavailable" in t3Resolved ? t3Resolved.unavailable : undefined;
     const seatWatches: { readonly stop: () => void }[] = [];
     const watchedThreads = new Set<string>();
     const composeTurn = deps.composeTurn?.(input.repoRoot);
@@ -1264,7 +1275,7 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
     // wiring. A seat's thread reference reaches its lane the moment the thread exists,
     // and the subscription that feeds the lane's live line starts with it.
     const t3Seam: T3SeatSeam | undefined =
-      t3Runtime === null || t3Runtime === undefined
+      t3Runtime === undefined
         ? undefined
         : {
             client: t3Runtime.seam.client,
@@ -1288,6 +1299,7 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
       claudePort,
       codexExecutor,
       ...(t3Seam === undefined ? {} : { t3: t3Seam }),
+      ...(t3Unavailable === undefined ? {} : { t3Unavailable }),
       repoRoot: input.draftingRoot ?? input.repoRoot,
       deltaPacket: input.deltaPacket,
       currentGeneration: attemptGeneration.id,

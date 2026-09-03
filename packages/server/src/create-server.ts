@@ -1248,20 +1248,23 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
    * The sidecar's seat runtime for one generation (t3-lens-threads). Every board seat of
    * that generation becomes one persistent thread on the review's checkout, titled by
    * branch and lens; the daemon holds each running seat's subscription so its lane can
-   * carry a live line. `null` when the sidecar cannot be brought up — no vendored bundle,
-   * a spawn failure — and the board seats fall back to the ephemeral legs.
+   * carry a live line. When the sidecar cannot be brought up — no vendored bundle, a spawn
+   * failure — this answers the REASON, and the board seats fail with it. There is no
+   * fallback to the ephemeral legs: T3 is a board seat's only backend (Rai's ruling), and
+   * a silent fallback would run the lens without its thread, transcript, live line or
+   * same-thread repair while the bench showed nothing wrong (review finding 1).
    */
   const resolveT3SeatRuntime = async (input: {
     readonly repoRoot: string;
     readonly generationId: string;
     readonly branch: string;
     readonly sessionId: string;
-  }): Promise<T3SeatRuntime | null> => {
+  }): Promise<T3SeatRuntime | { readonly unavailable: string }> => {
     let sidecar: Awaited<ReturnType<typeof t3Sidecar.ensure>>;
     try {
       sidecar = await t3Sidecar.ensure();
-    } catch {
-      return null;
+    } catch (error) {
+      return { unavailable: error instanceof Error ? error.message : String(error) };
     }
     const environmentId = sidecar.environment.environmentId;
     return {
