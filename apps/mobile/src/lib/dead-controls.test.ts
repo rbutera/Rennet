@@ -39,9 +39,12 @@ const admitsUnavailable = (source: string): boolean => /temporarily unavailable/
 // resolves routes that stay inside the review directory (either naming `/review/` or built
 // from the screens' own `base`). A push assembled from a variable is invisible to it.
 
+/** How a review screen writes its own route prefix: `${base}` or the full `/review/` path. */
+const REVIEW_BASE = ["$", "{base}"].join("");
+
 /** The last path segment of a route, or undefined when it is interpolated or empty. */
 function routeTarget(route: string): string | undefined {
-  const scoped = route.includes("/review/") || route.startsWith("${base}");
+  const scoped = route.includes("/review/") || route.startsWith(REVIEW_BASE);
   if (!scoped) return undefined;
   const segment = route.split("/").at(-1) ?? "";
   return /^[a-z][a-z0-9-]*$/.test(segment) ? segment : undefined;
@@ -84,7 +87,7 @@ describe("every review screen pushes only to routes that exist", () => {
     // The exact route `publish.tsx` used to push (t3-lens-threads 4.2 deleted `turn.tsx`).
     // Without this, "every route resolves" would be satisfied by a resolver that answers
     // true for anything.
-    const target = routeTarget("/daemon/${daemonId}/review/${reviewId}/turn");
+    const target = routeTarget(`/daemon/${REVIEW_BASE}/review/${REVIEW_BASE}/turn`);
     expect(target).toBe("turn");
     expect(existsSync(join(reviewDir, `${target}.tsx`))).toBe(false);
   });

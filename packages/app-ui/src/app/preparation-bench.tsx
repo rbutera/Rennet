@@ -197,7 +197,8 @@ function Reader({ lane, reviewId }: { readonly lane: LensLane; readonly reviewId
   const reading = lane.status === "running" && lane.latest?.kind === "tool";
   const open =
     thread !== undefined &&
-    openRef?.reviewId === reviewId &&
+    openRef !== null &&
+    openRef.reviewId === reviewId &&
     openRef.thread.threadId === thread.threadId;
 
   return (

@@ -2882,7 +2882,13 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     recordBenchmark,
     resolveClaudePort: claudeAdapterForRepo,
     resolveCodexExecutor: codexExecutorForRepo,
-    resolveT3Seats: resolveT3SeatRuntime,
+    // Wired only when this process was GIVEN a sidecar. A bundle path means a sidecar
+    // exists here, so a board seat that cannot reach it fails with the reason (review
+    // finding 1) rather than dropping to an ephemeral leg that loses the thread. No bundle
+    // path means no sidecar was ever composed — a hermetic `createServer` in a test — and
+    // the ephemeral legs stand, because nothing was lost. A packaged Rennet always has one:
+    // `rennet-desktop:build` fails outright when the bundle is not staged.
+    ...(options.t3BundlePath === undefined ? {} : { resolveT3Seats: resolveT3SeatRuntime }),
     boardsRuntimeFor,
     readPrompt,
     persistBoardMeta: (_repoRoot: string, meta: PersistedBoardMeta) => boardMetaStore.save(meta),
