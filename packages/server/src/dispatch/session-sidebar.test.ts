@@ -404,7 +404,7 @@ describe("session.archive deletes the session's T3 threads", () => {
     handlers: ReturnType<typeof sessionDispatch>["handlers"],
     sessionId: string,
     archived: boolean,
-  ) => handlers["session.archive"]({ sessionId, archived }, undefined as never);
+  ) => handlers["session.archive"]({ sessionId, archived });
 
   it("sweeps the session id AND the review id, because the two kinds bind under different ones", async () => {
     const spy = forgetSpy();
