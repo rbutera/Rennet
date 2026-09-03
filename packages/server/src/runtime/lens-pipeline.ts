@@ -8,7 +8,7 @@ import type {
   T3SeatSeam,
   WhiteboardClient,
 } from "@rennet/adapters";
-import { councilSeatTurn, createCoverageTurn } from "@rennet/adapters";
+import { councilSeatTurn, createCoverageTurn, fitDesignArtifactsToBytes } from "@rennet/adapters";
 import {
   assertCoverage,
   type CodexExecutor,
@@ -88,6 +88,7 @@ import {
   type Violation,
 } from "@rennet/protocol";
 import { z } from "zod";
+import { T3_TURN_INPUT_MAX_CHARS } from "../t3/client";
 import type { SeatKind as BoardSeatId } from "../t3/threads";
 import { projectRoundReportBoard } from "./lens-board-read";
 import {
@@ -958,6 +959,32 @@ export function renderDrafterPrompt(
     return `${renderLayer("payload", promptText)}\n\n${renderLayer("context", context)}`;
   }
   return `${renderLayer("payload", promptText)}\n\n${renderLayer("task", task)}\n\n${renderLayer("context", context)}`;
+}
+
+/** What `renderDrafterPrompt` adds around the bundle's own JSON: the key and its comma. */
+const DESIGN_ARTIFACTS_KEY_CHARS = ',"designArtifacts":'.length;
+
+/**
+ * Fit the design bundle to the room the drafter prompt has left under the T3 seat's
+ * input cap. T3 accepts `thread.turn.start` and refuses an input over
+ * `T3_TURN_INPUT_MAX_CHARS` afterwards, on the reactor's fiber, where the refusal is an
+ * activity and no turn ever starts (drive 1.6, both runs, 2026-09-03: the Design seat's
+ * 241,848-character prompt — 103k of hunk inventory plus a 126k bundle — while the five
+ * seats without a bundle sat at 110k and ran). Discovery bounds the bundle at 512 KiB,
+ * four times the cap, so this is the bound at the interpolation: the same trimming order
+ * and the same `omitted*` / `truncated` markers as discovery, with `limits` naming the
+ * budget. Everything else in the prompt keeps its size; when THAT alone overflows, no fit
+ * can help, and the seat fails fast on the sidecar's own refusal instead.
+ *
+ * The cap counts characters; the fit counts UTF-8 bytes, which is never fewer.
+ */
+export function fitDesignArtifactsToPrompt(
+  designArtifacts: DesignArtifactSet,
+  promptWithoutBundle: string,
+  maxChars: number = T3_TURN_INPUT_MAX_CHARS,
+): DesignArtifactSet {
+  const room = maxChars - promptWithoutBundle.length - DESIGN_ARTIFACTS_KEY_CHARS;
+  return fitDesignArtifactsToBytes(designArtifacts, Math.max(0, room));
 }
 
 /**
@@ -3682,22 +3709,22 @@ async function runLensBoard(
 
 async function draftLensBoard(
   lens: LensKind,
-  deps: LensPipelineDeps,
+  lensDeps: LensPipelineDeps,
   council: CouncilResolveContext,
   spans: ReturnType<typeof createSeatSpans>,
   markPostProcess: () => void,
   reportBoard?: DraftBoard,
 ): Promise<LensBoardOutcome> {
-  if (lens === "design" && deps.designArtifactFailure !== undefined) {
+  if (lens === "design" && lensDeps.designArtifactFailure !== undefined) {
     return {
       lens,
       omissions: [],
       blemishes: [],
       immutability: [],
-      failure: deps.designArtifactFailure,
+      failure: lensDeps.designArtifactFailure,
     };
   }
-  if (lens === "design" && deps.designArtifacts === null) {
+  if (lens === "design" && lensDeps.designArtifacts === null) {
     return {
       lens,
       omissions: [],
@@ -3707,9 +3734,29 @@ async function draftLensBoard(
     };
   }
   const promptText = expandPromptPartials(
-    await deps.readPrompt(LENS_PROMPT_FILES[lens]),
-    await deps.readPrompt(INVESTIGATE_PARTIAL_FILE),
+    await lensDeps.readPrompt(LENS_PROMPT_FILES[lens]),
+    await lensDeps.readPrompt(INVESTIGATE_PARTIAL_FILE),
   );
+  // The bundle the seat is shown is the bundle everything downstream reasons about — the
+  // lint context, the coverage projection, the grounding — so it is fitted once, here, to
+  // the room this prompt has under the seat's input cap, and `deps` carries the fitted set
+  // from this point on.
+  const deps: LensPipelineDeps =
+    lens === "design" && lensDeps.designArtifacts != null
+      ? {
+          ...lensDeps,
+          designArtifacts: fitDesignArtifactsToPrompt(
+            lensDeps.designArtifacts,
+            renderDrafterPrompt(
+              promptText,
+              lensDeps.deltaPacket,
+              reportBoard,
+              undefined,
+              lensDeps.round,
+            ),
+          ),
+        }
+      : lensDeps;
   const semanticDesignAbsence =
     lens === "design" && deps.designArtifacts !== undefined && deps.designArtifacts !== null;
   const basePrompt = renderDrafterPrompt(

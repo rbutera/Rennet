@@ -10,6 +10,7 @@ import {
   type OrchestrationThread,
   type OrchestrationThreadStreamItem,
   readTurnSettlement,
+  T3_TURN_INPUT_MAX_CHARS,
   type T3Client,
   withStartBound,
 } from "./client";
@@ -316,7 +317,11 @@ describe.skipIf(!bundle)("t3 client: a provider stream that dies before its turn
       startTimeoutMs: 15_000,
     });
     expect(outcome.state).toBe("error");
-    expect(outcome.errorMessage).toMatch(/stream failed|Claude/i);
+    // Either face of the same dead provider: the session's stream failure, or the
+    // `provider.turn.start.failed` refusal (`turn/setPermissionMode failed`) that the
+    // reactor records first on a Linux runner, where the wait reads it before the session
+    // error lands (#772 is the residual race in that ordering).
+    expect(outcome.errorMessage).toMatch(/stream failed|Claude|setPermissionMode failed/i);
     // A dead provider registers no turn at all, so the wait names the session, and the
     // failure it names was recorded after this start, not before it.
     expect(outcome.thread.latestTurn).toBeNull();
@@ -344,6 +349,93 @@ describe.skipIf(!bundle)("t3 client: a provider stream that dies before its turn
     expect(Date.parse(again.thread.session?.updatedAt ?? "")).toBeGreaterThanOrEqual(
       Date.parse(second.requestedAt),
     );
+    expect(running.child?.exitCode).toBeNull();
+  }, 45_000);
+});
+
+// Drive 1.6, both runs (2026-09-03): the Design seat's 241,848-character prompt. T3
+// accepts `thread.turn.start` at the socket and validates the provider request later, on
+// the reactor's fiber, where `ProviderService.sendTurn` refuses an input over
+// `PROVIDER_SEND_TURN_MAX_INPUT_CHARS`. The refusal lands as a `provider.turn.start.failed`
+// activity plus a session `error` that the concurrent session start's `ready` overwrites
+// at once — so the dispatch resolved, the session read `ready` with no `lastError`, no
+// turn row ever appeared, and the seat sat on its start timeout for two minutes. Own
+// sidecar: the `claude` stand-in just lives, so nothing but the refusal can settle the
+// wait, and a session that never streams cannot be mistaken for the answer.
+describe.skipIf(!bundle)("t3 client: a turn the sidecar refuses after accepting it", () => {
+  let root: string;
+  let running: RunningSidecar;
+  let client: T3Client;
+  let dataDir: string;
+
+  beforeAll(async () => {
+    root = mkdtempSync(join(tmpdir(), "rennet-t3-refused-turn-"));
+    dataDir = join(root, "data");
+    const repo = join(root, "repo");
+    mkdirSync(repo, { recursive: true });
+    execFileSync("git", ["init", "-q", "-b", "main", repo]);
+    writeFileSync(join(repo, "README.md"), "repo\n");
+    execFileSync("git", ["-C", repo, "add", "."]);
+    execFileSync("git", [
+      "-C",
+      repo,
+      "-c",
+      "user.name=t",
+      "-c",
+      "user.email=t@example.com",
+      "commit",
+      "-q",
+      "-m",
+      "init",
+    ]);
+    const claude = join(root, "claude-silent");
+    writeFileSync(claude, "#!/bin/sh\nsleep 20\n", { mode: 0o755 });
+    running = await spawnSidecar({
+      dataDir,
+      bundlePath: bundle as string,
+      upstreamCommit: "test",
+      env: { ...process.env, HOME: join(root, "home") },
+      binaries: { claude },
+      readyTimeoutMs: 30_000,
+    });
+    client = await connectT3({
+      wsUrl: `${running.origin.replace(/^http/, "ws")}/ws`,
+      accessToken: running.credentials.accessToken,
+    });
+  }, 60_000);
+
+  afterAll(async () => {
+    await client?.close();
+    await stopSidecar(dataDir);
+    running?.child?.kill("SIGKILL");
+    rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }, 30_000);
+
+  it("settles as a failed turn carrying the refusal, instead of a start timeout", async () => {
+    const projectId = await client.ensureProject(join(root, "repo"), "fixture");
+    const threadId = await client.createThread({
+      projectId,
+      title: "oversized prompt",
+      modelSelection: modelSelection("claudeAgent", "claude-sonnet-5"),
+    });
+    // Dispatched the moment the sidecar is up, as the seats do — and the dispatch is
+    // accepted. That acceptance is the trap: nothing on the reply says the turn is dead.
+    const start = await client.startTurn({
+      threadId,
+      text: "x".repeat(T3_TURN_INPUT_MAX_CHARS + 1),
+      outputSchema: { type: "object" },
+    });
+    const outcome = await client.waitForTurnSettled(threadId, {
+      after: start,
+      startTimeoutMs: 15_000,
+    });
+    expect(outcome.state).toBe("error");
+    // The sidecar's own words, cap included — not the wait's "never started" guess.
+    expect(outcome.errorMessage).toContain(String(T3_TURN_INPUT_MAX_CHARS));
+    expect(outcome.errorMessage).not.toMatch(/\n\s+at file:/);
+    // No turn was ever minted for it, and the session is NOT where the failure shows.
+    expect(outcome.thread.latestTurn).toBeNull();
+    expect(outcome.thread.session?.lastError ?? null).toBeNull();
     expect(running.child?.exitCode).toBeNull();
   }, 45_000);
 });
@@ -582,6 +674,50 @@ describe("awaitTurnSettled", () => {
       errorMessage: "new stream failed",
     });
   });
+
+  it("settles a start the sidecar refused after accepting it, off the failure activity", async () => {
+    // Drive 1.6: the refusal is an activity with no turn id; the session reads `ready`
+    // with no `lastError` because the session start's own `ready` overwrote the error.
+    const ready = { status: "ready", activeTurnId: null, lastError: null, updatedAt: T0 };
+    const detail =
+      'ProviderValidationError: Provider validation failed in ProviderService.sendTurn: Expected a value with a length of at most 120000\n  at ["input"]\n    at file:///app/bin.mjs:104379:89\n    at file:///app/Schema.mjs:1:1';
+    const refusal = (createdAt: string) => ({
+      id: "a-refused",
+      tone: "error",
+      kind: "provider.turn.start.failed",
+      summary: "Provider turn start failed",
+      payload: { detail },
+      turnId: null,
+      createdAt,
+    });
+    // Recorded BEFORE this request: an earlier turn's refusal, not ours — keep waiting.
+    const stale = projection(
+      fakeThread({ session: ready, activities: [refusal("2026-09-03T09:59:59.000Z")] }),
+    );
+    await expect(
+      awaitTurnSettled("t", stale.deps, {
+        after: { previousTurnId: null, requestedAt: T0 },
+        startTimeoutMs: 50,
+      }),
+    ).rejects.toThrow(/never started the requested turn/);
+
+    const p = projection(fakeThread({ session: ready }));
+    const wait = awaitTurnSettled("t", p.deps, {
+      after: { previousTurnId: null, requestedAt: T0 },
+      startTimeoutMs: 5_000,
+    });
+    await tick();
+    // Stamped with the request's own time, as T3 does (the command's `createdAt`).
+    p.set(fakeThread({ session: ready, activities: [refusal(T0)] }));
+    p.push(event("thread.activity-appended"));
+    await expect(wait).resolves.toMatchObject({
+      state: "error",
+      turnId: "t:session",
+      // The message and its schema path travel; the stack frames do not.
+      errorMessage:
+        'ProviderValidationError: Provider validation failed in ProviderService.sendTurn: Expected a value with a length of at most 120000\n  at ["input"]',
+    });
+  }, 2_000);
 
   it("gives up on a turn that never registers even when the stream stays silent", async () => {
     // Nothing after the opening snapshot: no turn row, session `ready`. The timeout must

@@ -140,6 +140,7 @@ export {
   type DesignCandidateRelevance,
   type DiscoverDesignArtifactsOptions,
   discoverDesignArtifacts,
+  fitDesignArtifactsToBytes,
 } from "./design-artifact-discovery";
 export { type DossierKey, DossierStore } from "./dossier-store";
 export {

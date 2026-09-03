@@ -818,6 +818,7 @@ function serializedBytes(value: DesignArtifactSet): number {
 function fitSerializedLimit(
   input: DesignArtifactSet,
   allChangedPaths: readonly string[],
+  maxSerializedBytes: number = DESIGN_ARTIFACT_LIMITS.maxSerializedBytes,
 ): DesignArtifactSet {
   const changedPaths = [...input.changedPaths];
   let omittedChangedPathCount = input.omittedChangedPathCount;
@@ -832,10 +833,11 @@ function fitSerializedLimit(
     omittedChangedPathCount,
     candidates,
     omittedCandidateCount,
-    limits: input.limits,
+    // The bundle declares the budget it was actually fitted to.
+    limits: { ...input.limits, maxSerializedBytes },
   });
 
-  while (serializedBytes(current()) > DESIGN_ARTIFACT_LIMITS.maxSerializedBytes) {
+  while (serializedBytes(current()) > maxSerializedBytes) {
     if (changedPaths.length > 0) {
       changedPaths.pop();
       omittedChangedPathCount += 1;
@@ -901,6 +903,22 @@ function fitSerializedLimit(
     };
   }
   return current();
+}
+
+/**
+ * Re-fit a discovered bundle to a tighter serialized budget: the room the prompt that
+ * carries it actually has. Discovery's own ceiling is 512 KiB, and the T3 seat's transport
+ * refuses a turn over 120,000 characters, so a bundle within the first can still sink the
+ * turn (drive 1.6, 2026-09-03). Same trimming order as discovery — omitted paths, then
+ * relevance paths, then artifacts, then candidates, then the last artifact's content —
+ * with the same honest `omitted*` / `truncated` markers, and `limits.maxSerializedBytes`
+ * naming the budget it was fitted to.
+ */
+export function fitDesignArtifactsToBytes(
+  set: DesignArtifactSet,
+  maxSerializedBytes: number,
+): DesignArtifactSet {
+  return fitSerializedLimit(set, set.changedPaths, maxSerializedBytes);
 }
 
 /**
