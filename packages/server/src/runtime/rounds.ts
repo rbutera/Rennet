@@ -1094,7 +1094,13 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
       .resolveT3Seats?.({
         repoRoot: input.draftingRoot ?? input.repoRoot,
         generationId: attemptGeneration.id,
-        branch: input.deltaPacket.patchset.repository.baseRef,
+        // The branch the seat is READING, which titles its thread in the sidecar
+        // ("feat/x — Design"). The SESSION'S CLAIM is what names it: the delta packet's
+        // repository projection carries `baseRef` alone — the resolved default-branch ref
+        // the change is measured against — so titling from it made every thread of every
+        // review read "origin/main — Design" (review finding 6). A session that claimed no
+        // target has no branch to name, and the base ref is the honest fallback.
+        branch: input.session.claim?.branch ?? input.deltaPacket.patchset.repository.baseRef,
         sessionId: input.session.id,
       })
       .catch((error: unknown) => ({

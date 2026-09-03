@@ -29,6 +29,7 @@ import {
 } from "@rennet/protocol";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type BoardsRuntime, createBoardsRuntime } from "../boards/boards-runtime";
+import { seatThreadTitle } from "../t3/threads";
 import {
   assembleRoundCollation,
   readPriorGeneration,
@@ -1359,6 +1360,7 @@ describe("a board seat has one backend (review finding 1)", () => {
   const runWith = async (
     opened: string[],
     resolveT3Seats?: Parameters<typeof createRoundsRuntime>[0]["resolveT3Seats"],
+    claimBranch?: string,
   ): Promise<{ events: RoundEvent[]; error: unknown }> => {
     const events: RoundEvent[] = [];
     let error: unknown;
@@ -1372,7 +1374,11 @@ describe("a board seat has one backend (review finding 1)", () => {
       readPrompt,
       ...(resolveT3Seats === undefined ? {} : { resolveT3Seats }),
     }).runRound({
-      session: { ...session, id: "t3-backend-session" } as SessionModel,
+      session: {
+        ...session,
+        id: "t3-backend-session",
+        ...(claimBranch === undefined ? {} : { claim: { branch: claimBranch } }),
+      } as SessionModel,
       repoRoot: root,
       asksDispatched: [],
       runWorkers: async () => ({ commitRange: { from: "c0", to: "c1" }, patchsetId: "ps-landed" }),
@@ -1428,5 +1434,39 @@ describe("a board seat has one backend (review finding 1)", () => {
     expect(error).toBeUndefined();
     expect(opened.length).toBeGreaterThan(0);
     for (const lane of settledLanes(events)) expect(lane.status).not.toBe("failed");
+  });
+
+  // Review finding 6. A seat thread is titled by the branch it is READING, and the sidecar's
+  // own thread list is how a reviewer finds one. The delta packet's repository projection
+  // carries `baseRef` alone — the ref the change is MEASURED AGAINST — so every thread of
+  // every review used to read "origin/main — Design".
+  it("names the claimed branch to the seat runtime, not the ref the change is measured against", async () => {
+    const branches: (string | undefined)[] = [];
+    // The premise, asserted rather than assumed: the claim and the base ref DIFFER on this
+    // fixture, so a reader cannot pass by picking either one.
+    expect(patchset().repository.baseRef).toBe("origin/main");
+
+    await runWith(
+      [],
+      async (input) => {
+        branches.push(input.branch);
+        return { unavailable: "no sidecar in this test" };
+      },
+      "feat/lens-threads",
+    );
+
+    expect(branches).toEqual(["feat/lens-threads"]);
+    expect(seatThreadTitle(branches[0] ?? "", "design")).toBe("feat/lens-threads — Design");
+  });
+
+  it("falls back to the base ref when the session claimed no branch", async () => {
+    // A no-target session claims nothing, so there is no branch to name; the base ref is
+    // honest rather than an invented title. Without this the fallback could be anything.
+    const branches: (string | undefined)[] = [];
+    await runWith([], async (input) => {
+      branches.push(input.branch);
+      return { unavailable: "no sidecar in this test" };
+    });
+    expect(branches).toEqual(["origin/main"]);
   });
 });
