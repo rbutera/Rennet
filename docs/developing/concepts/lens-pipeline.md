@@ -431,9 +431,10 @@ projection emits findings, decisions, requirements, steps, outcomes, groups,
 files, and comments from each section's direct children. Repeated code refs for
 one path count as one file, and structural prose does not inflate the count. A
 pair with no persisted board answers `null`. A successful empty result is typed
-instead of persisted as a zero-element board: Design uses `no-material`,
+instead of persisted as a zero-element board: Design uses `no-spec`,
 Decisions uses `no-decisions`, Flagged uses `no-findings`, and Noise uses
-`no-noise`. For the three core review lenses, material follows the topology the
+`no-noise`. An empty Design board is never an absence — only the seat's own
+`no-spec` return is. For the three core review lenses, material follows the topology the
 client serves, not the flat element pool. Sequence needs a reachable
 `order_step`, Decisions a reachable `decision`, and Flagged a reachable `finding`.
 Prose-only boards, empty sections, and detached typed elements do not satisfy
@@ -552,12 +553,10 @@ A board says what it does not know as plainly as what it does.
 - A drafting seat that fails renders as **failed**, never as empty. The
   surface distinguishes a lens that ran and found nothing from a lens that did
   not run.
-- Design discovery that completes and finds no supported spec artifacts is a
-  successful **absent** lane, not a failed drafter and not an empty board. The
-  other four lenses continue normally.
-- Design discovery that cannot read the pinned reviewed tree settles Design as a
-  failed lane while the other four lenses continue. It never falls back to mutable
-  repository reads and never records `no-material` for evidence it could not inspect.
+- A Design seat that looked for this branch's specification and found none returns
+  `no-spec`. That is a successful **absent** lane, not a failed drafter and not an
+  empty board; the other four lenses continue normally, and the finished board views
+  carry no Design tab.
 - An element the validation loop could not make pass leaves a trace, never a
   silent hole. If it was dropped, the omission names it with a reason (the
   honest-omission exit); unresolved board-level or schema violations ride
@@ -589,10 +588,10 @@ mount failure is **inconclusive** and never an all-clear.
 ## Lane discipline
 
 Each lens owns a lane, and material in another lens's lane is omitted, never
-narrated. Spec artifacts and their requirements belong to Design; the
+narrated. The branch's specification and its requirements belong to Design; the
 reading walk to Sequence; judgment calls to Decisions; defects to Flagged;
 skip-safe mechanical hunks to Noise. Generated scaffold stamps (OpenSpec's
-`.openspec.yaml` and the like) are noise, not spec artifacts.
+`.openspec.yaml` and the like) are noise, not specification documents.
 
 A lens accounts for what it cites and for nothing else. There is no skip list
 to fill and no remainder to declare: material another lens owns is simply
@@ -608,101 +607,77 @@ on them.
   before any exchange exists, so a draft board can never contain one. A real
   question from the change's history renders as an annotation or callout
   citing its source.
-- A decision stated in a spec artifact renders on both the Design board (as
-  artifact content) and the Decisions board (as a call citing the artifact).
-  Each board stands alone.
+- A decision stated in a specification renders on both the Design board (as source
+  content) and the Decisions board (as a call citing that document). Each board
+  stands alone.
 
 ## The Design lens
 
-Before drafting, the host discovers spec artifacts deterministically at the
-reviewed state. It recognises OpenSpec, Kiro, BMAD, Superpowers, and
-grill-with-docs; their exact shapes are documented in the
-[spec-format survey](../reference/spec-formats/openspec.md). BMAD discovery
-honours its configured paths before conventional locations and scopes a
-candidate to one story or unmatched epic. In a single-context grill-with-docs
-repository, one candidate contains the root glossary and every root ADR. In a
-multi-context repository, each linked context gets one candidate with its local
-ADRs, while each system-wide root ADR remains a separate candidate beside the
-context map. Candidates carry stable ids derived from their format and complete
-path set, then rank by changed artifacts and references to
-changed paths. That deterministic rank orders the evidence; the drafter still
-makes the semantic selection, so a genuinely relevant repository-only companion
-is not forbidden and a nearby decoy does not win merely by sorting first. One
-Design document selects exactly one candidate and its complete artifact set; it
-never combines neighbouring candidates. If no
-candidate applies, the drafter must account for each id and relevance class in a
-grounded `no-material` answer. The drafter
-receives source bytes from the patchset's pinned reviewed tree and never reads
-mutable working-tree replacements. If that pinned read fails, the Design lane
-reports the discovery failure instead of asking the drafter to rediscover the
-material from the repository; the sibling lenses continue.
+The Design seat finds the specification itself. Nothing is discovered for it and no
+artifact bundle rides in its prompt: it stands in the reviewed checkout and looks
+where specifications live — `openspec/changes/**` and `openspec/specs/**`, `.kiro/**`,
+`.bmad/**`, `docs/superpowers/specs/**` and `docs/superpowers/plans/**`, `docs/adr/**`
+and `docs/decisions/**`, grill-me documents and `CONTEXT.md` context maps. Their
+exact shapes are surveyed in the [spec-format reference](../reference/spec-formats/openspec.md).
+The clue is the change's own history: the commit messages of the reviewed range and
+the pull request body name the change directory, the story, or the ADR.
 
-Discovery is bounded: it retains at most 48 candidates, 64 artifacts per
-candidate, 192 KiB of source content in total, and 512 KiB for the complete
-serialized bundle. Every retained artifact records its full byte count and
-whether its supplied text was shortened; candidates and the set record omission
-counts and the applied limits. Relevant candidates get the larger share of the
-budget. A shortened bundle renders an explicit incompleteness account and a
-source link rather than presenting the preview as the whole specification.
+The board must cite the evidence that ties the specification to the branch — the
+commit message, pull request text, or task line that connects them — so a reader can
+check the link instead of trusting it. One specification per board; a neighbouring
+change that merely sorts first is not this branch's.
 
-The resulting board is a structured composition, not a Markdown viewer. Its
-header names the source set, displays the selected format, and reports derived
-capability, requirement, and task counts. Each supported stat appears once.
-Header artifact chips list every selected artifact exactly once in discovered
-order, and their first named source regions preserve that order; labels do not
-change identity. Header chips jump to their rendered regions; section and
-requirement source chips open the repo-relative file in the project editor. A
-proposal renders source-grounded Why, tagged What Changes rows, and Impact; capabilities
-render as counted jump cards, and task groups show their own completed/total
-progress. Each artifact gets a source-linked region; requirements preserve their
-normative text and source order, and every scenario and task remains its own
-canonical element so later dispositions can address it. A scenario is owned only
-through its requirement's `scenarios` list, never repeated in section children.
-The host splits exact OpenSpec and Kiro scenario text into condition and response
-fields so the surface can distinguish trigger from outcome without replacing the
-source wording. The drafter supplies exact source text and canonical ownership,
-but format-specific metadata is host-owned. Before lint and rendering, the host
-strips any drafter-supplied claims for those fields and stamps exact parser values:
-Kiro `requirement_refs: string[]` on task prose; BMAD `status: string` on a story
-requirement and `acceptance_criteria: string[]` on task prose; Superpowers
-`task_manifest` file, interface, and verification arrays on a uniquely mapped
-task-group section; `source_cells: string[]` on matched BMAD Tech Stack row and
-Superpowers Architecture or Tech Stack header decisions; and grill `glossary_term`
-term, definition, and avoided-synonym values on the exact glossary-entry prose.
-Every array preserves source order. The surface renders each visible projection once
-at that owner; `source_cells` remains exact source-shape validation metadata because
-the decision already renders its parsed choice. Stated decisions continue to use
-their canonical statement, rationale, alternatives, and evidence fields. The
-rendered content still comes from the immutable discovery bundle.
+When the repository holds no specification for this branch, the seat returns
+`{ "absence": "no-spec" }` and drafts nothing. The lane settles **absent**, not
+failed: a branch without a spec workflow is an ordinary branch. The bench reader
+says "No spec found for this branch." and the finished board views carry no Design
+tab at all, because an empty Design board would be a lie about what the repository
+holds. Design's older `no-material` absence stays readable for generations recorded
+before this change; nothing settles it now.
 
-Requirement coverage is not derived. The host discards any coverage fields a
-drafter supplies and renders none, so a requirement row carries its source and
-its normative text rather than a met/partial/gap chip nobody grounded. Task
-progress such as `0/N` still comes from the source's own marks.
+The resulting board is a structured composition, not a Markdown viewer. Its header
+names the source set, displays the format, and reports capability, requirement, and
+task counts read from those files. Each stat appears once. Header source chips list
+every rendered file exactly once in reading order, and their first named source
+regions preserve that order. Header chips jump to their rendered regions; section and
+requirement source chips open the repo-relative file in the project editor. A proposal
+renders source-grounded Why, tagged What Changes rows, and Impact; capabilities render
+as counted jump cards, and task groups keep their source's own `- [x]` / `- [ ]` marks.
+Requirements preserve their normative text and source order, and every scenario and
+task remains its own canonical element so later dispositions can address it. A scenario
+is owned only through its requirement's `scenarios` list, never repeated in section
+children.
 
-`spec_delta` and the round `delta` marker are independent: the first records
-the artifact's added, modified, removed, or renamed state; the second records
-whether the rendered section changed since the prior review generation. A spec
-artifact has one source-linked capability root. When it contains several delta
-headers, exact operation sections sit beneath that root in source order, and each
-requirement row and its nearest operation section carry the source `spec_delta`.
-The capability card rolls those operations up as ordered unique badges without
-duplicating the capability.
-Source-indexed lint checks each requirement only against its named artifact and
-tracks source order independently per file. Once the drafter selects a
-candidate, lint requires every retained artifact in that candidate in both the
-header roll-up and a named region without forcing nearby candidates into the
-board. Reverse checks require every source requirement, scenario, and task once
-and in source order, verify proposal anatomy and derived header values, and make
-bounded discovery visible. Source lines resolve against the reviewed file or the
-retained artifact text, and requirement scenario refs resolve only to narrative
-scenario regions.
+Format-specific display fields are authored by the seat from the source text it read,
+on the element that owns them: Kiro `requirement_refs` on task prose; BMAD `status` on
+a story requirement and `acceptance_criteria` on task prose; Superpowers `task_manifest`
+file, interface, and verification arrays on a task-group section; `task_progress` on the
+top-level source section; `source_cells` on a matched tech-stack or architecture
+decision; grill `glossary_term` on the glossary-entry prose; and `scenario_clauses`
+split from a scenario's own WHEN/THEN words. Every array preserves source order, and the
+surface renders each projection once at its owner. A field whose shape does not match is
+not rendered, so a guess buys nothing. Stated decisions continue to use their canonical
+statement, rationale, alternatives, and evidence fields.
 
-For Superpowers, the host leaves plan checkbox bytes untouched and overlays task
-completion from a selected progress artifact only when its exact first line binds
-the selected plan path. Only `Task N: complete (...)` completes a group. Fix-round,
-minor, and ruling lines remain visible in the progress region but never count as
-completion, and an unbound or absent ledger leaves the plan's static marks in charge.
+A requirement cites the code that implements it through `trace` — `code_ref` elements
+by path and line range — and names implementing paths in `related_files`. Those
+citations resolve against the patchset like any other; a requirement with no
+implementing code in the change carries an empty `trace` rather than a guess. There is
+no met/partial/gap coverage chip: nothing derives one, and no lens accounts for
+requirements it did not cite.
+
+`spec_delta` and the round `delta` marker are independent: the first records the
+specification's added, modified, removed, or renamed state; the second records whether
+the rendered section changed since the prior review generation. A capability file has
+one source-linked capability root. When it contains several delta headers, exact
+operation sections sit beneath that root in source order, and each requirement row and
+its nearest operation section carry the source `spec_delta`. The capability card rolls
+those operations up as ordered unique badges without duplicating the capability.
+
+For Superpowers, the seat leaves plan checkbox bytes untouched and reports task
+completion from a progress ledger only when its exact first line binds the selected
+plan path. Only `Task N: complete (...)` completes a group. Fix-round, minor, and
+ruling lines remain visible in the progress region but never count as completion.
 
 ## Reading affordances every board shares
 

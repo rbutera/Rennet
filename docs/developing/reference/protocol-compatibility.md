@@ -193,14 +193,16 @@ A round's progress rows are two shapes, each a union on `status` so the illegal
 states are unrepresentable rather than guarded at every read. A **step row** (a
 prep line, the worker turn) settles `done` with its own account of itself, or
 `failed` with a reason. A **lens lane** adds `drafted` — its board is written but
-its carried/reworked verdict is not known yet — plus `absent` for a successful
-discovery that found no material for that lens. Its `done` state *requires* the `carrying
+its carried/reworked verdict is not known yet — plus `absent` for a lens that
+settled with nothing to show and said why. Its `done` state *requires* the `carrying
 forward` / `reworked` verdict; `absent` and `failed` both require their honest
 reason. Step rows never use `drafted` or `absent`.
 
 The same successful absence is durable. A generation may record a lens in
-`absentLenses`: Design uses `no-material`, Decisions uses `no-decisions`,
-Flagged uses `no-findings`, and Noise uses `no-noise`. `board.read` then returns
+`absentLenses`: Design uses `no-spec`, Decisions uses `no-decisions`, Flagged
+uses `no-findings`, and Noise uses `no-noise`. Design's `no-material` predates
+the spec respec and stays in the reason enum so generations recorded before it
+keep parsing; nothing settles it now. `board.read` then returns
 `board: null` plus that optional absence code. Older generations and older
 daemons omit the field, which remains the ordinary missing-board answer rather
 than being reclassified as successful absence. The client polls missing boards

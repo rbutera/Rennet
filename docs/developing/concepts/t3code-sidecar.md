@@ -253,14 +253,12 @@ Three things follow from the thread being persistent.
   sidecar's own message with its stack frames dropped, instead of the two-minute timeout.
 - **The prompt fits the transport.** T3 caps a turn's input at
   `PROVIDER_SEND_TURN_MAX_INPUT_CHARS` (120,000 characters), exported through the seam as
-  `T3_TURN_INPUT_MAX_CHARS`. The Design seat is the one that carries a design-artifact
-  bundle, and discovery bounds that bundle at 512 KiB — four times the cap — so
-  `fitDesignArtifactsToPrompt` re-fits it to the room the rendered
-  prompt has left: the same trimming order and the same `omitted*` / `truncated` markers as
-  discovery, with the bundle's `limits` naming the budget it was fitted to, and the fitted
-  bundle is what the lint context reasons about too. On the drive of 2026-09-03 the
-  Design prompt was 241,848 characters — 103k of hunk inventory plus a 126k bundle —
-  while the five bundle-less seats sat at 110k and ran.
+  `T3_TURN_INPUT_MAX_CHARS`. On the drive of 2026-09-03 the Design prompt was 241,848
+  characters — 103k of hunk inventory plus a 126k design-artifact bundle — while the five
+  bundle-less seats sat at 110k and ran. Both payloads are gone: citations by path and
+  line removed the inventory, and the Design seat now finds the specification itself in
+  the checkout instead of being handed one (session-bound-workspace D5, D6). No seat
+  interpolates a bundle, so nothing needs re-fitting to the cap.
 
 Because the SDK fixes `outputFormat` when a query is constructed and offers no in-session
 setter, a *live* session's contract is decided by the turn that started it. A later turn
@@ -546,7 +544,6 @@ enumeration, so a large delta costs the turn nothing and the file stays complete
 - `packages/server/src/t3/threads.ts`: the (repository root, session id) and (repository root, generation id, seat) → thread bindings, and `seatThreadTitle`.
 - `packages/server/src/t3/latest-event.ts`: the pure thread → `LaneLatest` projector; `t3/seat-progress.ts`: the throttled subscription that feeds a lane.
 - `packages/adapters/src/t3-seat-turn.ts`: the seat leg (`createT3SeatTurn`); `council-seat-turn.ts` routes board jobs to it when the seam is present, and `runtime/rounds.ts` builds the seam per generation.
-- `packages/server/src/runtime/lens-pipeline.ts`: `fitDesignArtifactsToPrompt`, the Design bundle's bound under `T3_TURN_INPUT_MAX_CHARS`, over `fitDesignArtifactsToBytes` in `packages/adapters/src/design-artifact-discovery.ts`.
 - `packages/server/src/t3/handoff.ts`: the handoff exit, which `create-server.ts` runs for every work order that names a review.
 - `packages/app-ui/src/chat/t3-chat-dock.tsx`: the slot, its header trail, the session-or-lens choice and the hand-off to the host-provided components (`chat/t3-chat-slot.tsx`); `packages/app-ui/src/store/ui.ts`: `lensThread` and `openLensThread`.
 - `packages/t3-chat/src/native-chat.tsx`: the native mount (routes, providers, environment registration, the thread and draft route views mirrored from upstream's route files, and `T3ThreadView`); `session.ts`: the session-to-registration mapping and the route builder both views share; `t3.css`: the theme bridge and the read-only composer rule. `apps/desktop/vite.renderer.config.ts` and `vite.browser.config.ts` each carry the alias, dedupe and defines; `apps/desktop/src/renderer/index.tsx` and `src/browser/entry.tsx` each provide both components.

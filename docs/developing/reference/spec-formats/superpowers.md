@@ -21,8 +21,8 @@ The workflow classifies every request as **spike**, **bounded**, or **architectu
 For a local review, Rennet makes one narrow exception to normal git-ignore handling:
 it copies matching `.superpowers/sdd/*/progress.md` ledgers into the immutable
 reviewed Git tree at capture time. Sibling briefs, reports, review packages, and
-all other ignored files stay out. Later Design discovery reads only that pinned
-tree, so a changing scratch ledger cannot rewrite an existing review.
+all other ignored files stay out, so the Design reader finds the ledger in the
+reviewed checkout beside the plan it binds.
 
 User preferences override the default `docs/superpowers/specs` and `docs/superpowers/plans` locations, so a renderer must not hard-code them — discover the file, then parse by shape.
 
