@@ -228,6 +228,19 @@ Claude and Codex adapters that hand it to their runtimes, and the runtime-ingest
 that projects the `turn.settled` activity. Each has its row in `vendor/t3code/PATCHES.md`,
 all upstreamable.
 
+**A dead `claude` must not take the sidecar with it.** The SDK's process transport writes
+the prompt to the child's stdin and never listens for that socket's `error` event, so a
+`claude` that dies before the first write — a bad install, an immediate auth failure —
+raised an unhandled `write EPIPE` that killed the whole server process and every other
+seat's thread with it. The Claude adapter now spawns the child through the SDK's
+`spawnClaudeCodeProcess` hook and handles that error, terminating a child whose transport
+is broken so the failure arrives on the query stream, where the session settles the turn
+as failed like any other runtime failure. One thing that crash was hiding is still open:
+when the write loses that race against a `claude` that exits immediately, the turn can be
+left unsettled instead — about one run in ten against a stand-in that exits at once. The
+sidecar now survives it, so the blast radius is one thread rather than every seat, but a
+turn that never settles is its own defect and is not fixed here.
+
 ## The live line on a lane
 
 While a seat's lane runs, the daemon holds one subscription to that seat's thread and

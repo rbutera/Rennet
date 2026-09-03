@@ -232,70 +232,76 @@ describe.skipIf(!bundle)("t3 client over the vendored sidecar", () => {
 // the session with `lastError` and emits no turn lifecycle, so the settle wait must read
 // the session, not just `latestTurn`. This gets its OWN sidecar: on the ubuntu CI runner
 // the sidecar's RPC socket closed with 1006 right after the dead stream and every later
-// test in the shared suite lost its connection (run 33744230481). On macOS the sidecar
-// survives it. Until that Linux behaviour is reproduced and fixed in the vendored server,
-// the proof runs on macOS only and says so here rather than pretending to run.
-describe.skipIf(!bundle || process.platform !== "darwin")(
-  "t3 client: a provider stream that dies before its turn registers",
-  () => {
-    let root: string;
-    let running: RunningSidecar;
-    let client: T3Client;
-    let dataDir: string;
+// test in the shared suite lost its connection (run 33744230481). That 1006 was the whole
+// sidecar dying on an unhandled `write EPIPE`: the SDK's transport writes the prompt to a
+// child stdin nobody listens to for errors. It is fixed in `ClaudeAdapter.ts` (ledger row
+// 6), so this runs on every platform again. A `claude` that merely EXITS cannot see it —
+// the SDK's own exit check wins that race, ten runs out of ten — so the stand-in below
+// closes its stdin and lives on, which is the shape that produces the write.
+describe.skipIf(!bundle)("t3 client: a provider stream that dies before its turn registers", () => {
+  let root: string;
+  let running: RunningSidecar;
+  let client: T3Client;
+  let dataDir: string;
 
-    beforeAll(async () => {
-      root = mkdtempSync(join(tmpdir(), "rennet-t3-dead-provider-"));
-      dataDir = join(root, "data");
-      const repo = join(root, "repo");
-      mkdirSync(repo, { recursive: true });
-      execFileSync("git", ["init", "-q", "-b", "main", repo]);
-      writeFileSync(join(repo, "README.md"), "repo\n");
-      execFileSync("git", ["-C", repo, "add", "."]);
-      execFileSync("git", [
-        "-C",
-        repo,
-        "-c",
-        "user.name=t",
-        "-c",
-        "user.email=t@example.com",
-        "commit",
-        "-q",
-        "-m",
-        "init",
-      ]);
-      running = await spawnSidecar({
-        dataDir,
-        bundlePath: bundle as string,
-        upstreamCommit: "test",
-        env: { ...process.env, HOME: join(root, "home") },
-        // `claude` exits at once, so a turn on the Claude provider fails at the stream.
-        binaries: { claude: "/usr/bin/false" },
-        readyTimeoutMs: 30_000,
-      });
-      client = await connectT3({
-        wsUrl: `${running.origin.replace(/^http/, "ws")}/ws`,
-        accessToken: running.credentials.accessToken,
-      });
-    }, 60_000);
+  beforeAll(async () => {
+    root = mkdtempSync(join(tmpdir(), "rennet-t3-dead-provider-"));
+    dataDir = join(root, "data");
+    const repo = join(root, "repo");
+    mkdirSync(repo, { recursive: true });
+    execFileSync("git", ["init", "-q", "-b", "main", repo]);
+    writeFileSync(join(repo, "README.md"), "repo\n");
+    execFileSync("git", ["-C", repo, "add", "."]);
+    execFileSync("git", [
+      "-C",
+      repo,
+      "-c",
+      "user.name=t",
+      "-c",
+      "user.email=t@example.com",
+      "commit",
+      "-q",
+      "-m",
+      "init",
+    ]);
+    // `claude` closes its stdin and then dies, so a turn on the Claude provider
+    // fails at the stream AND the SDK's prompt write lands on a broken pipe.
+    const claude = join(root, "claude-broken-stdin");
+    writeFileSync(claude, "#!/bin/sh\nexec 0<&-\nsleep 2\nexit 1\n", { mode: 0o755 });
+    running = await spawnSidecar({
+      dataDir,
+      bundlePath: bundle as string,
+      upstreamCommit: "test",
+      env: { ...process.env, HOME: join(root, "home") },
+      binaries: { claude },
+      readyTimeoutMs: 30_000,
+    });
+    client = await connectT3({
+      wsUrl: `${running.origin.replace(/^http/, "ws")}/ws`,
+      accessToken: running.credentials.accessToken,
+    });
+  }, 60_000);
 
-    afterAll(async () => {
-      await client?.close();
-      await stopSidecar(dataDir);
-      running?.child?.kill("SIGKILL");
-      rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
-    }, 30_000);
+  afterAll(async () => {
+    await client?.close();
+    await stopSidecar(dataDir);
+    running?.child?.kill("SIGKILL");
+    rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }, 30_000);
 
-    it("settles as a failed turn carrying the session error, instead of waiting forever", async () => {
-      const projectId = await client.ensureProject(join(root, "repo"), "fixture");
-      const threadId = await client.createThread({
-        projectId,
-        title: "dead claude",
-        modelSelection: modelSelection("claudeAgent", "claude-sonnet-5"),
-      });
-      await client.startTurn({ threadId, text: "say hi", outputSchema: { type: "object" } });
-      const outcome = await client.waitForTurnSettled(threadId, { startTimeoutMs: 15_000 });
-      expect(outcome.state).toBe("error");
-      expect(outcome.errorMessage).toMatch(/stream failed|Claude/i);
-    }, 30_000);
-  },
-);
+  it("settles as a failed turn carrying the session error, instead of waiting forever", async () => {
+    const projectId = await client.ensureProject(join(root, "repo"), "fixture");
+    const threadId = await client.createThread({
+      projectId,
+      title: "dead claude",
+      modelSelection: modelSelection("claudeAgent", "claude-sonnet-5"),
+    });
+    await client.startTurn({ threadId, text: "say hi", outputSchema: { type: "object" } });
+    const outcome = await client.waitForTurnSettled(threadId, { startTimeoutMs: 15_000 });
+    expect(outcome.state).toBe("error");
+    expect(outcome.errorMessage).toMatch(/stream failed|Claude/i);
+    // The sidecar has to still be there: the whole point of the EPIPE fix is that
+    // one thread's dead provider does not take every other seat's thread with it.
+    expect(running.child?.exitCode).toBeNull();
+  }, 30_000);
+});
