@@ -269,6 +269,10 @@ describe("attachCiSignal", () => {
               summary: "snapshot mismatch without an attributable path",
             },
           ]),
+        // The classification turn's context goes to a file it names; the fake answers
+        // with a directory and keeps nothing. Without it there is nothing to point at,
+        // so the refinement block is skipped and this test's abort never happens.
+        writeContext: () => ".rennet/context/sess_test",
         refineTurn: async (_prompt, signal) =>
           new Promise(() => {
             signal?.addEventListener("abort", () => {

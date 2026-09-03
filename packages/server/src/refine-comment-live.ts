@@ -2,11 +2,13 @@ import {
   type CodexExecutor,
   type HarnessPort,
   providerHarness,
+  REFINE_INLINE_NOTE_MAX,
   type RefinePort,
   type RefinePortResult,
   refineComment,
   resolveAssignment,
 } from "@rennet/core";
+import type { PromptContextFile } from "@rennet/prompts";
 import type {
   AnchorSide,
   AnchorSpan,
@@ -48,10 +50,10 @@ import type {
 /** The council job id for comment refinement (light tier, §2.2 row 14). */
 const REFINE_JOB_ID = "comment-refinement";
 
-/** How much of the anchored file's diff is inlined for grounding (bounded so a
- *  huge file cannot blow the prompt; the note usually carries the intent, the diff
- *  makes the cleanup "investigated" rather than blind). */
-export const REFINE_DIFF_CEILING = 8_000;
+/** The pointer file this turn writes into the session's context directory. */
+const REFINE_POINTERS = "refine-pointers.json";
+/** Where an over-ceiling raw note is written, rather than inlined. */
+const REFINE_NOTE = "refine-note.md";
 
 /**
  * The tiny structured-output schema the refine turn is constrained to. `verdict`
@@ -87,12 +89,6 @@ function activePatchsetOf(review: Review): Patchset {
   return patchset;
 }
 
-/** Bound a diff string to `maxBytes`, marking the cut honestly. "" stays "". */
-function boundToBytes(section: string, maxBytes: number): string {
-  if (section.length <= maxBytes) return section;
-  return `${section.slice(0, maxBytes)}\n… (diff truncated at ${maxBytes} bytes)`;
-}
-
 /**
  * The whole (unbounded) section of a unified diff for one file. A unified diff
  * opens each file with `diff --git a/<path> b/<path>`; this returns from that
@@ -121,60 +117,44 @@ function fileSection(rawDiff: string, path: string): string {
 
 const HUNK_HEADER = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
 
+/** Where a note's code lives: the side of the change and the lines to read. */
+export interface AnchoredHunkRange {
+  readonly side: "old" | "new";
+  readonly startLine: number;
+  readonly endLine: number;
+}
+
 /**
- * The single hunk of a file's diff section whose line range CONTAINS the anchored
- * span, plus the file's header lines (so `--- / +++` context rides along). The
- * span's `startLine` is a file line: for `deletions` it is an OLD-file line
- * (matched against `-oldStart,oldLen`); for `additions`/`context` a NEW-file line
- * (matched against `+newStart,newLen`). `null` when no hunk covers the span (e.g.
- * the anchored file is not in the diff at that line) — the caller then falls back
- * to the whole file section rather than guessing.
+ * The LINE RANGE of the diff hunk that contains the anchored span — never its text
+ * (session-context-files, D4: the fenced diff used to ride into the prompt; the refiner
+ * now reads the checkout). The span's `startLine` is a file line: for `deletions` an
+ * OLD-file line (matched against `-oldStart,oldLen`); for `additions`/`context` a
+ * NEW-file line (`+newStart,newLen`).
+ *
+ * `null` when the file is not in the diff, or when no hunk covers the span — the refiner
+ * then cleans from the note alone, which is still the whole "messy in, clean out"
+ * promise. A null is honest; a pointer at a range no hunk covers would not be.
  */
-function hunkForSpan(section: string, span: AnchorSpan, side?: AnchorSide): string | null {
-  const lines = section.split("\n");
-  const firstHunk = lines.findIndex((line) => HUNK_HEADER.test(line));
-  if (firstHunk === -1) return null;
-  const header = lines.slice(0, firstHunk);
+export function anchoredHunkRange(
+  rawDiff: string,
+  path: string,
+  span?: AnchorSpan,
+  side?: AnchorSide,
+): AnchoredHunkRange | null {
+  const section = fileSection(rawDiff, path);
+  if (section === "" || span === undefined) return null;
   const useOld = side === "deletions";
-  for (let i = firstHunk; i < lines.length; i += 1) {
-    const match = lines[i]?.match(HUNK_HEADER);
+  for (const line of section.split("\n")) {
+    const match = line.match(HUNK_HEADER);
     if (!match) continue;
     const start = Number(useOld ? match[1] : match[3]);
     const len = Number((useOld ? match[2] : match[4]) ?? "1");
     const end = start + Math.max(len, 1) - 1;
     if (span.startLine >= start && span.startLine <= end) {
-      let next = i + 1;
-      while (next < lines.length && !HUNK_HEADER.test(lines[next] ?? "")) next += 1;
-      return [...header, ...lines.slice(i, next)].join("\n");
+      return { side: useOld ? "old" : "new", startLine: start, endLine: end };
     }
   }
   return null;
-}
-
-/**
- * Extract the diff context the note refers to, bounded to `maxBytes`. With a span
- * anchor, return the HUNK covering it (so a note anchored past byte `maxBytes`
- * still gets its own code, not an unrelated truncation from the file's start — the
- * grounding catch). Without a span (a path-grained note), the whole file section,
- * bounded and honestly marked. "" when the file is not in the diff — the refiner
- * then cleans from the note alone (still the whole "messy in, clean out" promise).
- */
-export function extractAnchoredDiff(
-  rawDiff: string,
-  path: string,
-  maxBytes: number,
-  span?: AnchorSpan,
-  side?: AnchorSide,
-): string {
-  const section = fileSection(rawDiff, path);
-  if (section === "") return "";
-  if (span === undefined) return boundToBytes(section, maxBytes);
-  return boundToBytes(hunkForSpan(section, span, side) ?? section, maxBytes);
-}
-
-/** Back-compat whole-file extraction (path-grained). Prefer `extractAnchoredDiff`. */
-export function extractFileDiff(rawDiff: string, path: string, maxBytes: number): string {
-  return boundToBytes(fileSection(rawDiff, path), maxBytes);
 }
 
 /** Render a thrown value into a turn-failure message (mirrors harness-run-turn). */
@@ -317,6 +297,12 @@ export interface LiveRefineDeps {
    * Receives the review's repo root (#334) so a WSL project resolves the distro seat.
    */
   codexExecutor(repoRoot: string): Promise<CodexExecutor | null>;
+  /**
+   * Write this turn's context files into the review's session context directory and
+   * return that directory relative to the repository root — which IS the seat's cwd.
+   * The one writer (`writeSessionContext`); the prompt only ever names paths.
+   */
+  writeContext(review: Review, files: readonly PromptContextFile[]): string;
 }
 
 /**
@@ -365,22 +351,45 @@ export function createLiveRefinePort(
       };
     }
 
-    const context = input.path
-      ? extractAnchoredDiff(
+    // Nothing about the code travels in the prompt. The anchored hunk becomes a RANGE in
+    // a pointer file, and the raw note stays inline only under the anchored-ask ceiling —
+    // over it, it is a file too.
+    const range = input.path
+      ? anchoredHunkRange(
           activePatchsetOf(input.review).rawDiff,
           input.path,
-          REFINE_DIFF_CEILING,
           input.span,
           input.side,
         )
-      : "";
+      : null;
+    const noteInline = input.raw.length <= REFINE_INLINE_NOTE_MAX;
+    const files: PromptContextFile[] = [];
+    if (range !== null && input.path !== undefined) {
+      files.push({
+        name: REFINE_POINTERS,
+        // Compact: an indent is a ~30% surcharge no reader sees (#737).
+        body: JSON.stringify({ turn: "comment-refinement", read: { path: input.path, ...range } }),
+        holds: "The file, the side and the line range the reviewer's note is anchored to.",
+        readWhen: "before you clean up the note, to ground it in the code it is about.",
+      });
+    }
+    if (!noteInline) {
+      files.push({
+        name: REFINE_NOTE,
+        body: input.raw,
+        holds: "The reviewer's raw note, verbatim.",
+        readWhen: "first — it is the text you are cleaning up.",
+      });
+    }
+    const dir = files.length > 0 ? deps.writeContext(input.review, files) : "";
     return refineComment(
       {
         raw: input.raw,
         type: input.type,
         ...(input.lens === undefined ? {} : { lens: input.lens }),
         ...(input.path === undefined ? {} : { path: input.path }),
-        ...(context === "" ? {} : { context }),
+        ...(range === null ? {} : { pointersPath: `${dir}/${REFINE_POINTERS}` }),
+        ...(noteInline ? {} : { notePath: `${dir}/${REFINE_NOTE}` }),
       },
       port,
       resolution.model,

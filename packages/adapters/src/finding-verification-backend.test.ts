@@ -52,9 +52,11 @@ describe("createVerificationFileReader (#179)", () => {
     // 100 - 10 context .. (100 + 3 - 1) + 10 = lines 90..112.
     expect(window?.startLine).toBe(90);
     expect(window?.endLine).toBe(112);
-    expect(window?.text).toContain("line 100");
-    expect(window?.text).toContain("line 90");
-    expect(window?.text).toContain("line 112");
+    // The anchored hunk's OWN span rides beside the window, so the pointer can name it.
+    expect(window?.hunkStartLine).toBe(100);
+    expect(window?.hunkEndLine).toBe(102);
+    // A working-tree read: the file on disk IS the reviewed content, so no `readAt`.
+    expect(window?.readAt).toBeUndefined();
   });
 
   it("clamps the window to the file bounds", async () => {
@@ -67,7 +69,8 @@ describe("createVerificationFileReader (#179)", () => {
     const window = await read("rennet:hunk/h1");
     expect(window?.startLine).toBe(1);
     expect(window?.endLine).toBe(1);
-    expect(window?.text).toBe("only one line");
+    expect(window?.hunkStartLine).toBe(1);
+    expect(window?.hunkEndLine).toBe(1);
   });
 
   it("returns undefined for an unknown hunk (fail-closed → core caveats it)", async () => {
@@ -202,7 +205,10 @@ describe("createVerificationFileReaderForPatchset (#179 → PR/retrospective)", 
     // The SAME window math as the working-tree reader, over the git-show content.
     expect(window?.startLine).toBe(90);
     expect(window?.endLine).toBe(112);
-    expect(window?.text).toContain("line 100");
+    // The reviewed head is NOT what is checked out, so the pointer must carry the read
+    // command. Without it the verifier opens the working tree and checks a different
+    // revision — silently, which is exactly what the removed inline window prevented.
+    expect(window?.readAt).toBe("git show headsha:src/a.ts");
     expect(calls).toEqual(["show headsha:src/a.ts"]);
   });
 
@@ -213,7 +219,7 @@ describe("createVerificationFileReaderForPatchset (#179 → PR/retrospective)", 
       hunks: [hunk({ id: "h1", filePath: "src/a.ts", newStart: 5, newLines: 1 })],
       git,
     });
-    expect((await read("rennet:hunk/h1"))?.text).toContain("line 5");
+    expect((await read("rennet:hunk/h1"))?.readAt).toBe("git show headsha:src/a.ts");
     expect(calls).toEqual(["show headsha:src/a.ts"]);
   });
 
@@ -229,7 +235,7 @@ describe("createVerificationFileReaderForPatchset (#179 → PR/retrospective)", 
       git,
       readFile: () => FILE,
     });
-    expect((await read("rennet:hunk/h1"))?.text).toContain("line 1");
+    expect((await read("rennet:hunk/h1"))?.readAt).toBeUndefined();
     expect(calls).toEqual([]);
   });
 

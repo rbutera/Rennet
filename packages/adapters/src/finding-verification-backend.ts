@@ -87,6 +87,12 @@ export interface VerificationFileReaderOptions {
    * Defaults to a guarded UTF-8 working-tree read.
    */
   readonly readFile?: VerificationFileRead;
+  /**
+   * How the verifier should read a file when the working tree is NOT the reviewed
+   * content — given the repo-relative path, the command that reads the reviewed bytes.
+   * Absent for a working-tree review, where the file on disk IS the reviewed content.
+   */
+  readonly readAt?: (repoRelativePath: string) => string;
 }
 
 /** A guarded working-tree read: any failure (missing, unreadable) is `undefined`, never a throw. */
@@ -99,11 +105,16 @@ function defaultReadFile(absolutePath: string): string | undefined {
 }
 
 /**
- * Build the {@link VerificationFileReader} core injects: anchor → real file window.
- * The window is centred on the hunk's post-change line range, widened by
+ * Build the {@link VerificationFileReader} core injects: anchor → WHERE the real file
+ * window is. The window is centred on the hunk's post-change line range, widened by
  * `contextLines` each side and clamped to the file — strictly more than the offered
  * hunk. Fail-closed at every step (unknown hunk, unsafe path, unreadable file →
  * `undefined`).
+ *
+ * The file is still READ here even though its text no longer travels anywhere
+ * (session-context-files, D4: the verifier opens the checkout itself). The read is what
+ * clamps `endLine` to the lines the file actually has and what makes an unreadable file
+ * an honest inconclusive instead of a pointer at nothing.
  */
 export function createVerificationFileReader(
   options: VerificationFileReaderOptions,
@@ -128,17 +139,20 @@ export function createVerificationFileReader(
     const content = await readFile(join(options.repositoryRoot, hunk.filePath));
     if (content === undefined) return undefined;
 
-    const lines = content.split("\n");
-    const total = lines.length;
+    const total = content.split("\n").length;
     // The hunk's post-change span (1-based). A pure deletion (newLines 0) anchors at
     // its `newStart` insertion point; clamp both ends into the file.
     const spanStart = Math.max(1, hunk.newStart);
     const spanEnd = Math.max(spanStart, hunk.newStart + Math.max(0, hunk.newLines) - 1);
-    const startLine = Math.max(1, spanStart - contextLines);
-    const endLine = Math.min(total, spanEnd + contextLines);
-    const text = lines.slice(startLine - 1, endLine).join("\n");
 
-    return { path: hunk.filePath, startLine, endLine, text };
+    return {
+      path: hunk.filePath,
+      startLine: Math.max(1, spanStart - contextLines),
+      endLine: Math.min(total, spanEnd + contextLines),
+      hunkStartLine: spanStart,
+      hunkEndLine: Math.min(total, spanEnd),
+      ...(options.readAt === undefined ? {} : { readAt: options.readAt(hunk.filePath) }),
+    };
   };
 }
 
@@ -232,13 +246,14 @@ export function createVerificationFileReaderForPatchset(
       ...(options.readFile ? { readFile: options.readFile } : {}),
     });
   }
+  const headOid = options.patchset.repository.headOid;
   return createVerificationFileReader({
     ...base,
-    readFile: createGitShowFileRead({
-      git: options.git,
-      repositoryRoot,
-      headOid: options.patchset.repository.headOid,
-    }),
+    readFile: createGitShowFileRead({ git: options.git, repositoryRoot, headOid }),
+    // The reviewed head is NOT what is checked out, so the verifier must be told how to
+    // read the reviewed bytes. Without this it would read the working tree and verify a
+    // different revision than the one under review — silently, and confidently.
+    readAt: (path) => `git show ${headOid}:${path}`,
   });
 }
 

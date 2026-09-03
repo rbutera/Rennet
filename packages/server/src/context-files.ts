@@ -17,7 +17,7 @@
 //     resumed round still finds its files. Three callers: `session.archive`, the round's
 //     `sweepIfArchived` re-sweep, and the daemon-start orphan sweep below.
 
-import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { ensureManagedIgnoreBlock } from "@rennet/adapters";
 import { type SessionContextFile, sessionContextRelativeDir } from "@rennet/core";
@@ -32,9 +32,35 @@ export function sessionContextDir(root: string, sessionId: string): string {
   return join(root, sessionContextRelativeDir(sessionId));
 }
 
-/** The `README.md` index: one line per file — name, what it holds, when to read it. */
-function renderIndex(files: readonly SessionContextFile[]): string {
-  const lines = files.map((file) => `- \`${file.name}\` — ${file.holds} Read it ${file.readWhen}`);
+/** An index entry, so a re-render can tell one apart from the prose around it. */
+const INDEX_ENTRY = /^- `([^`]+)` — /;
+
+/**
+ * The `README.md` index: one line per file — name, what it holds, when to read it.
+ *
+ * Entries from EARLIER writes are carried forward. Several turn kinds write into one
+ * session's directory at different moments (a seat's context, then a verification turn's
+ * pointers), and each write re-renders this file; without the carry-forward the last
+ * writer's index would omit files whose prompts still name them — a directory listing
+ * that lies about its own directory.
+ */
+function renderIndex(dir: string, files: readonly SessionContextFile[]): string {
+  const written = new Set(files.map((file) => file.name));
+  let kept: readonly string[] = [];
+  try {
+    kept = readFileSync(join(dir, "README.md"), "utf8")
+      .split("\n")
+      .filter((line) => {
+        const name = INDEX_ENTRY.exec(line)?.[1];
+        return name !== undefined && !written.has(name);
+      });
+  } catch {
+    // No index yet (the first write into this directory), or it is unreadable.
+  }
+  const lines = [
+    ...kept,
+    ...files.map((file) => `- \`${file.name}\` — ${file.holds} Read it ${file.readWhen}`),
+  ].sort();
   return [
     "# Session context",
     "",
@@ -44,6 +70,11 @@ function renderIndex(files: readonly SessionContextFile[]): string {
     ...(lines.length === 0 ? ["(no files)"] : lines),
     "",
   ].join("\n");
+}
+
+/** The session's context directory, as a path relative to the bound root (`/` separators). */
+export function sessionContextRelativeDir(sessionId: string): string {
+  return `.rennet/context/${sessionId}`;
 }
 
 /**
@@ -66,7 +97,7 @@ export function writeSessionContext(
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, file.body);
   }
-  writeFileSync(join(dir, "README.md"), renderIndex(files));
+  writeFileSync(join(dir, "README.md"), renderIndex(dir, files));
   return dir;
 }
 

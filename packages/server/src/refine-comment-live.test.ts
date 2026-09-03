@@ -6,14 +6,10 @@ import type {
   HarnessPort,
   SessionSpec,
 } from "@rennet/core";
+import type { PromptContextFile } from "@rennet/prompts";
 import type { Patchset, Review } from "@rennet/protocol";
-import { describe, expect, it } from "vitest";
-import {
-  createLiveRefinePort,
-  extractAnchoredDiff,
-  extractFileDiff,
-  REFINE_DIFF_CEILING,
-} from "./refine-comment-live";
+import { beforeEach, describe, expect, it } from "vitest";
+import { anchoredHunkRange, createLiveRefinePort } from "./refine-comment-live";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The LIVE review.refine producer (issue #19). Driven with NO real codex and NO
@@ -131,34 +127,28 @@ function fakeClaudePort(
   } as HarnessPort;
 }
 
-describe("extractFileDiff", () => {
-  it("returns only the requested file's diff section", () => {
-    const section = extractFileDiff(DIFF, "src/keys.ts", REFINE_DIFF_CEILING);
-    expect(section).toContain("a/src/keys.ts");
-    expect(section).toContain("+export const b = 2;");
-    // Stops before the next file's section.
-    expect(section).not.toContain("src/other.ts");
-  });
+/** The directory the fake writer answers with; every pointer path is built on it. */
+const CONTEXT_DIR = ".rennet/context/sess_test";
 
-  it("returns an empty string when the path is not in the diff", () => {
-    expect(extractFileDiff(DIFF, "src/missing.ts", REFINE_DIFF_CEILING)).toBe("");
-  });
+let contextWrites: PromptContextFile[] = [];
+/** The injected context writer: records what was written, answers with the directory. */
+const writeContext = (_review: Review, files: readonly PromptContextFile[]): string => {
+  contextWrites = [...contextWrites, ...files];
+  return CONTEXT_DIR;
+};
+const bodyOf = (name: string) => contextWrites.find((file) => file.name === name)?.body;
 
-  it("bounds the section to the byte ceiling", () => {
-    const section = extractFileDiff(DIFF, "src/keys.ts", 20);
-    expect(section.length).toBeLessThanOrEqual(20 + "\n… (diff truncated at 20 bytes)".length);
-    expect(section).toContain("truncated");
-  });
+beforeEach(() => {
+  contextWrites = [];
 });
 
-describe("extractAnchoredDiff — grounds on the anchored hunk, not a start-truncation", () => {
-  const bigFirst = "x".repeat(500);
+describe("anchoredHunkRange — WHERE the note's code is, never the code itself", () => {
   const diff = [
     "diff --git a/src/f.ts b/src/f.ts",
     "--- a/src/f.ts",
     "+++ b/src/f.ts",
     "@@ -1,3 +1,3 @@",
-    `-const a = "${bigFirst}";`,
+    '-const a = "was";',
     '+const a = "changed";',
     " const b = 1;",
     "@@ -40,2 +40,3 @@",
@@ -167,32 +157,35 @@ describe("extractAnchoredDiff — grounds on the anchored hunk, not a start-trun
     " const w = 3;",
   ].join("\n");
 
-  it("returns the hunk covering a span PAST the byte ceiling, not the file's first bytes", () => {
-    // Anchor at new-file line 41 (the +const z), side additions. With a tiny ceiling,
-    // a start-truncation would hand back the first (huge) hunk truncated — unrelated
-    // code labelled as the note's. The anchored extraction returns the SECOND hunk.
-    const out = extractAnchoredDiff(diff, "src/f.ts", 200, { startLine: 41 }, "additions");
-    expect(out).toContain("+const z = 2;");
-    // The first hunk's content is NOT what we get — a start-truncation reddens this.
-    expect(out).not.toContain("const a");
+  it("returns the range of the hunk covering a NEW-side span, not the file's first hunk", () => {
+    // Anchor at new-file line 41 (the +const z), side additions → the SECOND hunk's
+    // range. Answering with the first hunk would point the refiner at unrelated code
+    // labelled as the note's.
+    expect(anchoredHunkRange(diff, "src/f.ts", { startLine: 41 }, "additions")).toEqual({
+      side: "new",
+      startLine: 40,
+      endLine: 42,
+    });
   });
 
   it("matches a deletions anchor against OLD-file lines", () => {
-    // Old line 1 (the -const a) on the deletions side → the first hunk.
-    const out = extractAnchoredDiff(diff, "src/f.ts", 10_000, { startLine: 1 }, "deletions");
-    expect(out).toContain('+const a = "changed";');
+    expect(anchoredHunkRange(diff, "src/f.ts", { startLine: 1 }, "deletions")).toEqual({
+      side: "old",
+      startLine: 1,
+      endLine: 3,
+    });
   });
 
-  it("falls back to the whole file section when there is no span (path-grained)", () => {
-    const out = extractAnchoredDiff(diff, "src/f.ts", 10_000);
-    expect(out).toContain('+const a = "changed";');
-    expect(out).toContain("+const z = 2;");
+  it("is null with no span (path-grained) — an honest absence, not a guessed range", () => {
+    expect(anchoredHunkRange(diff, "src/f.ts")).toBeNull();
   });
 
-  it("returns '' when the file is not in the diff", () => {
-    expect(extractAnchoredDiff(diff, "src/missing.ts", 10_000, { startLine: 1 }, "additions")).toBe(
-      "",
-    );
+  it("is null when the file is not in the diff", () => {
+    expect(anchoredHunkRange(diff, "src/missing.ts", { startLine: 1 }, "additions")).toBeNull();
+  });
+
+  it("is null when no hunk covers the span, rather than pointing at the wrong hunk", () => {
+    expect(anchoredHunkRange(diff, "src/f.ts", { startLine: 900 }, "additions")).toBeNull();
   });
 });
 
@@ -200,6 +193,7 @@ describe("createLiveRefinePort — Codex seat (council resolves Terra)", () => {
   it("refines on Codex and returns the council-resolved model", async () => {
     let seenPrompt = "";
     const port = createLiveRefinePort({
+      writeContext,
       claudePort: async () => null,
       codexExecutor: async () =>
         fakeExecutor(
@@ -224,13 +218,62 @@ describe("createLiveRefinePort — Codex seat (council resolves Terra)", () => {
       refined: "Re-keying breaks per-key clients; please add a note.",
       model: "gpt-5.6-terra",
     });
-    // The anchored file diff was inlined for grounding (the "investigated" input).
-    expect(seenPrompt).toContain("+export const b = 2;");
+    // The note is under the anchored-ask ceiling, so it rides inline — the ONE admitted
+    // exception. The diff does NOT: no fenced hunk reaches the seat any more.
     expect(seenPrompt).toContain("this breaks per-key clients?? add note");
+    expect(seenPrompt).not.toContain("+export const b = 2;");
+  });
+
+  it("writes a pointer file for a span-anchored note and NAMES it in the prompt", async () => {
+    let seenPrompt = "";
+    const port = createLiveRefinePort({
+      writeContext,
+      claudePort: async () => null,
+      codexExecutor: async () =>
+        fakeExecutor({ verdict: "refined", refinedBody: "Please add a note." }, (req) => {
+          seenPrompt = req.prompt;
+        }),
+    });
+    await port({
+      review: review(),
+      type: "request-change",
+      raw: "this breaks per-key clients?? add note",
+      path: "src/keys.ts",
+      span: { startLine: 2 },
+      side: "additions",
+    });
+    // The written file body is the pointer contract: path, side, and the hunk's range.
+    expect(bodyOf("refine-pointers.json")).toBe(
+      JSON.stringify({
+        turn: "comment-refinement",
+        read: { path: "src/keys.ts", side: "new", startLine: 1, endLine: 2 },
+      }),
+    );
+    expect(seenPrompt).toContain(`${CONTEXT_DIR}/refine-pointers.json`);
+    expect(seenPrompt).not.toContain("+export const b = 2;");
+  });
+
+  it("writes an over-ceiling note to a file instead of inlining it", async () => {
+    let seenPrompt = "";
+    const long = `${"a very long note that the reviewer typed out at length. ".repeat(12)}end`;
+    const port = createLiveRefinePort({
+      writeContext,
+      claudePort: async () => null,
+      codexExecutor: async () =>
+        fakeExecutor({ verdict: "refined", refinedBody: "Tightened." }, (req) => {
+          seenPrompt = req.prompt;
+        }),
+    });
+    await port({ review: review(), type: "comment", raw: long });
+    expect(long.length).toBeGreaterThan(600);
+    expect(bodyOf("refine-note.md")).toBe(long);
+    expect(seenPrompt).toContain(`${CONTEXT_DIR}/refine-note.md`);
+    expect(seenPrompt).not.toContain(long);
   });
 
   it("maps a no-change verdict through honestly", async () => {
     const port = createLiveRefinePort({
+      writeContext,
       claudePort: async () => null,
       codexExecutor: async () => fakeExecutor({ verdict: "no-change" }),
     });
@@ -240,6 +283,7 @@ describe("createLiveRefinePort — Codex seat (council resolves Terra)", () => {
 
   it("returns an honest `failed` when the Codex turn throws — never the raw as refined", async () => {
     const port = createLiveRefinePort({
+      writeContext,
       claudePort: async () => null,
       codexExecutor: async () => async () => {
         throw new Error("codex exited 1");
@@ -255,6 +299,7 @@ describe("createLiveRefinePort — Claude seat (Claude-only machine resolves Son
   it("refines on the Claude adapter and reports the ACTUAL runtime model, not the planned one", async () => {
     let seenSpec: SessionSpec | undefined;
     const port = createLiveRefinePort({
+      writeContext,
       claudePort: async () =>
         fakeClaudePort(
           () => [
@@ -288,6 +333,7 @@ describe("createLiveRefinePort — Claude seat (Claude-only machine resolves Son
 
   it("falls back to the resolved model when the session reports no started frame", async () => {
     const port = createLiveRefinePort({
+      writeContext,
       claudePort: async () => fakeClaudePort(() => [completedEvent({ verdict: "no-change" })]),
       codexExecutor: async () => null,
     });
@@ -298,6 +344,7 @@ describe("createLiveRefinePort — Claude seat (Claude-only machine resolves Son
 
   it("fails honestly when the Claude turn completes without structured output", async () => {
     const port = createLiveRefinePort({
+      writeContext,
       claudePort: async () => fakeClaudePort(() => [completedEvent(undefined)]),
       codexExecutor: async () => null,
     });
@@ -309,6 +356,7 @@ describe("createLiveRefinePort — Claude seat (Claude-only machine resolves Son
 describe("createLiveRefinePort — no seat installed", () => {
   it("is UNAVAILABLE when NEITHER Codex nor Claude is installed", async () => {
     const port = createLiveRefinePort({
+      writeContext,
       claudePort: async () => null,
       codexExecutor: async () => null,
     });

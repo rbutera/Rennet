@@ -122,41 +122,71 @@ export function renderBaseInstruction(contract: PromptContract): string {
 }
 
 /**
- * Render a committed hypothesis (#178) into the disconfirmation layer a lens
- * runner assembles after its base instruction and before its payload. It carries
- * the Domain, the in/out Scope, the Design expectation, and the numbered
- * risks-with-disconfirmers, plus the standing instruction that turns a passive
- * reader into an active checker: for each risk, check whether the change diverges
- * from the expectation and surface a finding when it does. Pure and deterministic
- * — the same hypothesis renders byte-for-byte identically, so a runner's assembled
- * prompt stays a stable function of its inputs. This is the vehicle by which the
- * change's intent reaches runners that do not themselves take an intent input.
+ * One file a turn's caller writes into the session's context directory, with the two
+ * lines its `README.md` index entry needs. Structurally the daemon's
+ * `SessionContextFile`; declared here because the prompt text and the file the prompt
+ * NAMES have to be authored together — a pointer whose file nobody wrote is a lie, and
+ * the two drift the moment they live in different packages.
  */
-export function renderHypothesisLayer(hypothesis: ReviewHypothesis): string {
-  const scopeIn =
-    hypothesis.scope.inScope.length > 0 ? hypothesis.scope.inScope.join("; ") : "(none stated)";
-  const scopeOut =
-    hypothesis.scope.outOfScope.length > 0
-      ? hypothesis.scope.outOfScope.join("; ")
-      : "(none stated)";
-  const risks = hypothesis.risks
-    .map(
-      (risk, index) =>
-        `${index + 1}. [${risk.severity}] ${risk.statement}\n   disconfirm: ${risk.disconfirmer}`,
-    )
-    .join("\n");
+export interface PromptContextFile {
+  readonly name: string;
+  readonly body: string;
+  /** One line: what this file holds. */
+  readonly holds: string;
+  /** One line: when a turn should read it. */
+  readonly readWhen: string;
+}
+
+/** The name the hypothesis takes inside a session's context directory. */
+export const HYPOTHESIS_CONTEXT_FILE = "hypothesis.json";
+
+/**
+ * The per-project convention catalogue, relative to the repository root — which IS the
+ * cwd of every seat. Mirrors `CONVENTIONS_FILE` in the adapter that reads and writes it;
+ * this package cannot import that one, and the string is the prompt's, not the reader's.
+ */
+export const CONVENTIONS_PATH = ".rennet/conventions.json";
+
+/**
+ * The committed hypothesis (#178) as a session context file, for the caller to write
+ * through `writeSessionContext` before it renders the layer below. Compact JSON — the
+ * indent is a ~30% surcharge no reader sees.
+ */
+export function hypothesisContextFile(hypothesis: ReviewHypothesis): PromptContextFile {
+  return {
+    name: HYPOTHESIS_CONTEXT_FILE,
+    body: JSON.stringify(hypothesis),
+    holds:
+      "The review hypothesis committed before the diff was read: domain, in/out scope, the design we would have chosen, and the risks with their disconfirmers.",
+    readWhen: "before you judge the change, and again for each risk you are checking.",
+  };
+}
+
+/**
+ * Render the disconfirmation layer a lens runner assembles after its base instruction
+ * and before its payload (#178).
+ *
+ * It carries the standing instruction that turns a passive reader into an active
+ * checker — for each risk, check whether the change diverges from the expectation and
+ * surface a finding when it does — and a POINTER to the hypothesis, never the
+ * hypothesis itself (session-context-files, D4: never inline context). The caller
+ * writes {@link hypothesisContextFile} into the session's context directory and passes
+ * the path it lands on; `path` defaults to the bare file name, which resolves inside
+ * the context directory the prompt's context layer names.
+ *
+ * Pure and deterministic — the same path renders byte-for-byte identically, so a
+ * runner's assembled prompt stays a stable function of its inputs.
+ */
+export function renderHypothesisLayer(
+  hypothesis: ReviewHypothesis,
+  path: string = HYPOTHESIS_CONTEXT_FILE,
+): string {
   return [
     "# Committed review hypothesis (formed before the diff was read)",
     "",
-    "Treat the following as EXPECTATIONS to disconfirm, not as facts about the code. For each risk below, check whether this change diverges from the expectation, and surface a finding where it does. A change that meets every expectation is a clean result; a divergence is exactly what a reviewer's attention should go to.",
+    `A review hypothesis was committed before this diff was read: the domain, what is in and out of scope, the design we would have chosen, and ${hypothesis.risks.length} risk(s) with their disconfirmers. It is in \`${path}\` — read it.`,
     "",
-    `## Domain\n${hypothesis.domain}`,
-    "",
-    `## Scope\nIn: ${scopeIn}\nOut: ${scopeOut}`,
-    "",
-    `## Design we would have chosen\n${hypothesis.designExpectation}`,
-    "",
-    `## Risks to disconfirm\n${risks}`,
+    "Treat what it states as EXPECTATIONS to disconfirm, not as facts about the code. For each risk it lists, check whether this change diverges from the expectation, and surface a finding where it does. A change that meets every expectation is a clean result; a divergence is exactly what a reviewer's attention should go to.",
     hypothesis.repoContextPresent
       ? ""
       : "\n(Repo context was unavailable when this prior was formed.)",
@@ -165,38 +195,31 @@ export function renderHypothesisLayer(hypothesis: ReviewHypothesis): string {
 }
 
 /**
- * Render a per-project convention / anti-pattern catalogue (#180) into the
- * checklist layer a lens runner assembles after its base instruction (and any
- * committed hypothesis) and before its general guidance. It carries each
- * convention with its plain-language rationale, its severity, and — when the
- * author stated one — what a violation looks like, numbered for the model's
- * legibility. The standing instruction is the load-bearing product rule: when the
- * change violates a convention, surface a finding that states the convention and
- * WHY it matters (the underlying reason), NEVER a rule number or id (there is no
- * rule-number vocabulary to cite; the reason IS the finding). The author-facing
- * `id` is deliberately never rendered, so the model has no number to reach for.
- * Pure and deterministic — the same catalogue renders byte-for-byte identically,
- * so a runner's assembled prompt stays a stable function of its inputs. Mirrors
- * Florence's injected anti-pattern checklist, ported into Rennet's runners.
+ * Render the checklist layer a lens runner assembles after its base instruction (and
+ * any committed hypothesis) and before its general guidance (#180).
+ *
+ * The catalogue itself is NOT interpolated (session-context-files, D4). Rennet reads it
+ * from `<repo>/.rennet/conventions.json`, Rennet owns that file, and the seat's cwd IS
+ * the repository root — so the layer names the relative path and the seat reads it with
+ * its own tools, the same way it reads the checkout. The rule count comes along so a
+ * seat knows the file is worth opening.
+ *
+ * The standing instruction is the load-bearing product rule: when the change violates a
+ * convention, surface a finding that states the convention and WHY it matters (the
+ * underlying reason the file records), NEVER a rule number or id — there is no
+ * rule-number vocabulary to cite; the reason IS the finding.
+ *
+ * Pure and deterministic — the same catalogue renders byte-for-byte identically, so a
+ * runner's assembled prompt stays a stable function of its inputs.
  */
 export function renderConventionLayer(catalogue: ConventionCatalogue): string {
-  const rules = catalogue.rules
-    .map((rule, index) => {
-      const lines = [`${index + 1}. [${rule.severity}] ${rule.convention}`];
-      lines.push(`   why: ${rule.rationale}`);
-      if (rule.antiPattern !== undefined && rule.antiPattern.trim().length > 0) {
-        lines.push(`   anti-pattern: ${rule.antiPattern}`);
-      }
-      return lines.join("\n");
-    })
-    .join("\n");
+  const count = catalogue.rules.length;
   return [
     "# Project conventions and anti-patterns (established for this repo)",
     "",
-    "These are the project's established conventions and known anti-patterns. Check whether this change violates any of them. When it does, surface a finding that states the convention and WHY it matters in plain language — the underlying reason below — and NEVER a rule id or number (there is no rule-number vocabulary; the reason IS the finding). A change that honors every convention is a clean result on this axis, not something to flag.",
+    `This repository states ${count} convention${count === 1 ? "" : "s"} and known anti-pattern${count === 1 ? "" : "s"} in \`${CONVENTIONS_PATH}\`, relative to your working directory. Read that file — each entry carries the convention, the plain-language reason it exists, its severity, and (where the author stated one) what a violation looks like.`,
     "",
-    "## Conventions to check",
-    rules,
+    "Check whether this change violates any of them. When it does, surface a finding that states the convention and WHY it matters in plain language — the underlying reason the file records — and NEVER a rule id or number (there is no rule-number vocabulary; the reason IS the finding). A change that honors every convention is a clean result on this axis, not something to flag.",
     "",
   ].join("\n");
 }
@@ -226,11 +249,11 @@ export interface VerificationContract {
 }
 
 export const FINDING_VERIFICATION_CONTRACT: VerificationContract = {
-  version: 4,
+  version: 5,
   role: "You verify a code-review finding against the REAL code. You are working INSIDE the repository, with a shell, and you MAY run the code — execute the tests, run the build, reproduce the failure at the command line — to check whether the concern actually holds. Another model raised the concern below from a narrow view of one hunk; your job is to check it against the real system and say, honestly, whether it holds, so a hallucinated or mistaken concern never reaches the reviewer and a real one arrives with proof.",
   task: "You are given ONE finding — its reference key, its severity, and its one-sentence concern. Reproduce it or refute it. PREFER EXECUTED EVIDENCE: when you can run the code to make the concern happen (or to show it cannot), do that, and set the evidence to what the run proved — the commands you actually run are observed independently, so the executed proof comes from what ran, not from your description of it. REPRODUCE: name the concrete failure — the command whose output shows it, the failing test, or the exact lines that make the concern true. REFUTE: show, by running it or from the code, why it does not hold. If you can honestly do neither, return INCONCLUSIVE. Emit exactly one verification, echoing the reference key unchanged. The exact JSON shape is enforced separately as a structured-output constraint you must satisfy; do not describe or restate it.",
   discipline:
-    "Ground the verdict in evidence you actually have: what a command printed when you ran it, or the specific code you read. You are shown a file window to start from, but you are NOT confined to it — read more of the repository, and run it, when that is what it takes to know. The evidence is ONE line: for a reproduced finding, the command and its result or the lines that prove it; for a refuted or inconclusive one, the concrete reason. Do not soften a genuine bug into inconclusive to be safe, and do not upgrade a hunch into reproduced to look decisive.",
+    "Ground the verdict in evidence you actually have: what a command printed when you ran it, or the specific code you read. NOTHING is shown to you inline — the pointer file names the path, the side and the line range this concern was raised over, plus the exact way to read that content when the reviewed commit is not what is checked out. Read it, read the code it points at, and then keep going: you are not confined to that range, so read more of the repository, and run it, when that is what it takes to know. The evidence is ONE line: for a reproduced finding, the command and its result or the lines that prove it; for a refuted or inconclusive one, the concrete reason. Do not soften a genuine bug into inconclusive to be safe, and do not upgrade a hunch into reproduced to look decisive.",
   failureValve:
     "If you can establish neither reproduce NOR refute — running it is impractical here, the claim reaches beyond what you can check, you are genuinely unsure — return inconclusive with the honest reason. Inconclusive is surfaced to the human with a 'could not verify' caveat, so it is a safe and honest answer. A refuted verdict DROPS the finding from the review, so refute a concern only when you have shown it wrong; never refute merely because you did not immediately see the problem.",
 };
@@ -244,11 +267,11 @@ export interface CiClassificationContract {
 }
 
 export const CI_CLASSIFICATION_CONTRACT: CiClassificationContract = {
-  version: 2,
+  version: 3,
   role: "You classify CI failures that Rennet's deterministic rules could not attribute. This is an informational review signal, never a review, sign, or publish gate.",
-  task: 'For every supplied failure, return exactly one classification with its ref unchanged and verdict "change-caused" or "unclassified". Deterministic rules alone may identify environmental failures; this refinement may never produce that verdict. The exact JSON schema is enforced separately; return only the complete classifications object.',
+  task: 'For every failure the pointer file lists, return exactly one classification with its ref unchanged and verdict "change-caused" or "unclassified". Deterministic rules alone may identify environmental failures; this refinement may never produce that verdict. The exact JSON schema is enforced separately; return only the complete classifications object.',
   discipline:
-    "Use only the supplied check name, failure summary, and changed-path list. Promote a failure to change-caused only when that evidence attributes it to this changeset. Otherwise leave it unclassified; never infer infrastructure attribution.",
+    "Nothing is shown to you inline. Read the pointer file: it gives each failure its ref and its check name, names the file holding that check's failure evidence, and names the file listing this change's changed paths. Read those, and classify only from what they say. Promote a failure to change-caused only when that evidence attributes it to this changeset. Otherwise leave it unclassified; never infer infrastructure attribution.",
   failureValve:
     "When the evidence cannot support change attribution, return unclassified. Uncertainty must stay visible and must never be softened into environmental.",
 };
@@ -273,18 +296,15 @@ export const CI_CLASSIFICATION_OUTPUT_SCHEMA = {
   required: ["classifications"],
 } as const;
 
-export interface CiClassificationPromptFailure {
-  readonly ref: string;
-  readonly checkName: string;
-  readonly evidence: string;
-}
-
+/**
+ * Render the CI-classification prompt. The failures, their evidence and the changed-path
+ * list are NOT interpolated (session-context-files, D4): the caller writes them under the
+ * session's context directory and passes the path of the pointer file that names them.
+ * The turn's cwd is the bound root, so `pointersPath` is repo-relative.
+ */
 export function renderCiClassificationPrompt(
   contract: CiClassificationContract,
-  input: {
-    readonly failures: readonly CiClassificationPromptFailure[];
-    readonly changedPaths: readonly string[];
-  },
+  input: { readonly pointersPath: string },
 ): string {
   return [
     `# Rennet ci-failure-classification@${contract.version}`,
@@ -301,60 +321,47 @@ export function renderCiClassificationPrompt(
     "## Failure valve",
     contract.failureValve,
     "",
-    "## Unclassified failures and changed paths",
-    // Compact: an indent is a ~30% surcharge no reader sees (#737).
-    JSON.stringify(input),
+    "## What to read",
+    `\`${input.pointersPath}\`, relative to your working directory. It lists every unclassified failure — its ref, its check name, and the path of the file holding that check's failure evidence — and names the file listing this change's changed paths.`,
     "",
   ].join("\n");
 }
 
-/** One finding handed to a verification turn: its ref key, severity, concern, and offered hunk. */
+/** One finding handed to a verification turn: its ref key, severity, and concern. */
 export interface VerificationPromptFinding {
   /** The reference key the runner minted (e.g. "f1"); the model echoes it back. */
   readonly ref: string;
   readonly severity: string;
   readonly summary: string;
-  /** The offered hunk lines the concern was raised over (may be empty when unavailable). */
-  readonly hunk: string;
-}
-
-/** The real file window a verification turn reads — MORE than the offered hunk (issue #179). */
-export interface VerificationPromptFile {
-  readonly path: string;
-  readonly startLine: number;
-  readonly endLine: number;
-  /** The file's real content across `[startLine, endLine]`, as the snapshot/working tree has it. */
-  readonly text: string;
 }
 
 /**
- * Render one verification prompt (issue #179): the contract's four slots, the REAL
- * file window (line-numbered so the model can cite exact lines), and the finding(s)
- * with ref key, severity, concern, and offered hunk. Pure and deterministic — the same
- * inputs render byte-for-byte identically. A verification turn covers ONE finding
- * (#268 fix round 2), so a command it runs is unambiguously that finding's; the
- * `findings` array stays generic but the runner passes a single element.
+ * Render one verification prompt (issue #179): the contract's four slots, the path of
+ * the pointer file, and the finding(s) with ref key, severity and concern.
+ *
+ * The ±40-line file window is NOT interpolated any more (session-context-files, D4).
+ * The pointer file names the path, the side and the line range the concern was raised
+ * over — and, for a reviewed head that is not the checked-out tree, the exact `git show`
+ * that reads the right bytes. The turn runs with its cwd at the bound root, so
+ * `pointersPath` is repo-relative and the session can open it with its own tools.
+ *
+ * Pure and deterministic — the same inputs render byte-for-byte identically. A
+ * verification turn covers ONE finding (#268 fix round 2), so a command it runs is
+ * unambiguously that finding's; the `findings` array stays generic but the runner
+ * passes a single element.
  */
 export function renderFindingVerificationPrompt(
   contract: VerificationContract,
   batch: {
-    readonly file: VerificationPromptFile;
+    readonly pointersPath: string;
     readonly findings: readonly VerificationPromptFinding[];
   },
 ): string {
-  const numbered = batch.file.text
-    .split("\n")
-    .map((line, index) => `${batch.file.startLine + index}\t${line}`)
-    .join("\n");
   const findings = batch.findings
     .map((finding) =>
-      [
-        `### ${finding.ref} — severity: ${finding.severity}`,
-        `Concern: ${finding.summary}`,
-        finding.hunk.trim().length > 0
-          ? `Offered hunk:\n${finding.hunk}`
-          : "Offered hunk: (unavailable)",
-      ].join("\n"),
+      [`### ${finding.ref} — severity: ${finding.severity}`, `Concern: ${finding.summary}`].join(
+        "\n",
+      ),
     )
     .join("\n\n");
   return [
@@ -372,10 +379,8 @@ export function renderFindingVerificationPrompt(
     "## Failure valve",
     contract.failureValve,
     "",
-    `## File under verification: ${batch.file.path} (lines ${batch.file.startLine}-${batch.file.endLine})`,
-    "The real file content around the findings, beyond the offered hunk. Cite exact line numbers.",
-    "",
-    numbered,
+    "## What to read",
+    `\`${batch.pointersPath}\`, relative to your working directory. It names the file this concern was raised over, the side and line range it was raised on, the anchored hunk's own range inside it, and how to read that content when the reviewed commit is not what is checked out. Start there, then read as much more of the repository as the concern needs. Cite exact line numbers.`,
     "",
     "## Findings to verify",
     findings,

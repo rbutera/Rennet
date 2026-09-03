@@ -40,6 +40,7 @@
 
 import {
   FINDING_VERIFICATION_CONTRACT,
+  type PromptContextFile,
   renderFindingVerificationPrompt,
   type VerificationContract,
 } from "@rennet/prompts";
@@ -51,11 +52,9 @@ import type {
   FindingVerification,
   FlaggedReview,
   InvocationBudget,
-  ManifestOccurrence,
-  OfferedManifest,
   RspTokenUsage,
 } from "@rennet/protocol";
-import { parseAnchor, resolveAnchor } from "@rennet/protocol";
+import type { TurnContextWriter } from "./harness-run-turn";
 import { absentBudgetGrant } from "./invocation-budget";
 
 // ── ① The deterministic non-obvious gate ─────────────────────────────────────
@@ -134,23 +133,35 @@ export function markVerificationUnavailable(review: FlaggedReview): FlaggedRevie
 
 // ── ② The verification pass ───────────────────────────────────────────────────
 
-/** The real file content around a finding's anchor — MORE than the offered hunk (§spec). */
+/**
+ * WHERE the real content around a finding's anchor is — never the content itself
+ * (session-context-files, D4: the window used to be interpolated into the prompt; it is
+ * now a pointer the turn reads for itself). The window is still resolved against the
+ * real file, so its `endLine` is clamped to what the file actually has: a pointer at
+ * lines that do not exist is the same lie the inline window could not tell.
+ */
 export interface VerificationFileWindow {
   readonly path: string;
-  /** 1-based first file line of `text`. */
+  /** 1-based first file line the verifier is pointed at. */
   readonly startLine: number;
-  /** 1-based last file line of `text`. */
+  /** 1-based last file line the verifier is pointed at (clamped to the file). */
   readonly endLine: number;
-  /** The file's real content across `[startLine, endLine]`. */
-  readonly text: string;
+  /** 1-based first line of the anchored hunk's OWN span inside `[startLine, endLine]`. */
+  readonly hunkStartLine: number;
+  /** 1-based last line of the anchored hunk's own span. */
+  readonly hunkEndLine: number;
+  /**
+   * How to read those lines when the working tree is NOT the reviewed content — the
+   * `git show <headOid>:<path>` a range / PR / retrospective review needs. Absent for a
+   * working-tree review, where the file on disk IS the reviewed bytes.
+   */
+  readonly readAt?: string;
 }
 
 /**
  * Injected (adapters): resolve a finding's anchor to the real file window around it.
  * `undefined` when the file/window is unavailable (snapshot refused, unsafe path,
- * unreadable) — an honest inconclusive, NEVER a drop and NEVER a clear. Fed the real
- * content beyond the offered hunk so the verifier can trace the claim through the
- * actual code.
+ * unreadable) — an honest inconclusive, NEVER a drop and NEVER a clear.
  */
 export type VerificationFileReader = (
   anchor: string,
@@ -203,10 +214,13 @@ export type VerificationTurn = (prompt: string) => Promise<VerificationTurnResul
 export interface RunFindingVerificationInput {
   /** The findings to verify — the reconciled Flagged set (dual-model #41) or single-seat. */
   readonly findings: readonly FindingElement[];
-  /** The offered manifest, to render each finding's own hunk into the verifier's prompt. */
-  readonly manifest: OfferedManifest;
   /** The real-file reader (adapters); resolves an anchor to the window around it. */
   readonly readFileWindow: VerificationFileReader;
+  /**
+   * The session-context writer (the daemon). Each verification turn's pointer file is
+   * written through it and NAMED in the prompt — the window is never interpolated.
+   */
+  readonly writeContext: TurnContextWriter;
   /** The fresh-session verification turn (adapters); by default a different seat than the raiser. */
   readonly runTurn: VerificationTurn;
   /**
@@ -375,16 +389,12 @@ export async function runFindingVerification(
       continue;
     }
 
+    // The pointer file, written before the turn and NAMED by the prompt. Nothing about
+    // the code travels in the prompt — the turn opens this and reads the checkout.
+    const dir = input.writeContext([pointerFileFor(finding, window)]);
     const prompt = renderFindingVerificationPrompt(contract, {
-      file: window,
-      findings: [
-        {
-          ref: "f1",
-          severity: finding.severity,
-          summary: finding.summary,
-          hunk: hunkTextForAnchor(finding.anchor, input.manifest),
-        },
-      ],
+      pointersPath: `${dir}/${pointerNameFor(finding)}`,
+      findings: [{ ref: "f1", severity: finding.severity, summary: finding.summary }],
     });
 
     const turn = await input.runTurn(prompt);
@@ -569,25 +579,55 @@ async function readWindowSafely(
   }
 }
 
-/** Render a finding's own offered hunk (from the manifest) into the verifier's prompt; best-effort. */
-function hunkTextForAnchor(anchor: string, manifest: OfferedManifest): string {
-  const parsed = parseAnchor(anchor);
-  if (!parsed.ok) return "";
-  const resolution = resolveAnchor(parsed.anchor, manifest);
-  if (resolution.outcome !== "resolved") return "";
-  const occurrence = manifest.occurrences.find(
-    (candidate) => candidate.id === resolution.occurrenceId,
-  );
-  return occurrence ? renderSides(occurrence) : "";
+/**
+ * The pointer file's name inside the session's context directory. Keyed on the finding
+ * id so a directory of scratch stays traceable back to the flag it served; every
+ * character outside `[A-Za-z0-9._-]` is folded to `_`, so an id from a forge or a model
+ * can never escape the directory or name a path segment.
+ */
+function pointerNameFor(finding: FindingElement): string {
+  return `verification/${finding.findingId.replace(/[^A-Za-z0-9._-]/g, "_")}.json`;
 }
 
-function renderSides(occurrence: ManifestOccurrence): string {
-  const sides = occurrence.sides ?? {};
-  const parts: string[] = [];
-  for (const line of sides.deletions ?? []) parts.push(`- ${line}`);
-  for (const line of sides.additions ?? []) parts.push(`+ ${line}`);
-  for (const line of sides.context ?? []) parts.push(`  ${line}`);
-  return parts.join("\n");
+/**
+ * The pointer file itself: WHERE the finding's code is, never the code. Compact JSON —
+ * an indent is a ~30% surcharge no reader sees. `readAt` rides along only when the
+ * reviewed commit is not what is checked out; without it a PR review's verifier would
+ * silently read the wrong bytes off disk, which is the failure the inline window used
+ * to make impossible.
+ */
+function pointerFileFor(
+  finding: FindingElement,
+  window: VerificationFileWindow,
+): PromptContextFile {
+  return {
+    name: pointerNameFor(finding),
+    body: JSON.stringify({
+      turn: "finding-verification",
+      ref: "f1",
+      findingId: finding.findingId,
+      read: {
+        path: window.path,
+        startLine: window.startLine,
+        endLine: window.endLine,
+        ...(window.readAt === undefined
+          ? { how: "the working tree at your working directory" }
+          : { how: window.readAt }),
+      },
+      // "new" and not an additions/deletions side: the reader centres the window on the
+      // hunk's POST-CHANGE span, so every line number here is a new-file line — including
+      // for a pure deletion, which anchors at its insertion point.
+      anchoredHunk: {
+        path: window.path,
+        side: "new",
+        startLine: window.hunkStartLine,
+        endLine: window.hunkEndLine,
+      },
+    }),
+    holds:
+      "The file, the line range and the anchored hunk's own range this finding was raised over, plus how to read that content.",
+    readWhen: "first, before you verify the finding it names.",
+  };
 }
 
 /**
