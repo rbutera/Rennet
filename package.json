@@ -1,6 +1,6 @@
 {
   "name": "rennet",
-  "version": "0.6.3",
+  "version": "0.6.5",
   "private": true,
   "description": "A local-first code review harness",
   "repository": {

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -72,4 +72,22 @@ test("refuses to stage when the bundle is not built", () => {
   } finally {
     rmSync(f.root, { recursive: true, force: true });
   }
+});
+
+// v0.6.4 shipped nothing: declaring `dependsOn` on the desktop build to pull in the T3
+// server build REPLACED Nx's default `^build`, so the adapters native artifacts were never
+// built on the release runner. The explicit list must keep `^build`.
+test("the desktop build still depends on ^build beside the T3 server build", () => {
+  const project = JSON.parse(
+    readFileSync(new URL("../apps/desktop/project.json", import.meta.url), "utf8"),
+  );
+  const dependsOn = project.targets.build.dependsOn;
+  assert.ok(
+    dependsOn.includes("^build"),
+    `desktop build dependsOn lost ^build: ${JSON.stringify(dependsOn)}`,
+  );
+  assert.ok(
+    dependsOn.some((d) => typeof d === "object" && d.projects?.includes("t3code-server")),
+    "desktop build must depend on t3code-server:build",
+  );
 });

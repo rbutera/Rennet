@@ -141,16 +141,34 @@ filter contains text, the first Escape clears it and the next leaves.
 
 Clicking a row starts the session — it is not a selection you then confirm.
 Rennet mints the session, claims that target, and takes you into it immediately.
-Capture and first-generation drafting continue on that session's preparation
-screen. Repository capture is named as its own stage; then the five real lens
-lanes move from queued through drafting to their terminal state as the daemon
-reports them. You can leave the screen without stopping the work, or cancel and
-retry it in place. A failed capture or board generation keeps the session and
-names the failed stage instead of dropping the review.
 
-Anything already typed in the composer travels with you as the opening ask,
-waiting in the chat box rather than being sent for you. When preparation
-settles, the progress screen is replaced by the populated review workspace.
+The workspace opens at once, on **the bench**: its first frame, inside the same
+shell as everything else, with the sidebar, the session top bar and the chat
+slot already around it. The change itself is the centrepiece — the branch or
+pull request you started from, and once capture settles, how many files were
+captured. Capture is the bench's first beat rather than a page in front of it:
+two named steps, *resolving the repository* then *capturing the change*, with
+cancel beside them.
+
+Five readers stand under it, one per lens. Each has its own mark, a lantern that
+is lit only while that seat is actually working, and a line of what it is doing
+right now, read straight off that seat's own thread — the file it is reading,
+the command it is running, or the last thing it said. A seat that has gone quiet
+says so instead of freezing on its last line. A settled reader turns green and
+shows what its board came back with; a failed reader turns red and speaks the
+reason it failed, rather than spinning forever.
+
+Every reader is also a control: activating one opens that seat's full transcript
+in the chat slot, read-only, and it keeps streaming while the seat runs. A
+reader whose seat has not opened a thread yet is inert rather than pretending to
+have one.
+
+You can leave the bench without stopping the work, or cancel and retry it in
+place. A failed capture or board generation keeps the session and names the
+failed stage instead of dropping the review. Anything already typed in the
+composer travels with you as the opening ask, waiting in the chat box rather
+than being sent for you. When preparation settles, the bench gives way to the
+populated review workspace.
 
 What gets captured depends on the row. A pull-request row opens that pull
 request's diff. The pinned **Current Checkout** row captures your working tree,

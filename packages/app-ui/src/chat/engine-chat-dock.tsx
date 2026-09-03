@@ -4,9 +4,10 @@ import { useCommand } from "../data/query";
 import { useSessionProjectId } from "../routes/slug";
 import { ROUTES } from "../routes/url";
 import { useSettingsProjection } from "../settings/data/projections";
+import { useRennetStore } from "../store";
 import { useRouteReviewId } from "./chat-data";
 import { ChatDock } from "./chat-dock";
-import { useT3NativeChat } from "./t3-chat-slot";
+import { useT3ChatSlot } from "./t3-chat-slot";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The chat slot's engine switch (t3code-sidecar-chat, group 6). The slot is the SAME
@@ -53,7 +54,11 @@ export function T3ChatDock({ corner }: { readonly corner?: ReactNode }) {
     { enabled: reviewId !== undefined },
   );
   // Rung two when the host provides it (the desktop renderer); rung one otherwise.
-  const NativeChat = useT3NativeChat();
+  const slot = useT3ChatSlot();
+  // Which thread the slot is showing: a lens seat's transcript when the reviewer opened
+  // one from the bench (t3-lens-threads 3.4), the review's own thread otherwise.
+  const lensThread = useRennetStore((s) => s.ui.lensThread);
+  const openLensThread = useRennetStore((s) => s.uiActions.openLensThread);
   const host = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
@@ -87,7 +92,7 @@ export function T3ChatDock({ corner }: { readonly corner?: ReactNode }) {
         <p data-slot="t3-chat-starting" className="p-3 text-xs text-ink-soft">
           Starting the T3 Code sidecar…
         </p>
-      ) : NativeChat ? (
+      ) : slot ? (
         <Suspense
           fallback={
             <p data-slot="t3-chat-starting" className="p-3 text-xs text-ink-soft">
@@ -95,7 +100,21 @@ export function T3ChatDock({ corner }: { readonly corner?: ReactNode }) {
             </p>
           }
         >
-          <NativeChat session={data} />
+          {lensThread ? (
+            <>
+              <button
+                type="button"
+                data-slot="t3-thread-back"
+                onClick={() => openLensThread(null)}
+                className="flex-none border-line border-b px-3 py-2 text-left text-ink-soft text-xs hover:text-ink"
+              >
+                ← Back to the session
+              </button>
+              <slot.thread session={data} thread={lensThread} readOnly />
+            </>
+          ) : (
+            <slot.session session={data} />
+          )}
         </Suspense>
       ) : (
         <webview

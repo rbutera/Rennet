@@ -8,4 +8,9 @@
 import { lazy } from "react";
 
 export const T3NativeChat = lazy(() => import("./native-chat"));
-export type { T3NativeChatProps } from "./native-chat";
+// Both views live in the one module so they share a chunk (and the vendored ChatView it
+// pulls in); the thread view is a named export, so it needs the default-shape adapter.
+export const T3ThreadView = lazy(() =>
+  import("./native-chat").then((module) => ({ default: module.T3ThreadView })),
+);
+export type { T3NativeChatProps, T3ThreadViewProps } from "./native-chat";

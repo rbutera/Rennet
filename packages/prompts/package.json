@@ -1,6 +1,6 @@
 {
   "name": "@rennet/prompts",
-  "version": "0.6.3",
+  "version": "0.6.5",
   "private": true,
   "type": "module",
   "sideEffects": false,

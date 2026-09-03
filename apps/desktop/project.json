@@ -20,7 +20,7 @@
         { "input": "nativeArtifactStaging" },
         "{workspaceRoot}/scripts/stage-t3-sidecar.mjs"
       ],
-      "dependsOn": [{ "projects": ["t3code-server"], "target": "build" }],
+      "dependsOn": ["^build", { "projects": ["t3code-server"], "target": "build" }],
       "cache": false
     },
     "dev": {

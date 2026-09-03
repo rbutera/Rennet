@@ -60,6 +60,19 @@ export interface T3NativeChatProps {
   readonly session: SidecarSession;
 }
 
+/** A thread anywhere in the sidecar environment — a lens seat's, not the session's. */
+export interface ThreadRef {
+  readonly environmentId: string;
+  readonly threadId: string;
+}
+
+export interface T3ThreadViewProps {
+  readonly session: SidecarSession;
+  readonly thread: ThreadRef;
+  /** Read-only is what this mount IS; the literal keeps the call site saying so. */
+  readonly readOnly: true;
+}
+
 // ─── Routes ──────────────────────────────────────────────────────────────────
 // ChatView and its hooks navigate to `/`, `/$environmentId/$threadId`, `/draft/$draftId`
 // and `/settings/connections`; DiffPanel and the toast viewport read the thread params.
@@ -257,12 +270,14 @@ function SidecarEnvironment({ session }: T3NativeChatProps) {
   return null;
 }
 
-/** Keeps the memory router on the session's bound thread as reviews change. */
-function FollowSessionThread({
-  session,
+/** Keeps a mounted memory router on `path` as the review — or the opened lens — changes. */
+function FollowPath({
   router,
-}: T3NativeChatProps & { readonly router: ReturnType<typeof createChatRouter> }) {
-  const path = sidecarThreadPath(session);
+  path,
+}: {
+  readonly router: ReturnType<typeof createChatRouter>;
+  readonly path: string;
+}) {
   useEffect(() => {
     if (router.state.location.pathname !== path) {
       void router.navigate({ to: path, replace: true });
@@ -280,7 +295,31 @@ export default function T3NativeChat({ session }: T3NativeChatProps) {
     >
       <AppAtomRegistryProvider>
         <SidecarEnvironment session={session} />
-        <FollowSessionThread session={session} router={router} />
+        <FollowPath router={router} path={sidecarThreadPath(session)} />
+        <RouterProvider router={router} />
+      </AppAtomRegistryProvider>
+    </div>
+  );
+}
+
+/**
+ * A lens seat's transcript (t3-lens-threads 3.3): the same providers, the same routes and
+ * the same `ChatView` as the session mount, pointed at an arbitrary thread on the same
+ * sidecar environment, with the composer hidden by the `t3-thread-view` rule in t3.css —
+ * upstream's composer overlay carries `data-chat-composer-overlay`, so no vendored edit is
+ * needed. Streaming is upstream's thread subscription: a seat still running keeps writing
+ * into this view, and the transcript stays readable once it settles.
+ */
+export function T3ThreadView({ session, thread }: T3ThreadViewProps) {
+  const [router] = useState(() => createChatRouter(sidecarThreadPath(thread)));
+  return (
+    <div
+      data-slot="t3-thread-view"
+      className="flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-background text-foreground"
+    >
+      <AppAtomRegistryProvider>
+        <SidecarEnvironment session={session} />
+        <FollowPath router={router} path={sidecarThreadPath(thread)} />
         <RouterProvider router={router} />
       </AppAtomRegistryProvider>
     </div>
