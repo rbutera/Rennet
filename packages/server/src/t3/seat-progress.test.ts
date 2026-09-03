@@ -221,11 +221,17 @@ describe("watchSeatThread", () => {
   // quiet right after its busiest moment showed a line from the middle of it, forever.
 
   it("publishes the last state of a busy window when NO further event arrives", async () => {
+    // What is under test is the TIMER, so the timers and the clock are faked together and
+    // advanced by hand; the microtask flushes (`settle`) stay real. On a real clock this
+    // test flaked twice on CI (2026-09-03): a starved runner spent more than the 30 ms
+    // window inside the first flush, the event then landed outside the window and was
+    // read at once, and "deferred, not served immediately" was false for that reason.
+    vi.useFakeTimers({
+      toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"],
+    });
     const stream = pushableStream();
     const published: string[] = [];
     let detail = "Bash: step-1";
-    // Real clock and a short window, because what is under test is the TIMER: a frozen
-    // clock could not tell a trailing read from no read at all.
     const readThread = vi.fn(async () => threadAt(Date.now(), detail));
     const watch = watchSeatThread({
       client: { subscribeThread: () => stream.iterable, readThread },
@@ -252,10 +258,16 @@ describe("watchSeatThread", () => {
     // read, only that a read happened.
     expect(readThread).not.toHaveBeenCalled();
 
-    await waitUntil(() => published.length === 2);
+    // Just short of the window's end: still deferred. Past it: the one trailing read.
+    await vi.advanceTimersByTimeAsync(29);
+    await settle();
+    expect(readThread).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(2);
+    await settle();
     expect(published).toEqual(["running step-1", "running step-final"]);
     expect(readThread).toHaveBeenCalledTimes(1);
     watch.stop();
+    vi.useRealTimers();
   });
 
   it("does not re-read the thread for events that keep saying the same thing", async () => {
