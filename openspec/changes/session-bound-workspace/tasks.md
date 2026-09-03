@@ -20,24 +20,24 @@
 - [ ] 3.3 `renderComposePrompt`: boards written to `boards/<lens>.json`, voice rules referenced by path from the prompts bundle
 - [ ] 3.4 Round-report classifier: evidence manifest written to `evidence.json`; `report.md` rewritten to read it
 - [ ] 3.5 Noise: offered manifest without line bodies written to `noise-offer.json`; the assembled context text referenced at its existing persisted path; `noise.md` and `NOISE_CONTRACT.input` rewritten
-- [ ] 3.6 Hypothesis and convention layers: reference `.rennet/conventions.json` and a written `hypothesis.json`
-- [ ] 3.7 Review opener, draft PR body, handoff compose and work order, delta digest: boards, asks and the work order written to the context directory; `renderComposedPrompt` and `renderHandoffPrompt` name `work-order.md` instead of embedding asks and diff fences
+- [x] 3.6 Hypothesis and convention layers: reference `.rennet/conventions.json` and a written `hypothesis.json`
+- [x] 3.7 Review opener, draft PR body, handoff compose and work order, delta digest: boards, asks and the work order written to the context directory; `renderComposedPrompt` and `renderHandoffPrompt` name `work-order.md` instead of embedding asks and diff fences
 - [x] 3.8 Project scout: reference the guidance files in the cwd instead of embedding them; related context: reference the persisted dossier
-- [ ] 3.9 Finding verification, refine comment, CI classification: `pointers.json` naming file and lines; the prompt contracts' "you are shown a window" sentences rewritten
-- [ ] 3.10 Codex utility port: the retry report stays pointer-only and bounded
+- [x] 3.9 Finding verification, refine comment, CI classification: `pointers.json` naming file and lines; the prompt contracts' "you are shown a window" sentences rewritten
+- [x] 3.10 Codex utility port: the retry report stays pointer-only and bounded
 - [x] 3.11 Confirm every cold utility turn passes the bound root as `cwd`; add the missing ones
 
 ## 4. Design lens respec (D6)
 
-- [ ] 4.1 Rewrite `design.md`: find the spec for this branch (openspec changes, BMAD, Kiro, grill-me, ADRs, superpowers; commit messages and PR body as the clue), draft from it citing by path, or return the `no-spec` absence
-- [ ] 4.2 Delete `design-artifact-discovery.ts`, `DESIGN_ARTIFACT_LIMITS`, `fitDesignArtifactsToPrompt`/`fitDesignArtifactsToBytes`, the `designArtifacts` schema, the no-material candidate accounting, and their tests
-- [ ] 4.3 Add `no-spec` to the Design lane's admissible absences; bench reader shows "no spec found for this branch"; the lens switcher and board routes omit an absent Design tab; dom tests with controls for both surfaces
-- [ ] 4.4 Docs: the Design lens page under `docs/using` and the lens pipeline concept
+- [x] 4.1 Rewrite `design.md`: find the spec for this branch (openspec changes, BMAD, Kiro, grill-me, ADRs, superpowers; commit messages and PR body as the clue), draft from it citing by path, or return the `no-spec` absence
+- [x] 4.2 Delete `design-artifact-discovery.ts`, `DESIGN_ARTIFACT_LIMITS`, `fitDesignArtifactsToPrompt`/`fitDesignArtifactsToBytes`, the `designArtifacts` schema, the no-material candidate accounting, and their tests
+- [x] 4.3 Add `no-spec` to the Design lane's admissible absences; bench reader shows "no spec found for this branch"; the lens switcher and board routes omit an absent Design tab; dom tests with controls for both surfaces
+- [x] 4.4 Docs: the Design lens page under `docs/using` and the lens pipeline concept
 
 ## 5. One workspace per session (D1, D2)
 
 - [ ] 5.1 Record the bound root on the session at creation: current checkout when on the branch, a Rennet-created branch worktree otherwise, the PR-head worktree for a snapshot; surface it beside the branch name
-- [ ] 5.2 Create the session thread, seat threads and handoff thread with the bound `worktreePath`; fail with the missing path when the root is gone
+- [ ] 5.2 Create the session thread, seat threads and handoff thread with the bound `worktreePath`; fail with the missing path when the root is gone (includes the WSL leg: `ClaudeAdapter` runs the child with `wsl.exe --cd <distro root>` from `locusContextForRepo(repoRoot)`, so a seat's bound root must reach `wslCwd` too, or a PR-snapshot seat on WSL drafts in the wrong tree; found by PR #789)
 - [ ] 5.3 Run the round worker as a turn in the bound root; read the turn's checkpoint as the receipt; capture the successor patchset from the bound root; record root and checkpoint in the round account and show them
 - [ ] 5.4 Delete `planWorkspace`, `round-worktrees`, round-collation landing, `settleRoundCommits`, the round use of `cleanupWorktree`, the review evidence worktree, and the WSL round path translation; delete their tests
 - [ ] 5.5 Daemon-start sweep removes legacy round and review worktrees with a logged count; sessions from before the wave bind lazily on first use
