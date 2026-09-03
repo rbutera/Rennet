@@ -76,6 +76,38 @@ describe("writeSessionContext (session-context-files 2.2)", () => {
     }
   });
 
+  it("carries earlier entries forward, so a later turn's write cannot orphan them", () => {
+    // Several turn kinds write into ONE session directory at different moments (a seat's
+    // context, then a verification turn's pointers). Each write re-renders the index; a
+    // re-render that only listed its own files would leave a directory listing that lies
+    // about its own directory, while the earlier prompts still name those files.
+    const root = scratchDir("rennet-ctx-merge-");
+    writeSessionContext(root, "sess-1", files);
+    const dir = writeSessionContext(root, "sess-1", [
+      {
+        name: "verification/F1.json",
+        body: JSON.stringify({ turn: "finding-verification" }),
+        holds: "where one finding's code is.",
+        readWhen: "before verifying that finding.",
+      },
+    ]);
+
+    const index = readFileSync(join(dir, "README.md"), "utf8");
+    expect(index).toContain("`round.json`");
+    expect(index).toContain("`boards/design.json`");
+    expect(index).toContain("`verification/F1.json`");
+    // And a re-write of an existing name replaces its entry rather than doubling it.
+    writeSessionContext(
+      root,
+      "sess-1",
+      files.slice(0, 1).map((file) => ({ ...file, holds: "the asks, restated." })),
+    );
+    const rewritten = readFileSync(join(dir, "README.md"), "utf8");
+    expect(rewritten.split("\n").filter((row) => row.includes("`round.json`"))).toHaveLength(1);
+    expect(rewritten).toContain("the asks, restated.");
+    expect(rewritten).toContain("`verification/F1.json`");
+  });
+
   it("ensures the managed ignore block BEFORE the first file lands", () => {
     const root = scratchDir("rennet-ctx-ignore-");
 
