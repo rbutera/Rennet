@@ -235,11 +235,36 @@ export interface BindThreadInput {
   readonly sessionId?: string;
 }
 
+/** One creation per (data dir, repository root, key) in flight at a time. */
+const bindingsInFlight = new Map<string, Promise<ThreadBinding>>();
+
+function flightKey(input: BindThreadInput): string {
+  const key = input.key;
+  return JSON.stringify([
+    input.dataDir,
+    input.repositoryRoot,
+    key.kind,
+    key.kind === "session" ? key.sessionId : [key.generationId, key.seat],
+  ]);
+}
+
 /**
  * The thread bound to this key on this repository, created on first use with the
- * checkout as its working directory in full-access mode. Idempotent per key.
+ * checkout as its working directory in full-access mode. Idempotent per key, and
+ * single-flighted: the seats ask together, and a check-then-create per caller made two
+ * threads for one key with one binding surviving, so identical concurrent asks share
+ * the one creation.
  */
-export async function bindThread(input: BindThreadInput): Promise<ThreadBinding> {
+export function bindThread(input: BindThreadInput): Promise<ThreadBinding> {
+  const key = flightKey(input);
+  const inFlight = bindingsInFlight.get(key);
+  if (inFlight) return inFlight;
+  const binding = findOrCreateBinding(input).finally(() => bindingsInFlight.delete(key));
+  bindingsInFlight.set(key, binding);
+  return binding;
+}
+
+async function findOrCreateBinding(input: BindThreadInput): Promise<ThreadBinding> {
   const existing = findBinding(input.dataDir, input.repositoryRoot, input.key);
   if (existing) return existing;
   const projectId = await input.client.ensureProject(

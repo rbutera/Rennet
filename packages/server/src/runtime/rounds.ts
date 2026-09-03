@@ -66,6 +66,7 @@ import {
   generationIdForDispatch,
   generationIdForPatchset,
   type LaneLatest,
+  type LaneSeat,
   type LaneThreadRef,
   LENS_KINDS,
   type LensAbsenceReason,
@@ -129,7 +130,7 @@ type LaneState = LensLane extends infer Arm
 const sameThreadRef = (a: LaneThreadRef | undefined, b: LaneThreadRef): boolean =>
   a !== undefined && a.environmentId === b.environmentId && a.threadId === b.threadId;
 
-function createRegenerationLanes(
+export function createRegenerationLanes(
   emit: (lanes: readonly LensLane[]) => void,
   /**
    * This lane has left `running` (review finding 7). The daemon's own subscription to that
@@ -148,15 +149,34 @@ function createRegenerationLanes(
   const set = (lens: LensKind, next: LaneState): void => {
     const current = lanes.get(lens);
     if (!current) return;
-    // The thread ref is lane IDENTITY, not lane state: it survives every transition so a
-    // settled or failed reader still opens its transcript.
+    // The thread ref and the seats are lane IDENTITY, not lane state: they survive every
+    // transition so a settled or failed reader still opens its transcripts. A seat's
+    // `latest` is state, though — only a running lane has something in flight — so it is
+    // dropped on every transition out of `running`, exactly as the lane's own is.
+    const seats =
+      current.seats === undefined
+        ? undefined
+        : next.status === "running"
+          ? current.seats
+          : current.seats.map((seat) => ({
+              seat: seat.seat,
+              provider: seat.provider,
+              ...(seat.thread === undefined ? {} : { thread: seat.thread }),
+            }));
     lanes.set(lens, {
       id: lens,
       label: LENS_LANE_LABEL[lens],
       ...(current.thread === undefined ? {} : { thread: current.thread }),
+      ...(seats === undefined ? {} : { seats }),
       ...next,
     });
     if (next.status !== "running") onSettled?.(lens);
+  };
+  /** The lane a seat belongs to, or nothing for a seat with no lane (the report seat). */
+  const laneOf = (seat: string): { lens: LensKind; lane: LensLane } | undefined => {
+    const lens = laneForSeat(seat);
+    const lane = lens === undefined ? undefined : lanes.get(lens);
+    return lens === undefined || lane === undefined ? undefined : { lens, lane };
   };
   return {
     /** Re-emit the current lane snapshot unchanged. The coverage state rides the same
@@ -185,21 +205,49 @@ function createRegenerationLanes(
      * and kept on EVERY later state, so a settled lane still opens its transcript.
      * Silent on the wire: it re-emits the snapshot, nothing else moves.
      */
-    thread(lens: LensKind, thread: LaneThreadRef): void {
-      const current = lanes.get(lens);
-      if (!current || sameThreadRef(current.thread, thread)) return;
-      lanes.set(lens, { ...current, thread });
+    thread(seat: string, provider: LaneSeat["provider"], thread: LaneThreadRef): void {
+      const found = laneOf(seat);
+      if (!found) return;
+      const { lens, lane: current } = found;
+      // Addressed by SEAT, not by lane: Flagged runs a Claude seat and a Codex seat on
+      // the same lane, and the second to arrive must join the first, never replace it.
+      // Seats are held in arrival order; `seats[0]` is the primary the lane's own
+      // `thread`/`latest` mirror.
+      const seats = [...(current.seats ?? [])];
+      const index = seats.findIndex((entry) => entry.seat === seat);
+      const known = index >= 0 ? seats[index] : undefined;
+      if (known !== undefined && sameThreadRef(known.thread, thread)) return;
+      const entry: LaneSeat = { ...(known ?? { seat, provider }), thread };
+      if (known === undefined) seats.push(entry);
+      else seats[index] = entry;
+      const primary = seats[0];
+      lanes.set(lens, {
+        ...current,
+        seats,
+        ...(primary?.thread === undefined ? {} : { thread: primary.thread }),
+      });
       emit(snapshot());
     },
     /**
      * The newest thing this seat is doing, from its thread subscription. Only a RUNNING
      * lane has something in flight, so a publication for any other state is dropped —
      * which is also how a settled lane stops showing a line it can no longer refresh.
+     * The lane's own `latest` follows the PRIMARY seat only, so a two-seat lane's line
+     * never flips between speakers; the other seat's line lives on its seat entry.
      */
-    progress(lens: LensKind, latest: LaneLatest): void {
-      const current = lanes.get(lens);
-      if (current?.status !== "running") return;
-      lanes.set(lens, { ...current, latest });
+    progress(seat: string, latest: LaneLatest): void {
+      const found = laneOf(seat);
+      if (found?.lane.status !== "running") return;
+      const { lens, lane: current } = found;
+      const seats = (current.seats ?? []).map((entry) =>
+        entry.seat === seat ? { ...entry, latest } : entry,
+      );
+      const primary = seats.length === 0 || seats[0]?.seat === seat;
+      lanes.set(lens, {
+        ...current,
+        ...(seats.length === 0 ? {} : { seats }),
+        ...(primary ? { latest } : {}),
+      });
       emit(snapshot());
     },
     /** A lens board's draft landed. The lane reads `drafted`, NOT `done`: cross-lens
@@ -1310,17 +1358,19 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
         : {
             client: t3Runtime.seam.client,
             threadFor: t3Runtime.seam.threadFor,
-            onThread: (seat, thread) => {
+            onThread: (seat, thread, provider) => {
               const lens = laneForSeat(seat);
               if (lens === undefined || lanes === undefined) return;
-              lanes.thread(lens, {
+              // By SEAT: the two Flagged seats share a lane and must not overwrite each
+              // other's thread or line.
+              lanes.thread(seat, provider, {
                 environmentId: t3Runtime.environmentId,
                 threadId: thread.threadId,
               });
               if (watchedThreads.has(thread.threadId)) return;
               watchedThreads.add(thread.threadId);
               const watch = t3Runtime.watch(thread.threadId, (latest) =>
-                lanes.progress(lens, latest),
+                lanes.progress(seat, latest),
               );
               seatWatches.push(watch);
               // A seat whose lane has ALREADY settled gets no watch at all: a repair that

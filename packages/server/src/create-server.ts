@@ -1271,7 +1271,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       environmentId,
       seam: {
         client: () => t3Sidecar.client(),
-        threadFor: async ({ seat, provider, model }) => {
+        threadFor: async ({ seat, provider, model, effort }) => {
           const binding = await t3Sidecar.threadFor({
             repositoryRoot: input.repoRoot,
             key: { kind: "seat", generationId: input.generationId, seat: seat as SeatKind },
@@ -1282,10 +1282,12 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
             sessionId: input.sessionId,
             // The council's own routing, in the provider's own vocabulary: T3's Claude
             // catalog uses the full ids `mapCouncilModel` already produces, and its Codex
-            // catalog uses the council's model names verbatim.
+            // catalog uses the council's model names verbatim. Effort rides the same
+            // selection; both providers take the council's own levels.
             modelSelection: modelSelection(
               provider,
               provider === "claudeAgent" ? mapCouncilModel(model) : model,
+              { effort },
             ),
           });
           return { threadId: binding.threadId, projectId: binding.projectId };

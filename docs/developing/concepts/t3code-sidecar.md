@@ -117,11 +117,15 @@ The slot's other caller is **the bench** — the review workspace's first frame 
 capture and the first board generation run (`packages/app-ui/src/app/preparation-bench.tsx`,
 mounted by `SessionScreen` in the session outlet, so the sidebar, top bar and chat slot
 stay around it). The bench draws the change as its centrepiece with one reader per lens,
-each showing that seat's `latest` line from `SessionPreparation` — the daemon's plain-words
-projection of the seat's newest thread activity — and capture as the first beat of the same
-scene rather than a separate screen. Each reader is a control: activating one writes the
-lane's `thread` (`{ environmentId, threadId }`) through `uiActions.openLensThread` and
-opens the dock, and the slot renders that transcript read-only (below). A lane with no
+each showing its seats' `latest` lines from `SessionPreparation` — the daemon's plain-words
+projection of each seat's newest thread activity — and capture as the first beat of the same
+scene rather than a separate screen. Each seat's line is a control: activating one writes
+that seat's `thread` (`{ environmentId, threadId }`) through `uiActions.openLensThread` and
+opens the dock, and the slot renders that transcript read-only (below). As a lane settles
+(`drafted`/`done`) its board opens on the bench beneath the readers through
+`LensBoardDocument`, read off the same per-lens `board.read` seam the workspace uses
+(`useLensBoardResolutions` at the initial generation), so three settled lanes and two
+running ones show three boards and two live readers. A lane with no
 `thread` yet is disabled rather than offered as a transcript that does not exist.
 
 The mount's environment registration persists in each host's IndexedDB under T3's
@@ -147,8 +151,9 @@ bottom instead of reserving a gap. No vendored file is edited and there is no
 gate either: it hides a composer that would otherwise start a turn on a seat's thread,
 which is confusing rather than dangerous.
 
-The workspace opens one by writing the lane's thread ref into the store
-(`uiActions.openLensThread(ref)`); `T3ChatDock` then renders `T3ThreadView` for it with a
+The workspace opens one by writing a seat's thread ref into the store
+(`uiActions.openLensThread(ref)`) — on the bench every seat's line of speech is its own
+control, so Flagged offers two, one per provider; `T3ChatDock` then renders `T3ThreadView` for it with a
 "Back to the session" control that clears it. The transcript keeps streaming while the
 seat runs — that is upstream's thread subscription, nothing Rennet drives — and stays
 readable after the seat settles and after the boards reveal.
@@ -193,11 +198,26 @@ Three things follow from the thread being persistent.
   `V2TurnStartParams.outputSchema`, but its runtime does not surface a settled turn's
   structured result, so the daemon parses the board out of the Codex seat's final message
   — for that provider only.
-- **Spend is per turn, and it is a delta.** Claude's SDK reports usage cumulatively over a
-  streaming session's turns, so the seat leg records each turn's own usage as the
-  difference against the previous turn's total. One `TurnMetric` per turn reaches the
-  generation's collector, labelled `board.<jobId>`, and a repair therefore never bills the
+- **Spend is per turn, and it is a delta read off the thread.** Claude's SDK reports usage
+  cumulatively over a streaming session's turns, so the seat leg records each turn's own
+  usage as the difference against the previous settled turn's total — which
+  `waitForTurnSettled` reads from the thread's own earlier `turn.settled` activity, so a
+  runner recreated for the thread (a whole-board restart) or a daemon restarted under it
+  subtracts the same as one that watched every turn. A total below the previous one means
+  the session restarted and its counter began again, and the whole figure is the turn's.
+  Codex reports nothing on its settlement: its tokens ride T3's `context-window.updated`
+  snapshot for the turn, which is the last request's own figures (a turn with several
+  tool round-trips under-reports until T3 projects the running total's breakdown). One
+  `TurnMetric` per turn reaches the generation's collector, labelled `board.<jobId>`, with
+  the provider's own duration when it reported one; a repair therefore never bills the
   drafting turn twice.
+- **A cancelled seat stops the model.** An abort reaches the sidecar as
+  `thread.turn.interrupt`, and the seat leg then waits a bounded moment for the interrupted
+  settlement so the usage that turn had already billed is recorded rather than booked as
+  zero. Each wait is scoped to the start it belongs to: `startTurn` returns what the thread
+  showed before dispatch, and the wait ignores that earlier turn's settlement and any
+  session error recorded before the request, because T3 only flips `latestTurn` to running
+  once the provider reports the new turn.
 
 Because the SDK fixes `outputFormat` when a query is constructed and offers no in-session
 setter, a seat thread's contract is decided by its first turn. A later turn asking for a
@@ -274,8 +294,12 @@ re-read that produces an unchanged line publishes nothing, and keying the read o
 publish time made a run of identical events re-read the thread on every one of them. The
 idle tick re-projects the last snapshot against a fresh clock and costs no RPC at all.
 
-The lane carries its `thread` reference from the moment the thread exists and keeps it
-through every later state, so a settled or failed reader still opens its transcript. The
+A lane holds one entry per seat (`LensLane.seats`: seat id, provider, thread, latest
+line), addressed by seat id, because Flagged runs a Claude seat and a Codex seat on one
+lane and each has its own transcript and its own line. The lane's top-level `thread` and
+`latest` mirror the first seat to register (`seats[0]`) so pre-seats readers keep working
+for one release. A seat's thread is recorded from the moment it exists and kept through
+every later state, so a settled or failed reader still opens its transcripts. The
 subscription is dropped when THAT LANE settles — not when the generation does, so the
 seats that finish first stop costing a socket and an idle tick while the slowest lens
 runs on.

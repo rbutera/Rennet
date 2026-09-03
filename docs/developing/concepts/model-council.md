@@ -212,6 +212,6 @@ Adding a job requires both catalogue metadata and a default assignment for each
 availability scenario if the job is model-facing. It also requires a real caller
 before documentation can describe the job as live product behavior.
 
-See [Context assembly](./context-assembly.md) for orchestrator context and
+See [Context assembly](./context-assembly.md) for what a turn is given and
 [Architecture contracts](./architecture-contracts.md) for harness and provenance
 boundaries.

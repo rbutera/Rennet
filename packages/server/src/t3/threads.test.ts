@@ -126,6 +126,25 @@ describe("thread bindings", () => {
     );
   });
 
+  it("single-flights concurrent asks for one key: one thread, one binding", async () => {
+    // The seats fan out together, and a check-then-create per caller made two threads
+    // with one binding surviving; the loser's thread ran unbound. Identical concurrent
+    // asks share one creation, while a different key at the same moment is still its own.
+    const key = seat("gen-a", "design");
+    const [first, second, other] = await Promise.all([
+      bind(WORKTREE_A, key, "session-a"),
+      bind(WORKTREE_A, key, "session-a"),
+      bind(WORKTREE_A, seat("gen-a", "noise"), "session-a"),
+    ]);
+    expect(second.threadId).toBe(first.threadId);
+    expect(other.threadId).not.toBe(first.threadId);
+    expect(created).toBe(2);
+    expect(readBindings(dataDir)).toHaveLength(2);
+    // Once landed, the next ask reads the binding rather than a stale in-flight promise.
+    expect((await bind(WORKTREE_A, key, "session-a")).threadId).toBe(first.threadId);
+    expect(created).toBe(2);
+  });
+
   it("creates a NEW thread for the same key after its binding was removed", async () => {
     const first = await bind(REPO_A, { kind: "session", sessionId: "review-a" });
     removeBindings(dataDir, [first.threadId]);

@@ -1,11 +1,12 @@
 import type { LaneThreadRef, T3Session } from "@rennet/protocol";
 import { type ComponentType, createContext, type ReactNode, useContext } from "react";
 
-// The rung-two seam (t3code-sidecar-chat, group 8). app-ui may not import the vendored
-// T3 Code web app, so the native ChatView mounts arrive from the host: the desktop
-// renderer provides `@rennet/t3-chat`'s components here, and the chat slot renders them in
-// place of the rung-one <webview>. A host that provides nothing (the browser build) keeps
-// rung one. Two components, because the slot has two jobs (t3-lens-threads 3.3): the
+// The native-mount seam (t3code-sidecar-chat, group 8). app-ui may not import the vendored
+// T3 Code web app, so the native ChatView mounts arrive from the host: both of the desktop
+// package's entries — the Electron renderer and the served browser tab — provide
+// `@rennet/t3-chat`'s components here. The <webview> fallback they replaced is deleted
+// (t3-lens-threads 4.4), so a host that provides nothing says so rather than showing an
+// empty box. Two components, because the slot has two jobs (t3-lens-threads 3.3): the
 // review's own thread with its composer, and a lens seat's transcript read-only.
 
 export interface T3NativeChatProps {

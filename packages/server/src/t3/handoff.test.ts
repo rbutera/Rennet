@@ -7,6 +7,8 @@ import type { ThreadBinding, ThreadBindingKey } from "./threads";
 // consumes. Driven with a stub client so the mapping is the thing under test; the wire
 // itself is proven by client.test.ts against the real bundle.
 
+const START = { previousTurnId: "turn-0", requestedAt: "2026-09-03T10:00:00.000Z" };
+
 const thread = (
   state: "completed" | "error" | "interrupted",
   messages: OrchestrationThread["messages"] = [],
@@ -24,7 +26,7 @@ function stubs(
   outcome: TurnOutcome,
   diff = { diff: "--- a\n+++ b\n", files: [{ path: "src/x.ts" }] },
 ) {
-  const startTurn = vi.fn(async () => undefined);
+  const startTurn = vi.fn(async () => START);
   const client = {
     startTurn,
     waitForTurnSettled: vi.fn(async () => outcome),
@@ -65,6 +67,8 @@ describe("runHandoffTurn", () => {
       title: "a",
     });
     expect(startTurn).toHaveBeenCalledWith({ threadId: "t1", text: "WORK ORDER" });
+    // The wait is scoped to this start: the review's thread keeps its earlier handoffs.
+    expect(client.waitForTurnSettled).toHaveBeenCalledWith("t1", { after: START });
     expect(outcome).toEqual({
       status: "completed",
       finalText: "Done: renamed x.",
@@ -101,6 +105,33 @@ describe("runHandoffTurn", () => {
         )
       ).status,
     ).toBe("failed");
+  });
+
+  it("carries the turn's own usage on a completed outcome, as the delta on the review's thread", async () => {
+    const { client, threadFor } = stubs({
+      turnId: "turn-2",
+      state: "completed",
+      thread: thread("completed"),
+      // Cumulative over the session; the previous handoff on this thread is subtracted.
+      usage: { input_tokens: 12_000, output_tokens: 900, cache_read_input_tokens: 4_000 },
+      previousUsage: { usage: { input_tokens: 10_000, output_tokens: 500 } },
+    });
+    const outcome = await runHandoffTurn(
+      { repoRoot: "/repos/a", prompt: "x", reviewId: "rv-1" },
+      { client: async () => client, threadFor },
+    );
+    expect(outcome).toMatchObject({
+      status: "completed",
+      usage: { input: 2_000, output: 400, cacheRead: 4_000, cacheWrite: 0, total: 6_400 },
+    });
+    // No usage reported means no usage claimed.
+    const bare = stubs({ turnId: "turn-1", state: "completed", thread: thread("completed") });
+    expect(
+      await runHandoffTurn(
+        { repoRoot: "/repos/a", prompt: "x", reviewId: "rv-1" },
+        { client: async () => bare.client, threadFor: bare.threadFor },
+      ),
+    ).not.toHaveProperty("usage");
   });
 
   it("treats a missing checkpoint as an empty diff rather than a thrown handoff", async () => {
