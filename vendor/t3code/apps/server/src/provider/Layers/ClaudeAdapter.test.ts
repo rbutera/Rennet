@@ -437,6 +437,34 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("names the missing contract when its session was started without a schema", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      // ProviderService recovers a thread whose session died; a recovery that did
+      // not carry the turn's schema used to leave THIS session serving a turn that
+      // asks for one, reported as a mismatch against a contract nobody set.
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      const error = yield* adapter
+        .sendTurn({
+          threadId: THREAD_ID,
+          input: "asks for a board",
+          outputSchema: { type: "object", properties: { a: { type: "string" } } },
+        })
+        .pipe(Effect.flip);
+      assert.match(error.message, /started without an output schema/u);
+      assert.notMatch(error.message, /output schema differs/u);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("terminates a Claude child whose stdin breaks instead of crashing the server", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {

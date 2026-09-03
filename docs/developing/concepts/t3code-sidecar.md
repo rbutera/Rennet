@@ -200,9 +200,12 @@ Three things follow from the thread being persistent.
   drafting turn twice.
 
 Because the SDK fixes `outputFormat` when a query is constructed and offers no in-session
-setter, a seat thread's contract is decided by its first turn. A later turn asking for a
-different schema is refused by name rather than answered in the wrong shape; Rennet never
-sends one, since a seat drafts and repairs against a single board schema.
+setter, a *live* session's contract is decided by the turn that started it. A later turn
+asking for a different schema is refused by name rather than answered in the wrong shape;
+Rennet never sends one, since a seat drafts and repairs against a single board schema. A
+turn whose session is gone is a different case and starts a new one on the turn's own
+schema — including the session T3 recovers from a persisted resume cursor, which is the
+path a seat takes when its first turn killed the provider.
 
 The seam is two functions. `packages/adapters/src/t3-seat-turn.ts` builds the seat's
 `runTurn` and knows nothing about `effect`; `create-server.ts` fills it from the
@@ -222,9 +225,10 @@ its seat threads are bound under the session id at the drafting worktree, so a r
 sweep would leave every seat thread behind. Seat rows written before the owner field
 existed carry no session id and are matched by nothing — silence never sweeps.
 
-Nine vendored files carry this: the three contract modules that gained `outputSchema` /
+Ten vendored files carry this: the three contract modules that gained `outputSchema` /
 `structuredOutput`, the decider and the provider command reactor that thread it, the
-Claude and Codex adapters that hand it to their runtimes, and the runtime-ingestion layer
+Claude and Codex adapters that hand it to their runtimes, the provider service that
+carries the turn's schema into a session it recovers, and the runtime-ingestion layer
 that projects the `turn.settled` activity. Each has its row in `vendor/t3code/PATCHES.md`,
 all upstreamable.
 

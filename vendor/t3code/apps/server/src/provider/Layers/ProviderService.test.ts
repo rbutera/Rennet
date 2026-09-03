@@ -1545,6 +1545,45 @@ routing.layer("ProviderServiceLive routing", (it) => {
     }),
   );
 
+  it.effect("recovers a stale claudeAgent session on the turn's own output schema", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const outputSchema = { type: "object", properties: { verdict: { type: "string" } } };
+
+      const initial = yield* provider.startSession(asThreadId("thread-claude-schema-recover"), {
+        provider: ProviderDriverKind.make("claudeAgent"),
+        providerInstanceId: claudeAgentInstanceId,
+        threadId: asThreadId("thread-claude-schema-recover"),
+        cwd: "/tmp/project-claude-schema-recover",
+        runtimeMode: "full-access",
+        outputSchema,
+      });
+
+      // The session dies — a `claude` that exits at once takes it down on the
+      // first turn. Claude's SDK fixes `outputFormat` when the query is built, so
+      // a recovery that dropped the schema left the next turn refused against a
+      // contract the recovered session was never given.
+      yield* routing.claude.stopAll();
+      routing.claude.startSession.mockClear();
+      routing.claude.sendTurn.mockClear();
+
+      yield* provider.sendTurn({
+        threadId: initial.threadId,
+        input: "second turn, same contract",
+        attachments: [],
+        outputSchema,
+      });
+
+      assert.equal(routing.claude.startSession.mock.calls.length, 1);
+      const resumedStartInput = routing.claude.startSession.mock.calls[0]?.[0];
+      assert.deepEqual(
+        (resumedStartInput as { outputSchema?: unknown } | undefined)?.outputSchema,
+        outputSchema,
+      );
+      assert.equal(routing.claude.sendTurn.mock.calls.length, 1);
+    }),
+  );
+
   it.effect("lists no sessions after adapter runtime clears", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService.ProviderService;

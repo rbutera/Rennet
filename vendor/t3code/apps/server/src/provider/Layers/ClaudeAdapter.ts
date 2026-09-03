@@ -4641,9 +4641,12 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
   const sendTurn: ClaudeAdapterShape["sendTurn"] = Effect.fn("sendTurn")(function* (input) {
     const context = yield* requireSession(input.threadId);
     // The SDK fixes `outputFormat` when the query is built and offers no setter,
-    // so a turn asking for a DIFFERENT contract than the session was started with
-    // cannot be honoured. Fail it by name rather than silently returning output
-    // shaped to the wrong schema.
+    // so a turn asking for a contract this session's query cannot serve is failed
+    // by name rather than answered in the wrong shape. Only a LIVE session is
+    // compared: a thread whose session is gone starts a new one from the turn's
+    // own schema, which is the start path above. The two ways a live session can
+    // fail the turn read differently, and saying "differs" when the session holds
+    // no contract at all sends the reader hunting for a mismatch that is not there.
     const turnOutputSchema = asJsonSchemaRecord(input.outputSchema);
     if (
       turnOutputSchema !== undefined &&
@@ -4653,7 +4656,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         provider: PROVIDER,
         method: "thread.turn.start",
         detail:
-          "This turn's output schema differs from the one its Claude session was started with. The SDK fixes the structured-output contract when the query is created, so the session would have to be restarted.",
+          context.outputSchema === undefined
+            ? "This turn asks for structured output, but its Claude session was started without an output schema. The SDK fixes the structured-output contract when the query is created, so the session would have to be restarted."
+            : "This turn's output schema differs from the one its Claude session was started with. The SDK fixes the structured-output contract when the query is created, so the session would have to be restarted.",
       });
     }
     const modelCatalog = yield* modelCatalogEffect;
