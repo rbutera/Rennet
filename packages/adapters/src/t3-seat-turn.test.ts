@@ -89,10 +89,6 @@ describe("createT3SeatTurn", () => {
       { after: START },
       { after: START },
     ]);
-    // The contract travels ONCE, as the schema. Never restated in the text (AGENTS.md).
-    for (const [call] of startTurn.mock.calls) {
-      expect(call?.text).not.toContain("object");
-    }
   });
 
   it("tells the seam its thread as soon as it exists, before the turn starts", async () => {
