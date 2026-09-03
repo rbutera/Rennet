@@ -199,3 +199,57 @@ describe("createCodexSwarmTurn records usage (#737)", () => {
     ]);
   });
 });
+
+// ── The inline-context measurement rides the turn metric, on both ephemeral legs ──
+
+/** Today's expensive shape: an inventory interpolated as one JSON literal. ~14 KB. */
+const INLINE_LAYER = `Draft the board.\n${JSON.stringify({
+  hunks: Array.from({ length: 100 }, (_, index) => ({
+    path: `src/module-${index}.ts`,
+    excerpt: "export const value = 1; ".repeat(5),
+  })),
+})}`;
+/** The converted shape: the same turn, pointed at what it may read. */
+const PATH_REFERENCE =
+  "Draft the board. The context is in `.rennet/context/s1/README.md`; run `git diff main...HEAD` yourself.";
+
+describe("inline context is measured where the prompt is sent", () => {
+  it("the Claude leg (session.send) stamps a 10 KB layer on its metric, and nothing for a path reference", async () => {
+    const collector = createMetricsCollector();
+    const state: FakeState = { closed: false };
+    const port = fakePort(
+      [endedEvent({ status: "completed", finalText: "{}", structuredOutput: {} })],
+      state,
+    );
+    const seat = councilSeatTurn(
+      "project-scout",
+      { type: "object" },
+      { claudePort: port, repoRoot: "/repo", collector },
+      { availability: { installed: ["claude-code" as const] } },
+    );
+    if ("failure" in seat) throw new Error(seat.failure);
+    await seat.runTurn(INLINE_LAYER, 0);
+    await seat.runTurn(PATH_REFERENCE, 1);
+    expect(collector.metrics[0]?.inlineContextBytes).toBeGreaterThan(10_000);
+    expect(collector.metrics[1]).not.toHaveProperty("inlineContextBytes");
+  });
+
+  it("the Codex leg (the executor) stamps the same measurement", async () => {
+    const collector = createMetricsCollector();
+    const executor: CodexExecutor = () => Promise.resolve({ output: { elements: [] } });
+    const runTurn = createCodexSwarmTurn(
+      executor,
+      "gpt-5.6-terra",
+      "medium",
+      {},
+      {
+        cwd: "/repo",
+        collector,
+      },
+    );
+    await runTurn(INLINE_LAYER, 0);
+    await runTurn(PATH_REFERENCE, 1);
+    expect(collector.metrics[0]?.inlineContextBytes).toBeGreaterThan(10_000);
+    expect(collector.metrics[1]).not.toHaveProperty("inlineContextBytes");
+  });
+});

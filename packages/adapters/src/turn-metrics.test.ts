@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   createMetricsCollector,
   extractClaudeUsage,
+  inlineContextMetric,
   mergeGenerationUsage,
   summarizeUsage,
   type TurnMetric,
@@ -168,5 +169,17 @@ describe("mergeGenerationUsage (#741 review)", () => {
     expect(mergeGenerationUsage(undefined, usage())).toEqual(usage());
     expect(mergeGenerationUsage(usage(), undefined)).toEqual(usage());
     expect(mergeGenerationUsage(undefined, undefined)).toBeUndefined();
+  });
+});
+
+describe("inlineContextMetric", () => {
+  it("is the metric-shaped reading of the core measurement: a field when over the limit, nothing otherwise", () => {
+    const layer = JSON.stringify({
+      rows: Array.from({ length: 200 }, (_, i) => ({ i, p: `src/${i}.ts` })),
+    });
+    expect(inlineContextMetric(`Draft.\n${layer}`)).toEqual({
+      inlineContextBytes: new TextEncoder().encode(layer).length,
+    });
+    expect(inlineContextMetric("Draft. Read `.rennet/context/s1/README.md` first.")).toEqual({});
   });
 });

@@ -24,7 +24,12 @@
  * synthetic result frame, so the parse is verified independent of a live turn.
  */
 
-import { type HarnessPort, type HarnessTurnResult, METERED_API_KEY_SOURCES } from "@rennet/core";
+import {
+  type HarnessPort,
+  type HarnessTurnResult,
+  inlineContextViolation,
+  METERED_API_KEY_SOURCES,
+} from "@rennet/core";
 import type { GenerationUsage, RspDocType } from "@rennet/protocol";
 import { bodyJsonSchema } from "@rennet/protocol";
 
@@ -61,7 +66,19 @@ export interface TurnMetric {
   readonly latencyMs: number;
   /** Null when the turn failed before a result frame, or carried no usage. */
   readonly usage: ClaudeTurnUsage | null;
+  /**
+   * The bytes of context the prompt carried inline (JSON literals and fenced blocks,
+   * summed), present only when over `INLINE_CONTEXT_MAX_BYTES`. Measured where the prompt
+   * is sent, on every leg, and carried beside the tokens it cost so both reach one sink.
+   */
+  readonly inlineContextBytes?: number;
   readonly error?: string;
+}
+
+/** The inline-context measurement of one prompt, shaped to spread into a `TurnMetric`. */
+export function inlineContextMetric(prompt: string): { readonly inlineContextBytes?: number } {
+  const inline = inlineContextViolation(prompt);
+  return inline === undefined ? {} : { inlineContextBytes: inline.bytes };
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -223,6 +240,7 @@ export function createInstrumentedRunTurn(
       ...(options.signal === undefined ? {} : { signal: options.signal }),
     });
     const started = now();
+    const inline = inlineContextMetric(prompt);
     let model: string | null = null;
     let apiKeySource: string | null = null;
     const finish = (
@@ -235,6 +253,7 @@ export function createInstrumentedRunTurn(
         attempt,
         model,
         apiKeySource,
+        ...inline,
         status: result.status,
         latencyMs: now() - started,
         usage,

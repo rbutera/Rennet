@@ -16,7 +16,7 @@ import type {
   RspTokenUsage,
 } from "@rennet/protocol";
 import { createT3SeatTurn, type T3SeatSeam } from "./t3-seat-turn";
-import { extractClaudeUsage, type MetricsCollector } from "./turn-metrics";
+import { extractClaudeUsage, inlineContextMetric, type MetricsCollector } from "./turn-metrics";
 
 /**
  * Council-seat turn resolution: one council job becomes a concrete `runTurn`
@@ -105,6 +105,7 @@ export function createClaudeSwarmTurn(
         // Diagnostics never change the provider result they describe.
       }
     };
+    const inline = inlineContextMetric(prompt);
     const record = (
       status: "emitted" | "failed",
       usage: ReturnType<typeof extractClaudeUsage>,
@@ -120,6 +121,7 @@ export function createClaudeSwarmTurn(
         attempt,
         model: observedModel,
         apiKeySource,
+        ...inline,
         status,
         latencyMs: now() - started,
         usage,
@@ -235,6 +237,7 @@ export function createCodexSwarmTurn(
     // The same tap the Claude leg feeds (#737): a Codex turn is spend too. Codex reports
     // tokens with no dollar figure and no credential source, so `reportedUsd` is null and
     // the generation sum stays honest about it.
+    const inline = inlineContextMetric(prompt);
     const record = (
       status: "emitted" | "failed",
       observedModel: string | null,
@@ -249,6 +252,7 @@ export function createCodexSwarmTurn(
         label,
         docType: "review.hypothesis",
         attempt,
+        ...inline,
         model: observedModel,
         apiKeySource: null,
         status,

@@ -2131,8 +2131,10 @@ export interface ContextSendRecord {
   readonly contextIncluded: boolean;
   readonly contextDigest?: string;
   /**
-   * The size of the first JSON literal over 2 KiB found in the sent prompt — the mechanical
-   * reading of the never-inline-context rule (session-context-files 2.3).
+   * The bytes of context the sent prompt carried inline (every JSON literal and fenced block,
+   * summed), present when over 2 KiB — the mechanical reading of the never-inline-context
+   * rule (session-context-files 2.3). The same figure is stamped on the turn metric beside
+   * the tokens it cost, on every harness leg.
    *
    * MEASUREMENT, NOT A GATE: it is recorded and never blocks a send. Its point is that a
    * prompt's cost is invisible in a diff, so the one place every prompt passes through says

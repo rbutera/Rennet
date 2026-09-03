@@ -89,30 +89,41 @@ function extractContextLayer(sentText: string): string | undefined {
 export const INLINE_CONTEXT_MAX_BYTES = 2048;
 
 /**
- * The first JSON object or array literal in a prompt larger than {@link
- * INLINE_CONTEXT_MAX_BYTES}, with its byte size and its offset — the mechanical reading of
- * "never inline context".
+ * How much context a prompt carries inline, in bytes: every balanced JSON literal and every
+ * fenced code block, summed over the whole text — the mechanical reading of "never inline
+ * context". Reported only when the total is over {@link INLINE_CONTEXT_MAX_BYTES}, so an
+ * instruction that shows a small shape costs nothing, while a manifest of three hundred
+ * small rows, or a payload sitting after a stray brace in prose, is measured in full.
  *
- * Pure, and cheap: ONE left-to-right pass keeping a stack of open brackets (tracking JSON
- * string escapes only once inside a candidate, since a quote in prose means nothing), and
- * `JSON.parse` is run only on a balanced top-level span that is already over the limit. So
- * a prompt that references paths — the shape every site is being converted to — costs one
- * scan and parses nothing.
+ * Pure, and cheap: fenced blocks are lifted first (their bytes count whole, and a literal
+ * inside one is not counted twice), then each LINE is scanned once with a stack of open
+ * brackets, `JSON.parse` confirming only a balanced span. The stack resets at every newline:
+ * a `JSON.stringify(x)` literal never spans lines (the harness rule forbids pretty-printing
+ * for a model), and the reset is what stops an unpaired `{` in prose from swallowing the
+ * rest of the prompt.
  *
- * ponytail: top-level spans only. A payload nested inside a larger span that does NOT
- * parse as JSON (a fenced code block, say) is not reported; the shape this exists to catch
- * is a whole context layer that is one literal. Descend per-span if a real prompt ever
- * hides one.
+ * ponytail: a stray opener on the SAME line as a literal still hides it (the literal is then
+ * nested, never top-level); rescan from the stray if a real prompt ever has that shape.
  */
-export function inlineContextViolation(
-  prompt: string,
-): { readonly bytes: number; readonly at: number } | undefined {
+export function inlineContextViolation(prompt: string): { readonly bytes: number } | undefined {
+  let bytes = 0;
+  const unfenced = prompt.replace(/```[\s\S]*?```/g, (block) => {
+    bytes += UTF8_ENCODER.encode(block).length;
+    return "";
+  });
+  for (const line of unfenced.split("\n")) bytes += jsonLiteralBytes(line);
+  return bytes > INLINE_CONTEXT_MAX_BYTES ? { bytes } : undefined;
+}
+
+/** The bytes of every balanced top-level JSON literal on one line of prompt. */
+function jsonLiteralBytes(line: string): number {
+  let bytes = 0;
   const open: string[] = [];
   let start = -1;
   let inString = false;
   let escaped = false;
-  for (let i = 0; i < prompt.length; i += 1) {
-    const ch = prompt[i];
+  for (let i = 0; i < line.length; i += 1) {
+    const ch = line[i];
     if (inString) {
       if (escaped) escaped = false;
       else if (ch === "\\") escaped = true;
@@ -137,17 +148,15 @@ export function inlineContextViolation(
       continue;
     }
     if (open.length > 0) continue;
-    const literal = prompt.slice(start, i + 1);
-    const bytes = UTF8_ENCODER.encode(literal).length;
-    if (bytes <= INLINE_CONTEXT_MAX_BYTES) continue;
+    const literal = line.slice(start, i + 1);
     try {
       JSON.parse(literal);
     } catch {
       continue; // balanced brackets, but not JSON
     }
-    return { bytes, at: start };
+    bytes += UTF8_ENCODER.encode(literal).length;
   }
-  return undefined;
+  return bytes;
 }
 
 /**
