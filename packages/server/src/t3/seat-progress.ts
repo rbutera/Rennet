@@ -74,7 +74,15 @@ export function watchSeatThread(input: WatchSeatThreadInput): SeatThreadWatch {
     if (latest.text === lastText) return;
     lastText = latest.text;
     lastPublishedAt = at;
-    input.publish(latest);
+    // The publish reaches the lane store and its persistence. It runs from the idle
+    // interval and the trailing timer as well as from the stream loop, and a throw from
+    // a timer is an uncaught exception in the daemon — so it is contained here, once, and
+    // reported the same way a failed read is.
+    try {
+      input.publish(latest);
+    } catch (error) {
+      if (!stopped) input.onError?.(error);
+    }
   };
 
   const clearTrailing = (): void => {

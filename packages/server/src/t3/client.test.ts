@@ -11,6 +11,7 @@ import {
   type OrchestrationThreadStreamItem,
   readTurnSettlement,
   type T3Client,
+  withStartBound,
 } from "./client";
 import { type RunningSidecar, resolveSidecarBundle, spawnSidecar, stopSidecar } from "./sidecar";
 import {
@@ -240,111 +241,112 @@ describe.skipIf(!bundle)("t3 client over the vendored sidecar", () => {
 // the session with `lastError` and emits no turn lifecycle, so the settle wait must read
 // the session, not just `latestTurn`. This gets its OWN sidecar: on the ubuntu CI runner
 // the sidecar's RPC socket closed with 1006 right after the dead stream and every later
-// test in the shared suite lost its connection (run 33744230481). On macOS the sidecar
-// survives it. Until that Linux behaviour is reproduced and fixed in the vendored server,
-// the proof runs on macOS only and says so here rather than pretending to run.
-describe.skipIf(!bundle || process.platform !== "darwin")(
-  "t3 client: a provider stream that dies before its turn registers",
-  () => {
-    let root: string;
-    let running: RunningSidecar;
-    let client: T3Client;
-    let dataDir: string;
+// test in the shared suite lost its connection (run 33744230481). That 1006 was the whole
+// sidecar dying on an unhandled `write EPIPE`: the SDK's transport writes the prompt to a
+// child stdin nobody listens to for errors. It is fixed in `ClaudeAdapter.ts` (ledger row
+// 6), so this runs on every platform again. A `claude` that merely EXITS cannot see it —
+// the SDK's own exit check wins that race, ten runs out of ten — so the stand-in below
+// closes its stdin and lives on, which is the shape that produces the write.
+describe.skipIf(!bundle)("t3 client: a provider stream that dies before its turn registers", () => {
+  let root: string;
+  let running: RunningSidecar;
+  let client: T3Client;
+  let dataDir: string;
 
-    beforeAll(async () => {
-      root = mkdtempSync(join(tmpdir(), "rennet-t3-dead-provider-"));
-      dataDir = join(root, "data");
-      const repo = join(root, "repo");
-      mkdirSync(repo, { recursive: true });
-      execFileSync("git", ["init", "-q", "-b", "main", repo]);
-      writeFileSync(join(repo, "README.md"), "repo\n");
-      execFileSync("git", ["-C", repo, "add", "."]);
-      execFileSync("git", [
-        "-C",
-        repo,
-        "-c",
-        "user.name=t",
-        "-c",
-        "user.email=t@example.com",
-        "commit",
-        "-q",
-        "-m",
-        "init",
-      ]);
-      // A `claude` that idles briefly and then exits 1, so a turn on the Claude provider
-      // fails at the stream. Not `/usr/bin/false`: that exits before the sidecar's first
-      // stdin write lands, and the resulting EPIPE is an unhandled socket error that
-      // kills the sidecar (close 1006) — a race in the fixture, not in the code here.
-      const deadClaude = join(root, "dead-claude.sh");
-      writeFileSync(deadClaude, "#!/bin/sh\nsleep 0.2\nexit 1\n", { mode: 0o755 });
-      running = await spawnSidecar({
-        dataDir,
-        bundlePath: bundle as string,
-        upstreamCommit: "test",
-        env: { ...process.env, HOME: join(root, "home") },
-        binaries: { claude: deadClaude },
-        readyTimeoutMs: 30_000,
-      });
-      client = await connectT3({
-        wsUrl: `${running.origin.replace(/^http/, "ws")}/ws`,
-        accessToken: running.credentials.accessToken,
-      });
-    }, 60_000);
+  beforeAll(async () => {
+    root = mkdtempSync(join(tmpdir(), "rennet-t3-dead-provider-"));
+    dataDir = join(root, "data");
+    const repo = join(root, "repo");
+    mkdirSync(repo, { recursive: true });
+    execFileSync("git", ["init", "-q", "-b", "main", repo]);
+    writeFileSync(join(repo, "README.md"), "repo\n");
+    execFileSync("git", ["-C", repo, "add", "."]);
+    execFileSync("git", [
+      "-C",
+      repo,
+      "-c",
+      "user.name=t",
+      "-c",
+      "user.email=t@example.com",
+      "commit",
+      "-q",
+      "-m",
+      "init",
+    ]);
+    // `claude` closes its stdin and then dies, so a turn on the Claude provider
+    // fails at the stream AND the SDK's prompt write lands on a broken pipe.
+    const claude = join(root, "claude-broken-stdin");
+    writeFileSync(claude, "#!/bin/sh\nexec 0<&-\nsleep 2\nexit 1\n", { mode: 0o755 });
+    running = await spawnSidecar({
+      dataDir,
+      bundlePath: bundle as string,
+      upstreamCommit: "test",
+      env: { ...process.env, HOME: join(root, "home") },
+      binaries: { claude },
+      readyTimeoutMs: 30_000,
+    });
+    client = await connectT3({
+      wsUrl: `${running.origin.replace(/^http/, "ws")}/ws`,
+      accessToken: running.credentials.accessToken,
+    });
+  }, 60_000);
 
-    afterAll(async () => {
-      await client?.close();
-      await stopSidecar(dataDir);
-      running?.child?.kill("SIGKILL");
-      rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
-    }, 30_000);
+  afterAll(async () => {
+    await client?.close();
+    await stopSidecar(dataDir);
+    running?.child?.kill("SIGKILL");
+    rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }, 30_000);
 
-    it("settles as a failed turn carrying the session error, instead of waiting forever", async () => {
-      const projectId = await client.ensureProject(join(root, "repo"), "fixture");
-      const threadId = await client.createThread({
-        projectId,
-        title: "dead claude",
-        modelSelection: modelSelection("claudeAgent", "claude-sonnet-5"),
-      });
-      const first = await client.startTurn({
-        threadId,
-        text: "say hi",
-        outputSchema: { type: "object" },
-      });
-      expect(first.previousTurnId).toBeNull();
-      const outcome = await client.waitForTurnSettled(threadId, {
-        after: first,
-        startTimeoutMs: 15_000,
-      });
-      expect(outcome.state).toBe("error");
-      expect(outcome.errorMessage).toMatch(/stream failed|Claude/i);
-      // A dead provider registers no turn at all, so the wait names the session, and the
-      // failure it names was recorded after this start, not before it.
-      expect(outcome.thread.latestTurn).toBeNull();
-      expect(Date.parse(outcome.thread.session?.updatedAt ?? "")).toBeGreaterThanOrEqual(
-        Date.parse(first.requestedAt),
-      );
+  it("settles as a failed turn carrying the session error, instead of waiting forever", async () => {
+    const projectId = await client.ensureProject(join(root, "repo"), "fixture");
+    const threadId = await client.createThread({
+      projectId,
+      title: "dead claude",
+      modelSelection: modelSelection("claudeAgent", "claude-sonnet-5"),
+    });
+    const first = await client.startTurn({
+      threadId,
+      text: "say hi",
+      outputSchema: { type: "object" },
+    });
+    expect(first.previousTurnId).toBeNull();
+    const outcome = await client.waitForTurnSettled(threadId, {
+      after: first,
+      startTimeoutMs: 15_000,
+    });
+    expect(outcome.state).toBe("error");
+    expect(outcome.errorMessage).toMatch(/stream failed|Claude/i);
+    // A dead provider registers no turn at all, so the wait names the session, and the
+    // failure it names was recorded after this start, not before it.
+    expect(outcome.thread.latestTurn).toBeNull();
+    expect(Date.parse(outcome.thread.session?.updatedAt ?? "")).toBeGreaterThanOrEqual(
+      Date.parse(first.requestedAt),
+    );
+    // And the sidecar is still there. The EPIPE this stand-in provokes used to kill it,
+    // which is one thread's dead provider taking every other seat's thread with it.
+    expect(running.child?.exitCode).toBeNull();
 
-      // A SECOND turn on the same thread. The thread still carries the first failure, so
-      // an unscoped wait could answer with it; scoped to this start, the answer is the
-      // session state recorded AFTER the second request. (T3 gives the second start a
-      // different message: it refuses the schema against the dead session.)
-      const second = await client.startTurn({
-        threadId,
-        text: "say hi again",
-        outputSchema: { type: "object" },
-      });
-      const again = await client.waitForTurnSettled(threadId, {
-        after: second,
-        startTimeoutMs: 15_000,
-      });
-      expect(again.state).toBe("error");
-      expect(again.thread.session?.updatedAt).not.toBe(outcome.thread.session?.updatedAt);
-      expect(Date.parse(again.thread.session?.updatedAt ?? "")).toBeGreaterThanOrEqual(
-        Date.parse(second.requestedAt),
-      );
-    }, 30_000);
-  },
-);
+    // A SECOND turn on the same thread. The thread still carries the first failure, so
+    // an unscoped wait could answer with it; scoped to this start, the answer is the
+    // session state recorded AFTER the second request.
+    const second = await client.startTurn({
+      threadId,
+      text: "say hi again",
+      outputSchema: { type: "object" },
+    });
+    const again = await client.waitForTurnSettled(threadId, {
+      after: second,
+      startTimeoutMs: 15_000,
+    });
+    expect(again.state).toBe("error");
+    expect(again.thread.session?.updatedAt).not.toBe(outcome.thread.session?.updatedAt);
+    expect(Date.parse(again.thread.session?.updatedAt ?? "")).toBeGreaterThanOrEqual(
+      Date.parse(second.requestedAt),
+    );
+    expect(running.child?.exitCode).toBeNull();
+  }, 45_000);
+});
 
 describe("modelSelection", () => {
   it("carries effort as the option each provider's adapter reads, and nothing when absent", () => {
@@ -597,6 +599,44 @@ describe("awaitTurnSettled", () => {
     ).rejects.toThrow(/never started the requested turn within 0 s \(session ready\)/);
   }, 2_000);
 
+  it("does not lose a settle event that lands right after the start timer fired", async () => {
+    // The turn registers in the gap between the timer firing and its read; the very next
+    // stream item is the settlement. A wait that asked the stream for a fresh read after
+    // the timer would let the earlier, orphaned read swallow that item.
+    const p = projection(fakeThread({}));
+    const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+    // A slow read, so the settle event can land WHILE the timer's read is out.
+    const deps = {
+      ...p.deps,
+      readThread: async () => {
+        // What the thread showed when the read was ISSUED, delivered late.
+        const seen = await p.deps.readThread();
+        await sleep(40);
+        return seen;
+      },
+    };
+    const wait = awaitTurnSettled("t", deps, {
+      after: { previousTurnId: null, requestedAt: T0 },
+      startTimeoutMs: 20,
+    });
+    await sleep(10);
+    // Registered, but no stream item about it: the timer's read is what will see it.
+    p.set(fakeThread({ latestTurn: { turnId: "turn-1", state: "running" } }));
+    // Timer fires at 20 ms; its read is out until 60 ms. Settle at 35 ms, inside that window.
+    await sleep(25);
+    p.set(
+      fakeThread({
+        latestTurn: { turnId: "turn-1", state: "completed" },
+        activities: [settledActivity("turn-1", { structuredOutput: { seen: true } })],
+      }),
+    );
+    p.push(event("thread.activity-appended"));
+    await expect(wait).resolves.toMatchObject({
+      turnId: "turn-1",
+      structuredOutput: { seen: true },
+    });
+  }, 2_000);
+
   it("keeps waiting past the start timeout once the turn has registered", async () => {
     const p = projection(fakeThread({}));
     const wait = awaitTurnSettled("t", p.deps, {
@@ -691,5 +731,26 @@ describe("awaitTurnSettled", () => {
     await awaitTurnSettled("t", p.deps, { signal: controller.signal });
     expect(added).toHaveBeenCalledTimes(1);
     expect(removed).toHaveBeenCalledWith("abort", added.mock.calls[0]?.[1]);
+  });
+});
+
+describe("withStartBound: a turn start is held to a deadline and a signal", () => {
+  it("gives up on a start the sidecar never answers, naming the step", async () => {
+    const never = () => new Promise<never>(() => undefined);
+    await expect(
+      withStartBound(never, { timeoutMs: 30 }, "T3 thread t did not accept"),
+    ).rejects.toThrow(/did not accept within 0 s/);
+  });
+
+  it("lets an abort release the start while the RPC is still out", async () => {
+    const controller = new AbortController();
+    const never = () => new Promise<never>(() => undefined);
+    const start = withStartBound(never, { signal: controller.signal, timeoutMs: 5_000 }, "x");
+    controller.abort();
+    await expect(start).rejects.toThrow(/aborted/);
+  });
+
+  it("passes an answered start through untouched", async () => {
+    await expect(withStartBound(async () => 42, { timeoutMs: 1_000 }, "x")).resolves.toBe(42);
   });
 });

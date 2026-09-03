@@ -53,11 +53,14 @@ export interface T3TurnStart {
 
 /** The daemon's T3 client, narrowed to what a seat turn uses. */
 export interface T3SeatClient {
-  readonly startTurn: (input: {
-    readonly threadId: string;
-    readonly text: string;
-    readonly outputSchema?: unknown;
-  }) => Promise<T3TurnStart>;
+  readonly startTurn: (
+    input: {
+      readonly threadId: string;
+      readonly text: string;
+      readonly outputSchema?: unknown;
+    },
+    options?: { readonly signal?: AbortSignal },
+  ) => Promise<T3TurnStart>;
   readonly waitForTurnSettled: (
     threadId: string,
     options?: { readonly signal?: AbortSignal; readonly after?: T3TurnStart },
@@ -325,13 +328,18 @@ export function createT3SeatTurn(
       signal?.addEventListener("abort", onAbort);
       let settled: T3SettledTurn;
       try {
-        const start = await client.startTurn({
-          threadId: thread.threadId,
-          text: prompt,
-          // Once per turn, as the turn's structured-output contract, shaped for the
-          // provider that will validate it. Never in the text.
-          outputSchema: outputSchemaFor(provider, options.outputSchema),
-        });
+        const start = await client.startTurn(
+          {
+            threadId: thread.threadId,
+            text: prompt,
+            // Once per turn, as the turn's structured-output contract, shaped for the
+            // provider that will validate it. Never in the text.
+            outputSchema: outputSchemaFor(provider, options.outputSchema),
+          },
+          // The start is bounded like the wait: an abort or a stalled sidecar releases the
+          // seat here instead of holding it on an RPC that never answers.
+          signal === undefined ? {} : { signal },
+        );
         // Aborted while the start was in flight: the listener's interrupt may have reached
         // the sidecar before the turn existed, so send it again now that it does.
         if (signal?.aborted) interrupt();
