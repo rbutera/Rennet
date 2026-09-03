@@ -129,6 +129,81 @@ script plus a 380 KB stylesheet, and the on-disk renderer grew from 2.4 MB to 21
 because `@pierre/diffs` splits every Shiki grammar into its own on-demand chunk and
 `heic-to` (2.9 MB, loaded only when a HEIC image is attached) rides along.
 
+## Seats as threads
+
+Every board seat of a review generation — Design, Sequence, Decisions, both Flagged seats,
+Noise, and the round report — runs as one persistent thread in this sidecar, on the
+review's checkout, instead of a cold ephemeral harness session per attempt. The binding is
+`(repository root, generation id, seat)` in the same `thread-bindings.json` as the session
+bindings, and the thread's title names the branch and the lens (`feat/x — Design`), so the
+sidecar's own thread list reads sensibly. Two repositories in one workspace on the same
+branch get two threads, because the key starts at the checkout and never at a project id.
+
+The council still routes each seat: a Claude seat is a thread on T3's `claudeAgent`
+instance at the council's model, a Codex seat one on `codex`. Flagged runs both, on two
+threads.
+
+Three things follow from the thread being persistent.
+
+- **A repair is the next turn, not a new session.** When a draft fails lint, the seat is
+  sent `renderRepairTurn(pointers, frozenIds)` from `@rennet/prompts`: the lint pointers,
+  the frozen element ids, and the instruction. The base drafting prompt and the failing
+  draft are already in the conversation, so neither is re-sent. Measured on the repair
+  fixture in `lens-pipeline.test.ts` against the shipped Flagged prompt, a repair turn
+  fell from 7,107 bytes to 469 — the base prompt is 6,359 of the bytes that no longer
+  travel, and a production base prompt also carries the change inventory, so the real
+  saving is larger. Both interpolations declare a byte bound with an honest omission
+  marker.
+- **The output schema is the turn's contract, once.** `startTurn` takes an `outputSchema`
+  and T3 attaches it to the turn; it is never restated in prompt text. A settled turn's
+  structured result, duration, usage and cost come back on a `turn.settled` activity the
+  sidecar appends to the thread, which `waitForTurnSettled` reads. A Claude turn that
+  settles without structured output is an honest turn failure, not a guess at the final
+  message. Codex is the documented exception: T3 forwards the schema to Codex as
+  `V2TurnStartParams.outputSchema`, but its runtime does not surface a settled turn's
+  structured result, so the daemon parses the board out of the Codex seat's final message
+  — for that provider only.
+- **Spend is per turn, and it is a delta.** Claude's SDK reports usage cumulatively over a
+  streaming session's turns, so the seat leg records each turn's own usage as the
+  difference against the previous turn's total. One `TurnMetric` per turn reaches the
+  generation's collector, labelled `board.<jobId>`, and a repair therefore never bills the
+  drafting turn twice.
+
+Because the SDK fixes `outputFormat` when a query is constructed and offers no in-session
+setter, a seat thread's contract is decided by its first turn. A later turn asking for a
+different schema is refused by name rather than answered in the wrong shape; Rennet never
+sends one, since a seat drafts and repairs against a single board schema.
+
+The seam is two functions. `packages/adapters/src/t3-seat-turn.ts` builds the seat's
+`runTurn` and knows nothing about `effect`; `create-server.ts` fills it from the
+supervisor. A daemon with no vendored bundle resolves no seat runtime and the board seats
+fall back to the ephemeral Claude/Codex legs unchanged.
+
+Nine vendored files carry this: the three contract modules that gained `outputSchema` /
+`structuredOutput`, the decider and the provider command reactor that thread it, the
+Claude and Codex adapters that hand it to their runtimes, and the runtime-ingestion layer
+that projects the `turn.settled` activity. Each has its row in `vendor/t3code/PATCHES.md`,
+all upstreamable.
+
+## The live line on a lane
+
+While a seat's lane runs, the daemon holds one subscription to that seat's thread and
+publishes what the seat is doing through the lane. `packages/server/src/t3/latest-event.ts`
+is the projector: a pure function from a thread projection to the protocol's `LaneLatest`.
+A tool call in flight becomes plain words naming what it is acting on — `reading
+src/foo.ts`, `running git diff --stat`, `editing a.ts`, `searching createSession` — a tool
+with no plain word for it keeps T3's own summary rather than being given an invented verb,
+and assistant prose becomes its last sentence. Every line is capped at 120 characters with
+an honest `…`. When nothing new has arrived for twenty seconds the line becomes `idle` and
+says how long it has been quiet, rather than freezing on a stale one.
+
+`t3/seat-progress.ts` holds the subscription. Thread events do not carry the whole
+projection, so a re-read is an RPC and is throttled to at most four publications a second
+per lane; the idle tick re-projects the last snapshot against a fresh clock and costs no
+RPC at all. The lane carries its `thread` reference from the moment the thread exists and
+keeps it through every later state, so a settled or failed reader still opens its
+transcript. The subscription is dropped when the generation settles.
+
 ## The handoff exit
 
 "Hand to coding agent" on a project whose engine is `t3` dispatches the composed work
@@ -167,7 +242,9 @@ over RPC before the signal is the daemon-side client's job and lands with it.
 - `packages/server/src/t3/sidecar.ts`: claim, probe, free port, provider seeding, environment, spawn, adopt, stop.
 - `packages/server/src/t3/supervisor.ts`: one supervisor per data dir; `ensure`, `session`, `client`, `threadFor`, `status`, `stopSync`.
 - `packages/server/src/t3/client.ts`: the daemon-side RPC client, the one Rennet module importing `effect` and `@t3tools/contracts`.
-- `packages/server/src/t3/threads.ts`: the (repository root, session id) → thread binding.
+- `packages/server/src/t3/threads.ts`: the (repository root, session id) and (repository root, generation id, seat) → thread bindings, and `seatThreadTitle`.
+- `packages/server/src/t3/latest-event.ts`: the pure thread → `LaneLatest` projector; `t3/seat-progress.ts`: the throttled subscription that feeds a lane.
+- `packages/adapters/src/t3-seat-turn.ts`: the seat leg (`createT3SeatTurn`); `council-seat-turn.ts` routes board jobs to it when the seam is present, and `runtime/rounds.ts` builds the seam per generation.
 - `packages/server/src/t3/handoff.ts`: the handoff exit; `create-server.ts` routes by the repository's `chatEngine`.
 - `packages/app-ui/src/settings/projects/chat-engine.tsx`: the engine control and its disclosure; `packages/app-ui/src/chat/engine-chat-dock.tsx`: the slot switch, the rung-one `<webview>`, and the rung-two hand-off to the host-provided component (`chat/t3-chat-slot.tsx`).
 - `packages/t3-chat/src/native-chat.tsx`: rung two (routes, providers, environment registration, the thread and draft route views mirrored from upstream's route files); `session.ts`: the session-to-registration mapping; `t3.css`: the theme bridge. `apps/desktop/vite.renderer.config.ts` carries the alias, dedupe and defines; `apps/desktop/src/renderer/index.tsx` provides the component.
