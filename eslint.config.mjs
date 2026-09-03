@@ -218,7 +218,35 @@ export default [
     },
   },
   {
+    // Flat config REPLACES a rule per matching file, so every server-wide import ban
+    // lives in this ONE block: Electron-free, and `effect` / `@t3tools/*` confined to the
+    // daemon-side T3 client (AGENTS.md, "Vendored T3 Code"). The client gets its own block
+    // below that keeps the Electron ban and lifts the other.
     files: ["packages/server/**/*.ts", "packages/server/**/*.tsx"],
+    ignores: ["packages/server/src/t3/client.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: [
+            {
+              name: "electron",
+              message: "packages/server is Electron-free; inject effects via RennetServerOptions.",
+            },
+          ],
+          patterns: [
+            {
+              group: ["effect", "effect/*", "@t3tools/*"],
+              message:
+                "Only packages/server/src/t3/client.ts may import effect or @t3tools/*; consume its Promise/AsyncIterable API instead.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    files: ["packages/server/src/t3/client.ts"],
     rules: {
       "no-restricted-imports": [
         "error",
@@ -296,27 +324,6 @@ export default [
     rules: {
       "rennet/no-direct-invoke": "error",
       "rennet/no-handrolled-toggle": "error",
-    },
-  },
-  {
-    // `effect` and `@t3tools/*` are imported by vendored code and by exactly one Rennet
-    // module, the daemon-side T3 client (AGENTS.md, "Vendored T3 Code"). Everything else in
-    // the server stays Promise-shaped; the client is the seam that converts.
-    files: ["packages/server/src/**/*.ts"],
-    ignores: ["packages/server/src/t3/client.ts"],
-    rules: {
-      "no-restricted-imports": [
-        "error",
-        {
-          patterns: [
-            {
-              group: ["effect", "effect/*", "@t3tools/*"],
-              message:
-                "Only packages/server/src/t3/client.ts may import effect or @t3tools/*; consume its Promise/AsyncIterable API instead.",
-            },
-          ],
-        },
-      ],
     },
   },
 ];
