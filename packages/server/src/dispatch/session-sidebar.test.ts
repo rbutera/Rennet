@@ -12,7 +12,7 @@ import {
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { SessionEntry } from "../session/session-entry";
 import type { ModelSelection, T3Client } from "../t3/client";
-import { bindThread, findBindingsForSessions, sweepThreads } from "../t3/threads";
+import { bindThread, findBindingsForSessions, sweepIfArchived, sweepThreads } from "../t3/threads";
 import { projectHandlers } from "./project";
 import { createDispatchRuntime, type DispatchDeps } from "./runtime";
 import { sessionHandlers, sidebarSessionOf } from "./session";
@@ -592,6 +592,157 @@ describe("session.archive waits for the preparation before sweeping", () => {
     expect(findBindingsForSessions(dataDir, ["s1", "rev-1"]).map((row) => row.seat)).toEqual([
       "design",
     ]);
+    expect(deleted).toEqual(["thread-1"]);
+  });
+});
+
+// ── ...and a ROUND outlives that same boundary, because nothing aborts it ────
+//
+// The preparation is awaited; a round is not. A round is driven by the durable round
+// coordinator, `dispatchRound` passes no abort signal, and nothing holds a round in
+// flight — so archiving a session while a returned generation is drafting lets the
+// round's board seats bind fresh seat threads under the session id AFTER the sweep has
+// already passed. The archive answers "deleted 1 thread" and five orphans appear behind
+// it that nothing sweeps, which an un-archive then resolves against.
+//
+// The fix is `sweepIfArchived` on the round's way out (wired into the composition root's
+// `boardDraftingDeps.runRound`), so this drives the REAL helper, the REAL `bindThread`
+// and the REAL sweep over the REAL bindings file; only the RPC delete is a stub.
+//
+// What this CANNOT catch: the call site. `boardDraftingDeps.runRound` is a closure in
+// `createRennetServer` that no test reaches without booting a server and running a round,
+// so deleting the `finally` there would leave both tests below green. Breaking the helper
+// reddens the first one (control run 2026-09-03, 5 seat rows survived); breaking the
+// wiring is caught by reading `create-server.ts`, not by this file.
+
+describe("a round that outlives an archive sweeps its own late seat bindings", () => {
+  let dataDir: string;
+  let sessionDir: string;
+  beforeEach(() => {
+    dataDir = mkdtempSync(join(tmpdir(), "rennet-round-boundary-"));
+    sessionDir = sessionsDir();
+  });
+  afterEach(() => {
+    rmSync(dataDir, { recursive: true, force: true });
+    rmSync(sessionDir, { recursive: true, force: true });
+  });
+
+  /** The five seats a returned generation binds threads for, in the order it binds them. */
+  const ROUND_SEATS = ["design", "sequence", "decisions", "noise", "round-report"] as const;
+
+  /**
+   * @param sweepsOnSettle the composition root's shape when `true` (the round runs
+   * `sweepIfArchived` in its `finally`); the pre-fix shape — the round simply ends — when
+   * `false`. Nothing else differs, so the two runs differ only by the fix.
+   */
+  function roundBoundary(sweepsOnSettle: boolean) {
+    let created = 0;
+    const client = {
+      ensureProject: async (root: string) => `project:${root}`,
+      createThread: async () => `thread-${++created}`,
+    } as unknown as T3Client;
+    const deleted: string[] = [];
+    const store = new SessionStore(sessionDir);
+    const rounds = new RoundRecordStore(join(sessionDir, "rounds"));
+
+    const forgetSession = (ids: readonly string[]) =>
+      sweepThreads({
+        dataDir,
+        ids,
+        deleteThread: async (threadId: string) => {
+          deleted.push(threadId);
+        },
+        warn: () => undefined,
+      });
+
+    const rt = createDispatchRuntime({
+      service: { reviewById: () => undefined },
+      sessions: {
+        // The composition root's own `setArchived` minus the preparation wait: there is no
+        // preparation in this fixture. The ROUND is the thing still able to bind.
+        setArchived: async (id: string, archived: boolean) => {
+          const session = archived ? store.archive(id) : store.restore(id);
+          return session && sidebarSessionOf(session, rounds.read(session.id));
+        },
+      },
+      t3Sidecar: { forgetSession },
+    } as unknown as DispatchDeps);
+
+    /** One round drafting a returned generation: a thread per seat, then it settles. */
+    const round = (async () => {
+      // A real round's seats resolve their threads inside an async pipeline, well after
+      // the archive command has returned — and the drafting root is a detached worktree,
+      // so the seat rows are the only thing tying those threads back to the session.
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      for (const seat of ROUND_SEATS) {
+        await bindThread({
+          dataDir,
+          client,
+          repositoryRoot: "/worktree",
+          key: { kind: "seat", generationId: "gen-2", seat },
+          title: `feat/x — ${seat}`,
+          modelSelection: SELECTION,
+          sessionId: "s1",
+        });
+      }
+    })().finally(async () => {
+      if (sweepsOnSettle) await sweepIfArchived(store.load("s1"), forgetSession);
+    });
+
+    return { handlers: sessionHandlers(rt), store, client, deleted, round };
+  }
+
+  /** The session's own thread, bound before the archive as a live review's would be. */
+  const bindRoundSessionThread = (client: T3Client) =>
+    bindThread({
+      dataDir,
+      client,
+      repositoryRoot: "/repo",
+      key: { kind: "session", sessionId: "rev-1" },
+      title: "feat/x",
+      modelSelection: SELECTION,
+      sessionId: "rev-1",
+    });
+
+  it("leaves no seat binding behind when the archive lands mid-round", async () => {
+    const { handlers, store, client, deleted, round } = roundBoundary(true);
+    store.save(seed("s1", "feat/x"));
+    store.attachReview("s1", "rev-1");
+    await bindRoundSessionThread(client);
+
+    await handlers["session.archive"]({ sessionId: "s1", archived: true });
+    await round;
+
+    // WHAT remains, not how many: the seat rows are what an un-archive would resolve
+    // against, so naming them is what tells the next reader which threads went missing.
+    expect(findBindingsForSessions(dataDir, ["s1", "rev-1"])).toEqual([]);
+    expect(deleted).toEqual([
+      "thread-1",
+      "thread-2",
+      "thread-3",
+      "thread-4",
+      "thread-5",
+      "thread-6",
+    ]);
+  });
+
+  it("positive control: without the re-sweep the round's five seats are orphaned", async () => {
+    // The pre-fix ordering, through the same handler and the same bindings file. This is
+    // the orphan the boundary exists to prevent, and it proves the assertion above is not
+    // vacuous — a fixture that bound nothing late would pass both tests identically.
+    const { handlers, store, client, deleted, round } = roundBoundary(false);
+    store.save(seed("s1", "feat/x"));
+    store.attachReview("s1", "rev-1");
+    await bindRoundSessionThread(client);
+
+    await handlers["session.archive"]({ sessionId: "s1", archived: true });
+    await round;
+
+    expect(findBindingsForSessions(dataDir, ["s1", "rev-1"]).map((row) => row.seat)).toEqual([
+      ...ROUND_SEATS,
+    ]);
+    // Only the session's own thread was deleted: the archive reported a sweep that had
+    // already passed the five threads the round went on to create.
     expect(deleted).toEqual(["thread-1"]);
   });
 });
