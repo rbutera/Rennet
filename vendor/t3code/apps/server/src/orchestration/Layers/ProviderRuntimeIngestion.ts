@@ -748,6 +748,43 @@ export function runtimeEventToActivities(
       ];
     }
 
+    case "turn.completed": {
+      // The settled turn's own facts, which no other projected event carries:
+      // its structured result (when the turn had an output schema), the
+      // provider's wall-clock duration, and the usage/cost the result frame
+      // reported. Deliberately NOT under a `data` key — `projectActivityPayload`
+      // only rewrites payloads that have one, and a structured result must reach
+      // a reader intact.
+      const settled = {
+        state: event.payload.state,
+        ...(event.payload.structuredOutput !== undefined
+          ? { structuredOutput: event.payload.structuredOutput }
+          : {}),
+        ...(event.payload.durationMs !== undefined
+          ? { durationMs: event.payload.durationMs }
+          : {}),
+        ...(event.payload.usage !== undefined ? { usage: event.payload.usage } : {}),
+        ...(event.payload.totalCostUsd !== undefined
+          ? { totalCostUsd: event.payload.totalCostUsd }
+          : {}),
+        ...(event.payload.errorMessage !== undefined
+          ? { errorMessage: event.payload.errorMessage }
+          : {}),
+      };
+      return [
+        {
+          id: event.eventId,
+          createdAt: event.createdAt,
+          tone: event.payload.state === "failed" ? "error" : "info",
+          kind: "turn.settled",
+          summary: "Turn settled",
+          payload: settled,
+          turnId: toTurnId(event.turnId) ?? null,
+          ...maybeSequence,
+        },
+      ];
+    }
+
     case "thread.state.changed": {
       if (event.payload.state !== "compacted") {
         return [];

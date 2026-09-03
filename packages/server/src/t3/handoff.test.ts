@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { OrchestrationThread, T3Client, TurnOutcome } from "./client";
 import { lastAssistantText, runHandoffTurnT3 } from "./handoff";
+import type { ThreadBinding, ThreadBindingKey } from "./threads";
 
 // The T3 exit maps a settled T3 turn onto the handoff outcome the review loop already
 // consumes. Driven with a stub client so the mapping is the thing under test; the wire
@@ -29,13 +30,17 @@ function stubs(
     waitForTurnSettled: vi.fn(async () => outcome),
     readTurnDiff: vi.fn(async () => ({ turnId: outcome.turnId, turnCount: 1, ...diff })),
   } as unknown as T3Client;
-  const threadFor = vi.fn(async (input: { sessionId: string; repositoryRoot: string }) => ({
-    repositoryRoot: input.repositoryRoot,
-    sessionId: input.sessionId,
-    projectId: "p",
-    threadId: "t1",
-    createdAt: "now",
-  }));
+  const threadFor = vi.fn(
+    async (input: { key: ThreadBindingKey; repositoryRoot: string }) =>
+      ({
+        kind: "session",
+        repositoryRoot: input.repositoryRoot,
+        ...(input.key.kind === "session" ? { sessionId: input.key.sessionId } : {}),
+        projectId: "p",
+        threadId: "t1",
+        createdAt: "now",
+      }) as ThreadBinding,
+  );
   return { client, startTurn, threadFor };
 }
 
@@ -56,7 +61,7 @@ describe("runHandoffTurnT3", () => {
     );
     expect(threadFor).toHaveBeenCalledWith({
       repositoryRoot: "/repos/a",
-      sessionId: "rv-1",
+      key: { kind: "session", sessionId: "rv-1" },
       title: "a",
     });
     expect(startTurn).toHaveBeenCalledWith({ threadId: "t1", text: "WORK ORDER" });

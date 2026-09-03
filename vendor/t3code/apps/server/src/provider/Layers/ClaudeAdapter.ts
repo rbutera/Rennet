@@ -316,6 +316,10 @@ interface ClaudeSessionContext {
   /** Task ids that have started and not yet reached a terminal state. */
   readonly liveTaskIds: Set<string>;
   turnState: ClaudeTurnState | undefined;
+  /** The JSON Schema this session's `query()` was constructed with, if any. The
+   * SDK's `outputFormat` is a query-construction option with no in-session
+   * setter, so the contract is fixed for the session's whole life. */
+  readonly outputSchema: Record<string, unknown> | undefined;
   lastKnownContextWindow: number | undefined;
   lastKnownTokenUsage: ThreadTokenUsageSnapshot | undefined;
   lastKnownTotalProcessedTokens: number | undefined;
@@ -1216,6 +1220,13 @@ function summarizeToolRequest(toolName: string, input: Record<string, unknown>):
     return `${toolName}: ${serialized}`;
   }
   return `${toolName}: ${serialized.slice(0, 397)}...`;
+}
+
+/** A turn's output schema as the SDK's `outputFormat` wants it: a plain object. */
+function asJsonSchemaRecord(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
 }
 
 function titleForTool(itemType: CanonicalItemType): string {
@@ -2420,6 +2431,12 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(typeof result?.total_cost_usd === "number"
           ? { totalCostUsd: result.total_cost_usd }
           : {}),
+        ...(result !== undefined &&
+        "structured_output" in result &&
+        result.structured_output !== undefined
+          ? { structuredOutput: result.structured_output }
+          : {}),
+        ...(typeof result?.duration_ms === "number" ? { durationMs: result.duration_ms } : {}),
         ...(errorMessage ? { errorMessage } : {}),
       },
       providerRefs: nativeProviderRefs(context),
@@ -4349,6 +4366,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(input.cwd ? [input.cwd] : []),
         serverConfig.attachmentsDir,
       ];
+      const sessionOutputSchema = asJsonSchemaRecord(input.outputSchema);
       const queryOptions: ClaudeQueryOptions = {
         ...(input.cwd ? { cwd: input.cwd } : {}),
         ...(apiModelId ? { model: apiModelId } : {}),
@@ -4369,6 +4387,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(Object.keys(settings).length > 0 ? { settings } : {}),
         ...(existingResumeSessionId ? { resume: existingResumeSessionId } : {}),
         ...(newSessionId ? { sessionId: newSessionId } : {}),
+        ...(sessionOutputSchema !== undefined
+          ? { outputFormat: { type: "json_schema" as const, schema: sessionOutputSchema } }
+          : {}),
         includePartialMessages: true,
         canUseTool,
         onUserDialog,
@@ -4470,6 +4491,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         workflowMemberFingerprints,
         liveTaskIds,
         turnState: undefined,
+        outputSchema: sessionOutputSchema,
         lastKnownContextWindow: initialContextWindow,
         lastKnownTokenUsage: undefined,
         lastKnownTotalProcessedTokens: undefined,
@@ -4556,6 +4578,22 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
 
   const sendTurn: ClaudeAdapterShape["sendTurn"] = Effect.fn("sendTurn")(function* (input) {
     const context = yield* requireSession(input.threadId);
+    // The SDK fixes `outputFormat` when the query is built and offers no setter,
+    // so a turn asking for a DIFFERENT contract than the session was started with
+    // cannot be honoured. Fail it by name rather than silently returning output
+    // shaped to the wrong schema.
+    const turnOutputSchema = asJsonSchemaRecord(input.outputSchema);
+    if (
+      turnOutputSchema !== undefined &&
+      JSON.stringify(turnOutputSchema) !== JSON.stringify(context.outputSchema ?? null)
+    ) {
+      return yield* new ProviderAdapterRequestError({
+        provider: PROVIDER,
+        method: "thread.turn.start",
+        detail:
+          "This turn's output schema differs from the one its Claude session was started with. The SDK fixes the structured-output contract when the query is created, so the session would have to be restarted.",
+      });
+    }
     const modelCatalog = yield* modelCatalogEffect;
     const selectedModel =
       input.modelSelection !== undefined && input.modelSelection.instanceId === boundInstanceId

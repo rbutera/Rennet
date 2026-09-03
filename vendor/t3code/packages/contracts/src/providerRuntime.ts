@@ -370,6 +370,10 @@ const TurnCompletedPayload = Schema.Struct({
   usage: Schema.optional(Schema.Unknown),
   modelUsage: Schema.optional(UnknownRecordSchema),
   totalCostUsd: Schema.optional(Schema.Number),
+  /** The turn's structured result, when the turn carried an output schema. */
+  structuredOutput: Schema.optional(Schema.Unknown),
+  /** Provider-reported wall-clock duration for the turn, in milliseconds. */
+  durationMs: Schema.optional(Schema.Number),
   errorMessage: Schema.optional(TrimmedNonEmptyStringSchema),
 });
 export type TurnCompletedPayload = typeof TurnCompletedPayload.Type;

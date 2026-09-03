@@ -40,6 +40,7 @@ import {
   type DesignArtifactSet,
   mergeGenerationUsage,
   summarizeUsage,
+  type T3SeatSeam,
   WhiteboardClient,
 } from "@rennet/adapters";
 import type {
@@ -64,6 +65,8 @@ import {
   type GenerationPhaseTiming,
   generationIdForDispatch,
   generationIdForPatchset,
+  type LaneLatest,
+  type LaneThreadRef,
   LENS_KINDS,
   type LensAbsenceReason,
   type LensFailureAccount,
@@ -123,6 +126,9 @@ type LaneState = LensLane extends infer Arm
  * turns run concurrently. Each lane starts together and settles only from its own
  * persistence/arrival event.
  */
+const sameThreadRef = (a: LaneThreadRef | undefined, b: LaneThreadRef): boolean =>
+  a !== undefined && a.environmentId === b.environmentId && a.threadId === b.threadId;
+
 function createRegenerationLanes(emit: (lanes: readonly LensLane[]) => void) {
   const lanes = new Map<LensKind, LensLane>(
     LENS_KINDS.map((lens) => [lens, { id: lens, label: LENS_LANE_LABEL[lens], status: "queued" }]),
@@ -131,7 +137,16 @@ function createRegenerationLanes(emit: (lanes: readonly LensLane[]) => void) {
   /** Replace a lane WHOLE — the state is a union, so a lane moves from one legal shape to
    *  another rather than being patched into an in-between that carries the wrong fields. */
   const set = (lens: LensKind, next: LaneState): void => {
-    if (lanes.has(lens)) lanes.set(lens, { id: lens, label: LENS_LANE_LABEL[lens], ...next });
+    const current = lanes.get(lens);
+    if (!current) return;
+    // The thread ref is lane IDENTITY, not lane state: it survives every transition so a
+    // settled or failed reader still opens its transcript.
+    lanes.set(lens, {
+      id: lens,
+      label: LENS_LANE_LABEL[lens],
+      ...(current.thread === undefined ? {} : { thread: current.thread }),
+      ...next,
+    });
   };
   return {
     /** Re-emit the current lane snapshot unchanged. The coverage state rides the same
@@ -149,6 +164,28 @@ function createRegenerationLanes(emit: (lanes: readonly LensLane[]) => void) {
       const queued = LENS_KINDS.filter((lens) => lanes.get(lens)?.status === "queued");
       if (queued.length === 0) return;
       for (const lens of queued) set(lens, { status: "running" });
+      emit(snapshot());
+    },
+    /**
+     * The seat's thread exists (t3-lens-threads 2.3). Recorded from the moment it does
+     * and kept on EVERY later state, so a settled lane still opens its transcript.
+     * Silent on the wire: it re-emits the snapshot, nothing else moves.
+     */
+    thread(lens: LensKind, thread: LaneThreadRef): void {
+      const current = lanes.get(lens);
+      if (!current || sameThreadRef(current.thread, thread)) return;
+      lanes.set(lens, { ...current, thread });
+      emit(snapshot());
+    },
+    /**
+     * The newest thing this seat is doing, from its thread subscription. Only a RUNNING
+     * lane has something in flight, so a publication for any other state is dropped —
+     * which is also how a settled lane stops showing a line it can no longer refresh.
+     */
+    progress(lens: LensKind, latest: LaneLatest): void {
+      const current = lanes.get(lens);
+      if (current?.status !== "running") return;
+      lanes.set(lens, { ...current, latest });
       emit(snapshot());
     },
     /** A lens board's draft landed. The lane reads `drafted`, NOT `done`: cross-lens
@@ -549,6 +586,24 @@ export interface UnchangedRoundInput {
   readonly onProgress?: (event: RoundEvent) => void;
 }
 
+/** What the composition root hands a generation so its seats can run as T3 threads. */
+export interface T3SeatRuntime {
+  readonly seam: T3SeatSeam;
+  /** The sidecar environment a lane's `thread` ref is addressed in. */
+  readonly environmentId: string;
+  /** Hold the seat thread's subscription and publish its latest event, throttled. */
+  readonly watch: (
+    threadId: string,
+    publish: (latest: LaneLatest) => void,
+  ) => { readonly stop: () => void };
+}
+
+/** Which lane a seat's thread belongs to. The report seat has no lens lane. */
+export function laneForSeat(seat: string): LensKind | undefined {
+  if (seat === "flagged-claude" || seat === "flagged-codex") return "flagged";
+  return (LENS_KINDS as readonly string[]).includes(seat) ? (seat as LensKind) : undefined;
+}
+
 // ── The composition-root factory (the swarm/scout precedent) ──
 
 export interface RoundsRuntimeDeps {
@@ -556,6 +611,15 @@ export interface RoundsRuntimeDeps {
   readonly resolveClaudePort: (repoRoot: string) => Promise<HarnessPort | null>;
   /** The locus-aware codex utility executor probe (null when no `codex` resolves). */
   readonly resolveCodexExecutor: (repoRoot: string) => Promise<CodexExecutor | null>;
+  /**
+   * The T3 sidecar's seat runtime for one generation (t3-lens-threads). `null` ⇒ this
+   * daemon has no sidecar, and the board seats fall back to the ephemeral legs.
+   */
+  readonly resolveT3Seats?: (input: {
+    readonly repoRoot: string;
+    readonly generationId: string;
+    readonly branch: string;
+  }) => Promise<T3SeatRuntime | null>;
   /** B04's boards runtime for a repo — the sole board-op writer (`WhiteboardClient`
    *  over its `service`) and the board minter (`createRennetBoard`). */
   readonly boardsRuntimeFor: (
@@ -1016,6 +1080,17 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
       deps.resolveClaudePort(input.repoRoot),
       deps.resolveCodexExecutor(input.repoRoot),
     ]);
+    // t3-lens-threads — the sidecar's seat runtime for THIS generation. Absent (no
+    // vendored bundle, or a direct-call test) leaves the ephemeral legs in place.
+    const t3Runtime = await deps
+      .resolveT3Seats?.({
+        repoRoot: input.draftingRoot ?? input.repoRoot,
+        generationId: attemptGeneration.id,
+        branch: input.deltaPacket.patchset.repository.baseRef,
+      })
+      .catch(() => null);
+    const seatWatches: { readonly stop: () => void }[] = [];
+    const watchedThreads = new Set<string>();
     const composeTurn = deps.composeTurn?.(input.repoRoot);
     const persistBoardMeta = deps.persistBoardMeta;
 
@@ -1182,9 +1257,34 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
       else lanes?.absent(lens, lensAbsenceMessage(reason));
     };
 
+    // The seam the pipeline sees: the sidecar's own `client`/`threadFor`, plus the lane
+    // wiring. A seat's thread reference reaches its lane the moment the thread exists,
+    // and the subscription that feeds the lane's live line starts with it.
+    const t3Seam: T3SeatSeam | undefined =
+      t3Runtime === null || t3Runtime === undefined
+        ? undefined
+        : {
+            client: t3Runtime.seam.client,
+            threadFor: t3Runtime.seam.threadFor,
+            onThread: (seat, thread) => {
+              const lens = laneForSeat(seat);
+              if (lens === undefined || lanes === undefined) return;
+              lanes.thread(lens, {
+                environmentId: t3Runtime.environmentId,
+                threadId: thread.threadId,
+              });
+              if (watchedThreads.has(thread.threadId)) return;
+              watchedThreads.add(thread.threadId);
+              seatWatches.push(
+                t3Runtime.watch(thread.threadId, (latest) => lanes.progress(lens, latest)),
+              );
+            },
+          };
+
     const pipelineInput = {
       claudePort,
       codexExecutor,
+      ...(t3Seam === undefined ? {} : { t3: t3Seam }),
       repoRoot: input.draftingRoot ?? input.repoRoot,
       deltaPacket: input.deltaPacket,
       currentGeneration: attemptGeneration.id,
@@ -1331,6 +1431,11 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
         error instanceof Error ? error.message : String(error),
       );
       throw error;
+    } finally {
+      // Every seat has settled: the live lines are over, so the sockets that fed them go
+      // with them. Held open they would keep publishing into lanes nothing reads (2.3).
+      for (const watch of seatWatches) watch.stop();
+      seatWatches.length = 0;
     }
     // A drafter that produced no board settles its lane as failed. Without this the lane
     // sits at `queued`/`running` after the round is over — the surface reads "still

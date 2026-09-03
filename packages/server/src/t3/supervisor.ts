@@ -6,7 +6,7 @@
 // contract and ./client.ts for the RPC surface.
 
 import type { T3Session, T3SidecarStatus } from "@rennet/protocol";
-import { connectT3, modelSelection, type T3Client } from "./client";
+import { connectT3, type ModelSelection, modelSelection, type T3Client } from "./client";
 import {
   adoptSidecar,
   type ProviderBinaries,
@@ -15,7 +15,7 @@ import {
   removeSidecarClaim,
   spawnSidecar,
 } from "./sidecar";
-import { bindThread, type ThreadBinding } from "./threads";
+import { bindThread, type ThreadBinding, type ThreadBindingKey } from "./threads";
 
 export interface T3SidecarSupervisorOptions {
   readonly dataDir: string;
@@ -35,11 +35,13 @@ export interface T3SidecarSupervisor {
   readonly status: () => T3SidecarStatus;
   /** The daemon's own RPC client over the sidecar socket, connected on first use. */
   readonly client: () => Promise<T3Client>;
-  /** The T3 thread bound to (repository root, session id), created on first use. */
+  /** The T3 thread bound to (repository root, key), created on first use. */
   readonly threadFor: (input: {
     readonly repositoryRoot: string;
-    readonly sessionId: string;
+    readonly key: ThreadBindingKey;
     readonly title: string;
+    /** The seat's council-routed model; absent ⇒ the sidecar's default. */
+    readonly modelSelection?: ModelSelection;
   }) => Promise<ThreadBinding>;
   /** Synchronous teardown for the daemon's own shutdown path (no async budget there). */
   readonly stopSync: () => void;
@@ -130,9 +132,9 @@ export function createT3SidecarSupervisor(
       dataDir: options.dataDir,
       client: await client(),
       repositoryRoot: input.repositoryRoot,
-      sessionId: input.sessionId,
+      key: input.key,
       title: input.title,
-      modelSelection: DEFAULT_MODEL,
+      modelSelection: input.modelSelection ?? DEFAULT_MODEL,
     });
 
   const session = async (): Promise<T3Session> => {

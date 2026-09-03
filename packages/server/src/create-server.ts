@@ -86,6 +86,7 @@ import {
   listDir,
   loadConventionCatalogue,
   loadProjectDetail,
+  mapCouncilModel,
   matchWorktree,
   migrateLegacyGlobalConfig,
   NoveltyLifecycleRegistry,
@@ -305,6 +306,7 @@ import {
   createRoundsRuntime,
   type DispatchRoundResult,
   type PersistedBoardMeta,
+  type T3SeatRuntime,
 } from "./runtime/rounds";
 import { verifyStoredRoundReport } from "./runtime/stored-round-report-verification";
 import { resolveCaptureRoot } from "./session/capture-root";
@@ -325,8 +327,11 @@ import { SessionTurnLoop } from "./session/turn-loop";
 import { createSettingsComposition } from "./settings";
 import { findHealthyDaemon } from "./supervise";
 import { createLiveSymbolLookup, reviewPinnedToHead } from "./symbol-lookup-live";
+import { modelSelection } from "./t3/client";
 import { runHandoffTurnT3 } from "./t3/handoff";
+import { type SeatThreadWatch, watchSeatThread } from "./t3/seat-progress";
 import { createT3SidecarSupervisor } from "./t3/supervisor";
+import { type SeatKind, seatThreadTitle } from "./t3/threads";
 import { startWsListener, type WsListener } from "./ws-listener";
 import { createWslRunner } from "./wsl-daemon";
 import { ensureWslDaemon, probeWslDaemon } from "./wsl-supervisor";
@@ -1235,6 +1240,65 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       };
     },
   });
+
+  /**
+   * The sidecar's seat runtime for one generation (t3-lens-threads). Every board seat of
+   * that generation becomes one persistent thread on the review's checkout, titled by
+   * branch and lens; the daemon holds each running seat's subscription so its lane can
+   * carry a live line. `null` when the sidecar cannot be brought up — no vendored bundle,
+   * a spawn failure — and the board seats fall back to the ephemeral legs.
+   */
+  const resolveT3SeatRuntime = async (input: {
+    readonly repoRoot: string;
+    readonly generationId: string;
+    readonly branch: string;
+  }): Promise<T3SeatRuntime | null> => {
+    let sidecar: Awaited<ReturnType<typeof t3Sidecar.ensure>>;
+    try {
+      sidecar = await t3Sidecar.ensure();
+    } catch {
+      return null;
+    }
+    const environmentId = sidecar.environment.environmentId;
+    return {
+      environmentId,
+      seam: {
+        client: () => t3Sidecar.client(),
+        threadFor: async ({ seat, provider, model }) => {
+          const binding = await t3Sidecar.threadFor({
+            repositoryRoot: input.repoRoot,
+            key: { kind: "seat", generationId: input.generationId, seat: seat as SeatKind },
+            title: seatThreadTitle(input.branch, seat as SeatKind),
+            // The council's own routing, in the provider's own vocabulary: T3's Claude
+            // catalog uses the full ids `mapCouncilModel` already produces, and its Codex
+            // catalog uses the council's model names verbatim.
+            modelSelection: modelSelection(
+              provider,
+              provider === "claudeAgent" ? mapCouncilModel(model) : model,
+            ),
+          });
+          return { threadId: binding.threadId, projectId: binding.projectId };
+        },
+      },
+      watch: (threadId, publish) => {
+        let watch: SeatThreadWatch | undefined;
+        let stopped = false;
+        void t3Sidecar
+          .client()
+          .then((client) => {
+            if (stopped) return;
+            watch = watchSeatThread({ client, threadId, repoRoot: input.repoRoot, publish });
+          })
+          .catch(() => undefined);
+        return {
+          stop: () => {
+            stopped = true;
+            watch?.stop();
+          },
+        };
+      },
+    };
+  };
 
   // Composition root for the Claude harness. This binds the REAL
   // @anthropic-ai/claude-agent-sdk query() (via createClaudeHarness) to the
@@ -2826,6 +2890,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     recordBenchmark,
     resolveClaudePort: claudeAdapterForRepo,
     resolveCodexExecutor: codexExecutorForRepo,
+    resolveT3Seats: resolveT3SeatRuntime,
     boardsRuntimeFor,
     readPrompt,
     persistBoardMeta: (_repoRoot: string, meta: PersistedBoardMeta) => boardMetaStore.save(meta),

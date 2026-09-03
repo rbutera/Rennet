@@ -918,6 +918,10 @@ export const ThreadTurnStartCommand = Schema.Struct({
   ),
   bootstrap: Schema.optional(ThreadTurnStartBootstrap),
   sourceProposedPlan: Schema.optional(SourceProposedPlanReference),
+  // JSON Schema for a structured turn result. Providers that support a
+  // structured-output contract attach it to the turn; the settled turn then
+  // carries `structuredOutput` on its `turn.settled` activity.
+  outputSchema: Schema.optional(Schema.Unknown),
   createdAt: IsoDateTime,
 });
 
@@ -937,6 +941,10 @@ const ClientThreadTurnStartCommand = Schema.Struct({
   interactionMode: ProviderInteractionMode,
   bootstrap: Schema.optional(ThreadTurnStartBootstrap),
   sourceProposedPlan: Schema.optional(SourceProposedPlanReference),
+  // JSON Schema for a structured turn result. Providers that support a
+  // structured-output contract attach it to the turn; the settled turn then
+  // carries `structuredOutput` on its `turn.settled` activity.
+  outputSchema: Schema.optional(Schema.Unknown),
   createdAt: IsoDateTime,
 });
 
@@ -1334,6 +1342,7 @@ export const ThreadTurnStartRequestedPayload = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_PROVIDER_INTERACTION_MODE)),
   ),
   sourceProposedPlan: Schema.optional(SourceProposedPlanReference),
+  outputSchema: Schema.optional(Schema.Unknown),
   createdAt: IsoDateTime,
 });
 

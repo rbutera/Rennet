@@ -63,9 +63,29 @@ export interface StartTurnInput {
   readonly text: string;
   readonly modelSelection?: ModelSelection;
   readonly runtimeMode?: RuntimeMode;
+  /**
+   * JSON Schema the turn's result must match, attached as the turn's
+   * structured-output contract — never restated in the prompt text. On the Claude
+   * provider the SDK fixes `outputFormat` when the session's query is built, so a
+   * thread's FIRST turn decides the contract and a later turn asking for a
+   * different one is refused by name rather than answered in the wrong shape.
+   */
+  readonly outputSchema?: unknown;
 }
 
-export interface TurnOutcome {
+/** What the settled turn reported about itself, read off its `turn.settled` activity. */
+export interface TurnSettlement {
+  /** Present when the turn carried an output schema and the provider honoured it. */
+  readonly structuredOutput?: unknown;
+  /** The provider's own wall-clock duration for the turn, in milliseconds. */
+  readonly durationMs?: number;
+  /** The provider's raw usage record (Claude's SDK `usage`), unparsed. */
+  readonly usage?: unknown;
+  readonly totalCostUsd?: number;
+  readonly errorMessage?: string;
+}
+
+export interface TurnOutcome extends TurnSettlement {
   readonly turnId: string;
   readonly state: Exclude<OrchestrationLatestTurnState, "running">;
   readonly thread: OrchestrationThread;
@@ -94,10 +114,18 @@ export interface T3Client {
   ) => Promise<void>;
   /** Snapshot first, then events, until the iterator is returned or the socket closes. */
   readonly subscribeThread: (threadId: string) => AsyncIterable<OrchestrationThreadStreamItem>;
-  /** Resolve when the thread's latest turn leaves `running`. */
+  /** One projection of the thread as it stands. */
+  readonly readThread: (threadId: string) => Promise<OrchestrationThread>;
+  /**
+   * Resolve when the thread's latest turn leaves `running`, carrying what that turn
+   * reported about itself. The settlement facts ride a `turn.settled` activity the
+   * sidecar appends beside the lifecycle transition, so once the turn is settled this
+   * waits a bounded moment for that activity and then answers with what it has —
+   * absent facts come back absent rather than made up.
+   */
   readonly waitForTurnSettled: (
     threadId: string,
-    options?: { readonly signal?: AbortSignal },
+    options?: { readonly signal?: AbortSignal; readonly settlementGraceMs?: number },
   ) => Promise<TurnOutcome>;
   readonly readTurnDiff: (threadId: string, turnId: string) => Promise<TurnDiff>;
   readonly close: () => Promise<void>;
@@ -218,6 +246,7 @@ export async function connectT3(options: T3ClientOptions): Promise<T3Client> {
           attachments: [],
         },
         ...(input.modelSelection ? { modelSelection: input.modelSelection } : {}),
+        ...(input.outputSchema === undefined ? {} : { outputSchema: input.outputSchema }),
         runtimeMode: input.runtimeMode ?? FULL_ACCESS,
         interactionMode: "default",
       });
@@ -239,6 +268,7 @@ export async function connectT3(options: T3ClientOptions): Promise<T3Client> {
       });
     },
     subscribeThread,
+    readThread,
     waitForTurnSettled: async (threadId, options = {}) => {
       const iterator = subscribeThread(threadId)[Symbol.asyncIterator]();
       const abort = new Promise<never>((_, reject) => {
@@ -246,8 +276,13 @@ export async function connectT3(options: T3ClientOptions): Promise<T3Client> {
           once: true,
         });
       });
+      // The lifecycle transition and the `turn.settled` activity are two writes; the
+      // lifecycle one can land first. This is how long we keep reading for the activity
+      // AFTER the turn has settled before answering without it.
+      const graceMs = options.settlementGraceMs ?? 3_000;
       try {
         let thread: OrchestrationThread | undefined;
+        let settledAtMs: number | undefined;
         for (;;) {
           const next = await Promise.race([iterator.next(), abort]);
           if (next.done)
@@ -255,17 +290,20 @@ export async function connectT3(options: T3ClientOptions): Promise<T3Client> {
           const item = next.value;
           if (item.kind === "snapshot") thread = item.snapshot.thread;
           // Events do not carry the whole projection; re-read on the ones that end a turn.
-          if (item.kind === "event" && /turn|session|settled/.test(item.event.type)) {
+          if (item.kind === "event" && /turn|session|settled|activity/.test(item.event.type)) {
             thread = await readThread(threadId);
           }
           const latest = thread?.latestTurn;
-          if (latest && latest.state !== "running") {
-            return {
-              turnId: latest.turnId,
-              state: latest.state,
-              thread: thread as OrchestrationThread,
-            };
-          }
+          if (!latest || latest.state === "running") continue;
+          const settlement = readTurnSettlement(thread as OrchestrationThread, latest.turnId);
+          settledAtMs ??= Date.now();
+          if (settlement === undefined && Date.now() - settledAtMs < graceMs) continue;
+          return {
+            turnId: latest.turnId,
+            state: latest.state,
+            thread: thread as OrchestrationThread,
+            ...(settlement ?? {}),
+          };
         }
       } finally {
         await iterator.return?.();
@@ -291,6 +329,39 @@ export async function connectT3(options: T3ClientOptions): Promise<T3Client> {
     },
   };
   return api;
+}
+
+/**
+ * The settled turn's own facts, off the `turn.settled` activity the sidecar appends when
+ * a turn completes. `undefined` means the activity has not landed (or the provider did
+ * not report), which the caller distinguishes from "landed with nothing in it".
+ */
+export function readTurnSettlement(
+  thread: OrchestrationThread,
+  turnId: string,
+): TurnSettlement | undefined {
+  for (let i = thread.activities.length - 1; i >= 0; i -= 1) {
+    const activity = thread.activities[i];
+    if (activity?.kind !== "turn.settled" || activity.turnId !== turnId) continue;
+    const payload = activity.payload;
+    if (payload === null || typeof payload !== "object") return {};
+    const record = payload as Record<string, unknown>;
+    const number = (key: string): number | undefined =>
+      typeof record[key] === "number" ? (record[key] as number) : undefined;
+    const durationMs = number("durationMs");
+    const totalCostUsd = number("totalCostUsd");
+    const errorMessage = typeof record.errorMessage === "string" ? record.errorMessage : undefined;
+    return {
+      ...(record.structuredOutput === undefined
+        ? {}
+        : { structuredOutput: record.structuredOutput }),
+      ...(durationMs === undefined ? {} : { durationMs }),
+      ...(record.usage === undefined ? {} : { usage: record.usage }),
+      ...(totalCostUsd === undefined ? {} : { totalCostUsd }),
+      ...(errorMessage === undefined ? {} : { errorMessage }),
+    };
+  }
+  return undefined;
 }
 
 /** Drain an Effect stream into an AsyncIterable; returning the iterator interrupts the fiber. */

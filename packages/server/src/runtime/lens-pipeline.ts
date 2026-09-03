@@ -5,6 +5,7 @@ import type {
   DesignArtifactSet,
   MetricsCollector,
   ProviderTurnSettlement,
+  T3SeatSeam,
   WhiteboardClient,
 } from "@rennet/adapters";
 import { councilSeatTurn, createCoverageTurn } from "@rennet/adapters";
@@ -50,6 +51,7 @@ import {
   REVIEW_DRAFT_VOICE_FILE,
   ROUND_REPORT_FILE,
   renderLayer,
+  renderRepairTurn,
 } from "@rennet/prompts";
 import {
   type BoardDocument,
@@ -86,6 +88,7 @@ import {
   type Violation,
 } from "@rennet/protocol";
 import { z } from "zod";
+import type { SeatKind as BoardSeatId } from "../t3/threads";
 import { projectRoundReportBoard } from "./lens-board-read";
 import {
   buildRoundEvidenceManifest,
@@ -963,19 +966,30 @@ export function renderDrafterPrompt(
  * corrected board (the loop freezes passing elements, so only the pointed-at
  * elements need fixing).
  */
+/**
+ * A lint pointer's path indexes the WHOLE previous draft, so the pointed-at element's id
+ * rides beside it (#743 review). A parse pointer (no ruleId) indexes the seat's rejected
+ * return, not this draft: no id.
+ */
+export function elementIdForPointer(
+  draft: DraftBoard,
+  pointer: { readonly path: readonly (string | number)[]; readonly ruleId?: string },
+): string | undefined {
+  return pointer.ruleId !== undefined &&
+    pointer.path[0] === "elements" &&
+    typeof pointer.path[1] === "number"
+    ? draft.elements[pointer.path[1]]?.id
+    : undefined;
+}
+
 export function renderRetryPrompt(
   basePrompt: string,
   draft: DraftBoard,
   pointers: readonly { path: readonly (string | number)[]; message: string; ruleId?: string }[],
   frozenIds: readonly string[] = [],
 ): string {
-  // A lint pointer's path indexes the WHOLE previous draft, which the seat no longer
-  // sees in full, so the pointed-at element's id rides beside it (#743 review). A parse
-  // pointer (no ruleId) indexes the seat's rejected return, not this draft: no id.
   const elementIdAt = (p: (typeof pointers)[number]): string | undefined =>
-    p.ruleId !== undefined && p.path[0] === "elements" && typeof p.path[1] === "number"
-      ? draft.elements[p.path[1]]?.id
-      : undefined;
+    elementIdForPointer(draft, p);
   const issues = pointers
     .map((p) => {
       const id = elementIdAt(p);
@@ -1304,6 +1318,12 @@ export interface LensPipelineDeps {
   readonly claudePort: HarnessPort | null;
   /** The codex utility executor, or null when no `codex` resolved. */
   readonly codexExecutor: CodexExecutor | null;
+  /**
+   * The T3 sidecar seam (t3-lens-threads). Present ⇒ every BOARD seat runs as a turn on
+   * its own persistent thread for this generation, and a repair is the next turn on that
+   * thread. Absent ⇒ the ephemeral Claude/Codex legs, exactly as before.
+   */
+  readonly t3?: T3SeatSeam;
   /** Council context override; availability defaults to the resolved ports. */
   readonly council?: CouncilResolveContext;
   /** The PR worktree the drafter sessions are rooted at (D1). */
@@ -1708,16 +1728,24 @@ export function draftsRoundReport(
 /** Resolve one job to a concrete board `runTurn`, or an honest failure reason. */
 function resolveBoardSeat(
   jobId: CouncilJobId,
+  seat: BoardSeatId,
   deps: LensPipelineDeps,
   council: CouncilResolveContext,
   outputSchema: unknown = boardOutputSchema(),
 ): ((prompt: string, attempt: number) => Promise<HarnessTurnResult>) | { failure: string } {
-  const seat = resolveBoardSeatDetails(jobId, deps, council, outputSchema);
-  return "failure" in seat ? { failure: seat.failure } : seat.runTurn;
+  const resolved = resolveBoardSeatDetails(jobId, seat, deps, council, outputSchema);
+  return "failure" in resolved ? { failure: resolved.failure } : resolved.runTurn;
 }
 
+/**
+ * One seat of one generation. Board jobs route to the T3 leg when the daemon composed a
+ * sidecar seam ({@link LensPipelineDeps.t3}), so the seat runs as a persistent thread and
+ * a repair is the next turn on it. Without the seam the ephemeral legs still run, which
+ * is what every direct-call test and any daemon without a vendored bundle uses.
+ */
 function resolveBoardSeatDetails(
   jobId: CouncilJobId,
+  seat: BoardSeatId,
   deps: LensPipelineDeps,
   council: CouncilResolveContext,
   outputSchema: unknown,
@@ -1729,6 +1757,7 @@ function resolveBoardSeatDetails(
     {
       claudePort: deps.claudePort,
       codexExecutor: deps.codexExecutor,
+      ...(deps.t3 === undefined ? {} : { t3: { seat, seam: deps.t3 } }),
       repoRoot: deps.repoRoot,
       label: `board.${jobId}`,
       ...(deps.collector === undefined ? {} : { collector: deps.collector }),
@@ -1806,6 +1835,13 @@ function requiredBoardFailure(lens: LensKind): string {
   }
 }
 
+/** Extras a caller hands the drafting ladder without disturbing its positional shape. */
+interface DraftLensOptions {
+  /** The seat's turns run on ONE persistent thread (the T3 leg), so a repair is a
+   *  follow-up turn and carries pointers only, never the base prompt again. */
+  readonly sameThread?: boolean;
+}
+
 /**
  * Draft one lens: seed the seat, run the cluster-3 deterministic validation loop,
  * and return the validated board — or an honest `failure` (finding 6). A failure is recorded, never a
@@ -1823,6 +1859,7 @@ function draftOneLens(
   ctx: LintContext,
   retryCap: number,
   transformOutput?: (output: unknown) => unknown,
+  options?: DraftLensOptions,
 ): Promise<DraftedLens | LensDraftFailure>;
 function draftOneLens(
   basePrompt: string,
@@ -1831,6 +1868,7 @@ function draftOneLens(
   retryCap: number,
   transformOutput: (output: unknown) => unknown,
   initialAbsence: (output: unknown) => { readonly absence: "no-material" } | undefined,
+  options?: DraftLensOptions,
 ): Promise<DraftedLens | LensDraftFailure | { readonly absence: "no-material" }>;
 async function draftOneLens(
   basePrompt: string,
@@ -1838,8 +1876,19 @@ async function draftOneLens(
   ctx: LintContext,
   retryCap: number,
   transformOutput: (output: unknown) => unknown = (output) => output,
-  initialAbsence?: (output: unknown) => { readonly absence: "no-material" } | undefined,
+  initialAbsenceOrOptions?:
+    | ((output: unknown) => { readonly absence: "no-material" } | undefined)
+    | DraftLensOptions,
+  maybeOptions?: DraftLensOptions,
 ): Promise<DraftedLens | LensDraftFailure | { readonly absence: "no-material" }> {
+  const initialAbsence =
+    typeof initialAbsenceOrOptions === "function" ? initialAbsenceOrOptions : undefined;
+  const options =
+    maybeOptions ??
+    (typeof initialAbsenceOrOptions === "object" ? initialAbsenceOrOptions : undefined);
+  // The seat's turns run on ONE persistent thread, so the base prompt and the failing
+  // draft are already in the conversation and a repair carries only its pointers.
+  const sameThread = options?.sameThread === true;
   const who = ctx.lens === "report" ? "round-report seat" : `${ctx.lens} lens`;
   try {
     const first = await seatTurn(basePrompt, 0);
@@ -1875,7 +1924,22 @@ async function draftOneLens(
         runTurn: async (req) => {
           try {
             const retry = await seatTurn(
-              renderRetryPrompt(basePrompt, req.draft, req.pointers, req.frozenIds),
+              // t3-lens-threads 1.5 — a repair is the NEXT TURN on the seat's own thread,
+              // which already holds the base prompt and the draft. Only the pointers, the
+              // frozen ids and the instruction travel. On the ephemeral legs (no sidecar
+              // seam) the base prompt still has to ride, because a cold session has no
+              // memory of the draft it is being asked to fix.
+              sameThread
+                ? renderRepairTurn(
+                    req.pointers.map((pointer) => ({
+                      ...pointer,
+                      ...(elementIdForPointer(req.draft, pointer) === undefined
+                        ? {}
+                        : { elementId: elementIdForPointer(req.draft, pointer) as string }),
+                    })),
+                    req.frozenIds,
+                  )
+                : renderRetryPrompt(basePrompt, req.draft, req.pointers, req.frozenIds),
               req.attempt,
             );
             if (retry.status === "emitted") {
@@ -2356,6 +2420,7 @@ async function runClassifiedRoundReport(
   }
   const seat = resolveBoardSeatDetails(
     "round-report",
+    "round-report",
     deps,
     council,
     roundReportClassificationOutputSchema(),
@@ -2528,7 +2593,7 @@ async function runLegacyRoundReport(
   deps: LensPipelineDeps,
   council: CouncilResolveContext,
 ): Promise<LensBoardOutcome | undefined> {
-  const seat = resolveBoardSeat("round-report", deps, council);
+  const seat = resolveBoardSeat("round-report", "round-report", deps, council);
   if ("failure" in seat) {
     return {
       lens: "report",
@@ -2556,6 +2621,8 @@ async function runLegacyRoundReport(
     seat,
     ctx,
     lensRetryBudget("report", deps.boardAttempt ?? 0),
+    undefined,
+    { sameThread: deps.t3 !== undefined },
   );
   if ("failure" in validated) {
     return {
@@ -3424,6 +3491,7 @@ async function runFlaggedDual(
   const claudeSeat = deps.claudePort
     ? resolveBoardSeatDetails(
         "lens-draft-flagged",
+        "flagged-claude",
         deps,
         { availability: { installed: ["claude-code"] } },
         boardOutputSchema(),
@@ -3432,6 +3500,7 @@ async function runFlaggedDual(
   const codexSeat = deps.codexExecutor
     ? resolveBoardSeatDetails(
         "lens-draft-flagged",
+        "flagged-codex",
         deps,
         { availability: { installed: ["codex"] } },
         boardOutputSchema(),
@@ -3456,6 +3525,8 @@ async function runFlaggedDual(
       wrapSeat(resolved.runTurn, { harness: resolved.harness, model: resolved.model }),
       ctx,
       retryCap,
+      undefined,
+      { sameThread: deps.t3 !== undefined },
     );
     // Carry the account, not just the words: the sole seat's classification IS the lens's.
     if ("failure" in single) return single;
@@ -3471,12 +3542,16 @@ async function runFlaggedDual(
       wrapSeat(claude.runTurn, { harness: claude.harness, model: claude.model }),
       ctx,
       retryCap,
+      undefined,
+      { sameThread: deps.t3 !== undefined },
     ),
     draftOneLens(
       basePrompt,
       wrapSeat(codex.runTurn, { harness: codex.harness, model: codex.model }),
       ctx,
       retryCap,
+      undefined,
+      { sameThread: deps.t3 !== undefined },
     ),
   ]);
   const aOk = !("failure" in a);
@@ -3668,6 +3743,7 @@ async function draftLensBoard(
     const jobId: CouncilJobId = lens === "noise" ? "lens-draft-noise" : "lens-draft";
     const resolved = resolveBoardSeatDetails(
       jobId,
+      lens,
       deps,
       council,
       semanticDesignAbsence ? designDraftOutputSchema() : boardOutputSchema(),
@@ -3681,8 +3757,14 @@ async function draftLensBoard(
     });
     const drafted =
       semanticDesignAbsence && deps.designArtifacts !== undefined && deps.designArtifacts !== null
-        ? await draftOneLens(basePrompt, seat, ctx, retryCap, transformDesignOutput, (output) =>
-            groundedDesignAbsence(output, deps.designArtifacts as DesignArtifactSet),
+        ? await draftOneLens(
+            basePrompt,
+            seat,
+            ctx,
+            retryCap,
+            transformDesignOutput,
+            (output) => groundedDesignAbsence(output, deps.designArtifacts as DesignArtifactSet),
+            { sameThread: deps.t3 !== undefined },
           )
         : await draftOneLens(
             basePrompt,
@@ -3690,6 +3772,7 @@ async function draftLensBoard(
             ctx,
             retryCap,
             lens === "design" ? transformDesignOutput : undefined,
+            { sameThread: deps.t3 !== undefined },
           );
     if ("failure" in drafted) {
       return failedLensOutcome(lens, drafted);
