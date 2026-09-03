@@ -13,7 +13,13 @@ export const OWNER_LOOP_ROUND_TWO_BODY = "Set `ownerValue` to `round-two`.";
 export const OWNER_LOOP_SEQUENCE_QUOTE = "Read `src/owner.ts` first.";
 
 const author: Author = { kind: "lens-agent", id: OWNER_LOOP_LANE };
-const patchsetPlanValue = `\${patchsetId}`;
+/**
+ * The host stamps a `code_ref`'s patchset id (`validateDraft`): a seat is never told the
+ * captured patchset's identity — since session-context-files the drafting prompt carries no
+ * packet — so a plan that resolved one here would be modelling a channel that no longer
+ * exists.
+ */
+const HOST_STAMPED_PATCHSET = "host-stamps-this";
 const askPlanValue = `\${askId}`;
 const evidenceIdsPlanValue = `\${evidenceIds}`;
 
@@ -23,7 +29,7 @@ function codeRef(id: string): DraftBoard["elements"][number] {
     kind: "code_ref",
     data: {
       author,
-      patchset_id: patchsetPlanValue,
+      patchset_id: HOST_STAMPED_PATCHSET,
       path: OWNER_LOOP_SOURCE,
       side: "head",
       start_line: 1,

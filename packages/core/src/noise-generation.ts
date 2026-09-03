@@ -79,6 +79,19 @@ import type {
 import { computeInputDigest, parseAnchor, resolveAnchor, validateDocument } from "@rennet/protocol";
 import { absentBudgetGrant } from "./invocation-budget";
 
+/**
+ * One context file, structurally identical to the server's `SessionContextFile` — this
+ * package cannot import the server, and this is the whole contract.
+ */
+export interface NoiseContextFile {
+  readonly name: string;
+  readonly body: string;
+  /** One line: what this file holds. */
+  readonly holds: string;
+  /** One line: when a turn should read it. */
+  readonly readWhen: string;
+}
+
 /** The result of one noise turn: the emitted body, or a turn-level failure. */
 export type NoiseTurnResult =
   | { readonly status: "emitted"; readonly body: unknown; readonly tokens?: RspTokenUsage }
@@ -131,7 +144,22 @@ export interface RunNoiseAngleInput {
   readonly runTurn: (prompt: string, attempt: number) => Promise<NoiseTurnResult>;
   /** Optional repo guidance layers, wrapped as untrusted material by the assembler. */
   readonly guidance?: { readonly general?: string; readonly files?: string };
-  readonly assembledContext?: string;
+  /**
+   * The daemon's ONE session-context writer, bound to the seat's root and a session id
+   * (session-context-files D3). It writes `noise-offer.json` and returns the context
+   * directory AS THE SEAT SHOULD NAME IT (relative to its cwd, or absolute); the prompt
+   * names that path and never carries the offer. Structural, because this package cannot
+   * import the server that owns the writer.
+   */
+  readonly writeContext: (files: readonly NoiseContextFile[]) => string;
+  /**
+   * Where Rennet's assembled project context for this base already sits on disk
+   * (`~/.rennet/projects/<key>/context-manifests/<baseOid>.context.txt`). Named in the
+   * prompt, never read into it: the text used to ride every attempt as a context layer.
+   */
+  readonly assembledContextPath?: string;
+  /** The `git diff` that shows the seat the whole change from its cwd (`reviewedDiffCommand`). */
+  readonly diffCommand?: string;
   /** Retries after the first attempt. Default 2 (three attempts total). */
   readonly maxRetries?: number;
   /**
@@ -413,71 +441,52 @@ function buildEnvelope(
   };
 }
 
+/** The offered manifest's file in the session's context directory. The prompt names it. */
+export const NOISE_OFFER_FILE = "noise-offer.json";
+
 /**
- * UTF-8 ceiling on the noise seat's WHOLE hunk payload text (#737). Whole hunks are
- * kept in offered order until the next one would cross it; the rest are COUNTED in
- * a marker (a hunk the seat was not shown cannot be grouped and falls through to
- * normal review). Same magnitude as the round-evidence manifest bound. The payload
- * is re-sent on every retry, so the bound is per attempt.
+ * The offer as written to `noise-offer.json`: every offered hunk's immutable id, its
+ * path, and its 1-based line ranges on both sides — and NO line bodies. The seat's cwd is
+ * the reviewed checkout, so it reads the lines it is grouping from `git diff` like every
+ * other seat, and nothing about the change's size reaches the prompt. This replaces the
+ * 256 KiB inline payload that rode every attempt (#737) and had to count what it dropped;
+ * a file has nothing to drop. Compact JSON: an indent is a surcharge no reader sees.
  */
-export const NOISE_PAYLOAD_MAX_BYTES = 262_144;
-
-const PAYLOAD_ENCODER = new TextEncoder();
-
-function payloadBytes(value: unknown): number {
-  return PAYLOAD_ENCODER.encode(JSON.stringify(value)).length;
+export function renderNoiseOffer(manifest: OfferedManifest, patchsetId: string): string {
+  return JSON.stringify({
+    patchsetId,
+    hunks: manifest.occurrences
+      .filter((occurrence) => occurrence.kind === "hunk")
+      .map((occurrence) => ({
+        id: occurrence.id,
+        ...(occurrence.path === undefined ? {} : { path: occurrence.path }),
+        ...(occurrence.spans === undefined ? {} : { spans: occurrence.spans }),
+      })),
+  });
 }
 
-const PAYLOAD_READ_WITH =
-  "This many offered hunks, in offered order after the last one shown, did not fit the payload bound. You cannot classify what you were not shown; they fall through to normal review. Group only the hunks above.";
-
 /**
- * A compact, model-facing serialisation of the offered hunks and their lines. The
- * WHOLE returned text is bounded by `maxBytes`: whole hunks are kept in offered order
- * until the next would cross the budget left after reserving the truncation marker,
- * which carries a COUNT of omitted hunks (never a list — a list is itself unbounded,
- * review of #739). One floor: a bound below the envelope-plus-marker size (~290 bytes)
- * still ships the marker, because a payload that cannot say what it dropped is worse
- * than a ~290-byte overrun; the production bound is nine hundred times that. Compact
- * JSON: an indent is a ~30% surcharge no reader sees.
+ * The payload layer: a path reference to the offer (angle-prompt-contract — the layer
+ * that used to BE the offer now names it) plus the diff command that shows the lines.
+ * Its size does not depend on the change.
  */
-export function renderPayload(
-  manifest: OfferedManifest,
-  patchsetId: string,
-  maxBytes: number = NOISE_PAYLOAD_MAX_BYTES,
-): string {
-  const offered = manifest.occurrences
-    .filter((occurrence) => occurrence.kind === "hunk")
-    .map((occurrence) => ({
-      id: occurrence.id,
-      additions: occurrence.sides?.additions ?? [],
-      deletions: occurrence.sides?.deletions ?? [],
-      context: occurrence.sides?.context ?? [],
-    }));
-  // The complete payload, when it fits, ships as is: no marker is reserved for an
-  // omission that will not happen (#740 review).
-  const complete = JSON.stringify({ patchsetId, hunks: offered });
-  if (PAYLOAD_ENCODER.encode(complete).length <= maxBytes) return complete;
-  const marker = (omittedHunks: number) => ({ omittedHunks, readWith: PAYLOAD_READ_WITH });
-  // Reserve the marker at its largest (every hunk omitted) so the kept set never has to
-  // shrink again once the marker turns out to be needed.
-  const envelopeBytes = payloadBytes({ patchsetId, hunks: [] });
-  const markerOverhead =
-    payloadBytes({ patchsetId, hunks: [], truncated: marker(offered.length) }) - envelopeBytes;
-  const kept: typeof offered = [];
-  let bytes = envelopeBytes;
-  for (const hunk of offered) {
-    const hunkBytes = payloadBytes(hunk) + (kept.length > 0 ? 1 : 0);
-    if (bytes + hunkBytes + markerOverhead > maxBytes) break;
-    kept.push(hunk);
-    bytes += hunkBytes;
-  }
-  const omitted = offered.length - kept.length;
-  return JSON.stringify(
-    omitted === 0
-      ? { patchsetId, hunks: kept }
-      : { patchsetId, hunks: kept, truncated: marker(omitted) },
-  );
+export function renderNoiseOfferLayer(input: {
+  readonly contextDir: string;
+  readonly diffCommand?: string;
+}): string {
+  const offerPath = `${input.contextDir.replace(/\/$/, "")}/${NOISE_OFFER_FILE}`;
+  return [
+    "Your working directory is a checkout of the reviewed repository.",
+    `The offered hunks are listed in \`${offerPath}\`: each entry is a hunk's immutable \`id\`, its \`path\`, and its 1-based line ranges on the old and new side (\`spans\`). Read that file first.`,
+    `Read the lines themselves from the checkout — ${
+      input.diffCommand === undefined ? "`git diff`" : `\`${input.diffCommand}\``
+    } shows the whole change — and group only hunks whose lines you actually read.`,
+  ].join("\n");
+}
+
+/** The context layer: the persisted assembled-context text, named at its path. */
+export function renderNoiseAssembledContextLayer(assembledContextPath: string): string {
+  return `Rennet's assembled project context for this base is at \`${assembledContextPath}\`; read it when a group's reason turns on a repository convention.`;
 }
 
 /** Format a validation report into the machine-readable text fed back on retry. */
@@ -515,7 +524,26 @@ export async function runNoiseAngle(input: RunNoiseAngleInput): Promise<RunNoise
   const patchsetRef = { id: patchsetId };
   const inputDigest = computeInputDigest(patchsetRef, manifest);
   const base = renderBaseInstruction(contract);
-  const payload = renderPayload(manifest, patchsetId);
+  // The offer is written ONCE, before any turn, and named on every attempt. There is no
+  // payload layer any more, so a retry re-sends nothing of the change: the base, the
+  // path references, and the validator's pointers.
+  const contextDir = input.writeContext([
+    {
+      name: NOISE_OFFER_FILE,
+      body: renderNoiseOffer(manifest, patchsetId),
+      holds:
+        "The offered hunks you may anchor to: each one's id, path and line ranges, no line bodies.",
+      readWhen: "first, before you read the change; anchor only to ids listed here.",
+    },
+  ]);
+  const offerLayer = renderNoiseOfferLayer({
+    contextDir,
+    ...(input.diffCommand === undefined ? {} : { diffCommand: input.diffCommand }),
+  });
+  const contextLayer =
+    input.assembledContextPath === undefined
+      ? undefined
+      : renderNoiseAssembledContextLayer(input.assembledContextPath);
   const hypothesisLayer =
     input.hypothesis === undefined ? undefined : renderHypothesisLayer(input.hypothesis);
   // The per-project convention checklist (#180). An absent catalogue, or one with
@@ -553,8 +581,8 @@ export async function runNoiseAngle(input: RunNoiseAngleInput): Promise<RunNoise
         ...(guidance?.general === undefined ? {} : { general: guidance.general }),
         ...(guidance?.files === undefined ? {} : { files: guidance.files }),
         ...(lastReportText === undefined ? {} : { task: lastReportText }),
-        ...(input.assembledContext === undefined ? {} : { context: input.assembledContext }),
-        payload,
+        ...(contextLayer === undefined ? {} : { context: contextLayer }),
+        payload: offerLayer,
       },
       assembleOptions ?? {},
     );

@@ -186,13 +186,19 @@ export async function captureReviewContextManifest(
   return built.manifest;
 }
 
-export async function ensureReviewContextAssembly(
-  deps: CaptureReviewContextManifestDeps,
-): Promise<{ readonly manifest: ContextManifest; readonly text: string } | undefined> {
+export async function ensureReviewContextAssembly(deps: CaptureReviewContextManifestDeps): Promise<
+  | {
+      readonly manifest: ContextManifest;
+      readonly text: string;
+      /** The persisted text's path, present only when the bytes on disk are the verified ones. */
+      readonly textPath?: string;
+    }
+  | undefined
+> {
   const { repoKey, baseOid } = repoRecordOf(deps.review);
   const store = new ContextManifestStore(deps.store);
   const persisted = store.loadVerified(repoKey, baseOid);
-  if (persisted) return persisted;
+  if (persisted) return { ...persisted, textPath: store.textPath(repoKey, baseOid) };
 
   const built = await buildReviewContextManifest(deps);
   if (!built) return undefined;
@@ -201,8 +207,14 @@ export async function ensureReviewContextAssembly(
     store.saveText(repoKey, baseOid, built.assembly.text);
   } catch (error) {
     deps.onPersistError?.(error);
+    // The text never reached disk, so there is no path a seat could read it at.
+    return { manifest: built.manifest, text: built.assembly.text };
   }
-  return { manifest: built.manifest, text: built.assembly.text };
+  return {
+    manifest: built.manifest,
+    text: built.assembly.text,
+    textPath: store.textPath(repoKey, baseOid),
+  };
 }
 
 /**

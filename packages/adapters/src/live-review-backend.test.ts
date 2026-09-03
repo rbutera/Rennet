@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildReviewCanvases, createInvocationBudget, type ProjectMap } from "@rennet/core";
@@ -280,7 +280,14 @@ describe("createLiveCanvasOpsBackend — the live end-to-end review backend", ()
 
     const ensured = await ensureReviewContextAssembly({ store, review });
 
-    expect(ensured).toEqual({ manifest: built.manifest, text: built.assembly.text });
+    expect(ensured).toEqual({
+      manifest: built.manifest,
+      text: built.assembly.text,
+      // The persisted text's path travels beside the text: a seat converted to
+      // session-context-files is pointed at it instead of being handed the bytes.
+      textPath: manifestStore.textPath(repoKey, baseOid),
+    });
+    expect(readFileSync(ensured?.textPath ?? "", "utf8")).toBe(built.assembly.text);
   });
 
   it("rebuilds and re-persists both artifacts when text is mismatched or missing", async () => {
@@ -301,7 +308,11 @@ describe("createLiveCanvasOpsBackend — the live end-to-end review backend", ()
 
     const fromMismatch = await ensureReviewContextAssembly({ store, review });
     expect(fromMismatch).toBeDefined();
-    expect(manifestStore.loadVerified(repoKey, baseOid)).toEqual(fromMismatch);
+    expect(manifestStore.loadVerified(repoKey, baseOid)).toEqual({
+      manifest: fromMismatch?.manifest,
+      text: fromMismatch?.text,
+    });
+    expect(fromMismatch?.textPath).toBe(manifestStore.textPath(repoKey, baseOid));
     expect(fromMismatch?.manifest.assembledPromptDigest).not.toBe(
       original.manifest.assembledPromptDigest,
     );
@@ -310,7 +321,11 @@ describe("createLiveCanvasOpsBackend — the live end-to-end review backend", ()
     write(repo.root, "CLAUDE.md", "replacement guidance two\n");
     const fromMissing = await ensureReviewContextAssembly({ store, review });
     expect(fromMissing).toBeDefined();
-    expect(manifestStore.loadVerified(repoKey, baseOid)).toEqual(fromMissing);
+    expect(manifestStore.loadVerified(repoKey, baseOid)).toEqual({
+      manifest: fromMissing?.manifest,
+      text: fromMissing?.text,
+    });
+    expect(fromMissing?.textPath).toBe(manifestStore.textPath(repoKey, baseOid));
     expect(fromMissing?.manifest.assembledPromptDigest).not.toBe(
       fromMismatch?.manifest.assembledPromptDigest,
     );

@@ -168,6 +168,7 @@ import {
   renderWorkOrder,
   resolveAssignment,
   resolveLocus,
+  reviewedDiffCommand,
   runHandoffTurn as runHandoffTurnCore,
   runNoiseAngle,
   toDistroPath,
@@ -2419,9 +2420,14 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       // degrades to a turn-failure rather than crashing the command.
       runTurn: recordedDesktopSeatTurn(runNoiseTurn, "noise", contextFeed),
       budget,
-      ...(contextFeed.assembledContext === undefined
+      // session-context-files: the offer is written under the seat's cwd and NAMED, and
+      // the assembled project context is named at the path it is already persisted to.
+      // Nothing about the change rides inline; the seat reads the diff from its cwd.
+      writeContext: (files) => writeReviewContext(review, files),
+      diffCommand: reviewedDiffCommand(patchset.repository),
+      ...(contextFeed.assembledContextPath === undefined
         ? {}
-        : { assembledContext: contextFeed.assembledContext }),
+        : { assembledContextPath: contextFeed.assembledContextPath }),
     });
     if (result.status === "ok") {
       return { status: "ok", groups: result.groups };

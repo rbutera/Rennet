@@ -40,6 +40,8 @@ import { bodyJsonSchema, computeInputDigest, validateDocument } from "@rennet/pr
 /** One structured-output `codex exec` invocation. The prompt and schema are
  *  already assembled/derived by the port; the executor is a thin process seam. */
 export interface CodexExecRequest {
+  /** Which seat is asking (`board.lens-draft.flagged-codex`); logs, metrics and test attribution only. */
+  readonly label?: string;
   /** The Codex model, e.g. "gpt-5.6-luna". Passed to `codex exec -m`. */
   readonly model: string;
   /** The reasoning effort, e.g. "low". Passed to `-c model_reasoning_effort=`. */

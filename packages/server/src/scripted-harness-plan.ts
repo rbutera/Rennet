@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { isAbsolute, relative, resolve } from "node:path";
 import {
   buildCapabilities,
@@ -162,6 +162,42 @@ function readInvocationRecords(path: string): InvocationRecord[] {
   });
 }
 
+/**
+ * The session-context files this turn was told about, read from the seat's own cwd.
+ *
+ * Since session-context-files a prompt carries no data: it names
+ * `.rennet/context/<sessionId>/` under the working directory and the agent reads what it
+ * decides it needs. A scripted seat reads the same files, so a plan step still matches on
+ * the material the turn actually has, and `${askId}` / `${evidenceIds}` still resolve
+ * against what the host wrote rather than against a payload nobody sends any more.
+ *
+ * Never throws: a turn with no context directory simply sees nothing extra.
+ */
+function sessionContextFiles(prompt: string, cwd: string): readonly string[] {
+  const dir = /`(\.rennet\/context\/[^`/]+)\//.exec(prompt)?.[1];
+  if (dir === undefined || cwd === "") return [];
+  const root = resolve(cwd, dir);
+  let names: readonly string[];
+  try {
+    names = readdirSync(root);
+  } catch {
+    return [];
+  }
+  return names.flatMap((name) => {
+    if (name === "README.md") return [];
+    try {
+      return [readFileSync(resolve(root, name), "utf8")];
+    } catch {
+      return []; // a subdirectory (`boards/`), or a file this turn cannot read
+    }
+  });
+}
+
+/** Everything the turn can see: its prompt and the context files it names. */
+function visibleToTurn(prompt: string, cwd: string): string {
+  return [prompt, ...sessionContextFiles(prompt, cwd)].join("\n");
+}
+
 function jsonLayer(prompt: string, prefix: string, until?: string): unknown {
   const start = prompt.indexOf(prefix);
   if (start < 0) throw new Error(`scripted harness prompt is missing ${prefix.trim()}`);
@@ -180,6 +216,7 @@ function findPatchsetId(value: unknown): string | undefined {
     }
     return undefined;
   }
+  if ("patchsetId" in value && typeof value.patchsetId === "string") return value.patchsetId;
   if ("patchset" in value) {
     const patchset = value.patchset;
     if (typeof patchset === "object" && patchset !== null && "id" in patchset) {
@@ -325,8 +362,23 @@ function completedOutcome(
   const needsPatchset = containsPlanValue(step.output, PATCHSET_PLAN_VALUE);
   const needsAsk = containsPlanValue(step.output, ASK_PLAN_VALUE);
   const needsEvidence = containsPlanValue(step.output, EVIDENCE_IDS_PLAN_VALUE);
-  const context =
-    needsPatchset || needsAsk || needsEvidence ? jsonLayer(prompt, CONTEXT_PREFIX) : undefined;
+  // The values live in the session-context FILES since session-context-files: the prompt
+  // names a directory and the seat opens it. A turn that still carries a JSON context
+  // layer (the post-process turn, and the direct-call shapes the unit tests drive) is read
+  // the old way, so both shapes resolve from whatever the turn can actually see.
+  const needsValue = needsPatchset || needsAsk || needsEvidence;
+  const contextFileBodies = needsValue ? sessionContextFiles(prompt, spec.cwd) : [];
+  const context = !needsValue
+    ? undefined
+    : contextFileBodies.length > 0
+      ? contextFileBodies.flatMap((body) => {
+          try {
+            return [JSON.parse(body) as unknown];
+          } catch {
+            return []; // a non-JSON context file (a `.md` the prompt also names)
+          }
+        })
+      : jsonLayer(prompt, CONTEXT_PREFIX);
   const patchsetId = context === undefined ? "" : findPatchsetId(context);
   if (needsPatchset && patchsetId === undefined) {
     throw new Error(`scripted harness step ${step.id} could not resolve the current patchset id`);
@@ -414,6 +466,7 @@ class ScriptedHarnessSession implements HarnessSession {
 /** The one step whose prompt match is unique for this turn; ambiguity is a plan bug. */
 function selectStep(
   plan: ScriptedHarnessPlan,
+  /** The prompt PLUS the session-context files it names — what the turn can actually see. */
   prompt: string,
   wantsEdit: boolean,
 ): ScriptedHarnessStep {
@@ -480,7 +533,7 @@ export function loadScriptedCodexExecutor(path: string): CodexExecutor {
   const plan = parsePlan(path);
   return async (request) => {
     const cwd = request.cwd ?? "";
-    const step = selectStep(plan, request.prompt, false);
+    const step = selectStep(plan, visibleToTurn(request.prompt, cwd), false);
     const completed = completedOutcome(
       step,
       { cwd, outputSchema: request.outputSchema } as SessionSpec,
@@ -529,7 +582,11 @@ export function loadScriptedHarnessPlan(path: string): HarnessPort {
     health: async () => ({ state: "ready", version: SCRIPTED_HARNESS_VERSION }),
     createSession: async (spec) =>
       new ScriptedHarnessSession(harness, (prompt, executingHarness) => {
-        const step = selectStep(plan, prompt, spec.outputSchema === undefined);
+        const step = selectStep(
+          plan,
+          visibleToTurn(prompt, spec.cwd),
+          spec.outputSchema === undefined,
+        );
         if (step.kind === "edit" && consumedEdits.has(step.id)) {
           throw new Error(`scripted harness edit step ${step.id} was already consumed`);
         }

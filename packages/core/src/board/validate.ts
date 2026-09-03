@@ -259,15 +259,38 @@ export function checkImmutability(before: DraftBoard, after: DraftBoard): Violat
 
 // ── The loop ─────────────────────────────────────────────────────────────────
 
+/**
+ * Stamp the board's own patchset id onto every `code_ref`.
+ *
+ * The seat cannot know it and is never told: since session-context-files the drafting
+ * prompt carries no packet, and a captured patchset's id is Rennet's identity for the
+ * capture, not something readable from the checkout. A seat asked for a field it has no
+ * source for invents one, so the HOST supplies it and lint's cross-patchset check then
+ * measures what it was written for — a board composed against the wrong capture — rather
+ * than a hallucination every seat produces.
+ */
+function stampPatchsetId(board: DraftBoard, patchsetId: string | undefined): DraftBoard {
+  if (patchsetId === undefined) return board;
+  return {
+    ...board,
+    elements: board.elements.map((el) =>
+      el.kind === "code_ref"
+        ? ({ ...el, data: { ...(el.data as object), patchset_id: patchsetId } } as DraftElement)
+        : el,
+    ),
+  };
+}
+
 /** Coerce a raw seat return into a `DraftBoard`, or the parse issues that rejected it. */
 function coerceBoard(
   raw: unknown,
+  patchsetId?: string,
 ):
   | { ok: true; board: DraftBoard }
   | { ok: false; issues: readonly { path: readonly (string | number)[]; message: string }[] } {
   const parsed = parseDraft(raw);
   return parsed.ok
-    ? { ok: true, board: parsed.value }
+    ? { ok: true, board: stampPatchsetId(parsed.value, patchsetId) }
     : {
         ok: false,
         issues: parsed.issues.map((i) => ({
@@ -316,7 +339,7 @@ export async function validateDraft(
   seams: ValidateSeams,
 ): Promise<ValidateResult> {
   // Gate 1 — the lint loop. `input` is the drafter's first structured return.
-  const first = coerceBoard(input);
+  const first = coerceBoard(input, ctx.patchsetId);
   let current: DraftBoard = first.ok ? first.board : { elements: [] };
   // A parse failure on the very first return still seeds the channel: the seat
   // is re-asked with the schema issues as pointers (attempt 1 below).
@@ -494,7 +517,7 @@ export async function validateDraft(
       pointers,
       attempt: attempts,
     });
-    const coerced = coerceBoard(raw);
+    const coerced = coerceBoard(raw, ctx.patchsetId);
     if (coerced.ok) {
       everParsed = true;
       pendingParseIssues = [];
@@ -508,7 +531,7 @@ export async function validateDraft(
   // Gate 2 — post-process editor pass, reference safety, then typed-data immutability.
   const beforeEditor = current;
   const editedRaw = seams.postProcess ? await seams.postProcess(current) : current;
-  const edited = coerceBoard(editedRaw);
+  const edited = coerceBoard(editedRaw, ctx.patchsetId);
   const afterEditor = edited.ok ? edited.board : current;
   const editorReferenceViolations = lint(afterEditor, ctx).filter(
     ({ ruleId }) => ruleId === "element-reference-resolves",

@@ -86,6 +86,15 @@ export class ContextManifestStore {
     writeAtomic(contextTextPath(this.store, repoKey, baseOid), text);
   }
 
+  /**
+   * Where the assembled context TEXT for a base sits on disk. A seat is pointed at this
+   * path (session-context-files) instead of receiving the text inline; the caller checks
+   * `loadVerified` first, so a path handed out names a file whose digest matched.
+   */
+  textPath(repoKey: string, baseOid: string): string {
+    return contextTextPath(this.store, repoKey, baseOid);
+  }
+
   /** The persisted manifest for a base OID, or null when absent/unreadable/malformed. */
   load(repoKey: string, baseOid: string): ContextManifest | null {
     let parsed: unknown;

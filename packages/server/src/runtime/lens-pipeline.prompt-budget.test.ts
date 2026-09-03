@@ -6,7 +6,7 @@ import {
   LENS_KINDS,
   LENS_PROMPT_FILES,
 } from "@rennet/prompts";
-import { patchsetSchema } from "@rennet/protocol";
+import { type Patchset, patchsetSchema } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { renderDrafterPrompt } from "./lens-pipeline";
 
@@ -24,42 +24,85 @@ const read = (file: string): string => readFileSync(new URL(file, promptsDir), "
 const lensPrompt = (lens: (typeof LENS_KINDS)[number]): string =>
   expandPromptPartials(read(LENS_PROMPT_FILES[lens]), read(INVESTIGATE_PARTIAL_FILE));
 
-// Measured 2026-09-03 on this fixture (2 files, 3 hunks) after the hunk inventory
-// left the prompt (session-bound-workspace D5; the 2026-09-02 figures were design
-// 15,233 B, flagged 9,076, sequence 8,672, decisions 8,407, noise 8,379): design
-// 14,367 B, flagged 8,210, sequence 7,806, decisions 7,541, noise 7,513 — of which
-// 1,100 is the packet share below. Each lens's fixed cost is its measurement minus
-// that share, plus 10% headroom; one shared number would let the small lenses grow
-// by half before anything reddened. The packet scales at roughly 550 bytes per file
-// row; no hunk row travels any more, which is the tripwire's second control — a hunk
-// inventory creeping back in reddens every lens at once.
+/**
+ * A 74-file / 292-hunk patchset — the shape a large agent-written branch has, and the
+ * one the 2026-09-03 audit measured the old inline packet on. It shares the fixture's
+ * repository record, so the only thing that differs from the fixture is the change.
+ */
+function synthetic(): Patchset {
+  const files = Array.from({ length: 74 }, (_, index) => {
+    const path = `packages/pkg-${index % 9}/src/module-${index}.ts`;
+    const hunkCount = index < 70 ? 4 : 3;
+    const hunks = Array.from({ length: hunkCount }, (_, h) => {
+      const start = 10 + h * 40;
+      const added = Array.from(
+        { length: 6 },
+        (_unused, line) => `+export const v${index}_${h}_${line} = ${line};`,
+      );
+      return `@@ -${start},3 +${start},9 @@ function f${h}()\n context\n${added.join("\n")}\n-old line\n context\n`;
+    });
+    return {
+      path,
+      status: "modified" as const,
+      additions: hunkCount * 6,
+      deletions: hunkCount,
+      binary: false,
+      patch: `diff --git a/${path} b/${path}\n--- a/${path}\n+++ b/${path}\n${hunks.join("")}`,
+    };
+  });
+  return { ...patchset, id: "ps-synthetic", files };
+}
+
+const bigPacket = buildDeltaPacket(synthetic(), []);
+
+// Measured 2026-09-04 on this fixture (2 files, 3 hunks) once the context layer became a
+// path reference (session-bound-workspace 3.1), rendered WITHOUT a context directory:
+// design 12,152 B, flagged 6,673, sequence 6,288, noise 6,088, decisions 6,004. The
+// DeltaPacket no longer rides, so there is no per-file term any more — on the
+// 74-file/292-hunk packet below every one of these numbers is IDENTICAL, which is the
+// property the second test pins. Each budget is its measurement plus 10% headroom; one
+// shared number would let the small lenses grow by half before anything reddened.
 //
 // What this cannot catch, stated so no reader inherits a wider claim: the prompt is
-// rendered with no report board, no design artifacts and no round context, so those
-// three interpolations are not measured here; and on a 2-file fixture the per-file
-// constant is a stated scaling rule, not an exercised one.
-const FIXED_BUDGET: Record<(typeof LENS_KINDS)[number], number> = {
-  design: 14_600,
-  sequence: 7_400,
-  decisions: 7_100,
-  flagged: 7_850,
-  noise: 7_050,
+// rendered with no context directory, so the path-reference layer (bounded under 2 KB by
+// its own test in `lens-pipeline.test.ts`) is not measured here.
+const BUDGET: Record<(typeof LENS_KINDS)[number], number> = {
+  design: 13_400,
+  sequence: 6_950,
+  decisions: 6_650,
+  flagged: 7_400,
+  noise: 6_750,
 };
-const PER_FILE = 550;
-const packetShare = PER_FILE * patchset.files.length;
-const budgetFor = (lens: (typeof LENS_KINDS)[number]): number => FIXED_BUDGET[lens] + packetShare;
 
 describe("drafter prompt byte budget (tripwire, #737)", () => {
   it.each(LENS_KINDS)("%s drafter prompt stays under the declared budget", (lens) => {
-    expect(bytes(renderDrafterPrompt(lensPrompt(lens), packet))).toBeLessThanOrEqual(
-      budgetFor(lens),
+    expect(bytes(renderDrafterPrompt(lensPrompt(lens), packet))).toBeLessThanOrEqual(BUDGET[lens]);
+  });
+
+  it.each(LENS_KINDS)("%s drafter prompt does not grow with the change at all", (lens) => {
+    // 2 files / 3 hunks against 74 files / 292 hunks: byte-identical, because nothing
+    // derived from the packet reaches the prompt. This is the tripwire that reddens if an
+    // inventory, a hunk index or a file-row list creeps back into any layer — the budget
+    // above would still pass on the fixture while every large branch paid for it.
+    expect(bigPacket.hunks.hunks.length).toBeGreaterThan(290);
+    expect(bytes(renderDrafterPrompt(lensPrompt(lens), bigPacket))).toBe(
+      bytes(renderDrafterPrompt(lensPrompt(lens), packet)),
     );
   });
 
   it("reddens when a layer inflates (positive control)", () => {
     // Ten percent is the headroom, so an eleven-percent inflation must cross the line.
-    const budget = budgetFor("noise");
+    const budget = BUDGET.noise;
     const inflated = `${lensPrompt("noise")}\n${"x".repeat(Math.ceil(budget * 0.11))}`;
     expect(bytes(renderDrafterPrompt(inflated, packet))).toBeGreaterThan(budget);
+  });
+
+  it("reddens when the change reaches the prompt (positive control for the scaling test)", () => {
+    // The second test asserts an equality; an equality is satisfied by two prompts that
+    // are both wrong in the same way. This proves it can see a difference at all: the same
+    // comparison over a prompt that DOES interpolate the packet is not equal.
+    const withPacket = (p: typeof packet): string =>
+      `${renderDrafterPrompt(lensPrompt("noise"), p)}\n${JSON.stringify(p.patchset.files)}`;
+    expect(bytes(withPacket(bigPacket))).not.toBe(bytes(withPacket(packet)));
   });
 });

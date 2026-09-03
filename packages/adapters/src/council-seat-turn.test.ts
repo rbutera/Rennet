@@ -84,6 +84,9 @@ describe("councilSeatTurn — the Claude branch", () => {
     // spec reddens the test no matter what the key is named.
     expect(state.spec).toEqual({
       cwd: "/repo",
+      // Attribution only, never sent to the model: the seat label the log, the token
+      // collector and a repair turn's caller identify this session by.
+      label: "council.seat",
       outputSchema: { type: "object" },
       model: expect.any(String),
       effort: expect.any(String),
