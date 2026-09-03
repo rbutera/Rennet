@@ -79,8 +79,14 @@ export interface T3SeatSeam {
     /** The council's effort for the seat; the thread's model selection carries it. */
     readonly effort: CouncilEffort;
   }) => Promise<T3SeatThread>;
-  /** Told the seat's thread as soon as it exists, so a lane can carry the reference. */
-  readonly onThread?: (seat: string, thread: T3SeatThread) => void;
+  /** Told the seat's thread as soon as it exists, so a lane can carry the reference. The
+   *  provider rides along because a lane can hold two seats (Flagged: Claude AND Codex)
+   *  and the surface names which one is speaking. */
+  readonly onThread?: (
+    seat: string,
+    thread: T3SeatThread,
+    provider: "claudeAgent" | "codex",
+  ) => void;
 }
 
 export interface T3SeatTurnOptions {
@@ -297,7 +303,7 @@ export function createT3SeatTurn(
     const signal = options.signal;
     try {
       const thread = await seam.threadFor({ seat, provider, model, effort });
-      seam.onThread?.(seat, thread);
+      seam.onThread?.(seat, thread, provider);
       const client = await seam.client();
       if (signal?.aborted) throw new Error(INTERRUPTED);
       // An abort while the model runs must reach the sidecar as an interrupt: stopping the

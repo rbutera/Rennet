@@ -712,6 +712,32 @@ describe("session/ durable shapes (#466/#457)", () => {
     ).toBe(false);
   });
 
+  it("lets a lane carry one entry per seat, each with its own thread and line", () => {
+    const base = { id: "flagged", label: "Flagged", status: "running" };
+    const claude = {
+      seat: "flagged-claude",
+      provider: "claudeAgent",
+      thread: { environmentId: "env-1", threadId: "t-claude" },
+      latest: { kind: "tool", text: "reading src/a.ts", at: 1 },
+    };
+    const codex = {
+      seat: "flagged-codex",
+      provider: "codex",
+      thread: { environmentId: "env-1", threadId: "t-codex" },
+    };
+    const parsed = LensLaneSchema.parse({ ...base, seats: [claude, codex] });
+    expect(parsed.seats).toEqual([claude, codex]);
+    // A lane written before seats existed still parses: `seats` is optional.
+    expect(LensLaneSchema.parse(base)).not.toHaveProperty("seats");
+    // A seat names a real provider, and a seat without its id is not a seat.
+    expect(
+      LensLaneSchema.safeParse({ ...base, seats: [{ ...claude, provider: "gemini" }] }).success,
+    ).toBe(false);
+    expect(LensLaneSchema.safeParse({ ...base, seats: [{ provider: "codex" }] }).success).toBe(
+      false,
+    );
+  });
+
   it("makes an unverdicted settled lens lane unrepresentable", () => {
     const base = { id: "design", label: "Design" };
     expect(LensLaneSchema.safeParse({ ...base, status: "done" }).success).toBe(false);

@@ -135,9 +135,12 @@ rules are worth writing down, because it is the only one that renders a live ext
 process and the failure mode is a surface that quietly lies about it.
 
 - **Not a table.** The change is a slab; the lenses are five readers standing under it,
-  each with its own hand-drawn mark, a lantern, a gaze line and a line of speech. Rows,
-  columns and dividers are the shape this surface exists to replace. The reader's speech
-  is the review serif (`font-serif`); its name and the chrome around it are sans.
+  each with its own hand-drawn mark, a lantern, a gaze line and a line of speech per
+  seat. A reader with one seat speaks one line; Flagged has two seats (Claude and Codex)
+  and speaks two, each under its speaker's name, and each line is the control that opens
+  that seat's transcript. Rows, columns and dividers are the shape this surface exists to
+  replace. The reader's speech is the review serif (`font-serif`); its name and the chrome
+  around it are sans.
 - **Never colour alone** (root `DESIGN.md`). Each of the five registers — waiting,
   working, settled, absent, failed — is stated twice: by the lantern's tone *and* by a
   rim badge or by motion. Gold plus a moving glance is working; green plus a check is
@@ -147,10 +150,14 @@ process and the failure mode is a surface that quietly lies about it.
   (`animate-processing-pulse`) runs only while the seat is running. Both carry
   `motion-reduce:animate-none`, which is safe because each animation's settled state is
   its own rest state.
+- **A settled reader's board opens beneath it, now.** A `drafted`/`done` lane renders its
+  board on the bench (`LensBoardDocument`, the workspace's own document) the moment
+  `board.read` answers, without waiting for the other lanes; the reader stays above it as
+  the way to that lens's transcript. The bench never waits for the slowest lens.
 - **It never invents a state.** Every line comes off the lane arm that carries it: a
   running lane with no `latest` says "under way", an `idle` projection is rendered in the
   quiet voice with the daemon's own words, and a failed lane speaks its `reason`. A
-  reader with no thread is disabled, not offered.
+  voice whose seat has no thread is disabled, not offered.
 
 ## Radius scale
 
