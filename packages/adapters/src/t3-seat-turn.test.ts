@@ -69,8 +69,14 @@ describe("createT3SeatTurn", () => {
     await runTurn("REPAIR POINTERS", 1);
 
     // One thread; two turns on it, in order, each carrying the contract as a schema and
-    // never as prompt text.
+    // never as prompt text. The council's effort reaches the thread's model selection.
     expect(threadFor).toHaveBeenCalledTimes(2);
+    expect(threadFor).toHaveBeenCalledWith({
+      seat: "design",
+      provider: "claudeAgent",
+      model: "opus-4.8",
+      effort: "high",
+    });
     // Order matters, not membership: the base prompt is turn one and the repair is turn
     // two, on one thread id. A set of `toContain` checks would pass on the wrong order.
     expect(startTurn.mock.calls.map((call) => call[0])).toEqual([

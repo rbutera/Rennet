@@ -171,10 +171,26 @@ export interface T3Client {
 
 const FULL_ACCESS: RuntimeMode = "full-access";
 
-/** A provider instance plus model; built-in instance ids are the driver slugs (`claudeAgent`, `codex`). */
-export const modelSelection = (instanceId: string, model: string): ModelSelection => ({
+/**
+ * A provider instance plus model; built-in instance ids are the driver slugs (`claudeAgent`,
+ * `codex`). Effort travels as the provider option each adapter actually reads — T3's Claude
+ * adapter reads `effort` and its Codex adapter `reasoningEffort`, both off
+ * `modelSelection.options`, and nothing else on the thread or the turn carries it.
+ */
+export const modelSelection = (
+  instanceId: string,
+  model: string,
+  options: { readonly effort?: string } = {},
+): ModelSelection => ({
   instanceId: ProviderInstanceId.make(instanceId),
   model,
+  ...(options.effort === undefined
+    ? {}
+    : {
+        options: [
+          { id: instanceId === "codex" ? "reasoningEffort" : "effort", value: options.effort },
+        ],
+      }),
 });
 
 const makeWsClient = RpcClient.make(WsRpcGroup);

@@ -346,6 +346,27 @@ describe.skipIf(!bundle || process.platform !== "darwin")(
   },
 );
 
+describe("modelSelection", () => {
+  it("carries effort as the option each provider's adapter reads, and nothing when absent", () => {
+    // T3's Claude adapter reads `effort` and its Codex adapter `reasoningEffort`, both off
+    // `modelSelection.options`; a selection without the option lets the provider default.
+    expect(modelSelection("claudeAgent", "claude-opus-5", { effort: "high" })).toEqual({
+      instanceId: "claudeAgent",
+      model: "claude-opus-5",
+      options: [{ id: "effort", value: "high" }],
+    });
+    expect(modelSelection("codex", "gpt-5.6-sol", { effort: "xhigh" })).toEqual({
+      instanceId: "codex",
+      model: "gpt-5.6-sol",
+      options: [{ id: "reasoningEffort", value: "xhigh" }],
+    });
+    expect(modelSelection("claudeAgent", "claude-sonnet-5")).toEqual({
+      instanceId: "claudeAgent",
+      model: "claude-sonnet-5",
+    });
+  });
+});
+
 describe("readTurnSettlement", () => {
   const activity = (kind: string, turnId: string | null, payload: unknown) => ({
     id: `${kind}:${turnId}:${JSON.stringify(payload)}`,

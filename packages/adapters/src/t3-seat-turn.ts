@@ -76,6 +76,8 @@ export interface T3SeatSeam {
     readonly seat: string;
     readonly provider: "claudeAgent" | "codex";
     readonly model: string;
+    /** The council's effort for the seat; the thread's model selection carries it. */
+    readonly effort: CouncilEffort;
   }) => Promise<T3SeatThread>;
   /** Told the seat's thread as soon as it exists, so a lane can carry the reference. */
   readonly onThread?: (seat: string, thread: T3SeatThread) => void;
@@ -263,8 +265,11 @@ export function createT3SeatTurn(
 ): RunTurn {
   return async function runTurn(prompt: string, attempt: number): Promise<HarnessTurnResult> {
     const started = now();
-    const { label, seat, provider, model } = options;
-    logSeat(label, `start attempt=${attempt} harness=t3:${provider} model=${model} seat=${seat}`);
+    const { label, seat, provider, model, effort } = options;
+    logSeat(
+      label,
+      `start attempt=${attempt} harness=t3:${provider} model=${model} effort=${effort} seat=${seat}`,
+    );
     const record = (
       status: "emitted" | "failed",
       settled: T3SettledTurn | null,
@@ -291,7 +296,7 @@ export function createT3SeatTurn(
     };
     const signal = options.signal;
     try {
-      const thread = await seam.threadFor({ seat, provider, model });
+      const thread = await seam.threadFor({ seat, provider, model, effort });
       seam.onThread?.(seat, thread);
       const client = await seam.client();
       if (signal?.aborted) throw new Error(INTERRUPTED);
