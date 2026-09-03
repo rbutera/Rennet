@@ -65,7 +65,7 @@ _7.3 needs a real harness turn (spends the subscription) and is driven by hand w
 
 ## 9. Documentation
 
-- [ ] 9.1 New `docs/developing/concepts/t3code-vendoring.md`: layout, vendor branch, scripts, cadence, ledger, licence
-- [ ] 9.2 New `docs/developing/concepts/t3code-sidecar.md` with a mermaid diagram of daemon, sidecar and client
-- [ ] 9.3 Update the egress statement in `product-and-vision.md`, the dependency standard, `harness-adapters.md`, and CLAUDE.md with the vendoring rules (never reformat `vendor/`, every edit in the ledger, extend over edit)
-- [ ] 9.4 PR description states what grows: the vendored snapshot, the toolchain additions, the renderer bundle delta, and that T3 threads persist to harness history and write hidden refs
+- [x] 9.1 New `docs/developing/concepts/t3code-vendoring.md`: layout, vendor branch, scripts, cadence, ledger, licence
+- [x] 9.2 New `docs/developing/concepts/t3code-sidecar.md` with a mermaid diagram of daemon, sidecar and client
+- [x] 9.3 Update the egress statement in `product-and-vision.md`, the dependency standard, `harness-adapters.md`, and CLAUDE.md with the vendoring rules (never reformat `vendor/`, every edit in the ledger, extend over edit)
+- [x] 9.4 Each wave PR (#744, #746, #748, #749) states what grows: the vendored snapshot, the toolchain additions, the renderer bundle delta, and that T3 threads persist to harness history and write hidden refs
