@@ -130,6 +130,8 @@ The adapter build writes one validated pair per collected platform under `packag
 
 The installed-package smoke calls both artifacts from that exact unpacked path. At runtime, `createRennetServer` constructs the rooted transactional landing host on POSIX daemons. The desktop daemon, `rennet serve`, and the distro-native WSL daemon all enter through `runDaemon`, so they use the artifact staged beside their own server bundle. Native Windows repositories retain legacy source landing while the Windows `RootedLandingHost` constructor is explicitly unsupported; a WSL project uses the Linux host inside its distro.
 
+The T3 Code sidecar ships inside the package. The desktop build depends on `t3code-server:build` and runs `scripts/stage-t3-sidecar.mjs`, which copies the vendored server bundle (maps dropped), its `UPSTREAM.json`, and the native runtime externals the bundle leaves un-inlined (node-pty for the running platform only, ffi-rs, fff-node, msgpackr-extract, bufferutil, utf-8-validate) into `apps/desktop/dist/t3code/`. Forge ships that directory as an extra resource at `Resources/t3code/` and fails the package when the bundle is missing; the main process sets `RENNET_T3_BUNDLE` to it for the daemon. About 22 MB per platform.
+
 The Claude adapter uses the user's installed `claude` executable. Packaging excludes executables supplied inside `@anthropic-ai/claude-agent-sdk` so Rennet does not ship a second Claude binary.
 
 ## Automatic updates
