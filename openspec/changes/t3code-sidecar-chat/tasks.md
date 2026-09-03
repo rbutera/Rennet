@@ -21,15 +21,15 @@
 
 ## 3. Daemon-side RPC module
 
-- [ ] 3.1 Write `packages/server/src/t3/client.ts`: the single Rennet module importing `effect` and `@t3tools/*`; exposes `createThread`, `startTurn`, `subscribeThread`, `readTurnDiff` as Promises and AsyncIterables
-- [ ] 3.2 Session-to-thread binding keyed on `repositoryRoot` and session id; create or resume the thread with cwd set to that repository's checkout, full-access mode
-- [ ] 3.3 Test with a two-repo workspace sharing a branch name that the second repo's session binds to the second repo's checkout
+- [x] 3.1 Write `packages/server/src/t3/client.ts`: the single Rennet module importing `effect` and `@t3tools/*`; exposes `createThread`, `startTurn`, `subscribeThread`, `readTurnDiff` as Promises and AsyncIterables
+- [x] 3.2 Session-to-thread binding keyed on `repositoryRoot` and session id; create or resume the thread with cwd set to that repository's checkout, full-access mode
+- [x] 3.3 Test with a two-repo workspace sharing a branch name that the second repo's session binds to the second repo's checkout
 
 ## 4. Upstreamable seeds
 
 - [ ] 4.1 Add an `outputFormat` option to the vendored Claude text generation; ledger entry marked upstreamable; open the upstream PR
 - [ ] 4.2 Add an ephemeral (`persistSession: false`) flag to the same path; ledger entry; upstream PR
-- [ ] 4.3 Flip the vendored telemetry default to off in the ledger only if the env flag proves insufficient in 2.2; otherwise no edit
+- [x] 4.3 Flip the vendored telemetry default to off in the ledger only if the env flag proves insufficient in 2.2; otherwise no edit (env flag suffices: `T3CODE_TELEMETRY_ENABLED=false` is forced by the supervisor and proven by test; no vendored edit)
 
 ## 5. Engine setting and disclosure
 

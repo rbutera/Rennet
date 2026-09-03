@@ -560,12 +560,18 @@ importers:
       '@rennet/protocol':
         specifier: workspace:*
         version: link:../protocol
+      '@t3tools/contracts':
+        specifier: workspace:*
+        version: link:../../vendor/t3code/packages/contracts
       '@wboard/core':
         specifier: 0.1.0-alpha.2
         version: 0.1.0-alpha.2
       '@wboard/server':
         specifier: 0.1.0-alpha.2
         version: 0.1.0-alpha.2
+      effect:
+        specifier: 'catalog:'
+        version: 4.0.0-beta.103(patch_hash=af36b7948b6f9c56623074662b51dade5699880c1a7c71245de73e13c3185fb6)
       ws:
         specifier: 8.21.1
         version: 8.21.1(bufferutil@4.1.0)(utf-8-validate@6.0.6)
