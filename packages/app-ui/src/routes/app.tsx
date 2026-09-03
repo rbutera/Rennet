@@ -1,24 +1,18 @@
-import {
-  newCommandId,
-  type RennetBridge,
-  type SessionPreparation,
-  type SettingsView,
-  type SidebarSession,
-} from "@rennet/protocol";
+import type { RennetBridge, SettingsView, SidebarSession } from "@rennet/protocol";
 import { Button } from "@rennet/ui";
 import { FolderPlus } from "lucide-react";
 import { Component, lazy, type ReactNode, Suspense, useEffect, useRef, useState } from "react";
 import { Redirect, Route, Router, Switch, useLocation, useSearch } from "wouter";
+import { PreparationBench } from "../app/preparation-bench";
 import { ReviewWorkspace } from "../app/review-workspace-route";
 import { Icon } from "../components/icon";
-import { BridgeProvider, useCommand, useMutation, useRefreshCommand } from "../data";
+import { BridgeProvider, useCommand, useMutation } from "../data";
 import { ArchivedView } from "../project/archived-view";
 import { BackgroundNarration } from "../project/indexing/background-narration";
 import { IndexingView } from "../project/indexing/indexing-view";
 import { NewChatView } from "../project/new-chat-view";
-import { coverageNote, coverageStatus } from "../rounds/round-machine";
 import { RoundsSourceProvider, useLiveRoundsSource } from "../rounds/rounds-data";
-import { RunRoute, StatusIcon } from "../rounds/run-route";
+import { RunRoute } from "../rounds/run-route";
 import {
   LiveSettingsProjectionProvider,
   PriorSurfaceTracker,
@@ -218,131 +212,6 @@ function ChatOnlySession({ session }: { readonly session: SidebarSession }) {
   );
 }
 
-function preparationLaneNote(
-  lane: Extract<SessionPreparation, { status: "drafting" }>["lanes"][number],
-): string {
-  if (lane.status === "done")
-    return lane.verdict === "carrying-forward" ? "carrying forward" : "ready";
-  if (lane.status === "absent" || lane.status === "failed") return lane.reason;
-  if (lane.status === "drafted") return "drafted";
-  return lane.status;
-}
-
-function PreparationLanes({ preparation }: { readonly preparation: SessionPreparation }) {
-  const lanes = "lanes" in preparation ? preparation.lanes : undefined;
-  const coverage = "coverage" in preparation ? preparation.coverage : undefined;
-  if (lanes === undefined) return null;
-  return (
-    <div className="flex w-full flex-col divide-y divide-border/60 rounded-lg border border-border">
-      {lanes.map((lane) => (
-        <div
-          key={lane.id}
-          data-row={lane.id}
-          data-status={lane.status}
-          className="flex items-center gap-2.5 px-3.5 py-2 text-sm"
-        >
-          <StatusIcon status={lane.status} />
-          <span className="text-foreground">{lane.label}</span>
-          <span
-            className={
-              lane.status === "failed"
-                ? "ml-auto max-w-[55%] truncate text-2xs text-destructive"
-                : "ml-auto max-w-[55%] truncate text-2xs text-muted-foreground"
-            }
-          >
-            {preparationLaneNote(lane)}
-          </span>
-        </div>
-      ))}
-      {coverage !== undefined && (
-        <div
-          data-row="coverage"
-          data-testid="cross-lens-coverage"
-          data-coverage={coverage.state}
-          data-status={coverageStatus(coverage)}
-          className="flex items-center gap-2.5 px-3.5 py-2 text-sm"
-        >
-          <StatusIcon status={coverageStatus(coverage)} />
-          <span className="text-muted-foreground">{coverageNote(coverage)}</span>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function SessionPreparationScreen({ session }: { readonly session: SidebarSession }) {
-  const preparation = session.preparation;
-  const refreshSessions = useRefreshCommand("session.list");
-  const cancel = useMutation("session.cancelPreparation", { invalidates: ["session.list"] });
-  const retry = useMutation("session.retryPreparation", { invalidates: ["session.list"] });
-  const active = preparation?.status === "capturing" || preparation?.status === "drafting";
-
-  useEffect(() => {
-    if (!active) return;
-    const timer = window.setInterval(refreshSessions, 400);
-    return () => window.clearInterval(timer);
-  }, [active, refreshSessions]);
-
-  if (preparation === undefined) return <ChatOnlySession session={session} />;
-  const failed = preparation.status === "failed";
-  const cancelled = preparation.status === "cancelled";
-  const stage =
-    preparation.status === "capturing"
-      ? preparation.step === "resolving-repository"
-        ? "Resolving the repository"
-        : "Capturing the change"
-      : preparation.status === "drafting"
-        ? "Generating the Boards"
-        : preparation.stage === "capture"
-          ? "Capture"
-          : "Board generation";
-
-  return (
-    <section
-      data-screen="session-preparation"
-      data-status={preparation.status}
-      role={failed ? "alert" : "status"}
-      className="mx-auto flex h-full w-full max-w-[720px] flex-col justify-center gap-5 p-8"
-    >
-      <div className="flex flex-col gap-1">
-        <span className="text-2xs font-medium uppercase tracking-wide text-muted-foreground/70">
-          {failed ? `${stage} failed` : cancelled ? `${stage} cancelled` : stage}
-        </span>
-        <h1 className="font-display text-2xl font-medium text-ink">{session.title}</h1>
-        <p className="font-serif text-ink-soft">
-          {failed
-            ? preparation.reason
-            : cancelled
-              ? "The review is still here. Retry when you’re ready."
-              : preparation.status === "capturing"
-                ? "The review route is open while Rennet pins the exact change."
-                : "Boards appear here as each lens finishes."}
-        </p>
-      </div>
-      <PreparationLanes preparation={preparation} />
-      <div className="flex gap-2">
-        {active ? (
-          <Button
-            variant="outline"
-            disabled={cancel.pending}
-            onClick={() => void cancel.mutate({ sessionId: session.id })}
-          >
-            Cancel
-          </Button>
-        ) : (
-          <Button
-            variant="accent"
-            disabled={retry.pending}
-            onClick={() => void retry.mutate({ sessionId: session.id, commandId: newCommandId() })}
-          >
-            Retry
-          </Button>
-        )}
-      </div>
-    </section>
-  );
-}
-
 function useRememberProject(projectId?: string): void {
   const { data: listed } = useCommand("projects.list", {});
   const { mutate: remember } = useMutation("settings.setLastProject", {
@@ -428,13 +297,27 @@ function FirstRunEligibility({
 
 /** A session route (#480 `/s/:slug`). The slug is the durable session id (C21); it
  *  resolves to the review workspace, an honest chat-only session when no review is
- *  attached yet, or an honest not-found / load-error. */
+ *  attached yet, or an honest not-found / load-error.
+ *
+ *  A session still preparing renders the BENCH (t3-lens-threads 3.1) — the workspace's
+ *  first frame, in this outlet, inside the same `AppLayout` that keeps the sidebar, the
+ *  session top bar and the chat slot mounted around it. It is not a separate route and
+ *  not a takeover, which is what lets a reader open a lens transcript in the slot while
+ *  the lenses are still running. */
 function SessionScreen({ slug }: { readonly slug: string }) {
   const { data: sessions } = useCommand("session.list", {});
   const session = sessions?.sessions.find((candidate) => candidate.id === slug);
   useRememberProject(session?.projectId);
   const resolution = useSlugResolution(slug);
-  if (session?.preparation !== undefined) return <SessionPreparationScreen session={session} />;
+  if (session?.preparation !== undefined) {
+    return (
+      <PreparationBench
+        session={session}
+        preparation={session.preparation}
+        {...(resolution.status === "review" ? { review: resolution.review } : {})}
+      />
+    );
+  }
   if (resolution.status === "pending") {
     return <p className="p-10 font-serif text-ink-soft">Opening…</p>;
   }

@@ -1,4 +1,4 @@
-import type { ProjectProcessEvent } from "@rennet/protocol";
+import type { LaneThreadRef, ProjectProcessEvent } from "@rennet/protocol";
 import type { StateCreator } from "zustand";
 import type { RennetState } from "./index";
 
@@ -60,6 +60,13 @@ export interface UiState {
    * Capped at `BACKGROUND_EVENT_LIMIT` per project, oldest dropped first.
    */
   readonly backgroundEvents: Readonly<Record<string, readonly ProjectProcessEvent[]>>;
+  /**
+   * The lens seat's thread the chat slot is showing, or `null` for the session's own
+   * thread (t3-lens-threads 3.1/3.4). Client-ephemeral like `openDialogs`: which
+   * transcript the reader is looking at is a choice they just made, not a server fact,
+   * and closing the app forgets it. The bench WRITES it; the slot READS it.
+   */
+  readonly lensThread: LaneThreadRef | null;
 }
 
 /** Retained background lines per project. A long swarm narrates one line per partition. */
@@ -88,6 +95,12 @@ export interface UiSlice {
     setProjectProcessing(projectId: string, processing: boolean): void;
     /** Retain one background narration line for `projectId`. */
     appendBackgroundEvent(projectId: string, event: ProjectProcessEvent): void;
+    /**
+     * Point the chat slot at a lens seat's thread — the bench's reader control. Opens
+     * the dock in the same act, because a transcript nobody can see is not "opened".
+     * `null` hands the slot back to the session's own thread.
+     */
+    openLensThread(thread: LaneThreadRef | null): void;
   };
 }
 
@@ -104,6 +117,7 @@ const initialUi: UiState = {
   openDialogs: [],
   processingProjectIds: [],
   backgroundEvents: {},
+  lensThread: null,
 };
 
 export const createUiSlice: StateCreator<RennetState, [], [], UiSlice> = (set) => ({
@@ -171,6 +185,10 @@ export const createUiSlice: StateCreator<RennetState, [], [], UiSlice> = (set) =
           ui: { ...s.ui, backgroundEvents: { ...s.ui.backgroundEvents, [projectId]: next } },
         };
       }),
+    openLensThread: (thread) =>
+      set((s) => ({
+        ui: { ...s.ui, lensThread: thread, chatOpen: thread !== null || s.ui.chatOpen },
+      })),
   },
 });
 
