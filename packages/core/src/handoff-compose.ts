@@ -8,6 +8,7 @@ import type {
   RspTokenUsage,
 } from "@rennet/protocol";
 import { sha256Hex } from "@rennet/protocol";
+import { type SessionContextFile, sessionContextRelativeDir } from "./session-context";
 
 /**
  * The one rule both handoff prompts share verbatim: the coding agent edits, the
@@ -98,43 +99,60 @@ export type ComposePortResult =
 export type ComposePort = (prompt: string) => Promise<ComposePortResult>;
 
 /**
- * Build the compose prompt. It hands the model the asks WITH ids and constrains it
- * to return a partition only — order + grouping + a per-group title — never the ask
+ * The reviewer's notes as ONE file (design D4) — id, kind, anchor and the body VERBATIM.
+ * The compose turn reads it and answers with a partition over the ids; the bodies never
+ * travel in the prompt, in either direction.
+ */
+export function composeAsksContextFile(asks: readonly ComposableAsk[]): SessionContextFile {
+  return {
+    name: "compose/asks.json",
+    body: JSON.stringify(
+      asks.map((ask) => ({
+        id: ask.id,
+        kind: TYPE_LABEL[ask.type],
+        path: ask.path,
+        anchor: anchorLabel(ask),
+        note: ask.instruction.trim(),
+      })),
+    ),
+    holds:
+      "Every review note the reviewer staged: its `id`, its kind, the file and anchor it sits on, and the note text verbatim.",
+    readWhen: "always — you are ordering and grouping exactly these ids.",
+  };
+}
+
+/**
+ * Build the compose prompt. It points the model at the asks WITH their ids and constrains
+ * it to return a partition only — order + grouping + a per-group title — never the ask
  * bodies. The instruction is explicit that every id must appear exactly once and no
  * id may be invented, so a well-behaved turn produces a total cover the validator
  * accepts; a mis-behaved one is caught and dropped rather than trusted.
+ *
+ * The notes are NOT in this prompt: they are `compose/asks.json`, named by relative path.
  */
-export function buildComposePrompt(asks: readonly ComposableAsk[]): string {
-  const lines: string[] = [
+export function buildComposePrompt(sessionId: string): string {
+  const dir = sessionContextRelativeDir(sessionId);
+  return [
     "You are composing a code reviewer's separate review notes into ONE coherent work order",
     "for a coding agent. You decide ONLY how to ORDER and GROUP them and write a short title",
     "for each group. You do NOT rewrite, summarise, or drop any note — the exact text is",
     "re-attached from the ids you cite.",
     "",
+    `Read the notes from \`${dir}/compose/asks.json\` in your working directory. Each entry`,
+    "carries an `id`, its kind, the `path` and `anchor` it sits on, and the `note` itself.",
+    "",
     "Rules, in order of importance:",
-    "1. Every note id below must appear in EXACTLY ONE group. Never omit an id, never repeat an",
-    "   id, never invent an id. If two notes are unrelated, put each in its own group.",
+    "1. Every note id in that file must appear in EXACTLY ONE group. Never omit an id, never",
+    "   repeat an id, never invent an id. If two notes are unrelated, put each in its own group.",
     "2. Merge notes into one group ONLY when they are the same change or must be done together",
     "   (same symbol, overlapping lines, or one depends on the other).",
     "3. Order the groups for EXECUTION sense: dependencies first, then changes to the same file",
     "   or nearby code adjacent, so the agent works top-to-bottom without thrashing.",
     "4. The title is one plain line naming what the group accomplishes. No marketing, no filler.",
     "",
-    "The notes:",
-  ];
-  for (const ask of asks) {
-    const body =
-      ask.instruction.trim() === "" ? "(no text — infer from the anchor)" : ask.instruction.trim();
-    lines.push(
-      `- id ${ask.id} · ${TYPE_LABEL[ask.type]} · ${ask.path} (${anchorLabel(ask)}): ${body}`,
-    );
-  }
-  lines.push(
-    "",
     'Return JSON: {"groups":[{"title":"<one line>","dispositionIds":["<id>", ...]}, ...]}.',
     "The group order is the execution order.",
-  );
-  return lines.join("\n");
+  ].join("\n");
 }
 
 // ── Validation: the partition must be a TOTAL COVER of the ask ids ────────────
@@ -208,15 +226,23 @@ function mechanicalHeading(task: ComposedTask): string {
   return paths.length === 0 ? "task" : paths.join(", ");
 }
 
+/** The one name the executable work order is written and read under, per session. */
+export const WORK_ORDER_FILE = "work-order.md";
+
 /**
- * Render the coherent work-order prompt from the composed tasks. Each group leads
+ * Render the coherent work-order DOCUMENT from the composed tasks. Each group leads
  * with a heading DERIVED MECHANICALLY from its asks' paths (never the model's title),
  * then lists its member asks with anchor, the instruction body VERBATIM, and context,
  * so the coding agent reads one ordered narrative rather than N disconnected comments
  * — and every original instruction body is present, byte-for-byte unaltered. No
- * model-authored prose enters this prompt: the title stays preview-only.
+ * model-authored prose enters it: the title stays preview-only.
+ *
+ * This is the FILE, not the prompt (session-context-files). It is written to
+ * `.rennet/context/<sessionId>/work-order.md` before the run and the turn's prompt names
+ * that path — so the asks and their diff fences reach the agent by being read, not by
+ * being billed on every retry.
  */
-export function renderComposedPrompt(tasks: readonly ComposedTask[]): string {
+export function renderWorkOrder(tasks: readonly ComposedTask[]): string {
   const askCount = tasks.reduce((total, task) => total + task.asks.length, 0);
   const out: string[] = [
     "# Review handoff",
@@ -250,6 +276,45 @@ export function renderComposedPrompt(tasks: readonly ComposedTask[]): string {
     }
   });
   return out.join("\n");
+}
+
+/** The work order as the file the run writes and the turn is pointed at. */
+export function workOrderContextFile(tasks: readonly ComposedTask[]): SessionContextFile {
+  return {
+    name: WORK_ORDER_FILE,
+    body: renderWorkOrder(tasks),
+    holds:
+      "The reviewer's requested changes as one ordered work order: each task's file, anchor, the note verbatim, and the anchored diff context.",
+    readWhen: "first, and in full — it is the work you were started to do.",
+  };
+}
+
+/**
+ * The prompt the coding turn actually receives: the rules, the shape of the job, and the
+ * PATH of the work order. The asks and their diff fences are in the file, not here.
+ *
+ * Deterministic in `tasks` and the session id, so `verifyComposedBundle` can recompute it
+ * and prove the run is executing the order that was composed.
+ */
+export function renderComposedPrompt(tasks: readonly ComposedTask[], sessionId: string): string {
+  const askCount = tasks.reduce((total, task) => total + task.asks.length, 0);
+  return [
+    "# Review handoff",
+    "",
+    "You are a coding agent addressing a reviewer's requested changes on the current branch.",
+    "",
+    `Your work order is \`${sessionContextRelativeDir(sessionId)}/${WORK_ORDER_FILE}\`, in your`,
+    `working directory. It holds ${tasks.length} task${tasks.length === 1 ? "" : "s"} carrying`,
+    `${askCount} review note${askCount === 1 ? "" : "s"}, in execution order, each with the`,
+    "reviewer's note verbatim and the anchored diff context. Read it in full, then work",
+    "through the tasks IN ORDER, editing files in place.",
+    "",
+    "Rules, in order of importance:",
+    "1. Address ONLY the tasks in that file. Do not make unrelated changes.",
+    ...HANDOFF_NO_GIT_RULE,
+    "3. If a task cannot be done as asked, leave those files unchanged and say why in your final",
+    "   message — never guess or half-apply it.",
+  ].join("\n");
 }
 
 /** Digest over the ordered composed structure — binds a disclosure/consent to it. */
@@ -288,7 +353,10 @@ function assemble(
     patchsetId,
     // Strip the array-level readonly: the mutable z.infer bundle field wants ComposedTask[].
     tasks: [...tasks],
-    prompt: renderComposedPrompt(tasks),
+    // The turn's prompt, which NAMES the work order; the work order itself is the file
+    // `workOrderContextFile` writes. `reviewId` is the session the context directory is
+    // keyed on — the same key `t3/handoff.ts` binds the review's thread under.
+    prompt: renderComposedPrompt(tasks, reviewId),
     digest: composedDigest(tasks),
     composed,
     traceMap,
@@ -335,7 +403,7 @@ export async function composeHandoffBundle(
   // contract. Catch the rejection at the composition boundary and return the floor.
   let turn: ComposePortResult;
   try {
-    turn = await port(buildComposePrompt(asks));
+    turn = await port(buildComposePrompt(bundle.reviewId));
   } catch {
     return mechanicalComposition(bundle, asks);
   }
@@ -359,10 +427,13 @@ export async function composeHandoffBundle(
   const composed = assemble(bundle.reviewId, bundle.patchsetId, tasks, true);
   // Content-preservation guard: every original instruction body must be present in
   // the rendered work order VERBATIM. Reconstruction guarantees it, but assert it
-  // rather than trust it — a mismatch means fall closed to the mechanical floor.
+  // rather than trust it — a mismatch means fall closed to the mechanical floor. The
+  // guard reads the WORK ORDER, which is where the bodies now live; the bundle's prompt
+  // only names the file.
+  const workOrder = renderWorkOrder(composed.tasks);
   for (const ask of asks) {
     if (ask.instruction.trim() === "") continue;
-    if (!composed.prompt.includes(ask.instruction)) {
+    if (!workOrder.includes(ask.instruction)) {
       return mechanicalComposition(bundle, asks);
     }
   }
@@ -383,6 +454,6 @@ export async function composeHandoffBundle(
 export function verifyComposedBundle(bundle: ComposedHandoffBundle): boolean {
   return (
     composedDigest(bundle.tasks) === bundle.digest &&
-    renderComposedPrompt(bundle.tasks) === bundle.prompt
+    renderComposedPrompt(bundle.tasks, bundle.reviewId) === bundle.prompt
   );
 }

@@ -7,6 +7,7 @@ import {
   sha256Hex,
 } from "@rennet/protocol";
 import type { ForgeReviewEvent } from "./publish-review";
+import { type SessionContextFile, sessionContextRelativeDir } from "./session-context";
 
 export interface ReviewOpenerDraftInput {
   readonly verdict: ForgeReviewEvent;
@@ -172,29 +173,93 @@ export function reviewOpenerSourceId(
   );
 }
 
-export function buildReviewOpenerPrompt(input: ReviewOpenerDraftInput, voiceRules: string): string {
+/**
+ * The opener's context as FILES under the session's context directory (design D4), not as
+ * a JSON line in the prompt. The boards split per lens so the seat can open the one it is
+ * writing about; the asks, the dismissals and the review's frame are one file each. The
+ * voice rules travel as a file too: they live inside the installed `@rennet/prompts`
+ * bundle, which is not a path the seat's cwd can reach.
+ *
+ * Namespaced under `opener/` because a session's other turns write `asks.json` and
+ * `dispositions.json` of their own, and one directory holds them all.
+ */
+export function reviewOpenerContextFiles(
+  input: ReviewOpenerDraftInput,
+  voiceRules: string,
+): readonly SessionContextFile[] {
+  const context = buildReviewOpenerContext(input);
+  return [
+    ...context.boards.map((board) => ({
+      name: `opener/boards/${board.lens}.json`,
+      body: JSON.stringify(board),
+      holds: `The ${board.lens} board's title, intro and section gists with their counts.`,
+      readWhen: "when the opener needs to say what this lens found.",
+    })),
+    {
+      name: "opener/asks.json",
+      body: JSON.stringify({
+        stagedAsks: context.stagedAsks,
+        lineComments: context.lineComments,
+      }),
+      holds: "The asks the reviewer staged and the line comments they wrote, verbatim.",
+      readWhen: "always — these are what the review actually says.",
+    },
+    {
+      name: "opener/dispositions.json",
+      body: JSON.stringify(context.dismissedFindings),
+      holds: "The findings the reviewer dismissed, with the concern and severity each carried.",
+      readWhen: "when the opener would otherwise imply a dismissed finding still stands.",
+    },
+    {
+      name: "opener/review-facts.json",
+      body: JSON.stringify({ verdict: context.verdict, changedPaths: context.changedPaths }),
+      holds: "The review's verdict and the paths the change touched.",
+      readWhen: "always — the opener must be correct for the verdict.",
+    },
+    {
+      name: "opener/voice-rules.md",
+      body: voiceRules,
+      holds: "The writing rules for the reviewer's first-person GitHub register.",
+      readWhen: "always, before writing a word.",
+    },
+  ];
+}
+
+/**
+ * The opener prompt: instructions plus the paths of the files above, never their contents.
+ * Everything it names is relative to the turn's working directory, which is the session's
+ * bound root, so the seat reads them with its own tools the way it reads the checkout.
+ */
+export function buildReviewOpenerPrompt(sessionId: string): string {
+  const dir = sessionContextRelativeDir(sessionId);
   const task = [
-    "Write the opening paragraph for the signed GitHub review described by the context.",
-    "The opener must be concise Markdown prose and correct for the supplied verdict.",
-    "Ground every statement only in the supplied persisted review facts and reviewer acts.",
-    "Do not claim the reviewer viewed or walked every supplied section: viewed state is not among the facts.",
+    "Write the opening paragraph for the signed GitHub review this session holds.",
+    "The opener must be concise Markdown prose and correct for the recorded verdict.",
+    "Ground every statement only in the persisted review facts and reviewer acts named below.",
+    "Do not claim the reviewer viewed or walked every section: viewed state is not among the facts.",
     "Do not repeat all comments, add a heading, mention Rennet, or mention models, boards, lenses, seats, or drafting machinery.",
     'Return JSON: {"opener":"<one non-empty paragraph>"}.',
   ].join("\n");
-  return [
-    renderLayer("payload", voiceRules),
-    renderLayer("task", task),
-    renderLayer("context", JSON.stringify(buildReviewOpenerContext(input))),
-  ].join("\n\n");
+  const context = [
+    "Read these files from your working directory before you write. Nothing here was sent",
+    "to you inline; open what you need with your own tools.",
+    "",
+    `- \`${dir}/opener/voice-rules.md\` — the register to write in. Read it first.`,
+    `- \`${dir}/opener/review-facts.json\` — the verdict and the changed paths.`,
+    `- \`${dir}/opener/asks.json\` — the staged asks and the line comments.`,
+    `- \`${dir}/opener/dispositions.json\` — the findings the reviewer dismissed.`,
+    `- \`${dir}/opener/boards/\` — one JSON per lens board (title, intro, section gists, counts).`,
+    `- \`${dir}/README.md\` — the index of everything this session wrote for you.`,
+  ].join("\n");
+  return [renderLayer("task", task), renderLayer("context", context)].join("\n\n");
 }
 
 export async function draftReviewOpener(
-  input: ReviewOpenerDraftInput,
-  voiceRules: string,
+  sessionId: string,
   port: ReviewOpenerPort,
   resolvedModel: string,
 ): Promise<ReviewOpenerDraftResult> {
-  const turn = await port(buildReviewOpenerPrompt(input, voiceRules));
+  const turn = await port(buildReviewOpenerPrompt(sessionId));
   if (turn.status !== "emitted") return turn;
   const opener = (turn.opener ?? "").trim();
   if (opener === "") {

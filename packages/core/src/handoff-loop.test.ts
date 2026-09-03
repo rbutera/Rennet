@@ -13,6 +13,7 @@ import {
   renderHandoffPrompt,
   runHandoffTurn,
 } from "./handoff-loop";
+import { inlineContextViolation } from "./harness-run-turn";
 
 const FOO_PATCH = [
   "diff --git a/src/foo.ts b/src/foo.ts",
@@ -230,8 +231,8 @@ describe("buildHandoffBundle", () => {
   });
 });
 
-describe("renderHandoffPrompt", () => {
-  it("instructs the agent to address only the listed items and never push", () => {
+describe("renderHandoffPrompt — the items are NAMED, never inlined (3.7)", () => {
+  it("names the work order, states the count, and carries no instruction body", () => {
     const bundle = buildHandoffBundle({
       reviewId: "r1",
       patchset,
@@ -239,14 +240,46 @@ describe("renderHandoffPrompt", () => {
         disposition({ path: "src/foo.ts", type: "request-change", body: "add a guard" }),
       ],
     });
-    expect(bundle.prompt).toContain("Address ONLY the items listed below");
+    expect(bundle.prompt).toContain(".rennet/context/r1/work-order.md");
+    expect(bundle.prompt).toContain("Address ONLY the items in that file");
     expect(bundle.prompt).toContain("do NOT push");
-    expect(bundle.prompt).toContain("## Requested changes (1)");
-    expect(bundle.prompt).toContain("add a guard");
+    expect(bundle.prompt).toContain("1 requested change,");
+    // The body and its diff fence are in the file, not in what the turn is billed for.
+    expect(bundle.prompt).not.toContain("add a guard");
+    expect(bundle.prompt).not.toContain("```diff");
+    expect(inlineContextViolation(bundle.prompt)).toBeUndefined();
+  });
+
+  it("is CONSTANT in the tasks: forty items render the same length as one", () => {
+    const one = renderHandoffPrompt(
+      buildHandoffBundle({
+        reviewId: "r1",
+        patchset,
+        dispositions: [disposition({ path: "src/foo.ts", type: "request-change", body: "x" })],
+      }).tasks,
+      "r1",
+    );
+    const forty = renderHandoffPrompt(
+      buildHandoffBundle({
+        reviewId: "r1",
+        patchset,
+        dispositions: Array.from({ length: 40 }, (_unused, index) =>
+          disposition({
+            path: "src/foo.ts",
+            type: "request-change",
+            body: `rework call site ${index} thoroughly and at length`,
+            span: { startLine: index + 1 },
+          }),
+        ),
+      }).tasks,
+      "r1",
+    );
+    // Only the count differs — "1 requested change" vs "40 requested changes".
+    expect(Math.abs(forty.length - one.length)).toBeLessThan(10);
   });
 
   it("renders the count as zero for an empty bundle", () => {
-    expect(renderHandoffPrompt([])).toContain("## Requested changes (0)");
+    expect(renderHandoffPrompt([], "r1")).toContain("0 requested changes,");
   });
 });
 

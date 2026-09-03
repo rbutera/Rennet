@@ -1,5 +1,9 @@
+import { mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   buildHandoffBundle,
+  type CodexExecRequest,
   type CodexExecutor,
   type HarnessDescriptor,
   type HarnessEvent,
@@ -9,19 +13,30 @@ import {
 } from "@rennet/core";
 import type { HandoffDisposition, Patchset } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
+import { sessionContextDir } from "./context-files";
 import {
   claudeComposePort,
   createLiveComposeBundle,
   mapComposeOutput,
 } from "./handoff-compose-live";
 
+// A REAL repository root: the live composer writes `compose/asks.json` under it before
+// the turn (session-context-files 3.7), and the seat resolves the path in its prompt
+// against it. A fixture root that does not exist cannot exercise the turn at all.
+const REPO_ROOT = mkdtempSync(join(tmpdir(), "rennet-compose-repo-"));
+
+/** Read one of the files the composer wrote for this review. */
+function contextFile(reviewId: string, name: string): string {
+  return readFileSync(join(sessionContextDir(REPO_ROOT, reviewId), name), "utf8");
+}
+
 const patchset: Patchset = {
   id: "ps-1",
   createdAt: "2026-08-11T00:00:00.000Z",
   repository: {
     id: "repo",
-    root: "/repo",
-    commonDir: "/repo/.git",
+    root: REPO_ROOT,
+    commonDir: join(REPO_ROOT, ".git"),
     baseRef: "origin/main",
     baseOid: "base",
     headOid: "head",
@@ -117,8 +132,11 @@ function fakeClaude(structuredOutput: unknown): {
   return { port, lastSpec: () => last };
 }
 
-function fakeCodex(output: unknown): CodexExecutor {
-  return () => Promise.resolve({ output });
+function fakeCodex(output: unknown, onRequest?: (req: CodexExecRequest) => void): CodexExecutor {
+  return (req) => {
+    onRequest?.(req);
+    return Promise.resolve({ output });
+  };
 }
 
 describe("mapComposeOutput", () => {
@@ -146,22 +164,41 @@ describe("mapComposeOutput", () => {
 describe("claudeComposePort", () => {
   it("binds the compose session to the repo with the structured-output schema", async () => {
     const { port, lastSpec } = fakeClaude(VALID_PROPOSAL);
-    await claudeComposePort(port, "/repo")("prompt");
-    expect(lastSpec()?.cwd).toBe("/repo");
+    await claudeComposePort(port, REPO_ROOT)("prompt");
+    expect(lastSpec()?.cwd).toBe(REPO_ROOT);
     expect(lastSpec()?.outputSchema).toBeDefined();
   });
 });
 
 describe("createLiveComposeBundle", () => {
   it("adopts a valid authoring from the Codex seat (composed:true)", async () => {
+    let seenPrompt = "";
+    let seenCwd: string | undefined;
     const compose = createLiveComposeBundle({
       claudePort: () => Promise.resolve(null),
-      codexExecutor: () => Promise.resolve(fakeCodex(VALID_PROPOSAL)),
+      codexExecutor: () =>
+        Promise.resolve(
+          fakeCodex(VALID_PROPOSAL, (req) => {
+            seenPrompt = req.prompt;
+            seenCwd = req.cwd;
+          }),
+        ),
     });
-    const composed = await compose({ bundle: bundle(), repoRoot: "/repo" });
+    const composed = await compose({ bundle: bundle(), repoRoot: REPO_ROOT });
     expect(composed.composed).toBe(true);
     expect(composed.tasks).toHaveLength(2);
     expect(composed.tasks[0]?.sourceDispositions).toEqual(["d0", "d1"]);
+    // The notes went to disk under the root the turn runs in, BEFORE the turn, and the
+    // prompt named that file rather than carrying them (session-context-files 3.7).
+    expect(JSON.parse(contextFile("r1", "compose/asks.json"))).toEqual([
+      expect.objectContaining({ id: "d0", note: "handle expiry too" }),
+      expect.objectContaining({ id: "d1", note: "validate the token" }),
+      expect.objectContaining({ id: "d2", note: "return 404 not 500" }),
+    ]);
+    expect(contextFile("r1", "README.md")).toContain("compose/asks.json");
+    expect(seenPrompt).toContain(".rennet/context/r1/compose/asks.json");
+    expect(seenPrompt).not.toContain("validate the token");
+    expect(seenCwd).toBe(REPO_ROOT);
   });
 
   it("adopts a valid authoring from the Claude seat when Codex is absent", async () => {
@@ -170,7 +207,7 @@ describe("createLiveComposeBundle", () => {
       claudePort: () => Promise.resolve(port),
       codexExecutor: () => Promise.resolve(null),
     });
-    const composed = await compose({ bundle: bundle(), repoRoot: "/repo" });
+    const composed = await compose({ bundle: bundle(), repoRoot: REPO_ROOT });
     expect(composed.composed).toBe(true);
     expect(composed.tasks).toHaveLength(2);
   });
@@ -180,7 +217,7 @@ describe("createLiveComposeBundle", () => {
       claudePort: () => Promise.resolve(null),
       codexExecutor: () => Promise.resolve(null),
     });
-    const composed = await compose({ bundle: bundle(), repoRoot: "/repo" });
+    const composed = await compose({ bundle: bundle(), repoRoot: REPO_ROOT });
     expect(composed.composed).toBe(false);
     expect(composed.tasks).toHaveLength(3); // one per ask, nothing lost
     expect(Object.keys(composed.traceMap).sort()).toEqual(["d0", "d1", "d2"]);
@@ -191,7 +228,7 @@ describe("createLiveComposeBundle", () => {
       claudePort: () => Promise.resolve(null),
       codexExecutor: () => Promise.resolve(fakeCodex({ groups: "garbage" })),
     });
-    const composed = await compose({ bundle: bundle(), repoRoot: "/repo" });
+    const composed = await compose({ bundle: bundle(), repoRoot: REPO_ROOT });
     expect(composed.composed).toBe(false);
     expect(composed.tasks).toHaveLength(3);
   });
@@ -203,7 +240,7 @@ describe("F3: rejections fall to the floor, never a rejected command", () => {
       claudePort: () => Promise.reject(new Error("claude discovery blew up")),
       codexExecutor: () => Promise.resolve(null),
     });
-    const composed = await compose({ bundle: bundle(), repoRoot: "/repo" });
+    const composed = await compose({ bundle: bundle(), repoRoot: REPO_ROOT });
     expect(composed.composed).toBe(false);
     expect(composed.tasks).toHaveLength(3); // one per ask, nothing lost
     expect(Object.keys(composed.traceMap).sort()).toEqual(["d0", "d1", "d2"]);
@@ -223,7 +260,7 @@ describe("F3: rejections fall to the floor, never a rejected command", () => {
       },
     };
     // Must RESOLVE to the emitted result, not reject on the teardown error.
-    const result = await claudeComposePort(port, "/repo")("prompt");
+    const result = await claudeComposePort(port, REPO_ROOT)("prompt");
     expect(result.status).toBe("emitted");
   });
 });

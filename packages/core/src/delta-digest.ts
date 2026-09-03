@@ -1,28 +1,7 @@
-import type {
-  DeltaAskStatus,
-  DeltaBeyondHunk,
-  DeltaDigestResult,
-  SuccessorAccount,
-} from "@rennet/protocol";
+import type { DeltaDigestResult, SuccessorAccount } from "@rennet/protocol";
+import { type SessionContextFile, sessionContextRelativeDir } from "./session-context";
 
 export type { DeltaDigestResult };
-
-/** How many beyond-ask hunks the prompt enumerates before "…and N more" (honest cap). */
-const DIGEST_HUNK_CAP = 10;
-
-/** A plain-English label for a beyond-ask hunk's bucket — narration, never an accusation. */
-const BUCKET_PHRASE: Record<DeltaBeyondHunk["bucket"], string> = {
-  "unasked-file": "in a file no ask targeted",
-  "asked-file": "in an asked file, outside the asked lines",
-};
-
-/** One beyond-ask hunk as a prompt line: path, line range, and its bucket phrasing. */
-function describeBeyondHunk(hunk: DeltaBeyondHunk): string {
-  const { startLine, endLine } = hunk.span;
-  const range =
-    endLine !== undefined && endLine !== startLine ? `${startLine}–${endLine}` : `${startLine}`;
-  return `${hunk.path} line${range.includes("–") ? "s" : ""} ${range} — ${BUCKET_PHRASE[hunk.bucket]}`;
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // review.deltaDigest — the light-tier prose over the successor account (#73 / M25,
@@ -63,62 +42,44 @@ export type DeltaDigestPortResult =
  */
 export type DeltaDigestPort = (prompt: string) => Promise<DeltaDigestPortResult>;
 
-/** A stable, human phrasing of each ask status inside the prompt. */
-const STATUS_PHRASE: Record<DeltaAskStatus, string> = {
-  addressed: "addressed",
-  "partially-addressed": "partially addressed (the file changed, but not the flagged spot)",
-  untouched: "left untouched",
-};
+/**
+ * The successor account as ONE file (design D4) — whole, uncapped, since a file is not
+ * billed. The enumeration cap the prompt used to need is gone with the enumeration: a
+ * hundred beyond-ask hunks cost the turn nothing now, and the digest can be honest about
+ * a large delta instead of reading "…and 90 more".
+ */
+export function deltaDigestContextFile(account: SuccessorAccount): SessionContextFile {
+  return {
+    name: "digest-input.json",
+    body: JSON.stringify(account),
+    holds:
+      "The deterministic successor account: each staged ask with its path, type, one-line summary and status, the paths changed beyond the asks, and (when present) those changes at hunk grain.",
+    readWhen: "always — it is the only thing you may state as fact.",
+  };
+}
 
 /**
- * Assemble the digest prompt from ONLY the structured account. This is the whole
- * grounding guarantee: the model sees the ask paths + statuses + summaries and the
- * beyond-asks paths, and nothing else — no diff, no file content — so it can only
- * rephrase what the account already states, never invent a change. The reviewer reads
- * the one-liner then the facts below it, so the prompt asks for a tight, honest gist.
+ * Assemble the digest prompt. The grounding guarantee is unchanged and now structural:
+ * the ONLY thing the turn may state is what `digest-input.json` holds, and that file is
+ * the structured account — no diff, no file content — so the model can rephrase what the
+ * account states and nothing else. The account is named by path, never interpolated.
  */
-export function buildDeltaDigestPrompt(account: SuccessorAccount): string {
-  const lines: string[] = [
+export function buildDeltaDigestPrompt(sessionId: string): string {
+  const dir = sessionContextRelativeDir(sessionId);
+  return [
     "You are writing a ONE- or TWO-SENTENCE plain-English summary of what a coding agent did to a code review's requests, for the reviewer to read at a glance.",
     "",
+    `Read \`${dir}/digest-input.json\` — the review's own structured account of the turn:`,
+    "each staged ask with its status (`partially-addressed` means the file changed but not",
+    "the flagged spot), and what the agent changed beyond the asks.",
+    "",
     "Rules, in order of importance:",
-    "1. Use ONLY the facts listed below. Do NOT invent any file, change, or motivation that is not stated here. You are rephrasing a structured account, not analysing code.",
+    "1. Use ONLY the facts in that file. Do NOT invent any file, change, or motivation that is not stated there. You are rephrasing a structured account, not analysing code.",
     "2. Say plainly what was addressed, what was left untouched, and — LOUDLY — anything changed beyond what was asked (the reviewer most needs to see scope-creep).",
     "3. One or two sentences. Plain prose, no markdown, no bullet list, no preamble like 'The agent…' is required but keep it natural. No trailing meta-commentary.",
     "",
-    "What the agent did to each request:",
-  ];
-  if (account.asks.length === 0) {
-    lines.push("- (no staged requests)");
-  } else {
-    for (const ask of account.asks) {
-      const summary = ask.summary.trim();
-      lines.push(`- ${ask.path}: ${STATUS_PHRASE[ask.status]}${summary ? ` — "${summary}"` : ""}`);
-    }
-  }
-  lines.push("", "Files the agent changed that NObody asked about (scope-creep):");
-  if (account.beyondAsks.length === 0) {
-    lines.push("- (none)");
-  } else {
-    for (const path of account.beyondAsks) lines.push(`- ${path}`);
-  }
-  // Hunk-grain beyond-asks (issue #73 wave 3): the exact changes beyond the asks, still
-  // built from ONLY the account. Enumeration is CAPPED with an honest "and N more" so a
-  // large delta does not bloat the prompt while the count stays truthful. Absent (legacy
-  // account) or empty ⇒ no section, so an account with no hunk fields yields today's prompt.
-  const hunks = account.beyondAskHunks ?? [];
-  if (hunks.length > 0) {
-    lines.push("", "The exact changes beyond the asks (hunk grain):");
-    const shown = hunks.slice(0, DIGEST_HUNK_CAP);
-    for (const hunk of shown) lines.push(`- ${describeBeyondHunk(hunk)}`);
-    const remaining = hunks.length - shown.length;
-    if (remaining > 0) lines.push(`- …and ${remaining} more`);
-  }
-  lines.push(
-    "",
     'Return JSON: {"digest":"<the one- or two-sentence summary>"}. The field is required and must be non-empty.',
-  );
-  return lines.join("\n");
+  ].join("\n");
 }
 
 /**
@@ -129,11 +90,11 @@ export function buildDeltaDigestPrompt(account: SuccessorAccount): string {
  * turn returns that state, and the panel shows the facts with no headline.
  */
 export async function draftDeltaDigest(
-  account: SuccessorAccount,
+  sessionId: string,
   port: DeltaDigestPort,
   model: string,
 ): Promise<DeltaDigestResult> {
-  const turn = await port(buildDeltaDigestPrompt(account));
+  const turn = await port(buildDeltaDigestPrompt(sessionId));
   if (turn.status === "unavailable") return { status: "unavailable", reason: turn.reason };
   if (turn.status === "failed") return { status: "failed", reason: turn.reason };
   // Report the model that ACTUALLY ran when the port observed it; else the resolved

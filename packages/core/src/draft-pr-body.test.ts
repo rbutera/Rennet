@@ -5,7 +5,9 @@ import {
   type PrBodyDraftInput,
   type PrBodyDraftPort,
   type PrBodyDraftPortResult,
+  prBodyContextFiles,
 } from "./draft-pr-body";
+import { inlineContextViolation } from "./harness-run-turn";
 
 // A representative reviewed changeset: branch shape + narration + dispositions +
 // one requirement + one decision — the honest-account inputs M26 draws from.
@@ -36,41 +38,74 @@ function portReturning(result: PrBodyDraftPortResult): PrBodyDraftPort {
   return async () => result;
 }
 
-describe("buildPrBodyPrompt — the material reaches the model", () => {
-  it("includes the branch shape, narration, dispositions, requirements, and decisions", () => {
-    const prompt = buildPrBodyPrompt(INPUT);
+describe("buildPrBodyPrompt — the material is NAMED, never inlined (3.7)", () => {
+  it("names the file for every section the input carries, and no material", () => {
+    const prompt = buildPrBodyPrompt(INPUT, "review-7");
+    // The frame stays inline: two refs are the task, not context.
     expect(prompt).toContain("feat/rate-limit-fallback");
     expect(prompt).toContain("main");
-    expect(prompt).toContain("process-local fallback bucket");
-    // The acceptance floor (#74): the draft cites real requirements/decisions, so
-    // the prompt MUST carry them — a generic-boilerplate draft would not have them.
-    expect(prompt).toContain("The limiter MUST bound the fail-open path");
-    expect(prompt).toContain("process-local bucket over a shared store (decision 2)");
-    // The dispositions' resolutions ground the account.
-    expect(prompt).toContain("Document the migration note in the PR body");
-    expect(prompt).toContain("[requested change]");
-    expect(prompt).toContain("[approved]");
+    // The material is named by relative path, resolved against the turn's cwd.
+    expect(prompt).toContain(".rennet/context/review-7/pr-body/narration.json");
+    expect(prompt).toContain(".rennet/context/review-7/pr-body/dispositions.json");
+    expect(prompt).toContain(".rennet/context/review-7/pr-body/requirements.json");
+    expect(prompt).toContain(".rennet/context/review-7/pr-body/decisions.json");
+    // And none of it travels.
+    expect(prompt).not.toContain("The limiter MUST bound the fail-open path");
+    expect(prompt).not.toContain("process-local bucket over a shared store");
+    expect(prompt).not.toContain("Document the migration note in the PR body");
+    expect(prompt).not.toContain("process-local fallback bucket");
+    expect(inlineContextViolation(prompt)).toBeUndefined();
   });
 
-  it("omits enrichment sections the input does not carry (never invites invention)", () => {
-    const prompt = buildPrBodyPrompt({
-      base: "main",
-      head: "feat/thin",
-      dispositions: [],
-    });
-    expect(prompt).not.toContain("roll-up account");
-    expect(prompt).not.toContain("requirements this change");
-    expect(prompt).not.toContain("decisions the review surfaced");
+  it("names ONLY the files the input carries (never invites invention)", () => {
+    const prompt = buildPrBodyPrompt({ base: "main", head: "feat/thin", dispositions: [] }, "r1");
+    expect(prompt).not.toContain("narration.json");
+    expect(prompt).not.toContain("requirements.json");
+    expect(prompt).not.toContain("decisions.json");
+    expect(prompt).not.toContain("dispositions.json");
+    expect(prompt).toContain("recorded no dispositions, requirements or decisions");
     // The branch shape is always framed — a thin submission is still honest.
     expect(prompt).toContain("feat/thin");
   });
+});
 
-  it("drops blank dispositions/requirements/decisions from the prompt", () => {
-    const prompt = buildPrBodyPrompt(INPUT);
-    // The whitespace-only comment resolution, requirement, and the blank rows never
-    // become empty bullets the model would have to fill.
-    expect(prompt).not.toContain("empty.ts");
-    expect(prompt).not.toMatch(/- \s*\n/);
+describe("prBodyContextFiles — the material on disk (3.7)", () => {
+  it("writes narration, dispositions with their intent, requirements and decisions", () => {
+    const byName = new Map(prBodyContextFiles(INPUT).map((file) => [file.name, file.body]));
+    expect(JSON.parse(byName.get("pr-body/narration.json") ?? "null")).toEqual(INPUT.narration);
+    expect(JSON.parse(byName.get("pr-body/dispositions.json") ?? "null")).toEqual([
+      {
+        intent: "requested change",
+        path: "keys.ts",
+        resolution:
+          "Document the migration note in the PR body — re-keying changes what a 429 means.",
+      },
+      {
+        intent: "approved",
+        path: "rate-limit.ts",
+        resolution: "The fallback bucket is defensible.",
+      },
+    ]);
+    expect(JSON.parse(byName.get("pr-body/requirements.json") ?? "null")).toEqual([
+      "The limiter MUST bound the fail-open path",
+    ]);
+    expect(JSON.parse(byName.get("pr-body/decisions.json") ?? "null")).toEqual([
+      "Chose a process-local bucket over a shared store (decision 2)",
+    ]);
+  });
+
+  it("drops the blank disposition, requirement and decision rows", () => {
+    const bodies = prBodyContextFiles(INPUT)
+      .map((file) => file.body)
+      .join("");
+    // The whitespace-only comment resolution and the blank requirement row never become
+    // empty entries the model would have to fill.
+    expect(bodies).not.toContain("empty.ts");
+    expect(bodies).not.toContain('""');
+  });
+
+  it("writes no file for a section the input does not carry", () => {
+    expect(prBodyContextFiles({ base: "main", head: "feat/thin", dispositions: [] })).toEqual([]);
   });
 });
 
@@ -82,7 +117,7 @@ describe("draftPrBody — mapping the port outcome", () => {
       body: "Adds a process-local fallback bucket. Documents the migration note (decision 2).",
       model: "gpt-5.6-luna",
     });
-    const result = await draftPrBody(INPUT, port, "resolved-model");
+    const result = await draftPrBody(INPUT, "review-7", port, "resolved-model");
     expect(result).toEqual({
       status: "drafted",
       title: "Bound the rate limiter's fail-open path",
@@ -93,7 +128,7 @@ describe("draftPrBody — mapping the port outcome", () => {
 
   it("falls back to the resolved model when the port does not observe the runtime model", async () => {
     const port = portReturning({ status: "emitted", title: "A title", body: "A body." });
-    const result = await draftPrBody(INPUT, port, "resolved-model");
+    const result = await draftPrBody(INPUT, "review-7", port, "resolved-model");
     expect(result).toEqual({
       status: "drafted",
       title: "A title",
@@ -109,7 +144,7 @@ describe("draftPrBody — mapping the port outcome", () => {
       body: "\n  Body with surround \n",
       model: "m",
     });
-    const result = await draftPrBody(INPUT, port, "resolved-model");
+    const result = await draftPrBody(INPUT, "review-7", port, "resolved-model");
     expect(result).toMatchObject({
       status: "drafted",
       title: "Trim me",
@@ -126,59 +161,67 @@ describe("draftPrBody — the honesty floor", () => {
       body: "A real body.",
       model: "m",
     });
-    const result = await draftPrBody(INPUT, port, "resolved-model");
+    const result = await draftPrBody(INPUT, "review-7", port, "resolved-model");
     expect(result.status).toBe("failed");
   });
 
   it("maps an emitted result with an empty body to `failed`", async () => {
     const port = portReturning({ status: "emitted", title: "A real title", body: "", model: "m" });
-    const result = await draftPrBody(INPUT, port, "resolved-model");
+    const result = await draftPrBody(INPUT, "review-7", port, "resolved-model");
     expect(result.status).toBe("failed");
   });
 
   it("maps an emitted result missing both fields to `failed`", async () => {
     const port = portReturning({ status: "emitted", model: "m" });
-    const result = await draftPrBody(INPUT, port, "resolved-model");
+    const result = await draftPrBody(INPUT, "review-7", port, "resolved-model");
     expect(result.status).toBe("failed");
   });
 
   it("passes an unavailable turn straight through", async () => {
     const port = portReturning({ status: "unavailable", reason: "no seat" });
-    const result = await draftPrBody(INPUT, port, "resolved-model");
+    const result = await draftPrBody(INPUT, "review-7", port, "resolved-model");
     expect(result).toEqual({ status: "unavailable", reason: "no seat" });
   });
 
   it("passes a failed turn straight through", async () => {
     const port = portReturning({ status: "failed", reason: "the turn threw" });
-    const result = await draftPrBody(INPUT, port, "resolved-model");
+    const result = await draftPrBody(INPUT, "review-7", port, "resolved-model");
     expect(result).toEqual({ status: "failed", reason: "the turn threw" });
   });
 });
 
-describe("draftPrBody — the port receives the assembled prompt (citing contract)", () => {
-  it("a port that echoes the material proves requirements/decisions reach the draft", async () => {
-    // The acceptance contract (#74): a draft cites real content from the review, not
-    // generic boilerplate. A port that grounds its body on the prompt it was handed
-    // proves the material is actually presented to the model — asserting the
-    // CONTRACT (the material flows to the turn), not this producer's own wording.
+describe("draftPrBody — the port receives the prompt that NAMES the material (3.7)", () => {
+  it("a port that echoes the pointers proves the material is reachable, not sent", async () => {
+    // The acceptance contract (#74) is unchanged — a draft cites real content from the
+    // review, not boilerplate — but the material now reaches the turn by being READ.
+    // So what the prompt must carry is the PATH; the requirement text itself is in
+    // `pr-body/requirements.json`, which this asserts separately.
     let seen = "";
     const echoingPort: PrBodyDraftPort = async (prompt) => {
       seen = prompt;
-      const citesRequirement = prompt.includes("The limiter MUST bound the fail-open path");
-      const citesDecision = prompt.includes("process-local bucket over a shared store");
+      const namesRequirements = prompt.includes("pr-body/requirements.json");
+      const namesDecisions = prompt.includes("pr-body/decisions.json");
       return {
         status: "emitted",
         title: "Bound the fail-open path",
         body:
-          citesRequirement && citesDecision
+          namesRequirements && namesDecisions
             ? "Grounded body citing the requirement and decision 2."
             : "",
         model: "m",
       };
     };
-    const result = await draftPrBody(INPUT, echoingPort, "resolved-model");
+    const result = await draftPrBody(INPUT, "review-7", echoingPort, "resolved-model");
     expect(result.status).toBe("drafted");
-    expect(seen).toContain("The limiter MUST bound the fail-open path");
-    expect(seen).toContain("process-local bucket over a shared store");
+    expect(seen).toContain(".rennet/context/review-7/pr-body/requirements.json");
+    expect(seen).toContain(".rennet/context/review-7/pr-body/decisions.json");
+    // The material is on the other end of those paths, byte for byte.
+    const files = new Map(prBodyContextFiles(INPUT).map((file) => [file.name, file.body]));
+    expect(files.get("pr-body/requirements.json")).toContain(
+      "The limiter MUST bound the fail-open path",
+    );
+    expect(files.get("pr-body/decisions.json")).toContain(
+      "process-local bucket over a shared store",
+    );
   });
 });

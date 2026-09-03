@@ -27,6 +27,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { ensureManagedIgnoreBlock } from "@rennet/adapters";
+import { type SessionContextFile, sessionContextRelativeDir } from "@rennet/core";
 import type { ProjectVisibility } from "@rennet/protocol";
 
 /** The stamp naming the daemon that wrote a context directory. Never in the index. */
@@ -59,20 +60,14 @@ export function configureSessionContext(next: SessionContextHost): void {
   host = next;
 }
 
-/** One file in a session's context directory, with the two lines its index entry needs. */
-export interface SessionContextFile {
-  /** Path relative to the session's context directory; may name a subdirectory (`boards/design.json`). */
-  readonly name: string;
-  readonly body: string;
-  /** One line: what this file holds. */
-  readonly holds: string;
-  /** One line: when a turn should read it. */
-  readonly readWhen: string;
-}
+// The file SHAPE and the RELATIVE path live in `@rennet/core`, because the node-free
+// prompt builders that name these files must agree with this writer byte for byte — a
+// prompt naming a path the writer does not create is a turn that reads nothing.
+export type { SessionContextFile };
 
 /** The session's context directory under a bound root. Not created by this call. */
 export function sessionContextDir(root: string, sessionId: string): string {
-  return join(root, ".rennet", "context", sessionId);
+  return join(root, sessionContextRelativeDir(sessionId));
 }
 
 /** An index entry, so a re-render can tell one apart from the prose around it. */
@@ -115,10 +110,9 @@ function renderIndex(dir: string, files: readonly SessionContextFile[]): string 
   ].join("\n");
 }
 
-/** The session's context directory, as a path relative to the bound root (`/` separators). */
-export function sessionContextRelativeDir(sessionId: string): string {
-  return `.rennet/context/${sessionId}`;
-}
+// The relative path has ONE definition, in `@rennet/core`, so the node-free prompt
+// builders and this writer cannot drift; re-exported here for the daemon's own callers.
+export { sessionContextRelativeDir };
 
 /**
  * The session's context directory, created, ignored, and stamped with this daemon's

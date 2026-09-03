@@ -16,6 +16,16 @@ the review's thread** in the [T3 Code sidecar](./t3code-sidecar.md)
 directory; the turn's diff is T3's own checkpoint, and the delta re-review that
 follows is unchanged.
 
+The work order itself is **a file, not a prompt**. Before the run,
+`review.handoff.run` writes the ordered, grouped, verbatim tasks — each with its
+anchor and its diff fence — to `.rennet/context/<reviewId>/work-order.md` under the
+checkout, and the turn's prompt names that path. The agent reads it the way it reads
+the rest of the checkout. The bundle's `prompt` is that short pointer text, and
+`verifyComposedBundle` still recomputes both it and the digest from `tasks`, so a run
+still refuses an order nobody composed. The round worker is the one exception today:
+it runs in a detached worktree the path would not resolve against, so its work order
+is still sent inline until the round binds to the session's own root.
+
 ## The session is the durable root
 
 A review lives in a **session** — the first-class durable object that owns the
