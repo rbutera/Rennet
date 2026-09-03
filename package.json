@@ -88,10 +88,12 @@
       },
       "test": {
         "cache": true,
-        "command": "node --test scripts/t3-upstream.test.mjs",
+        "command": "node --test scripts/t3-upstream.test.mjs scripts/stage-t3-sidecar.test.mjs",
         "inputs": [
           "{workspaceRoot}/scripts/t3-upstream.mjs",
           "{workspaceRoot}/scripts/t3-upstream.test.mjs",
+          "{workspaceRoot}/scripts/stage-t3-sidecar.mjs",
+          "{workspaceRoot}/scripts/stage-t3-sidecar.test.mjs",
           "sharedGlobals"
         ]
       }

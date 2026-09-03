@@ -1,6 +1,7 @@
 const { MakerDMG } = require("@electron-forge/maker-dmg");
 const { MakerSquirrel } = require("@electron-forge/maker-squirrel");
 const { MakerZIP } = require("@electron-forge/maker-zip");
+const fs = require("node:fs");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
 const { flipFuses, FuseV1Options, FuseVersion } = require("@electron/fuses");
@@ -81,6 +82,19 @@ async function verifyPackagedNativePayload(_forgeConfig, packageResult) {
   if (platform !== "darwin" && platform !== "win32") return;
   if (outputPaths.length === 0) throw new Error(`Forge produced no ${platform}-${arch} package`);
 
+  // The T3 Code sidecar bundle (extraResource below) must be in every package: without
+  // it the chat slot shows "sidecar unavailable", which no installed user may ever see.
+  for (const outputPath of outputPaths) {
+    const resourcesRoot =
+      platform === "darwin"
+        ? path.join(outputPath, "Rennet.app", "Contents", "Resources")
+        : path.join(outputPath, "resources");
+    const sidecarBin = path.join(resourcesRoot, "t3code", "apps", "server", "dist", "bin.mjs");
+    if (!fs.existsSync(sidecarBin)) {
+      throw new Error(`packaged app is missing the T3 Code sidecar bundle: ${sidecarBin}`);
+    }
+  }
+
   const checkerPath = path.join(__dirname, "../../scripts/check-native-artifact-layout.mjs");
   const { assertNativeArtifactLayout } = await import(pathToFileURL(checkerPath).href);
   const expectedPlatforms =
@@ -117,9 +131,16 @@ module.exports = {
     // module resolves `<process.resourcesPath>/tray` when packaged (the dev path reaches
     // brand/exports/tray directly). Unlike the app icon, the tray has no exe-embedded
     // fallback — it MUST ship these files.
-    extraResource: [path.join(__dirname, "../../brand/exports/tray")],
+    extraResource: [
+      path.join(__dirname, "../../brand/exports/tray"),
+      // The staged T3 Code sidecar (scripts/stage-t3-sidecar.mjs): the bundle, its
+      // UPSTREAM.json and the native runtime externals, shipped at Resources/t3code so the
+      // daemon can spawn it with no checkout present. Ignored from the asar below.
+      path.join(__dirname, "dist/t3code"),
+    ],
     ignore: [
       /^\/node_modules/,
+      /^\/dist\/t3code/,
       /^\/src/,
       /^\/e2e/,
       /^\/test-results/,

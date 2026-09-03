@@ -86,6 +86,14 @@ protocol.registerSchemesAsPrivileged([
 
 if (process.env.RENNET_USER_DATA) app.setPath("userData", process.env.RENNET_USER_DATA);
 
+// The packaged app ships the T3 Code sidecar bundle as an extra resource
+// (scripts/stage-t3-sidecar.mjs → Resources/t3code). The daemon inherits this env, so
+// pointing at it here is the whole hand-off; a shell that already chose a bundle wins.
+if (app.isPackaged && !process.env.RENNET_T3_BUNDLE) {
+  const bundledSidecar = join(process.resourcesPath, "t3code", "apps", "server", "dist", "bin.mjs");
+  if (existsSync(bundledSidecar)) process.env.RENNET_T3_BUNDLE = bundledSidecar;
+}
+
 function isTrustedAppUrl(value: string): boolean {
   const url = new URL(value);
   return (
