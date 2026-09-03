@@ -458,6 +458,26 @@ reconciled on the sidecar's next start as an errored session ("Provider session 
 survive a server restart"), not as an interrupted one. Sending `thread.turn.interrupt`
 over RPC before the signal is the daemon-side client's job and lands with it.
 
+## Session context files
+
+A turn is never sent its context. Anything it may need beyond its instructions is written
+as a file under `<bound root>/.rennet/context/<sessionId>/`, and the prompt names the path;
+the agent reads what it decides it needs with its own tools, the way it reads the checkout.
+`packages/server/src/context-files.ts` is the only writer and the only purge. Each write
+puts a `README.md` in that directory listing every file, what it holds and when to read it,
+and ensures `context/` is in the repository's Rennet-managed `.rennet/.gitignore` block
+before the first file lands — so a round committing in the reviewer's own checkout cannot
+stage it.
+
+The purge is at archive, not at settle: a reopened transcript or a resumed round still finds
+its files. Three callers remove a directory, and nothing else does. `session.archive` purges
+beside the thread sweep, on the same deletion boundary. The round's `sweepIfArchived`
+re-sweep purges again on its way out, because a round driven by the durable coordinator can
+write context after an archive has already passed. And a daemon start sweeps every
+`.rennet/context/<id>` under the roots it knows — each project's `openPath` and every one of
+its `includedRepoPaths`, since a workspace's other repos are invisible from `openPath` alone
+— whose session id the store no longer holds, logging the count it removed.
+
 ## Code map
 
 - `packages/server/src/t3/sidecar.ts`: claim, probe, free port, provider seeding, environment, spawn, adopt, stop.

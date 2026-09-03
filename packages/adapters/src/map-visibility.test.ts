@@ -3,7 +3,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { GitExec } from "./git-range-diff";
-import { applyVisibilitySwitch, previewVisibilitySwitch } from "./map-visibility";
+import {
+  applyVisibilitySwitch,
+  ensureManagedIgnoreBlock,
+  previewVisibilitySwitch,
+} from "./map-visibility";
 import { ProjectSnapshotStore } from "./project-snapshot-store";
 
 const scratch: string[] = [];
@@ -56,6 +60,9 @@ describe("map-visibility switch (A.2)", () => {
     expect(written).toContain("map/");
     expect(written).toContain("overlays/");
     expect(written).toContain("knowledge/");
+    // The session context directory (session-context-files 2.1): Rennet's own
+    // purge-on-archive scratch, never the reviewer's to stage.
+    expect(written).toContain("context/");
     expect(store.loadConfig("-k")?.visibility).toBe("local");
   });
 
@@ -113,5 +120,51 @@ describe("map-visibility switch (A.2)", () => {
     // Neither file was touched — this is what makes the guard non-vacuous.
     expect(readFileSync(gitignore, "utf8")).toBe(gitignoreBefore);
     expect(readFileSync(configPath, "utf8")).toBe(configBefore);
+  });
+});
+
+describe("ensureManagedIgnoreBlock (session-context-files 2.1)", () => {
+  it("writes the managed block with `context/` into a repo Rennet has never mapped", () => {
+    const repo = mkdtempSync(join(tmpdir(), "rennet-ensure-"));
+    scratch.push(repo);
+
+    expect(ensureManagedIgnoreBlock(repo)).toBe(true);
+    const written = readFileSync(join(repo, ".rennet", ".gitignore"), "utf8");
+    expect(written).toContain("rennet-managed");
+    // The load-bearing entry: without this line a `git add -A` in the reviewer's own
+    // checkout stages the session's context files. The control proving a MISSING entry
+    // really does stage them is the never-staged pair in `packages/server`'s
+    // `context-files.test.ts`, which runs a real `git add -A` with and without it.
+    expect(written).toContain("context/");
+  });
+
+  it("is idempotent: a second call writes nothing and leaves the file byte-identical", () => {
+    const repo = mkdtempSync(join(tmpdir(), "rennet-ensure2-"));
+    scratch.push(repo);
+
+    ensureManagedIgnoreBlock(repo);
+    const path = join(repo, ".rennet", ".gitignore");
+    const first = readFileSync(path, "utf8");
+    expect(ensureManagedIgnoreBlock(repo)).toBe(false);
+    expect(readFileSync(path, "utf8")).toBe(first);
+  });
+
+  it("preserves user-authored lines and rewrites a stale managed block in place", () => {
+    const repo = mkdtempSync(join(tmpdir(), "rennet-ensure3-"));
+    scratch.push(repo);
+    mkdirSync(join(repo, ".rennet"), { recursive: true });
+    writeFileSync(
+      join(repo, ".rennet", ".gitignore"),
+      // A block written before `context/` existed — what an already-installed Rennet has.
+      "# my own note\nscratch.local\n\n# >>> rennet-managed (do not edit) >>>\nmap/\n# <<< rennet-managed <<<\n",
+    );
+
+    expect(ensureManagedIgnoreBlock(repo)).toBe(true);
+    const written = readFileSync(join(repo, ".rennet", ".gitignore"), "utf8");
+    expect(written).toContain("# my own note");
+    expect(written).toContain("scratch.local");
+    expect(written).toContain("context/");
+    // One managed block, not two.
+    expect(written.match(/rennet-managed \(do not edit\)/g)).toHaveLength(1);
   });
 });

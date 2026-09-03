@@ -214,6 +214,7 @@ import {
 import { createBenchmarkRecording } from "./benchmark-store";
 import { type BoardsRuntime, createBoardsRuntime } from "./boards/boards-runtime";
 import { attachCiSignal } from "./ci-signal";
+import { purgeSessionContext, sweepOrphanedSessionContext } from "./context-files";
 import { createLiveDeltaDigestPort } from "./delta-digest-live";
 import { createDispatch, type DispatchDeps, type FlaggedReviewRun } from "./dispatch";
 import {
@@ -2689,6 +2690,35 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       ...(preparation.status === "drafting" ? { lanes: preparation.lanes } : {}),
     });
   }
+  /**
+   * The root a session's context files live under (session-context-files). The session's
+   * OWN `repositoryRoot` first — a workspace project maps many repos to one id and that
+   * mapping is not invertible, so `projectId` can never answer "which repo" — then the
+   * attached review's root for a session minted before anything stamped one.
+   */
+  const boundRootForSession = (sessionId: string): string | undefined => {
+    const session = sessionStore.load(sessionId);
+    if (session === undefined) return undefined;
+    if (session.repositoryRoot !== undefined) return session.repositoryRoot;
+    return session.reviewId === undefined
+      ? undefined
+      : service.reviewById(session.reviewId)?.repositoryRoot;
+  };
+  const purgeContextForSession = (sessionId: string): void => {
+    const root = boundRootForSession(sessionId);
+    if (root !== undefined) purgeSessionContext(root, sessionId);
+  };
+  // The daemon-start orphan sweep (session-context-files): a crash between a context write
+  // and an archive leaves a directory nobody would ever purge, so the next start collects
+  // every one whose session id the store no longer holds, and says how many in the log.
+  // Every root the daemon knows is looked in — `openPath` is only "the repo, or the FIRST
+  // included repo", so a workspace's other repos are swept from `includedRepoPaths`.
+  sweepOrphanedSessionContext(
+    projectStore
+      .list()
+      .flatMap((project) => [project.openPath, ...(project.includedRepoPaths ?? [])]),
+    new Set(sessionStore.list().map((session) => session.id)),
+  );
   const sessionPreparations = new Map<string, AbortController>();
   const sessionPreparationRuns = new Map<string, Promise<void>>();
   // The display-transcript store (issue-set B): the durable read-model behind
@@ -3055,7 +3085,11 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
           ...(awaitReport === undefined ? {} : { onReportProgress: awaitReport }),
         });
       } finally {
-        await sweepIfArchived(sessionStore.load(session.id), t3Sidecar.forgetSession);
+        await sweepIfArchived(
+          sessionStore.load(session.id),
+          t3Sidecar.forgetSession,
+          purgeContextForSession,
+        );
       }
     },
     emit,
@@ -4124,6 +4158,9 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
 
   dispatch = createDispatch({
     t3Sidecar,
+    // Archive is the deletion boundary for the session's context files as much as for its
+    // threads; the host resolves the bound root the wire never carries.
+    purgeSessionContext: purgeContextForSession,
     service,
     allowedRoots,
     askLog: askLogStore,
