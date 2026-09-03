@@ -18,7 +18,9 @@ import {
   readDaemonFile,
   removeDaemonFile,
   type SpawnDaemonOptions,
+  type StopSidecarOutcome,
   spawnDaemon,
+  stopSidecar,
   waitForHealthy,
 } from "@rennet/server";
 import { app } from "electron";
@@ -102,6 +104,8 @@ export interface StopOwnedDaemonDeps {
   readonly sleep: (ms: number) => Promise<void>;
   readonly warn: (message: string) => void;
   readonly timeoutMs: number;
+  /** Stop the owned T3 Code sidecar AFTER the daemon (t3code-sidecar-chat). */
+  readonly stopSidecar: (dataDir: string) => Promise<StopSidecarOutcome>;
 }
 
 export type StopOwnedDaemonOutcome =
@@ -136,6 +140,7 @@ async function stopOwnedDaemonOnce(
   overrides: Partial<StopOwnedDaemonDeps> = {},
 ): Promise<StopOwnedDaemonOutcome> {
   const deps: StopOwnedDaemonDeps = {
+    stopSidecar,
     probe: findHealthyDaemon,
     removeClaim: removeDaemonFile,
     readClaim: readDaemonFile,
@@ -156,6 +161,17 @@ async function stopOwnedDaemonOnce(
     timeoutMs: 5_000,
     ...overrides,
   };
+  const outcome = await stopDaemonProcess(dataDir, deps);
+  // The sidecar goes AFTER the daemon has interrupted its own turns (and, on a clean
+  // shutdown, has already signalled its child); this reaps whatever survived.
+  await stopOwnedSidecar(dataDir, deps);
+  return outcome;
+}
+
+async function stopDaemonProcess(
+  dataDir: string,
+  deps: StopOwnedDaemonDeps,
+): Promise<StopOwnedDaemonOutcome> {
   let verdict: DaemonVerdict;
   try {
     verdict = await deps.probe(dataDir);
@@ -196,6 +212,28 @@ async function stopOwnedDaemonOnce(
   const message = `rennet: sent SIGTERM to owned daemon pid ${claim.pid} but its process or daemon.json is still present after ${deps.timeoutMs}ms`;
   deps.warn(message);
   return { kind: "failed", message };
+}
+
+/**
+ * The sidecar step (t3code-sidecar-chat, 2.6): after the daemon has had its turn, stop the
+ * owned T3 Code sidecar the same way — verified pid only, SIGTERM, bounded wait, claim
+ * cleared. A daemon that shut down cleanly already signalled its own child; this reaps a
+ * survivor of a daemon crash. A sidecar that will not exit is logged and left for the next
+ * start; the app still exits.
+ */
+async function stopOwnedSidecar(dataDir: string, deps: StopOwnedDaemonDeps): Promise<void> {
+  try {
+    const outcome = await deps.stopSidecar(dataDir);
+    if (outcome.kind === "timeout") {
+      deps.warn(
+        `rennet: sent SIGTERM to owned T3 sidecar pid ${outcome.pid} but it is still running; the next start will reap it`,
+      );
+    }
+  } catch (error) {
+    deps.warn(
+      `rennet: failed to stop the owned T3 sidecar: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
 }
 
 /** Stop the owned daemon before the installer replaces the bundle it runs from; throws on a

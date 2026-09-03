@@ -352,6 +352,10 @@ The harness authenticates itself. Rennet does not copy OAuth tokens or API keys
 into an adapter. Claude's session-start frame reports `apiKeySource`; metered key
 sources produce a visible warning without stopping the turn.
 
+The [T3 Code sidecar](./t3code-sidecar.md) drives the same installed `claude` and
+`codex` through T3 Code's own provider layer, seeded with the absolute paths this
+discovery resolves; lens seats stay on the adapters described here.
+
 Usage is optional on a normalized session outcome. An adapter omits it when the
 harness supplied no token record. RSP documents require a token block, and the
 current document producers substitute an all-zero block when a model turn has no

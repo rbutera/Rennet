@@ -106,6 +106,11 @@ starts a daemon on the user's machine and connects to it over loopback. The
 daemon can also serve paired clients over a private network. Closing the desktop
 window does not stop the daemon.
 
+When a project selects the T3 Code chat engine, the daemon also runs a second local
+process, the T3 Code sidecar, built from the vendored T3 Code snapshot. It runs with T3
+telemetry off and no T3 Connect configuration, and its only egress is the same coding
+harness traffic to the provider, plus any MCP servers the user configured.
+
 Review state and project context stay with that daemon. Material selected for a
 model turn can go to the chosen harness and provider. Rennet records the exact
 context it assembled and labels it as sent only when the stored record matches.

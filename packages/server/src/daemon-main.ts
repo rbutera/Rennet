@@ -8,6 +8,7 @@ import { setDefaultAutoSelectFamily, setDefaultAutoSelectFamilyAttemptTimeout } 
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveDaemonConfig, runDaemon } from "./daemon";
+import { resolveSidecarBundle } from "./t3/sidecar";
 
 // Thread-pool headroom (field bug, lancelot 2026-08-20): the daemon's libuv pool
 // (default 4) is shared by every fs stat the repo-watcher poll makes AND by
@@ -62,7 +63,11 @@ try {
 }
 
 if (config) {
-  void runDaemon({ ...config, uiDist: config.uiDist ?? defaultUiDist() }).catch((error) => {
+  void runDaemon({
+    ...config,
+    uiDist: config.uiDist ?? defaultUiDist(),
+    t3BundlePath: config.t3BundlePath ?? resolveSidecarBundle(process.env),
+  }).catch((error) => {
     console.error("rennet daemon failed to start:", error);
     process.exitCode = 1;
   });

@@ -10,8 +10,9 @@ export function daemonHandlers(rt: DispatchRuntime) {
       // call — DISCLOSURE, like harness.detect / forge.detect. Absent settings dep ⇒ no
       // host enumeration exists, so the honest answer is NO hosts (never a fabricated one).
       parseCommandInput(name, rawInput);
-      if (!deps.settings) return parseCommandOutput(name, { hosts: [] });
-      return parseCommandOutput(name, { hosts: await deps.settings.daemonStatus() });
+      const t3Sidecar = deps.t3Sidecar?.status();
+      if (!deps.settings) return parseCommandOutput(name, { hosts: [], t3Sidecar });
+      return parseCommandOutput(name, { hosts: await deps.settings.daemonStatus(), t3Sidecar });
     },
     "daemon.reconnect": async (rawInput) => {
       const name = "daemon.reconnect" as const;

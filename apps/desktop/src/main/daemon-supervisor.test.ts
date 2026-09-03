@@ -1139,3 +1139,44 @@ describe("start/stop serialization per dataDir (installer handoff safety)", () =
     expect(skewRestarts.get(dataDir)).toBeUndefined();
   });
 });
+
+describe("stopOwnedDaemon stops the owned T3 sidecar AFTER the daemon (t3code-sidecar-chat)", () => {
+  it("signals the daemon first, then runs the sidecar step, and still reports the daemon outcome", async () => {
+    const order: string[] = [];
+    let claimPresent = true;
+    let alive = true;
+    const outcome = await stopOwnedDaemon("/data", {
+      probe: async () => ({ kind: "healthy", claim: { ...claim }, identity: {} as never }),
+      readClaim: () => (claimPresent ? { ...claim } : null),
+      isAlive: () => alive,
+      kill: () => {
+        order.push("daemon:SIGTERM");
+        claimPresent = false;
+        alive = false;
+      },
+      stopSidecar: async () => {
+        order.push("sidecar:stop");
+        return { kind: "stopped" };
+      },
+      warn: vi.fn(),
+      sleep: immediateSleep,
+    });
+    expect(order).toEqual(["daemon:SIGTERM", "sidecar:stop"]);
+    expect(outcome).toEqual({ kind: "stopped" });
+  });
+
+  it("reaps a sidecar even when no daemon is owned, and logs a sidecar that will not exit", async () => {
+    const warn = vi.fn();
+    const stopSidecar = vi.fn(async () => ({ kind: "timeout" as const, pid: 4242 }));
+    const outcome = await stopOwnedDaemon("/data", {
+      probe: async () => ({ kind: "absent" }),
+      stopSidecar,
+      warn,
+      sleep: immediateSleep,
+    });
+    expect(stopSidecar).toHaveBeenCalledWith("/data");
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("T3 sidecar pid 4242"));
+    // Positive control: the daemon outcome is unchanged by the sidecar step.
+    expect(outcome).toEqual({ kind: "stopped" });
+  });
+});
