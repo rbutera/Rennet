@@ -19,6 +19,16 @@ export const LATEST_EVENT_MAX_CHARS = 120;
 /** Nothing new for this long and the line says so instead of freezing on a stale one. */
 export const LATEST_EVENT_IDLE_AFTER_MS = 20_000;
 
+/**
+ * How coarsely the idle line counts (review finding 7).
+ *
+ * "quiet for N s" at one-second resolution is a DIFFERENT STRING every second, and a lane's
+ * live line is republished by re-sending the whole `SessionPreparation` snapshot. Five idle
+ * lanes therefore pushed five whole snapshots a second for as long as a generation ran, to
+ * tell a reviewer a number they cannot read that fast. Ten-second steps say the same thing.
+ */
+export const LATEST_EVENT_IDLE_STEP_MS = 10_000;
+
 /** The fields this projector reads from `OrchestrationThreadActivity`. */
 export interface ThreadActivityLike {
   readonly tone: string;
@@ -27,6 +37,32 @@ export interface ThreadActivityLike {
   readonly payload: unknown;
   readonly turnId: string | null;
   readonly createdAt: string;
+  /** The activity's own event id. Only used to group tool rows when `toolCallId` is absent. */
+  readonly id?: string;
+}
+
+/**
+ * A tool call that has finished, whatever it finished as.
+ *
+ * T3 emits started, updated and completed tool activities with the SAME `tool` tone
+ * (`ProviderRuntimeIngestion.ts`), so tone alone cannot tell "reading src/foo.ts" from
+ * "read src/foo.ts, done" — and a lane that says a finished call is in flight is a lie in
+ * the UI (review finding 5). The lifecycle is in `kind` and in the runtime's own item
+ * status (`inProgress | completed | failed | declined`).
+ */
+const TERMINAL_TOOL_STATUSES: ReadonlySet<string> = new Set(["completed", "failed", "declined"]);
+
+function toolPayloadField(activity: ThreadActivityLike, key: string): string | undefined {
+  const payload = activity.payload;
+  if (payload === null || typeof payload !== "object") return undefined;
+  const value = (payload as Record<string, unknown>)[key];
+  return typeof value === "string" && value !== "" ? value : undefined;
+}
+
+function isTerminalTool(activity: ThreadActivityLike): boolean {
+  if (activity.kind === "tool.completed") return true;
+  const status = toolPayloadField(activity, "status");
+  return status !== undefined && TERMINAL_TOOL_STATUSES.has(status);
 }
 
 /** The fields this projector reads from `OrchestrationMessage`. */
@@ -48,6 +84,8 @@ export interface LatestEventOptions {
   /** Stripped from an absolute path so the line reads `src/foo.ts`, not `/Users/…/src/foo.ts`. */
   readonly repoRoot?: string;
   readonly idleAfterMs?: number;
+  /** Resolution of the idle count; see {@link LATEST_EVENT_IDLE_STEP_MS}. */
+  readonly idleStepMs?: number;
 }
 
 /**
@@ -178,29 +216,57 @@ export function projectLatestEvent(
   const inTurn = (candidateTurnId: string | null): boolean =>
     turnId === undefined || candidateTurnId === turnId;
 
+  // Which tool CALLS have finished. Grouped by the runtime's own item id, because the
+  // finishing activity is a separate row from the one that said the call started: without
+  // the grouping, "reading src/foo.ts" outlives the read it describes.
+  const finishedCalls = new Set<string>();
+  for (const activity of thread.activities) {
+    if (activity.tone !== "tool" || !isTerminalTool(activity)) continue;
+    finishedCalls.add(toolPayloadField(activity, "toolCallId") ?? activity.id ?? "");
+  }
+  const inFlight = (activity: ThreadActivityLike): boolean =>
+    !isTerminalTool(activity) &&
+    !finishedCalls.has(toolPayloadField(activity, "toolCallId") ?? activity.id ?? "");
+
   let best: { readonly at: number; readonly line: string; readonly kind: "tool" | "text" } | null =
     null;
+  // The newest thing the turn did AT ALL, finished calls included. Idleness is a fact about
+  // the thread, not about the line on screen: a seat whose last act was a completed tool is
+  // working, not quiet, even though that tool is no longer what it is doing.
+  let newestAt: number | null = null;
   const consider = (at: number, kind: "tool" | "text", line: string): void => {
     if (line === "") return;
     if (best === null || at >= best.at) best = { at, kind, line };
   };
+  const witness = (at: number): void => {
+    if (newestAt === null || at > newestAt) newestAt = at;
+  };
 
   for (const activity of thread.activities) {
     if (activity.tone !== "tool" || !inTurn(activity.turnId)) continue;
-    consider(timeOf(activity.createdAt), "tool", toolLine(activity, options.repoRoot));
+    const at = timeOf(activity.createdAt);
+    witness(at);
+    // A completed or denied call falls back to whatever the seat is saying instead.
+    if (!inFlight(activity)) continue;
+    consider(at, "tool", toolLine(activity, options.repoRoot));
   }
   for (const message of thread.messages) {
     if (message.role !== "assistant" || !inTurn(message.turnId)) continue;
-    consider(timeOf(message.updatedAt), "text", capLine(lastSentence(message.text)));
+    const at = timeOf(message.updatedAt);
+    witness(at);
+    consider(at, "text", capLine(lastSentence(message.text)));
   }
 
+  const idleAfterMs = options.idleAfterMs ?? LATEST_EVENT_IDLE_AFTER_MS;
+  if (newestAt !== null && now - newestAt >= idleAfterMs) {
+    // Counted in coarse steps so an idle lane does not republish its whole snapshot once a
+    // second to change one digit (review finding 7).
+    const step = options.idleStepMs ?? LATEST_EVENT_IDLE_STEP_MS;
+    const quiet = Math.floor((now - newestAt) / step) * Math.floor(step / 1000);
+    return { kind: "idle", text: `quiet for ${quiet} s`, at: now };
+  }
   if (best === null) return undefined;
   const found: { readonly at: number; readonly line: string; readonly kind: "tool" | "text" } =
     best;
-  const idleAfterMs = options.idleAfterMs ?? LATEST_EVENT_IDLE_AFTER_MS;
-  const quietMs = now - found.at;
-  if (quietMs >= idleAfterMs) {
-    return { kind: "idle", text: `quiet for ${Math.floor(quietMs / 1000)} s`, at: now };
-  }
   return { kind: found.kind, text: found.line, at: found.at };
 }

@@ -22,6 +22,31 @@ const tool = (at: number, detail: string, turnId: string | null = "turn-1") => (
   createdAt: ISO(at),
 });
 
+/** One tool CALL's lifecycle rows, as `ProviderRuntimeIngestion` shapes them: started and
+ *  completed share the `tool` tone and are paired only by `toolCallId`. */
+const toolStarted = (at: number, detail: string, toolCallId: string) => ({
+  tone: "tool",
+  kind: "tool.started",
+  summary: "Tool started",
+  payload: { itemType: "file_change", detail, toolCallId, status: "inProgress" },
+  turnId: "turn-1",
+  createdAt: ISO(at),
+});
+
+const toolFinished = (
+  at: number,
+  detail: string,
+  toolCallId: string,
+  status: "completed" | "declined" = "completed",
+) => ({
+  tone: "tool",
+  kind: "tool.completed",
+  summary: "Tool",
+  payload: { itemType: "file_change", detail, toolCallId, status },
+  turnId: "turn-1",
+  createdAt: ISO(at),
+});
+
 const said = (at: number, text: string, turnId: string | null = "turn-1") => ({
   role: "assistant",
   text,
@@ -107,14 +132,93 @@ describe("projectLatestEvent", () => {
   it("goes idle and says for how long once the thread has been quiet", () => {
     const quiet = thread({ activities: [tool(1_000, "Bash: git log")] });
     expect(projectLatestEvent(quiet, 1_000 + 19_999)?.kind).toBe("tool");
-    const idle = projectLatestEvent(quiet, 1_000 + 41_000);
-    expect(idle).toEqual({ kind: "idle", text: "quiet for 41 s", at: 42_000 });
+    // Counted in TEN-SECOND steps (review finding 7): at one-second resolution the text is
+    // a new string every second, and every new string republishes the whole preparation
+    // snapshot for as long as the lane stays quiet.
+    expect(projectLatestEvent(quiet, 1_000 + 41_000)).toEqual({
+      kind: "idle",
+      text: "quiet for 40 s",
+      at: 42_000,
+    });
+    // The whole ten-second span reads the same, which is what makes it publish once.
+    for (const extra of [40_000, 44_000, 49_999]) {
+      expect(projectLatestEvent(quiet, 1_000 + extra)?.text).toBe("quiet for 40 s");
+    }
+    // And it does advance — a bucket that never changed would be a frozen line.
+    expect(projectLatestEvent(quiet, 1_000 + 50_000)?.text).toBe("quiet for 50 s");
   });
 
   it("has no line at all for a thread that has produced nothing", () => {
     expect(projectLatestEvent(thread(), 1_000)).toBeUndefined();
     // An assistant message with no text yet is not a line either.
     expect(projectLatestEvent(thread({ messages: [said(1, "")] }), 2)).toBeUndefined();
+  });
+
+  // ── A finished tool call is not in flight (review finding 5) ──────────────
+  //
+  // T3 emits started, updated and completed with the SAME `tool` tone, so tone alone made
+  // "reading src/foo.ts" outlive the read by the whole rest of the turn.
+
+  it("falls back to the seat's latest words once its tool call has completed", () => {
+    const running = thread({
+      messages: [said(1_000, "Looking at the auth seam.")],
+      activities: [toolStarted(2_000, 'Read: {"file_path":"/repo/src/foo.ts"}', "call-1")],
+    });
+    // The premise: while the call IS in flight the tool line wins, so what changes below
+    // is the lifecycle and nothing else.
+    expect(projectLatestEvent(running, 2_500, { repoRoot: "/repo" })).toEqual({
+      kind: "tool",
+      text: "reading src/foo.ts",
+      at: 2_000,
+    });
+
+    const finished = thread({
+      messages: running.messages,
+      activities: [
+        ...running.activities,
+        toolFinished(3_000, 'Read: {"file_path":"/repo/src/foo.ts"}', "call-1"),
+      ],
+    });
+    expect(projectLatestEvent(finished, 3_500, { repoRoot: "/repo" })).toEqual({
+      kind: "text",
+      text: "Looking at the auth seam.",
+      at: 1_000,
+    });
+  });
+
+  it("treats a DENIED call as finished too, and keeps a second call in flight", () => {
+    const mixed = thread({
+      messages: [said(1_000, "Checking the diff.")],
+      activities: [
+        toolStarted(2_000, "Bash: git log", "call-1"),
+        toolFinished(2_500, "Bash: git log", "call-1", "declined"),
+        toolStarted(3_000, "Bash: git diff --stat", "call-2"),
+      ],
+    });
+    // The declined call is gone from the line; the one still open is what the seat is doing.
+    expect(projectLatestEvent(mixed, 3_500)).toEqual({
+      kind: "tool",
+      text: "running git diff --stat",
+      at: 3_000,
+    });
+  });
+
+  it("a completed tool still counts as activity, so the lane is not called quiet", () => {
+    // Idleness is a fact about the THREAD, not about the line on screen. Without this, a
+    // turn whose last act was a completed tool and which said nothing would read "quiet
+    // for 0 s" — or nothing at all — the instant the call landed.
+    const done = thread({
+      activities: [
+        toolStarted(1_000, "Bash: git log", "call-1"),
+        toolFinished(40_000, "Bash: git log", "call-1"),
+      ],
+    });
+    expect(projectLatestEvent(done, 45_000)).toBeUndefined();
+    expect(projectLatestEvent(done, 70_000)).toEqual({
+      kind: "idle",
+      text: "quiet for 30 s",
+      at: 70_000,
+    });
   });
 
   it("shows the raw fragment while a tool call is still streaming its input", () => {

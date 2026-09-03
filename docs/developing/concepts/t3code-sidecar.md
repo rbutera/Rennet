@@ -254,15 +254,31 @@ A tool call in flight becomes plain words naming what it is acting on — `readi
 src/foo.ts`, `running git diff --stat`, `editing a.ts`, `searching createSession` — a tool
 with no plain word for it keeps T3's own summary rather than being given an invented verb,
 and assistant prose becomes its last sentence. Every line is capped at 120 characters with
-an honest `…`. When nothing new has arrived for twenty seconds the line becomes `idle` and
-says how long it has been quiet, rather than freezing on a stale one.
+an honest `…`.
+
+A tool call is only "in flight" until it finishes. T3 emits started, updated and completed
+tool activities with the same `tool` tone, so the projector reads the lifecycle — the
+activity's `kind` and the runtime's item status — and a completed, failed or denied call
+falls back to whatever the seat is saying instead of freezing the lane on a read that is
+over. When nothing new has arrived for twenty seconds the line becomes `idle` and says how
+long it has been quiet, counted in ten-second steps: the lane's line is republished by
+re-sending the whole preparation snapshot, and a one-second counter would push five
+snapshots a second to change one digit.
 
 `t3/seat-progress.ts` holds the subscription. Thread events do not carry the whole
 projection, so a re-read is an RPC and is throttled to at most four publications a second
-per lane; the idle tick re-projects the last snapshot against a fresh clock and costs no
-RPC at all. The lane carries its `thread` reference from the moment the thread exists and
-keeps it through every later state, so a settled or failed reader still opens its
-transcript. The subscription is dropped when the generation settles.
+per lane. The throttle is TRAILING: events inside a busy window are deferred to one read at
+the end of it, never dropped, so the last thing a seat did before going quiet is what the
+lane shows. The read throttle keeps its own clock, separate from the publish one — a
+re-read that produces an unchanged line publishes nothing, and keying the read on the
+publish time made a run of identical events re-read the thread on every one of them. The
+idle tick re-projects the last snapshot against a fresh clock and costs no RPC at all.
+
+The lane carries its `thread` reference from the moment the thread exists and keeps it
+through every later state, so a settled or failed reader still opens its transcript. The
+subscription is dropped when THAT LANE settles — not when the generation does, so the
+seats that finish first stop costing a socket and an idle tick while the slowest lens
+runs on.
 
 ## The handoff exit
 
