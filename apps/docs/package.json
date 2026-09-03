@@ -1,6 +1,6 @@
 {
   "name": "@rennet/docs",
-  "version": "0.6.6",
+  "version": "0.6.7",
   "private": true,
   "type": "module",
   "description": "Rennet documentation renderer (Astro Starlight, static, two audiences).",
