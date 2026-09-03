@@ -72,6 +72,12 @@ jobs:
       - name: Deploy to Cloudflare Pages (preview)
         if: ${{ env.CLOUDFLARE_API_TOKEN != '' }}
         uses: cloudflare/wrangler-action@v3
+        # The action installs wrangler with npm inside our pnpm-hoisted node_modules; npm
+        # then tries to reconcile peers it did not install (vite-plus pins vitest 4.1.9 beside
+        # our 4.1.10) and fails with ERESOLVE. Legacy peer resolution restores the pre-vendor
+        # behaviour: install wrangler, ignore peers, deploy.
+        env:
+          npm_config_legacy_peer_deps: "true"
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
