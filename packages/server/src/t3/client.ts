@@ -434,10 +434,48 @@ export async function awaitTurnSettled(
     turnId: string,
     state: TurnOutcome["state"],
   ): TurnOutcome => ({ turnId, state, thread, ...(readTurnSettlement(thread, turnId) ?? {}) });
+  /**
+   * The subscription ended, or its socket closed under it (the sidecar drops the socket
+   * after some stream failures). One fresh read: what the thread shows now is still the
+   * answer when it has one, and only a projection that has not settled is a failure of
+   * the wait itself.
+   */
+  const settleFromRead = async (cause: unknown): Promise<TurnOutcome> => {
+    const reason = (error: unknown) =>
+      error === undefined ? "" : ` (${error instanceof Error ? error.message : String(error)})`;
+    let thread: OrchestrationThread;
+    try {
+      thread = await deps.readThread(threadId);
+    } catch (readError) {
+      throw new Error(
+        `T3 thread ${threadId} stream ended before the turn settled${reason(cause ?? readError)}`,
+      );
+    }
+    const latest = currentTurn(thread);
+    if (latest !== undefined && latest.state !== "running") {
+      return settledOutcome(thread, latest.turnId, latest.state);
+    }
+    const failure = sessionFailure(thread);
+    if (failure !== undefined && latest?.state !== "running") {
+      return {
+        turnId: latest?.turnId ?? `${threadId}:session`,
+        state: "error",
+        thread,
+        errorMessage: failure,
+      };
+    }
+    throw new Error(`T3 thread ${threadId} stream ended before the turn settled${reason(cause)}`);
+  };
   try {
     let thread: OrchestrationThread | undefined;
     for (;;) {
-      const next = await Promise.race([iterator.next(), abort, ...(grace ? [grace] : [])]);
+      let next: Awaited<ReturnType<typeof iterator.next>> | typeof GRACE_OVER;
+      try {
+        next = await Promise.race([iterator.next(), abort, ...(grace ? [grace] : [])]);
+      } catch (error) {
+        if (signal?.aborted) throw error;
+        return await settleFromRead(error);
+      }
       if (next === GRACE_OVER) {
         // The stream went quiet after the lifecycle settled: one last read, then answer
         // with what the projection holds. Absent facts come back absent.
@@ -448,7 +486,7 @@ export async function awaitTurnSettled(
         }
         return settledOutcome(thread, latest.turnId, latest.state);
       }
-      if (next.done) throw new Error(`T3 thread ${threadId} stream ended before the turn settled`);
+      if (next.done) return await settleFromRead(undefined);
       const item = next.value;
       if (item.kind === "snapshot") thread = item.snapshot.thread;
       // Events do not carry the whole projection; re-read on the ones that end a turn.

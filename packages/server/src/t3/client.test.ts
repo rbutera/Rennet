@@ -427,12 +427,17 @@ describe("awaitTurnSettled", () => {
   function pushable() {
     const queue: Item[] = [];
     let wake: (() => void) | null = null;
+    let ended: { readonly error?: unknown } | undefined;
     const iterable: AsyncIterable<Item> = {
       [Symbol.asyncIterator]: () => ({
         async next() {
           for (;;) {
             const item = queue.shift();
             if (item !== undefined) return { value: item, done: false as const };
+            if (ended !== undefined) {
+              if (ended.error !== undefined) throw ended.error;
+              return { value: undefined, done: true as const };
+            }
             await new Promise<void>((resolve) => {
               wake = resolve;
             });
@@ -443,12 +448,20 @@ describe("awaitTurnSettled", () => {
         },
       }),
     };
+    const notify = () => {
+      wake?.();
+      wake = null;
+    };
     return {
       iterable,
       push(item: Item) {
         queue.push(item);
-        wake?.();
-        wake = null;
+        notify();
+      },
+      /** The stream ends cleanly, or with the socket's error. */
+      end(error?: unknown) {
+        ended = error === undefined ? {} : { error };
+        notify();
       },
     };
   }
@@ -484,6 +497,7 @@ describe("awaitTurnSettled", () => {
         current = thread;
       },
       push: (item: Item) => stream.push(item),
+      end: (error?: unknown) => stream.end(error),
       deps: {
         subscribeThread: () => {
           stream = pushable();
@@ -585,6 +599,44 @@ describe("awaitTurnSettled", () => {
       awaitTurnSettled("t", { ...p.deps, subscribeThread }, { signal: controller.signal }),
     ).rejects.toThrow(/aborted/);
     expect(subscribeThread).not.toHaveBeenCalled();
+  });
+
+  it("settles from one fresh read when the subscription ends or its socket closes", async () => {
+    // The sidecar drops the RPC socket after some stream failures. What the thread shows
+    // on a fresh read is still the answer: a settled turn, or a session that failed.
+    const failed = fakeThread({
+      session: { status: "error", activeTurnId: null, lastError: "stream failed", updatedAt: T0 },
+    });
+    const closed = projection(fakeThread({ latestTurn: { turnId: "turn-1", state: "running" } }));
+    const wait = awaitTurnSettled("t", closed.deps);
+    await tick();
+    closed.set(failed);
+    closed.end(new Error("SocketCloseError: 1006"));
+    await expect(wait).resolves.toMatchObject({ state: "error", errorMessage: "stream failed" });
+
+    const ended = projection(fakeThread({ latestTurn: { turnId: "turn-1", state: "running" } }));
+    const cleanly = awaitTurnSettled("t", ended.deps);
+    await tick();
+    ended.set(
+      fakeThread({
+        latestTurn: { turnId: "turn-1", state: "completed" },
+        activities: [settledActivity("turn-1", { structuredOutput: { done: true } })],
+      }),
+    );
+    ended.end();
+    await expect(cleanly).resolves.toMatchObject({
+      turnId: "turn-1",
+      structuredOutput: { done: true },
+    });
+
+    // Nothing settled on the fresh read: the wait fails and names the socket's reason.
+    const unsettled = projection(
+      fakeThread({ latestTurn: { turnId: "turn-1", state: "running" } }),
+    );
+    const still = awaitTurnSettled("t", unsettled.deps);
+    await tick();
+    unsettled.end(new Error("SocketCloseError: 1006"));
+    await expect(still).rejects.toThrow(/stream ended before the turn settled \(SocketCloseError/);
   });
 
   it("removes its abort listener once the turn has settled", async () => {
