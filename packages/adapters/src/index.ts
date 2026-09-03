@@ -355,6 +355,7 @@ export {
   applyVisibilitySwitch,
   ensureManagedIgnoreBlock,
   previewVisibilitySwitch,
+  recordedVisibility,
   type VisibilityPreview,
 } from "./map-visibility";
 export { NestedProjectContext } from "./nested-project-context";
@@ -450,7 +451,7 @@ export {
 } from "./project-relocate";
 export {
   loadScoutFacts,
-  PROJECT_SCOUT_CONTEXT_ID,
+  PROJECT_SCOUT_CONTEXT_PREFIX,
   PROJECT_SCOUT_SCHEMA,
   type ProjectScoutDeps,
   type ProjectScoutProgress,

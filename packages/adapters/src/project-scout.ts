@@ -129,7 +129,14 @@ export const SCOUT_DETECTED_FILE = "scout-detected.json";
  * no session yet (design D3/D4). A session-scoped caller passes its own session id to
  * its own `writeContext`; this adapter never chooses the id.
  */
-export const PROJECT_SCOUT_CONTEXT_ID = "project-scout";
+/**
+ * The PREFIX of a scout run's context directory id, not the id itself. Each run appends
+ * something unique: the scout runs for a project, before any session exists, so a fixed id
+ * is never a session id — every daemon start read it as an orphan, and two scouts on one
+ * root raced purge-then-write over each other's files (review finding 5). The runtime owns
+ * the suffix and purges the directory when its turn returns.
+ */
+export const PROJECT_SCOUT_CONTEXT_PREFIX = "project-scout";
 
 function readIfPresent(root: string, rel: string, cap: number): string | undefined {
   try {
