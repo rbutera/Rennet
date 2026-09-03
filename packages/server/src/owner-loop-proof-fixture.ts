@@ -14,7 +14,6 @@ export const OWNER_LOOP_SEQUENCE_QUOTE = "Read `src/owner.ts` first.";
 
 const author: Author = { kind: "lens-agent", id: OWNER_LOOP_LANE };
 const patchsetPlanValue = `\${patchsetId}`;
-const candidatePlanValue = `\${candidateId}`;
 const askPlanValue = `\${askId}`;
 const evidenceIdsPlanValue = `\${evidenceIds}`;
 
@@ -39,7 +38,7 @@ function designBoard(): DraftBoard {
       title: "owner-loop",
       introMarkdown: "The owner-loop value remains visible across review rounds.",
       measure: "structured",
-      sources: [{ path: OWNER_LOOP_SPEC, candidate: candidatePlanValue, line: 1 }],
+      sources: [{ path: OWNER_LOOP_SPEC, line: 1 }],
       stats: [
         { label: "Format", value: "OpenSpec" },
         { label: "Requirements", value: "1" },
@@ -66,7 +65,7 @@ function designBoard(): DraftBoard {
           shall: "The system SHALL keep the owner-loop value source-backed.",
           scenarios: ["design-scenario"],
           related_files: [OWNER_LOOP_SOURCE],
-          source: { path: OWNER_LOOP_SPEC, candidate: candidatePlanValue, line: 3 },
+          source: { path: OWNER_LOOP_SPEC, line: 3 },
           spec_delta: "added",
         },
       },
@@ -98,7 +97,7 @@ function designBoard(): DraftBoard {
           author,
           title: "Owner specification",
           children: ["design-capability", "design-code"],
-          sources: [{ path: OWNER_LOOP_SPEC, candidate: candidatePlanValue, line: 1 }],
+          sources: [{ path: OWNER_LOOP_SPEC, line: 1 }],
         },
       },
     ],

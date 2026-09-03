@@ -55,7 +55,6 @@ import {
   deriveProjectDraft,
   discoverClaude,
   discoverCodex,
-  discoverDesignArtifacts,
   discoverProject,
   discoverWorktreeIdentities,
   ensureManagedClone,
@@ -2995,11 +2994,6 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         patchset.repository.baseOid,
         gitForRepo(patchset.repository.root),
       ),
-    designArtifactsFor: (patchset: Patchset) =>
-      discoverDesignArtifacts({
-        patchset,
-        git: gitForRepo(patchset.repository.root),
-      }),
     readFindingDispositions: () => ({
       ...askLogStore.readProjection(review.id).findingDispositions,
     }),

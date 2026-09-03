@@ -128,19 +128,6 @@ export {
   type RunTurn,
   type SwarmTurnOptions,
 } from "./council-seat-turn";
-export {
-  DESIGN_ARTIFACT_LIMITS,
-  type DesignArtifact,
-  type DesignArtifactCandidate,
-  type DesignArtifactFormat,
-  type DesignArtifactLimits,
-  type DesignArtifactRole,
-  type DesignArtifactSet,
-  type DesignCandidateRelevance,
-  type DiscoverDesignArtifactsOptions,
-  discoverDesignArtifacts,
-  fitDesignArtifactsToBytes,
-} from "./design-artifact-discovery";
 export { type DossierKey, DossierStore } from "./dossier-store";
 export {
   createExclusiveNamespaceMover,
