@@ -7,9 +7,12 @@ import {
   bindThread,
   findBinding,
   findBindingsForSessions,
+  PENDING_DELETION_MAX_ATTEMPTS,
   readBindings,
+  readPendingDeletions,
   removeBindings,
   type SeatKind,
+  sweepThreads,
   type ThreadBindingKey,
 } from "./threads";
 
@@ -146,5 +149,90 @@ describe("thread bindings", () => {
     removeBindings(dataDir, [a.thread.threadId, "thread-never-existed"]);
     removeBindings(dataDir, [a.thread.threadId]);
     expect(readBindings(dataDir).map((row) => row.threadId)).not.toContain(a.thread.threadId);
+  });
+
+  // ── A failed delete keeps its handle (review finding 2) ───────────────────
+  //
+  // Two things have to hold at once: the archived session must not keep a live binding
+  // (an un-archive would rebind to a thread nobody can reach), and a transcript that
+  // still exists must not lose the only handle that could delete it. The row moves to
+  // `pendingDeletions` — invisible to `findBinding` — and the next sweep retries it.
+
+  describe("sweepThreads", () => {
+    it("defers a failed delete to pendingDeletions and clears it on the next sweep", async () => {
+      const { a, b } = await twoReviews();
+      let refuse = true;
+      const attempted: string[] = [];
+      const deleteThread = async (threadId: string): Promise<void> => {
+        attempted.push(threadId);
+        if (refuse && threadId === a.design.threadId) throw new Error("sidecar said no");
+      };
+
+      const firstPass = await sweepThreads({
+        dataDir,
+        ids: [a.session, a.review],
+        deleteThread,
+        warn: () => undefined,
+      });
+      expect(firstPass).toBe(2);
+
+      // The live bindings are gone whatever the sidecar said…
+      expect(findBindingsForSessions(dataDir, [a.session, a.review])).toEqual([]);
+      expect(findBinding(dataDir, WORKTREE_A, seat("gen-a", "design"))).toBeUndefined();
+      // …so the SAME key mints a fresh thread rather than resolving to the undeleted one.
+      const rebound = await bind(WORKTREE_A, seat("gen-a", "design"), a.session);
+      expect(rebound.threadId).not.toBe(a.design.threadId);
+      // …and the handle to the thread that still exists survives here.
+      expect(readPendingDeletions(dataDir).map((row) => row.threadId)).toEqual([a.design.threadId]);
+      expect(readPendingDeletions(dataDir)[0]?.attempts).toBe(1);
+
+      // The retry: `ids: []` is the sweep the supervisor runs when the sidecar comes back.
+      refuse = false;
+      attempted.length = 0;
+      expect(await sweepThreads({ dataDir, ids: [], deleteThread, warn: () => undefined })).toBe(1);
+      expect(attempted).toEqual([a.design.threadId]);
+      expect(readPendingDeletions(dataDir)).toEqual([]);
+      // The sibling review was never touched by any of this.
+      expect(findBinding(dataDir, REPO_B, { kind: "session", sessionId: b.review })?.threadId).toBe(
+        b.thread.threadId,
+      );
+    });
+
+    it("gives up after the attempt cap so a thread the sidecar lost cannot pin the list", async () => {
+      const a = await bind(REPO_A, { kind: "session", sessionId: "review-a" }, "review-a");
+      const deleteThread = async (): Promise<void> => {
+        throw new Error("no such thread");
+      };
+      // First sweep retires the binding; every later one only retries the pending row.
+      for (let attempt = 1; attempt <= PENDING_DELETION_MAX_ATTEMPTS; attempt += 1) {
+        const swept = await sweepThreads({
+          dataDir,
+          ids: attempt === 1 ? ["review-a"] : [],
+          deleteThread,
+          warn: () => undefined,
+        });
+        expect(swept).toBe(0);
+        expect(readPendingDeletions(dataDir).map((row) => row.attempts)).toEqual(
+          attempt === PENDING_DELETION_MAX_ATTEMPTS ? [] : [attempt],
+        );
+      }
+      expect(readBindings(dataDir).map((row) => row.threadId)).not.toContain(a.threadId);
+      // Nothing left to retry: a later sweep is a no-op, not a fresh attempt.
+      expect(await sweepThreads({ dataDir, ids: [], deleteThread, warn: () => undefined })).toBe(0);
+    });
+
+    it("sweeps nothing when neither the ids nor the pending list name anything", async () => {
+      let called = 0;
+      const swept = await sweepThreads({
+        dataDir,
+        ids: ["nobody"],
+        deleteThread: async () => {
+          called += 1;
+        },
+        warn: () => undefined,
+      });
+      expect(swept).toBe(0);
+      expect(called).toBe(0);
+    });
   });
 });

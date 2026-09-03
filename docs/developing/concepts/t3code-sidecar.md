@@ -216,14 +216,24 @@ Claude/Codex legs: those still run every non-board job (the project scout, the r
 the delta digest), but a lens drafted on one would have no thread, no transcript, no live
 line and no same-thread repair, and nothing on screen would say so.
 
-**Archiving a session is how threads are pruned.** Transcripts are the product while a
-review is live, so nothing expires on a timer; `session.archive` is the act that ends
-them. After the archive persists, the daemon deletes the session's own thread and every
-seat thread its generations left behind (`thread.delete` over RPC) and drops those
-bindings. Un-archiving restores nothing — the next use creates fresh threads. A sidecar
-that is off still leaves the bindings dropped, because a binding pointing at a thread
-nobody can reach is worse than none, and a thread the sidecar no longer has does not fail
-the archive. The sweep is keyed on the session and review ids rather than on a repository
+**Archiving a session is how threads are pruned, and it is a deletion boundary.** Transcripts
+are the product while a review is live, so nothing expires on a timer; `session.archive` is
+the act that ends them. Archiving first ABORTS AND AWAITS the session's own preparation —
+anything still able to bind a thread has to be finished before the sweep, or a seat mid-flight
+binds a fresh thread behind it and the archive leaves exactly the orphan it exists to prevent.
+Then, once the archive has persisted, one serialized sweep deletes the session's own thread
+and every seat thread its generations left behind (`thread.delete` over RPC) and drops those
+bindings. Un-archiving restores nothing — the next use creates fresh threads.
+
+A sidecar that is off still leaves the bindings dropped, because a binding pointing at a
+thread nobody can reach is worse than none, and neither an off sidecar nor a thread it no
+longer has may fail the archive. The handle is not thrown away with the binding, though: a
+thread whose delete failed moves to `pendingDeletions` in the same bindings file — out of the
+live bindings, so an un-archived session still gets a fresh thread — and is retried on the
+next sweep or the next successful `ensure`, up to five attempts, after which a thread the
+sidecar genuinely lost stops pinning the list.
+
+The sweep is keyed on the session and review ids rather than on a repository
 root: a session's own thread is bound under the review id at the review's checkout, while
 its seat threads are bound under the session id at the drafting worktree, so a root-scoped
 sweep would leave every seat thread behind. Seat rows written before the owner field

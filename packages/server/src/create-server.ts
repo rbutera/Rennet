@@ -4318,7 +4318,16 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         const session = sessionStore.setPinned(sessionId, pinned);
         return session && sidebarSessionFor(session);
       },
-      setArchived: (sessionId, archived) => {
+      setArchived: async (sessionId, archived) => {
+        // Archiving establishes a DELETION BOUNDARY (review finding 2). The sweep that
+        // follows deletes this session's threads, so anything still able to BIND one has
+        // to be over first: a preparation mid-flight would otherwise bind a fresh seat
+        // thread after the sweep had already passed, and the archive would leave exactly
+        // the orphan it exists to prevent. Same abort-then-await the retry path uses.
+        if (archived) {
+          cancelSessionPreparation(sessionId);
+          await sessionPreparationRuns.get(sessionId)?.catch(() => undefined);
+        }
         const session = archived
           ? sessionStore.archive(sessionId)
           : sessionStore.restore(sessionId);
