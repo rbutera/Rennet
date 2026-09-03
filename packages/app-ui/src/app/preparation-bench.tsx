@@ -1,4 +1,9 @@
 import {
+  generationIdForPatchset,
+  type LaneLatest,
+  type LaneSeat,
+  type LaneThreadRef,
+  type LensKind,
   type LensLane,
   newCommandId,
   type Review,
@@ -9,6 +14,8 @@ import { Button, cn } from "@rennet/ui";
 import { Check, Minus, X } from "lucide-react";
 import type { SVGProps } from "react";
 import { useEffect } from "react";
+import { LensBoardDocument } from "../board";
+import { useLensBoardResolutions } from "../board/board-data";
 import { Icon } from "../components/icon";
 import { useMutation, useRefreshCommand } from "../data";
 import { coverageNote, coverageStatus } from "../rounds/round-machine";
@@ -57,17 +64,54 @@ function registerOf(lane: LensLane): Register {
   return "settled";
 }
 
-/** What the reader is saying, and whether it is said quietly (a promise or a lull, not
- *  work in progress). Read off the arm that HAS the words — never guessed. */
-function speechOf(lane: LensLane): { readonly text: string; readonly quiet: boolean } {
+/** One voice at the reader: a seat with its thread and its own live line. A lane that
+ *  predates `seats` (or has none yet) speaks with one voice, the lane's own. */
+interface Voice {
+  readonly seat: string;
+  /** Named only when the lane has more than one voice — a single seat is just the lens. */
+  readonly name?: string;
+  readonly thread?: LaneThreadRef;
+  readonly latest?: LaneLatest;
+}
+
+const PROVIDER_NAME: Readonly<Record<LaneSeat["provider"], string>> = {
+  claudeAgent: "Claude",
+  codex: "Codex",
+};
+
+function voicesOf(lane: LensLane): readonly Voice[] {
+  const seats = lane.seats ?? [];
+  if (seats.length === 0) {
+    return [
+      {
+        seat: lane.id,
+        ...(lane.thread === undefined ? {} : { thread: lane.thread }),
+        ...(lane.status === "running" && lane.latest !== undefined ? { latest: lane.latest } : {}),
+      },
+    ];
+  }
+  return seats.map((seat) => ({
+    seat: seat.seat,
+    ...(seats.length > 1 ? { name: PROVIDER_NAME[seat.provider] } : {}),
+    ...(seat.thread === undefined ? {} : { thread: seat.thread }),
+    ...(lane.status === "running" && seat.latest !== undefined ? { latest: seat.latest } : {}),
+  }));
+}
+
+/** What a voice is saying, and whether it is said quietly (a promise or a lull, not work
+ *  in progress). Read off the arm that HAS the words — never guessed. */
+function speechOf(
+  lane: LensLane,
+  latest: LaneLatest | undefined,
+): { readonly text: string; readonly quiet: boolean } {
   switch (lane.status) {
     case "queued":
       return { text: "queued", quiet: true };
     case "running":
       // No projection yet is its own honest state: the thread exists, nothing has come
       // off it. Saying "reading the change" here would be an invention.
-      if (lane.latest === undefined) return { text: "under way", quiet: true };
-      return { text: lane.latest.text, quiet: lane.latest.kind === "idle" };
+      if (latest === undefined) return { text: "under way", quiet: true };
+      return { text: latest.text, quiet: latest.kind === "idle" };
     case "drafted":
       return { text: "drafted", quiet: false };
     case "done":
@@ -183,40 +227,24 @@ const GAZE_BY_REGISTER: Readonly<Record<Register, string>> = {
   failed: "bg-danger",
 };
 
+/**
+ * One reader: the lane's lantern and mark once, then one line of speech PER SEAT, each
+ * its own control. A lane with one seat (every lens but Flagged) reads exactly as before;
+ * Flagged shows two lines, each naming its speaker, because a Claude seat and a Codex
+ * seat are two voices with two transcripts, not one voice that keeps changing its mind.
+ */
 function Reader({ lane }: { readonly lane: LensLane }) {
-  const openLensThread = useRennetStore((s) => s.uiActions.openLensThread);
-  const setChatOpen = useRennetStore((s) => s.uiActions.setChatOpen);
-  const openThread = useRennetStore((s) => s.ui.lensThread);
   const register = registerOf(lane);
-  const speech = speechOf(lane);
   const Mark = MARKS[lane.id] ?? UnknownMark;
-  const thread = lane.thread;
-  const reading = lane.status === "running" && lane.latest?.kind === "tool";
-  const open = thread !== undefined && openThread?.threadId === thread.threadId;
+  const voices = voicesOf(lane);
+  const reading = lane.status === "running" && voices.some((v) => v.latest?.kind === "tool");
 
   return (
-    <button
-      type="button"
+    <div
       data-row={lane.id}
       data-status={lane.status}
       data-register={register}
-      disabled={thread === undefined}
-      aria-pressed={open}
-      onClick={() => {
-        if (thread === undefined) return;
-        // The dock is opened HERE, not in `openLensThread`: the store action only says
-        // WHICH transcript the slot shows, and the slot is hidden at zero width while
-        // the chat is closed. A reader that pointed the slot at a thread nobody could
-        // see would report "opened" for nothing on screen.
-        openLensThread(thread);
-        setChatOpen(true);
-      }}
-      className={cn(
-        "group flex min-w-36 flex-1 basis-36 cursor-pointer flex-col items-center gap-2 rounded-surface px-2 pb-3 pt-0 text-center transition-colors",
-        "hover:bg-raised focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-accent-line",
-        open && "bg-raised",
-        thread === undefined && "cursor-default hover:bg-transparent",
-      )}
+      className="flex min-w-36 flex-1 basis-36 flex-col items-center gap-2 px-2 pb-3 pt-0 text-center"
     >
       {/* The gaze line: this reader's attention, rising to the slab above. It carries a
           travelling glance ONLY while a tool call is actually in flight — motion that
@@ -246,6 +274,49 @@ function Reader({ lane }: { readonly lane: LensLane }) {
       </span>
 
       <span className="text-sm font-medium text-ink">{lane.label}</span>
+      {voices.map((voice) => (
+        <Speech key={voice.seat} lane={lane} voice={voice} />
+      ))}
+    </div>
+  );
+}
+
+/** One voice's line, and the control that opens that voice's transcript. */
+function Speech({ lane, voice }: { readonly lane: LensLane; readonly voice: Voice }) {
+  const openLensThread = useRennetStore((s) => s.uiActions.openLensThread);
+  const setChatOpen = useRennetStore((s) => s.uiActions.setChatOpen);
+  const openThread = useRennetStore((s) => s.ui.lensThread);
+  const register = registerOf(lane);
+  const speech = speechOf(lane, voice.latest);
+  const thread = voice.thread;
+  const open = thread !== undefined && openThread?.threadId === thread.threadId;
+  return (
+    <button
+      type="button"
+      data-seat={voice.seat}
+      disabled={thread === undefined}
+      aria-pressed={open}
+      onClick={() => {
+        if (thread === undefined) return;
+        // The dock is opened HERE, not in `openLensThread`: the store action only says
+        // WHICH transcript the slot shows, and the slot is hidden at zero width while
+        // the chat is closed. A reader that pointed the slot at a thread nobody could
+        // see would report "opened" for nothing on screen.
+        openLensThread(thread);
+        setChatOpen(true);
+      }}
+      className={cn(
+        "flex w-full cursor-pointer flex-col items-center gap-0.5 rounded-control px-1 py-1 transition-colors",
+        "hover:bg-raised focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-accent-line",
+        open && "bg-raised",
+        thread === undefined && "cursor-default hover:bg-transparent",
+      )}
+    >
+      {voice.name !== undefined && (
+        <span className="text-2xs font-medium uppercase tracking-wide text-ink-faint">
+          {voice.name}
+        </span>
+      )}
       <span
         data-speech={speech.quiet ? "quiet" : "live"}
         className={cn(
@@ -358,19 +429,42 @@ export interface PreparationBenchProps {
 
 export function PreparationBench({ session, preparation, review }: PreparationBenchProps) {
   const refreshSessions = useRefreshCommand("session.list");
+  const refreshBoards = useRefreshCommand("board.read");
   const cancel = useMutation("session.cancelPreparation", { invalidates: ["session.list"] });
   const retry = useMutation("session.retryPreparation", { invalidates: ["session.list"] });
   const active = preparation.status === "capturing" || preparation.status === "drafting";
+  const lanes = "lanes" in preparation ? preparation.lanes : undefined;
+
+  // THE BOARDS, as they land. A lane that has settled with a board reveals that board on
+  // the bench at once, beneath the readers, without waiting for its siblings (the spec's
+  // "boards replace their presence as they settle"). Read through the SAME per-lens
+  // `board.read` seam the workspace's `LensBoardView` uses — one cache key per (review,
+  // generation, lens), so the workspace that replaces the bench pays nothing again. The
+  // generation is the initial one: the bench is the FIRST frame, before any round.
+  const reviewId = review?.id ?? "";
+  const generation = review === undefined ? "" : generationIdForPatchset(review.activePatchsetId);
+  const boards = useLensBoardResolutions(reviewId, generation);
+  const settled = (lanes ?? []).filter(
+    (lane) => lane.status === "drafted" || lane.status === "done",
+  );
+  // A settled lane whose board has not answered yet: the draft is on disk a beat before
+  // `board.read` has been asked again, so the poll below re-asks until it lands.
+  const awaitingBoard = settled.some((lane) => {
+    const read = boards[lane.id as LensKind];
+    return read !== undefined && (read.status === "missing" || read.status === "pending");
+  });
 
   useEffect(() => {
     if (!active) return;
-    const timer = window.setInterval(refreshSessions, 400);
+    const timer = window.setInterval(() => {
+      refreshSessions();
+      if (awaitingBoard) refreshBoards();
+    }, 400);
     return () => window.clearInterval(timer);
-  }, [active, refreshSessions]);
+  }, [active, awaitingBoard, refreshBoards, refreshSessions]);
 
   const failed = preparation.status === "failed";
   const cancelled = preparation.status === "cancelled";
-  const lanes = "lanes" in preparation ? preparation.lanes : undefined;
   const coverage = "coverage" in preparation ? preparation.coverage : undefined;
   const branch = session.claim?.branch;
   const files = review?.patchsets.find((set) => set.id === review.activePatchsetId)?.files.length;
@@ -428,6 +522,27 @@ export function PreparationBench({ session, preparation, review }: PreparationBe
           ))}
         </div>
       )}
+
+      {/* THE BOARDS THAT HAVE LANDED — each settled lens's board, readable now, in lane
+          order. The reader above stays as the way back to that lens's transcript. A lane
+          that settled without a board (absent, failed) has its account on the reader. */}
+      {settled.map((lane) => {
+        const read = boards[lane.id as LensKind];
+        if (read?.status !== "valid") return null;
+        return (
+          <section
+            key={lane.id}
+            data-bench-board={lane.id}
+            className="rounded-window border border-line bg-surface px-8 py-6"
+          >
+            <LensBoardDocument
+              reviewId={reviewId}
+              board={read.board}
+              forceOpen={lane.id === "flagged" ? true : undefined}
+            />
+          </section>
+        );
+      })}
 
       {coverage !== undefined && (
         <p

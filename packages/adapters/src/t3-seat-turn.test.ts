@@ -85,7 +85,11 @@ describe("createT3SeatTurn", () => {
     });
     await createT3SeatTurn(seam, options)("P", 0);
     expect(order).toEqual(["thread", "turn"]);
-    expect(onThread).toHaveBeenCalledWith("design", { threadId: "t-design", projectId: "p1" });
+    expect(onThread).toHaveBeenCalledWith(
+      "design",
+      { threadId: "t-design", projectId: "p1" },
+      "claudeAgent",
+    );
   });
 
   it("records ONE metric per turn, and a repair's usage is its own, not the session's total", async () => {

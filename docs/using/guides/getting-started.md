@@ -155,13 +155,17 @@ is lit only while that seat is actually working, and a line of what it is doing
 right now, read straight off that seat's own thread — the file it is reading,
 the command it is running, or the last thing it said. A seat that has gone quiet
 says so instead of freezing on its last line. A settled reader turns green and
-shows what its board came back with; a failed reader turns red and speaks the
-reason it failed, rather than spinning forever.
+its board opens on the bench right beneath the readers, readable at once while
+the other seats keep working — you do not wait for the slowest lens to read the
+fastest one's board. A failed reader turns red and speaks the reason it failed,
+rather than spinning forever.
 
-Every reader is also a control: activating one opens that seat's full transcript
-in the chat slot, read-only, and it keeps streaming while the seat runs. A
-reader whose seat has not opened a thread yet is inert rather than pretending to
-have one.
+Every reader's line is also a control: activating it opens that seat's full
+transcript in the chat slot, read-only, and it keeps streaming while the seat
+runs. Flagged has two seats, one on Claude and one on Codex, so it speaks two
+lines, each under its speaker's name, and each opens its own transcript. A line
+whose seat has not opened a thread yet is inert rather than pretending to have
+one.
 
 You can leave the bench without stopping the work, or cancel and retry it in
 place. A failed capture or board generation keeps the session and names the
