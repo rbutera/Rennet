@@ -1,6 +1,8 @@
+import type { PromptContextFile } from "@rennet/prompts";
 import type { CiFailure, RspTokenUsage } from "@rennet/protocol";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { refineCiFailures } from "./ci-refinement";
+import type { TurnContextWriter } from "./harness-run-turn";
 import { createInvocationBudget } from "./invocation-budget";
 
 const deterministic: CiFailure = {
@@ -20,7 +22,49 @@ const uncertain: CiFailure = {
   classifiedBy: "deterministic",
 };
 
+/** The directory the fake writer answers with; the prompt's pointer path is built on it. */
+const CONTEXT_DIR = ".rennet/context/sess_test";
+
+let contextWrites: PromptContextFile[] = [];
+const writeContext: TurnContextWriter = (files) => {
+  contextWrites = [...contextWrites, ...files];
+  return CONTEXT_DIR;
+};
+const names = () => contextWrites.map((file) => file.name);
+const bodyOf = (name: string) => contextWrites.find((file) => file.name === name)?.body;
+
+beforeEach(() => {
+  contextWrites = [];
+});
+
 describe("refineCiFailures", () => {
+  it("writes the pointer file naming each failure's evidence — the WRITER call", async () => {
+    await refineCiFailures({
+      failures: [deterministic, uncertain],
+      changedPaths: ["packages/core/src/pipeline.ts", "packages/server/src/ci-signal.ts"],
+      writeContext,
+      runTurn: async () => ({ status: "failed", message: "not the subject here" }),
+    });
+    // Paths inside the pointer file resolve beside it, which is where it says they do.
+    expect(bodyOf("ci-pointers.json")).toBe(
+      JSON.stringify({
+        turn: "ci-failure-classification",
+        pathsRelativeTo: "this file's directory",
+        changedPaths: "ci-classification/changed-paths.txt",
+        failures: [
+          {
+            ref: "failure-1",
+            checkName: "acceptance",
+            evidence: "ci-classification/evidence/failure-1.txt",
+          },
+        ],
+      }),
+    );
+    expect(bodyOf("ci-classification/changed-paths.txt")).toBe(
+      "packages/core/src/pipeline.ts\npackages/server/src/ci-signal.ts\n",
+    );
+  });
+
   it("refines only unclassified failures, stamps model, and meters one shared-budget turn", async () => {
     const budget = createInvocationBudget(1);
     const tokens: RspTokenUsage = {
@@ -32,8 +76,15 @@ describe("refineCiFailures", () => {
       total: 13,
     };
     const runTurn = vi.fn(async (prompt: string) => {
-      expect(prompt).not.toContain('"checkName":"core:test"');
-      expect(prompt).toContain('"checkName":"acceptance"');
+      // The prompt names the pointer file and carries no failure data at all — the
+      // check names, the evidence and the changed paths are files the turn reads.
+      expect(prompt).toContain(`${CONTEXT_DIR}/ci-pointers.json`);
+      expect(prompt).not.toContain("acceptance");
+      expect(prompt).not.toContain("snapshot mismatch");
+      // Only the UNCLASSIFIED failure's evidence is offered; the deterministic one is
+      // settled and pays for nothing.
+      expect(bodyOf("ci-classification/evidence/failure-1.txt")).toBe("snapshot mismatch");
+      expect(names()).not.toContain("ci-classification/evidence/failure-0.txt");
       return {
         status: "emitted" as const,
         body: { classifications: [{ ref: "failure-1", verdict: "change-caused" }] },
@@ -44,6 +95,7 @@ describe("refineCiFailures", () => {
       failures: [deterministic, uncertain],
       changedPaths: ["packages/core/src/pipeline.ts"],
       runTurn,
+      writeContext,
       budget,
     });
     expect(result.failures).toEqual([
@@ -65,6 +117,7 @@ describe("refineCiFailures", () => {
     const result = await refineCiFailures({
       failures: [uncertain],
       changedPaths: ["packages/core/src/pipeline.ts"],
+      writeContext,
       runTurn: async () => ({
         status: "emitted",
         body: { classifications: [{ ref: "failure-0", verdict: "environmental" }] },
@@ -79,6 +132,7 @@ describe("refineCiFailures", () => {
     const result = await refineCiFailures({
       failures: [deterministic, uncertain, second],
       changedPaths: ["packages/core/src/pipeline.ts"],
+      writeContext,
       runTurn: async () => ({
         status: "emitted",
         body: {
@@ -98,6 +152,7 @@ describe("refineCiFailures", () => {
     const result = await refineCiFailures({
       failures: [deterministic, uncertain],
       changedPaths: ["packages/core/src/pipeline.ts"],
+      writeContext,
       runTurn: async () => ({
         status: "emitted",
         body: {
@@ -118,6 +173,7 @@ describe("refineCiFailures", () => {
       failures: [uncertain],
       changedPaths: [],
       runTurn,
+      writeContext,
       budget,
     });
     expect(result.failures).toEqual([uncertain]);
@@ -134,11 +190,13 @@ describe("refineCiFailures", () => {
     const failed = await refineCiFailures({
       failures: [uncertain],
       changedPaths: [],
+      writeContext,
       runTurn: async () => ({ status: "failed", message: "seat unavailable" }),
     });
     const thrown = await refineCiFailures({
       failures: [uncertain],
       changedPaths: [],
+      writeContext,
       runTurn: async () => {
         throw new Error("spawn failed");
       },

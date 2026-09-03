@@ -79,27 +79,35 @@ describe("verification turn executes the code (gated real turn, #259)", () => {
       if (!adapter) return;
 
       const root = makeBuggyRepo();
+      // The prompt carries no code at all now (session-context-files): the turn reads a
+      // pointer file inside the repo it is rooted at, then opens the code itself. So the
+      // file has to be THERE — this write is the live half of the pointer contract.
+      const pointersPath = ".rennet/context/sess_real/verification/f1.json";
+      mkdirSync(join(root, ".rennet", "context", "sess_real", "verification"), {
+        recursive: true,
+      });
+      writeFileSync(
+        join(root, pointersPath),
+        JSON.stringify({
+          turn: "finding-verification",
+          ref: "f1",
+          read: {
+            path: "src/sum.js",
+            startLine: 1,
+            endLine: 6,
+            how: "the working tree at your working directory",
+          },
+          anchoredHunk: { path: "src/sum.js", side: "new", startLine: 2, endLine: 2 },
+        }),
+      );
       const prompt = renderFindingVerificationPrompt(FINDING_VERIFICATION_CONTRACT, {
-        file: {
-          path: "src/sum.js",
-          startLine: 1,
-          endLine: 6,
-          text: [
-            "function sum(nums) {",
-            "  let total = nums[0].valueOf();",
-            "  for (let i = 1; i < nums.length; i++) total += nums[i];",
-            "  return total;",
-            "}",
-            "module.exports = { sum };",
-          ].join("\n"),
-        },
+        pointersPath,
         findings: [
           {
             ref: "f1",
             severity: "high",
             summary:
               "sum([]) throws instead of returning 0 — nums[0] is undefined and .valueOf() dereferences it",
-            hunk: "+  let total = nums[0].valueOf();",
           },
         ],
       });
