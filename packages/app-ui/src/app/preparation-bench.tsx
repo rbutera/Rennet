@@ -512,7 +512,11 @@ export function PreparationBench({ session, preparation, review }: PreparationBe
       data-screen="session-preparation"
       data-status={preparation.status}
       role={failed ? "alert" : "status"}
-      className="mx-auto flex h-full w-full max-w-4xl flex-col justify-center gap-8 p-8"
+      // `min-h-full` with SAFE centring, not `h-full` + `justify-center`: once the revealed
+      // boards make the bench taller than its pane, plain centring pushes the overflow out
+      // of BOTH ends and the top half (the slab and the first readers) is clipped where no
+      // scroll can reach it (drive 1.6, third run: four of five readers off-screen).
+      className="mx-auto flex min-h-full w-full max-w-4xl flex-col justify-center-safe gap-8 p-8"
     >
       {/* THE SLAB — the change under review, the centrepiece the readers look at. */}
       <div className="flex flex-col gap-3 rounded-window border border-line bg-surface p-6">
