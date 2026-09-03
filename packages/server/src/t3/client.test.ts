@@ -3,7 +3,14 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { connectT3, modelSelection, type T3Client } from "./client";
+import {
+  awaitTurnSettled,
+  connectT3,
+  modelSelection,
+  type OrchestrationThread,
+  type OrchestrationThreadStreamItem,
+  type T3Client,
+} from "./client";
 import { type RunningSidecar, resolveSidecarBundle, spawnSidecar, stopSidecar } from "./sidecar";
 import {
   bindThread,
@@ -292,10 +299,179 @@ describe.skipIf(!bundle || process.platform !== "darwin")(
         title: "dead claude",
         modelSelection: modelSelection("claudeAgent", "claude-sonnet-5"),
       });
-      await client.startTurn({ threadId, text: "say hi", outputSchema: { type: "object" } });
-      const outcome = await client.waitForTurnSettled(threadId, { startTimeoutMs: 15_000 });
+      const first = await client.startTurn({
+        threadId,
+        text: "say hi",
+        outputSchema: { type: "object" },
+      });
+      expect(first.previousTurnId).toBeNull();
+      const outcome = await client.waitForTurnSettled(threadId, {
+        after: first,
+        startTimeoutMs: 15_000,
+      });
       expect(outcome.state).toBe("error");
       expect(outcome.errorMessage).toMatch(/stream failed|Claude/i);
+      // A dead provider registers no turn at all, so the wait names the session, and the
+      // failure it names was recorded after this start, not before it.
+      expect(outcome.thread.latestTurn).toBeNull();
+      expect(Date.parse(outcome.thread.session?.updatedAt ?? "")).toBeGreaterThanOrEqual(
+        Date.parse(first.requestedAt),
+      );
+      // What this cannot stage: a SECOND turn on this thread. The sidecar's next write to
+      // the exited `claude` child raises an unhandled EPIPE that kills the sidecar (socket
+      // close 1006, the same death the ubuntu runner sees), so the previous-turn scoping
+      // is proven over fakes in the `awaitTurnSettled` block below, not here.
     }, 30_000);
   },
 );
+
+// The settle wait over fakes: the thread projection and the stream are scripted, so the
+// cases the real bundle cannot stage without a live model (a repair on a thread that
+// already holds a settlement, a stale session error) run deterministically.
+describe("awaitTurnSettled", () => {
+  type Item = OrchestrationThreadStreamItem;
+  const T0 = "2026-09-03T10:00:00.000Z";
+
+  function pushable() {
+    const queue: Item[] = [];
+    let wake: (() => void) | null = null;
+    const iterable: AsyncIterable<Item> = {
+      [Symbol.asyncIterator]: () => ({
+        async next() {
+          for (;;) {
+            const item = queue.shift();
+            if (item !== undefined) return { value: item, done: false as const };
+            await new Promise<void>((resolve) => {
+              wake = resolve;
+            });
+          }
+        },
+        async return() {
+          return { value: undefined, done: true as const };
+        },
+      }),
+    };
+    return {
+      iterable,
+      push(item: Item) {
+        queue.push(item);
+        wake?.();
+        wake = null;
+      },
+    };
+  }
+
+  const fakeThread = (over: Record<string, unknown>): OrchestrationThread =>
+    ({
+      id: "t",
+      latestTurn: null,
+      session: null,
+      activities: [],
+      messages: [],
+      checkpoints: [],
+      ...over,
+    }) as unknown as OrchestrationThread;
+  const settledActivity = (turnId: string, payload: unknown) => ({
+    id: `a-${turnId}`,
+    tone: "info",
+    kind: "turn.settled",
+    summary: "Turn settled",
+    payload,
+    turnId,
+    createdAt: T0,
+  });
+  const event = (type: string): Item => ({ kind: "event", event: { type } }) as unknown as Item;
+  const tick = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+  /** A projection the test moves forward; every subscription opens on its current state. */
+  function projection(initial: OrchestrationThread) {
+    let current = initial;
+    let stream = pushable();
+    return {
+      set: (thread: OrchestrationThread) => {
+        current = thread;
+      },
+      push: (item: Item) => stream.push(item),
+      deps: {
+        subscribeThread: () => {
+          stream = pushable();
+          stream.push({ kind: "snapshot", snapshot: { thread: current } } as unknown as Item);
+          return stream.iterable;
+        },
+        readThread: async () => current,
+      },
+    };
+  }
+
+  it("waits for ITS turn: the settlement already on the thread is the previous turn's", async () => {
+    const drafted = fakeThread({
+      latestTurn: { turnId: "turn-1", state: "completed" },
+      activities: [settledActivity("turn-1", { structuredOutput: { old: true } })],
+    });
+    const p = projection(drafted);
+    // Control: unscoped, the wait answers at once with the drafting turn — the bug.
+    await expect(awaitTurnSettled("t", p.deps)).resolves.toMatchObject({
+      turnId: "turn-1",
+      structuredOutput: { old: true },
+    });
+
+    const wait = awaitTurnSettled("t", p.deps, {
+      after: { previousTurnId: "turn-1", requestedAt: T0 },
+    });
+    await tick();
+    p.set(fakeThread({ latestTurn: { turnId: "turn-2", state: "running" } }));
+    p.push(event("thread.turn.started"));
+    await tick();
+    p.set(
+      fakeThread({
+        latestTurn: { turnId: "turn-2", state: "completed" },
+        activities: [
+          settledActivity("turn-1", { structuredOutput: { old: true } }),
+          settledActivity("turn-2", { structuredOutput: { repaired: true } }),
+        ],
+      }),
+    );
+    p.push(event("thread.activity-appended"));
+    await expect(wait).resolves.toMatchObject({
+      turnId: "turn-2",
+      structuredOutput: { repaired: true },
+    });
+  });
+
+  it("ignores a session failure recorded before the turn was requested", async () => {
+    const stale = fakeThread({
+      session: {
+        status: "stopped",
+        activeTurnId: null,
+        lastError: "old stream failed",
+        updatedAt: "2026-09-03T09:59:00.000Z",
+      },
+    });
+    const p = projection(stale);
+    // Control: unscoped, the stale error is the answer.
+    await expect(awaitTurnSettled("t", p.deps)).resolves.toMatchObject({
+      errorMessage: "old stream failed",
+    });
+
+    const wait = awaitTurnSettled("t", p.deps, {
+      after: { previousTurnId: null, requestedAt: T0 },
+      startTimeoutMs: 2_000,
+    });
+    await tick();
+    p.set(
+      fakeThread({
+        session: {
+          status: "error",
+          activeTurnId: null,
+          lastError: "new stream failed",
+          updatedAt: "2026-09-03T10:00:00.050Z",
+        },
+      }),
+    );
+    p.push(event("thread.session.updated"));
+    await expect(wait).resolves.toMatchObject({
+      state: "error",
+      errorMessage: "new stream failed",
+    });
+  });
+});

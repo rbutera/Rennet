@@ -41,16 +41,22 @@ export interface T3SettledTurn {
   };
 }
 
+/** What starting a turn saw before dispatch; the wait uses it to tell the new turn from the last. */
+export interface T3TurnStart {
+  readonly previousTurnId: string | null;
+  readonly requestedAt: string;
+}
+
 /** The daemon's T3 client, narrowed to what a seat turn uses. */
 export interface T3SeatClient {
   readonly startTurn: (input: {
     readonly threadId: string;
     readonly text: string;
     readonly outputSchema?: unknown;
-  }) => Promise<void>;
+  }) => Promise<T3TurnStart>;
   readonly waitForTurnSettled: (
     threadId: string,
-    options?: { readonly signal?: AbortSignal },
+    options?: { readonly signal?: AbortSignal; readonly after?: T3TurnStart },
   ) => Promise<T3SettledTurn>;
 }
 
@@ -226,14 +232,18 @@ export function createT3SeatTurn(
       const thread = await seam.threadFor({ seat, provider, model });
       seam.onThread?.(seat, thread);
       const client = await seam.client();
-      await client.startTurn({
+      const start = await client.startTurn({
         threadId: thread.threadId,
         text: prompt,
         // Once per turn, as the turn's structured-output contract, shaped for the provider
         // that will validate it. Never in the text.
         outputSchema: outputSchemaFor(provider, options.outputSchema),
       });
+      // Scoped to THIS start: on a repair the thread still shows the drafting turn settled
+      // until the provider reports the new one, and an unscoped wait would answer with
+      // the old board in milliseconds while the repair ran unwatched.
       const settled = await client.waitForTurnSettled(thread.threadId, {
+        after: start,
         ...(options.signal === undefined ? {} : { signal: options.signal }),
       });
       const cumulative = cumulativeUsage(settled.usage, settled.totalCostUsd);

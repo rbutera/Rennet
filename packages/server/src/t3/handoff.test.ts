@@ -7,6 +7,8 @@ import type { ThreadBinding, ThreadBindingKey } from "./threads";
 // consumes. Driven with a stub client so the mapping is the thing under test; the wire
 // itself is proven by client.test.ts against the real bundle.
 
+const START = { previousTurnId: "turn-0", requestedAt: "2026-09-03T10:00:00.000Z" };
+
 const thread = (
   state: "completed" | "error" | "interrupted",
   messages: OrchestrationThread["messages"] = [],
@@ -24,7 +26,7 @@ function stubs(
   outcome: TurnOutcome,
   diff = { diff: "--- a\n+++ b\n", files: [{ path: "src/x.ts" }] },
 ) {
-  const startTurn = vi.fn(async () => undefined);
+  const startTurn = vi.fn(async () => START);
   const client = {
     startTurn,
     waitForTurnSettled: vi.fn(async () => outcome),
@@ -65,6 +67,8 @@ describe("runHandoffTurn", () => {
       title: "a",
     });
     expect(startTurn).toHaveBeenCalledWith({ threadId: "t1", text: "WORK ORDER" });
+    // The wait is scoped to this start: the review's thread keeps its earlier handoffs.
+    expect(client.waitForTurnSettled).toHaveBeenCalledWith("t1", { after: START });
     expect(outcome).toEqual({
       status: "completed",
       finalText: "Done: renamed x.",

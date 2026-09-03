@@ -9,10 +9,13 @@ import {
 import { createMetricsCollector } from "./turn-metrics";
 
 // The seat leg maps a settled T3 turn onto the harness turn result the drafting ladder
-// already consumes. Driven with a stub client so the mapping is the thing under test; the
-// wire is proven by packages/server/src/t3/client.test.ts against the real bundle.
+// already consumes. Driven with a stub client so the mapping is the thing under test.
+// packages/server/src/t3/client.test.ts proves the wire against the real bundle: connect,
+// project, thread, and the settle wait on a provider that dies at the stream. No test
+// drives a live model turn (that would spend the user's subscription).
 
 const SCHEMA = { type: "object" } as const;
+const START = { previousTurnId: null, requestedAt: "2026-09-03T10:00:00.000Z" };
 
 const settled = (over: Partial<T3SettledTurn> = {}): T3SettledTurn => ({
   turnId: "turn-1",
@@ -23,7 +26,10 @@ const settled = (over: Partial<T3SettledTurn> = {}): T3SettledTurn => ({
 
 function stubs(outcomes: T3SettledTurn[]) {
   const startTurn = vi.fn(
-    async (input: { threadId: string; text: string; outputSchema?: unknown }) => void input,
+    async (input: { threadId: string; text: string; outputSchema?: unknown }) => {
+      void input;
+      return START;
+    },
   );
   let call = 0;
   const client = {
@@ -51,7 +57,7 @@ const options = {
 
 describe("createT3SeatTurn", () => {
   it("runs every attempt on the SAME thread, attaching the schema once per turn", async () => {
-    const { seam, startTurn, threadFor } = stubs([settled({ structuredOutput: { a: 1 } })]);
+    const { seam, client, startTurn, threadFor } = stubs([settled({ structuredOutput: { a: 1 } })]);
     const runTurn = createT3SeatTurn(seam, options);
 
     expect(await runTurn("BASE PROMPT", 0)).toEqual({
@@ -69,6 +75,12 @@ describe("createT3SeatTurn", () => {
     expect(startTurn.mock.calls.map((call) => call[0])).toEqual([
       { threadId: "t-design", text: "BASE PROMPT", outputSchema: SCHEMA },
       { threadId: "t-design", text: "REPAIR POINTERS", outputSchema: SCHEMA },
+    ]);
+    // Each wait is scoped to ITS start, or the repair would read the drafting turn's
+    // settlement off the thread and answer with the old board.
+    expect(client.waitForTurnSettled.mock.calls.map((call) => call[1])).toEqual([
+      { after: START },
+      { after: START },
     ]);
     // The contract travels ONCE, as the schema. Never restated in the text (AGENTS.md).
     for (const [call] of startTurn.mock.calls) {

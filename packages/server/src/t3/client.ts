@@ -91,6 +91,29 @@ export interface TurnOutcome extends TurnSettlement {
   readonly thread: OrchestrationThread;
 }
 
+/** What `startTurn` saw before it dispatched, so the wait can tell the new turn from the last one. */
+export interface TurnStart {
+  /** The thread's latest turn when this one was requested; `null` on a fresh thread. */
+  readonly previousTurnId: string | null;
+  /** The start command's own stamp. A session error recorded before it is an earlier turn's. */
+  readonly requestedAt: string;
+}
+
+export interface WaitForTurnOptions {
+  readonly signal?: AbortSignal;
+  readonly settlementGraceMs?: number;
+  /** How long a requested turn may take to APPEAR before the wait gives up. */
+  readonly startTimeoutMs?: number;
+  /**
+   * The start this wait belongs to. T3 flips `latestTurn` to `running` only when the
+   * provider's `turn.started` is ingested, asynchronously after the start command has
+   * replied, so the first snapshot after a repair still shows the PREVIOUS turn settled
+   * with its `turn.settled` activity. Without this the wait answers at once with the old
+   * turn's result and the new one runs unwatched.
+   */
+  readonly after?: TurnStart;
+}
+
 export interface TurnDiff {
   readonly turnId: string;
   readonly turnCount: number;
@@ -107,7 +130,7 @@ export interface T3Client {
   readonly createThread: (input: CreateThreadInput) => Promise<string>;
   /** Delete a thread and its transcript. A thread the sidecar no longer has is not an error. */
   readonly deleteThread: (threadId: string) => Promise<void>;
-  readonly startTurn: (input: StartTurnInput) => Promise<void>;
+  readonly startTurn: (input: StartTurnInput) => Promise<TurnStart>;
   readonly interruptTurn: (threadId: string) => Promise<void>;
   readonly respondApproval: (
     threadId: string,
@@ -127,12 +150,7 @@ export interface T3Client {
    */
   readonly waitForTurnSettled: (
     threadId: string,
-    options?: {
-      readonly signal?: AbortSignal;
-      readonly settlementGraceMs?: number;
-      /** How long a requested turn may take to APPEAR before the wait gives up. */
-      readonly startTimeoutMs?: number;
-    },
+    options?: WaitForTurnOptions,
   ) => Promise<TurnOutcome>;
   readonly readTurnDiff: (threadId: string, turnId: string) => Promise<TurnDiff>;
   readonly close: () => Promise<void>;
@@ -266,9 +284,13 @@ export async function connectT3(options: T3ClientOptions): Promise<T3Client> {
       });
     },
     startTurn: async (input) => {
+      // Read before dispatching: the reply does not name the turn the server mints, and
+      // the projection keeps showing the last turn until the provider reports the new one.
+      const previousTurnId = (await readThread(input.threadId)).latestTurn?.turnId ?? null;
+      const stamped = stamp();
       await dispatch({
         type: "thread.turn.start",
-        ...stamp(),
+        ...stamped,
         threadId: ThreadId.make(input.threadId),
         message: {
           messageId: MessageId.make(randomUUID()),
@@ -281,6 +303,7 @@ export async function connectT3(options: T3ClientOptions): Promise<T3Client> {
         runtimeMode: input.runtimeMode ?? FULL_ACCESS,
         interactionMode: "default",
       });
+      return { previousTurnId, requestedAt: stamped.createdAt };
     },
     interruptTurn: async (threadId) => {
       await dispatch({
@@ -300,77 +323,8 @@ export async function connectT3(options: T3ClientOptions): Promise<T3Client> {
     },
     subscribeThread,
     readThread,
-    waitForTurnSettled: async (threadId, options = {}) => {
-      const iterator = subscribeThread(threadId)[Symbol.asyncIterator]();
-      const abort = new Promise<never>((_, reject) => {
-        options.signal?.addEventListener("abort", () => reject(new Error("aborted")), {
-          once: true,
-        });
-      });
-      // The lifecycle transition and the `turn.settled` activity are two writes; the
-      // lifecycle one can land first. This is how long we keep reading for the activity
-      // AFTER the turn has settled before answering without it.
-      const graceMs = options.settlementGraceMs ?? 3_000;
-      // A provider stream that dies BEFORE its turn registers (drive 1.6, 2026-09-03: every
-      // Claude seat, "Claude runtime stream failed.") leaves no turn at all: T3 stops the
-      // session with `lastError` and, by upstream design, emits no turn lifecycle. Waiting
-      // on `latestTurn` alone then never returns and the lane spins forever. So a session
-      // that has stopped or errored with no turn in flight settles the wait as a failed
-      // turn carrying that error, and a turn that never appears at all gives up after
-      // `startTimeoutMs` with a message that says so.
-      const startTimeoutMs = options.startTimeoutMs ?? 120_000;
-      const startedWaitingAt = Date.now();
-      const sessionFailure = (thread: OrchestrationThread | undefined): string | undefined => {
-        const session = thread?.session;
-        if (!session || session.activeTurnId !== null) return undefined;
-        if (session.status !== "stopped" && session.status !== "error") return undefined;
-        return session.lastError ?? undefined;
-      };
-      try {
-        let thread: OrchestrationThread | undefined;
-        let settledAtMs: number | undefined;
-        for (;;) {
-          const next = await Promise.race([iterator.next(), abort]);
-          if (next.done)
-            throw new Error(`T3 thread ${threadId} stream ended before the turn settled`);
-          const item = next.value;
-          if (item.kind === "snapshot") thread = item.snapshot.thread;
-          // Events do not carry the whole projection; re-read on the ones that end a turn.
-          if (item.kind === "event" && /turn|session|settled|activity/.test(item.event.type)) {
-            thread = await readThread(threadId);
-          }
-          const latest = thread?.latestTurn;
-          if (!latest || latest.state === "running") {
-            const failure = sessionFailure(thread);
-            if (failure !== undefined && (!latest || latest.state !== "running")) {
-              return {
-                turnId: latest?.turnId ?? `${threadId}:session`,
-                state: "error",
-                thread: thread as OrchestrationThread,
-                errorMessage: failure,
-              };
-            }
-            if (!latest && Date.now() - startedWaitingAt > startTimeoutMs) {
-              throw new Error(
-                `T3 thread ${threadId} never started the requested turn within ${Math.round(startTimeoutMs / 1000)} s (session ${thread?.session?.status ?? "unknown"})`,
-              );
-            }
-            continue;
-          }
-          const settlement = readTurnSettlement(thread as OrchestrationThread, latest.turnId);
-          settledAtMs ??= Date.now();
-          if (settlement === undefined && Date.now() - settledAtMs < graceMs) continue;
-          return {
-            turnId: latest.turnId,
-            state: latest.state,
-            thread: thread as OrchestrationThread,
-            ...(settlement ?? {}),
-          };
-        }
-      } finally {
-        await iterator.return?.();
-      }
-    },
+    waitForTurnSettled: (threadId, options) =>
+      awaitTurnSettled(threadId, { subscribeThread, readThread }, options),
     readTurnDiff: async (threadId, turnId) => {
       const thread = await readThread(threadId);
       const checkpoint = thread.checkpoints.find((c) => c.turnId === turnId);
@@ -391,6 +345,98 @@ export async function connectT3(options: T3ClientOptions): Promise<T3Client> {
     },
   };
   return api;
+}
+
+/** The two reads the settle wait needs; the client supplies them over the socket, tests supply fakes. */
+export interface TurnWaitDeps {
+  readonly subscribeThread: (threadId: string) => AsyncIterable<OrchestrationThreadStreamItem>;
+  readonly readThread: (threadId: string) => Promise<OrchestrationThread>;
+}
+
+/** `T3Client.waitForTurnSettled`, over its two reads. */
+export async function awaitTurnSettled(
+  threadId: string,
+  deps: TurnWaitDeps,
+  options: WaitForTurnOptions = {},
+): Promise<TurnOutcome> {
+  const iterator = deps.subscribeThread(threadId)[Symbol.asyncIterator]();
+  const abort = new Promise<never>((_, reject) => {
+    options.signal?.addEventListener("abort", () => reject(new Error("aborted")), {
+      once: true,
+    });
+  });
+  // The lifecycle transition and the `turn.settled` activity are two writes; the
+  // lifecycle one can land first. This is how long we keep reading for the activity
+  // AFTER the turn has settled before answering without it.
+  const graceMs = options.settlementGraceMs ?? 3_000;
+  // A provider stream that dies BEFORE its turn registers (drive 1.6, 2026-09-03: every
+  // Claude seat, "Claude runtime stream failed.") leaves no turn at all: T3 stops the
+  // session with `lastError` and, by upstream design, emits no turn lifecycle. Waiting
+  // on `latestTurn` alone then never returns and the lane spins forever. So a session
+  // that has stopped or errored with no turn in flight settles the wait as a failed
+  // turn carrying that error, and a turn that never appears at all gives up after
+  // `startTimeoutMs` with a message that says so.
+  const startTimeoutMs = options.startTimeoutMs ?? 120_000;
+  const startedWaitingAt = Date.now();
+  const after = options.after;
+  /** The turn this wait is for: the latest one, unless it is the one already there at the start. */
+  const currentTurn = (thread: OrchestrationThread | undefined) => {
+    const latest = thread?.latestTurn;
+    return latest && latest.turnId !== after?.previousTurnId ? latest : undefined;
+  };
+  const sessionFailure = (thread: OrchestrationThread | undefined): string | undefined => {
+    const session = thread?.session;
+    if (!session || session.activeTurnId !== null) return undefined;
+    if (session.status !== "stopped" && session.status !== "error") return undefined;
+    // Recorded before this turn was requested: an earlier turn's failure, not ours.
+    if (after !== undefined && Date.parse(session.updatedAt) < Date.parse(after.requestedAt)) {
+      return undefined;
+    }
+    return session.lastError ?? undefined;
+  };
+  try {
+    let thread: OrchestrationThread | undefined;
+    let settledAtMs: number | undefined;
+    for (;;) {
+      const next = await Promise.race([iterator.next(), abort]);
+      if (next.done) throw new Error(`T3 thread ${threadId} stream ended before the turn settled`);
+      const item = next.value;
+      if (item.kind === "snapshot") thread = item.snapshot.thread;
+      // Events do not carry the whole projection; re-read on the ones that end a turn.
+      if (item.kind === "event" && /turn|session|settled|activity/.test(item.event.type)) {
+        thread = await deps.readThread(threadId);
+      }
+      const latest = currentTurn(thread);
+      if (!latest || latest.state === "running") {
+        const failure = sessionFailure(thread);
+        if (failure !== undefined && latest?.state !== "running") {
+          return {
+            turnId: latest?.turnId ?? `${threadId}:session`,
+            state: "error",
+            thread: thread as OrchestrationThread,
+            errorMessage: failure,
+          };
+        }
+        if (!latest && Date.now() - startedWaitingAt > startTimeoutMs) {
+          throw new Error(
+            `T3 thread ${threadId} never started the requested turn within ${Math.round(startTimeoutMs / 1000)} s (session ${thread?.session?.status ?? "unknown"})`,
+          );
+        }
+        continue;
+      }
+      const settlement = readTurnSettlement(thread as OrchestrationThread, latest.turnId);
+      settledAtMs ??= Date.now();
+      if (settlement === undefined && Date.now() - settledAtMs < graceMs) continue;
+      return {
+        turnId: latest.turnId,
+        state: latest.state,
+        thread: thread as OrchestrationThread,
+        ...(settlement ?? {}),
+      };
+    }
+  } finally {
+    await iterator.return?.();
+  }
 }
 
 /**

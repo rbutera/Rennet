@@ -45,8 +45,11 @@ export async function runHandoffTurn(
     title: basename(input.repoRoot) || "review",
   });
   const client = await deps.client();
-  await client.startTurn({ threadId: binding.threadId, text: input.prompt });
+  const start = await client.startTurn({ threadId: binding.threadId, text: input.prompt });
+  // Scoped to this start: the review's thread keeps its earlier handoffs, so an unscoped
+  // wait would answer a second handoff with the first one's settlement.
   const outcome = await client.waitForTurnSettled(binding.threadId, {
+    after: start,
     ...(input.signal ? { signal: input.signal } : {}),
   });
   // The diff is T3's checkpoint for that turn. A turn that produced no checkpoint (nothing
