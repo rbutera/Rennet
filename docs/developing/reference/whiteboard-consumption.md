@@ -80,11 +80,11 @@ artifact delta, and host-grounded coverage. `HostBoardSchema` and
 `DraftBoardSchema` validate this data, but the document is not a fourteenth
 whiteboard element and does not enter the board event log as an op.
 
-A source ref carries a repo-relative path and may add its stable discovery
-candidate id, label, and line. Candidate identity disambiguates two selected
-artifact sets that share a file; it does not replace the path the editor opens.
-Design decisions stated by an artifact carry `inferred: false` and that exact
-source. Sparse decisions may honestly leave evidence or alternatives empty.
+A source ref carries a repo-relative path and may add a label and a line. Boards
+drafted before the spec respec also carry a `candidate` id, which disambiguated
+two discovered artifact sets sharing a file; it never replaced the path the editor
+opens, and nothing writes it now. Design decisions stated by a specification carry
+`inferred: false` and that exact source. Sparse decisions may honestly leave evidence or alternatives empty.
 
 The file keeps two honest layers, matching the kit's own doctrine that authoring
 is convenience and the wire is truth:
@@ -148,10 +148,11 @@ before announcing the board. `board.read` combines it with the event-log
 projection, so a restart preserves the authored title and introduction rather
 than reconstructing them from section elements.
 
-A successful no-material result has no board or board-meta row. Its durable home
-is the generation's `absentLenses` map. `board.read` pairs `board: null` with the
-`no-material` code for that case, keeping it distinct from a board that has not
-arrived yet.
+A successful absence has no board or board-meta row. Its durable home is the
+generation's `absentLenses` map. `board.read` pairs `board: null` with that reason
+code, keeping it distinct from a board that has not arrived yet. Design's reason is
+`no-spec` — the branch has no specification to read — and the finished board views
+drop the Design tab rather than showing an empty board.
 
 A drafter that fails also has no board row. The generation records the reason in
 `failedLenses` and, when the failing path named one, its typed account in

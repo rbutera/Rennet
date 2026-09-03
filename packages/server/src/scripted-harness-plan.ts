@@ -21,7 +21,6 @@ const SCRIPTED_HARNESS_VERSION = "685-scripted-v1";
 type ScriptedProvider = "claude-code" | "codex";
 
 const PATCHSET_PLAN_VALUE = `\${patchsetId}`;
-const CANDIDATE_PLAN_VALUE = `\${candidateId}`;
 const ASK_PLAN_VALUE = `\${askId}`;
 /** Whole-string placeholder: becomes the round's ACTUAL evidence-manifest ids (#727).
  *  The ids are content-derived from the coding turn's diff, so a scripted plan cannot
@@ -194,26 +193,6 @@ function findPatchsetId(value: unknown): string | undefined {
   return undefined;
 }
 
-function findCandidateId(value: unknown): string | undefined {
-  if (typeof value !== "object" || value === null) return undefined;
-  if ("candidates" in value && Array.isArray(value.candidates)) {
-    const first = value.candidates[0];
-    if (
-      typeof first === "object" &&
-      first !== null &&
-      "id" in first &&
-      typeof first.id === "string"
-    ) {
-      return first.id;
-    }
-  }
-  for (const nested of Array.isArray(value) ? value : Object.values(value)) {
-    const found = findCandidateId(nested);
-    if (found !== undefined) return found;
-  }
-  return undefined;
-}
-
 function findDispatchedAskId(value: unknown): string | undefined {
   if (typeof value !== "object" || value === null) return undefined;
   if ("dispatchedAsks" in value && Array.isArray(value.dispatchedAsks)) {
@@ -256,7 +235,6 @@ function substitutePlanValues(
   value: unknown,
   values: {
     readonly patchsetId: string;
-    readonly candidateId?: string;
     readonly askId?: string;
     readonly evidenceIds?: readonly string[];
   },
@@ -267,7 +245,6 @@ function substitutePlanValues(
   if (typeof value === "string") {
     return value
       .replaceAll(PATCHSET_PLAN_VALUE, values.patchsetId)
-      .replaceAll(CANDIDATE_PLAN_VALUE, values.candidateId ?? CANDIDATE_PLAN_VALUE)
       .replaceAll(ASK_PLAN_VALUE, values.askId ?? ASK_PLAN_VALUE);
   }
   if (Array.isArray(value)) return value.map((item) => substitutePlanValues(item, values));
@@ -346,20 +323,13 @@ function completedOutcome(
     };
   }
   const needsPatchset = containsPlanValue(step.output, PATCHSET_PLAN_VALUE);
-  const needsCandidate = containsPlanValue(step.output, CANDIDATE_PLAN_VALUE);
   const needsAsk = containsPlanValue(step.output, ASK_PLAN_VALUE);
   const needsEvidence = containsPlanValue(step.output, EVIDENCE_IDS_PLAN_VALUE);
   const context =
-    needsPatchset || needsCandidate || needsAsk || needsEvidence
-      ? jsonLayer(prompt, CONTEXT_PREFIX)
-      : undefined;
+    needsPatchset || needsAsk || needsEvidence ? jsonLayer(prompt, CONTEXT_PREFIX) : undefined;
   const patchsetId = context === undefined ? "" : findPatchsetId(context);
   if (needsPatchset && patchsetId === undefined) {
     throw new Error(`scripted harness step ${step.id} could not resolve the current patchset id`);
-  }
-  const candidateId = context === undefined ? undefined : findCandidateId(context);
-  if (needsCandidate && candidateId === undefined) {
-    throw new Error(`scripted harness step ${step.id} could not resolve the current candidate id`);
   }
   const askId = context === undefined ? undefined : findDispatchedAskId(context);
   if (needsAsk && askId === undefined) {
@@ -375,7 +345,6 @@ function completedOutcome(
       finalText: "",
       structuredOutput: substitutePlanValues(step.output, {
         patchsetId: patchsetId ?? "",
-        ...(candidateId === undefined ? {} : { candidateId }),
         ...(askId === undefined ? {} : { askId }),
         ...(evidenceIds === undefined ? {} : { evidenceIds }),
       }),

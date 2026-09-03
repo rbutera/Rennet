@@ -2,21 +2,18 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
 import type {
-  DesignArtifactSet,
   MetricsCollector,
   ProviderTurnSettlement,
   T3SeatSeam,
   WhiteboardClient,
 } from "@rennet/adapters";
-import { councilSeatTurn, fitDesignArtifactsToBytes } from "@rennet/adapters";
+import { councilSeatTurn } from "@rennet/adapters";
 import {
   type CodexExecutor,
   carriedElementIds,
   composeFindingRound,
   DEFAULT_SEAT_LABELS,
   type DeltaPacket,
-  type DesignTaskProgressSource,
-  deriveDesignTaskProgress,
   type ElementReference,
   elementReferences,
   type FindingResolution,
@@ -31,7 +28,6 @@ import {
   lintReviewDraft,
   NO_CONCERN_ANSWER,
   type Omission,
-  parseDesignSourceObligations,
   type RegisterLintContext,
   reconcileFindingsWithProvenance,
   stampDeltas,
@@ -80,7 +76,6 @@ import {
   type Violation,
 } from "@rennet/protocol";
 import { z } from "zod";
-import { T3_TURN_INPUT_MAX_CHARS } from "../t3/client";
 import type { SeatKind as BoardSeatId } from "../t3/threads";
 import { projectRoundReportBoard } from "./lens-board-read";
 import {
@@ -176,18 +171,26 @@ const RoundReportClassificationSchema = z
   .strict();
 type RoundReportClassification = z.infer<typeof RoundReportClassificationSchema>;
 let cachedRoundReportClassificationSchema: unknown;
-const DesignNoMaterialSchema = z.object({
-  absence: z.literal("no-material"),
-  candidates: z.array(
-    z.object({
-      id: z.string().min(1),
-      relevance: z.enum(["changed-artifact", "references-changed-path", "repository-candidate"]),
-      reason: z.string().trim().min(1),
-    }),
-  ),
-});
-const DesignDraftOutputSchema = z.union([DraftBoardSchema, DesignNoMaterialSchema]);
+/**
+ * Design's absence return (session-bound-workspace D6). The seat finds the specification
+ * this branch was written against in the checkout it is standing in; when the repository
+ * holds none it returns this instead of a board. There is nothing to account for — the
+ * host offers no candidate bundle any more — so the shape is the reason alone.
+ */
+const DesignNoSpecSchema = z.object({ absence: z.literal("no-spec") });
+const DesignDraftOutputSchema = z.union([DraftBoardSchema, DesignNoSpecSchema]);
 let cachedDesignDraftSchema: unknown;
+
+/**
+ * The Design seat's `no-spec` return, or `undefined` for anything else. A parseable board
+ * always wins: a return that is BOTH is a board, so a seat cannot draft and claim absence
+ * in the same breath.
+ */
+function designNoSpecAbsence(output: unknown): { readonly absence: "no-spec" } | undefined {
+  if (DraftBoardSchema.safeParse(output).success) return undefined;
+  return DesignNoSpecSchema.safeParse(output).success ? { absence: "no-spec" } : undefined;
+}
+
 /**
  * The JSON-schema view of the frozen `DraftBoardSchema`, derived once (never
  * hand-authored — reconciliation 2/F4). Passed to the harness session as the
@@ -853,7 +856,6 @@ export function renderDrafterPrompt(
   promptText: string,
   packet: DeltaPacket,
   reportBoard?: DraftBoard,
-  designArtifacts?: DesignArtifactSet,
   round?: RoundDraftContext,
   options?: {
     /**
@@ -871,7 +873,6 @@ export function renderDrafterPrompt(
     deltaPacket: { ...packet, hunks: undefined },
     // On rounds the round-report drafts FIRST and is the lens drafters' input (D3/R58).
     ...(reportBoard === undefined ? {} : { roundReport: reportBoard }),
-    ...(designArtifacts === undefined ? {} : { designArtifacts }),
     ...(round === undefined
       ? {}
       : {
@@ -928,32 +929,6 @@ export function renderDrafterPrompt(
     return `${renderLayer("payload", promptText)}\n\n${renderLayer("context", context)}`;
   }
   return `${renderLayer("payload", promptText)}\n\n${renderLayer("task", task)}\n\n${renderLayer("context", context)}`;
-}
-
-/** What `renderDrafterPrompt` adds around the bundle's own JSON: the key and its comma. */
-const DESIGN_ARTIFACTS_KEY_CHARS = ',"designArtifacts":'.length;
-
-/**
- * Fit the design bundle to the room the drafter prompt has left under the T3 seat's
- * input cap. T3 accepts `thread.turn.start` and refuses an input over
- * `T3_TURN_INPUT_MAX_CHARS` afterwards, on the reactor's fiber, where the refusal is an
- * activity and no turn ever starts (drive 1.6, both runs, 2026-09-03: the Design seat's
- * 241,848-character prompt — 103k of hunk inventory plus a 126k bundle — while the five
- * seats without a bundle sat at 110k and ran). Discovery bounds the bundle at 512 KiB,
- * four times the cap, so this is the bound at the interpolation: the same trimming order
- * and the same `omitted*` / `truncated` markers as discovery, with `limits` naming the
- * budget. Everything else in the prompt keeps its size; when THAT alone overflows, no fit
- * can help, and the seat fails fast on the sidecar's own refusal instead.
- *
- * The cap counts characters; the fit counts UTF-8 bytes, which is never fewer.
- */
-export function fitDesignArtifactsToPrompt(
-  designArtifacts: DesignArtifactSet,
-  promptWithoutBundle: string,
-  maxChars: number = T3_TURN_INPUT_MAX_CHARS,
-): DesignArtifactSet {
-  const room = maxChars - promptWithoutBundle.length - DESIGN_ARTIFACTS_KEY_CHARS;
-  return fitDesignArtifactsToBytes(designArtifacts, Math.max(0, room));
 }
 
 /**
@@ -1282,10 +1257,6 @@ export interface LensPipelineDeps {
   readonly round?: RoundDraftContext;
   /** Per-lens lint context the caller assembles (changed regions, files, patchsetId…). */
   readonly lintContextFor: (lens: LintTarget) => LintContext;
-  /** Undefined keeps the legacy drafter-owned discovery path; null is a successful no-spec result. */
-  readonly designArtifacts?: DesignArtifactSet | null;
-  /** Pinned discovery failed before drafting. Settles Design only; sibling lenses still run. */
-  readonly designArtifactFailure?: string;
   /** Read a prompt file's text (node fs seam; hermetic in tests). */
   readonly readPrompt: PromptReader;
   /**
@@ -1709,18 +1680,21 @@ function bodyOr(result: HarnessTurnResult, fallback: unknown): unknown {
   return result.status === "emitted" ? result.body : fallback;
 }
 
-class GroundedDesignAbsenceSignal extends Error {
+class DesignNoSpecSignal extends Error {
   constructor() {
-    super("The Design candidate set was dismissed with grounded no-material evidence.");
-    this.name = "GroundedDesignAbsenceSignal";
+    super("The Design seat found no specification for this branch.");
+    this.name = "DesignNoSpecSignal";
   }
 }
 
 /**
  * The lenses whose admissible absence is NOT provable by an empty board. Design admits
- * `no-material`, but only a grounded dismissal of its candidate set proves it — an empty
+ * `no-spec`, but only the seat's own `{ absence: "no-spec" }` return proves it — an empty
  * Design board is a drafting failure, so the design row of the protocol table is
- * deliberately absent from {@link EMPTY_LENS_ABSENCE} below.
+ * deliberately absent from {@link EMPTY_LENS_ABSENCE} below. Design's legacy `no-material`
+ * keeps old generations readable and is never settled now, which is the second reason the
+ * row cannot be derived: the map answers "which absence does empty mean?" and Design's
+ * answer is "none".
  */
 const EMPTY_BOARD_PROVES_NO_ABSENCE: ReadonlySet<LensKind> = new Set(["design"]);
 
@@ -1791,21 +1765,21 @@ function draftOneLens(
   seatTurn: (prompt: string, attempt: number) => Promise<HarnessTurnResult>,
   ctx: LintContext,
   retryCap: number,
-  transformOutput: (output: unknown) => unknown,
-  initialAbsence: (output: unknown) => { readonly absence: "no-material" } | undefined,
+  transformOutput: ((output: unknown) => unknown) | undefined,
+  initialAbsence: (output: unknown) => { readonly absence: "no-spec" } | undefined,
   options?: DraftLensOptions,
-): Promise<DraftedLens | LensDraftFailure | { readonly absence: "no-material" }>;
+): Promise<DraftedLens | LensDraftFailure | { readonly absence: "no-spec" }>;
 async function draftOneLens(
   basePrompt: string,
   seatTurn: (prompt: string, attempt: number) => Promise<HarnessTurnResult>,
   ctx: LintContext,
   retryCap: number,
-  transformOutput: (output: unknown) => unknown = (output) => output,
+  transformOutput: ((output: unknown) => unknown) | undefined = (output) => output,
   initialAbsenceOrOptions?:
-    | ((output: unknown) => { readonly absence: "no-material" } | undefined)
+    | ((output: unknown) => { readonly absence: "no-spec" } | undefined)
     | DraftLensOptions,
   maybeOptions?: DraftLensOptions,
-): Promise<DraftedLens | LensDraftFailure | { readonly absence: "no-material" }> {
+): Promise<DraftedLens | LensDraftFailure | { readonly absence: "no-spec" }> {
   const initialAbsence =
     typeof initialAbsenceOrOptions === "function" ? initialAbsenceOrOptions : undefined;
   const options =
@@ -1839,7 +1813,7 @@ async function draftOneLens(
     // `everParsed` alone would report "produced zero elements in the emitted board"
     // about a board no seat ever emitted.
     let anyEmitted = emitted;
-    let retryAbsence: { readonly absence: "no-material" } | undefined;
+    let retryAbsence: { readonly absence: "no-spec" } | undefined;
     let validated: Awaited<ReturnType<typeof validateDraft>>;
     try {
       validated = await validateDraft(transformedFirst, ctx, {
@@ -1869,7 +1843,7 @@ async function draftOneLens(
             );
             if (retry.status === "emitted") {
               retryAbsence = initialAbsence?.(retry.body);
-              if (retryAbsence !== undefined) throw new GroundedDesignAbsenceSignal();
+              if (retryAbsence !== undefined) throw new DesignNoSpecSignal();
               anyEmitted = true;
               firstEmittedWasEmpty ??= isTrulyEmptyDraft(transformOutput(retry.body));
             }
@@ -1878,7 +1852,7 @@ async function draftOneLens(
             // honest omission. Never a wipe (returning an empty board would drop passers).
             return transformOutput(bodyOr(retry, req.draft));
           } catch (error) {
-            if (error instanceof GroundedDesignAbsenceSignal) throw error;
+            if (error instanceof DesignNoSpecSignal) throw error;
             // A THROWN retry (a live-harness crash mid-loop) degrades the same way —
             // keep the draft, let the loop escalate; one crashed retry is not fatal.
             return req.draft;
@@ -1886,7 +1860,7 @@ async function draftOneLens(
         },
       });
     } catch (error) {
-      if (error instanceof GroundedDesignAbsenceSignal && retryAbsence !== undefined) {
+      if (error instanceof DesignNoSpecSignal && retryAbsence !== undefined) {
         return retryAbsence;
       }
       throw error;
@@ -2490,7 +2464,6 @@ async function runLegacyRoundReport(
     `${promptText}\n\n${LEGACY_ROUND_REPORT_NOTE}`,
     deps.deltaPacket,
     undefined,
-    undefined,
     deps.round,
     // The reviewed-range task line would name a second, contradicting range
     // for a report seat.
@@ -2591,543 +2564,6 @@ interface ValidatedLike {
 /** A validated lens result plus the provider-return fact that authorizes clean absence. */
 interface DraftedLens extends ValidatedLike {
   readonly initialOutputWasEmpty: boolean;
-}
-
-function discoveredArtifacts(set: DesignArtifactSet | null | undefined): readonly {
-  readonly candidate: string;
-  readonly format: DesignArtifactSet["candidates"][number]["format"];
-  readonly path: string;
-  readonly text: string;
-  readonly role: string;
-  readonly truncated: boolean;
-  readonly sourceBytes: number;
-}[] {
-  if (set == null) return [];
-  return set.candidates.flatMap((candidate) =>
-    candidate.artifacts.map((artifact) => ({
-      candidate: candidate.id,
-      format: candidate.format,
-      path: artifact.path,
-      text: artifact.content,
-      role: artifact.role,
-      truncated: artifact.truncated,
-      sourceBytes: artifact.sourceBytes,
-    })),
-  );
-}
-
-function designArtifactBundleIncomplete(set: DesignArtifactSet | null | undefined): boolean {
-  if (set == null) return false;
-  return (
-    set.omittedCandidateCount > 0 ||
-    set.omittedChangedPathCount > 0 ||
-    set.candidates.some(
-      (candidate) =>
-        candidate.omittedArtifactCount > 0 ||
-        candidate.nameTruncated ||
-        candidate.artifacts.some((artifact) => artifact.truncated),
-    )
-  );
-}
-
-function designArtifactCandidates(set: DesignArtifactSet | null | undefined): readonly {
-  readonly id: string;
-  readonly name: string;
-  readonly format: DesignArtifactSet["candidates"][number]["format"];
-  readonly paths: readonly string[];
-  readonly relevance: DesignArtifactSet["candidates"][number]["relevance"]["kind"];
-}[] {
-  if (set == null) return [];
-  return set.candidates
-    .map((candidate) => ({
-      id: candidate.id,
-      name: candidate.name,
-      format: candidate.format,
-      paths: [...new Set(candidate.artifacts.map((artifact) => artifact.path))],
-      relevance: candidate.relevance.kind,
-    }))
-    .filter((candidate) => candidate.paths.length > 0);
-}
-
-type DiscoveredDesignArtifact = ReturnType<typeof discoveredArtifacts>[number];
-
-interface TaskProjectionSource {
-  readonly artifact: DiscoveredDesignArtifact;
-  readonly progress: DesignTaskProgressSource;
-}
-
-function designSourceKey(candidate: string, path: string): string {
-  return `${candidate}\u0000${path}`;
-}
-
-function sourceCandidate(
-  source: { readonly candidate?: unknown },
-  artifacts: DesignArtifactSet,
-): string | undefined {
-  if (typeof source.candidate === "string") return source.candidate;
-  return artifacts.candidates.length === 1 ? artifacts.candidates[0]?.id : undefined;
-}
-
-function selectedTaskProjectionSources(
-  board: DraftBoard,
-  artifacts: DesignArtifactSet,
-): readonly TaskProjectionSource[] {
-  const selectedArtifacts = selectedProjectionArtifacts(board, artifacts);
-
-  const progress = deriveDesignTaskProgress(
-    selectedArtifacts.map((artifact) => ({
-      candidate: artifact.candidate,
-      format: artifact.format,
-      role: artifact.role,
-      path: artifact.path,
-      text: artifact.text,
-    })),
-  );
-  return progress.sources.flatMap((sourceProgress) => {
-    const artifact = selectedArtifacts.find(
-      (candidate) =>
-        candidate.candidate === sourceProgress.source.candidate &&
-        candidate.path === sourceProgress.source.path,
-    );
-    return artifact === undefined ? [] : [{ artifact, progress: sourceProgress }];
-  });
-}
-
-function selectedProjectionArtifacts(
-  board: DraftBoard,
-  artifacts: DesignArtifactSet,
-): readonly DiscoveredDesignArtifact[] {
-  const selected = new Set(
-    (board.document?.sources ?? []).flatMap((source) => {
-      const candidate = sourceCandidate(source, artifacts);
-      return candidate === undefined ? [] : [designSourceKey(candidate, source.path)];
-    }),
-  );
-  const discovered = discoveredArtifacts(artifacts);
-  return discovered.filter((artifact) =>
-    selected.has(designSourceKey(artifact.candidate, artifact.path)),
-  );
-}
-
-function normalizedTaskText(value: unknown): string | undefined {
-  return typeof value === "string" ? value.replace(/\s+/g, " ").trim() : undefined;
-}
-
-const HOST_OWNED_DESIGN_FIELDS = [
-  "task_progress",
-  "scenario_clauses",
-  "requirement_refs",
-  "acceptance_criteria",
-  "task_manifest",
-  "glossary_term",
-  "source_cells",
-  "status",
-] as const;
-
-function stripDesignHostClaims(board: DraftBoard): DraftBoard {
-  return {
-    ...board,
-    elements: board.elements.map((element) => {
-      const data = { ...(element.data as Record<string, unknown>) };
-      for (const field of HOST_OWNED_DESIGN_FIELDS) delete data[field];
-      return { ...element, data } as DraftElement;
-    }),
-  };
-}
-
-function taskStatDocument(
-  document: DraftBoard["document"],
-  done: number,
-  total: number,
-): DraftBoard["document"] {
-  if (document === undefined) return document;
-  const stats = document.stats ?? [];
-  const taskIndex = stats.findIndex((stat) => stat.label.toLowerCase() === "tasks");
-  const withoutTasks = stats.filter((stat) => stat.label.toLowerCase() !== "tasks");
-  if (total === 0) {
-    const withoutStats = { ...document };
-    delete withoutStats.stats;
-    return withoutTasks.length === 0 ? withoutStats : { ...withoutStats, stats: withoutTasks };
-  }
-  const taskStat = { label: "Tasks", value: `${done}/${total}` };
-  const next = [...withoutTasks];
-  next.splice(taskIndex < 0 ? next.length : Math.min(taskIndex, next.length), 0, taskStat);
-  return { ...document, stats: next };
-}
-
-function sourceLinksArtifact(
-  element: DraftElement,
-  artifact: DiscoveredDesignArtifact,
-  artifacts: DesignArtifactSet,
-): boolean {
-  if (element.kind !== "section") return false;
-  const sources = (element.data as { sources?: unknown }).sources;
-  if (!Array.isArray(sources)) return false;
-  return sources.some((value) => {
-    if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
-    const source = value as { path?: unknown; candidate?: unknown };
-    return (
-      source.path === artifact.path && sourceCandidate(source, artifacts) === artifact.candidate
-    );
-  });
-}
-
-export function projectDesignTaskProgress(
-  input: DraftBoard,
-  artifacts: DesignArtifactSet,
-): DraftBoard {
-  const board = stripDesignHostClaims(input);
-  const selectedArtifacts = selectedProjectionArtifacts(board, artifacts);
-  const sources = selectedTaskProjectionSources(board, artifacts);
-  const byId = new Map(board.elements.map((element) => [element.id, element]));
-  const parentByChild = new Map<string, string>();
-  for (const element of board.elements) {
-    if (element.kind !== "section") continue;
-    for (const child of element.data.children) {
-      if (!parentByChild.has(child)) parentByChild.set(child, element.id);
-    }
-  }
-  const topologyDescendants = (roots: readonly DraftElement[]): DraftElement[] => {
-    const ordered: DraftElement[] = [];
-    const seen = new Set<string>();
-    const visit = (id: string): void => {
-      if (seen.has(id)) return;
-      seen.add(id);
-      const element = byId.get(id);
-      if (element === undefined) return;
-      ordered.push(element);
-      if (element.kind !== "section") return;
-      for (const child of element.data.children) visit(child);
-    };
-    for (const root of roots) {
-      if (root.kind !== "section") continue;
-      for (const child of root.data.children) visit(child);
-    }
-    return ordered;
-  };
-
-  const taskProgress = new Map<string, Record<string, unknown>>();
-  const sourceMetadata = new Map<string, Record<string, unknown>>();
-  const addSourceMetadata = (id: string, metadata: Record<string, unknown>): void => {
-    sourceMetadata.set(id, { ...sourceMetadata.get(id), ...metadata });
-  };
-  const scenarioClauses = new Map<
-    string,
-    { readonly condition: string; readonly response: string }
-  >();
-  for (const requirement of board.elements) {
-    if (requirement.kind !== "requirement") continue;
-    const data = requirement.data as {
-      shall?: unknown;
-      scenarios?: unknown;
-      source?: { path?: unknown; candidate?: unknown; line?: unknown };
-    };
-    if (typeof data.shall !== "string") continue;
-    const sourcePath = data.source?.path;
-    const candidate = sourceCandidate(data.source ?? {}, artifacts);
-    if (typeof sourcePath !== "string" || candidate === undefined) continue;
-    const artifact = selectedArtifacts.find(
-      (entry) => entry.candidate === candidate && entry.path === sourcePath,
-    );
-    if (artifact === undefined) continue;
-    const obligations = parseDesignSourceObligations({
-      format: artifact.format,
-      role: artifact.role,
-      path: artifact.path,
-      text: artifact.text,
-    });
-    const sourceRequirement = obligations.find(
-      (obligation) =>
-        obligation.kind === "requirement" &&
-        normalizedTaskText(obligation.text) === normalizedTaskText(data.shall) &&
-        (typeof data.source?.line !== "number" || obligation.line === data.source.line),
-    );
-    if (sourceRequirement?.kind !== "requirement") continue;
-    if (sourceRequirement.status !== undefined) {
-      addSourceMetadata(requirement.id, { status: sourceRequirement.status });
-    }
-    if (!Array.isArray(data.scenarios)) continue;
-    const sourceScenarios = obligations.filter(
-      (obligation) =>
-        obligation.kind === "scenario" && obligation.parentKey === sourceRequirement.key,
-    );
-    for (const scenarioId of data.scenarios) {
-      if (typeof scenarioId !== "string") continue;
-      const scenario = byId.get(scenarioId);
-      if (scenario?.kind !== "prose") continue;
-      const sourceScenario = sourceScenarios.find(
-        (obligation) =>
-          normalizedTaskText(obligation.text) === normalizedTaskText(scenario.data.markdown),
-      );
-      if (sourceScenario?.kind !== "scenario" || sourceScenario.clauses === undefined) continue;
-      scenarioClauses.set(scenarioId, sourceScenario.clauses);
-    }
-  }
-
-  for (const renderedDecision of board.elements) {
-    if (renderedDecision.kind !== "decision") continue;
-    const data = renderedDecision.data as {
-      statement?: unknown;
-      source?: { path?: unknown; candidate?: unknown; line?: unknown };
-    };
-    if (typeof data.statement !== "string") continue;
-    const sourcePath = data.source?.path;
-    const candidate = sourceCandidate(data.source ?? {}, artifacts);
-    if (typeof sourcePath !== "string" || candidate === undefined) continue;
-    const artifact = selectedArtifacts.find(
-      (entry) => entry.candidate === candidate && entry.path === sourcePath,
-    );
-    if (artifact === undefined) continue;
-    const sourceDecision = parseDesignSourceObligations({
-      format: artifact.format,
-      role: artifact.role,
-      path: artifact.path,
-      text: artifact.text,
-    }).find(
-      (obligation) =>
-        obligation.kind === "decision" &&
-        normalizedTaskText(obligation.text) === normalizedTaskText(data.statement) &&
-        (typeof data.source?.line !== "number" || obligation.line === data.source.line),
-    );
-    if (sourceDecision?.kind !== "decision" || sourceDecision.sourceCells === undefined) continue;
-    addSourceMetadata(renderedDecision.id, { source_cells: sourceDecision.sourceCells });
-  }
-
-  for (const artifact of selectedArtifacts) {
-    const roots = board.elements.filter(
-      (element) =>
-        !parentByChild.has(element.id) && sourceLinksArtifact(element, artifact, artifacts),
-    );
-    const glossary = parseDesignSourceObligations({
-      format: artifact.format,
-      role: artifact.role,
-      path: artifact.path,
-      text: artifact.text,
-    }).filter((obligation) => obligation.kind === "glossary-term");
-    const prose = topologyDescendants(roots).filter((element) => element.kind === "prose");
-    const used = new Set<string>();
-    for (const obligation of glossary) {
-      const match = prose.find(
-        (element) =>
-          !used.has(element.id) &&
-          normalizedTaskText(element.data.markdown) === normalizedTaskText(obligation.text),
-      );
-      if (match === undefined) continue;
-      used.add(match.id);
-      addSourceMetadata(match.id, {
-        glossary_term: {
-          term: obligation.term,
-          definition: obligation.definition,
-          avoid: obligation.avoid,
-        },
-      });
-    }
-  }
-  let taskDone = 0;
-  let taskTotal = 0;
-
-  for (const source of sources) {
-    const sourceCount = { done: source.progress.done, total: source.progress.total };
-    const roots = board.elements.filter(
-      (element) =>
-        !parentByChild.has(element.id) && sourceLinksArtifact(element, source.artifact, artifacts),
-    );
-    const rootIds = new Set(roots.map(({ id }) => id));
-    const prose = topologyDescendants(roots).filter((element) => element.kind === "prose");
-    const used = new Set<string>();
-    const renderedGroups = new Map<
-      string,
-      {
-        readonly rootId: string;
-        readonly sectionId: string;
-        readonly tasks: DesignTaskProgressSource["tasks"];
-      }
-    >();
-
-    for (const obligation of source.progress.tasks) {
-      const match = prose.find(
-        (element) =>
-          !used.has(element.id) && normalizedTaskText(element.data.markdown) === obligation.text,
-      );
-      if (match === undefined) continue;
-      used.add(match.id);
-      if (obligation.requirementRefs !== undefined) {
-        addSourceMetadata(match.id, { requirement_refs: obligation.requirementRefs });
-      }
-      if (obligation.acceptanceCriteria !== undefined) {
-        addSourceMetadata(match.id, { acceptance_criteria: obligation.acceptanceCriteria });
-      }
-
-      let parent = parentByChild.get(match.id);
-      let nearestSection: string | undefined;
-      let rootId: string | undefined;
-      const visited = new Set<string>();
-      while (parent !== undefined && !visited.has(parent)) {
-        visited.add(parent);
-        if (byId.get(parent)?.kind === "section") {
-          nearestSection ??= parent;
-          if (rootIds.has(parent)) {
-            rootId = parent;
-            break;
-          }
-        }
-        parent = parentByChild.get(parent);
-      }
-      if (rootId === undefined || nearestSection === undefined) continue;
-      const previous = renderedGroups.get(obligation.parentKey);
-      renderedGroups.set(obligation.parentKey, {
-        rootId,
-        sectionId: previous?.sectionId ?? nearestSection,
-        tasks: [...(previous?.tasks ?? []), obligation],
-      });
-    }
-
-    const groupsByRoot = new Map<string, typeof renderedGroups>();
-    for (const [parentKey, group] of renderedGroups) {
-      const groups = groupsByRoot.get(group.rootId) ?? new Map();
-      groups.set(parentKey, group);
-      groupsByRoot.set(group.rootId, groups);
-    }
-    for (const root of roots) {
-      const groups = groupsByRoot.get(root.id) ?? new Map();
-      const grouped = [...groups.values()].some((group) => group.sectionId !== root.id);
-      taskProgress.set(root.id, {
-        kind: "source",
-        format: source.artifact.format,
-        role: source.artifact.role,
-        layout: grouped ? "grouped" : "ungrouped",
-        ...(grouped ? {} : sourceCount),
-      });
-      for (const group of groups.values()) {
-        const manifest = group.tasks.find(
-          (task: DesignTaskProgressSource["tasks"][number]) => task.manifest !== undefined,
-        )?.manifest;
-        if (manifest !== undefined) {
-          addSourceMetadata(group.sectionId, { task_manifest: manifest });
-        }
-      }
-      if (!grouped) continue;
-      for (const [parentKey, group] of groups) {
-        if (group.sectionId === root.id) continue;
-        if (source.progress.format !== "superpowers" || source.artifact.role !== "plan") {
-          taskProgress.set(group.sectionId, { kind: "group", state: "static" });
-          continue;
-        }
-        const complete =
-          source.progress.groups.find((candidate) => candidate.parentKey === parentKey)?.complete ??
-          false;
-        taskProgress.set(group.sectionId, {
-          kind: "group",
-          state: complete ? "complete" : "incomplete",
-        });
-      }
-    }
-
-    taskTotal += sourceCount.total;
-    taskDone += sourceCount.done;
-  }
-
-  return {
-    ...board,
-    document: taskStatDocument(board.document, taskDone, taskTotal),
-    elements: board.elements.map((element) => {
-      const progress = taskProgress.get(element.id);
-      const clauses = scenarioClauses.get(element.id);
-      const metadata = sourceMetadata.get(element.id);
-      if (progress === undefined && clauses === undefined && metadata === undefined) return element;
-      return {
-        ...element,
-        data: {
-          ...(element.data as Record<string, unknown>),
-          ...metadata,
-          ...(progress === undefined ? {} : { task_progress: progress }),
-          ...(clauses === undefined ? {} : { scenario_clauses: clauses }),
-        },
-      } as unknown as DraftElement;
-    }),
-  };
-}
-
-function groundedDesignAbsence(
-  output: unknown,
-  set: DesignArtifactSet,
-): { readonly absence: "no-material" } | undefined {
-  if (designArtifactBundleIncomplete(set)) return undefined;
-  if (DraftBoardSchema.safeParse(output).success) return undefined;
-  const parsed = DesignNoMaterialSchema.safeParse(output);
-  if (!parsed.success || parsed.data.candidates.length !== set.candidates.length) return undefined;
-  const byId = new Map(parsed.data.candidates.map((candidate) => [candidate.id, candidate]));
-  if (byId.size !== set.candidates.length) return undefined;
-  for (const candidate of set.candidates) {
-    const dismissed = byId.get(candidate.id);
-    if (dismissed?.relevance !== candidate.relevance.kind) return undefined;
-  }
-  return { absence: "no-material" };
-}
-
-function containsString(value: unknown, target: string): boolean {
-  if (value === target) return true;
-  if (Array.isArray(value)) return value.some((item) => containsString(item, target));
-  if (typeof value !== "object" || value === null) return false;
-  return Object.values(value as Record<string, unknown>).some((item) =>
-    containsString(item, target),
-  );
-}
-
-/**
- * Coverage and related implementation paths are host-owned evidence. Remove any
- * drafter-authored mapping while the value is still unknown input, before
- * schema/lint and again after the editor pass. A code ref used only by an invented
- * trace goes with it. (The host mapping turn that used to fill these is gone with the
- * coverage gate, D5; the Design respec decides what the seat may claim itself.)
- */
-export function stripDraftedDesignCoverage(output: unknown): unknown {
-  if (typeof output !== "object" || output === null || Array.isArray(output)) return output;
-  const record = output as Record<string, unknown>;
-  if (!Array.isArray(record.elements)) return output;
-
-  const tracedIds = new Set<string>();
-  const elements = record.elements.map((candidate) => {
-    if (typeof candidate !== "object" || candidate === null || Array.isArray(candidate)) {
-      return candidate;
-    }
-    const element = candidate as Record<string, unknown>;
-    if (
-      element.kind !== "requirement" ||
-      typeof element.data !== "object" ||
-      element.data === null ||
-      Array.isArray(element.data)
-    ) {
-      return candidate;
-    }
-    const data = { ...(element.data as Record<string, unknown>) };
-    if (Array.isArray(data.trace)) {
-      for (const id of data.trace) if (typeof id === "string") tracedIds.add(id);
-    }
-    delete data.coverage;
-    delete data.trace;
-    delete data.tests;
-    delete data.related_files;
-    return { ...element, data };
-  });
-
-  const withoutCoverageOnlyRefs = elements.filter((candidate) => {
-    if (typeof candidate !== "object" || candidate === null || Array.isArray(candidate)) {
-      return true;
-    }
-    const element = candidate as Record<string, unknown>;
-    if (element.kind !== "code_ref" || typeof element.id !== "string") return true;
-    if (!tracedIds.has(element.id)) return true;
-    return elements.some(
-      (other) =>
-        other !== candidate &&
-        typeof other === "object" &&
-        other !== null &&
-        containsString((other as Record<string, unknown>).data, element.id as string),
-    );
-  });
-
-  return { ...record, elements: withoutCoverageOnlyRefs };
 }
 
 /**
@@ -3356,88 +2792,18 @@ async function runLensBoard(
 
 async function draftLensBoard(
   lens: LensKind,
-  lensDeps: LensPipelineDeps,
+  deps: LensPipelineDeps,
   council: CouncilResolveContext,
   spans: ReturnType<typeof createSeatSpans>,
   markPostProcess: () => void,
   reportBoard?: DraftBoard,
 ): Promise<LensBoardOutcome> {
-  if (lens === "design" && lensDeps.designArtifactFailure !== undefined) {
-    return {
-      lens,
-      omissions: [],
-      blemishes: [],
-      immutability: [],
-      failure: lensDeps.designArtifactFailure,
-    };
-  }
-  if (lens === "design" && lensDeps.designArtifacts === null) {
-    return {
-      lens,
-      omissions: [],
-      blemishes: [],
-      immutability: [],
-      absence: "no-material",
-    };
-  }
   const promptText = expandPromptPartials(
-    await lensDeps.readPrompt(LENS_PROMPT_FILES[lens]),
-    await lensDeps.readPrompt(INVESTIGATE_PARTIAL_FILE),
+    await deps.readPrompt(LENS_PROMPT_FILES[lens]),
+    await deps.readPrompt(INVESTIGATE_PARTIAL_FILE),
   );
-  // The bundle the seat is shown is the bundle everything downstream reasons about — the
-  // lint context, the coverage projection, the grounding — so it is fitted once, here, to
-  // the room this prompt has under the seat's input cap, and `deps` carries the fitted set
-  // from this point on.
-  const deps: LensPipelineDeps =
-    lens === "design" && lensDeps.designArtifacts != null
-      ? {
-          ...lensDeps,
-          designArtifacts: fitDesignArtifactsToPrompt(
-            lensDeps.designArtifacts,
-            renderDrafterPrompt(
-              promptText,
-              lensDeps.deltaPacket,
-              reportBoard,
-              undefined,
-              lensDeps.round,
-            ),
-          ),
-        }
-      : lensDeps;
-  const semanticDesignAbsence =
-    lens === "design" && deps.designArtifacts !== undefined && deps.designArtifacts !== null;
-  const basePrompt = renderDrafterPrompt(
-    promptText,
-    deps.deltaPacket,
-    reportBoard,
-    lens === "design" ? (deps.designArtifacts ?? undefined) : undefined,
-    deps.round,
-  );
-  const baseCtx = deps.lintContextFor(lens);
-  const artifacts = lens === "design" ? discoveredArtifacts(deps.designArtifacts) : [];
-  const artifactCandidates =
-    lens === "design" ? designArtifactCandidates(deps.designArtifacts) : [];
-  const ctx: LintContext =
-    artifacts.length > 0
-      ? {
-          ...baseCtx,
-          artifacts,
-          ...(artifactCandidates.length === 0 ? {} : { artifactCandidates }),
-          ...(designArtifactBundleIncomplete(deps.designArtifacts)
-            ? { artifactBundleIncomplete: true }
-            : {}),
-        }
-      : baseCtx;
-  const transformDesignOutput = (output: unknown): unknown => {
-    const withoutCoverage = stripDraftedDesignCoverage(output);
-    if (deps.designArtifacts === undefined || deps.designArtifacts === null) {
-      return withoutCoverage;
-    }
-    const parsed = DraftBoardSchema.safeParse(withoutCoverage);
-    return parsed.success
-      ? projectDesignTaskProgress(parsed.data, deps.designArtifacts)
-      : withoutCoverage;
-  };
+  const basePrompt = renderDrafterPrompt(promptText, deps.deltaPacket, reportBoard, deps.round);
+  const ctx: LintContext = deps.lintContextFor(lens);
 
   // #725 D4 — this lane's repair budget for this whole-board attempt.
   const retryCap = lensRetryBudget(lens, deps.boardAttempt ?? 0);
@@ -3457,7 +2823,7 @@ async function draftLensBoard(
       lens,
       deps,
       council,
-      semanticDesignAbsence ? designDraftOutputSchema() : boardOutputSchema(),
+      lens === "design" ? designDraftOutputSchema() : boardOutputSchema(),
     );
     if ("failure" in resolved) {
       return failedLensOutcome(lens, resolved);
@@ -3466,25 +2832,17 @@ async function draftLensBoard(
       harness: resolved.harness,
       model: resolved.model,
     });
+    // The Design seat finds the spec itself and may return `{ absence: "no-spec" }` instead
+    // of a board (D6). That return is the absence — there is no host bundle left to ground
+    // it against — so it settles the lane on the first turn or on any repair turn.
     const drafted =
-      semanticDesignAbsence && deps.designArtifacts !== undefined && deps.designArtifacts !== null
-        ? await draftOneLens(
-            basePrompt,
-            seat,
-            ctx,
-            retryCap,
-            transformDesignOutput,
-            (output) => groundedDesignAbsence(output, deps.designArtifacts as DesignArtifactSet),
-            { sameThread: deps.t3 !== undefined },
-          )
-        : await draftOneLens(
-            basePrompt,
-            seat,
-            ctx,
-            retryCap,
-            lens === "design" ? transformDesignOutput : undefined,
-            { sameThread: deps.t3 !== undefined },
-          );
+      lens === "design"
+        ? await draftOneLens(basePrompt, seat, ctx, retryCap, undefined, designNoSpecAbsence, {
+            sameThread: deps.t3 !== undefined,
+          })
+        : await draftOneLens(basePrompt, seat, ctx, retryCap, undefined, {
+            sameThread: deps.t3 !== undefined,
+          });
     if ("failure" in drafted) {
       return failedLensOutcome(lens, drafted);
     }
@@ -3520,17 +2878,6 @@ async function draftLensBoard(
         absence,
       };
     }
-  }
-
-  if (lens === "design") {
-    const grounded = stripDraftedDesignCoverage(validated.board) as DraftBoard;
-    validated = {
-      ...validated,
-      board:
-        deps.designArtifacts === undefined || deps.designArtifacts === null
-          ? stripDesignHostClaims(grounded)
-          : projectDesignTaskProgress(grounded, deps.designArtifacts),
-    };
   }
 
   let findingResolutions: readonly FindingResolution[] | undefined;

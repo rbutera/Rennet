@@ -239,7 +239,7 @@ returns to its board. Reloading the URL opens the same selection.
 
 | Board | Question |
 |---|---|
-| Design | What should the change do, and which requirements have evidence? |
+| Design | What was this change supposed to do, according to its own specification? |
 | Sequence | In what order should I read the implementation? |
 | Decisions | Which implementation choices need explanation? |
 | Flagged | Where did automated analysis find a problem or a disagreement? |
@@ -249,8 +249,17 @@ A lens rail shows only the boards present in the selected generation. Reviewing
 a proposal before any code exists gives you Design alone, not four disabled
 segments.
 
+Design reads the specification the branch was written against. Rennet does not
+hand it one: the reader looks through the checkout where specifications live —
+OpenSpec changes, Kiro and BMAD documents, superpowers plans, ADRs, grill-me
+notes — using the branch's own commit messages and pull request body as the
+clue, and it cites the line that ties the document to the branch so you can
+check the link. Repositories without a spec workflow are ordinary, and Rennet
+says so plainly: the bench reads "No spec found for this branch." and the
+finished boards have no Design tab, rather than an empty one.
+
 The board drafter writes each title and short intro. Design uses a wider
-structured measure for artifacts. Sequence, Decisions, Flagged, and Noise use a
+structured measure for specification content. Sequence, Decisions, Flagged, and Noise use a
 narrower reading measure. Sections fold to a one-line gist and unfold to their
 contents; every board opens folded except Flagged, which opens ready to read.
 Folded counts name review objects: findings, decisions, requirements, steps,

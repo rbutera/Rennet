@@ -327,6 +327,13 @@ function absenceCopy(reason: LensAbsenceReason): {
         detail:
           "There is no applicable specification to project into a Design board for this generation.",
       };
+    // Reachable only by opening a `no-spec` Design board directly: the lens list omits
+    // the tab (`lensBoardsFromResolutions`), so the switcher never routes here.
+    case "no-spec":
+      return {
+        title: "No spec found for this branch.",
+        detail: "This branch has no specification document to read the change against.",
+      };
     case "no-decisions":
       return {
         title: "No material engineering decisions were found.",

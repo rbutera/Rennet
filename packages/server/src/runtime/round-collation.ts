@@ -7,7 +7,6 @@
 // these derive the collation universe.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import type { DesignArtifactSet } from "@rennet/adapters";
 import {
   buildDeltaPacket,
   type ChangedRegion,
@@ -411,9 +410,6 @@ export interface BoardRegenerationDeps {
    *  citation past the diff. Rejecting/throwing degrades to the diff-derived
    *  inventories rather than failing the regeneration. */
   readonly fileInventory?: (patchset: Patchset) => Promise<TreeInventories>;
-  /** Deterministic spec discovery at the reviewed state; null is a successful no-spec result.
-   *  A throw settles Design as failed while the other lenses continue. */
-  readonly designArtifactsFor?: (patchset: Patchset) => Promise<DesignArtifactSet | null>;
   /** Re-read the reviewer overlay at the exact Flagged composition boundary. */
   readonly readFindingDispositions?: LensPipelineDeps["readFindingDispositions"];
   /** Persist reviewer-owned finding reattachments before Flagged is written. */
@@ -461,29 +457,6 @@ export interface BoardRegenerationInput {
   readonly signal?: AbortSignal;
 }
 
-type DesignArtifactDiscovery =
-  | { readonly status: "legacy" }
-  | { readonly status: "available"; readonly artifacts: DesignArtifactSet | null }
-  | { readonly status: "unavailable"; readonly reason: string };
-
-/** Preserve the semantic difference between an old host, a completed pinned read,
- *  and a pinned read that failed. Only the old host may use legacy repo discovery. */
-async function discoverDesignArtifactsFor(
-  reader: BoardRegenerationDeps["designArtifactsFor"],
-  patchset: Patchset,
-): Promise<DesignArtifactDiscovery> {
-  if (reader === undefined) return { status: "legacy" };
-  try {
-    return { status: "available", artifacts: await reader(patchset) };
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    return {
-      status: "unavailable",
-      reason: `Design artifact discovery failed for the pinned reviewed tree: ${detail}`,
-    };
-  }
-}
-
 /**
  * Regenerate the lens boards over what the round's worker actually produced.
  *
@@ -528,23 +501,6 @@ export async function runBoardRegeneration(
       tree = await deps.fileInventory?.(successor);
     } catch {
       tree = undefined;
-    }
-    const designDiscovery = await discoverDesignArtifactsFor(deps.designArtifactsFor, successor);
-    let designArtifactInput: Pick<RoundInput, "designArtifacts" | "designArtifactFailure">;
-    switch (designDiscovery.status) {
-      case "legacy":
-        designArtifactInput = {};
-        break;
-      case "available":
-        designArtifactInput = { designArtifacts: designDiscovery.artifacts };
-        break;
-      case "unavailable":
-        designArtifactInput = { designArtifactFailure: designDiscovery.reason };
-        break;
-      default: {
-        const exhaustive: never = designDiscovery;
-        return exhaustive;
-      }
     }
     const collation = assembleRoundCollation({
       patchset: successor,
@@ -620,7 +576,6 @@ export async function runBoardRegeneration(
         }),
         onProgress: deps.emit,
         ...(input.signal === undefined ? {} : { signal: input.signal }),
-        ...designArtifactInput,
         ...collation,
       });
     } catch {

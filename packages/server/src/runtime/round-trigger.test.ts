@@ -1,7 +1,6 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { DESIGN_ARTIFACT_LIMITS } from "@rennet/adapters";
 import { type CodexExecutor, type HarnessPort, lint, lintReviewDraft } from "@rennet/core";
 import {
   currentGenerationId,
@@ -590,105 +589,6 @@ describe("C15 1.5 — the regeneration drafts over the POST-worker patchset", ()
     );
     expect(seen[0]?.lintContextFor("design").patchsetId).toBe("ps-post");
     expect(events.filter((e) => e.type === "failed")).toEqual([]);
-  });
-
-  it("threads deterministic Design discovery over the successor patchset into drafting", async () => {
-    const { deps, seen } = reviewHarness();
-    const artifacts = {
-      changedPaths: ["src/a.ts"],
-      omittedChangedPathCount: 0,
-      candidates: [
-        {
-          id: "candidate-1",
-          format: "openspec",
-          name: "auth-refresh",
-          nameSourceBytes: 12,
-          nameTruncated: false,
-          relevance: {
-            kind: "references-changed-path",
-            paths: ["src/a.ts"],
-            omittedPathCount: 0,
-          },
-          artifacts: [
-            {
-              path: "openspec/changes/auth-refresh/specs/auth/spec.md",
-              role: "requirements",
-              content: "The system SHALL refresh the token.",
-              sourceBytes: 35,
-              truncated: false,
-            },
-          ],
-          omittedArtifactCount: 0,
-        },
-      ],
-      omittedCandidateCount: 0,
-      limits: DESIGN_ARTIFACT_LIMITS,
-    } as const;
-
-    await runBoardRegeneration(
-      {
-        ...deps,
-        designArtifactsFor: async (patchset) => {
-          expect(patchset.id).toBe("ps-post");
-          return artifacts;
-        },
-      },
-      {
-        session,
-        repoRoot: "/repo",
-        priorPatchsetId: "ps-pre",
-        asksDispatched: ["t-1"],
-        worked: WORKED,
-      },
-    );
-
-    expect(seen[0]?.designArtifacts).toBe(artifacts);
-  });
-
-  it("carries pinned Design discovery failure into the round without aborting sibling lenses", async () => {
-    const { deps, seen, events } = reviewHarness();
-    await runBoardRegeneration(
-      {
-        ...deps,
-        designArtifactsFor: async () => {
-          throw new Error("git object disappeared");
-        },
-      },
-      {
-        session,
-        repoRoot: "/repo",
-        priorPatchsetId: "ps-pre",
-        asksDispatched: ["t-1"],
-        worked: WORKED,
-      },
-    );
-
-    expect(seen).toHaveLength(1);
-    expect(seen[0]?.designArtifacts).toBeUndefined();
-    expect(seen[0]?.designArtifactFailure).toBe(
-      "Design artifact discovery failed for the pinned reviewed tree: git object disappeared",
-    );
-    expect(events.filter((event) => event.type === "failed")).toEqual([]);
-  });
-
-  it("reserves null for discovery that successfully proves there is no Design material", async () => {
-    const { deps, seen, events } = reviewHarness();
-    await runBoardRegeneration(
-      {
-        ...deps,
-        designArtifactsFor: async () => null,
-      },
-      {
-        session,
-        repoRoot: "/repo",
-        priorPatchsetId: "ps-pre",
-        asksDispatched: ["t-1"],
-        worked: WORKED,
-      },
-    );
-
-    expect(seen[0]?.designArtifacts).toBeNull();
-    expect(events.filter((event) => event.type === "failed")).toEqual([]);
   });
 
   it("recaptures uncommitted checkpoint work and hands its exact evidence to the report", async () => {

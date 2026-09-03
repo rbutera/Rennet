@@ -223,6 +223,14 @@ const RUN_RECEIPT: RoundRunReceipt = {
   gate: { outcome: "skipped", reason: "not-configured" },
 };
 
+/**
+ * The Design seat's D6 return when the branch has no specification. The absence is the
+ * seat's own claim now — there is no host bundle to settle the lane before drafting —
+ * so every test that wants an absent Design lane drives it through the port.
+ */
+const noSpecBodyFor = (prompt: string): unknown =>
+  lensFromPrompt(prompt) === "design" ? { absence: "no-spec" } : cleanBody(lensFromPrompt(prompt));
+
 function baseDeps(over: Partial<RoundsRuntimeDeps> = {}): RoundsRuntimeDeps {
   return {
     resolveClaudePort: async () => fakeClaudePort(),
@@ -348,7 +356,7 @@ describe("generation lifecycle (append-then-freeze)", () => {
       boards: [
         {
           lens: "design",
-          absence: "no-material",
+          absence: "no-spec",
           omissions: [],
           blemishes: [],
           immutability: [],
@@ -356,7 +364,7 @@ describe("generation lifecycle (append-then-freeze)", () => {
       ],
     });
     expect(gen.lensBoards).toEqual({});
-    expect(gen.absentLenses).toEqual({ design: "no-material" });
+    expect(gen.absentLenses).toEqual({ design: "no-spec" });
   });
 
   it("preserves a typed clean result on the generation", () => {
@@ -407,14 +415,14 @@ describe("generation lifecycle (append-then-freeze)", () => {
   });
 
   it("refuses to persist an absence the lens does not admit, recording a failure (#549)", () => {
-    // `no-material` is Design's absence; Sequence admits none at all. A lens settling
+    // `no-spec` is Design's absence; Sequence admits none at all. A lens settling
     // another lens's absence is a producer defect, and persisting it would make the wrong
     // pairing indistinguishable from a real clean result forever after.
     const gen = withLensBoards(mintGeneration("g", "ps"), {
       boards: [
         {
           lens: "sequence",
-          absence: "no-material",
+          absence: "no-spec",
           omissions: [],
           blemishes: [],
           immutability: [],
@@ -427,7 +435,8 @@ describe("generation lifecycle (append-then-freeze)", () => {
     // this lane has spent none — the attempt count beside it says so. A drafting attempt is
     // exactly what answers a seat that settled an absence its row does not admit.
     expect(gen.failedLensAccounts?.sequence).toEqual({ attempt: 0, classification: "retryable" });
-    expect(lensAdmitsAbsence("sequence", "no-material")).toBe(false);
+    expect(lensAdmitsAbsence("sequence", "no-spec")).toBe(false);
+    expect(lensAdmitsAbsence("design", "no-spec")).toBe(true);
   });
 
   it("clears a durable lens absence when that lens later produces a board", () => {
@@ -435,7 +444,7 @@ describe("generation lifecycle (append-then-freeze)", () => {
       boards: [
         {
           lens: "design",
-          absence: "no-material",
+          absence: "no-spec",
           omissions: [],
           blemishes: [],
           immutability: [],
@@ -1158,12 +1167,13 @@ describe("createRoundsRuntime", () => {
     const generations = new GenerationStore(
       mkdtempSync(join(tmpdir(), "rounds-absence-generation-")),
     );
-    const input = roundInput({ designArtifacts: null });
+    const input = roundInput();
     const first = await createRoundsRuntime(
       baseDeps({
         resolveClaudePort: async () =>
           fakeClaudePort([], (prompt) => {
             const lens = lensFromPrompt(prompt);
+            if (lens === "design") return { absence: "no-spec" };
             if (
               lens === "decisions" ||
               lens === "flagged" ||
@@ -1178,7 +1188,7 @@ describe("createRoundsRuntime", () => {
         loadGeneration: (id) => generations.load(id),
       }),
     ).runRound(input);
-    expect(first.boardGeneration.absentLenses?.design).toBe("no-material");
+    expect(first.boardGeneration.absentLenses?.design).toBe("no-spec");
     expect(first.boardGeneration.absentLenses?.decisions).toBe("no-decisions");
     expect(first.boardGeneration.absentLenses?.flagged).toBe("no-findings");
     expect(first.boardGeneration.lensBoards.sequence).toBeDefined();
@@ -1196,7 +1206,7 @@ describe("createRoundsRuntime", () => {
     ).runRound(input);
 
     expect(recovered.pipeline.boards.find((outcome) => outcome.lens === "design")?.absence).toBe(
-      "no-material",
+      "no-spec",
     );
     expect(recovered.pipeline.boards.find((outcome) => outcome.lens === "flagged")?.absence).toBe(
       "no-findings",
@@ -1204,7 +1214,7 @@ describe("createRoundsRuntime", () => {
     expect(recovered.pipeline.boards.find((outcome) => outcome.lens === "decisions")?.absence).toBe(
       "no-decisions",
     );
-    expect(recovered.boardGeneration.absentLenses?.design).toBe("no-material");
+    expect(recovered.boardGeneration.absentLenses?.design).toBe("no-spec");
     expect(recovered.boardGeneration.absentLenses?.decisions).toBe("no-decisions");
     expect(recovered.boardGeneration.absentLenses?.flagged).toBe("no-findings");
     expect(recovered.boardGeneration.lensBoards.sequence).toBeDefined();
@@ -2401,6 +2411,7 @@ describe("createRoundsRuntime", () => {
     const sessionId = "no-spec-crash";
     const first = createRoundsRuntime(
       baseDeps({
+        resolveClaudePort: async () => fakeClaudePort([], noSpecBodyFor),
         persistBoardMeta: (_repo, meta) => metaStore.save(meta),
         loadDraftedBoards: (_repo, session, generation) =>
           metaStore.listForGeneration(session, generation),
@@ -2418,12 +2429,11 @@ describe("createRoundsRuntime", () => {
       first.runRound(
         roundInput({
           session: { id: sessionId } as RoundInput["session"],
-          designArtifacts: null,
         }),
       ),
     ).rejects.toThrow("crashed after board metadata");
     expect(generationStore.load("gen:ps-1")?.absentLenses).toEqual({
-      design: "no-material",
+      design: "no-spec",
     });
     expect(metaStore.listForGeneration(sessionId, "gen:ps-1").length).toBeGreaterThan(0);
 
@@ -2441,10 +2451,9 @@ describe("createRoundsRuntime", () => {
     const recovered = await restarted.runRound(
       roundInput({
         session: { id: sessionId } as RoundInput["session"],
-        designArtifacts: null,
       }),
     );
-    expect(recovered.boardGeneration.absentLenses).toEqual({ design: "no-material" });
+    expect(recovered.boardGeneration.absentLenses).toEqual({ design: "no-spec" });
     expect(recovered.boardGeneration.lensBoards).not.toHaveProperty("design");
   });
 
@@ -2715,6 +2724,7 @@ describe("createRoundsRuntime", () => {
         resolveClaudePort: async () =>
           fakeClaudePort([], (prompt) => {
             const lens = lensFromPrompt(prompt);
+            if (lens === "design") return { absence: "no-spec" };
             if (lens === "flagged") {
               announceFlaggedDraft();
               return { elements: [] } as unknown as DraftBoard;
@@ -2724,15 +2734,13 @@ describe("createRoundsRuntime", () => {
         persistGeneration: async (generation) => {
           const snapshot = copyGeneration(generation);
           const absent = Object.keys(snapshot.absentLenses ?? {});
-          // Two writes carry exactly the design absence, and only the LAST of them is
-          // the one this test delays:
-          //   1. the attempt write, before drafting starts;
-          //   2. design's own absence notification, which settles while the other four
-          //      lens seats are already running. That is the save under test.
-          // So: count the design-only writes and delay the second.
+          // ONE write carries exactly the design absence: design's own absence
+          // notification, which settles while the other four lens seats are already
+          // running (the seat reports `no-spec` now, so the attempt write at mint carries
+          // no absence at all). That single save is the one this test delays.
           if (snapshot.draftingBoardIds !== undefined && absent.length === 1) {
             designOnlyWrites += 1;
-            if (designOnlyWrites === 2) {
+            if (designOnlyWrites === 1) {
               announceDelayedSave();
               await delayedSaveRelease;
             }
@@ -2744,7 +2752,6 @@ describe("createRoundsRuntime", () => {
 
     const run = runtime.runRound(
       roundInput({
-        designArtifacts: null,
         verifyDraftedReport: () => {
           throw new Error("stop before final generation persist");
         },
@@ -2775,7 +2782,7 @@ describe("createRoundsRuntime", () => {
     if (controlFailure !== undefined) throw controlFailure;
 
     expect(durable?.absentLenses).toEqual({
-      design: "no-material",
+      design: "no-spec",
       flagged: "no-findings",
     });
   });

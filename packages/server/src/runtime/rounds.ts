@@ -37,7 +37,6 @@
 
 import {
   createMetricsCollector,
-  type DesignArtifactSet,
   mergeGenerationUsage,
   summarizeUsage,
   type T3SeatSeam,
@@ -338,6 +337,8 @@ function lensAbsenceMessage(reason: LensAbsenceReason): string {
   switch (reason) {
     case "no-material":
       return "No Design specification applies to this change.";
+    case "no-spec":
+      return "No spec found for this branch.";
     case "no-decisions":
       return "No material engineering decisions were found.";
     case "no-findings":
@@ -582,10 +583,6 @@ export interface RoundInput {
    *  `successorAccount`; the no-code boundary removes any stale prior account. */
   readonly deltaPacket: DeltaPacket;
   readonly lintContextFor: (lens: LintTarget) => LintContext;
-  /** Deterministically discovered Design artifacts; null means discovery succeeded with no spec. */
-  readonly designArtifacts?: DesignArtifactSet | null;
-  /** Pinned Design discovery failed; Design settles failed while sibling lenses continue. */
-  readonly designArtifactFailure?: string;
   /** The prior generation's boards, for the pipeline's R58 delta stamps (optional). */
   readonly previous?: ReadonlyMap<LintTarget, DraftBoard>;
   /**
@@ -1052,9 +1049,6 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
       // attempt write below, which lands AFTER the cleanup loop (see the
       // attempt-identity note before that write) — so a crash inside cleanup leaves
       // the replaced attempt's record, not a half-pending one.
-      ...(input.designArtifacts === null
-        ? { absentLenses: { design: "no-material" as const } }
-        : {}),
     };
     const durableRecords =
       start === "partial"
@@ -1380,10 +1374,6 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
         ? {}
         : { persistFindingResolutions: input.persistFindingResolutions }),
       lintContextFor: input.lintContextFor,
-      ...(input.designArtifacts === undefined ? {} : { designArtifacts: input.designArtifacts }),
-      ...(input.designArtifactFailure === undefined
-        ? {}
-        : { designArtifactFailure: input.designArtifactFailure }),
       readPrompt: deps.readPrompt,
       collector,
       whiteboard,
