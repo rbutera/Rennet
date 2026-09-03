@@ -8,7 +8,7 @@ import {
   sanitizeSchemaForCodex,
   WhiteboardClient,
 } from "@rennet/adapters";
-import type { DeltaPacket, HarnessPort, LintContext, LintHunk, LintTarget } from "@rennet/core";
+import type { DeltaPacket, HarnessPort, LintContext, LintTarget } from "@rennet/core";
 import {
   INVESTIGATE_PARTIAL_FILE,
   LENS_PROMPT_FILES,
@@ -18,7 +18,6 @@ import {
   AUTHORED_BOARD_SCHEMA,
   type DraftBoard,
   findingRefKey,
-  type GenerationCoverage,
   type GenerationPhaseTiming,
   type LensKind,
   lensAdmitsAbsence,
@@ -38,7 +37,6 @@ import {
   boardOutputSchema,
   composeReviewDraft,
   createNodePromptReader,
-  type DesignCoverageMapper,
   designDraftOutputSchema,
   draftToOps,
   fitDesignArtifactsToPrompt,
@@ -135,8 +133,8 @@ const mkSection = (
   kind: "section",
   data: { author, title, children },
 });
-const mkBoard = (elements: DraftBoard["elements"], skippedHunks: unknown[] = []): DraftBoard =>
-  ({ elements, skippedHunks }) as unknown as DraftBoard;
+const mkBoard = (elements: DraftBoard["elements"]): DraftBoard =>
+  ({ elements }) as unknown as DraftBoard;
 const concurrenceOf = (board: DraftBoard, id: string): { model: string; agree: number }[] =>
   (
     board.elements.find((e) => e.id === id)?.data as {
@@ -187,10 +185,9 @@ const DESIGN_ARTIFACTS: DesignArtifactSet = {
   limits: DESIGN_ARTIFACT_LIMITS,
 };
 
-/** The per-lens lint context: empty hunks/files keep the shared fixtures citation-free. */
+/** The per-lens lint context: no regions and no files keep the shared fixtures citation-free. */
 const lintContextFor = (lens: LintTarget): LintContext => ({
   lens,
-  hunks: [],
   files: new Map(),
 });
 
@@ -224,7 +221,6 @@ const meaningfulSequenceBody = (): DraftBoard => ({
       },
     },
   ],
-  skippedHunks: [],
 });
 
 const meaningfulDecisionBody = (): DraftBoard => ({
@@ -266,7 +262,6 @@ const meaningfulDecisionBody = (): DraftBoard => ({
       },
     },
   ],
-  skippedHunks: [],
 });
 
 const withoutRootSections = (board: DraftBoard): DraftBoard => ({
@@ -318,7 +313,6 @@ const meaningfulFlaggedBody = (): DraftBoard => ({
       },
     },
   ],
-  skippedHunks: [],
 });
 
 const proseOnlyBody = (lens: string, markdown = "This change reads cleanly."): DraftBoard => ({
@@ -332,7 +326,6 @@ const proseOnlyBody = (lens: string, markdown = "This change reads cleanly."): D
       },
     },
   ],
-  skippedHunks: [],
 });
 
 /** A semantically populated board for load-bearing lanes, ordinary prose elsewhere. */
@@ -378,19 +371,6 @@ const DESIGN_PACKET = {
   ...PACKET,
   hunks: { hunks: DESIGN_HUNKS, byId: new Map(DESIGN_HUNKS.map((hunk) => [hunk.id, hunk])) },
 } as unknown as DeltaPacket;
-
-const DESIGN_LINT_HUNKS: LintHunk[] = [
-  { id: "spec-hunk", path: DESIGN_SOURCE, newStart: 1, newLines: 1, oldStart: 1, oldLines: 1 },
-  { id: "impl-hunk", path: "src/auth.ts", newStart: 10, newLines: 4, oldStart: 10, oldLines: 2 },
-  {
-    id: "test-hunk",
-    path: "src/auth.test.ts",
-    newStart: 20,
-    newLines: 3,
-    oldStart: 20,
-    oldLines: 0,
-  },
-];
 
 const designBody = (): DraftBoard =>
   ({
@@ -470,7 +450,6 @@ const designBody = (): DraftBoard =>
         },
       },
     ],
-    skippedHunks: [],
   }) as unknown as DraftBoard;
 
 const SUPERPOWERS_PLAN = "docs/superpowers/plans/2026-08-29-search.md";
@@ -689,7 +668,6 @@ function superpowersBoard(firstStep = "- [ ] **Step 1: Write the failing test**"
         },
       },
     ],
-    skippedHunks: [],
   } as unknown as DraftBoard;
 }
 
@@ -2171,7 +2149,6 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       codexExecutor: null,
       repoRoot: "/pr-worktree",
       deltaPacket: PACKET,
-      hunks: [] as LintHunk[],
       lintContextFor,
       readPrompt,
       whiteboard: fakeWhiteboard(applied),
@@ -2205,8 +2182,6 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     expect(captures.some(({ prompt }) => lensFromPrompt(prompt ?? "") === "post-process")).toBe(
       false,
     );
-    // Coverage: no hunks ⇒ nothing uncovered.
-    expect(result.coverage).toEqual([]);
   });
 
   it("repairs dangling Sequence and Decisions references before the real board service write", async () => {
@@ -2240,7 +2215,6 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
             ...(span === "sequence-code" ? [lensCodeRef("sequence", "sequence-code")] : []),
             mkSection("sequence-root", "Reading order", ["sequence-step"], lensAuthor("sequence")),
           ],
-          skippedHunks: [],
         }) as unknown as DraftBoard;
       const decisionsDraft = (evidence: string): DraftBoard =>
         ({
@@ -2272,7 +2246,6 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
               lensAuthor("decisions"),
             ),
           ],
-          skippedHunks: [],
         }) as unknown as DraftBoard;
 
       const rawId = await runtime.createRennetBoard();
@@ -2308,10 +2281,8 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
         codexExecutor: null,
         repoRoot: "/pr-worktree",
         deltaPacket: PACKET,
-        hunks: [],
         lintContextFor: (lens) => ({
           lens,
-          hunks: [],
           files: new Map([["src/auth.ts", 200]]),
           patchsetId: "ps-1",
         }),
@@ -2420,7 +2391,6 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
           findingDispositions: {},
         },
         previous: new Map<LintTarget, DraftBoard>([["sequence", previousSequence]]),
-        hunks: [],
         lintContextFor,
         readPrompt,
         whiteboard: client,
@@ -2479,7 +2449,6 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       codexExecutor: null,
       repoRoot: "/pr-worktree",
       deltaPacket: PACKET,
-      hunks: [],
       lintContextFor,
       designArtifacts: null,
       readPrompt,
@@ -2511,7 +2480,6 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       codexExecutor: null,
       repoRoot: "/pr-worktree",
       deltaPacket: PACKET,
-      hunks: [],
       lintContextFor,
       designArtifactFailure: reason,
       readPrompt,
@@ -2553,7 +2521,6 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       codexExecutor: null,
       repoRoot: "/pr-worktree",
       deltaPacket: PACKET,
-      hunks: [],
       lintContextFor,
       designArtifacts: decoyArtifacts,
       readPrompt,
@@ -2583,17 +2550,16 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
           const lens = lensFromPrompt(prompt);
           if (lens === emptyLens) {
             emptyLensTurns += 1;
-            return { elements: [], skippedHunks: [] };
+            return { elements: [] };
           }
           if (lens === "post-process" && prompt.includes('"elements":[]')) {
-            return { elements: [], skippedHunks: [] };
+            return { elements: [] };
           }
           return cleanBody(lens);
         }),
         codexExecutor: null,
         repoRoot: "/pr-worktree",
         deltaPacket: PACKET,
-        hunks: [],
         lintContextFor,
         readPrompt,
         whiteboard: fakeWhiteboard(applied),
@@ -2618,16 +2584,15 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     const result = await runLensPipeline({
       claudePort: fakeClaudePort([], (prompt) => {
         const lens = lensFromPrompt(prompt);
-        if (lens === "sequence") return { elements: [], skippedHunks: [] };
+        if (lens === "sequence") return { elements: [] };
         if (lens === "post-process" && prompt.includes('"elements":[]')) {
-          return { elements: [], skippedHunks: [] };
+          return { elements: [] };
         }
         return cleanBody(lens);
       }),
       codexExecutor: null,
       repoRoot: "/pr-worktree",
       deltaPacket: PACKET,
-      hunks: [],
       lintContextFor,
       readPrompt,
       whiteboard: fakeWhiteboard(applied),
@@ -2658,7 +2623,6 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       codexExecutor: null,
       repoRoot: "/pr-worktree",
       deltaPacket: PACKET,
-      hunks: [],
       lintContextFor,
       readPrompt,
       whiteboard: fakeWhiteboard([]),
@@ -2701,7 +2665,6 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       codexExecutor: null,
       repoRoot: "/pr-worktree",
       deltaPacket: PACKET,
-      hunks: [],
       lintContextFor,
       readPrompt,
       whiteboard: fakeWhiteboard([]),
@@ -2732,7 +2695,6 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       })) as never,
       repoRoot: "/pr-worktree",
       deltaPacket: PACKET,
-      hunks: [],
       lintContextFor,
       readPrompt,
       whiteboard: fakeWhiteboard([]),
@@ -2757,7 +2719,6 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       codexExecutor: null,
       repoRoot: "/pr-worktree",
       deltaPacket: PACKET,
-      hunks: [],
       lintContextFor,
       readPrompt,
       whiteboard: fakeWhiteboard([]),
@@ -2797,7 +2758,6 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       codexExecutor: null,
       repoRoot: "/pr-worktree",
       deltaPacket: PACKET,
-      hunks: [],
       lintContextFor,
       readPrompt,
       whiteboard: fakeWhiteboard([]),
@@ -2820,7 +2780,6 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       codexExecutor: null,
       repoRoot: "/pr-worktree",
       deltaPacket: PACKET,
-      hunks: [],
       lintContextFor,
       readPrompt,
       whiteboard: fakeWhiteboard([]),
@@ -2871,7 +2830,6 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
         codexExecutor: null,
         repoRoot: "/pr-worktree",
         deltaPacket: PACKET,
-        hunks: [],
         lintContextFor,
         readPrompt,
         whiteboard: fakeWhiteboard(applied),
@@ -2921,7 +2879,6 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
         codexExecutor: null,
         repoRoot: "/pr-worktree",
         deltaPacket: PACKET,
-        hunks: [],
         lintContextFor,
         readPrompt,
         whiteboard: fakeWhiteboard([]),
@@ -2958,7 +2915,6 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
         codexExecutor: null,
         repoRoot: "/pr-worktree",
         deltaPacket: PACKET,
-        hunks: [],
         lintContextFor,
         readPrompt,
         whiteboard: fakeWhiteboard(applied),
@@ -2985,17 +2941,16 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
           const lens = lensFromPrompt(prompt);
           if (lens === requiredLens) {
             requiredTurns += 1;
-            return { elements: [], skippedHunks: [] };
+            return { elements: [] };
           }
           if (lens === "post-process" && prompt.includes('"elements":[]')) {
-            return { elements: [], skippedHunks: [] };
+            return { elements: [] };
           }
           return cleanBody(lens);
         }),
         codexExecutor: null,
         repoRoot: "/pr-worktree",
         deltaPacket: PACKET,
-        hunks: [],
         lintContextFor,
         readPrompt,
         whiteboard: fakeWhiteboard([]),
@@ -3035,7 +2990,6 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       codexExecutor: null,
       repoRoot: "/pr-worktree",
       deltaPacket: PACKET,
-      hunks: [],
       lintContextFor,
       designArtifacts: DESIGN_ARTIFACTS,
       readPrompt,
@@ -3075,7 +3029,6 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       codexExecutor: null,
       repoRoot: "/pr-worktree",
       deltaPacket: PACKET,
-      hunks: [],
       lintContextFor,
       designArtifacts: incompleteArtifacts,
       readPrompt,
@@ -3097,7 +3050,6 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       codexExecutor: null,
       repoRoot: "/pr-worktree",
       deltaPacket: PACKET,
-      hunks: [],
       lintContextFor,
       designArtifacts: DESIGN_ARTIFACTS,
       readPrompt,
@@ -3130,7 +3082,6 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       codexExecutor: null,
       repoRoot: "/pr-worktree",
       deltaPacket: PACKET,
-      hunks: [],
       lintContextFor,
       designArtifacts: DESIGN_ARTIFACTS,
       readPrompt,
@@ -3188,7 +3139,6 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       codexExecutor: null,
       repoRoot: "/pr-worktree",
       deltaPacket: PACKET,
-      hunks: [],
       lintContextFor,
       designArtifacts: DESIGN_ARTIFACTS,
       readPrompt,
@@ -3277,7 +3227,6 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
           data: { author, markdown: task },
         },
       ],
-      skippedHunks: [],
     } as unknown as DraftBoard;
     let designTurns = 0;
     const result = await runLensPipeline({
@@ -3296,10 +3245,8 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       codexExecutor: null,
       repoRoot: "/pr-worktree",
       deltaPacket: PACKET,
-      hunks: [],
       lintContextFor: (lens) => ({
         lens,
-        hunks: [],
         files: new Map([[path, source.split("\n").length]]),
       }),
       designArtifacts: artifacts,
@@ -3367,7 +3314,6 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
           },
         },
       ],
-      skippedHunks: [],
     } as unknown as DraftBoard;
     let designTurns = 0;
     const result = await runLensPipeline({
@@ -3386,10 +3332,8 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       codexExecutor: null,
       repoRoot: "/pr-worktree",
       deltaPacket: PACKET,
-      hunks: [],
       lintContextFor: (lens) => ({
         lens,
-        hunks: [],
         files: new Map([[path, source.split("\n").length]]),
       }),
       designArtifacts: artifacts,
@@ -3406,294 +3350,6 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     ).toMatchObject({
       source_cells: ["Language", "TypeScript", "5.6", "Shared types"],
     });
-  });
-
-  it("replaces drafter-authored Design coverage with grounded immutable hunk refs", async () => {
-    const captures: { model?: string; prompt?: string }[] = [];
-    const requests: Parameters<DesignCoverageMapper>[0][] = [];
-    const mapDesignCoverage: DesignCoverageMapper = async (request) => {
-      requests.push(request);
-      return {
-        status: "ok",
-        edges: [
-          {
-            capability: "auth",
-            requirement: "Refresh before retry",
-            hunks: ["rennet:hunk/impl-hunk", "rennet:hunk/test-hunk"],
-            tests: 1,
-          },
-        ],
-      };
-    };
-    const bodyFor = (prompt: string): unknown => {
-      const lens = lensFromPrompt(prompt);
-      if (lens === "design") {
-        const drafted = designBody();
-        return {
-          ...drafted,
-          elements: drafted.elements.map((element) =>
-            element.id === "requirement-refresh"
-              ? {
-                  ...element,
-                  data: { ...element.data, related_files: ["src/invented.ts"] },
-                }
-              : element,
-          ),
-          skippedHunks: [
-            { hunk: "impl-hunk", reason: "The drafter left implementation mapping to the host." },
-          ],
-        };
-      }
-      if (lens === "post-process") {
-        const context = /rennet:layer context>>>\n(\{.*)/s.exec(prompt);
-        return context ? JSON.parse(context[1] as string).board : { elements: [] };
-      }
-      return cleanBody(lens);
-    };
-
-    const result = await runLensPipeline({
-      claudePort: fakeClaudePort(captures, bodyFor),
-      codexExecutor: null,
-      repoRoot: "/pr-worktree",
-      deltaPacket: DESIGN_PACKET,
-      hunks: DESIGN_LINT_HUNKS,
-      lintContextFor: (lens) => ({
-        lens,
-        hunks: DESIGN_LINT_HUNKS,
-        files: new Map([
-          [DESIGN_SOURCE, 20],
-          ["src/auth.ts", 100],
-          ["src/auth.test.ts", 100],
-        ]),
-      }),
-      designArtifacts: DESIGN_ARTIFACTS,
-      mapDesignCoverage,
-      readPrompt,
-      whiteboard: fakeWhiteboard([]),
-      boardIdFor: (lens) => `board:${lens}`,
-    });
-
-    expect(requests).toHaveLength(1);
-    expect(requests[0]?.requirements).toEqual([
-      {
-        capability: "auth",
-        name: "Refresh before retry",
-        statement: "The system SHALL refresh the token before classifying an error.",
-        scenarios: [
-          "Scenario: Expired token\n\nWHEN a request uses an expired token\nTHEN the client refreshes it before retrying.",
-        ],
-      },
-    ]);
-    expect(requests[0]?.hunks.map(({ id }) => id)).toEqual(["impl-hunk", "test-hunk"]);
-
-    const board = result.boards.find(({ lens }) => lens === "design")?.board;
-    expect(board?.elements.some(({ id }) => id === "fabricated-coverage-ref")).toBe(false);
-    expect((board as { skippedHunks?: unknown[] } | undefined)?.skippedHunks).toEqual([]);
-    const requirement = board?.elements.find(({ id }) => id === "requirement-refresh");
-    expect(requirement?.data).toMatchObject({
-      coverage: "met",
-      tests: 1,
-      related_files: ["src/auth.ts", "src/auth.test.ts"],
-    });
-    const trace = (requirement?.data as { trace?: string[] } | undefined)?.trace ?? [];
-    expect(trace).toHaveLength(2);
-    const refs = board?.elements.filter(({ id }) => trace.includes(id)) ?? [];
-    expect(refs.map(({ data }) => (data as { path: string }).path)).toEqual([
-      "src/auth.ts",
-      "src/auth.test.ts",
-    ]);
-    expect(refs.map(({ data }) => data.author)).toEqual([
-      { kind: "orchestrator", id: "coverage-mapper" },
-      { kind: "orchestrator", id: "coverage-mapper" },
-    ]);
-  });
-
-  it("shows no Design coverage chip when the change contains only proposal artifacts", async () => {
-    let mappingCalls = 0;
-    const stampHunk = {
-      id: "openspec-stamp",
-      path: ".openspec.yaml",
-      header: "@@ -0,0 +1 @@",
-      body: ["+schema: spec-driven"],
-      spans: { old: { start: 0, lines: 0 }, new: { start: 1, lines: 1 } },
-      lossy: false,
-    } as const;
-    const stampLintHunk: LintHunk = {
-      id: stampHunk.id,
-      path: stampHunk.path,
-      newStart: 1,
-      newLines: 1,
-      oldStart: 0,
-      oldLines: 0,
-    };
-    const proposalPacket = {
-      ...DESIGN_PACKET,
-      hunks: {
-        hunks: [DESIGN_HUNKS[0], stampHunk],
-        byId: new Map<string, unknown>([
-          [DESIGN_HUNKS[0].id, DESIGN_HUNKS[0]],
-          [stampHunk.id, stampHunk],
-        ]),
-      },
-    } as unknown as DeltaPacket;
-    const bodyFor = (prompt: string): unknown => {
-      const lens = lensFromPrompt(prompt);
-      if (lens === "design") return designBody();
-      if (lens === "post-process") {
-        const context = /rennet:layer context>>>\n(\{.*)/s.exec(prompt);
-        return context ? JSON.parse(context[1] as string).board : { elements: [] };
-      }
-      return cleanBody(lens);
-    };
-
-    const result = await runLensPipeline({
-      claudePort: fakeClaudePort([], bodyFor),
-      codexExecutor: null,
-      repoRoot: "/pr-worktree",
-      deltaPacket: proposalPacket,
-      hunks: [DESIGN_LINT_HUNKS[0] as LintHunk, stampLintHunk],
-      lintContextFor: (lens) => ({
-        lens,
-        hunks: [DESIGN_LINT_HUNKS[0] as LintHunk, stampLintHunk],
-        files: new Map([
-          [DESIGN_SOURCE, 20],
-          [stampHunk.path, 1],
-          ["src/auth.ts", 100],
-          ["src/auth.test.ts", 100],
-        ]),
-      }),
-      designArtifacts: DESIGN_ARTIFACTS,
-      mapDesignCoverage: async () => {
-        mappingCalls += 1;
-        return { status: "ok", edges: [] };
-      },
-      readPrompt,
-      whiteboard: fakeWhiteboard([]),
-      boardIdFor: (lens) => `board:${lens}`,
-    });
-
-    expect(mappingCalls).toBe(0);
-    const board = result.boards.find(({ lens }) => lens === "design")?.board;
-    const data = board?.elements.find(({ id }) => id === "requirement-refresh")?.data as
-      | Record<string, unknown>
-      | undefined;
-    expect(data).toBeDefined();
-    expect(data).not.toHaveProperty("coverage");
-    expect(data).not.toHaveProperty("trace");
-    expect(data).not.toHaveProperty("tests");
-    expect(data).not.toHaveProperty("related_files");
-    expect(board?.skippedHunks).toEqual([
-      {
-        hunk: stampHunk.id,
-        reason: ".openspec.yaml is a generated scaffold stamp owned by the Noise lens.",
-      },
-    ]);
-  });
-
-  it("classifies grounded Design coverage as gap or partial from host evidence", async () => {
-    const bodyFor = (prompt: string): unknown => {
-      const lens = lensFromPrompt(prompt);
-      if (lens === "design") return designBody();
-      if (lens === "post-process") {
-        const context = /rennet:layer context>>>\n(\{.*)/s.exec(prompt);
-        return context ? JSON.parse(context[1] as string).board : { elements: [] };
-      }
-      return cleanBody(lens);
-    };
-    const run = async (hunks: readonly string[]) =>
-      runLensPipeline({
-        claudePort: fakeClaudePort([], bodyFor),
-        codexExecutor: null,
-        repoRoot: "/pr-worktree",
-        deltaPacket: DESIGN_PACKET,
-        hunks: DESIGN_LINT_HUNKS,
-        lintContextFor: (lens) => ({
-          lens,
-          hunks: DESIGN_LINT_HUNKS,
-          files: new Map([
-            [DESIGN_SOURCE, 20],
-            ["src/auth.ts", 100],
-            ["src/auth.test.ts", 100],
-          ]),
-        }),
-        designArtifacts: DESIGN_ARTIFACTS,
-        mapDesignCoverage: async () => ({
-          status: "ok",
-          edges: [
-            {
-              capability: "auth",
-              requirement: "Refresh before retry",
-              hunks,
-              tests: 0,
-            },
-          ],
-        }),
-        readPrompt,
-        whiteboard: fakeWhiteboard([]),
-        boardIdFor: (lens) => `board:${lens}`,
-      });
-
-    const gap = await run([]);
-    const partial = await run(["rennet:hunk/impl-hunk"]);
-    const dataFor = (result: Awaited<ReturnType<typeof runLensPipeline>>) =>
-      result.boards
-        .find(({ lens }) => lens === "design")
-        ?.board?.elements.find(({ id }) => id === "requirement-refresh")?.data;
-
-    expect(dataFor(gap)).toMatchObject({ coverage: "gap", trace: [], tests: 0 });
-    expect(dataFor(partial)).toMatchObject({ coverage: "partial", tests: 0 });
-    expect((dataFor(partial) as { trace?: unknown[] } | undefined)?.trace).toHaveLength(1);
-  });
-
-  it("omits Design coverage when the host mapper fails or throws", async () => {
-    const bodyFor = (prompt: string): unknown => {
-      const lens = lensFromPrompt(prompt);
-      if (lens === "design") return designBody();
-      if (lens === "post-process") {
-        const context = /rennet:layer context>>>\n(\{.*)/s.exec(prompt);
-        return context ? JSON.parse(context[1] as string).board : { elements: [] };
-      }
-      return cleanBody(lens);
-    };
-    const mappers: DesignCoverageMapper[] = [
-      async () => ({ status: "failed", edges: [] }),
-      async () => {
-        throw new Error("coverage seat crashed");
-      },
-    ];
-
-    for (const mapDesignCoverage of mappers) {
-      const result = await runLensPipeline({
-        claudePort: fakeClaudePort([], bodyFor),
-        codexExecutor: null,
-        repoRoot: "/pr-worktree",
-        deltaPacket: DESIGN_PACKET,
-        hunks: DESIGN_LINT_HUNKS,
-        lintContextFor: (lens) => ({
-          lens,
-          hunks: DESIGN_LINT_HUNKS,
-          files: new Map([
-            [DESIGN_SOURCE, 20],
-            ["src/auth.ts", 100],
-            ["src/auth.test.ts", 100],
-          ]),
-        }),
-        designArtifacts: DESIGN_ARTIFACTS,
-        mapDesignCoverage,
-        readPrompt,
-        whiteboard: fakeWhiteboard([]),
-        boardIdFor: (lens) => `board:${lens}`,
-      });
-      const data = result.boards
-        .find(({ lens }) => lens === "design")
-        ?.board?.elements.find(({ id }) => id === "requirement-refresh")?.data as
-        | Record<string, unknown>
-        | undefined;
-      expect(data).toBeDefined();
-      expect(data).not.toHaveProperty("coverage");
-      expect(data).not.toHaveProperty("trace");
-      expect(data).not.toHaveProperty("tests");
-    }
   });
 
   it("keeps Design title, source navigation, stats, and verbatim scenarios without a rewrite turn", async () => {
@@ -3804,10 +3460,8 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       codexExecutor: null,
       repoRoot: "/pr-worktree",
       deltaPacket: DESIGN_PACKET,
-      hunks: DESIGN_LINT_HUNKS,
       lintContextFor: (lens) => ({
         lens,
-        hunks: DESIGN_LINT_HUNKS,
         files: new Map([
           [DESIGN_SOURCE, 20],
           ["src/auth.ts", 100],
@@ -3920,10 +3574,8 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       codexExecutor: null,
       repoRoot: "/pr-worktree",
       deltaPacket: DESIGN_PACKET,
-      hunks: DESIGN_LINT_HUNKS,
       lintContextFor: (lens) => ({
         lens,
-        hunks: DESIGN_LINT_HUNKS,
         files: new Map([
           [DESIGN_SOURCE, 20],
           ["src/auth.ts", 100],
@@ -4010,10 +3662,8 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       codexExecutor: null,
       repoRoot: "/pr-worktree",
       deltaPacket: DESIGN_PACKET,
-      hunks: DESIGN_LINT_HUNKS,
       lintContextFor: (lens) => ({
         lens,
-        hunks: DESIGN_LINT_HUNKS,
         files: new Map([
           [DESIGN_SOURCE, 20],
           ["src/auth.ts", 100],
@@ -4050,7 +3700,6 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       codexExecutor: null,
       repoRoot: "/pr-worktree",
       deltaPacket: PACKET,
-      hunks: [] as LintHunk[],
       lintContextFor,
       readPrompt,
       whiteboard: fakeWhiteboard([]),
@@ -4077,7 +3726,6 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       codexExecutor: null,
       repoRoot: "/pr-worktree",
       deltaPacket: PACKET,
-      hunks: [] as LintHunk[],
       lintContextFor,
       readPrompt,
       whiteboard: fakeWhiteboard(applied),
@@ -4100,16 +3748,13 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     // A clean flagged board both seats return: a grounded finding citing c1 (covers
     // h1), h2 consciously skipped — passes the flagged lens lint.
     const flaggedBody = (): unknown =>
-      mkBoard(
-        [
-          mkFinding("f1", "The refresh token is classified as an error before its code is read.", [
-            "c1",
-          ]),
-          mkCodeRef("c1", "src/auth.ts", 11, 12),
-          mkSection("findings", "Findings", ["f1"]),
-        ],
-        [{ hunk: "h2", reason: "The util rename is mechanical — the Noise board owns it." }],
-      );
+      mkBoard([
+        mkFinding("f1", "The refresh token is classified as an error before its code is read.", [
+          "c1",
+        ]),
+        mkCodeRef("c1", "src/auth.ts", 11, 12),
+        mkSection("findings", "Findings", ["f1"]),
+      ]);
     const bodyFor = (prompt: string): unknown => {
       const lens = lensFromPrompt(prompt);
       if (lens === "flagged") return flaggedBody();
@@ -4126,9 +3771,9 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
 
     const flaggedCtx: LintContext = {
       lens: "flagged",
-      hunks: [
-        { id: "h1", path: "src/auth.ts", newStart: 10, newLines: 5 },
-        { id: "h2", path: "src/util.ts", newStart: 1, newLines: 3 },
+      regions: [
+        { path: "src/auth.ts", side: "head", start: 10, end: 14 },
+        { path: "src/util.ts", side: "head", start: 1, end: 3 },
       ],
       files: new Map([
         ["src/auth.ts", 200],
@@ -4141,7 +3786,6 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       codexExecutor: codexExecutor as never,
       repoRoot: "/pr-worktree",
       deltaPacket: PACKET,
-      hunks: [] as LintHunk[],
       lintContextFor: (lens) => (lens === "flagged" ? flaggedCtx : lintContextFor(lens)),
       readPrompt,
       whiteboard: fakeWhiteboard(applied),
@@ -4198,7 +3842,6 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       codexExecutor: null,
       repoRoot: "/pr-worktree",
       deltaPacket: roundPacket,
-      hunks: [] as LintHunk[],
       lintContextFor,
       readPrompt,
       whiteboard: fakeWhiteboard(applied),
@@ -4326,7 +3969,6 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       } as unknown as DeltaPacket,
       currentGeneration: "gen:ps-1:dispatch:round-2",
       round,
-      hunks: [],
       lintContextFor,
       readPrompt,
       whiteboard: fakeWhiteboard(applied),
@@ -4548,7 +4190,6 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
           deltaPacket: PACKET,
           currentGeneration: "gen:ps-1:dispatch:handoff",
           round,
-          hunks: [],
           lintContextFor,
           readPrompt,
           whiteboard: fakeWhiteboard([]),
@@ -4631,7 +4272,6 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
           commitRange: { from: "before", to: "after" },
         },
       },
-      hunks: [],
       lintContextFor,
       readPrompt,
       whiteboard: fakeWhiteboard(applied),
@@ -4705,7 +4345,6 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
           commitRange: { from: "before", to: "after" },
         },
       },
-      hunks: [],
       lintContextFor,
       readPrompt,
       whiteboard: fakeWhiteboard(applied),
@@ -4786,7 +4425,6 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
           },
         },
       ],
-      skippedHunks: [],
     };
 
     const result = await runLensPipeline({
@@ -4817,7 +4455,6 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       deltaPacket: PACKET,
       currentGeneration: "gen:ps-1:dispatch:recovered",
       round,
-      hunks: [],
       lintContextFor,
       readPrompt,
       whiteboard: {
@@ -4981,7 +4618,6 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
             commitRange: { from: "before", to: "after" },
           },
         },
-        hunks: [],
         lintContextFor,
         readPrompt,
         whiteboard: fakeWhiteboard(applied),
@@ -5062,7 +4698,6 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
         ...PACKET,
         successorAccount: { asks: [], beyondAsks: [] },
       },
-      hunks: [],
       lintContextFor,
       readPrompt,
       whiteboard,
@@ -5143,17 +4778,15 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     expect(pipelineSettled).toBe(true);
   });
 
-  it("records a distinct durable timing for every phase, and coverage moves pending → complete", async () => {
+  it("records a distinct durable timing for every phase", async () => {
     const applied: Applied[] = [];
     const timings: GenerationPhaseTiming[] = [];
-    const coverageStates: GenerationCoverage[] = [];
 
     const result = await runLensPipeline({
       claudePort: fakeClaudePort([], (prompt) => cleanBody(lensFromPrompt(prompt))),
       codexExecutor: null,
       repoRoot: "/pr-worktree",
       deltaPacket: PACKET,
-      hunks: [] as LintHunk[],
       lintContextFor,
       readPrompt,
       whiteboard: fakeWhiteboard(applied),
@@ -5161,19 +4794,11 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       onPhaseTiming: (timing) => {
         timings.push(timing);
       },
-      onCoverageState: (coverage) => {
-        coverageStates.push(coverage);
-      },
     });
     expect(result.boards).toHaveLength(5);
 
-    // Coverage is explicitly pending from the moment the lanes start, and completes after
-    // them. It is a state the surface renders, never a gate on the reveal.
-    expect(coverageStates.map(({ state }) => state)).toEqual(["pending", "complete"]);
-    expect(coverageStates[1]).toEqual({ state: "complete", violations: 0 });
-
-    // Every lane has its own draft and post-process record; the cross-lens phases have one
-    // each. No report here (this generation drafts none), which is why `report` is absent
+    // Every lane has its own draft and post-process record; the generation-wide phases have
+    // one each. No report here (this generation drafts none), which is why `report` is absent
     // rather than present-and-zero.
     const phases = timings.map(
       ({ phase, lens }) => `${phase}${lens === undefined ? "" : `:${lens}`}`,
@@ -5182,7 +4807,6 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       expect(phases).toContain(`lens-draft:${lens}`);
       expect(phases).toContain(`lens-post-process:${lens}`);
     }
-    expect(phases).toContain("coverage");
     expect(phases).toContain("reveal");
     expect(phases).not.toContain("report");
     // Every record is a durable, non-negative integer span anchored to a wall clock.
@@ -5214,7 +4838,6 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       })) as never,
       repoRoot: "/pr-worktree",
       deltaPacket: PACKET,
-      hunks: [] as LintHunk[],
       lintContextFor,
       readPrompt,
       whiteboard: fakeWhiteboard([]),
@@ -5285,7 +4908,6 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       }) as never,
       repoRoot: "/pr-worktree",
       deltaPacket: PACKET,
-      hunks: [] as LintHunk[],
       lintContextFor,
       readPrompt,
       whiteboard: fakeWhiteboard([]),
@@ -5327,7 +4949,6 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     //     `outcomes.map` that rethrows a rejected lane, and so was lost exactly when a run
     //     failed.
     const timings: GenerationPhaseTiming[] = [];
-    const coverageStates: GenerationCoverage[] = [];
     let ticks = 1_000;
     let revealed = 0;
 
@@ -5340,7 +4961,6 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
         codexExecutor: null,
         repoRoot: "/pr-worktree",
         deltaPacket: PACKET,
-        hunks: [] as LintHunk[],
         lintContextFor,
         readPrompt,
         whiteboard: fakeWhiteboard([]),
@@ -5356,10 +4976,6 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
           // a window that closed on it instead would be unmistakable.
           ticks += 100;
         },
-        onCoverageState: (coverage) => {
-          coverageStates.push(coverage);
-          ticks += 1_000;
-        },
         onPhaseTiming: (timing) => {
           timings.push(timing);
         },
@@ -5373,11 +4989,6 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     // rejected lane, so a run that died lost the timing for the window it most needed
     // explaining. (Where the window ENDS is the test above, which controls the ordering.)
     expect(timings.some(({ phase }) => phase === "reveal")).toBe(true);
-
-    // And coverage says what actually happened rather than sitting at `pending` forever.
-    expect(coverageStates.map(({ state }) => state)).toEqual(["pending", "failed"]);
-    // No `coverage` timing: that phase never ran, and a duration for it would be invented.
-    expect(timings.some(({ phase }) => phase === "coverage")).toBe(false);
   });
 
   it("keeps the report phase's timing to the report, never absorbing the lens lanes", async () => {
@@ -5399,7 +5010,6 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       codexExecutor: null,
       repoRoot: "/pr-worktree",
       deltaPacket: { ...PACKET, successorAccount: { asks: [], beyondAsks: [] } },
-      hunks: [] as LintHunk[],
       lintContextFor,
       readPrompt,
       whiteboard: fakeWhiteboard(applied),
@@ -5484,7 +5094,6 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
         repoRoot: "/pr-worktree",
         deltaPacket: PACKET,
         boardAttempt,
-        hunks: [] as LintHunk[],
         lintContextFor,
         readPrompt,
         whiteboard: fakeWhiteboard(applied),
@@ -5519,7 +5128,6 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       codexExecutor: null,
       repoRoot: "/pr-worktree",
       deltaPacket: PACKET,
-      hunks: [] as LintHunk[],
       lintContextFor,
       readPrompt,
       whiteboard: fakeWhiteboard([]),
@@ -5580,7 +5188,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
         await lensRelease;
       }
       return {
-        output: lens === "decisions" ? { elements: [], skippedHunks: [] } : cleanBody(lens),
+        output: lens === "decisions" ? { elements: [] } : cleanBody(lens),
       };
     };
 
@@ -5589,7 +5197,6 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       codexExecutor: codexExecutor as never,
       repoRoot: "/pr-worktree",
       deltaPacket: PACKET,
-      hunks: [],
       lintContextFor,
       designArtifacts: null,
       readPrompt,
@@ -5642,10 +5249,10 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
         const lens = lensFromPrompt(prompt);
         if (lens === "report") {
           reportTurns += 1;
-          return { elements: [], skippedHunks: [] };
+          return { elements: [] };
         }
         if (lens === "post-process" && prompt.includes('"elements":[]')) {
-          return { elements: [], skippedHunks: [] };
+          return { elements: [] };
         }
         lensTurns += 1;
         return cleanBody(lens);
@@ -5656,7 +5263,6 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
         ...PACKET,
         successorAccount: { asks: [], beyondAsks: [] },
       },
-      hunks: [] as LintHunk[],
       lintContextFor,
       readPrompt,
       whiteboard: fakeWhiteboard(applied),
@@ -5751,7 +5357,6 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
           commitRange: { from: "same-head", to: "same-head" },
         },
       },
-      hunks: [] as LintHunk[],
       lintContextFor,
       previous: new Map([["sequence", previousSequence]]),
       readPrompt,
@@ -5811,7 +5416,6 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
         ]),
         mkCodeRef("orphan-code", "src/auth.ts", 80, 81),
       ],
-      skippedHunks: [],
     };
 
     const result = await runLensPipeline({
@@ -5838,7 +5442,6 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
         dispatchedAsks: [],
         findingDispositions: {},
       },
-      hunks: [] as LintHunk[],
       lintContextFor: (lens) => ({
         ...lintContextFor(lens),
         files: new Map([["src/auth.ts", 200]]),
@@ -5909,7 +5512,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
         const lens = lensFromPrompt(prompt);
         if (lens === "flagged") {
           flaggedTurns += 1;
-          return { elements: [], skippedHunks: [] };
+          return { elements: [] };
         }
         return cleanBody(lens);
       }),
@@ -5926,7 +5529,6 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
         dispatchedAsks: [],
         findingDispositions: {},
       },
-      hunks: [],
       lintContextFor: (lens) => ({
         ...lintContextFor(lens),
         files: new Map([["src/auth.ts", 200]]),
@@ -5970,7 +5572,6 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
         dispatchedAsks: [],
         findingDispositions: {},
       },
-      hunks: [] as LintHunk[],
       lintContextFor,
       readPrompt,
       whiteboard: fakeWhiteboard(applied),
@@ -6040,7 +5641,6 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
           [findingRefKey(finding)]: { finding, disposition: "dismissed" },
         },
       },
-      hunks: [] as LintHunk[],
       lintContextFor: (lens) => ({
         ...lintContextFor(lens),
         files: new Map([["src/auth.ts", 200]]),
@@ -6075,7 +5675,6 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       codexExecutor: null,
       repoRoot: "/pr-worktree",
       deltaPacket: PACKET,
-      hunks: [] as LintHunk[],
       lintContextFor,
       readPrompt,
       whiteboard: fakeWhiteboard(applied),
@@ -6092,7 +5691,6 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       codexExecutor: null,
       repoRoot: "/pr-worktree",
       deltaPacket: PACKET,
-      hunks: [] as LintHunk[],
       lintContextFor,
       readPrompt,
       whiteboard: fakeWhiteboard(applied),
@@ -6111,7 +5709,6 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       codexExecutor: null,
       repoRoot: "/pr-worktree",
       deltaPacket: PACKET,
-      hunks: [] as LintHunk[],
       lintContextFor,
       readPrompt,
       whiteboard: fakeWhiteboard(applied),
@@ -6125,31 +5722,27 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
 // ── Persistence honesty (findings 2/3/6) ─────────────────────────────────────
 
 describe("runLensPipeline — persistence honesty (findings 2/3/6)", () => {
-  const FLAGGED_HUNKS: LintHunk[] = [
-    { id: "h1", path: "src/auth.ts", newStart: 10, newLines: 5 },
-    { id: "h2", path: "src/util.ts", newStart: 1, newLines: 3 },
-  ];
   const flaggedCtx: LintContext = {
     lens: "flagged",
-    hunks: FLAGGED_HUNKS,
+    regions: [
+      { path: "src/auth.ts", side: "head", start: 10, end: 14 },
+      { path: "src/util.ts", side: "head", start: 1, end: 3 },
+    ],
     files: new Map([
       ["src/auth.ts", 200],
       ["src/util.ts", 50],
     ]),
   };
   // A flagged board whose finding is authored BEFORE the code_ref it cites (the
-  // bad-ref hazard) and that consciously skips h2.
+  // bad-ref hazard).
   const flaggedBody = (): DraftBoard =>
-    mkBoard(
-      [
-        mkFinding("f1", "The refresh token is classified as an error before its code is read.", [
-          "c1",
-        ]),
-        mkCodeRef("c1", "src/auth.ts", 11, 12),
-        mkSection("findings", "Findings", ["f1"]),
-      ],
-      [{ hunk: "h2", reason: "The util rename is mechanical — the Noise board owns it." }],
-    );
+    mkBoard([
+      mkFinding("f1", "The refresh token is classified as an error before its code is read.", [
+        "c1",
+      ]),
+      mkCodeRef("c1", "src/auth.ts", 11, 12),
+      mkSection("findings", "Findings", ["f1"]),
+    ]);
   const bodyForFlagged = (prompt: string): unknown => {
     const lens = lensFromPrompt(prompt);
     if (lens === "flagged") return flaggedBody();
@@ -6214,7 +5807,7 @@ describe("runLensPipeline — persistence honesty (findings 2/3/6)", () => {
     }
   });
 
-  it("writes through a REAL board service and persists skippedHunks durably (findings 2/3)", async () => {
+  it("writes through a REAL board service and persists the document durably (findings 2/3)", async () => {
     const root = await mkdtemp(join(tmpdir(), "lens-pipeline-"));
     try {
       const runtime = createBoardsRuntime(root);
@@ -6230,7 +5823,6 @@ describe("runLensPipeline — persistence honesty (findings 2/3/6)", () => {
         codexExecutor: null,
         repoRoot: "/pr-worktree",
         deltaPacket: PACKET,
-        hunks: FLAGGED_HUNKS,
         lintContextFor: (l) => (l === "flagged" ? flaggedCtx : lintContextFor(l)),
         readPrompt,
         whiteboard: client,
@@ -6254,12 +5846,9 @@ describe("runLensPipeline — persistence honesty (findings 2/3/6)", () => {
       expect(state.has("f1")).toBe(true);
       expect(state.has("c1")).toBe(true);
 
-      // skippedHunks survived persistence via the durable metadata seam — the event
+      // The document survived persistence via the durable metadata seam — the event
       // log carries only elements, so this is the finding-3 durability proof.
       const flaggedMeta = meta.find((m) => m.lens === "flagged");
-      expect(flaggedMeta?.skippedHunks).toEqual([
-        { hunk: "h2", reason: "The util rename is mechanical — the Noise board owns it." },
-      ]);
       expect(flaggedMeta?.document).toEqual({
         title: "Flagged",
         introMarkdown: "",
@@ -6291,7 +5880,6 @@ describe("runLensPipeline — persistence honesty (findings 2/3/6)", () => {
       codexExecutor: null,
       repoRoot: "/pr-worktree",
       deltaPacket: PACKET,
-      hunks: [] as LintHunk[],
       lintContextFor,
       readPrompt,
       whiteboard: rejecting,
@@ -6312,7 +5900,6 @@ describe("runLensPipeline — persistence honesty (findings 2/3/6)", () => {
       codexExecutor: null,
       repoRoot: "/pr-worktree",
       deltaPacket: PACKET,
-      hunks: [] as LintHunk[],
       lintContextFor,
       readPrompt,
       whiteboard: fakeWhiteboard(applied),
@@ -6337,7 +5924,6 @@ describe("runLensPipeline — persistence honesty (findings 2/3/6)", () => {
       codexExecutor: null,
       repoRoot: "/pr-worktree",
       deltaPacket: PACKET,
-      hunks: [] as LintHunk[],
       lintContextFor,
       readPrompt,
       whiteboard: fakeWhiteboard(applied),
@@ -6365,7 +5951,6 @@ describe("runLensPipeline — persistence honesty (findings 2/3/6)", () => {
       codexExecutor: null,
       repoRoot: "/pr-worktree",
       deltaPacket: PACKET,
-      hunks: [] as LintHunk[],
       lintContextFor,
       readPrompt,
       whiteboard: fakeWhiteboard([]),
@@ -6412,7 +5997,7 @@ describe("createNodePromptReader (perf audit §4 M)", () => {
   });
 });
 
-describe("renderDrafterPrompt — the inventory travels, the diff content does not", () => {
+describe("renderDrafterPrompt — the inventory travels, the hunk index does not (D5)", () => {
   const HUNK_BODY = "+const SECRET_BODY_LINE = 42;";
   const RANGE_PACKET = {
     patchset: {
@@ -6441,14 +6026,17 @@ describe("renderDrafterPrompt — the inventory travels, the diff content does n
     },
   } as unknown as DeltaPacket;
 
-  it("redacts hunk bodies while the hunk ids/headers/spans survive", () => {
+  it("sends neither hunk bodies nor hunk ids/headers/spans — the seat cites by path and line", () => {
     const prompt = renderDrafterPrompt("lens instructions", RANGE_PACKET);
-    // Positive control: the body string IS in the packet — deleting the
-    // redaction in renderDrafterPrompt turns this assertion red.
+    // Positive control: the id, header and body ARE in the packet — a hunk index creeping
+    // back into the context layer turns the assertions below red.
     expect(JSON.stringify(RANGE_PACKET.hunks.hunks)).toContain(SECRET(HUNK_BODY));
+    expect(JSON.stringify(RANGE_PACKET.hunks.hunks)).toContain("hunk-1");
     expect(prompt).not.toContain(SECRET(HUNK_BODY));
-    expect(prompt).toContain("hunk-1");
-    expect(prompt).toContain("@@ -1,1 +1,1 @@");
+    expect(prompt).not.toContain("hunk-1");
+    expect(prompt).not.toContain("@@ -1,1 +1,1 @@");
+    // The rest of the inventory still rides: the reviewed range and its diff command.
+    expect(prompt).toContain(`git diff ${"b".repeat(40)}...${"h".repeat(40)}`);
   });
 
   it("fits the design bundle to the room left under the T3 turn's input cap", () => {
@@ -6660,7 +6248,6 @@ describe("the report gate times a turn that DIED (#731 O4)", () => {
       deltaPacket: PACKET,
       currentGeneration: "gen:ps-1:dispatch:o4",
       round,
-      hunks: [],
       lintContextFor,
       readPrompt,
       whiteboard: fakeWhiteboard([]),
@@ -6703,7 +6290,6 @@ describe("renderRetryPrompt sends pointers and only the open elements", () => {
       { id: "f1", kind: "finding", data: { concern: FROZEN_BODY } },
       { id: "p1", kind: "prose", data: { markdown: OPEN_BODY } },
     ],
-    skippedHunks: [{ hunk: "h9", reason: "mechanical" }],
   } as never;
   const pointers = [
     {
@@ -6723,8 +6309,6 @@ describe("renderRetryPrompt sends pointers and only the open elements", () => {
     expect(prompt).toContain(
       'no-code-bytes at ["elements",1,"data","markdown"] (element `p1`): no code bytes',
     );
-    // Board-level passthrough still rides (the seat owns skippedHunks fixes).
-    expect(prompt).toContain('"skippedHunks":[{"hunk":"h9"');
     expect(prompt.startsWith("BASE\n\n")).toBe(true);
   });
 

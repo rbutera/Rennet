@@ -421,7 +421,6 @@ function populatedBoardEvidence(
       document: fallbackBoardDocument(lens),
       sections,
       elements,
-      skippedHunks: [],
     },
   };
 }

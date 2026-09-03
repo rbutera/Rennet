@@ -70,7 +70,6 @@ const fixture = {
     },
     { id: "p1", kind: "prose", data: { author, markdown: "context." } },
   ],
-  skippedHunks: [{ hunk: "hunk-9", reason: "mechanical lockfile churn — Noise's lane" }],
 };
 
 describe("LensBoard projection (client asset risk 1)", () => {

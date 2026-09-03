@@ -26,7 +26,6 @@ export * from "./ci-refinement";
 export * from "./codex-run-turn";
 export * from "./codex-utility-port";
 export * from "./context-assembly";
-export * from "./coverage-mapping";
 export * from "./decomposition";
 export * from "./delta";
 export * from "./delta-digest";

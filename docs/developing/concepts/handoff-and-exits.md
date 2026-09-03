@@ -666,13 +666,9 @@ keeping them apart.
   the label — an explicit decision, not something to assume from the wording.
   Until it lands, a round's cost is six drafters every time.
 
-Two absences beside it are stated rather than smoothed over. A round rebuilt
-from durable board metadata after a restart cannot recompute its cross-lens
-coverage. That is derived from the drafted boards, which the metadata does not
-hold, so it reports coverage as *unknown* instead of an empty violation list
-that would claim a clean round nobody checked. And a client talking to a daemon
-older than itself gets no answer to the rounds reads at all; the surfaces say
-that, with the daemon's own reason, rather than showing the empty ledger that
+One absence beside it is stated rather than smoothed over. A client talking to a
+daemon older than itself gets no answer to the rounds reads at all; the surfaces
+say that, with the daemon's own reason, rather than showing the empty ledger that
 reads as "no rounds have completed".
 
 The round report's **arrival** is live. After the report board and metadata have
@@ -683,10 +679,10 @@ readable, settles the report's own progress row, and starts the visible lane
 block while the coarse durable `report-drafting` phase continues. A client that
 reconnects mid-fan-out reaches the same place from the durable snapshot alone,
 because that phase projects its report as `handed-off`. Lens-progress events
-carry the same operation identity, and each carries the generation's cross-lens
-coverage state — `pending`, `complete`, or `failed` — on the same frame as its
-lane rows, so the surface can never show lanes from one moment and coverage from
-another. The client chooses the newest compatible operation revision before it
+carry the same operation identity, and each carries the generation's seat spend
+so far on the same frame as its lane rows, so the surface can never show lanes
+from one moment and a figure from another. The client chooses the newest
+compatible operation revision before it
 compares event sequence numbers, because a restarted daemon can reset its
 transport sequence. Legacy unscoped report and lens events remain accepted only
 for callers without a durable operation.

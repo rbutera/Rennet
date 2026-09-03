@@ -186,10 +186,7 @@ function fakePublishPort(
 
 function harness(
   publishPort: ForgePublishPort & { posts: ForgeReviewPost[] } = fakePublishPort(),
-  opts: Pick<
-    DispatchDeps,
-    "symbolLookup" | "openInEditor" | "openSpecChange" | "openSpecCoverage" | "settings"
-  > = {},
+  opts: Pick<DispatchDeps, "symbolLookup" | "openInEditor" | "openSpecChange" | "settings"> = {},
   extra: {
     capturePort?: PatchsetCapturePort;
     runHandoffTurn?: DispatchDeps["runHandoffTurn"];
@@ -376,7 +373,6 @@ function harness(
     symbolLookup: opts.symbolLookup,
     openInEditor: opts.openInEditor,
     openSpecChange: opts.openSpecChange,
-    openSpecCoverage: opts.openSpecCoverage,
     settings: opts.settings,
   };
   return {
@@ -1046,39 +1042,6 @@ describe("createDispatch — openspec.change routing (the live Spec source, wire
     const { dispatch } = harness();
     await capturedReview(dispatch);
     await expect(dispatch("openspec.change", { reviewId: randomUUID() })).rejects.toThrow(
-      /Review not found/,
-    );
-  });
-});
-
-describe("createDispatch — openspec.coverage routing (the Spec view's coverage chips, R53)", () => {
-  it("resolves the addressed review and returns the producer's coverage", async () => {
-    const coverage = {
-      status: "ok" as const,
-      edges: [
-        {
-          capability: "review-hypothesis-pass",
-          requirement: "A hypothesis is committed before the runners read the diff",
-          hunks: ["rennet:hunk/h1"],
-          tests: 2,
-        },
-      ],
-    };
-    const { dispatch } = harness(undefined, { openSpecCoverage: () => Promise.resolve(coverage) });
-    const review = await capturedReview(dispatch);
-    expect(await dispatch("openspec.coverage", { reviewId: review.id })).toEqual(coverage);
-  });
-
-  it("returns null when no producer is wired (the Spec view renders no chips, never a fixture)", async () => {
-    const { dispatch } = harness();
-    const review = await capturedReview(dispatch);
-    expect(await dispatch("openspec.coverage", { reviewId: review.id })).toBeNull();
-  });
-
-  it("refuses openspec.coverage for a stale or unknown review id (it spends a model turn)", async () => {
-    const { dispatch } = harness();
-    await capturedReview(dispatch);
-    await expect(dispatch("openspec.coverage", { reviewId: randomUUID() })).rejects.toThrow(
       /Review not found/,
     );
   });
@@ -2717,7 +2680,6 @@ describe("createDispatch — publish.compose + publish-ready + handoff-completed
           },
         },
       ],
-      skippedHunks: [],
     });
     const { dispatch } = harness(
       fakePublishPort(),
@@ -2807,7 +2769,6 @@ describe("createDispatch — publish.compose + publish-ready + handoff-completed
       },
       sections: [],
       elements: [],
-      skippedHunks: [],
     };
     const draftReviewOpener = vi.fn<NonNullable<DispatchDeps["draftReviewOpener"]>>(async () => ({
       status: "drafted",

@@ -335,11 +335,9 @@ describe("board kind renderers over the fixture set", () => {
     ]);
   });
 
-  it("renders a requirement's coverage verdict and a message's role + quote", () => {
+  it("renders a requirement and a message's role + quote", () => {
     const design = renderBoard(designBoard);
-    expect(
-      design.container.querySelector("[data-kind=requirement][data-coverage=met]"),
-    ).toBeTruthy();
+    expect(design.container.querySelector("[data-kind=requirement]")).toBeTruthy();
     design.unmount();
 
     const flagged = renderBoard(flaggedBoard);

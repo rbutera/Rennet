@@ -39,13 +39,6 @@ export {
   withdrawItem,
   withdrawPath,
 } from "./canvas/collation";
-export type { CoverageMosaic, MosaicCell, ReadState, ViewEvent } from "./canvas/read-state";
-export {
-  coverageMosaic,
-  dispositionsToViewEvents,
-  foldReadState,
-  nextUnread,
-} from "./canvas/read-state";
 // The inhabited CodeView (issue #77): the anchor↔row registrar (real file lines,
 // sides, occurrence identity, span→row resolution) and L3 mark placement.
 export type {
@@ -101,7 +94,6 @@ export type {
 export { ConnectionHost } from "./components/connection-host";
 // The context-composition inspector: Rennet's deterministic, gate-free assembly manifest.
 export { ContextManifestPanel } from "./components/context-manifest-panel";
-export { CoverageMosaicView } from "./components/coverage";
 // The in-app directory browser (source-aware project selection, task 5): fed by
 // `fs.listDir` so browsing works over a remote/WSL source with no native dialog.
 export { DirectoryBrowser } from "./components/directory-browser";

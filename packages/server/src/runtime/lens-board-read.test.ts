@@ -27,7 +27,6 @@ const board: DraftBoard = {
     introMarkdown: "Read the specification shape beside the implementation evidence.",
     measure: "structured",
   },
-  skippedHunks: [{ hunk: "h9", reason: "sequence's lane" }],
   elements: [
     {
       id: "change",
@@ -61,7 +60,7 @@ const board: DraftBoard = {
       kind: "decision",
       data: { author, statement: "s", why: "w", evidence: ["c1"], alternatives: [] },
     },
-    { id: "r1", kind: "requirement", data: { author, shall: "SHALL", coverage: "met", trace: [] } },
+    { id: "r1", kind: "requirement", data: { author, shall: "SHALL", trace: [] } },
     {
       id: "c1",
       kind: "code_ref",
@@ -105,12 +104,11 @@ async function roundTrip() {
     generation: "gen-1",
     boardId,
     document: board.document,
-    skippedHunks: [{ hunk: "h9", reason: "sequence's lane" }],
   });
 }
 
 describe("projectLensBoard — the persisted board, read back", () => {
-  it("rebuilds the board's identity, elements, and coverage from what was written", async () => {
+  it("rebuilds the board's identity, document, and elements from what was written", async () => {
     const read = await roundTrip();
     expect(read.lens).toBe("design");
     expect(read.generation).toBe("gen-1");
@@ -128,8 +126,6 @@ describe("projectLensBoard — the persisted board, read back", () => {
       "r1",
       "risks",
     ]);
-    // Board-level coverage cannot ride the element log, so it comes from the meta record.
-    expect(read.skippedHunks).toEqual([{ hunk: "h9", reason: "sequence's lane" }]);
   });
 
   it("folds only TOP-LEVEL sections, with counts tallied from their own children", async () => {
@@ -155,7 +151,7 @@ describe("projectLensBoard — the persisted board, read back", () => {
     // Never a summary this projection wrote — the section's own words or nothing.
     const read = projectLensBoard(
       [{ id: "s", kind: "section", data: { author, title: "Untitled Work", children: [] } }],
-      { lens: "noise", generation: "g", boardId: "b", skippedHunks: [] },
+      { lens: "noise", generation: "g", boardId: "b" },
     );
     expect(read.sections[0]?.gist).toBe("Untitled Work");
     expect(read.sections[0]?.counts).toEqual({});
@@ -202,7 +198,6 @@ describe("projectLensBoard — the persisted board, read back", () => {
       generation: "gen-2",
       boardId,
       document: report.document,
-      skippedHunks: [],
     });
     expect(read.lens).toBe("report");
     expect(read.document).toEqual(report.document);
@@ -222,7 +217,6 @@ describe("projectLensBoard — the persisted board, read back", () => {
         boardId: "report-1",
         session: "session-elsewhere",
         generation: "gen-2",
-        skippedHunks: [],
       },
     ],
     [
@@ -232,7 +226,6 @@ describe("projectLensBoard — the persisted board, read back", () => {
         boardId: "report-1",
         session: "session-1",
         generation: "gen-elsewhere",
-        skippedHunks: [],
       },
     ],
     [
@@ -242,7 +235,6 @@ describe("projectLensBoard — the persisted board, read back", () => {
         boardId: "report-1",
         session: "session-1",
         generation: "gen-2",
-        skippedHunks: [],
       },
     ],
   ])("omits the report projection for %s", async (_case, meta) => {

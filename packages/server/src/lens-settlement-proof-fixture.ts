@@ -37,8 +37,6 @@ export const LENS_SETTLEMENT_FLAGGED_FINDING = "flag-finding";
 export const LENS_SETTLEMENT_FLAGGED_SECTION = "flag-section";
 
 const author: Author = { kind: "lens-agent", id: LENS_SETTLEMENT_LANE };
-/** Neutral in both legs: the signal-only repository has no generated table to name. */
-const OTHER_LANE_SKIP = "The rest of this change belongs to another lens.";
 const patchsetPlanValue = `\${patchsetId}`;
 
 function codeRef(id: string, path: string): DraftBoard["elements"][number] {
@@ -81,7 +79,6 @@ function sequenceBoard(): DraftBoard {
         data: { author, title: "Settlement", children: ["seq-step"] },
       },
     ],
-    skippedHunks: [{ hunk: "*", reason: OTHER_LANE_SKIP }],
   };
 }
 
@@ -117,7 +114,6 @@ function decisionsBoard(): DraftBoard {
         data: { author, title: "Source-controlled value", children: ["dec-choice"] },
       },
     ],
-    skippedHunks: [{ hunk: "*", reason: OTHER_LANE_SKIP }],
   };
 }
 
@@ -152,7 +148,6 @@ function flaggedBoard(): DraftBoard {
         },
       },
     ],
-    skippedHunks: [{ hunk: "*", reason: OTHER_LANE_SKIP }],
   };
 }
 
@@ -183,7 +178,6 @@ function noiseBoard(): DraftBoard {
         data: { author, title: "Regenerated output", children: ["noise-verdict", "noise-code"] },
       },
     ],
-    skippedHunks: [],
   };
 }
 

@@ -15,7 +15,7 @@ import {
 // ─────────────────────────────────────────────────────────────────────────────
 // The lens-board READ projection (C05 cluster 8 / C18) — the inverse of
 // `draftToOps`. The pipeline writes a drafted board's ELEMENTS to the whiteboard
-// event log (`runLensBoard` → `whiteboard.apply`) and its board-level coverage to
+// event log (`runLensBoard` → `whiteboard.apply`) and its board-level document to
 // the `BoardMetaStore`; this rebuilds the `LensBoard` the client reads from those
 // two durable halves, inventing nothing:
 //
@@ -26,8 +26,6 @@ import {
 //     names as a child is nested, not a fold line), in that same order. `counts`
 //     is TALLIED from each section's own resolved children, exactly as the fold
 //     line is defined; `delta` is the R58 stamp the section element carries.
-//   • `skippedHunks` — the board meta's, since the 13-kind element vocabulary has
-//     no element that can carry board-level coverage.
 //
 // The one derivation with a choice in it is `gist`. The drafters are asked for a
 // one-line folded gist (`prompts/*.md`) and the `section` kind is a loose object,
@@ -48,7 +46,6 @@ interface BoardIdentity {
   readonly generation: string;
   readonly boardId: string;
   readonly document?: BoardDocument;
-  readonly skippedHunks: readonly { readonly hunk: string; readonly reason: string }[];
 }
 
 export interface LensBoardIdentity extends BoardIdentity {
@@ -65,7 +62,6 @@ interface StoredRoundReportMeta {
   readonly session?: string;
   readonly generation?: string;
   readonly document?: BoardDocument;
-  readonly skippedHunks: readonly { readonly hunk: string; readonly reason: string }[];
 }
 
 const asString = (value: unknown): string | undefined =>
@@ -100,7 +96,7 @@ function nestedIds(elements: readonly StateElement[]): ReadonlySet<string> {
 /**
  * Project a persisted board's element state into the {@link LensBoard} the client
  * reads. Pure: the caller supplies the elements (the board service's projected
- * state) and the identity/coverage half (the board-meta record). The result is
+ * state) and the identity half (the board-meta record). The result is
  * validated against `LensBoardSchema` HERE — a board whose persisted elements no
  * longer satisfy the host vocabulary THROWS rather than serving a half-board, so
  * the client reads an honest failure instead of a silently pruned document.
@@ -142,7 +138,6 @@ function projectBoard(elements: readonly StateElement[], identity: BoardIdentity
     document: resolveBoardDocument(identity.lens, identity.document),
     sections,
     elements,
-    skippedHunks: identity.skippedHunks.map((s) => ({ hunk: s.hunk, reason: s.reason })),
   };
 }
 
@@ -198,6 +193,5 @@ export async function readRoundReportBoardForRecord(
     generation: input.record.boardGeneration,
     boardId: input.reportBoardId,
     document: meta.document,
-    skippedHunks: meta.skippedHunks,
   });
 }

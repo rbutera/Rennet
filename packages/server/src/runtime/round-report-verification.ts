@@ -245,9 +245,6 @@ function verifyCanonicalClassifiedRoundReport(
   ) {
     throw new Error("Canonical round report has a non-deterministic section tally.");
   }
-  if (board.skippedHunks.length !== 0) {
-    throw new Error("Canonical round report cannot carry skipped hunks.");
-  }
 }
 
 /**

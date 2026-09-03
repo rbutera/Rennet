@@ -8,7 +8,8 @@
  */
 import { z } from "zod";
 
-/** A stable decomposition hunk id — the unit anchors and citations reference. */
+/** A stable decomposition hunk id — an INTERNAL delta-packet key for the diff renderer. A
+ *  board citation never names one: it is a path plus a line range (`codeRefSchema`). */
 export const hunkIdSchema = z.string().min(1);
 export type HunkId = z.infer<typeof hunkIdSchema>;
 

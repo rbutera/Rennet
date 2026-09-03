@@ -659,8 +659,7 @@ describe("round.dispatch (B11 4.2) — asks → one work-order, coalesced", () =
               patchset: { id: "ps-2", createdAt: "", truncated: false, files: [] },
               successorAccount: { asks: [] },
             } as never,
-            hunks: [],
-            lintContextFor: (lens: LintTarget) => ({ lens, hunks: [], files: new Map() }),
+            lintContextFor: (lens: LintTarget) => ({ lens, files: new Map() }),
             reviewDraftLintCtx: { files: new Map() },
             onProgress: (event) => progress.push(event),
           });

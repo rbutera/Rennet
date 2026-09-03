@@ -62,7 +62,8 @@ export const REPO_MAP_STAGES = [
 
 /**
  * The generation's stages. `report`/`report-classification`/`lens-draft`/`lens-repair`/
- * `lens-post-process`/`coverage`/`reveal`/`first-core-board` are the #725 phases verbatim —
+ * `lens-post-process`/`reveal`/`first-core-board` are the #725 phases verbatim (`coverage` is
+ * the retired cross-lens gate's phase, kept so older records parse) —
  * a benchmark stage IS a spine phase, renamed nowhere.
  *
  * There is deliberately no `lens-total`, `lens-dual-review` or `whole-process` stage:

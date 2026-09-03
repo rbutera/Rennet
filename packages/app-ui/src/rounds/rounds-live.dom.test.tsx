@@ -1044,7 +1044,6 @@ describe("the read and the push merge by seq, neither erasing the other", () => 
       document: { title: "Round report", introMarkdown: "Recovered", measure: "reading" as const },
       sections: [],
       elements: [],
-      skippedHunks: [],
     };
     const oldAttempt = operationEvent(
       {

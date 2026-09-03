@@ -354,7 +354,6 @@ describe("outbound structural projection", () => {
             },
           },
         ],
-        skippedHunks: [],
       },
     });
 

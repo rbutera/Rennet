@@ -17,7 +17,6 @@ import {
   type FindingDisposition,
   findingRefKey,
   type Generation,
-  type GenerationCoverage,
   type GenerationPhaseTiming,
   GenerationSchema,
   generationIdForDispatch,
@@ -50,7 +49,7 @@ const ROUND_PACKET = {
   successorAccount: { asks: [] },
 } as unknown as DeltaPacket;
 
-const lintContextFor = (lens: LintTarget): LintContext => ({ lens, hunks: [], files: new Map() });
+const lintContextFor = (lens: LintTarget): LintContext => ({ lens, files: new Map() });
 const readPrompt = (file: string): string => `PROMPT_FILE:${file}`;
 const lensFromPrompt = (prompt: string): string =>
   /PROMPT_FILE:prompts\/([a-z-]+)\.md/.exec(prompt)?.[1] ?? "unknown";
@@ -80,7 +79,6 @@ const cleanBody = (lens: string): DraftBoard => {
           data: { author, markdown: "The changed entry point begins the reading." },
         },
       ],
-      skippedHunks: [],
     } as DraftBoard;
   }
   if (lens === "decisions") {
@@ -113,7 +111,6 @@ const cleanBody = (lens: string): DraftBoard => {
           },
         },
       ],
-      skippedHunks: [],
     } as DraftBoard;
   }
   if (lens === "flagged") {
@@ -137,7 +134,6 @@ const cleanBody = (lens: string): DraftBoard => {
           },
         },
       ],
-      skippedHunks: [],
     } as DraftBoard;
   }
   return {
@@ -148,7 +144,6 @@ const cleanBody = (lens: string): DraftBoard => {
         data: { author, markdown: "Reads cleanly." },
       },
     ],
-    skippedHunks: [],
   } as DraftBoard;
 };
 
@@ -242,7 +237,6 @@ function roundInput(over: Partial<RoundInput> = {}): RoundInput {
     asksDispatched: ["t1", "t2"],
     runWorkers: async () => ({ commitRange: { from: "c0", to: "c1" }, patchsetId: "ps-1" }),
     deltaPacket: ROUND_PACKET,
-    hunks: [],
     lintContextFor,
     reviewDraftLintCtx: { files: new Map() },
     ...over,
@@ -272,12 +266,11 @@ describe("durable reveal state (#725 7.2)", () => {
     ...over,
   });
 
-  it("reconstructs which lanes settled and where coverage stands", () => {
+  it("reconstructs which lanes settled", () => {
     const reveal = revealFromGeneration(
       attempt({
         lensBoards: { sequence: "b:sequence", decisions: "b:decisions" },
         absentLenses: { noise: "no-noise" },
-        coverage: { state: "pending" },
       }),
     );
     expect(Object.fromEntries(reveal.lanes.map((lane) => [lane.id, lane.status]))).toEqual({
@@ -287,9 +280,6 @@ describe("durable reveal state (#725 7.2)", () => {
       flagged: "queued",
       noise: "absent",
     });
-    // Pending coverage beside two settled lanes — the exact restart shape, and neither a
-    // reset nor an invented completion.
-    expect(reveal.coverage).toEqual({ state: "pending" });
   });
 
   it("reconstructs a RETRYABLE failure as pending, because the restart redraft re-runs it", () => {
@@ -661,40 +651,6 @@ describe("createRoundsRuntime", () => {
     // (The fake report board carries no `round_outcome` items, so the count is a real 0.)
     expect(record.reworkCount).toBe(0);
     expect(pipeline.report?.boardId).toBeDefined();
-  });
-
-  // ── A restored round cannot claim a coverage it never checked (review finding b) ──
-  //
-  // Reconstructing from durable board meta rebuilds ids and blemishes but NOT the boards,
-  // and cross-lens coverage is computed from the boards. Reporting `[]` said "every hunk
-  // was covered" over a check that never ran.
-  it("a round rebuilt from durable meta says its coverage is UNKNOWN, not clean", async () => {
-    const store = new BoardMetaStore(mkdtempSync(join(tmpdir(), "rounds-restart-")));
-    const generationStore = new GenerationStore(mkdtempSync(join(tmpdir(), "rounds-restart-gen-")));
-    const deps = baseDeps({
-      persistBoardMeta: (_repo, meta: BoardMeta) => store.save(meta),
-      persistGeneration: (generation) => generationStore.save(generation),
-      loadGeneration: (id) => generationStore.load(id),
-    });
-    const first = await createRoundsRuntime(deps).runRound(roundInput());
-    // A freshly drafted round DOES know its coverage picture.
-    expect(first.pipeline.coverage).toBeDefined();
-
-    // A fresh runtime over the same on-disk evidence reconstructs rather than re-drafting.
-    const restarted = createRoundsRuntime(
-      baseDeps({
-        loadDraftedBoards: () => store.list(),
-        resolveClaudePort: async () => {
-          throw new Error("a reconstruction must never re-draft");
-        },
-        loadGeneration: (id) => generationStore.load(id),
-      }),
-    );
-    const after = await restarted.runRound(roundInput());
-    expect(after.pipeline.boards.map((b) => b.lens).sort()).toEqual(
-      ["decisions", "design", "flagged", "noise", "sequence"].sort(),
-    );
-    expect(after.pipeline.coverage).toBeUndefined();
   });
 
   it("reuses a verified reserved report after a crash without another report provider turn", async () => {
@@ -1209,7 +1165,7 @@ describe("createRoundsRuntime", () => {
               lens === "flagged" ||
               (lens === "post-process" && prompt.includes('"elements":[]'))
             ) {
-              return { elements: [], skippedHunks: [] } as unknown as DraftBoard;
+              return { elements: [] } as unknown as DraftBoard;
             }
             return cleanBody(lens);
           }),
@@ -1470,7 +1426,6 @@ describe("createRoundsRuntime", () => {
       } satisfies Partial<RoundsRuntimeDeps>;
       const invalid = {
         elements: [{ id: "invalid", kind: "not-a-kind", data: {} }],
-        skippedHunks: [],
       };
 
       await expect(
@@ -2489,12 +2444,12 @@ describe("createRoundsRuntime", () => {
     expect(recovered.boardGeneration.lensBoards).not.toHaveProperty("design");
   });
 
-  it("persists each lane's settlement, the coverage state and the per-phase timings as they land", async () => {
+  it("persists each lane's settlement and the per-phase timings as they land", async () => {
     const writes: Generation[] = [];
     // A real durable store, not just a write log: the claim being tested is about what a
     // reader FINDS after the round, and a filtered write log answers a different question.
     // The final settle overwrote the record for months while the log still showed the
-    // coverage and timings some earlier write had carried.
+    // timings some earlier write had carried.
     const store = new Map<string, Generation>();
     const runtime = createRoundsRuntime(
       baseDeps({
@@ -2508,18 +2463,12 @@ describe("createRoundsRuntime", () => {
     );
     const outcome = await runtime.runRound(roundInput());
 
-    // Coverage is durable and generation-keyed, and it is PENDING while lanes are still
-    // settling — the state a reconnecting surface renders beside boards already revealed.
-    const pending = writes.filter(({ coverage }) => coverage?.state === "pending");
-    expect(pending.length).toBeGreaterThan(0);
-    const revealedWhilePending = pending.map(({ lensBoards }) => Object.keys(lensBoards).length);
-    expect(Math.max(...revealedWhilePending)).toBeGreaterThan(0);
-    expect(Math.min(...revealedWhilePending)).toBe(0);
-
-    // …and it completes, durably, with the violation count coverage produced.
-    const completed = writes.filter(({ coverage }) => coverage?.state === "complete");
-    expect(completed.length).toBeGreaterThan(0);
-    expect(completed.at(-1)?.coverage).toEqual({ state: "complete", violations: 0 });
+    // Settlements land one lane at a time: the reveal writes run from no board to some.
+    const revealed = writes
+      .filter(({ draftingBoardIds }) => draftingBoardIds !== undefined)
+      .map(({ lensBoards }) => Object.keys(lensBoards).length);
+    expect(Math.max(...revealed)).toBeGreaterThan(0);
+    expect(Math.min(...revealed)).toBe(0);
 
     // ── The DURABLE record, read back after the round settled ──
     // Not `writes.filter(...).at(-1)`: that steps over the last write, which is the one
@@ -2527,7 +2476,6 @@ describe("createRoundsRuntime", () => {
     // reader) sees is `loadGeneration`, so that is what gets asserted.
     const durable = runtime.generation(outcome.boardGeneration.id);
     expect(durable).toBeDefined();
-    expect(durable?.coverage).toEqual({ state: "complete", violations: 0 });
 
     // Spend rides the same durable record (#737), and it is the LAST write that a reader
     // finds: the final settle used to erase it (#741 review). The scripted harness reports
@@ -2546,7 +2494,6 @@ describe("createRoundsRuntime", () => {
     expect(phases.has("report")).toBe(true);
     expect(phases.has("lens-draft")).toBe(true);
     expect(phases.has("lens-post-process")).toBe(true);
-    expect(phases.has("coverage")).toBe(true);
     expect(phases.has("reveal")).toBe(true);
     // Time-to-first-core-board is measured from the round's own start and names the lane
     // that got there first — one of the three core lenses, never Design or Noise.
@@ -2558,7 +2505,7 @@ describe("createRoundsRuntime", () => {
     expect(GenerationSchema.safeParse(durable).success).toBe(true);
   });
 
-  it("carries the reveal's coverage and timings into the round's FAILURE writes too", async () => {
+  it("carries the reveal's timings into the round's FAILURE writes too", async () => {
     // The two error paths persist the generation before throwing. They take the same
     // record the final settle does, so a round that dies still leaves behind what it
     // measured — the failure is exactly when someone wants to read it.
@@ -2570,7 +2517,7 @@ describe("createRoundsRuntime", () => {
         resolveClaudePort: async () =>
           fakeClaudePort([], (prompt) => {
             const lens = lensFromPrompt(prompt);
-            return lens === "sequence" ? { elements: [], skippedHunks: [] } : cleanBody(lens);
+            return lens === "sequence" ? { elements: [] } : cleanBody(lens);
           }),
         persistGeneration: (generation) => {
           store.set(generation.id, JSON.parse(JSON.stringify(generation)) as Generation);
@@ -2587,7 +2534,6 @@ describe("createRoundsRuntime", () => {
     // when someone reads the timings.
     const durable = store.get("gen:ps-1");
     expect(durable?.draftingBoardIds).toBeUndefined();
-    expect(durable?.coverage).toEqual({ state: "complete", violations: 0 });
     expect(durable?.timings?.phases.some(({ phase }) => phase === "reveal")).toBe(true);
   });
 
@@ -2688,75 +2634,6 @@ describe("createRoundsRuntime", () => {
     expect(Math.max(...dead.laneFrames.map((frame) => frame.length), 0)).toBe(0);
   });
 
-  it("clears a replaced attempt's coverage so no client sees `complete` beside queued lanes", async () => {
-    // The restart shape: a durable generation that got as far as ONE settled lens and a
-    // completed coverage state, with its attempt slots still reserved — so this round takes
-    // the partial-evidence redraft path. That coverage described five boards the redraft is
-    // about to delete.
-    const seeded: Generation = {
-      id: "gen:ps-1",
-      patchsetId: "ps-1",
-      lensBoards: { sequence: "b:stale-sequence" },
-      draftingBoardIds: {
-        design: "b:stale-design",
-        sequence: "b:stale-sequence",
-        decisions: "b:stale-decisions",
-        flagged: "b:stale-flagged",
-        noise: "b:stale-noise",
-      },
-      draftingReportBoardId: "b:stale-report",
-      coverage: { state: "complete", violations: 0 },
-      status: "live",
-    };
-    const store = new Map<string, Generation>([[seeded.id, seeded]]);
-    const writes: Generation[] = [];
-    const frames: { queued: number; coverage?: GenerationCoverage }[] = [];
-    const runtime = createRoundsRuntime(
-      baseDeps({
-        loadGeneration: (id) => store.get(id),
-        loadDraftedBoards: () => [],
-        removeBoardMeta: () => undefined,
-        persistGeneration: (generation) => {
-          const snapshot = JSON.parse(JSON.stringify(generation)) as Generation;
-          writes.push(snapshot);
-          store.set(snapshot.id, snapshot);
-        },
-      }),
-    );
-    await runtime.runRound(
-      roundInput({
-        onProgress: (event) => {
-          if (event.type !== "lens") return;
-          frames.push({
-            queued: event.lanes.filter(
-              (lane) => lane.status === "queued" || lane.status === "running",
-            ).length,
-            ...(event.coverage === undefined ? {} : { coverage: event.coverage }),
-          });
-        },
-      }),
-    );
-
-    // The FIRST frame — the resume republish, before any board is cleared — already says
-    // pending. It has to carry the state explicitly: the client's fold keeps the last known
-    // coverage when a frame carries none, so an omission would leave `complete` standing.
-    expect(frames[0]?.coverage).toEqual({ state: "pending" });
-    expect(frames[0]?.queued).toBeGreaterThan(0);
-
-    // And no frame ever shows a completed coverage beside a lane still to be drafted.
-    for (const frame of frames) {
-      if (frame.queued === 0) continue;
-      expect(frame.coverage?.state === "complete").toBe(false);
-    }
-
-    // Durably: the attempt write that reserves the new slots carries pending, not the
-    // replaced attempt's completion. (That write lands after the cleanup loop — this
-    // asserts the CONTENT of the write; ordering is documented at the write site.)
-    const attemptWrite = writes.find(({ draftingBoardIds }) => draftingBoardIds !== undefined);
-    expect(attemptWrite?.coverage).toEqual({ state: "pending" });
-    expect(attemptWrite?.lensBoards).toEqual({});
-  });
-
   it("rejects a reveal write from a superseded generation attempt", async () => {
     const runAndCollect = async (supersedeAfterAttempt: boolean): Promise<Generation[]> => {
       const writes: Generation[] = [];
@@ -2792,22 +2669,20 @@ describe("createRoundsRuntime", () => {
     // Control first: with the durable record still naming THIS attempt, the reveal writes
     // land — so the assertion below is about supersession, not about a missing seam.
     const current = revealWrites(await runAndCollect(false));
-    expect(current.some(({ coverage }) => coverage !== undefined)).toBe(true);
     expect(current.some(({ timings }) => timings !== undefined)).toBe(true);
     expect(current.some(({ lensBoards }) => Object.keys(lensBoards).length > 0)).toBe(true);
 
     const superseded = revealWrites(await runAndCollect(true));
     // Every reveal write was dropped. What remains is the attempt write alone — the
-    // superseded attempt's settlements, coverage and timings were never folded into the
+    // superseded attempt's settlements and timings were never folded into the
     // generation a later attempt now owns.
-    expect(superseded.some(({ coverage }) => coverage !== undefined)).toBe(false);
     expect(superseded.some(({ timings }) => timings !== undefined)).toBe(false);
     expect(superseded.some(({ lensBoards }) => Object.keys(lensBoards).length > 0)).toBe(false);
   });
 
   it("serializes concurrent absence saves so a delayed partial snapshot cannot win", async () => {
     let durable: Generation | undefined;
-    let coverageCarryingDesignOnlyWrites = 0;
+    let designOnlyWrites = 0;
     let releaseDelayedSave = (): void => undefined;
     let announceDelayedSave = (): void => undefined;
     let announceFlaggedDraft = (): void => undefined;
@@ -2838,24 +2713,22 @@ describe("createRoundsRuntime", () => {
             const lens = lensFromPrompt(prompt);
             if (lens === "flagged") {
               announceFlaggedDraft();
-              return { elements: [], skippedHunks: [] } as unknown as DraftBoard;
+              return { elements: [] } as unknown as DraftBoard;
             }
             return cleanBody(lens);
           }),
         persistGeneration: async (generation) => {
           const snapshot = copyGeneration(generation);
           const absent = Object.keys(snapshot.absentLenses ?? {});
-          // Three writes carry exactly the design absence, and only the LAST of them is
+          // Two writes carry exactly the design absence, and only the LAST of them is
           // the one this test delays:
-          //   1. the attempt write, before drafting starts — no coverage state yet;
-          //   2. the coverage-`pending` write the pipeline makes at lens kickoff (#725 D4),
-          //      which the lens seats wait behind and so cannot be delayed here;
-          //   3. design's own absence notification, which settles while the other four
+          //   1. the attempt write, before drafting starts;
+          //   2. design's own absence notification, which settles while the other four
           //      lens seats are already running. That is the save under test.
-          // So: count the coverage-carrying design-only writes and delay the second.
+          // So: count the design-only writes and delay the second.
           if (snapshot.draftingBoardIds !== undefined && absent.length === 1) {
-            if (snapshot.coverage !== undefined) coverageCarryingDesignOnlyWrites += 1;
-            if (coverageCarryingDesignOnlyWrites === 2) {
+            designOnlyWrites += 1;
+            if (designOnlyWrites === 2) {
               announceDelayedSave();
               await delayedSaveRelease;
             }
@@ -3039,7 +2912,6 @@ describe("what a round archives, and when (#731 N3)", () => {
     // a complete run.
     const invalid = {
       elements: [{ id: "invalid", kind: "not-a-kind", data: {} }],
-      skippedHunks: [],
     };
     const { deps, recorded } = archiving({
       resolveClaudePort: async () =>

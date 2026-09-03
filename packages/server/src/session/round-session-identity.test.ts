@@ -159,7 +159,6 @@ async function recordARound(session: SessionModel): Promise<void> {
   sub.boardMeta.save({
     lens: "design",
     boardId: `board-${session.id}`,
-    skippedHunks: [],
     blemishes: [],
     omissions: [],
     immutability: [],

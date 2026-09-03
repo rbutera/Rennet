@@ -85,7 +85,6 @@ function deps(activePatchsetId: string): StoredRoundReportVerificationDeps {
             introMarkdown: "Verified against the coding turn: 1 addressed.",
             measure: "reading",
           },
-          skippedHunks: [],
         }) as never,
     ),
     loadDispatchedAsks: vi.fn(() => [
