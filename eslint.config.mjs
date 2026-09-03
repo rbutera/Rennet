@@ -151,6 +151,10 @@ export default [
               ],
             },
             {
+              // layer:vendor is the vendored T3 Code snapshot (vendor/t3code). The
+              // server may import its contracts, but only from ONE module — the
+              // daemon-side T3 client — which the no-restricted-imports block below
+              // enforces file by file.
               sourceTag: "layer:server",
               onlyDependOnLibsWithTags: [
                 "layer:protocol",
@@ -158,6 +162,7 @@ export default [
                 "layer:core",
                 "layer:adapter",
                 "layer:server",
+                "layer:vendor",
               ],
             },
             {
@@ -291,6 +296,27 @@ export default [
     rules: {
       "rennet/no-direct-invoke": "error",
       "rennet/no-handrolled-toggle": "error",
+    },
+  },
+  {
+    // `effect` and `@t3tools/*` are imported by vendored code and by exactly one Rennet
+    // module, the daemon-side T3 client (AGENTS.md, "Vendored T3 Code"). Everything else in
+    // the server stays Promise-shaped; the client is the seam that converts.
+    files: ["packages/server/src/**/*.ts"],
+    ignores: ["packages/server/src/t3/client.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: ["effect", "effect/*", "@t3tools/*"],
+              message:
+                "Only packages/server/src/t3/client.ts may import effect or @t3tools/*; consume its Promise/AsyncIterable API instead.",
+            },
+          ],
+        },
+      ],
     },
   },
 ];

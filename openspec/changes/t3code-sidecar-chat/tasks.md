@@ -27,6 +27,8 @@
 
 ## 4. Upstreamable seeds
 
+_4.1 and 4.2 are deferred: nothing in this change consumes them (lens seats stay on Rennet adapters, a stated non-goal), and opening pull requests on pingdotgg/t3code is outward-facing, so it waits for Rai's word. The ledger stays empty until then._
+
 - [ ] 4.1 Add an `outputFormat` option to the vendored Claude text generation; ledger entry marked upstreamable; open the upstream PR
 - [ ] 4.2 Add an ephemeral (`persistSession: false`) flag to the same path; ledger entry; upstream PR
 - [x] 4.3 Flip the vendored telemetry default to off in the ledger only if the env flag proves insufficient in 2.2; otherwise no edit (env flag suffices: `T3CODE_TELEMETRY_ENABLED=false` is forced by the supervisor and proven by test; no vendored edit)
