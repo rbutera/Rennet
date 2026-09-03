@@ -2345,6 +2345,18 @@ export const SessionModelSchema = z
      */
     repositoryRoot: z.string().min(1).optional(),
     /**
+     * The root this session's context files were actually WRITTEN under
+     * (session-context-files). Usually the same as `repositoryRoot`, and different exactly
+     * when it has to be: until the workspace binding lands (task 5.1) a range review's
+     * seats draft in `~/.rennet/worktrees/review/<reviewId>`, so that — not the reviewer's
+     * checkout — is where their context directory is, and a purge aimed at
+     * `repositoryRoot` would leave it behind forever.
+     *
+     * Absent ⇒ nothing recorded a write root, and the purge falls back to `repositoryRoot`
+     * then the attached review's root, exactly as it did before this field existed.
+     */
+    contextRoot: z.string().min(1).optional(),
+    /**
      * The `owner/name` identity of the repo this session's target lives in (#580). NOT a path —
      * it is the same stable identity `LocalWork.repository`/`PullRequest.repository` carry (the
      * origin remote, else the durable common-dir alias), so it crosses the wire freely where

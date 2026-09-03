@@ -468,30 +468,60 @@ as a file under `<bound root>/.rennet/context/<sessionId>/`, and the prompt name
 the agent reads what it decides it needs with its own tools, the way it reads the checkout.
 `packages/server/src/context-files.ts` is the only writer and the only purge. Each write
 puts a `README.md` in that directory listing every file, what it holds and when to read it,
-and ensures `context/` is in the repository's Rennet-managed `.rennet/.gitignore` block
-before the first file lands — so a round committing in the reviewer's own checkout cannot
-stage it.
+stamps an `.owner` file naming the data dir of the daemon that wrote it, and ensures
+`context/` is in the repository's Rennet-managed `.rennet/.gitignore` block before the first
+file lands — so a round committing in the reviewer's own checkout cannot stage it. The block
+is composed at the repository's *own* recorded visibility, so ensuring it never re-ignores
+`map/ overlays/ knowledge/` on a repository the reviewer set to `git-visible`; `context/` is
+in the block at either visibility, because it is Rennet's scratch rather than derived data
+the reviewer might commit.
 
 The purge is at archive, not at settle: a reopened transcript or a resumed round still finds
-its files. Three callers remove a directory, and nothing else does. `session.archive` purges
-beside the thread sweep, on the same deletion boundary. The round's `sweepIfArchived`
-re-sweep purges again on its way out, because a round driven by the durable coordinator can
-write context after an archive has already passed. And a daemon start sweeps every
-`.rennet/context/<id>` under the roots it knows — each project's `openPath` and every one of
-its `includedRepoPaths`, since a workspace's other repos are invisible from `openPath` alone
-— whose session id the store no longer holds, logging the count it removed.
+its files. Four callers remove a directory, and nothing else does.
+
+- `session.archive` purges beside the thread sweep, on the same deletion boundary — unless a
+  round is in flight for that session, in which case the purge is deferred, because archive
+  awaits the session's *preparation* and nothing tracks a round, so an immediate purge would
+  delete the directory the round's next turn reads.
+- The round's `sweepIfArchived` re-sweep purges on its way out, both for a round that wrote
+  context after an archive had already passed and for the deferral above.
+- A daemon start sweeps context directories **it owns** — matched on the `.owner` stamp,
+  because a second daemon over the same repository (a dev daemon beside the packaged app,
+  any isolated data dir) has its own session store in which every one of the first daemon's
+  live sessions is absent, and would otherwise delete them mid-turn. An unknown owner is
+  left, with a log line. Of the directories it owns it removes those whose id is absent from
+  the store's **raw persisted ids** — not the parsed list, since a record that will not parse
+  is skipped by `list()` and reading that silence as "the session is gone" deletes live
+  files — and those whose session the store already marks archived, which is what a crash
+  between `setArchived` and the purge leaves behind. The roots it looks under are each
+  project's `openPath` and every one of its `includedRepoPaths` (a workspace's other repos
+  are invisible from `openPath` alone), every `contextRoot` a session recorded, and the
+  drafting roots a range review's seats run in until the workspace binding lands
+  (`~/.rennet/worktrees/review/<reviewId>` and any recorded PR worktree).
+- The project scout purges its own run (below).
+
+The session record carries `contextRoot`: the root its context was actually written under,
+which the purge prefers over `repositoryRoot`. They differ exactly when they must — a range
+review's seats draft in a review worktree, not the reviewer's checkout, so a purge aimed at
+`repositoryRoot` would leave those files behind forever.
 
 One turn runs before any session exists: the project scout, which fires at project add. It
-writes through the same writer under the fixed id `project-scout`, so its facts land at
-`<repo>/.rennet/context/project-scout/scout-detected.json`. There is no archive to purge it
-at, so the next scout run purges the last one before writing. That is what pays for the
-scout's prompt: it used to carry `CLAUDE.md`, `AGENTS.md` and `CONTRIBUTING.md` at 8 kB each
-plus the detected facts as JSON — 19,166 bytes on Rennet's own checkout — and now names the
-three documents by path, for a seat whose `cwd` is already the repository root, at 706 bytes.
-Related-context retrieval is the same shape: its candidate dossier is written by
-`DossierStore.saveCandidates` as `candidates.json` beside the record it will become, and the
-enrichment prompt names that absolute path and the item count instead of carrying the items
-(27,543 → 414 bytes on the frozen PR #514 fixture). `candidates.json` is deliberately not
+writes through the same writer under an id of its own, `project-scout-<uuid>`, one per run,
+so its facts land at `<repo>/.rennet/context/project-scout-<uuid>/scout-detected.json` and
+the run purges that directory when it returns — including a failed run. A fixed id was never
+a session id, so every daemon start read it as an orphan, and two scouts on one root raced
+purge-then-write over each other's files. That directory is what pays for the scout's prompt:
+it used to carry `CLAUDE.md`, `AGENTS.md` and `CONTRIBUTING.md` at 8 kB each plus the detected
+facts as JSON — 19,166 bytes on Rennet's own checkout — and now names the three documents by
+path, for a seat whose `cwd` is already the repository root, at 706 bytes.
+
+Related-context retrieval is the same shape with the same lifecycle: its candidate dossier is
+a run-scoped file under the review's session context directory, and the enrichment prompt
+names that absolute path and the item count instead of carrying the items (27,543 → 414 bytes
+on the frozen PR #514 fixture). It is written run-scoped and under the session rather than as
+a `candidates.json` in the global dossier store, so a concurrent open of the same target
+cannot overwrite the file the first seat is mid-read of, and so the archive purge covers it if
+the turn never returns; the kick discards it as soon as the turn does. It is deliberately not
 `record.json`, because a readable record is what gates a refire and a candidate list is not a
 finished retrieval.
 

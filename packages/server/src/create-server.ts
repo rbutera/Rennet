@@ -10,6 +10,7 @@ import {
   existsSync,
   constants as fsConstants,
   mkdirSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   writeFileSync,
@@ -105,6 +106,7 @@ import {
   readSetupLogTail,
   readSetupStatus,
   readTreeLineCounts,
+  recordedVisibility,
   refreshGitHubCredential,
   releaseRoundSourceCommit,
   removeRoundWorktree,
@@ -208,15 +210,18 @@ import {
   forgeRepositorySlug,
   LENS_KINDS,
   roundOperationProgressSnapshot,
+  serializeDossier,
   sha256Hex,
 } from "@rennet/protocol";
 import { createBenchmarkRecording } from "./benchmark-store";
 import { type BoardsRuntime, createBoardsRuntime } from "./boards/boards-runtime";
 import { attachCiSignal } from "./ci-signal";
 import {
-  purgeSessionContext,
+  configureSessionContext,
+  createSessionContextPurger,
   sessionContextRelativeDir,
   sweepOrphanedSessionContext,
+  writeRunScopedContext,
   writeSessionContext,
 } from "./context-files";
 import { createLiveDeltaDigestPort } from "./delta-digest-live";
@@ -2583,34 +2588,83 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       ...(preparation.status === "drafting" ? { lanes: preparation.lanes } : {}),
     });
   }
+  // Name this daemon on every context directory it writes, and read each repo's own
+  // visibility before ensuring the ignore block — the two facts the writer cannot know
+  // from a call (session-context-files, review findings 1 and 2).
+  configureSessionContext({
+    owner: dataDir,
+    visibilityOf: (repoRoot) => recordedVisibility(liveSnapshotStore, repoRoot),
+  });
   /**
-   * The root a session's context files live under (session-context-files). The session's
-   * OWN `repositoryRoot` first — a workspace project maps many repos to one id and that
-   * mapping is not invertible, so `projectId` can never answer "which repo" — then the
-   * attached review's root for a session minted before anything stamped one.
+   * The root a session's context files live under (session-context-files). The root
+   * something actually WROTE under first (`contextRoot` — a range review's seats draft in
+   * `~/.rennet/worktrees/review/<reviewId>` until the workspace binding lands, and that is
+   * where their files are); then the session's OWN `repositoryRoot` — a workspace project
+   * maps many repos to one id and that mapping is not invertible, so `projectId` can never
+   * answer "which repo" — then the attached review's root for a session minted before
+   * anything stamped one.
    */
   const boundRootForSession = (sessionId: string): string | undefined => {
     const session = sessionStore.load(sessionId);
     if (session === undefined) return undefined;
+    if (session.contextRoot !== undefined) return session.contextRoot;
     if (session.repositoryRoot !== undefined) return session.repositoryRoot;
     return session.reviewId === undefined
       ? undefined
       : service.reviewById(session.reviewId)?.repositoryRoot;
   };
-  const purgeContextForSession = (sessionId: string): void => {
-    const root = boundRootForSession(sessionId);
-    if (root !== undefined) purgeSessionContext(root, sessionId);
+  // Deferred while a round is in flight: `session.archive` awaits the session's
+  // preparation, but nothing tracks a round, so an immediate purge deletes the directory
+  // the round's next turn reads. The round's settle path purges instead.
+  const contextPurger = createSessionContextPurger(boundRootForSession);
+  const purgeContextForSession = (sessionId: string): void => void contextPurger.purge(sessionId);
+  /**
+   * The drafting roots a range review's seats run in until task 5.1 binds one root per
+   * session: the review worktrees under the data dir, plus any PR worktree the index
+   * recorded. A context directory written there is invisible to a sweep that looks only at
+   * project roots, so it would survive every start (review finding 8).
+   */
+  const draftingRoots = (): string[] => {
+    let reviewWorktrees: string[] = [];
+    const base = dirname(reviewWorktreePath(dataDir, "any"));
+    try {
+      reviewWorktrees = readdirSync(base, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => join(base, entry.name));
+    } catch {
+      // No review worktrees yet, or the directory is unreadable: nothing to sweep there.
+    }
+    return [...reviewWorktrees, ...Object.values(readPrWorktreeIndex()).map((entry) => entry.path)];
   };
   // The daemon-start orphan sweep (session-context-files): a crash between a context write
   // and an archive leaves a directory nobody would ever purge, so the next start collects
-  // every one whose session id the store no longer holds, and says how many in the log.
+  // every one THIS daemon wrote whose session the store no longer holds or already marks
+  // archived, and says how many in the log.
   // Every root the daemon knows is looked in — `openPath` is only "the repo, or the FIRST
-  // included repo", so a workspace's other repos are swept from `includedRepoPaths`.
+  // included repo", so a workspace's other repos are swept from `includedRepoPaths`, the
+  // recorded `contextRoot`s cover a session whose files went somewhere else, and the
+  // drafting roots cover the review worktrees the seats currently run in.
   sweepOrphanedSessionContext(
-    projectStore
-      .list()
-      .flatMap((project) => [project.openPath, ...(project.includedRepoPaths ?? [])]),
-    new Set(sessionStore.list().map((session) => session.id)),
+    [
+      ...projectStore
+        .list()
+        .flatMap((project) => [project.openPath, ...(project.includedRepoPaths ?? [])]),
+      ...sessionStore
+        .list()
+        .flatMap((session) => (session.contextRoot === undefined ? [] : [session.contextRoot])),
+      ...draftingRoots(),
+    ],
+    {
+      // RAW ids: a record that will not parse is skipped by `list()`, and treating that
+      // silence as "the session is gone" deletes a live session's files.
+      persistedIds: new Set(sessionStore.persistedIds()),
+      archivedIds: new Set(
+        sessionStore
+          .list()
+          .filter((session) => session.archivedAt !== undefined)
+          .map((session) => session.id),
+      ),
+    },
   );
   const sessionPreparations = new Map<string, AbortController>();
   const sessionPreparationRuns = new Map<string, Promise<void>>();
@@ -2989,12 +3043,17 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // re-runs the identical sweep on the way out, and does nothing at all for a session
     // that is still live (the ordinary case: one memoized `load`, no sidecar call).
     runRound: async (input: Parameters<typeof roundsRuntime.runRound>[0]) => {
+      // In flight for the duration, so an archive landing mid-round DEFERS its context
+      // purge to this settle instead of deleting the directory the next turn reads
+      // (review finding 4). Cleared before the sweep, which is what then performs it.
+      const settle = contextPurger.roundInFlight(session.id);
       try {
         return await roundsRuntime.runRound({
           ...input,
           ...(awaitReport === undefined ? {} : { onReportProgress: awaitReport }),
         });
       } finally {
+        settle();
         await sweepIfArchived(
           sessionStore.load(session.id),
           t3Sidecar.forgetSession,
@@ -4091,6 +4150,12 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       kickBoardDrafting(review);
       // The hook must never throw into the command path (`repoKeyOf` realpaths).
       try {
+        // The enrichment seat's candidate dossier: a RUN-SCOPED file under this review's
+        // session context directory, not `candidates.json` in the global dossier store
+        // (review finding 3). Under the session, the archive purge covers it; run-scoped,
+        // a concurrent open of the same target cannot overwrite the file the first seat is
+        // reading; discarded below, because it exists only for the turn that reads it.
+        const written: { discard(): void }[] = [];
         void runRelatedContextRetrieval(review, {
           store: snapshotStore,
           resolveClaudePort: claudeAdapterForRepo,
@@ -4100,6 +4165,18 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
             repoKeyOf(review),
             daemonSettingsStore.readState().config,
           ),
+          writeCandidates: (items) => {
+            const file = writeRunScopedContext(
+              review.repositoryRoot,
+              sessionIdForReview(review),
+              `related-context-candidates-${randomUUID()}.json`,
+              `${serializeDossier(items)}\n`,
+            );
+            written.push(file);
+            return file.path;
+          },
+        }).finally(() => {
+          for (const file of written) file.discard();
         });
       } catch {
         // Retrieval is garnish on the open — a failed kick never surfaces here.
