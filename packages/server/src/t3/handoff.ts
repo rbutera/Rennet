@@ -8,7 +8,7 @@
 import { basename } from "node:path";
 import type { HandoffTurnOutcome } from "@rennet/core";
 import type { OrchestrationThread, T3Client } from "./client";
-import type { ThreadBinding } from "./threads";
+import type { ThreadBinding, ThreadBindingKey } from "./threads";
 
 export interface T3HandoffInput {
   readonly repoRoot: string;
@@ -21,7 +21,7 @@ export interface T3HandoffDeps {
   readonly client: () => Promise<T3Client>;
   readonly threadFor: (input: {
     readonly repositoryRoot: string;
-    readonly sessionId: string;
+    readonly key: ThreadBindingKey;
     readonly title: string;
   }) => Promise<ThreadBinding>;
 }
@@ -41,7 +41,7 @@ export async function runHandoffTurnT3(
 ): Promise<HandoffTurnOutcome> {
   const binding = await deps.threadFor({
     repositoryRoot: input.repoRoot,
-    sessionId: input.reviewId,
+    key: { kind: "session", sessionId: input.reviewId },
     title: basename(input.repoRoot) || "review",
   });
   const client = await deps.client();

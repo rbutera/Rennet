@@ -5,7 +5,13 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { connectT3, modelSelection, type T3Client } from "./client";
 import { type RunningSidecar, resolveSidecarBundle, spawnSidecar, stopSidecar } from "./sidecar";
-import { bindThread, findBinding } from "./threads";
+import {
+  bindThread,
+  findBinding,
+  type SeatKind,
+  seatThreadTitle,
+  type ThreadBindingKey,
+} from "./threads";
 
 // Drives the REAL vendored bundle over its RPC socket with the bearer the supervisor
 // exchanged. No harness turn is started (that would spend the user's subscription); the
@@ -106,50 +112,19 @@ describe.skipIf(!bundle)("t3 client over the vendored sidecar", () => {
     const other = initRepo("other");
     // Both repos are on `main`; only the repository root tells them apart.
     const selection = modelSelection("claudeAgent", "claude-sonnet-5");
-    const first = await bindThread({
-      dataDir,
-      client,
-      repositoryRoot: repo,
-      sessionId: "s1",
-      title: "s1",
-      modelSelection: selection,
-    });
-    const second = await bindThread({
-      dataDir,
-      client,
-      repositoryRoot: other,
-      sessionId: "s1",
-      title: "s1",
-      modelSelection: selection,
-    });
+    const bind = (repositoryRoot: string, key: ThreadBindingKey, title: string) =>
+      bindThread({ dataDir, client, repositoryRoot, key, title, modelSelection: selection });
+    const s1: ThreadBindingKey = { kind: "session", sessionId: "s1" };
+    const first = await bind(repo, s1, "s1");
+    const second = await bind(other, s1, "s1");
     expect(second.threadId).not.toBe(first.threadId);
     expect(second.projectId).not.toBe(first.projectId);
     // Re-binding the same key is idempotent; a different session on the same repo is not.
-    expect(
-      (
-        await bindThread({
-          dataDir,
-          client,
-          repositoryRoot: other,
-          sessionId: "s1",
-          title: "x",
-          modelSelection: selection,
-        })
-      ).threadId,
-    ).toBe(second.threadId);
-    expect(
-      (
-        await bindThread({
-          dataDir,
-          client,
-          repositoryRoot: other,
-          sessionId: "s2",
-          title: "x",
-          modelSelection: selection,
-        })
-      ).threadId,
-    ).not.toBe(second.threadId);
-    expect(findBinding(dataDir, other, "s1")?.threadId).toBe(second.threadId);
+    expect((await bind(other, s1, "x")).threadId).toBe(second.threadId);
+    expect((await bind(other, { kind: "session", sessionId: "s2" }, "x")).threadId).not.toBe(
+      second.threadId,
+    );
+    expect(findBinding(dataDir, other, s1)?.threadId).toBe(second.threadId);
 
     // The second thread's working directory is the SECOND repository's checkout: T3 resolves
     // cwd as worktreePath ?? project.workspaceRoot, and the project was created for `other`.
@@ -161,5 +136,50 @@ describe.skipIf(!bundle)("t3 client over the vendored sidecar", () => {
     expect(item.value.snapshot.thread.worktreePath).toBeNull();
     const projects = await client.ensureProject(other, "other");
     expect(projects).toBe(second.projectId);
+  }, 30_000);
+
+  it("binds one thread per (repository, generation, seat), beside the session bindings", async () => {
+    const other = initRepo("seats-other");
+    const selection = modelSelection("claudeAgent", "claude-sonnet-5");
+    const seatKey = (generationId: string, seat: SeatKind): ThreadBindingKey => ({
+      kind: "seat",
+      generationId,
+      seat,
+    });
+    const bind = (repositoryRoot: string, key: ThreadBindingKey, title: string) =>
+      bindThread({ dataDir, client, repositoryRoot, key, title, modelSelection: selection });
+
+    const design = await bind(repo, seatKey("g1", "design"), seatThreadTitle("feat/x", "design"));
+    // Same generation id, same seat, DIFFERENT repository: the workspace maps many repos to
+    // one identity, so nothing but the checkout tells these two apart (AGENTS.md).
+    const otherDesign = await bind(
+      other,
+      seatKey("g1", "design"),
+      seatThreadTitle("feat/x", "design"),
+    );
+    expect(otherDesign.threadId).not.toBe(design.threadId);
+    expect(otherDesign.projectId).not.toBe(design.projectId);
+
+    // Every axis of the key is load-bearing: seat, generation, and idempotence on re-bind.
+    const sequence = await bind(repo, seatKey("g1", "sequence"), "x");
+    const nextGeneration = await bind(repo, seatKey("g2", "design"), "x");
+    expect(new Set([design, sequence, nextGeneration].map((b) => b.threadId)).size).toBe(3);
+    expect((await bind(repo, seatKey("g1", "design"), "x")).threadId).toBe(design.threadId);
+
+    // The pre-existing session binding on the same repo is untouched and still resolves.
+    const session: ThreadBindingKey = { kind: "session", sessionId: "s1" };
+    expect(findBinding(dataDir, repo, session)).toBeDefined();
+    expect(findBinding(dataDir, repo, session)?.threadId).not.toBe(design.threadId);
+    // A seat key never matches a session row and vice versa.
+    expect(findBinding(dataDir, repo, seatKey("g1", "design"))?.threadId).toBe(design.threadId);
+    expect(findBinding(dataDir, repo, seatKey("g9", "design"))).toBeUndefined();
+
+    // The title names the branch and the lens, so the sidecar's own list reads sensibly.
+    expect(seatThreadTitle("feat/x", "flagged-codex")).toBe("feat/x — Flagged (Codex)");
+    const iterator = client.subscribeThread(design.threadId)[Symbol.asyncIterator]();
+    const item = await iterator.next();
+    await iterator.return?.();
+    if (item.done || item.value.kind !== "snapshot") throw new Error("no snapshot");
+    expect(item.value.snapshot.thread.title).toBe("feat/x — Design");
   }, 30_000);
 });
