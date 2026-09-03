@@ -83,6 +83,7 @@ export interface SettingsCompositionDeps {
           visibility?: ProjectVisibility;
           promoted?: boolean;
           glyph?: string;
+          chatEngine?: string;
           worktreeBaseDir?: string;
           worktreePattern?: string;
           tracker?: {
@@ -515,6 +516,7 @@ const PROJECT_PREF: Record<
   { readonly field: RepoPrefField; readonly validate: (value: string) => string }
 > = {
   glyph: { field: "glyph", validate: SETTINGS_REGISTRY.projectGlyph.validate },
+  chatEngine: { field: "chatEngine", validate: SETTINGS_REGISTRY.chatEngine.validate },
   worktreeRoot: { field: "worktreeBaseDir", validate: SETTINGS_REGISTRY.worktreeBaseDir.validate },
   worktreePattern: {
     field: "worktreePattern",
@@ -638,6 +640,7 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
     target: RepoTarget,
     config: {
       glyph?: string;
+      chatEngine?: string;
       worktreeBaseDir?: string;
       worktreePattern?: string;
       tracker?: { kind?: string; projectKey?: string; baseUrl?: string; tokenEnv?: string };
@@ -646,6 +649,14 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
     const detected = deps.scoutOffers?.(target.repoKey) ?? {};
     const globalTracker = deps.readDaemonSettings().tracker ?? {};
     const repoTracker = config?.tracker ?? {};
+    const offerChatEngine = (value: string | undefined) => {
+      if (!value || value.trim() === "") return undefined;
+      try {
+        return SETTINGS_REGISTRY.chatEngine.validate(value);
+      } catch {
+        return undefined;
+      }
+    };
     const layered = <T extends string>(resolved: { value: T; layer: SettingsLayer }) => ({
       value: resolved.value as string,
       layer: resolved.layer,
@@ -653,6 +664,11 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
     const guidance = deps.loadGuidance(target.repoRoot);
     return {
       glyph: layered(resolve(SETTINGS_REGISTRY.projectGlyph, { repo: offer(config?.glyph) })),
+      // The engine is an enum: a hand-edited value outside the vocabulary reads as unset
+      // rather than failing the whole row, the same leniency `offer` gives blanks.
+      chatEngine: layered(
+        resolve(SETTINGS_REGISTRY.chatEngine, { repo: offerChatEngine(config?.chatEngine) }),
+      ),
       worktreeRoot: layered(
         resolve(SETTINGS_REGISTRY.worktreeBaseDir, {
           detected: offer(detected.worktreeBaseDir),

@@ -1,3 +1,4 @@
+import type { T3SidecarStatus } from "@rennet/protocol";
 import { createContext, useContext } from "react";
 import type { HostOS } from "../assets/os-glyphs";
 import type { ProjectIconName } from "../assets/project-icon";
@@ -41,6 +42,9 @@ export interface DaemonInfo {
   readonly lastSeenVersion?: string;
   /** This host has a daemon update available (drives the button-only Update Daemon). */
   readonly updateAvailable?: boolean;
+  /** The owned T3 Code sidecar's state (t3code-sidecar-chat); local host only, and only
+   *  when the daemon composed one. Disclosure, never a control. */
+  readonly t3Sidecar?: T3SidecarStatus;
 }
 
 /** One environment card: the machine, its address, and its daemon. */
@@ -107,6 +111,9 @@ export interface ReviewRole {
 
 // ── Projects (§8) ──────────────────────────────────────────────────────────────
 
+/** The chat engine for one project's sessions (t3code-sidecar-chat). */
+export type ChatEngine = "rennet" | "t3";
+
 /** The worktree location + naming pattern for one project (each a layered value). */
 export interface WorktreeSettings {
   readonly root: Layered<string>;
@@ -162,6 +169,8 @@ export interface SettingsProjection {
   readonly glyphByProject: Readonly<Record<string, ProjectIconName>>;
   /** The worktree settings per project id. */
   readonly worktreeByProject: Readonly<Record<string, WorktreeSettings>>;
+  /** The resolved chat engine per project; absent when the daemon predates the setting. */
+  readonly chatEngineByProject: Readonly<Record<string, Layered<ChatEngine>>>;
   /** The issue-tracker settings per project id. */
   readonly trackerByProject: Readonly<Record<string, IssueTrackerSettings>>;
   /** The guidance rules the review agents read, per project id. */
@@ -235,6 +244,8 @@ export interface SettingsProjection {
   setWorktreeRoot(projectId: string, root: string): void;
   /** Set a project's worktree naming pattern. */
   setWorktreePattern(projectId: string, pattern: string): void;
+  /** Set a project's chat engine (t3code-sidecar-chat); takes effect on the next session open. */
+  setChatEngine(projectId: string, engine: ChatEngine): void;
   /** Set a project's issue-tracker config. */
   setTracker(projectId: string, tracker: IssueTrackerSettings): void;
   /** Set a project's guidance rules (the review agents read them). */
@@ -253,6 +264,7 @@ export const EMPTY_SETTINGS_PROJECTION: SettingsProjection = {
   nameByProject: {},
   glyphByProject: {},
   worktreeByProject: {},
+  chatEngineByProject: {},
   trackerByProject: {},
   guidanceByProject: {},
   projectEditsPersist: false,
@@ -270,6 +282,7 @@ export const EMPTY_SETTINGS_PROJECTION: SettingsProjection = {
   setProjectGlyph: () => undefined,
   setWorktreeRoot: () => undefined,
   setWorktreePattern: () => undefined,
+  setChatEngine: () => undefined,
   setTracker: () => undefined,
   setGuidance: () => undefined,
 };

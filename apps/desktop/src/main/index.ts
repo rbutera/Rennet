@@ -245,6 +245,10 @@ async function createWindow(): Promise<void> {
       nodeIntegration: false,
       sandbox: true,
       webSecurity: true,
+      // The chat slot's rung-one T3 view is an Electron <webview> of the sidecar's own UI
+      // (t3code-sidecar-chat, 6.1): a separate guest at a loopback origin, never this
+      // page's DOM. Off by default in Electron; on here for exactly that element.
+      webviewTag: true,
       // The app version stays a boot-time argv constant (it is known before the window is).
       // The WS port is NOT: it arrives over `rennet:ws-port` once the daemon is healthy.
       additionalArguments: [`--rennet-version=${app.getVersion()}`],

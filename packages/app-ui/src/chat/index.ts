@@ -34,3 +34,4 @@ export {
   useSessionTranscript,
 } from "./chat-data";
 export { ChatDock } from "./chat-dock";
+export { EngineChatDock, T3ChatDock, useRouteChatEngine } from "./engine-chat-dock";

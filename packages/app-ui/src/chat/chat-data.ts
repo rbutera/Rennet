@@ -730,7 +730,7 @@ export interface ChatDockModel {
  * resolved. The read is shared: `useSlugResolution` keys `review.load` on a slug-derived
  * commandId, so the route screen and this hook hit ONE cache entry, not two fetches.
  */
-function useRouteReviewId(): string | undefined {
+export function useRouteReviewId(): string | undefined {
   const [onSession, sessionParams] = useRoute(ROUTES.session);
   const [, runParams] = useRoute(ROUTES.sessionRun);
   const raw = (onSession ? sessionParams?.slug : runParams?.slug) ?? "";

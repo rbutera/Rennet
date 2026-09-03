@@ -6,6 +6,7 @@
 // contract and ./client.ts for the RPC surface.
 
 import type { T3Session, T3SidecarStatus } from "@rennet/protocol";
+import { connectT3, modelSelection, type T3Client } from "./client";
 import {
   adoptSidecar,
   type ProviderBinaries,
@@ -14,6 +15,7 @@ import {
   removeSidecarClaim,
   spawnSidecar,
 } from "./sidecar";
+import { bindThread, type ThreadBinding } from "./threads";
 
 export interface T3SidecarSupervisorOptions {
   readonly dataDir: string;
@@ -31,9 +33,20 @@ export interface T3SidecarSupervisor {
   /** Broker a session for a client: the origin, the WS URL, the bearer, and a pairing URL for an embedded UI. */
   readonly session: () => Promise<T3Session>;
   readonly status: () => T3SidecarStatus;
+  /** The daemon's own RPC client over the sidecar socket, connected on first use. */
+  readonly client: () => Promise<T3Client>;
+  /** The T3 thread bound to (repository root, session id), created on first use. */
+  readonly threadFor: (input: {
+    readonly repositoryRoot: string;
+    readonly sessionId: string;
+    readonly title: string;
+  }) => Promise<ThreadBinding>;
   /** Synchronous teardown for the daemon's own shutdown path (no async budget there). */
   readonly stopSync: () => void;
 }
+
+/** Rung one's default model: T3's own default for its Claude driver. The composer changes it per thread. */
+const DEFAULT_MODEL = modelSelection("claudeAgent", "claude-sonnet-5");
 
 export function createT3SidecarSupervisor(
   options: T3SidecarSupervisorOptions,
@@ -42,6 +55,7 @@ export function createT3SidecarSupervisor(
   const upstreamCommit = options.bundlePath ? readUpstreamCommit(options.bundlePath) : "unknown";
   let running: RunningSidecar | null = null;
   let inFlight: Promise<RunningSidecar> | null = null;
+  let rpc: Promise<T3Client> | null = null;
   let status: T3SidecarStatus = { state: "off", upstreamCommit, telemetry: "off" };
 
   const bringUp = async (): Promise<RunningSidecar> => {
@@ -95,6 +109,32 @@ export function createT3SidecarSupervisor(
     return inFlight;
   };
 
+  const client = (): Promise<T3Client> => {
+    if (rpc) return rpc;
+    rpc = ensure()
+      .then((sidecar) =>
+        connectT3({
+          wsUrl: `${sidecar.origin.replace(/^http/, "ws")}/ws`,
+          accessToken: sidecar.credentials.accessToken,
+        }),
+      )
+      .catch((error: unknown) => {
+        rpc = null;
+        throw error;
+      });
+    return rpc;
+  };
+
+  const threadFor: T3SidecarSupervisor["threadFor"] = async (input) =>
+    bindThread({
+      dataDir: options.dataDir,
+      client: await client(),
+      repositoryRoot: input.repositoryRoot,
+      sessionId: input.sessionId,
+      title: input.title,
+      modelSelection: DEFAULT_MODEL,
+    });
+
   const session = async (): Promise<T3Session> => {
     const sidecar = await ensure();
     const pairing = await mintPairingCredential(sidecar.origin, sidecar.credentials.accessToken);
@@ -110,6 +150,9 @@ export function createT3SidecarSupervisor(
   const stopSync = (): void => {
     const current = running;
     running = null;
+    const openRpc = rpc;
+    rpc = null;
+    void openRpc?.then((c) => c.close()).catch(() => undefined);
     status = { state: "off", upstreamCommit, telemetry: "off" };
     if (!current) return;
     // Only a sidecar this daemon spawned is signalled here; an adopted one belongs to the
@@ -124,7 +167,7 @@ export function createT3SidecarSupervisor(
     }
   };
 
-  return { ensure, session, status: () => status, stopSync };
+  return { ensure, session, status: () => status, client, threadFor, stopSync };
 }
 
 /** A short-lived pairing credential an embedded T3 UI can consume at `/pair#token=`. */

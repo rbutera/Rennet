@@ -1,7 +1,7 @@
 import { cn, ResizeHandle } from "@rennet/ui";
 import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { useRoute } from "wouter";
-import { ChatDock } from "../chat/chat-dock";
+import { EngineChatDock } from "../chat/engine-chat-dock";
 import { Coachmark } from "../coach/coachmark";
 import { CoachDataProvider } from "../coach/provider";
 import { CodeDestinationProvider } from "../review/code-destination";
@@ -176,7 +176,7 @@ export function AppLayout({ children }: { readonly children: ReactNode }) {
               row. Gated on ownership, never on the dock existing: this slot stays
               MOUNTED at width 0 + `inert` when closed, and an ungated mount here would
               be an invisible second corner slot that steals the window's drag region. */}
-              <ChatDock corner={owner === "chat" ? <CornerSlot owner="chat" /> : null} />
+              <EngineChatDock corner={owner === "chat" ? <CornerSlot owner="chat" /> : null} />
             </div>
 
             {/* The divider — only on a session route with the chat open. */}

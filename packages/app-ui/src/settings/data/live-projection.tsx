@@ -14,6 +14,7 @@ import { type HostOS, osFromPlatform } from "../assets/os-glyphs";
 import { PROJECT_ICON_NAMES, type ProjectIconName } from "../assets/project-icon";
 import { DEFAULT_WORKTREE_PATTERN, DEFAULT_WORKTREE_ROOT } from "../assets/worktree";
 import {
+  type ChatEngine,
   type DaemonInfo,
   type DetectedTool,
   EMPTY_SETTINGS_PROJECTION,
@@ -169,6 +170,7 @@ function forgeRow(forge: DetectedForge, disabled: ReadonlySet<string>): Detected
  *  vocabulary, minus the ones no control on these pages edits. */
 type ProjectPrefKey =
   | "glyph"
+  | "chatEngine"
   | "worktreeRoot"
   | "worktreePattern"
   | "trackerKind"
@@ -334,7 +336,11 @@ export function LiveSettingsProjectionProvider({ children }: { readonly children
       // The routing address IS the source for a non-local host (`wsl:Ubuntu`,
       // `remote:<deviceId>`); the local machine has nothing to dial.
       address: section.isLocal ? undefined : section.source,
-      daemon: daemonInfo(statusBySource.get(section.source)),
+      daemon: {
+        ...daemonInfo(statusBySource.get(section.source)),
+        // The sidecar is a process THIS daemon owns, so only the local card carries it.
+        ...(section.isLocal && status?.t3Sidecar ? { t3Sidecar: status.t3Sidecar } : {}),
+      },
     }));
 
     // Each host's OWN forge CLIs (amendment B). A host that could not be asked claims NOTHING —
@@ -380,6 +386,7 @@ export function LiveSettingsProjectionProvider({ children }: { readonly children
     }
     const glyphByProject: Record<string, ProjectIconName> = {};
     const worktreeByProject: Record<string, WorktreeSettings> = {};
+    const chatEngineByProject: Record<string, Layered<ChatEngine>> = {};
     const trackerByProject: Record<string, IssueTrackerSettings> = {};
     const guidanceByProject: Record<string, readonly GuidanceRule[]> = {};
     for (const [projectId, row] of rowByProject) {
@@ -394,6 +401,12 @@ export function LiveSettingsProjectionProvider({ children }: { readonly children
         root: layeredOr(prefs.worktreeRoot, DEFAULT_WORKTREE_ROOT),
         pattern: layeredOr(prefs.worktreePattern, DEFAULT_WORKTREE_PATTERN),
       };
+      // Older daemons serve no chatEngine at all; then the row is absent and the chat dock
+      // stays on the Rennet engine without claiming a resolved value.
+      if (prefs.chatEngine) {
+        const engine = prefs.chatEngine.value === "t3" ? "t3" : "rennet";
+        chatEngineByProject[projectId] = { value: engine, layer: prefs.chatEngine.layer };
+      }
       const kind = trackerKind(prefs.tracker.kind.value);
       const rest = kind === "jira" || kind === "linear";
       trackerByProject[projectId] = {
@@ -454,11 +467,13 @@ export function LiveSettingsProjectionProvider({ children }: { readonly children
       agentsByHost,
       glyphByProject,
       worktreeByProject,
+      chatEngineByProject,
       trackerByProject,
       guidanceByProject,
       setProjectGlyph: (projectId, icon) => writePref(projectId, "glyph", icon),
       setWorktreeRoot: (projectId, root) => writePref(projectId, "worktreeRoot", root),
       setWorktreePattern: (projectId, pattern) => writePref(projectId, "worktreePattern", pattern),
+      setChatEngine: (projectId, engine) => writePref(projectId, "chatEngine", engine),
       setTracker: (projectId, tracker) => {
         // The surface hands back the whole section; only the CHANGED keys are written,
         // so switching the kind does not rewrite three endpoint fields that did not move.
