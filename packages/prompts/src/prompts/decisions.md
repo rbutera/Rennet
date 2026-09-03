@@ -60,8 +60,7 @@ Give each section a one-line folded gist with counts.
   genuinely changes how the reader must think about the code.
 
 If no call passes the viable-alternative test, return an empty `elements` list.
-Keep `skippedHunks` as the complete honest coverage account; it may contain
-every hunk. Do not emit a prose-only summary, an empty section, or a "no
+Do not emit a prose-only summary, an empty section, or a "no
 decisions" placeholder. Those shapes look like a board but contain no decision
 for the reader.
 
@@ -79,7 +78,8 @@ narrated. Never write prose about what is not on this board.
 
 ## Ground rules (all lenses)
 
-- Every claim cites code (path:line) or names its absence honestly.
+- Every claim cites code (path plus a line range on one side of the change)
+  or names its absence honestly.
 - Code is cited, never copied: to place code on the board, emit a code ref
   (path + line span); the surface hydrates the real lines. Never type code
   bytes into a board element.
@@ -96,7 +96,5 @@ narrated. Never write prose about what is not on this board.
   narration.
 - Threads and messages are records of real exchanges. You draft before any
   exchange exists; never author one.
-- Hunks you consciously leave to another lens go in your skipped-hunks list —
-  data the pipeline checks, invisible on the board — never in prose.
 - Your output is a draft board of typed blocks in the schema supplied with
   your task. Fill only the fields the schema defines.

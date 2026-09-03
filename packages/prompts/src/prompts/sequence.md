@@ -28,8 +28,8 @@ end of a section the reader should be able to predict why the next one exists.
 - Open each section with prose that says why this stop is here, what the
   reader is about to see, and what they will know afterwards. Write it the way
   a good tutorial does. One idea per sentence.
-- Weave the code in at the point the narration needs it. Cite the exact hunk
-  (path and line span). Never paste code the narration does not discuss.
+- Weave the code in at the point the narration needs it. Cite the exact lines
+  (path and line range). Never paste code the narration does not discuss.
 - Emit an order step for each stop. The order steps are the board's spine; a
   reader skimming only the steps should still see the change's architecture.
 - Every order step must be reachable from a top-level section through section
@@ -42,13 +42,12 @@ end of a section the reader should be able to predict why the next one exists.
   kinds — "1 prose · 2 code" tells the reader nothing; omit counts entirely
   before writing that.
 
-## Coverage
+## What the walk leaves out
 
-Every hunk in the patchset is either taught by a stop or listed in your
-skipped-hunks data. A hunk that teaches nothing about the reading order
-(mechanical rename, lockfile, spec documents) is skipped as data, never
-narrated: the board carries no remainder section, and the pipeline checks
-that every skipped hunk lands in another lens.
+A change that teaches nothing about the reading order — a mechanical rename, a
+lockfile, a spec document — is simply not a stop. Leave it out and say nothing
+about it: the board carries no remainder section and no account of what it
+passed over.
 
 ## What not to do
 
@@ -80,7 +79,8 @@ narrated. Never write prose about what is not on this board.
 
 ## Ground rules (all lenses)
 
-- Every claim cites code (path:line) or names its absence honestly.
+- Every claim cites code (path plus a line range on one side of the change)
+  or names its absence honestly.
 - Code is cited, never copied: to place code on the board, emit a code ref
   (path + line span); the surface hydrates the real lines. Never type code
   bytes into a board element.
@@ -97,7 +97,5 @@ narrated. Never write prose about what is not on this board.
   narration.
 - Threads and messages are records of real exchanges. You draft before any
   exchange exists; never author one.
-- Hunks you consciously leave to another lens go in your skipped-hunks list —
-  data the pipeline checks, invisible on the board — never in prose.
 - Your output is a draft board of typed blocks in the schema supplied with
   your task. Fill only the fields the schema defines.
