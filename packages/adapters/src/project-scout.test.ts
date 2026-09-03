@@ -1,14 +1,16 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { HarnessTurnResult } from "@rennet/core";
+import { type HarnessTurnResult, inlineContextViolation } from "@rennet/core";
 import { afterEach, describe, expect, it } from "vitest";
 import { loadConventionCatalogue } from "./convention-catalogue-reader";
 import type { GitExec } from "./git-range-diff";
 import {
   loadScoutFacts,
+  PROJECT_SCOUT_CONTEXT_ID,
   resolveTrackerConfig,
   runProjectScout,
+  SCOUT_DETECTED_FILE,
   saveScoutFacts,
   scoutDeterministic,
   scoutSettingsOffers,
@@ -174,6 +176,96 @@ describe("runProjectScout", () => {
       }),
     ]);
     expect(result.guidanceSkipped).toBe("no-seat");
+  });
+
+  // ── session-context-files 3.8: the prompt names files, it never carries them ──
+
+  /** A guidance document the size real ones are — 12 kB used to ride every scout prompt. */
+  function bigGuidance(marker: string): string {
+    return `# ${marker}\n${`${marker} paragraph of repository guidance.\n`.repeat(400)}`;
+  }
+
+  it("names the guidance documents by path and embeds none of their bytes", async () => {
+    const repo = tempRepo();
+    writeFileSync(join(repo, "CLAUDE.md"), bigGuidance("CLAUDE-SENTINEL"));
+    writeFileSync(join(repo, "AGENTS.md"), bigGuidance("AGENTS-SENTINEL"));
+    writeFileSync(join(repo, "CONTRIBUTING.md"), bigGuidance("CONTRIBUTING-SENTINEL"));
+    let prompt = "";
+    await runProjectScout({
+      repoRoot: repo,
+      git: gitStub({}),
+      runTurn: (sent) => {
+        prompt = sent;
+        return Promise.resolve(emitted({}));
+      },
+    });
+
+    // Every present document is named…
+    expect(prompt).toContain("CONTRIBUTING.md");
+    expect(prompt).toContain("CLAUDE.md");
+    expect(prompt).toContain("AGENTS.md");
+    // …and not one byte of any of them travelled.
+    expect(prompt).not.toContain("CLAUDE-SENTINEL");
+    expect(prompt).not.toContain("AGENTS-SENTINEL");
+    expect(prompt).not.toContain("CONTRIBUTING-SENTINEL");
+    expect(inlineContextViolation(prompt)).toBeUndefined();
+    // A bound, not a vibe: the same three documents used to add ~24 kB here.
+    expect(Buffer.byteLength(prompt, "utf8")).toBeLessThan(1_200);
+  });
+
+  it("writes the detected facts to scout-detected.json and names its relative path", async () => {
+    const repo = tempRepo();
+    writeFileSync(join(repo, "README.md"), "Track work in ABC-1 and ABC-2.");
+    writeFileSync(join(repo, "CLAUDE.md"), bigGuidance("CLAUDE-SENTINEL"));
+    const written: { name: string; body: string; holds: string; readWhen: string }[] = [];
+    let prompt = "";
+    await runProjectScout({
+      repoRoot: repo,
+      git: gitStub({}),
+      writeContext: (files) => {
+        written.push(...files);
+        return join(repo, ".rennet", "context", PROJECT_SCOUT_CONTEXT_ID);
+      },
+      runTurn: (sent) => {
+        prompt = sent;
+        return Promise.resolve(emitted({}));
+      },
+    });
+
+    expect(written).toHaveLength(1);
+    const file = written[0];
+    expect(file?.name).toBe(SCOUT_DETECTED_FILE);
+    // The detected facts are in the FILE, with the two index lines the writer needs.
+    expect(JSON.parse(file?.body ?? "null")).toMatchObject({
+      trackerKind: { value: "jira", provenance: "detected" },
+      trackerProjectKey: { value: "ABC" },
+    });
+    expect(file?.holds).not.toBe("");
+    expect(file?.readWhen).not.toBe("");
+    // The prompt names the path, relative to the cwd the seat runs in, and nothing else.
+    expect(prompt).toContain(`.rennet/context/${PROJECT_SCOUT_CONTEXT_ID}/${SCOUT_DETECTED_FILE}`);
+    expect(prompt).not.toContain('"provenance"');
+    expect(inlineContextViolation(prompt)).toBeUndefined();
+  });
+
+  it("skipping the context write leaves the prompt with no path to name (the control)", async () => {
+    // The control for the test above, executed rather than described: drop the writer and
+    // the path assertion has nothing to match, which is what makes it load-bearing.
+    const repo = tempRepo();
+    writeFileSync(join(repo, "README.md"), "Track work in ABC-1 and ABC-2.");
+    let prompt = "";
+    await runProjectScout({
+      repoRoot: repo,
+      git: gitStub({}),
+      runTurn: (sent) => {
+        prompt = sent;
+        return Promise.resolve(emitted({}));
+      },
+    });
+    expect(prompt).not.toContain(SCOUT_DETECTED_FILE);
+    expect(prompt).not.toContain("already detected");
+    // Still a usable prompt: the gaps are still named, so the seat still has its job.
+    expect(prompt).toContain("Fill ONLY these unknown facts");
   });
 });
 

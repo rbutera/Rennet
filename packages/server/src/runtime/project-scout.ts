@@ -2,6 +2,7 @@ import { basename } from "node:path";
 import {
   councilSeatTurn,
   type GitExec,
+  PROJECT_SCOUT_CONTEXT_ID,
   PROJECT_SCOUT_SCHEMA,
   type ProjectSnapshotStore,
   runProjectScout,
@@ -15,6 +16,7 @@ import type {
   ProjectScoutAnswer,
   ProjectScoutQuestionnaire,
 } from "@rennet/protocol";
+import { purgeSessionContext, writeSessionContext } from "../context-files";
 
 /**
  * The project-scout SCHEDULER (#461 §4, B7 cluster 4): runs at project add and
@@ -130,6 +132,14 @@ export function createProjectScoutRuntime(deps: ProjectScoutRuntimeDeps): Projec
           git: deps.gitForRepo(input.repoRoot),
           ...(input.defaultBranch ? { knownDefaultBranch: input.defaultBranch } : {}),
           runTurn: seat !== null && "runTurn" in seat ? seat.runTurn : null,
+          // The scout runs for a PROJECT, before any session exists, so its context sits
+          // under the fixed `project-scout` id in the repo it is scouting — the same ONE
+          // writer, the same ignored directory. There is no archive to purge it at, so
+          // the next run purges the last one (design D4).
+          writeContext: (files) => {
+            purgeSessionContext(input.repoRoot, PROJECT_SCOUT_CONTEXT_ID);
+            return writeSessionContext(input.repoRoot, PROJECT_SCOUT_CONTEXT_ID, files);
+          },
           onProgress: (progress) => {
             if (!input.runId) return;
             const line =
