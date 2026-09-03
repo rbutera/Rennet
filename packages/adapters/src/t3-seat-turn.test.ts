@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   createT3SeatTurn,
+  outputSchemaFor,
   parseFinalMessageJson,
   type T3SeatSeam,
   type T3SettledTurn,
@@ -177,5 +178,47 @@ describe("parseFinalMessageJson", () => {
     expect(parseFinalMessageJson("[1,2]")).toEqual([1, 2]);
     expect(parseFinalMessageJson("I could not do it.")).toBeUndefined();
     expect(parseFinalMessageJson("{not json")).toBeUndefined();
+  });
+});
+
+describe("the schema each provider actually accepts (drive 1.6, 2026-09-03)", () => {
+  // Zod projects a `$schema` draft the Claude CLI's validator rejects, and a typeless
+  // `additionalProperties: {}` plus absent-from-`required` optionals that Codex's strict
+  // structured outputs 400 on. T3 forwards whatever it is handed, so the seat leg shapes it.
+  const zodShaped = {
+    $schema: "https://json-schema.org/draft/2020-12/schema",
+    type: "object",
+    properties: { a: { type: "number" }, b: { type: "string" } },
+    required: ["a"],
+    additionalProperties: {},
+  };
+
+  it("strips the draft for Claude and leaves the shape alone", () => {
+    const shaped = outputSchemaFor("claudeAgent", zodShaped) as Record<string, unknown>;
+    expect(shaped).not.toHaveProperty("$schema");
+    expect(shaped.additionalProperties).toEqual({});
+    expect(shaped.required).toEqual(["a"]);
+  });
+
+  it("makes the schema strict for Codex: no typeless additionalProperties, every property required", () => {
+    const shaped = outputSchemaFor("codex", zodShaped) as Record<string, unknown>;
+    expect(shaped.additionalProperties).toBe(false);
+    expect(shaped.required).toEqual(["a", "b"]);
+  });
+
+  it("hands the provider-shaped schema to startTurn, and strips the nulls a strict Codex turn emits", async () => {
+    const { seam, startTurn } = stubs([settled({ structuredOutput: { a: 1, b: null } })]);
+    const runTurn = createT3SeatTurn(seam, {
+      ...options,
+      provider: "codex",
+      outputSchema: zodShaped,
+    });
+    const result = await runTurn("BASE PROMPT", 0);
+    const sent = startTurn.mock.calls[0]?.[0]?.outputSchema as Record<string, unknown>;
+    expect(sent.additionalProperties).toBe(false);
+    expect(sent).not.toHaveProperty("$schema");
+    // The optional field Codex was forced to emit as null is absent again for the parser.
+    expect(result).toMatchObject({ status: "emitted", body: { a: 1 } });
+    expect((result as { body: Record<string, unknown> }).body).not.toHaveProperty("b");
   });
 });
