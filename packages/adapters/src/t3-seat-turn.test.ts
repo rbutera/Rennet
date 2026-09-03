@@ -9,10 +9,13 @@ import {
 import { createMetricsCollector } from "./turn-metrics";
 
 // The seat leg maps a settled T3 turn onto the harness turn result the drafting ladder
-// already consumes. Driven with a stub client so the mapping is the thing under test; the
-// wire is proven by packages/server/src/t3/client.test.ts against the real bundle.
+// already consumes. Driven with a stub client so the mapping is the thing under test.
+// packages/server/src/t3/client.test.ts proves the wire against the real bundle: connect,
+// project, thread, and the settle wait on a provider that dies at the stream. No test
+// drives a live model turn (that would spend the user's subscription).
 
 const SCHEMA = { type: "object" } as const;
+const START = { previousTurnId: null, requestedAt: "2026-09-03T10:00:00.000Z" };
 
 const settled = (over: Partial<T3SettledTurn> = {}): T3SettledTurn => ({
   turnId: "turn-1",
@@ -23,16 +26,27 @@ const settled = (over: Partial<T3SettledTurn> = {}): T3SettledTurn => ({
 
 function stubs(outcomes: T3SettledTurn[]) {
   const startTurn = vi.fn(
-    async (input: { threadId: string; text: string; outputSchema?: unknown }) => void input,
+    async (input: { threadId: string; text: string; outputSchema?: unknown }) => {
+      void input;
+      return START;
+    },
   );
   let call = 0;
   const client = {
     startTurn,
-    waitForTurnSettled: vi.fn(async () => {
-      const outcome = outcomes[Math.min(call++, outcomes.length - 1)];
-      if (outcome === undefined) throw new Error("the test supplied no settled turn");
-      return outcome;
-    }),
+    waitForTurnSettled: vi.fn(
+      async (
+        threadId: string,
+        waitOptions?: { readonly signal?: AbortSignal; readonly after?: unknown },
+      ) => {
+        void threadId;
+        void waitOptions;
+        const outcome = outcomes[Math.min(call++, outcomes.length - 1)];
+        if (outcome === undefined) throw new Error("the test supplied no settled turn");
+        return outcome;
+      },
+    ),
+    interruptTurn: vi.fn(async (threadId: string) => void threadId),
   };
   const threadFor = vi.fn(async () => ({ threadId: "t-design", projectId: "p1" }));
   const onThread = vi.fn();
@@ -51,7 +65,7 @@ const options = {
 
 describe("createT3SeatTurn", () => {
   it("runs every attempt on the SAME thread, attaching the schema once per turn", async () => {
-    const { seam, startTurn, threadFor } = stubs([settled({ structuredOutput: { a: 1 } })]);
+    const { seam, client, startTurn, threadFor } = stubs([settled({ structuredOutput: { a: 1 } })]);
     const runTurn = createT3SeatTurn(seam, options);
 
     expect(await runTurn("BASE PROMPT", 0)).toEqual({
@@ -62,18 +76,26 @@ describe("createT3SeatTurn", () => {
     await runTurn("REPAIR POINTERS", 1);
 
     // One thread; two turns on it, in order, each carrying the contract as a schema and
-    // never as prompt text.
+    // never as prompt text. The council's effort reaches the thread's model selection.
     expect(threadFor).toHaveBeenCalledTimes(2);
+    expect(threadFor).toHaveBeenCalledWith({
+      seat: "design",
+      provider: "claudeAgent",
+      model: "opus-4.8",
+      effort: "high",
+    });
     // Order matters, not membership: the base prompt is turn one and the repair is turn
     // two, on one thread id. A set of `toContain` checks would pass on the wrong order.
     expect(startTurn.mock.calls.map((call) => call[0])).toEqual([
       { threadId: "t-design", text: "BASE PROMPT", outputSchema: SCHEMA },
       { threadId: "t-design", text: "REPAIR POINTERS", outputSchema: SCHEMA },
     ]);
-    // The contract travels ONCE, as the schema. Never restated in the text (AGENTS.md).
-    for (const [call] of startTurn.mock.calls) {
-      expect(call?.text).not.toContain("object");
-    }
+    // Each wait is scoped to ITS start, or the repair would read the drafting turn's
+    // settlement off the thread and answer with the old board.
+    expect(client.waitForTurnSettled.mock.calls.map((call) => call[1])).toEqual([
+      { after: START },
+      { after: START },
+    ]);
   });
 
   it("tells the seam its thread as soon as it exists, before the turn starts", async () => {
@@ -82,6 +104,7 @@ describe("createT3SeatTurn", () => {
     onThread.mockImplementation(() => order.push("thread"));
     startTurn.mockImplementation(async () => {
       order.push("turn");
+      return START;
     });
     await createT3SeatTurn(seam, options)("P", 0);
     expect(order).toEqual(["thread", "turn"]);
@@ -92,31 +115,62 @@ describe("createT3SeatTurn", () => {
     );
   });
 
-  it("records ONE metric per turn, and a repair's usage is its own, not the session's total", async () => {
+  it("records ONE metric per turn, and a repair's usage is its own even on a recreated runner", async () => {
     const collector = createMetricsCollector();
+    const drafting = { input_tokens: 50_000, output_tokens: 1_000 };
     const { seam } = stubs([
-      settled({
-        structuredOutput: {},
-        usage: { input_tokens: 50_000, output_tokens: 1_000 },
-        totalCostUsd: 1,
-      }),
-      // Claude's SDK reports usage CUMULATIVELY over a streaming session's turns.
+      settled({ structuredOutput: {}, usage: drafting, totalCostUsd: 1, durationMs: 8_000 }),
+      // Claude's SDK reports usage CUMULATIVELY over a streaming session's turns, and the
+      // settlement carries the previous turn's figure off the thread itself.
       settled({
         structuredOutput: {},
         usage: { input_tokens: 51_000, output_tokens: 1_400 },
-        totalCostUsd: 1.1,
+        totalCostUsd: 1.5,
+        durationMs: 2_500,
+        previousUsage: { usage: drafting, totalCostUsd: 1 },
       }),
     ]);
-    const runTurn = createT3SeatTurn(seam, { ...options, collector });
-    await runTurn("BASE", 0);
-    await runTurn("REPAIR", 1);
+    await createT3SeatTurn(seam, { ...options, collector })("BASE", 0);
+    // A whole-board restart re-resolves the seat: a NEW runner for the same thread. It
+    // must subtract the drafting turn all the same, or the repair bills it a second time.
+    await createT3SeatTurn(seam, { ...options, collector })("REPAIR", 1);
 
     expect(collector.metrics).toHaveLength(2);
     expect(collector.metrics[0]?.usage).toMatchObject({ inputTokens: 50_000, outputTokens: 1_000 });
     // The delta, not 51_000 — billing the base prompt twice would be spend nobody spent.
-    expect(collector.metrics[1]?.usage).toMatchObject({ inputTokens: 1_000, outputTokens: 400 });
+    expect(collector.metrics[1]?.usage).toMatchObject({
+      inputTokens: 1_000,
+      outputTokens: 400,
+      reportedUsd: 0.5,
+    });
     expect(collector.metrics[1]?.attempt).toBe(1);
+    // The provider's own duration for the turn, not the wrapper's wall clock.
+    expect(collector.metrics.map((m) => m.latencyMs)).toEqual([8_000, 2_500]);
     expect(collector.metrics.map((m) => m.label)).toEqual(["board.lens-draft", "board.lens-draft"]);
+  });
+
+  it("takes the whole figure when the session counter restarted below the previous turn", async () => {
+    // T3 restarting the Claude session between draft and repair begins a new cumulative
+    // counter; subtracting the old watermark would clamp the repair to zero spend.
+    const collector = createMetricsCollector();
+    const { seam } = stubs([
+      settled({
+        structuredOutput: {},
+        usage: { input_tokens: 3_000, output_tokens: 200 },
+        previousUsage: { usage: { input_tokens: 50_000, output_tokens: 1_000 } },
+      }),
+    ]);
+    await createT3SeatTurn(seam, { ...options, collector })("REPAIR", 1);
+    expect(collector.metrics[0]?.usage).toMatchObject({ inputTokens: 3_000, outputTokens: 200 });
+  });
+
+  it("falls back to the wrapper's wall clock when the settlement carries no duration", async () => {
+    const collector = createMetricsCollector();
+    const { seam } = stubs([settled({ structuredOutput: {} })]);
+    let clock = 1_000;
+    await createT3SeatTurn(seam, { ...options, collector }, () => (clock += 250))("P", 0);
+    expect(collector.metrics[0]?.latencyMs).toBeGreaterThan(0);
+    expect(collector.metrics[0]?.latencyMs).toBeLessThan(2_000);
   });
 
   it("fails a Claude turn that settled without structured output, and says so", async () => {
@@ -151,6 +205,31 @@ describe("createT3SeatTurn", () => {
     });
   });
 
+  it("records a Codex turn's tokens off T3's context-window snapshot, since its settlement carries none", async () => {
+    const collector = createMetricsCollector();
+    const { seam } = stubs([
+      settled({
+        structuredOutput: { elements: [] },
+        // T3's snapshot: `inputTokens` includes the cached share, as Codex reports it.
+        tokenUsage: {
+          usedTokens: 1_200,
+          inputTokens: 1_000,
+          cachedInputTokens: 300,
+          outputTokens: 200,
+        },
+      }),
+    ]);
+    await createT3SeatTurn(seam, { ...options, collector, provider: "codex" })("P", 0);
+    expect(collector.metrics[0]?.usage).toEqual({
+      inputTokens: 700,
+      outputTokens: 200,
+      cacheReadTokens: 300,
+      cacheCreationTokens: 0,
+      totalTokens: 1_200,
+      reportedUsd: null,
+    });
+  });
+
   it("reports a failed turn with T3's own reason, and records the metric anyway", async () => {
     const collector = createMetricsCollector();
     const { seam } = stubs([settled({ state: "error", errorMessage: "provider exited" })]);
@@ -159,6 +238,67 @@ describe("createT3SeatTurn", () => {
       message: "provider exited",
     });
     expect(collector.metrics[0]?.status).toBe("failed");
+  });
+
+  it("does not start a turn on a signal that is already aborted", async () => {
+    const { seam, startTurn } = stubs([settled({ structuredOutput: {} })]);
+    const controller = new AbortController();
+    controller.abort();
+    expect(await createT3SeatTurn(seam, { ...options, signal: controller.signal })("P", 0)).toEqual(
+      { status: "failed", message: "the seat turn was interrupted" },
+    );
+    expect(startTurn).not.toHaveBeenCalled();
+  });
+
+  it("interrupts the sidecar turn on abort and records what the interrupted turn spent", async () => {
+    // Cancelling the wait alone leaves the model running and spending on the sidecar. The
+    // abort must reach T3 as an interrupt, and the settlement that interrupt produces
+    // carries the usage the turn had already billed, so it is recorded rather than
+    // booked as zero.
+    const collector = createMetricsCollector();
+    const { seam, client } = stubs([]);
+    const controller = new AbortController();
+    let settle: ((turn: T3SettledTurn) => void) | undefined;
+    client.waitForTurnSettled.mockImplementation(
+      () =>
+        new Promise<T3SettledTurn>((resolve) => {
+          settle = resolve;
+        }),
+    );
+    client.interruptTurn.mockImplementation(async (threadId: string) => {
+      settle?.(settled({ turnId: threadId, state: "interrupted", usage: { input_tokens: 7_000 } }));
+    });
+    const pending = createT3SeatTurn(seam, { ...options, collector, signal: controller.signal })(
+      "P",
+      0,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    controller.abort();
+    expect(await pending).toEqual({ status: "failed", message: "the seat turn was interrupted" });
+    expect(client.interruptTurn).toHaveBeenCalledWith("t-design");
+    expect(collector.metrics[0]?.usage).toMatchObject({ inputTokens: 7_000 });
+  });
+
+  it("gives up on a sidecar that never settles the interrupted turn", async () => {
+    vi.useFakeTimers();
+    try {
+      const { seam, client } = stubs([]);
+      const controller = new AbortController();
+      client.waitForTurnSettled.mockImplementation(
+        (_threadId: string, waitOptions?: { signal?: AbortSignal }) =>
+          new Promise<T3SettledTurn>((_, reject) => {
+            waitOptions?.signal?.addEventListener("abort", () => reject(new Error("aborted")));
+          }),
+      );
+      const pending = createT3SeatTurn(seam, { ...options, signal: controller.signal })("P", 0);
+      await vi.advanceTimersByTimeAsync(0);
+      controller.abort();
+      await vi.advanceTimersByTimeAsync(20_000);
+      expect(await pending).toEqual({ status: "failed", message: "the seat turn was interrupted" });
+      expect(client.interruptTurn).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("degrades a thrown sidecar call to an honest turn failure, never a throw", async () => {

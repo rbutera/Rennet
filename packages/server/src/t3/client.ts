@@ -83,12 +83,48 @@ export interface TurnSettlement {
   readonly usage?: unknown;
   readonly totalCostUsd?: number;
   readonly errorMessage?: string;
+  /**
+   * T3's latest `context-window.updated` snapshot for the turn, unparsed. Codex reports
+   * its tokens here and nothing on the settlement; the snapshot is the last request's
+   * own figures. Absent when no snapshot landed for the turn.
+   */
+  readonly tokenUsage?: unknown;
+  /**
+   * The nearest earlier settled turn's usage on this thread. Claude's counter is
+   * cumulative over the session, so a turn's own spend is the difference — read off the
+   * thread itself, so a wait that starts fresh (a recreated runner, a restarted daemon)
+   * subtracts the same as one that watched every turn.
+   */
+  readonly previousUsage?: { readonly usage: unknown; readonly totalCostUsd?: number };
 }
 
 export interface TurnOutcome extends TurnSettlement {
   readonly turnId: string;
   readonly state: Exclude<OrchestrationLatestTurnState, "running">;
   readonly thread: OrchestrationThread;
+}
+
+/** What `startTurn` saw before it dispatched, so the wait can tell the new turn from the last one. */
+export interface TurnStart {
+  /** The thread's latest turn when this one was requested; `null` on a fresh thread. */
+  readonly previousTurnId: string | null;
+  /** The start command's own stamp. A session error recorded before it is an earlier turn's. */
+  readonly requestedAt: string;
+}
+
+export interface WaitForTurnOptions {
+  readonly signal?: AbortSignal;
+  readonly settlementGraceMs?: number;
+  /** How long a requested turn may take to APPEAR before the wait gives up. */
+  readonly startTimeoutMs?: number;
+  /**
+   * The start this wait belongs to. T3 flips `latestTurn` to `running` only when the
+   * provider's `turn.started` is ingested, asynchronously after the start command has
+   * replied, so the first snapshot after a repair still shows the PREVIOUS turn settled
+   * with its `turn.settled` activity. Without this the wait answers at once with the old
+   * turn's result and the new one runs unwatched.
+   */
+  readonly after?: TurnStart;
 }
 
 export interface TurnDiff {
@@ -107,7 +143,7 @@ export interface T3Client {
   readonly createThread: (input: CreateThreadInput) => Promise<string>;
   /** Delete a thread and its transcript. A thread the sidecar no longer has is not an error. */
   readonly deleteThread: (threadId: string) => Promise<void>;
-  readonly startTurn: (input: StartTurnInput) => Promise<void>;
+  readonly startTurn: (input: StartTurnInput) => Promise<TurnStart>;
   readonly interruptTurn: (threadId: string) => Promise<void>;
   readonly respondApproval: (
     threadId: string,
@@ -127,12 +163,7 @@ export interface T3Client {
    */
   readonly waitForTurnSettled: (
     threadId: string,
-    options?: {
-      readonly signal?: AbortSignal;
-      readonly settlementGraceMs?: number;
-      /** How long a requested turn may take to APPEAR before the wait gives up. */
-      readonly startTimeoutMs?: number;
-    },
+    options?: WaitForTurnOptions,
   ) => Promise<TurnOutcome>;
   readonly readTurnDiff: (threadId: string, turnId: string) => Promise<TurnDiff>;
   readonly close: () => Promise<void>;
@@ -140,10 +171,26 @@ export interface T3Client {
 
 const FULL_ACCESS: RuntimeMode = "full-access";
 
-/** A provider instance plus model; built-in instance ids are the driver slugs (`claudeAgent`, `codex`). */
-export const modelSelection = (instanceId: string, model: string): ModelSelection => ({
+/**
+ * A provider instance plus model; built-in instance ids are the driver slugs (`claudeAgent`,
+ * `codex`). Effort travels as the provider option each adapter actually reads — T3's Claude
+ * adapter reads `effort` and its Codex adapter `reasoningEffort`, both off
+ * `modelSelection.options`, and nothing else on the thread or the turn carries it.
+ */
+export const modelSelection = (
+  instanceId: string,
+  model: string,
+  options: { readonly effort?: string } = {},
+): ModelSelection => ({
   instanceId: ProviderInstanceId.make(instanceId),
   model,
+  ...(options.effort === undefined
+    ? {}
+    : {
+        options: [
+          { id: instanceId === "codex" ? "reasoningEffort" : "effort", value: options.effort },
+        ],
+      }),
 });
 
 const makeWsClient = RpcClient.make(WsRpcGroup);
@@ -266,9 +313,13 @@ export async function connectT3(options: T3ClientOptions): Promise<T3Client> {
       });
     },
     startTurn: async (input) => {
+      // Read before dispatching: the reply does not name the turn the server mints, and
+      // the projection keeps showing the last turn until the provider reports the new one.
+      const previousTurnId = (await readThread(input.threadId)).latestTurn?.turnId ?? null;
+      const stamped = stamp();
       await dispatch({
         type: "thread.turn.start",
-        ...stamp(),
+        ...stamped,
         threadId: ThreadId.make(input.threadId),
         message: {
           messageId: MessageId.make(randomUUID()),
@@ -281,6 +332,7 @@ export async function connectT3(options: T3ClientOptions): Promise<T3Client> {
         runtimeMode: input.runtimeMode ?? FULL_ACCESS,
         interactionMode: "default",
       });
+      return { previousTurnId, requestedAt: stamped.createdAt };
     },
     interruptTurn: async (threadId) => {
       await dispatch({
@@ -300,77 +352,8 @@ export async function connectT3(options: T3ClientOptions): Promise<T3Client> {
     },
     subscribeThread,
     readThread,
-    waitForTurnSettled: async (threadId, options = {}) => {
-      const iterator = subscribeThread(threadId)[Symbol.asyncIterator]();
-      const abort = new Promise<never>((_, reject) => {
-        options.signal?.addEventListener("abort", () => reject(new Error("aborted")), {
-          once: true,
-        });
-      });
-      // The lifecycle transition and the `turn.settled` activity are two writes; the
-      // lifecycle one can land first. This is how long we keep reading for the activity
-      // AFTER the turn has settled before answering without it.
-      const graceMs = options.settlementGraceMs ?? 3_000;
-      // A provider stream that dies BEFORE its turn registers (drive 1.6, 2026-09-03: every
-      // Claude seat, "Claude runtime stream failed.") leaves no turn at all: T3 stops the
-      // session with `lastError` and, by upstream design, emits no turn lifecycle. Waiting
-      // on `latestTurn` alone then never returns and the lane spins forever. So a session
-      // that has stopped or errored with no turn in flight settles the wait as a failed
-      // turn carrying that error, and a turn that never appears at all gives up after
-      // `startTimeoutMs` with a message that says so.
-      const startTimeoutMs = options.startTimeoutMs ?? 120_000;
-      const startedWaitingAt = Date.now();
-      const sessionFailure = (thread: OrchestrationThread | undefined): string | undefined => {
-        const session = thread?.session;
-        if (!session || session.activeTurnId !== null) return undefined;
-        if (session.status !== "stopped" && session.status !== "error") return undefined;
-        return session.lastError ?? undefined;
-      };
-      try {
-        let thread: OrchestrationThread | undefined;
-        let settledAtMs: number | undefined;
-        for (;;) {
-          const next = await Promise.race([iterator.next(), abort]);
-          if (next.done)
-            throw new Error(`T3 thread ${threadId} stream ended before the turn settled`);
-          const item = next.value;
-          if (item.kind === "snapshot") thread = item.snapshot.thread;
-          // Events do not carry the whole projection; re-read on the ones that end a turn.
-          if (item.kind === "event" && /turn|session|settled|activity/.test(item.event.type)) {
-            thread = await readThread(threadId);
-          }
-          const latest = thread?.latestTurn;
-          if (!latest || latest.state === "running") {
-            const failure = sessionFailure(thread);
-            if (failure !== undefined && (!latest || latest.state !== "running")) {
-              return {
-                turnId: latest?.turnId ?? `${threadId}:session`,
-                state: "error",
-                thread: thread as OrchestrationThread,
-                errorMessage: failure,
-              };
-            }
-            if (!latest && Date.now() - startedWaitingAt > startTimeoutMs) {
-              throw new Error(
-                `T3 thread ${threadId} never started the requested turn within ${Math.round(startTimeoutMs / 1000)} s (session ${thread?.session?.status ?? "unknown"})`,
-              );
-            }
-            continue;
-          }
-          const settlement = readTurnSettlement(thread as OrchestrationThread, latest.turnId);
-          settledAtMs ??= Date.now();
-          if (settlement === undefined && Date.now() - settledAtMs < graceMs) continue;
-          return {
-            turnId: latest.turnId,
-            state: latest.state,
-            thread: thread as OrchestrationThread,
-            ...(settlement ?? {}),
-          };
-        }
-      } finally {
-        await iterator.return?.();
-      }
-    },
+    waitForTurnSettled: (threadId, options) =>
+      awaitTurnSettled(threadId, { subscribeThread, readThread }, options),
     readTurnDiff: async (threadId, turnId) => {
       const thread = await readThread(threadId);
       const checkpoint = thread.checkpoints.find((c) => c.turnId === turnId);
@@ -393,6 +376,159 @@ export async function connectT3(options: T3ClientOptions): Promise<T3Client> {
   return api;
 }
 
+/** The two reads the settle wait needs; the client supplies them over the socket, tests supply fakes. */
+export interface TurnWaitDeps {
+  readonly subscribeThread: (threadId: string) => AsyncIterable<OrchestrationThreadStreamItem>;
+  readonly readThread: (threadId: string) => Promise<OrchestrationThread>;
+}
+
+/** `T3Client.waitForTurnSettled`, over its two reads. */
+export async function awaitTurnSettled(
+  threadId: string,
+  deps: TurnWaitDeps,
+  options: WaitForTurnOptions = {},
+): Promise<TurnOutcome> {
+  const signal = options.signal;
+  if (signal?.aborted) throw new Error("aborted");
+  const iterator = deps.subscribeThread(threadId)[Symbol.asyncIterator]();
+  let onAbort: (() => void) | undefined;
+  const abort = new Promise<never>((_, reject) => {
+    onAbort = () => reject(new Error("aborted"));
+    signal?.addEventListener("abort", onAbort);
+  });
+  // The lifecycle transition and the `turn.settled` activity are two writes; the
+  // lifecycle one can land first. This is how long we keep reading for the activity
+  // AFTER the turn has settled before answering without it — on a timer, because a
+  // stream that goes quiet after the lifecycle write would otherwise hold the wait open
+  // until something unrelated arrives.
+  const graceMs = options.settlementGraceMs ?? 3_000;
+  let graceTimer: ReturnType<typeof setTimeout> | undefined;
+  let grace: Promise<typeof GRACE_OVER> | undefined;
+  // A provider stream that dies BEFORE its turn registers (drive 1.6, 2026-09-03: every
+  // Claude seat, "Claude runtime stream failed.") leaves no turn at all: T3 stops the
+  // session with `lastError` and, by upstream design, emits no turn lifecycle. Waiting
+  // on `latestTurn` alone then never returns and the lane spins forever. So a session
+  // that has stopped or errored with no turn in flight settles the wait as a failed
+  // turn carrying that error, and a turn that never appears at all gives up after
+  // `startTimeoutMs` with a message that says so.
+  const startTimeoutMs = options.startTimeoutMs ?? 120_000;
+  const startedWaitingAt = Date.now();
+  const after = options.after;
+  /** The turn this wait is for: the latest one, unless it is the one already there at the start. */
+  const currentTurn = (thread: OrchestrationThread | undefined) => {
+    const latest = thread?.latestTurn;
+    return latest && latest.turnId !== after?.previousTurnId ? latest : undefined;
+  };
+  const sessionFailure = (thread: OrchestrationThread | undefined): string | undefined => {
+    const session = thread?.session;
+    if (!session || session.activeTurnId !== null) return undefined;
+    if (session.status !== "stopped" && session.status !== "error") return undefined;
+    // Recorded before this turn was requested: an earlier turn's failure, not ours.
+    if (after !== undefined && Date.parse(session.updatedAt) < Date.parse(after.requestedAt)) {
+      return undefined;
+    }
+    return session.lastError ?? undefined;
+  };
+  const settledOutcome = (
+    thread: OrchestrationThread,
+    turnId: string,
+    state: TurnOutcome["state"],
+  ): TurnOutcome => ({ turnId, state, thread, ...(readTurnSettlement(thread, turnId) ?? {}) });
+  /**
+   * The subscription ended, or its socket closed under it (the sidecar drops the socket
+   * after some stream failures). One fresh read: what the thread shows now is still the
+   * answer when it has one, and only a projection that has not settled is a failure of
+   * the wait itself.
+   */
+  const settleFromRead = async (cause: unknown): Promise<TurnOutcome> => {
+    const reason = (error: unknown) =>
+      error === undefined ? "" : ` (${error instanceof Error ? error.message : String(error)})`;
+    let thread: OrchestrationThread;
+    try {
+      thread = await deps.readThread(threadId);
+    } catch (readError) {
+      throw new Error(
+        `T3 thread ${threadId} stream ended before the turn settled${reason(cause ?? readError)}`,
+        { cause: readError },
+      );
+    }
+    const latest = currentTurn(thread);
+    if (latest !== undefined && latest.state !== "running") {
+      return settledOutcome(thread, latest.turnId, latest.state);
+    }
+    const failure = sessionFailure(thread);
+    if (failure !== undefined && latest?.state !== "running") {
+      return {
+        turnId: latest?.turnId ?? `${threadId}:session`,
+        state: "error",
+        thread,
+        errorMessage: failure,
+      };
+    }
+    throw new Error(`T3 thread ${threadId} stream ended before the turn settled${reason(cause)}`);
+  };
+  try {
+    let thread: OrchestrationThread | undefined;
+    for (;;) {
+      let next: Awaited<ReturnType<typeof iterator.next>> | typeof GRACE_OVER;
+      try {
+        next = await Promise.race([iterator.next(), abort, ...(grace ? [grace] : [])]);
+      } catch (error) {
+        if (signal?.aborted) throw error;
+        return await settleFromRead(error);
+      }
+      if (next === GRACE_OVER) {
+        // The stream went quiet after the lifecycle settled: one last read, then answer
+        // with what the projection holds. Absent facts come back absent.
+        thread = await deps.readThread(threadId);
+        const latest = currentTurn(thread);
+        if (!latest || latest.state === "running") {
+          throw new Error(`T3 thread ${threadId} lost its settled turn before it was read`);
+        }
+        return settledOutcome(thread, latest.turnId, latest.state);
+      }
+      if (next.done) return await settleFromRead(undefined);
+      const item = next.value;
+      if (item.kind === "snapshot") thread = item.snapshot.thread;
+      // Events do not carry the whole projection; re-read on the ones that end a turn.
+      if (item.kind === "event" && /turn|session|settled|activity/.test(item.event.type)) {
+        thread = await deps.readThread(threadId);
+      }
+      const latest = currentTurn(thread);
+      if (!latest || latest.state === "running") {
+        const failure = sessionFailure(thread);
+        if (failure !== undefined && latest?.state !== "running") {
+          return {
+            turnId: latest?.turnId ?? `${threadId}:session`,
+            state: "error",
+            thread: thread as OrchestrationThread,
+            errorMessage: failure,
+          };
+        }
+        if (!latest && Date.now() - startedWaitingAt > startTimeoutMs) {
+          throw new Error(
+            `T3 thread ${threadId} never started the requested turn within ${Math.round(startTimeoutMs / 1000)} s (session ${thread?.session?.status ?? "unknown"})`,
+          );
+        }
+        continue;
+      }
+      if (readTurnSettlement(thread as OrchestrationThread, latest.turnId) === undefined) {
+        grace ??= new Promise((resolve) => {
+          graceTimer = setTimeout(() => resolve(GRACE_OVER), graceMs);
+        });
+        continue;
+      }
+      return settledOutcome(thread as OrchestrationThread, latest.turnId, latest.state);
+    }
+  } finally {
+    clearTimeout(graceTimer);
+    if (onAbort) signal?.removeEventListener("abort", onAbort);
+    await iterator.return?.();
+  }
+}
+
+const GRACE_OVER = Symbol("settlement grace over");
+
 /**
  * The settled turn's own facts, off the `turn.settled` activity the sidecar appends when
  * a turn completes. `undefined` means the activity has not landed (or the provider did
@@ -402,28 +538,69 @@ export function readTurnSettlement(
   thread: OrchestrationThread,
   turnId: string,
 ): TurnSettlement | undefined {
-  for (let i = thread.activities.length - 1; i >= 0; i -= 1) {
-    const activity = thread.activities[i];
-    if (activity?.kind !== "turn.settled" || activity.turnId !== turnId) continue;
-    const payload = activity.payload;
-    if (payload === null || typeof payload !== "object") return {};
-    const record = payload as Record<string, unknown>;
-    const number = (key: string): number | undefined =>
-      typeof record[key] === "number" ? (record[key] as number) : undefined;
-    const durationMs = number("durationMs");
-    const totalCostUsd = number("totalCostUsd");
-    const errorMessage = typeof record.errorMessage === "string" ? record.errorMessage : undefined;
-    return {
-      ...(record.structuredOutput === undefined
-        ? {}
-        : { structuredOutput: record.structuredOutput }),
-      ...(durationMs === undefined ? {} : { durationMs }),
-      ...(record.usage === undefined ? {} : { usage: record.usage }),
-      ...(totalCostUsd === undefined ? {} : { totalCostUsd }),
-      ...(errorMessage === undefined ? {} : { errorMessage }),
+  const activities = thread.activities;
+  const settledAt = activities.findLastIndex(
+    (activity) => activity.kind === "turn.settled" && activity.turnId === turnId,
+  );
+  if (settledAt === -1) return undefined;
+  const record = asRecord(activities[settledAt]?.payload) ?? {};
+  const number = (key: string): number | undefined =>
+    typeof record[key] === "number" ? (record[key] as number) : undefined;
+  const durationMs = number("durationMs");
+  const totalCostUsd = number("totalCostUsd");
+  const errorMessage = typeof record.errorMessage === "string" ? record.errorMessage : undefined;
+
+  const otherSettlement = (i: number) => {
+    const activity = activities[i];
+    return activity?.kind === "turn.settled" && activity.turnId !== turnId ? activity : undefined;
+  };
+  // The nearest earlier settlement that carried usage; the nearest one at all bounds
+  // this turn's span from below.
+  let previousUsage: TurnSettlement["previousUsage"];
+  let spanStart = -1;
+  for (let i = settledAt - 1; i >= 0; i -= 1) {
+    const earlier = asRecord(otherSettlement(i)?.payload);
+    if (earlier === null) continue;
+    if (spanStart === -1) spanStart = i;
+    if (earlier.usage === undefined) continue;
+    previousUsage = {
+      usage: earlier.usage,
+      ...(typeof earlier.totalCostUsd === "number" ? { totalCostUsd: earlier.totalCostUsd } : {}),
     };
+    break;
   }
-  return undefined;
+  let spanEnd = activities.length;
+  for (let i = settledAt + 1; i < activities.length; i += 1) {
+    if (otherSettlement(i) !== undefined) {
+      spanEnd = i;
+      break;
+    }
+  }
+  // The latest context-window snapshot inside the span. Codex stamps its snapshots with
+  // no turn id and emits them before the turn completes, so an unstamped one counts only
+  // ahead of this turn's own settlement; a stamped one counts anywhere in the span.
+  let tokenUsage: unknown;
+  for (let i = spanEnd - 1; i > spanStart; i -= 1) {
+    const activity = activities[i];
+    if (activity?.kind !== "context-window.updated") continue;
+    if (activity.turnId === turnId || (activity.turnId === null && i < settledAt)) {
+      tokenUsage = activity.payload;
+      break;
+    }
+  }
+  return {
+    ...(record.structuredOutput === undefined ? {} : { structuredOutput: record.structuredOutput }),
+    ...(durationMs === undefined ? {} : { durationMs }),
+    ...(record.usage === undefined ? {} : { usage: record.usage }),
+    ...(totalCostUsd === undefined ? {} : { totalCostUsd }),
+    ...(errorMessage === undefined ? {} : { errorMessage }),
+    ...(tokenUsage === undefined ? {} : { tokenUsage }),
+    ...(previousUsage === undefined ? {} : { previousUsage }),
+  };
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === "object" ? (value as Record<string, unknown>) : null;
 }
 
 /** Drain an Effect stream into an AsyncIterable; returning the iterator interrupts the fiber. */

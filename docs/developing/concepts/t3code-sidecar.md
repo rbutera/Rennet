@@ -198,11 +198,26 @@ Three things follow from the thread being persistent.
   `V2TurnStartParams.outputSchema`, but its runtime does not surface a settled turn's
   structured result, so the daemon parses the board out of the Codex seat's final message
   — for that provider only.
-- **Spend is per turn, and it is a delta.** Claude's SDK reports usage cumulatively over a
-  streaming session's turns, so the seat leg records each turn's own usage as the
-  difference against the previous turn's total. One `TurnMetric` per turn reaches the
-  generation's collector, labelled `board.<jobId>`, and a repair therefore never bills the
+- **Spend is per turn, and it is a delta read off the thread.** Claude's SDK reports usage
+  cumulatively over a streaming session's turns, so the seat leg records each turn's own
+  usage as the difference against the previous settled turn's total — which
+  `waitForTurnSettled` reads from the thread's own earlier `turn.settled` activity, so a
+  runner recreated for the thread (a whole-board restart) or a daemon restarted under it
+  subtracts the same as one that watched every turn. A total below the previous one means
+  the session restarted and its counter began again, and the whole figure is the turn's.
+  Codex reports nothing on its settlement: its tokens ride T3's `context-window.updated`
+  snapshot for the turn, which is the last request's own figures (a turn with several
+  tool round-trips under-reports until T3 projects the running total's breakdown). One
+  `TurnMetric` per turn reaches the generation's collector, labelled `board.<jobId>`, with
+  the provider's own duration when it reported one; a repair therefore never bills the
   drafting turn twice.
+- **A cancelled seat stops the model.** An abort reaches the sidecar as
+  `thread.turn.interrupt`, and the seat leg then waits a bounded moment for the interrupted
+  settlement so the usage that turn had already billed is recorded rather than booked as
+  zero. Each wait is scoped to the start it belongs to: `startTurn` returns what the thread
+  showed before dispatch, and the wait ignores that earlier turn's settlement and any
+  session error recorded before the request, because T3 only flips `latestTurn` to running
+  once the provider reports the new turn.
 
 Because the SDK fixes `outputFormat` when a query is constructed and offers no in-session
 setter, a seat thread's contract is decided by its first turn. A later turn asking for a
