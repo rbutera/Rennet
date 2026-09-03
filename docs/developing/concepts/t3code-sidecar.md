@@ -198,7 +198,7 @@ Three things follow from the thread being persistent.
   draft are already in the conversation, so neither is re-sent. Measured on the repair
   fixture in `lens-pipeline.test.ts` against the shipped Flagged prompt, a repair turn
   fell from 7,107 bytes to 469 — the base prompt is 6,359 of the bytes that no longer
-  travel, and a production base prompt also carries the change inventory, so the real
+  travel, and a production base prompt is larger than the fixture's, so the real
   saving is larger. Both interpolations declare a byte bound with an honest omission
   marker.
 - **The output schema is the turn's contract, once.** `startTurn` takes an `outputSchema`
@@ -254,14 +254,13 @@ Three things follow from the thread being persistent.
 - **The prompt fits the transport.** T3 caps a turn's input at
   `PROVIDER_SEND_TURN_MAX_INPUT_CHARS` (120,000 characters), exported through the seam as
   `T3_TURN_INPUT_MAX_CHARS`. The Design seat is the one that carries a design-artifact
-  bundle beside the change inventory, and discovery bounds that bundle at 512 KiB — four
-  times the cap — so `fitDesignArtifactsToPrompt` re-fits it to the room the rendered
+  bundle, and discovery bounds that bundle at 512 KiB — four times the cap — so
+  `fitDesignArtifactsToPrompt` re-fits it to the room the rendered
   prompt has left: the same trimming order and the same `omitted*` / `truncated` markers as
   discovery, with the bundle's `limits` naming the budget it was fitted to, and the fitted
-  bundle is what the lint context and the coverage projection reason about too. The
-  drive's Design prompt was 241,848 characters — 103k of hunk inventory plus a 126k bundle
-  — while the five bundle-less seats sat at 110k and ran. The inventory itself is not
-  fitted; when that alone overflows, the seat fails fast on the refusal above.
+  bundle is what the lint context reasons about too. On the drive of 2026-09-03 the
+  Design prompt was 241,848 characters — 103k of hunk inventory plus a 126k bundle —
+  while the five bundle-less seats sat at 110k and ran.
 
 Because the SDK fixes `outputFormat` when a query is constructed and offers no in-session
 setter, a *live* session's contract is decided by the turn that started it. A later turn
@@ -457,6 +456,40 @@ T3 has no SIGTERM handler of its own. A turn that was streaming when the sidecar
 reconciled on the sidecar's next start as an errored session ("Provider session did not
 survive a server restart"), not as an interrupted one. Sending `thread.turn.interrupt`
 over RPC before the signal is the daemon-side client's job and lands with it.
+
+## Session context files
+
+A turn is never sent its context. Anything it may need beyond its instructions is written
+as a file under `<bound root>/.rennet/context/<sessionId>/`, and the prompt names the path;
+the agent reads what it decides it needs with its own tools, the way it reads the checkout.
+`packages/server/src/context-files.ts` is the only writer and the only purge. Each write
+puts a `README.md` in that directory listing every file, what it holds and when to read it,
+and ensures `context/` is in the repository's Rennet-managed `.rennet/.gitignore` block
+before the first file lands — so a round committing in the reviewer's own checkout cannot
+stage it.
+
+The purge is at archive, not at settle: a reopened transcript or a resumed round still finds
+its files. Three callers remove a directory, and nothing else does. `session.archive` purges
+beside the thread sweep, on the same deletion boundary. The round's `sweepIfArchived`
+re-sweep purges again on its way out, because a round driven by the durable coordinator can
+write context after an archive has already passed. And a daemon start sweeps every
+`.rennet/context/<id>` under the roots it knows — each project's `openPath` and every one of
+its `includedRepoPaths`, since a workspace's other repos are invisible from `openPath` alone
+— whose session id the store no longer holds, logging the count it removed.
+
+One turn runs before any session exists: the project scout, which fires at project add. It
+writes through the same writer under the fixed id `project-scout`, so its facts land at
+`<repo>/.rennet/context/project-scout/scout-detected.json`. There is no archive to purge it
+at, so the next scout run purges the last one before writing. That is what pays for the
+scout's prompt: it used to carry `CLAUDE.md`, `AGENTS.md` and `CONTRIBUTING.md` at 8 kB each
+plus the detected facts as JSON — 19,166 bytes on Rennet's own checkout — and now names the
+three documents by path, for a seat whose `cwd` is already the repository root, at 706 bytes.
+Related-context retrieval is the same shape: its candidate dossier is written by
+`DossierStore.saveCandidates` as `candidates.json` beside the record it will become, and the
+enrichment prompt names that absolute path and the item count instead of carrying the items
+(27,543 → 414 bytes on the frozen PR #514 fixture). `candidates.json` is deliberately not
+`record.json`, because a readable record is what gates a refire and a candidate list is not a
+finished retrieval.
 
 ## Code map
 

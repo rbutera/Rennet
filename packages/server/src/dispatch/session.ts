@@ -270,6 +270,11 @@ export function sessionHandlers(rt: DispatchRuntime) {
           input.sessionId,
           ...(session.reviewId === undefined ? [] : [session.reviewId]),
         ];
+        // The session's context files go on the SAME boundary as its threads
+        // (session-context-files): they are kept until archive precisely so a reopened
+        // transcript or a resumed round still finds them, and removed here because after
+        // an archive nothing will read them again. The host resolves the bound root.
+        rt.deps.purgeSessionContext?.(input.sessionId);
         // `forgetSession` never throws: an absent sidecar has nothing to delete and still
         // drops the bindings. Awaited so the command answers after the cleanup, not before.
         await rt.deps.t3Sidecar?.forgetSession(ids);

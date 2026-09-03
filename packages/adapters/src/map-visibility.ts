@@ -22,8 +22,16 @@ import type { ProjectSnapshotStore, ProjectVisibility } from "./project-snapshot
 const MANAGED_START = "# >>> rennet-managed (do not edit) >>>";
 const MANAGED_END = "# <<< rennet-managed <<<";
 
-/** The derived-data paths (relative to `.rennet/`) that `local` visibility ignores. */
-const IGNORED_ENTRIES = ["map/", "overlays/", "knowledge/"] as const;
+/**
+ * The derived-data paths (relative to `.rennet/`) that `local` visibility ignores.
+ *
+ * `context/` is the session context directory (session-context-files): the files a turn
+ * reads instead of being sent them inline. It is Rennet's scratch for one session and is
+ * purged when that session is archived, so nothing under it is ever the reviewer's to
+ * stage — which is why {@link ensureManagedIgnoreBlock} writes this block before the
+ * first context file lands, whatever the project's visibility.
+ */
+const IGNORED_ENTRIES = ["map/", "overlays/", "knowledge/", "context/"] as const;
 
 function gitignorePath(repoRoot: string): string {
   return join(repoRoot, ".rennet", ".gitignore");
@@ -69,6 +77,36 @@ function composeGitignore(current: string, target: ProjectVisibility): string {
   }
   const managed = [MANAGED_START, ...IGNORED_ENTRIES, MANAGED_END].join("\n");
   return userLines ? `${userLines}\n\n${managed}\n` : `${managed}\n`;
+}
+
+/** Write the `.rennet/.gitignore` atomically (tmp + rename), creating `.rennet/` if needed. */
+function writeGitignore(path: string, content: string): void {
+  mkdirSync(join(path, ".."), { recursive: true });
+  const tmp = `${path}.tmp-${process.pid}-${Math.random().toString(36).slice(2)}`;
+  writeFileSync(tmp, content);
+  renameSync(tmp, path);
+}
+
+/**
+ * Ensure the Rennet-managed block exists in `<repoRoot>/.rennet/.gitignore` before Rennet
+ * writes derived data there — the pre-write half of the never-staged rule for session
+ * context files (session-context-files).
+ *
+ * Composes the block through the SAME `composeGitignore` the visibility switch uses, so
+ * the block's shape has one definition. User-authored lines are preserved, and a file that
+ * already carries the block is left byte-identical (returns `false`).
+ *
+ * Unlike the switch this is not a visibility decision: a repo the reviewer set to
+ * `git-visible` gets the block back, because `context/` is Rennet's own purge-on-archive
+ * scratch and is never the reviewer's to stage. Never runs git.
+ */
+export function ensureManagedIgnoreBlock(repoRoot: string): boolean {
+  const path = gitignorePath(repoRoot);
+  const before = readGitignore(repoRoot);
+  const after = composeGitignore(before, "local");
+  if (after === before) return false;
+  writeGitignore(path, after);
+  return true;
 }
 
 /** Files git already tracks under `.rennet/` — disclosed, never restaged. */
@@ -139,13 +177,7 @@ export async function applyVisibilitySwitch(
     );
   }
   const preview = await previewVisibilitySwitch(repoRoot, target, git);
-  if (preview.changed) {
-    const path = preview.gitignorePath;
-    mkdirSync(join(path, ".."), { recursive: true });
-    const tmp = `${path}.tmp-${process.pid}-${Math.random().toString(36).slice(2)}`;
-    writeFileSync(tmp, preview.after);
-    renameSync(tmp, path);
-  }
+  if (preview.changed) writeGitignore(preview.gitignorePath, preview.after);
   store.updateConfig(repoKey, (current) => ({ ...current, visibility: target }));
   return preview;
 }

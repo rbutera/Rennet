@@ -353,6 +353,7 @@ export {
 } from "./map-travel";
 export {
   applyVisibilitySwitch,
+  ensureManagedIgnoreBlock,
   previewVisibilitySwitch,
   type VisibilityPreview,
 } from "./map-visibility";
@@ -449,11 +450,14 @@ export {
 } from "./project-relocate";
 export {
   loadScoutFacts,
+  PROJECT_SCOUT_CONTEXT_ID,
   PROJECT_SCOUT_SCHEMA,
   type ProjectScoutDeps,
   type ProjectScoutProgress,
   resolveTrackerConfig,
   runProjectScout,
+  SCOUT_DETECTED_FILE,
+  type ScoutContextFile,
   type ScoutFact,
   type ScoutFacts,
   type ScoutProvenance,

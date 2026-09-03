@@ -20,7 +20,7 @@
  * round — this store is the durable home either way, and B8 re-keys nothing.
  */
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { escapePath } from "@rennet/core";
 import type { DossierItem } from "@rennet/protocol";
 import { dossierItemSchema, serializeDossier } from "@rennet/protocol";
@@ -55,6 +55,19 @@ export class DossierStore {
   private recordPath(repoKey: string, key: DossierKey): string {
     const segment = escapePath(`${key.target}@${key.patchsetRef}`);
     return join(this.store.paths(repoKey).projectDir, "dossier", segment, "record.json");
+  }
+
+  /**
+   * Persist the PRE-enrichment candidates and return the absolute path the enrichment
+   * seat reads (session-context-files: the prompt names this path, it never carries the
+   * items). Deliberately NOT `record.json`: a readable record gates a refire, and a
+   * candidate list is not a finished retrieval. Overwritten by the next run on the same
+   * target and patchset, which is the same lifecycle the record already has.
+   */
+  saveCandidates(repoKey: string, key: DossierKey, items: readonly DossierItem[]): string {
+    const path = join(dirname(this.recordPath(repoKey, key)), "candidates.json");
+    writeAtomic(path, `${serializeDossier(items)}\n`);
+    return path;
   }
 
   /** Persist dossier (canonical bytes) + raw payloads in ONE atomic publish. */

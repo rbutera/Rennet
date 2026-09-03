@@ -80,6 +80,75 @@ function extractContextLayer(sentText: string): string | undefined {
   return sentText.slice(bodyStart, payloadStart < 0 ? sentText.length : payloadStart);
 }
 
+/**
+ * The size at which an interpolated JSON literal stops being an instruction and starts
+ * being context (session-context-files 2.3). Two kilobytes is generous: the payloads the
+ * rule exists to stop measured 10 KB to 103 KB.
+ */
+export const INLINE_CONTEXT_MAX_BYTES = 2048;
+
+/**
+ * The first JSON object or array literal in a prompt larger than {@link
+ * INLINE_CONTEXT_MAX_BYTES}, with its byte size and its offset — the mechanical reading of
+ * "never inline context".
+ *
+ * Pure, and cheap: ONE left-to-right pass keeping a stack of open brackets (tracking JSON
+ * string escapes only once inside a candidate, since a quote in prose means nothing), and
+ * `JSON.parse` is run only on a balanced top-level span that is already over the limit. So
+ * a prompt that references paths — the shape every site is being converted to — costs one
+ * scan and parses nothing.
+ *
+ * ponytail: top-level spans only. A payload nested inside a larger span that does NOT
+ * parse as JSON (a fenced code block, say) is not reported; the shape this exists to catch
+ * is a whole context layer that is one literal. Descend per-span if a real prompt ever
+ * hides one.
+ */
+export function inlineContextViolation(
+  prompt: string,
+): { readonly bytes: number; readonly at: number } | undefined {
+  const open: string[] = [];
+  let start = -1;
+  let inString = false;
+  let escaped = false;
+  for (let i = 0; i < prompt.length; i += 1) {
+    const ch = prompt[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') {
+      // Only inside a candidate literal: an unpaired quote in prose must not desync the scan.
+      if (open.length > 0) inString = true;
+      continue;
+    }
+    if (ch === "{" || ch === "[") {
+      if (open.length === 0) start = i;
+      open.push(ch);
+      continue;
+    }
+    if (ch !== "}" && ch !== "]") continue;
+    const opener = open.pop();
+    if (opener === undefined) continue; // a stray closer in prose
+    if (opener !== (ch === "}" ? "{" : "[")) {
+      open.length = 0; // mismatched: this was prose, not a literal
+      continue;
+    }
+    if (open.length > 0) continue;
+    const literal = prompt.slice(start, i + 1);
+    const bytes = UTF8_ENCODER.encode(literal).length;
+    if (bytes <= INLINE_CONTEXT_MAX_BYTES) continue;
+    try {
+      JSON.parse(literal);
+    } catch {
+      continue; // balanced brackets, but not JSON
+    }
+    return { bytes, at: start };
+  }
+  return undefined;
+}
+
 export interface ContextSendRecordInput {
   readonly seat: string;
   readonly harness: string;
@@ -98,6 +167,10 @@ export function buildContextSendRecord(
       : sentText.includes(renderLayer("context", expectedContext))
         ? expectedContext
         : undefined;
+  // Recorded, never enforced (Rule Zero): the send proceeds whatever this says. The tap is
+  // the one place every harness path passes through, so it is where a prompt that still
+  // carries context inline becomes visible instead of invisible in a diff.
+  const inline = inlineContextViolation(sentText);
   return {
     seat: input.seat,
     harness: input.harness,
@@ -107,6 +180,7 @@ export function buildContextSendRecord(
     promptDigest: sha256Hex(sentText),
     contextIncluded: context !== undefined,
     ...(context === undefined ? {} : { contextDigest: sha256Hex(context) }),
+    ...(inline === undefined ? {} : { inlineContextBytes: inline.bytes }),
     sentAt: new Date().toISOString(),
   };
 }

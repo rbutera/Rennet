@@ -157,9 +157,8 @@ For every requirement:
   `requirement.scenarios`; never repeat its id in a section `children` list.
 - Keep requirements and scenarios in source order. Do not paraphrase, renumber,
   combine, or silently omit them.
-- Omit `related_files`, `coverage`, `trace`, and `tests`. The host derives related
-  implementation and test paths together with coverage from mapped immutable
-  hunks after drafting. Drafter-authored mappings are discarded.
+- Omit `related_files`, `coverage`, `trace`, and `tests`. Drafter-authored
+  mappings are discarded; the host renders none of them.
 
 Give each capability artifact one source-linked capability root. If its source has
 multiple delta headers, keep that one root and reproduce the headers in source
@@ -183,8 +182,7 @@ Do not author `task_progress` or turn ledger prose into plan checkbox edits.
 - Do not infer requirements from code. The diff cannot write its own spec.
 - Do not reconstruct rationale and present it as stated design intent.
 - Do not turn source navigation into prose citations; carry exact source refs.
-- Do not invent coverage for proposal-only work. The host will leave coverage
-  absent when there is no implementation relation to map.
+- Do not invent coverage. The host renders none, whatever the artifacts claim.
 
 ## Lanes
 
@@ -199,11 +197,11 @@ Each lens owns a lane, and material in another lane is omitted, not narrated.
 
 ## Ground rules
 
-- Code is cited through `code_ref` elements, never copied into prose.
+- Code is cited through `code_ref` elements — a path plus a line range on one
+  side of the change — never copied into prose.
 - Use plain, concrete language and third person.
 - Structural labels use title case; exact code tokens keep their casing.
 - Put code tokens in prose in backticks.
 - Never name lenses, boards, agents, or review machinery in reader-facing prose.
 - Threads and messages represent real exchanges; never invent one.
-- Hunks consciously left to another lens go in `skippedHunks`, never prose.
 - Return only a draft board using the supplied host schema.

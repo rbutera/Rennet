@@ -91,6 +91,9 @@ describe("B07 packet e2e — frozen PR #514 capture through the full retrieval f
         repo: { owner: "rbutera", name: "rennet" },
         prNumber: FIXTURE.pr.number,
         runTurn: keepAll,
+        // The seat reads the candidates from this path; the prompt only names it.
+        writeCandidates: () =>
+          "/home/rai/.rennet/projects/rennet/dossier/pr-514@ps/candidates.json",
         now: () => new Date("2026-08-27T12:00:00.000Z"),
       },
     );

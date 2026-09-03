@@ -123,9 +123,8 @@ and calls board regeneration through this runtime.
    inlined board context and native repository tools.
    A clean generation makes one drafting turn for Design, Sequence, Decisions,
    and Noise, plus the two parallel Flagged seats. It does not run a separate
-   board editor after those turns. Design may make one additional grounded
-   coverage call when the board contains requirements, eligible hunks exist,
-   and the caller supplied a coverage mapper.
+   board editor after those turns, and no lens spends a second turn accounting
+   for what it did not cite.
 2. **Reconcile** (Flagged only). The two seats' findings are matched by cited
    location: a matched pair collapses to ONE row carrying both models'
    concurrence — the clearer of the two summaries when the seats concur, seat
@@ -144,22 +143,22 @@ and calls board regeneration through this runtime.
    with honest single-model concurrence and no accord: one seat has no
    agreement to report.
 3. **Validate.** A deterministic loop guarantees every lens draft before a human
-   sees it. It parses the frozen schema, runs the per-lens lint rules, and then
-   runs the cross-lens **every-hunk composition check**. A lint failure
-   returns the draft to its seat as ZodError-shaped JSON pointers on one retry
-   channel; the seat returns a patch, and passing elements **freeze** — a
+   sees it. It parses the frozen schema and runs the per-lens lint rules. A lint
+   failure returns the draft to its seat as ZodError-shaped JSON pointers on one
+   retry channel; the seat returns a patch, and passing elements **freeze** — a
    frozen element is never re-linted or re-drafted. The repair turn is a fresh
    ephemeral session (an ephemeral session is never persisted, so it cannot be
    resumed), and it carries the lens prompt, the change inventory, the
-   pointers (each naming the element it is about), the board-level document
-   and skipped hunks, and only the elements still open; the frozen ids travel
-   as a list so references stay valid, and the host merges the frozen bodies
+   pointers (each naming the element it is about), the board-level document, and
+   only the elements still open; the frozen ids travel as a list so references
+   stay valid, and the host merges the frozen bodies
    back itself. After a turn that emitted nothing, the re-ask is for the whole
    board. Validation spends at most
    one model repair turn after the initial draft. An element that remains
-   invalid takes an **honest-omission exit**: it is dropped and its hunks move
-   to `skippedHunks` with a reason. Unresolved board-level or schema violations
-   ship as labelled `blemishes` — **visible, never blocking**.
+   invalid takes an **honest-omission exit**: it is dropped and the drop is
+   recorded as an omission naming the element and the reason. Unresolved
+   board-level or schema violations ship as labelled `blemishes` —
+   **visible, never blocking**.
 
    After validation, the host checks the material the served board actually
    needs. Sequence requires a reachable `order_step`. Decisions and Flagged
@@ -180,24 +179,23 @@ and calls board regeneration through this runtime.
      board is a `code_ref` (path plus line span) the surface hydrates, so
      numbering cannot drift from the file it claims to show (backticked
      identifiers and patchset ids are exempt);
-   - **citation resolves** — every citation is well-formed and resolves against
-     the correct side of the patchset;
+   - **citation resolves** — every citation is a repository path plus a 1-based
+     line range on the new or the old side, and the daemon resolves it against a
+     changed region of the captured patchset; a range no changed region covers
+     comes back to the seat as an unresolvable-citation pointer carrying the
+     path and the range;
    - **element references resolve** — every schema-declared element reference
      names an element in that exact board, and the reference graph is acyclic so
      the host can create each target before its citer;
-   - **`skippedHunks` present** and its reasons specific;
    - **decision-grounded** — a decision carries non-empty evidence and
      alternatives;
    - **a process-vocabulary screen** flags structural-field prose that names
      lenses, boards, agents, seats, or drafts.
 
-   Cross-lens every-hunk coverage runs once over the frozen board set rather than
-   per draft, and after the boards have been revealed rather than before. The core validator retains its typed-data immutability result for
+   The core validator retains its typed-data immutability result for
    callers that provide a deterministic transform; the production lens scheduler
-   supplies no model-backed post-process transform.
-   The design target is "19 rules"; against the frozen 13-kind board schema the
-   faithful per-draft set is 16 — two of the nineteen (cross-lens coverage and
-   immutability) belong to the other two gates, and a handful reference fields
+   supplies no model-backed post-process transform. Immutability is its own
+   gate rather than a lint rule, and a handful of designed rules reference fields
    the frozen schema deliberately does not carry (they wait on a schema
    follow-up rather than being enforced against absent data). The reviewer-voice
    authored prose is screened by a separate, narrower register.
@@ -236,10 +234,8 @@ and calls board regeneration through this runtime.
    findings' citers at the surviving partner for the same reason.
 5. **Compose.** A frozen draft board *is* the lens board the human reads; there
    is no separate composed surface. Composition is split. The **mechanical**
-   part lives in `core/board/`: the coverage assertion (every patchset hunk is
-   taught by some lens or listed in some lens's `skippedHunks`), verbatim carry
-   on stable element ids (a carried element is byte-identical across
-   generations), `new`/`reworked` delta stamps on sections, and the host-owned
+   part lives in `core/board/`: verbatim carry on stable element ids (a carried
+   element is byte-identical across generations), `new`/`reworked` delta stamps on sections, and the host-owned
    finding lifecycle for a returned round. That lifecycle matches each
    generation-and-board-scoped finding against the prior and freshly drafted
    Flagged boards. It removes only a stable-id or unique semantic match for an
@@ -265,33 +261,32 @@ progress follows completion order. Both successful typed absences and
 **per-board arrival events** are published in that same settlement order through
 one serialized callback, which keeps cumulative generation snapshots monotonic.
 A lane's arrival is emitted the moment its board is written — no global barrier
-over the five lanes, and cross-lens coverage does not gate it. The returned
+over the five lanes. The returned
 outcomes still use the canonical Design, Sequence, Decisions, Flagged, Noise
 order regardless of which drafter finished first, because that array is
 completion bookkeeping rather than the reveal. The rounds machinery consumes the
 arrival events to drive the reveal; the pipeline only emits them.
 
-**Cross-lens coverage is a generation state, not a gate.** It runs once, after
-every lane has settled, and moves `pending` → `complete` (with the violation
-count) or `failed`. The state is durable on the generation and rendered
-explicitly beside boards that are already readable; because the coverage
-assertion returns violations without amending a board, coverage annotates a
-revealed board and never rewrites one.
+**Coverage is a projection, never a gate.** No step checks that every changed
+region was taught or accounted for: a board carries no skip list, composition
+runs no coverage assertion, and no reveal is blocked, failed, or annotated on
+coverage. Which regions the boards cite is derivable on the daemon from the
+citations themselves, so a coverage view is a read over what was cited rather
+than an obligation on a seat.
 
 **Per-phase timings are durable and versioned.** One record per phase —
 `report` (the whole report gate) and `report-classification` (the provider turn
 inside it), each lane's `lens-draft` / `lens-repair` / `lens-post-process`, plus
-`coverage`, `reveal`, and `first-core-board` — carries the wall-clock start and
-the measured duration. They live on the generation under a versioned `timings`
+`reveal` and `first-core-board` — carries the wall-clock start and the measured
+duration. They live on the generation under a versioned `timings`
 record, so no label can absorb another phase's time and the
 [benchmark archive](../reference/benchmarks.md) reads this one spine rather than
 measuring anything a second time. `lens` is discriminated on the record: the four
 lane-scoped phases require it, the generation-wide ones forbid it.
 
 **Spend is durable beside the timings.** Every seat turn the pipeline runs
-(board, report, repair, on either harness) and the Design coverage-mapping turn
-record one metric each into the generation's collector: tokens and, when the
-provider gave one, its price. The orchestrator's compose turn is not yet
+(board, report, repair, on either harness) records one metric into the
+generation's collector: tokens and, when the provider gave one, its price. The orchestrator's compose turn is not yet
 counted. The sum rides the lens progress frame while the generation drafts and
 lands on the generation as `usage` when it settles; a repeat drafting attempt
 adds to the prior attempt's total rather than replacing it. The round shows it
@@ -325,11 +320,6 @@ repeat entry, so one restart costs one draft plus that budget rather than a
 silently refreshed ladder. The repeat entry is reduced but never zero: a zero
 budget ends a lane on one malformed output, and the restart recovery that exists
 to re-draft a retryable lens could then never produce a board for it.
-
-**Cross-lens coverage is attempt-scoped.** A redraft clears the replaced
-attempt's coverage state durably and republishes `pending` on its first frame,
-so a reconnecting client never reads "every hunk covered" beside lanes that are
-queued for a redraft over boards that no longer exist.
 
 The classified report path also emits content-free diagnostics. Its fixed
 milestones distinguish provider time from session cleanup, schema parsing,
@@ -429,10 +419,9 @@ one durable report projection per round, not exactly-once remote invocation.
 ## Reading a board back
 
 A drafted board lands in two durable places. Its elements go to the whiteboard
-event log. Its document envelope, skipped-hunk coverage, blemishes, omissions,
-and immutability result go to the board-meta store before the board arrival is
-announced. The client reads both halves through `board.read`, keyed by review,
-generation, and lens. The handler resolves the review's session, finds that
+event log. Its document envelope, blemishes, omissions, and immutability result
+go to the board-meta store before the board arrival is announced. The client
+reads both halves through `board.read`, keyed by review, generation, and lens. The handler resolves the review's session, finds that
 triple's board-meta record, projects the element state, and assembles one
 `LensBoard` with the persisted document, the element pool in creation order,
 and one fold line per top-level section.
@@ -570,8 +559,8 @@ A board says what it does not know as plainly as what it does.
   failed lane while the other four lenses continue. It never falls back to mutable
   repository reads and never records `no-material` for evidence it could not inspect.
 - An element the validation loop could not make pass leaves a trace, never a
-  silent hole. If it was dropped, its hunks are in `skippedHunks` with a reason
-  (the honest-omission exit); unresolved board-level or schema violations ride
+  silent hole. If it was dropped, the omission names it with a reason (the
+  honest-omission exit); unresolved board-level or schema violations ride
   along as labelled **blemishes** — shown to the reviewer, never blocking the
   board.
 - Capture limits stay visible. Truncated files, binary files, and submodule
@@ -600,15 +589,14 @@ mount failure is **inconclusive** and never an all-clear.
 ## Lane discipline
 
 Each lens owns a lane, and material in another lens's lane is omitted, never
-narrated. Spec artifacts and requirement coverage belong to Design; the
+narrated. Spec artifacts and their requirements belong to Design; the
 reading walk to Sequence; judgment calls to Decisions; defects to Flagged;
 skip-safe mechanical hunks to Noise. Generated scaffold stamps (OpenSpec's
 `.openspec.yaml` and the like) are noise, not spec artifacts.
 
-Coverage is data, not prose. Each draft board carries a `skippedHunks` list —
-hunks the lens consciously left to other lenses, with reasons — and the
-composition step checks that every patchset hunk lands in at least one lens's
-taught-or-skipped set. Boards never carry remainder essays about what is not
+A lens accounts for what it cites and for nothing else. There is no skip list
+to fill and no remainder to declare: material another lens owns is simply
+absent from this board. Boards never carry remainder essays about what is not
 on them.
 
 ## Voice rules
@@ -687,13 +675,10 @@ the decision already renders its parsed choice. Stated decisions continue to use
 their canonical statement, rationale, alternatives, and evidence fields. The
 rendered content still comes from the immutable discovery bundle.
 
-Requirement coverage is host-owned. After drafting, the host discards any
-coverage fields the drafter supplied, offers only non-artifact patchset hunks
-to a dedicated mapping turn, grounds its answer against those exact hunk ids,
-and mints immutable `code_ref` anchors from the patchset geometry. A completed
-mapping shows met, partial, or gap with a grounded test count. A failed mapping
-shows no chip. Proposal-only work has no implementation relation to map, so it
-shows task progress such as `0/N` without fabricated coverage.
+Requirement coverage is not derived. The host discards any coverage fields a
+drafter supplies and renders none, so a requirement row carries its source and
+its normative text rather than a met/partial/gap chip nobody grounded. Task
+progress such as `0/N` still comes from the source's own marks.
 
 `spec_delta` and the round `delta` marker are independent: the first records
 the artifact's added, modified, removed, or renamed state; the second records

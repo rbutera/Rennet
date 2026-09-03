@@ -100,6 +100,16 @@ export interface DispatchDeps {
   /** The owned T3 Code sidecar (t3code-sidecar-chat); absent when no vendored bundle was composed. */
   readonly t3Sidecar?: T3SidecarSupervisor;
   /**
+   * Purge a session's context files (session-context-files), called by `session.archive`
+   * beside the thread sweep — archive is the deletion boundary for both.
+   *
+   * The host resolves the bound root, not this layer: `SidebarSession` deliberately carries
+   * no `repositoryRoot` (R19 keeps host paths off the wire), and a `Project.id` cannot say
+   * WHICH repo of a workspace a session ran in. Absent ⇒ no session store wired, so there
+   * was never a context directory to remove. Never throws.
+   */
+  readonly purgeSessionContext?: (sessionId: string) => void;
+  /**
    * Push-token registry for `device.registerPush` (issue #383 M1). Present only when the
    * daemon wired the attention system; a connection's authenticated `ctx.deviceId` keys the
    * token. Absent ⇒ the command is unreachable (the daemon never advertised `attention`, so

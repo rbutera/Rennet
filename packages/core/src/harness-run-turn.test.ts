@@ -13,9 +13,12 @@ import type {
   TurnInput,
 } from "./harness";
 import {
+  buildContextSendRecord,
   createHarnessRunTurn,
   guardSeatTurn,
   type HarnessTurnResult,
+  INLINE_CONTEXT_MAX_BYTES,
+  inlineContextViolation,
   recordSeatSend,
 } from "./harness-run-turn";
 
@@ -373,5 +376,115 @@ describe("recordSeatSend", () => {
     expect(result.status).toBe("failed");
     expect(records).toHaveLength(1);
     expect(records[0]).toMatchObject({ attempt: 2, promptDigest: sha256Hex("sent before throw") });
+  });
+});
+
+// ── The mechanical never-inline-context check (session-context-files 2.3) ─────
+//
+// The two prompts below are the SAME turn written the two ways: today's shape, which
+// interpolates the change inventory as one JSON literal in the context layer, and the
+// shape every site is being converted to, which names the file the seat reads instead.
+// The pair is the control for each other — the assertion is a difference in behaviour
+// between two real prompt shapes, not a threshold checked against itself.
+
+/** Today's shape: an inventory serialised into the context layer. ~10 KB. */
+function inventoryLayerPrompt(): string {
+  const hunks = Array.from({ length: 60 }, (_, index) => ({
+    path: `packages/server/src/module-${index}.ts`,
+    side: "new",
+    startLine: index * 7 + 1,
+    endLine: index * 7 + 12,
+    excerpt: `export function thing${index}(input: string): string { return input.trim(); }`,
+  }));
+  return [
+    "You are the Sequence lens. Draft the board for this change.",
+    renderLayer("context", JSON.stringify({ generation: "g1", hunks })),
+    "Cite every claim.",
+  ].join("\n\n");
+}
+
+/** The converted shape: the same turn, pointed at the file it may read. */
+function pathReferencePrompt(): string {
+  return [
+    "You are the Sequence lens. Draft the board for this change.",
+    renderLayer(
+      "context",
+      [
+        "The context for this session is in `.rennet/context/sess-1/`.",
+        "Its `README.md` lists every file, what it holds and when to read it;",
+        "`round.json` holds the dispatched asks. Run `git diff main...HEAD` yourself.",
+      ].join("\n"),
+    ),
+    "Cite every claim.",
+  ].join("\n\n");
+}
+
+describe("inlineContextViolation (session-context-files 2.3)", () => {
+  it("reports today's shape: a 10 KB JSON context layer, with its size and offset", () => {
+    const prompt = inventoryLayerPrompt();
+    const violation = inlineContextViolation(prompt);
+
+    expect(violation).toBeDefined();
+    // The fixture really is the expensive shape, not a hair over the limit.
+    expect(violation?.bytes).toBeGreaterThan(10_000);
+    // `at` points at the literal itself, so a reader can find what to convert.
+    expect(prompt[violation?.at ?? -1]).toBe("{");
+    expect(prompt.slice(violation?.at ?? 0, (violation?.at ?? 0) + 20)).toContain('"generation"');
+  });
+
+  it("reports nothing for the converted shape, which names paths instead", () => {
+    expect(inlineContextViolation(pathReferencePrompt())).toBeUndefined();
+  });
+
+  it("reports nothing for a small JSON literal, prose braces, or an unbalanced brace", () => {
+    // Instructions legitimately show a small shape; the rule is about payloads.
+    expect(
+      inlineContextViolation('Answer with {"lens":"sequence","claims":[]} and nothing else.'),
+    ).toBeUndefined();
+    // Prose over the limit that merely contains braces and quotes is not a literal.
+    const prose = `Use the { and } characters freely. "quoted" too. ${"filler ".repeat(600)}`;
+    expect(prose.length).toBeGreaterThan(INLINE_CONTEXT_MAX_BYTES);
+    expect(inlineContextViolation(prose)).toBeUndefined();
+    // A balanced span that is not JSON (a fenced code block) is over the limit and skipped.
+    const code = `\`\`\`ts\nexport function f() {\n${"  // a line of code\n".repeat(200)}}\n\`\`\``;
+    expect(code.length).toBeGreaterThan(INLINE_CONTEXT_MAX_BYTES);
+    expect(inlineContextViolation(code)).toBeUndefined();
+  });
+
+  it("records the violation on the send tap's record, and omits it once converted", () => {
+    const meta = {
+      seat: "sequence",
+      harness: "claude-code",
+      channel: "prompt",
+      attempt: 1,
+    } as const;
+
+    const inline = buildContextSendRecord(inventoryLayerPrompt(), meta);
+    const converted = buildContextSendRecord(pathReferencePrompt(), meta);
+
+    expect(inline.inlineContextBytes).toBeGreaterThan(10_000);
+    // The whole point of the field: the prompt-site conversions make this absent on every
+    // path, and the tap is where that becomes visible rather than invisible in a diff.
+    expect(converted.inlineContextBytes).toBeUndefined();
+    // Measurement, not a gate — both records were produced, neither send was refused.
+    expect(inline.promptBytes).toBeGreaterThan(converted.promptBytes);
+  });
+
+  it("never blocks a send: the turn runs and the record still carries the violation", async () => {
+    const records: ContextSendRecord[] = [];
+    const sent: string[] = [];
+    const runTurn = async (prompt: string): Promise<HarnessTurnResult> => {
+      sent.push(prompt);
+      return { status: "emitted", body: { ok: true } };
+    };
+
+    const tapped = recordSeatSend(runTurn, { seat: "sequence", harness: "claude-code" }, (record) =>
+      records.push(record),
+    );
+    const result = await tapped(inventoryLayerPrompt(), 1);
+
+    expect(result.status).toBe("emitted");
+    expect(sent).toHaveLength(1);
+    expect(records[0]?.inlineContextBytes).toBeGreaterThan(10_000);
   });
 });

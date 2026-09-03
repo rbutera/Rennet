@@ -2130,6 +2130,16 @@ export interface ContextSendRecord {
   readonly promptDigest: string;
   readonly contextIncluded: boolean;
   readonly contextDigest?: string;
+  /**
+   * The size of the first JSON literal over 2 KiB found in the sent prompt — the mechanical
+   * reading of the never-inline-context rule (session-context-files 2.3).
+   *
+   * MEASUREMENT, NOT A GATE: it is recorded and never blocks a send. Its point is that a
+   * prompt's cost is invisible in a diff, so the one place every prompt passes through says
+   * what it carried. Absent means the prompt carried no such literal, which is what every
+   * path reads once the prompt sites reference paths instead of interpolating payloads.
+   */
+  readonly inlineContextBytes?: number;
   readonly sentAt: string;
 }
 
