@@ -317,7 +317,11 @@ describe.skipIf(!bundle)("t3 client: a provider stream that dies before its turn
       startTimeoutMs: 15_000,
     });
     expect(outcome.state).toBe("error");
-    expect(outcome.errorMessage).toMatch(/stream failed|Claude/i);
+    // Either face of the same dead provider: the session's stream failure, or the
+    // `provider.turn.start.failed` refusal (`turn/setPermissionMode failed`) that the
+    // reactor records first on a Linux runner, where the wait reads it before the session
+    // error lands (#772 is the residual race in that ordering).
+    expect(outcome.errorMessage).toMatch(/stream failed|Claude|setPermissionMode failed/i);
     // A dead provider registers no turn at all, so the wait names the session, and the
     // failure it names was recorded after this start, not before it.
     expect(outcome.thread.latestTurn).toBeNull();
