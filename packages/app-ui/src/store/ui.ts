@@ -61,10 +61,10 @@ export interface UiState {
    */
   readonly backgroundEvents: Readonly<Record<string, readonly ProjectProcessEvent[]>>;
   /**
-   * The lens seat's thread the chat slot is showing, or `null` for the session's own
-   * thread (t3-lens-threads 3.1/3.4). Client-ephemeral like `openDialogs`: which
-   * transcript the reader is looking at is a choice they just made, not a server fact,
-   * and closing the app forgets it. The bench WRITES it; the slot READS it.
+   * The lens seat transcript the chat slot is showing instead of the review's own thread
+   * (t3-lens-threads 3.4). Client state: which reader the reviewer opened, not something
+   * the daemon knows. `null` ⇒ the slot is back on the session's thread. The ref carries
+   * BOTH ids because a thread is addressed by (environment, thread), never by the lane.
    */
   readonly lensThread: LaneThreadRef | null;
 }
@@ -95,11 +95,7 @@ export interface UiSlice {
     setProjectProcessing(projectId: string, processing: boolean): void;
     /** Retain one background narration line for `projectId`. */
     appendBackgroundEvent(projectId: string, event: ProjectProcessEvent): void;
-    /**
-     * Point the chat slot at a lens seat's thread — the bench's reader control. Opens
-     * the dock in the same act, because a transcript nobody can see is not "opened".
-     * `null` hands the slot back to the session's own thread.
-     */
+    /** Show a lens seat's transcript in the chat slot; `null` returns to the session. */
     openLensThread(thread: LaneThreadRef | null): void;
   };
 }
@@ -185,10 +181,7 @@ export const createUiSlice: StateCreator<RennetState, [], [], UiSlice> = (set) =
           ui: { ...s.ui, backgroundEvents: { ...s.ui.backgroundEvents, [projectId]: next } },
         };
       }),
-    openLensThread: (thread) =>
-      set((s) => ({
-        ui: { ...s.ui, lensThread: thread, chatOpen: thread !== null || s.ui.chatOpen },
-      })),
+    openLensThread: (thread) => set((s) => ({ ui: { ...s.ui, lensThread: thread } })),
   },
 });
 

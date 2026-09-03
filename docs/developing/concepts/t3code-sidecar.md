@@ -113,7 +113,7 @@ bound thread. Two rungs exist, and the host decides which one mounts:
   every T3 semantic variable onto Rennet's `--rn-*` palette; the names both kits share
   mirror `packages/theme/src/theme.css` exactly, because a utility rule is one rule for
   the whole document. The mount is a lazy chunk: a project on the `rennet` engine never
-  downloads it. The desktop provides the component through `T3ChatSlotProvider`;
+  downloads it. The desktop provides the components through `T3ChatSlotProvider`;
   `app-ui` itself never imports the vendored app.
 - **Rung one, every other host.** An Electron `<webview>` of the sidecar's own served
   UI, first at the pairing URL (which sets T3's session cookie inside the guest) and
@@ -126,13 +126,38 @@ stay around it). The bench draws the change as its centrepiece with one reader p
 each showing that seat's `latest` line from `SessionPreparation` — the daemon's plain-words
 projection of the seat's newest thread activity — and capture as the first beat of the same
 scene rather than a separate screen. Each reader is a control: activating one writes the
-lane's `thread` (`{ environmentId, threadId }`) to the store's `ui.lensThread` and opens the
-dock, and the slot reads that field to decide which thread it renders. A lane with no
+lane's `thread` (`{ environmentId, threadId }`) through `uiActions.openLensThread` and
+opens the dock, and the slot renders that transcript read-only (below). A lane with no
 `thread` yet is disabled rather than offered as a transcript that does not exist.
 
 Rung two's environment registration persists in the renderer's IndexedDB under T3's
 catalog (the same store T3's hosted app uses for paired machines), keyed by one stable
 connection id, so a refreshed bearer replaces the entry rather than adding one.
+
+### Reading a lens seat's transcript
+
+Rung two provides two views, not one, and the slot shows whichever the workspace asked
+for. `T3NativeChat` is the review's own bound thread with its composer. `T3ThreadView`
+is any other thread on the same sidecar environment — in practice a lens seat's, since
+every board seat runs as its own thread — mounted read-only: the same providers, the
+same routes and the same `ChatView`, with the initial route built from the `{
+environmentId, threadId }` ref the lane carries rather than from the session. Both
+register the same bearer environment under the same connection id, so opening a
+transcript adds no connection.
+
+Read-only is one CSS rule. `t3.css` hides `[data-chat-composer-overlay]` — upstream's own
+attribute on the whole input bar — inside `[data-slot="t3-thread-view"]`, which also
+zeroes the clearance `ChatView` measures from that element, so the timeline runs to the
+bottom instead of reserving a gap. No vendored file is edited and there is no
+`PATCHES.md` row; a Tailwind class string would not have survived a fold. It is not a
+gate either: it hides a composer that would otherwise start a turn on a seat's thread,
+which is confusing rather than dangerous.
+
+The workspace opens one by writing the lane's thread ref into the store
+(`uiActions.openLensThread(ref)`); `T3ChatDock` then renders `T3ThreadView` for it with a
+"Back to the session" control that clears it. The transcript keeps streaming while the
+seat runs — that is upstream's thread subscription, nothing Rennet drives — and stays
+readable after the seat settles and after the boards reveal.
 
 Measured on 2026-09-03 (renderer production build, raw bytes before gzip): the chunks
 loaded at startup grew from 1,822 KB to 1,846 KB, the lazy T3 payload is 3,122 KB of
@@ -180,8 +205,8 @@ over RPC before the signal is the daemon-side client's job and lands with it.
 - `packages/server/src/t3/client.ts`: the daemon-side RPC client, the one Rennet module importing `effect` and `@t3tools/contracts`.
 - `packages/server/src/t3/threads.ts`: the (repository root, session id) → thread binding.
 - `packages/server/src/t3/handoff.ts`: the handoff exit; `create-server.ts` routes by the repository's `chatEngine`.
-- `packages/app-ui/src/settings/projects/chat-engine.tsx`: the engine control and its disclosure; `packages/app-ui/src/chat/engine-chat-dock.tsx`: the slot switch, the rung-one `<webview>`, and the rung-two hand-off to the host-provided component (`chat/t3-chat-slot.tsx`).
-- `packages/t3-chat/src/native-chat.tsx`: rung two (routes, providers, environment registration, the thread and draft route views mirrored from upstream's route files); `session.ts`: the session-to-registration mapping; `t3.css`: the theme bridge. `apps/desktop/vite.renderer.config.ts` carries the alias, dedupe and defines; `apps/desktop/src/renderer/index.tsx` provides the component.
+- `packages/app-ui/src/settings/projects/chat-engine.tsx`: the engine control and its disclosure; `packages/app-ui/src/chat/engine-chat-dock.tsx`: the slot switch, the rung-one `<webview>`, the session-or-lens choice and the hand-off to the host-provided components (`chat/t3-chat-slot.tsx`); `packages/app-ui/src/store/ui.ts`: `lensThread` and `openLensThread`.
+- `packages/t3-chat/src/native-chat.tsx`: rung two (routes, providers, environment registration, the thread and draft route views mirrored from upstream's route files, and `T3ThreadView`); `session.ts`: the session-to-registration mapping and the route builder both views share; `t3.css`: the theme bridge and the read-only composer rule. `apps/desktop/vite.renderer.config.ts` carries the alias, dedupe and defines; `apps/desktop/src/renderer/index.tsx` provides both components.
 - `packages/server/src/dispatch/chat.ts`: `chat.t3Session`; `dispatch/daemon.ts` adds `t3Sidecar` to `daemon.status`.
 - `packages/protocol/src/wire.ts`: `t3SidecarStatusSchema`, `t3SessionSchema`.
 - `packages/server/src/daemon-main.ts`: resolves the bundle (`RENNET_T3_BUNDLE` overrides); in the packaged app the main process sets that variable to `Resources/t3code/apps/server/dist/bin.mjs`, staged by `scripts/stage-t3-sidecar.mjs` at desktop build time (see `apps/desktop/PACKAGING.md`).

@@ -185,6 +185,7 @@ const GAZE_BY_REGISTER: Readonly<Record<Register, string>> = {
 
 function Reader({ lane }: { readonly lane: LensLane }) {
   const openLensThread = useRennetStore((s) => s.uiActions.openLensThread);
+  const setChatOpen = useRennetStore((s) => s.uiActions.setChatOpen);
   const openThread = useRennetStore((s) => s.ui.lensThread);
   const register = registerOf(lane);
   const speech = speechOf(lane);
@@ -201,7 +202,15 @@ function Reader({ lane }: { readonly lane: LensLane }) {
       data-register={register}
       disabled={thread === undefined}
       aria-pressed={open}
-      onClick={() => thread !== undefined && openLensThread(thread)}
+      onClick={() => {
+        if (thread === undefined) return;
+        // The dock is opened HERE, not in `openLensThread`: the store action only says
+        // WHICH transcript the slot shows, and the slot is hidden at zero width while
+        // the chat is closed. A reader that pointed the slot at a thread nobody could
+        // see would report "opened" for nothing on screen.
+        openLensThread(thread);
+        setChatOpen(true);
+      }}
       className={cn(
         "group flex min-w-36 flex-1 basis-36 cursor-pointer flex-col items-center gap-2 rounded-surface px-2 pb-3 pt-0 text-center transition-colors",
         "hover:bg-raised focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-accent-line",
