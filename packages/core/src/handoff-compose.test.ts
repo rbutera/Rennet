@@ -2,14 +2,24 @@ import type { HandoffDisposition, PatchFile, Patchset } from "@rennet/protocol";
 import { describe, expect, it, vi } from "vitest";
 import {
   asksFromBundle,
+  buildComposePrompt,
   type ComposePort,
   type ComposePortResult,
   type ComposeProposal,
+  composeAsksContextFile,
   composeHandoffBundle,
   mechanicalComposition,
+  renderWorkOrder,
   validateComposition,
+  workOrderContextFile,
 } from "./handoff-compose";
 import { buildHandoffBundle } from "./handoff-loop";
+import { inlineContextViolation } from "./harness-run-turn";
+
+/** The executable work order for a bundle — where the verbatim bodies live (3.7). */
+function workOrder(bundle: { tasks: readonly Parameters<typeof renderWorkOrder>[0][number][] }) {
+  return renderWorkOrder(bundle.tasks);
+}
 
 function file(path: string, patch: string): PatchFile {
   return { path, status: "modified", additions: 1, deletions: 0, binary: false, patch };
@@ -205,17 +215,18 @@ describe("composeHandoffBundle — valid model authoring", () => {
     expect(composed.tasks).toHaveLength(2);
     // The merged task carries BOTH source ids and BOTH verbatim bodies.
     expect(composed.tasks[0]?.sourceDispositions).toEqual(["d0", "d1"]);
-    expect(composed.prompt).toContain("validate the token before use");
-    expect(composed.prompt).toContain("also handle the expired-token case");
-    expect(composed.prompt).toContain("return 404 not 500 when the user is missing");
+    expect(workOrder(composed)).toContain("validate the token before use");
+    expect(workOrder(composed)).toContain("also handle the expired-token case");
+    expect(workOrder(composed)).toContain("return 404 not 500 when the user is missing");
     // The model's title is PREVIEW metadata on the task, NOT in the executable prompt.
     expect(composed.tasks[0]?.title).toBe("Harden token validation in auth.ts");
     expect(composed.prompt).not.toContain("Harden token validation in auth.ts");
+    expect(workOrder(composed)).not.toContain("Harden token validation in auth.ts");
     // The executable heading is derived MECHANICALLY from the trusted path.
-    expect(composed.prompt).toContain("### 1. src/auth.ts");
+    expect(workOrder(composed)).toContain("### 1. src/auth.ts");
     // Execution order is the group order (both auth bodies precede the user body).
-    expect(composed.prompt.indexOf("validate the token before use")).toBeLessThan(
-      composed.prompt.indexOf("return 404 not 500 when the user is missing"),
+    expect(workOrder(composed).indexOf("validate the token before use")).toBeLessThan(
+      workOrder(composed).indexOf("return 404 not 500 when the user is missing"),
     );
   });
 
@@ -258,12 +269,14 @@ describe("composeHandoffBundle — F1: model prose cannot enter the executable p
     // ...but the invented instruction NEVER reaches the prompt the agent executes.
     expect(composed.prompt).not.toContain(evil);
     expect(composed.prompt).not.toContain("DELETE src/user.ts");
+    expect(workOrder(composed)).not.toContain(evil);
+    expect(workOrder(composed)).not.toContain("DELETE src/user.ts");
     // It survives only as preview metadata on the task.
     expect(composed.tasks[0]?.title).toBe(evil);
     // The human's real asks are all still present verbatim.
-    expect(composed.prompt).toContain("validate the token before use");
-    expect(composed.prompt).toContain("also handle the expired-token case");
-    expect(composed.prompt).toContain("return 404 not 500 when the user is missing");
+    expect(workOrder(composed)).toContain("validate the token before use");
+    expect(workOrder(composed)).toContain("also handle the expired-token case");
+    expect(workOrder(composed)).toContain("return 404 not 500 when the user is missing");
   });
 });
 
@@ -275,7 +288,7 @@ describe("composeHandoffBundle — F2: instruction bodies are byte-for-byte verb
       portReturning(emitted({ groups: [{ title: "t", dispositionIds: ["d0"] }] })),
     );
     // The exact indented body — not a dedented/trimmed variant — is in the prompt.
-    expect(composed.prompt).toContain(indented);
+    expect(workOrder(composed)).toContain(indented);
   });
 });
 
@@ -286,7 +299,7 @@ describe("composeHandoffBundle — F3: a rejected port falls to the floor", () =
     expect(composed.composed).toBe(false);
     expect(composed.tasks).toHaveLength(3);
     expect(Object.keys(composed.traceMap).sort()).toEqual(["d0", "d1", "d2"]);
-    expect(composed.prompt).toContain("return 404 not 500 when the user is missing");
+    expect(workOrder(composed)).toContain("return 404 not 500 when the user is missing");
   });
 });
 
@@ -300,7 +313,7 @@ describe("composeHandoffBundle — the deterministic floor (fail-closed)", () =>
     expect(composed.tasks).toHaveLength(3); // one task per ask
     // Nothing was lost: every ask + body still present.
     expect(Object.keys(composed.traceMap).sort()).toEqual(["d0", "d1", "d2"]);
-    expect(composed.prompt).toContain("return 404 not 500 when the user is missing");
+    expect(workOrder(composed)).toContain("return 404 not 500 when the user is missing");
   });
 
   it("falls back when the model turn fails", async () => {
@@ -337,5 +350,64 @@ describe("mechanicalComposition", () => {
     expect(floor.tasks).toHaveLength(3);
     expect(floor.tasks.every((t) => t.title === "")).toBe(true);
     expect(Object.keys(floor.traceMap).sort()).toEqual(["d0", "d1", "d2"]);
+  });
+});
+
+describe("the compose and work-order prompts NAME their files (3.7)", () => {
+  it("the compose prompt names compose/asks.json and carries no note text", () => {
+    const prompt = buildComposePrompt("r1");
+    expect(prompt).toContain(".rennet/context/r1/compose/asks.json");
+    expect(prompt).not.toContain("validate the token before use");
+    // Constant in the asks: the prompt does not take them at all any more.
+    expect(buildComposePrompt("r1")).toBe(prompt);
+    expect(inlineContextViolation(prompt)).toBeUndefined();
+  });
+
+  it("compose/asks.json carries every id, anchor and note verbatim", () => {
+    const written = composeAsksContextFile(asksFromBundle(bundleOf(THREE_ASKS)));
+    expect(written.name).toBe("compose/asks.json");
+    expect(JSON.parse(written.body)).toEqual([
+      // The mechanical order: same path, so the type breaks the tie (comment < request-change).
+      {
+        id: "d0",
+        kind: "comment",
+        path: "src/auth.ts",
+        anchor: "whole file",
+        note: "also handle the expired-token case",
+      },
+      {
+        id: "d1",
+        kind: "requested change",
+        path: "src/auth.ts",
+        anchor: "whole file",
+        note: "validate the token before use",
+      },
+      {
+        id: "d2",
+        kind: "requested change",
+        path: "src/user.ts",
+        anchor: "whole file",
+        note: "return 404 not 500 when the user is missing",
+      },
+    ]);
+  });
+
+  it("the run prompt names work-order.md and carries no ask or diff fence", () => {
+    const composed = mechanicalComposition(bundleOf(THREE_ASKS));
+    expect(composed.prompt).toContain(".rennet/context/r1/work-order.md");
+    expect(composed.prompt).toContain("3 tasks");
+    expect(composed.prompt).toContain("3 review notes");
+    expect(composed.prompt).not.toContain("validate the token before use");
+    expect(composed.prompt).not.toContain("```diff");
+    expect(inlineContextViolation(composed.prompt)).toBeUndefined();
+  });
+
+  it("work-order.md is the file the run writes, and holds the composed order", () => {
+    const composed = mechanicalComposition(bundleOf(THREE_ASKS));
+    const written = workOrderContextFile(composed.tasks);
+    expect(written.name).toBe("work-order.md");
+    expect(written.body).toBe(renderWorkOrder(composed.tasks));
+    expect(written.body).toContain("validate the token before use");
+    expect(written.body).toContain("```diff");
   });
 });

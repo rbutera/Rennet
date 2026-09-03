@@ -16,8 +16,9 @@ import {
   isCodingRoundDisposition,
   sha256Hex,
 } from "@rennet/protocol";
-import { HANDOFF_NO_GIT_RULE } from "./handoff-compose";
+import { HANDOFF_NO_GIT_RULE, WORK_ORDER_FILE } from "./handoff-compose";
 import type { HarnessEvent, HarnessInProcessTool } from "./harness";
+import { sessionContextRelativeDir } from "./session-context";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The review→agent handoff loop (issue #18, Contracts §2.1 destination B — "your
@@ -166,61 +167,38 @@ function withTaskIds(
   });
 }
 
-const TYPE_LABEL: Record<DispositionType, string> = {
-  approve: "approval",
-  "request-change": "requested change",
-  comment: "comment",
-  question: "question",
-};
-
-/** The human-facing anchor label for one task ("lines A–B, additions" / "whole file"). */
-function anchorLabel(task: HandoffTask): string {
-  if (task.span === undefined) return "whole file";
-  const end = task.span.endLine ?? task.span.startLine;
-  const range =
-    end === task.span.startLine
-      ? `line ${task.span.startLine}`
-      : `lines ${task.span.startLine}–${end}`;
-  return task.side === undefined ? range : `${range}, ${task.side}`;
-}
+// The type label and the anchor label moved to `handoff-compose.ts` with the work-order
+// document (session-context-files 3.7): they render the FILE, and this module now renders
+// only the prompt that names it.
 
 /**
- * Render the deterministic bundle prompt — the task-bundle CONTRACT. It enumerates
- * every addressed task with its anchor and diff context and instructs the agent to
- * address ONLY these items, editing files in place, never committing or pushing.
- * Deterministic in the ordered tasks, so the same bundle always renders the same
- * prompt (and hence the same digest the consent token binds to).
+ * Render the deterministic bundle prompt — the task-bundle CONTRACT. It names the work
+ * order and instructs the agent to address ONLY what that file lists, editing files in
+ * place, never committing or pushing. Deterministic in the ordered tasks and the session
+ * id, so the same bundle always renders the same prompt.
+ *
+ * The items themselves — anchors, verbatim instructions, diff fences — are in
+ * `work-order.md` under the session's context directory, not here (session-context-files).
+ * `renderWorkOrder` builds that file from the same tasks.
  */
-export function renderHandoffPrompt(tasks: readonly HandoffTask[]): string {
-  const out: string[] = [
+export function renderHandoffPrompt(tasks: readonly HandoffTask[], sessionId: string): string {
+  return [
     "# Review handoff",
     "",
     "You are a coding agent addressing a reviewer's dispositions on the current branch.",
-    "Make exactly the changes requested below, editing files in place.",
+    "",
+    `Your work order is \`${sessionContextRelativeDir(sessionId)}/${WORK_ORDER_FILE}\`, in your`,
+    `working directory. It lists ${tasks.length} requested change${tasks.length === 1 ? "" : "s"},`,
+    "each with its file, anchor, the reviewer's instruction verbatim and the anchored diff",
+    "context. Read it in full, then make exactly those changes, editing files in place.",
     "",
     "Rules, in order of importance:",
-    "1. Address ONLY the items listed below. Do not make unrelated changes, do not refactor",
+    "1. Address ONLY the items in that file. Do not make unrelated changes, do not refactor",
     "   beyond what is asked, do not reformat untouched code.",
     ...HANDOFF_NO_GIT_RULE,
     "3. If an item cannot be done as asked, leave that file unchanged and say why in your",
     "   final message — never guess or half-apply it.",
-    "",
-    `## Requested changes (${tasks.length})`,
-  ];
-  tasks.forEach((task, index) => {
-    out.push(
-      "",
-      `### ${index + 1}. ${TYPE_LABEL[task.type]} — ${task.path} (${anchorLabel(task)})`,
-      "",
-      task.instruction.trim() === ""
-        ? "(no instruction body — infer from the context below)"
-        : task.instruction.trim(),
-    );
-    if (task.context !== "") {
-      out.push("", "Anchored diff context:", "```diff", task.context, "```");
-    }
-  });
-  return out.join("\n");
+  ].join("\n");
 }
 
 /** Input to the bundle composer. `dispositions` are already the effective bodies
@@ -261,7 +239,7 @@ export function buildHandoffBundle(input: BuildHandoffBundleInput): HandoffBundl
       disposition.side,
     ),
   }));
-  const prompt = renderHandoffPrompt(tasks);
+  const prompt = renderHandoffPrompt(tasks, input.reviewId);
   // A content digest over the ordered tasks — a stable bundle identity (same tasks ⇒
   // same digest), used by callers that want to key on the bundle. Not a gate.
   const digest = sha256Hex(

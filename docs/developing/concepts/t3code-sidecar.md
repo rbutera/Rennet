@@ -491,6 +491,23 @@ enrichment prompt names that absolute path and the item count instead of carryin
 `record.json`, because a readable record is what gates a refire and a candidate list is not a
 finished retrieval.
 
+The five review-side utility turns are the same shape, keyed on the review id — the id the
+sidecar already binds the review's thread under. Each writes immediately before it sends, and
+each names only what it wrote: the **review opener** writes `opener/boards/<lens>.json`,
+`opener/asks.json`, `opener/dispositions.json`, `opener/review-facts.json` and
+`opener/voice-rules.md` (the voice rules travel as a file because they live inside the
+installed `@rennet/prompts` bundle, which the seat's `cwd` cannot reach); the **PR-body
+drafter** writes `pr-body/narration.json`, `pr-body/dispositions.json`,
+`pr-body/requirements.json` and `pr-body/decisions.json`, and writes only the ones the input
+actually carries, so the prompt still never invites an invented section; **handoff compose**
+writes `compose/asks.json` and gets back a partition over the ids in it; the **handoff run**
+writes `work-order.md`; the **delta digest** writes `digest-input.json`. Measured on the
+packages' own fixtures at branch scale — 40 asks, 40 beyond-ask hunks, four boards — the five
+prompts go 10,623 → 1,253, 7,222 → 1,600, 8,582 → 1,237, 15,598 → 771 and 6,250 → 1,035
+bytes. Every one of them is now **constant in the material**: the enumeration caps those
+prompts needed (the digest's ten-hunk "and N more", among them) are gone with the
+enumeration, so a large delta costs the turn nothing and the file stays complete.
+
 ## Code map
 
 - `packages/server/src/t3/sidecar.ts`: claim, probe, free port, provider seeding, environment, spawn, adopt, stop.

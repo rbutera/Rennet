@@ -164,6 +164,7 @@ import {
   planQuoteThreadReanchors,
   ReviewService,
   recordSeatSend,
+  renderWorkOrder,
   resolveAssignment,
   resolveLocus,
   runHandoffTurn as runHandoffTurnCore,
@@ -175,6 +176,7 @@ import {
 import type { PromptContextFile } from "@rennet/prompts";
 import type {
   CodingHarnessSelection,
+  ComposedHandoffBundle,
   ConventionCatalogue,
   CouncilHarnessId,
   DetectedForge,
@@ -3060,7 +3062,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   const createRoundOperation = (input: {
     readonly session: SessionModel;
     readonly review: Review;
-    readonly workOrder: { readonly prompt: string };
+    readonly workOrder: ComposedHandoffBundle;
     readonly dispatchId: string;
     readonly sourcePatchsetId: string;
     readonly askOccurrences: readonly RoundOperation["askOccurrences"][number][];
@@ -3079,6 +3081,16 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     ).gateCommand?.trim();
     const createdAt = Date.now();
     const records = roundRecordStore.read(input.session.id);
+    // The ROUND worker keeps the work order INLINE, deliberately (session-context-files
+    // 3.7). `bundle.prompt` is now the short turn prompt that names
+    // `.rennet/context/<reviewId>/work-order.md`, and that path resolves against the
+    // turn's cwd — which for a round is today's DETACHED worktree, not the reviewer's
+    // checkout. Writing the file into that worktree would put `.rennet/.gitignore` in
+    // front of `git add -A`, and the round source landing refuses a changed path inside
+    // Rennet's own namespace. So the round persists the work-order DOCUMENT, byte for
+    // byte as composed, and the worker is sent it directly. Wave 5 (D1/D2) binds the
+    // round to the session's root, and the pointer works there like everywhere else.
+    const workOrderDocument = renderWorkOrder(input.workOrder.tasks);
     return {
       operationId: randomUUID(),
       sessionId: input.session.id,
@@ -3092,8 +3104,8 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
           ? { kind: "detached", head: patchset.repository.headOid }
           : { kind: "branch", branch: patchset.repository.headRef },
       repoRoot: input.review.repositoryRoot,
-      workOrderPrompt: input.workOrder.prompt,
-      workOrderDigest: sha256Hex(input.workOrder.prompt),
+      workOrderPrompt: workOrderDocument,
+      workOrderDigest: sha256Hex(workOrderDocument),
       gatePlan:
         gateCommand === undefined || gateCommand.length === 0
           ? { kind: "absent" }

@@ -1,3 +1,6 @@
+import { mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type {
   CodexExecRequest,
   CodexExecResult,
@@ -8,7 +11,18 @@ import type {
 } from "@rennet/core";
 import type { Patchset, Review } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
+import { sessionContextDir } from "./context-files";
 import { createLiveDraftPrBodyPort, type LiveDraftPrBodyInput } from "./draft-pr-body-live";
+
+// A REAL repository root: the live ports write the turn's context under it before the
+// turn (session-context-files 3.7), and the seat resolves the paths in its prompt against
+// it. A fixture root that does not exist cannot exercise the turn at all.
+const REPO_ROOT = mkdtempSync(join(tmpdir(), "rennet-prbody-repo-"));
+
+/** Read one of the files the port wrote for this review. */
+function contextFile(name: string): string {
+  return readFileSync(join(sessionContextDir(REPO_ROOT, "review-1"), name), "utf8");
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The LIVE review.draftPrBody producer (issue #74, M26). Driven with NO real codex
@@ -23,8 +37,8 @@ function review(id = "review-1"): Review {
     createdAt: "2026-08-11T00:00:00.000Z",
     repository: {
       id: "repo",
-      root: "/repo",
-      commonDir: "/repo/.git",
+      root: REPO_ROOT,
+      commonDir: join(REPO_ROOT, ".git"),
       baseRef: "main",
       baseOid: "abc",
       headOid: "def",
@@ -36,7 +50,7 @@ function review(id = "review-1"): Review {
   };
   return {
     id,
-    repositoryRoot: "/repo",
+    repositoryRoot: REPO_ROOT,
     patchsets: [patchset],
     activePatchsetId: patchset.id,
     dispositions: [],
@@ -83,7 +97,7 @@ function startedEvent(model: string): HarnessEvent {
     native: null,
     kind: "session.started",
     model,
-    cwd: "/repo",
+    cwd: REPO_ROOT,
     tools: [],
     apiKeySource: null,
   } as unknown as HarnessEvent;
@@ -133,6 +147,7 @@ function fakeClaudePort(
 describe("createLiveDraftPrBodyPort — Codex seat (council resolves Luna)", () => {
   it("drafts on Codex, reports the OBSERVED runtime model (not the requested pick), and grounds the prompt", async () => {
     let seenPrompt = "";
+    let seenCwd: string | undefined;
     const port = createLiveDraftPrBodyPort({
       claudePort: async () => null,
       codexExecutor: async () =>
@@ -140,6 +155,7 @@ describe("createLiveDraftPrBodyPort — Codex seat (council resolves Luna)", () 
           { title: "Bound the rate limiter's fail-open path", body: "Adds a fallback bucket." },
           (req) => {
             seenPrompt = req.prompt;
+            seenCwd = req.cwd;
           },
           // What Codex ACTUALLY ran (from its session log) — a runtime-versioned id
           // DISTINCT from the requested "gpt-5.6-luna", so reporting the plan reddens.
@@ -156,10 +172,20 @@ describe("createLiveDraftPrBodyPort — Codex seat (council resolves Luna)", () 
     });
     // The real drafting material reached the model — the honest-account inputs, not
     // a diffstat. This is the citing contract on the LIVE path.
+    // The citing contract on the LIVE path, through the files (3.7): the prompt names
+    // them and runs in the checkout, and the material is on the other end of the paths.
     expect(seenPrompt).toContain("feat/rate-limit-fallback");
-    expect(seenPrompt).toContain("process-local fallback bucket");
-    expect(seenPrompt).toContain("The limiter MUST bound the fail-open path");
-    expect(seenPrompt).toContain("Document the migration note.");
+    expect(seenPrompt).toContain(".rennet/context/review-1/pr-body/narration.json");
+    expect(seenPrompt).toContain(".rennet/context/review-1/pr-body/requirements.json");
+    expect(seenPrompt).not.toContain("process-local fallback bucket");
+    expect(seenPrompt).not.toContain("The limiter MUST bound the fail-open path");
+    expect(seenCwd).toBe(REPO_ROOT);
+    expect(contextFile("pr-body/narration.json")).toContain("process-local fallback bucket");
+    expect(JSON.parse(contextFile("pr-body/requirements.json"))).toEqual([
+      "The limiter MUST bound the fail-open path",
+    ]);
+    expect(contextFile("pr-body/dispositions.json")).toContain("Document the migration note.");
+    expect(contextFile("README.md")).toContain("pr-body/dispositions.json");
   });
 
   it("falls back to the requested model when the session log named none (best remaining truth)", async () => {

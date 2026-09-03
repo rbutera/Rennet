@@ -18,6 +18,11 @@
  * `status: "admitted"` is only ever constructed inside `if (report.admitted)`.
  */
 
+import {
+  capBytes,
+  REPAIR_POINTER_LINE_MAX_BYTES,
+  REPAIR_POINTERS_MAX_BYTES,
+} from "@rennet/prompts";
 import type {
   OfferedManifest,
   PatchsetRef,
@@ -209,6 +214,9 @@ const ZERO_TOKENS: RspTokenUsage = {
 
 const CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 
+/** One encoder for the retry report's byte accounting. */
+const UTF8 = new TextEncoder();
+
 /** A 26-char Crockford base32 id (ULID-shaped), the port's minted identity. */
 function defaultMintDocId(): string {
   let out = "";
@@ -222,8 +230,14 @@ function defaultRunId(): string {
   return `run_${Math.floor(Math.random() * 1e9).toString(36)}`;
 }
 
-/** Fold the optional system preamble, the user prompt, and any fed-back rejection
- *  report into the single positional prompt `codex exec` accepts. */
+/**
+ * Fold the optional system preamble, the user prompt, and any fed-back rejection
+ * report into the single positional prompt `codex exec` accepts.
+ *
+ * Every part is a path reference or an instruction: the caller's `system`/`prompt` carry
+ * no payload (session-context-files), and the retry report is pointers only — a rule id,
+ * a JSON pointer and a message, never the rejected value or the document that carried it.
+ */
 function assemblePrompt(
   system: string | undefined,
   user: string,
@@ -236,16 +250,35 @@ function assemblePrompt(
   return parts.join("\n\n");
 }
 
-/** Format a validation report into the machine-readable text fed back on retry. */
+/**
+ * Format a validation report into the machine-readable text fed back on retry.
+ *
+ * Pointer-only and BOUNDED, on the same bounds the sidecar repair turn uses
+ * (`REPAIR_POINTERS_MAX_BYTES` / `REPAIR_POINTER_LINE_MAX_BYTES`) rather than a constant
+ * of its own. Each line is capped first: a validator message can quote what it rejected,
+ * so one enormous pointer would otherwise eat the whole budget and leave the retry with
+ * "Fix every error" and no error under it. The omission marker keeps the count honest.
+ */
 function renderReport(report: ValidationReport): string {
-  const lines = report.errors.map(
-    (error) => `- ${error.code} at ${error.pointer}: ${error.message}`,
+  const all = [...report.errors, ...report.rejectedItems.flatMap((item) => item.errors)].map(
+    (error) =>
+      capBytes(
+        `- ${error.code} at ${error.pointer}: ${error.message}`,
+        REPAIR_POINTER_LINE_MAX_BYTES,
+      ),
   );
-  const rejected = report.rejectedItems.flatMap((item) =>
-    item.errors.map((error) => `- ${error.code} at ${error.pointer}: ${error.message}`),
-  );
-  const all = [...lines, ...rejected];
-  return `The previous document was REJECTED. Fix every error and re-emit:\n${all.join("\n")}`;
+  const kept: string[] = [];
+  let bytes = 0;
+  for (const line of all) {
+    const size = UTF8.encode(`${line}\n`).length;
+    if (bytes + size > REPAIR_POINTERS_MAX_BYTES) {
+      kept.push(`- … ${all.length - kept.length} more error(s) omitted (byte cap)`);
+      break;
+    }
+    kept.push(line);
+    bytes += size;
+  }
+  return `The previous document was REJECTED. Fix every error and re-emit:\n${kept.join("\n")}`;
 }
 
 function messageOf(error: unknown): string {

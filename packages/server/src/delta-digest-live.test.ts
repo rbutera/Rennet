@@ -1,3 +1,6 @@
+import { mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type {
   CodexExecRequest,
   CodexExecResult,
@@ -7,7 +10,18 @@ import type {
 } from "@rennet/core";
 import type { Patchset, Review, SuccessorAccount } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
+import { sessionContextDir } from "./context-files";
 import { createLiveDeltaDigestPort } from "./delta-digest-live";
+
+// A REAL repository root: the live ports write the turn's context under it before the
+// turn (session-context-files 3.7), and the seat resolves the paths in its prompt against
+// it. A fixture root that does not exist cannot exercise the turn at all.
+const REPO_ROOT = mkdtempSync(join(tmpdir(), "rennet-digest-repo-"));
+
+/** Read one of the files the port wrote for this review. */
+function contextFile(name: string): string {
+  return readFileSync(join(sessionContextDir(REPO_ROOT, "review-1"), name), "utf8");
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The LIVE review.deltaDigest producer (issue #73 / M25). Driven with NO real codex
@@ -23,8 +37,8 @@ function review(): Review {
     createdAt: "2026-08-12T00:00:00.000Z",
     repository: {
       id: "repo",
-      root: "/repo",
-      commonDir: "/repo/.git",
+      root: REPO_ROOT,
+      commonDir: join(REPO_ROOT, ".git"),
       baseRef: "main",
       baseOid: "abc",
       headOid: "def",
@@ -36,7 +50,7 @@ function review(): Review {
   };
   return {
     id: "review-1",
-    repositoryRoot: "/repo",
+    repositoryRoot: REPO_ROOT,
     patchsets: [patchset],
     activePatchsetId: patchset.id,
     dispositions: [],
@@ -85,7 +99,7 @@ function startedEvent(model: string): HarnessEvent {
     native: null,
     kind: "session.started",
     model,
-    cwd: "/repo",
+    cwd: REPO_ROOT,
     tools: [],
     apiKeySource: null,
   } as unknown as HarnessEvent;
@@ -129,6 +143,7 @@ function fakeClaudePort(makeEvents: () => HarnessEvent[]): HarnessPort {
 describe("createLiveDeltaDigestPort — Codex seat", () => {
   it("digests on Codex, reports the OBSERVED runtime model, and grounds the prompt in ONLY the account", async () => {
     let seenPrompt = "";
+    let seenCwd: string | undefined;
     const producer = createLiveDeltaDigestPort({
       claudePort: async () => null,
       codexExecutor: async () =>
@@ -139,6 +154,7 @@ describe("createLiveDeltaDigestPort — Codex seat", () => {
           },
           (req) => {
             seenPrompt = req.prompt;
+            seenCwd = req.cwd;
           },
           "gpt-observed",
         ),
@@ -149,9 +165,17 @@ describe("createLiveDeltaDigestPort — Codex seat", () => {
       text: "Renamed the key, left the dead branch, and touched metrics nobody asked about.",
       model: "gpt-observed",
     });
-    // The prompt carries the account's facts and NOTHING about the code itself.
-    expect(seenPrompt).toContain("src/rate/keys.ts");
-    expect(seenPrompt).toContain("src/metrics/emit.ts");
+    // The prompt NAMES the account and carries no fact of its own (3.7); the account
+    // is on disk under the root the turn runs in, so the grounding guarantee is the same
+    // one — that file is still the only thing the turn may state.
+    expect(seenPrompt).toContain(".rennet/context/review-1/digest-input.json");
+    expect(seenPrompt).not.toContain("src/rate/keys.ts");
+    expect(seenPrompt).not.toContain("src/metrics/emit.ts");
+    expect(seenCwd).toBe(REPO_ROOT);
+    const written = JSON.parse(contextFile("digest-input.json")) as { beyondAsks: string[] };
+    expect(contextFile("digest-input.json")).toContain("src/rate/keys.ts");
+    expect(written.beyondAsks).toContain("src/metrics/emit.ts");
+    expect(contextFile("README.md")).toContain("digest-input.json");
   });
 
   it("MODEL-FREE FLOOR: a THROWING Codex seat degrades to failed — never a fabricated digest", async () => {

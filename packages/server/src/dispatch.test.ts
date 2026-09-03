@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AskLogStore, buildGitHubReviewRequest, PublishReceiptStore } from "@rennet/adapters";
@@ -51,11 +51,20 @@ import {
   type ReviewRoleMapping,
 } from "@rennet/protocol";
 import { describe, expect, it, vi } from "vitest";
+import { sessionContextDir } from "./context-files";
 import { createDispatch, type DispatchDeps } from "./dispatch";
 import { publishCompositionId } from "./dispatch/runtime";
 import { InFlightReviews } from "./in-flight-reviews";
 
-const REPO = "/repo";
+// A REAL repository root: `review.handoff.run` writes the composed work order under it
+// before the turn (session-context-files 3.7), and the coding turn resolves the path in
+// its prompt against it. A root that does not exist cannot exercise the handoff at all.
+const REPO = mkdtempSync(join(tmpdir(), "rennet-dispatch-repo-"));
+/** The work order `review.handoff.run` wrote for this review, before the turn (3.7). */
+function workOrderFor(reviewId: string): string {
+  return readFileSync(join(sessionContextDir(REPO, reviewId), "work-order.md"), "utf8");
+}
+
 const DEFAULT_PR_TARGET = {
   repo: { forge: "github", owner: "acme", name: "widget" },
 } satisfies ForgePrSubmissionTarget;
@@ -4260,11 +4269,16 @@ describe("createDispatch — review.handoff.* (the review→agent loop, issue #1
     })) as { status: string };
 
     expect(out.status).toBe("ran");
-    // The order the WRITE TURN received is the composed (reversed) one: BETA before ALPHA.
+    // The turn is POINTED AT the work order rather than sent it (session-context-files
+    // 3.7), so the order it received is the order in that file, written before the run.
+    expect(ranPrompt).toContain(`.rennet/context/${review.id}/work-order.md`);
+    expect(ranPrompt).not.toContain("BETA-SECOND-ASK");
+    const order = workOrderFor(review.id);
+    // The composed (reversed) order: BETA before ALPHA.
     // RED-proof: rebuild mechanically at run time and BETA would follow ALPHA → this fires.
-    expect(ranPrompt).toContain("BETA-SECOND-ASK");
-    expect(ranPrompt).toContain("ALPHA-FIRST-ASK");
-    expect(ranPrompt.indexOf("BETA-SECOND-ASK")).toBeLessThan(ranPrompt.indexOf("ALPHA-FIRST-ASK"));
+    expect(order).toContain("BETA-SECOND-ASK");
+    expect(order).toContain("ALPHA-FIRST-ASK");
+    expect(order.indexOf("BETA-SECOND-ASK")).toBeLessThan(order.indexOf("ALPHA-FIRST-ASK"));
   });
 
   it("run executes a MERGED composition as one task (issue #72)", async () => {
@@ -4296,10 +4310,14 @@ describe("createDispatch — review.handoff.* (the review→agent loop, issue #1
     const bundle = await composeBundleFor(dispatch, review.id, dispositions);
     await dispatch("review.handoff.run", { commandId: randomUUID(), reviewId: review.id, bundle });
 
+    // The prompt names the file and states the count; the file carries the merge.
+    expect(ranPrompt).toContain(`.rennet/context/${review.id}/work-order.md`);
+    expect(ranPrompt).toContain("1 task carrying");
     // One task, both bodies present. Mechanical would render "## Tasks (2 —".
-    expect(ranPrompt).toContain("## Tasks (1 —");
-    expect(ranPrompt).toContain("MERGE-ONE");
-    expect(ranPrompt).toContain("MERGE-TWO");
+    const order = workOrderFor(review.id);
+    expect(order).toContain("## Tasks (1 —");
+    expect(order).toContain("MERGE-ONE");
+    expect(order).toContain("MERGE-TWO");
   });
 
   it("run REFUSES a bundle whose prompt was swapped after composition (digest binding, issue #72)", async () => {

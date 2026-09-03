@@ -1,14 +1,17 @@
 import {
+  asksFromBundle,
   type CodexExecutor,
   type ComposeGroup,
   type ComposePort,
   type ComposePortResult,
+  composeAsksContextFile,
   composeHandoffBundle,
   type HarnessPort,
   providerHarness,
   resolveAssignment,
 } from "@rennet/core";
 import type { ComposedHandoffBundle, CouncilHarnessId, HandoffBundle } from "@rennet/protocol";
+import { writeSessionContext } from "./context-files";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // review.handoff.compose — the LIVE producer (issue #72, Model Council job M24).
@@ -107,10 +110,17 @@ export function codexComposePort(
   executor: CodexExecutor,
   model: string,
   effort: string,
+  cwd: string,
 ): ComposePort {
   return async (prompt) => {
     try {
-      const result = await executor({ model, effort, prompt, outputSchema: COMPOSE_OUTPUT_SCHEMA });
+      const result = await executor({
+        model,
+        effort,
+        prompt,
+        cwd,
+        outputSchema: COMPOSE_OUTPUT_SCHEMA,
+      });
       return mapComposeOutput(result.output);
     } catch (error) {
       return { status: "failed", reason: `the compose turn failed: ${describeThrow(error)}` };
@@ -214,7 +224,7 @@ export function createLiveComposeBundle(
       if (resolution.kind === "model") {
         const harness = providerHarness(resolution.model);
         if (harness === "codex" && executor !== null) {
-          port = codexComposePort(executor, resolution.model, resolution.effort);
+          port = codexComposePort(executor, resolution.model, resolution.effort, repoRoot);
         } else if (harness === "claude-code" && claudePort !== null) {
           port = claudeComposePort(claudePort, repoRoot);
         }
@@ -222,6 +232,13 @@ export function createLiveComposeBundle(
     } catch {
       port = null;
     }
+    // The notes go to disk under the repo root the compose turn runs in, BEFORE the turn
+    // (session-context-files); the prompt names the file and the turn answers with a
+    // partition over the ids in it. Written even when no seat is installed: the write is
+    // cheap, and a seat that appears between the probe and the turn still finds its notes.
+    writeSessionContext(repoRoot, bundle.reviewId, [
+      composeAsksContextFile(asksFromBundle(bundle)),
+    ]);
     // No seat (or a probe rejected): compose with an unavailable port so the core
     // router returns the deterministic mechanical floor (a real, complete bundle).
     const composePort: ComposePort =
