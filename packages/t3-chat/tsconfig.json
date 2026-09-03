@@ -1,0 +1,11 @@
+{
+  "extends": "../../vendor/t3code/apps/web/tsconfig.json",
+  "compilerOptions": {
+    "composite": false,
+    "noEmit": true,
+    "plugins": [],
+    "types": ["node", "vite/client"]
+  },
+  "include": ["src/**/*.ts", "src/**/*.tsx"],
+  "exclude": ["src/public.d.ts"]
+}

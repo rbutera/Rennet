@@ -1,5 +1,6 @@
 // @vitest-environment happy-dom
 import type { Review, SettingsProject } from "@rennet/protocol";
+import type { ComponentType } from "react";
 import { afterEach, describe, expect, it } from "vitest";
 import { RennetRouterApp } from "../routes/app";
 import { memoryHistory } from "../routes/history";
@@ -7,6 +8,7 @@ import { useRennetStore } from "../store";
 import { act, cleanup, mount, waitFor } from "../test/dom";
 import { emptySettings, frontDoorHandlers } from "../test/fixtures/front-door";
 import { MemoryBridge } from "../test/memory-bridge";
+import { T3ChatSlotProvider, type T3NativeChatProps } from "./t3-chat-slot";
 
 // The chat slot's engine switch (t3code-sidecar-chat, 6.1): with the session's project
 // resolved to `t3`, the slot mounts the rung-one <webview> at the daemon-brokered URLs;
@@ -54,7 +56,10 @@ function projectRow(engine: "rennet" | "t3" | undefined): SettingsProject {
   };
 }
 
-function mountWithEngine(engine: "rennet" | "t3" | undefined) {
+function mountWithEngine(
+  engine: "rennet" | "t3" | undefined,
+  native?: ComponentType<T3NativeChatProps>,
+) {
   const asks: unknown[] = [];
   const bridge = new MemoryBridge({
     ...frontDoorHandlers(),
@@ -93,7 +98,10 @@ function mountWithEngine(engine: "rennet" | "t3" | undefined) {
     useRennetStore.getState().uiActions.setSidebarOpen(false);
     useRennetStore.getState().uiActions.setChatOpen(true);
   });
-  const view = mount(<RennetRouterApp bridge={bridge} history={memoryHistory("/s/review-1")} />);
+  const app = <RennetRouterApp bridge={bridge} history={memoryHistory("/s/review-1")} />;
+  const view = mount(
+    native ? <T3ChatSlotProvider component={native}>{app}</T3ChatSlotProvider> : app,
+  );
   return { ...view, asks };
 }
 
@@ -109,6 +117,20 @@ describe("the chat slot follows the project's chat engine", () => {
     expect(asks).toEqual([{ reviewId: "review-1" }]);
     // The bearer is not written into the guest's attributes.
     expect(dock.innerHTML).not.toContain("bearer-never-in-the-guest");
+  });
+
+  it("mounts the host-provided native view (rung two) with the session, and no <webview>", async () => {
+    const seen: T3NativeChatProps["session"][] = [];
+    const Native = ({ session }: T3NativeChatProps) => {
+      seen.push(session);
+      return <div data-slot="t3-native-stub">{session.threadId}</div>;
+    };
+    const { getByTestId } = mountWithEngine("t3", Native);
+    const dock = getByTestId("chat-dock-slot");
+    await waitFor(() => expect(dock.querySelector('[data-slot="t3-native-stub"]')).not.toBeNull());
+    expect(dock.querySelector('[data-slot="t3-native-stub"]')?.textContent).toBe("thread-1");
+    expect(dock.querySelector('[data-slot="t3-chat-view"]')).toBeNull();
+    expect(seen.at(-1)?.environmentId).toBe("env-1");
   });
 
   it.each([["rennet" as const], [undefined]])(

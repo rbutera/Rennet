@@ -200,6 +200,13 @@ export default [
               onlyDependOnLibsWithTags: ["layer:protocol", "layer:client", "layer:mobile"],
             },
             {
+              // layer:t3-chat is @rennet/t3-chat, the rung-two mount of the vendored T3
+              // Code web app: the renderer-side counterpart of the daemon's T3 client,
+              // and the ONE Rennet package besides it that may import effect/@t3tools.
+              sourceTag: "layer:t3-chat",
+              onlyDependOnLibsWithTags: ["layer:protocol", "layer:vendor", "layer:t3-chat"],
+            },
+            {
               sourceTag: "layer:app",
               onlyDependOnLibsWithTags: [
                 "layer:protocol",
@@ -208,6 +215,7 @@ export default [
                 "layer:adapter",
                 "layer:server",
                 "layer:ui",
+                "layer:t3-chat",
                 "layer:client",
                 "layer:app",
               ],

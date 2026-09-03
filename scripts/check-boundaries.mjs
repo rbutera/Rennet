@@ -18,6 +18,9 @@ const allowed = new Map([
   ["@rennet/ui", new Set(["@rennet/protocol", "@rennet/theme"])],
   ["@rennet/app-ui", new Set(["@rennet/protocol", "@rennet/theme", "@rennet/ui"])],
   ["@rennet/client", new Set(["@rennet/protocol"])],
+  // The rung-two T3 chat mount: protocol for the session shape, plus the vendored
+  // @t3tools/* packages (not @rennet/*, so outside this map; ESLint tags fence them).
+  ["@rennet/t3-chat", new Set(["@rennet/protocol"])],
 ]);
 
 for (const [packageName, permitted] of allowed) {

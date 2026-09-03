@@ -11,7 +11,7 @@ check rejects missing or misnamed rows here.
 
 | Nx project | Package | Root | Responsibility | Allowed in-repository dependencies |
 | --- | --- | --- | --- | --- |
-| `rennet-desktop` | `@rennet/desktop` | `apps/desktop` | Electron shell, browser bundle, packaging, and end-to-end tests | adapters, client, core, protocol, server, app-ui |
+| `rennet-desktop` | `@rennet/desktop` | `apps/desktop` | Electron shell, browser bundle, packaging, and end-to-end tests | adapters, client, core, protocol, server, app-ui, t3-chat |
 | `rennet-docs` | `@rennet/docs` | `apps/docs` | Astro and Starlight documentation renderer | docs-content, theme |
 | `rennet-marketing` | `@rennet/marketing` | `apps/marketing` | Public marketing site | theme |
 | `rennet-mobile` | `@rennet/mobile` | `apps/mobile` | Expo mobile client | client, protocol |
@@ -29,6 +29,7 @@ check rejects missing or misnamed rows here.
 | `rennet-client` | `@rennet/client` | `packages/client` | Browser-safe connection and session runtime | protocol |
 | `rennet-ui` | `@rennet/ui` | `packages/ui` | Vendored shadcn/Base UI component kit | protocol, theme |
 | `rennet-app-ui` | `@rennet/app-ui` | `packages/app-ui` | Rennet's composites and review-interface screens | protocol, theme, ui |
+| `rennet-t3-chat` | `@rennet/t3-chat` | `packages/t3-chat` | Native mount of the vendored T3 Code chat view (rung two of the chat slot) | protocol |
 
 The root `rennet` Nx project owns workspace-wide checks. The content-only
 `rennet-docs-content` project owns canonical Markdown under `docs`; it has no

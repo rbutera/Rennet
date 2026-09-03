@@ -1,0 +1,26 @@
+{
+  "name": "@rennet/t3-chat",
+  "version": "0.6.2",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/public.d.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "dependencies": {
+    "@effect/atom-react": "catalog:",
+    "@rennet/protocol": "workspace:*",
+    "@t3tools/client-runtime": "workspace:*",
+    "@t3tools/contracts": "workspace:*",
+    "@t3tools/web": "workspace:*",
+    "@tanstack/react-router": "1.170.10",
+    "effect": "catalog:",
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  },
+  "devDependencies": {
+    "tailwindcss": "4.3.3"
+  }
+}

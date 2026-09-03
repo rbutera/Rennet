@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useRef } from "react";
+import { type ReactNode, Suspense, useEffect, useRef } from "react";
 import { useRoute } from "wouter";
 import { useCommand } from "../data/query";
 import { useSessionProjectId } from "../routes/slug";
@@ -6,6 +6,7 @@ import { ROUTES } from "../routes/url";
 import { useSettingsProjection } from "../settings/data/projections";
 import { useRouteReviewId } from "./chat-data";
 import { ChatDock } from "./chat-dock";
+import { useT3NativeChat } from "./t3-chat-slot";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The chat slot's engine switch (t3code-sidecar-chat, group 6). The slot is the SAME
@@ -51,6 +52,8 @@ export function T3ChatDock({ corner }: { readonly corner?: ReactNode }) {
     reviewId === undefined ? {} : { reviewId },
     { enabled: reviewId !== undefined },
   );
+  // Rung two when the host provides it (the desktop renderer); rung one otherwise.
+  const NativeChat = useT3NativeChat();
   const host = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
@@ -84,6 +87,16 @@ export function T3ChatDock({ corner }: { readonly corner?: ReactNode }) {
         <p data-slot="t3-chat-starting" className="p-3 text-xs text-ink-soft">
           Starting the T3 Code sidecar…
         </p>
+      ) : NativeChat ? (
+        <Suspense
+          fallback={
+            <p data-slot="t3-chat-starting" className="p-3 text-xs text-ink-soft">
+              Loading the thread view…
+            </p>
+          }
+        >
+          <NativeChat session={data} />
+        </Suspense>
       ) : (
         <webview
           ref={host as never}

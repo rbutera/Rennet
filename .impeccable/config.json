@@ -464,6 +464,12 @@
         "value": "0.8rem",
         "createdAt": "2026-08-28T19:59:03.603Z",
         "reason": "openspec desktop-styling-convergence design.md D2: verbatim restore of the prototype control ramp (spikes/board-prototype/components/ui/button.tsx sm size)"
+      },
+      {
+        "rule": "design-system-color",
+        "value": "rgb(0 0 0 / 65%)",
+        "createdAt": "2026-09-03T03:11:29.053Z",
+        "reason": "verbatim copy of vendored T3 Code index.css (dialog-glass) in packages/t3-chat/src/t3.css; upstream MIT stylesheet, not a Rennet palette choice"
       }
     ]
   }
