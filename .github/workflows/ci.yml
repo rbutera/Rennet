@@ -103,6 +103,13 @@ jobs:
         env:
           NX_SELF_HOSTED_REMOTE_CACHE_SERVER: http://127.0.0.1:4210
 
+      # The vendored T3 Code suites (upstream's own tests, ~3 min cold) run here and on
+      # folds, not in the local gate: `pnpm check` excludes `t3code-*` from `test`.
+      - name: Upstream T3 Code tests
+        run: pnpm t3:test
+        env:
+          NX_SELF_HOSTED_REMOTE_CACHE_SERVER: http://127.0.0.1:4210
+
   exclusive-namespace-move:
     name: exclusive namespace move (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

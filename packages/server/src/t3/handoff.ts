@@ -1,0 +1,70 @@
+// The T3 exit on the handoff loop (t3code-sidecar-chat, group 7). When a project's chat
+// engine is `t3`, a composed work order runs as ONE turn on the review's bound T3 thread
+// (full access, cwd = the checkout) instead of Rennet's `SessionTurnLoop`. The turn's diff
+// comes from T3's own checkpoint, and the outcome has the same shape the Rennet engine
+// returns, so `review.handoff.run` recaptures the checkout and offers the delta re-review
+// exactly as before. No Effect here: the client's Promise API is the seam.
+
+import { basename } from "node:path";
+import type { HandoffTurnOutcome } from "@rennet/core";
+import type { OrchestrationThread, T3Client } from "./client";
+import type { ThreadBinding } from "./threads";
+
+export interface T3HandoffInput {
+  readonly repoRoot: string;
+  readonly prompt: string;
+  readonly reviewId: string;
+  readonly signal?: AbortSignal;
+}
+
+export interface T3HandoffDeps {
+  readonly client: () => Promise<T3Client>;
+  readonly threadFor: (input: {
+    readonly repositoryRoot: string;
+    readonly sessionId: string;
+    readonly title: string;
+  }) => Promise<ThreadBinding>;
+}
+
+/** The last assistant message text of the thread, or an empty string. */
+export function lastAssistantText(thread: OrchestrationThread): string {
+  for (let i = thread.messages.length - 1; i >= 0; i -= 1) {
+    const message = thread.messages[i];
+    if (message?.role === "assistant") return message.text;
+  }
+  return "";
+}
+
+export async function runHandoffTurnT3(
+  input: T3HandoffInput,
+  deps: T3HandoffDeps,
+): Promise<HandoffTurnOutcome> {
+  const binding = await deps.threadFor({
+    repositoryRoot: input.repoRoot,
+    sessionId: input.reviewId,
+    title: basename(input.repoRoot) || "review",
+  });
+  const client = await deps.client();
+  await client.startTurn({ threadId: binding.threadId, text: input.prompt });
+  const outcome = await client.waitForTurnSettled(binding.threadId, {
+    ...(input.signal ? { signal: input.signal } : {}),
+  });
+  // The diff is T3's checkpoint for that turn. A turn that produced no checkpoint (nothing
+  // changed, or it failed before one) reads as an empty diff, never a thrown handoff.
+  const diff = await client
+    .readTurnDiff(binding.threadId, outcome.turnId)
+    .catch(() => ({ diff: "", files: [] as ReadonlyArray<{ readonly path: string }> }));
+  const filesTouched = diff.files.map((file) => file.path);
+  if (outcome.state === "completed") {
+    return {
+      status: "completed",
+      finalText: lastAssistantText(outcome.thread),
+      turnDiff: diff.diff,
+      filesTouched,
+    };
+  }
+  const reason =
+    outcome.thread.session?.lastError ??
+    (outcome.state === "interrupted" ? "The T3 turn was interrupted." : "The T3 turn failed.");
+  return { status: "failed", reason, turnDiff: diff.diff, filesTouched };
+}

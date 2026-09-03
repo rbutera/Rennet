@@ -675,6 +675,7 @@ export function reviewHandlers(rt: DispatchRuntime) {
       const turn = await deps.runHandoffTurn({
         repoRoot: review.repositoryRoot,
         prompt: bundle.prompt,
+        reviewId: review.id,
       });
       if (turn.status === "failed") {
         // Surface the files the agent changed before erroring (Codex F4) — the working

@@ -96,7 +96,7 @@ A fold lands weekly as its own pull request, run by an agent:
 3. Apply what the manifest diff asks for: catalog versions and patch entries in
    `pnpm-workspace.yaml`, then `pnpm install`.
 4. Remove ledger rows for changes upstream has merged.
-5. `pnpm check`. The PR description is the digest.
+5. `pnpm check` and `pnpm t3:test`. The PR description is the digest.
 
 A fold that changes a vendored package's dependencies or toolchain versions says
 so in the PR, the same way any change that grows the install does.
@@ -121,7 +121,9 @@ fold into wall-to-wall conflicts.
 
 Each vendored package is an Nx project named `t3code-<package>` with `typecheck`
 (via `tsgo`), `test` (via `vp test run`), and, for the server and web app,
-`build` (`vp pack` and `vp build`). Their inputs include the `t3codeShared`
+`build` (`vp pack` and `vp build`). Typecheck and build run in `pnpm check`; the
+upstream test suites do not (the server suite alone is about three minutes cold).
+They run as `pnpm t3:test` in CI and on every fold. Their inputs include the `t3codeShared`
 named input so a change to the vendored root config busts the cache. Two
 projects typecheck through a `tsconfig.rennet.json` that extends upstream's
 config with a narrower `include`: the server drops `../../scripts/lib` (its

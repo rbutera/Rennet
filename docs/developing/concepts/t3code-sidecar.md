@@ -101,6 +101,17 @@ cookie inside the guest) and then at the bound thread's route. The bearer never 
 the guest. Rung one exists to answer whether the thread view fits the slot and whether
 approvals and questions round-trip; the native `ChatView` mount is rung two.
 
+## The handoff exit
+
+"Hand to coding agent" on a project whose engine is `t3` dispatches the composed work
+order as one turn on the review's bound thread, full access, cwd the checkout, instead
+of Rennet's session turn loop. The daemon waits for the turn to settle, reads T3's
+checkpoint diff for that turn, and returns the same outcome shape the Rennet engine
+returns (final text, unified diff, files touched, or a failure reason from T3's
+session). `review.handoff.run` then recaptures the checkout and offers the delta
+re-review exactly as before; nothing downstream knows which engine ran the turn. The
+engine is read from the repository's own config, never from a project id.
+
 ## Status
 
 `daemon.status` carries a `t3Sidecar` field: `off` until something asked for it,
@@ -129,6 +140,7 @@ over RPC before the signal is the daemon-side client's job and lands with it.
 - `packages/server/src/t3/supervisor.ts`: one supervisor per data dir; `ensure`, `session`, `client`, `threadFor`, `status`, `stopSync`.
 - `packages/server/src/t3/client.ts`: the daemon-side RPC client, the one Rennet module importing `effect` and `@t3tools/contracts`.
 - `packages/server/src/t3/threads.ts`: the (repository root, session id) → thread binding.
+- `packages/server/src/t3/handoff.ts`: the handoff exit; `create-server.ts` routes by the repository's `chatEngine`.
 - `packages/app-ui/src/settings/projects/chat-engine.tsx`: the engine control and its disclosure; `packages/app-ui/src/chat/engine-chat-dock.tsx`: the slot switch and the rung-one `<webview>`.
 - `packages/server/src/dispatch/chat.ts`: `chat.t3Session`; `dispatch/daemon.ts` adds `t3Sidecar` to `daemon.status`.
 - `packages/protocol/src/wire.ts`: `t3SidecarStatusSchema`, `t3SessionSchema`.

@@ -49,8 +49,10 @@ _6.2 and 6.3 need the desktop app driven by hand against a real harness turn (sp
 
 ## 7. Handoff to a T3 turn
 
-- [ ] 7.1 In the handoff loop, when the engine is `t3`, dispatch the composed work order through `startTurn` on the bound thread instead of `SessionTurnLoop`
-- [ ] 7.2 On turn settle, read the turn diff from T3 and offer the existing delta re-review entry
+_7.3 needs a real harness turn (spends the subscription) and is driven by hand with 6.2; the mapping from a settled T3 turn to the handoff outcome is unit-tested in `packages/server/src/t3/handoff.test.ts`._
+
+- [x] 7.1 In the handoff loop, when the engine is `t3`, dispatch the composed work order through `startTurn` on the bound thread instead of `SessionTurnLoop`
+- [x] 7.2 On turn settle, read the turn diff from T3 and offer the existing delta re-review entry
 - [ ] 7.3 E2E: hand off dispositions, observe one T3 turn, confirm the delta re-review offer appears; positive control by disabling the settle listener
 
 ## 8. Chat slot, rung two (only after 6.2 passes)

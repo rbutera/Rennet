@@ -239,6 +239,7 @@ export interface DispatchDeps {
     repoRoot: string;
     /** The composed bundle's ordered, verbatim work-order prompt (issue #72). */
     prompt: string;
+    readonly reviewId?: string;
   }) => Promise<HandoffTurnOutcome>;
   /**
    * The handoff-bundle composer (issue #72, Model Council M24): the light-tier

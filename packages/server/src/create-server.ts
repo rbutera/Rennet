@@ -325,6 +325,7 @@ import { SessionTurnLoop } from "./session/turn-loop";
 import { createSettingsComposition } from "./settings";
 import { findHealthyDaemon } from "./supervise";
 import { createLiveSymbolLookup, reviewPinnedToHead } from "./symbol-lookup-live";
+import { runHandoffTurnT3 } from "./t3/handoff";
 import { createT3SidecarSupervisor } from "./t3/supervisor";
 import { startWsListener, type WsListener } from "./ws-listener";
 import { createWslRunner } from "./wsl-daemon";
@@ -407,6 +408,8 @@ export type HandoffTurnExecution =
 export interface HandoffTurnInput {
   readonly repoRoot: string;
   readonly prompt: string;
+  /** The review this work order serves; the T3 engine keys its thread on (repoRoot, reviewId). */
+  readonly reviewId?: string;
   /**
    * The persisted session this turn belongs to, when it has one. Present means the turn runs
    * through the session turn loop. An absent or unknown session uses the plain one-shot port.
@@ -2721,7 +2724,23 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         }),
     });
   };
-  const runHandoffTurn = options.runHandoffTurn ?? runHandoffTurnDefault;
+  // The T3 exit (t3code-sidecar-chat, group 7): a project whose chat engine is `t3` runs the
+  // work order as one turn on the review's bound thread instead of the session turn loop.
+  // The engine is read from the repository's own config, never from a project id.
+  const chatEngineFor = (repoRoot: string): "rennet" | "t3" => {
+    const state = snapshotStore.loadConfigState(repoRoot);
+    return state.status === "ok" && state.config.chatEngine === "t3" ? "t3" : "rennet";
+  };
+  const runHandoffTurnByEngine = async (input: HandoffTurnInput): Promise<HandoffTurnOutcome> => {
+    if (input.reviewId !== undefined && chatEngineFor(input.repoRoot) === "t3") {
+      return runHandoffTurnT3(
+        { repoRoot: input.repoRoot, prompt: input.prompt, reviewId: input.reviewId },
+        t3Sidecar,
+      );
+    }
+    return runHandoffTurnDefault(input);
+  };
+  const runHandoffTurn = options.runHandoffTurn ?? runHandoffTurnByEngine;
   // B4 broadcast wiring (reconciliation 7, recorded): board events ride the EXISTING
   // WS push path — the runtime's store-append hook feeds `wsListener.broadcastBoardEvent`
   // (late-bound: `wsListener` is assigned below, read only when a board event fires), which
