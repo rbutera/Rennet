@@ -83,6 +83,19 @@ export interface TurnSettlement {
   readonly usage?: unknown;
   readonly totalCostUsd?: number;
   readonly errorMessage?: string;
+  /**
+   * T3's latest `context-window.updated` snapshot for the turn, unparsed. Codex reports
+   * its tokens here and nothing on the settlement; the snapshot is the last request's
+   * own figures. Absent when no snapshot landed for the turn.
+   */
+  readonly tokenUsage?: unknown;
+  /**
+   * The nearest earlier settled turn's usage on this thread. Claude's counter is
+   * cumulative over the session, so a turn's own spend is the difference — read off the
+   * thread itself, so a wait that starts fresh (a recreated runner, a restarted daemon)
+   * subtracts the same as one that watched every turn.
+   */
+  readonly previousUsage?: { readonly usage: unknown; readonly totalCostUsd?: number };
 }
 
 export interface TurnOutcome extends TurnSettlement {
@@ -470,28 +483,69 @@ export function readTurnSettlement(
   thread: OrchestrationThread,
   turnId: string,
 ): TurnSettlement | undefined {
-  for (let i = thread.activities.length - 1; i >= 0; i -= 1) {
-    const activity = thread.activities[i];
-    if (activity?.kind !== "turn.settled" || activity.turnId !== turnId) continue;
-    const payload = activity.payload;
-    if (payload === null || typeof payload !== "object") return {};
-    const record = payload as Record<string, unknown>;
-    const number = (key: string): number | undefined =>
-      typeof record[key] === "number" ? (record[key] as number) : undefined;
-    const durationMs = number("durationMs");
-    const totalCostUsd = number("totalCostUsd");
-    const errorMessage = typeof record.errorMessage === "string" ? record.errorMessage : undefined;
-    return {
-      ...(record.structuredOutput === undefined
-        ? {}
-        : { structuredOutput: record.structuredOutput }),
-      ...(durationMs === undefined ? {} : { durationMs }),
-      ...(record.usage === undefined ? {} : { usage: record.usage }),
-      ...(totalCostUsd === undefined ? {} : { totalCostUsd }),
-      ...(errorMessage === undefined ? {} : { errorMessage }),
+  const activities = thread.activities;
+  const settledAt = activities.findLastIndex(
+    (activity) => activity.kind === "turn.settled" && activity.turnId === turnId,
+  );
+  if (settledAt === -1) return undefined;
+  const record = asRecord(activities[settledAt]?.payload) ?? {};
+  const number = (key: string): number | undefined =>
+    typeof record[key] === "number" ? (record[key] as number) : undefined;
+  const durationMs = number("durationMs");
+  const totalCostUsd = number("totalCostUsd");
+  const errorMessage = typeof record.errorMessage === "string" ? record.errorMessage : undefined;
+
+  const otherSettlement = (i: number) => {
+    const activity = activities[i];
+    return activity?.kind === "turn.settled" && activity.turnId !== turnId ? activity : undefined;
+  };
+  // The nearest earlier settlement that carried usage; the nearest one at all bounds
+  // this turn's span from below.
+  let previousUsage: TurnSettlement["previousUsage"];
+  let spanStart = -1;
+  for (let i = settledAt - 1; i >= 0; i -= 1) {
+    const earlier = asRecord(otherSettlement(i)?.payload);
+    if (earlier === null) continue;
+    if (spanStart === -1) spanStart = i;
+    if (earlier.usage === undefined) continue;
+    previousUsage = {
+      usage: earlier.usage,
+      ...(typeof earlier.totalCostUsd === "number" ? { totalCostUsd: earlier.totalCostUsd } : {}),
     };
+    break;
   }
-  return undefined;
+  let spanEnd = activities.length;
+  for (let i = settledAt + 1; i < activities.length; i += 1) {
+    if (otherSettlement(i) !== undefined) {
+      spanEnd = i;
+      break;
+    }
+  }
+  // The latest context-window snapshot inside the span. Codex stamps its snapshots with
+  // no turn id and emits them before the turn completes, so an unstamped one counts only
+  // ahead of this turn's own settlement; a stamped one counts anywhere in the span.
+  let tokenUsage: unknown;
+  for (let i = spanEnd - 1; i > spanStart; i -= 1) {
+    const activity = activities[i];
+    if (activity?.kind !== "context-window.updated") continue;
+    if (activity.turnId === turnId || (activity.turnId === null && i < settledAt)) {
+      tokenUsage = activity.payload;
+      break;
+    }
+  }
+  return {
+    ...(record.structuredOutput === undefined ? {} : { structuredOutput: record.structuredOutput }),
+    ...(durationMs === undefined ? {} : { durationMs }),
+    ...(record.usage === undefined ? {} : { usage: record.usage }),
+    ...(totalCostUsd === undefined ? {} : { totalCostUsd }),
+    ...(errorMessage === undefined ? {} : { errorMessage }),
+    ...(tokenUsage === undefined ? {} : { tokenUsage }),
+    ...(previousUsage === undefined ? {} : { previousUsage }),
+  };
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === "object" ? (value as Record<string, unknown>) : null;
 }
 
 /** Drain an Effect stream into an AsyncIterable; returning the iterator interrupts the fiber. */

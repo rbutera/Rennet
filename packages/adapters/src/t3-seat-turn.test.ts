@@ -101,31 +101,62 @@ describe("createT3SeatTurn", () => {
     expect(onThread).toHaveBeenCalledWith("design", { threadId: "t-design", projectId: "p1" });
   });
 
-  it("records ONE metric per turn, and a repair's usage is its own, not the session's total", async () => {
+  it("records ONE metric per turn, and a repair's usage is its own even on a recreated runner", async () => {
     const collector = createMetricsCollector();
+    const drafting = { input_tokens: 50_000, output_tokens: 1_000 };
     const { seam } = stubs([
-      settled({
-        structuredOutput: {},
-        usage: { input_tokens: 50_000, output_tokens: 1_000 },
-        totalCostUsd: 1,
-      }),
-      // Claude's SDK reports usage CUMULATIVELY over a streaming session's turns.
+      settled({ structuredOutput: {}, usage: drafting, totalCostUsd: 1, durationMs: 8_000 }),
+      // Claude's SDK reports usage CUMULATIVELY over a streaming session's turns, and the
+      // settlement carries the previous turn's figure off the thread itself.
       settled({
         structuredOutput: {},
         usage: { input_tokens: 51_000, output_tokens: 1_400 },
-        totalCostUsd: 1.1,
+        totalCostUsd: 1.5,
+        durationMs: 2_500,
+        previousUsage: { usage: drafting, totalCostUsd: 1 },
       }),
     ]);
-    const runTurn = createT3SeatTurn(seam, { ...options, collector });
-    await runTurn("BASE", 0);
-    await runTurn("REPAIR", 1);
+    await createT3SeatTurn(seam, { ...options, collector })("BASE", 0);
+    // A whole-board restart re-resolves the seat: a NEW runner for the same thread. It
+    // must subtract the drafting turn all the same, or the repair bills it a second time.
+    await createT3SeatTurn(seam, { ...options, collector })("REPAIR", 1);
 
     expect(collector.metrics).toHaveLength(2);
     expect(collector.metrics[0]?.usage).toMatchObject({ inputTokens: 50_000, outputTokens: 1_000 });
     // The delta, not 51_000 — billing the base prompt twice would be spend nobody spent.
-    expect(collector.metrics[1]?.usage).toMatchObject({ inputTokens: 1_000, outputTokens: 400 });
+    expect(collector.metrics[1]?.usage).toMatchObject({
+      inputTokens: 1_000,
+      outputTokens: 400,
+      reportedUsd: 0.5,
+    });
     expect(collector.metrics[1]?.attempt).toBe(1);
+    // The provider's own duration for the turn, not the wrapper's wall clock.
+    expect(collector.metrics.map((m) => m.latencyMs)).toEqual([8_000, 2_500]);
     expect(collector.metrics.map((m) => m.label)).toEqual(["board.lens-draft", "board.lens-draft"]);
+  });
+
+  it("takes the whole figure when the session counter restarted below the previous turn", async () => {
+    // T3 restarting the Claude session between draft and repair begins a new cumulative
+    // counter; subtracting the old watermark would clamp the repair to zero spend.
+    const collector = createMetricsCollector();
+    const { seam } = stubs([
+      settled({
+        structuredOutput: {},
+        usage: { input_tokens: 3_000, output_tokens: 200 },
+        previousUsage: { usage: { input_tokens: 50_000, output_tokens: 1_000 } },
+      }),
+    ]);
+    await createT3SeatTurn(seam, { ...options, collector })("REPAIR", 1);
+    expect(collector.metrics[0]?.usage).toMatchObject({ inputTokens: 3_000, outputTokens: 200 });
+  });
+
+  it("falls back to the wrapper's wall clock when the settlement carries no duration", async () => {
+    const collector = createMetricsCollector();
+    const { seam } = stubs([settled({ structuredOutput: {} })]);
+    let clock = 1_000;
+    await createT3SeatTurn(seam, { ...options, collector }, () => (clock += 250))("P", 0);
+    expect(collector.metrics[0]?.latencyMs).toBeGreaterThan(0);
+    expect(collector.metrics[0]?.latencyMs).toBeLessThan(2_000);
   });
 
   it("fails a Claude turn that settled without structured output, and says so", async () => {
@@ -157,6 +188,31 @@ describe("createT3SeatTurn", () => {
       status: "emitted",
       body: { elements: [] },
       observed: { model: "gpt-5.6-sol", apiKeySource: null },
+    });
+  });
+
+  it("records a Codex turn's tokens off T3's context-window snapshot, since its settlement carries none", async () => {
+    const collector = createMetricsCollector();
+    const { seam } = stubs([
+      settled({
+        structuredOutput: { elements: [] },
+        // T3's snapshot: `inputTokens` includes the cached share, as Codex reports it.
+        tokenUsage: {
+          usedTokens: 1_200,
+          inputTokens: 1_000,
+          cachedInputTokens: 300,
+          outputTokens: 200,
+        },
+      }),
+    ]);
+    await createT3SeatTurn(seam, { ...options, collector, provider: "codex" })("P", 0);
+    expect(collector.metrics[0]?.usage).toEqual({
+      inputTokens: 700,
+      outputTokens: 200,
+      cacheReadTokens: 300,
+      cacheCreationTokens: 0,
+      totalTokens: 1_200,
+      reportedUsd: null,
     });
   });
 

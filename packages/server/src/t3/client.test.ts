@@ -9,6 +9,7 @@ import {
   modelSelection,
   type OrchestrationThread,
   type OrchestrationThreadStreamItem,
+  readTurnSettlement,
   type T3Client,
 } from "./client";
 import { type RunningSidecar, resolveSidecarBundle, spawnSidecar, stopSidecar } from "./sidecar";
@@ -270,13 +271,18 @@ describe.skipIf(!bundle || process.platform !== "darwin")(
         "-m",
         "init",
       ]);
+      // A `claude` that idles briefly and then exits 1, so a turn on the Claude provider
+      // fails at the stream. Not `/usr/bin/false`: that exits before the sidecar's first
+      // stdin write lands, and the resulting EPIPE is an unhandled socket error that
+      // kills the sidecar (close 1006) — a race in the fixture, not in the code here.
+      const deadClaude = join(root, "dead-claude.sh");
+      writeFileSync(deadClaude, "#!/bin/sh\nsleep 0.2\nexit 1\n", { mode: 0o755 });
       running = await spawnSidecar({
         dataDir,
         bundlePath: bundle as string,
         upstreamCommit: "test",
         env: { ...process.env, HOME: join(root, "home") },
-        // `claude` exits at once, so a turn on the Claude provider fails at the stream.
-        binaries: { claude: "/usr/bin/false" },
+        binaries: { claude: deadClaude },
         readyTimeoutMs: 30_000,
       });
       client = await connectT3({
@@ -317,13 +323,78 @@ describe.skipIf(!bundle || process.platform !== "darwin")(
       expect(Date.parse(outcome.thread.session?.updatedAt ?? "")).toBeGreaterThanOrEqual(
         Date.parse(first.requestedAt),
       );
-      // What this cannot stage: a SECOND turn on this thread. The sidecar's next write to
-      // the exited `claude` child raises an unhandled EPIPE that kills the sidecar (socket
-      // close 1006, the same death the ubuntu runner sees), so the previous-turn scoping
-      // is proven over fakes in the `awaitTurnSettled` block below, not here.
+
+      // A SECOND turn on the same thread. The thread still carries the first failure, so
+      // an unscoped wait could answer with it; scoped to this start, the answer is the
+      // session state recorded AFTER the second request. (T3 gives the second start a
+      // different message: it refuses the schema against the dead session.)
+      const second = await client.startTurn({
+        threadId,
+        text: "say hi again",
+        outputSchema: { type: "object" },
+      });
+      const again = await client.waitForTurnSettled(threadId, {
+        after: second,
+        startTimeoutMs: 15_000,
+      });
+      expect(again.state).toBe("error");
+      expect(again.thread.session?.updatedAt).not.toBe(outcome.thread.session?.updatedAt);
+      expect(Date.parse(again.thread.session?.updatedAt ?? "")).toBeGreaterThanOrEqual(
+        Date.parse(second.requestedAt),
+      );
     }, 30_000);
   },
 );
+
+describe("readTurnSettlement", () => {
+  const activity = (kind: string, turnId: string | null, payload: unknown) => ({
+    id: `${kind}:${turnId}:${JSON.stringify(payload)}`,
+    tone: "info",
+    kind,
+    summary: kind,
+    payload,
+    turnId,
+    createdAt: "2026-09-03T10:00:00.000Z",
+  });
+  const thread = (activities: unknown[]) =>
+    ({ activities, messages: [], checkpoints: [] }) as unknown as OrchestrationThread;
+
+  it("carries the turn's own context-window snapshot and the previous settlement's usage", () => {
+    const drafting = { input_tokens: 50_000 };
+    const t = thread([
+      // Codex stamps its snapshots with no turn id; the previous turn's settlement bounds them.
+      activity("context-window.updated", null, { usedTokens: 10 }),
+      activity("turn.settled", "turn-1", { usage: drafting, totalCostUsd: 1 }),
+      activity("context-window.updated", null, { usedTokens: 20 }),
+      activity("context-window.updated", null, { usedTokens: 30 }),
+      activity("turn.settled", "turn-2", { structuredOutput: {} }),
+    ]);
+    expect(readTurnSettlement(t, "turn-2")).toEqual({
+      structuredOutput: {},
+      tokenUsage: { usedTokens: 30 },
+      previousUsage: { usage: drafting, totalCostUsd: 1 },
+    });
+    // The first turn: its own snapshot, and nothing earlier to subtract.
+    expect(readTurnSettlement(t, "turn-1")).toEqual({
+      usage: drafting,
+      totalCostUsd: 1,
+      tokenUsage: { usedTokens: 10 },
+    });
+    expect(readTurnSettlement(t, "turn-9")).toBeUndefined();
+  });
+
+  it("skips an earlier settlement that carried no usage and finds the one before it", () => {
+    const t = thread([
+      activity("turn.settled", "turn-1", { usage: { input_tokens: 5 } }),
+      activity("turn.settled", "turn-2", { errorMessage: "interrupted" }),
+      activity("turn.settled", "turn-3", { usage: { input_tokens: 9 } }),
+    ]);
+    expect(readTurnSettlement(t, "turn-3")?.previousUsage).toEqual({
+      usage: { input_tokens: 5 },
+    });
+    expect(readTurnSettlement(t, "turn-3")?.tokenUsage).toBeUndefined();
+  });
+});
 
 // The settle wait over fakes: the thread projection and the stream are scripted, so the
 // cases the real bundle cannot stage without a live model (a repair on a thread that
