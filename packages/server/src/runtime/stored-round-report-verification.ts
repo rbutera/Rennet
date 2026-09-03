@@ -69,7 +69,6 @@ export async function verifyStoredRoundReport(
     generation: identity.generation,
     boardId: identity.reportBoardId,
     document: meta.document,
-    skippedHunks: meta.skippedHunks,
   });
   verifyRoundReportEvidence({
     board,

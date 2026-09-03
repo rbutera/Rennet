@@ -93,7 +93,6 @@ function rawBoard(
       },
     ],
     elements: [...elements],
-    skippedHunks: [],
   };
 }
 

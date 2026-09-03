@@ -110,7 +110,6 @@ const reportBoard = {
   },
   sections: [],
   elements: [],
-  skippedHunks: [],
 } satisfies RoundReportBoard;
 function reportHandoff(operationId: string, operationRevision: number): RoundReportHandoff {
   return {

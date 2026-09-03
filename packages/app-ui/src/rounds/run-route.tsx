@@ -1,12 +1,11 @@
 import { Button, cn, Spinner } from "@rennet/ui";
-import { Check, Minus, TriangleAlert } from "lucide-react";
+import { Check, Minus } from "lucide-react";
 import { useEffect } from "react";
 import { Redirect, useLocation } from "wouter";
 import { Icon } from "../components/icon";
 import { sessionPath } from "../routes/url";
 import { useRennetStore } from "../store";
 import {
-  type CoverageStatus,
   type LaneRow,
   type RoundState,
   type RowStatus,
@@ -54,14 +53,10 @@ export function StatusIcon({
   status,
   compact = false,
 }: {
-  /** `warn` is the coverage row's only extra register (copper caution) — a completed run
-   *  that still found uncovered hunks is not "done" and must not wear the check. */
-  readonly status: RowStatus | CoverageStatus;
+  readonly status: RowStatus;
   readonly compact?: boolean;
 }) {
   const size = compact ? "size-3" : "size-3.5";
-  if (status === "warn")
-    return <Icon icon={TriangleAlert} className={cn(size, "shrink-0 text-warn")} />;
   if (status === "running")
     return <Spinner className={cn(size, "shrink-0 text-model")} aria-hidden="true" />;
   if (status === "queued")

@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DESIGN_ARTIFACT_LIMITS } from "@rennet/adapters";
-import { type CodexExecutor, type HarnessPort, lintReviewDraft } from "@rennet/core";
+import { type CodexExecutor, type HarnessPort, lint, lintReviewDraft } from "@rennet/core";
 import {
   currentGenerationId,
   type DraftBoard,
@@ -282,49 +282,47 @@ describe("C15 1.5 — runRound trigger over the assembled collation (fake ports)
     expect(events.at(-1)?.type).toBe("composed");
   });
 
-  // ── Coverage, through the REAL path (review finding 11) ───────────────────
+  // ── Citation resolution, through the REAL collation (D5) ────────────────────
   //
-  // The flip-to-red control for coverage used to call `assertCoverage` on the side, which
-  // only ever proved the helper works. This drives an uncovered hunk through `runRound`
-  // itself: the drafters answer prose-only boards that teach nothing, so the round's own
-  // coverage verdict must name the patchset's hunk. A pipeline that stopped asserting
-  // coverage — the failure that matters — would pass the old control and fail this one.
-  it("a hunk no board teaches comes back as the round's own coverage violation", async () => {
+  // The daemon builds the changed regions from the packet it already has; a board's
+  // citation resolves by overlapping one on its own side. This drives that context as
+  // `assembleRoundCollation` really assembles it — not a hand-built region list.
+  it("a citation outside the change reddens against the collation's own regions; one inside passes", () => {
     const collation = assembleRoundCollation({
       patchset: patchset(),
       dossier: [],
       successorAccount: { asks: [], beyondAsks: [] },
     });
-    // The collation bridge really derived a hunk from the patchset — otherwise the
-    // assertion below would pass over an empty universe.
-    expect(collation.hunks).toHaveLength(1);
-    const hunkId = collation.hunks[0]?.id;
-
-    const outcome = await runtimeWith([]).runRound({
-      session: { ...session, id: "coverage-session" } as SessionModel,
-      repoRoot: root,
-      asksDispatched: [],
-      runWorkers: async () => ({ commitRange: { from: "c0", to: "c1" }, patchsetId: "ps-cov" }),
-      ...collation,
-    });
-
-    const coverage = outcome.pipeline.coverage;
-    expect(coverage, "a freshly drafted round must know its coverage picture").toBeDefined();
-    expect((coverage ?? []).map((v) => v.ruleId)).toContain("every-hunk-covered");
-    expect((coverage ?? []).map((v) => v.elementRef)).toContain(`/hunks/${hunkId}`);
-
-    // The same round over an EMPTY hunk universe reports nothing — the verdict tracks the
-    // real patchset rather than being a constant the assertion above could not tell apart.
-    const empty = await runtimeWith([]).runRound({
-      session: { ...session, id: "coverage-empty-session" } as SessionModel,
-      repoRoot: root,
-      asksDispatched: [],
-      runWorkers: async () => ({ commitRange: { from: "c0", to: "c1" }, patchsetId: "ps-cov-2" }),
-      ...collation,
-      hunks: [],
-      lintContextFor: (lens) => ({ ...collation.lintContextFor(lens), hunks: [] }),
-    });
-    expect(empty.pipeline.coverage).toEqual([]);
+    const ctx = collation.lintContextFor("flagged");
+    // The bridge really derived the regions from the patchset (PATCH: old 1..2, new 1..2).
+    expect(ctx.regions).toEqual([
+      { path: "src/a.ts", side: "head", start: 1, end: 2 },
+      { path: "src/a.ts", side: "base", start: 1, end: 2 },
+    ]);
+    const citing = (start: number, end: number): DraftBoard =>
+      ({
+        elements: [
+          {
+            id: "c1",
+            kind: "code_ref",
+            data: {
+              author: { kind: "lens-agent", id: "seat" },
+              patchset_id: patchset().id,
+              path: "src/a.ts",
+              side: "head",
+              start_line: start,
+              end_line: end,
+            },
+          },
+        ],
+      }) as unknown as DraftBoard;
+    const outside = lint(citing(2, 2), { ...ctx, files: new Map([["src/a.ts", 40]]) });
+    expect(outside.filter((v) => v.ruleId === "unresolvable-citation")).toEqual([]);
+    const past = lint(citing(30, 31), { ...ctx, files: new Map([["src/a.ts", 40]]) });
+    expect(past.map((v) => v.ruleId)).toContain("unresolvable-citation");
+    expect(past.find((v) => v.ruleId === "unresolvable-citation")?.message).toContain(
+      "src/a.ts:1-2",
+    );
   });
 });
 

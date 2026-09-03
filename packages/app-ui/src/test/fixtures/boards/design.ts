@@ -1,5 +1,5 @@
 import type { LensBoard } from "@rennet/protocol";
-import { board, callout, codeRef, decision, prose, requirement, section, skip } from "./helpers";
+import { board, callout, codeRef, decision, prose, requirement, section } from "./helpers";
 
 // Design lens — PR #438 "observe the GitHub token refresh, drop the unsafe retry".
 // The spike's spec-header / what-changes / capability-grid / task-progress composites
@@ -76,19 +76,16 @@ export const designBoard: LensBoard = board("design", "gen1", "design-gen1", [
       requirement("req-recorded", {
         shall:
           "The daemon SHALL record every credential refresh attempt and its outcome to daemon.log through an injected logger, so a field failure is observed rather than inferred.",
-        coverage: "met",
         trace: ["cr-record"],
       }),
       requirement("req-nosecret", {
         shall:
           "A RefreshLogRecord SHALL carry no token, refresh token, or secret field, so a credential cannot be logged even by mistake — enforced by the type, not a review promise.",
-        coverage: "met",
         trace: ["cr-record"],
       }),
       requirement("req-attempt", {
         shall:
           "An `attempt` record SHALL be emitted at the start of the exchange, before the network call, so the attempt remains visible even if the process dies mid-refresh.",
-        coverage: "partial",
       }),
     ],
     { refs: [codeRef("cr-record", "packages/adapters/src/github-auth.ts", 407, 415)] },
@@ -106,7 +103,6 @@ export const designBoard: LensBoard = board("design", "gen1", "design-gen1", [
       requirement("req-field", {
         shall:
           "The daemon SHALL be observed to refresh a real credential successfully at least once on lancelot — a `persisted` record read from daemon.log is the first field confirmation.",
-        coverage: "gap",
       }),
     ],
   ),
@@ -123,49 +119,36 @@ export const designBoard: LensBoard = board("design", "gen1", "design-gen1", [
  * diff, no coverage: tasks 0/13, every requirement absent-coverage (`gap`), decision
  * evidence cites the design.md spec markdown rather than hydrated code.
  */
-export const designGen0Board: LensBoard = board(
-  "design",
-  "gen0",
-  "design-gen0",
-  [
-    section(
-      "change",
-      "The Change",
-      "github-token-refresh-reliability · 2 new capabilities · 1 modified · tasks 0/13.",
-      [
-        prose(
-          "change-why",
-          "The token's lifetime was never the bug. Renewal was silent. This change makes every refresh observable through a secret-free log record, and moves retry ownership to the shared transport. Nothing is implemented yet.",
-        ),
-      ],
-    ),
-    section(
-      "design",
-      "Design",
-      "Injected logger over a global sink; type-level secret-safety over redaction; the transport owns retry.",
-      [
-        decision("d-logger", {
-          statement: "Records flow through an injected logger, not a global sink",
-          why: "The daemon decides where records land (daemon.log today), and tests capture records as plain values instead of scraping log output.",
-          evidence: ["cr-design-md"],
-          alternatives: ["module-level logger singleton", "event-emitter the daemon subscribes to"],
-        }),
-      ],
-      { refs: [codeRef("cr-design-md", `${CHANGE}/design.md`, 23)] },
-    ),
-    section(
-      "tasks",
-      "Tasks",
-      "0 of 13 done. Nothing is implemented yet; the change is still a proposal.",
-      [prose("tasks-body", "0 of 13 tasks done. The change is still a proposal.")],
-    ),
-  ],
-  {
-    skippedHunks: [
-      skip(
-        `${CHANGE}/.openspec.yaml`,
-        "OpenSpec scaffold stamp — Noise's lane; no Noise board exists pre-implementation.",
+export const designGen0Board: LensBoard = board("design", "gen0", "design-gen0", [
+  section(
+    "change",
+    "The Change",
+    "github-token-refresh-reliability · 2 new capabilities · 1 modified · tasks 0/13.",
+    [
+      prose(
+        "change-why",
+        "The token's lifetime was never the bug. Renewal was silent. This change makes every refresh observable through a secret-free log record, and moves retry ownership to the shared transport. Nothing is implemented yet.",
       ),
     ],
-  },
-);
+  ),
+  section(
+    "design",
+    "Design",
+    "Injected logger over a global sink; type-level secret-safety over redaction; the transport owns retry.",
+    [
+      decision("d-logger", {
+        statement: "Records flow through an injected logger, not a global sink",
+        why: "The daemon decides where records land (daemon.log today), and tests capture records as plain values instead of scraping log output.",
+        evidence: ["cr-design-md"],
+        alternatives: ["module-level logger singleton", "event-emitter the daemon subscribes to"],
+      }),
+    ],
+    { refs: [codeRef("cr-design-md", `${CHANGE}/design.md`, 23)] },
+  ),
+  section(
+    "tasks",
+    "Tasks",
+    "0 of 13 done. Nothing is implemented yet; the change is still a proposal.",
+    [prose("tasks-body", "0 of 13 tasks done. The change is still a proposal.")],
+  ),
+]);

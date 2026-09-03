@@ -34,7 +34,6 @@ const reportBoard = {
   },
   sections: [],
   elements: [],
-  skippedHunks: [],
 } satisfies RoundReportBoard;
 
 function transactionalLandingAttempt(): RoundSourceLandingAttempt {

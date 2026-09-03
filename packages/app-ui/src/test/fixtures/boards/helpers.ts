@@ -5,7 +5,6 @@ import type {
   LensBoard,
   LensKind,
   LensSection,
-  SkippedHunk,
 } from "@rennet/protocol";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -131,7 +130,6 @@ export const requirement = (
   id: string,
   opts: {
     shall: string;
-    coverage?: "met" | "gap" | "partial";
     trace?: readonly string[];
   },
 ): HostElement => ({
@@ -139,7 +137,6 @@ export const requirement = (
   kind: "requirement",
   data: withAuthor({
     shall: opts.shall,
-    coverage: opts.coverage ?? "met",
     trace: [...(opts.trace ?? [])],
   }),
 });
@@ -258,7 +255,7 @@ export function board(
   generation: string,
   boardId: string,
   sections: readonly AssembledSection[],
-  opts: { skippedHunks?: readonly SkippedHunk[]; document?: LensBoard["document"] } = {},
+  opts: { document?: LensBoard["document"] } = {},
 ): LensBoard {
   const title = `${lens[0]?.toUpperCase() ?? ""}${lens.slice(1)}`;
   return {
@@ -272,9 +269,5 @@ export function board(
     },
     sections: sections.map((s) => s.entry),
     elements: sections.flatMap((s) => [...s.elements]),
-    skippedHunks: [...(opts.skippedHunks ?? [])],
   };
 }
-
-/** A skipped-hunk entry — the path stands in as the stable hunk id in fixtures. */
-export const skip = (path: string, reason: string): SkippedHunk => ({ hunk: path, reason });

@@ -48,7 +48,6 @@ import type {
   DeltaPacket,
   HarnessPort,
   LintContext,
-  LintHunk,
   LintTarget,
   RegisterLintContext,
 } from "@rennet/core";
@@ -61,7 +60,6 @@ import {
   DraftBoardSchema,
   GENERATION_TIMINGS_VERSION,
   type Generation,
-  type GenerationCoverage,
   type GenerationPhaseTiming,
   generationIdForDispatch,
   generationIdForPatchset,
@@ -86,7 +84,6 @@ import { PipelineStartGuard } from "../session/pipeline-guard";
 import {
   type BoardArrivalEvent,
   type BoardMeta,
-  createDesignCoverageMapper,
   deleteBoardElements,
   draftsRoundReport,
   type LensBoardOutcome,
@@ -184,9 +181,7 @@ export function createRegenerationLanes(
     return lens === undefined || lane === undefined ? undefined : { lens, lane };
   };
   return {
-    /** Re-emit the current lane snapshot unchanged. The coverage state rides the same
-     *  frame as the lanes (#725 D4), so a coverage transition republishes the rows rather
-     *  than opening a second channel that could disagree with them. */
+    /** Re-emit the current lane snapshot unchanged. */
     refresh(): void {
       emit(snapshot());
     },
@@ -260,8 +255,7 @@ export function createRegenerationLanes(
       });
       emit(snapshot());
     },
-    /** A lens board's draft landed. The lane reads `drafted`, NOT `done`: cross-lens
-     *  coverage has not run and the delta
+    /** A lens board's draft landed. The lane reads `drafted`, NOT `done`: the delta
      *  verdict is not known yet, and a settled lane without its verdict is exactly the
      *  in-between state the union refuses to represent. */
     drafted(lens: LensKind): void {
@@ -367,7 +361,7 @@ export function sameDraftingAttempt(a: Generation, b: Generation): boolean {
 
 /**
  * Rebuild the reveal a reader should see for a generation from DURABLE state alone
- * (#725 7.2) — which lanes settled with what, and where coverage stands. This is what a
+ * (#725 7.2) — which lanes settled with what. This is what a
  * reconnect or a daemon restart shows instead of a reset or an invented completion.
  *
  * Two honesty rules it enforces, and both matter:
@@ -382,7 +376,6 @@ export function sameDraftingAttempt(a: Generation, b: Generation): boolean {
  */
 export function revealFromGeneration(gen: Generation): {
   readonly lanes: readonly LensLane[];
-  readonly coverage?: GenerationCoverage;
 } {
   const lanes = LENS_KINDS.map((lens): LensLane => {
     const base = { id: lens, label: LENS_LANE_LABEL[lens] } as const;
@@ -397,7 +390,7 @@ export function revealFromGeneration(gen: Generation): {
     }
     return { ...base, status: "queued" };
   });
-  return { lanes, ...(gen.coverage === undefined ? {} : { coverage: gen.coverage }) };
+  return { lanes };
 }
 
 /**
@@ -588,7 +581,6 @@ export interface RoundInput {
   /** The pinned packet over the current patchset. A landed round carries the new
    *  `successorAccount`; the no-code boundary removes any stale prior account. */
   readonly deltaPacket: DeltaPacket;
-  readonly hunks: readonly LintHunk[];
   readonly lintContextFor: (lens: LintTarget) => LintContext;
   /** Deterministically discovered Design artifacts; null means discovery succeeded with no spec. */
   readonly designArtifacts?: DesignArtifactSet | null;
@@ -946,13 +938,7 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
   /** Reconstruct the drafting result from complete durable BoardMeta (B09 F1): a fresh
    *  runtime after a restart rebuilds the board ids + per-board blemish metadata from the
    *  exact records its Generation names. A recovery redraft can leave metadata from its
-   *  partial predecessor on disk; those unreferenced records are deliberately ignored.
-   *
-   *  COVERAGE IS OMITTED, not emptied. Cross-lens coverage is computed from the drafted
-   *  boards (which hunks each one teaches) and the boards are not in the durable meta —
-   *  so a restored round CANNOT know its coverage picture. Reporting `[]` here said "this
-   *  round covered every hunk", which is a claim the reconstruction never verified; the
-   *  honest answer is that it cannot say. */
+   *  partial predecessor on disk; those unreferenced records are deliberately ignored. */
   function reconstructFromMeta(
     records: readonly BoardMeta[],
     generation: Generation,
@@ -1057,11 +1043,6 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
     // crash between this attempt's persistence and its settle, and the next reader found
     // an account whose failure had already been cleared — a classification about nothing.
     delete generationWithoutAbsences.failedLensAccounts;
-    // Coverage is ATTEMPT-scoped, and leaving it behind was the same defect one level up:
-    // this attempt is about to clear five boards and re-draft them, so a `complete` state
-    // from the attempt being replaced would sit beside queued lanes on the reconnecting
-    // surface, saying every hunk is covered by boards that no longer exist.
-    delete generationWithoutAbsences.coverage;
     const attemptGeneration: Generation = {
       ...generationWithoutAbsences,
       lensBoards: {},
@@ -1071,7 +1052,6 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
       // attempt write below, which lands AFTER the cleanup loop (see the
       // attempt-identity note before that write) — so a crash inside cleanup leaves
       // the replaced attempt's record, not a half-pending one.
-      ...(start === "partial" ? { coverage: { state: "pending" as const } } : {}),
       ...(input.designArtifacts === null
         ? { absentLenses: { design: "no-material" as const } }
         : {}),
@@ -1096,7 +1076,6 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
           ? {}
           : { document: reusableReportMeta.document }),
         elements: state,
-        skippedHunks: reusableReportMeta.skippedHunks,
       });
       if (recovered.success) {
         reusableRoundReport = {
@@ -1110,20 +1089,14 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
     }
 
     if (start === "partial") {
-      // #725 7.2 — the reconnecting surface sees what durably settled and where coverage
-      // stands BEFORE this attempt clears and redrafts, so a restart mid-generation reads
-      // as "here is what we have, still working" instead of a reset to nothing. The
-      // redraft's own snapshot moves those lanes back to running immediately after.
+      // #725 7.2 — the reconnecting surface sees what durably settled BEFORE this attempt
+      // clears and redrafts, so a restart mid-generation reads as "here is what we have,
+      // still working" instead of a reset to nothing. The redraft's own snapshot moves
+      // those lanes back to running immediately after.
       const resumed = revealFromGeneration(boardGeneration);
       input.onProgress?.({
         type: "lens",
         lanes: [...resumed.lanes],
-        // NOT `resumed.coverage`. What durably settled about coverage described the boards
-        // this attempt is about to delete; re-publishing it would show "every hunk covered"
-        // beside lanes that are queued for a redraft. The honest state is pending, and it
-        // rides the FIRST frame — the client's fold keeps the last known coverage when a
-        // frame carries none, so an omission here would leave the stale one standing.
-        coverage: { state: "pending" },
       });
       for (const target of LINT_TARGETS) {
         const boardId = boardIdFor(target);
@@ -1200,14 +1173,13 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
     // Two pipeline callbacks carry the real regeneration timeline: `persistBoardMeta`
     // fires as each board's draft lands (per-lens progress, in completion order), and
     // `onBoardArrival` fires once the board is announced — the report inline and ahead
-    // of the lenses, the lenses together after cross-lens coverage, each carrying its
-    // delta verdict. Both are wrapped here so the round's own sink sees them without the
+    // of the lenses, each carrying its delta verdict. Both are wrapped here so the round's own sink sees them without the
     // pipeline learning about the wire.
     const onProgress = input.onProgress;
     const onReportProgress = input.onReportProgress;
     // ── The generation's durable reveal state (#725 D4/7.2) ──
-    // Per-lane settlements, the explicit coverage state and the per-phase timings, all
-    // keyed to THIS drafting attempt's reserved board slots.
+    // Per-lane settlements and the per-phase timings, all keyed to THIS drafting
+    // attempt's reserved board slots.
     // The generation's spend tap (#737): every seat turn the pipeline runs records here,
     // and the sum rides the lens frame while drafting and lands on the durable generation.
     const collector = createMetricsCollector();
@@ -1227,14 +1199,12 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
       } as Partial<Record<LensKind, LensAbsenceReason>>,
       failedLenses: {} as Partial<Record<LensKind, string>>,
       failedLensAccounts: {} as Partial<Record<LensKind, LensFailureAccount>>,
-      // Pending from the first frame on a repeat attempt, matching what was just persisted.
-      coverage: attemptGeneration.coverage,
       timings: [] as GenerationPhaseTiming[],
     };
     /**
      * Write the reveal state durably, unless a LATER attempt (or the settle that dropped
      * this attempt's slots) already owns the generation. Rejecting here rather than at the
-     * store means one check covers every reveal write — settlements, coverage and timings
+     * store means one check covers every reveal write — settlements and timings
      * all route through it, so none of them can be the one that folds a superseded
      * attempt's result into the current generation.
      *
@@ -1261,7 +1231,6 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
               failedLenses: { ...reveal.failedLenses },
               failedLensAccounts: { ...reveal.failedLensAccounts },
             }),
-        ...(reveal.coverage === undefined ? {} : { coverage: reveal.coverage }),
         ...(reveal.timings.length === 0
           ? {}
           : {
@@ -1278,10 +1247,8 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
             void onProgress({
               type: "lens",
               lanes: [...rows],
-              // Coverage rides the SAME frame as the lanes, so the surface can never show
-              // settled boards from one moment and a coverage state from another.
-              ...(reveal.coverage === undefined ? {} : { coverage: reveal.coverage }),
-              // Spend rides the same frame for the same reason (#737).
+              // Spend rides the same frame as the lanes (#737), so the surface can never
+              // show settled boards from one moment and a spend from another.
               ...usageSoFar(),
             });
           }, stopSeatWatches);
@@ -1324,10 +1291,6 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
       if (!(await persistReveal())) return;
       await runtimeArrival?.(event);
       lanes?.arrived(event.lens, event.carried);
-    };
-    const onCoverageState = async (coverage: GenerationCoverage): Promise<void> => {
-      reveal.coverage = coverage;
-      if (await persistReveal()) lanes?.refresh();
     };
     const onPhaseTiming = (timing: GenerationPhaseTiming): void => {
       reveal.timings.push(timing);
@@ -1416,22 +1379,8 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
       ...(input.persistFindingResolutions === undefined
         ? {}
         : { persistFindingResolutions: input.persistFindingResolutions }),
-      hunks: input.hunks,
       lintContextFor: input.lintContextFor,
-      ...(input.designArtifacts === undefined
-        ? {}
-        : {
-            designArtifacts: input.designArtifacts,
-            ...(claudePort === null
-              ? {}
-              : {
-                  mapDesignCoverage: createDesignCoverageMapper(
-                    claudePort,
-                    input.draftingRoot ?? input.repoRoot,
-                    collector,
-                  ),
-                }),
-          }),
+      ...(input.designArtifacts === undefined ? {} : { designArtifacts: input.designArtifacts }),
       ...(input.designArtifactFailure === undefined
         ? {}
         : { designArtifactFailure: input.designArtifactFailure }),
@@ -1446,7 +1395,6 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
             removeBoardMeta: (boardId: string) => deps.removeBoardMeta?.(input.repoRoot, boardId),
           }),
       onBoardArrival,
-      onCoverageState,
       onPhaseTiming,
       // A `"partial"` start is a REPEATED whole-board attempt over this generation — the
       // redraft wave 3's restart recovery runs. It draws the reduced per-lane ladder
@@ -1561,19 +1509,18 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
       if (outcome.absence !== undefined) continue;
       lanes?.failed(outcome.lens, outcome.failure ?? "the drafter produced no board");
     }
-    // One last write so the timings recorded after the final settlement (coverage, reveal,
-    // the lens post-process tails) reach durable state too. A REFUSED write means a later
+    // One last write so the timings recorded after the final settlement (reveal, the
+    // lens post-process tails) reach durable state too. A REFUSED write means a later
     // attempt owns this generation, and this attempt archives nothing.
     if (!(await persistReveal())) benchmarkSuperseded = true;
     // …and the generation handed back carries them, because that record is what the final
     // settle and BOTH failure paths persist. `withLensBoards` spreads the generation it is
-    // given and deletes only the attempt-scoped drafting fields, so coverage and timings
-    // ride through it — returning the bare `attemptGeneration` instead meant the last write
-    // of every round erased every durable coverage state and every timing the run measured.
+    // given and deletes only the attempt-scoped drafting fields, so the timings ride
+    // through it — returning the bare `attemptGeneration` instead meant the last write
+    // of every round erased every timing the run measured.
     return {
       generation: {
         ...attemptGeneration,
-        ...(reveal.coverage === undefined ? {} : { coverage: reveal.coverage }),
         ...(reveal.timings.length === 0
           ? {}
           : { timings: { version: GENERATION_TIMINGS_VERSION, phases: [...reveal.timings] } }),

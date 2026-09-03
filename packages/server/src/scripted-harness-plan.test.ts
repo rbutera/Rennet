@@ -241,57 +241,6 @@ describe("scripted harness JSON plan", () => {
     expect(echoed).toMatchObject({ status: "completed", structuredOutput: board });
   });
 
-  it("maps every offered requirement to the implementation hunk selected by the plan", async () => {
-    const root = mkdtempSync(join(tmpdir(), "rennet-owner-loop-685-coverage-"));
-    const planPath = writePlan(root, {
-      schemaVersion: 1,
-      lane: "owner-loop-685",
-      invocationLog: join(root, "invocations.jsonl"),
-      steps: [
-        {
-          id: "coverage",
-          kind: "coverage",
-          promptIncludes: "Map coverage fixture",
-          implementationPath: "src/value.ts",
-        },
-      ],
-    });
-    const outcome = await terminalOutcome(
-      loadScriptedHarnessPlan(planPath),
-      root,
-      [
-        "Map coverage fixture",
-        "REQUIREMENTS:",
-        JSON.stringify({
-          requirements: [{ capability: "owner", requirement: "Keep the value source-backed" }],
-        }),
-        "",
-        "OFFERED HUNKS:",
-        JSON.stringify({
-          hunks: [
-            { id: "implementation", filePath: "src/value.ts" },
-            { id: "unrelated", filePath: "src/other.ts" },
-          ],
-        }),
-      ].join("\n"),
-      {},
-    );
-
-    expect(outcome).toMatchObject({
-      status: "completed",
-      structuredOutput: {
-        mappings: [
-          {
-            capability: "owner",
-            requirement: "Keep the value source-backed",
-            hunks: ["implementation"],
-            testHunks: [],
-          },
-        ],
-      },
-    });
-  });
-
   it("rejects invalid plans and repository escapes before creating a session", async () => {
     const root = mkdtempSync(join(tmpdir(), "rennet-owner-loop-685-invalid-"));
     expect(() =>

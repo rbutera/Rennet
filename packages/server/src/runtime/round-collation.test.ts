@@ -5,8 +5,8 @@ import {
   lint,
   lintReviewDraft,
   materializeSnapshot,
+  resolveCitation,
   type SnapshotStructuralInputs,
-  taughtHunkIds,
 } from "@rennet/core";
 import type {
   BaseRefResolution,
@@ -17,7 +17,7 @@ import type {
   SuccessorAccount,
 } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
-import { assembleRoundCollation, buildLintContextFor, toLintHunks } from "./round-collation";
+import { assembleRoundCollation, buildLintContextFor, changedRegions } from "./round-collation";
 
 // A modified file with ONE hunk: old 1..3 (3 lines), new 1..4 (4 lines).
 const MODIFIED_PATCH = [
@@ -71,64 +71,47 @@ const PS = patchset([
   }),
 ]);
 
-describe("toLintHunks", () => {
-  it("maps indexed-hunk spans to the flat LintHunk shape, base path only on a rename", () => {
-    const index = buildHunkIndex(PS);
-    const lint = toLintHunks(index, PS.files);
-    expect(lint).toHaveLength(2);
-
-    const a = lint.find((h) => h.path === "src/a.ts");
-    expect(a).toMatchObject({
-      path: "src/a.ts",
-      newStart: 1,
-      newLines: 4,
-      oldStart: 1,
-      oldLines: 3,
-    });
-    expect(a?.previousPath).toBeUndefined(); // not renamed
-    expect(a?.id).toBe(index.hunks.find((h) => h.path === "src/a.ts")?.id); // id carried verbatim
-
-    const renamed = lint.find((h) => h.path === "src/new.ts");
-    expect(renamed).toMatchObject({
-      path: "src/new.ts",
-      newStart: 10,
-      newLines: 2,
-      oldStart: 10,
-      oldLines: 2,
-      previousPath: "src/old.ts", // base-side resolves against the OLD path
-    });
+describe("changedRegions", () => {
+  it("emits one region per hunk per side, the base side on the rename's OLD path", () => {
+    const regions = changedRegions(buildHunkIndex(PS), PS.files);
+    expect(regions).toEqual([
+      { path: "src/a.ts", side: "head", start: 1, end: 4 },
+      { path: "src/a.ts", side: "base", start: 1, end: 3 },
+      { path: "src/new.ts", side: "head", start: 10, end: 11 },
+      { path: "src/old.ts", side: "base", start: 10, end: 11 },
+    ]);
   });
 
-  it("emits a hunk that a head-side citation over its new range TEACHES (coverage control)", () => {
-    const lint = toLintHunks(buildHunkIndex(PS), PS.files);
-    const aHunk = lint.find((h) => h.path === "src/a.ts");
-    if (aHunk === undefined) throw new Error("missing hunk");
-    // A code_ref over the hunk's new range teaches it…
-    const inside: DraftElement = {
-      id: "c1",
-      kind: "code_ref",
-      data: { path: "src/a.ts", side: "head", start_line: 2, end_line: 3 },
-    } as unknown as DraftElement;
-    expect(taughtHunkIds([inside], lint).has(aHunk.id)).toBe(true);
-    // …a citation past the hunk's range does NOT — so a dropped/mis-ranged hunk fails coverage.
-    const outside: DraftElement = {
-      id: "c2",
-      kind: "code_ref",
-      data: { path: "src/a.ts", side: "head", start_line: 99, end_line: 100 },
-    } as unknown as DraftElement;
-    expect(taughtHunkIds([outside], lint).has(aHunk.id)).toBe(false);
+  it("a head-side citation over a region's range resolves; one past it does not (control)", () => {
+    const regions = changedRegions(buildHunkIndex(PS), PS.files);
+    expect(resolveCitation({ path: "src/a.ts", side: "head", start: 2, end: 3 }, regions)).toEqual({
+      path: "src/a.ts",
+      side: "head",
+      start: 1,
+      end: 4,
+    });
+    expect(
+      resolveCitation({ path: "src/a.ts", side: "head", start: 99, end: 100 }, regions),
+    ).toBeUndefined();
+    // The base side resolves against the OLD path of a rename, never the new one.
+    expect(
+      resolveCitation({ path: "src/new.ts", side: "base", start: 10, end: 10 }, regions),
+    ).toBeUndefined();
+    expect(
+      resolveCitation({ path: "src/old.ts", side: "base", start: 10, end: 10 }, regions),
+    ).toBeDefined();
   });
 });
 
 describe("buildLintContextFor", () => {
   it("builds head + base file inventories, the patchsetId, and varies only lens", () => {
-    const lint = toLintHunks(buildHunkIndex(PS), PS.files);
-    const ctxFor = buildLintContextFor(PS, lint);
+    const regions = changedRegions(buildHunkIndex(PS), PS.files);
+    const ctxFor = buildLintContextFor(PS, regions);
     const design = ctxFor("design");
 
     expect(design.lens).toBe("design");
     expect(design.patchsetId).toBe("ps-collation");
-    expect(design.hunks).toBe(lint); // the full hunk universe, same for every lens
+    expect(design.regions).toBe(regions); // the changed regions, same for every lens
     // Head inventory: a.ts reaches new line 1+4-1=4; new.ts reaches 10+2-1=11.
     expect(design.files.get("src/a.ts")).toBe(4);
     expect(design.files.get("src/new.ts")).toBe(11);
@@ -139,7 +122,7 @@ describe("buildLintContextFor", () => {
     // Only `lens` differs across lenses — the universe is shared.
     const noise = ctxFor("noise");
     expect(noise.lens).toBe("noise");
-    expect(noise.hunks).toBe(design.hunks);
+    expect(noise.regions).toBe(design.regions);
     expect(noise.files).toBe(design.files);
   });
 });
@@ -171,11 +154,13 @@ describe("buildLintContextFor — whole-tree citation grounding", () => {
           },
         } as unknown as DraftElement,
       ],
-      skippedHunks: [],
     }) as unknown as DraftBoard;
 
   const unresolved = (board: DraftBoard, tree?: Parameters<typeof buildLintContextFor>[2]) =>
-    lint(board, buildLintContextFor(PS, toLintHunks(buildHunkIndex(PS), PS.files), tree)("design"))
+    lint(
+      board,
+      buildLintContextFor(PS, changedRegions(buildHunkIndex(PS), PS.files), tree)("design"),
+    )
       .filter((v) => v.ruleId === "citation-resolves")
       .map((v) => v.message);
 
@@ -203,7 +188,11 @@ describe("buildLintContextFor — whole-tree citation grounding", () => {
     // — pinned to the commit — can be SHORTER. Taking it would reject a citation
     // inside the change's own hunk, which always resolved before W5.
     const tree = { head: new Map([["src/a.ts", 2]]), base: new Map() };
-    const ctx = buildLintContextFor(PS, toLintHunks(buildHunkIndex(PS), PS.files), tree)("design");
+    const ctx = buildLintContextFor(
+      PS,
+      changedRegions(buildHunkIndex(PS), PS.files),
+      tree,
+    )("design");
     expect(ctx.files.get("src/a.ts")).toBe(4);
     expect(unresolved(boardCiting("src/a.ts", 3, 4), tree)).toHaveLength(0);
   });
@@ -212,7 +201,11 @@ describe("buildLintContextFor — whole-tree citation grounding", () => {
     // `src/a.ts`'s patch only reaches new line 4; the file is really 400 lines, and a
     // citation at line 200 is legitimate.
     const tree = { head: new Map([["src/a.ts", 400]]), base: new Map([["src/a.ts", 380]]) };
-    const ctx = buildLintContextFor(PS, toLintHunks(buildHunkIndex(PS), PS.files), tree)("design");
+    const ctx = buildLintContextFor(
+      PS,
+      changedRegions(buildHunkIndex(PS), PS.files),
+      tree,
+    )("design");
     expect(ctx.files.get("src/a.ts")).toBe(400);
     expect(ctx.baseFiles?.get("src/a.ts")).toBe(380);
     expect(unresolved(boardCiting("src/a.ts", 200, 210), tree)).toHaveLength(0);
@@ -228,14 +221,14 @@ describe("assembleRoundCollation", () => {
       successorAccount,
     });
     expect(c.deltaPacket.successorAccount).toBeDefined(); // isRound branch fires
-    expect(c.hunks).toHaveLength(2); // derived off the same packet
+    expect(c.lintContextFor("design").regions).toHaveLength(4); // derived off the same packet
     expect(c.lintContextFor("design").patchsetId).toBe("ps-collation");
   });
 
   it("degrades to a first-generation (non-round) packet when no successor account", () => {
     const c = assembleRoundCollation({ patchset: PS, dossier: [] });
     expect(c.deltaPacket.successorAccount).toBeUndefined(); // first-generation, not a crash
-    expect(c.hunks).toHaveLength(2);
+    expect(c.lintContextFor("design").regions).toHaveLength(4);
   });
 
   // W5 finding 2 — the SAME grounding, one layer up. The composed review draft is the

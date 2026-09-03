@@ -103,7 +103,6 @@ describe("Design board document metadata", () => {
           },
         },
       ],
-      skippedHunks: [],
     };
     const opened: Array<{ reviewId: string; path: string; line?: number }> = [];
     const bridge = new MemoryBridge({
@@ -362,7 +361,6 @@ describe("Design board document metadata", () => {
         { ref: "tasks", gist: "Three of four tasks are done.", counts: {} },
       ],
       elements,
-      skippedHunks: [],
     };
     const view = mount(
       <BridgeProvider
@@ -506,7 +504,6 @@ describe("Design board document metadata", () => {
       },
       sections: [{ ref: "implementation-plan", gist: "Implement search.", counts: {} }],
       elements,
-      skippedHunks: [],
     };
     const view = mount(
       <BridgeProvider
@@ -566,7 +563,6 @@ describe("Design board document metadata", () => {
           data: { author, markdown: "- [ ] Revisit the storage alternative after launch." },
         },
       ],
-      skippedHunks: [],
     };
     const view = mount(
       <BridgeProvider
@@ -900,7 +896,6 @@ describe("Design section metadata", () => {
       },
       sections: [{ ref: "prd", gist: "Product requirements.", counts: { requirements: 2 } }],
       elements,
-      skippedHunks: [],
     };
     const view = mount(
       <BridgeProvider
@@ -1015,7 +1010,6 @@ describe("Design section metadata", () => {
       },
       sections: [{ ref: "story-source", gist: "Restore sessions.", counts: { requirements: 1 } }],
       elements,
-      skippedHunks: [],
     };
     const view = mount(
       <BridgeProvider
@@ -1099,7 +1093,6 @@ describe("Design section metadata", () => {
       },
       sections: [{ ref: "session-capability", gist: "Preserve sessions.", counts: {} }],
       elements,
-      skippedHunks: [],
     };
     const view = mount(
       <BridgeProvider bridge={new MemoryBridge()}>
@@ -1187,7 +1180,6 @@ describe("Design section metadata", () => {
       },
       sections: [{ ref: capability.id, gist: "Session changes.", counts: {} }],
       elements,
-      skippedHunks: [],
     };
     const view = mount(
       <BridgeProvider bridge={new MemoryBridge()}>
@@ -1317,7 +1309,6 @@ describe("Design requirements", () => {
     expect(view.container.querySelector("[data-kind=requirement] p")?.textContent).toContain(
       "The daemon SHALL record every refresh outcome.",
     );
-    expect(view.container.querySelector("[data-kind=coverage-chip]")).toBeNull();
     expect(view.container.querySelector('[data-scenario-ref="scenario-proposal"]')).toBeTruthy();
     expect(view.getByText("Trigger")).toBeTruthy();
     expect(view.getByText("Outcome")).toBeTruthy();
@@ -1359,30 +1350,7 @@ describe("Design requirements", () => {
     expect(view.container.querySelector('[data-kind="scenario-clauses"]')).toBeNull();
   });
 
-  it("renders a completed zero-hunk mapping as honestly unimplemented", () => {
-    const requirement: HostElement = {
-      id: "req-unimplemented",
-      kind: "requirement",
-      data: {
-        author,
-        shall: "The daemon SHALL persist the refreshed token.",
-        coverage: "gap",
-        trace: [],
-        tests: 0,
-      },
-    };
-    const view = mount(
-      <BridgeProvider bridge={new MemoryBridge()}>
-        <BoardElementsProvider elements={[requirement]} reviewId="review-gap">
-          <BoardElement element={requirement} />
-        </BoardElementsProvider>
-      </BridgeProvider>,
-    );
-
-    expect(view.getByText("unimplemented · 0 hunks")).toBeTruthy();
-  });
-
-  it("renders name, capability, scenario elements, source, related files, and grounded counts", () => {
+  it("renders name, capability, scenario elements, source, related files, and citations", () => {
     const scenarios: HostElement[] = [
       {
         id: "scenario-attempt",
@@ -1440,9 +1408,7 @@ describe("Design requirements", () => {
           line: 12,
         },
         spec_delta: "modified",
-        coverage: "partial",
         trace: traces.map((trace) => trace.id),
-        tests: 3,
       },
     };
     const elements = [requirement, ...scenarios, ...traces];
@@ -1456,7 +1422,6 @@ describe("Design requirements", () => {
 
     expect(view.getByText("Every refresh is recorded")).toBeTruthy();
     expect(view.getByText("refresh-observability")).toBeTruthy();
-    expect(view.getByText("covered by 2 hunks · 3 tests · partial")).toBeTruthy();
     expect(view.container.querySelector('[data-spec-delta="modified"]')).toBeTruthy();
     expect(view.container.querySelectorAll("[data-kind=related-file-chip]")).toHaveLength(2);
     expect(

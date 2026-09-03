@@ -35,7 +35,6 @@ import type {
   LensKind,
   NoiseReview,
   OpenSpecChange,
-  OpenSpecCoverage,
   Patchset,
   PrBodyDraftResult,
   RefinementResult,
@@ -422,14 +421,6 @@ export interface DispatchDeps {
    * shows its honest empty state rather than a fixture).
    */
   readonly openSpecChange?: (review: Review) => Promise<OpenSpecChange | null>;
-  /**
-   * The Spec view's requirement→hunk coverage (wireframes #9 / R53): the produced
-   * hunk↔requirement mapping over the review's OpenSpec change. Spends a budgeted
-   * model turn, so it takes the ALREADY-RESOLVED review. `null` when the review
-   * touches no change; unwired ⇒ also `null` (the Spec view then renders no coverage
-   * chips — an uncomputed mapping never masquerades as a real zero).
-   */
-  readonly openSpecCoverage?: (review: Review) => Promise<OpenSpecCoverage | null>;
   /**
    * Open a review file (repo-relative, optionally at a line) in the reviewer's
    * editor — the inspector's "open in editor" jump (Rai, wireframes #8). Takes the

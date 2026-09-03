@@ -100,9 +100,7 @@ const fullBoard = {
         related_files: ["src/a.ts", "src/a.test.ts"],
         source: { path: "openspec/changes/refresh/specs/runtime/spec.md", line: 8 },
         spec_delta: "added",
-        coverage: "met",
         trace: ["cr1"],
-        tests: 3,
       },
     },
     {
@@ -287,12 +285,6 @@ describe("host board schema (#462)", () => {
       HostElementSchema.safeParse({
         ...requirement,
         data: { ...requirement.data, source: { path: "spec.md", line: 0 } },
-      }).success,
-    ).toBe(false);
-    expect(
-      HostElementSchema.safeParse({
-        ...requirement,
-        data: { ...requirement.data, tests: -1 },
       }).success,
     ).toBe(false);
   });

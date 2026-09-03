@@ -12,9 +12,8 @@ const meta = (boardId: string, lens: BoardMetaInput["lens"]): BoardMetaInput => 
     introMarkdown: "Walked from the durable write to the reader.",
     measure: lens === "design" ? "structured" : "reading",
   },
-  skippedHunks: [{ hunk: "h1", reason: "binary blob" }],
   blemishes: [{ ruleId: "prose-length", elementRef: "/e1", message: "too long" }],
-  omissions: [{ elementId: "e2", hunks: ["h2"], reason: "not covered" }],
+  omissions: [{ elementId: "e2", reason: "not covered" }],
   immutability: [],
 });
 
@@ -32,11 +31,10 @@ describe("BoardMetaStore", () => {
       introMarkdown: "Walked from the durable write to the reader.",
       measure: "structured",
     });
-    expect(read?.skippedHunks).toEqual([{ hunk: "h1", reason: "binary blob" }]);
     expect(read?.blemishes).toEqual([
       { ruleId: "prose-length", elementRef: "/e1", message: "too long" },
     ]);
-    expect(read?.omissions).toEqual([{ elementId: "e2", hunks: ["h2"], reason: "not covered" }]);
+    expect(read?.omissions).toEqual([{ elementId: "e2", reason: "not covered" }]);
   });
 
   it("round-trips the write-boundary reference repairs (#548 D1)", () => {
@@ -106,7 +104,6 @@ describe("BoardMetaStore", () => {
     store.save({
       lens: "sequence",
       boardId: "board:legacy",
-      skippedHunks: [],
       blemishes: [],
       omissions: [],
       immutability: [],

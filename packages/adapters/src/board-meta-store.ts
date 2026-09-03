@@ -21,7 +21,7 @@ import { z } from "zod";
 /**
  * The board-meta store (#464 finding 3, B09 cluster 6, reconciliation 5) — the
  * durable home for board-level data that the whiteboard event log CANNOT carry:
- * the document opening, `skippedHunks` coverage, and validation
+ * the document opening and validation
  * blemishes/omissions/immutability. `draftToOps` serializes only a board's
  * ELEMENTS; the 13-kind element vocabulary has no element for any of these, so
  * a result reconstructed after a crash would otherwise lose them.
@@ -48,10 +48,10 @@ import { z } from "zod";
 /** The lint targets a board can carry meta for: the five lenses plus the round report. */
 const LINT_TARGETS = [...LENS_KINDS, "report"] as const;
 
-const SkippedHunkSchema = z.object({ hunk: z.string().min(1), reason: z.string() });
+// Records written before session-bound-workspace D5 carry `skippedHunks` and an
+// `omissions[].hunks` list; both are stripped on read, since nothing consumes a hunk id.
 const OmissionSchema = z.object({
   elementId: z.string().min(1),
-  hunks: z.array(z.string()),
   reason: z.string(),
 });
 /** One provable reference repair the write boundary made before this board was written
@@ -74,7 +74,6 @@ export const BoardMetaRecordSchema = z.object({
   boardId: z.string().min(1),
   // Optional on read so board metadata written before the document contract remains valid.
   document: BoardDocumentSchema.optional(),
-  skippedHunks: z.array(SkippedHunkSchema),
   blemishes: z.array(ViolationSchema),
   omissions: z.array(OmissionSchema),
   immutability: z.array(ViolationSchema),
@@ -96,11 +95,9 @@ export interface BoardMetaInput {
   readonly boardId: string;
   /** New pipeline writes always carry this; optional admits legacy/non-pipeline callers. */
   readonly document?: BoardDocument;
-  readonly skippedHunks: readonly { readonly hunk: string; readonly reason: string }[];
   readonly blemishes: readonly z.infer<typeof ViolationSchema>[];
   readonly omissions: readonly {
     readonly elementId: string;
-    readonly hunks: readonly string[];
     readonly reason: string;
   }[];
   readonly immutability: readonly z.infer<typeof ViolationSchema>[];

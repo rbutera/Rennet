@@ -128,7 +128,6 @@ export {
   type RunTurn,
   type SwarmTurnOptions,
 } from "./council-seat-turn";
-export { type CoverageTurnOptions, createCoverageTurn } from "./coverage-turn-backend";
 export {
   DESIGN_ARTIFACT_LIMITS,
   type DesignArtifact,

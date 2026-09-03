@@ -53,12 +53,6 @@ const echoBoardStepSchema = z.object({
   kind: z.literal("echo-board"),
 });
 
-const coverageStepSchema = z.object({
-  ...match,
-  kind: z.literal("coverage"),
-  implementationPath: relativeRepoPath,
-});
-
 const editStepSchema = z.object({
   ...match,
   kind: z.literal("edit"),
@@ -87,12 +81,7 @@ export const ScriptedHarnessPlanSchema = z.object({
   invocationLog: z.string().refine(isAbsolute, "invocationLog must be an absolute path"),
   steps: z
     .array(
-      z.discriminatedUnion("kind", [
-        structuredStepSchema,
-        echoBoardStepSchema,
-        coverageStepSchema,
-        editStepSchema,
-      ]),
+      z.discriminatedUnion("kind", [structuredStepSchema, echoBoardStepSchema, editStepSchema]),
     )
     .min(1),
 });
@@ -159,7 +148,7 @@ function readInvocationRecords(path: string): InvocationRecord[] {
         lane: z.string(),
         invocationId: z.string(),
         stepId: z.string(),
-        kind: z.enum(["structured", "echo-board", "coverage", "edit"]),
+        kind: z.enum(["structured", "echo-board", "edit"]),
         cwd: z.string(),
         promptDigest: z.string(),
         resumed: z.boolean(),
@@ -329,66 +318,6 @@ function applyEdits(step: Extract<ScriptedHarnessStep, { kind: "edit" }>, cwd: s
   return recovered;
 }
 
-function coverageSection(
-  prompt: string,
-  heading: string,
-  nextHeading: string,
-): Record<string, unknown> {
-  const start = prompt.indexOf(heading);
-  const end = prompt.indexOf(nextHeading, start + heading.length);
-  if (start < 0 || end < 0) {
-    throw new Error(`scripted harness coverage prompt is missing ${heading.trim()}`);
-  }
-  const parsed: unknown = JSON.parse(prompt.slice(start + heading.length, end).trim());
-  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    throw new Error(`scripted harness coverage section ${heading.trim()} is not an object`);
-  }
-  return parsed as Record<string, unknown>;
-}
-
-function coverageOutput(
-  step: Extract<ScriptedHarnessStep, { kind: "coverage" }>,
-  prompt: string,
-): unknown {
-  const requirementSection = coverageSection(prompt, "REQUIREMENTS:\n", "\n\nOFFERED HUNKS:");
-  const hunkSection = coverageSection(
-    `${prompt}\nSCRIPTED COVERAGE END`,
-    "OFFERED HUNKS:\n",
-    "\nSCRIPTED COVERAGE END",
-  );
-  const requirements = Array.isArray(requirementSection.requirements)
-    ? requirementSection.requirements
-    : [];
-  const hunks = Array.isArray(hunkSection.hunks) ? hunkSection.hunks : [];
-  const implementationHunks = hunks.flatMap((value) => {
-    if (typeof value !== "object" || value === null || Array.isArray(value)) return [];
-    const hunk = value as Record<string, unknown>;
-    return hunk.filePath === step.implementationPath && typeof hunk.id === "string"
-      ? [hunk.id]
-      : [];
-  });
-  return {
-    mappings: requirements.flatMap((value) => {
-      if (typeof value !== "object" || value === null || Array.isArray(value)) return [];
-      const requirement = value as Record<string, unknown>;
-      if (
-        typeof requirement.capability !== "string" ||
-        typeof requirement.requirement !== "string"
-      ) {
-        return [];
-      }
-      return [
-        {
-          capability: requirement.capability,
-          requirement: requirement.requirement,
-          hunks: implementationHunks,
-          testHunks: [],
-        },
-      ];
-    }),
-  };
-}
-
 function completedOutcome(
   step: ScriptedHarnessStep,
   spec: SessionSpec,
@@ -413,16 +342,6 @@ function completedOutcome(
     }
     return {
       outcome: { status: "completed", finalText: "", structuredOutput: context.board },
-      recovered: false,
-    };
-  }
-  if (step.kind === "coverage") {
-    return {
-      outcome: {
-        status: "completed",
-        finalText: "",
-        structuredOutput: coverageOutput(step, prompt),
-      },
       recovered: false,
     };
   }

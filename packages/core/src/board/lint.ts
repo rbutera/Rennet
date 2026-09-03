@@ -3,16 +3,16 @@
  *
  * `lint(draft, ctx) => Violation[]` is a pure function: no model, no I/O, no
  * Node. It rejects what is *false* about a draft board's structure — code bytes
- * in prose, unresolvable citations, boilerplate skip reasons, machinery
- * vocabulary in structural fields — so the drafter gets a scoped, deterministic
+ * in prose, citations outside the change, machinery vocabulary in structural
+ * fields — so the drafter gets a scoped, deterministic
  * re-ask (the retry channel is cluster 3). It deliberately owns NO prose-quality
  * or slop-vocabulary judgment; that is the post-process editor's lane (#493 §5).
  *
  * Consumes the B03-frozen `protocol/src/board` seam verbatim — `DraftBoard`,
  * `DraftElement`, `Violation` (`{ ruleId, elementRef, message }`) — and never
  * re-models it (reconciliation 2). The `ctx` is plain data the caller assembles
- * (patchset hunk list, side-specific file→line-count indices, the review lens);
- * assembling it is the cluster-5 runtime's job, not lint's.
+ * (the patchset's changed regions per path and side, side-specific file→line-count
+ * indices, the review lens); assembling it is the cluster-5 runtime's job, not lint's.
  *
  * ── Reconciliation with #493's rule catalog (recorded in proposal.md ledger) ──
  * #493 was written against a RICHER imagined schema (a `finding.fix` field,
@@ -23,7 +23,6 @@
  *     KIND with ZodError issues (see lint.test.ts). Code bytes inside a *legal*
  *     prose element are NOT a parse-time concern — the `no-code-bytes` lint rule
  *     below owns them.
- *   - L18 (cross-lens every-hunk coverage) runs at COMPOSITION → cluster 4.
  *   - L19 (typed-data immutability across post-process) is a POST-PASS assertion
  *     → cluster 3.
  *   - The residue — the per-draft rules whose fields DO exist — is implemented
@@ -36,7 +35,6 @@ import {
   AUTHORED_BOARD_SCHEMA,
   type DraftBoard,
   type DraftElement,
-  type HunkId,
   type LensKind,
   type Violation,
 } from "@rennet/protocol";
@@ -55,39 +53,24 @@ import {
 export type LintTarget = LensKind | "report";
 
 /**
- * One patchset hunk. Coverage and citation resolution are SIDE-AWARE: a
- * `side: "head"` code_ref resolves against the new image on {@link path}; a
- * `side: "base"` one resolves against the old image on {@link previousPath}
- * (its own line numbers). A pure addition has no old image (`oldLines === 0`)
- * and is teachable only from the head side; a pure deletion has no new image
- * (`newLines === 0`) and is teachable only from the base side — the geometry
- * finding 8 restores.
+ * One changed region of the patchset: a 1-based inclusive line range on one side of
+ * one path (session-bound-workspace D5). The daemon builds these from the delta packet
+ * it already has — one region per hunk per side that has lines, on the head path for
+ * `head` and the pre-image path for `base` — so a citation resolves by overlapping a
+ * region on its own side, and a pure addition (no base lines) can never be cited from
+ * the base side. No hunk identifier reaches this shape.
  */
-export interface LintHunk {
-  readonly id: HunkId;
-  /** The head-side (post-image) path; a `side: "head"` code_ref resolves here. */
-  readonly path: string;
-  /** 1-based first line of the hunk's new image. */
-  readonly newStart: number;
-  /** Line count of the hunk's new image (`newStart .. newStart + newLines - 1`); 0 for a pure deletion. */
-  readonly newLines: number;
-  /** The base-side (pre-image) path; defaults to {@link path} when the file was not renamed. */
-  readonly previousPath?: string;
-  /** 1-based first line of the hunk's old image; a `side: "base"` code_ref resolves here. */
-  readonly oldStart?: number;
-  /** Line count of the hunk's old image (`oldStart .. oldStart + oldLines - 1`); 0 for a pure addition. */
-  readonly oldLines?: number;
-}
-
-/** A code_ref reduced to what coverage/citation geometry needs: its side, path, and line span. */
-export interface CodeRefSpan {
+export interface ChangedRegion {
   readonly path: string;
   readonly side: "base" | "head";
   readonly start: number;
   readonly end: number;
 }
 
-/** Read a `code_ref` element's coverage span, or `undefined` if it is not a code_ref. */
+/** A code_ref reduced to what citation geometry needs: its side, path, and line span. */
+export type CodeRefSpan = ChangedRegion;
+
+/** Read a `code_ref` element's citation span, or `undefined` if it is not a code_ref. */
 export function readCodeRefSpan(el: DraftElement): CodeRefSpan | undefined {
   if (el.kind !== "code_ref") return undefined;
   const d = el.data as { path?: unknown; side?: unknown; start_line?: unknown; end_line?: unknown };
@@ -98,40 +81,40 @@ export function readCodeRefSpan(el: DraftElement): CodeRefSpan | undefined {
   return { path, side, start, end };
 }
 
-/**
- * Does `ref` TEACH `hunk`? A base-side ref resolves against the old image and
- * the previous path (a pure addition, `oldLines === 0`, has no old image to
- * teach); a head-side ref resolves against the new image and the current path
- * (a pure deletion, `newLines === 0`, has no new image). A base-side citation
- * therefore can never falsely cover an addition, and a deletion-only hunk is
- * teachable only from the base side (finding 8).
- */
-export function codeRefTeaches(ref: CodeRefSpan, hunk: LintHunk): boolean {
-  if (ref.side === "base") {
-    const oldStart = hunk.oldStart;
-    const oldLines = hunk.oldLines;
-    if (oldStart === undefined || oldLines === undefined || oldLines === 0) return false;
-    if (ref.path !== (hunk.previousPath ?? hunk.path)) return false;
-    const hEnd = oldStart + oldLines - 1;
-    return ref.start <= hEnd && ref.end >= oldStart;
-  }
-  if (hunk.newLines === 0 || ref.path !== hunk.path) return false;
-  const hEnd = hunk.newStart + hunk.newLines - 1;
-  return ref.start <= hEnd && ref.end >= hunk.newStart;
+/** Does the citation overlap the region — same path, same side, ranges intersect? */
+export function regionOverlaps(ref: CodeRefSpan, region: ChangedRegion): boolean {
+  return (
+    ref.side === region.side &&
+    ref.path === region.path &&
+    ref.start <= region.end &&
+    ref.end >= region.start
+  );
 }
 
-/** The hunk ids a set of board elements TEACH (side-aware), across every code_ref among them. */
-export function taughtHunkIds(
+/**
+ * Resolve a citation against the changed regions: the first region it overlaps, or
+ * `undefined` when it lies entirely outside the change on the named side. Pure; the
+ * `unresolvable-citation` rule and the daemon's coverage projection share it.
+ */
+export function resolveCitation(
+  ref: CodeRefSpan,
+  regions: readonly ChangedRegion[],
+): ChangedRegion | undefined {
+  return regions.find((region) => regionOverlaps(ref, region));
+}
+
+/** The changed regions a set of board elements cite (every region some code_ref overlaps). */
+export function citedRegions(
   elements: readonly DraftElement[],
-  hunks: readonly LintHunk[],
-): Set<string> {
-  const taught = new Set<string>();
+  regions: readonly ChangedRegion[],
+): Set<ChangedRegion> {
+  const cited = new Set<ChangedRegion>();
   for (const el of elements) {
     const ref = readCodeRefSpan(el);
     if (ref === undefined) continue;
-    for (const h of hunks) if (codeRefTeaches(ref, h)) taught.add(h.id);
+    for (const region of regions) if (regionOverlaps(ref, region)) cited.add(region);
   }
-  return taught;
+  return cited;
 }
 
 /**
@@ -141,12 +124,15 @@ export function taughtHunkIds(
  * (S2 — a base-side citation checked against the head inventory is a false
  * pass/fail). `patchsetId`, when supplied, is the one patchset this board may
  * cite: a `code_ref` naming any other patchset is a cross-patchset leak.
- * `hunks` is the collation producer's hunk list (coverage rules);
+ * `regions` is the patchset's changed regions (the `unresolvable-citation` rule); absent
+ * means the caller had no packet to derive them from and the rule does not run, the same
+ * degrade as an absent `baseFiles` — an EMPTY list is a patchset with no changed lines,
+ * against which every citation is outside the change.
  * `patchsetIdentifiers` is the R20 allowlist built from the changed files.
  */
 export interface LintContext {
   readonly lens: LintTarget;
-  readonly hunks: readonly LintHunk[];
+  readonly regions?: readonly ChangedRegion[];
   /** HEAD-side (post-image) path → line-count inventory. */
   readonly files: ReadonlyMap<string, number>;
   /** BASE-side (pre-image) inventory; `side: "base"` code_refs resolve here (S2). */
@@ -607,6 +593,51 @@ const citationResolves: Rule = (draft, ctx) => {
   return out;
 };
 
+/** `path:start-end`, collapsing a one-line range to `path:start`. */
+function rangeLabel(path: string, start: number, end: number): string {
+  return start === end ? `${path}:${start}` : `${path}:${start}-${end}`;
+}
+
+/** Line distance from a citation to a region; 0 when they overlap. */
+function regionDistance(ref: CodeRefSpan, region: ChangedRegion): number {
+  if (ref.end < region.start) return region.start - ref.end;
+  if (ref.start > region.end) return ref.start - region.end;
+  return 0;
+}
+
+/**
+ * D5 — every `code_ref` overlaps a changed region of the patchset on its own side. A
+ * citation entirely outside the change is the violation; its pointer names the nearest
+ * changed range on that path and side so the repair turn can move it, or says the path
+ * has no changed lines on that side at all. Range order and file existence are
+ * `citation-resolves`'s lane, so an inverted or overrunning citation is not reported twice.
+ */
+const unresolvableCitation: Rule = (draft, ctx) => {
+  const regions = ctx.regions;
+  if (regions === undefined) return [];
+  const out: Violation[] = [];
+  for (const el of draft.elements) {
+    const span = readCodeRefSpan(el);
+    if (span === undefined || span.end < span.start || span.start < 1) continue;
+    if (resolveCitation(span, regions) !== undefined) continue;
+    const onSide = regions.filter((r) => r.path === span.path && r.side === span.side);
+    const nearest = onSide.reduce<ChangedRegion | undefined>(
+      (best, r) =>
+        best === undefined || regionDistance(span, r) < regionDistance(span, best) ? r : best,
+      undefined,
+    );
+    out.push({
+      ruleId: "unresolvable-citation",
+      elementRef: ref(el.id),
+      message:
+        nearest === undefined
+          ? `code_ref \`${rangeLabel(span.path, span.start, span.end)}\` (${span.side}) cites no changed line: \`${span.path}\` has no changed lines on the ${span.side} side of this patchset.`
+          : `code_ref \`${rangeLabel(span.path, span.start, span.end)}\` (${span.side}) lies outside the change; the nearest changed range on that side is \`${rangeLabel(nearest.path, nearest.start, nearest.end)}\`.`,
+    });
+  }
+  return out;
+};
+
 /** L7 — no machinery vocabulary in structural fields (R20), with the F2 exemptions. */
 const processVocabulary: Rule = (draft, ctx) =>
   draft.elements.flatMap((el) =>
@@ -617,7 +648,7 @@ const processVocabulary: Rule = (draft, ctx) =>
 
 const REMAINDER =
   /\b(?:not (?:covered|shown|discussed) (?:here|on this)|left to (?:another|the other)|covered elsewhere|out of scope (?:here|for this)|handled separately|the rest of the (?:diff|change))\b/i;
-/** L9 — no remainder narration; skipped material is `skippedHunks` data, never prose. */
+/** L9 — no remainder narration; a board says what it cites, never what it leaves out. */
 const noRemainderNarration: Rule = (draft) =>
   draft.elements.flatMap((el) =>
     proseFields(el).flatMap(({ elementId, field, text }) =>
@@ -627,7 +658,7 @@ const noRemainderNarration: Rule = (draft) =>
               ruleId: "no-remainder-narration",
               elementRef: ref(elementId, field),
               message:
-                "R18/R19: what a board skips is `skippedHunks` data, not prose. Drop the remainder sentence; record the hunk with a reason.",
+                "R18: a board never narrates what it leaves out. Drop the remainder sentence; cite what you read and say nothing about the rest.",
             },
           ]
         : [],
@@ -683,89 +714,6 @@ const scaffoldIsNoiseLane: Rule = (draft, ctx) => {
         ]
       : [];
   });
-};
-
-// ── Skipped-hunks rules (the draft carries `skippedHunks` as passthrough) ─────
-
-interface SkipEntry {
-  hunk: string;
-  reason: string;
-}
-function skippedHunks(draft: DraftBoard): SkipEntry[] | undefined {
-  const raw = (draft as { skippedHunks?: unknown }).skippedHunks;
-  if (!Array.isArray(raw)) return undefined;
-  return raw.map((e) => {
-    const o = (e ?? {}) as { hunk?: unknown; reason?: unknown };
-    return {
-      hunk: typeof o.hunk === "string" ? o.hunk : "",
-      reason: typeof o.reason === "string" ? o.reason : "",
-    };
-  });
-}
-
-/** S3-as-lint — a board carries a `skippedHunks` array (present, even if empty). */
-const skippedHunksPresent: Rule = (draft) =>
-  skippedHunks(draft) === undefined
-    ? [
-        {
-          ruleId: "skipped-hunks-present",
-          elementRef: "/skippedHunks",
-          message:
-            "R19: every board carries a `skippedHunks` array — coverage is data, not silence. Include it even when empty.",
-        },
-      ]
-    : [];
-
-const BOILERPLATE_REASON = /^(n\/a|none|other lens|not relevant|see above|mechanical)\.?$/i;
-/** L11 — skip reasons are specific, never boilerplate. */
-const skipReasonSpecific: Rule = (draft) => {
-  const skips = skippedHunks(draft);
-  if (skips === undefined) return [];
-  return skips.flatMap((s, i) =>
-    s.reason.trim().length === 0 || BOILERPLATE_REASON.test(s.reason.trim())
-      ? [
-          {
-            ruleId: "skip-reason-specific",
-            elementRef: `/skippedHunks/${i}`,
-            message:
-              "R19: name which lens owns this hunk and why, specific to this change — not a boilerplate reason.",
-          },
-        ]
-      : [],
-  );
-};
-
-/** L14 — every `skippedHunks` entry resolves against the patchset hunk list. */
-const skippedHunksResolve: Rule = (draft, ctx) => {
-  const skips = skippedHunks(draft);
-  if (skips === undefined) return [];
-  const ids = new Set(ctx.hunks.map((h) => h.id));
-  return skips.flatMap((s, i) =>
-    ids.has(s.hunk)
-      ? []
-      : [
-          {
-            ruleId: "skipped-hunks-resolve",
-            elementRef: `/skippedHunks/${i}`,
-            message: `R19: skipped hunk \`${s.hunk}\` is not in the patchset — it cannot be skipped.`,
-          },
-        ],
-  );
-};
-
-/** L15 — a hunk is never both taught (cited) and skipped on the same board. */
-const noTaughtAndSkipped: Rule = (draft, ctx) => {
-  const skips = skippedHunks(draft);
-  if (skips === undefined || skips.length === 0) return [];
-  const skipped = new Set(skips.map((s) => s.hunk));
-  // "Taught": any code_ref whose side-appropriate range overlaps a hunk (finding 8).
-  const taught = taughtHunkIds(draft.elements, ctx.hunks);
-  const both = [...skipped].filter((id) => taught.has(id));
-  return both.map((id) => ({
-    ruleId: "no-taught-and-skipped",
-    elementRef: "/skippedHunks",
-    message: `R19: hunk \`${id}\` is both taught and skipped on this board — incoherent. Teach it or skip it, not both.`,
-  }));
 };
 
 // ── Decisions grounding (S6 — the frozen decision carries evidence + alternatives) ──
@@ -2600,8 +2548,8 @@ const kindAllowlist: Rule = (draft, ctx) => {
 
 /**
  * The per-draft rule registry for a LENS board, in evaluation order. The report
- * seat runs {@link REPORT_RULES} instead — it carries no coverage/skipped-hunks
- * obligation, so the lens coverage rules do not apply to it.
+ * seat runs {@link REPORT_RULES} instead — it cites the round's own diff, not the
+ * reviewed patchset, so the changed-region rule does not apply to it.
  */
 export const LENS_RULES: readonly Rule[] = [
   kindAllowlist,
@@ -2610,13 +2558,10 @@ export const LENS_RULES: readonly Rule[] = [
   citationWellFormed,
   elementReferencesResolve,
   citationResolves,
+  unresolvableCitation,
   processVocabulary,
   noRemainderNarration,
   scaffoldIsNoiseLane,
-  skippedHunksPresent,
-  skipReasonSpecific,
-  skippedHunksResolve,
-  noTaughtAndSkipped,
   decisionGrounded,
   reportCoherent,
   designSourcesKnown,
@@ -2631,9 +2576,8 @@ export const LENS_RULES: readonly Rule[] = [
 ];
 
 /**
- * The round-report seat's rule set (S1). The report is not a lens board: it has
- * no hunk coverage or `skippedHunks` obligation, so only the prose/kind screens
- * plus report coherence apply.
+ * The round-report seat's rule set (S1). The report is not a lens board: it cites
+ * the round's own diff, so only the prose/kind screens plus report coherence apply.
  */
 export const REPORT_RULES: readonly Rule[] = [
   kindAllowlist,

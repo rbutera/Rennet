@@ -2,7 +2,6 @@ import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import {
   existsSync,
-  mkdirSync,
   mkdtempSync,
   readFileSync,
   realpathSync,
@@ -34,7 +33,6 @@ import type {
 } from "@rennet/protocol";
 import {
   generationIdForPatchset,
-  parseCommandOutput,
   ROUND_NO_REGEN,
   roundSourceLandingTransactionPath,
   sha256Hex,
@@ -43,7 +41,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   captureBranchPatchset,
   captureLandedBranchPatchset,
-  coverageSeatFor,
   createBoardDraftCoordinator,
   createCompositionBoardsForReview,
   createGitLabPrSubmissionResolver,
@@ -298,167 +295,6 @@ describe("coding-harness resolution", () => {
         "The codex resolver returned claude-code; refusing to run a different harness than the selected one.",
     });
   });
-});
-
-describe("requirement-coverage seat provenance (#681 residue, C14 D3)", () => {
-  it("runs on a resolved Claude seat and stamps the harness that ran it", () => {
-    const claude = codingPort("claude-code", "2.1.220");
-    expect(
-      coverageSeatFor({
-        status: "ready",
-        selection: { id: "claude-code", version: "2.1.220" },
-        port: claude,
-      }),
-    ).toEqual({
-      kind: "claude",
-      port: claude,
-      harness: { id: "claude-code", version: "2.1.220" },
-    });
-  });
-
-  it("reports a typed absence naming Codex when Codex is what resolved", () => {
-    const seat = coverageSeatFor({
-      status: "ready",
-      selection: { id: "codex", version: "0.146.0" },
-      port: codingPort("codex", "0.146.0"),
-    });
-
-    expect(seat).toEqual({
-      kind: "absent",
-      coverage: {
-        status: "unavailable",
-        edges: [],
-        harness: { id: "codex", version: "0.146.0" },
-        reason:
-          "Requirement coverage needs a Claude Code seat; this repository resolved Codex 0.146.0. No mapping was attempted.",
-      },
-    });
-    // NOT "failed": nothing ran, so nothing broke. The distinction is the whole point.
-    expect(seat.kind === "absent" && seat.coverage.status).not.toBe("failed");
-  });
-
-  it("carries the resolution's own account when no harness resolved at all", () => {
-    expect(
-      coverageSeatFor({
-        status: "unavailable",
-        reason:
-          "No enabled coding harness (Claude Code or Codex) is available on the execution host.",
-      }),
-    ).toEqual({
-      kind: "absent",
-      coverage: {
-        status: "unavailable",
-        edges: [],
-        reason:
-          "Requirement coverage needs a Claude Code seat. No enabled coding harness (Claude Code or Codex) is available on the execution host.",
-      },
-    });
-  });
-});
-
-// The unit tests above exercise `coverageSeatFor` directly, which proves the branch but
-// not that PRODUCTION reaches it: `runLiveCoverage` could go back to calling
-// `claudeAdapterForRepo` and every one of them would stay green. This drives the real
-// `openspec.coverage` command through a composed server whose only harness is Codex.
-//
-// POSITIVE CONTROL (run 2026-09-01, restored after): replace `runLiveCoverage`'s
-// `coverageSeatFor(await resolveCodingHarness(...))` with a direct
-// `await claudeAdapterForRepo(review.repositoryRoot)` + no-adapter guard. This reddens —
-// the command answers `failed` with no harness and no reason, and the wire refinement
-// on `unavailable` is never reached.
-describe("openspec.coverage through a composed Codex-only server (#681 residue, C14 D3)", () => {
-  const dirs: string[] = [];
-  const shutdowns: (() => void)[] = [];
-
-  afterEach(() => {
-    for (const shutdown of shutdowns.splice(0)) shutdown();
-    for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
-  });
-
-  it("answers a typed unavailable naming Codex and spends no coverage turn", async () => {
-    const dataDir = mkdtempSync(join(tmpdir(), "rennet-coverage-codex-data-"));
-    const repo = realpathSync(mkdtempSync(join(tmpdir(), "rennet-coverage-codex-repo-")));
-    dirs.push(dataDir, repo);
-    const git = (...args: string[]) => execFileSync("git", args, { cwd: repo, encoding: "utf8" });
-    git("init", "-b", "main");
-    git("config", "user.email", "t@t");
-    git("config", "user.name", "t");
-    git("config", "core.excludesFile", "/dev/null");
-    const specPath = "openspec/changes/coverage-seat/specs/coverage/spec.md";
-    mkdirSync(join(repo, "openspec", "changes", "coverage-seat", "specs", "coverage"), {
-      recursive: true,
-    });
-    writeFileSync(join(repo, "src.ts"), "export const value = 'base';\n");
-    writeFileSync(
-      join(repo, "openspec", "changes", "coverage-seat", "proposal.md"),
-      "## Why\n\nThe coverage seat needs a Claude Code harness.\n",
-    );
-    writeFileSync(
-      join(repo, specPath),
-      "## ADDED Requirements\n\n### Requirement: The coverage seat is honest\n\nIt SHALL name what resolved.\n\n#### Scenario: codex only\n\n- **WHEN** only Codex resolves\n- **THEN** no mapping is attempted\n",
-    );
-    git("add", "-A");
-    git("commit", "-m", "base");
-    git("checkout", "-b", "feat/coverage");
-    writeFileSync(join(repo, "src.ts"), "export const value = 'reviewed';\n");
-    writeFileSync(
-      join(repo, specPath),
-      "## ADDED Requirements\n\n### Requirement: The coverage seat is honest\n\nIt SHALL name what resolved instead.\n\n#### Scenario: codex only\n\n- **WHEN** only Codex resolves\n- **THEN** no mapping is attempted\n",
-    );
-    git("add", "-A");
-    git("commit", "-m", "reviewed");
-
-    // The coverage turn's only observable spend: constructing a session on the port. A
-    // Codex-only host must never reach it, so this throwing spy is both the assertion
-    // and a trap — a seat that ran anyway fails loudly instead of silently mapping.
-    const createSession = vi.fn(async () => {
-      throw new Error("the coverage seat must not run a turn on a Codex-only host");
-    });
-    const codexOnly = {
-      descriptor: { id: "codex", version: "0.146.0", displayName: "Codex", binaryPath: "/codex" },
-      health: async () => ({ state: "ready", version: "0.146.0" }),
-      createSession,
-    } as unknown as HarnessPort;
-
-    const server = await createRennetServer({
-      dataDir,
-      env: { RENNET_DISABLE_HARNESS: "1" },
-      testHarnessPort: codexOnly,
-    });
-    shutdowns.push(server.shutdown);
-    const added = (await server.dispatch("projects.add", {
-      commandId: randomUUID(),
-      discovery: {
-        path: repo,
-        kind: "repo",
-        repos: [{ name: "repo", path: repo, branches: 2 }],
-        primaryBranch: "main",
-      },
-      includedRepos: ["repo"],
-      primaryBranch: "main",
-    })) as { project: { id: string } };
-    const minted = (await server.dispatch("session.mint", {
-      projectId: added.project.id,
-      commandId: randomUUID(),
-    })) as { session: { id: string } | null };
-    const reviewId = (await waitForReviewSession(server, minted.session?.id ?? "")).reviewId ?? "";
-    expect(reviewId).not.toBe("");
-
-    // `parseCommandOutput` is the wire boundary, so this also proves the refined
-    // `unavailable` shape survives the trip rather than only the in-process object.
-    const coverage = parseCommandOutput(
-      "openspec.coverage",
-      await server.dispatch("openspec.coverage", { reviewId }),
-    );
-    expect(coverage).toEqual({
-      status: "unavailable",
-      edges: [],
-      harness: { id: "codex", version: "0.146.0" },
-      reason:
-        "Requirement coverage needs a Claude Code seat; this repository resolved Codex 0.146.0. No mapping was attempted.",
-    });
-    expect(createSession).not.toHaveBeenCalled();
-  }, 30_000);
 });
 
 async function waitForReviewSession(

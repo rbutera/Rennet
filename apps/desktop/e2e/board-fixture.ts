@@ -327,7 +327,6 @@ export async function seedBoardFixture(
                 introMarkdown: `Persisted ${lens} evidence for the launched desktop journey.`,
                 measure: "reading",
               },
-        skippedHunks: [],
         blemishes: [],
         omissions: [],
         immutability: [],

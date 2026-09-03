@@ -83,7 +83,6 @@ function failedOperationWithReportHandoff(): RoundOperation {
     },
     sections: [],
     elements: [],
-    skippedHunks: [],
   };
   const reportAttempt = {
     executionId: "report-execution-1",
@@ -575,7 +574,6 @@ describe("RoundProgressHub — the append-only round log (C15 3.1)", () => {
             document: { title: "Other", introMarkdown: "Other", measure: "reading" },
             sections: [],
             elements: [],
-            skippedHunks: [],
           },
         },
       ],
