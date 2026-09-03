@@ -5,16 +5,18 @@ import {
   lint,
   lintReviewDraft,
   materializeSnapshot,
+  REGION_OPEN_END,
   resolveCitation,
   type SnapshotStructuralInputs,
 } from "@rennet/core";
-import type {
-  BaseRefResolution,
-  DraftBoard,
-  DraftElement,
-  PatchFile,
-  Patchset,
-  SuccessorAccount,
+import {
+  type BaseRefResolution,
+  DIFF_TRUNCATION_MARKER,
+  type DraftBoard,
+  type DraftElement,
+  type PatchFile,
+  type Patchset,
+  type SuccessorAccount,
 } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { assembleRoundCollation, buildLintContextFor, changedRegions } from "./round-collation";
@@ -72,13 +74,14 @@ const PS = patchset([
 ]);
 
 describe("changedRegions", () => {
-  it("emits one region per hunk per side, the base side on the rename's OLD path", () => {
+  it("emits one region per hunk per side, a rename's base side under BOTH its names", () => {
     const regions = changedRegions(buildHunkIndex(PS), PS.files);
     expect(regions).toEqual([
       { path: "src/a.ts", side: "head", start: 1, end: 4 },
       { path: "src/a.ts", side: "base", start: 1, end: 3 },
       { path: "src/new.ts", side: "head", start: 10, end: 11 },
       { path: "src/old.ts", side: "base", start: 10, end: 11 },
+      { path: "src/new.ts", side: "base", start: 10, end: 11 },
     ]);
   });
 
@@ -93,13 +96,89 @@ describe("changedRegions", () => {
     expect(
       resolveCitation({ path: "src/a.ts", side: "head", start: 99, end: 100 }, regions),
     ).toBeUndefined();
-    // The base side resolves against the OLD path of a rename, never the new one.
+    // A rename's base side answers to either name — the seat reads `git diff` and writes
+    // "the base side of src/new.ts" as readily as "src/old.ts" — but never the head side of
+    // the old name, which no longer exists.
     expect(
       resolveCitation({ path: "src/new.ts", side: "base", start: 10, end: 10 }, regions),
-    ).toBeUndefined();
+    ).toBeDefined();
     expect(
       resolveCitation({ path: "src/old.ts", side: "base", start: 10, end: 10 }, regions),
     ).toBeDefined();
+    expect(
+      resolveCitation({ path: "src/old.ts", side: "head", start: 10, end: 10 }, regions),
+    ).toBeUndefined();
+  });
+
+  it("a base-side citation under a rename's NEW name passes lint whole: no pointer of either rule", () => {
+    const ctx = buildLintContextFor(PS, changedRegions(buildHunkIndex(PS), PS.files))("flagged");
+    const citing = (path: string): DraftBoard =>
+      ({
+        elements: [
+          {
+            id: "c-base",
+            kind: "code_ref",
+            data: {
+              author: { kind: "lens-agent", id: "seat" },
+              patchset_id: "ps-collation",
+              path,
+              side: "base",
+              start_line: 10,
+              end_line: 11,
+            },
+          } as unknown as DraftElement,
+        ],
+      }) as unknown as DraftBoard;
+    const citationRules = (board: DraftBoard) =>
+      lint(board, ctx)
+        .map((v) => v.ruleId)
+        .filter((rule) => rule === "citation-resolves" || rule === "unresolvable-citation");
+    // Before this, `{path: new, side: base}` earned TWO pointers — "no such file" from the
+    // inventory and "no changed lines on the base side" from the regions — naming neither
+    // name the seat could have used.
+    expect(citationRules(citing("src/new.ts"))).toEqual([]);
+    expect(citationRules(citing("src/old.ts"))).toEqual([]);
+  });
+
+  it("a truncated capture gets one open-ended region per side past its last parsed hunk", () => {
+    // The seat reads the whole `git diff`; the daemon captured only up to the cap. A line
+    // past the cut is not "outside the change" — the daemon does not know — so it resolves.
+    const lossy = patchset([
+      file({ path: "src/a.ts", patch: `${MODIFIED_PATCH}\n${DIFF_TRUNCATION_MARKER}` }),
+      file({
+        path: "src/fresh.ts",
+        status: "added",
+        patch: `@@ -0,0 +1,2 @@\n+a\n+b\n${DIFF_TRUNCATION_MARKER}`,
+      }),
+    ]);
+    const regions = changedRegions(buildHunkIndex(lossy), lossy.files);
+    expect(regions).toContainEqual({
+      path: "src/a.ts",
+      side: "head",
+      start: 5,
+      end: REGION_OPEN_END,
+    });
+    expect(regions).toContainEqual({
+      path: "src/a.ts",
+      side: "base",
+      start: 4,
+      end: REGION_OPEN_END,
+    });
+    expect(
+      resolveCitation({ path: "src/a.ts", side: "head", start: 500, end: 510 }, regions),
+    ).toBeDefined();
+    // An ADDED file has no base side, truncated or not.
+    expect(regions.filter((r) => r.path === "src/fresh.ts").map((r) => r.side)).toEqual([
+      "head",
+      "head",
+    ]);
+    // Control: the same citation against the complete capture is outside the change.
+    expect(
+      resolveCitation(
+        { path: "src/a.ts", side: "head", start: 500, end: 510 },
+        changedRegions(buildHunkIndex(PS), PS.files),
+      ),
+    ).toBeUndefined();
   });
 });
 
@@ -164,7 +243,7 @@ describe("buildLintContextFor — whole-tree citation grounding", () => {
       .filter((v) => v.ruleId === "citation-resolves")
       .map((v) => v.message);
 
-  it("keeps a citation into a file the change never touched", () => {
+  it("grounds citation-resolves for an off-diff file on the tree inventory (unresolvable-citation still reports it)", () => {
     const board = boardCiting("src/untouched.ts", 120, 130);
     // Diff-only grounding (what shipped before W5) calls the real file a ghost.
     expect(unresolved(board)).toHaveLength(1);
@@ -221,14 +300,14 @@ describe("assembleRoundCollation", () => {
       successorAccount,
     });
     expect(c.deltaPacket.successorAccount).toBeDefined(); // isRound branch fires
-    expect(c.lintContextFor("design").regions).toHaveLength(4); // derived off the same packet
+    expect(c.lintContextFor("design").regions).toHaveLength(5); // derived off the same packet
     expect(c.lintContextFor("design").patchsetId).toBe("ps-collation");
   });
 
   it("degrades to a first-generation (non-round) packet when no successor account", () => {
     const c = assembleRoundCollation({ patchset: PS, dossier: [] });
     expect(c.deltaPacket.successorAccount).toBeUndefined(); // first-generation, not a crash
-    expect(c.lintContextFor("design").regions).toHaveLength(4);
+    expect(c.lintContextFor("design").regions).toHaveLength(5);
   });
 
   // W5 finding 2 — the SAME grounding, one layer up. The composed review draft is the

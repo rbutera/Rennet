@@ -583,6 +583,7 @@ describe.skipIf(!SMOKE)("C15 1.1 — rounds pipeline smoke-run (LIVE ports, RENN
 
       const lintContextFor = (lens: LintTarget): LintContext => ({
         lens,
+        regions: [{ path: "src/greet.ts", side: "head", start: 1, end: 3 }],
         files: new Map([["src/greet.ts", 3]]),
         patchsetId: "ps-c15-smoke",
       });

@@ -275,10 +275,37 @@ describe("unresolvable-citation (D5)", () => {
     expect(hit[0]?.message).toContain("src/auth.ts:10-14");
   });
 
-  it("a citation overlapping a changed region passes, even partially", () => {
-    // 13..20 overlaps 10..14 on its last two lines.
-    const ok = board([codeRef("c", "src/auth.ts", 13, 20)]);
-    expect(rulesHit(lint(ok, ctx()))).not.toContain("unresolvable-citation");
+  it("resolves only when EVERY cited line is inside a region — the reader's own test", () => {
+    const hit = (start: number, end: number) =>
+      rulesHit(lint(board([codeRef("c", "src/auth.ts", start, end)]), ctx()));
+    // src/auth.ts changed on 10..14: its exact first line, its exact last line, and the
+    // whole region resolve.
+    expect(hit(10, 10)).not.toContain("unresolvable-citation");
+    expect(hit(14, 14)).not.toContain("unresolvable-citation");
+    expect(hit(10, 14)).not.toContain("unresolvable-citation");
+    // One line past either end overlaps the region and still fails: `patchset.readSpan`
+    // serves the capture line by line and would refuse line 15 (or 9), so lint says so first.
+    expect(hit(13, 15)).toContain("unresolvable-citation");
+    expect(hit(9, 10)).toContain("unresolvable-citation");
+  });
+
+  it("two regions: a citation spanning the gap between them fails; adjacent regions read as one", () => {
+    const split = ctx({
+      regions: [
+        { path: "src/auth.ts", side: "head", start: 10, end: 14 },
+        { path: "src/auth.ts", side: "head", start: 20, end: 24 },
+        { path: "src/util.ts", side: "head", start: 1, end: 3 },
+        { path: "src/util.ts", side: "head", start: 4, end: 6 },
+      ],
+    });
+    // 12..22 touches both auth regions and the uncaptured 15..19 between them.
+    expect(rulesHit(lint(board([codeRef("c", "src/auth.ts", 12, 22)]), split))).toContain(
+      "unresolvable-citation",
+    );
+    // 2..5 crosses two util regions that meet with no gap: every line is captured.
+    expect(rulesHit(lint(board([codeRef("c", "src/util.ts", 2, 5)]), split))).not.toContain(
+      "unresolvable-citation",
+    );
   });
 
   it("resolves on the cited SIDE: a base-side citation never resolves against head regions", () => {
@@ -296,7 +323,7 @@ describe("unresolvable-citation (D5)", () => {
     expect(hit[0]?.message).toContain("no changed lines on the base side");
     const withBase = ctx({
       baseFiles: new Map([["src/auth.ts", 200]]),
-      regions: [...REGIONS, { path: "src/auth.ts", side: "base", start: 11, end: 11 }],
+      regions: [...REGIONS, { path: "src/auth.ts", side: "base", start: 11, end: 12 }],
     });
     expect(rulesHit(lint(board([base]), withBase))).not.toContain("unresolvable-citation");
   });
@@ -306,13 +333,30 @@ describe("unresolvable-citation (D5)", () => {
     const hit = rulesHit(lint(inverted, ctx()));
     expect(hit).toContain("citation-resolves");
     expect(hit).not.toContain("unresolvable-citation");
+    // 300..301 on a 200-line file is outside every region AND past the end of the file.
+    // One pointer — the overrun — not two telling the seat two different things.
+    const overrun = lint(board([codeRef("c", "src/auth.ts", 300, 301)]), ctx());
+    expect(overrun.filter((v) => v.ruleId === "citation-resolves")).toHaveLength(1);
+    expect(overrun.filter((v) => v.ruleId === "unresolvable-citation")).toEqual([]);
+    // Control: the same overrun on the BASE side is judged against the base inventory.
+    const baseOverrun = el("c", "code_ref", {
+      patchset_id: "ps-1",
+      path: "src/auth.ts",
+      side: "base",
+      start_line: 300,
+      end_line: 301,
+    });
+    const baseHits = lint(
+      board([baseOverrun]),
+      ctx({ baseFiles: new Map([["src/auth.ts", 200]]) }),
+    );
+    expect(baseHits.map((v) => v.ruleId).filter((r) => r.includes("citation"))).toEqual([
+      "citation-resolves",
+    ]);
   });
 
-  it("an absent region list is unchecked; an EMPTY one is a change with no lines to cite", () => {
+  it("an EMPTY region list is a change with no lines to cite (an absent one is a type error)", () => {
     const cited = board([codeRef("c", "src/auth.ts", 40, 41)]);
-    expect(rulesHit(lint(cited, ctx({ regions: undefined })))).not.toContain(
-      "unresolvable-citation",
-    );
     expect(rulesHit(lint(cited, ctx({ regions: [] })))).toContain("unresolvable-citation");
   });
 

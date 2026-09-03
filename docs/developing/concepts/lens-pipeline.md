@@ -180,10 +180,15 @@ and calls board regeneration through this runtime.
      numbering cannot drift from the file it claims to show (backticked
      identifiers and patchset ids are exempt);
    - **citation resolves** — every citation is a repository path plus a 1-based
-     line range on the new or the old side, and the daemon resolves it against a
-     changed region of the captured patchset; a range no changed region covers
-     comes back to the seat as an unresolvable-citation pointer carrying the
-     path and the range;
+     line range on the new or the old side, and the daemon resolves it against
+     the changed regions of the captured patchset with the same predicate the
+     citation reader uses: every cited line must sit inside a captured region on
+     the named side, so a range one line past a hunk, or spanning the gap between
+     two, comes back to the seat as an unresolvable-citation pointer carrying the
+     path, the range and the nearest changed range (a rename's base side answers
+     to either name; a truncated capture's tail counts as changed rather than
+     being claimed outside; a range past the end of the file is the
+     citation-resolves overrun pointer alone);
    - **element references resolve** — every schema-declared element reference
      names an element in that exact board, and the reference graph is acyclic so
      the host can create each target before its citer;

@@ -287,7 +287,7 @@ describe("C15 1.5 — runRound trigger over the assembled collation (fake ports)
   // The daemon builds the changed regions from the packet it already has; a board's
   // citation resolves by overlapping one on its own side. This drives that context as
   // `assembleRoundCollation` really assembles it — not a hand-built region list.
-  it("a citation outside the change reddens against the collation's own regions; one inside passes", () => {
+  it("a citation inside the collation's own regions passes; one past them reddens, naming the nearest range", () => {
     const collation = assembleRoundCollation({
       patchset: patchset(),
       dossier: [],
@@ -316,8 +316,8 @@ describe("C15 1.5 — runRound trigger over the assembled collation (fake ports)
           },
         ],
       }) as unknown as DraftBoard;
-    const outside = lint(citing(2, 2), { ...ctx, files: new Map([["src/a.ts", 40]]) });
-    expect(outside.filter((v) => v.ruleId === "unresolvable-citation")).toEqual([]);
+    const inside = lint(citing(2, 2), { ...ctx, files: new Map([["src/a.ts", 40]]) });
+    expect(inside.filter((v) => v.ruleId === "unresolvable-citation")).toEqual([]);
     const past = lint(citing(30, 31), { ...ctx, files: new Map([["src/a.ts", 40]]) });
     expect(past.map((v) => v.ruleId)).toContain("unresolvable-citation");
     expect(past.find((v) => v.ruleId === "unresolvable-citation")?.message).toContain(

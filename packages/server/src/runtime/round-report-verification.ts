@@ -133,7 +133,8 @@ function verifyCanonicalClassifiedRoundReport(
       "author",
       "title",
       "children",
-      ...(section.data.delta === undefined ? [] : ["delta"]),
+      // A delta mark travels with the basis it was keyed on (compose.ts `DELTA_MARK_BASIS`).
+      ...(section.data.delta === undefined ? [] : ["delta", "delta_basis"]),
     ])
   ) {
     throw new Error("Canonical round report section contains fields the host cannot emit.");

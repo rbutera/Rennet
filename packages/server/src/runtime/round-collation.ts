@@ -19,6 +19,7 @@ import {
   type LintContext,
   type LintTarget,
   type LoadedSnapshot,
+  REGION_OPEN_END,
   type RegisterLintContext,
 } from "@rennet/core";
 import {
@@ -42,41 +43,62 @@ import type { RoundDraftPlan, RoundInput, WorkerReturn } from "./rounds";
 
 /**
  * The patchset's changed regions (D5): one `ChangedRegion` per hunk per side that has
- * lines — the head side on the current path, the base side on the pre-image path (a
- * RENAMED file's `previousPath`, else the same path). A pure addition yields no base
- * region and a pure deletion no head region, so a citation on the wrong side of either
- * can never resolve. The hunk id does not survive into this shape. Pure.
+ * lines — the head side on the current path, the base side on the pre-image path. A
+ * RENAMED file's base side is emitted under BOTH its names (`previousPath` and `path`):
+ * the seat reads `git diff` and writes "the base side of src/new.ts" as naturally as
+ * "src/old.ts", and `patchset.readSpan` already serves either. A pure addition yields no
+ * base region and a pure deletion no head region, so a citation on the wrong side of
+ * either can never resolve. A file whose capture was truncated (`lossy`) gets one
+ * open-ended region per side from its last parsed hunk's end: the seat reads the whole
+ * diff and may cite lines past the cut, and the daemon must not claim as "outside the
+ * change" lines it never captured. The hunk id does not survive into this shape. Pure.
  */
 export function changedRegions(
   hunks: HunkIndex,
   files: readonly (DeltaPacketFile | PatchFile)[],
 ): ChangedRegion[] {
-  const previousPathByPath = new Map<string, string>();
-  for (const file of files) {
-    if (file.status === "renamed" && file.previousPath !== undefined) {
-      previousPathByPath.set(file.path, file.previousPath);
-    }
-  }
-  return hunks.hunks.flatMap((hunk): ChangedRegion[] => {
-    const regions: ChangedRegion[] = [];
+  const fileByPath = new Map(files.map((file) => [file.path, file]));
+  const basePathsFor = (path: string): readonly string[] => {
+    const file = fileByPath.get(path);
+    return file?.status === "renamed" &&
+      file.previousPath !== undefined &&
+      file.previousPath !== path
+      ? [file.previousPath, path]
+      : [path];
+  };
+  const regions: ChangedRegion[] = [];
+  const lossyEnds = new Map<string, { head: number; base: number }>();
+  for (const hunk of hunks.hunks) {
+    const headEnd = hunk.spans.new.start + hunk.spans.new.lines - 1;
+    const baseEnd = hunk.spans.old.start + hunk.spans.old.lines - 1;
     if (hunk.spans.new.lines > 0) {
-      regions.push({
-        path: hunk.path,
-        side: "head",
-        start: hunk.spans.new.start,
-        end: hunk.spans.new.start + hunk.spans.new.lines - 1,
-      });
+      regions.push({ path: hunk.path, side: "head", start: hunk.spans.new.start, end: headEnd });
     }
     if (hunk.spans.old.lines > 0) {
-      regions.push({
-        path: previousPathByPath.get(hunk.path) ?? hunk.path,
-        side: "base",
-        start: hunk.spans.old.start,
-        end: hunk.spans.old.start + hunk.spans.old.lines - 1,
+      for (const path of basePathsFor(hunk.path)) {
+        regions.push({ path, side: "base", start: hunk.spans.old.start, end: baseEnd });
+      }
+    }
+    if (hunk.lossy) {
+      const prior = lossyEnds.get(hunk.path) ?? { head: 0, base: 0 };
+      lossyEnds.set(hunk.path, {
+        head: Math.max(prior.head, headEnd),
+        base: Math.max(prior.base, baseEnd),
       });
     }
-    return regions;
-  });
+  }
+  for (const [path, end] of lossyEnds) {
+    const status = fileByPath.get(path)?.status;
+    if (status !== "deleted") {
+      regions.push({ path, side: "head", start: end.head + 1, end: REGION_OPEN_END });
+    }
+    if (status !== "added") {
+      for (const basePath of basePathsFor(path)) {
+        regions.push({ path: basePath, side: "base", start: end.base + 1, end: REGION_OPEN_END });
+      }
+    }
+  }
+  return regions;
 }
 
 /**
@@ -119,6 +141,8 @@ function baseFileInventory(files: readonly PatchFile[]): Map<string, number> {
       maxLine = Math.max(maxLine, start + Math.max(lines, 1) - 1);
     }
     inventory.set(basePath, maxLine);
+    // A rename's base side answers to either name, as its regions and the reader do.
+    if (basePath !== file.path) inventory.set(file.path, maxLine);
   }
   return inventory;
 }
