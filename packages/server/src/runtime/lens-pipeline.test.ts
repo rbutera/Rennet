@@ -4087,7 +4087,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     // The council's claude-only table: the deep reading-surface lenses on opus, noise on haiku, flagged on sonnet.
     expect(modelFor("prompts/design.md")).toBe("opus-4.8");
     expect(modelFor("prompts/noise.md")).toBe("haiku");
-    expect(modelFor("prompts/flagged.md")).toBe("sonnet-5");
+    expect(modelFor("prompts/flagged.md")).toBe("opus-4.8"); // Opus, not Sonnet (Rai, 2026-09-03)
   });
 
   it("runs the Flagged lens as a dual seat under both harnesses — cross-model concurrence", async () => {
@@ -4160,7 +4160,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     ]);
     // Each seat was forced to its own provider's flagged pick.
     expect(
-      claudeCaptures.some((c) => c.prompt?.includes("flagged.md") && c.model === "sonnet-5"),
+      claudeCaptures.some((c) => c.prompt?.includes("flagged.md") && c.model === "opus-4.8"),
     ).toBe(true);
     expect(
       codexCaptures.some((c) => c.prompt?.includes("flagged.md") && c.model === "gpt-5.6-sol"),
