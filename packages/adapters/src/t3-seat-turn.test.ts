@@ -22,12 +22,16 @@ const settled = (over: Partial<T3SettledTurn> = {}): T3SettledTurn => ({
 
 function stubs(outcomes: T3SettledTurn[]) {
   const startTurn = vi.fn(
-    async (_input: { threadId: string; text: string; outputSchema?: unknown }) => undefined,
+    async (input: { threadId: string; text: string; outputSchema?: unknown }) => void input,
   );
   let call = 0;
   const client = {
     startTurn,
-    waitForTurnSettled: vi.fn(async () => outcomes[Math.min(call++, outcomes.length - 1)]!),
+    waitForTurnSettled: vi.fn(async () => {
+      const outcome = outcomes[Math.min(call++, outcomes.length - 1)];
+      if (outcome === undefined) throw new Error("the test supplied no settled turn");
+      return outcome;
+    }),
   };
   const threadFor = vi.fn(async () => ({ threadId: "t-design", projectId: "p1" }));
   const onThread = vi.fn();
