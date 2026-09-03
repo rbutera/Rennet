@@ -29,7 +29,7 @@ A client can reconstruct durable state by querying the daemon. Push frames carry
 | Durable review changes | Commands and append-only events | Transactions remain replayable and inspectable after restart. |
 | Command progress | `onProgress(commandId)` | The server assigns order and sends terminal state that agrees with the command result. |
 | Project-detail progress | `onProjectDetailProgress(commandId)` | Each completed forge repository advances the pull-request fetch count for one project-detail request. |
-| Review conversation | `onAskStream(reviewId)` | The server broadcasts deltas by review and the client filters them by subscription. |
+| Review conversation | T3's own thread subscription | The conversation is a T3 Code thread; its client runtime owns the subscription, and Rennet carries no parallel channel for it. |
 | Connection state | `ConnectionSupervisor.subscribe` | Each client receives reachability changes from one supervisor. |
 | Project-detail repository fetches | `mapLimit(..., 4, ...)` | At most four forge repositories fetch pull requests at once. A sibling semaphore (`MAX_CONCURRENT_LIST_FETCHES`) bounds pull-request list fetches the same way. |
 
@@ -45,7 +45,7 @@ Every push path has these properties:
 4. One fan-out point per process.
 5. A query or reattach path for state that must survive a disconnect.
 
-The server owns progress terminal events, so the final pushed state agrees with the resolved command. It keeps a bounded progress replay suffix for a reconnecting client. Ask deltas broadcast to every authorized socket subscribed to the review.
+The server owns progress terminal events, so the final pushed state agrees with the resolved command. It keeps a bounded progress replay suffix for a reconnecting client.
 
 Project-detail progress uses `prs-start` followed by one `repo-prs` event for
 each completed forge repository. This channel has no server replay buffer or
@@ -54,14 +54,14 @@ client keeps the registration across bridge replacement so later frames still
 reach the same listener, but it does not invent missed counts.
 
 `ConnectionSupervisor` keeps `onProgress`, `onProjectDetailProgress`,
-`onAskStream`, and attention registrations above the current socket. After
-reconnect, it attaches those listeners to the new bridge and runs
-`review.reattach` for subscribed reviews. Components do not create transports or
-retry loops.
+`onAskProjection`, `onRoundProgress`, and attention registrations above the
+current socket. After reconnect, it attaches those listeners to the new bridge
+and re-reads `ask.read` for subscribed reviews. Components do not create
+transports or retry loops.
 
 ## Persistence boundary
 
-Streams never replace the event store. A client that reconnects reads durable review state, then resumes eligible subscriptions. Transient model prose can continue over the ask stream, while persisted conversation and review events remain the restart boundary.
+Streams never replace the event store. A client that reconnects reads durable review state, then resumes eligible subscriptions. Persisted review events remain the restart boundary; a conversation's own durability belongs to its T3 thread.
 
 ## Where to go next
 

@@ -5,7 +5,6 @@
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as SecureStore from "expo-secure-store";
-import { AskDraftStore } from "./ask-draft-store";
 import { DaemonListStore } from "./daemon-list-store";
 import { NotificationPrefsStore } from "./notification-prefs-store";
 import { AsyncReplicaStore } from "./replica-store";
@@ -39,14 +38,6 @@ export function createDaemonListStore(): DaemonListStore {
 /** The persisted notification-preferences store over async storage. */
 export function createNotificationPrefsStore(): NotificationPrefsStore {
   return new NotificationPrefsStore({
-    getItem: (key) => AsyncStorage.getItem(key),
-    setItem: (key, value) => AsyncStorage.setItem(key, value),
-  });
-}
-
-/** The per-review ask-draft store over async storage (the free-text direction, no secrets). */
-export function createAskDraftStore(): AskDraftStore {
-  return new AskDraftStore({
     getItem: (key) => AsyncStorage.getItem(key),
     setItem: (key, value) => AsyncStorage.setItem(key, value),
   });

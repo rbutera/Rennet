@@ -131,14 +131,12 @@ binding (planned).
 
 ## Selection-aware questions
 
-`review.ask` is a live server operation. The UI sends the current review
-selection through the session protocol. `packages/server/src/review-ask-live.ts`
-resolves that selection against the immutable patchset, assembles bounded context,
-and streams the answer back to subscribed clients.
+Asking about a span is `chat.t3Send`: the client composes the question plus the
+cited excerpt, bounded at the call site, and the daemon starts one turn on the
+review's bound T3 thread. The answer streams in T3's own view.
 
-Selection is an address, not prompt prose. The server resolves it to trusted
-review state before constructing model context. This keeps a reconnecting desktop,
-browser, or mobile client on the same review identity.
+The thread is keyed on the review and its REPOSITORY ROOT, never a project id, so
+two repositories sharing a branch name never share a conversation.
 
 ## Context budget
 

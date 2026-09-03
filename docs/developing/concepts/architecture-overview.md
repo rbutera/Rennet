@@ -198,8 +198,7 @@ redrafted and stamped.
 command implementations to the dispatch map in `packages/server/src/dispatch/`
 (one module per command family, bound from the command registry), which validates
 and routes protocol commands. This package also owns live orchestration, symbol
-lookup, projected connections, ask streams, review reattachment, and daemon
-lifecycle.
+lookup, projected connections, the owned T3 Code sidecar, and daemon lifecycle.
 
 `@rennet/core` contains portable review logic, document validation, scheduling,
 lineage, and state folds. `@rennet/adapters` implements
@@ -232,17 +231,15 @@ review folds its event history into the current projection. Conversation files
 are separate so completed messages and interrupted turns survive client or
 desktop restarts.
 
-## Live turns and reattachment
+## Live turns
 
-The server registers active model turns in `LiveTurnRegistry`. A reconnecting
-client calls `review.reattach` and receives the durable thread plus any live
-turn, including the body accumulated so far. A streaming placeholder recovered
-from disk is marked interrupted unless the registry confirms that the turn is
-still active. Completing a turn replaces its placeholder with the completed
-message.
+A session's conversation is a thread in the owned T3 Code sidecar, so the sidecar
+owns its persistence, its live tail and its reattachment. A reconnecting client
+re-subscribes to the thread through T3's own client runtime; Rennet keeps no
+parallel transcript of it.
 
-Daemon shutdown aborts all registered live turns. Closing a client or desktop
-window does not stop a daemon that remains resident.
+Closing a client or desktop window does not stop a daemon that remains resident.
+Daemon shutdown stops the sidecar it spawned.
 
 ## Where to go next
 

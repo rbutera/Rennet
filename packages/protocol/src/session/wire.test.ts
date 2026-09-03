@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  askStreamEventFrameSchema,
   attentionEventFrameSchema,
   attentionItemSchema,
   checkProtocolCompatibility,
@@ -45,11 +44,6 @@ const progressEvent = {
   commandId: "cmd1",
   event: { kind: "done", repos: [] },
 } as const;
-const askStreamEvent = {
-  type: "askStreamEvent",
-  reviewId: "rev1",
-  event: { kind: "ask-delta", threadId: "t1", turnId: "u1", channel: "orchestrator", delta: "hi" },
-} as const;
 const presence = {
   type: "presence",
   focused: true,
@@ -81,7 +75,6 @@ const frames: [string, StrictCheckable, Record<string, unknown>][] = [
   ["response", responseFrameSchema, response],
   ["rpcError", rpcErrorFrameSchema, rpcError],
   ["progressEvent", progressEventFrameSchema, progressEvent],
-  ["askStreamEvent", askStreamEventFrameSchema, askStreamEvent],
   ["presence", presenceFrameSchema, presence],
   ["attentionEvent", attentionEventFrameSchema, attentionEvent],
 ];
@@ -133,11 +126,21 @@ describe("session frames", () => {
         event: { kind: "not-a-real-kind" },
       }),
     ).toThrow();
+    // Absence (t3-lens-threads 4.2): the ask-stream frame family is gone with the
+    // orchestrator chat, so its `type` is not a frame at all any more — the union rejects it
+    // on the discriminator rather than on a bad payload. LOAD-BEARING: re-adding
+    // `askStreamEventFrameSchema` to the union makes this well-formed frame parse.
     expect(() =>
       parseSessionFrame({
         type: "askStreamEvent",
         reviewId: "r",
-        event: { kind: "not-a-real-kind" },
+        event: {
+          kind: "ask-delta",
+          threadId: "t",
+          turnId: "u",
+          channel: "orchestrator",
+          delta: "x",
+        },
       }),
     ).toThrow();
   });

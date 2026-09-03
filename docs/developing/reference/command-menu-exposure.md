@@ -70,9 +70,6 @@ still goes through the one seam; only the label is hand-written.
 | `review.checkFreshness` | Read the board drives for the review it is showing. |
 | `review.regenerate` | Needs the review and generation being regenerated. |
 | `review.uiEvidence` | Needs the review and the evidence the surface captured. |
-| `review.ask` | Needs the review, the ask, and a stream to narrate into. |
-| `review.reattach` | Read the chat route drives to re-attach a live run. |
-| `review.interrupt` | Needs the run it interrupts; only the surface showing it knows which. |
 | `review.refine` | Needs the review and the refinement instruction. |
 | `review.draftPrBody` | Needs the review, and its draft must be displayed. |
 | `review.deltaDigest` | Needs the generation pair being compared. |
@@ -105,6 +102,7 @@ still goes through the one seam; only the label is hand-written.
 | `daemon.status` | Read the environments surface drives for itself. |
 | `daemon.reconnect` | Needs the host being reconnected. |
 | `daemon.update` | Needs the host being updated. |
+| `chat.t3Send` | Needs the review and the composed question; the answer appears in the thread, not as command output. |
 | `chat.t3Session` | Brokers T3 sidecar access to the chat slot; nothing for a person to pick. |
 
 ### github

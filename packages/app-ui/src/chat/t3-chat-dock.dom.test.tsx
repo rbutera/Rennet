@@ -10,10 +10,11 @@ import { emptySettings, frontDoorHandlers } from "../test/fixtures/front-door";
 import { MemoryBridge } from "../test/memory-bridge";
 import { T3ChatSlotProvider, type T3NativeChatProps, type T3ThreadViewProps } from "./t3-chat-slot";
 
-// The chat slot (t3-lens-threads 4.1): there is no engine choice left — every session's
-// slot is the T3 thread. The project row below carries NO engine pref, which is exactly
-// the fixture that used to yield Rennet's own dock, so "it mounts T3 anyway" is the
-// converted proof that the switch is gone rather than merely defaulting the other way.
+// The chat slot (t3-lens-threads 4.1 and 4.4): there is no engine choice and no rung-one
+// <webview> left — every session's slot is the host-mounted native T3 thread view. The
+// project row below carries NO engine pref, which is exactly the fixture that used to
+// yield Rennet's own dock, so mounting T3 anyway is the converted proof that the switch
+// is gone rather than a default flipped the other way.
 //
 // And which THREAD the rung-two slot shows (t3-lens-threads 3.4): the review's own, or
 // the lens seat the store's `lensThread` names, with a control back to the session.
@@ -93,7 +94,6 @@ function mountDock(slot?: {
         wsUrl: "ws://127.0.0.1:43117/ws",
         accessToken: "bearer-never-in-the-guest",
         environmentId: "env-1",
-        pairingUrl: "http://127.0.0.1:43117/pair#token=PAIR",
         threadId: "thread-1",
         threadUrl: "http://127.0.0.1:43117/env-1/thread-1",
       };
@@ -132,20 +132,30 @@ function mountWithSlot() {
 }
 
 describe("the chat slot is always the T3 thread", () => {
-  it("mounts the rung-one T3 view at the brokered URLs, with no engine pref set", async () => {
+  // The rung-one <webview> is deleted (t3-lens-threads 4.4). This is the case that used to
+  // render it: the daemon answers, no host provides the native components, and the slot has
+  // to show SOMETHING. LOAD-BEARING on the guest never returning — restoring the <webview>
+  // branch reddens both the honest-message assertion and the `t3-chat-view` miss. It is NOT
+  // load-bearing on the pairing token: `pairingUrl` is off the wire schema entirely, so the
+  // fixture below cannot even offer one.
+  it("shows an honest line, and no <webview>, when the host mounts nothing", async () => {
     const { getByTestId, asks } = mountDock();
     const dock = getByTestId("chat-dock-slot");
-    await waitFor(() => expect(dock.querySelector('[data-slot="t3-chat-view"]')).not.toBeNull());
-    const view = dock.querySelector('[data-slot="t3-chat-view"]');
-    expect(view?.getAttribute("src")).toBe("http://127.0.0.1:43117/pair#token=PAIR");
-    expect(view?.getAttribute("data-thread-url")).toBe("http://127.0.0.1:43117/env-1/thread-1");
+    await waitFor(() =>
+      expect(dock.querySelector('[data-slot="t3-chat-unmounted"]')).not.toBeNull(),
+    );
+    expect(dock.querySelector('[data-slot="t3-chat-unmounted"]')?.textContent).toContain(
+      "does not mount the chat view",
+    );
+    expect(dock.querySelector('[data-slot="t3-chat-view"]')).toBeNull();
+    expect(dock.querySelector("webview")).toBeNull();
     // The ask carried the review, so the daemon bound this review's thread.
     expect(asks).toEqual([{ reviewId: "review-1" }]);
-    // The bearer is not written into the guest's attributes.
+    // The bearer never reaches the DOM.
     expect(dock.innerHTML).not.toContain("bearer-never-in-the-guest");
   });
 
-  it("mounts the host-provided native view (rung two) with the session, and no <webview>", async () => {
+  it("mounts the host-provided native view with the session, and no <webview>", async () => {
     const { getByTestId, seen } = mountWithSlot();
     const dock = getByTestId("chat-dock-slot");
     await waitFor(() => expect(dock.querySelector('[data-slot="t3-native-stub"]')).not.toBeNull());

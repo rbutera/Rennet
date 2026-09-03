@@ -100,7 +100,7 @@ does not require changing the `serverInfo` schema.
 |---|---|
 | `serverRequests` | The daemon can send `serverRequest` and `serverRequestResolved`, and accepts `serverResponse`. Current daemons always advertise it. |
 | `attention` | The daemon accepts `presence`, publishes `attentionEvent`, and supports push registration and attention acknowledgement. It is advertised only when the attention system is composed. |
-| `act` | The daemon implements `review.interrupt` and `publish.compose`. It is advertised only when those acting seams are composed. |
+| `act` | The daemon implements `publish.compose`. It is advertised only when that acting seam is composed. |
 
 The client does not send feature-specific frames or commands when the daemon did
 not advertise the matching key. A client without `act` disables Stop and publish

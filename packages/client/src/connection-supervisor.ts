@@ -6,14 +6,14 @@
 //   1. A reachability STATE MACHINE (`idle/connecting/online/offline/error`) every shell
 //      can paint honestly — `online` only after the handshake, `error` terminal on a
 //      rejected handshake (never a silent retry loop).
-//   2. The RECONNECT loop (capped backoff) and the RESUBSCRIBE REGISTRY: `onAskStream`
+//   2. The RECONNECT loop (capped backoff) and the RESUBSCRIBE REGISTRY: `onAskProjection`
 //      /`onProgress` registrations live ABOVE the socket, so a fresh bridge inherits every
 //      live subscription and a stream consumer created before an interruption keeps
 //      receiving after it — no re-subscribe from the consumer (issue #389, client half).
 //   3. The STORE seams (token, replica) and the PRESENCE seam — platform differences live
 //      in the injected stores, not in the runtime, which stays free of DOM/Node globals.
 //
-// The supervisor IS a `RennetBridge` (invoke/onProgress/onAskStream) so a shell drops it
+// The supervisor IS a `RennetBridge` (invoke/onProgress/onAskProjection) so a shell drops it
 // in wherever a bridge went before; it ADDS `state`/`subscribe`/`setPresence`/`replica`.
 
 import type {
@@ -25,7 +25,6 @@ import type {
   ProjectDetailProgressEvent,
   ProjectProcessEvent,
   RennetBridge,
-  ReviewAskStreamEvent,
   RoundEvent,
 } from "@rennet/protocol";
 import { ACT_FEATURE, ATTENTION_FEATURE } from "@rennet/protocol";
@@ -43,7 +42,6 @@ export interface SupervisedBridge {
     commandId: string,
     listener: (event: ProjectDetailProgressEvent) => void,
   ): () => void;
-  onAskStream(reviewId: string, listener: (event: ReviewAskStreamEvent) => void): () => void;
   onAskProjection(reviewId: string, listener: (projection: AskProjection) => void): () => void;
   /** Subscribe to a review's live round progress (C15 3.1); returns an unsubscribe. */
   onRoundProgress(reviewId: string, listener: (event: RoundEvent) => void): () => void;
@@ -114,15 +112,12 @@ export interface ConnectionSupervisorOptions {
   /** Reconnect backoff ceiling in ms (default 8000). */
   readonly maxBackoffMs?: number;
   /**
-   * Re-issue `review.reattach` for every subscribed review on `online` (default true), so
-   * a surviving turn's persisted state reconciles after a reconnect. Live deltas resume via
-   * the daemon's ask-stream broadcast (issue #389 server half, landed with this change);
-   * this reattach recovers what streamed while the socket was down.
+   * Re-read the durable ask projection for every subscribed review on `online` (default
+   * true), so an accepted write made while the socket was down reconciles after a reconnect.
    */
   readonly reconcileOnReconnect?: boolean;
 }
 
-type AskListener = (event: ReviewAskStreamEvent) => void;
 type AskProjectionListener = (projection: AskProjection) => void;
 type ProgressListener = (event: ProjectProcessEvent) => void;
 type DetailProgressListener = (event: ProjectDetailProgressEvent) => void;
@@ -156,7 +151,6 @@ export class ConnectionSupervisor implements RennetBridge {
   #replica: StoredReplica | undefined;
 
   readonly #statusListeners = new Set<(status: ConnectionStatus) => void>();
-  readonly #askRegistry = new Map<string, Set<AskListener>>();
   readonly #askProjectionRegistry = new Map<string, Set<AskProjectionListener>>();
   readonly #askProjectionVersions = new Map<string, number>();
   readonly #progressRegistry = new Map<string, Set<ProgressListener>>();
@@ -165,7 +159,6 @@ export class ConnectionSupervisor implements RennetBridge {
   // with it). Keyed by [registry key][listener], NOT by listener alone: one callback
   // subscribed to two reviews holds a distinct disposer per review, so unsubscribing it
   // from review A never loses (or wrongly detaches) its live binding on review B.
-  #askBridgeUnsub = new Map<string, Map<AskListener, () => void>>();
   #askProjectionBridgeUnsub = new Map<string, Map<AskProjectionListener, () => void>>();
   #progressBridgeUnsub = new Map<string, Map<ProgressListener, () => void>>();
   readonly #detailProgressRegistry = new Map<string, Set<DetailProgressListener>>();
@@ -277,12 +270,6 @@ export class ConnectionSupervisor implements RennetBridge {
 
   // ── Resubscribe registry (issue #389, client half) ────────────────────────
 
-  onAskStream(reviewId: string, listener: AskListener): () => void {
-    return this.#register(this.#askRegistry, this.#askBridgeUnsub, reviewId, listener, (bridge) =>
-      bridge.onAskStream(reviewId, listener),
-    );
-  }
-
   onAskProjection(reviewId: string, listener: AskProjectionListener): () => void {
     return this.#register(
       this.#askProjectionRegistry,
@@ -309,7 +296,7 @@ export class ConnectionSupervisor implements RennetBridge {
 
   /**
    * Subscribe to a review's live ROUND progress (C15 3.1). Registry-backed like
-   * `onAskStream`: a round outlives any single socket, so a reconnect mid-round re-attaches
+   * `onAskProjection`: a round outlives any single socket, so a reconnect mid-round re-attaches
    * the listener to the fresh bridge and the live feed resumes (the events missed while the
    * socket was down come back through the `session.roundEvents` catch-up read).
    */
@@ -344,7 +331,7 @@ export class ConnectionSupervisor implements RennetBridge {
   }
 
   /**
-   * Subscribe to daemon attention events (#383 batch). Registry-backed like `onAskStream`, so a
+   * Subscribe to daemon attention events (#383 batch). Registry-backed like `onAskProjection`, so a
    * reconnect re-attaches the listener to the fresh bridge and the connect-time attention replay
    * lands on it — a client's needs-you set stays live across reconnects, not just the first socket.
    */
@@ -387,7 +374,6 @@ export class ConnectionSupervisor implements RennetBridge {
 
   /** Re-attach every registered listener to a freshly created bridge (the resubscribe). */
   #wireRegistry(bridge: SupervisedBridge): void {
-    this.#askBridgeUnsub = new Map();
     this.#askProjectionBridgeUnsub = new Map();
     this.#progressBridgeUnsub = new Map();
     this.#detailProgressBridgeUnsub = new Map();
@@ -418,11 +404,6 @@ export class ConnectionSupervisor implements RennetBridge {
         mapSet(this.#attentionBridgeUnsub, key, listener, bridge.onAttention(listener));
       }
     }
-    for (const [reviewId, listeners] of this.#askRegistry) {
-      for (const listener of listeners) {
-        mapSet(this.#askBridgeUnsub, reviewId, listener, bridge.onAskStream(reviewId, listener));
-      }
-    }
     for (const [reviewId, listeners] of this.#askProjectionRegistry) {
       for (const listener of listeners) {
         mapSet(
@@ -446,19 +427,13 @@ export class ConnectionSupervisor implements RennetBridge {
   }
 
   /**
-   * Reconcile after `online`: re-issue `review.reattach` for every subscribed review so a
-   * surviving turn's persisted state comes back. Best-effort and fire-and-forget — a
-   * failure just leaves the last painted state until the next event. (Live deltas resume
-   * on their own via the daemon's #389 ask-stream broadcast.)
+   * Reconcile after `online`: re-read the durable ask projection for every subscribed review
+   * so a write accepted while the socket was down comes back. Best-effort and
+   * fire-and-forget — a failure just leaves the last painted state until the next event.
    */
   #reconcile(): void {
     const bridge = this.#bridge;
     if (!bridge) return;
-    for (const reviewId of this.#askRegistry.keys()) {
-      void bridge
-        .invoke("review.reattach", { commandId: crypto.randomUUID(), reviewId })
-        .catch(() => undefined);
-    }
     for (const reviewId of this.#askProjectionRegistry.keys()) {
       const version = this.#askProjectionVersions.get(reviewId) ?? 0;
       const listeners = [...(this.#askProjectionRegistry.get(reviewId) ?? [])];

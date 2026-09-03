@@ -44,7 +44,6 @@ function findLeaks(frames: string[], needles: string[]): string[] {
 describe("remote-surface e2e (#380)", () => {
   const REPO_ROOT = mkdtempSync(join(tmpdir(), "rennet-remote-repo-"));
   const HOME = mkdtempSync(join(tmpdir(), "rennet-remote-home-"));
-  const ASK_STREAM_ANCHOR = "src/app.ts";
   // An absolute path under NEITHER the fixture repo root NOR the home dir — the shape the
   // blanket root/home scrub cannot see, so only the transcript's own redaction catches it.
   const STRAY_PATH = "/etc/hosts/passwd";
@@ -189,9 +188,6 @@ describe("remote-surface e2e (#380)", () => {
               },
             ],
           };
-        case "review.ask":
-          ctx?.emitAskStream?.({ kind: "ask-focus", anchor: ASK_STREAM_ANCHOR });
-          return {};
         case "harness.detect": {
           const error = new Error(`failed to inspect ${REPO_ROOT}/broken`);
           Object.assign(error, { details: { path: `${REPO_ROOT}/details` } });
@@ -385,20 +381,6 @@ describe("remote-surface e2e (#380)", () => {
       path: "src/app.ts",
       disposition: null,
       body: "",
-    });
-
-    expect(isAbsolute(ASK_STREAM_ANCHOR)).toBe(false);
-    expect(win32.isAbsolute(ASK_STREAM_ANCHOR)).toBe(false);
-    await paired.request("review.ask", {
-      commandId: "ask",
-      reviewId: "rev-1",
-      question: "what changed?",
-    });
-    const askStreamFrame = paired.frames
-      .map((frame) => JSON.parse(frame))
-      .find((frame) => frame.type === "askStreamEvent");
-    expect(askStreamFrame).toMatchObject({
-      event: { kind: "ask-focus", anchor: ASK_STREAM_ANCHOR },
     });
 
     // The display transcript over the PROJECTED connection. This is the half that must not

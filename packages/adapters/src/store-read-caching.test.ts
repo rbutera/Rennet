@@ -2,7 +2,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { bindTarget, mintSession } from "@rennet/core";
-import type { AskEventBody, ConversationAnchorWire, SessionTranscriptRow } from "@rennet/protocol";
+import type { AskEventBody, SessionTranscriptRow } from "@rennet/protocol";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
@@ -39,7 +39,6 @@ vi.mock("node:fs", async (importOriginal) => {
 });
 
 const { AskLogStore } = await import("./ask-log-store");
-const { FileThreadStore } = await import("./file-thread-store");
 const { TranscriptStore } = await import("./transcript-store");
 const { SessionStore } = await import("./session-store");
 
@@ -127,61 +126,6 @@ describe("AskLogStore read caching", () => {
 
     writeFileSync(join(dir, "s1.json"), "{ not json");
     expect(() => store.read("s1")).toThrow(/unreadable\/corrupt/);
-  });
-});
-
-const ANCHOR: ConversationAnchorWire = {
-  kind: "range",
-  label: "src/a.ts:1-2",
-  key: "range|src/a.ts|additions|1|2",
-  side: "additions",
-};
-
-describe("FileThreadStore read caching", () => {
-  it("charges one read for the cold file and none for later putMessage calls", () => {
-    const dir = tmpDir("thread-cache-");
-    const store = new FileThreadStore(dir);
-
-    expect(readsDuring(() => store.upsertThread("r1", { threadId: "t1", anchor: ANCHOR }))).toBe(1);
-
-    // Four messages per turn was the measured shape; ten turns, no further reads.
-    const warm = readsDuring(() => {
-      for (let turn = 0; turn < 10; turn++) {
-        for (let part = 0; part < 4; part++) {
-          store.putMessage("r1", "t1", {
-            id: `m${turn}-${part}`,
-            author: "you",
-            body: `b${turn}-${part}`,
-          });
-        }
-        store.loadThreads("r1");
-      }
-    });
-    expect(warm).toBe(0);
-    expect(store.loadThreads("r1")[0]?.messages).toHaveLength(40);
-  });
-
-  it("still reads a streaming message back as interrupted from the memo", () => {
-    // The crash-recovery transform is a property of READING, not of parsing: it has to
-    // survive the cache, or a process that wrote a placeholder would read it back live.
-    const dir = tmpDir("thread-recover-");
-    const store = new FileThreadStore(dir);
-    store.upsertThread("r1", { threadId: "t1", anchor: ANCHOR });
-    store.putMessage("r1", "t1", { id: "m1", author: "harness", body: "", status: "streaming" });
-
-    expect(readsDuring(() => void store.loadThreads("r1"))).toBe(0);
-    expect(store.loadThreads("r1")[0]?.messages[0]?.status).toBe("interrupted");
-  });
-
-  it("serves a fresh instance from disk (cold start)", () => {
-    const dir = tmpDir("thread-cold-");
-    const first = new FileThreadStore(dir);
-    first.upsertThread("r1", { threadId: "t1", anchor: ANCHOR });
-    first.putMessage("r1", "t1", { id: "m1", author: "you", body: "hi" });
-
-    const reopened = new FileThreadStore(dir);
-    expect(readsDuring(() => void reopened.loadThreads("r1"))).toBe(1);
-    expect(reopened.loadThreads("r1")[0]?.messages[0]?.body).toBe("hi");
   });
 });
 

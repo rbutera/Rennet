@@ -1,13 +1,7 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-  commands,
-  projectProcessEventSchema,
-  type ReviewAskStreamEvent,
-  RoundEventSchema,
-  reviewAskStreamEventSchema,
-} from "@rennet/protocol";
+import { commands, projectProcessEventSchema, RoundEventSchema } from "@rennet/protocol";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { z } from "zod";
 import {
@@ -16,7 +10,6 @@ import {
   INBOUND_HOST_PATH_FIELDS,
   INBOUND_REPO_RELATIVE_PATH_FIELDS,
   ProjectionResolveError,
-  projectAskStreamEvent,
   projectBoardEvent,
   projectBoardProjection,
   projectCommandOutput,
@@ -268,61 +261,6 @@ describe("outbound structural projection", () => {
     // the stray path, which is exactly why the branch has to exist.
     const other = JSON.stringify(projectCommandOutput("session.rounds", rawTranscript, ctx));
     expect(other).toContain("/etc/hosts/passwd");
-  });
-
-  it("projects structured ask-state transcript rows without changing prose-only stream events", () => {
-    const state = {
-      kind: "ask-state",
-      threadId: "thread-1",
-      turnId: "turn-1",
-      channel: "orchestrator",
-      rows: rawTranscript.rows,
-    } as ReviewAskStreamEvent;
-    const projected = JSON.stringify(projectAskStreamEvent(state, ctx));
-    expect(projected).not.toContain(REPO);
-    expect(projected).not.toContain("/etc/hosts/passwd");
-    expect(projected).toContain("<rennet>/src/a.ts");
-    expect(projected).toContain("<path>");
-
-    const delta = {
-      kind: "ask-delta",
-      threadId: "thread-1",
-      turnId: "turn-1",
-      channel: "orchestrator",
-      delta: `/model-authored/${REPO}`,
-    } as ReviewAskStreamEvent;
-    expect(projectAskStreamEvent(delta, ctx)).toBe(delta);
-  });
-
-  it("projects raw transcript rows nested under review reattach", () => {
-    const out = projectCommandOutput(
-      "review.reattach",
-      {
-        threads: [
-          {
-            threadId: "thread-1",
-            anchor: { kind: "fragment", label: "conversation", key: "thread-1" },
-            messages: [{ id: "turn-1", author: "harness", body: "done", rows: rawTranscript.rows }],
-          },
-        ],
-        inFlight: [
-          {
-            threadId: "thread-1",
-            turnId: "turn-2",
-            channel: "orchestrator",
-            model: "harness",
-            bodySoFar: "",
-            rows: rawTranscript.rows,
-          },
-        ],
-      },
-      ctx,
-    );
-    const serialized = JSON.stringify(out);
-    expect(serialized).not.toContain(REPO);
-    expect(serialized).not.toContain("/etc/hosts/passwd");
-    expect(serialized).toContain("<rennet>/src/a.ts");
-    expect(serialized).toContain("<path>");
   });
 
   it("projects a project list output", () => {
@@ -798,8 +736,6 @@ const PATH_FIELD_CLASSIFICATIONS: Readonly<Record<string, PathClassification>> =
     "flagged.adjudication.output.review.uiVerification.screenshots.path",
     "flagged.adjudication.output.review.blockingStates.path",
     "review.uiEvidence.input.path",
-    "review.ask.input.anchor.path",
-    "review.reattach.output.threads.anchor.path",
     "review.refine.input.path",
     "review.draftPrBody.input.dispositions.path",
     "review.symbolLookup.output.definition.sites.path",
@@ -866,12 +802,6 @@ const PATH_FIELD_CLASSIFICATIONS: Readonly<Record<string, PathClassification>> =
     // treatment as the free-text a projected `rpcError` carries — the row content is harness text.
     "session.transcript.output.rows.blocks.path",
     "session.transcript.output.rows.body.path",
-    "askStreamEvent.rows.blocks.path",
-    "askStreamEvent.rows.body.path",
-    "review.reattach.output.inFlight.rows.blocks.path",
-    "review.reattach.output.inFlight.rows.body.path",
-    "review.reattach.output.threads.messages.rows.blocks.path",
-    "review.reattach.output.threads.messages.rows.body.path",
   ]),
   ...classified("repo-relative", [
     // The lens-board read (C18): a board's `code_ref` elements cite the CAPTURED patchset by
@@ -910,11 +840,9 @@ describe("recursive path-field coverage guard", () => {
     }
     collectPathFields(projectProcessEventSchema, "progressEvent", found);
     collectPathFields(RoundEventSchema, "progressEvent", found);
-    collectPathFields(reviewAskStreamEventSchema, "askStreamEvent", found);
 
     expect(found).toContain("projects.add.input.discovery.repos.path");
     expect(found).toContain("settings.get.output.projects.repoPath");
-    expect(found).toContain("review.ask.input.anchor.path");
     const unclassified = [...found]
       .filter((location) => PATH_FIELD_CLASSIFICATIONS[location] === undefined)
       .sort();

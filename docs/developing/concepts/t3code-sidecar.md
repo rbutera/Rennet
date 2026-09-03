@@ -16,7 +16,7 @@ flowchart LR
   client[Desktop or browser client] -->|chat.t3Session over the Rennet WS| daemon[Rennet daemon]
   daemon -->|spawn: node bin.mjs serve, envelope over fd 3| sidecar[T3 Code server\nvendor/t3code build]
   daemon -->|POST /oauth/token, bearer| sidecar
-  client -->|/ws with the brokered bearer, or /pair with the pairing URL| sidecar
+  client -->|/ws with the brokered bearer| sidecar
   sidecar -->|absolute binaries from Rennet's discovery| harness[claude, codex]
   harness --> provider[Harness provider]
 ```
@@ -80,42 +80,38 @@ the claim is removed and a fresh sidecar is spawned.
 ## Access for clients
 
 `chat.t3Session` returns the sidecar's origin, its `/ws` URL, the bearer to open that
-socket with, the sidecar's environment id, and a pairing URL. Called with a review id, it
+socket with, and the sidecar's environment id. Called with a review id, it
 also binds that review's thread: one T3 project per repository checkout (created on first
 use), one thread per repository root and review id, full access, with `worktreePath`
 null so the thread's working directory is the checkout itself. The binding is persisted
-beside the sidecar's state and returned as `threadId` plus the sidecar UI's `threadUrl`. The bearer is what the
-vendored client runtime needs; the pairing URL (`<origin>/pair#token=…`, minted through
-`POST /api/auth/pairing-token`) is what an embedded copy of T3's own UI consumes to set its
-session cookie. The command is loopback-only and never remote-exposed. Clients do not
-read the credential file.
+beside the sidecar's state and returned as `threadId` plus the sidecar UI's `threadUrl`.
+The bearer is what the vendored client runtime needs. The command is loopback-only and
+never remote-exposed. Clients do not read the credential file.
 
 ## The chat slot
 
-There is no engine choice: the review workspace's chat slot always renders T3's thread
-view for the review's bound thread. Two rungs exist, and the host decides which one
-mounts:
+There is no engine choice and no second rung: the review workspace's chat slot always
+renders T3's thread view for the review's bound thread, mounted natively by the host.
 
-- **Rung two, the desktop app.** `@rennet/t3-chat` mounts T3's `ChatView` natively:
-  the vendored web app is imported by module (the desktop Vite config aliases `~/` into
-  `vendor/t3code/apps/web/src`, dedupes React, and defines the two `import.meta.env`
+`@rennet/t3-chat` mounts T3's `ChatView` natively:
+  the vendored web app is imported by module (both desktop Vite configs — the Electron
+  renderer and the served browser tab — alias `~/` into `vendor/t3code/apps/web/src`,
+  dedupe React, and define the two `import.meta.env`
   values the source reads at module scope), wrapped in T3's atom registry, toast and
   confirm hosts, and a TanStack router over memory history carrying the four routes
   `ChatView` navigates to. The sidecar is registered in T3's environment catalog as a
   bearer environment built from `chat.t3Session` (the brokered origin, the websocket
   base and the 30-day bearer); T3's client runtime then does what it does for any remote
   environment: bearer HTTP, a short-lived `wsTicket` for `/ws`, thread subscriptions.
-  The renderer runs the vendored app in its hosted-static mode, so no primary
+  Each host runs the vendored app in its hosted-static mode, so no primary
   environment is ever looked for at Rennet's own origin. A second Tailwind entry
   (`packages/t3-chat/src/t3.css`, no preflight) scans only the vendored source and maps
   every T3 semantic variable onto Rennet's `--rn-*` palette; the names both kits share
   mirror `packages/theme/src/theme.css` exactly, because a utility rule is one rule for
   the whole document. The mount is a lazy chunk, fetched when a session's slot opens.
-  The desktop provides the components through `T3ChatSlotProvider`; `app-ui` itself
-  never imports the vendored app.
-- **Rung one, every other host.** An Electron `<webview>` of the sidecar's own served
-  UI, first at the pairing URL (which sets T3's session cookie inside the guest) and
-  then at the bound thread's route. The bearer never enters the guest.
+  Both `apps/desktop` entries provide the components through `T3ChatSlotProvider`;
+  `app-ui` itself never imports the vendored app, and a host that provides nothing shows
+  a line saying so rather than an empty box.
 
 The slot's other caller is **the bench** — the review workspace's first frame while
 capture and the first board generation run (`packages/app-ui/src/app/preparation-bench.tsx`,
@@ -165,14 +161,23 @@ because `@pierre/diffs` splits every Shiki grammar into its own on-demand chunk 
 
 ## The handoff exit
 
-"Hand to coding agent" on a project whose engine is `t3` dispatches the composed work
-order as one turn on the review's bound thread, full access, cwd the checkout, instead
-of Rennet's session turn loop. The daemon waits for the turn to settle, reads T3's
-checkpoint diff for that turn, and returns the same outcome shape the Rennet engine
-returns (final text, unified diff, files touched, or a failure reason from T3's
-session). `review.handoff.run` then recaptures the checkout and offers the delta
-re-review exactly as before; nothing downstream knows which engine ran the turn. The
-engine is read from the repository's own config, never from a project id.
+"Hand to coding agent" dispatches the composed work order as one turn on the review's
+bound thread, full access, cwd the checkout. The daemon waits for the turn to settle,
+reads T3's checkpoint diff for that turn, and returns a final text, a unified diff and
+the files touched — or a failure reason from T3's session. `review.handoff.run` then
+recaptures the checkout and offers the delta re-review exactly as before. There is no
+second engine to fall back to.
+
+## What a thread costs and where it is kept
+
+Three facts about running every session's chat and every work order inside the sidecar,
+stated here and on the local host card in Settings rather than beside a choice, because
+there is no choice:
+
+- Threads are persisted harness sessions, so they appear in the harness's own history.
+- Their token usage is reported by T3 Code's usage view, not by Rennet's seat usage.
+- T3 Code records a hidden checkpoint ref in the reviewed repository per turn. An
+  ordinary push does not send it.
 
 ## Status
 
@@ -203,8 +208,8 @@ over RPC before the signal is the daemon-side client's job and lands with it.
 - `packages/server/src/t3/client.ts`: the daemon-side RPC client, the one Rennet module importing `effect` and `@t3tools/contracts`.
 - `packages/server/src/t3/threads.ts`: the (repository root, session id) → thread binding.
 - `packages/server/src/t3/handoff.ts`: the handoff exit, which `create-server.ts` runs for every work order that names a review.
-- `packages/app-ui/src/chat/t3-chat-dock.tsx`: the slot, the rung-one `<webview>`, the session-or-lens choice and the hand-off to the host-provided components (`chat/t3-chat-slot.tsx`); `packages/app-ui/src/store/ui.ts`: `lensThread` and `openLensThread`.
-- `packages/t3-chat/src/native-chat.tsx`: rung two (routes, providers, environment registration, the thread and draft route views mirrored from upstream's route files, and `T3ThreadView`); `session.ts`: the session-to-registration mapping and the route builder both views share; `t3.css`: the theme bridge and the read-only composer rule. `apps/desktop/vite.renderer.config.ts` carries the alias, dedupe and defines; `apps/desktop/src/renderer/index.tsx` provides both components.
+- `packages/app-ui/src/chat/t3-chat-dock.tsx`: the slot, the session-or-lens choice and the hand-off to the host-provided components (`chat/t3-chat-slot.tsx`); `packages/app-ui/src/store/ui.ts`: `lensThread` and `openLensThread`.
+- `packages/t3-chat/src/native-chat.tsx`: the native mount (routes, providers, environment registration, the thread and draft route views mirrored from upstream's route files, and `T3ThreadView`); `session.ts`: the session-to-registration mapping and the route builder both views share; `t3.css`: the theme bridge and the read-only composer rule. `apps/desktop/vite.renderer.config.ts` and `vite.browser.config.ts` each carry the alias, dedupe and defines; `apps/desktop/src/renderer/index.tsx` and `src/browser/entry.tsx` each provide both components.
 - `packages/server/src/dispatch/chat.ts`: `chat.t3Session`; `dispatch/daemon.ts` adds `t3Sidecar` to `daemon.status`.
 - `packages/protocol/src/wire.ts`: `t3SidecarStatusSchema`, `t3SessionSchema`.
 - `packages/server/src/daemon-main.ts`: resolves the bundle (`RENNET_T3_BUNDLE` overrides); in the packaged app the main process sets that variable to `Resources/t3code/apps/server/dist/bin.mjs`, staged by `scripts/stage-t3-sidecar.mjs` at desktop build time (see `apps/desktop/PACKAGING.md`).

@@ -14,7 +14,7 @@
 
 import { EventSchema as boardOpEventSchema } from "@wboard/core";
 import { z } from "zod";
-import { isCommandName, projectProgressEventSchema, reviewAskStreamEventSchema } from "../index";
+import { isCommandName, projectProgressEventSchema } from "../index";
 import { AskProjectionSchema as askProjectionSchema } from "./ask-log";
 import { RoundEventSchema as roundEventSchema } from "./model";
 
@@ -130,13 +130,6 @@ export const progressEventFrameSchema = z.object({
   type: z.literal("progressEvent"),
   commandId: z.string().min(1),
   event: z.lazy(() => projectProgressEventSchema),
-});
-
-/** Server → client: a conversation's token stream, keyed by `reviewId`. */
-export const askStreamEventFrameSchema = z.object({
-  type: z.literal("askStreamEvent"),
-  reviewId: z.string().min(1),
-  event: z.lazy(() => reviewAskStreamEventSchema),
 });
 
 // ── Server-initiated requests (wire support only, issue #380) ────────────────
@@ -346,7 +339,6 @@ export const sessionFrameSchema = z.discriminatedUnion("type", [
   responseFrameSchema,
   rpcErrorFrameSchema,
   progressEventFrameSchema,
-  askStreamEventFrameSchema,
   serverRequestFrameSchema,
   serverResponseFrameSchema,
   serverRequestResolvedFrameSchema,
@@ -363,7 +355,6 @@ export type RequestFrame = z.infer<typeof requestFrameSchema>;
 export type ResponseFrame = z.infer<typeof responseFrameSchema>;
 export type RpcErrorFrame = z.infer<typeof rpcErrorFrameSchema>;
 export type ProgressEventFrame = z.infer<typeof progressEventFrameSchema>;
-export type AskStreamEventFrame = z.infer<typeof askStreamEventFrameSchema>;
 export type ServerRequestFrame = z.infer<typeof serverRequestFrameSchema>;
 export type ServerResponseFrame = z.infer<typeof serverResponseFrameSchema>;
 export type ServerRequestResolvedFrame = z.infer<typeof serverRequestResolvedFrameSchema>;

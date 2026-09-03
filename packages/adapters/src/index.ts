@@ -173,12 +173,6 @@ export {
   type ProjectDraft,
 } from "./file-project-store";
 export {
-  defaultThreadStoreDir,
-  FileThreadStore,
-  recoverInterruptedTurns,
-  THREAD_STORE_VERSION,
-} from "./file-thread-store";
-export {
   createGitShowFileRead,
   createVerificationFileReader,
   createVerificationFileReaderForPatchset,
@@ -549,11 +543,6 @@ export {
 } from "./repo-composition-discovery";
 export { RepoCompositionStore } from "./repo-composition-store";
 export { RepoWatcher } from "./repo-watcher";
-export {
-  codexAskFixture,
-  orchestratorAskFixture,
-  reviewAskFixturePorts,
-} from "./review-ask-fixture";
 export {
   createOrAdoptRoundSourceCommit,
   execaRoundProcess,

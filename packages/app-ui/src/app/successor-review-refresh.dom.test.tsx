@@ -157,7 +157,6 @@ function mountSuccessorJourney() {
     "session.rounds": () => ({ records: [] }),
     "board.read": () => ({ board: null }),
     "ask.read": () => ({ projection: EMPTY_ASKS }),
-    "review.reattach": () => ({ threads: [], inFlight: [] }),
     "session.transcript": () => ({ trail: { title: "Owner loop" }, rows: [] }),
   });
   const history = memoryHistory(sessionPath(SESSION_ID, { view: "diff" }));

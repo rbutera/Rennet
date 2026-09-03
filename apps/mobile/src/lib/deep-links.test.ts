@@ -1,24 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
-  askReviewIdOf,
   parseAttentionPushData,
   parseDeepLink,
   parsePairingLink,
   resolvePushHref,
   routeHref,
 } from "./deep-links";
-
-describe("askReviewIdOf — the ask a shade answer targets (#382 M2 finding 4)", () => {
-  it("extracts the review id from an ask deep-link", () => {
-    expect(askReviewIdOf("rennet://review/rev-9/ask")).toBe("rev-9");
-  });
-
-  it("ignores a non-ask link (only an ask push answers) and a missing link", () => {
-    expect(askReviewIdOf("rennet://review/rev-9/digest")).toBeUndefined();
-    expect(askReviewIdOf("rennet://project/p1")).toBeUndefined();
-    expect(askReviewIdOf(undefined)).toBeUndefined();
-  });
-});
 
 describe("parsePairingLink (task 4.1)", () => {
   it("parses a pairing link's url, code, and name", () => {
@@ -62,16 +49,18 @@ describe("deep-link routing table (task 6.2)", () => {
     expect(parseDeepLink("https://example.com")).toBeNull();
   });
 
-  it("builds daemon-scoped expo-router hrefs; ask→turn, publish→publish (#382 M2)", () => {
+  it("builds daemon-scoped expo-router hrefs; ask lands on the digest, publish on publish", () => {
     expect(routeHref("d1", { kind: "review", reviewId: "r1", surface: "digest" })).toBe(
       "/daemon/d1/review/r1/digest",
     );
     expect(routeHref("d1", { kind: "review", reviewId: "r1", surface: "error" })).toBe(
       "/daemon/d1/review/r1/error",
     );
-    // ask lands on the live turn screen, publish on the publish preview (M2 surfaces).
+    // The ask surface no longer exists on the phone: the orchestrator chat that answered an ask
+    // is retired (t3-lens-threads 4.2), so an ask push lands on the review digest rather than a
+    // screen with nothing to send. LOAD-BEARING on the route: restoring the `turn` case reddens it.
     expect(routeHref("d1", { kind: "review", reviewId: "r1", surface: "ask" })).toBe(
-      "/daemon/d1/review/r1/turn",
+      "/daemon/d1/review/r1/digest",
     );
     expect(routeHref("d1", { kind: "review", reviewId: "r1", surface: "publish" })).toBe(
       "/daemon/d1/review/r1/publish",
@@ -102,7 +91,7 @@ describe("deep-link routing table (task 6.2)", () => {
 });
 
 describe("parseAttentionPushData (#382 M2 findings 3 + 11 — parse before use)", () => {
-  it("parses a well-formed ask push, keeping attentionId and validated actions", () => {
+  it("parses a well-formed ask push, keeping attentionId and dropping the retired answer chips", () => {
     const parsed = parseAttentionPushData({
       deviceId: "d1",
       deepLink: "rennet://review/r1/ask",
@@ -111,12 +100,13 @@ describe("parseAttentionPushData (#382 M2 findings 3 + 11 — parse before use)"
       actions: [{ id: "a", label: "Approve" }],
       extra: "stripped",
     });
+    // `actions` left the payload with the shade-answer path (t3-lens-threads 4.2): nothing can
+    // send a chip's answer now, so carrying the chips would promise a button that does nothing.
     expect(parsed).toEqual({
       deviceId: "d1",
       deepLink: "rennet://review/r1/ask",
       family: "ask-pending",
       attentionId: "ask-pending:r1",
-      actions: [{ id: "a", label: "Approve" }],
     });
   });
 
@@ -125,9 +115,11 @@ describe("parseAttentionPushData (#382 M2 findings 3 + 11 — parse before use)"
     expect(parseAttentionPushData("nope")).toBeNull();
   });
 
-  it("rejects a payload whose actions are malformed (over-long label)", () => {
+  it("ignores a malformed `actions` array instead of losing the whole push", () => {
+    // The field is no longer part of the shape, so a daemon that still sends it — malformed or
+    // not — must not cost the user the deep-link. Zod strips the unknown key.
     expect(
       parseAttentionPushData({ deviceId: "d", actions: [{ id: "a", label: "x".repeat(200) }] }),
-    ).toBeNull();
+    ).toEqual({ deviceId: "d" });
   });
 });

@@ -22,11 +22,8 @@ import {
 import { sha256Hex } from "../sha256";
 import {
   appearanceSchemeSchema,
-  askModeSchema,
-  askReviewResultSchema,
   coachMarksSchema,
   composedHandoffBundleSchema,
-  conversationAnchorSchema,
   councilPickSchema,
   daemonHostStatusSchema,
   deltaDigestResultSchema,
@@ -62,7 +59,6 @@ import {
   publishDegradationSchema,
   publishOutcomeSchema,
   pullRequestStateSchema,
-  reattachResultSchema,
   refinementResultSchema,
   resolvedProvenanceSchema,
   reviewArtifactSchema,
@@ -505,13 +501,26 @@ const definitions = {
     }),
   },
   // Broker T3 Code sidecar access to a client (t3code-sidecar-chat, 2.4). The daemon starts
-  // the sidecar on first ask and hands back the origin, WS URL, bearer, and a pairing URL;
-  // the client never reads the credential file. Loopback clients only — never remote-exposed.
+  // the sidecar on first ask and hands back the origin, WS URL and bearer; the client never
+  // reads the credential file. Loopback clients only — never remote-exposed.
   "chat.t3Session": {
     /** With a review id, the daemon also binds (creates or resumes) that review's T3 thread,
      *  rooted in the review's repository checkout. */
     input: z.object({ reviewId: z.string().min(1).optional() }),
     output: t3SessionSchema,
+  },
+  // Start a turn on the review's bound T3 thread with text the client composed
+  // (t3-lens-threads 4.2). The one writer besides the thread's own composer: an anchored ask
+  // ("ask about this span") sends its question plus the cited excerpt here and then opens the
+  // chat slot, where the answer streams in T3's own view. The daemon binds the thread exactly
+  // as `chat.t3Session` does — on the review's REPOSITORY ROOT, never a project id.
+  "chat.t3Send": {
+    input: z.object({
+      reviewId: z.string().min(1),
+      /** The turn's prompt. Bounded by the caller; the daemon sends it verbatim. */
+      text: z.string().min(1).max(8_000),
+    }),
+    output: z.object({ threadId: z.string().min(1) }),
   },
   // Re-attempt the handshake to ONE host's daemon (C17 cluster 5, #533) — the operation behind
   // the host card's Reconnect button. The same per-host handshake `daemon.status` polls, run on
@@ -809,89 +818,6 @@ const definitions = {
       z.object({ status: z.literal("oversized") }),
       z.object({ status: z.literal("not-found") }),
     ]),
-  },
-  // ── Ask the AI a question about the review (issue #139) ────────────────────
-  // The reviewer's question goes to the ORCHESTRATOR by default; `mode: "both"`
-  // ADDITIONALLY asks Codex, and the two labelled answers come back side by side.
-  //   • `mode` defaults to "orchestrator" (wrong-side-safe): an omitted mode NEVER
-  //     fires a second model behind the reviewer's back.
-  //   • The output carries at most `primary` (always the orchestrator) + an optional
-  //     `secondOpinion` (Codex, only in "both") — there is NO merged-answer field, so
-  //     "no synthesis, ever" is a property of the schema, not just the router.
-  // The routing law — orchestrator once, both adds Codex, never a synthesis — lives
-  // in `@rennet/core`'s `askReview`. The ports are LIVE (a real orchestrator turn +
-  // an optional `codex exec`); asking a model is Rennet's whole job, so it just runs
-  // — no permission check, no consent token. Dispatch resolves the current review
-  // ONCE and hands the SAME snapshot to both legs, so a "both" ask can never cross
-  // two patchsets.
-  "review.ask": {
-    input: z.object({
-      commandId: commandIdSchema,
-      reviewId: z.string().min(1),
-      /** Default "orchestrator": an omitted mode never fires a second model. */
-      mode: askModeSchema.default("orchestrator"),
-      /** The reviewer's question about the review. */
-      question: z.string().min(1),
-      // #251: when these are present, main persists the thread and streams the turn
-      // under these ids (delta/complete/interrupted over `onAskStream`). ABSENT = a
-      // one-shot #139 ask with no persistence and no stream — fully back-compatible.
-      threadId: z.string().min(1).optional(),
-      turnId: z.string().min(1).optional(),
-      anchor: conversationAnchorSchema.optional(),
-      selection: z
-        .object({
-          anchor: z.string().min(1),
-          excerpt: z.string().optional(),
-          target: z.string().min(1).optional(),
-          generation: z.string().min(1).optional(),
-        })
-        .optional(),
-      // The reviewer's RAW question for this turn (not the folded transcript), persisted
-      // as the "you" message so a re-attached thread shows what was asked. #251.
-      turnBody: z.string().optional(),
-      /**
-       * The attention item this answer resolves (#382 M2 finding 3, shade answering). Carried ONLY
-       * by a shade answer: the ask push carries its attention id, the chip-tap invokes `review.ask`
-       * with it, and the daemon consumes that attention atomically BEFORE running the turn — so a
-       * duplicate tap (the item already consumed) is refused truthfully as "already answered", and a
-       * forged/stale id (no such active item) is refused too. Absent for an in-app answer (which
-       * interrupts + asks) and for a pre-M2 client. Additive.
-       */
-      attentionId: z.string().min(1).optional(),
-    }),
-    output: askReviewResultSchema,
-  },
-  // ── review.reattach: reload persisted threads + learn what is still streaming (#251)
-  // Called on review load / after a renderer reload. Returns every persisted thread for
-  // the review (identity + content + harness version) AND the turns still in flight in a
-  // surviving main process (so the renderer resumes their coalesced bodies). A turn left
-  // `streaming` by a KILLED main is not "in flight": the store reads it back as
-  // `interrupted`, so it returns inside a thread's messages, never in `inFlight`.
-  "review.reattach": {
-    input: z.object({
-      commandId: commandIdSchema,
-      reviewId: z.string().min(1),
-    }),
-    output: reattachResultSchema,
-  },
-  // ── review.interrupt: stop a review's in-flight turn (issue #382 M2) ──────────
-  // The mobile "Stop" (wireframe 22) and any client's turn interrupt. Aborts the
-  // review's currently-streaming turn(s) via the live-turn registry — the same abort
-  // signal `before-quit` fires, but scoped to ONE review and client-triggered. The
-  // aborted turn emits `ask-interrupted` on its stream (so every watcher renders the
-  // interrupted outcome truthfully), its ask-pending attention clears, and turn-failed
-  // raises with the truthful "interrupted" cause. Additive and idempotent: interrupting
-  // a review with nothing in flight returns `interrupted: 0` (a no-op, never an error) —
-  // a double-tap Stop is safe. No new egress, no gate: stopping your own turn just runs.
-  "review.interrupt": {
-    input: z.object({
-      commandId: commandIdSchema,
-      reviewId: z.string().min(1),
-    }),
-    output: z.object({
-      /** How many in-flight turns were signalled to stop (0 ⇒ nothing was running). */
-      interrupted: z.number().int().nonnegative(),
-    }),
   },
   // ── review.refine: refine one rough note into a clean comment (issue #19) ────
   // Rai's headline feature. A real model turn cleans the user's raw note into a
@@ -1519,7 +1445,7 @@ const definitions = {
   // the harness events it already sees and persists them verbatim, so `rows`
   // carries real coding turns for a session that has run one and is honestly `[]` for a
   // session that has not. `contextWindow` stays absent — no read port reports it. The
-  // live ask threads still arrive separately via `review.reattach`. `session.rounds` is
+  // conversation itself lives in the session's T3 thread. `session.rounds` is
   // the rounds ledger read (C09 cluster 8): the session's `RoundRecord[]`, projected from
   // the live rounds runtime. Both `runRound` and the round DISPATCH record a
   // `RoundRecord`, so the ledger fills from the first dispatched round onward.

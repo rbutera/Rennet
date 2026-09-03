@@ -32,7 +32,6 @@ import type {
   CommandName,
   ProjectProcessEvent,
   ProjectProgressEvent,
-  ReviewAskStreamEvent,
   RoundEvent,
   SessionFrame,
 } from "@rennet/protocol";
@@ -62,7 +61,6 @@ import {
   buildProjectionContext,
   type ProjectionContext,
   ProjectionResolveError,
-  projectAskStreamEvent,
   projectBoardEvent,
   projectCommandOutput,
   projectProgressEvent,
@@ -81,7 +79,6 @@ type Dispatch = (
   ctx?: {
     emitProgress?(event: ProjectProgressEvent): void;
     progressRecipientId?: string | number;
-    emitAskStream?(event: ReviewAskStreamEvent): void;
     /** The authenticated device id for a projected connection (#383 M1: `device.registerPush`). */
     deviceId?: string;
   },
@@ -411,9 +408,6 @@ export async function startWsListener(deps: WsListenerDeps): Promise<WsListener>
 
   const connections = new Set<Connection>();
   const byId = new Map<string, Connection>();
-  // Per-review monotonic ask-stream seq (#382 M2 finding 5): the last seq broadcast for a review,
-  // stamped on every outgoing ask-stream event so the client reducer can reject a re-delivered one.
-  const askSeqByReview = new Map<string, number>();
   let boundPort = 0;
 
   const httpServer: HttpServer = createServer((req, res) => {
@@ -513,22 +507,10 @@ export async function startWsListener(deps: WsListenerDeps): Promise<WsListener>
               event: ctx ? projectProgressEvent(event, ctx) : event,
             })
         : undefined;
-      // Ask-stream deltas BROADCAST to every live authorized socket by `reviewId`
-      // (issue #389 server half), mirroring `broadcastProgress`. Closing over the
-      // invoking socket dropped the live stream after a mid-turn reconnect — the turn
-      // survives in main, but its deltas kept firing at the dead socket. Broadcasting
-      // means the reconnected socket (a fresh connection) receives them, and the client
-      // filters by its `onAskStream(reviewId)` listener exactly as it filters progress.
-      // Deltas are model-authored prose — NOT projected (R31/R32 honesty) — so the raw
-      // event goes to private and projected connections alike.
-      const emitAskStream = reviewId
-        ? (event: ReviewAskStreamEvent): void => broadcastAskStream(reviewId, event)
-        : undefined;
       try {
         const output = await dispatch(command, effectiveInput, {
           emitProgress,
           progressRecipientId: connectionId,
-          emitAskStream,
           deviceId: connection.deviceId,
         });
         send(socket, {
@@ -882,50 +864,6 @@ export async function startWsListener(deps: WsListenerDeps): Promise<WsListener>
         } catch {
           // Same isolation for the raw path.
         }
-      }
-    }
-  };
-
-  // Broadcast a review's ask-stream delta to every live authorized socket by `reviewId`
-  // (issue #389 server half). This is the read-side twin of `broadcastProgress`, and it is
-  // what lets a mid-turn reconnect keep the live stream flowing to the fresh socket.
-  //
-  // Why broadcasting to all authorized sockets is correct here, NOT a cross-client leak
-  // (reviewed, #383): Rennet is single-user — every authorized socket is the same person's
-  // paired device, and a device token is a full peer within its locus (Rule Zero), so a
-  // phone watching a turn the desktop started is the phase-6 feature, not a leak.
-  // `ask-state` carries raw harness transcript rows, including optional code paths, so it takes
-  // the same projection as `session.transcript`; prose-only delta/terminal events stay raw.
-  // `pairing-only` (no valid token) is excluded, exactly as `broadcastProgress` excludes it.
-  // Per-review subscription routing and bandwidth filtering arrive with the presence phase.
-  const broadcastAskStream = (reviewId: string, event: ReviewAskStreamEvent): void => {
-    // Stamp a per-review MONOTONIC seq (#382 M2 finding 5) at this single choke point so every
-    // emitted event carries one, regardless of which socket triggered the turn. The reducer
-    // rejects an already-applied seq, making the append-not-idempotent `ask-delta` safe under a
-    // reconnect that re-delivers. A never-shrinking counter per review; process-lifetime memory.
-    const seq = (askSeqByReview.get(reviewId) ?? 0) + 1;
-    askSeqByReview.set(reviewId, seq);
-    const stamped = { ...event, seq } as ReviewAskStreamEvent;
-    const rawPayload = JSON.stringify({
-      type: "askStreamEvent",
-      reviewId,
-      event: stamped,
-    } satisfies SessionFrame);
-    let projectedPayload: string | null = null;
-    for (const connection of connections) {
-      if (connection.socket.readyState !== WebSocket.OPEN) continue;
-      if (!connection.helloReceived || connection.connectionClass === "pairing-only") continue;
-      if (connection.connectionClass === "projected") {
-        if (projectedPayload === null) {
-          projectedPayload = JSON.stringify({
-            type: "askStreamEvent",
-            reviewId,
-            event: projectAskStreamEvent(stamped, contextOf()),
-          } satisfies SessionFrame);
-        }
-        connection.socket.send(projectedPayload);
-      } else {
-        connection.socket.send(rawPayload);
       }
     }
   };

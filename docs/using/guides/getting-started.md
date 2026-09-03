@@ -302,15 +302,14 @@ chat — a comment made on one surface is the same object everywhere. Diff line
 comments key to new-side line numbers, so a requested change carries a real
 diff position.
 
-**Say it in chat.** The chat column beside the surface is one continuous
-conversation with the orchestrator that travels with you across every board. Ask
-it about the change and it runs a real turn on your own `claude` — grounded in
-this review's diff, able to read the repository — and streams the answer back as
-it arrives. The exchange persists, so it is still there after a reload. You can
-also explicitly ask it to stage a specific conclusion as a review ask; Rennet
-runs the staging action once and records its receipt in the conversation. A
-conclusion the orchestrator merely suggests is not staged until you ask it to act
-or stage it yourself from the board, a line, or a highlighted span.
+**Say it in chat.** The chat column beside the surface is the review's T3 Code
+thread, and it travels with you across every board. Ask it about the change and it
+runs a real turn on your own installed harness, working in this review's checkout,
+and streams the answer back as it arrives. The thread persists in the sidecar, so it
+is still there after a reload. Asking about a highlighted span sends your question
+with the cited lines into the same thread and opens the chat on the answer.
+Nothing the thread says stages anything: you stage an ask yourself, from the board,
+a line, or a highlighted span.
 
 ## Stage asks
 
