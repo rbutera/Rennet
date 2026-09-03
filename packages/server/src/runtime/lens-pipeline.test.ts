@@ -148,6 +148,7 @@ const PACKET = {
 /** The per-lens lint context: no regions and no files keep the shared fixtures citation-free. */
 const lintContextFor = (lens: LintTarget): LintContext => ({
   lens,
+  regions: [],
   files: new Map(),
 });
 
@@ -1524,6 +1525,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
         deltaPacket: PACKET,
         lintContextFor: (lens) => ({
           lens,
+          regions: [{ path: "src/auth.ts", side: "head", start: 1, end: 200 }],
           files: new Map([["src/auth.ts", 200]]),
           patchsetId: "ps-1",
         }),
@@ -2213,6 +2215,10 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       deltaPacket: DESIGN_PACKET,
       lintContextFor: (lens) => ({
         lens,
+        regions: [
+          { path: DESIGN_SOURCE, side: "head", start: 1, end: 20 },
+          { path: "src/auth.ts", side: "head", start: 1, end: 40 },
+        ],
         files: new Map([
           [DESIGN_SOURCE, 20],
           ["src/auth.ts", 40],
@@ -2343,6 +2349,11 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       deltaPacket: DESIGN_PACKET,
       lintContextFor: (lens) => ({
         lens,
+        regions: [
+          { path: DESIGN_SOURCE, side: "head", start: 1, end: 20 },
+          { path: "src/auth.ts", side: "head", start: 1, end: 100 },
+          { path: "src/auth.test.ts", side: "head", start: 1, end: 100 },
+        ],
         files: new Map([
           [DESIGN_SOURCE, 20],
           ["src/auth.ts", 100],
@@ -2461,6 +2472,11 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       deltaPacket: DESIGN_PACKET,
       lintContextFor: (lens) => ({
         lens,
+        regions: [
+          { path: DESIGN_SOURCE, side: "head", start: 1, end: 20 },
+          { path: "src/auth.ts", side: "head", start: 1, end: 100 },
+          { path: "src/auth.test.ts", side: "head", start: 1, end: 100 },
+        ],
         files: new Map([
           [DESIGN_SOURCE, 20],
           ["src/auth.ts", 100],
@@ -2548,6 +2564,11 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       deltaPacket: DESIGN_PACKET,
       lintContextFor: (lens) => ({
         lens,
+        regions: [
+          { path: DESIGN_SOURCE, side: "head", start: 1, end: 20 },
+          { path: "src/auth.ts", side: "head", start: 1, end: 100 },
+          { path: "src/auth.test.ts", side: "head", start: 1, end: 100 },
+        ],
         files: new Map([
           [DESIGN_SOURCE, 20],
           ["src/auth.ts", 100],
@@ -4331,6 +4352,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       },
       lintContextFor: (lens) => ({
         ...lintContextFor(lens),
+        regions: [{ path: "src/auth.ts", side: "head", start: 1, end: 200 }],
         files: new Map([["src/auth.ts", 200]]),
       }),
       previous: new Map<LintTarget, DraftBoard>([["flagged", previousFlagged]]),
@@ -4418,6 +4440,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       },
       lintContextFor: (lens) => ({
         ...lintContextFor(lens),
+        regions: [{ path: "src/auth.ts", side: "head", start: 1, end: 200 }],
         files: new Map([["src/auth.ts", 200]]),
       }),
       previous: new Map<LintTarget, DraftBoard>([["flagged", previous]]),
@@ -4530,6 +4553,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       },
       lintContextFor: (lens) => ({
         ...lintContextFor(lens),
+        regions: [{ path: "src/auth.ts", side: "head", start: 1, end: 200 }],
         files: new Map([["src/auth.ts", 200]]),
       }),
       previous: new Map<LintTarget, DraftBoard>([["flagged", flaggedBoard]]),
@@ -5153,5 +5177,75 @@ describe("renderRetryPrompt sends pointers and only the open elements", () => {
     const prompt = renderRetryPrompt("BASE", { elements: [] } as never, pointers, []);
     expect(prompt).toContain("and return the whole board:");
     expect(prompt).not.toContain("elementsToFix");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// D5 — the lane's lint context carries the patchset's changed regions, and a citation
+// past the change reaches the seat as an `unresolvable-citation` pointer. Driven through
+// the REAL pipeline so the context a lane actually lints with is the one under test: a
+// context assembled without regions (the Design branch rebuilds its ctx by spread) can
+// not pass here, and `regions` is a required field so it cannot compile either.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("runLensPipeline — a citation past the change is an unresolvable-citation pointer", () => {
+  it("sends the pointer on the repair turn and omits the citation the seat never moved", async () => {
+    const captures: { model?: string; prompt?: string }[] = [];
+    // The seat's board, as drafted: a finding citing src/auth.ts:30-31 when the change is
+    // 10..14. The Design lens gets the same citation beside its prose.
+    const citingPast = (lens: string): DraftBoard => {
+      const base = cleanBody(lens);
+      const author = { kind: "lens-agent" as const, id: `${lens}-seat` };
+      return {
+        elements: [
+          ...base.elements.map((el) =>
+            el.kind === "finding" ? { ...el, data: { ...el.data, code: ["c-past"] } } : el,
+          ),
+          {
+            id: "c-past",
+            kind: "code_ref",
+            data: {
+              author,
+              patchset_id: "ps-1",
+              path: "src/auth.ts",
+              side: "head",
+              start_line: 30,
+              end_line: 31,
+            },
+          },
+        ],
+      } as DraftBoard;
+    };
+    const result = await runLensPipeline({
+      claudePort: fakeClaudePort(captures, (prompt) => {
+        const lens = lensFromPrompt(prompt);
+        return lens === "flagged" || lens === "design" ? citingPast(lens) : cleanBody(lens);
+      }),
+      codexExecutor: null,
+      repoRoot: "/pr-worktree",
+      deltaPacket: PACKET,
+      lintContextFor: (lens) => ({
+        lens,
+        regions: [{ path: "src/auth.ts", side: "head", start: 10, end: 14 }],
+        files: new Map([["src/auth.ts", 200]]),
+        patchsetId: "ps-1",
+      }),
+      readPrompt,
+      whiteboard: fakeWhiteboard([]),
+      boardIdFor: (lens) => `board:${lens}`,
+    });
+
+    for (const lens of ["flagged", "design"] as const) {
+      const turns = captures.filter((c) => lensFromPrompt(c.prompt ?? "") === lens);
+      // The drafting turn, then at least one repair carrying the pointer by rule and range.
+      expect(turns.length).toBeGreaterThan(1);
+      expect(turns[1]?.prompt).toContain("unresolvable-citation");
+      expect(turns[1]?.prompt).toContain("src/auth.ts:30-31");
+      expect(turns[1]?.prompt).toContain("src/auth.ts:10-14");
+      // The seat never moved it, so the citation is omitted honestly rather than shown.
+      const outcome = result.boards.find((board) => board.lens === lens);
+      expect(outcome?.failure).toBeUndefined();
+      expect(outcome?.omissions.map((o) => o.elementId)).toContain("c-past");
+    }
   });
 });

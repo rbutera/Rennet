@@ -366,3 +366,35 @@ describe("the schema each provider actually accepts (drive 1.6, 2026-09-03)", ()
     expect((result as { body: Record<string, unknown> }).body).not.toHaveProperty("b");
   });
 });
+
+// ── The inline-context measurement rides the turn metric, at the send ─────────
+
+/** Today's expensive shape: an inventory interpolated as one JSON literal. ~14 KB. */
+const INLINE_LAYER = `Draft the board.\n${JSON.stringify({
+  hunks: Array.from({ length: 100 }, (_, index) => ({
+    path: `src/module-${index}.ts`,
+    excerpt: "export const value = 1; ".repeat(5),
+  })),
+})}`;
+/** The converted shape: the same turn, pointed at what it may read. */
+const PATH_REFERENCE =
+  "Draft the board. The context is in `.rennet/context/s1/README.md`; run `git diff main...HEAD` yourself.";
+
+describe("createT3SeatTurn — inline context is measured where the prompt is sent", () => {
+  it("stamps a 10 KB JSON layer on the metric beside its tokens, and nothing for a path reference", async () => {
+    const collector = createMetricsCollector();
+    const { seam, startTurn } = stubs([
+      settled({ structuredOutput: {}, usage: { input_tokens: 4_000, output_tokens: 100 } }),
+      settled({ structuredOutput: {}, usage: { input_tokens: 4_500, output_tokens: 150 } }),
+    ]);
+    const runTurn = createT3SeatTurn(seam, { ...options, collector });
+    await runTurn(INLINE_LAYER, 0);
+    await runTurn(PATH_REFERENCE, 1);
+
+    // The measurement is of the text `startTurn` actually sent, not of some earlier layer.
+    expect(startTurn.mock.calls[0]?.[0].text).toBe(INLINE_LAYER);
+    expect(collector.metrics[0]?.inlineContextBytes).toBeGreaterThan(10_000);
+    expect(collector.metrics[0]?.usage).toMatchObject({ inputTokens: 4_000 });
+    expect(collector.metrics[1]).not.toHaveProperty("inlineContextBytes");
+  });
+});

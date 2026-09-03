@@ -1,3 +1,4 @@
+import { DELTA_MARK_BASIS } from "@rennet/core";
 import {
   type BoardDocument,
   type DomainCountKind,
@@ -101,7 +102,24 @@ function nestedIds(elements: readonly StateElement[]): ReadonlySet<string> {
  * longer satisfy the host vocabulary THROWS rather than serving a half-board, so
  * the client reads an honest failure instead of a silently pruned document.
  */
-function projectBoard(elements: readonly StateElement[], identity: BoardIdentity) {
+function projectBoard(stored: readonly StateElement[], identity: BoardIdentity) {
+  // A mark minted before marks keyed on citations keyed on element ids (D5) and would be
+  // wrong under the current basis: it is stripped, and the board says so, rather than
+  // served as a current mark.
+  const legacyMark = (el: StateElement): boolean =>
+    el.kind === "section" &&
+    el.data.delta !== undefined &&
+    el.data.delta_basis !== DELTA_MARK_BASIS;
+  const marksStripped = stored.some(legacyMark);
+  const elements = marksStripped
+    ? stored.map((el) => {
+        if (!legacyMark(el)) return el;
+        const data = { ...el.data };
+        delete data.delta;
+        delete data.delta_basis;
+        return { ...el, data };
+      })
+    : stored;
   const byId = new Map(elements.map((el) => [el.id, el]));
   const nested = nestedIds(elements);
   const sections = elements
@@ -138,6 +156,7 @@ function projectBoard(elements: readonly StateElement[], identity: BoardIdentity
     document: resolveBoardDocument(identity.lens, identity.document),
     sections,
     elements,
+    ...(marksStripped ? { marksStripped: "pre-citation-basis" as const } : {}),
   };
 }
 

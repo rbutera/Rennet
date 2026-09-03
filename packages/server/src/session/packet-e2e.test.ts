@@ -49,7 +49,11 @@ const ROUND_PACKET = {
   successorAccount: { asks: [] },
 } as unknown as DeltaPacket;
 
-const lintContextFor = (lens: LintTarget): LintContext => ({ lens, files: new Map() });
+const lintContextFor = (lens: LintTarget): LintContext => ({
+  lens,
+  regions: [],
+  files: new Map(),
+});
 const readPrompt = (file: string): string => `PROMPT_FILE:${file}`;
 const lensFromPrompt = (prompt: string): string =>
   /PROMPT_FILE:prompts\/([a-z-]+)\.md/.exec(prompt)?.[1] ?? "unknown";

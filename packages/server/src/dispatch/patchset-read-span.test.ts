@@ -3,9 +3,15 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseUnifiedDiffFiles, SqliteReviewStore } from "@rennet/adapters";
-import { type PatchsetCapturePort, ReviewService } from "@rennet/core";
-import type { CodeRef, Patchset } from "@rennet/protocol";
+import {
+  buildHunkIndex,
+  type PatchsetCapturePort,
+  ReviewService,
+  resolveCitation,
+} from "@rennet/core";
+import { type CodeRef, DIFF_TRUNCATION_MARKER, type Patchset } from "@rennet/protocol";
 import { afterAll, describe, expect, it } from "vitest";
+import { changedRegions } from "../runtime/round-collation";
 import { createDispatch, type DispatchDeps } from "./index";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -38,6 +44,9 @@ function realDiff(): string {
   mkdirSync(join(root, "src"), { recursive: true });
   writeFileSync(join(root, "src/cheese.ts"), `${BASE.join("\n")}\n`);
   writeFileSync(join(root, "src/old-name.ts"), "export const rennet = 1;\n");
+  // A REAL rename: ten lines kept, one changed, so `git diff -M` records `rename from/to`
+  // (the one-line `old-name`/`new-name` pair above is too dissimilar and is a delete + add).
+  writeFileSync(join(root, "src/before.ts"), `${BASE.slice(0, 10).join("\n")}\n`);
   writeFileSync(join(root, "src/gone.ts"), "export const removedEntirely = true;\n");
   writeFileSync(join(root, "assets.bin"), Buffer.from([0, 1, 2, 3, 0, 255]));
   git(root, "add", "-A");
@@ -51,6 +60,10 @@ function realDiff(): string {
   writeFileSync(join(root, "src/cheese.ts"), `${edited.join("\n")}\n`);
   writeFileSync(join(root, "src/new-name.ts"), "export const rennet = 2;\n");
   rmSync(join(root, "src/old-name.ts"));
+  const renamed = BASE.slice(0, 10);
+  renamed[4] = "const line5 = 5; // moved";
+  writeFileSync(join(root, "src/after.ts"), `${renamed.join("\n")}\n`);
+  rmSync(join(root, "src/before.ts"));
   writeFileSync(
     join(root, "src/added.ts"),
     "export function brandNew(): number {\n  return 7;\n}\n",
@@ -228,7 +241,7 @@ describe("patchset.readSpan — served from the captured patchset, over real dis
     expect(added.lines).toEqual(["  return 7;"]);
   });
 
-  it("resolves a renamed file from EITHER of its two paths", async () => {
+  it("resolves an added file by its path and a deleted file's base side by its old path", async () => {
     const dispatch = await realDispatch();
     const byNewPath = (await dispatch(
       "patchset.readSpan",
@@ -281,5 +294,125 @@ describe("patchset.readSpan — served from the captured patchset, over real dis
     expect(
       ((await dispatch("patchset.readSpan", ref({ patchsetId: "ps-real-2" }))) as Span).lines,
     ).toEqual(["const line5 = 999; // changed"]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Lint and the reader share ONE readability predicate (`resolveCitation` over
+// `changedRegions`): a citation lint accepts is one this reader can open, and one it
+// cannot open is one lint sent back to the seat. Before this, lint accepted any overlap
+// while the reader demanded every line, so a citation one line past a hunk, or spanning
+// the gap between two, passed lint and failed when the reviewer clicked it. Each case
+// below asserts the two verdicts AGREE and asserts what the verdict is, over the real diff.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("patchset.readSpan agrees with lint's predicate, line for line", () => {
+  const fileFor = (path: string) =>
+    files.find((file) => file.path === path || file.previousPath === path);
+  const lintSays = (citation: CodeRef): boolean => {
+    const file = fileFor(citation.path);
+    if (file === undefined) return false;
+    const span = {
+      path: citation.path,
+      side: citation.side,
+      start: citation.startLine,
+      end: citation.endLine,
+    };
+    return (
+      resolveCitation(span, changedRegions(buildHunkIndex({ files: [file] }), [file])) !== undefined
+    );
+  };
+  const readerSays = async (
+    dispatch: Awaited<ReturnType<typeof realDispatch>>,
+    citation: CodeRef,
+  ): Promise<boolean> => {
+    try {
+      await dispatch("patchset.readSpan", citation);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  // `git diff` with its default three lines of context: the edit at line 5 yields a hunk
+  // over 2..8 and the edit at line 35 one over 32..38, with 9..31 never captured.
+  const cases: readonly [string, Partial<CodeRef>, boolean][] = [
+    ["the exact first line of a hunk", { startLine: 2, endLine: 2 }, true],
+    ["the exact last line of a hunk", { startLine: 8, endLine: 8 }, true],
+    ["one line past the hunk's end", { startLine: 8, endLine: 9 }, false],
+    ["one line before the hunk's start", { startLine: 1, endLine: 2 }, false],
+    ["a span across the gap between two hunks", { startLine: 8, endLine: 32 }, false],
+    [
+      "the base side of a deleted file",
+      { path: "src/gone.ts", side: "base", startLine: 1, endLine: 1 },
+      true,
+    ],
+    [
+      "the head side of a deleted file",
+      { path: "src/gone.ts", side: "head", startLine: 1, endLine: 1 },
+      false,
+    ],
+    [
+      "a rename's base side under its NEW name",
+      { path: "src/after.ts", side: "base", startLine: 5, endLine: 5 },
+      true,
+    ],
+    [
+      "a rename's base side under its OLD name",
+      { path: "src/before.ts", side: "base", startLine: 5, endLine: 5 },
+      true,
+    ],
+    [
+      "a rename's head side under its OLD name",
+      { path: "src/before.ts", side: "head", startLine: 5, endLine: 5 },
+      false,
+    ],
+  ];
+
+  it("the fixture really carries a rename, so the rename rows above test one", () => {
+    expect(fileFor("src/after.ts")).toMatchObject({
+      status: "renamed",
+      previousPath: "src/before.ts",
+    });
+  });
+
+  it.each(cases)("%s", async (_label, overrides, readable) => {
+    const dispatch = await realDispatch();
+    const citation = ref(overrides);
+    expect(lintSays(citation)).toBe(readable);
+    expect(await readerSays(dispatch, citation)).toBe(readable);
+  });
+
+  it("the one deliberate divergence: a truncated capture resolves in lint and says so when opened", async () => {
+    // The seat reads the whole diff and may cite past the cut; lint must not call that
+    // "outside the change". The reader has no text for it, and names the truncation.
+    const store = new SqliteReviewStore(":memory:");
+    const service = new ReviewService(
+      { capture: () => Promise.reject(new Error("unused")) },
+      store,
+    );
+    const truncated = files.map((file) =>
+      file.path === "src/cheese.ts"
+        ? { ...file, patch: `${file.patch}\n${DIFF_TRUNCATION_MARKER}` }
+        : file,
+    );
+    await service.createReviewFromPatchset("cmd-1", {
+      ...patchset,
+      id: "ps-lossy",
+      files: truncated,
+    });
+    const dispatch = createDispatch({
+      service,
+      allowedRoots: new Set<string>(),
+    } as unknown as DispatchDeps);
+    const citation = ref({ patchsetId: "ps-lossy", startLine: 39, endLine: 40 });
+    const file = truncated.find((f) => f.path === "src/cheese.ts") as (typeof files)[number];
+    expect(
+      resolveCitation(
+        { path: citation.path, side: "head", start: 39, end: 40 },
+        changedRegions(buildHunkIndex({ files: [file] }), [file]),
+      ),
+    ).toBeDefined();
+    await expect(dispatch("patchset.readSpan", citation)).rejects.toThrow(/truncated/);
   });
 });

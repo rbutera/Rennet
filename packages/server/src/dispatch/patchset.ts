@@ -1,6 +1,7 @@
-import { sideLinesByFileLine } from "@rennet/core";
+import { buildHunkIndex, resolveCitation, sideLinesByFileLine } from "@rennet/core";
 import type { AnchorSide, PatchFile, Patchset } from "@rennet/protocol";
 import { parseCommandInput, parseCommandOutput } from "@rennet/protocol";
+import { changedRegions } from "../runtime/round-collation";
 import type { CommandHandler, DispatchRuntime } from "./runtime";
 
 /** Lines of orientation offered either side of a cited span, when the capture has them. */
@@ -93,16 +94,47 @@ export function patchsetHandlers(rt: DispatchRuntime) {
       const side: AnchorSide = ref.side === "base" ? "deletions" : "additions";
       const byLine = sideLinesByFileLine(file, side);
 
+      // The SAME predicate lint runs (`resolveCitation` over `changedRegions`): every cited
+      // line inside a captured region on the named side. A citation lint accepts is one
+      // this can open, and one it cannot open is one lint sent back — never a weaker test
+      // here than there.
+      const captured =
+        resolveCitation(
+          { path: ref.path, side: ref.side, start: ref.startLine, end: ref.endLine },
+          changedRegions(buildHunkIndex({ files: [file] }), [file]),
+        ) !== undefined;
+      const spanLabel =
+        ref.startLine === ref.endLine
+          ? `line ${ref.startLine}`
+          : `lines ${ref.startLine}–${ref.endLine}`;
+
+      if (!captured) {
+        // A rename's OLD name has no head side: the file exists at head as the new name, and
+        // serving its lines under the old one would be the right content under the wrong
+        // label. (The base side answers to either name, in lint and here.)
+        if (ref.side === "head" && ref.path !== file.path) {
+          throw new Error(
+            `${ref.path} was renamed to ${file.path} in this patchset — its head side is ${file.path}.`,
+          );
+        }
+        // The honest, and by far the most common, absence: the patchset carries only the
+        // diff's hunks, so an unchanged region of the file was never captured.
+        let missing = ref.startLine;
+        while (missing < ref.endLine && byLine.has(missing)) missing += 1;
+        throw new Error(
+          `${ref.path} ${spanLabel} (${ref.side}) is outside the diff this patchset captured — line ${missing} was never part of it.`,
+        );
+      }
+
       const lines: string[] = [];
       for (let n = ref.startLine; n <= ref.endLine; n += 1) {
         const text = byLine.get(n);
         if (text === undefined) {
-          // The honest, and by far the most common, absence: the patchset carries only
-          // the diff's hunks, so an unchanged region of the file was never captured.
-          const span =
-            ref.startLine === ref.endLine ? `line ${n}` : `lines ${ref.startLine}–${ref.endLine}`;
+          // A region claims the line but the capture has no text for it: only a truncated
+          // diff does that (its tail region is open-ended on purpose, so lint does not call
+          // the seat's citation wrong).
           throw new Error(
-            `${ref.path} ${span} (${ref.side}) is outside the diff this patchset captured — line ${n} was never part of it.`,
+            `${ref.path} ${spanLabel} (${ref.side}) reaches past the point where Rennet truncated this file's diff — line ${n} was not captured.`,
           );
         }
         lines.push(text);

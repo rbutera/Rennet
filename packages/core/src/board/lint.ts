@@ -56,9 +56,11 @@ export type LintTarget = LensKind | "report";
  * One changed region of the patchset: a 1-based inclusive line range on one side of
  * one path (session-bound-workspace D5). The daemon builds these from the delta packet
  * it already has — one region per hunk per side that has lines, on the head path for
- * `head` and the pre-image path for `base` — so a citation resolves by overlapping a
- * region on its own side, and a pure addition (no base lines) can never be cited from
- * the base side. No hunk identifier reaches this shape.
+ * `head` and the pre-image path for `base` — so a citation resolves when every line it
+ * names is inside a region on its own side, and a pure addition (no base lines) can never
+ * be cited from the base side. No hunk identifier reaches this shape. A region whose `end`
+ * is {@link REGION_OPEN_END} runs to the end of its file: the capture was truncated there,
+ * so the daemon cannot say which later lines changed and claims none of them are outside.
  */
 export interface ChangedRegion {
   readonly path: string;
@@ -66,6 +68,9 @@ export interface ChangedRegion {
   readonly start: number;
   readonly end: number;
 }
+
+/** The `end` of a region that runs to the end of its file (a truncated capture's tail). */
+export const REGION_OPEN_END = Number.MAX_SAFE_INTEGER;
 
 /** A code_ref reduced to what citation geometry needs: its side, path, and line span. */
 export type CodeRefSpan = ChangedRegion;
@@ -92,15 +97,27 @@ export function regionOverlaps(ref: CodeRefSpan, region: ChangedRegion): boolean
 }
 
 /**
- * Resolve a citation against the changed regions: the first region it overlaps, or
- * `undefined` when it lies entirely outside the change on the named side. Pure; the
- * `unresolvable-citation` rule and the daemon's coverage projection share it.
+ * Resolve a citation against the changed regions: the region its first line falls in, or
+ * `undefined` unless EVERY cited line lies in a region on the named path and side. This is
+ * the one readability predicate — `patchset.readSpan` serves a citation from the captured
+ * hunks line by line, so a citation one line past a region, or spanning the gap between
+ * two, passes no weaker test here than it meets when opened. Pure; lint's
+ * `unresolvable-citation` rule and the daemon's reader share it.
  */
 export function resolveCitation(
   ref: CodeRefSpan,
   regions: readonly ChangedRegion[],
 ): ChangedRegion | undefined {
-  return regions.find((region) => regionOverlaps(ref, region));
+  const onSide = regions.filter((r) => r.side === ref.side && r.path === ref.path);
+  let first: ChangedRegion | undefined;
+  for (let line = ref.start; line <= ref.end; ) {
+    const region = onSide.find((r) => r.start <= line && line <= r.end);
+    if (region === undefined) return undefined;
+    first ??= region;
+    if (region.end >= ref.end) break;
+    line = region.end + 1;
+  }
+  return first;
 }
 
 /** The changed regions a set of board elements cite (every region some code_ref overlaps). */
@@ -124,15 +141,15 @@ export function citedRegions(
  * (S2 — a base-side citation checked against the head inventory is a false
  * pass/fail). `patchsetId`, when supplied, is the one patchset this board may
  * cite: a `code_ref` naming any other patchset is a cross-patchset leak.
- * `regions` is the patchset's changed regions (the `unresolvable-citation` rule); absent
- * means the caller had no packet to derive them from and the rule does not run, the same
- * degrade as an absent `baseFiles` — an EMPTY list is a patchset with no changed lines,
- * against which every citation is outside the change.
+ * `regions` is the patchset's changed regions (the `unresolvable-citation` rule). REQUIRED:
+ * the daemon always holds the diff a board was drafted from, so a context without regions
+ * is a programming error, never an "unchecked" board — an EMPTY list is a patchset with no
+ * changed lines, against which every citation is outside the change.
  * `patchsetIdentifiers` is the R20 allowlist built from the changed files.
  */
 export interface LintContext {
   readonly lens: LintTarget;
-  readonly regions?: readonly ChangedRegion[];
+  readonly regions: readonly ChangedRegion[];
   /** HEAD-side (post-image) path → line-count inventory. */
   readonly files: ReadonlyMap<string, number>;
   /** BASE-side (pre-image) inventory; `side: "base"` code_refs resolve here (S2). */
@@ -593,8 +610,9 @@ const citationResolves: Rule = (draft, ctx) => {
   return out;
 };
 
-/** `path:start-end`, collapsing a one-line range to `path:start`. */
+/** `path:start-end`, collapsing a one-line range to `path:start` and an open tail to `path:start-`. */
 function rangeLabel(path: string, start: number, end: number): string {
+  if (end === REGION_OPEN_END) return `${path}:${start}-`;
   return start === end ? `${path}:${start}` : `${path}:${start}-${end}`;
 }
 
@@ -606,19 +624,21 @@ function regionDistance(ref: CodeRefSpan, region: ChangedRegion): number {
 }
 
 /**
- * D5 — every `code_ref` overlaps a changed region of the patchset on its own side. A
- * citation entirely outside the change is the violation; its pointer names the nearest
- * changed range on that path and side so the repair turn can move it, or says the path
- * has no changed lines on that side at all. Range order and file existence are
- * `citation-resolves`'s lane, so an inverted or overrunning citation is not reported twice.
+ * D5 — every line a `code_ref` cites lies in a changed region of the patchset on its own
+ * side ({@link resolveCitation}). A citation the regions do not cover is the violation; its
+ * pointer names the nearest changed range on that path and side so the repair turn can
+ * move it, or says the path has no changed lines on that side at all. Range order and file
+ * existence are `citation-resolves`'s lane, so an inverted or overrunning citation is not
+ * reported twice.
  */
 const unresolvableCitation: Rule = (draft, ctx) => {
   const regions = ctx.regions;
-  if (regions === undefined) return [];
   const out: Violation[] = [];
   for (const el of draft.elements) {
     const span = readCodeRefSpan(el);
     if (span === undefined || span.end < span.start || span.start < 1) continue;
+    const count = (span.side === "base" ? ctx.baseFiles : ctx.files)?.get(span.path);
+    if (count !== undefined && span.end > count) continue; // an overrun is citation-resolves's report
     if (resolveCitation(span, regions) !== undefined) continue;
     const onSide = regions.filter((r) => r.path === span.path && r.side === span.side);
     const nearest = onSide.reduce<ChangedRegion | undefined>(

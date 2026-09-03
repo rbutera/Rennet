@@ -94,6 +94,13 @@ export const LensBoardSchema = z.looseObject({
   sections: z.array(LensSectionSchema),
   /** The element tree, in the 13-kind host vocabulary, stable element ids. */
   elements: z.array(HostElementSchema),
+  /**
+   * Set when the persisted board carried round-delta marks minted before marks keyed on
+   * citations (session-bound-workspace D5). Those marks keyed on element ids and would be
+   * wrong under the current basis, so the projection shows none rather than wrong ones,
+   * and says so here.
+   */
+  marksStripped: z.literal("pre-citation-basis").optional(),
 });
 
 /**

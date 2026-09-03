@@ -420,16 +420,17 @@ function pathReferencePrompt(): string {
 }
 
 describe("inlineContextViolation (session-context-files 2.3)", () => {
-  it("reports today's shape: a 10 KB JSON context layer, with its size and offset", () => {
+  const utf8 = (text: string): number => new TextEncoder().encode(text).length;
+
+  it("reports today's shape: a 10 KB JSON context layer, with the literal's own size", () => {
     const prompt = inventoryLayerPrompt();
     const violation = inlineContextViolation(prompt);
 
     expect(violation).toBeDefined();
     // The fixture really is the expensive shape, not a hair over the limit.
     expect(violation?.bytes).toBeGreaterThan(10_000);
-    // `at` points at the literal itself, so a reader can find what to convert.
-    expect(prompt[violation?.at ?? -1]).toBe("{");
-    expect(prompt.slice(violation?.at ?? 0, (violation?.at ?? 0) + 20)).toContain('"generation"');
+    // The figure is the payload, not the prompt: the instructions around it are not counted.
+    expect(violation?.bytes).toBeLessThan(utf8(prompt));
   });
 
   it("reports nothing for the converted shape, which names paths instead", () => {
@@ -445,10 +446,44 @@ describe("inlineContextViolation (session-context-files 2.3)", () => {
     const prose = `Use the { and } characters freely. "quoted" too. ${"filler ".repeat(600)}`;
     expect(prose.length).toBeGreaterThan(INLINE_CONTEXT_MAX_BYTES);
     expect(inlineContextViolation(prose)).toBeUndefined();
-    // A balanced span that is not JSON (a fenced code block) is over the limit and skipped.
+  });
+
+  it("measures the whole prompt: 300 small JSONL rows sum to a payload, and a fenced block counts whole", () => {
+    // Every row is a tenth of the limit; the manifest is five times over it. The first
+    // version measured literals one at a time and saw nothing here.
+    const rows = Array.from({ length: 300 }, (_, index) =>
+      JSON.stringify({ path: `src/module-${index}.ts`, lines: index }),
+    );
+    for (const row of rows) expect(utf8(row)).toBeLessThan(INLINE_CONTEXT_MAX_BYTES / 10);
+    const manifest = `Offered hunks:\n${rows.join("\n")}`;
+    expect(inlineContextViolation(manifest)?.bytes).toBe(rows.reduce((sum, r) => sum + utf8(r), 0));
+    // A fenced block is context too — a file body is the thing "point at the checkout" exists
+    // to keep out of a prompt — and is counted in full.
     const code = `\`\`\`ts\nexport function f() {\n${"  // a line of code\n".repeat(200)}}\n\`\`\``;
-    expect(code.length).toBeGreaterThan(INLINE_CONTEXT_MAX_BYTES);
-    expect(inlineContextViolation(code)).toBeUndefined();
+    expect(inlineContextViolation(`Read this:\n${code}\nThen draft.`)?.bytes).toBe(utf8(code));
+    // Summing is per PROMPT, not per line: two payloads on ONE line count as both. A
+    // mutation that returned the first literal of each line survived every assertion
+    // above, because every row there is its own line.
+    const pair = [
+      JSON.stringify({ hunks: Array.from({ length: 150 }, (_, i) => `h-${i}`) }),
+      JSON.stringify({ files: Array.from({ length: 100 }, (_, i) => `src/m-${i}.ts`) }),
+    ];
+    // Neither literal is over the limit alone; together they are, and both sit on ONE line.
+    for (const literal of pair) expect(utf8(literal)).toBeLessThan(INLINE_CONTEXT_MAX_BYTES);
+    const total = pair.reduce((sum, literal) => sum + utf8(literal), 0);
+    expect(total).toBeGreaterThan(INLINE_CONTEXT_MAX_BYTES);
+    expect(inlineContextViolation(`Both: ${pair.join(" and ")}.`)?.bytes).toBe(total);
+  });
+
+  it("a stray `{` in prose on an earlier line does not swallow the literal after it", () => {
+    const literal = JSON.stringify({
+      hunks: Array.from({ length: 100 }, (_, index) => ({ path: `src/m-${index}.ts`, n: index })),
+    });
+    expect(utf8(literal)).toBeGreaterThan(INLINE_CONTEXT_MAX_BYTES);
+    // The bracket stack resets at the newline, so the literal is scanned from a clean slate.
+    expect(inlineContextViolation(`Use the { character freely.\n${literal}`)?.bytes).toBe(
+      utf8(literal),
+    );
   });
 
   it("records the violation on the send tap's record, and omits it once converted", () => {

@@ -200,7 +200,11 @@ Three things follow from the thread being persistent.
   fell from 7,107 bytes to 469 — the base prompt is 6,359 of the bytes that no longer
   travel, and a production base prompt is larger than the fixture's, so the real
   saving is larger. Both interpolations declare a byte bound with an honest omission
-  marker.
+  marker. Every seat leg — this T3 turn, the ephemeral Claude session and the Codex
+  executor — measures the prompt it actually sends for inline context (every JSON
+  literal and fenced block, summed) and stamps the total on the turn metric beside its
+  tokens when it is over 2,048 bytes, so a payload that crept back into a prompt is
+  visible in the same sink as the spend it caused.
 - **The output schema is the turn's contract, once.** `startTurn` takes an `outputSchema`
   and T3 attaches it to the turn; it is never restated in prompt text. A settled turn's
   structured result, duration, usage and cost come back on a `turn.settled` activity the

@@ -17,7 +17,7 @@ import type { CouncilEffort } from "@rennet/protocol";
 import { normalizeOutputSchema } from "./claude-query";
 import { sanitizeSchemaForCodex, stripNullDeep } from "./codex-exec";
 import type { RunTurn } from "./council-seat-turn";
-import type { ClaudeTurnUsage, MetricsCollector } from "./turn-metrics";
+import { type ClaudeTurnUsage, inlineContextMetric, type MetricsCollector } from "./turn-metrics";
 
 /** The thread a seat runs on, as the supervisor's binding reports it. */
 export interface T3SeatThread {
@@ -279,6 +279,7 @@ export function createT3SeatTurn(
       label,
       `start attempt=${attempt} harness=t3:${provider} model=${model} effort=${effort} seat=${seat}`,
     );
+    const inline = inlineContextMetric(prompt);
     const record = (
       status: "emitted" | "failed",
       settled: T3SettledTurn | null,
@@ -297,6 +298,7 @@ export function createT3SeatTurn(
         model,
         // T3 runs the user's own `claude`/`codex` logins; no credential source is reported.
         apiKeySource: null,
+        ...inline,
         status,
         // The provider's own clock for the turn when it reported one; the wrapper's
         // wall clock (thread binding, dispatch, the wait) only when it did not.

@@ -18,10 +18,14 @@
  *    an unchanged section carries no stamp (absence = carried). The stamp lives
  *    on the section element's `data.delta` (`SectionDeltaSchema`); the
  *    `LensBoard` projection's `sections[].delta` is projected from it downstream
- *    (B04/B10), not here. A mark keys on what an element CITES — a `code_ref`'s
- *    identity for the stamp is `(path, side, start_line, end_line)`, never the
- *    patchset id it was minted under (session-bound-workspace D5), so a regenerated
- *    board whose element still cites the same lines carries the same mark.
+ *    (B04/B10), not here. A mark keys on what a section SAYS and CITES, never on
+ *    element ids: a `code_ref`'s identity for the stamp is `(path, side, start_line,
+ *    end_line, symbol)`, not the patchset id it was minted under, and a section is
+ *    matched by its content, then by a shared citation, never by id first
+ *    (session-bound-workspace D5). So a regenerated board whose elements cite the
+ *    same lines carries the same marks, even when every id was reminted. Each mark
+ *    is stamped with {@link DELTA_MARK_BASIS} so a reader can tell it from a mark
+ *    minted under the older id keying.
  */
 
 import type { DraftBoard, DraftElement } from "@rennet/protocol";
@@ -44,30 +48,43 @@ function stableStringify(value: unknown): string {
 // ── 1. Verbatim carry + 2. Delta stamps ──────────────────────────────────────
 
 /**
- * An element's content identity for carry/delta comparison. Excludes the
- * composition-set `delta` stamp (metadata, not drafter content) so a section
- * stamped `reworked` last generation still reads as carried when its content is
- * unchanged this generation. A `code_ref` is identified by what it cites —
- * `(path, side, start_line, end_line)` — and NOT by `patchset_id`: every
- * regenerated board is minted under the successor patchset, so keying on the id
- * would stamp every cited section `reworked` on every round (D5).
+ * The basis the delta marks this module writes are keyed on. Stamped beside every mark
+ * (`data.delta_basis`) so a reader can tell a mark minted under the citation keying from
+ * one minted before it, when marks keyed on element ids: the read projection shows no
+ * marks for the latter rather than wrong ones (session-bound-workspace D5).
  */
-function contentSig(el: DraftElement): string {
+export const DELTA_MARK_BASIS = "citation";
+
+/** The fields of a `code_ref` that identify what it cites — its semantic citation key. */
+const CODE_REF_KEY_FIELDS = ["path", "side", "start_line", "end_line", "symbol"] as const;
+
+/**
+ * The data an element is compared by. Excludes the composition-set `delta` stamp and its
+ * basis (metadata, not drafter content) so a section stamped `reworked` last generation
+ * still reads as carried when its content is unchanged this generation. A `code_ref` is
+ * identified by what it cites — `(path, side, start_line, end_line, symbol)` — and NOT by
+ * `patchset_id`: every regenerated board is minted under the successor patchset, so keying
+ * on the id would stamp every cited section `reworked` on every round (D5).
+ */
+function comparedData(el: DraftElement): Record<string, unknown> {
   const data = el.data as Record<string, unknown>;
-  if (el.kind === "section" && "delta" in data) {
-    return `${el.kind}:${stableStringify(withoutDelta(data))}`;
-  }
+  if (el.kind === "section") return withoutDelta(data);
   if (el.kind === "code_ref") {
-    const { path, side, start_line, end_line } = data;
-    return `${el.kind}:${stableStringify({ path, side, start_line, end_line })}`;
+    return Object.fromEntries(CODE_REF_KEY_FIELDS.map((field) => [field, data[field]]));
   }
-  return `${el.kind}:${stableStringify(data)}`;
+  return data;
 }
 
-/** A copy of a section's `data` without the composition-set `delta` stamp. */
+/** An element's content identity for the verbatim carry: its kind and compared data. */
+function contentSig(el: DraftElement): string {
+  return `${el.kind}:${stableStringify(comparedData(el))}`;
+}
+
+/** A copy of a section's `data` without the composition-set `delta` stamp and its basis. */
 function withoutDelta(data: Record<string, unknown>): Record<string, unknown> {
   const rest = { ...data };
   delete rest.delta;
+  delete rest.delta_basis;
   return rest;
 }
 
@@ -85,48 +102,89 @@ export function carriedElementIds(previous: DraftBoard, current: DraftBoard): Se
   return carried;
 }
 
-/** The element ids a value references (an `element`-typed attribute holds an id). */
-function referencedIds(el: DraftElement, byId: ReadonlyMap<string, DraftElement>): string[] {
-  const refs: string[] = [];
-  for (const value of Object.values(el.data as Record<string, unknown>)) {
-    if (typeof value === "string" && byId.has(value)) refs.push(value);
-    else if (Array.isArray(value)) {
-      for (const v of value) if (typeof v === "string" && byId.has(v)) refs.push(v);
-    }
-  }
-  return refs;
+/**
+ * One board's sections, each with the two id-free identities a delta mark keys on:
+ *
+ *  - `signature` — the section's compared data with every element reference replaced by
+ *    the referenced element's own signature, recursively (a cycle is cut at its second
+ *    visit). No element id survives into it, so a regenerated board that mints new ids for
+ *    the same content has the same signature: content, not ids, is what "the same section"
+ *    means (D5).
+ *  - `citations` — the semantic citation keys of every `code_ref` in the subtree, which is
+ *    how a section that CHANGED is still recognised as the same section, reworked.
+ */
+interface SectionIdentity {
+  readonly element: DraftElement;
+  readonly signature: string;
+  readonly citations: ReadonlySet<string>;
 }
 
-/** A section's subtree signature: itself + every element reachable through its refs. */
-function subtreeSignature(board: DraftBoard, rootId: string): string {
+function sectionIdentities(board: DraftBoard): SectionIdentity[] {
   const byId = new Map(board.elements.map((el) => [el.id, el]));
-  const seen = new Set<string>();
-  const queue = [rootId];
-  while (queue.length > 0) {
-    const id = queue.shift() as string;
-    if (seen.has(id)) continue;
-    seen.add(id);
-    const el = byId.get(id);
-    if (el === undefined) continue;
-    for (const ref of referencedIds(el, byId)) queue.push(ref);
-  }
-  return [...seen]
-    .filter((id) => byId.has(id))
-    .sort()
-    .map((id) => `${id}=${contentSig(byId.get(id) as DraftElement)}`)
-    .join("|");
+  const signatureOf = (el: DraftElement, stack: ReadonlySet<string>): string => {
+    const inner = new Set(stack).add(el.id);
+    const resolve = (value: unknown): unknown => {
+      if (typeof value === "string") {
+        const target = byId.get(value);
+        if (target === undefined) return value;
+        return inner.has(value) ? "<cycle>" : `<${signatureOf(target, inner)}>`;
+      }
+      return Array.isArray(value) ? value.map(resolve) : value;
+    };
+    const data = Object.fromEntries(
+      Object.entries(comparedData(el)).map(([key, value]) => [key, resolve(value)]),
+    );
+    return `${el.kind}:${stableStringify(data)}`;
+  };
+  const citationsOf = (root: DraftElement): Set<string> => {
+    const cited = new Set<string>();
+    const seen = new Set<string>();
+    const queue = [root.id];
+    while (queue.length > 0) {
+      const id = queue.shift() as string;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const el = byId.get(id);
+      if (el === undefined) continue;
+      if (el.kind === "code_ref") cited.add(contentSig(el));
+      for (const value of Object.values(el.data as Record<string, unknown>)) {
+        for (const v of Array.isArray(value) ? value : [value]) {
+          if (typeof v === "string" && byId.has(v)) queue.push(v);
+        }
+      }
+    }
+    return cited;
+  };
+  return board.elements
+    .filter((el) => el.kind === "section")
+    .map((el) => ({
+      element: el,
+      signature: signatureOf(el, new Set()),
+      citations: citationsOf(el),
+    }));
 }
 
-/** The R58 delta for one section id: `new`, `reworked`, or `undefined` (carried). */
+/**
+ * Is `previous` the same section as `current`, possibly reworked? Same content is the
+ * strongest answer; failing that, the two cite a common line range (the citation key the
+ * marks key on), carry the same title, or — for a board that kept its ids — the same id.
+ */
+function sameSection(previous: SectionIdentity, current: SectionIdentity): boolean {
+  if (previous.signature === current.signature) return true;
+  for (const citation of current.citations) if (previous.citations.has(citation)) return true;
+  const title = (identity: SectionIdentity) => (identity.element.data as { title?: unknown }).title;
+  if (title(previous) !== undefined && title(previous) === title(current)) return true;
+  return previous.element.id === current.element.id;
+}
+
+/** The R58 delta for one section: `new`, `reworked`, or `undefined` (carried). */
 function sectionDelta(
-  previous: DraftBoard | undefined,
-  current: DraftBoard,
-  sectionId: string,
+  previous: readonly SectionIdentity[] | undefined,
+  current: SectionIdentity,
 ): "new" | "reworked" | undefined {
-  if (previous === undefined || !previous.elements.some((el) => el.id === sectionId)) return "new";
-  return subtreeSignature(previous, sectionId) === subtreeSignature(current, sectionId)
-    ? undefined
-    : "reworked";
+  if (previous === undefined) return "new";
+  if (previous.some((p) => p.signature === current.signature)) return undefined;
+  return previous.some((p) => sameSection(p, current)) ? "reworked" : "new";
 }
 
 /**
@@ -139,10 +197,10 @@ function sectionDelta(
  * to carry content that is no longer there, which is the honest-present ruling inverted.
  */
 export function removedSectionIds(previous: DraftBoard, current: DraftBoard): string[] {
-  const present = new Set(current.elements.map((el) => el.id));
-  return previous.elements
-    .filter((el) => el.kind === "section" && !present.has(el.id))
-    .map((el) => el.id);
+  const kept = sectionIdentities(current);
+  return sectionIdentities(previous)
+    .filter((p) => !kept.some((c) => sameSection(p, c)))
+    .map((p) => p.element.id);
 }
 
 /**
@@ -177,11 +235,14 @@ export function isCarriedForward(previous: DraftBoard | undefined, stamped: Draf
  * {@link removedSectionIds} carries it, and {@link isCarriedForward} reads both.
  */
 export function stampDeltas(previous: DraftBoard | undefined, current: DraftBoard): DraftBoard {
+  const prior = previous === undefined ? undefined : sectionIdentities(previous);
+  const identities = new Map(sectionIdentities(current).map((s) => [s.element.id, s]));
   const elements: DraftElement[] = current.elements.map((el) => {
-    if (el.kind !== "section") return el;
-    const delta = sectionDelta(previous, current, el.id);
+    const identity = identities.get(el.id);
+    if (el.kind !== "section" || identity === undefined) return el;
+    const delta = sectionDelta(prior, identity);
     const rest = withoutDelta(el.data as Record<string, unknown>);
-    const data = delta === undefined ? rest : { ...rest, delta };
+    const data = delta === undefined ? rest : { ...rest, delta, delta_basis: DELTA_MARK_BASIS };
     return { ...el, data } as DraftElement;
   });
   return { ...(current as object), elements } as DraftBoard;
