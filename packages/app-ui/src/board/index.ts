@@ -8,7 +8,12 @@
 // (`board-data.ts`), the element pool (`kinds/`), `Section`, and `LENS_LABEL` are
 // module-private — every internal caller reaches them by deep path, and tests mount
 // the seam/pool from those paths too, so nothing outside `board/` needs them.
-export { LensBoardDocument, LensBoardView, type LensBoardViewProps } from "./board-view";
+export {
+  BoardAccount,
+  LensBoardDocument,
+  LensBoardView,
+  type LensBoardViewProps,
+} from "./board-view";
 export { GenerationSwitcher } from "./generation-switcher";
 export { LensSwitcher } from "./lens-switcher";
 export type {

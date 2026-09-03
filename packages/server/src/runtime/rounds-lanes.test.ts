@@ -9,6 +9,12 @@ import { createRegenerationLanes } from "./rounds";
 // POSITIVE CONTROL, run 2026-09-03: `thread()` rewritten to `lanes.set(lens, {...current,
 // thread})` (the pre-fix body, no `seats`) → every test in the first describe fails: the
 // Codex thread is the only one left, `seats` is undefined. Restored.
+//
+// SECOND POSITIVE CONTROL, run 2026-09-03: the provider `seats.sort(…)` deleted, so seats
+// fall back to arrival order → 2 failed, both on the Codex-first path (the lane's thread
+// reads CODEX, and Codex's live line becomes the lane's). The Claude-first cases stay
+// green, which is the point: arrival order is right half the time and that is what hid it.
+// Restored.
 
 const ENV = "env-1";
 const CLAUDE = { environmentId: ENV, threadId: "thread-flagged-claude" };
@@ -40,7 +46,9 @@ describe("a lane holds one entry per seat", () => {
       );
     }
     const row = flagged();
-    expect(row.seats?.map((entry) => entry.seat)).toEqual([...order]);
+    // PROVIDER order, not arrival order: both seats start concurrently, so the callback
+    // that happens to land first must not decide who speaks for the lane.
+    expect(row.seats?.map((entry) => entry.seat)).toEqual(["flagged-claude", "flagged-codex"]);
     expect(row.seats?.find((entry) => entry.seat === "flagged-claude")).toEqual({
       seat: "flagged-claude",
       provider: "claudeAgent",
@@ -51,9 +59,29 @@ describe("a lane holds one entry per seat", () => {
       provider: "codex",
       thread: CODEX,
     });
-    // The lane's own thread is the PRIMARY seat's — the first to arrive — and stays put
-    // when the second arrives.
-    expect(row.thread).toEqual(order[0] === "flagged-claude" ? CLAUDE : CODEX);
+    // The lane's own thread is the PRIMARY seat's, and the primary is Claude under BOTH
+    // callback orders — this is the assertion the previous version got wrong: it pinned
+    // whoever arrived first, so a Codex-first race made Codex the lane's voice and the
+    // bench listed it first (Codex review, 2026-09-03).
+    expect(row.thread).toEqual(CLAUDE);
+  });
+
+  it("the lane's live line follows Claude even when Codex bound its thread first", () => {
+    const { lanes, flagged } = harness();
+    lanes.start();
+    lanes.thread("flagged-codex", "codex", CODEX);
+    lanes.thread("flagged-claude", "claudeAgent", CLAUDE);
+
+    lanes.progress("flagged-codex", { kind: "tool", text: "running git diff", at: 1 });
+    // Codex is the SECOND seat however early it arrived, so its line stays on its own
+    // seat instead of becoming the lane's.
+    const during = flagged();
+    expect(during.status === "running" && during.latest).toBeUndefined();
+
+    lanes.progress("flagged-claude", { kind: "text", text: "The retry path is wrong.", at: 2 });
+    const row = flagged();
+    expect(row.status === "running" && row.latest?.text).toBe("The retry path is wrong.");
+    expect(row.seats?.[0]?.seat).toBe("flagged-claude");
   });
 
   it("routes a live line to its own seat, and the lane's line follows the primary only", () => {

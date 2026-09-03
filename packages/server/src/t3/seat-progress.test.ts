@@ -146,6 +146,41 @@ describe("watchSeatThread", () => {
     watch.stop();
   });
 
+  it("reports a publisher that throws instead of letting the timer crash the daemon", async () => {
+    const stream = pushableStream();
+    const errors: unknown[] = [];
+    let clock = 1_000;
+    const watch = watchSeatThread({
+      client: {
+        subscribeThread: () => stream.iterable,
+        readThread: vi.fn(async () => threadAt(clock, `Bash: step-${clock}`)),
+      },
+      threadId: "t1",
+      publish: () => {
+        throw new Error("lane store refused the line");
+      },
+      onError: (error) => errors.push(error),
+      now: () => clock,
+    });
+    stream.push({
+      kind: "snapshot",
+      snapshot: { thread: threadAt(1_000, "Bash: git log") },
+    } as unknown as OrchestrationThreadStreamItem);
+    await settle();
+    expect(errors.map((e) => (e instanceof Error ? e.message : String(e)))).toEqual([
+      "lane store refused the line",
+    ]);
+    // The watch is still alive after the throw: a later event still tries to publish.
+    clock += 1_000;
+    stream.push({
+      kind: "event",
+      event: { type: "item.updated" },
+    } as unknown as OrchestrationThreadStreamItem);
+    await settle();
+    expect(errors).toHaveLength(2);
+    watch.stop();
+  });
+
   it("stops publishing and drops the subscription when the lane settles", async () => {
     const stream = pushableStream();
     const published: string[] = [];

@@ -322,7 +322,7 @@ import { modelSelection } from "./t3/client";
 import { runHandoffTurn as runHandoffTurnOnThread } from "./t3/handoff";
 import { type SeatThreadWatch, watchSeatThread } from "./t3/seat-progress";
 import { createT3SidecarSupervisor } from "./t3/supervisor";
-import { type SeatKind, seatThreadTitle } from "./t3/threads";
+import { type SeatKind, seatThreadTitle, sweepIfArchived } from "./t3/threads";
 import { startWsListener, type WsListener } from "./ws-listener";
 import { createWslRunner } from "./wsl-daemon";
 import { ensureWslDaemon, probeWslDaemon } from "./wsl-supervisor";
@@ -3042,11 +3042,22 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         session.id,
         generationId,
       ),
-    runRound: (input: Parameters<typeof roundsRuntime.runRound>[0]) =>
-      roundsRuntime.runRound({
-        ...input,
-        ...(awaitReport === undefined ? {} : { onReportProgress: awaitReport }),
-      }),
+    // The ROUND half of the archive's deletion boundary. `session.archive` aborts and
+    // awaits the session's PREPARATION before sweeping, but a round is driven by the
+    // durable coordinator and nothing tracks it — so a returned generation drafting
+    // through an archive binds its seat threads AFTER the sweep passed. `sweepIfArchived`
+    // re-runs the identical sweep on the way out, and does nothing at all for a session
+    // that is still live (the ordinary case: one memoized `load`, no sidecar call).
+    runRound: async (input: Parameters<typeof roundsRuntime.runRound>[0]) => {
+      try {
+        return await roundsRuntime.runRound({
+          ...input,
+          ...(awaitReport === undefined ? {} : { onReportProgress: awaitReport }),
+        });
+      } finally {
+        await sweepIfArchived(sessionStore.load(session.id), t3Sidecar.forgetSession);
+      }
+    },
     emit,
   });
 

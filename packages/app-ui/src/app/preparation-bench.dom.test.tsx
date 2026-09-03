@@ -32,6 +32,11 @@ import { MemoryBridge } from "../test/memory-bridge";
 //        → 1 failed: the failed-reader test.
 //   5. `CaptureRail`'s per-beat `state` pinned to `"active"`
 //        → 1 failed: the capture test.
+//   6. (2026-09-03, second interval) the boards block's guard put back to
+//      `if (read?.status !== "valid") return null` — the pre-fix body, which drops every
+//      non-`valid` read on the floor
+//        → 1 failed: the account test below, on its FIRST assertion (the wrong-generation
+//          read has no `[data-bench-board]` section at all). Restored.
 //
 // What a control does NOT prove is that the poll is what moved the line — 1 reddens
 // the live-line test on its FIRST assertion too. The second half of that test is the
@@ -336,6 +341,89 @@ describe("the bench — five readers at work on the change", () => {
     // The bench is still the bench: the readers stay as the way to each transcript.
     expect(document.querySelector('[data-row="design"] button')).toBeTruthy();
     expect(document.querySelector('[data-screen="session-preparation"]')).toBeTruthy();
+  });
+
+  it("a settled lane whose board read went wrong shows the account, not an empty space", async () => {
+    // The reader above says "drafted"/"reworked" for every one of these lanes. Before the
+    // fix the bench rendered `null` for every non-`valid` read, so the reviewer was told a
+    // board existed and shown nothing and no reason (Codex review, 2026-09-03).
+    const review = {
+      id: "rev-1",
+      activePatchsetId: "ps-1",
+      patchsets: [{ id: "ps-1", files: [] }],
+    } as unknown as Review;
+    const good = FIXTURE_BOARDS.gen1?.design;
+    const row: SidebarSession = {
+      id: "sess-bench",
+      projectId: "proj-1",
+      title: "feat/bench",
+      target: "your-branch",
+      createdAt: 0,
+      reviewId: "rev-1",
+      preparation: {
+        status: "drafting",
+        reviewId: "rev-1",
+        lanes: [
+          lane({ id: "design", label: "Design", status: "done", verdict: "reworked" }),
+          lane({ id: "sequence", label: "Sequence", status: "drafted" }),
+          lane({ id: "decisions", label: "Decisions", status: "drafted" }),
+          lane({ id: "flagged", label: "Flagged", status: "done", verdict: "reworked" }),
+          lane({ id: "noise", label: "Noise", status: "running" }),
+        ] as LensLane[],
+      },
+    };
+    const bridge = new MemoryBridge({
+      ...frontDoorHandlers(),
+      "session.list": () => ({ sessions: [row] }),
+      "review.load": () => ({ review, repositoryPresent: true }),
+      "board.read": ({ lens }: { lens: LensKind }) => {
+        // Four settled lanes, four ways a read answers with something that is not the
+        // board asked for.
+        if (lens === "design") {
+          // A well-formed board for ANOTHER generation than the live `gen:ps-1` — the
+          // stale/cross-wired read.
+          return { board: { ...good, generation: "gen:ps-0" } };
+        }
+        if (lens === "sequence") return { board: { ...good, sections: "not-an-array" } };
+        if (lens === "flagged") throw new Error("the whiteboard is not readable");
+        if (lens === "decisions") {
+          return { board: null, failure: "The seat produced no structured output." };
+        }
+        return { board: null };
+      },
+    } as never);
+    open(bridge);
+
+    const accountOf = (lens: string) =>
+      document.querySelector(`[data-bench-board="${lens}"]`)?.textContent ?? "";
+    const reasonOf = (lens: string) =>
+      document
+        .querySelector(`[data-bench-board="${lens}"] [data-kind="board-error"]`)
+        ?.getAttribute("data-reason");
+
+    // Wrong generation: named as a wrong-board read, not as a missing one.
+    await waitFor(() => expect(reasonOf("design")).toBe("identity"));
+    expect(accountOf("design")).toContain("This board could not be read.");
+    expect(accountOf("design")).toContain("a board for a different lens or generation");
+
+    // Malformed: the schema rejected it.
+    await waitFor(() => expect(reasonOf("sequence")).toBe("shape"));
+    expect(accountOf("sequence")).toContain("did not match the expected shape");
+
+    // The read itself was rejected.
+    await waitFor(() => expect(reasonOf("flagged")).toBe("unreadable"));
+    expect(accountOf("flagged")).toContain("The board read failed");
+
+    // And the lens that failed to draft says so, in the same voice.
+    await waitFor(() => expect(accountOf("decisions")).toContain("This lens failed to generate."));
+    expect(accountOf("decisions")).toContain("The seat produced no structured output.");
+
+    // The running lane is still silent — this reveals accounts for SETTLED lanes, it does
+    // not start narrating lanes that have not answered yet.
+    expect(document.querySelector('[data-bench-board="noise"]')).toBeNull();
+    // And the readers above are untouched: each account sits under its own lane.
+    expect(speechOf("design")).toBe("reworked");
+    expect(speechOf("sequence")).toBe("drafted");
   });
 
   it("capture is the first beat of the same scene — both steps, on the bench, with cancel", async () => {
