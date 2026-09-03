@@ -179,6 +179,19 @@ The seam is two functions. `packages/adapters/src/t3-seat-turn.ts` builds the se
 supervisor. A daemon with no vendored bundle resolves no seat runtime and the board seats
 fall back to the ephemeral Claude/Codex legs unchanged.
 
+**Archiving a session is how threads are pruned.** Transcripts are the product while a
+review is live, so nothing expires on a timer; `session.archive` is the act that ends
+them. After the archive persists, the daemon deletes the session's own thread and every
+seat thread its generations left behind (`thread.delete` over RPC) and drops those
+bindings. Un-archiving restores nothing — the next use creates fresh threads. A sidecar
+that is off still leaves the bindings dropped, because a binding pointing at a thread
+nobody can reach is worse than none, and a thread the sidecar no longer has does not fail
+the archive. The sweep is keyed on the session and review ids rather than on a repository
+root: a session's own thread is bound under the review id at the review's checkout, while
+its seat threads are bound under the session id at the drafting worktree, so a root-scoped
+sweep would leave every seat thread behind. Seat rows written before the owner field
+existed carry no session id and are matched by nothing — silence never sweeps.
+
 Nine vendored files carry this: the three contract modules that gained `outputSchema` /
 `structuredOutput`, the decider and the provider command reactor that thread it, the
 Claude and Codex adapters that hand it to their runtimes, and the runtime-ingestion layer
@@ -240,7 +253,7 @@ over RPC before the signal is the daemon-side client's job and lands with it.
 ## Code map
 
 - `packages/server/src/t3/sidecar.ts`: claim, probe, free port, provider seeding, environment, spawn, adopt, stop.
-- `packages/server/src/t3/supervisor.ts`: one supervisor per data dir; `ensure`, `session`, `client`, `threadFor`, `status`, `stopSync`.
+- `packages/server/src/t3/supervisor.ts`: one supervisor per data dir; `ensure`, `session`, `client`, `threadFor`, `forgetSession`, `status`, `stopSync`.
 - `packages/server/src/t3/client.ts`: the daemon-side RPC client, the one Rennet module importing `effect` and `@t3tools/contracts`.
 - `packages/server/src/t3/threads.ts`: the (repository root, session id) and (repository root, generation id, seat) → thread bindings, and `seatThreadTitle`.
 - `packages/server/src/t3/latest-event.ts`: the pure thread → `LaneLatest` projector; `t3/seat-progress.ts`: the throttled subscription that feeds a lane.

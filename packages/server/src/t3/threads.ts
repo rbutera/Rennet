@@ -55,6 +55,13 @@ const bindingSchema = z.object({
   // Rows written before seat bindings existed carry no `kind`; they are session rows.
   kind: z.enum(["session", "seat"]).default("session"),
   repositoryRoot: z.string(),
+  /**
+   * Which session owns this thread. For a `session` row it is half the KEY (and holds the
+   * review id, which is what `chat.t3Session` and the handoff bind on). For a `seat` row
+   * it is provenance only — the key there is (root, generation, seat) — recorded so
+   * archiving a session can find every thread it left behind. Absent on a seat row
+   * written before this field existed; those are cleaned up when their repo is.
+   */
   sessionId: z.string().optional(),
   generationId: z.string().optional(),
   seat: z.enum(SEAT_KINDS).optional(),
@@ -95,6 +102,28 @@ function matches(row: ThreadBinding, repositoryRoot: string, key: ThreadBindingK
     : row.generationId === key.generationId && row.seat === key.seat;
 }
 
+/**
+ * Every binding owned by any of these session or review ids, whatever its kind.
+ *
+ * Deliberately NOT scoped by repository root: a session's own thread is rooted at the
+ * review's checkout while its seat threads are rooted at the drafting worktree, so a
+ * root-scoped sweep would leave every seat thread behind. Session and review ids are
+ * minted uuids, so matching on them alone cannot reach another session's rows.
+ */
+export function findBindingsForSessions(dataDir: string, ids: readonly string[]): ThreadBinding[] {
+  const wanted = new Set(ids);
+  return readBindings(dataDir).filter(
+    (row) => row.sessionId !== undefined && wanted.has(row.sessionId),
+  );
+}
+
+/** Drop every binding naming one of these threads. Idempotent. */
+export function removeBindings(dataDir: string, threadIds: readonly string[]): void {
+  const dropped = new Set(threadIds);
+  const remaining = readBindings(dataDir).filter((row) => !dropped.has(row.threadId));
+  writeBindings(dataDir, remaining);
+}
+
 export function findBinding(
   dataDir: string,
   repositoryRoot: string,
@@ -117,6 +146,8 @@ export interface BindThreadInput {
   readonly key: ThreadBindingKey;
   readonly title: string;
   readonly modelSelection: ModelSelection;
+  /** The owning session, recorded on a seat row so archiving can find it. */
+  readonly sessionId?: string;
 }
 
 /**
@@ -139,7 +170,12 @@ export async function bindThread(input: BindThreadInput): Promise<ThreadBinding>
     repositoryRoot: input.repositoryRoot,
     ...(input.key.kind === "session"
       ? { kind: "session" as const, sessionId: input.key.sessionId }
-      : { kind: "seat" as const, generationId: input.key.generationId, seat: input.key.seat }),
+      : {
+          kind: "seat" as const,
+          generationId: input.key.generationId,
+          seat: input.key.seat,
+          ...(input.sessionId === undefined ? {} : { sessionId: input.sessionId }),
+        }),
     projectId,
     threadId,
     createdAt: new Date().toISOString(),

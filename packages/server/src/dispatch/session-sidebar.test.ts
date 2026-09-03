@@ -27,7 +27,10 @@ function sessionsDir(): string {
 
 /** The dispatch surface over a session store rooted at `dir` — a fresh runtime each call,
  *  so "read it back through a new store" is a genuine reload, not a cached answer. */
-function sessionDispatch(dir: string) {
+function sessionDispatch(
+  dir: string,
+  t3?: { forgetSession: (ids: readonly string[]) => Promise<number> },
+) {
   const store = new SessionStore(dir);
   const rounds = new RoundRecordStore(join(dir, "rounds"));
   const sidebarSessionFor = (session: SessionModel) =>
@@ -80,6 +83,7 @@ function sessionDispatch(dir: string) {
         return session && sidebarSessionFor(session);
       },
     },
+    ...(t3 === undefined ? {} : { t3Sidecar: t3 }),
   } as unknown as DispatchDeps);
   return { handlers: sessionHandlers(rt), rounds, store };
 }
@@ -378,5 +382,84 @@ describe("session.mint — moved-head successor", () => {
       claim: { branch: "feat/seam", prNumber: 7 },
       repository: "acme/widget",
     });
+  });
+});
+
+// ── Archiving prunes the sidecar's threads (t3-lens-threads 1.7) ─────────────
+
+describe("session.archive deletes the session's T3 threads", () => {
+  /** Records every `forgetSession` call, so a test can assert WHEN and WITH WHAT. */
+  function forgetSpy() {
+    const calls: string[][] = [];
+    return {
+      calls,
+      forgetSession: async (ids: readonly string[]) => {
+        calls.push([...ids]);
+        return ids.length;
+      },
+    };
+  }
+
+  const archive = (
+    handlers: ReturnType<typeof sessionDispatch>["handlers"],
+    sessionId: string,
+    archived: boolean,
+  ) => handlers["session.archive"]({ sessionId, archived }, undefined as never);
+
+  it("sweeps the session id AND the review id, because the two kinds bind under different ones", async () => {
+    const spy = forgetSpy();
+    const { handlers, store } = sessionDispatch(sessionsDir(), spy);
+    store.save(seed("s1", "feat/x"));
+    store.attachReview("s1", "rev-1");
+
+    await archive(handlers, "s1", true);
+
+    // Exactly one sweep, naming both ids: the session thread is bound under the REVIEW id
+    // (what `chat.t3Session` and the handoff bind on), the seat threads under the session id.
+    expect(spy.calls).toHaveLength(1);
+    expect([...(spy.calls[0] ?? [])].sort()).toEqual(["rev-1", "s1"]);
+    // The archive itself still happened — the cleanup is not instead of it.
+    expect(store.list().find((row) => row.id === "s1")?.archivedAt).toBeDefined();
+  });
+
+  it("un-archiving deletes nothing, so the next use creates fresh threads", async () => {
+    const spy = forgetSpy();
+    const { handlers, store } = sessionDispatch(sessionsDir(), spy);
+    store.save(seed("s1", "feat/x"));
+    store.attachReview("s1", "rev-1");
+
+    await archive(handlers, "s1", true);
+    await archive(handlers, "s1", false);
+
+    // The COUNT is the assertion: "was called" would be satisfied by the archive alone and
+    // could not see an un-archive that swept too.
+    expect(spy.calls).toHaveLength(1);
+    expect(store.list().find((row) => row.id === "s1")?.archivedAt).toBeUndefined();
+  });
+
+  it("sweeps by the session id alone when no review is attached", async () => {
+    const spy = forgetSpy();
+    const { handlers, store } = sessionDispatch(sessionsDir(), spy);
+    store.save(seed("s2"));
+
+    await archive(handlers, "s2", true);
+    expect(spy.calls).toEqual([["s2"]]);
+  });
+
+  it("archives fine on a daemon with no sidecar composed", async () => {
+    const { handlers, store } = sessionDispatch(sessionsDir());
+    store.save(seed("s3", "feat/y"));
+
+    const out = await archive(handlers, "s3", true);
+    expect((out as { session: SidebarSession }).session.archived).toBe(true);
+  });
+
+  it("sweeps nothing for a session id the store does not know", async () => {
+    const spy = forgetSpy();
+    const { handlers } = sessionDispatch(sessionsDir(), spy);
+
+    await archive(handlers, "nope", true);
+    // `setArchived` returned null: no session was archived, so there is nothing to prune.
+    expect(spy.calls).toEqual([]);
   });
 });
