@@ -594,3 +594,13 @@
   transition-duration: 0s !important;
   animation-duration: 0s !important;
 }
+
+/* T3's thread top bar (project breadcrumb, new-thread, editor and GitHub openers, layout
+   toggles) is the workspace's own chrome and has no place in the review's chat slot or a
+   lens transcript: Rennet's frame already names the review, the branch and the diff. The
+   bar's own `data-chat-header` hook is the seam, so it is hidden here rather than edited
+   out of the vendored ChatView (Rai, 2026-09-03). */
+[data-slot="t3-native-chat"] [data-chat-header],
+[data-slot="t3-thread-view"] [data-chat-header] {
+  display: none;
+}

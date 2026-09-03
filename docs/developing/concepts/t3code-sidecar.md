@@ -98,7 +98,7 @@ never remote-exposed. Clients do not read the credential file.
 ## The chat slot
 
 There is no engine choice and no second rung: the review workspace's chat slot always
-renders T3's thread view for the review's bound thread, mounted natively by the host.
+renders T3's thread view for the review's bound thread, mounted natively by the host. T3's own thread top bar (project breadcrumb, new-thread, editor and GitHub openers, layout toggles) is hidden in both mounts by a rule in `packages/t3-chat/src/t3.css` keyed on the bar's `data-chat-header` hook: Rennet's frame already names the review, the branch and the diff, so the bar is workspace chrome the review does not need, and hiding it from the mount's stylesheet keeps the vendored `ChatView` unedited.
 
 `@rennet/t3-chat` mounts T3's `ChatView` natively:
   the vendored web app is imported by module (both desktop Vite configs — the Electron
