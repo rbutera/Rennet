@@ -354,6 +354,7 @@ export {
 } from "./map-travel";
 export {
   applyVisibilitySwitch,
+  ensureManagedIgnoreBlock,
   previewVisibilitySwitch,
   type VisibilityPreview,
 } from "./map-visibility";

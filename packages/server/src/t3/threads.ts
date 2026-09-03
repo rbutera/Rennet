@@ -315,8 +315,15 @@ export async function sweepIfArchived(
     | { readonly id: string; readonly reviewId?: string; readonly archivedAt?: number }
     | undefined,
   forgetSession: (ids: readonly string[]) => Promise<number>,
+  /**
+   * The session's context files, purged on the same terms as its threads
+   * (session-context-files): a round that ran through an archive wrote them after
+   * `session.archive` had already purged, so the round owes the same second pass.
+   */
+  purgeContext?: (sessionId: string) => void,
 ): Promise<void> {
   if (session?.archivedAt === undefined) return;
+  purgeContext?.(session.id);
   // BOTH ids, exactly as `session.archive` sweeps: the seat threads are bound under the
   // session id, the session's own thread under the review id.
   await forgetSession([session.id, ...(session.reviewId === undefined ? [] : [session.reviewId])]);
