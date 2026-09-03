@@ -21,7 +21,6 @@ export interface SidecarSession {
   readonly wsUrl: string;
   readonly accessToken: string;
   readonly environmentId: string;
-  readonly pairingUrl?: string;
   readonly threadId?: string;
   readonly threadUrl?: string;
 }
