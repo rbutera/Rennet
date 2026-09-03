@@ -378,7 +378,8 @@ const TABLE_BOTH: AssignmentTable = {
   "lens-draft": pick("opus-4.8", "high"), // the reading surface: the deep review draft
   // Primary seat only; the Flagged dual SECOND seat pairs Codex via dual-seat.ts
   // (DEFAULT_CODEX_SECOND_SEAT_MODEL), not a table row — mirrors finding-generation.
-  "lens-draft-flagged": pick("sonnet-5", "medium"),
+  // Opus, not Sonnet (Rai, 2026-09-03): the Flagged draft is the review's findings.
+  "lens-draft-flagged": pick("opus-4.8", "high"),
   "lens-draft-noise": pick("gpt-5.6-luna", "low"), // mirrors noise-narration (cheap Codex)
   "board-post-process": pick("gpt-5.6-terra", "medium"), // mirrors comment-refinement (prose editor)
   "round-report": pick("sonnet-5", "low"),

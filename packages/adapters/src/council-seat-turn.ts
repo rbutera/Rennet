@@ -58,6 +58,13 @@ export interface ProviderTurnSettlement {
   readonly elapsedMs: number;
 }
 
+/** One line per seat start and settle on the daemon's stdout (`<dataDir>/daemon.log`).
+ *  Before this the log carried nothing about seats, so a hung lens and a slow lens were
+ *  indistinguishable from outside the UI (2026-09-03). */
+function logSeat(label: string, line: string): void {
+  console.info(`[seat] ${label} ${line}`);
+}
+
 function nonnegativeElapsedMs(started: number, now: () => number): number {
   const elapsed = now() - started;
   return Number.isFinite(elapsed) ? Math.max(0, Math.floor(elapsed)) : 0;
@@ -79,6 +86,7 @@ export function createClaudeSwarmTurn(
   const label = options.label ?? "council.seat";
   return async function runTurn(prompt: string, attempt: number): Promise<HarnessTurnResult> {
     const started = now();
+    logSeat(label, `start attempt=${attempt} harness=claude model=${model} effort=${effort}`);
     let observedModel: string | null = null;
     let apiKeySource: string | null = null;
     let session: HarnessSession | undefined;
@@ -101,6 +109,10 @@ export function createClaudeSwarmTurn(
       usage: ReturnType<typeof extractClaudeUsage>,
       error?: string,
     ): void => {
+      logSeat(
+        label,
+        `${status} attempt=${attempt} in ${now() - started} ms${error === undefined ? "" : ` (${error})`}`,
+      );
       options.collector?.record({
         label,
         docType: "review.hypothesis",
@@ -207,6 +219,7 @@ export function createCodexSwarmTurn(
   const label = options.label ?? "council.seat";
   return async function runTurn(prompt: string, attempt: number): Promise<HarnessTurnResult> {
     const started = now();
+    logSeat(label, `start attempt=${attempt} harness=codex model=${model} effort=${effort}`);
     const settleProvider = (outcome: ProviderTurnSettlement["outcome"]): void => {
       try {
         options.onProviderSettled?.({
@@ -227,6 +240,10 @@ export function createCodexSwarmTurn(
       tokens: RspTokenUsage | undefined,
       error?: string,
     ): void => {
+      logSeat(
+        label,
+        `${status} attempt=${attempt} in ${now() - started} ms${error === undefined ? "" : ` (${error})`}`,
+      );
       options.collector?.record({
         label,
         docType: "review.hypothesis",
