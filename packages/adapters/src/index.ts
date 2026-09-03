@@ -45,6 +45,7 @@ export {
   createClaudeQueryFn,
   type LoadClaudeQuery,
   type LoadClaudeTooling,
+  mapCouncilModel,
   toSdkOptions,
 } from "./claude-query";
 export { type CleanupWorktreeDeps, cleanupWorktree } from "./cleanup-worktree";
@@ -645,6 +646,15 @@ export {
   SnapshotOverlayStore,
 } from "./snapshot-overlay-store";
 export { SqliteReviewStore } from "./sqlite-review-store";
+export {
+  createT3SeatTurn,
+  parseFinalMessageJson,
+  type T3SeatClient,
+  type T3SeatSeam,
+  type T3SeatThread,
+  type T3SeatTurnOptions,
+  type T3SettledTurn,
+} from "./t3-seat-turn";
 export {
   defaultTranscriptStoreDir,
   TRANSCRIPT_STORE_VERSION,

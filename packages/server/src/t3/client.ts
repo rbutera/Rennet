@@ -114,6 +114,8 @@ export interface T3Client {
   ) => Promise<void>;
   /** Snapshot first, then events, until the iterator is returned or the socket closes. */
   readonly subscribeThread: (threadId: string) => AsyncIterable<OrchestrationThreadStreamItem>;
+  /** One projection of the thread as it stands. */
+  readonly readThread: (threadId: string) => Promise<OrchestrationThread>;
   /**
    * Resolve when the thread's latest turn leaves `running`, carrying what that turn
    * reported about itself. The settlement facts ride a `turn.settled` activity the
@@ -266,6 +268,7 @@ export async function connectT3(options: T3ClientOptions): Promise<T3Client> {
       });
     },
     subscribeThread,
+    readThread,
     waitForTurnSettled: async (threadId, options = {}) => {
       const iterator = subscribeThread(threadId)[Symbol.asyncIterator]();
       const abort = new Promise<never>((_, reject) => {

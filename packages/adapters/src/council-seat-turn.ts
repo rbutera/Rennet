@@ -15,6 +15,7 @@ import type {
   CouncilResolveContext,
   RspTokenUsage,
 } from "@rennet/protocol";
+import { createT3SeatTurn, type T3SeatSeam } from "./t3-seat-turn";
 import { extractClaudeUsage, type MetricsCollector } from "./turn-metrics";
 
 /**
@@ -311,6 +312,16 @@ export interface CouncilSeatDeps {
    *  enforced limit on both. */
   readonly outputTokenCap?: number;
   readonly onProviderSettled?: SwarmTurnOptions["onProviderSettled"];
+  /**
+   * The T3 sidecar seam (t3-lens-threads). Present ⇒ BOARD jobs run as turns on their
+   * seat's persistent thread instead of a cold ephemeral session; the caller names which
+   * seat this resolution is for. The ephemeral Claude/Codex legs stay for every other
+   * job (the project scout, the repo map, utility turns).
+   */
+  readonly t3?: {
+    readonly seat: string;
+    readonly seam: T3SeatSeam;
+  };
 }
 
 // Board-pipeline jobs run one-shot on their inlined prompt and native
@@ -331,6 +342,11 @@ function suppressesCodexMcpServers(jobId: CouncilJobId): boolean {
   return CODEX_MCP_SUPPRESSED_JOB_IDS.has(jobId);
 }
 
+/** The board pipeline's own jobs — the ones that run as seats on the review's threads. */
+function isBoardJob(jobId: CouncilJobId): boolean {
+  return CODEX_MCP_SUPPRESSED_JOB_IDS.has(jobId);
+}
+
 /**
  * Resolve one council job to a concrete `runTurn` on the resolved harness, or
  * an honest failure reason.
@@ -346,6 +362,27 @@ export function councilSeatTurn(
   const resolution = resolveAssignment(jobId, council);
   if (resolution.kind !== "model") {
     return { failure: `${jobId} resolved to no model (${resolution.trace.summary})` };
+  }
+  // A board job with the sidecar seam present runs on its own persistent thread, on
+  // whichever provider the council routed. Both providers are T3 instances there, so the
+  // harness availability the council already checked is the same check.
+  if (deps.t3 !== undefined && isBoardJob(jobId)) {
+    const provider = resolution.harness === "codex" ? "codex" : "claudeAgent";
+    return {
+      harness: resolution.harness,
+      model: resolution.model,
+      effort: resolution.effort,
+      runTurn: createT3SeatTurn(deps.t3.seam, {
+        seat: deps.t3.seat,
+        provider,
+        model: resolution.model,
+        effort: resolution.effort,
+        outputSchema: schema,
+        label: deps.label ?? "council.seat",
+        ...(deps.collector === undefined ? {} : { collector: deps.collector }),
+        ...(deps.signal === undefined ? {} : { signal: deps.signal }),
+      }),
+    };
   }
   if (resolution.harness === "codex") {
     if (!deps.codexExecutor) return { failure: `${jobId} resolved to codex, which is unavailable` };
