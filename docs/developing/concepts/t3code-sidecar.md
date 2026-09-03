@@ -132,7 +132,10 @@ opens the dock, and the slot renders that transcript read-only (below). As a lan
 (`drafted`/`done`) its board opens on the bench beneath the readers through
 `LensBoardDocument`, read off the same per-lens `board.read` seam the workspace uses
 (`useLensBoardResolutions` at the initial generation), so three settled lanes and two
-running ones show three boards and two live readers. A lane with no
+running ones show three boards and two live readers. A settled lane whose read answered
+with something other than a board — malformed, for another generation, unreadable, or a
+lens that failed to draft — shows that account in the board's place, in the same words the
+workspace uses, rather than an empty space under a reader that says "drafted". A lane with no
 `thread` yet is disabled rather than offered as a transcript that does not exist.
 
 The mount's environment registration persists in each host's IndexedDB under T3's
@@ -183,7 +186,9 @@ branch get two threads, because the key starts at the checkout and never at a pr
 
 The council still routes each seat: a Claude seat is a thread on T3's `claudeAgent`
 instance at the council's model, a Codex seat one on `codex`. Flagged runs both, on two
-threads.
+threads. A lane holds its seats in provider order — Claude first, Codex second, never the
+order the two threads happened to bind in — so the lane's own `thread` and `latest` always
+mirror the Claude seat, and the bench lists the two voices the same way on every run.
 
 Three things follow from the thread being persistent.
 
@@ -231,7 +236,11 @@ Three things follow from the thread being persistent.
   that as a failed turn carrying the session error. A session that simply stays `ready`
   with no turn row and no stream item at all is given two minutes by a timer that runs
   independently of the stream, then the wait gives up naming the session state. The timer
-  is not checked behind the next stream item, because a silent stream has none.
+  is not checked behind the next stream item, because a silent stream has none. The start
+  itself is held to the same bound: the pre-read and the `thread.turn.start` dispatch race
+  the seat's abort signal and a two-minute deadline, so a sidecar whose socket is up but
+  whose command handling has stalled releases the seat with a reason instead of holding it
+  on an RPC that never answers.
 - **A turn the sidecar refuses after accepting it settles at once, on the refusal.** T3
   accepts `thread.turn.start` at the socket and validates the provider request later, on
   its reactor's fiber; a refusal there — `ProviderService.sendTurn` rejecting an input over
@@ -282,6 +291,13 @@ binds a fresh thread behind it and the archive leaves exactly the orphan it exis
 Then, once the archive has persisted, one serialized sweep deletes the session's own thread
 and every seat thread its generations left behind (`thread.delete` over RPC) and drops those
 bindings. Un-archiving restores nothing — the next use creates fresh threads.
+
+A round in flight is covered too, from the other side. A round is driven by the durable
+round coordinator, takes no abort signal and is not waited on, so a returned generation
+drafting through an archive would bind its five seat threads after the sweep had passed.
+Instead of cancelling it, the round re-runs the identical sweep on its way out whenever
+the session it drafted for is archived by then — idempotent, and no sidecar call at all
+for the ordinary live session.
 
 A sidecar that is off still leaves the bindings dropped, because a binding pointing at a
 thread nobody can reach is worse than none, and neither an off sidecar nor a thread it no
@@ -344,7 +360,10 @@ the end of it, never dropped, so the last thing a seat did before going quiet is
 lane shows. The read throttle keeps its own clock, separate from the publish one — a
 re-read that produces an unchanged line publishes nothing, and keying the read on the
 publish time made a run of identical events re-read the thread on every one of them. The
-idle tick re-projects the last snapshot against a fresh clock and costs no RPC at all.
+idle tick re-projects the last snapshot against a fresh clock and costs no RPC at all. A
+publish that throws (the lane store or its persistence refusing the line) is contained in
+the watcher and reported through its error sink, because that publish also runs from the
+idle interval and the trailing timer, where an uncaught throw is a daemon crash.
 
 A lane holds one entry per seat (`LensLane.seats`: seat id, provider, thread, latest
 line), addressed by seat id, because Flagged runs a Claude seat and a Codex seat on one
@@ -384,6 +403,47 @@ spawn failed, exited). The field also states `telemetry: "off"` and the upstream
 the bundle was built from. The set of RPC methods Rennet calls is checked at build time,
 not at boot: the daemon-side client and the sidecar are built from the same vendored
 snapshot, so a fold that removes a method fails the typecheck before it can ship.
+
+## Measured: one generation on a 74-file branch
+
+Task 1.6 of `t3-lens-threads`, run three times on 2026-09-03 against Rennet's own
+`feat/cm-w1-import-edges` (74 files) from the packaged app with an isolated data dir, all
+six seats on the sidecar, Claude seats on Opus 4.8 at high effort, Codex seats on GPT-5.6.
+The numbers below are the third run (v0.6.9, the first build carrying the scoped waits of
+#764), read from the generation record's `timings.phases`; the earlier runs are in the
+same shape for comparison. Wall clock from branch pick to the last board was fourteen
+minutes, of which the capture and scout took about ninety seconds.
+
+| Seat | Draft (v0.6.9) | Repair (v0.6.9) | Draft (v0.6.8, run 2) |
+| --- | --- | --- | --- |
+| Noise (Codex, low) | 62 s | 11 s | 66 s |
+| Flagged / Codex (high) | 310 s | 10 s | 267 s |
+| Flagged / Claude (Opus, high) | 325 s | 9 s | 400 s |
+| Sequence (Opus, high) | 316 s | 51 s | 278 s |
+| Decisions (Opus, high) | 309 s | 232 s | 452 s |
+| Design (Opus, high) | start dropped, 120 s timeout | 1 s (no draft to repair) | start dropped, never settled |
+
+The first core board (Flagged) reached the bench at 336 s; the whole generation settled at
+541 s. On v0.6.8 every repair "settled" in tens of milliseconds because the wait answered
+with the previous turn; on v0.6.9 the repairs are real follow-up turns on the same thread,
+which is what the pointer-only repair was built for.
+
+Two things the run found. The Design seat, the first of six to dispatch, had its
+`thread.turn.start` accepted and dropped by a sidecar that had come up two hundred
+milliseconds earlier, in both runs that used a fresh sidecar; the two-minute start timer
+settled the lane honestly and the repair turn on the same thread ran fine, so the thread
+was healthy and only the first command was lost. It was not a startup race: the sidecar
+had accepted a 241,848-character prompt and refused it afterwards on its reactor's fiber,
+over its 120,000-character input cap; the refusal read and the bundle fit under
+[Seats as threads](#seats-as-threads) are the fix. And the Decisions seat drafted a board with no
+reachable `decision` element even after a repair, which the pipeline reports as a lens
+failure rather than an empty board.
+
+The ephemeral-session baseline the task named (`benchmarks.jsonl` on Rai's machine) was
+not available on the host these runs used; the comparison here is between the two
+sidecar builds. On the same branch the ephemeral legs ran on 2026-09-03 the core lenses
+were still drafting past eight minutes, so the thread-backed seats are not slower, and
+their repairs no longer re-send the base prompt.
 
 ## Stopping
 

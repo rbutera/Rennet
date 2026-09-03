@@ -294,3 +294,30 @@ async function findOrCreateBinding(input: BindThreadInput): Promise<ThreadBindin
   writeBindings(input.dataDir, [...readBindings(input.dataDir), binding]);
   return binding;
 }
+
+/**
+ * The re-sweep a ROUND owes an archive it outlived (second-interval review finding 2).
+ *
+ * Archiving is the deletion boundary, and the archive path aborts and awaits the session's
+ * PREPARATION before sweeping — but a round is driven by the durable coordinator, takes no
+ * abort signal, and nothing tracks it. So a round drafting a returned generation keeps
+ * going straight through an archive: its board seats bind fresh seat threads under the
+ * session id AFTER the sweep has already passed, the archive answers "deleted N threads",
+ * and five orphans appear behind it that nobody sweeps — which an un-archive then resolves
+ * against, one thread per ghost.
+ *
+ * So the round runs the SAME sweep again on its way out, when the session it drafted for is
+ * archived by then. Idempotent (the sweep deletes what it finds and drops those bindings,
+ * nothing more), and for the ordinary live session it calls `forgetSession` not at all.
+ */
+export async function sweepIfArchived(
+  session:
+    | { readonly id: string; readonly reviewId?: string; readonly archivedAt?: number }
+    | undefined,
+  forgetSession: (ids: readonly string[]) => Promise<number>,
+): Promise<void> {
+  if (session?.archivedAt === undefined) return;
+  // BOTH ids, exactly as `session.archive` sweeps: the seat threads are bound under the
+  // session id, the session's own thread under the review id.
+  await forgetSession([session.id, ...(session.reviewId === undefined ? [] : [session.reviewId])]);
+}

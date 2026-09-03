@@ -5,7 +5,7 @@
 - [x] 1.3 `council-seat-turn.ts`: the T3 leg (`createT3SeatTurn`) on either provider via `modelSelection`; attempt 1 starts the thread's first turn, attempt > 1 a further turn; one `TurnMetric` per turn through the collector; seat start/settle lines in `daemon.log`
 - [x] 1.4 `resolveBoardSeatDetails` routes every board job (`lens-draft*`, `board-post-process`, `round-report`) to the T3 leg; `runFlaggedDual` resolves two T3 seats on two providers
 - [x] 1.5 `@rennet/prompts`: `renderRepairTurn(pointers, frozenIds)` as a partial; `draftOneLens` sends it as the repair turn instead of `renderRetryPrompt`; measure and record the per-repair token delta in the PR description
-- [ ] 1.6 Run one real generation on a large branch; compare per-seat timings against the 2026-09-03 baseline in `benchmarks.jsonl` and record the numbers in `docs/developing/concepts/t3code-sidecar.md`
+- [x] 1.6 Run one real generation on a large branch; compare per-seat timings against the 2026-09-03 baseline in `benchmarks.jsonl` and record the numbers in `docs/developing/concepts/t3code-sidecar.md`
 - [x] 1.7 `session.archive` deletes the session thread and every seat thread bound to the review, and drops the bindings; unarchive creates fresh threads on next use
 
 ## 2. Live lanes
