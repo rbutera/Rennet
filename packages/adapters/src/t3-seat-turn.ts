@@ -14,6 +14,8 @@
 
 import type { HarnessTurnResult } from "@rennet/core";
 import type { CouncilEffort } from "@rennet/protocol";
+import { normalizeOutputSchema } from "./claude-query";
+import { sanitizeSchemaForCodex, stripNullDeep } from "./codex-exec";
 import type { RunTurn } from "./council-seat-turn";
 import type { ClaudeTurnUsage, MetricsCollector } from "./turn-metrics";
 
@@ -171,6 +173,18 @@ export function parseFinalMessageJson(text: string): unknown {
 }
 
 /**
+ * The schema each provider will actually accept (drive 1.6, 2026-09-03: every seat failed
+ * in its first five seconds without this). Codex's structured outputs 400 on a typeless
+ * `additionalProperties: {}` and on optional fields, which `sanitizeSchemaForCodex` has
+ * reconciled for Rennet's own Codex leg since it existed; the Claude CLI's validator
+ * rejects the `$schema` draft Zod projects, which `normalizeOutputSchema` strips for the
+ * Claude leg. T3 forwards a schema verbatim, so the seat leg owns the same shaping.
+ */
+export function outputSchemaFor(provider: "claudeAgent" | "codex", schema: unknown): unknown {
+  return normalizeOutputSchema(provider === "codex" ? sanitizeSchemaForCodex(schema) : schema);
+}
+
+/**
  * Build a seat `runTurn` on a T3 thread. Same signature as the ephemeral legs, so the
  * lint ladder in `draftOneLens` is unchanged: `attempt` 0 is the drafting turn, and every
  * later attempt is a repair turn on the same thread.
@@ -215,8 +229,9 @@ export function createT3SeatTurn(
       await client.startTurn({
         threadId: thread.threadId,
         text: prompt,
-        // Once per turn, as the turn's structured-output contract. Never in the text.
-        outputSchema: options.outputSchema,
+        // Once per turn, as the turn's structured-output contract, shaped for the provider
+        // that will validate it. Never in the text.
+        outputSchema: outputSchemaFor(provider, options.outputSchema),
       });
       const settled = await client.waitForTurnSettled(thread.threadId, {
         ...(options.signal === undefined ? {} : { signal: options.signal }),
@@ -234,9 +249,13 @@ export function createT3SeatTurn(
         record("failed", turnUsage, message);
         return { status: "failed", message };
       }
-      const body =
+      // Codex's strict schema made every optional field required-but-nullable; strip the
+      // nulls it emitted so the board parses against the original Zod shape (codex-exec
+      // does the same for the ephemeral leg).
+      const raw =
         settled.structuredOutput ??
         (provider === "codex" ? parseFinalMessageJson(lastAssistantText(settled)) : undefined);
+      const body = provider === "codex" && raw !== undefined ? stripNullDeep(raw) : raw;
       if (body === undefined) {
         const message =
           provider === "codex"

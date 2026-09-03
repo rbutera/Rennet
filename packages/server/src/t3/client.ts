@@ -206,16 +206,33 @@ export async function connectT3(options: T3ClientOptions): Promise<T3Client> {
   const subscribeThread = (threadId: string): AsyncIterable<OrchestrationThreadStreamItem> =>
     toAsyncIterable(client["orchestration.subscribeThread"]({ threadId: ThreadId.make(threadId) }));
 
+  const ensuringProjects = new Map<string, Promise<string>>();
   const api: T3Client = {
     probe: async () => {
       await run(client["server.probe"]({}));
     },
-    ensureProject: async (workspaceRoot, title) => {
-      const existing = (await readShellProjects()).find((p) => p.workspaceRoot === workspaceRoot);
-      if (existing) return existing.id;
-      const projectId = ProjectId.make(randomUUID());
-      await dispatch({ type: "project.create", ...stamp(), projectId, title, workspaceRoot });
-      return projectId;
+    ensureProject: (workspaceRoot, title) => {
+      // Six seats ask for the same root within milliseconds (drive 1.6, 2026-09-03): a
+      // read-then-create per caller raced into T3's "Active project already exists"
+      // invariant and cost every seat its first attempt. One in-flight creation per root;
+      // a create that still loses the race re-reads instead of failing.
+      const inFlight = ensuringProjects.get(workspaceRoot);
+      if (inFlight) return inFlight;
+      const creating = (async () => {
+        const existing = (await readShellProjects()).find((p) => p.workspaceRoot === workspaceRoot);
+        if (existing) return existing.id;
+        const projectId = ProjectId.make(randomUUID());
+        try {
+          await dispatch({ type: "project.create", ...stamp(), projectId, title, workspaceRoot });
+          return projectId;
+        } catch (error) {
+          const again = (await readShellProjects()).find((p) => p.workspaceRoot === workspaceRoot);
+          if (again) return again.id;
+          throw error;
+        }
+      })().finally(() => ensuringProjects.delete(workspaceRoot));
+      ensuringProjects.set(workspaceRoot, creating);
+      return creating;
     },
     createThread: async (input) => {
       const threadId = ThreadId.make(randomUUID());

@@ -82,6 +82,16 @@ describe.skipIf(!bundle)("t3 client over the vendored sidecar", () => {
     ).rejects.toThrow();
   }, 20_000);
 
+  it("creates ONE project when six seats ask for the same checkout at once", async () => {
+    // Drive 1.6 (2026-09-03): the seats fan out together, and a read-then-create per
+    // caller raced into T3's "Active project already exists" invariant. Six concurrent
+    // asks must converge on one id and none may throw.
+    const ids = await Promise.all(
+      Array.from({ length: 6 }, (_, i) => client.ensureProject(repo, `seat ${i}`)),
+    );
+    expect(new Set(ids).size).toBe(1);
+  }, 20_000);
+
   it("creates one project per checkout, then a full-access thread rooted in it", async () => {
     const projectId = await client.ensureProject(repo, "fixture");
     expect(await client.ensureProject(repo, "fixture again")).toBe(projectId);
