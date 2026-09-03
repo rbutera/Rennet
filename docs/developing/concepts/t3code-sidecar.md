@@ -198,7 +198,7 @@ Three things follow from the thread being persistent.
   draft are already in the conversation, so neither is re-sent. Measured on the repair
   fixture in `lens-pipeline.test.ts` against the shipped Flagged prompt, a repair turn
   fell from 7,107 bytes to 469 — the base prompt is 6,359 of the bytes that no longer
-  travel, and a production base prompt also carries the change inventory, so the real
+  travel, and a production base prompt is larger than the fixture's, so the real
   saving is larger. Both interpolations declare a byte bound with an honest omission
   marker.
 - **The output schema is the turn's contract, once.** `startTurn` takes an `outputSchema`
@@ -254,14 +254,13 @@ Three things follow from the thread being persistent.
 - **The prompt fits the transport.** T3 caps a turn's input at
   `PROVIDER_SEND_TURN_MAX_INPUT_CHARS` (120,000 characters), exported through the seam as
   `T3_TURN_INPUT_MAX_CHARS`. The Design seat is the one that carries a design-artifact
-  bundle beside the change inventory, and discovery bounds that bundle at 512 KiB — four
-  times the cap — so `fitDesignArtifactsToPrompt` re-fits it to the room the rendered
+  bundle, and discovery bounds that bundle at 512 KiB — four times the cap — so
+  `fitDesignArtifactsToPrompt` re-fits it to the room the rendered
   prompt has left: the same trimming order and the same `omitted*` / `truncated` markers as
   discovery, with the bundle's `limits` naming the budget it was fitted to, and the fitted
-  bundle is what the lint context and the coverage projection reason about too. The
-  drive's Design prompt was 241,848 characters — 103k of hunk inventory plus a 126k bundle
-  — while the five bundle-less seats sat at 110k and ran. The inventory itself is not
-  fitted; when that alone overflows, the seat fails fast on the refusal above.
+  bundle is what the lint context reasons about too. On the drive of 2026-09-03 the
+  Design prompt was 241,848 characters — 103k of hunk inventory plus a 126k bundle —
+  while the five bundle-less seats sat at 110k and ran.
 
 Because the SDK fixes `outputFormat` when a query is constructed and offers no in-session
 setter, a *live* session's contract is decided by the turn that started it. A later turn
