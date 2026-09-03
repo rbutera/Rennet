@@ -19,11 +19,7 @@ import type {
 import { MAX_UI_SCREENSHOTS_PER_RUN } from "./domain";
 import { forgeRepoIdentitySchema, forgeRepositoryMatchesLegacy } from "./forge";
 import type { AskProjection, AttentionEventFrame, RoundEvent } from "./session";
-import {
-  CodingHarnessSelectionSchema,
-  SessionPreparationSchema,
-  SessionTranscriptRowSchema,
-} from "./session/model";
+import { CodingHarnessSelectionSchema, SessionPreparationSchema } from "./session/model";
 
 const repositoryProvenanceSchema = z.object({
   id: z.string().min(1),
@@ -1192,152 +1188,6 @@ export const flaggedReviewSchema: z.ZodType<FlaggedReview> = z.union([
   }),
 ]);
 
-// ── review.ask: ask the AI a question, one model or both (issue #139) ─────────
-// The wire shape of a review question's routing + result. `mode` defaults to
-// "orchestrator" so an omitted mode NEVER fires a second model. The result can
-// carry at most `primary` (always the orchestrator) + `secondOpinion` (Codex, only
-// in "both" mode) — there is no field for a merged answer, so "no synthesis, ever"
-// is enforced by the schema itself, not only by the router.
-export const askModeSchema = z.enum(["orchestrator", "both"]);
-export const askAnswerSchema = z.object({
-  model: z.string().min(1),
-  answer: z.string(),
-});
-export const askReviewResultSchema = z.object({
-  mode: askModeSchema,
-  primary: askAnswerSchema,
-  secondOpinion: askAnswerSchema.optional(),
-});
-
-// ── #251 conversation durability: token streaming + persistence + re-attach ───
-// The final answer still returns from `invoke("review.ask")` (back-compat); these
-// add the token STREAM alongside it, and the persisted-thread shapes a re-attach
-// reloads. All fields optional on review.ask stay back-compatible with a #139 ask.
-
-/** The channel a streamed answer arrives on — the orchestrator, or Codex's second opinion. */
-export const streamChannelSchema = z.enum(["orchestrator", "codex"]);
-export type StreamChannel = z.infer<typeof streamChannelSchema>;
-
-/** A harness turn's lifecycle. ABSENT on a message = `complete` (back-compat). */
-export const turnStatusSchema = z.enum(["streaming", "complete", "interrupted"]);
-export type TurnStatus = z.infer<typeof turnStatusSchema>;
-
-// Token-stream events, pushed main→renderer and keyed by `reviewId` (NOT commandId):
-// a conversation stream must survive a renderer reload — Cmd-R keeps the turn running
-// in main — whereas project.process's narration dies with its command. The kind
-// literals are `ask-*`, DELIBERATELY disjoint from projectProcessEvent's own "done",
-// so the two event families can never collide on a shared discriminator.
-// A per-review MONOTONIC sequence number the daemon stamps on every emitted ask-stream event
-// (#382 M2 finding 5, additive). `ask-delta` is the one event that APPENDS rather than sets, so a
-// re-delivered delta (a reconnect that replays, a doubled broadcast) would duplicate text; the
-// reducer rejects any event whose seq it has already applied. Optional for back-compat: a daemon
-// that predates the field sends none and the reducer keeps its by-id idempotence for set-events.
-const askStreamSeqSchema = z.number().int().nonnegative().optional();
-export const reviewAskStreamEventSchema = z.discriminatedUnion("kind", [
-  z.object({
-    kind: z.literal("ask-focus"),
-    anchor: z.string().min(1),
-    threadId: z.string().min(1).optional(),
-    turnId: z.string().min(1).optional(),
-    seq: askStreamSeqSchema,
-  }),
-  z.object({
-    kind: z.literal("ask-delta"),
-    threadId: z.string().min(1),
-    turnId: z.string().min(1),
-    channel: streamChannelSchema,
-    delta: z.string(),
-    seq: askStreamSeqSchema,
-  }),
-  z.object({
-    kind: z.literal("ask-state"),
-    threadId: z.string().min(1),
-    turnId: z.string().min(1),
-    channel: streamChannelSchema,
-    rows: z.array(SessionTranscriptRowSchema),
-    seq: askStreamSeqSchema,
-  }),
-  z.object({
-    kind: z.literal("ask-complete"),
-    threadId: z.string().min(1),
-    turnId: z.string().min(1),
-    channel: streamChannelSchema,
-    model: z.string().min(1),
-    finalBody: z.string(),
-    seq: askStreamSeqSchema,
-  }),
-  z.object({
-    kind: z.literal("ask-interrupted"),
-    threadId: z.string().min(1),
-    turnId: z.string().min(1),
-    channel: streamChannelSchema,
-    reason: z.string().optional(),
-    seq: askStreamSeqSchema,
-  }),
-]);
-export type ReviewAskStreamEvent = z.infer<typeof reviewAskStreamEventSchema>;
-
-/** The IPC representation of a conversation anchor. The UI `ConversationAnchor` lives in
- *  `@rennet/app-ui`, which protocol cannot import; the renderer maps to and from this shape. */
-export const conversationAnchorSchema = z.object({
-  kind: z.enum(["line", "range", "chunk", "fragment"]),
-  label: z.string().min(1),
-  key: z.string().min(1),
-  side: anchorSideSchema.optional(),
-  context: z.string().optional(),
-  // The file this anchor hangs on (#251 slice 3), for orphan resolution on re-attach.
-  // Absent for a conversation fragment (anchors to a message, not code).
-  path: z.string().optional(),
-});
-export type ConversationAnchorWire = z.infer<typeof conversationAnchorSchema>;
-
-/** A persisted thread message crossing IPC on re-attach. `status` absent = complete. */
-export const persistedThreadMessageSchema = z.object({
-  id: z.string().min(1),
-  author: z.enum(["you", "harness"]),
-  model: z.string().min(1).optional(),
-  body: z.string(),
-  status: turnStatusSchema.optional(),
-  /** ISO occurrence time for chronology; absent on legacy rows. */
-  time: z.iso.datetime().optional(),
-  /** Rich harness rows for this message, when the live adapter supplied them. */
-  rows: z.array(SessionTranscriptRowSchema).optional(),
-});
-export type PersistedThreadMessageWire = z.infer<typeof persistedThreadMessageSchema>;
-
-// A persisted thread as it returns on re-attach: identity + content + the harness
-// version that produced it. There is NO orphan flag here — orphan placement is resolved
-// RENDERER-side against the current diff (main persists identity; the renderer, the only
-// place holding both the thread and the live diff, decides placement and never re-anchors).
-export const persistedThreadSchema = z.object({
-  threadId: z.string().min(1),
-  anchor: conversationAnchorSchema,
-  harnessVersionAtCreation: z.string().optional(),
-  messages: z.array(persistedThreadMessageSchema),
-});
-export type PersistedThreadWire = z.infer<typeof persistedThreadSchema>;
-
-// An in-flight turn reported by re-attach (the main-alive live case): the renderer
-// resumes this coalesced body and re-subscribes for the remaining deltas.
-export const inFlightTurnSchema = z.object({
-  threadId: z.string().min(1),
-  turnId: z.string().min(1),
-  channel: streamChannelSchema,
-  model: z.string().min(1),
-  bodySoFar: z.string(),
-  /** ISO turn-start time for chronology; absent on legacy daemon state. */
-  time: z.iso.datetime().optional(),
-  /** Latest idempotent activity snapshot for reload while the daemon still runs. */
-  rows: z.array(SessionTranscriptRowSchema).optional(),
-});
-export type InFlightTurn = z.infer<typeof inFlightTurnSchema>;
-
-export const reattachResultSchema = z.object({
-  threads: z.array(persistedThreadSchema),
-  inFlight: z.array(inFlightTurnSchema),
-});
-export type ReattachResult = z.infer<typeof reattachResultSchema>;
-
 // ── review.refine: the comment-refinement loop's result (issue #19) ───────────
 // A rough review note refined into a clean comment by a real model turn. The
 // producer guarantees `refined` carries a non-empty body that is NOT byte-
@@ -2074,8 +1924,6 @@ const layeredStringSchema = z.object({ value: z.string(), layer: settingsLayerSc
  */
 export const settingsProjectPrefsSchema = z.object({
   glyph: layeredStringSchema,
-  /** `rennet` or `t3` (t3code-sidecar-chat); optional so older daemons' rows still parse. */
-  chatEngine: layeredStringSchema.optional(),
   worktreeRoot: layeredStringSchema,
   worktreePattern: layeredStringSchema,
   tracker: z.object({
@@ -2471,7 +2319,6 @@ export type SettingsRepoWriteOutcome = z.infer<typeof settingsRepoWriteOutcomeSc
  */
 export const settingsProjectValueKeySchema = z.enum([
   "glyph",
-  "chatEngine",
   "worktreeRoot",
   "worktreePattern",
   "trackerKind",
@@ -2814,21 +2661,6 @@ export type ReviewHypothesis = z.infer<typeof reviewHypothesisSchema>;
  */
 export type UiScreenshot = z.infer<typeof uiScreenshotSchema>;
 /**
- * One model's answer to a review question, labelled by the model that gave it
- * (e.g. "Orchestrator · Claude", "codex"). The label is what the side-by-side
- * cards show, so the reviewer always knows WHO said WHAT.
- */
-export type AskAnswer = z.infer<typeof askAnswerSchema>;
-/**
- * The result of one review question. `primary` is ALWAYS the orchestrator's
- * answer; `secondOpinion` is Codex's answer and is present ONLY in "both" mode.
- * There is deliberately NO third field: the shape cannot express a synthesized or
- * merged answer, so "no synthesis, ever" holds by construction rather than by
- * discipline. When both are present they render side by side, labelled, and the
- * reviewer reconciles any disagreement themselves.
- */
-export type AskReviewResult = z.infer<typeof askReviewResultSchema>;
-/**
  * One churn item inside a noise group: the anchor it lives at and a short plain
  * detail. `deviates` marks a line that BREAKS its group's pattern — the totality
  * floor's deviating-line ejection: it is never suppressed inside the group, it
@@ -3037,15 +2869,6 @@ export interface RennetBridge {
     listener: (event: ProjectDetailProgressEvent) => void,
   ): () => void;
   /**
-   * Subscribe to a conversation's token STREAM (issue #251), keyed by `reviewId` rather
-   * than a commandId — a stream must survive a renderer reload while its turn keeps
-   * running in main, so the subscription outlives any single `invoke`. Each event carries
-   * its own `turnId` + `channel`, so a "both" ask's two channels route independently and a
-   * stray delta from a superseded turn is ignorable. Optional: a bridge without a push
-   * channel omits it, and a subscriber degrades to the command's final resolved value.
-   */
-  onAskStream?(reviewId: string, listener: (event: ReviewAskStreamEvent) => void): () => void;
-  /**
    * Subscribe to the durable ask projection for a review. The server emits the full
    * projection after every accepted ask-log write, including writes made by a completed
    * round, so an open renderer reconciles without waiting for a reload.
@@ -3212,16 +3035,14 @@ export type T3SidecarStatus = z.infer<typeof t3SidecarStatusSchema>;
 
 /**
  * A brokered sidecar session for a client (`chat.t3Session`). The daemon owns the token
- * file; a client gets the origin, the WebSocket URL, the bearer to open it with, the
- * sidecar's environment id, and, when the sidecar minted one, a pairing URL an embedded
- * T3 UI can consume to set its own session cookie.
+ * file; a client gets the origin, the WebSocket URL, the bearer to open it with, and the
+ * sidecar's environment id.
  */
 export const t3SessionSchema = z.object({
   origin: z.string(),
   wsUrl: z.string(),
   accessToken: z.string(),
   environmentId: z.string(),
-  pairingUrl: z.string().optional(),
   /** The thread bound to the review that asked (repository root + review id), when one was. */
   threadId: z.string().optional(),
   /** The sidecar UI's route for that thread, for an embedded T3 view. */

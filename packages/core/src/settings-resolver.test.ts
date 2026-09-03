@@ -105,7 +105,6 @@ describe("settings registry + generic resolve (#28)", () => {
   it("registers exactly the live keys, each with a builtin default that passes its own validator and merge=replace", () => {
     const keys = Object.keys(SETTINGS_REGISTRY).sort();
     expect(keys).toEqual([
-      "chatEngine",
       "gateCommand",
       "locus",
       "logoPath",

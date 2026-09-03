@@ -55,7 +55,6 @@ const RUNNING_TURN_COMMANDS = new Set<CommandName>([
   "review.regenerate",
   "review.refine",
   "review.handoff.run",
-  "review.ask",
 ]);
 
 /** The reviewId a running-turn command operates on, or undefined if it is not one / has none. */

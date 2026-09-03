@@ -2,7 +2,6 @@ import { existsSync } from "node:fs";
 import { basename } from "node:path";
 import type { AskLogStore, PublishReceiptStore } from "@rennet/adapters";
 import {
-  type AskAnswer,
   canonicalReviewPayload,
   emptyAskProjection,
   type ForgePrSubmission,
@@ -12,7 +11,6 @@ import {
   type ForgeReviewEvent,
   type ForgeReviewTarget,
   type HandoffTurnOutcome,
-  type HarnessEvent,
   type ReviewOpenerDraftInput,
   type ReviewOpenerDraftResult,
   type ReviewService,
@@ -53,7 +51,6 @@ import type {
 } from "@rennet/protocol";
 import {
   type CommandOutput,
-  type ConversationAnchorWire,
   type DetectedForge,
   type DetectedHarness,
   type DiscoveryResult,
@@ -62,7 +59,6 @@ import {
   type GitHubAuthStatus,
   type GitHubConnectPoll,
   type PairedDevice,
-  type PersistedThreadMessageWire,
   type ProcessedRepoSummary,
   type Project,
   type ProjectDetail,
@@ -72,8 +68,6 @@ import {
   type ProjectProgressEvent,
   type PrWorktreeSetup,
   type PullRequestState,
-  type ReattachResult,
-  type ReviewAskStreamEvent,
   sha256Hex,
 } from "@rennet/protocol";
 import { deepLinkFor, type RaisedAttention } from "../attention-planner";
@@ -231,15 +225,18 @@ export interface DispatchDeps {
   /**
    * The write-enabled handoff turn (issue #18): brackets a coding-harness write turn
    * with workspace checkpoints and returns the turn diff. Composed by the root as
-   * `runHandoffTurn` over the live Claude adapter (fully capable, Bash included) + the
-   * git checkpoint store. Optional so a composition WITHOUT a coding harness still constructs — the
-   * `run` command then answers an honest `unavailable` rather than throwing.
+   * `runHandoffTurn` over the T3 sidecar — one turn on the review's bound thread, full
+   * access, cwd the checkout, its diff read from T3's own checkpoint (t3-lens-threads 4.3:
+   * there is no second engine). Optional so a composition WITHOUT a sidecar still constructs
+   * — the `run` command then answers an honest `unavailable` rather than throwing.
+   * `reviewId` is REQUIRED: the thread is keyed on the review and its repository root, so a
+   * turn naming no review has no thread to run on.
    */
   readonly runHandoffTurn?: (input: {
     repoRoot: string;
     /** The composed bundle's ordered, verbatim work-order prompt (issue #72). */
     prompt: string;
-    readonly reviewId?: string;
+    readonly reviewId: string;
   }) => Promise<HandoffTurnOutcome>;
   /**
    * The handoff-bundle composer (issue #72, Model Council M24): the light-tier
@@ -353,72 +350,6 @@ export interface DispatchDeps {
    */
   noiseReview(review: Review): Promise<NoiseReview>;
   /**
-   * The review.ask ports (issue #139): the two model-facing sessions a review
-   * question can reach. `askOrchestrator` is the one model the reviewer converses
-   * with (always asked); `askCodex` is the second opinion (asked ONLY in "both"
-   * mode). Dispatch calls the core `askReview` router over these — the router owns
-   * the orchestrator-once / both-adds-codex / never-synthesize law, so the invariant
-   * holds on the real command path, not only in an isolated unit test.
-   *
-   * Both ports take the ALREADY-RESOLVED `review` (not a bare id): dispatch resolves
-   * and freshness-pins the review+patchset ONCE, then hands the SAME snapshot to both
-   * legs, so a "both" ask can never answer from two different patchsets (a
-   * regeneration between the orchestrator and Codex legs cannot cross them).
-   */
-  readonly reviewAsk: {
-    askOrchestrator(input: {
-      review: Review;
-      question: string;
-      /** Token-stream sink (#251): each orchestrator token as it arrives, when the ask
-       *  is a streamed one. Absent for a one-shot #139 ask. */
-      onDelta?: (text: string) => void;
-      /** Ordered normalized activity for the live transcript snapshot. */
-      onEvent?: (event: HarnessEvent) => void;
-      selection?: { anchor: string; excerpt?: string; target?: string; generation?: string };
-      /** Public turn identity shared by stream, persistence, and transcript capture. */
-      turnId?: string;
-      onFocus?: (anchor: string) => void;
-      /** Cancels the turn (#251 criterion 4): the LiveTurnRegistry's controller for this
-       *  turn, threaded to the claude SDK so `before-quit` reaps it. Absent → an
-       *  uncancellable turn (fully back-compat: no registry wired). */
-      abortController?: AbortController;
-    }): Promise<AskAnswer>;
-    askCodex(input: {
-      review: Review;
-      question: string;
-      /** Cancels the codex exec (#251 criterion 4): the SAME controller the orchestrator
-       *  leg gets, so one quit-abort cancels BOTH legs of a "both" ask. */
-      abortController?: AbortController;
-    }): Promise<AskAnswer>;
-  };
-  /**
-   * The live-turn registry (issue #251, criterion 4 — scoped reaping on quit). Optional
-   * so a composition with no registry still constructs — dispatch then runs the ask with
-   * NO abort seam (fully back-compat: the #139/#251 ports are called with exactly their
-   * existing inputs, no controller threaded). When present, each `review.ask` turn
-   * REGISTERS its AbortController when it starts and SETTLES it when it finishes (whether
-   * it completed, errored, or was aborted), so `before-quit` can abort the ones still in
-   * flight. The registered controller is threaded into BOTH model legs.
-   */
-  readonly liveTurns?: {
-    /** `reviewId` (#382 M2) indexes the turn so `review.interrupt` can abort it by review; `stream`
-     *  marks a live streaming turn so `review.reattach` resumes its real in-flight body (finding 5). */
-    register(
-      turnId: string,
-      reviewId?: string,
-      stream?: { threadId: string; channel: "orchestrator" | "codex" },
-    ): AbortController;
-    settle(turnId: string): void;
-    /** Grow a live turn's coalesced body as deltas stream (the reattach cursor, #382 M2 finding 5). */
-    appendDelta(turnId: string, delta: string): void;
-    /** Replace the idempotent ordered activity snapshot used by live reattach. */
-    setRows?(turnId: string, rows: readonly SessionTranscriptRow[]): void;
-    /** The coalesced body streamed so far — the truthful partial persisted on interrupt (finding 6). */
-    bodyOf(turnId: string): string;
-    /** Abort every in-flight turn on a review (the client "Stop", #382 M2); returns the count. */
-    abortReview(reviewId: string): number;
-  };
-  /**
    * The comment-refinement producer (issue #19): refine one raw review note into a
    * clean comment via a real, council-routed model turn. Takes the ALREADY-RESOLVED
    * review (dispatch freshness-pins it once). Optional so a composition without a
@@ -475,34 +406,6 @@ export interface DispatchDeps {
     review: Review;
     account: SuccessorAccount;
   }) => Promise<DeltaDigestResult>;
-  /**
-   * Reload the persisted conversation threads for a review, plus any turn still
-   * streaming in a surviving main process (issue #251). Optional so a composition with
-   * no thread store still constructs — dispatch then answers the TRUTHFUL empty result
-   * (there are genuinely zero persisted threads and zero tracked in-flight turns, NOT a
-   * fabricated set). This is the seam the `ThreadStore` + `LiveTurnRegistry` plug into.
-   */
-  readonly reattachThreads?: (input: { reviewId: string }) => Promise<ReattachResult>;
-  /**
-   * Persist a conversation turn as it streams (issue #251), so a turn interrupted by a
-   * process death recovers as `interrupted` on re-attach. Optional so a composition with
-   * no thread store still constructs (no persistence, streaming still works). `upsertThread`
-   * records identity; `putMessage` appends the "you" question + a `streaming` placeholder,
-   * then REPLACES the placeholder with the durable answer on completion.
-   */
-  readonly threadPersistence?: {
-    upsertThread(input: {
-      reviewId: string;
-      threadId: string;
-      anchor: ConversationAnchorWire;
-      harnessVersionAtCreation?: string;
-    }): void;
-    putMessage(input: {
-      reviewId: string;
-      threadId: string;
-      message: PersistedThreadMessageWire;
-    }): void;
-  };
   /**
    * The symbol inspector port (Rai, wireframes #8): resolve one clicked identifier to
    * its definition + reference sites over the review's model-free symbolic surface.
@@ -751,12 +654,6 @@ export interface DispatchContext {
    * renderer's sink instead of adding a second sender for the same live run.
    */
   progressRecipientId?: string | number;
-  /**
-   * The push sink for a conversation's token STREAM (issue #251) — the transport binds
-   * it to the renderer's `onAskStream` channel, keyed by `reviewId`. Absent for a bridge
-   * with no push channel (a #139 one-shot ask resolves its final value with no stream).
-   */
-  emitAskStream?(event: ReviewAskStreamEvent): void;
   /**
    * The authenticated device id for a projected (token-bearing) connection (issue #383 M1).
    * `device.registerPush` keys its push token by it; absent for loopback/pairing-only

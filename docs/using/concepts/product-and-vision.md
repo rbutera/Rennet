@@ -106,8 +106,9 @@ starts a daemon on the user's machine and connects to it over loopback. The
 daemon can also serve paired clients over a private network. Closing the desktop
 window does not stop the daemon.
 
-When a project selects the T3 Code chat engine, the daemon also runs a second local
-process, the T3 Code sidecar, built from the vendored T3 Code snapshot. It runs with T3
+The daemon also runs a second local process, the T3 Code sidecar, built from the
+vendored T3 Code snapshot — every session's chat and every work order runs on a thread
+inside it, so it starts with the first review that opens a chat. It runs with T3
 telemetry off and no T3 Connect configuration, and its only egress is the same coding
 harness traffic to the provider, plus any MCP servers the user configured.
 

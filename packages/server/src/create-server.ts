@@ -64,7 +64,6 @@ import {
   execaGitFor,
   executeExternalCommand,
   FileProjectStore,
-  FileThreadStore,
   type ForgeDetectionDeps,
   GenerationStore,
   GITHUB_REQUEST_TIMEOUT_MS,
@@ -212,7 +211,6 @@ import {
   roundOperationProgressSnapshot,
   sha256Hex,
 } from "@rennet/protocol";
-import { buildAppTools } from "./agent-tools";
 import { createBenchmarkRecording } from "./benchmark-store";
 import { type BoardsRuntime, createBoardsRuntime } from "./boards/boards-runtime";
 import { attachCiSignal } from "./ci-signal";
@@ -240,7 +238,6 @@ import { createLiveComposeBundle } from "./handoff-compose-live";
 import { InFlightReviews } from "./in-flight-reviews";
 import { liveProbe, liveProbeMap } from "./live-detection";
 import { createDesktopReviewBackend, createDesktopReviewContextFeed } from "./live-review-backend";
-import { LiveTurnRegistry } from "./live-turn-registry";
 import {
   createEditorLaunchEffects,
   editorLaunchSpec,
@@ -268,12 +265,6 @@ import {
 import { createCachedProjectionContext } from "./projection";
 import { PushTokenStore } from "./push-token-store";
 import { createLiveRefinePort } from "./refine-comment-live";
-import {
-  CODEX_ASK_LABEL,
-  createLiveCodexAsk,
-  createLiveOrchestratorAsk,
-  createLiveReviewAskPorts,
-} from "./review-ask-live";
 import { type ReviewContextFeed, runWithReviewContextFeed } from "./review-context-feed";
 import type { ReviewIntelligenceSession } from "./review-intelligence-session";
 import { createLiveReviewOpenerPort } from "./review-opener-live";
@@ -328,7 +319,7 @@ import { createSettingsComposition } from "./settings";
 import { findHealthyDaemon } from "./supervise";
 import { createLiveSymbolLookup, reviewPinnedToHead } from "./symbol-lookup-live";
 import { modelSelection } from "./t3/client";
-import { runHandoffTurnT3 } from "./t3/handoff";
+import { runHandoffTurn as runHandoffTurnOnThread } from "./t3/handoff";
 import { type SeatThreadWatch, watchSeatThread } from "./t3/seat-progress";
 import { createT3SidecarSupervisor } from "./t3/supervisor";
 import { type SeatKind, seatThreadTitle } from "./t3/threads";
@@ -410,11 +401,21 @@ export type HandoffTurnExecution =
   | { readonly kind: "host" }
   | { readonly kind: "wsl"; readonly distro: string; readonly cwd: string };
 
+/** The review handoff's turn: one turn on the review's bound T3 thread. `reviewId` is
+ *  REQUIRED — the thread is keyed on (repoRoot, reviewId), and there is no other engine
+ *  to fall back to (t3-lens-threads 4.3). */
 export interface HandoffTurnInput {
   readonly repoRoot: string;
   readonly prompt: string;
-  /** The review this work order serves; the T3 engine keys its thread on (repoRoot, reviewId). */
-  readonly reviewId?: string;
+  readonly reviewId: string;
+}
+
+/** The ROUND WORKER's turn: a coding turn in a detached worktree under a session id. It
+ *  names no review, so it has no bound thread; it runs through `SessionTurnLoop` with a
+ *  checkpoint bracket. The one surviving user of that loop. */
+export interface RoundWorkerTurnInput {
+  readonly repoRoot: string;
+  readonly prompt: string;
   /**
    * The persisted session this turn belongs to, when it has one. Present means the turn runs
    * through the session turn loop. An absent or unknown session uses the plain one-shot port.
@@ -715,7 +716,7 @@ export function roundWorkerTurnInput(input: {
   readonly worktreePath: string;
   readonly prompt: string;
   readonly sessionId: string;
-}): HandoffTurnInput {
+}): RoundWorkerTurnInput {
   return {
     repoRoot: input.worktreePath,
     prompt: input.prompt,
@@ -762,7 +763,7 @@ export function createRoundWorkspacePlanner(input: {
 }
 
 export function createRoundWorkerPort(input: {
-  readonly runHandoffTurn: (turn: HandoffTurnInput) => Promise<HandoffTurnOutcome>;
+  readonly runHandoffTurn: (turn: RoundWorkerTurnInput) => Promise<HandoffTurnOutcome>;
   readonly now?: () => number;
 }): RoundExecutionPorts["runWorker"] {
   return async ({ operation, attempt }) => {
@@ -1072,9 +1073,11 @@ export interface RennetServerOptions {
   readonly testHarnessPort?: HarnessPort;
   /** Test-composition seam for the Codex utility executor (the council's Codex seats). */
   readonly testCodexExecutor?: CodexExecutor;
-  /** Hermetic production-mapping seam for the coding turn. Tests use it to prove the
-   * composition root carries checkpoint evidence even when HEAD does not move. */
-  readonly runHandoffTurn?: (input: HandoffTurnInput) => Promise<HandoffTurnOutcome>;
+  /** Hermetic production-mapping seam for the ROUND WORKER's coding turn. Tests use it to
+   * prove the composition root carries checkpoint evidence even when HEAD does not move.
+   * The REVIEW handoff has no such seam any more: it always runs on the review's T3 thread
+   * (t3-lens-threads 4.3), and a test drives that through the sidecar. */
+  readonly runHandoffTurn?: (input: RoundWorkerTurnInput) => Promise<HandoffTurnOutcome>;
   /** Hermetic opener-drafting seam for compose/post transport proofs. Production uses the
    * live council-routed drafter; tests can supply authored bytes without launching a harness. */
   readonly draftReviewOpener?: DispatchDeps["draftReviewOpener"];
@@ -1898,11 +1901,6 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   // rehydration broadcast and shutdown reference it through this binding; both run
   // after construction, by which time it is set.
   let wsListener: WsListener | null = null;
-  // The in-flight conversation turns (#251, criterion 4). One registry for the app
-  // lifetime: dispatch registers each `review.ask` turn's AbortController and settles
-  // it when the turn finishes; `before-quit` aborts whatever is still in flight so a
-  // model child is asked to stop rather than surviving the quit.
-  const liveTurns = new LiveTurnRegistry();
   function activePatchset(review: Review): Patchset {
     const patchset = review.patchsets.find((candidate) => candidate.id === review.activePatchsetId);
     if (!patchset) throw new Error("The active patchset is missing");
@@ -2661,10 +2659,6 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       ...input,
     });
   };
-  // #251: the durable conversation store (~/.rennet/threads). Backs both re-attach
-  // (reload persisted threads, crash-recovered) and persistence (write a streaming
-  // placeholder that recovers as interrupted if this process dies mid-answer).
-  const threadStore = new FileThreadStore(join(dataDir, "threads"));
   // B11: the durable ask-log store (~/.rennet/asks), sibling to the thread store.
   // Backs the `ask.*` write path (the sole writers) and the reload-survival read
   // a reconnecting client rehydrates from (`ask.read`).
@@ -2749,15 +2743,17 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     sessionTurnLoops.set(key, loop);
     return loop;
   }
-  // The write-enabled coding-agent turn (issue #18): brackets the selected live harness turn
-  // with git checkpoints and returns the turn diff. Extracted to a local so BOTH the
-  // `review.handoff.run` command and the B11 round dispatch (below) run the same turn.
-  const runHandoffTurnDefault = async ({
+  // The ROUND WORKER's coding turn (issue #18): brackets the selected live harness turn with
+  // git checkpoints and returns the turn diff. This is the last consumer of `SessionTurnLoop`
+  // (t3-lens-threads 4.3 removed the OTHER one, the review handoff): a round worker runs in a
+  // detached worktree under a session id and names no review, so it has no bound T3 thread to
+  // run on. Moving it to a thread is its own change; until then the loop stays for this path.
+  const runRoundWorkerTurn = async ({
     repoRoot,
     prompt,
     sessionId,
     execution: requestedExecution,
-  }: HandoffTurnInput): Promise<HandoffTurnOutcome> => {
+  }: RoundWorkerTurnInput): Promise<HandoffTurnOutcome> => {
     const execution = requestedExecution ?? handoffTurnExecution(locusForRepo(repoRoot), repoRoot);
     const locus: Locus =
       execution.kind === "host" ? HOST_LOCUS : { kind: "wsl", distro: execution.distro };
@@ -2788,23 +2784,11 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         }),
     });
   };
-  // The T3 exit (t3code-sidecar-chat, group 7): a project whose chat engine is `t3` runs the
-  // work order as one turn on the review's bound thread instead of the session turn loop.
-  // The engine is read from the repository's own config, never from a project id.
-  const chatEngineFor = (repoRoot: string): "rennet" | "t3" => {
-    const state = snapshotStore.loadConfigState(repoRoot);
-    return state.status === "ok" && state.config.chatEngine === "t3" ? "t3" : "rennet";
-  };
-  const runHandoffTurnByEngine = async (input: HandoffTurnInput): Promise<HandoffTurnOutcome> => {
-    if (input.reviewId !== undefined && chatEngineFor(input.repoRoot) === "t3") {
-      return runHandoffTurnT3(
-        { repoRoot: input.repoRoot, prompt: input.prompt, reviewId: input.reviewId },
-        t3Sidecar,
-      );
-    }
-    return runHandoffTurnDefault(input);
-  };
-  const runHandoffTurn = options.runHandoffTurn ?? runHandoffTurnByEngine;
+  // The handoff exit (t3-lens-threads 4.3): a composed work order runs as ONE turn on the
+  // review's bound T3 thread. One engine, no switch — the review is what names the thread,
+  // and the thread is keyed on the review's REPOSITORY ROOT, never a project id.
+  const runHandoffTurn = (input: HandoffTurnInput): Promise<HandoffTurnOutcome> =>
+    runHandoffTurnOnThread(input, t3Sidecar);
   // B4 broadcast wiring (reconciliation 7, recorded): board events ride the EXISTING
   // WS push path — the runtime's store-append hook feeds `wsListener.broadcastBoardEvent`
   // (late-bound: `wsListener` is assigned below, read only when a board event fires), which
@@ -3204,7 +3188,9 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     dataDir,
     sourceRepositoryFor: (operation) => sourcePatchsetFor(operation).repository,
   });
-  const runRoundWorker = createRoundWorkerPort({ runHandoffTurn });
+  const runRoundWorker = createRoundWorkerPort({
+    runHandoffTurn: options.runHandoffTurn ?? runRoundWorkerTurn,
+  });
   const recoverRoundWorker = createRoundWorkerRecoveryPort();
   const runRoundGate: RoundExecutionPorts["runGate"] = async ({ operation, attempt }) => {
     if (operation.state.phase !== "gate-running" || operation.gatePlan.kind !== "configured") {
@@ -4630,17 +4616,6 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // mapping a budget-gated model turn grounds against the offered hunks. `null` (no
     // change) or `status:"failed"` (no seat / refusal / failed turn) ⇒ no chips.
     openSpecCoverage: runLiveCoverage,
-    // review.ask (issue #139, bead workspace-alqow): the LIVE ports a review
-    // question reaches. The core `askReview` router (invoked in dispatch) still owns
-    // the orchestrator-once / both-adds-codex / never-synthesize law; these ports are
-    // now the REAL invocation behind that law (replacing `reviewAskFixturePorts()`):
-    //   • askOrchestrator runs ONE capable `claude` turn at the review's repository
-    //     root, grounded in the active patchset's diff and free to read the repo.
-    //     The ask's model spend is that single turn, not a fresh lens review.
-    //   • askCodex shells one `codex exec` over the diff + question (gated on the
-    //     honestly-probed `codex` availability; an absent binary yields a legible
-    //     "unavailable" answer, never a crash, so a "both" ask still returns the
-    //     orchestrator's answer).
     // review.symbolLookup (Rai, wireframes #8): the LIVE symbol inspector port. It
     // reads the review's OWN model-free symbolic surface (context.symbol +
     // context.references) over a freshly composed backend — deterministic index
@@ -4677,50 +4652,6 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         line,
         locus: locusForRepo(review.repositoryRoot),
       }),
-    // review.ask — BOTH live legs (F1, #570). The orchestrator runs ONE capable
-    // `claude` turn at the review's repository root through the same
-    // `claudeHandoffRunPort` the write handoff uses (no second drain loop, no
-    // checkpoint bracket — an ask has no diff to measure), streaming its text
-    // deltas out through dispatch. No harness ⇒ an honest line naming `claude`.
-    reviewAsk: createLiveReviewAskPorts({
-      askOrchestrator: createLiveOrchestratorAsk({
-        resolveRunPort: async (repoRoot, review) => {
-          const adapter = await claudeAdapterForRepo(repoRoot);
-          if (!adapter) return null;
-          if (review) {
-            const sessionId = sessionIdForReview(review);
-            if (sessionStore.load(sessionId)) {
-              return turnLoopRunPort(turnLoopForRepo(repoRoot, adapter), sessionId);
-            }
-          }
-          return claudeHandoffRunPort(adapter);
-        },
-        askLogIdForReview: (review) => review.id,
-        toolsForReview: () => buildAppTools((name, input, ctx) => dispatch(name, input, ctx)),
-      }),
-      askCodex: async ({ review, question, abortController }) => {
-        // The ask executor is bound to the RESOLVED absolute codex, same as the
-        // pipeline seat (bead workspace-6qp15), and to the review's locus (#334) so a
-        // WSL project asks the distro's codex. A null executor means no codex resolved
-        // — surface that honestly rather than shelling a bad `codex`.
-        const executor = await codexExecutorForRepo(review.repositoryRoot);
-        if (executor === null) {
-          return {
-            model: CODEX_ASK_LABEL,
-            answer: "Codex is not installed, so no second opinion is available.",
-          };
-        }
-        // Thread the quit-abort controller (#251 criterion 4) → execa's cancelSignal.
-        return createLiveCodexAsk({ executor })({
-          review,
-          question,
-          ...(abortController ? { abortController } : {}),
-        });
-      },
-    }),
-    // The live-turn registry (#251 criterion 4): dispatch registers each ask turn's
-    // AbortController; `before-quit` reaps whatever is still in flight.
-    liveTurns,
     // review.refine (issue #19): the LIVE comment-refinement producer. Rai's
     // headline feature — a rough note refined into a clean comment by a real,
     // council-routed model turn. Runs on WHICHEVER seat the council resolves: Codex
@@ -4766,29 +4697,6 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       claudePort: claudeAdapterForRepo,
       codexExecutor: codexExecutorForRepo,
     }),
-    // #251 / #382 M2 finding 5 re-attach: reload the persisted threads AND the turns still
-    // genuinely streaming in this surviving main process. A turn still LIVE in the registry is
-    // NOT interrupted — the crash-recovery transform in `loadThreads` painted its placeholder
-    // `interrupted`, so drop that placeholder and report the turn in `inFlight` (with its real
-    // coalesced body) instead, letting the phone resume the live cursor. Only a turn whose main
-    // process actually died stays `interrupted`. `channelKey` matches the persisted placeholder
-    // id (`${turnId}::orchestrator`) the reducer would otherwise fold as a stopped turn.
-    reattachThreads: async ({ reviewId }) => {
-      const inFlight = liveTurns.inFlightFor(reviewId);
-      const liveIds = new Set(inFlight.map((t) => `${t.turnId}::${t.channel}`));
-      const threads = threadStore.loadThreads(reviewId).map((thread) => ({
-        ...thread,
-        messages: thread.messages.filter((m) => !liveIds.has(m.id)),
-      }));
-      return { threads, inFlight };
-    },
-    // #251 persistence: the write side of durability — a streaming placeholder on disk
-    // before the turn runs (recovers as interrupted on a kill), replaced by the durable
-    // answer on completion.
-    threadPersistence: {
-      upsertThread: (input) => threadStore.upsertThread(input.reviewId, input),
-      putMessage: (input) => threadStore.putMessage(input.reviewId, input.threadId, input.message),
-    },
     // The handoff-bundle composer (issue #72, M24): the light-tier authoring step over
     // the mechanical bundle. Council-routed over the SAME probes the refiner uses
     // (claude adapter + codex executor); one batched turn, exec-free (read-only). No
@@ -4984,7 +4892,6 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     }
     sessionPreparations.clear();
     sessionPreparationRuns.clear();
-    liveTurns.abortAll();
     void nativeRoundSourceLanding?.close().catch((error) => {
       console.error("Could not close native round source landing hosts", error);
     });

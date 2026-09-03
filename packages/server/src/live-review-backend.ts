@@ -25,8 +25,8 @@ import { createReviewContextFeed, type ReviewContextFeed } from "./review-contex
 // testable without spinning up Electron; `index.ts` injects nothing and inherits
 // the `~/.rennet/projects/` default. (Was `<userData>/snapshots` before #188.)
 //
-// The orchestrator ATTACH (`attachOrchestratorSession`) that consumes this backend
-// is a follow-on (wave 2); this wave assembles the live backend so context.map /
+// The orchestrator session that was to consume this backend never shipped and is now
+// retired outright (t3-lens-threads 4.2). The backend stands on its own: context.map /
 // context.file / context.novelty serve real data the moment a review is opened.
 // ─────────────────────────────────────────────────────────────────────────────
 

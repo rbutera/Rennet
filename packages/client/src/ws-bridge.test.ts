@@ -290,11 +290,9 @@ describe("WsRennetBridge", () => {
       check();
     });
     const progress: unknown[] = [];
-    const asks: unknown[] = [];
     const projections: unknown[] = [];
     const rounds: unknown[] = [];
     bridge.onProgress("cmd-1", (event) => progress.push(event));
-    bridge.onAskStream("rev-1", (event) => asks.push(event));
     bridge.onAskProjection("rev-1", (projection) => projections.push(projection));
     bridge.onRoundProgress("rev-1", (event) => rounds.push(event));
 
@@ -307,11 +305,6 @@ describe("WsRennetBridge", () => {
       type: "progressEvent",
       commandId: "other",
       event: { kind: "repo-error", repo: "r", message: "not for us" },
-    });
-    stub.broadcast({
-      type: "askStreamEvent",
-      reviewId: "rev-1",
-      event: { kind: "ask-focus", anchor: "a" },
     });
     stub.broadcast({
       type: "askProjection",
@@ -347,15 +340,8 @@ describe("WsRennetBridge", () => {
       reviewId: "other",
       event: { type: "dispatched", seq: 8 },
     });
-    await waitFor(
-      () =>
-        progress.length === 1 &&
-        asks.length === 1 &&
-        projections.length === 1 &&
-        rounds.length === 1,
-    );
+    await waitFor(() => progress.length === 1 && projections.length === 1 && rounds.length === 1);
     expect(progress).toEqual([{ kind: "repo-error", repo: "r", message: "m" }]);
-    expect(asks).toEqual([{ kind: "ask-focus", anchor: "a" }]);
     expect(projections).toHaveLength(1);
     expect(rounds).toEqual([{ type: "dispatched", seq: 7 }]);
     expect(consoleInfo).toHaveBeenCalledWith("[rennet:round]", {

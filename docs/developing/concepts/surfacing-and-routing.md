@@ -174,12 +174,14 @@ flowchart LR
   registry --> tools["app_* agent tools\nserver/agent-tools.ts"]
   registry -->|exposure.commandMenu| menu["⌘K command menu\napp-ui/shell/command-menu"]
   map --> handler["Family handler runs"]
-  tools -->|exposure.agent, rebuilt each turn| turn["Orchestrator turn\nserver/review-ask-live.ts"]
+  tools -.->|exposure.agent — no mount today| turn["(unmounted)\nserver/agent-tools.ts"]
 ```
 
-The orchestrator turn is live: a chat ask normally runs one capable `claude` turn
-through the review's durable `SessionTurnLoop`; only a legacy review with no durable
-session falls back to `claudeHandoffRunPort`. Both paths answer from the review's
+The orchestrator turn that mounted these tools is retired. A session's conversation is
+its T3 Code thread, and Rennet does not expose `app_*` tools to it yet, so
+`exposure.agent` currently gates a surface with no mount. `buildAppTools` and its
+registry contract stay — re-mounting them as an MCP server on T3 threads is its own
+change. What follows describes that contract, not a live path. Both paths answer from the review's
 diff and repository and receive the current `app_*` projection as in-process tools.
 The projection is rebuilt for every turn, so removing `exposure.agent` from a
 registry row removes the tool from the next turn without a second allow-list. When
@@ -209,15 +211,15 @@ with no edit here. There is no per-tool allow or deny list (Rule Zero). The
 whiteboard five stay HTTP MCP tools (`WhiteboardClient`, #455-locked names); they
 are not registry ids, so they are structurally absent from this loop.
 
-`buildAppTools` is wired at the composition root. Each review ask derives the tools
-from the live registry, passes them through the harness-neutral turn contract, and
-the Claude adapter mounts them in its per-turn in-process MCP server alongside any
-configured HTTP MCP servers. Tool output is captured as an ordered transcript action,
+`buildAppTools` derives the tools from the live registry and passes them through the
+harness-neutral turn contract, which the Claude adapter mounts in its per-turn
+in-process MCP server alongside any configured HTTP MCP servers. Nothing calls it at
+the composition root today. Tool output is captured as an ordered transcript action,
 including the returned command receipt, and the underlying command remains the sole
 writer of durable app state.
 
-`exposure.agent` is the only per-row datum that gates the agent surface. The v1
-inventory covers staging a review ask, project add and list, review capture and
+`exposure.agent` is the only per-row datum that gates the agent surface. The inventory
+covers staging a review ask, project add and list, review capture and
 open-PR, and the settings ops. Session-scoped tools stay unexposed by choice: `session.list` and
 its rename / pin / archive writes exist (C18), but they are client-surface reads
 and writes, not app tools. A client-locus `navigate` command does not exist in

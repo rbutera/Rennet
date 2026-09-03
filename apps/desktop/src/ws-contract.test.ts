@@ -10,7 +10,7 @@ import { afterEach, describe, expect, it } from "vitest";
 // @rennet/client (the dependency arrows), so the two reals can only meet here.
 
 // The stub dispatch: a progress-emitting command streams one event to its invoker;
-// `review.reattach` returns persisted threads; everything else echoes its input.
+// `session.transcript` returns rows; everything else echoes its input.
 type Dispatch = Parameters<typeof startWsListener>[0]["dispatch"];
 // Command names must be REAL (the session envelope validates `command` against the
 // registry), but their behaviour here is stubbed — the transport, not the command, is
@@ -26,7 +26,7 @@ const stubDispatch: Dispatch = (async (
     ctx?.emitProgress?.({ kind: "repo-error", repo: "r", message: "streamed" });
     return { streamed: true };
   }
-  if (name === "review.reattach") return { threads: [{ id: "t1", turns: [] }] };
+  if (name === "session.transcript") return { rows: [{ id: "t1" }] };
   return { echoed: input };
 }) as Dispatch;
 
@@ -88,11 +88,11 @@ describe("WS transport contract — real listener, real bridges (#378)", () => {
     expect(bBroadcast).toEqual([{ kind: "repo-error", repo: "r", message: "rehydrate" }]);
   });
 
-  it("a reconnected client recovers persisted threads via review.reattach", async () => {
+  it("a reconnected client recovers a served read via session.transcript", async () => {
     const listener = await startListener();
     const first = connect(listener);
-    expect(await invoke(first, "review.reattach", { reviewId: "rev-1" })).toEqual({
-      threads: [{ id: "t1", turns: [] }],
+    expect(await invoke(first, "session.transcript", { reviewId: "rev-1" })).toEqual({
+      rows: [{ id: "t1" }],
     });
 
     // Model a renderer reload / dropped connection: the old client goes away and a
@@ -100,8 +100,8 @@ describe("WS transport contract — real listener, real bridges (#378)", () => {
     // bridge's own auto-reconnect timer is pinned in the client unit suite.)
     first.close();
     const reconnected = connect(listener);
-    expect(await invoke(reconnected, "review.reattach", { reviewId: "rev-1" })).toEqual({
-      threads: [{ id: "t1", turns: [] }],
+    expect(await invoke(reconnected, "session.transcript", { reviewId: "rev-1" })).toEqual({
+      rows: [{ id: "t1" }],
     });
   });
 

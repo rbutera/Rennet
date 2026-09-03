@@ -57,6 +57,7 @@ const ABSORBED_IDS = [
   "attention.acknowledge",
   "benchmarks.list",
   "board.read",
+  "chat.t3Send",
   "chat.t3Session",
   "daemon.reconnect",
   "daemon.status",
@@ -98,7 +99,6 @@ const ABSORBED_IDS = [
   "publish.review",
   "publish.submitPr",
   "repository.choose",
-  "review.ask",
   "review.capture",
   "review.checkFreshness",
   "review.deltaDigest",
@@ -106,12 +106,10 @@ const ABSORBED_IDS = [
   "review.handoff.compose",
   "review.handoff.prepare",
   "review.handoff.run",
-  "review.interrupt",
   "review.load",
   "review.openInEditor",
   "review.openPr",
   "review.prWorktree",
-  "review.reattach",
   "review.refine",
   "review.regenerate",
   "review.reviseSpan",
@@ -183,7 +181,7 @@ const MENU_INVENTORY: readonly string[] = [];
 describe("command registry invariants (#465)", () => {
   it("matches the recorded command snapshot (settings.setRepoLocus demoted, #476)", () => {
     expect(Object.keys(commands).sort()).toEqual([...ABSORBED_IDS]);
-    expect(ABSORBED_IDS).toHaveLength(107);
+    expect(ABSORBED_IDS).toHaveLength(105);
   });
 
   it("every row carries label, exposure, and locus with today's uniform values", () => {

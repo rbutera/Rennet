@@ -145,10 +145,7 @@ describe("CommandCache — late reads never erase invalidation or streamed data"
 
   it("an abandoned key goes stale, so the next reader RE-READS instead of re-showing", async () => {
     const cache = new CommandCache();
-    const key = commandKey("review.reattach", {
-      commandId: "00000000-0000-4000-8000-000000000001",
-      reviewId: "r1",
-    });
+    const key = commandKey("session.transcript", { reviewId: "r1" });
     let served = "before";
     let calls = 0;
     const fetcher = () => {
@@ -178,10 +175,7 @@ describe("CommandCache — late reads never erase invalidation or streamed data"
 
   it("abandoned MID-FLIGHT: the completion cannot land as fresh, and refetches for nobody", async () => {
     const cache = new CommandCache();
-    const key = commandKey("review.reattach", {
-      commandId: "00000000-0000-4000-8000-000000000002",
-      reviewId: "r2",
-    });
+    const key = commandKey("session.transcript", { reviewId: "r2" });
     const first = deferred<unknown>();
     let calls = 0;
     const fetcher = () => {

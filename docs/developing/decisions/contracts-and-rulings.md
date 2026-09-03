@@ -146,7 +146,7 @@ the reviewer has already read in full is exactly the ceremony Rule Zero rejects.
 | **R48** | Decisions derive from spec, stated intent, and diff evidence. They are grouped, uncapped, and not pre-judged by a user-facing taxonomy. |
 | **R49** | Flagged indexes anchored findings and disagreements with severity and agreement state. Schema validation failures are malformed analysis, not findings. |
 | **R50** | Noise provides visible total coverage. Mechanical rules classify unambiguous churn; model judgement handles the remainder; restoring an item returns it to review. |
-| **R51** | `review.ask` returns one orchestrator answer by default. Ask both adds a separately labelled second opinion and no synthetic third answer. |
+| **R51** | *(Retired 2026-09-03.)* Rennet's own orchestrator chat is deleted; a session's conversation is its T3 Code thread, which answers on one model with no second-opinion mode. |
 
 Read state is action-defined: the reviewer's own acts — staging an ask, marking a
 section, concluding a thread — mark content read. Scroll position and dwell time

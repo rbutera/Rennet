@@ -30,7 +30,7 @@ export interface T3SidecarSupervisorOptions {
 export interface T3SidecarSupervisor {
   /** Adopt or spawn; single-flighted. Rejects when the sidecar cannot be brought up. */
   readonly ensure: () => Promise<RunningSidecar>;
-  /** Broker a session for a client: the origin, the WS URL, the bearer, and a pairing URL for an embedded UI. */
+  /** Broker a session for a client: the origin, the WS URL, the bearer, the environment id. */
   readonly session: () => Promise<T3Session>;
   readonly status: () => T3SidecarStatus;
   /** The daemon's own RPC client over the sidecar socket, connected on first use. */
@@ -47,7 +47,7 @@ export interface T3SidecarSupervisor {
   readonly stopSync: () => void;
 }
 
-/** Rung one's default model: T3's own default for its Claude driver. The composer changes it per thread. */
+/** The default model for a bound thread: T3's own default for its Claude driver. The composer changes it per thread. */
 const DEFAULT_MODEL = modelSelection("claudeAgent", "claude-sonnet-5");
 
 export function createT3SidecarSupervisor(
@@ -139,13 +139,11 @@ export function createT3SidecarSupervisor(
 
   const session = async (): Promise<T3Session> => {
     const sidecar = await ensure();
-    const pairing = await mintPairingCredential(sidecar.origin, sidecar.credentials.accessToken);
     return {
       origin: sidecar.origin,
       wsUrl: `${sidecar.origin.replace(/^http/, "ws")}/ws`,
       accessToken: sidecar.credentials.accessToken,
       environmentId: sidecar.environment.environmentId,
-      ...(pairing ? { pairingUrl: `${sidecar.origin}/pair#token=${pairing}` } : {}),
     };
   };
 
@@ -170,24 +168,4 @@ export function createT3SidecarSupervisor(
   };
 
   return { ensure, session, status: () => status, client, threadFor, stopSync };
-}
-
-/** A short-lived pairing credential an embedded T3 UI can consume at `/pair#token=`. */
-async function mintPairingCredential(origin: string, accessToken: string): Promise<string | null> {
-  try {
-    const res = await fetch(`${origin}/api/auth/pairing-token`, {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${accessToken}`,
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({ label: "Rennet chat slot" }),
-      signal: AbortSignal.timeout(5_000),
-    });
-    if (!res.ok) return null;
-    const body = (await res.json()) as { credential?: unknown };
-    return typeof body.credential === "string" ? body.credential : null;
-  } catch {
-    return null;
-  }
 }

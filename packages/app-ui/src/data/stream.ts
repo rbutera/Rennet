@@ -6,7 +6,6 @@ import type {
   ProjectDetailProgressEvent,
   ProjectProcessEvent,
   RennetBridge,
-  ReviewAskStreamEvent,
   RoundEvent,
 } from "@rennet/protocol";
 import { useEffect, useRef } from "react";
@@ -19,7 +18,6 @@ import { commandKey } from "./cache";
 // never a second event state. The three keyed channels map to a command read:
 //   • progress               (onProgress, keyed by commandId)        → project.process
 //   • projectDetailProgress  (onProjectDetailProgress, by commandId) → project.detail
-//   • askStream              (onAskStream, keyed by reviewId)        → review.ask
 //   • askProjection          (onAskProjection, keyed by reviewId)    → ask.read
 //   • roundProgress          (onRoundProgress, keyed by reviewId)    → session.roundEvents
 // The daemon-wide channels (onAttention/onUpdateReady) fold into the store, not a read,
@@ -29,7 +27,6 @@ import { commandKey } from "./cache";
 interface ChannelEvent {
   progress: ProjectProcessEvent;
   projectDetailProgress: ProjectDetailProgressEvent;
-  askStream: ReviewAskStreamEvent;
   askProjection: AskProjection;
   roundProgress: RoundEvent;
 }
@@ -49,8 +46,6 @@ function subscribeChannel<C extends StreamChannelName>(
         subscriptionKey,
         listener as (e: ProjectDetailProgressEvent) => void,
       );
-    case "askStream":
-      return bridge.onAskStream?.(subscriptionKey, listener as (e: ReviewAskStreamEvent) => void);
     case "askProjection":
       return bridge.onAskProjection?.(subscriptionKey, listener as (e: AskProjection) => void);
     case "roundProgress":

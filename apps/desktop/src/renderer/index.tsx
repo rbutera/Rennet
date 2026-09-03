@@ -59,7 +59,6 @@ function composeBridge(supervisor: ConnectionSupervisor): RennetBridge & { close
     invoke: supervisor.invoke.bind(supervisor),
     onProgress: supervisor.onProgress.bind(supervisor),
     onProjectDetailProgress: supervisor.onProjectDetailProgress.bind(supervisor),
-    onAskStream: supervisor.onAskStream.bind(supervisor),
     onAskProjection: supervisor.onAskProjection.bind(supervisor),
     onRoundProgress: supervisor.onRoundProgress.bind(supervisor),
     platform: preload.platform,

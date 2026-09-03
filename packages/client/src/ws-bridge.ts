@@ -17,7 +17,6 @@ import type {
   ProjectProcessEvent,
   ProjectProgressEvent,
   RennetBridge,
-  ReviewAskStreamEvent,
   RoundEvent,
   SessionFrame,
 } from "@rennet/protocol";
@@ -251,7 +250,7 @@ interface ReadyWaiter {
 
 /**
  * A `RennetBridge` over a loopback WebSocket. Correlates `invoke` calls by a
- * generated `requestId`, routes `progressEvent`/`askStreamEvent` push frames to
+ * generated `requestId`, routes `progressEvent`/`askProjection` push frames to
  * keyed listeners, and reconnects with capped exponential backoff (re-sending the
  * `hello` handshake on every fresh connection). In-flight invokes reject on a
  * dropped connection — no offline queueing (a caller sees a failed command exactly
@@ -285,7 +284,6 @@ export class WsRennetBridge implements RennetBridge {
   // `project.detail` never share a commandId, so a given id only carries one
   // member's kinds. The public methods below cast their narrower listener in.
   readonly #progressListeners = new Map<string, Set<(event: ProjectProgressEvent) => void>>();
-  readonly #askListeners = new Map<string, Set<(event: ReviewAskStreamEvent) => void>>();
   readonly #askProjectionListeners = new Map<string, Set<(projection: AskProjection) => void>>();
   /** Live round-progress listeners, keyed by review id (C15 3.1). */
   readonly #roundListeners = new Map<string, Set<(event: RoundEvent) => void>>();
@@ -369,10 +367,6 @@ export class WsRennetBridge implements RennetBridge {
       commandId,
       listener as (event: ProjectProgressEvent) => void,
     );
-  }
-
-  onAskStream(reviewId: string, listener: (event: ReviewAskStreamEvent) => void): () => void {
-    return subscribe(this.#askListeners, reviewId, listener);
   }
 
   onAskProjection(reviewId: string, listener: (projection: AskProjection) => void): () => void {
@@ -680,11 +674,6 @@ export class WsRennetBridge implements RennetBridge {
       }
       case "progressEvent": {
         const listeners = this.#progressListeners.get(frame.commandId);
-        if (listeners) for (const listener of listeners) listener(frame.event);
-        return;
-      }
-      case "askStreamEvent": {
-        const listeners = this.#askListeners.get(frame.reviewId);
         if (listeners) for (const listener of listeners) listener(frame.event);
         return;
       }

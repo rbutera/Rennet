@@ -7,11 +7,6 @@
 //
 // Routes are scoped by daemon id (the Paseo shape: many daemons coexist in one nav tree).
 
-import {
-  type AttentionAction,
-  attentionActionSchema,
-  MAX_ATTENTION_ACTIONS,
-} from "@rennet/protocol";
 import { z } from "zod";
 
 /** A parsed attention target — the surface the user should land on. */
@@ -50,11 +45,12 @@ export function parseDeepLink(url: string): LinkTarget | null {
 }
 
 /**
- * The expo-router href for a target under a specific daemon. `ask` lands on the live turn screen
- * (the ask is answered there, wireframe 22) and `publish` on the publish preview (wireframe 23) —
- * both M2 surfaces. `handoff` lands on the digest (its dedicated surface is secondary per the
- * ideation doc). The digest is a real screen that states what it does and does not carry — while
- * the Board rebuild has not reached mobile it says so rather than offering a read that dead-ends.
+ * The expo-router href for a target under a specific daemon. `publish` lands on the publish
+ * preview (wireframe 23). `handoff` lands on the digest (its dedicated surface is secondary per
+ * the ideation doc), and so does `ask`: the orchestrator chat that answered an ask is retired
+ * (t3-lens-threads 4.2), so the phone shows the review rather than a screen that cannot answer.
+ * The digest is a real screen that states what it does and does not carry — while the Board
+ * rebuild has not reached mobile it says so rather than offering a read that dead-ends.
  */
 export function routeHref(daemonId: string, target: LinkTarget): string {
   const base = `/daemon/${encodeURIComponent(daemonId)}`;
@@ -65,25 +61,13 @@ export function routeHref(daemonId: string, target: LinkTarget): string {
   switch (target.surface) {
     case "error":
       return `${review}/error`;
-    case "ask": // the live turn screen — reattach paint + live stream + the ask card
-      return `${review}/turn`;
     case "publish": // the publish preview → one-tap post
       return `${review}/publish`;
+    case "ask": // no phone-side chat since the orchestrator session was retired
     case "digest":
     case "handoff":
       return `${review}/digest`;
   }
-}
-
-/**
- * The review id an ASK deep-link names (`rennet://review/<id>/ask`), or undefined for any other
- * link (#382 M2). One source for the reviewId a shade answer targets — the live tap handler, the
- * background task, and the category-registration path all resolve it here, never their own regex.
- */
-export function askReviewIdOf(deepLink: string | undefined): string | undefined {
-  if (!deepLink) return undefined;
-  const target = parseDeepLink(deepLink);
-  return target?.kind === "review" && target.surface === "ask" ? target.reviewId : undefined;
 }
 
 /** A parsed pairing offer — the daemon URL, the one-time code, and a suggested name. */
@@ -115,17 +99,15 @@ export function parsePairingLink(link: string): PairingOffer | null {
 
 /** The push-notification data payload the daemon posts and the app reads on tap. Parsed (never
  *  blindly cast) via {@link parseAttentionPushData} — the payload is untrusted input (#382 M2
- *  findings 3 + 11), and a shade answer binds to `attentionId`. */
+ *  findings 3 + 11). */
 export interface AttentionPushData {
   /** Identifies which paired daemon the push is for (one device per daemon). */
   readonly deviceId?: string;
   readonly deepLink?: string;
   readonly family?: string;
-  /** The ask's attention id (#382 M2 finding 3): a shade answer invokes `review.ask` with it so the
-   *  daemon consumes exactly this ask (dedup + forgery guard). Present on ask-pending pushes. */
+  /** The ask's attention id: the daemon stamps it on an ask-pending push. Carried so a future
+   *  mobile thread view can acknowledge the item; nothing answers into it today. */
   readonly attentionId?: string;
-  /** The ask's answer chips (ask-pending only). Bounded + refined by the protocol schema. */
-  readonly actions?: readonly AttentionAction[];
 }
 
 /** Validate a push notification's untrusted `data` payload into an {@link AttentionPushData}, or
@@ -141,7 +123,6 @@ const attentionPushDataSchema = z.object({
   deepLink: z.string().min(1).optional(),
   family: z.string().min(1).optional(),
   attentionId: z.string().min(1).optional(),
-  actions: z.array(attentionActionSchema).max(MAX_ATTENTION_ACTIONS).optional(),
 });
 
 /**

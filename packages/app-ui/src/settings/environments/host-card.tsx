@@ -63,7 +63,10 @@ function sidecarLine(host: SettingsHost): string | null {
       : sidecar.state === "starting"
         ? "starting"
         : `degraded${sidecar.detail ? ` — ${sidecar.detail}` : ""}`;
-  return `T3 Code sidecar (owned by this daemon) — ${state}; telemetry off, egress only through the coding harness`;
+  // The three facts that used to sit beside the chat-engine control, moved here when the
+  // engine choice was deleted (t3-lens-threads 4.1): every session's chat is now a T3
+  // thread, so they are facts about the product, not about a choice. Copy, not a gate.
+  return `T3 Code sidecar (owned by this daemon) — ${state}; telemetry off, egress only through the coding harness. Threads are persisted harness sessions: they appear in the harness's own history, their token usage is reported by T3 Code's usage view rather than Rennet's seat usage, and T3 Code records a hidden checkpoint ref in the reviewed repository per turn, which ordinary pushes do not send.`;
 }
 
 /** The Remove confirmation's blast-radius sentence — names the counts it forgets. */

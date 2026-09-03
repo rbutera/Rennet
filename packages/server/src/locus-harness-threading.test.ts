@@ -62,12 +62,13 @@ describe("locus threading in MAIN", () => {
   // was addressed with. A project path, a workspace path, or a host default reddens this.
   it("passes a caller-owned repository root into every claudeAdapterForRepo consumer", () => {
     const calls = callArgs("claudeAdapterForRepo");
-    // Exact, not `>=`. FIVE consumers: the flagged runner, the coverage seat (#681), the
-    // noise runner — all three on `review.repositoryRoot` — plus the coding-round handoff
-    // turn and the review-ask run port, which receive `repoRoot` as a parameter. Bare
-    // references (`resolveClaudePort: claudeAdapterForRepo`) are not calls and do not
-    // match; they hand the function on, and the site that CALLS it is counted here.
-    expect(calls).toHaveLength(5);
+    // Exact, not `>=`. FOUR consumers: the flagged runner, the coverage seat (#681), the
+    // noise runner — all three on `review.repositoryRoot` — plus the round worker's coding
+    // turn, which receives `repoRoot` as a parameter. The fifth was the review-ask run
+    // port, gone with the orchestrator chat (t3-lens-threads 4.2). Bare references
+    // (`resolveClaudePort: claudeAdapterForRepo`) are not calls and do not match; they hand
+    // the function on, and the site that CALLS it is counted here.
+    expect(calls).toHaveLength(4);
     expect(calls.filter((arg) => arg === "review.repositoryRoot")).toHaveLength(3);
     for (const arg of calls) {
       expect(

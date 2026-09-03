@@ -100,7 +100,6 @@ function mountEvidence(
       reviewLoads += 1;
       return { review: REVIEW, repositoryPresent: true };
     },
-    "review.reattach": () => ({ threads: [], inFlight: [] }),
   });
   const history = memoryHistory(
     "/s/session-1?lens=sequence&generation=generation-1&ask=keep%20me&round=2&file=old.ts",

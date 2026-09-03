@@ -4,17 +4,13 @@ import {
   type CommandInput,
   type CommandOutput,
   findingRefKey,
-  type ReattachResult,
 } from "@rennet/protocol";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { reviewReattachKey, SessionTranscriptProvider } from "../chat/chat-data";
-import { ChatDock } from "../chat/chat-dock";
 import { BridgeProvider } from "../data";
-import { useBridgeContext } from "../data/bridge";
 import { useRennetStore } from "../store";
-import { act, cleanup, mount, screen, waitFor } from "../test/dom";
+import { act, cleanup, mount, waitFor } from "../test/dom";
 import { MemoryBridge } from "../test/memory-bridge";
-import { ReviewAnchoredAskProvider, useAnchoredAsk } from "./anchored-ask";
+import { anchoredAskText, ReviewAnchoredAskProvider, useAnchoredAsk } from "./anchored-ask";
 import { useAskLog } from "./ask-log";
 
 function Send({ threadId }: { readonly threadId: string }) {
@@ -35,13 +31,6 @@ function Send({ threadId }: { readonly threadId: string }) {
       Anchored send
     </button>
   );
-}
-
-let capturedCache: ReturnType<typeof useBridgeContext>["cache"] | undefined;
-
-function CaptureCache() {
-  capturedCache = useBridgeContext().cache;
-  return null;
 }
 
 function AskLogBinding({ reviewId }: { readonly reviewId: string }) {
@@ -85,7 +74,6 @@ function emptyProjection(quoteThreads: AskProjection["quoteThreads"] = {}): AskP
 }
 
 beforeEach(() => {
-  capturedCache = undefined;
   useRennetStore.getState().reviewActions.resetReview();
 });
 afterEach(cleanup);
@@ -231,318 +219,54 @@ describe("useAskLog write reconciliation", () => {
   });
 });
 
-describe("ReviewAnchoredAskProvider", () => {
-  it("dispatches once on the existing thread and persists the real reply", async () => {
+describe("ReviewAnchoredAskProvider (t3-lens-threads 4.2)", () => {
+  it("starts one turn on the review thread carrying the question and the cited span, and opens the chat", async () => {
     const threadId = useRennetStore
       .getState()
       .reviewActions.addQuoteComment("rawCall() source", "Explain this passage.", "explain", {
         target: "finding-1",
         generation: "gen-2",
       });
-    const seen: CommandInput<"review.ask">[] = [];
-    const replyWrites: CommandInput<"ask.quoteReply">[] = [];
+    const sends: CommandInput<"chat.t3Send">[] = [];
     const bridge = new MemoryBridge({
-      "review.reattach": () => ({ threads: [], inFlight: [] }),
-      "review.ask": (input) => {
-        seen.push(input);
-        return {
-          mode: "orchestrator",
-          primary: { model: "Orchestrator · Claude", answer: "It preserves identity." },
-        };
-      },
-      "ask.quoteReply": (input) => {
-        replyWrites.push(input);
-        return { receipt: { kind: "quote-reply", threadId, messages: [] } };
+      "chat.t3Send": (input) => {
+        sends.push(input);
+        return { threadId: "t3-thread-1" };
       },
     });
+    act(() => useRennetStore.getState().uiActions.setChatOpen(false));
     const view = mount(
       <BridgeProvider bridge={bridge}>
-        <CaptureCache />
         <ReviewAnchoredAskProvider reviewId="review-1">
           <Send threadId={threadId} />
         </ReviewAnchoredAskProvider>
       </BridgeProvider>,
     );
 
-    capturedCache?.setData(reviewReattachKey("review-1"), () => ({ threads: [], inFlight: [] }));
     await act(async () => view.user.click(view.getByText("Anchored send")));
 
-    expect(seen).toHaveLength(1);
-    expect(seen[0]).toMatchObject({
-      reviewId: "review-1",
-      threadId,
-      question: "Why this fix?",
-      turnBody: "Why this fix?",
-      anchor: {
-        kind: "fragment",
-        key: threadId,
-        context: "`rawCall()` [source](packages/core/src/a.ts)",
-      },
-      selection: {
-        anchor: "board:gen-2:finding-1",
-        excerpt: "`rawCall()` [source](packages/core/src/a.ts)",
-        target: "finding-1",
-        generation: "gen-2",
-      },
-    });
-    expect(seen[0]?.commandId).toMatch(/^[0-9a-f-]{36}$/);
-    expect(seen[0]?.turnId).toMatch(/^[0-9a-f-]{36}$/);
-    const cached = capturedCache?.getSnapshot(reviewReattachKey("review-1")).data as
-      | ReattachResult
-      | undefined;
-    expect(cached?.threads[0]?.messages[0]).toMatchObject({
-      id: `${seen[0]?.turnId}::you`,
-      author: "you",
-      body: "Why this fix?",
-    });
-    await waitFor(() => expect(replyWrites).toHaveLength(1));
-    expect(replyWrites[0]).toEqual({
-      sessionId: "review-1",
-      threadId,
-      author: "orchestrator",
-      text: "It preserves identity.",
-    });
+    // ONE turn, on the review the provider names, carrying both halves: the question and
+    // the span it was asked about. The answer streams in T3 own view, so nothing here
+    // reads a reply back. This asserts what was SENT, which is all this path now owns.
+    expect(sends).toHaveLength(1);
+    expect(sends[0]?.reviewId).toBe("review-1");
+    expect(sends[0]?.text).toContain("Why this fix?");
+    expect(sends[0]?.text).toContain("packages/core/src/a.ts");
+    // The question comes FIRST: a position assertion, not two membership checks that a
+    // reversed compose would satisfy just as well.
+    expect(sends[0]?.text.indexOf("Why this fix?")).toBeLessThan(
+      sends[0]?.text.indexOf("packages/core/src/a.ts") ?? -1,
+    );
+    // And the dock is open, because that is where the answer arrives. Asking with nothing
+    // opening would read to the reviewer as a dropped ask.
+    expect(useRennetStore.getState().ui.chatOpen).toBe(true);
   });
 
-  it("replays its user echo after an older in-flight reattach snapshot lands", async () => {
-    const threadId = useRennetStore
-      .getState()
-      .reviewActions.addQuoteComment("rawCall()", "Explain this passage.", "explain");
-    let resolveReattach!: (value: ReattachResult) => void;
-    let reattachCalled = false;
-    const pendingReattach = new Promise<ReattachResult>((resolve) => {
-      resolveReattach = resolve;
-    });
-    const bridge = new MemoryBridge({
-      "review.reattach": () => {
-        reattachCalled = true;
-        return pendingReattach;
-      },
-      "session.transcript": () => ({ trail: { title: "Review" }, rows: [] }),
-      "review.ask": () => ({
-        mode: "orchestrator",
-        primary: { model: "Orchestrator · Claude", answer: "A real reply." },
-      }),
-    });
-    const view = mount(
-      <BridgeProvider bridge={bridge}>
-        <SessionTranscriptProvider value={{ reviewId: "review-1" }}>
-          <ChatDock />
-        </SessionTranscriptProvider>
-        <ReviewAnchoredAskProvider reviewId="review-1">
-          <Send threadId={threadId} />
-        </ReviewAnchoredAskProvider>
-      </BridgeProvider>,
-    );
-
-    await waitFor(() => expect(reattachCalled).toBe(true));
-    await act(async () => view.user.click(view.getByText("Anchored send")));
-    await act(async () => resolveReattach({ threads: [], inFlight: [] }));
-
-    await waitFor(() => expect(screen.getByText("Why this fix?")).toBeTruthy());
-  });
-
-  it("persists a late answer against the originating review after the provider switches", async () => {
-    const threadId = "qt-origin";
-    const originThread = {
-      anchor: "rawCall()",
-      kind: "explain" as const,
-      messages: [{ author: "user" as const, text: "Explain this passage." }],
-    };
-    let resolveAsk!: (value: {
-      mode: "orchestrator";
-      primary: { model: string; answer: string };
-    }) => void;
-    const pendingAsk = new Promise<{
-      mode: "orchestrator";
-      primary: { model: string; answer: string };
-    }>((resolve) => {
-      resolveAsk = resolve;
-    });
-    const replyWrites: CommandInput<"ask.quoteReply">[] = [];
-    const bridge = new MemoryBridge({
-      "ask.read": ({ sessionId }) => ({
-        projection:
-          sessionId === "review-a"
-            ? emptyProjection({ [threadId]: originThread })
-            : emptyProjection(),
-      }),
-      "review.reattach": () => ({ threads: [], inFlight: [] }),
-      "review.ask": () => pendingAsk,
-      "ask.quoteReply": (input) => {
-        replyWrites.push(input);
-        return { receipt: { kind: "quote-reply", threadId, messages: originThread.messages } };
-      },
-    });
-    const render = (reviewId: string, showSend: boolean) => (
-      <BridgeProvider bridge={bridge}>
-        <AskLogBinding reviewId={reviewId} />
-        <ReviewAnchoredAskProvider reviewId={reviewId}>
-          {showSend ? <Send threadId={threadId} /> : null}
-        </ReviewAnchoredAskProvider>
-      </BridgeProvider>
-    );
-    const view = mount(render("review-a", true));
-    await waitFor(() =>
-      expect(useRennetStore.getState().review.quoteThreads[threadId]).toEqual(originThread),
-    );
-
-    await act(async () => view.user.click(view.getByText("Anchored send")));
-    view.rerender(render("review-b", false));
-    await waitFor(() =>
-      expect(useRennetStore.getState().review.quoteThreads[threadId]).toBeUndefined(),
-    );
-    await act(async () =>
-      resolveAsk({
-        mode: "orchestrator",
-        primary: { model: "Orchestrator · Claude", answer: "It survives the switch." },
-      }),
-    );
-
-    await waitFor(() => expect(replyWrites).toHaveLength(1));
-    expect(replyWrites[0]).toEqual({
-      sessionId: "review-a",
-      threadId,
-      author: "orchestrator",
-      text: "It survives the switch.",
-    });
-    expect(useRennetStore.getState().review.quoteThreads[threadId]).toBeUndefined();
-  });
-
-  it("repairs a quote reply from the durable reattach transcript after reload", async () => {
-    const threadId = "qt-reloaded";
-    let projection = emptyProjection({
-      [threadId]: {
-        anchor: "rawCall()",
-        kind: "explain",
-        messages: [{ author: "user", text: "Explain this passage." }],
-      },
-    });
-    const replyWrites: CommandInput<"ask.quoteReply">[] = [];
-    const bridge = new MemoryBridge({
-      "ask.read": () => ({ projection }),
-      "review.reattach": () => ({
-        threads: [
-          {
-            threadId,
-            anchor: { kind: "fragment", key: threadId, label: "rawCall()" },
-            messages: [
-              { id: "turn-1::you", author: "you", body: "Explain this passage." },
-              {
-                id: "turn-1::orchestrator",
-                author: "harness",
-                body: "Recovered after reload.",
-                status: "complete",
-              },
-            ],
-          },
-        ],
-        inFlight: [],
-      }),
-      "ask.quoteReply": (input) => {
-        replyWrites.push(input);
-        const thread = projection.quoteThreads[threadId];
-        if (!thread) throw new Error("expected persisted quote thread");
-        projection = emptyProjection({
-          [threadId]: {
-            ...thread,
-            messages: [...thread.messages, { author: input.author, text: input.text }],
-          },
-        });
-        return { receipt: { kind: "quote-reply", threadId, messages: thread.messages } };
-      },
-    });
-
-    mount(
-      <BridgeProvider bridge={bridge}>
-        <AskLogBinding reviewId="review-a" />
-        <ReviewAnchoredAskProvider reviewId="review-a">
-          <span>Board</span>
-        </ReviewAnchoredAskProvider>
-      </BridgeProvider>,
-    );
-
-    await waitFor(() => expect(replyWrites).toHaveLength(1));
-    expect(replyWrites[0]?.sessionId).toBe("review-a");
-    await waitFor(() =>
-      expect(useRennetStore.getState().review.quoteThreads[threadId]?.messages.at(-1)).toEqual({
-        author: "orchestrator",
-        text: "Recovered after reload.",
-      }),
-    );
-  });
-
-  it("repairs an earlier failed reply write without losing durable reply order", async () => {
-    const threadId = "qt-gap";
-    const initialThread = {
-      anchor: "rawCall()",
-      kind: "explain" as const,
-      messages: [
-        { author: "user" as const, text: "Explain this passage." },
-        { author: "orchestrator" as const, text: "Reply B" },
-      ],
-    };
-    const projection = emptyProjection({ [threadId]: initialThread });
-    const replacements: CommandInput<"ask.quoteOpen">[] = [];
-    const replyWrites: CommandInput<"ask.quoteReply">[] = [];
-    const bridge = new MemoryBridge({
-      "ask.read": () => ({ projection }),
-      "review.reattach": () => ({
-        threads: [
-          {
-            threadId,
-            anchor: { kind: "fragment", key: threadId, label: "rawCall()" },
-            messages: [
-              { id: "turn-0::you", author: "you", body: "Explain this passage." },
-              {
-                id: "turn-a::orchestrator",
-                author: "harness",
-                body: "Reply A",
-                status: "complete",
-              },
-              {
-                id: "turn-b::orchestrator",
-                author: "harness",
-                body: "Reply B",
-                status: "complete",
-              },
-            ],
-          },
-        ],
-        inFlight: [],
-      }),
-      "ask.quoteOpen": (input) => {
-        replacements.push(input);
-        return { receipt: { kind: "quote-open", threadId, thread: initialThread } };
-      },
-      "ask.quoteReply": (input) => {
-        replyWrites.push(input);
-        return { receipt: { kind: "quote-reply", threadId, messages: initialThread.messages } };
-      },
-    });
-
-    mount(
-      <BridgeProvider bridge={bridge}>
-        <AskLogBinding reviewId="review-a" />
-        <ReviewAnchoredAskProvider reviewId="review-a">
-          <span>Board</span>
-        </ReviewAnchoredAskProvider>
-      </BridgeProvider>,
-    );
-
-    await waitFor(() => expect(replacements).toHaveLength(1));
-    expect(replyWrites).toEqual([]);
-    expect(replacements[0]).toEqual({
-      sessionId: "review-a",
-      threadId,
-      thread: {
-        ...initialThread,
-        messages: [
-          { author: "user", text: "Explain this passage." },
-          { author: "orchestrator", text: "Reply A" },
-          { author: "orchestrator", text: "Reply B" },
-        ],
-      },
-    });
+  it("caps a long cited span with an honest truncation marker", () => {
+    const long = "x".repeat(2_000);
+    const text = anchoredAskText({ question: "why?", excerpt: long });
+    expect(text.length).toBeLessThan(long.length);
+    expect(text).toContain("(truncated)");
+    expect(text.startsWith("why?")).toBe(true);
   });
 });

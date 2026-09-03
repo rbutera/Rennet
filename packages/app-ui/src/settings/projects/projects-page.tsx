@@ -3,7 +3,6 @@ import { useLocation, useSearch } from "wouter";
 import { resolveProject } from "../../routes/project-resolution";
 import { settingsPath } from "../../routes/url";
 import { useActiveRoute, useSidebarTree } from "../../shell/sidebar-data";
-import { ChatEngineSection } from "./chat-engine";
 import { GuidanceSection } from "./guidance";
 import { IdentitySection } from "./identity";
 import { TrackerSection } from "./issue-tracker";
@@ -73,7 +72,6 @@ export function ProjectsPage() {
 
       <IdentitySection project={project} />
       <WorktreeSection project={project} />
-      <ChatEngineSection project={project} />
       <RepositorySection project={project} host={host} />
       <TrackerSection project={project} host={host} />
       <GuidanceSection project={project} />

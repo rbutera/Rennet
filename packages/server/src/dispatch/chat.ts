@@ -32,5 +32,25 @@ export function chatHandlers(rt: DispatchRuntime) {
         threadUrl: `${session.origin}/${session.environmentId}/${binding.threadId}`,
       });
     },
+    // chat.t3Send (t3-lens-threads 4.2): start a turn on the review's bound thread with the
+    // client's text. The anchored ask's path — it replaces `review.ask`, whose orchestrator
+    // session is retired. Same binding rule as `chat.t3Session`: keyed on the review's
+    // REPOSITORY ROOT, so two repos on one branch never share a thread.
+    "chat.t3Send": async (rawInput) => {
+      const name = "chat.t3Send" as const;
+      const input = parseCommandInput(name, rawInput);
+      if (!deps.t3Sidecar) {
+        throw new Error("chat.t3Send: this daemon has no T3 Code sidecar composed");
+      }
+      const review = rt.requireReviewById(input.reviewId);
+      const binding = await deps.t3Sidecar.threadFor({
+        repositoryRoot: review.repositoryRoot,
+        key: { kind: "session", sessionId: input.reviewId },
+        title: basename(review.repositoryRoot) || "review",
+      });
+      const client = await deps.t3Sidecar.client();
+      await client.startTurn({ threadId: binding.threadId, text: input.text });
+      return parseCommandOutput(name, { threadId: binding.threadId });
+    },
   } satisfies Record<string, CommandHandler>;
 }

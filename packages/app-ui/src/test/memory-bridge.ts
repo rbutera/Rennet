@@ -7,7 +7,6 @@ import type {
   ProjectDetailProgressEvent,
   ProjectProcessEvent,
   RennetBridge,
-  ReviewAskStreamEvent,
   RoundEvent,
   UpdateReadyInfo,
 } from "@rennet/protocol";
@@ -89,7 +88,6 @@ export class MemoryBridge implements RennetBridge {
   readonly #handlers: MemoryBridgeHandlers;
   readonly #progress = new KeyedEmitter<ProjectProcessEvent>();
   readonly #detailProgress = new KeyedEmitter<ProjectDetailProgressEvent>();
-  readonly #askStream = new KeyedEmitter<ReviewAskStreamEvent>();
   readonly #askProjection = new KeyedEmitter<AskProjection>();
   readonly #roundProgress = new KeyedEmitter<RoundEvent>();
   readonly #attention = new Emitter<AttentionEventFrame>();
@@ -138,10 +136,6 @@ export class MemoryBridge implements RennetBridge {
     return this.#detailProgress.subscribe(commandId, listener);
   }
 
-  onAskStream(reviewId: string, listener: Listener<ReviewAskStreamEvent>): () => void {
-    return this.#askStream.subscribe(reviewId, listener);
-  }
-
   onAskProjection(reviewId: string, listener: Listener<AskProjection>): () => void {
     return this.#askProjection.subscribe(reviewId, listener);
   }
@@ -165,10 +159,6 @@ export class MemoryBridge implements RennetBridge {
 
   emitProjectDetailProgress(commandId: string, event: ProjectDetailProgressEvent): void {
     this.#detailProgress.emit(commandId, event);
-  }
-
-  emitAskStream(reviewId: string, event: ReviewAskStreamEvent): void {
-    this.#askStream.emit(reviewId, event);
   }
 
   emitAskProjection(reviewId: string, projection: AskProjection): void {

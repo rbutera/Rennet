@@ -74,31 +74,16 @@ export {
   resolveAnchorToRows,
   spanAnchorForRows,
 } from "./canvas/registrar";
-// The chat dock (C07, #489): the persistent conversation dock mounted once into C3's
-// layout slot. The `SessionTranscriptProvider` + projection types let a host supply the
-// live session's transcript / trail / context figure / reviewId. See `chat/index.ts`.
+// The chat slot (C07, #489): the persistent conversation pane mounted once into C3's
+// layout slot. A host supplies T3's own components through `T3ChatSlotProvider`; the slot
+// itself lives here so `app-ui` never imports the vendored app. See `chat/index.ts`.
 export type {
-  ChatDockModel,
   ChatTrail,
-  CompactBoundaryRow,
-  ContextWindow,
-  DetachedThreadRef,
-  DetachedThreadsRow,
-  SessionTranscriptProjection,
   T3ChatSlotComponents,
   T3NativeChatProps,
   T3ThreadViewProps,
-  TranscriptRow,
-  TurnRow,
-  TurnStatus,
 } from "./chat";
-export {
-  ChatDock,
-  EMPTY_TRANSCRIPT,
-  SessionTranscriptProvider,
-  T3ChatSlotProvider,
-  useSessionTranscript,
-} from "./chat";
+export { T3ChatSlotProvider } from "./chat";
 // The connections surface (issue #381): the shared daemon-attachment shell both the
 // desktop renderer and the served browser tab mount. Transport-agnostic — the shell
 // injects the bridge factory, so `ui` never imports a client package.

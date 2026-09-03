@@ -17,7 +17,6 @@ import type {
   CommandName,
   CommandOutput,
   ProjectProcessEvent,
-  ReviewAskStreamEvent,
 } from "@rennet/protocol";
 
 /** A paired daemon as the app tracks it. */
@@ -46,13 +45,8 @@ export interface DaemonSupervisor {
   setPresence(presence: Partial<Presence>): void;
   /** Subscribe to this daemon's attention broadcasts (#383 batch) — keeps needs-you live. */
   onAttention(listener: (event: AttentionEventFrame) => void): () => void;
-  /**
-   * Subscribe to a review's live ask-stream (#382 M2). Rebind-safe: the supervisor re-attaches
-   * this listener to a fresh socket on reconnect, so a mid-turn network change keeps the timeline
-   * flowing without the consumer re-subscribing (#389). Returns an unsubscribe.
-   */
-  onAskStream(reviewId: string, listener: (event: ReviewAskStreamEvent) => void): () => void;
-  /** Subscribe to durable ask-projection replacements that invalidate an open publish preview. */
+  /** Subscribe to durable ask-projection replacements that invalidate an open publish preview.
+   *  This is the session ASK LOG (dispositions), not the retired orchestrator chat stream. */
   onAskProjection(reviewId: string, listener: (projection: AskProjection) => void): () => void;
   /** Subscribe to a long-running command's progress (kickoff `onProgress`, #382 M2), by commandId. */
   onProgress(commandId: string, listener: (event: ProjectProcessEvent) => void): () => void;

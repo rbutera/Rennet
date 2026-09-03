@@ -10,9 +10,9 @@ Everything the reviewer concludes along the way gathers as asks, and the
 orchestrator keeps every outbound document drafted as it goes.
 
 
-When a project's chat engine is the [T3 Code sidecar](./t3code-sidecar.md), the work
-order runs as one turn on the review's T3 thread instead of the session turn loop; the
-diff and the delta re-review that follow are unchanged.
+There is one engine. A work order runs as one turn on the review's thread in the
+[T3 Code sidecar](./t3code-sidecar.md); the diff and the delta re-review that follow
+are unchanged.
 
 ## The session is the durable root
 

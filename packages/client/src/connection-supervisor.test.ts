@@ -4,7 +4,6 @@ import type {
   AttentionEventFrame,
   ProjectDetailProgressEvent,
   ProjectProcessEvent,
-  ReviewAskStreamEvent,
   RoundEvent,
 } from "@rennet/protocol";
 import { MIN_COMPATIBLE_PROTOCOL_VERSION, PROTOCOL_VERSION } from "@rennet/protocol";
@@ -30,7 +29,6 @@ class FakeBridge implements SupervisedBridge {
   closed = false;
   readonly invokes: Array<{ name: string; input: unknown }> = [];
   readonly sentPresence: Array<Record<string, unknown>> = [];
-  readonly askListeners = new Map<string, Set<(e: ReviewAskStreamEvent) => void>>();
   readonly askProjectionListeners = new Map<string, Set<(e: AskProjection) => void>>();
   readonly progressListeners = new Map<string, Set<(e: ProjectProcessEvent) => void>>();
   readonly attentionListeners = new Set<(e: AttentionEventFrame) => void>();
@@ -53,9 +51,6 @@ class FakeBridge implements SupervisedBridge {
   invoke(name: string, input: unknown): Promise<never> {
     this.invokes.push({ name, input });
     return this.invokeImpl(name, input) as Promise<never>;
-  }
-  onAskStream(reviewId: string, listener: (e: ReviewAskStreamEvent) => void): () => void {
-    return add(this.askListeners, reviewId, listener);
   }
   onAskProjection(reviewId: string, listener: (e: AskProjection) => void): () => void {
     return add(this.askProjectionListeners, reviewId, listener);
@@ -96,9 +91,6 @@ class FakeBridge implements SupervisedBridge {
   }
   goError(reason: string): void {
     this.hooks.onLifecycle({ kind: "error", reason });
-  }
-  emitAsk(reviewId: string, event: ReviewAskStreamEvent): void {
-    for (const l of this.askListeners.get(reviewId) ?? []) l(event);
   }
   emitAskProjection(reviewId: string, projection: AskProjection): void {
     for (const listener of this.askProjectionListeners.get(reviewId) ?? []) listener(projection);
@@ -146,7 +138,15 @@ afterEach(() => {
   for (const s of supervisors.splice(0)) s.close();
 });
 
-const ASK: ReviewAskStreamEvent = { kind: "ask-focus", anchor: "a" } as ReviewAskStreamEvent;
+const ASK: AskProjection = {
+  stagedAsks: {},
+  lineComments: {},
+  findings: {},
+  findingDispositions: {},
+  quoteThreads: {},
+  retired: {},
+  verdictOverride: null,
+} as unknown as AskProjection;
 
 describe("ConnectionSupervisor — reachability", () => {
   it("starts connecting and reaches online on the handshake, notifying subscribers", async () => {
@@ -290,9 +290,9 @@ describe("ConnectionSupervisor — resubscribe registry (#389 client half)", () 
     await waitFor(() => bridges.length === 1);
     nth(bridges, 0).goOnline();
 
-    const received: ReviewAskStreamEvent[] = [];
-    supervisor.onAskStream("rev-1", (e) => received.push(e)); // ONE consumer subscribe, ever
-    nth(bridges, 0).emitAsk("rev-1", ASK);
+    const received: AskProjection[] = [];
+    supervisor.onAskProjection("rev-1", (e) => received.push(e)); // ONE consumer subscribe, ever
+    nth(bridges, 0).emitAskProjection("rev-1", ASK);
     expect(received).toHaveLength(1);
 
     // Socket drops, supervisor reconnects onto a FRESH bridge.
@@ -301,8 +301,8 @@ describe("ConnectionSupervisor — resubscribe registry (#389 client half)", () 
     nth(bridges, 1).goOnline();
 
     // The fresh bridge has the listener wired by the registry — the consumer never re-subscribed.
-    expect(nth(bridges, 1).askListeners.get("rev-1")?.size).toBe(1);
-    nth(bridges, 1).emitAsk("rev-1", ASK);
+    expect(nth(bridges, 1).askProjectionListeners.get("rev-1")?.size).toBe(1);
+    nth(bridges, 1).emitAskProjection("rev-1", ASK);
     expect(received).toHaveLength(2); // delivered again, at most once per emit
   });
 
@@ -343,18 +343,20 @@ describe("ConnectionSupervisor — resubscribe registry (#389 client half)", () 
     expect(seen[1]).toMatchObject({ event: "cleared" });
   });
 
-  it("re-issues review.reattach for subscribed reviews on reconnect (state reconcile)", async () => {
+  it("re-reads ask.read for subscribed reviews on reconnect (state reconcile)", async () => {
     const { supervisor, bridges } = makeSupervisor();
     track(supervisor);
     await waitFor(() => bridges.length === 1);
     nth(bridges, 0).goOnline();
-    supervisor.onAskStream("rev-1", () => undefined);
+    supervisor.onAskProjection("rev-1", () => undefined);
     nth(bridges, 0).goOffline();
     await waitFor(() => bridges.length === 2);
     nth(bridges, 1).goOnline();
-    const reattaches = nth(bridges, 1).invokes.filter((i) => i.name === "review.reattach");
-    expect(reattaches).toHaveLength(1);
-    expect(nth(reattaches, 0).input).toMatchObject({ reviewId: "rev-1" });
+    // `review.reattach` went with the orchestrator chat (t3-lens-threads 4.2); the durable
+    // ask projection is what a reconnect now has to re-read, and it is the same registry.
+    const rereads = nth(bridges, 1).invokes.filter((i) => i.name === "ask.read");
+    expect(rereads).toHaveLength(1);
+    expect(nth(rereads, 0).input).toMatchObject({ sessionId: "rev-1" });
   });
 
   it("stops delivery after the consumer unsubscribes", async () => {
@@ -362,11 +364,11 @@ describe("ConnectionSupervisor — resubscribe registry (#389 client half)", () 
     track(supervisor);
     await waitFor(() => bridges.length === 1);
     nth(bridges, 0).goOnline();
-    const received: ReviewAskStreamEvent[] = [];
-    const off = supervisor.onAskStream("rev-1", (e) => received.push(e));
+    const received: AskProjection[] = [];
+    const off = supervisor.onAskProjection("rev-1", (e) => received.push(e));
     off();
-    expect(nth(bridges, 0).askListeners.get("rev-1")?.size ?? 0).toBe(0);
-    nth(bridges, 0).emitAsk("rev-1", ASK);
+    expect(nth(bridges, 0).askProjectionListeners.get("rev-1")?.size ?? 0).toBe(0);
+    nth(bridges, 0).emitAskProjection("rev-1", ASK);
     expect(received).toHaveLength(0);
   });
 
@@ -378,16 +380,16 @@ describe("ConnectionSupervisor — resubscribe registry (#389 client half)", () 
     await waitFor(() => bridges.length === 1);
     nth(bridges, 0).goOnline();
     const received: string[] = [];
-    const shared = (e: ReviewAskStreamEvent): void => {
-      received.push(e.kind);
+    const shared = (): void => {
+      received.push("delivered");
     };
-    const offA = supervisor.onAskStream("rev-A", shared);
-    supervisor.onAskStream("rev-B", shared);
+    const offA = supervisor.onAskProjection("rev-A", shared);
+    supervisor.onAskProjection("rev-B", shared);
     offA(); // detach rev-A only
-    expect(nth(bridges, 0).askListeners.get("rev-A")?.size ?? 0).toBe(0);
-    expect(nth(bridges, 0).askListeners.get("rev-B")?.size ?? 0).toBe(1); // rev-B still live
-    nth(bridges, 0).emitAsk("rev-B", ASK);
-    expect(received).toEqual(["ask-focus"]);
+    expect(nth(bridges, 0).askProjectionListeners.get("rev-A")?.size ?? 0).toBe(0);
+    expect(nth(bridges, 0).askProjectionListeners.get("rev-B")?.size ?? 0).toBe(1); // rev-B still live
+    nth(bridges, 0).emitAskProjection("rev-B", ASK);
+    expect(received).toEqual(["delivered"]);
   });
 });
 
@@ -552,10 +554,10 @@ describe("ConnectionSupervisor — reconnect-resubscribe over a real socket (#38
     );
 
     await waitFor(() => supervisor.state.state === "online");
-    const received: ReviewAskStreamEvent[] = [];
-    supervisor.onAskStream("rev-1", (e) => received.push(e));
+    const received: AskProjection[] = [];
+    supervisor.onAskProjection("rev-1", (e) => received.push(e));
 
-    stub.broadcast({ type: "askStreamEvent", reviewId: "rev-1", event: ASK });
+    stub.broadcast({ type: "askProjection", sessionId: "rev-1", projection: ASK });
     await waitFor(() => received.length === 1);
 
     // Mid-turn: drop every socket. The supervisor reconnects onto a fresh bridge.
@@ -565,7 +567,7 @@ describe("ConnectionSupervisor — reconnect-resubscribe over a real socket (#38
     expect(stub.helloCount()).toBe(2);
 
     // The turn continues: a subsequent delta lands on the SAME consumer, no re-subscribe.
-    stub.broadcast({ type: "askStreamEvent", reviewId: "rev-1", event: ASK });
+    stub.broadcast({ type: "askProjection", sessionId: "rev-1", projection: ASK });
     await waitFor(() => received.length === 2, 2000);
     expect(received).toHaveLength(2);
   });

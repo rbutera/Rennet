@@ -51,7 +51,7 @@ export interface ConnectionStatus {
 /**
  * A live connection to a daemon (issue #383 M0): the `RennetBridge` the app drives plus a
  * `close`. Shells build this over a `ConnectionSupervisor` — the bridge is the supervisor's
- * own `invoke`/`onProgress`/`onAskStream` surface, so the resubscribe registry and the
+ * own `invoke`/`onProgress`/`onAskProjection` surface, so the resubscribe registry and the
  * reachability state machine ride underneath every remount, transparently to the app.
  */
 export interface Connection {
