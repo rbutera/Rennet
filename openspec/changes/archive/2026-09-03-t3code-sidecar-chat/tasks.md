@@ -71,3 +71,7 @@ _8.4: bundle delta measured and recorded in `docs/developing/concepts/t3code-sid
 - [x] 9.2 New `docs/developing/concepts/t3code-sidecar.md` with a mermaid diagram of daemon, sidecar and client
 - [x] 9.3 Update the egress statement in `product-and-vision.md`, the dependency standard, `harness-adapters.md`, and CLAUDE.md with the vendoring rules (never reformat `vendor/`, every edit in the ledger, extend over edit)
 - [x] 9.4 Each wave PR (#744, #746, #748, #749) states what grows: the vendored snapshot, the toolchain additions, the renderer bundle delta, and that T3 threads persist to harness history and write hidden refs
+
+---
+
+_Archived 2026-09-03 with seven tasks open, each deliberately: 4.1 and 4.2 (the upstream PRs to pingdotgg/t3code) wait for Rai's word, since posting them is outward-facing; 6.2, 6.3 and 7.3 (the rung-one manual drive) are superseded by the rung-two drive that `t3-lens-threads` task 1.6 carries, and rung one itself was deleted by that change's 4.4; 8.4's WebSocket-coexistence half and 8.5's read-model fallback moved to `t3-lens-threads`, where the native mount and the seat threads made both moot._
