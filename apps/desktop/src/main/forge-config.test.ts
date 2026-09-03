@@ -69,11 +69,20 @@ describe("forge.config.cjs signing", () => {
     expect(packagerConfig.icon).toMatch(expected);
   });
 
-  it("bundles the tray icons as a resource (they have no exe-embedded fallback)", () => {
+  it("bundles the tray icons and the staged T3 sidecar as resources", () => {
     const { packagerConfig } = loadConfig({});
     expect(packagerConfig.extraResource).toEqual([
       expect.stringMatching(/brand[\\/]exports[\\/]tray$/),
+      // The sidecar bundle ships OUTSIDE the asar (the daemon spawns it as a file), and
+      // the same staged dir is ignored from the asar so it is not packed twice.
+      expect.stringMatching(/apps[\\/]desktop[\\/]dist[\\/]t3code$/),
     ]);
+    expect(
+      packagerConfig.ignore.some((re: RegExp) => re.test("/dist/t3code/apps/server/dist/bin.mjs")),
+    ).toBe(true);
+    expect(packagerConfig.ignore.some((re: RegExp) => re.test("/dist/server/index.cjs"))).toBe(
+      false,
+    );
   });
 
   it("default (no creds): ad-hoc signature, not hardened, no notarization", () => {
