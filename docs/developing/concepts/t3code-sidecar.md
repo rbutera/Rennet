@@ -119,6 +119,17 @@ bound thread. Two rungs exist, and the host decides which one mounts:
   UI, first at the pairing URL (which sets T3's session cookie inside the guest) and
   then at the bound thread's route. The bearer never enters the guest.
 
+The slot's other caller is **the bench** — the review workspace's first frame while
+capture and the first board generation run (`packages/app-ui/src/app/preparation-bench.tsx`,
+mounted by `SessionScreen` in the session outlet, so the sidebar, top bar and chat slot
+stay around it). The bench draws the change as its centrepiece with one reader per lens,
+each showing that seat's `latest` line from `SessionPreparation` — the daemon's plain-words
+projection of the seat's newest thread activity — and capture as the first beat of the same
+scene rather than a separate screen. Each reader is a control: activating one writes the
+lane's `thread` (`{ environmentId, threadId }`) to the store's `ui.lensThread` and opens the
+dock, and the slot reads that field to decide which thread it renders. A lane with no
+`thread` yet is disabled rather than offered as a transcript that does not exist.
+
 Rung two's environment registration persists in the renderer's IndexedDB under T3's
 catalog (the same store T3's hosted app uses for paired machines), keyed by one stable
 connection id, so a refreshed bearer replaces the entry rather than adding one.

@@ -127,6 +127,31 @@ Two rules follow from past drift:
   region's `button, a, input, code` opt-out silently failed for any other interactive
   child.
 
+## Surface rules: the bench
+
+The bench (`src/app/preparation-bench.tsx`) is the review workspace's first frame while
+capture and the first board generation run. It is the one surface in this package whose
+rules are worth writing down, because it is the only one that renders a live external
+process and the failure mode is a surface that quietly lies about it.
+
+- **Not a table.** The change is a slab; the lenses are five readers standing under it,
+  each with its own hand-drawn mark, a lantern, a gaze line and a line of speech. Rows,
+  columns and dividers are the shape this surface exists to replace. The reader's speech
+  is the review serif (`font-serif`); its name and the chrome around it are sans.
+- **Never colour alone** (root `DESIGN.md`). Each of the five registers — waiting,
+  working, settled, absent, failed — is stated twice: by the lantern's tone *and* by a
+  rim badge or by motion. Gold plus a moving glance is working; green plus a check is
+  settled; danger plus a cross is failed.
+- **Motion only where it carries a fact.** The travelling glance (`animate-bench-glance`)
+  runs only while that seat has a tool call actually in flight; the lantern's pulse
+  (`animate-processing-pulse`) runs only while the seat is running. Both carry
+  `motion-reduce:animate-none`, which is safe because each animation's settled state is
+  its own rest state.
+- **It never invents a state.** Every line comes off the lane arm that carries it: a
+  running lane with no `latest` says "under way", an `idle` projection is rendered in the
+  quiet voice with the daemon's own words, and a failed lane speaks its `reason`. A
+  reader with no thread is disabled, not offered.
+
 ## Radius scale
 
 Use `4 / 6 / 8 / 12 / 16` px. Pills and circles have separate geometry values: `999px` for chips and counts, and `50%` for circles.
