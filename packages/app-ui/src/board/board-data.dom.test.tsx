@@ -5,7 +5,12 @@ import { BridgeProvider } from "../data";
 import { mount } from "../test/dom";
 import { FIXTURE_BOARDS, fixtureBoardRead } from "../test/fixtures/boards";
 import { MemoryBridge } from "../test/memory-bridge";
-import { lensReadsSettled, useBoardData } from "./board-data";
+import {
+  type LensBoardResolutions,
+  lensBoardsFromResolutions,
+  lensReadsSettled,
+  useBoardData,
+} from "./board-data";
 
 // The board-fetch seam resolves boards through the registered `board.read` command
 // (C18). The fixtures live behind the import fence and reach the seam only as a
@@ -60,6 +65,36 @@ describe("board-data seam — the single board resolution point", () => {
     };
     expect(lensReadsSettled(resolutions)).toBe(true);
     expect(lensReadsSettled({ ...resolutions, design: { status: "missing" } })).toBe(false);
+  });
+
+  it("omits an absent Design lane from the lens list when the branch has no spec", () => {
+    // session-bound-workspace D6: `no-spec` means this branch has no specification, so
+    // there is no Design tab and no empty board — every other absence stays selectable
+    // so its reason is still reachable, including Design's legacy `no-material`.
+    const valid = { status: "valid", board: FIXTURE_BOARDS.gen1?.sequence } as never;
+    const resolutions = (designReason: "no-spec" | "no-material"): LensBoardResolutions =>
+      ({
+        design: { status: "absent", reason: designReason },
+        sequence: valid,
+        decisions: { status: "absent", reason: "no-decisions" },
+        flagged: { status: "failed", reason: "The structured response did not validate." },
+        noise: { status: "absent", reason: "no-noise" },
+      }) as unknown as LensBoardResolutions;
+
+    const withoutSpec = lensBoardsFromResolutions(resolutions("no-spec"));
+    expect(withoutSpec.map(({ lens }) => lens)).toEqual([
+      "sequence",
+      "decisions",
+      "flagged",
+      "noise",
+    ]);
+    // Control for the omission: only the `no-spec` pairing is dropped. A Design lane
+    // carrying any other absence — or a board — is still in the list, so this cannot
+    // pass by dropping Design (or every absence) wholesale.
+    const legacy = lensBoardsFromResolutions(resolutions("no-material"));
+    expect(legacy.map(({ lens }) => lens)).toContain("design");
+    expect(legacy.find(({ lens }) => lens === "design")?.absence).toBe("no-material");
+    expect(withoutSpec.map(({ absence }) => absence)).toContain("no-decisions");
   });
 
   it("renders a durable lens failure instead of polling it as an empty board", async () => {

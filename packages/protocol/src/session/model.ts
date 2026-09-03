@@ -124,6 +124,7 @@ export type SessionThread = z.infer<typeof SessionThreadSchema>;
  */
 export const LensAbsenceReasonSchema = z.enum([
   "no-material",
+  "no-spec",
   "no-decisions",
   "no-findings",
   "no-noise",
@@ -139,11 +140,16 @@ export type LensAbsenceReason = z.infer<typeof LensAbsenceReasonSchema>;
  * Sequence admits none: a review whose order board never arrived has nothing to read,
  * so an absent Sequence is a failure and never a clean result. Noise's `no-noise` is a
  * first-class SUCCESS — a change carrying no mechanical noise settled correctly, it did
- * not fail — and Design's `no-material` is proven by grounded dismissal, not by an
- * empty board.
+ * not fail — and Design's `no-spec` is the same kind of success: the seat looked for the
+ * specification this branch was written against and the repository holds none, so there is
+ * nothing to render and no empty board is drafted.
+ *
+ * Design's `no-material` predates the spec respec (session-bound-workspace D6), when a host
+ * bundle offered candidates and Design's absence was a grounded dismissal of them. It stays
+ * admissible so generations persisted before the respec keep reading; nothing settles it now.
  */
 export const LENS_ADMISSIBLE_ABSENCES: Readonly<Record<LensKind, readonly LensAbsenceReason[]>> = {
-  design: ["no-material"],
+  design: ["no-material", "no-spec"],
   sequence: [],
   decisions: ["no-decisions"],
   flagged: ["no-findings"],

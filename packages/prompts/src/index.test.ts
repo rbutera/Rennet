@@ -59,44 +59,47 @@ describe("lens prompt manifest", () => {
     expect(expandPromptPartials("# T\n\n## Next", partial)).toBe("# T\n\n## Next");
   });
 
-  it("keeps the Design prompt on one candidate and one canonical scenario owner", () => {
+  it("tells the Design seat to find the spec itself, prove the tie, or return no-spec", () => {
     const text = readFileSync(join(srcDir, LENS_PROMPT_FILES.design), "utf8");
     const normalized = text.replace(/\s+/g, " ");
 
-    expect(normalized).toContain("Never combine candidates into one document");
-    expect(normalized).not.toContain("render their complete artifact sets together");
+    // Where to look, and what makes a document THIS branch's spec.
+    expect(normalized).toContain("openspec/changes/**");
+    expect(normalized).toContain("`.kiro/**`");
+    expect(normalized).toContain("`.bmad/**`");
+    expect(normalized).toContain("docs/adr/**");
+    expect(normalized).toContain("docs/superpowers/plans/**");
+    expect(normalized).toContain(
+      "commit messages of the reviewed range and the pull request body are the strongest clue",
+    );
+    // The tie is cited, so a wrong-spec board is falsifiable rather than merely wrong.
+    expect(normalized).toContain(
+      "The board must carry, as a cited source, the commit message, pull request text, or task line that connects this specification to this branch",
+    );
+    // The absence is the seat's own return, and it is the ONLY absence it may claim.
+    expect(normalized).toContain('{ "absence": "no-spec" }');
+    expect(normalized).toContain("not an empty board, not a placeholder");
+    // D6 — no host bundle exists any more, so no instruction may assume one.
+    expect(normalized).not.toContain("designArtifacts");
+    expect(normalized).not.toMatch(/candidate/i);
+    expect(normalized).not.toMatch(/no-material/);
+    expect(normalized).not.toMatch(/sourceBytes|truncated/);
+    // Board shape the seat still owns.
     expect(normalized).toContain("A scenario is a child only through `requirement.scenarios`");
-    expect(normalized).toContain("exact `Format` label");
-    expect(normalized).toContain("exact first line names the selected plan");
     expect(normalized).toContain("one source-linked capability root");
     expect(normalized).toContain("exact nested operation sections");
     expect(normalized).toContain("Never promote the operations into separate capability roots");
+    // The requirement's code citations belong to the seat now: nothing strips `trace`.
+    expect(normalized).toContain("Cite the code that implements a requirement through `trace`");
   });
 
-  it("assigns each format-specific Design projection to one canonical owner", () => {
-    const text = readFileSync(join(srcDir, LENS_PROMPT_FILES.design), "utf8");
-    const fields = [
-      "`requirement_refs`",
-      "`status`",
-      "`acceptance_criteria`",
-      "`task_manifest`",
-      "`source_cells`",
-      "`glossary_term`",
-    ];
-
-    for (const field of fields) expect(text.split(field)).toHaveLength(2);
-    expect(fields.map((field) => text.indexOf(field))).toEqual(
-      [...fields.map((field) => text.indexOf(field))].sort((left, right) => left - right),
-    );
-    expect(text.replace(/\s+/g, " ")).toContain(
-      "The surface renders each display projection once, on the owning element named below",
-    );
-    expect(text.replace(/\s+/g, " ")).toContain(
-      "host-owned parser projections: do not author them",
-    );
-    expect(text.replace(/\s+/g, " ")).toContain(
-      "strips any drafter-supplied claims for these fields, then stamps exact source values before lint and rendering",
-    );
+  it("keeps the lens lane vocabulary honest about what Design now owns", () => {
+    // Design emits no coverage mapping, so no prompt may tell a sibling seat to omit
+    // "requirement coverage" as Design's lane — that would drop the material entirely.
+    for (const kind of LENS_KINDS) {
+      const text = readFileSync(join(srcDir, LENS_PROMPT_FILES[kind]), "utf8");
+      expect(text.replace(/\s+/g, " "), `${kind} prompt`).not.toContain("requirement coverage");
+    }
   });
 
   it("keeps the round report to a narrow semantic classification", () => {

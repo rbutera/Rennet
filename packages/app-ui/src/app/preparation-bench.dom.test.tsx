@@ -167,6 +167,31 @@ describe("the bench — five readers at work on the change", () => {
     expect(reader?.getAttribute("data-status")).toBe("failed");
   });
 
+  it("an absent Design reader says no spec was found for this branch", async () => {
+    // session-bound-workspace D6 — the Design seat looks for the specification itself
+    // and finds none, so the lane settles ABSENT with the daemon's own reason. The bench
+    // prints that reason verbatim; the copy is `lensAbsenceMessage`'s, not the client's.
+    const { bridge } = benchBridge({
+      status: "drafting",
+      reviewId: "rev-1",
+      lanes: [
+        lane({
+          id: "design",
+          label: "Design",
+          status: "absent",
+          reason: "No spec found for this branch.",
+        }),
+      ] as LensLane[],
+    });
+    open(bridge);
+
+    await waitFor(() => expect(speechOf("design")).toBe("No spec found for this branch."));
+    const reader = document.querySelector('[data-row="design"]');
+    // Absent, never failed: an unspecified branch is a clean result, not a broken lane.
+    expect(reader?.getAttribute("data-register")).toBe("absent");
+    expect(reader?.getAttribute("data-status")).toBe("absent");
+  });
+
   it("a settled reader is still a control: activating it points the chat slot at its thread", async () => {
     const { bridge } = benchBridge({
       status: "drafting",

@@ -29,8 +29,8 @@ async function expectTerminalFailure(page: Page): Promise<string> {
   await expect(page.locator('[data-kind="board-empty"]')).toHaveCount(0);
   await expect(page.locator('[data-kind="board-error"]')).toHaveCount(0);
   const failedTabs = page.locator('[data-kind="lens-switcher"] [data-failed="true"]');
-  // Design settles as grounded no-material in this fixture; the four harness-backed
-  // lenses fail and each must remain reachable through the switcher.
+  // Design settles `no-spec` in this fixture and has no tab at all; the four
+  // harness-backed lenses fail and each must remain reachable through the switcher.
   await expect(failedTabs).toHaveCount(4);
   const sequence = page.locator(
     '[data-kind="lens-switcher"] [data-failed="true"][data-lens="sequence"]',

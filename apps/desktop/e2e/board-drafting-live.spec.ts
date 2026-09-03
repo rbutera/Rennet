@@ -72,14 +72,16 @@ type TerminalLensEvidence =
   | { readonly kind: "failure"; readonly reason: string };
 
 const ABSENCE_BY_LENS: ReadonlyMap<LensKind, LensAbsenceReason> = new Map([
-  ["design", "no-material"],
+  ["design", "no-spec"],
   ["decisions", "no-decisions"],
   ["flagged", "no-findings"],
   ["noise", "no-noise"],
 ]);
 
 const ABSENCE_TITLE: Readonly<Record<LensAbsenceReason, string>> = {
+  // Design's pre-respec absence, kept so a generation recorded before it still reads.
   "no-material": "No Design specification applies to this change.",
+  "no-spec": "No spec found for this branch.",
   "no-decisions": "No material engineering decisions were found.",
   "no-findings": "No review findings were found.",
   "no-noise": "No safely skippable noise was found.",
@@ -260,9 +262,18 @@ async function expectTerminalLensesRendered(
   page: Page,
   terminal: ReadonlyMap<LensKind, TerminalLensEvidence>,
 ): Promise<void> {
+  const tabbed = LENS_KINDS.filter((lens) => {
+    const evidence = terminal.get(lens);
+    return !(lens === "design" && evidence?.kind === "absence" && evidence.reason === "no-spec");
+  });
   const tabs = page.locator('[data-kind="lens-switcher"] [data-lens]');
-  await expect(tabs).toHaveCount(LENS_KINDS.length, { timeout: 30_000 });
-  for (const lens of LENS_KINDS) {
+  await expect(tabs).toHaveCount(tabbed.length, { timeout: 30_000 });
+  // A Design lane that settled `no-spec` is absent from the switcher entirely — the
+  // branch has no specification, so there is no tab and no empty board to open.
+  await expect(page.locator('[data-kind="lens-switcher"] [data-lens="design"]')).toHaveCount(
+    tabbed.includes("design") ? 1 : 0,
+  );
+  for (const lens of tabbed) {
     const evidence = terminal.get(lens);
     if (evidence === undefined) throw new Error(`${lens}: missing terminal proof evidence`);
     const tab = page.locator(`[data-kind="lens-switcher"] [data-lens="${lens}"]`);
@@ -427,7 +438,7 @@ function populatedBoardEvidence(
 
 test("core lens oracle rejects noise-only results and accepts useful core boards", () => {
   const noiseOnly: ReadonlyMap<LensKind, TerminalLensEvidence> = new Map([
-    ["design", { kind: "absence", reason: "no-material" }],
+    ["design", { kind: "absence", reason: "no-spec" }],
     ["sequence", populatedBoardEvidence("sequence", { semantic: false })],
     ["decisions", { kind: "absence", reason: "no-decisions" }],
     ["flagged", { kind: "absence", reason: "no-findings" }],
