@@ -6,6 +6,7 @@ import {
   type ForgeCiStatus,
   type ForgePullRequestRef,
   refineCiFailures,
+  type TurnContextWriter,
 } from "@rennet/core";
 import type {
   CiSignal,
@@ -27,6 +28,12 @@ export interface AttachCiSignalInput {
     signal?: AbortSignal,
   ) => Promise<ForgeCiStatus>;
   readonly refineTurn?: CiRefinementTurn;
+  /**
+   * The session-context writer the classification turn's pointers, evidence blobs and
+   * changed-path list are written through. Required alongside `refineTurn`: a
+   * classification turn with nowhere to write its context has nothing to point at.
+   */
+  readonly writeContext?: TurnContextWriter;
   readonly budget?: InvocationBudget;
   readonly fetchTimeoutMs?: number;
   readonly refinementTimeoutMs?: number;
@@ -86,8 +93,10 @@ export async function attachCiSignal(input: AttachCiSignalInput): Promise<Flagge
     const changedPaths = input.patchset.files.map((file) => file.path);
     let failures = classifyCiFailures(fetched.checks, changedPaths);
     const refineTurn = input.refineTurn;
+    const writeContext = input.writeContext;
     if (
       refineTurn !== undefined &&
+      writeContext !== undefined &&
       failures.some((failure) => failure.verdict === "unclassified")
     ) {
       try {
@@ -97,6 +106,7 @@ export async function attachCiSignal(input: AttachCiSignalInput): Promise<Flagge
               failures,
               changedPaths,
               runTurn: refineTurn,
+              writeContext,
               signal,
               ...(input.budget === undefined ? {} : { budget: input.budget }),
             }),

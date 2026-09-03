@@ -18,6 +18,7 @@
  * angle's always-present deterministic floor stands.
  */
 
+import type { PromptContextFile } from "@rennet/prompts";
 import { renderLayer } from "@rennet/prompts";
 import type {
   ContextSendRecord,
@@ -148,6 +149,17 @@ export function inlineContextViolation(
   }
   return undefined;
 }
+
+/**
+ * Injected (the daemon): write a turn's context files into the session's context
+ * directory and return that directory as a path RELATIVE to the turn's cwd, with `/`
+ * separators — the turn runs with its cwd at the bound root, so the prompt names
+ * `<returned dir>/<file name>` and the session opens it with its own tools.
+ *
+ * It exists so `core` can point a turn at a file without owning the filesystem: the
+ * daemon's `writeSessionContext` is the ONE writer, this is the seam that reaches it.
+ */
+export type TurnContextWriter = (files: readonly PromptContextFile[]) => string;
 
 export interface ContextSendRecordInput {
   readonly seat: string;

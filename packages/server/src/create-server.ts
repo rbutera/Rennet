@@ -174,6 +174,7 @@ import {
   toWindowsView,
   verifyFlaggedReview,
 } from "@rennet/core";
+import type { PromptContextFile } from "@rennet/prompts";
 import type {
   CodingHarnessSelection,
   ConventionCatalogue,
@@ -214,7 +215,12 @@ import {
 import { createBenchmarkRecording } from "./benchmark-store";
 import { type BoardsRuntime, createBoardsRuntime } from "./boards/boards-runtime";
 import { attachCiSignal } from "./ci-signal";
-import { purgeSessionContext, sweepOrphanedSessionContext } from "./context-files";
+import {
+  purgeSessionContext,
+  sessionContextRelativeDir,
+  sweepOrphanedSessionContext,
+  writeSessionContext,
+} from "./context-files";
 import { createLiveDeltaDigestPort } from "./delta-digest-live";
 import { createDispatch, type DispatchDeps, type FlaggedReviewRun } from "./dispatch";
 import {
@@ -2299,8 +2305,8 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       // telemetry is the aggregate of those same per-finding chips, so no capped or
       // refused finding is dropped without a visible caveat.
       const { review: verified } = await verifyFlaggedReview(flagged, {
-        manifest,
         readFileWindow,
+        writeContext: (files) => writeReviewContext(review, files),
         runTurn,
         budget: sharedBudget,
         maxVerifications: DEFAULT_REVIEW_INTELLIGENCE_BUDGET.verification.maxVerifications,
@@ -2327,7 +2333,13 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         ref.repo.forge === "gitlab"
           ? gitLabForgeAdapterForRoot(review.repositoryRoot).fetchCiStatus(ref, headOid, signal)
           : fetchForgeCiStatus(forgeCiStatusSources, ref, headOid, signal),
-      ...(ciRefinementTurn === undefined ? {} : { refineTurn: ciRefinementTurn }),
+      ...(ciRefinementTurn === undefined
+        ? {}
+        : {
+            refineTurn: ciRefinementTurn,
+            writeContext: (files: readonly PromptContextFile[]) =>
+              writeReviewContext(review, files),
+          }),
       budget: sharedBudget,
     });
     // R18/#309: stamp the deterministic incomplete-ingestion blockers from the
@@ -2908,6 +2920,23 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   // `session.transcript` and `board.read` all go honest-empty at once.
   const sessionIdForReview = (review: Review): string =>
     resolveRoundSessionId(review, sessionStore.list(), projectIdOf(review.repositoryRoot));
+  /**
+   * The context-file seam every review-scoped utility turn writes through
+   * (session-context-files, D3/D4): the ONE writer, keyed on the SAME session id the
+   * rounds ledger and the archive purge use, so a turn's scratch is purged with the
+   * session that spent it. `review.repositoryRoot` — never the project's open path, which
+   * is only "the repo, or the first included repo" of a workspace.
+   *
+   * Returns the directory RELATIVE to that root with `/` separators. Every one of these
+   * turns runs with its cwd at the root, so a relative path is what the seat can open,
+   * and it stays correct on Windows where `join` would emit backslashes a prompt cannot
+   * carry cleanly.
+   */
+  const writeReviewContext = (review: Review, files: readonly PromptContextFile[]): string => {
+    const sessionId = sessionIdForReview(review);
+    writeSessionContext(review.repositoryRoot, sessionId, files);
+    return sessionContextRelativeDir(sessionId);
+  };
   const roundsRuntime = createRoundsRuntime({
     // One generation's archive (#731 9.3/9.4), taken from the phase records the reveal
     // block already persisted — the spine stays authoritative and unconditional.
@@ -4531,6 +4560,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       createLiveRefinePort({
         claudePort: claudeAdapterForRepo,
         codexExecutor: codexExecutorForRepo,
+        writeContext: writeReviewContext,
       })({
         review,
         type,
@@ -4735,6 +4765,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     refineComment: createLiveRefinePort({
       claudePort: claudeAdapterForRepo,
       codexExecutor: codexExecutorForRepo,
+      writeContext: writeReviewContext,
     }),
     // review.draftPrBody (issue #74, M26): the LIVE PR-body drafting producer. The
     // own-branch destination's paper opens with an HONEST ACCOUNT of the change,

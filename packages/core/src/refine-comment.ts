@@ -44,13 +44,28 @@ export interface RefineCommentInput {
   /** The anchor path the note is attached to, for the model's orientation. */
   readonly path?: string;
   /**
-   * Bounded code/diff context the note refers to — the anchored hunk (or the
-   * review's diff, byte-bounded by the host). This is what makes the output
-   * "investigated" rather than a blind copyedit. Absent ⇒ the refiner cleans from
+   * The pointer file naming the code the note refers to — its path, side and line range
+   * (session-context-files, D4). The anchored hunk used to ride into the prompt as a
+   * fenced diff; the refiner now opens the checkout itself, which is what makes the
+   * output "investigated" rather than a blind copyedit. Absent ⇒ the refiner cleans from
    * the note alone, which is still the whole "messy in, clean out" promise.
    */
-  readonly context?: string;
+  readonly pointersPath?: string;
+  /**
+   * Where the reviewer's raw note was written, when it was too long to inline (over
+   * {@link REFINE_INLINE_NOTE_MAX}). Absent ⇒ the note rides in the prompt, which is the
+   * ordinary case and the ONE admitted inline exception in the no-inline-context rule.
+   */
+  readonly notePath?: string;
 }
+
+/**
+ * The anchored-ask ceiling: a reviewer's raw note up to this many characters stays in
+ * the prompt (spec `session-context-files`: "a short quoted excerpt selected by the
+ * reviewer … at most 600 characters is the one admitted exception"). A longer note is
+ * written to the session's context directory and named by {@link RefineCommentInput.notePath}.
+ */
+export const REFINE_INLINE_NOTE_MAX = 600;
 
 /**
  * What the injected port returns — the outcome of ONE real model turn. `emitted`
@@ -127,21 +142,19 @@ export function buildRefinePrompt(input: RefineCommentInput): string {
       `The reviewer wrote it while on the "${input.lens}" lens (use this to disambiguate a terse note).`,
     );
   }
-  if (input.context !== undefined && input.context.trim() !== "") {
+  if (input.pointersPath !== undefined && input.pointersPath.trim() !== "") {
     lines.push(
       "",
-      "The code the note refers to (for grounding — do not quote it back unless it helps the comment):",
-      "```",
-      input.context.trim(),
-      "```",
+      `The code the note refers to is named in \`${input.pointersPath.trim()}\`, relative to your working directory: the file, the side and the line range. Read it and then read that code, for grounding — do not quote it back unless it helps the comment.`,
     );
   }
   lines.push(
     "",
-    "The reviewer's raw note:",
-    "```",
-    input.raw,
-    "```",
+    ...(input.notePath !== undefined && input.notePath.trim() !== ""
+      ? [
+          `The reviewer's raw note is in \`${input.notePath.trim()}\`, relative to your working directory. Read it verbatim — it is the thing you are cleaning up.`,
+        ]
+      : ["The reviewer's raw note:", "```", input.raw, "```"]),
     "",
     'Return JSON. If you improved the wording, use {"verdict":"refined","refinedBody":"<the cleaned comment>"}. If the note is already clear and needs no change, use {"verdict":"no-change"}.',
   );
