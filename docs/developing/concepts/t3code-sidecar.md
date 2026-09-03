@@ -117,11 +117,15 @@ The slot's other caller is **the bench** — the review workspace's first frame 
 capture and the first board generation run (`packages/app-ui/src/app/preparation-bench.tsx`,
 mounted by `SessionScreen` in the session outlet, so the sidebar, top bar and chat slot
 stay around it). The bench draws the change as its centrepiece with one reader per lens,
-each showing that seat's `latest` line from `SessionPreparation` — the daemon's plain-words
-projection of the seat's newest thread activity — and capture as the first beat of the same
-scene rather than a separate screen. Each reader is a control: activating one writes the
-lane's `thread` (`{ environmentId, threadId }`) through `uiActions.openLensThread` and
-opens the dock, and the slot renders that transcript read-only (below). A lane with no
+each showing its seats' `latest` lines from `SessionPreparation` — the daemon's plain-words
+projection of each seat's newest thread activity — and capture as the first beat of the same
+scene rather than a separate screen. Each seat's line is a control: activating one writes
+that seat's `thread` (`{ environmentId, threadId }`) through `uiActions.openLensThread` and
+opens the dock, and the slot renders that transcript read-only (below). As a lane settles
+(`drafted`/`done`) its board opens on the bench beneath the readers through
+`LensBoardDocument`, read off the same per-lens `board.read` seam the workspace uses
+(`useLensBoardResolutions` at the initial generation), so three settled lanes and two
+running ones show three boards and two live readers. A lane with no
 `thread` yet is disabled rather than offered as a transcript that does not exist.
 
 The mount's environment registration persists in each host's IndexedDB under T3's

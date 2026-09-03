@@ -1,11 +1,12 @@
 // @vitest-environment happy-dom
 
-import type { LensLane, SidebarSession } from "@rennet/protocol";
+import type { LensBoard, LensKind, LensLane, Review, SidebarSession } from "@rennet/protocol";
 import { beforeEach, describe, expect, it } from "vitest";
 import { RennetRouterApp } from "../routes/app";
 import { memoryHistory } from "../routes/history";
 import { useRennetStore } from "../store";
 import { mount, screen, waitFor } from "../test/dom";
+import { FIXTURE_BOARDS } from "../test/fixtures/boards";
 import { frontDoorHandlers } from "../test/fixtures/front-door";
 import { MemoryBridge } from "../test/memory-bridge";
 
@@ -269,6 +270,71 @@ describe("the bench — five readers at work on the change", () => {
     expect(useRennetStore.getState().ui.lensThread).toEqual(codex);
     await user.click(voice("flagged-claude"));
     expect(useRennetStore.getState().ui.lensThread).toEqual(claude);
+  });
+
+  it("reveals each settled lens's board in place while the other readers keep working", async () => {
+    // Two lanes settled, three still running. The bench must show the two boards NOW —
+    // not after every sibling finishes and the workspace replaces the bench.
+    const LIVE = "gen:ps-1";
+    const review = {
+      id: "rev-1",
+      activePatchsetId: "ps-1",
+      patchsets: [{ id: "ps-1", files: [] }],
+    } as unknown as Review;
+    const boardsAtLive = Object.fromEntries(
+      Object.entries(FIXTURE_BOARDS.gen1 ?? {}).map(([lens, board]) => [
+        lens,
+        { ...board, generation: LIVE },
+      ]),
+    ) as Partial<Record<LensKind, LensBoard>>;
+    const row: SidebarSession = {
+      id: "sess-bench",
+      projectId: "proj-1",
+      title: "feat/bench",
+      target: "your-branch",
+      createdAt: 0,
+      reviewId: "rev-1",
+      preparation: {
+        status: "drafting",
+        reviewId: "rev-1",
+        lanes: [
+          lane({ id: "design", label: "Design", status: "done", verdict: "reworked" }),
+          lane({ id: "sequence", label: "Sequence", status: "running" }),
+          lane({ id: "decisions", label: "Decisions", status: "drafted" }),
+          lane({ id: "flagged", label: "Flagged", status: "running" }),
+          lane({ id: "noise", label: "Noise", status: "running" }),
+        ] as LensLane[],
+      },
+    };
+    const bridge = new MemoryBridge({
+      ...frontDoorHandlers(),
+      "session.list": () => ({ sessions: [row] }),
+      "review.load": () => ({ review, repositoryPresent: true }),
+      // The daemon's own behaviour: the exact generation, honest `null` otherwise.
+      "board.read": ({ generation, lens }: { generation: string; lens: LensKind }) => ({
+        board: generation === LIVE ? (boardsAtLive[lens] ?? null) : null,
+      }),
+    } as never);
+    open(bridge);
+
+    const boardOf = (lens: string) =>
+      document.querySelector(`[data-bench-board="${lens}"] article[data-lens="${lens}"]`);
+    await waitFor(() => expect(boardOf("design")).toBeTruthy());
+    await waitFor(() => expect(boardOf("decisions")).toBeTruthy());
+    // Exactly the two settled boards, at the live generation, and none for a running lane
+    // — even though the fixture HAS a board for every lens, so a bench that revealed on
+    // "board exists" rather than "lane settled" would show five here.
+    expect(document.querySelectorAll("[data-bench-board]")).toHaveLength(2);
+    expect(boardOf("design")?.getAttribute("data-generation")).toBe(LIVE);
+    for (const lens of ["sequence", "flagged", "noise"]) {
+      expect(boardOf(lens)).toBeNull();
+      expect(document.querySelector(`[data-row="${lens}"]`)?.getAttribute("data-register")).toBe(
+        "working",
+      );
+    }
+    // The bench is still the bench: the readers stay as the way to each transcript.
+    expect(document.querySelector('[data-row="design"] button')).toBeTruthy();
+    expect(document.querySelector('[data-screen="session-preparation"]')).toBeTruthy();
   });
 
   it("capture is the first beat of the same scene — both steps, on the bench, with cancel", async () => {

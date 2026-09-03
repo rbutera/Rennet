@@ -150,6 +150,10 @@ process and the failure mode is a surface that quietly lies about it.
   (`animate-processing-pulse`) runs only while the seat is running. Both carry
   `motion-reduce:animate-none`, which is safe because each animation's settled state is
   its own rest state.
+- **A settled reader's board opens beneath it, now.** A `drafted`/`done` lane renders its
+  board on the bench (`LensBoardDocument`, the workspace's own document) the moment
+  `board.read` answers, without waiting for the other lanes; the reader stays above it as
+  the way to that lens's transcript. The bench never waits for the slowest lens.
 - **It never invents a state.** Every line comes off the lane arm that carries it: a
   running lane with no `latest` says "under way", an `idle` projection is rendered in the
   quiet voice with the daemon's own words, and a failed lane speaks its `reason`. A

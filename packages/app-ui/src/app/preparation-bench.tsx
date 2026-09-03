@@ -1,7 +1,9 @@
 import {
+  generationIdForPatchset,
   type LaneLatest,
   type LaneSeat,
   type LaneThreadRef,
+  type LensKind,
   type LensLane,
   newCommandId,
   type Review,
@@ -12,6 +14,8 @@ import { Button, cn } from "@rennet/ui";
 import { Check, Minus, X } from "lucide-react";
 import type { SVGProps } from "react";
 import { useEffect } from "react";
+import { LensBoardDocument } from "../board";
+import { useLensBoardResolutions } from "../board/board-data";
 import { Icon } from "../components/icon";
 import { useMutation, useRefreshCommand } from "../data";
 import { coverageNote, coverageStatus } from "../rounds/round-machine";
@@ -425,19 +429,42 @@ export interface PreparationBenchProps {
 
 export function PreparationBench({ session, preparation, review }: PreparationBenchProps) {
   const refreshSessions = useRefreshCommand("session.list");
+  const refreshBoards = useRefreshCommand("board.read");
   const cancel = useMutation("session.cancelPreparation", { invalidates: ["session.list"] });
   const retry = useMutation("session.retryPreparation", { invalidates: ["session.list"] });
   const active = preparation.status === "capturing" || preparation.status === "drafting";
+  const lanes = "lanes" in preparation ? preparation.lanes : undefined;
+
+  // THE BOARDS, as they land. A lane that has settled with a board reveals that board on
+  // the bench at once, beneath the readers, without waiting for its siblings (the spec's
+  // "boards replace their presence as they settle"). Read through the SAME per-lens
+  // `board.read` seam the workspace's `LensBoardView` uses — one cache key per (review,
+  // generation, lens), so the workspace that replaces the bench pays nothing again. The
+  // generation is the initial one: the bench is the FIRST frame, before any round.
+  const reviewId = review?.id ?? "";
+  const generation = review === undefined ? "" : generationIdForPatchset(review.activePatchsetId);
+  const boards = useLensBoardResolutions(reviewId, generation);
+  const settled = (lanes ?? []).filter(
+    (lane) => lane.status === "drafted" || lane.status === "done",
+  );
+  // A settled lane whose board has not answered yet: the draft is on disk a beat before
+  // `board.read` has been asked again, so the poll below re-asks until it lands.
+  const awaitingBoard = settled.some((lane) => {
+    const read = boards[lane.id as LensKind];
+    return read !== undefined && (read.status === "missing" || read.status === "pending");
+  });
 
   useEffect(() => {
     if (!active) return;
-    const timer = window.setInterval(refreshSessions, 400);
+    const timer = window.setInterval(() => {
+      refreshSessions();
+      if (awaitingBoard) refreshBoards();
+    }, 400);
     return () => window.clearInterval(timer);
-  }, [active, refreshSessions]);
+  }, [active, awaitingBoard, refreshBoards, refreshSessions]);
 
   const failed = preparation.status === "failed";
   const cancelled = preparation.status === "cancelled";
-  const lanes = "lanes" in preparation ? preparation.lanes : undefined;
   const coverage = "coverage" in preparation ? preparation.coverage : undefined;
   const branch = session.claim?.branch;
   const files = review?.patchsets.find((set) => set.id === review.activePatchsetId)?.files.length;
@@ -495,6 +522,27 @@ export function PreparationBench({ session, preparation, review }: PreparationBe
           ))}
         </div>
       )}
+
+      {/* THE BOARDS THAT HAVE LANDED — each settled lens's board, readable now, in lane
+          order. The reader above stays as the way back to that lens's transcript. A lane
+          that settled without a board (absent, failed) has its account on the reader. */}
+      {settled.map((lane) => {
+        const read = boards[lane.id as LensKind];
+        if (read?.status !== "valid") return null;
+        return (
+          <section
+            key={lane.id}
+            data-bench-board={lane.id}
+            className="rounded-window border border-line bg-surface px-8 py-6"
+          >
+            <LensBoardDocument
+              reviewId={reviewId}
+              board={read.board}
+              forceOpen={lane.id === "flagged" ? true : undefined}
+            />
+          </section>
+        );
+      })}
 
       {coverage !== undefined && (
         <p
