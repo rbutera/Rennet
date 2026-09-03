@@ -34,12 +34,19 @@ function stubs(outcomes: T3SettledTurn[]) {
   let call = 0;
   const client = {
     startTurn,
-    waitForTurnSettled: vi.fn(async (_threadId: string, _options?: unknown) => {
-      const outcome = outcomes[Math.min(call++, outcomes.length - 1)];
-      if (outcome === undefined) throw new Error("the test supplied no settled turn");
-      return outcome;
-    }),
-    interruptTurn: vi.fn(async (_threadId: string) => undefined),
+    waitForTurnSettled: vi.fn(
+      async (
+        threadId: string,
+        waitOptions?: { readonly signal?: AbortSignal; readonly after?: unknown },
+      ) => {
+        void threadId;
+        void waitOptions;
+        const outcome = outcomes[Math.min(call++, outcomes.length - 1)];
+        if (outcome === undefined) throw new Error("the test supplied no settled turn");
+        return outcome;
+      },
+    ),
+    interruptTurn: vi.fn(async (threadId: string) => void threadId),
   };
   const threadFor = vi.fn(async () => ({ threadId: "t-design", projectId: "p1" }));
   const onThread = vi.fn();
@@ -97,6 +104,7 @@ describe("createT3SeatTurn", () => {
     onThread.mockImplementation(() => order.push("thread"));
     startTurn.mockImplementation(async () => {
       order.push("turn");
+      return START;
     });
     await createT3SeatTurn(seam, options)("P", 0);
     expect(order).toEqual(["thread", "turn"]);

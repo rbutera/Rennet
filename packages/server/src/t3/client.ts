@@ -449,6 +449,7 @@ export async function awaitTurnSettled(
     } catch (readError) {
       throw new Error(
         `T3 thread ${threadId} stream ended before the turn settled${reason(cause ?? readError)}`,
+        { cause: readError },
       );
     }
     const latest = currentTurn(thread);
