@@ -17,7 +17,9 @@ import { useTheme } from "../../src/theme/use-theme";
 type Family = AttentionFamily;
 
 const COPY: Record<Family, { title: string; subtitle: string }> = {
-  "ask-pending": { title: "A turn needs you", subtitle: "the question, answerable right here" },
+  // Not "answerable right here" any more: the answer path was `review.ask`, retired with the
+  // orchestrator chat, and the push now lands on the review's digest (mobile-shell delta).
+  "ask-pending": { title: "A turn needs you", subtitle: "opens the review; answer on the desktop" },
   "review-finished": { title: "Review finished", subtitle: "what was found, at a glance" },
   "turn-failed": { title: "Something went wrong", subtitle: "a turn failed or was interrupted" },
   "handoff-completed": {
