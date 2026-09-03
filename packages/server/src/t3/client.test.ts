@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   awaitTurnSettled,
   connectT3,
@@ -473,5 +473,40 @@ describe("awaitTurnSettled", () => {
       state: "error",
       errorMessage: "new stream failed",
     });
+  });
+
+  it("answers after the grace even when the stream goes quiet after the lifecycle settled", async () => {
+    // The lifecycle landed, the `turn.settled` activity never did, and no further stream
+    // item arrives. The grace runs on a timer, not on the next item.
+    const p = projection(fakeThread({ latestTurn: { turnId: "turn-1", state: "completed" } }));
+    const outcome = await awaitTurnSettled("t", p.deps, { settlementGraceMs: 50 });
+    expect(outcome).toMatchObject({ turnId: "turn-1", state: "completed" });
+    expect(outcome.structuredOutput).toBeUndefined();
+  }, 2_000);
+
+  it("refuses a signal that is already aborted, before it subscribes", async () => {
+    const p = projection(fakeThread({}));
+    const subscribeThread = vi.fn(p.deps.subscribeThread);
+    const controller = new AbortController();
+    controller.abort();
+    await expect(
+      awaitTurnSettled("t", { ...p.deps, subscribeThread }, { signal: controller.signal }),
+    ).rejects.toThrow(/aborted/);
+    expect(subscribeThread).not.toHaveBeenCalled();
+  });
+
+  it("removes its abort listener once the turn has settled", async () => {
+    const p = projection(
+      fakeThread({
+        latestTurn: { turnId: "turn-1", state: "completed" },
+        activities: [settledActivity("turn-1", {})],
+      }),
+    );
+    const controller = new AbortController();
+    const added = vi.spyOn(controller.signal, "addEventListener");
+    const removed = vi.spyOn(controller.signal, "removeEventListener");
+    await awaitTurnSettled("t", p.deps, { signal: controller.signal });
+    expect(added).toHaveBeenCalledTimes(1);
+    expect(removed).toHaveBeenCalledWith("abort", added.mock.calls[0]?.[1]);
   });
 });

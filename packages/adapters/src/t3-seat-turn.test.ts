@@ -34,11 +34,12 @@ function stubs(outcomes: T3SettledTurn[]) {
   let call = 0;
   const client = {
     startTurn,
-    waitForTurnSettled: vi.fn(async () => {
+    waitForTurnSettled: vi.fn(async (_threadId: string, _options?: unknown) => {
       const outcome = outcomes[Math.min(call++, outcomes.length - 1)];
       if (outcome === undefined) throw new Error("the test supplied no settled turn");
       return outcome;
     }),
+    interruptTurn: vi.fn(async (_threadId: string) => undefined),
   };
   const threadFor = vi.fn(async () => ({ threadId: "t-design", projectId: "p1" }));
   const onThread = vi.fn();
@@ -167,6 +168,67 @@ describe("createT3SeatTurn", () => {
       message: "provider exited",
     });
     expect(collector.metrics[0]?.status).toBe("failed");
+  });
+
+  it("does not start a turn on a signal that is already aborted", async () => {
+    const { seam, startTurn } = stubs([settled({ structuredOutput: {} })]);
+    const controller = new AbortController();
+    controller.abort();
+    expect(await createT3SeatTurn(seam, { ...options, signal: controller.signal })("P", 0)).toEqual(
+      { status: "failed", message: "the seat turn was interrupted" },
+    );
+    expect(startTurn).not.toHaveBeenCalled();
+  });
+
+  it("interrupts the sidecar turn on abort and records what the interrupted turn spent", async () => {
+    // Cancelling the wait alone leaves the model running and spending on the sidecar. The
+    // abort must reach T3 as an interrupt, and the settlement that interrupt produces
+    // carries the usage the turn had already billed, so it is recorded rather than
+    // booked as zero.
+    const collector = createMetricsCollector();
+    const { seam, client } = stubs([]);
+    const controller = new AbortController();
+    let settle: ((turn: T3SettledTurn) => void) | undefined;
+    client.waitForTurnSettled.mockImplementation(
+      () =>
+        new Promise<T3SettledTurn>((resolve) => {
+          settle = resolve;
+        }),
+    );
+    client.interruptTurn.mockImplementation(async (threadId: string) => {
+      settle?.(settled({ turnId: threadId, state: "interrupted", usage: { input_tokens: 7_000 } }));
+    });
+    const pending = createT3SeatTurn(seam, { ...options, collector, signal: controller.signal })(
+      "P",
+      0,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    controller.abort();
+    expect(await pending).toEqual({ status: "failed", message: "the seat turn was interrupted" });
+    expect(client.interruptTurn).toHaveBeenCalledWith("t-design");
+    expect(collector.metrics[0]?.usage).toMatchObject({ inputTokens: 7_000 });
+  });
+
+  it("gives up on a sidecar that never settles the interrupted turn", async () => {
+    vi.useFakeTimers();
+    try {
+      const { seam, client } = stubs([]);
+      const controller = new AbortController();
+      client.waitForTurnSettled.mockImplementation(
+        (_threadId: string, waitOptions?: { signal?: AbortSignal }) =>
+          new Promise<T3SettledTurn>((_, reject) => {
+            waitOptions?.signal?.addEventListener("abort", () => reject(new Error("aborted")));
+          }),
+      );
+      const pending = createT3SeatTurn(seam, { ...options, signal: controller.signal })("P", 0);
+      await vi.advanceTimersByTimeAsync(0);
+      controller.abort();
+      await vi.advanceTimersByTimeAsync(20_000);
+      expect(await pending).toEqual({ status: "failed", message: "the seat turn was interrupted" });
+      expect(client.interruptTurn).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("degrades a thrown sidecar call to an honest turn failure, never a throw", async () => {

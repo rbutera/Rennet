@@ -58,6 +58,7 @@ export interface T3SeatClient {
     threadId: string,
     options?: { readonly signal?: AbortSignal; readonly after?: T3TurnStart },
   ) => Promise<T3SettledTurn>;
+  readonly interruptTurn: (threadId: string) => Promise<void>;
 }
 
 /** The seam `create-server.ts` fills from the sidecar supervisor. */
@@ -90,6 +91,17 @@ export interface T3SeatTurnOptions {
 function logSeat(label: string, line: string): void {
   console.info(`[seat] ${label} ${line}`);
 }
+
+const describeError = (error: unknown): string =>
+  error instanceof Error ? error.message : String(error);
+
+const INTERRUPTED = "the seat turn was interrupted";
+/**
+ * How long an aborted turn keeps waiting for the sidecar to settle it after the interrupt
+ * was sent, so the usage the turn had already billed is recorded rather than booked as
+ * zero. A sidecar that never settles it is given up on after this.
+ */
+const INTERRUPT_SETTLE_MS = 15_000;
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -228,24 +240,52 @@ export function createT3SeatTurn(
         ...(error === undefined ? {} : { error }),
       });
     };
+    const signal = options.signal;
     try {
       const thread = await seam.threadFor({ seat, provider, model });
       seam.onThread?.(seat, thread);
       const client = await seam.client();
-      const start = await client.startTurn({
-        threadId: thread.threadId,
-        text: prompt,
-        // Once per turn, as the turn's structured-output contract, shaped for the provider
-        // that will validate it. Never in the text.
-        outputSchema: outputSchemaFor(provider, options.outputSchema),
-      });
-      // Scoped to THIS start: on a repair the thread still shows the drafting turn settled
-      // until the provider reports the new one, and an unscoped wait would answer with
-      // the old board in milliseconds while the repair ran unwatched.
-      const settled = await client.waitForTurnSettled(thread.threadId, {
-        after: start,
-        ...(options.signal === undefined ? {} : { signal: options.signal }),
-      });
+      if (signal?.aborted) throw new Error(INTERRUPTED);
+      // An abort while the model runs must reach the sidecar as an interrupt: stopping the
+      // wait alone leaves the model running and spending after Rennet has moved on. The
+      // interrupted turn then settles carrying what it had already billed, so the wait
+      // stays open a bounded moment for that settlement. Best effort throughout — a
+      // failed interrupt is logged, never thrown.
+      const interrupt = () => {
+        client.interruptTurn(thread.threadId).catch((error: unknown) => {
+          logSeat(label, `interrupt failed (${describeError(error)})`);
+        });
+      };
+      const stop = new AbortController();
+      let stopTimer: ReturnType<typeof setTimeout> | undefined;
+      const onAbort = () => {
+        interrupt();
+        stopTimer ??= setTimeout(() => stop.abort(), INTERRUPT_SETTLE_MS);
+      };
+      signal?.addEventListener("abort", onAbort);
+      let settled: T3SettledTurn;
+      try {
+        const start = await client.startTurn({
+          threadId: thread.threadId,
+          text: prompt,
+          // Once per turn, as the turn's structured-output contract, shaped for the
+          // provider that will validate it. Never in the text.
+          outputSchema: outputSchemaFor(provider, options.outputSchema),
+        });
+        // Aborted while the start was in flight: the listener's interrupt may have reached
+        // the sidecar before the turn existed, so send it again now that it does.
+        if (signal?.aborted) interrupt();
+        // Scoped to THIS start: on a repair the thread still shows the drafting turn
+        // settled until the provider reports the new one, and an unscoped wait would
+        // answer with the old board in milliseconds while the repair ran unwatched.
+        settled = await client.waitForTurnSettled(thread.threadId, {
+          after: start,
+          ...(signal === undefined ? {} : { signal: stop.signal }),
+        });
+      } finally {
+        signal?.removeEventListener("abort", onAbort);
+        clearTimeout(stopTimer);
+      }
       const cumulative = cumulativeUsage(settled.usage, settled.totalCostUsd);
       const turnUsage = subtractUsage(cumulative, previousUsage);
       previousUsage = cumulative ?? previousUsage;
@@ -253,9 +293,7 @@ export function createT3SeatTurn(
         const message =
           settled.errorMessage ??
           settled.thread.session?.lastError ??
-          (settled.state === "interrupted"
-            ? "the seat turn was interrupted"
-            : "the seat turn failed");
+          (settled.state === "interrupted" ? INTERRUPTED : "the seat turn failed");
         record("failed", turnUsage, message);
         return { status: "failed", message };
       }
@@ -277,7 +315,7 @@ export function createT3SeatTurn(
       record("emitted", turnUsage);
       return { status: "emitted", body, observed: { model, apiKeySource: null } };
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = signal?.aborted ? INTERRUPTED : describeError(error);
       record("failed", null, message);
       return { status: "failed", message };
     }

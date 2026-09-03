@@ -359,16 +359,22 @@ export async function awaitTurnSettled(
   deps: TurnWaitDeps,
   options: WaitForTurnOptions = {},
 ): Promise<TurnOutcome> {
+  const signal = options.signal;
+  if (signal?.aborted) throw new Error("aborted");
   const iterator = deps.subscribeThread(threadId)[Symbol.asyncIterator]();
+  let onAbort: (() => void) | undefined;
   const abort = new Promise<never>((_, reject) => {
-    options.signal?.addEventListener("abort", () => reject(new Error("aborted")), {
-      once: true,
-    });
+    onAbort = () => reject(new Error("aborted"));
+    signal?.addEventListener("abort", onAbort);
   });
   // The lifecycle transition and the `turn.settled` activity are two writes; the
   // lifecycle one can land first. This is how long we keep reading for the activity
-  // AFTER the turn has settled before answering without it.
+  // AFTER the turn has settled before answering without it — on a timer, because a
+  // stream that goes quiet after the lifecycle write would otherwise hold the wait open
+  // until something unrelated arrives.
   const graceMs = options.settlementGraceMs ?? 3_000;
+  let graceTimer: ReturnType<typeof setTimeout> | undefined;
+  let grace: Promise<typeof GRACE_OVER> | undefined;
   // A provider stream that dies BEFORE its turn registers (drive 1.6, 2026-09-03: every
   // Claude seat, "Claude runtime stream failed.") leaves no turn at all: T3 stops the
   // session with `lastError` and, by upstream design, emits no turn lifecycle. Waiting
@@ -394,11 +400,25 @@ export async function awaitTurnSettled(
     }
     return session.lastError ?? undefined;
   };
+  const settledOutcome = (
+    thread: OrchestrationThread,
+    turnId: string,
+    state: TurnOutcome["state"],
+  ): TurnOutcome => ({ turnId, state, thread, ...(readTurnSettlement(thread, turnId) ?? {}) });
   try {
     let thread: OrchestrationThread | undefined;
-    let settledAtMs: number | undefined;
     for (;;) {
-      const next = await Promise.race([iterator.next(), abort]);
+      const next = await Promise.race([iterator.next(), abort, ...(grace ? [grace] : [])]);
+      if (next === GRACE_OVER) {
+        // The stream went quiet after the lifecycle settled: one last read, then answer
+        // with what the projection holds. Absent facts come back absent.
+        thread = await deps.readThread(threadId);
+        const latest = currentTurn(thread);
+        if (!latest || latest.state === "running") {
+          throw new Error(`T3 thread ${threadId} lost its settled turn before it was read`);
+        }
+        return settledOutcome(thread, latest.turnId, latest.state);
+      }
       if (next.done) throw new Error(`T3 thread ${threadId} stream ended before the turn settled`);
       const item = next.value;
       if (item.kind === "snapshot") thread = item.snapshot.thread;
@@ -424,20 +444,22 @@ export async function awaitTurnSettled(
         }
         continue;
       }
-      const settlement = readTurnSettlement(thread as OrchestrationThread, latest.turnId);
-      settledAtMs ??= Date.now();
-      if (settlement === undefined && Date.now() - settledAtMs < graceMs) continue;
-      return {
-        turnId: latest.turnId,
-        state: latest.state,
-        thread: thread as OrchestrationThread,
-        ...(settlement ?? {}),
-      };
+      if (readTurnSettlement(thread as OrchestrationThread, latest.turnId) === undefined) {
+        grace ??= new Promise((resolve) => {
+          graceTimer = setTimeout(() => resolve(GRACE_OVER), graceMs);
+        });
+        continue;
+      }
+      return settledOutcome(thread as OrchestrationThread, latest.turnId, latest.state);
     }
   } finally {
+    clearTimeout(graceTimer);
+    if (onAbort) signal?.removeEventListener("abort", onAbort);
     await iterator.return?.();
   }
 }
+
+const GRACE_OVER = Symbol("settlement grace over");
 
 /**
  * The settled turn's own facts, off the `turn.settled` activity the sidecar appends when
