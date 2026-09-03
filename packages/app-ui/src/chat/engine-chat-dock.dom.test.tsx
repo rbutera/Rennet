@@ -5,17 +5,23 @@ import { afterEach, describe, expect, it } from "vitest";
 import { RennetRouterApp } from "../routes/app";
 import { memoryHistory } from "../routes/history";
 import { useRennetStore } from "../store";
-import { act, cleanup, mount, waitFor } from "../test/dom";
+import { act, cleanup, fireEvent, mount, waitFor } from "../test/dom";
 import { emptySettings, frontDoorHandlers } from "../test/fixtures/front-door";
 import { MemoryBridge } from "../test/memory-bridge";
-import { T3ChatSlotProvider, type T3NativeChatProps } from "./t3-chat-slot";
+import { T3ChatSlotProvider, type T3NativeChatProps, type T3ThreadViewProps } from "./t3-chat-slot";
 
 // The chat slot's engine switch (t3code-sidecar-chat, 6.1): with the session's project
 // resolved to `t3`, the slot mounts the rung-one <webview> at the daemon-brokered URLs;
 // with `rennet` (or no resolved engine at all) it stays Rennet's own dock. Positive
 // control: the `t3` mount only appears when the setting says so.
+//
+// And which THREAD the rung-two slot shows (t3-lens-threads 3.4): the review's own, or
+// the lens seat the store's `lensThread` names, with a control back to the session.
 
-afterEach(() => cleanup());
+afterEach(() => {
+  cleanup();
+  act(() => useRennetStore.getState().uiActions.openLensThread(null));
+});
 
 const layered = (value: string) => ({ value, layer: "builtin" as const });
 
@@ -58,7 +64,10 @@ function projectRow(engine: "rennet" | "t3" | undefined): SettingsProject {
 
 function mountWithEngine(
   engine: "rennet" | "t3" | undefined,
-  native?: ComponentType<T3NativeChatProps>,
+  slot?: {
+    readonly session: ComponentType<T3NativeChatProps>;
+    readonly thread: ComponentType<T3ThreadViewProps>;
+  },
 ) {
   const asks: unknown[] = [];
   const bridge = new MemoryBridge({
@@ -100,9 +109,30 @@ function mountWithEngine(
   });
   const app = <RennetRouterApp bridge={bridge} history={memoryHistory("/s/review-1")} />;
   const view = mount(
-    native ? <T3ChatSlotProvider component={native}>{app}</T3ChatSlotProvider> : app,
+    slot ? (
+      <T3ChatSlotProvider session={slot.session} thread={slot.thread}>
+        {app}
+      </T3ChatSlotProvider>
+    ) : (
+      app
+    ),
   );
   return { ...view, asks };
+}
+
+/** The `t3` engine with both rung-two components provided, each recording its props. */
+function mountWithSlot() {
+  const seen: T3NativeChatProps["session"][] = [];
+  const opened: T3ThreadViewProps[] = [];
+  const Session = ({ session }: T3NativeChatProps) => {
+    seen.push(session);
+    return <div data-slot="t3-native-stub">{session.threadId}</div>;
+  };
+  const Thread = (props: T3ThreadViewProps) => {
+    opened.push(props);
+    return <div data-slot="t3-thread-stub">{props.thread.threadId}</div>;
+  };
+  return { ...mountWithEngine("t3", { session: Session, thread: Thread }), seen, opened };
 }
 
 describe("the chat slot follows the project's chat engine", () => {
@@ -120,17 +150,52 @@ describe("the chat slot follows the project's chat engine", () => {
   });
 
   it("mounts the host-provided native view (rung two) with the session, and no <webview>", async () => {
-    const seen: T3NativeChatProps["session"][] = [];
-    const Native = ({ session }: T3NativeChatProps) => {
-      seen.push(session);
-      return <div data-slot="t3-native-stub">{session.threadId}</div>;
-    };
-    const { getByTestId } = mountWithEngine("t3", Native);
+    const { getByTestId, seen } = mountWithSlot();
     const dock = getByTestId("chat-dock-slot");
     await waitFor(() => expect(dock.querySelector('[data-slot="t3-native-stub"]')).not.toBeNull());
     expect(dock.querySelector('[data-slot="t3-native-stub"]')?.textContent).toBe("thread-1");
     expect(dock.querySelector('[data-slot="t3-chat-view"]')).toBeNull();
     expect(seen.at(-1)?.environmentId).toBe("env-1");
+    // The control half of the lens tests below: with no lens opened, the read-only
+    // thread view is absent, so its presence there cannot be a mount-always artefact.
+    expect(dock.querySelector('[data-slot="t3-thread-stub"]')).toBeNull();
+  });
+
+  it("opens the lens seat's thread read-only in place of the session view", async () => {
+    const { getByTestId, opened } = mountWithSlot();
+    const dock = getByTestId("chat-dock-slot");
+    await waitFor(() => expect(dock.querySelector('[data-slot="t3-native-stub"]')).not.toBeNull());
+    act(() =>
+      useRennetStore
+        .getState()
+        .uiActions.openLensThread({ environmentId: "env-1", threadId: "seat-sequence" }),
+    );
+    await waitFor(() => expect(dock.querySelector('[data-slot="t3-thread-stub"]')).not.toBeNull());
+    // The ref the store carried reached the view whole — both ids, not just the thread.
+    expect(opened.at(-1)?.thread).toEqual({ environmentId: "env-1", threadId: "seat-sequence" });
+    expect(opened.at(-1)?.readOnly).toBe(true);
+    expect(opened.at(-1)?.session.environmentId).toBe("env-1");
+    // The session's own thread is not also mounted: one view fills the slot.
+    expect(dock.querySelector('[data-slot="t3-native-stub"]')).toBeNull();
+  });
+
+  it("returns to the session view when the back control clears the lens", async () => {
+    const { getByTestId } = mountWithSlot();
+    const dock = getByTestId("chat-dock-slot");
+    act(() =>
+      useRennetStore
+        .getState()
+        .uiActions.openLensThread({ environmentId: "env-1", threadId: "seat-design" }),
+    );
+    await waitFor(() => expect(dock.querySelector('[data-slot="t3-thread-stub"]')).not.toBeNull());
+    const back = dock.querySelector('[data-slot="t3-thread-back"]');
+    expect(back?.textContent).toContain("Back to the session");
+    act(() => {
+      fireEvent.click(back as Element);
+    });
+    await waitFor(() => expect(dock.querySelector('[data-slot="t3-native-stub"]')).not.toBeNull());
+    expect(dock.querySelector('[data-slot="t3-thread-stub"]')).toBeNull();
+    expect(useRennetStore.getState().ui.lensThread).toBeNull();
   });
 
   it.each([["rennet" as const], [undefined]])(

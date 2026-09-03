@@ -1,4 +1,4 @@
-import type { ProjectProcessEvent } from "@rennet/protocol";
+import type { LaneThreadRef, ProjectProcessEvent } from "@rennet/protocol";
 import type { StateCreator } from "zustand";
 import type { RennetState } from "./index";
 
@@ -60,6 +60,13 @@ export interface UiState {
    * Capped at `BACKGROUND_EVENT_LIMIT` per project, oldest dropped first.
    */
   readonly backgroundEvents: Readonly<Record<string, readonly ProjectProcessEvent[]>>;
+  /**
+   * The lens seat transcript the chat slot is showing instead of the review's own thread
+   * (t3-lens-threads 3.4). Client state: which reader the reviewer opened, not something
+   * the daemon knows. `null` ⇒ the slot is back on the session's thread. The ref carries
+   * BOTH ids because a thread is addressed by (environment, thread), never by the lane.
+   */
+  readonly lensThread: LaneThreadRef | null;
 }
 
 /** Retained background lines per project. A long swarm narrates one line per partition. */
@@ -88,6 +95,8 @@ export interface UiSlice {
     setProjectProcessing(projectId: string, processing: boolean): void;
     /** Retain one background narration line for `projectId`. */
     appendBackgroundEvent(projectId: string, event: ProjectProcessEvent): void;
+    /** Show a lens seat's transcript in the chat slot; `null` returns to the session. */
+    openLensThread(thread: LaneThreadRef | null): void;
   };
 }
 
@@ -104,6 +113,7 @@ const initialUi: UiState = {
   openDialogs: [],
   processingProjectIds: [],
   backgroundEvents: {},
+  lensThread: null,
 };
 
 export const createUiSlice: StateCreator<RennetState, [], [], UiSlice> = (set) => ({
@@ -171,6 +181,7 @@ export const createUiSlice: StateCreator<RennetState, [], [], UiSlice> = (set) =
           ui: { ...s.ui, backgroundEvents: { ...s.ui.backgroundEvents, [projectId]: next } },
         };
       }),
+    openLensThread: (thread) => set((s) => ({ ui: { ...s.ui, lensThread: thread } })),
   },
 });
 

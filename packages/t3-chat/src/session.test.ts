@@ -37,4 +37,13 @@ describe("the sidecar session as a T3 environment registration", () => {
     expect(sidecarThreadPath(session)).toBe("/env-1/thread-1");
     expect(sidecarThreadPath({ environmentId: "env-1" })).toBe("/");
   });
+
+  // T3ThreadView (t3-lens-threads 3.3) builds its initial route with the same function,
+  // from a lane's thread ref rather than the session's. A seat thread id is the daemon's
+  // to choose, so the two ids must stay two route segments however they are spelled.
+  it("routes to a lens seat's thread, keeping an awkward id inside one route segment", () => {
+    expect(sidecarThreadPath({ environmentId: "env-1", threadId: "seat/design gen-2" })).toBe(
+      "/env-1/seat%2Fdesign%20gen-2",
+    );
+  });
 });

@@ -35,4 +35,10 @@ export {
 } from "./chat-data";
 export { ChatDock } from "./chat-dock";
 export { EngineChatDock, T3ChatDock, useRouteChatEngine } from "./engine-chat-dock";
-export { T3ChatSlotProvider, type T3NativeChatProps, useT3NativeChat } from "./t3-chat-slot";
+export {
+  type T3ChatSlotComponents,
+  T3ChatSlotProvider,
+  type T3NativeChatProps,
+  type T3ThreadViewProps,
+  useT3ChatSlot,
+} from "./t3-chat-slot";
