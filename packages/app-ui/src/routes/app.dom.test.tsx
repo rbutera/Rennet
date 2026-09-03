@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 
-import type { AskProjection, CommandInput, Project, SettingsView } from "@rennet/protocol";
+import type { Project, SettingsView } from "@rennet/protocol";
 import { lazy, Suspense } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useRennetStore } from "../store";
@@ -426,18 +426,6 @@ const REVIEW = {
   dispositions: [],
   status: "current",
 };
-
-/** One persisted orchestrator turn, as `review.reattach` returns it. */
-const transcriptOf = (body: string) => ({
-  threads: [
-    {
-      threadId: "t-1",
-      anchor: { kind: "fragment" as const, label: "conversation", key: "t-1" },
-      messages: [{ id: "m-1", author: "harness" as const, body }],
-    },
-  ],
-  inFlight: [],
-});
 
 describe("the lazy welcome chunk", () => {
   it("renders the same calm blank when its chunk fails to load, instead of blanking the app", async () => {

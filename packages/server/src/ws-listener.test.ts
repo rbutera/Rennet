@@ -194,7 +194,7 @@ describe("WS listener server-request wire support (#380)", () => {
   });
 });
 
-describe("WS listener ask-stream broadcast (#389 server half)", () => {
+describe("WS listener: the ask-stream sink is gone (t3-lens-threads 4.2)", () => {
   const listeners: WsListener[] = [];
   const sockets: WebSocket[] = [];
   afterEach(async () => {
@@ -220,50 +220,35 @@ describe("WS listener ask-stream broadcast (#389 server half)", () => {
     return socket;
   }
 
-  it("delivers a live ask-stream delta to a RECONNECTED socket, not just the invoker", async () => {
-    // Capture the emit sink ws-listener hands dispatch for a `reviewId`-scoped turn.
-    let askSink: ((event: unknown) => void) | undefined;
-    const dispatch = vi.fn(
-      async (_name, _input, ctx?: { emitAskStream?: (event: unknown) => void }) => {
-        askSink = ctx?.emitAskStream;
-        return { ok: true };
-      },
-    ) as unknown as WsListenerDeps["dispatch"];
+  it("hands dispatch no `emitAskStream`, and still hands it the sinks that survive", async () => {
+    // The #389 broadcast this replaces proved a reconnected socket kept receiving a turn's
+    // deltas. There is no ask stream to receive: the conversation is a T3 thread, whose own
+    // client runtime owns the subscription. LOAD-BEARING on the sink's absence AND on the
+    // context still being real — asserting only `emitAskStream === undefined` would pass just
+    // as happily if `ctx` were undefined outright, i.e. if the whole context seam broke.
+    let seen: Record<string, unknown> | undefined;
+    const dispatch = vi.fn(async (_name, _input, ctx?: Record<string, unknown>) => {
+      seen = ctx;
+      return { ok: true };
+    }) as unknown as WsListenerDeps["dispatch"];
     const listener = await startWsListener({ dispatch, serverVersion: "test" });
     listeners.push(listener);
 
-    // Socket A is the client that STARTED the turn (its socket is about to "drop").
-    const socketA = await connect(listener, "invoker");
-    const response = once(socketA, "message");
-    socketA.send(
+    const socket = await connect(listener, "invoker");
+    const response = once(socket, "message");
+    socket.send(
       JSON.stringify({
         type: "request",
-        requestId: "ask-1",
-        command: "review.ask",
-        input: { reviewId: "rev-1", commandId: "cmd-1" },
+        requestId: "req-1",
+        command: "project.process",
+        input: { commandId: "cmd-1" },
       }),
     );
     await response;
-    expect(askSink).toBeTypeOf("function");
 
-    // Socket B is the SAME client after a mid-turn reconnect — a fresh connection that
-    // never invoked review.ask. Pre-fix, the emit closed over socket A and B got nothing.
-    const socketB = await connect(listener, "reconnected");
-    const delta = new Promise<Record<string, unknown>>((resolve) => {
-      socketB.on("message", (data) => {
-        const frame = JSON.parse(String(data));
-        if (frame.type === "askStreamEvent") resolve(frame);
-      });
-    });
-
-    askSink?.({ kind: "ask-focus", anchor: "widget.ts:1" });
-
-    const frame = await delta;
-    expect(frame).toMatchObject({
-      type: "askStreamEvent",
-      reviewId: "rev-1",
-      event: { kind: "ask-focus", anchor: "widget.ts:1" },
-    });
+    expect(seen).toBeTypeOf("object");
+    expect(seen?.emitProgress).toBeTypeOf("function");
+    expect("emitAskStream" in (seen ?? {})).toBe(false);
   });
 });
 

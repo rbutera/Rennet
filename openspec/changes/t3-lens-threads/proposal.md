@@ -23,6 +23,7 @@ The review pipeline still runs its lens seats through Rennet's own harness adapt
 - `round-regeneration-reveal`: a lane carries the seat's latest event while it runs; retry budgets count same-thread turns.
 - `handoff-bundle-composition`: the run always executes as one T3 turn on the review's thread; the engine choice is gone.
 - `orchestrator-session`: removed; the review's conversation is its T3 thread.
+- `mobile-shell`: the phone's live-turn and ask-answer requirements are removed with the command they rode; an ask push lands on the review.
 - `t3code-chat-surface` (from the in-flight `t3code-sidecar-chat` change, which must be archived first): the per-project chat engine setting is removed and the slot always renders the native thread view.
 
 ## Impact
@@ -32,7 +33,8 @@ The review pipeline still runs its lens seats through Rennet's own harness adapt
 - `packages/protocol`: `SessionPreparation` lanes carry a thread ref and a latest-event line; `settingsProjectPrefsSchema.chatEngine` and the `chat.*` orchestrator commands are removed; `daemon.status.t3Sidecar` stays.
 - `packages/app-ui`: `SessionPreparationScreen` becomes the first frame of the workspace; `ChatDock`, `chat-data.ts`'s ask stream, `engine-chat-dock.tsx`'s webview branch and the Chat engine settings section are deleted; `T3ChatSlotProvider` is required by every host.
 - `packages/t3-chat`: a read-only mode for `ChatView` (composer hidden) and a mount keyed by an arbitrary thread, not only the session's bound thread.
-- `apps/desktop` and the browser build: the same Vite alias, defines and CSS bridge.
+- `apps/desktop` and the browser build: the same Vite alias, defines and CSS bridge, and both entries provide `T3ChatSlotProvider`.
+- `apps/mobile`: the turn screen, the timeline reducer, the ask-reply composer, the shade-answer path and the background answer task go with `review.ask`; `onAskProjection` (the ask LOG) stays.
 - `@rennet/prompts`: the lint-repair turn prompt as a partial; the base lens prompts are unchanged.
 - Docs: the sidecar and chat-surface concept pages, the handoff-and-exits concept, the settings reference, product-and-vision's honest-copy line about spend, `AGENTS.md` package boundaries.
 - Users who set `chatEngine` in `.rennet/config.json` have that key ignored (Rai is the only user).

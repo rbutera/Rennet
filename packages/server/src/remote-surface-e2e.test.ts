@@ -15,7 +15,7 @@
 import { once } from "node:events";
 import { mkdtempSync } from "node:fs";
 import { networkInterfaces, tmpdir } from "node:os";
-import { isAbsolute, join, win32 } from "node:path";
+import { join } from "node:path";
 import { PROTOCOL_VERSION } from "@rennet/protocol";
 import { afterEach, describe, expect, it } from "vitest";
 import { WebSocket } from "ws";

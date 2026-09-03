@@ -19,11 +19,7 @@ import type {
 import { MAX_UI_SCREENSHOTS_PER_RUN } from "./domain";
 import { forgeRepoIdentitySchema, forgeRepositoryMatchesLegacy } from "./forge";
 import type { AskProjection, AttentionEventFrame, RoundEvent } from "./session";
-import {
-  CodingHarnessSelectionSchema,
-  SessionPreparationSchema,
-  SessionTranscriptRowSchema,
-} from "./session/model";
+import { CodingHarnessSelectionSchema, SessionPreparationSchema } from "./session/model";
 
 const repositoryProvenanceSchema = z.object({
   id: z.string().min(1),

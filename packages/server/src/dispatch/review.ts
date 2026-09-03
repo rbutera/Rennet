@@ -1,10 +1,7 @@
-import { randomUUID } from "node:crypto";
 import { basename } from "node:path";
 import {
   buildHandoffBundle,
-  createHarnessTranscriptFold,
   disclosureFor,
-  type HarnessEvent,
   isRepoRelativePath,
   mechanicalComposition,
   verifyComposedBundle,
@@ -14,15 +11,8 @@ import {
   type HandoffRunResult,
   parseCommandInput,
   parseCommandOutput,
-  type SessionTranscriptRow,
 } from "@rennet/protocol";
-import { deepLinkFor } from "../attention-planner";
 import type { CommandHandler, DispatchRuntime } from "./runtime";
-
-/** The one throttle window for a live turn's outbound frames: it paces the activity-row
- *  snapshot AND the `ask-delta` text batching, so a turn emits at most one of each per tick
- *  rather than one frame per harness event (perf audit §3 H3a / §4 H2). */
-const LIVE_ACTIVITY_SNAPSHOT_INTERVAL_MS = 50;
 
 export function reviewHandlers(rt: DispatchRuntime) {
   const {

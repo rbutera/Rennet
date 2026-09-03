@@ -11,7 +11,6 @@ import {
   type ForgeReviewEvent,
   type ForgeReviewTarget,
   type HandoffTurnOutcome,
-  type HarnessEvent,
   type ReviewOpenerDraftInput,
   type ReviewOpenerDraftResult,
   type ReviewService,

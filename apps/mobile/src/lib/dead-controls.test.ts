@@ -36,7 +36,9 @@ describe("review digest offers no dead controls (absent-not-disabled)", () => {
   it("routes only where the card's promise is kept", () => {
     // Anti-vacuity: if the push shape ever changes, `pushed` silently empties and the loop below
     // asserts nothing. Pin the exact set so that drift — or a re-added card — fails here first.
-    expect([...pushed].sort()).toEqual(["publish", "turn"]);
+    // `turn` left the set with the orchestrator chat (t3-lens-threads 4.2): the screen it
+    // pushed to is deleted, so a card pointing at it would be the deadest control of all.
+    expect([...pushed].sort()).toEqual(["publish"]);
 
     for (const route of pushed) {
       const target = read(join(reviewDir, `${route}.tsx`));
@@ -46,6 +48,15 @@ describe("review digest offers no dead controls (absent-not-disabled)", () => {
           "remove the card or state it on the card itself; do not disable it",
       ).toBe(false);
     }
+  });
+
+  it("states the missing conversation on the digest rather than routing to a dead screen", () => {
+    // The Act card pointed at `turn.tsx`, which is deleted (t3-lens-threads 4.2). Removing it
+    // without saying why would leave a user hunting for the ask they were pushed about, so
+    // the digest names the T3 thread and where to open it. LOAD-BEARING: re-adding the card
+    // reddens the route assertion above, and dropping this sentence reddens here.
+    expect(digest).toMatch(/T3 Code thread/i);
+    expect(digest).toMatch(/on the desktop/i);
   });
 
   it("says on the digest itself that reading is not on mobile yet", () => {

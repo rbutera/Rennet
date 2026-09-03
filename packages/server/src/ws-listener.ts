@@ -498,7 +498,6 @@ export async function startWsListener(deps: WsListenerDeps): Promise<WsListener>
         }
       }
       const commandId = inputString(effectiveInput, "commandId");
-      const reviewId = inputString(effectiveInput, "reviewId");
       const emitProgress = commandId
         ? (event: ProjectProgressEvent): void =>
             send(socket, {

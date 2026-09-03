@@ -7,9 +7,8 @@ import {
 } from "@rennet/protocol";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { BridgeProvider } from "../data";
-import { useBridgeContext } from "../data/bridge";
 import { useRennetStore } from "../store";
-import { act, cleanup, mount, screen, waitFor } from "../test/dom";
+import { act, cleanup, mount, waitFor } from "../test/dom";
 import { MemoryBridge } from "../test/memory-bridge";
 import { anchoredAskText, ReviewAnchoredAskProvider, useAnchoredAsk } from "./anchored-ask";
 import { useAskLog } from "./ask-log";
@@ -32,13 +31,6 @@ function Send({ threadId }: { readonly threadId: string }) {
       Anchored send
     </button>
   );
-}
-
-let capturedCache: ReturnType<typeof useBridgeContext>["cache"] | undefined;
-
-function CaptureCache() {
-  capturedCache = useBridgeContext().cache;
-  return null;
 }
 
 function AskLogBinding({ reviewId }: { readonly reviewId: string }) {
@@ -82,7 +74,6 @@ function emptyProjection(quoteThreads: AskProjection["quoteThreads"] = {}): AskP
 }
 
 beforeEach(() => {
-  capturedCache = undefined;
   useRennetStore.getState().reviewActions.resetReview();
 });
 afterEach(cleanup);
