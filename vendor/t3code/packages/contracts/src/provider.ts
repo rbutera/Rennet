@@ -62,6 +62,10 @@ export const ProviderSessionStartInput = Schema.Struct({
   approvalPolicy: Schema.optional(ProviderApprovalPolicy),
   sandboxMode: Schema.optional(ProviderSandboxMode),
   runtimeMode: RuntimeMode,
+  /** JSON Schema for a structured turn result, for adapters whose runtime
+      fixes the output contract when the session is created (Claude's SDK
+      `outputFormat` is a query-construction option). */
+  outputSchema: Schema.optional(Schema.Unknown),
 });
 export type ProviderSessionStartInput = typeof ProviderSessionStartInput.Type;
 
@@ -78,6 +82,8 @@ export const ProviderSendTurnInput = Schema.Struct({
   ),
   modelSelection: Schema.optional(ModelSelection),
   interactionMode: Schema.optional(ProviderInteractionMode),
+  /** JSON Schema for this turn's structured result. */
+  outputSchema: Schema.optional(Schema.Unknown),
 });
 export type ProviderSendTurnInput = typeof ProviderSendTurnInput.Type;
 

@@ -517,3 +517,80 @@ export function assemblePrompt(
 
   return { text: includedBlocks.join("\n\n"), layers: contributions, droppedLayers: dropped };
 }
+
+// ── The repair turn (t3-lens-threads 1.5) ──
+
+/** One lint or parse pointer, with the element it is about already resolved. */
+export interface RepairPointer {
+  readonly path: readonly (string | number)[];
+  readonly message: string;
+  /** The lint rule; absent means a parse pointer, which indexes the rejected return. */
+  readonly ruleId?: string;
+  /** The id of the element the pointer lands on, when the caller could resolve one. */
+  readonly elementId?: string;
+}
+
+/** The byte bound on the pointer list — enough for a full ladder, never unbounded. */
+export const REPAIR_POINTERS_MAX_BYTES = 8_000;
+
+/** The byte bound on the frozen-id list. Ids are short; this is ~250 of them. */
+export const REPAIR_FROZEN_IDS_MAX_BYTES = 4_000;
+
+function boundedJoin(lines: readonly string[], maxBytes: number, what: string): string {
+  const encoder = new TextEncoder();
+  const kept: string[] = [];
+  let bytes = 0;
+  for (const line of lines) {
+    const size = encoder.encode(`${line}\n`).length;
+    if (bytes + size > maxBytes) {
+      kept.push(`- … ${lines.length - kept.length} more ${what} omitted (byte cap)`);
+      break;
+    }
+    kept.push(line);
+    bytes += size;
+  }
+  return kept.join("\n");
+}
+
+/**
+ * The repair turn: the NEXT turn on a seat's own thread after its draft failed lint.
+ *
+ * The thread already holds the base drafting prompt and the draft the seat emitted, so
+ * neither is re-sent — that is the whole saving over the cold-session `renderRetryPrompt`
+ * it replaces (a repair used to re-bill the entire base prompt plus the draft). What
+ * travels is the pointers, the frozen ids, and the instruction. The output schema is NOT
+ * restated here: it rides the turn as its structured-output contract.
+ *
+ * Both interpolations are byte-bounded with an honest omission marker.
+ */
+export function renderRepairTurn(
+  pointers: readonly RepairPointer[],
+  frozenIds: readonly string[] = [],
+): string {
+  const issues = boundedJoin(
+    pointers.map((pointer) => {
+      const where = pointer.elementId === undefined ? "" : ` (element \`${pointer.elementId}\`)`;
+      return `- ${pointer.ruleId ?? "schema"} at ${JSON.stringify(pointer.path)}${where}: ${pointer.message}`;
+    }),
+    REPAIR_POINTERS_MAX_BYTES,
+    "issues",
+  );
+  // Nothing frozen is the re-ask after a non-emission or an unparseable return: there is
+  // no patch to make, so the seat re-drafts whole. Asking for a patch of nothing invites
+  // `{ elements: [] }`, which reads as a clean absence (#743 review).
+  if (frozenIds.length === 0) {
+    return renderLayer(
+      "task",
+      `Your last board did not pass. Fix ONLY these issues and return the whole board:\n${issues}`,
+    );
+  }
+  const frozen = boundedJoin(
+    frozenIds.map((id) => `- \`${id}\``),
+    REPAIR_FROZEN_IDS_MAX_BYTES,
+    "frozen ids",
+  );
+  return renderLayer(
+    "task",
+    `Your last board did not pass. Fix ONLY these issues:\n${issues}\n\nReturn a PATCH board: the elements you are fixing, corrected, plus any new element you need. These ids are already accepted and are kept verbatim by the host — do not resend them; references to them remain valid:\n${frozen}\n\nEach issue names the element it is about; pointer paths index the board you just sent.`,
+  );
+}

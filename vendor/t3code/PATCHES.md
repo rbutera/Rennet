@@ -6,3 +6,12 @@ Prefer extension over edit: put Rennet code outside `vendor/` and import their m
 
 | File | Reason | Upstreamable | Upstream PR |
 | --- | --- | --- | --- |
+| `packages/contracts/src/orchestration.ts` | `thread.turn.start` (both command shapes) and the `thread.turn-start-requested` payload carry an optional `outputSchema`, so a turn can declare a structured-output contract. Rennet's board seats need one JSON board per turn. | yes | pending |
+| `packages/contracts/src/provider.ts` | `ProviderSessionStartInput` and `ProviderSendTurnInput` carry `outputSchema`. `ProviderService` re-decodes both and strips unknown keys, so the field has to exist on the schema to survive the hop. | yes | pending |
+| `packages/contracts/src/providerRuntime.ts` | `TurnCompletedPayload` carries `structuredOutput` and `durationMs`, the two facts the SDK result frame already reports and T3 dropped. | yes | pending |
+| `apps/server/src/orchestration/decider.ts` | Copies the command's `outputSchema` onto the `thread.turn-start-requested` event it emits. | yes | pending |
+| `apps/server/src/orchestration/Layers/ProviderCommandReactor.ts` | Threads `outputSchema` from the turn-start event into both `ProviderSessionStartInput` (the session starts on the first turn) and `ProviderSendTurnInput`. | yes | pending |
+| `apps/server/src/provider/Layers/ClaudeAdapter.ts` | Sets the SDK's `outputFormat: { type: "json_schema", schema }` from the session's `outputSchema`, remembers the contract on the session context, fails a later turn whose schema differs (the SDK fixes `outputFormat` at `query()` construction and offers no setter), and puts `structured_output`/`duration_ms` from the result frame on `turn.completed`. | yes | pending |
+| `apps/server/src/provider/Layers/CodexAdapter.ts` | Forwards a turn's `outputSchema` to the Codex session runtime. | yes | pending |
+| `apps/server/src/provider/Layers/CodexSessionRuntime.ts` | `buildTurnStartParams` passes `outputSchema` through to `V2TurnStartParams.outputSchema`, which the generated protocol already carries and T3 was dropping. | yes | pending |
+| `apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts` | Projects a `turn.settled` activity from `turn.completed`, carrying the settled turn's structured output, duration, usage and cost. Nothing else in the projection carried a turn's own result, so a reader over `orchestration.subscribeThread` could not see it. | yes | pending |

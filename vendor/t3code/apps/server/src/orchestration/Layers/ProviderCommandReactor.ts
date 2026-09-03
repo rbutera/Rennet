@@ -525,6 +525,7 @@ const make = Effect.gen(function* () {
     options?: {
       readonly modelSelection?: ModelSelection;
       readonly pendingTurnStart?: boolean;
+      readonly outputSchema?: unknown;
     },
   ) {
     const thread = yield* resolveThread(threadId);
@@ -677,6 +678,7 @@ const make = Effect.gen(function* () {
           modelSelection: desiredModelSelection,
           ...(input?.resumeCursor !== undefined ? { resumeCursor: input.resumeCursor } : {}),
           runtimeMode: desiredRuntimeMode,
+          ...(options?.outputSchema !== undefined ? { outputSchema: options.outputSchema } : {}),
         })
         .pipe(Effect.tap(() => refreshWorkspaceSnapshot));
 
@@ -788,6 +790,7 @@ const make = Effect.gen(function* () {
     readonly attachments?: ReadonlyArray<ChatAttachment>;
     readonly modelSelection?: ModelSelection;
     readonly interactionMode?: "default" | "plan";
+    readonly outputSchema?: unknown;
     readonly createdAt: string;
   }) {
     const thread = yield* resolveThread(input.threadId);
@@ -799,6 +802,9 @@ const make = Effect.gen(function* () {
     yield* ensureSessionForThread(input.threadId, input.createdAt, {
       ...(input.modelSelection !== undefined ? { modelSelection: input.modelSelection } : {}),
       pendingTurnStart: true,
+      // The session that starts for this turn is created with the turn's output
+      // contract: Claude's SDK fixes `outputFormat` when the query is built.
+      ...(input.outputSchema !== undefined ? { outputSchema: input.outputSchema } : {}),
     });
     if (input.modelSelection !== undefined) {
       threadModelSelections.set(input.threadId, input.modelSelection);
@@ -839,6 +845,7 @@ const make = Effect.gen(function* () {
       ...(normalizedAttachments.length > 0 ? { attachments: normalizedAttachments } : {}),
       ...(modelForTurn !== undefined ? { modelSelection: modelForTurn } : {}),
       ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
+      ...(input.outputSchema !== undefined ? { outputSchema: input.outputSchema } : {}),
     };
   });
 
@@ -1228,6 +1235,9 @@ const make = Effect.gen(function* () {
         ? { modelSelection: event.payload.modelSelection }
         : {}),
       interactionMode: event.payload.interactionMode,
+      ...(event.payload.outputSchema !== undefined
+        ? { outputSchema: event.payload.outputSchema }
+        : {}),
       createdAt: event.payload.createdAt,
     }).pipe(
       Effect.map(Option.some),
