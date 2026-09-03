@@ -1,10 +1,6 @@
-import type {
-  FindingElement,
-  FlaggedReview,
-  OfferedManifest,
-  RspTokenUsage,
-} from "@rennet/protocol";
-import { describe, expect, it } from "vitest";
+import type { PromptContextFile } from "@rennet/prompts";
+import type { FindingElement, FlaggedReview, RspTokenUsage } from "@rennet/protocol";
+import { beforeEach, describe, expect, it } from "vitest";
 import {
   classifyNonObvious,
   DEFAULT_MAX_VERIFICATIONS,
@@ -18,18 +14,10 @@ import {
   type VerificationTurnResult,
   verifyFlaggedReview,
 } from "./finding-verification";
+import type { TurnContextWriter } from "./harness-run-turn";
 import { createInvocationBudget } from "./invocation-budget";
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
-
-const MANIFEST: OfferedManifest = {
-  occurrences: [
-    { id: "h1", kind: "hunk", sides: { additions: ["const x = load();"] } },
-    { id: "h2", kind: "hunk", sides: { additions: ["return y.value;"] } },
-    { id: "h3", kind: "hunk", sides: { additions: ["race();"] } },
-  ],
-  lineage: [],
-};
 
 function finding(overrides: Partial<FindingElement> & { findingId: string }): FindingElement {
   return {
@@ -42,12 +30,35 @@ function finding(overrides: Partial<FindingElement> & { findingId: string }): Fi
 }
 
 const WINDOWS: Record<string, VerificationFileWindow> = {
-  "rennet:hunk/h1": { path: "a.ts", startLine: 1, endLine: 5, text: "const x = load();\nuse(x);" },
-  "rennet:hunk/h2": { path: "a.ts", startLine: 20, endLine: 24, text: "return y.value;" },
-  "rennet:hunk/h3": { path: "b.ts", startLine: 1, endLine: 3, text: "race();" },
+  "rennet:hunk/h1": { path: "a.ts", startLine: 1, endLine: 5, hunkStartLine: 2, hunkEndLine: 3 },
+  "rennet:hunk/h2": {
+    path: "a.ts",
+    startLine: 20,
+    endLine: 24,
+    hunkStartLine: 22,
+    hunkEndLine: 22,
+    readAt: "git show deadbeef:a.ts",
+  },
+  "rennet:hunk/h3": { path: "b.ts", startLine: 1, endLine: 3, hunkStartLine: 1, hunkEndLine: 1 },
 };
 
 const readAll: VerificationFileReader = async (anchor) => WINDOWS[anchor];
+
+/** The context directory the fake writer reports; the prompt's pointer path is built on it. */
+const CONTEXT_DIR = ".rennet/context/sess_test";
+
+/** Every file every turn wrote, newest last — the writer-call assertions read this. */
+let contextWrites: PromptContextFile[] = [];
+
+/** The injected context writer: records what was written, answers with the directory. */
+const writeContext: TurnContextWriter = (files) => {
+  contextWrites = [...contextWrites, ...files];
+  return CONTEXT_DIR;
+};
+
+beforeEach(() => {
+  contextWrites = [];
+});
 
 /** A turn that returns a verdict per finding, keyed by the concern summary in the prompt. */
 function turnBySummary(
@@ -102,6 +113,72 @@ describe("classifyNonObvious (#179)", () => {
   });
 });
 
+// ── ② The pointer file each turn writes (session-context-files, task 3.9) ───────
+
+describe("the verification turn's pointer file", () => {
+  it("writes WHERE the code is, never the code, and the prompt names that file", async () => {
+    const f = finding({ findingId: "F1", anchor: "rennet:hunk/h2" });
+    let seenPrompt = "";
+    await runFindingVerification({
+      findings: [f],
+      writeContext,
+      readFileWindow: readAll,
+      runTurn: async (prompt) => {
+        seenPrompt = prompt;
+        return { status: "emitted", body: { verifications: [] } };
+      },
+      budget: budget(),
+    });
+    // The WRITER call: the whole file body, so a pointer that loses its `how` or its
+    // hunk range reddens here rather than silently sending a verifier to the wrong bytes.
+    const file = contextWrites.find((entry) => entry.name === "verification/F1.json");
+    expect(file?.body).toBe(
+      JSON.stringify({
+        turn: "finding-verification",
+        ref: "f1",
+        findingId: "F1",
+        read: {
+          path: "a.ts",
+          startLine: 20,
+          endLine: 24,
+          how: "git show deadbeef:a.ts",
+        },
+        anchoredHunk: { path: "a.ts", side: "new", startLine: 22, endLine: 22 },
+      }),
+    );
+    expect(file?.holds.length).toBeGreaterThan(0);
+    expect(file?.readWhen.length).toBeGreaterThan(0);
+    // The READ side: the prompt names the file it just wrote, and nothing else about it.
+    expect(seenPrompt).toContain(`${CONTEXT_DIR}/verification/F1.json`);
+    expect(seenPrompt).not.toContain("a.ts");
+  });
+
+  it("says to read the working tree when the reviewed content IS on disk", async () => {
+    await runFindingVerification({
+      findings: [finding({ findingId: "F1", anchor: "rennet:hunk/h1" })],
+      writeContext,
+      readFileWindow: readAll,
+      runTurn: async () => ({ status: "emitted", body: { verifications: [] } }),
+      budget: budget(),
+    });
+    const body = contextWrites.find((entry) => entry.name === "verification/F1.json")?.body ?? "";
+    expect(JSON.parse(body).read.how).toBe("the working tree at your working directory");
+  });
+
+  it("folds a finding id that could name a path segment", async () => {
+    await runFindingVerification({
+      findings: [finding({ findingId: "../../etc/passwd" })],
+      writeContext,
+      readFileWindow: readAll,
+      runTurn: async () => ({ status: "emitted", body: { verifications: [] } }),
+      budget: budget(),
+    });
+    expect(contextWrites.map((entry) => entry.name)).toEqual([
+      "verification/.._.._etc_passwd.json",
+    ]);
+  });
+});
+
 // ── ② runFindingVerification: disposition ───────────────────────────────────────
 
 describe("runFindingVerification disposition (#179)", () => {
@@ -109,7 +186,7 @@ describe("runFindingVerification disposition (#179)", () => {
     const f = finding({ findingId: "F1" });
     const result = await runFindingVerification({
       findings: [f],
-      manifest: MANIFEST,
+      writeContext,
       readFileWindow: readAll,
       runTurn: turnBySummary({
         [f.summary]: { verdict: "reproduced", evidence: "null at L1, deref at L2" },
@@ -133,7 +210,7 @@ describe("runFindingVerification disposition (#179)", () => {
     });
     const result = await runFindingVerification({
       findings: [keep, refuted],
-      manifest: MANIFEST,
+      writeContext,
       readFileWindow: readAll,
       runTurn: turnBySummary({
         "real null deref": { verdict: "reproduced", evidence: "L2 dereferences a null" },
@@ -151,7 +228,7 @@ describe("runFindingVerification disposition (#179)", () => {
     const f = finding({ findingId: "F1" });
     const result = await runFindingVerification({
       findings: [f],
-      manifest: MANIFEST,
+      writeContext,
       readFileWindow: readAll,
       runTurn: turnBySummary({
         [f.summary]: { verdict: "inconclusive", evidence: "cannot trace the caller" },
@@ -170,7 +247,7 @@ describe("runFindingVerification disposition (#179)", () => {
     const f = finding({ findingId: "F1" });
     const result = await runFindingVerification({
       findings: [f],
-      manifest: MANIFEST,
+      writeContext,
       readFileWindow: readAll,
       runTurn: turnBySummary({ [f.summary]: { verdict: "reproduced", evidence: "  " } }),
       budget: budget(),
@@ -183,7 +260,7 @@ describe("runFindingVerification disposition (#179)", () => {
     const low = finding({ findingId: "F1", severity: "low", summary: "minor style nit" });
     const result = await runFindingVerification({
       findings: [low],
-      manifest: MANIFEST,
+      writeContext,
       readFileWindow: readAll,
       runTurn: turnBySummary({}),
       budget: budget(),
@@ -198,7 +275,7 @@ describe("runFindingVerification disposition (#179)", () => {
     const reader: VerificationFileReader = async () => undefined;
     const result = await runFindingVerification({
       findings: [f],
-      manifest: MANIFEST,
+      writeContext,
       readFileWindow: reader,
       runTurn: turnBySummary({ [f.summary]: { verdict: "refuted", evidence: "n/a" } }),
       budget: budget(),
@@ -239,7 +316,7 @@ describe("runFindingVerification executed reproduction (#259 + #268 option 2)", 
     const f = finding({ findingId: "F1", summary: "sum([]) throws" });
     const result = await runFindingVerification({
       findings: [f],
-      manifest: MANIFEST,
+      writeContext,
       readFileWindow: readAll,
       runTurn: turnByFinding({
         "sum([]) throws": {
@@ -262,7 +339,7 @@ describe("runFindingVerification executed reproduction (#259 + #268 option 2)", 
     const f = finding({ findingId: "F1", summary: "line 2 derefs null" });
     const result = await runFindingVerification({
       findings: [f],
-      manifest: MANIFEST,
+      writeContext,
       readFileWindow: readAll,
       runTurn: turnByFinding({
         "line 2 derefs null": { verdict: "reproduced", evidence: "line 2 dereferences a null x" },
@@ -283,7 +360,7 @@ describe("runFindingVerification executed reproduction (#259 + #268 option 2)", 
     const f2 = finding({ findingId: "F2", anchor: "rennet:hunk/h2", summary: "second concern" });
     const result = await runFindingVerification({
       findings: [f1, f2],
-      manifest: MANIFEST,
+      writeContext,
       readFileWindow: readAll,
       runTurn: turnByFinding({
         "first concern": {
@@ -312,7 +389,7 @@ describe("runFindingVerification executed reproduction (#259 + #268 option 2)", 
     const f = finding({ findingId: "F1", summary: "would not build" });
     const result = await runFindingVerification({
       findings: [f],
-      manifest: MANIFEST,
+      writeContext,
       readFileWindow: readAll,
       runTurn: turnByFinding({
         "would not build": {
@@ -344,7 +421,7 @@ describe("runFindingVerification cost containment (#179)", () => {
     ];
     const result = await runFindingVerification({
       findings,
-      manifest: MANIFEST,
+      writeContext,
       readFileWindow: readAll,
       runTurn: turnBySummary({
         "high one": { verdict: "reproduced", evidence: "proof a" },
@@ -383,7 +460,7 @@ describe("runFindingVerification cost containment (#179)", () => {
         finding({ findingId: "F2", anchor: "rennet:hunk/h2", summary: "same file b" }), // a.ts
         finding({ findingId: "F3", anchor: "rennet:hunk/h3", summary: "other file" }), // b.ts
       ],
-      manifest: MANIFEST,
+      writeContext,
       readFileWindow: readAll,
       runTurn: counting,
       budget: budget(),
@@ -406,7 +483,7 @@ describe("runFindingVerification cost containment (#179)", () => {
     const f = finding({ findingId: "F1" });
     const result = await runFindingVerification({
       findings: [f],
-      manifest: MANIFEST,
+      writeContext,
       readFileWindow: readAll,
       runTurn: turnBySummary({ [f.summary]: { verdict: "reproduced", evidence: "e" } }, { tokens }),
       budget: budget(),
@@ -429,7 +506,7 @@ describe("runFindingVerification fail-closed invariants (#179)", () => {
     const f = finding({ findingId: "F1" });
     const result = await runFindingVerification({
       findings: [f],
-      manifest: MANIFEST,
+      writeContext,
       readFileWindow: readAll,
       runTurn: turnBySummary({ [f.summary]: { verdict: "refuted", evidence: "n/a" } }),
       // budget omitted — no ceiling, the turn runs.
@@ -443,7 +520,7 @@ describe("runFindingVerification fail-closed invariants (#179)", () => {
     const f = finding({ findingId: "F1" });
     const result = await runFindingVerification({
       findings: [f],
-      manifest: MANIFEST,
+      writeContext,
       readFileWindow: readAll,
       runTurn: turnBySummary({}, { fail: "codex flaked" }),
       budget: budget(),
@@ -461,7 +538,7 @@ describe("runFindingVerification fail-closed invariants (#179)", () => {
     ];
     const result = await runFindingVerification({
       findings,
-      manifest: MANIFEST,
+      writeContext,
       readFileWindow: readAll,
       runTurn: turnBySummary({
         "keep first": { verdict: "reproduced", evidence: "a" },
@@ -480,7 +557,7 @@ describe("verifyFlaggedReview (#179)", () => {
   it("passes a FAILED review through untouched", async () => {
     const { review, telemetry } = await verifyFlaggedReview(
       { status: "failed", reason: "runner did not complete" },
-      { manifest: MANIFEST, readFileWindow: readAll, runTurn: turnBySummary({}), budget: budget() },
+      { writeContext, readFileWindow: readAll, runTurn: turnBySummary({}), budget: budget() },
     );
     expect(review).toEqual({ status: "failed", reason: "runner did not complete" });
     expect(telemetry.verificationTurns).toBe(0);
@@ -497,7 +574,7 @@ describe("verifyFlaggedReview (#179)", () => {
         dual: { seats: ["Claude", "Codex"] },
       },
       {
-        manifest: MANIFEST,
+        writeContext,
         readFileWindow: readAll,
         runTurn: turnBySummary({
           keep: { verdict: "reproduced", evidence: "e" },

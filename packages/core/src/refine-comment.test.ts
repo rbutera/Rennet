@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildRefinePrompt,
+  REFINE_INLINE_NOTE_MAX,
   type RefineCommentInput,
   type RefinePort,
   type RefinePortResult,
@@ -104,8 +105,31 @@ describe("buildRefinePrompt — the input the model reasons over", () => {
     expect(prompt).toContain("src/keys.ts");
   });
 
-  it("grounds the model in the anchored code when context is supplied", () => {
-    const prompt = buildRefinePrompt({ ...RAW, context: "export function rekey() {}" });
-    expect(prompt).toContain("export function rekey() {}");
+  it("grounds the model by NAMING the pointer file, never by carrying the code", () => {
+    const prompt = buildRefinePrompt({ ...RAW, pointersPath: ".rennet/context/s1/p.json" });
+    expect(prompt).toContain(".rennet/context/s1/p.json");
+    // The instruction to read it must sit AFTER the path, so the path is what it refers
+    // to — a membership check alone would pass on a prompt that mentions them apart.
+    expect(prompt.indexOf("Read it and then read that code")).toBeGreaterThan(
+      prompt.indexOf(".rennet/context/s1/p.json"),
+    );
+  });
+
+  it("inlines a short note but writes a long one to a file it names", () => {
+    const short = buildRefinePrompt(RAW);
+    expect(short).toContain(RAW.raw);
+    expect(short).toContain("The reviewer's raw note:");
+
+    // Over the anchored-ask ceiling the caller writes the note out; the prompt then
+    // names it and the note's own text must NOT appear.
+    const long = "x".repeat(REFINE_INLINE_NOTE_MAX + 1);
+    const prompt = buildRefinePrompt({
+      ...RAW,
+      raw: long,
+      notePath: ".rennet/context/s1/refine-note.md",
+    });
+    expect(prompt).toContain(".rennet/context/s1/refine-note.md");
+    expect(prompt).not.toContain(long);
+    expect(prompt).not.toContain("The reviewer's raw note:");
   });
 });

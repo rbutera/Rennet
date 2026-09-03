@@ -1,9 +1,11 @@
 import {
   CI_CLASSIFICATION_CONTRACT,
   type CiClassificationContract,
+  type PromptContextFile,
   renderCiClassificationPrompt,
 } from "@rennet/prompts";
 import type { CiFailure, InvocationBudget, RspTokenUsage } from "@rennet/protocol";
+import type { TurnContextWriter } from "./harness-run-turn";
 import { absentBudgetGrant } from "./invocation-budget";
 
 export type CiRefinementTurnResult =
@@ -28,9 +30,65 @@ export interface RefineCiFailuresInput {
   readonly failures: readonly CiFailure[];
   readonly changedPaths: readonly string[];
   readonly runTurn: CiRefinementTurn;
+  /**
+   * The session-context writer (the daemon). The failures, their evidence blobs and the
+   * changed-path list are written through it and NAMED by the prompt; none of them is
+   * interpolated (session-context-files, D4).
+   */
+  readonly writeContext: TurnContextWriter;
   readonly budget?: InvocationBudget;
   readonly contract?: CiClassificationContract;
   readonly signal?: AbortSignal;
+}
+
+/** The pointer file, at the context directory's root so its entries resolve beside it. */
+const CI_POINTERS = "ci-pointers.json";
+
+/**
+ * The turn's context files: one evidence blob per unclassified failure, the changed-path
+ * list, and the pointer file that names them. Every path inside the pointer file is
+ * relative to the directory the pointer file itself sits in — the same frame the
+ * directory's `README.md` index uses — so one write suffices. Returns the pointer file's
+ * path relative to the turn's cwd, for the prompt to name.
+ */
+function writeCiContext(
+  write: TurnContextWriter,
+  candidates: readonly Candidate[],
+  changedPaths: readonly string[],
+): string {
+  const evidenceName = (ref: string) => `ci-classification/evidence/${ref}.txt`;
+  const changedPathsName = "ci-classification/changed-paths.txt";
+  const files: PromptContextFile[] = candidates.map(({ ref, failure }) => ({
+    name: evidenceName(ref),
+    body: failure.evidence,
+    holds: `The failure evidence CI reported for the "${failure.checkName}" check.`,
+    readWhen: `before you classify ${ref}.`,
+  }));
+  files.push(
+    {
+      name: changedPathsName,
+      body: `${changedPaths.join("\n")}\n`,
+      holds: "Every path this change touches, one per line.",
+      readWhen: "when you are deciding whether a failure is attributable to this change.",
+    },
+    {
+      name: CI_POINTERS,
+      // Compact: an indent is a ~30% surcharge no reader sees (#737).
+      body: JSON.stringify({
+        turn: "ci-failure-classification",
+        pathsRelativeTo: "this file's directory",
+        changedPaths: changedPathsName,
+        failures: candidates.map(({ ref, failure }) => ({
+          ref,
+          checkName: failure.checkName,
+          evidence: evidenceName(ref),
+        })),
+      }),
+      holds: "Every unclassified failure — its ref, its check name, and where its evidence is.",
+      readWhen: "first, before you classify anything.",
+    },
+  );
+  return `${write(files)}/${CI_POINTERS}`;
 }
 
 interface Candidate {
@@ -106,12 +164,7 @@ export async function refineCiFailures(
   }
 
   const prompt = renderCiClassificationPrompt(input.contract ?? CI_CLASSIFICATION_CONTRACT, {
-    failures: candidates.map(({ ref, failure }) => ({
-      ref,
-      checkName: failure.checkName,
-      evidence: failure.evidence,
-    })),
-    changedPaths: input.changedPaths,
+    pointersPath: writeCiContext(input.writeContext, candidates, input.changedPaths),
   });
   let turn: CiRefinementTurnResult;
   try {
