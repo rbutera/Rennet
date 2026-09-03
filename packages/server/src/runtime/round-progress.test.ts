@@ -338,17 +338,18 @@ function sectioned(lens: string, body: string): DraftBoard {
  * seat; that turn must hand back the board in its own prompt. Reading that per-session
  * input keeps concurrent lens turns isolated instead of sharing one "last draft" slot.
  */
+/** Which lens a rendered prompt belongs to; `post-process` echoes its layer context back. */
+function boardAnswer(prompt: string, outputFor: (lens: string) => unknown): unknown {
+  const lens = /PROMPT_FILE:prompts\/([a-z-]+)\.md/.exec(prompt)?.[1] ?? "unknown";
+  if (lens === "post-process") {
+    const context = /rennet:layer context>>>\n(\{.*)/s.exec(prompt);
+    return context ? (JSON.parse(context[1] as string).board as unknown) : { elements: [] };
+  }
+  return outputFor(lens);
+}
+
 function fakeClaudePort(outputFor: (lens: string) => unknown): HarnessPort {
-  const lensFromPrompt = (p: string): string =>
-    /PROMPT_FILE:prompts\/([a-z-]+)\.md/.exec(p)?.[1] ?? "unknown";
-  const answer = (prompt: string): unknown => {
-    const lens = lensFromPrompt(prompt);
-    if (lens === "post-process") {
-      const context = /rennet:layer context>>>\n(\{.*)/s.exec(prompt);
-      return context ? (JSON.parse(context[1] as string).board as unknown) : { elements: [] };
-    }
-    return outputFor(lens);
-  };
+  const answer = (prompt: string): unknown => boardAnswer(prompt, outputFor);
   return {
     createSession: async () => {
       const cap: { prompt?: string } = {};
@@ -1457,6 +1458,119 @@ describe("a board seat has one backend (review finding 1)", () => {
 
     expect(branches).toEqual(["feat/lens-threads"]);
     expect(seatThreadTitle(branches[0] ?? "", "design")).toBe("feat/lens-threads — Design");
+  });
+
+  // Review finding 7. The daemon holds one subscription per running seat to feed its lane's
+  // live line. It used to be dropped only in the GENERATION's `finally`, so the first lens
+  // to finish kept a socket and a one-second idle tick alive for as long as the slowest one
+  // ran — publishing into a lane that no longer shows a line.
+  it("drops a seat's subscription when ITS lane settles, not when the generation does", async () => {
+    const stopped: string[] = [];
+    const watched: string[] = [];
+    // Frames as the reviewer sees them, each paired with what was already closed at the
+    // moment it was published. ORDER is the assertion: "was stopped eventually" would be
+    // satisfied by the old generation-wide teardown too.
+    const frames: { lanes: readonly LensLane[]; closed: readonly string[] }[] = [];
+
+    // Seats that settle at DIFFERENT times, so a lane really does finish while the others
+    // are still running. Same-time settlement could not tell per-lane teardown from the
+    // generation-wide one this replaces.
+    const SETTLE_DELAY_MS: Readonly<Record<string, number>> = {
+      design: 0,
+      sequence: 40,
+      decisions: 80,
+      "flagged-claude": 120,
+      noise: 160,
+    };
+    const promptFor = new Map<string, string>();
+    const seatOf = (threadId: string): string => threadId.replace(/^thread-/, "");
+    const t3Client = {
+      startTurn: async ({ threadId, text }: { threadId: string; text: string }) => {
+        promptFor.set(threadId, text);
+        return "turn-1";
+      },
+      waitForTurnSettled: async (threadId: string) => {
+        const delay = SETTLE_DELAY_MS[seatOf(threadId)] ?? 0;
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        return {
+          state: "completed",
+          structuredOutput: boardAnswer(promptFor.get(threadId) ?? "", (lens) =>
+            sectioned(lens, "same"),
+          ),
+          thread: {},
+        };
+      },
+    };
+
+    const events = await (async () => {
+      const collected: RoundEvent[] = [];
+      const run = createRoundsRuntime({
+        resolveClaudePort: async () => countingClaudePort([]),
+        resolveCodexExecutor: async () => null as CodexExecutor | null,
+        boardsRuntimeFor: () => ({
+          service: boards.service,
+          createRennetBoard: boards.createRennetBoard,
+        }),
+        readPrompt,
+        resolveT3Seats: async () => ({
+          environmentId: "env-1",
+          seam: {
+            client: async () => t3Client,
+            threadFor: async ({ seat }: { seat: string }) => ({
+              threadId: `thread-${seat}`,
+              projectId: "p1",
+            }),
+          },
+          watch: (threadId: string) => {
+            watched.push(threadId);
+            return {
+              stop: () => {
+                if (!stopped.includes(threadId)) stopped.push(threadId);
+              },
+            };
+          },
+        }),
+      } as unknown as Parameters<typeof createRoundsRuntime>[0]).runRound({
+        session: { ...session, id: "seat-watch-session" } as SessionModel,
+        repoRoot: root,
+        asksDispatched: [],
+        runWorkers: async () => ({
+          commitRange: { from: "c0", to: "c1" },
+          patchsetId: "ps-landed",
+        }),
+        onProgress: (event) => {
+          collected.push(event);
+          if (event.type === "lens") frames.push({ lanes: event.lanes, closed: [...stopped] });
+        },
+        ...assembleRoundCollation({ patchset: patchset(), dossier: [] }),
+      });
+      await run.catch(() => undefined);
+      return collected;
+    })();
+
+    expect(events.some((event) => event.type === "lens")).toBe(true);
+    // Every seat opened a watch — otherwise "they were all closed" is vacuous.
+    expect(watched.sort()).toContain("thread-design");
+
+    // The load-bearing frame: the FIRST one that shows Design settled must already show
+    // Design's watch closed, AND at least one other lane still running — which is what
+    // separates per-lane teardown from the generation-wide `finally` it replaces.
+    const designSettled = frames.find((candidate) =>
+      candidate.lanes.some(
+        (lane) => lane.id === "design" && lane.status !== "queued" && lane.status !== "running",
+      ),
+    );
+    expect(designSettled, "Design never settled in any published frame").toBeDefined();
+    expect(
+      designSettled?.lanes.some((lane) => lane.id !== "design" && lane.status === "running"),
+      "no other lane was still running when Design settled — the stagger did not hold",
+    ).toBe(true);
+    expect(designSettled?.closed, "Design was still watched when its lane settled").toContain(
+      "thread-design",
+    );
+
+    // And every seat's subscription is closed by the end, flagged's second provider too.
+    expect(stopped).toEqual(expect.arrayContaining(watched));
   });
 
   it("falls back to the base ref when the session claimed no branch", async () => {

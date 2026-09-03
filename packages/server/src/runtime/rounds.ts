@@ -129,7 +129,16 @@ type LaneState = LensLane extends infer Arm
 const sameThreadRef = (a: LaneThreadRef | undefined, b: LaneThreadRef): boolean =>
   a !== undefined && a.environmentId === b.environmentId && a.threadId === b.threadId;
 
-function createRegenerationLanes(emit: (lanes: readonly LensLane[]) => void) {
+function createRegenerationLanes(
+  emit: (lanes: readonly LensLane[]) => void,
+  /**
+   * This lane has left `running` (review finding 7). The daemon's own subscription to that
+   * seat's thread exists to feed a running lane's live line, so it is dropped HERE rather
+   * than when the whole generation settles: the first lens to finish used to keep a socket
+   * and a one-second idle tick alive for as long as the slowest one ran.
+   */
+  onSettled?: (lens: LensKind) => void,
+) {
   const lanes = new Map<LensKind, LensLane>(
     LENS_KINDS.map((lens) => [lens, { id: lens, label: LENS_LANE_LABEL[lens], status: "queued" }]),
   );
@@ -147,6 +156,7 @@ function createRegenerationLanes(emit: (lanes: readonly LensLane[]) => void) {
       ...(current.thread === undefined ? {} : { thread: current.thread }),
       ...next,
     });
+    if (next.status !== "running") onSettled?.(lens);
   };
   return {
     /** Re-emit the current lane snapshot unchanged. The coverage state rides the same
@@ -154,6 +164,10 @@ function createRegenerationLanes(emit: (lanes: readonly LensLane[]) => void) {
      *  than opening a second channel that could disagree with them. */
     refresh(): void {
       emit(snapshot());
+    },
+    /** This lane's current status, so a caller can tell a running lane from a settled one. */
+    statusOf(lens: LensKind): LensLane["status"] | undefined {
+      return lanes.get(lens)?.status;
     },
     /** The lens drafters are under way. Called when the round report lands (it gated the
      *  regeneration) AND at the pipeline's own lens kickoff, which fires on every run —
@@ -1110,6 +1124,16 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
     const t3Unavailable =
       t3Resolved !== undefined && "unavailable" in t3Resolved ? t3Resolved.unavailable : undefined;
     const seatWatches: { readonly stop: () => void }[] = [];
+    // Per LENS, because the subscription is dropped when that lane settles rather than when
+    // the generation does (review finding 7). A list per lens, not one entry: Flagged runs
+    // two seats on two providers, and both belong to the one lane.
+    const seatWatchesByLens = new Map<LensKind, { readonly stop: () => void }[]>();
+    const stopSeatWatches = (lens: LensKind): void => {
+      const held = seatWatchesByLens.get(lens);
+      if (held === undefined) return;
+      seatWatchesByLens.delete(lens);
+      for (const watch of held) watch.stop();
+    };
     const watchedThreads = new Set<string>();
     const composeTurn = deps.composeTurn?.(input.repoRoot);
     const persistBoardMeta = deps.persistBoardMeta;
@@ -1202,7 +1226,7 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
               // Spend rides the same frame for the same reason (#737).
               ...usageSoFar(),
             });
-          });
+          }, stopSeatWatches);
     // Time-to-first-core-board is measured from the moment the REVIEWER's wait began, which
     // the caller holds and this runtime does not: the captured input becoming ready on an
     // initial generation, the round landing and its report verifying on a returned one.
@@ -1295,9 +1319,18 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
               });
               if (watchedThreads.has(thread.threadId)) return;
               watchedThreads.add(thread.threadId);
-              seatWatches.push(
-                t3Runtime.watch(thread.threadId, (latest) => lanes.progress(lens, latest)),
+              const watch = t3Runtime.watch(thread.threadId, (latest) =>
+                lanes.progress(lens, latest),
               );
+              seatWatches.push(watch);
+              // A seat whose lane has ALREADY settled gets no watch at all: a repair that
+              // rebinds after the fact would otherwise open a socket nothing reads.
+              const settled = lanes.statusOf(lens);
+              if (settled !== undefined && settled !== "running" && settled !== "queued") {
+                watch.stop();
+                return;
+              }
+              seatWatchesByLens.set(lens, [...(seatWatchesByLens.get(lens) ?? []), watch]);
             },
           };
 
@@ -1453,10 +1486,12 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
       );
       throw error;
     } finally {
-      // Every seat has settled: the live lines are over, so the sockets that fed them go
-      // with them. Held open they would keep publishing into lanes nothing reads (2.3).
+      // The backstop. Each lane already dropped its own subscription as it settled (review
+      // finding 7); this catches a seat whose lane never reached a settled state at all —
+      // an abort, a throw before the pipeline published anything. `stop` is idempotent.
       for (const watch of seatWatches) watch.stop();
       seatWatches.length = 0;
+      seatWatchesByLens.clear();
     }
     // A drafter that produced no board settles its lane as failed. Without this the lane
     // sits at `queued`/`running` after the round is over — the surface reads "still

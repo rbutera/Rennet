@@ -270,6 +270,48 @@ describe("watchSeatThread", () => {
     watch.stop();
   });
 
+  it("an idle lane publishes at most once every ten seconds", async () => {
+    // Review finding 7. A lane's live line is republished by re-sending the WHOLE
+    // `SessionPreparation` snapshot, and "quiet for N s" at one-second resolution is a new
+    // string every second — five idle lanes pushed five snapshots a second, for the whole
+    // generation, to move a digit nobody reads that fast.
+    const stream = pushableStream();
+    const published: string[] = [];
+    let clock = 100_000;
+    const watch = watchSeatThread({
+      client: {
+        subscribeThread: () => stream.iterable,
+        readThread: vi.fn(async () => threadAt(0, "Bash: git log")),
+      },
+      threadId: "t1",
+      publish: (latest) => published.push(latest.text),
+      now: () => clock,
+      // A fast idle tick: the point is that the CLOCK, not the tick rate, decides how often
+      // an idle line is news. At one-second resolution this would publish on every tick.
+      idleTickMs: 5,
+    });
+    stream.push({
+      kind: "snapshot",
+      snapshot: { thread: threadAt(80_000, "Bash: git log") },
+    } as unknown as OrchestrationThreadStreamItem);
+    await settle();
+    expect(published).toEqual(["quiet for 20 s"]);
+
+    // Nine more seconds of quiet, with the tick firing throughout: nothing new is said.
+    for (let second = 1; second <= 9; second += 1) {
+      clock += 1_000;
+      await new Promise((resolve) => setTimeout(resolve, 15));
+    }
+    expect(published).toEqual(["quiet for 20 s"]);
+
+    // The tenth second crosses the step, and the line does move — a bucket that never
+    // changed would be a frozen line, which is the other half of the same lie.
+    clock += 1_000;
+    await waitUntil(() => published.length === 2);
+    expect(published).toEqual(["quiet for 20 s", "quiet for 30 s"]);
+    watch.stop();
+  });
+
   it("survives a subscription that throws, and reports it without failing the seat", async () => {
     const onError = vi.fn();
     const watch = watchSeatThread({
