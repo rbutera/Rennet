@@ -125,7 +125,10 @@ opens the dock, and the slot renders that transcript read-only (below). As a lan
 (`drafted`/`done`) its board opens on the bench beneath the readers through
 `LensBoardDocument`, read off the same per-lens `board.read` seam the workspace uses
 (`useLensBoardResolutions` at the initial generation), so three settled lanes and two
-running ones show three boards and two live readers. A lane with no
+running ones show three boards and two live readers. A settled lane whose read answered
+with something other than a board — malformed, for another generation, unreadable, or a
+lens that failed to draft — shows that account in the board's place, in the same words the
+workspace uses, rather than an empty space under a reader that says "drafted". A lane with no
 `thread` yet is disabled rather than offered as a transcript that does not exist.
 
 The mount's environment registration persists in each host's IndexedDB under T3's
@@ -176,7 +179,9 @@ branch get two threads, because the key starts at the checkout and never at a pr
 
 The council still routes each seat: a Claude seat is a thread on T3's `claudeAgent`
 instance at the council's model, a Codex seat one on `codex`. Flagged runs both, on two
-threads.
+threads. A lane holds its seats in provider order — Claude first, Codex second, never the
+order the two threads happened to bind in — so the lane's own `thread` and `latest` always
+mirror the Claude seat, and the bench lists the two voices the same way on every run.
 
 Three things follow from the thread being persistent.
 

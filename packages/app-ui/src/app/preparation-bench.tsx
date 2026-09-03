@@ -14,7 +14,7 @@ import { Button, cn } from "@rennet/ui";
 import { Check, Minus, X } from "lucide-react";
 import type { SVGProps } from "react";
 import { useEffect } from "react";
-import { LensBoardDocument } from "../board";
+import { BoardAccount, LensBoardDocument } from "../board";
 import { useLensBoardResolutions } from "../board/board-data";
 import { Icon } from "../components/icon";
 import { useMutation, useRefreshCommand } from "../data";
@@ -555,22 +555,32 @@ export function PreparationBench({ session, preparation, review }: PreparationBe
       )}
 
       {/* THE BOARDS THAT HAVE LANDED — each settled lens's board, readable now, in lane
-          order. The reader above stays as the way back to that lens's transcript. A lane
-          that settled without a board (absent, failed) has its account on the reader. */}
+          order. The reader above stays as the way back to that lens's transcript.
+          A read that answered with something OTHER than a board — malformed, wrong
+          generation, unreadable, failed — shows its account in the board's place, in the
+          workspace's own words (`BoardAccount`). Rendering null there left the reader
+          saying "drafted" over an empty bench with no reason (Codex review, 2026-09-03).
+          `missing` and `pending` are the only silent ones: the draft is on disk a beat
+          before `board.read` is re-asked, and the poll above is already chasing them. */}
       {settled.map((lane) => {
         const read = boards[lane.id as LensKind];
-        if (read?.status !== "valid") return null;
+        if (read === undefined || read.status === "missing" || read.status === "pending")
+          return null;
         return (
           <section
             key={lane.id}
             data-bench-board={lane.id}
             className="rounded-window border border-line bg-surface px-8 py-6"
           >
-            <LensBoardDocument
-              reviewId={reviewId}
-              board={read.board}
-              forceOpen={lane.id === "flagged" ? true : undefined}
-            />
+            {read.status === "valid" ? (
+              <LensBoardDocument
+                reviewId={reviewId}
+                board={read.board}
+                forceOpen={lane.id === "flagged" ? true : undefined}
+              />
+            ) : (
+              <BoardAccount resolution={read} />
+            )}
           </section>
         );
       })}
