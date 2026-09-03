@@ -249,6 +249,16 @@ export function seedProviderSettings(baseDir: string, binaries: ProviderBinaries
   writeAtomic(path, `${JSON.stringify({ ...current, providers }, null, 2)}\n`);
 }
 
+/** The last lines of the sidecar log, for an error that would otherwise point at a file nobody can open. */
+function logTail(path: string, bytes = 2_000): string {
+  try {
+    const text = readFileSync(path, "utf8");
+    return `\n--- sidecar.log (tail) ---\n${text.slice(-bytes)}`;
+  } catch {
+    return "";
+  }
+}
+
 /** Drop every T3 knob the parent shell may carry, then set exactly what the sidecar needs. */
 export function sidecarEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const cleaned: NodeJS.ProcessEnv = {};
@@ -397,7 +407,7 @@ export async function spawnSidecar(options: SpawnSidecarOptions): Promise<Runnin
     if (exited) {
       const { code, signal } = exited as { code: number | null; signal: NodeJS.Signals | null };
       throw new Error(
-        `sidecar exited before it was ready (code ${code}, signal ${signal}); see ${join(baseDir, "sidecar.log")}`,
+        `sidecar exited before it was ready (code ${code}, signal ${signal}); see ${join(baseDir, "sidecar.log")}${logTail(join(baseDir, "sidecar.log"))}`,
       );
     }
     const runtime = readServerRuntime(baseDir);
