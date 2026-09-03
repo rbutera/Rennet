@@ -606,9 +606,9 @@ describe("awaitTurnSettled", () => {
     // A slow read, so the settle event can land WHILE the timer's read is out.
     const deps = {
       ...p.deps,
-      readThread: async (id: string) => {
+      readThread: async () => {
         // What the thread showed when the read was ISSUED, delivered late.
-        const seen = await p.deps.readThread(id);
+        const seen = await p.deps.readThread();
         await sleep(40);
         return seen;
       },
