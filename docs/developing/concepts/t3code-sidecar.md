@@ -228,9 +228,12 @@ Three things follow from the thread being persistent.
   because a silent stream has none.
 
 Because the SDK fixes `outputFormat` when a query is constructed and offers no in-session
-setter, a seat thread's contract is decided by its first turn. A later turn asking for a
-different schema is refused by name rather than answered in the wrong shape; Rennet never
-sends one, since a seat drafts and repairs against a single board schema.
+setter, a *live* session's contract is decided by the turn that started it. A later turn
+asking for a different schema is refused by name rather than answered in the wrong shape;
+Rennet never sends one, since a seat drafts and repairs against a single board schema. A
+turn whose session is gone is a different case and starts a new one on the turn's own
+schema — including the session T3 recovers from a persisted resume cursor, which is the
+path a seat takes when its first turn killed the provider.
 
 The seam is two functions. `packages/adapters/src/t3-seat-turn.ts` builds the seat's
 `runTurn` and knows nothing about `effect`; `create-server.ts` fills it from the
@@ -274,11 +277,25 @@ its seat threads are bound under the session id at the drafting worktree, so a r
 sweep would leave every seat thread behind. Seat rows written before the owner field
 existed carry no session id and are matched by nothing — silence never sweeps.
 
-Nine vendored files carry this: the three contract modules that gained `outputSchema` /
+Ten vendored files carry this: the three contract modules that gained `outputSchema` /
 `structuredOutput`, the decider and the provider command reactor that thread it, the
-Claude and Codex adapters that hand it to their runtimes, and the runtime-ingestion layer
+Claude and Codex adapters that hand it to their runtimes, the provider service that
+carries the turn's schema into a session it recovers, and the runtime-ingestion layer
 that projects the `turn.settled` activity. Each has its row in `vendor/t3code/PATCHES.md`,
 all upstreamable.
+
+**A dead `claude` must not take the sidecar with it.** The SDK's process transport writes
+the prompt to the child's stdin and never listens for that socket's `error` event, so a
+`claude` that dies before the first write — a bad install, an immediate auth failure —
+raised an unhandled `write EPIPE` that killed the whole server process and every other
+seat's thread with it. The Claude adapter now spawns the child through the SDK's
+`spawnClaudeCodeProcess` hook and handles that error, terminating a child whose transport
+is broken so the failure arrives on the query stream, where the session settles the turn
+as failed like any other runtime failure. One thing that crash was hiding is still open:
+when the write loses that race against a `claude` that exits immediately, the turn can be
+left unsettled instead — about one run in ten against a stand-in that exits at once. The
+sidecar now survives it, so the blast radius is one thread rather than every seat, but a
+turn that never settles is its own defect and is not fixed here.
 
 ## The live line on a lane
 
