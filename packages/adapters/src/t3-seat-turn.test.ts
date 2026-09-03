@@ -21,7 +21,9 @@ const settled = (over: Partial<T3SettledTurn> = {}): T3SettledTurn => ({
 });
 
 function stubs(outcomes: T3SettledTurn[]) {
-  const startTurn = vi.fn(async () => undefined);
+  const startTurn = vi.fn(
+    async (_input: { threadId: string; text: string; outputSchema?: unknown }) => undefined,
+  );
   let call = 0;
   const client = {
     startTurn,
@@ -65,7 +67,7 @@ describe("createT3SeatTurn", () => {
     ]);
     // The contract travels ONCE, as the schema. Never restated in the text (AGENTS.md).
     for (const [call] of startTurn.mock.calls) {
-      expect(call.text).not.toContain("object");
+      expect(call?.text).not.toContain("object");
     }
   });
 

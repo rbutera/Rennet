@@ -86,6 +86,7 @@ import {
   listDir,
   loadConventionCatalogue,
   loadProjectDetail,
+  mapCouncilModel,
   matchWorktree,
   migrateLegacyGlobalConfig,
   NoveltyLifecycleRegistry,
