@@ -412,7 +412,15 @@ export async function awaitTurnSettled(
   // turn carrying that error, and a turn that never appears at all gives up after
   // `startTimeoutMs` with a message that says so.
   const startTimeoutMs = options.startTimeoutMs ?? 120_000;
-  const startedWaitingAt = Date.now();
+  // On a TIMER, like the grace: a stream that never emits anything after its opening
+  // snapshot (drive 1.6, second run, 2026-09-03: the Design seat's session sat `ready`
+  // with no turn row for seventeen minutes) would otherwise never reach a clock check,
+  // because the check used to live behind the next stream item.
+  let startTimer: ReturnType<typeof setTimeout> | undefined;
+  let startOver: Promise<typeof START_OVER> | undefined = new Promise((resolve) => {
+    startTimer = setTimeout(() => resolve(START_OVER), startTimeoutMs);
+  });
+  let startTimedOut = false;
   const after = options.after;
   /** The turn this wait is for: the latest one, unless it is the one already there at the start. */
   const currentTurn = (thread: OrchestrationThread | undefined) => {
@@ -469,14 +477,26 @@ export async function awaitTurnSettled(
   };
   try {
     let thread: OrchestrationThread | undefined;
+    // ONE read in flight across iterations. A race the timer wins leaves the stream read
+    // pending; asking for a fresh one would orphan it, and the orphan still consumes the
+    // next item (the iterable has a single wake slot), so a settle event arriving right
+    // after the start timer fired would be eaten and the wait would sit on a settled turn.
+    let pending: ReturnType<typeof iterator.next> | undefined;
     for (;;) {
-      let next: Awaited<ReturnType<typeof iterator.next>> | typeof GRACE_OVER;
+      let next: Awaited<ReturnType<typeof iterator.next>> | typeof GRACE_OVER | typeof START_OVER;
       try {
-        next = await Promise.race([iterator.next(), abort, ...(grace ? [grace] : [])]);
+        pending ??= iterator.next();
+        next = await Promise.race([
+          pending,
+          abort,
+          ...(grace ? [grace] : []),
+          ...(startOver ? [startOver] : []),
+        ]);
       } catch (error) {
         if (signal?.aborted) throw error;
         return await settleFromRead(error);
       }
+      if (next !== GRACE_OVER && next !== START_OVER) pending = undefined;
       if (next === GRACE_OVER) {
         // The stream went quiet after the lifecycle settled: one last read, then answer
         // with what the projection holds. Absent facts come back absent.
@@ -487,14 +507,28 @@ export async function awaitTurnSettled(
         }
         return settledOutcome(thread, latest.turnId, latest.state);
       }
-      if (next.done) return await settleFromRead(undefined);
-      const item = next.value;
-      if (item.kind === "snapshot") thread = item.snapshot.thread;
-      // Events do not carry the whole projection; re-read on the ones that end a turn.
-      if (item.kind === "event" && /turn|session|settled|activity/.test(item.event.type)) {
+      if (next === START_OVER) {
+        // The start timer fired with no stream item in between: one fresh read decides
+        // whether the turn quietly registered, the session quietly died, or nothing
+        // happened at all. Only the last is the wait's own failure.
+        startTimedOut = true;
+        startOver = undefined;
         thread = await deps.readThread(threadId);
+      } else {
+        if (next.done) return await settleFromRead(undefined);
+        const item = next.value;
+        if (item.kind === "snapshot") thread = item.snapshot.thread;
+        // Events do not carry the whole projection; re-read on the ones that end a turn.
+        if (item.kind === "event" && /turn|session|settled|activity/.test(item.event.type)) {
+          thread = await deps.readThread(threadId);
+        }
       }
       const latest = currentTurn(thread);
+      if (latest !== undefined) {
+        // The turn is on the board; the start timer has nothing left to say.
+        clearTimeout(startTimer);
+        startOver = undefined;
+      }
       if (!latest || latest.state === "running") {
         const failure = sessionFailure(thread);
         if (failure !== undefined && latest?.state !== "running") {
@@ -505,7 +539,7 @@ export async function awaitTurnSettled(
             errorMessage: failure,
           };
         }
-        if (!latest && Date.now() - startedWaitingAt > startTimeoutMs) {
+        if (!latest && startTimedOut) {
           throw new Error(
             `T3 thread ${threadId} never started the requested turn within ${Math.round(startTimeoutMs / 1000)} s (session ${thread?.session?.status ?? "unknown"})`,
           );
@@ -522,12 +556,14 @@ export async function awaitTurnSettled(
     }
   } finally {
     clearTimeout(graceTimer);
+    clearTimeout(startTimer);
     if (onAbort) signal?.removeEventListener("abort", onAbort);
     await iterator.return?.();
   }
 }
 
 const GRACE_OVER = Symbol("settlement grace over");
+const START_OVER = Symbol("turn start timeout over");
 
 /**
  * The settled turn's own facts, off the `turn.settled` activity the sidecar appends when

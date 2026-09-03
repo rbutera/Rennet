@@ -218,6 +218,14 @@ Three things follow from the thread being persistent.
   showed before dispatch, and the wait ignores that earlier turn's settlement and any
   session error recorded before the request, because T3 only flips `latestTurn` to running
   once the provider reports the new turn.
+- **A seat whose turn never registers settles as a failure, on a clock.** A provider
+  stream that dies before its turn exists leaves the session stopped or errored with
+  `lastError` and no turn row, and T3 emits no turn lifecycle for it; the wait settles
+  that as a failed turn carrying the session error. A session that simply stays `ready`
+  with no turn row and no stream item at all (the Design seat, drive 1.6 second run) is
+  given two minutes by a timer that runs independently of the stream, then the wait gives
+  up naming the session state. The timer is not checked behind the next stream item,
+  because a silent stream has none.
 
 Because the SDK fixes `outputFormat` when a query is constructed and offers no in-session
 setter, a *live* session's contract is decided by the turn that started it. A later turn

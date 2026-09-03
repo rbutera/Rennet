@@ -582,6 +582,83 @@ describe("awaitTurnSettled", () => {
     });
   });
 
+  it("gives up on a turn that never registers even when the stream stays silent", async () => {
+    // Nothing after the opening snapshot: no turn row, session `ready`. The timeout must
+    // run on its own clock, because there is no next item to check the clock behind.
+    const p = projection(
+      fakeThread({
+        session: { status: "ready", activeTurnId: null, lastError: null, updatedAt: T0 },
+      }),
+    );
+    await expect(
+      awaitTurnSettled("t", p.deps, {
+        after: { previousTurnId: null, requestedAt: T0 },
+        startTimeoutMs: 50,
+      }),
+    ).rejects.toThrow(/never started the requested turn within 0 s \(session ready\)/);
+  }, 2_000);
+
+  it("does not lose a settle event that lands right after the start timer fired", async () => {
+    // The turn registers in the gap between the timer firing and its read; the very next
+    // stream item is the settlement. A wait that asked the stream for a fresh read after
+    // the timer would let the earlier, orphaned read swallow that item.
+    const p = projection(fakeThread({}));
+    const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+    // A slow read, so the settle event can land WHILE the timer's read is out.
+    const deps = {
+      ...p.deps,
+      readThread: async () => {
+        // What the thread showed when the read was ISSUED, delivered late.
+        const seen = await p.deps.readThread();
+        await sleep(40);
+        return seen;
+      },
+    };
+    const wait = awaitTurnSettled("t", deps, {
+      after: { previousTurnId: null, requestedAt: T0 },
+      startTimeoutMs: 20,
+    });
+    await sleep(10);
+    // Registered, but no stream item about it: the timer's read is what will see it.
+    p.set(fakeThread({ latestTurn: { turnId: "turn-1", state: "running" } }));
+    // Timer fires at 20 ms; its read is out until 60 ms. Settle at 35 ms, inside that window.
+    await sleep(25);
+    p.set(
+      fakeThread({
+        latestTurn: { turnId: "turn-1", state: "completed" },
+        activities: [settledActivity("turn-1", { structuredOutput: { seen: true } })],
+      }),
+    );
+    p.push(event("thread.activity-appended"));
+    await expect(wait).resolves.toMatchObject({
+      turnId: "turn-1",
+      structuredOutput: { seen: true },
+    });
+  }, 2_000);
+
+  it("keeps waiting past the start timeout once the turn has registered", async () => {
+    const p = projection(fakeThread({}));
+    const wait = awaitTurnSettled("t", p.deps, {
+      after: { previousTurnId: null, requestedAt: T0 },
+      startTimeoutMs: 30,
+    });
+    await tick();
+    p.set(fakeThread({ latestTurn: { turnId: "turn-1", state: "running" } }));
+    p.push(event("thread.turn.started"));
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    p.set(
+      fakeThread({
+        latestTurn: { turnId: "turn-1", state: "completed" },
+        activities: [settledActivity("turn-1", { structuredOutput: { late: true } })],
+      }),
+    );
+    p.push(event("thread.activity-appended"));
+    await expect(wait).resolves.toMatchObject({
+      turnId: "turn-1",
+      structuredOutput: { late: true },
+    });
+  }, 2_000);
+
   it("answers after the grace even when the stream goes quiet after the lifecycle settled", async () => {
     // The lifecycle landed, the `turn.settled` activity never did, and no further stream
     // item arrives. The grace runs on a timer, not on the next item.

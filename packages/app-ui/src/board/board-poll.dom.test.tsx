@@ -56,6 +56,12 @@ async function mountBoard(drafted: () => boolean = () => true) {
 }
 
 describe("board refresh poll (perf audit §1 H1)", () => {
+  // Each test advances a fake clock through fifteen to thirty minutes of poll ticks, with a
+  // React flush per tick. That is under half a second here and over the default five-second
+  // budget on a two-core CI runner sharing the box with the server suites (three consecutive
+  // runs on 2026-09-03 timed out the first test, which then starved the other four of every
+  // read). The budget is wall-clock only; the fake clock is what the assertions measure.
+  vi.setConfig({ testTimeout: 30_000 });
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => {
     cleanup();
