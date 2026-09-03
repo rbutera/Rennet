@@ -25,6 +25,7 @@ import {
   type OrchestrationProjectShell,
   type OrchestrationThread,
   type OrchestrationThreadStreamItem,
+  PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   ProjectId,
   type ProviderApprovalDecision,
   ProviderInstanceId,
@@ -170,6 +171,15 @@ export interface T3Client {
 }
 
 const FULL_ACCESS: RuntimeMode = "full-access";
+
+/**
+ * The most characters one `thread.turn.start` may carry as its message text. T3 validates
+ * it in `ProviderService.sendTurn`, on the reactor's fiber AFTER the dispatch has been
+ * accepted, so a longer prompt is not refused at the socket: it is recorded on the thread
+ * as a `provider.turn.start.failed` activity and no turn ever starts. Prompt assembly
+ * fits to this; `awaitTurnSettled` reads the refusal.
+ */
+export const T3_TURN_INPUT_MAX_CHARS: number = PROVIDER_SEND_TURN_MAX_INPUT_CHARS;
 
 /**
  * A provider instance plus model; built-in instance ids are the driver slugs (`claudeAgent`,
@@ -437,6 +447,29 @@ export async function awaitTurnSettled(
     }
     return session.lastError ?? undefined;
   };
+  /**
+   * The sidecar accepted `thread.turn.start` and refused it afterwards, on the reactor's
+   * fiber — `ProviderService.sendTurn` rejecting an input over its character cap (drive
+   * 1.6, both runs, 2026-09-03: the Design seat's 241,848-character prompt), a message
+   * it could not find, an adapter that would not take the request. T3 records that as a
+   * `provider.turn.start.failed` activity with no turn id, and marks the session `error`
+   * — which the session start it had just kicked off overwrites with `ready` a moment
+   * later. So the session reads healthy, no turn row ever appears, and the activity is
+   * the only durable trace. One stamped at or after this request is this turn's refusal.
+   */
+  const startFailure = (thread: OrchestrationThread | undefined): string | undefined => {
+    const refusal = thread?.activities.findLast(
+      (activity) =>
+        activity.kind === "provider.turn.start.failed" &&
+        activity.turnId === null &&
+        (after === undefined || Date.parse(activity.createdAt) >= Date.parse(after.requestedAt)),
+    );
+    if (refusal === undefined) return undefined;
+    const detail = asRecord(refusal.payload)?.detail;
+    // The detail is the failure's message followed by its stack frames (four-space
+    // `at file://…` lines); the message, schema path included, is the part worth carrying.
+    return typeof detail === "string" ? (detail.split("\n    at ")[0] ?? detail) : refusal.summary;
+  };
   const settledOutcome = (
     thread: OrchestrationThread,
     turnId: string,
@@ -464,7 +497,7 @@ export async function awaitTurnSettled(
     if (latest !== undefined && latest.state !== "running") {
       return settledOutcome(thread, latest.turnId, latest.state);
     }
-    const failure = sessionFailure(thread);
+    const failure = sessionFailure(thread) ?? startFailure(thread);
     if (failure !== undefined && latest?.state !== "running") {
       return {
         turnId: latest?.turnId ?? `${threadId}:session`,
@@ -530,7 +563,7 @@ export async function awaitTurnSettled(
         startOver = undefined;
       }
       if (!latest || latest.state === "running") {
-        const failure = sessionFailure(thread);
+        const failure = sessionFailure(thread) ?? startFailure(thread);
         if (failure !== undefined && latest?.state !== "running") {
           return {
             turnId: latest?.turnId ?? `${threadId}:session`,

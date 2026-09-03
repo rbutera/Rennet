@@ -29,6 +29,7 @@ import {
 } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { createBoardsRuntime } from "../boards/boards-runtime";
+import { T3_TURN_INPUT_MAX_CHARS } from "../t3/client";
 import {
   admitBoardReferences,
   aggregateFailureAccount,
@@ -40,6 +41,7 @@ import {
   type DesignCoverageMapper,
   designDraftOutputSchema,
   draftToOps,
+  fitDesignArtifactsToPrompt,
   LENS_RETRY_BUDGET,
   lensRetryBudget,
   projectDesignTaskProgress,
@@ -6447,6 +6449,53 @@ describe("renderDrafterPrompt — the inventory travels, the diff content does n
     expect(prompt).not.toContain(SECRET(HUNK_BODY));
     expect(prompt).toContain("hunk-1");
     expect(prompt).toContain("@@ -1,1 +1,1 @@");
+  });
+
+  it("fits the design bundle to the room left under the T3 turn's input cap", () => {
+    // Drive 1.6 (2026-09-03): a bundle within discovery's 512 KiB ceiling rode a
+    // 241,848-character prompt into a sidecar that refuses anything over 120,000, and the
+    // Design seat waited two minutes for a turn the sidecar had already refused.
+    const bundle: DesignArtifactSet = {
+      changedPaths: ["src/a.ts"],
+      omittedChangedPathCount: 0,
+      omittedCandidateCount: 0,
+      limits: DESIGN_ARTIFACT_LIMITS,
+      candidates: [
+        {
+          id: "openspec:big",
+          format: "openspec",
+          name: "big",
+          nameSourceBytes: 3,
+          nameTruncated: false,
+          relevance: { kind: "changed-artifact", paths: ["src/a.ts"], omittedPathCount: 0 },
+          omittedArtifactCount: 0,
+          artifacts: [
+            {
+              path: "openspec/changes/big/proposal.md",
+              role: "proposal",
+              content: "x".repeat(200_000),
+              sourceBytes: 200_000,
+              truncated: false,
+            },
+          ],
+        },
+      ],
+    };
+    const without = renderDrafterPrompt("lens instructions", RANGE_PACKET);
+    // Positive control: unfitted, the bundle overflows the cap the sidecar enforces.
+    expect(
+      renderDrafterPrompt("lens instructions", RANGE_PACKET, undefined, bundle).length,
+    ).toBeGreaterThan(T3_TURN_INPUT_MAX_CHARS);
+
+    const fitted = fitDesignArtifactsToPrompt(bundle, without);
+    const prompt = renderDrafterPrompt("lens instructions", RANGE_PACKET, undefined, fitted);
+    expect(prompt.length).toBeLessThanOrEqual(T3_TURN_INPUT_MAX_CHARS);
+    // The seat is told, in the bundle's own markers, what it is not seeing and why.
+    expect(fitted.candidates[0]?.artifacts[0]?.truncated).toBe(true);
+    expect(fitted.limits.maxSerializedBytes).toBe(
+      T3_TURN_INPUT_MAX_CHARS - without.length - ',"designArtifacts":'.length,
+    );
+    expect(prompt).toContain('"designArtifacts"');
   });
 
   it("names the three-dot merge-base range on a range capture, never two-dot", () => {

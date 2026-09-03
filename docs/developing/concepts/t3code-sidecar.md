@@ -56,6 +56,13 @@ token at `POST /oauth/token` (form-encoded token exchange, subject type
 `urn:t3:params:oauth:token-type:environment-bootstrap`) for a 30-day bearer, and stores
 both tokens in `<dataDir>/t3/rennet-credentials.json` with owner-only permissions.
 
+That readiness is sufficient for commands: T3's orchestration reactors are live before the
+listener has an address, so a `thread.turn.start` dispatched the moment the sidecar reports
+ready is processed, not dropped. The daemon does not wait for anything further. What a
+command dispatched that early *can* meet is a refusal, described under [Seats as
+threads](#seats-as-threads): the sidecar accepts the dispatch and validates the provider
+request afterwards, and the answer to that is reading the refusal, not waiting longer.
+
 Before the spawn, the daemon writes `userdata/settings.json` with the absolute `claude`
 and `codex` paths Rennet's own discovery resolved, merging into whatever the user changed
 through T3's settings. A daemon launched by the desktop app inherits launchd's minimal
@@ -222,10 +229,30 @@ Three things follow from the thread being persistent.
   stream that dies before its turn exists leaves the session stopped or errored with
   `lastError` and no turn row, and T3 emits no turn lifecycle for it; the wait settles
   that as a failed turn carrying the session error. A session that simply stays `ready`
-  with no turn row and no stream item at all (the Design seat, drive 1.6 second run) is
-  given two minutes by a timer that runs independently of the stream, then the wait gives
-  up naming the session state. The timer is not checked behind the next stream item,
-  because a silent stream has none.
+  with no turn row and no stream item at all is given two minutes by a timer that runs
+  independently of the stream, then the wait gives up naming the session state. The timer
+  is not checked behind the next stream item, because a silent stream has none.
+- **A turn the sidecar refuses after accepting it settles at once, on the refusal.** T3
+  accepts `thread.turn.start` at the socket and validates the provider request later, on
+  its reactor's fiber; a refusal there — `ProviderService.sendTurn` rejecting an input over
+  its cap, a message it cannot find, an adapter that will not take the request — is
+  recorded as a `provider.turn.start.failed` activity with no turn id, beside a session
+  `error` that the session start it had just kicked off overwrites with `ready` a moment
+  later. So the dispatch resolves, the session reads healthy with no `lastError`, and no
+  turn row ever appears (the Design seat, drive 1.6, both runs). The wait reads the
+  activity: one stamped at or after its request settles the turn as failed, carrying the
+  sidecar's own message with its stack frames dropped, instead of the two-minute timeout.
+- **The prompt fits the transport.** T3 caps a turn's input at
+  `PROVIDER_SEND_TURN_MAX_INPUT_CHARS` (120,000 characters), exported through the seam as
+  `T3_TURN_INPUT_MAX_CHARS`. The Design seat is the one that carries a design-artifact
+  bundle beside the change inventory, and discovery bounds that bundle at 512 KiB — four
+  times the cap — so `fitDesignArtifactsToPrompt` re-fits it to the room the rendered
+  prompt has left: the same trimming order and the same `omitted*` / `truncated` markers as
+  discovery, with the bundle's `limits` naming the budget it was fitted to, and the fitted
+  bundle is what the lint context and the coverage projection reason about too. The
+  drive's Design prompt was 241,848 characters — 103k of hunk inventory plus a 126k bundle
+  — while the five bundle-less seats sat at 110k and ran. The inventory itself is not
+  fitted; when that alone overflows, the seat fails fast on the refusal above.
 
 Because the SDK fixes `outputFormat` when a query is constructed and offers no in-session
 setter, a *live* session's contract is decided by the turn that started it. A later turn
@@ -379,6 +406,7 @@ over RPC before the signal is the daemon-side client's job and lands with it.
 - `packages/server/src/t3/threads.ts`: the (repository root, session id) and (repository root, generation id, seat) → thread bindings, and `seatThreadTitle`.
 - `packages/server/src/t3/latest-event.ts`: the pure thread → `LaneLatest` projector; `t3/seat-progress.ts`: the throttled subscription that feeds a lane.
 - `packages/adapters/src/t3-seat-turn.ts`: the seat leg (`createT3SeatTurn`); `council-seat-turn.ts` routes board jobs to it when the seam is present, and `runtime/rounds.ts` builds the seam per generation.
+- `packages/server/src/runtime/lens-pipeline.ts`: `fitDesignArtifactsToPrompt`, the Design bundle's bound under `T3_TURN_INPUT_MAX_CHARS`, over `fitDesignArtifactsToBytes` in `packages/adapters/src/design-artifact-discovery.ts`.
 - `packages/server/src/t3/handoff.ts`: the handoff exit, which `create-server.ts` runs for every work order that names a review.
 - `packages/app-ui/src/chat/t3-chat-dock.tsx`: the slot, its header trail, the session-or-lens choice and the hand-off to the host-provided components (`chat/t3-chat-slot.tsx`); `packages/app-ui/src/store/ui.ts`: `lensThread` and `openLensThread`.
 - `packages/t3-chat/src/native-chat.tsx`: the native mount (routes, providers, environment registration, the thread and draft route views mirrored from upstream's route files, and `T3ThreadView`); `session.ts`: the session-to-registration mapping and the route builder both views share; `t3.css`: the theme bridge and the read-only composer rule. `apps/desktop/vite.renderer.config.ts` and `vite.browser.config.ts` each carry the alias, dedupe and defines; `apps/desktop/src/renderer/index.tsx` and `src/browser/entry.tsx` each provide both components.
