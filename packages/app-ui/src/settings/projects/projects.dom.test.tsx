@@ -668,7 +668,8 @@ describe("ProjectsPage — the served per-project rung (C18 group A)", () => {
   });
 
   it("a daemon that serves no engine row leaves the engine control disabled, never a silent no-op", async () => {
-    const { chatEngine: _omitted, ...withoutEngine } = P1_PREFS;
+    const withoutEngine = { ...P1_PREFS };
+    delete withoutEngine.chatEngine;
     const { writes, view } = mountServedPrefsWith(withoutEngine);
     const t3 = await view.findByRole("button", { name: "t3 code" });
     expect(t3).toHaveProperty("disabled", true);
