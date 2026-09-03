@@ -6,8 +6,10 @@
 // No Effect here: the client's Promise API is the seam.
 
 import { basename } from "node:path";
+import { settledTurnUsage } from "@rennet/adapters";
 import type { HandoffTurnOutcome } from "@rennet/core";
-import type { OrchestrationThread, T3Client } from "./client";
+import type { RspTokenUsage } from "@rennet/protocol";
+import type { OrchestrationThread, T3Client, TurnOutcome } from "./client";
 import type { ThreadBinding, ThreadBindingKey } from "./threads";
 
 export interface T3HandoffInput {
@@ -24,6 +26,24 @@ export interface T3HandoffDeps {
     readonly key: ThreadBindingKey;
     readonly title: string;
   }) => Promise<ThreadBinding>;
+}
+
+/**
+ * The handoff turn's own spend, in the shape the ephemeral leg's outcome already carries.
+ * The review's thread keeps every handoff, and Claude's counter is cumulative over the
+ * session, so this is the turn's delta as the seat leg computes it.
+ */
+function turnUsage(outcome: TurnOutcome): RspTokenUsage | undefined {
+  const usage = settledTurnUsage(outcome);
+  if (usage === null) return undefined;
+  return {
+    input: usage.inputTokens,
+    output: usage.outputTokens,
+    cacheRead: usage.cacheReadTokens,
+    cacheWrite: usage.cacheCreationTokens,
+    reasoning: null,
+    total: usage.totalTokens,
+  };
 }
 
 /** The last assistant message text of the thread, or an empty string. */
@@ -59,11 +79,13 @@ export async function runHandoffTurn(
     .catch(() => ({ diff: "", files: [] as ReadonlyArray<{ readonly path: string }> }));
   const filesTouched = diff.files.map((file) => file.path);
   if (outcome.state === "completed") {
+    const usage = turnUsage(outcome);
     return {
       status: "completed",
       finalText: lastAssistantText(outcome.thread),
       turnDiff: diff.diff,
       filesTouched,
+      ...(usage === undefined ? {} : { usage }),
     };
   }
   const reason =

@@ -638,6 +638,7 @@ export { SqliteReviewStore } from "./sqlite-review-store";
 export {
   createT3SeatTurn,
   parseFinalMessageJson,
+  settledTurnUsage,
   type T3SeatClient,
   type T3SeatSeam,
   type T3SeatThread,
