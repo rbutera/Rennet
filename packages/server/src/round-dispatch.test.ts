@@ -2,7 +2,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AskLogStore, RoundRecordStore } from "@rennet/adapters";
-import type { HarnessPort, LintTarget } from "@rennet/core";
+import { type HarnessPort, type LintTarget, renderWorkOrder } from "@rennet/core";
 import type {
   AskOccurrence,
   ComposedHandoffBundle,
@@ -218,14 +218,18 @@ describe("round.dispatch (B11 4.2) — asks → one work-order, coalesced", () =
 
     expect(dispatched).toBe(true);
     // ONE work-order, over this review's active patchset, carrying the two ADDRESSED asks — the
-    // question is filtered (`isAddressedByHandoff`), so it is neither a task nor in the prompt.
+    // question is filtered (`isAddressedByHandoff`), so it is neither a task nor in the order.
     expect(workOrder.reviewId).toBe(REVIEW_ID);
     expect(workOrder.patchsetId).toBe("ps-1");
     expect(workOrder.tasks).toHaveLength(2);
-    expect(workOrder.prompt).toContain("rename the export");
-    expect(workOrder.prompt).toContain("tighten it");
-    expect(workOrder.prompt).not.toContain("why here?");
-    expect(workOrder.prompt).not.toContain("leave this alone");
+    // The bodies live in the work-order DOCUMENT now; the bundle's prompt names the file
+    // it is written to (session-context-files 3.7).
+    expect(workOrder.prompt).toContain(`.rennet/context/${REVIEW_ID}/work-order.md`);
+    const order = renderWorkOrder(workOrder.tasks);
+    expect(order).toContain("rename the export");
+    expect(order).toContain("tighten it");
+    expect(order).not.toContain("why here?");
+    expect(order).not.toContain("leave this alone");
     expect(Object.keys(store.readProjection(REVIEW_ID).stagedAsks)).toEqual(["a3", "a4"]);
     expect(broadcast).toHaveBeenCalledTimes(1);
     expect(Object.keys(broadcast.mock.calls[0]?.[1].stagedAsks ?? {})).toEqual(["a3", "a4"]);

@@ -20,21 +20,16 @@
 import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { ensureManagedIgnoreBlock } from "@rennet/adapters";
+import { type SessionContextFile, sessionContextRelativeDir } from "@rennet/core";
 
-/** One file in a session's context directory, with the two lines its index entry needs. */
-export interface SessionContextFile {
-  /** Path relative to the session's context directory; may name a subdirectory (`boards/design.json`). */
-  readonly name: string;
-  readonly body: string;
-  /** One line: what this file holds. */
-  readonly holds: string;
-  /** One line: when a turn should read it. */
-  readonly readWhen: string;
-}
+// The file SHAPE and the RELATIVE path live in `@rennet/core`, because the node-free
+// prompt builders that name these files must agree with this writer byte for byte — a
+// prompt naming a path the writer does not create is a turn that reads nothing.
+export type { SessionContextFile };
 
 /** The session's context directory under a bound root. Not created by this call. */
 export function sessionContextDir(root: string, sessionId: string): string {
-  return join(root, ".rennet", "context", sessionId);
+  return join(root, sessionContextRelativeDir(sessionId));
 }
 
 /** The `README.md` index: one line per file — name, what it holds, when to read it. */

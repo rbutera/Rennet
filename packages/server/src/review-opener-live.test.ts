@@ -1,4 +1,4 @@
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PublishCompositionStore } from "@rennet/adapters";
@@ -12,20 +12,35 @@ import {
 } from "@rennet/core";
 import type { Patchset, Review } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
+import { sessionContextDir } from "./context-files";
 import {
   claudeReviewOpenerPort,
   createLiveReviewOpenerPort,
   REVIEW_OPENER_OUTPUT_SCHEMA,
 } from "./review-opener-live";
 
-function review(): Review {
+/**
+ * A real repository root. The port WRITES the opener's context under it before the turn
+ * (session-context-files 3.7), and the seat resolves the paths in its prompt against it —
+ * so a fixture root that does not exist is a fixture that cannot exercise the turn.
+ */
+function repoRoot(): string {
+  return mkdtempSync(join(tmpdir(), "rennet-opener-repo-"));
+}
+
+/** Read one of the files the port wrote for this review. */
+function contextFile(root: string, name: string): string {
+  return readFileSync(join(sessionContextDir(root, "review-1"), name), "utf8");
+}
+
+function review(root: string): Review {
   const patchset: Patchset = {
     id: "patch-1",
     createdAt: "2026-08-30T00:00:00.000Z",
     repository: {
       id: "repo",
-      root: "/repo",
-      commonDir: "/repo/.git",
+      root,
+      commonDir: join(root, ".git"),
       baseRef: "main",
       baseOid: "base",
       headOid: "head",
@@ -46,7 +61,7 @@ function review(): Review {
   };
   return {
     id: "review-1",
-    repositoryRoot: "/repo",
+    repositoryRoot: root,
     patchsets: [patchset],
     activePatchsetId: patchset.id,
     dispositions: [],
@@ -170,7 +185,8 @@ describe("createLiveReviewOpenerPort", () => {
       readPrompt: async () => "Write in the reviewer's own voice.",
       store: new PublishCompositionStore(directory),
     });
-    const firstResult = await first({ review: review(), draft: draft("REQUEST_CHANGES") });
+    const root = repoRoot();
+    const firstResult = await first({ review: review(root), draft: draft("REQUEST_CHANGES") });
     expect(firstResult).toEqual({
       status: "drafted",
       opener: "The retry path still needs outcome reconciliation.",
@@ -179,9 +195,25 @@ describe("createLiveReviewOpenerPort", () => {
     expect(firstCalls).toBe(1);
     expect(seenRequest?.model).toBe("gpt-5.6-luna");
     expect(seenRequest?.outputSchema).toEqual(REVIEW_OPENER_OUTPUT_SCHEMA);
-    expect(seenRequest?.prompt).toContain("REQUEST_CHANGES");
-    expect(seenRequest?.prompt).toContain("Reconcile the outcome before retrying.");
-    expect(seenRequest?.prompt).toContain("Write in the reviewer's own voice.");
+    // The turn runs in the checkout, so a relative path in the prompt resolves.
+    expect(seenRequest?.cwd).toBe(root);
+    // The prompt NAMES the files; not one fact travels with it (3.7).
+    expect(seenRequest?.prompt).toContain(".rennet/context/review-1/opener/review-facts.json");
+    expect(seenRequest?.prompt).toContain(".rennet/context/review-1/opener/asks.json");
+    expect(seenRequest?.prompt).not.toContain("REQUEST_CHANGES");
+    expect(seenRequest?.prompt).not.toContain("Reconcile the outcome before retrying.");
+    expect(seenRequest?.prompt).not.toContain("Write in the reviewer's own voice.");
+    // ...and the facts are on the other end of those paths, written before the turn ran.
+    expect(JSON.parse(contextFile(root, "opener/review-facts.json"))).toEqual({
+      verdict: "REQUEST_CHANGES",
+      changedPaths: ["src/retry.ts"],
+    });
+    expect(contextFile(root, "opener/asks.json")).toContain(
+      "Reconcile the outcome before retrying.",
+    );
+    expect(contextFile(root, "opener/voice-rules.md")).toBe("Write in the reviewer's own voice.");
+    // The index a reader who has never seen Rennet gets.
+    expect(contextFile(root, "README.md")).toContain("opener/asks.json");
 
     let restartedCalls = 0;
     const restarted = createLiveReviewOpenerPort({
@@ -193,26 +225,32 @@ describe("createLiveReviewOpenerPort", () => {
       readPrompt: async () => "voice",
       store: new PublishCompositionStore(directory),
     });
-    await expect(restarted({ review: review(), draft: draft("REQUEST_CHANGES") })).resolves.toEqual(
-      firstResult,
-    );
+    await expect(
+      restarted({ review: review(root), draft: draft("REQUEST_CHANGES") }),
+    ).resolves.toEqual(firstResult);
     expect(restartedCalls).toBe(0);
   });
 
   it("redrafts when the verdict changes because the evidence identity changes", async () => {
+    const root = repoRoot();
     let calls = 0;
     const live = createLiveReviewOpenerPort({
       claudePort: async () => null,
       codexExecutor: async () => async (request) => {
         calls += 1;
-        const verdict = request.prompt.includes('"verdict":"APPROVE"') ? "approval" : "comment";
+        // The seat reads the verdict the way a real one does: from the file the prompt
+        // names, resolved against the turn's cwd.
+        const facts = JSON.parse(contextFile(root, "opener/review-facts.json")) as {
+          verdict: string;
+        };
+        const verdict = facts.verdict === "APPROVE" ? "approval" : "comment";
         return { output: { opener: `Verdict-specific ${verdict} opener.` }, model: request.model };
       },
       readPrompt: async () => "voice",
       store: tempStore(),
     });
-    const comment = await live({ review: review(), draft: draft("COMMENT") });
-    const approval = await live({ review: review(), draft: draft("APPROVE") });
+    const comment = await live({ review: review(root), draft: draft("COMMENT") });
+    const approval = await live({ review: review(root), draft: draft("APPROVE") });
     expect(calls).toBe(2);
     expect(comment).toMatchObject({ opener: "Verdict-specific comment opener." });
     expect(approval).toMatchObject({ opener: "Verdict-specific approval opener." });
@@ -229,7 +267,7 @@ describe("createLiveReviewOpenerPort", () => {
       readPrompt: async () => "voice",
       store: tempStore(),
     });
-    await expect(live({ review: review(), draft: draft("APPROVE") })).resolves.toEqual({
+    await expect(live({ review: review(repoRoot()), draft: draft("APPROVE") })).resolves.toEqual({
       status: "drafted",
       opener: "The reviewed retry path now holds.",
       model: "claude-haiku-runtime",
@@ -243,9 +281,9 @@ describe("createLiveReviewOpenerPort", () => {
       readPrompt: async () => "voice",
       store: tempStore(),
     });
-    await expect(unavailable({ review: review(), draft: draft("COMMENT") })).resolves.toMatchObject(
-      { status: "unavailable" },
-    );
+    await expect(
+      unavailable({ review: review(repoRoot()), draft: draft("COMMENT") }),
+    ).resolves.toMatchObject({ status: "unavailable" });
 
     const empty = createLiveReviewOpenerPort({
       claudePort: async () => null,
@@ -253,7 +291,7 @@ describe("createLiveReviewOpenerPort", () => {
       readPrompt: async () => "voice",
       store: tempStore(),
     });
-    await expect(empty({ review: review(), draft: draft("COMMENT") })).resolves.toEqual({
+    await expect(empty({ review: review(repoRoot()), draft: draft("COMMENT") })).resolves.toEqual({
       status: "failed",
       reason: "the review-opener drafter returned an empty opener",
       retryable: true,
@@ -273,11 +311,12 @@ describe("createLiveReviewOpenerPort", () => {
       store: tempStore(),
     });
 
-    await expect(live({ review: review(), draft: draft("COMMENT") })).resolves.toMatchObject({
+    const root = repoRoot();
+    await expect(live({ review: review(root), draft: draft("COMMENT") })).resolves.toMatchObject({
       status: "failed",
       retryable: true,
     });
-    await expect(live({ review: review(), draft: draft("COMMENT") })).resolves.toMatchObject({
+    await expect(live({ review: review(root), draft: draft("COMMENT") })).resolves.toMatchObject({
       status: "drafted",
       opener: "The second attempt can draft.",
     });

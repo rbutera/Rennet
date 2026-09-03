@@ -8,10 +8,12 @@ import {
   type ReviewOpenerDraftResult,
   type ReviewOpenerPort,
   resolveAssignment,
+  reviewOpenerContextFiles,
   reviewOpenerSourceId,
 } from "@rennet/core";
 import { REVIEW_DRAFT_VOICE_FILE } from "@rennet/prompts";
 import type { CouncilHarnessId, Review } from "@rennet/protocol";
+import { writeSessionContext } from "./context-files";
 
 const REVIEW_OPENER_JOB_ID = "publish-comment-prose";
 
@@ -50,6 +52,7 @@ export function codexReviewOpenerPort(
   executor: CodexExecutor,
   model: string,
   effort: string,
+  cwd: string,
 ): ReviewOpenerPort {
   return async (prompt) => {
     try {
@@ -57,6 +60,7 @@ export function codexReviewOpenerPort(
         model,
         effort,
         prompt,
+        cwd,
         outputSchema: REVIEW_OPENER_OUTPUT_SCHEMA,
       });
       return { ...emittedOpener(result.output), ...(result.model ? { model: result.model } : {}) };
@@ -207,7 +211,12 @@ export function createLiveReviewOpenerPort(
         const harness = providerHarness(resolution.model);
         const port =
           harness === "codex" && executor !== null
-            ? codexReviewOpenerPort(executor, resolution.model, resolution.effort)
+            ? codexReviewOpenerPort(
+                executor,
+                resolution.model,
+                resolution.effort,
+                input.review.repositoryRoot,
+              )
             : harness === "claude-code" && claudePort !== null
               ? claudeReviewOpenerPort(claudePort, input.review.repositoryRoot)
               : null;
@@ -218,12 +227,15 @@ export function createLiveReviewOpenerPort(
           };
         }
 
-        const drafted = await draftReviewOpener(
-          input.draft,
-          await readVoiceRules(),
-          port,
-          resolution.model,
+        // The boards, the asks, the dismissals and the voice rules go to disk under the
+        // repo root the seat runs in, BEFORE the turn starts (session-context-files). The
+        // prompt then names them by relative path and the seat reads what it needs.
+        writeSessionContext(
+          input.review.repositoryRoot,
+          input.review.id,
+          reviewOpenerContextFiles(input.draft, await readVoiceRules()),
         );
+        const drafted = await draftReviewOpener(input.review.id, port, resolution.model);
         if (drafted.status !== "drafted") return drafted;
 
         const stored = deps.store.saveReviewOpener({

@@ -1,4 +1,5 @@
 import type { DispositionType, PrBodyDraftResult } from "@rennet/protocol";
+import { type SessionContextFile, sessionContextRelativeDir } from "./session-context";
 
 export type { PrBodyDraftResult };
 
@@ -108,54 +109,95 @@ const TYPE_INTENT: Record<DispositionType, string> = {
 };
 
 /**
+ * The material as FILES, one per kind (design D4) — never as prompt text. Only what the
+ * input actually carries is written, so the prompt names only files that exist and the
+ * model is never invited to invent a section it was not given. Namespaced under
+ * `pr-body/` because other turns in the same session write `dispositions.json` too.
+ */
+export function prBodyContextFiles(input: PrBodyDraftInput): readonly SessionContextFile[] {
+  const files: SessionContextFile[] = [];
+  if (input.narration !== undefined) {
+    files.push({
+      name: "pr-body/narration.json",
+      body: JSON.stringify(input.narration),
+      holds: "The review's roll-up account of the whole changeset, in its own voice.",
+      readWhen: "first — it is the closest thing to the description you are writing.",
+    });
+  }
+  const dispositions = input.dispositions.filter((item) => item.resolution.trim() !== "");
+  if (dispositions.length > 0) {
+    files.push({
+      name: "pr-body/dispositions.json",
+      body: JSON.stringify(
+        dispositions.map((item) => ({
+          intent: TYPE_INTENT[item.type],
+          path: item.path,
+          resolution: item.resolution.trim(),
+        })),
+      ),
+      holds: "What the reviewer asked for and approved, per file.",
+      readWhen: "always — this is what the review actually decided.",
+    });
+  }
+  const requirements = (input.requirements ?? []).filter((line) => line.trim() !== "");
+  if (requirements.length > 0) {
+    files.push({
+      name: "pr-body/requirements.json",
+      body: JSON.stringify(requirements.map((line) => line.trim())),
+      holds: "The requirements this change was meant to satisfy (the spec angle).",
+      readWhen: "when the description should say what the change had to achieve.",
+    });
+  }
+  const decisions = (input.decisions ?? []).filter((line) => line.trim() !== "");
+  if (decisions.length > 0) {
+    files.push({
+      name: "pr-body/decisions.json",
+      body: JSON.stringify(decisions.map((line) => line.trim())),
+      holds: "The decisions the review surfaced — the WHY behind the change.",
+      readWhen: "when the description should explain why it was done this way.",
+    });
+  }
+  return files;
+}
+
+/**
  * Assemble the drafter prompt. It is opinionated on the ONE thing that matters:
  * the body must read as an honest account of the CHANGE — what it does and why —
- * grounded in the review's real content (the narration, the dispositions, the
- * requirements, the decisions), never a generic template and never a raw diffstat.
- * The reviewer edits the result, so the prompt asks for a solid starting point, not
- * a final word. Every enrichment section is included only when the input carries it,
- * so the prompt never invites the model to invent content it was not given.
+ * grounded in the review's real content, never a generic template and never a raw
+ * diffstat. The reviewer edits the result, so the prompt asks for a solid starting
+ * point, not a final word.
+ *
+ * The material itself is NOT here: it is the files {@link prBodyContextFiles} writes,
+ * named by relative path. The prompt still lists only the files the input carried, so it
+ * never invites the model to invent content nobody gave it. The branch shape stays inline
+ * — two refs are the frame of the task, not context.
  */
-export function buildPrBodyPrompt(input: PrBodyDraftInput): string {
+export function buildPrBodyPrompt(input: PrBodyDraftInput, sessionId: string): string {
+  const dir = sessionContextRelativeDir(sessionId);
+  const files = prBodyContextFiles(input);
   const lines: string[] = [
     "You are drafting the TITLE and DESCRIPTION for a GitHub pull request, for a developer who will edit it before they open the PR themselves.",
     "",
     "Rules, in order of importance:",
     "1. Write an HONEST ACCOUNT of the change: what it does and why it matters. NEVER a bare list of changed files or a diffstat.",
-    "2. Ground every claim in the material below. Do not invent changes, motivations, or scope that is not evidenced here.",
+    "2. Ground every claim in the material named below. Do not invent changes, motivations, or scope that is not evidenced there.",
     "3. The title is a single concise line in the imperative mood (e.g. 'Add rate-limit fallback bucket'). No trailing period.",
     "4. The body is Markdown: a short lead paragraph of what changed and why, then the salient points as prose or tight bullets. Reference the real requirements and decisions where they explain the change.",
     "5. This is a STARTING POINT the developer will edit. Be a strong first draft; do not pad, hedge, or add an AI-attribution marker.",
     "",
     `The change submits branch \`${input.head}\` onto \`${input.base}\`.`,
   ];
-  if (input.narration !== undefined) {
+  if (files.length === 0) {
     lines.push(
       "",
-      "The review's roll-up account of the whole changeset:",
-      input.narration.oneLine.trim(),
-      input.narration.paragraph.trim(),
+      "The review recorded no dispositions, requirements or decisions for this change: draft from the branch shape alone and claim nothing more.",
     );
-  }
-  const dispositions = input.dispositions.filter((item) => item.resolution.trim() !== "");
-  if (dispositions.length > 0) {
+  } else {
     lines.push(
       "",
-      "The reviewer's dispositions on this change (what they asked for and approved):",
+      "The material is in your working directory. Read what you need with your own tools:",
     );
-    for (const item of dispositions) {
-      lines.push(`- [${TYPE_INTENT[item.type]}] ${item.path}: ${item.resolution.trim()}`);
-    }
-  }
-  const requirements = (input.requirements ?? []).filter((line) => line.trim() !== "");
-  if (requirements.length > 0) {
-    lines.push("", "The requirements this change was meant to satisfy (the spec angle):");
-    for (const requirement of requirements) lines.push(`- ${requirement.trim()}`);
-  }
-  const decisions = (input.decisions ?? []).filter((line) => line.trim() !== "");
-  if (decisions.length > 0) {
-    lines.push("", "The decisions the review surfaced (the WHY behind the change):");
-    for (const decision of decisions) lines.push(`- ${decision.trim()}`);
+    for (const file of files) lines.push(`- \`${dir}/${file.name}\` — ${file.holds}`);
   }
   lines.push(
     "",
@@ -174,10 +216,11 @@ export function buildPrBodyPrompt(input: PrBodyDraftInput): string {
  */
 export async function draftPrBody(
   input: PrBodyDraftInput,
+  sessionId: string,
   port: PrBodyDraftPort,
   model: string,
 ): Promise<PrBodyDraftResult> {
-  const turn = await port(buildPrBodyPrompt(input));
+  const turn = await port(buildPrBodyPrompt(input, sessionId));
   if (turn.status === "unavailable") return { status: "unavailable", reason: turn.reason };
   if (turn.status === "failed") return { status: "failed", reason: turn.reason };
   // Report the model that ACTUALLY ran when the port observed it; else the resolved

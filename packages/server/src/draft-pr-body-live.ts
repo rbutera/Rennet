@@ -5,6 +5,7 @@ import {
   type PrBodyDraftInput,
   type PrBodyDraftPort,
   type PrBodyDraftPortResult,
+  prBodyContextFiles,
   providerHarness,
   resolveAssignment,
 } from "@rennet/core";
@@ -14,6 +15,7 @@ import type {
   PrBodyDraftResult,
   Review,
 } from "@rennet/protocol";
+import { writeSessionContext } from "./context-files";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // review.draftPrBody — the LIVE producer (issue #74, M26).
@@ -109,10 +111,17 @@ export function codexDraftPrBodyPort(
   executor: CodexExecutor,
   model: string,
   effort: string,
+  cwd: string,
 ): PrBodyDraftPort {
   return async (prompt) => {
     try {
-      const result = await executor({ model, effort, prompt, outputSchema: PR_BODY_OUTPUT_SCHEMA });
+      const result = await executor({
+        model,
+        effort,
+        prompt,
+        cwd,
+        outputSchema: PR_BODY_OUTPUT_SCHEMA,
+      });
       const mapped = mapDraftOutput(result.output);
       // Report the model Codex OBSERVABLY ran (from its session log, #74 MED-3), not
       // the requested/planned `model`. Codex honors `-m`, so the two usually agree —
@@ -242,7 +251,12 @@ export function createLiveDraftPrBodyPort(
     const harness = providerHarness(resolution.model);
     let port: PrBodyDraftPort | null = null;
     if (harness === "codex" && executor !== null) {
-      port = codexDraftPrBodyPort(executor, resolution.model, resolution.effort);
+      port = codexDraftPrBodyPort(
+        executor,
+        resolution.model,
+        resolution.effort,
+        input.review.repositoryRoot,
+      );
     } else if (harness === "claude-code" && claudePort !== null) {
       // Follow the pipeline's Claude-seat convention: the council model rides the
       // result as provenance, but the session runs on the adapter's own default model.
@@ -260,6 +274,14 @@ export function createLiveDraftPrBodyPort(
       ...(input.requirements === undefined ? {} : { requirements: input.requirements }),
       ...(input.decisions === undefined ? {} : { decisions: input.decisions }),
     };
-    return draftPrBody(draftInput, port, resolution.model);
+    // The narration, dispositions, requirements and decisions go to disk under the repo
+    // root the turn runs in, BEFORE the turn (session-context-files); the prompt names
+    // only the files that exist, so it still never invites an invented section.
+    writeSessionContext(
+      input.review.repositoryRoot,
+      input.review.id,
+      prBodyContextFiles(draftInput),
+    );
+    return draftPrBody(draftInput, input.review.id, port, resolution.model);
   };
 }

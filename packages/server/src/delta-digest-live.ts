@@ -2,6 +2,7 @@ import {
   type CodexExecutor,
   type DeltaDigestPort,
   type DeltaDigestPortResult,
+  deltaDigestContextFile,
   draftDeltaDigest,
   type HarnessPort,
   providerHarness,
@@ -13,6 +14,7 @@ import type {
   Review,
   SuccessorAccount,
 } from "@rennet/protocol";
+import { writeSessionContext } from "./context-files";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // review.deltaDigest — the LIVE producer (issue #73 / M25).
@@ -95,6 +97,7 @@ export function codexDeltaDigestPort(
   executor: CodexExecutor,
   model: string,
   effort: string,
+  cwd: string,
 ): DeltaDigestPort {
   return async (prompt) => {
     try {
@@ -102,6 +105,7 @@ export function codexDeltaDigestPort(
         model,
         effort,
         prompt,
+        cwd,
         outputSchema: DELTA_DIGEST_OUTPUT_SCHEMA,
       });
       const mapped = mapDigestOutput(result.output);
@@ -206,13 +210,24 @@ export function createLiveDeltaDigestPort(
     const harness = providerHarness(resolution.model);
     let port: DeltaDigestPort | null = null;
     if (harness === "codex" && executor !== null) {
-      port = codexDeltaDigestPort(executor, resolution.model, resolution.effort);
+      port = codexDeltaDigestPort(
+        executor,
+        resolution.model,
+        resolution.effort,
+        input.review.repositoryRoot,
+      );
     } else if (harness === "claude-code" && claudePort !== null) {
       port = claudeDeltaDigestPort(claudePort, input.review.repositoryRoot);
     }
     if (port === null) {
       return { status: "unavailable", reason: "delta-digest has no model seat installed" };
     }
-    return draftDeltaDigest(input.account, port, resolution.model);
+    // The account goes to disk under the repo root the turn runs in, BEFORE the turn
+    // (session-context-files); the prompt names it by relative path. The grounding
+    // guarantee is unchanged — that file is still the only thing the turn may state.
+    writeSessionContext(input.review.repositoryRoot, input.review.id, [
+      deltaDigestContextFile(input.account),
+    ]);
+    return draftDeltaDigest(input.review.id, port, resolution.model);
   };
 }

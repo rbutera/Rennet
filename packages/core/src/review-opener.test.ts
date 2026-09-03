@@ -1,10 +1,12 @@
 import type { AskProjection, LensBoard } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
+import { inlineContextViolation } from "./harness-run-turn";
 import {
   buildReviewOpenerContext,
   buildReviewOpenerPrompt,
   draftReviewOpener,
   type ReviewOpenerDraftInput,
+  reviewOpenerContextFiles,
   reviewOpenerSourceId,
 } from "./review-opener";
 
@@ -167,15 +169,70 @@ describe("review opener context", () => {
     ).not.toBe(base);
   });
 
-  it("layers the shared review voice with opener-specific rules and exact persisted facts", () => {
-    const prompt = buildReviewOpenerPrompt(input(), "Write in the reviewer's own voice.");
-    expect(prompt).toContain("Write in the reviewer's own voice.");
-    expect(prompt).toContain("REQUEST_CHANGES");
-    expect(prompt).toContain("Retry ownership");
-    expect(prompt).toContain("Do not retry an unknown outcome.");
-    expect(prompt).toContain("Name the invariant.");
-    expect(prompt).toContain("An ambiguous send must not be retried blindly.");
-    expect(prompt).toContain("Do not claim the reviewer viewed or walked every supplied section");
+  it("NAMES the context files and carries no fact inline (session-context-files 3.7)", () => {
+    const prompt = buildReviewOpenerPrompt("review-7");
+    // The paths, relative to the turn's cwd, which is the session's bound root.
+    expect(prompt).toContain(".rennet/context/review-7/opener/voice-rules.md");
+    expect(prompt).toContain(".rennet/context/review-7/opener/review-facts.json");
+    expect(prompt).toContain(".rennet/context/review-7/opener/asks.json");
+    expect(prompt).toContain(".rennet/context/review-7/opener/dispositions.json");
+    expect(prompt).toContain(".rennet/context/review-7/opener/boards/");
+    expect(prompt).toContain(".rennet/context/review-7/README.md");
+    // The instructions survive; the material does not travel with them.
+    expect(prompt).toContain("Do not claim the reviewer viewed or walked every section");
+    expect(prompt).not.toContain("REQUEST_CHANGES");
+    expect(prompt).not.toContain("Do not retry an unknown outcome.");
+    expect(prompt).not.toContain("An ambiguous send must not be retried blindly.");
+    // The mechanical rule, on the same reading the send tap applies.
+    expect(inlineContextViolation(prompt)).toBeUndefined();
+  });
+
+  it("writes the boards per lens, the asks, the dismissals, the facts and the voice rules", () => {
+    const files = reviewOpenerContextFiles(input(), "Write in the reviewer's own voice.");
+    const byName = new Map(files.map((entry) => [entry.name, entry]));
+
+    // The board splits per lens, so the seat can open the one it is writing about.
+    const board = byName.get("opener/boards/design.json");
+    expect(JSON.parse(board?.body ?? "null")).toMatchObject({
+      lens: "design",
+      document: { title: "Design" },
+      sections: [{ title: "Retry ownership", gist: expect.any(String) }],
+    });
+
+    // The asks and line comments, verbatim, in one file.
+    expect(JSON.parse(byName.get("opener/asks.json")?.body ?? "null")).toEqual({
+      stagedAsks: [
+        expect.objectContaining({ id: "ask-a", body: "Do not retry an unknown outcome." }),
+        expect.objectContaining({ id: "ask-b", body: "Keep this visible." }),
+      ],
+      lineComments: [
+        { path: "src/a.ts", line: 3, body: "Name the invariant." },
+        { path: "src/z.ts", line: 8, body: "Extract this." },
+      ],
+    });
+
+    // The dismissed finding resolves to its concern and severity.
+    expect(JSON.parse(byName.get("opener/dispositions.json")?.body ?? "null")).toEqual([
+      expect.objectContaining({
+        concern: "An ambiguous send must not be retried blindly.",
+        severity: "high",
+      }),
+    ]);
+
+    expect(JSON.parse(byName.get("opener/review-facts.json")?.body ?? "null")).toEqual({
+      verdict: "REQUEST_CHANGES",
+      changedPaths: ["src/retry.ts", "src/z.ts"],
+    });
+
+    // The voice rules live inside the installed prompts bundle, which the seat's cwd
+    // cannot reach — so they travel as a file, not as a prompt layer.
+    expect(byName.get("opener/voice-rules.md")?.body).toBe("Write in the reviewer's own voice.");
+
+    // Every file carries the two index lines a reader who has never seen Rennet needs.
+    for (const entry of files) {
+      expect(entry.holds.length).toBeGreaterThan(10);
+      expect(entry.readWhen.length).toBeGreaterThan(5);
+    }
   });
 });
 
@@ -183,8 +240,7 @@ describe("draftReviewOpener", () => {
   it("trims emitted prose and reports the model that actually ran", async () => {
     await expect(
       draftReviewOpener(
-        input(),
-        "voice",
+        "review-7",
         async () => ({
           status: "emitted",
           opener: "  The retry boundary still needs an outcome-unknown path.  ",
@@ -202,8 +258,7 @@ describe("draftReviewOpener", () => {
   it("fails honestly on a missing or blank opener", async () => {
     for (const opener of [undefined, "   "]) {
       const result = await draftReviewOpener(
-        input(),
-        "voice",
+        "review-7",
         async () => ({ status: "emitted", ...(opener === undefined ? {} : { opener }) }),
         "gpt-5.6-luna",
       );
@@ -218,16 +273,14 @@ describe("draftReviewOpener", () => {
   it("preserves failed and unavailable turn outcomes without fabricating prose", async () => {
     await expect(
       draftReviewOpener(
-        input(),
-        "voice",
+        "review-7",
         async () => ({ status: "unavailable", reason: "no seat" }),
         "gpt-5.6-luna",
       ),
     ).resolves.toEqual({ status: "unavailable", reason: "no seat" });
     await expect(
       draftReviewOpener(
-        input(),
-        "voice",
+        "review-7",
         async () => ({ status: "failed", reason: "turn failed" }),
         "gpt-5.6-luna",
       ),

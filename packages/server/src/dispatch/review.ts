@@ -5,6 +5,7 @@ import {
   isRepoRelativePath,
   mechanicalComposition,
   verifyComposedBundle,
+  workOrderContextFile,
 } from "@rennet/core";
 import {
   type HandoffAskTrace,
@@ -12,6 +13,7 @@ import {
   parseCommandInput,
   parseCommandOutput,
 } from "@rennet/protocol";
+import { writeSessionContext } from "../context-files";
 import type { CommandHandler, DispatchRuntime } from "./runtime";
 
 export function reviewHandlers(rt: DispatchRuntime) {
@@ -229,6 +231,12 @@ export function reviewHandlers(rt: DispatchRuntime) {
           reason: "no coding harness is available to run the handoff",
         });
       }
+      // The work order goes to disk BEFORE the turn (session-context-files): the verified
+      // bundle's prompt names `.rennet/context/<reviewId>/work-order.md` relative to the
+      // turn's cwd, and this is what puts the ordered, grouped, verbatim asks and their
+      // diff fences there. Written after verification, from the SAME `tasks` the digest
+      // binds, so the file cannot carry an order nobody composed.
+      writeSessionContext(review.repositoryRoot, review.id, [workOrderContextFile(bundle.tasks)]);
       const turn = await deps.runHandoffTurn({
         repoRoot: review.repositoryRoot,
         prompt: bundle.prompt,

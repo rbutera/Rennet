@@ -545,7 +545,7 @@ export const REPAIR_FROZEN_IDS_MAX_BYTES = 4_000;
 export const REPAIR_POINTER_LINE_MAX_BYTES = 1_000;
 
 /** `text` cut to `maxBytes`, on a code-point boundary, with an honest "…" marker. */
-function capBytes(text: string, maxBytes: number): string {
+export function capBytes(text: string, maxBytes: number): string {
   if (utf8Bytes(text) <= maxBytes) return text;
   const budget = maxBytes - utf8Bytes("…");
   let kept = "";

@@ -67,6 +67,7 @@ export * from "./review-opener";
 export * from "./risk-crosscheck";
 export * from "./route-plan";
 export * from "./session";
+export * from "./session-context";
 export * from "./settings-resolver";
 export * from "./snapshot-overlay";
 export * from "./successor-account";
