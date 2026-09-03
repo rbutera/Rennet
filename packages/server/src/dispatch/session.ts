@@ -255,7 +255,10 @@ export function sessionHandlers(rt: DispatchRuntime) {
       // Archive is the only release (a soft delete — the record survives on disk), and
       // `archived: false` is its inverse, so an accidental archive is recoverable.
       const input = parseCommandInput(name, rawInput);
-      const session = rt.deps.sessions?.setArchived(input.sessionId, input.archived) ?? null;
+      // AWAITED: archiving aborts and awaits the session's own preparation first, so the
+      // sweep below cannot race a seat still able to bind a thread (review finding 2).
+      const session =
+        (await rt.deps.sessions?.setArchived(input.sessionId, input.archived)) ?? null;
       // Archiving is also the sidecar's pruning act (t3-lens-threads 1.7): the session's
       // own thread and every seat thread its generations left behind are deleted and their
       // bindings dropped, AFTER the archive has persisted. Un-archiving restores nothing —

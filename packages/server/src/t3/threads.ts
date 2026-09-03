@@ -68,30 +68,61 @@ const bindingSchema = z.object({
   projectId: z.string(),
   threadId: z.string(),
   createdAt: z.string(),
+  /** Only on a `pendingDeletions` row: how many sweeps have tried and failed. */
+  attempts: z.number().int().nonnegative().optional(),
 });
 export type ThreadBinding = z.infer<typeof bindingSchema>;
 
-const fileSchema = z.object({ bindings: z.array(bindingSchema) });
+/**
+ * Threads whose `thread.delete` failed, kept OUT of the live bindings.
+ *
+ * Two things have to be true at once and they pull apart: an archived session must not
+ * keep a live binding (an un-archive would rebind to a thread nobody can reach), and a
+ * transcript that still exists in the sidecar must not lose its only handle. So the row
+ * moves here — invisible to `findBinding`, so the session still gets a fresh thread — and
+ * the next sweep retries it. Capped by {@link PENDING_DELETION_MAX_ATTEMPTS} so a thread
+ * the sidecar genuinely no longer has drains out instead of being retried forever.
+ */
+const fileSchema = z.object({
+  bindings: z.array(bindingSchema),
+  pendingDeletions: z.array(bindingSchema).default([]),
+});
+
+/** How many sweeps a failed deletion is retried before the row is dropped. */
+export const PENDING_DELETION_MAX_ATTEMPTS = 5;
 
 export function bindingsPath(dataDir: string): string {
   return join(sidecarBaseDir(dataDir), "thread-bindings.json");
 }
 
-export function readBindings(dataDir: string): ThreadBinding[] {
+function readFile(dataDir: string): z.infer<typeof fileSchema> {
   try {
     const parsed = fileSchema.safeParse(JSON.parse(readFileSync(bindingsPath(dataDir), "utf8")));
-    return parsed.success ? parsed.data.bindings : [];
+    return parsed.success ? parsed.data : { bindings: [], pendingDeletions: [] };
   } catch {
-    return [];
+    return { bindings: [], pendingDeletions: [] };
   }
 }
 
-function writeBindings(dataDir: string, bindings: ThreadBinding[]): void {
+export function readBindings(dataDir: string): ThreadBinding[] {
+  return readFile(dataDir).bindings;
+}
+
+/** The threads a previous sweep could not delete. Never matched by {@link findBinding}. */
+export function readPendingDeletions(dataDir: string): ThreadBinding[] {
+  return readFile(dataDir).pendingDeletions;
+}
+
+function writeFile(dataDir: string, next: z.infer<typeof fileSchema>): void {
   const path = bindingsPath(dataDir);
   mkdirSync(dirname(path), { recursive: true });
   const tmp = `${path}.tmp-${process.pid}`;
-  writeFileSync(tmp, `${JSON.stringify({ bindings })}\n`);
+  writeFileSync(tmp, `${JSON.stringify(next)}\n`);
   renameSync(tmp, path);
+}
+
+function writeBindings(dataDir: string, bindings: ThreadBinding[]): void {
+  writeFile(dataDir, { ...readFile(dataDir), bindings });
 }
 
 /** Every field of the key, and the checkout, must match — a silent field never matches. */
@@ -124,6 +155,60 @@ export function removeBindings(dataDir: string, threadIds: readonly string[]): v
   writeBindings(dataDir, remaining);
 }
 
+const describeError = (error: unknown): string =>
+  error instanceof Error ? error.message : String(error);
+
+export interface SweepThreadsInput {
+  readonly dataDir: string;
+  /** Session/review ids whose threads are being retired. Empty ⇒ retry the pending only. */
+  readonly ids: readonly string[];
+  /** Delete one thread in the sidecar. A rejection defers the row instead of losing it. */
+  readonly deleteThread: (threadId: string) => Promise<void>;
+  readonly warn?: (message: string) => void;
+}
+
+/**
+ * Delete every thread bound to these ids, plus whatever a previous sweep could not.
+ *
+ * The live binding is dropped whatever the sidecar says — a binding pointing at a thread
+ * nobody can reach would rebind an un-archived session to a ghost. What is NOT dropped is
+ * the handle: a failed delete moves to `pendingDeletions`, so the transcript that still
+ * exists can be found and deleted on the next sweep (review finding 2). Returns how many
+ * threads were actually deleted. Never throws.
+ */
+export async function sweepThreads(input: SweepThreadsInput): Promise<number> {
+  const warn = input.warn ?? console.warn;
+  const pending = readPendingDeletions(input.dataDir);
+  const pendingIds = new Set(pending.map((row) => row.threadId));
+  const bindings = input.ids.length === 0 ? [] : findBindingsForSessions(input.dataDir, input.ids);
+  const targets = [...pending, ...bindings.filter((row) => !pendingIds.has(row.threadId))];
+  if (targets.length === 0) return 0;
+
+  let deleted = 0;
+  const deferred: ThreadBinding[] = [];
+  for (const row of targets) {
+    try {
+      await input.deleteThread(row.threadId);
+      deleted += 1;
+    } catch (error) {
+      const attempts = (row.attempts ?? 0) + 1;
+      warn(
+        `rennet: T3 thread ${row.threadId} was not deleted (attempt ${attempts}): ${describeError(error)}`,
+      );
+      if (attempts < PENDING_DELETION_MAX_ATTEMPTS) deferred.push({ ...row, attempts });
+      else warn(`rennet: giving up on T3 thread ${row.threadId} after ${attempts} attempts`);
+    }
+  }
+
+  const swept = new Set(targets.map((row) => row.threadId));
+  const file = readFile(input.dataDir);
+  writeFile(input.dataDir, {
+    bindings: file.bindings.filter((row) => !swept.has(row.threadId)),
+    pendingDeletions: deferred,
+  });
+  return deleted;
+}
+
 export function findBinding(
   dataDir: string,
   repositoryRoot: string,
@@ -150,11 +235,36 @@ export interface BindThreadInput {
   readonly sessionId?: string;
 }
 
+/** One creation per (data dir, repository root, key) in flight at a time. */
+const bindingsInFlight = new Map<string, Promise<ThreadBinding>>();
+
+function flightKey(input: BindThreadInput): string {
+  const key = input.key;
+  return JSON.stringify([
+    input.dataDir,
+    input.repositoryRoot,
+    key.kind,
+    key.kind === "session" ? key.sessionId : [key.generationId, key.seat],
+  ]);
+}
+
 /**
  * The thread bound to this key on this repository, created on first use with the
- * checkout as its working directory in full-access mode. Idempotent per key.
+ * checkout as its working directory in full-access mode. Idempotent per key, and
+ * single-flighted: the seats ask together, and a check-then-create per caller made two
+ * threads for one key with one binding surviving, so identical concurrent asks share
+ * the one creation.
  */
-export async function bindThread(input: BindThreadInput): Promise<ThreadBinding> {
+export function bindThread(input: BindThreadInput): Promise<ThreadBinding> {
+  const key = flightKey(input);
+  const inFlight = bindingsInFlight.get(key);
+  if (inFlight) return inFlight;
+  const binding = findOrCreateBinding(input).finally(() => bindingsInFlight.delete(key));
+  bindingsInFlight.set(key, binding);
+  return binding;
+}
+
+async function findOrCreateBinding(input: BindThreadInput): Promise<ThreadBinding> {
   const existing = findBinding(input.dataDir, input.repositoryRoot, input.key);
   if (existing) return existing;
   const projectId = await input.client.ensureProject(

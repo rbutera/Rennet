@@ -1,5 +1,7 @@
-// @rennet/t3-chat: the rung-two native ChatView mount, lazy so the vendored web app is
-// a separate renderer chunk that only a project on the `t3` engine ever downloads.
+// @rennet/t3-chat: the native ChatView mount for the chat slot — every review's
+// conversation is its T3 thread, so there is no engine choice to make. Lazy so the
+// vendored web app is a separate renderer chunk, downloaded when a review opens the
+// slot rather than at startup.
 // Public types live in ./public.d.ts (the package's `types` export): consumers typecheck
 // against that surface and never traverse the vendored source. Nothing else is exported:
 // the session helpers import @t3tools/contracts (Effect Schema), and re-exporting them

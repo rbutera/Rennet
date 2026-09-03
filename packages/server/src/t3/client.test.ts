@@ -2,8 +2,16 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { connectT3, modelSelection, type T3Client } from "./client";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import {
+  awaitTurnSettled,
+  connectT3,
+  modelSelection,
+  type OrchestrationThread,
+  type OrchestrationThreadStreamItem,
+  readTurnSettlement,
+  type T3Client,
+} from "./client";
 import { type RunningSidecar, resolveSidecarBundle, spawnSidecar, stopSidecar } from "./sidecar";
 import {
   bindThread,
@@ -296,12 +304,354 @@ describe.skipIf(!bundle)("t3 client: a provider stream that dies before its turn
       title: "dead claude",
       modelSelection: modelSelection("claudeAgent", "claude-sonnet-5"),
     });
-    await client.startTurn({ threadId, text: "say hi", outputSchema: { type: "object" } });
-    const outcome = await client.waitForTurnSettled(threadId, { startTimeoutMs: 15_000 });
+    const first = await client.startTurn({
+      threadId,
+      text: "say hi",
+      outputSchema: { type: "object" },
+    });
+    expect(first.previousTurnId).toBeNull();
+    const outcome = await client.waitForTurnSettled(threadId, {
+      after: first,
+      startTimeoutMs: 15_000,
+    });
     expect(outcome.state).toBe("error");
     expect(outcome.errorMessage).toMatch(/stream failed|Claude/i);
-    // The sidecar has to still be there: the whole point of the EPIPE fix is that
-    // one thread's dead provider does not take every other seat's thread with it.
+    // A dead provider registers no turn at all, so the wait names the session, and the
+    // failure it names was recorded after this start, not before it.
+    expect(outcome.thread.latestTurn).toBeNull();
+    expect(Date.parse(outcome.thread.session?.updatedAt ?? "")).toBeGreaterThanOrEqual(
+      Date.parse(first.requestedAt),
+    );
+    // And the sidecar is still there. The EPIPE this stand-in provokes used to kill it,
+    // which is one thread's dead provider taking every other seat's thread with it.
     expect(running.child?.exitCode).toBeNull();
-  }, 30_000);
+
+    // A SECOND turn on the same thread. The thread still carries the first failure, so
+    // an unscoped wait could answer with it; scoped to this start, the answer is the
+    // session state recorded AFTER the second request.
+    const second = await client.startTurn({
+      threadId,
+      text: "say hi again",
+      outputSchema: { type: "object" },
+    });
+    const again = await client.waitForTurnSettled(threadId, {
+      after: second,
+      startTimeoutMs: 15_000,
+    });
+    expect(again.state).toBe("error");
+    expect(again.thread.session?.updatedAt).not.toBe(outcome.thread.session?.updatedAt);
+    expect(Date.parse(again.thread.session?.updatedAt ?? "")).toBeGreaterThanOrEqual(
+      Date.parse(second.requestedAt),
+    );
+    expect(running.child?.exitCode).toBeNull();
+  }, 45_000);
+});
+
+describe("modelSelection", () => {
+  it("carries effort as the option each provider's adapter reads, and nothing when absent", () => {
+    // T3's Claude adapter reads `effort` and its Codex adapter `reasoningEffort`, both off
+    // `modelSelection.options`; a selection without the option lets the provider default.
+    expect(modelSelection("claudeAgent", "claude-opus-5", { effort: "high" })).toEqual({
+      instanceId: "claudeAgent",
+      model: "claude-opus-5",
+      options: [{ id: "effort", value: "high" }],
+    });
+    expect(modelSelection("codex", "gpt-5.6-sol", { effort: "xhigh" })).toEqual({
+      instanceId: "codex",
+      model: "gpt-5.6-sol",
+      options: [{ id: "reasoningEffort", value: "xhigh" }],
+    });
+    expect(modelSelection("claudeAgent", "claude-sonnet-5")).toEqual({
+      instanceId: "claudeAgent",
+      model: "claude-sonnet-5",
+    });
+  });
+});
+
+describe("readTurnSettlement", () => {
+  const activity = (kind: string, turnId: string | null, payload: unknown) => ({
+    id: `${kind}:${turnId}:${JSON.stringify(payload)}`,
+    tone: "info",
+    kind,
+    summary: kind,
+    payload,
+    turnId,
+    createdAt: "2026-09-03T10:00:00.000Z",
+  });
+  const thread = (activities: unknown[]) =>
+    ({ activities, messages: [], checkpoints: [] }) as unknown as OrchestrationThread;
+
+  it("carries the turn's own context-window snapshot and the previous settlement's usage", () => {
+    const drafting = { input_tokens: 50_000 };
+    const t = thread([
+      // Codex stamps its snapshots with no turn id; the previous turn's settlement bounds them.
+      activity("context-window.updated", null, { usedTokens: 10 }),
+      activity("turn.settled", "turn-1", { usage: drafting, totalCostUsd: 1 }),
+      activity("context-window.updated", null, { usedTokens: 20 }),
+      activity("context-window.updated", null, { usedTokens: 30 }),
+      activity("turn.settled", "turn-2", { structuredOutput: {} }),
+    ]);
+    expect(readTurnSettlement(t, "turn-2")).toEqual({
+      structuredOutput: {},
+      tokenUsage: { usedTokens: 30 },
+      previousUsage: { usage: drafting, totalCostUsd: 1 },
+    });
+    // The first turn: its own snapshot, and nothing earlier to subtract.
+    expect(readTurnSettlement(t, "turn-1")).toEqual({
+      usage: drafting,
+      totalCostUsd: 1,
+      tokenUsage: { usedTokens: 10 },
+    });
+    expect(readTurnSettlement(t, "turn-9")).toBeUndefined();
+  });
+
+  it("skips an earlier settlement that carried no usage and finds the one before it", () => {
+    const t = thread([
+      activity("turn.settled", "turn-1", { usage: { input_tokens: 5 } }),
+      activity("turn.settled", "turn-2", { errorMessage: "interrupted" }),
+      activity("turn.settled", "turn-3", { usage: { input_tokens: 9 } }),
+    ]);
+    expect(readTurnSettlement(t, "turn-3")?.previousUsage).toEqual({
+      usage: { input_tokens: 5 },
+    });
+    expect(readTurnSettlement(t, "turn-3")?.tokenUsage).toBeUndefined();
+  });
+});
+
+// The settle wait over fakes: the thread projection and the stream are scripted, so the
+// cases the real bundle cannot stage without a live model (a repair on a thread that
+// already holds a settlement, a stale session error) run deterministically.
+describe("awaitTurnSettled", () => {
+  type Item = OrchestrationThreadStreamItem;
+  const T0 = "2026-09-03T10:00:00.000Z";
+
+  function pushable() {
+    const queue: Item[] = [];
+    let wake: (() => void) | null = null;
+    let ended: { readonly error?: unknown } | undefined;
+    const iterable: AsyncIterable<Item> = {
+      [Symbol.asyncIterator]: () => ({
+        async next() {
+          for (;;) {
+            const item = queue.shift();
+            if (item !== undefined) return { value: item, done: false as const };
+            if (ended !== undefined) {
+              if (ended.error !== undefined) throw ended.error;
+              return { value: undefined, done: true as const };
+            }
+            await new Promise<void>((resolve) => {
+              wake = resolve;
+            });
+          }
+        },
+        async return() {
+          return { value: undefined, done: true as const };
+        },
+      }),
+    };
+    const notify = () => {
+      wake?.();
+      wake = null;
+    };
+    return {
+      iterable,
+      push(item: Item) {
+        queue.push(item);
+        notify();
+      },
+      /** The stream ends cleanly, or with the socket's error. */
+      end(error?: unknown) {
+        ended = error === undefined ? {} : { error };
+        notify();
+      },
+    };
+  }
+
+  const fakeThread = (over: Record<string, unknown>): OrchestrationThread =>
+    ({
+      id: "t",
+      latestTurn: null,
+      session: null,
+      activities: [],
+      messages: [],
+      checkpoints: [],
+      ...over,
+    }) as unknown as OrchestrationThread;
+  const settledActivity = (turnId: string, payload: unknown) => ({
+    id: `a-${turnId}`,
+    tone: "info",
+    kind: "turn.settled",
+    summary: "Turn settled",
+    payload,
+    turnId,
+    createdAt: T0,
+  });
+  const event = (type: string): Item => ({ kind: "event", event: { type } }) as unknown as Item;
+  const tick = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+  /** A projection the test moves forward; every subscription opens on its current state. */
+  function projection(initial: OrchestrationThread) {
+    let current = initial;
+    let stream = pushable();
+    return {
+      set: (thread: OrchestrationThread) => {
+        current = thread;
+      },
+      push: (item: Item) => stream.push(item),
+      end: (error?: unknown) => stream.end(error),
+      deps: {
+        subscribeThread: () => {
+          stream = pushable();
+          stream.push({ kind: "snapshot", snapshot: { thread: current } } as unknown as Item);
+          return stream.iterable;
+        },
+        readThread: async () => current,
+      },
+    };
+  }
+
+  it("waits for ITS turn: the settlement already on the thread is the previous turn's", async () => {
+    const drafted = fakeThread({
+      latestTurn: { turnId: "turn-1", state: "completed" },
+      activities: [settledActivity("turn-1", { structuredOutput: { old: true } })],
+    });
+    const p = projection(drafted);
+    // Control: unscoped, the wait answers at once with the drafting turn — the bug.
+    await expect(awaitTurnSettled("t", p.deps)).resolves.toMatchObject({
+      turnId: "turn-1",
+      structuredOutput: { old: true },
+    });
+
+    const wait = awaitTurnSettled("t", p.deps, {
+      after: { previousTurnId: "turn-1", requestedAt: T0 },
+    });
+    await tick();
+    p.set(fakeThread({ latestTurn: { turnId: "turn-2", state: "running" } }));
+    p.push(event("thread.turn.started"));
+    await tick();
+    p.set(
+      fakeThread({
+        latestTurn: { turnId: "turn-2", state: "completed" },
+        activities: [
+          settledActivity("turn-1", { structuredOutput: { old: true } }),
+          settledActivity("turn-2", { structuredOutput: { repaired: true } }),
+        ],
+      }),
+    );
+    p.push(event("thread.activity-appended"));
+    await expect(wait).resolves.toMatchObject({
+      turnId: "turn-2",
+      structuredOutput: { repaired: true },
+    });
+  });
+
+  it("ignores a session failure recorded before the turn was requested", async () => {
+    const stale = fakeThread({
+      session: {
+        status: "stopped",
+        activeTurnId: null,
+        lastError: "old stream failed",
+        updatedAt: "2026-09-03T09:59:00.000Z",
+      },
+    });
+    const p = projection(stale);
+    // Control: unscoped, the stale error is the answer.
+    await expect(awaitTurnSettled("t", p.deps)).resolves.toMatchObject({
+      errorMessage: "old stream failed",
+    });
+
+    const wait = awaitTurnSettled("t", p.deps, {
+      after: { previousTurnId: null, requestedAt: T0 },
+      startTimeoutMs: 2_000,
+    });
+    await tick();
+    p.set(
+      fakeThread({
+        session: {
+          status: "error",
+          activeTurnId: null,
+          lastError: "new stream failed",
+          updatedAt: "2026-09-03T10:00:00.050Z",
+        },
+      }),
+    );
+    p.push(event("thread.session.updated"));
+    await expect(wait).resolves.toMatchObject({
+      state: "error",
+      errorMessage: "new stream failed",
+    });
+  });
+
+  it("answers after the grace even when the stream goes quiet after the lifecycle settled", async () => {
+    // The lifecycle landed, the `turn.settled` activity never did, and no further stream
+    // item arrives. The grace runs on a timer, not on the next item.
+    const p = projection(fakeThread({ latestTurn: { turnId: "turn-1", state: "completed" } }));
+    const outcome = await awaitTurnSettled("t", p.deps, { settlementGraceMs: 50 });
+    expect(outcome).toMatchObject({ turnId: "turn-1", state: "completed" });
+    expect(outcome.structuredOutput).toBeUndefined();
+  }, 2_000);
+
+  it("refuses a signal that is already aborted, before it subscribes", async () => {
+    const p = projection(fakeThread({}));
+    const subscribeThread = vi.fn(p.deps.subscribeThread);
+    const controller = new AbortController();
+    controller.abort();
+    await expect(
+      awaitTurnSettled("t", { ...p.deps, subscribeThread }, { signal: controller.signal }),
+    ).rejects.toThrow(/aborted/);
+    expect(subscribeThread).not.toHaveBeenCalled();
+  });
+
+  it("settles from one fresh read when the subscription ends or its socket closes", async () => {
+    // The sidecar drops the RPC socket after some stream failures. What the thread shows
+    // on a fresh read is still the answer: a settled turn, or a session that failed.
+    const failed = fakeThread({
+      session: { status: "error", activeTurnId: null, lastError: "stream failed", updatedAt: T0 },
+    });
+    const closed = projection(fakeThread({ latestTurn: { turnId: "turn-1", state: "running" } }));
+    const wait = awaitTurnSettled("t", closed.deps);
+    await tick();
+    closed.set(failed);
+    closed.end(new Error("SocketCloseError: 1006"));
+    await expect(wait).resolves.toMatchObject({ state: "error", errorMessage: "stream failed" });
+
+    const ended = projection(fakeThread({ latestTurn: { turnId: "turn-1", state: "running" } }));
+    const cleanly = awaitTurnSettled("t", ended.deps);
+    await tick();
+    ended.set(
+      fakeThread({
+        latestTurn: { turnId: "turn-1", state: "completed" },
+        activities: [settledActivity("turn-1", { structuredOutput: { done: true } })],
+      }),
+    );
+    ended.end();
+    await expect(cleanly).resolves.toMatchObject({
+      turnId: "turn-1",
+      structuredOutput: { done: true },
+    });
+
+    // Nothing settled on the fresh read: the wait fails and names the socket's reason.
+    const unsettled = projection(
+      fakeThread({ latestTurn: { turnId: "turn-1", state: "running" } }),
+    );
+    const still = awaitTurnSettled("t", unsettled.deps);
+    await tick();
+    unsettled.end(new Error("SocketCloseError: 1006"));
+    await expect(still).rejects.toThrow(/stream ended before the turn settled \(SocketCloseError/);
+  });
+
+  it("removes its abort listener once the turn has settled", async () => {
+    const p = projection(
+      fakeThread({
+        latestTurn: { turnId: "turn-1", state: "completed" },
+        activities: [settledActivity("turn-1", {})],
+      }),
+    );
+    const controller = new AbortController();
+    const added = vi.spyOn(controller.signal, "addEventListener");
+    const removed = vi.spyOn(controller.signal, "removeEventListener");
+    await awaitTurnSettled("t", p.deps, { signal: controller.signal });
+    expect(added).toHaveBeenCalledTimes(1);
+    expect(removed).toHaveBeenCalledWith("abort", added.mock.calls[0]?.[1]);
+  });
 });

@@ -122,7 +122,7 @@ their credentials.
 
 ## Outbound artifacts
 
-Everything staged is private working material. The orchestrator keeps each
+Everything staged is private working material. Rennet keeps each
 outbound document — the review text, the work order, the pull request
 description — drafted and redrafted as the review progresses, and the reviewer
 can save a direct edit to one drafted block, talk through a revision, or

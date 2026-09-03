@@ -66,6 +66,7 @@ import {
   generationIdForDispatch,
   generationIdForPatchset,
   type LaneLatest,
+  type LaneSeat,
   type LaneThreadRef,
   LENS_KINDS,
   type LensAbsenceReason,
@@ -129,7 +130,16 @@ type LaneState = LensLane extends infer Arm
 const sameThreadRef = (a: LaneThreadRef | undefined, b: LaneThreadRef): boolean =>
   a !== undefined && a.environmentId === b.environmentId && a.threadId === b.threadId;
 
-function createRegenerationLanes(emit: (lanes: readonly LensLane[]) => void) {
+export function createRegenerationLanes(
+  emit: (lanes: readonly LensLane[]) => void,
+  /**
+   * This lane has left `running` (review finding 7). The daemon's own subscription to that
+   * seat's thread exists to feed a running lane's live line, so it is dropped HERE rather
+   * than when the whole generation settles: the first lens to finish used to keep a socket
+   * and a one-second idle tick alive for as long as the slowest one ran.
+   */
+  onSettled?: (lens: LensKind) => void,
+) {
   const lanes = new Map<LensKind, LensLane>(
     LENS_KINDS.map((lens) => [lens, { id: lens, label: LENS_LANE_LABEL[lens], status: "queued" }]),
   );
@@ -139,14 +149,34 @@ function createRegenerationLanes(emit: (lanes: readonly LensLane[]) => void) {
   const set = (lens: LensKind, next: LaneState): void => {
     const current = lanes.get(lens);
     if (!current) return;
-    // The thread ref is lane IDENTITY, not lane state: it survives every transition so a
-    // settled or failed reader still opens its transcript.
+    // The thread ref and the seats are lane IDENTITY, not lane state: they survive every
+    // transition so a settled or failed reader still opens its transcripts. A seat's
+    // `latest` is state, though — only a running lane has something in flight — so it is
+    // dropped on every transition out of `running`, exactly as the lane's own is.
+    const seats =
+      current.seats === undefined
+        ? undefined
+        : next.status === "running"
+          ? current.seats
+          : current.seats.map((seat) => ({
+              seat: seat.seat,
+              provider: seat.provider,
+              ...(seat.thread === undefined ? {} : { thread: seat.thread }),
+            }));
     lanes.set(lens, {
       id: lens,
       label: LENS_LANE_LABEL[lens],
       ...(current.thread === undefined ? {} : { thread: current.thread }),
+      ...(seats === undefined ? {} : { seats }),
       ...next,
     });
+    if (next.status !== "running") onSettled?.(lens);
+  };
+  /** The lane a seat belongs to, or nothing for a seat with no lane (the report seat). */
+  const laneOf = (seat: string): { lens: LensKind; lane: LensLane } | undefined => {
+    const lens = laneForSeat(seat);
+    const lane = lens === undefined ? undefined : lanes.get(lens);
+    return lens === undefined || lane === undefined ? undefined : { lens, lane };
   };
   return {
     /** Re-emit the current lane snapshot unchanged. The coverage state rides the same
@@ -154,6 +184,10 @@ function createRegenerationLanes(emit: (lanes: readonly LensLane[]) => void) {
      *  than opening a second channel that could disagree with them. */
     refresh(): void {
       emit(snapshot());
+    },
+    /** This lane's current status, so a caller can tell a running lane from a settled one. */
+    statusOf(lens: LensKind): LensLane["status"] | undefined {
+      return lanes.get(lens)?.status;
     },
     /** The lens drafters are under way. Called when the round report lands (it gated the
      *  regeneration) AND at the pipeline's own lens kickoff, which fires on every run —
@@ -171,21 +205,49 @@ function createRegenerationLanes(emit: (lanes: readonly LensLane[]) => void) {
      * and kept on EVERY later state, so a settled lane still opens its transcript.
      * Silent on the wire: it re-emits the snapshot, nothing else moves.
      */
-    thread(lens: LensKind, thread: LaneThreadRef): void {
-      const current = lanes.get(lens);
-      if (!current || sameThreadRef(current.thread, thread)) return;
-      lanes.set(lens, { ...current, thread });
+    thread(seat: string, provider: LaneSeat["provider"], thread: LaneThreadRef): void {
+      const found = laneOf(seat);
+      if (!found) return;
+      const { lens, lane: current } = found;
+      // Addressed by SEAT, not by lane: Flagged runs a Claude seat and a Codex seat on
+      // the same lane, and the second to arrive must join the first, never replace it.
+      // Seats are held in arrival order; `seats[0]` is the primary the lane's own
+      // `thread`/`latest` mirror.
+      const seats = [...(current.seats ?? [])];
+      const index = seats.findIndex((entry) => entry.seat === seat);
+      const known = index >= 0 ? seats[index] : undefined;
+      if (known !== undefined && sameThreadRef(known.thread, thread)) return;
+      const entry: LaneSeat = { ...(known ?? { seat, provider }), thread };
+      if (known === undefined) seats.push(entry);
+      else seats[index] = entry;
+      const primary = seats[0];
+      lanes.set(lens, {
+        ...current,
+        seats,
+        ...(primary?.thread === undefined ? {} : { thread: primary.thread }),
+      });
       emit(snapshot());
     },
     /**
      * The newest thing this seat is doing, from its thread subscription. Only a RUNNING
      * lane has something in flight, so a publication for any other state is dropped —
      * which is also how a settled lane stops showing a line it can no longer refresh.
+     * The lane's own `latest` follows the PRIMARY seat only, so a two-seat lane's line
+     * never flips between speakers; the other seat's line lives on its seat entry.
      */
-    progress(lens: LensKind, latest: LaneLatest): void {
-      const current = lanes.get(lens);
-      if (current?.status !== "running") return;
-      lanes.set(lens, { ...current, latest });
+    progress(seat: string, latest: LaneLatest): void {
+      const found = laneOf(seat);
+      if (found?.lane.status !== "running") return;
+      const { lens, lane: current } = found;
+      const seats = (current.seats ?? []).map((entry) =>
+        entry.seat === seat ? { ...entry, latest } : entry,
+      );
+      const primary = seats.length === 0 || seats[0]?.seat === seat;
+      lanes.set(lens, {
+        ...current,
+        ...(seats.length === 0 ? {} : { seats }),
+        ...(primary ? { latest } : {}),
+      });
       emit(snapshot());
     },
     /** A lens board's draft landed. The lane reads `drafted`, NOT `done`: cross-lens
@@ -612,8 +674,11 @@ export interface RoundsRuntimeDeps {
   /** The locus-aware codex utility executor probe (null when no `codex` resolves). */
   readonly resolveCodexExecutor: (repoRoot: string) => Promise<CodexExecutor | null>;
   /**
-   * The T3 sidecar's seat runtime for one generation (t3-lens-threads). `null` ⇒ this
-   * daemon has no sidecar, and the board seats fall back to the ephemeral legs.
+   * The T3 sidecar's seat runtime for one generation (t3-lens-threads). Every board seat
+   * runs on it — T3 is their only backend — so a daemon that cannot bring the sidecar up
+   * answers `{ unavailable: <detail> }` and the lanes FAIL with that reason. The dep being
+   * absent altogether is the direct-call shape (no sidecar was ever composed), which keeps
+   * the ephemeral legs; there is no path from a sidecar failure to one.
    */
   readonly resolveT3Seats?: (input: {
     readonly repoRoot: string;
@@ -621,7 +686,7 @@ export interface RoundsRuntimeDeps {
     readonly branch: string;
     /** The session that owns the generation, so archiving it can delete these threads. */
     readonly sessionId: string;
-  }) => Promise<T3SeatRuntime | null>;
+  }) => Promise<T3SeatRuntime | { readonly unavailable: string }>;
   /** B04's boards runtime for a repo — the sole board-op writer (`WhiteboardClient`
    *  over its `service`) and the board minter (`createRennetBoard`). */
   readonly boardsRuntimeFor: (
@@ -1082,17 +1147,41 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
       deps.resolveClaudePort(input.repoRoot),
       deps.resolveCodexExecutor(input.repoRoot),
     ]);
-    // t3-lens-threads — the sidecar's seat runtime for THIS generation. Absent (no
-    // vendored bundle, or a direct-call test) leaves the ephemeral legs in place.
-    const t3Runtime = await deps
+    // t3-lens-threads — the sidecar's seat runtime for THIS generation. A resolver that
+    // rejects is the same answer as one that says `unavailable`: the daemon has a sidecar
+    // and could not bring it up, so the board seats FAIL with the reason rather than
+    // dropping to the ephemeral legs (review finding 1). Only a caller with no resolver at
+    // all — a direct-call test — leaves those legs in place.
+    const t3Resolved = await deps
       .resolveT3Seats?.({
         repoRoot: input.draftingRoot ?? input.repoRoot,
         generationId: attemptGeneration.id,
-        branch: input.deltaPacket.patchset.repository.baseRef,
+        // The branch the seat is READING, which titles its thread in the sidecar
+        // ("feat/x — Design"). The SESSION'S CLAIM is what names it: the delta packet's
+        // repository projection carries `baseRef` alone — the resolved default-branch ref
+        // the change is measured against — so titling from it made every thread of every
+        // review read "origin/main — Design" (review finding 6). A session that claimed no
+        // target has no branch to name, and the base ref is the honest fallback.
+        branch: input.session.claim?.branch ?? input.deltaPacket.patchset.repository.baseRef,
         sessionId: input.session.id,
       })
-      .catch(() => null);
+      .catch((error: unknown) => ({
+        unavailable: error instanceof Error ? error.message : String(error),
+      }));
+    const t3Runtime = t3Resolved !== undefined && "seam" in t3Resolved ? t3Resolved : undefined;
+    const t3Unavailable =
+      t3Resolved !== undefined && "unavailable" in t3Resolved ? t3Resolved.unavailable : undefined;
     const seatWatches: { readonly stop: () => void }[] = [];
+    // Per LENS, because the subscription is dropped when that lane settles rather than when
+    // the generation does (review finding 7). A list per lens, not one entry: Flagged runs
+    // two seats on two providers, and both belong to the one lane.
+    const seatWatchesByLens = new Map<LensKind, { readonly stop: () => void }[]>();
+    const stopSeatWatches = (lens: LensKind): void => {
+      const held = seatWatchesByLens.get(lens);
+      if (held === undefined) return;
+      seatWatchesByLens.delete(lens);
+      for (const watch of held) watch.stop();
+    };
     const watchedThreads = new Set<string>();
     const composeTurn = deps.composeTurn?.(input.repoRoot);
     const persistBoardMeta = deps.persistBoardMeta;
@@ -1185,7 +1274,7 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
               // Spend rides the same frame for the same reason (#737).
               ...usageSoFar(),
             });
-          });
+          }, stopSeatWatches);
     // Time-to-first-core-board is measured from the moment the REVIEWER's wait began, which
     // the caller holds and this runtime does not: the captured input becoming ready on an
     // initial generation, the round landing and its report verifying on a returned one.
@@ -1264,23 +1353,34 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
     // wiring. A seat's thread reference reaches its lane the moment the thread exists,
     // and the subscription that feeds the lane's live line starts with it.
     const t3Seam: T3SeatSeam | undefined =
-      t3Runtime === null || t3Runtime === undefined
+      t3Runtime === undefined
         ? undefined
         : {
             client: t3Runtime.seam.client,
             threadFor: t3Runtime.seam.threadFor,
-            onThread: (seat, thread) => {
+            onThread: (seat, thread, provider) => {
               const lens = laneForSeat(seat);
               if (lens === undefined || lanes === undefined) return;
-              lanes.thread(lens, {
+              // By SEAT: the two Flagged seats share a lane and must not overwrite each
+              // other's thread or line.
+              lanes.thread(seat, provider, {
                 environmentId: t3Runtime.environmentId,
                 threadId: thread.threadId,
               });
               if (watchedThreads.has(thread.threadId)) return;
               watchedThreads.add(thread.threadId);
-              seatWatches.push(
-                t3Runtime.watch(thread.threadId, (latest) => lanes.progress(lens, latest)),
+              const watch = t3Runtime.watch(thread.threadId, (latest) =>
+                lanes.progress(seat, latest),
               );
+              seatWatches.push(watch);
+              // A seat whose lane has ALREADY settled gets no watch at all: a repair that
+              // rebinds after the fact would otherwise open a socket nothing reads.
+              const settled = lanes.statusOf(lens);
+              if (settled !== undefined && settled !== "running" && settled !== "queued") {
+                watch.stop();
+                return;
+              }
+              seatWatchesByLens.set(lens, [...(seatWatchesByLens.get(lens) ?? []), watch]);
             },
           };
 
@@ -1288,6 +1388,7 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
       claudePort,
       codexExecutor,
       ...(t3Seam === undefined ? {} : { t3: t3Seam }),
+      ...(t3Unavailable === undefined ? {} : { t3Unavailable }),
       repoRoot: input.draftingRoot ?? input.repoRoot,
       deltaPacket: input.deltaPacket,
       currentGeneration: attemptGeneration.id,
@@ -1435,10 +1536,12 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
       );
       throw error;
     } finally {
-      // Every seat has settled: the live lines are over, so the sockets that fed them go
-      // with them. Held open they would keep publishing into lanes nothing reads (2.3).
+      // The backstop. Each lane already dropped its own subscription as it settled (review
+      // finding 7); this catches a seat whose lane never reached a settled state at all —
+      // an abort, a throw before the pipeline published anything. `stop` is idempotent.
       for (const watch of seatWatches) watch.stop();
       seatWatches.length = 0;
+      seatWatchesByLens.clear();
     }
     // A drafter that produced no board settles its lane as failed. Without this the lane
     // sits at `queued`/`running` after the round is over — the surface reads "still

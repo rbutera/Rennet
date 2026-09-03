@@ -117,11 +117,15 @@ The slot's other caller is **the bench** — the review workspace's first frame 
 capture and the first board generation run (`packages/app-ui/src/app/preparation-bench.tsx`,
 mounted by `SessionScreen` in the session outlet, so the sidebar, top bar and chat slot
 stay around it). The bench draws the change as its centrepiece with one reader per lens,
-each showing that seat's `latest` line from `SessionPreparation` — the daemon's plain-words
-projection of the seat's newest thread activity — and capture as the first beat of the same
-scene rather than a separate screen. Each reader is a control: activating one writes the
-lane's `thread` (`{ environmentId, threadId }`) through `uiActions.openLensThread` and
-opens the dock, and the slot renders that transcript read-only (below). A lane with no
+each showing its seats' `latest` lines from `SessionPreparation` — the daemon's plain-words
+projection of each seat's newest thread activity — and capture as the first beat of the same
+scene rather than a separate screen. Each seat's line is a control: activating one writes
+that seat's `thread` (`{ environmentId, threadId }`) through `uiActions.openLensThread` and
+opens the dock, and the slot renders that transcript read-only (below). As a lane settles
+(`drafted`/`done`) its board opens on the bench beneath the readers through
+`LensBoardDocument`, read off the same per-lens `board.read` seam the workspace uses
+(`useLensBoardResolutions` at the initial generation), so three settled lanes and two
+running ones show three boards and two live readers. A lane with no
 `thread` yet is disabled rather than offered as a transcript that does not exist.
 
 The mount's environment registration persists in each host's IndexedDB under T3's
@@ -147,8 +151,9 @@ bottom instead of reserving a gap. No vendored file is edited and there is no
 gate either: it hides a composer that would otherwise start a turn on a seat's thread,
 which is confusing rather than dangerous.
 
-The workspace opens one by writing the lane's thread ref into the store
-(`uiActions.openLensThread(ref)`); `T3ChatDock` then renders `T3ThreadView` for it with a
+The workspace opens one by writing a seat's thread ref into the store
+(`uiActions.openLensThread(ref)`) — on the bench every seat's line of speech is its own
+control, so Flagged offers two, one per provider; `T3ChatDock` then renders `T3ThreadView` for it with a
 "Back to the session" control that clears it. The transcript keeps streaming while the
 seat runs — that is upstream's thread subscription, nothing Rennet drives — and stays
 readable after the seat settles and after the boards reveal.
@@ -193,11 +198,26 @@ Three things follow from the thread being persistent.
   `V2TurnStartParams.outputSchema`, but its runtime does not surface a settled turn's
   structured result, so the daemon parses the board out of the Codex seat's final message
   — for that provider only.
-- **Spend is per turn, and it is a delta.** Claude's SDK reports usage cumulatively over a
-  streaming session's turns, so the seat leg records each turn's own usage as the
-  difference against the previous turn's total. One `TurnMetric` per turn reaches the
-  generation's collector, labelled `board.<jobId>`, and a repair therefore never bills the
+- **Spend is per turn, and it is a delta read off the thread.** Claude's SDK reports usage
+  cumulatively over a streaming session's turns, so the seat leg records each turn's own
+  usage as the difference against the previous settled turn's total — which
+  `waitForTurnSettled` reads from the thread's own earlier `turn.settled` activity, so a
+  runner recreated for the thread (a whole-board restart) or a daemon restarted under it
+  subtracts the same as one that watched every turn. A total below the previous one means
+  the session restarted and its counter began again, and the whole figure is the turn's.
+  Codex reports nothing on its settlement: its tokens ride T3's `context-window.updated`
+  snapshot for the turn, which is the last request's own figures (a turn with several
+  tool round-trips under-reports until T3 projects the running total's breakdown). One
+  `TurnMetric` per turn reaches the generation's collector, labelled `board.<jobId>`, with
+  the provider's own duration when it reported one; a repair therefore never bills the
   drafting turn twice.
+- **A cancelled seat stops the model.** An abort reaches the sidecar as
+  `thread.turn.interrupt`, and the seat leg then waits a bounded moment for the interrupted
+  settlement so the usage that turn had already billed is recorded rather than booked as
+  zero. Each wait is scoped to the start it belongs to: `startTurn` returns what the thread
+  showed before dispatch, and the wait ignores that earlier turn's settlement and any
+  session error recorded before the request, because T3 only flips `latestTurn` to running
+  once the provider reports the new turn.
 
 Because the SDK fixes `outputFormat` when a query is constructed and offers no in-session
 setter, a *live* session's contract is decided by the turn that started it. A later turn
@@ -209,17 +229,34 @@ path a seat takes when its first turn killed the provider.
 
 The seam is two functions. `packages/adapters/src/t3-seat-turn.ts` builds the seat's
 `runTurn` and knows nothing about `effect`; `create-server.ts` fills it from the
-supervisor. A daemon with no vendored bundle resolves no seat runtime and the board seats
-fall back to the ephemeral Claude/Codex legs unchanged.
+supervisor.
 
-**Archiving a session is how threads are pruned.** Transcripts are the product while a
-review is live, so nothing expires on a timer; `session.archive` is the act that ends
-them. After the archive persists, the daemon deletes the session's own thread and every
-seat thread its generations left behind (`thread.delete` over RPC) and drops those
-bindings. Un-archiving restores nothing — the next use creates fresh threads. A sidecar
-that is off still leaves the bindings dropped, because a binding pointing at a thread
-nobody can reach is worse than none, and a thread the sidecar no longer has does not fail
-the archive. The sweep is keyed on the session and review ids rather than on a repository
+**T3 is a board seat's only backend.** A daemon that cannot bring the sidecar up — no
+vendored bundle, a spawn failure — answers with the reason instead of a runtime, and every
+board seat of that generation fails as `T3 sidecar unavailable: <detail>`, which the bench
+speaks in the failed reader's own voice. There is no fallback to the ephemeral
+Claude/Codex legs: those still run every non-board job (the project scout, the repo map,
+the delta digest), but a lens drafted on one would have no thread, no transcript, no live
+line and no same-thread repair, and nothing on screen would say so.
+
+**Archiving a session is how threads are pruned, and it is a deletion boundary.** Transcripts
+are the product while a review is live, so nothing expires on a timer; `session.archive` is
+the act that ends them. Archiving first ABORTS AND AWAITS the session's own preparation —
+anything still able to bind a thread has to be finished before the sweep, or a seat mid-flight
+binds a fresh thread behind it and the archive leaves exactly the orphan it exists to prevent.
+Then, once the archive has persisted, one serialized sweep deletes the session's own thread
+and every seat thread its generations left behind (`thread.delete` over RPC) and drops those
+bindings. Un-archiving restores nothing — the next use creates fresh threads.
+
+A sidecar that is off still leaves the bindings dropped, because a binding pointing at a
+thread nobody can reach is worse than none, and neither an off sidecar nor a thread it no
+longer has may fail the archive. The handle is not thrown away with the binding, though: a
+thread whose delete failed moves to `pendingDeletions` in the same bindings file — out of the
+live bindings, so an un-archived session still gets a fresh thread — and is retried on the
+next sweep or the next successful `ensure`, up to five attempts, after which a thread the
+sidecar genuinely lost stops pinning the list.
+
+The sweep is keyed on the session and review ids rather than on a repository
 root: a session's own thread is bound under the review id at the review's checkout, while
 its seat threads are bound under the session id at the drafting worktree, so a root-scoped
 sweep would leave every seat thread behind. Seat rows written before the owner field
@@ -254,15 +291,35 @@ A tool call in flight becomes plain words naming what it is acting on — `readi
 src/foo.ts`, `running git diff --stat`, `editing a.ts`, `searching createSession` — a tool
 with no plain word for it keeps T3's own summary rather than being given an invented verb,
 and assistant prose becomes its last sentence. Every line is capped at 120 characters with
-an honest `…`. When nothing new has arrived for twenty seconds the line becomes `idle` and
-says how long it has been quiet, rather than freezing on a stale one.
+an honest `…`.
+
+A tool call is only "in flight" until it finishes. T3 emits started, updated and completed
+tool activities with the same `tool` tone, so the projector reads the lifecycle — the
+activity's `kind` and the runtime's item status — and a completed, failed or denied call
+falls back to whatever the seat is saying instead of freezing the lane on a read that is
+over. When nothing new has arrived for twenty seconds the line becomes `idle` and says how
+long it has been quiet, counted in ten-second steps: the lane's line is republished by
+re-sending the whole preparation snapshot, and a one-second counter would push five
+snapshots a second to change one digit.
 
 `t3/seat-progress.ts` holds the subscription. Thread events do not carry the whole
 projection, so a re-read is an RPC and is throttled to at most four publications a second
-per lane; the idle tick re-projects the last snapshot against a fresh clock and costs no
-RPC at all. The lane carries its `thread` reference from the moment the thread exists and
-keeps it through every later state, so a settled or failed reader still opens its
-transcript. The subscription is dropped when the generation settles.
+per lane. The throttle is TRAILING: events inside a busy window are deferred to one read at
+the end of it, never dropped, so the last thing a seat did before going quiet is what the
+lane shows. The read throttle keeps its own clock, separate from the publish one — a
+re-read that produces an unchanged line publishes nothing, and keying the read on the
+publish time made a run of identical events re-read the thread on every one of them. The
+idle tick re-projects the last snapshot against a fresh clock and costs no RPC at all.
+
+A lane holds one entry per seat (`LensLane.seats`: seat id, provider, thread, latest
+line), addressed by seat id, because Flagged runs a Claude seat and a Codex seat on one
+lane and each has its own transcript and its own line. The lane's top-level `thread` and
+`latest` mirror the first seat to register (`seats[0]`) so pre-seats readers keep working
+for one release. A seat's thread is recorded from the moment it exists and kept through
+every later state, so a settled or failed reader still opens its transcripts. The
+subscription is dropped when THAT LANE settles — not when the generation does, so the
+seats that finish first stop costing a socket and an idle tick while the slowest lens
+runs on.
 
 ## The handoff exit
 

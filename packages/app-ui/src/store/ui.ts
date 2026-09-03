@@ -64,9 +64,19 @@ export interface UiState {
    * The lens seat transcript the chat slot is showing instead of the review's own thread
    * (t3-lens-threads 3.4). Client state: which reader the reviewer opened, not something
    * the daemon knows. `null` ⇒ the slot is back on the session's thread. The ref carries
-   * BOTH ids because a thread is addressed by (environment, thread), never by the lane.
+   * BOTH thread ids because a thread is addressed by (environment, thread), never by the
+   * lane — and the REVIEW it belongs to, because this slice is global while the dock is
+   * mounted once for whatever review the route names. Without that, navigating to another
+   * session rendered the new session's header around the previous session's transcript
+   * (review finding 4). A ref for another review is not this dock's, and it is cleared.
    */
-  readonly lensThread: LaneThreadRef | null;
+  readonly lensThread: LensThreadRef | null;
+}
+
+/** A lens transcript, and the review whose bench opened it. */
+export interface LensThreadRef {
+  readonly reviewId: string;
+  readonly thread: LaneThreadRef;
 }
 
 /** Retained background lines per project. A long swarm narrates one line per partition. */
@@ -96,7 +106,7 @@ export interface UiSlice {
     /** Retain one background narration line for `projectId`. */
     appendBackgroundEvent(projectId: string, event: ProjectProcessEvent): void;
     /** Show a lens seat's transcript in the chat slot; `null` returns to the session. */
-    openLensThread(thread: LaneThreadRef | null): void;
+    openLensThread(ref: LensThreadRef | null): void;
   };
 }
 
@@ -181,7 +191,7 @@ export const createUiSlice: StateCreator<RennetState, [], [], UiSlice> = (set) =
           ui: { ...s.ui, backgroundEvents: { ...s.ui.backgroundEvents, [projectId]: next } },
         };
       }),
-    openLensThread: (thread) => set((s) => ({ ui: { ...s.ui, lensThread: thread } })),
+    openLensThread: (ref) => set((s) => ({ ui: { ...s.ui, lensThread: ref } })),
   },
 });
 

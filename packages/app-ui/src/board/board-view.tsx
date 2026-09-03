@@ -6,7 +6,7 @@ import type {
   SourceRef,
 } from "@rennet/protocol";
 import { cn } from "@rennet/ui";
-import { useEffect, useMemo } from "react";
+import { type RefCallback, useEffect, useMemo } from "react";
 import { useCoachAnchor } from "../coach/registry";
 import { useRefreshCommand } from "../data";
 import { ProseSelectionLayer, ReviewAnchoredAskProvider, RichText } from "../review";
@@ -170,41 +170,12 @@ export function LensBoardView({
       </div>
 
       {board ? (
-        <ReviewAnchoredAskProvider reviewId={reviewId}>
-          <BoardElementsProvider
-            elements={board.elements}
-            reviewId={reviewId}
-            generation={board.generation}
-            boardId={board.boardId}
-          >
-            <ProseSelectionLayer>
-              {/* Key the document subtree by boardId (finding 5): gen0/gen1 reuse section
-                refs (change/design/tasks), so without a board-identity key switching
-                generation would keep the prior board's per-section fold `useState`.
-                Remounting on boardId resets fold state to the new board's foldAll. */}
-              <article
-                key={board.boardId}
-                ref={highlightRef}
-                data-lens={board.lens}
-                data-generation={board.generation}
-                className="flex flex-col"
-              >
-                <BoardHeader board={board} />
-                {board.lens === "design" ? <DesignCapabilityGrid board={board} /> : null}
-                <div className="flex flex-col gap-8">
-                  {board.sections.map((entry) => (
-                    <Section
-                      key={entry.ref}
-                      entry={entry}
-                      lens={board.lens}
-                      defaultOpen={forceOpen}
-                    />
-                  ))}
-                </div>
-              </article>
-            </ProseSelectionLayer>
-          </BoardElementsProvider>
-        </ReviewAnchoredAskProvider>
+        <LensBoardDocument
+          reviewId={reviewId}
+          board={board}
+          forceOpen={forceOpen}
+          anchorRef={highlightRef}
+        />
       ) : shown.status === "invalid" ? (
         <div data-kind="board-error" data-reason={shown.reason} className="text-danger text-sm">
           <p className="font-medium">This board could not be read.</p>
@@ -248,6 +219,61 @@ export function LensBoardView({
         </p>
       )}
     </main>
+  );
+}
+
+/**
+ * One resolved board as a document: the ask provider, the element pool and the selection
+ * layer around the article. The workspace's `LensBoardView` renders it for the selected
+ * lens; the bench renders one per lens that has settled while the others still draft, so
+ * a board is readable the moment it lands (t3-lens-threads: "boards replace their presence
+ * as they settle"). Both read through the same `board.read` seam.
+ */
+export function LensBoardDocument({
+  reviewId,
+  board,
+  forceOpen,
+  anchorRef,
+}: {
+  readonly reviewId: string;
+  readonly board: LensBoard;
+  /** Force every section open (the Flagged default, R44); undefined keeps each section's own. */
+  readonly forceOpen?: boolean;
+  /** The coach anchor for the document — the workspace's alone, since an anchor id
+   *  registers once and the bench can show several documents at a time. */
+  readonly anchorRef?: RefCallback<Element>;
+}) {
+  return (
+    <ReviewAnchoredAskProvider reviewId={reviewId}>
+      <BoardElementsProvider
+        elements={board.elements}
+        reviewId={reviewId}
+        generation={board.generation}
+        boardId={board.boardId}
+      >
+        <ProseSelectionLayer>
+          {/* Key the document subtree by boardId (finding 5): gen0/gen1 reuse section
+            refs (change/design/tasks), so without a board-identity key switching
+            generation would keep the prior board's per-section fold `useState`.
+            Remounting on boardId resets fold state to the new board's foldAll. */}
+          <article
+            key={board.boardId}
+            ref={anchorRef}
+            data-lens={board.lens}
+            data-generation={board.generation}
+            className="flex flex-col"
+          >
+            <BoardHeader board={board} />
+            {board.lens === "design" ? <DesignCapabilityGrid board={board} /> : null}
+            <div className="flex flex-col gap-8">
+              {board.sections.map((entry) => (
+                <Section key={entry.ref} entry={entry} lens={board.lens} defaultOpen={forceOpen} />
+              ))}
+            </div>
+          </article>
+        </ProseSelectionLayer>
+      </BoardElementsProvider>
+    </ReviewAnchoredAskProvider>
   );
 }
 

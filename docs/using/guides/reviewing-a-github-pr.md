@@ -86,10 +86,9 @@ produced it:
   numbers, so the ask carries a real diff position.
 - **A span of board prose** — highlight it and choose **Comment** or **Request
   Changes**; the quoted span becomes the ask's provenance.
-- **A conclusion you reached in chat** — explicitly ask the orchestrator to stage
-  it and Rennet records the completed action and receipt, or stage it yourself
-  from the board, the line, or the span it belongs to. A suggested action is not
-  silently staged.
+- **A conclusion you reached in chat** — stage it from the board, the line, or the
+  span it belongs to. Chat never stages on your behalf, and a suggested action is
+  not silently staged.
 
 Each finding keeps its controls together. **Request This Change** stages its
 proposed fix. **Dismiss** removes it from the open set, and **Undo** restores the

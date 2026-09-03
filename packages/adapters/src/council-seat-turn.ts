@@ -322,6 +322,16 @@ export interface CouncilSeatDeps {
     readonly seat: string;
     readonly seam: T3SeatSeam;
   };
+  /**
+   * Why the daemon has NO seam to give (t3-lens-threads, review finding 1). T3 is the only
+   * backend a board seat has — Rai's ruling — so a daemon that tried to bring the sidecar
+   * up and could not says so here, and every board job fails with this reason instead of
+   * silently taking an ephemeral leg that loses the thread, the transcript, the live line
+   * and the same-thread repair. Absent AND no seam ⇒ nobody ever composed a sidecar (a
+   * direct-call test, the scout's own deps), which is not a fallback: it is a caller that
+   * has no board pipeline behind it.
+   */
+  readonly t3Unavailable?: string;
 }
 
 // Board-pipeline jobs run one-shot on their inlined prompt and native
@@ -366,6 +376,14 @@ export function councilSeatTurn(
   // A board job with the sidecar seam present runs on its own persistent thread, on
   // whichever provider the council routed. Both providers are T3 instances there, so the
   // harness availability the council already checked is the same check.
+  //
+  // And when the daemon HAS a sidecar but could not bring it up, the board seat fails with
+  // that reason rather than dropping to the ephemeral legs: T3 is the only backend a board
+  // seat has, so a fallback here would run the lens without its thread, its transcript, its
+  // live line or its same-thread repair, and say nothing about it.
+  if (isBoardJob(jobId) && deps.t3 === undefined && deps.t3Unavailable !== undefined) {
+    return { failure: `T3 sidecar unavailable: ${deps.t3Unavailable}` };
+  }
   if (deps.t3 !== undefined && isBoardJob(jobId)) {
     const provider = resolution.harness === "codex" ? "codex" : "claudeAgent";
     return {

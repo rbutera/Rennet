@@ -91,6 +91,51 @@ describe("councilSeatTurn — the Claude branch", () => {
     });
     expect(state.closed).toBe(true);
   });
+
+  // Review finding 1: T3 is a board seat's only backend. A daemon that composed a sidecar
+  // and could not bring it up says so; the seat must NOT quietly become an ephemeral one.
+  it("fails a board job with the sidecar's reason instead of taking the ephemeral leg", () => {
+    const state: FakeState = { closed: false };
+    const seat = councilSeatTurn(
+      "lens-draft",
+      { type: "object" },
+      {
+        claudePort: fakePort([], state),
+        repoRoot: "/repo",
+        t3Unavailable: "sidecar exited (code 1, signal null)",
+      },
+      { availability: { installed: ["claude-code" as const] } },
+    );
+    expect("failure" in seat ? seat.failure : null).toBe(
+      "T3 sidecar unavailable: sidecar exited (code 1, signal null)",
+    );
+    // No session was ever opened — resolution failed before any harness was touched.
+    expect(state.spec).toBeUndefined();
+  });
+
+  it("leaves a NON-board job on the ephemeral leg when the sidecar is unavailable", async () => {
+    // The utility turns (scout, repo map, delta digest) never ran on a thread, so a
+    // sidecar failure is not their failure. Positive control for the test above: same
+    // deps, same `t3Unavailable`, and this one still resolves and runs.
+    const state: FakeState = { closed: false };
+    const seat = councilSeatTurn(
+      "project-scout",
+      { type: "object" },
+      {
+        claudePort: fakePort(
+          [endedEvent({ status: "completed", finalText: "{}", structuredOutput: {} })],
+          state,
+        ),
+        repoRoot: "/repo",
+        t3Unavailable: "sidecar exited (code 1, signal null)",
+      },
+      { availability: { installed: ["claude-code" as const] } },
+    );
+    expect("failure" in seat ? seat.failure : null).toBeNull();
+    if ("failure" in seat) return;
+    expect((await seat.runTurn("scout", 1)).status).toBe("emitted");
+    expect(state.spec?.cwd).toBe("/repo");
+  });
 });
 
 describe("createCodexSwarmTurn records usage (#737)", () => {

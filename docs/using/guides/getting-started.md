@@ -127,8 +127,8 @@ about your own installed CLI, and updating it clears the notice.
 
 ## Start a session
 
-A **session** is one conversation with the orchestrator and everything hanging
-off it. It claims exactly one **review target**: your branch, your PR, or a
+A **session** is one conversation — its own thread in the chat panel — and
+everything hanging off it. It claims exactly one **review target**: your branch, your PR, or a
 teammate PR.
 
 **New Chat** in the sidebar (`⌘N`) opens a searchable project picker. Choosing a
@@ -155,13 +155,17 @@ is lit only while that seat is actually working, and a line of what it is doing
 right now, read straight off that seat's own thread — the file it is reading,
 the command it is running, or the last thing it said. A seat that has gone quiet
 says so instead of freezing on its last line. A settled reader turns green and
-shows what its board came back with; a failed reader turns red and speaks the
-reason it failed, rather than spinning forever.
+its board opens on the bench right beneath the readers, readable at once while
+the other seats keep working — you do not wait for the slowest lens to read the
+fastest one's board. A failed reader turns red and speaks the reason it failed,
+rather than spinning forever.
 
-Every reader is also a control: activating one opens that seat's full transcript
-in the chat slot, read-only, and it keeps streaming while the seat runs. A
-reader whose seat has not opened a thread yet is inert rather than pretending to
-have one.
+Every reader's line is also a control: activating it opens that seat's full
+transcript in the chat slot, read-only, and it keeps streaming while the seat
+runs. Flagged has two seats, one on Claude and one on Codex, so it speaks two
+lines, each under its speaker's name, and each opens its own transcript. A line
+whose seat has not opened a thread yet is inert rather than pretending to have
+one.
 
 You can leave the bench without stopping the work, or cancel and retry it in
 place. A failed capture or board generation keeps the session and names the
@@ -292,8 +296,8 @@ Three routes, one result.
 **Comment**, **Request Changes**, and **Explain**. Comment opens a small editor
 quoting the span; `⌘`/`Ctrl` + Enter saves. The quoted text keeps a durable
 highlight afterwards — click it to reopen the thread, read the replies, and add
-a follow-up. Explain asks the orchestrator a question; it is not review content
-and never counts toward an exit.
+a follow-up. Explain asks the session's chat thread a question; it is not review
+content and never counts toward an exit.
 
 **Comment on a line.** Hovering a line of code turns its line number into a
 `+`. Click it for an editor offering **Save**, **Request Changes**, and

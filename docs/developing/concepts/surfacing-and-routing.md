@@ -156,7 +156,7 @@ review behavior.
 ## Command routing reads one registry
 
 The review path above surfaces model output. A second kind of routing decides
-which command runs when a client, the ⌘K menu, or the orchestrator asks for one.
+which command runs when a client or the ⌘K menu asks for one.
 That routing reads a single table: the command registry in
 `packages/protocol/src/commands/index.ts`. Every row is keyed by a stable command
 id and carries the id's argument schema, output schema, label, and an `exposure`
@@ -177,17 +177,18 @@ flowchart LR
   tools -.->|exposure.agent — no mount today| turn["(unmounted)\nserver/agent-tools.ts"]
 ```
 
-The orchestrator turn that mounted these tools is retired. A session's conversation is
-its T3 Code thread, and Rennet does not expose `app_*` tools to it yet, so
-`exposure.agent` currently gates a surface with no mount. `buildAppTools` and its
+**Nothing mounts these tools today.** A session's conversation is its
+[T3 Code thread](./t3code-sidecar.md), and Rennet does not expose `app_*` tools to a
+T3 thread, so `exposure.agent` gates a surface with no mount. `buildAppTools` and its
 registry contract stay — re-mounting them as an MCP server on T3 threads is its own
-change. What follows describes that contract, not a live path. Both paths answer from the review's
-diff and repository and receive the current `app_*` projection as in-process tools.
-The projection is rebuilt for every turn, so removing `exposure.agent` from a
-registry row removes the tool from the next turn without a second allow-list. When
-the reviewer asks the orchestrator to act in Rennet, it calls the matching tool once
-and receives the command's durable result or undo receipt; that observed result is
-what the transcript reports.
+change. What follows describes that contract, not a live path.
+
+A mounted turn would receive the current `app_*` projection as in-process tools,
+rebuilt for every turn, so removing `exposure.agent` from a registry row would remove
+the tool from the next turn without a second allow-list. A turn asked to act in Rennet
+would call the matching tool once and receive the command's durable result or undo
+receipt, and that observed result — never the model's account of it — would be what
+the transcript reports.
 
 **Dispatch map.** `packages/server/src/dispatch/` binds a
 `Map<commandId, handler>` from the registry, one module per command family
@@ -201,7 +202,7 @@ keys against the registry's command ids and asserts the two sets diff empty — 
 map serves every command the switch did. An unregistered id fails exactly as the
 switch's `default` did; there is no new gate on the path.
 
-**Agent tools.** `packages/server/src/agent-tools.ts` derives the orchestrator's
+**Agent tools.** `packages/server/src/agent-tools.ts` derives the
 `app_*` in-process SDK tools by iterating the registry for rows where
 `exposure.agent` is true. One row yields one tool: name `app_<id>` (dots
 flattened to underscores), args schema and description from the row, and a `run`

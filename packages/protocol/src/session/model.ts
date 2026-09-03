@@ -1958,7 +1958,25 @@ export const LaneLatestSchema = z.object({
 });
 export type LaneLatest = z.infer<typeof LaneLatestSchema>;
 
-const lensLaneBase = { ...laneBase, thread: LaneThreadRefSchema.optional() };
+/**
+ * One SEAT on a lane. Most lanes run one; Flagged runs two (a Claude seat and a Codex
+ * seat, reconciled into one board), and each has its own thread and its own live line.
+ * A lane's top-level `thread`/`latest` mirror `seats[0]` (the PRIMARY seat) so readers
+ * of the single-seat shape keep working for one release; new readers read `seats`.
+ */
+export const LaneSeatSchema = z.object({
+  seat: z.string(),
+  provider: z.enum(["claudeAgent", "codex"]),
+  thread: LaneThreadRefSchema.optional(),
+  latest: LaneLatestSchema.optional(),
+});
+export type LaneSeat = z.infer<typeof LaneSeatSchema>;
+
+const lensLaneBase = {
+  ...laneBase,
+  thread: LaneThreadRefSchema.optional(),
+  seats: z.array(LaneSeatSchema).optional(),
+};
 
 /**
  * One lens drafter's lane in the regeneration block. Same discipline as {@link
