@@ -8,15 +8,11 @@ import type {
   T3SeatSeam,
   WhiteboardClient,
 } from "@rennet/adapters";
-import { councilSeatTurn, createCoverageTurn, fitDesignArtifactsToBytes } from "@rennet/adapters";
+import { councilSeatTurn, fitDesignArtifactsToBytes } from "@rennet/adapters";
 import {
-  assertCoverage,
   type CodexExecutor,
-  type CoverageHunkInput,
-  type CoverageRequirementInput,
   carriedElementIds,
   composeFindingRound,
-  createInvocationBudget,
   DEFAULT_SEAT_LABELS,
   type DeltaPacket,
   type DesignTaskProgressSource,
@@ -29,9 +25,7 @@ import {
   HOST_COMPOSER_AUTHOR_ID,
   HOST_ROUND_HISTORY_PREFIX,
   isCarriedForward,
-  isScaffoldPath,
   type LintContext,
-  type LintHunk,
   type LintTarget,
   lint,
   lintReviewDraft,
@@ -40,7 +34,6 @@ import {
   parseDesignSourceObligations,
   type RegisterLintContext,
   reconcileFindingsWithProvenance,
-  runCoverageMapping,
   stampDeltas,
   validateDraft,
 } from "@rennet/core";
@@ -68,7 +61,6 @@ import {
   type FindingAgreement,
   type FindingDisposition,
   type FindingElement,
-  type GenerationCoverage,
   type GenerationPhaseTiming,
   generationIdForPatchset,
   LENS_ADMISSIBLE_ABSENCES,
@@ -126,9 +118,9 @@ import {
  *   - postProcess (validate.ts seam, identity by default) stays unused here.
  *     A second model turn to rewrite an already-valid board doubles the common
  *     path without adding source facts; deterministic validation owns cleanup.
- *   - compositionGate (validate.ts per-board seam) STAYS no-op; the cross-lens
- *     `assertCoverage(boards, hunks)` (cluster 4) runs ONCE over the frozen board
- *     set here, after every lens freezes — never per board.
+ *   - There is no cross-lens coverage gate (session-bound-workspace D5): a board cites
+ *     what it read, lint resolves each citation against the changed regions, and
+ *     nothing accounts for the regions a board did not cite.
  */
 
 // ── The board output schema (the host schema the drafter's session is constrained to) ──
@@ -584,20 +576,6 @@ function accordOf(agreement: FindingAgreement): FindingAccord {
   return agreement.answers.some((ans) => ans.answer === NO_CONCERN_ANSWER) ? "split" : "conflict";
 }
 
-/** Merge accumulated skippedHunks from both boards (dedup by hunk id). */
-function mergeSkips(boardA: DraftBoard, boardB: DraftBoard): { hunk: string; reason: string }[] {
-  const read = (b: DraftBoard) =>
-    ((b as { skippedHunks?: unknown }).skippedHunks ?? []) as { hunk: string; reason: string }[];
-  const seen = new Set<string>();
-  const out: { hunk: string; reason: string }[] = [];
-  for (const s of [...read(boardA), ...read(boardB)]) {
-    if (Array.isArray(s) || s?.hunk === undefined || seen.has(s.hunk)) continue;
-    seen.add(s.hunk);
-    out.push(s);
-  }
-  return out;
-}
-
 /** Describe a final Flagged finding set while keeping its authored title. */
 function finalizedFlaggedDocument(
   authored: BoardDocument | undefined,
@@ -680,8 +658,7 @@ function isTrulyEmptyDraft(output: unknown): boolean {
  * under `prefix`, so two independently-drafted seats can never share an id. The
  * two flagged seats mint ids independently, so both may author a `c1` for
  * DIFFERENT code — without this, seat B's finding would resolve its `code:["c1"]`
- * against seat A's `c1` after the merge (finding 7). Hunk ids in `skippedHunks`
- * are patchset ids, not element ids, so they are left untouched. Pure.
+ * against seat A's `c1` after the merge (finding 7). Pure.
  */
 export function namespaceBoard(board: DraftBoard, prefix: string): DraftBoard {
   const ids = new Set(board.elements.map((el) => el.id));
@@ -707,7 +684,7 @@ export function namespaceBoard(board: DraftBoard, prefix: string): DraftBoard {
  * raising model's concurrence. Seat B's ids are NAMESPACED first (finding 7), so
  * a seat can never cite the other seat's code; matching is by synthesized
  * location anchor, not id, so namespacing does not disturb it. Non-finding
- * elements then union by id (now collision-free); skippedHunks merge. Pure.
+ * elements then union by id (now collision-free). Pure.
  */
 export function reconcileFlaggedBoards(
   boardArg: DraftBoard,
@@ -776,7 +753,6 @@ export function reconcileFlaggedBoards(
     ...(boardA as object),
     ...(document === undefined ? {} : { document }),
     elements,
-    skippedHunks: mergeSkips(boardA, boardB),
   } as DraftBoard;
 }
 
@@ -864,9 +840,10 @@ export async function composeReviewDraft(input: ComposeInput): Promise<ComposeRe
 /**
  * The drafter's base prompt: the lens instructions (payload), the reviewed-range
  * task line, and the packet's INVENTORY (context). The session's cwd IS the
- * reviewed checkout, so the prompt carries identity and derived signals — the
- * hunk index WITHOUT its verbatim bodies — and the drafter reads the change
- * itself with its own tools. Inlining the whole diff here is what used to blow
+ * reviewed checkout, so the prompt carries identity and derived signals — never
+ * the hunk index (D5: a citation is a path and a line range, so the seat needs no
+ * hunk ids to copy back) — and the drafter reads the change itself with its own
+ * tools. Inlining the whole diff here is what used to blow
  * the model's context on any large branch: the capture cap (2 MB) sits far
  * above what a prompt can carry, and no budget stood between them. Every turn
  * re-sends this — the harness turn builders open a fresh session per call, so
@@ -887,19 +864,11 @@ export function renderDrafterPrompt(
     readonly omitTaskLayer?: boolean;
   },
 ): string {
-  // The hunk INDEX travels (coverage is taught-or-skipped over these exact
-  // ids); the verbatim bodies do not — the drafter reads content from the
-  // checkout it is standing in. Optional-chained: legacy callers and fixtures
-  // hand partial packets, and a missing index is an honest empty inventory.
-  const hunkIndex = (packet.hunks?.hunks ?? []).map(({ id, path, header, spans, lossy }) => ({
-    id,
-    path,
-    header,
-    spans,
-    lossy,
-  }));
+  // The hunk index never travels: the seat cites by path and line and reads the
+  // content from the checkout it is standing in (D5). `JSON.stringify` drops an
+  // undefined key, so the context carries no `hunks` at all.
   const context = JSON.stringify({
-    deltaPacket: { ...packet, hunks: { hunks: hunkIndex } },
+    deltaPacket: { ...packet, hunks: undefined },
     // On rounds the round-report drafts FIRST and is the lens drafters' input (D3/R58).
     ...(reportBoard === undefined ? {} : { roundReport: reportBoard }),
     ...(designArtifacts === undefined ? {} : { designArtifacts }),
@@ -948,7 +917,7 @@ export function renderDrafterPrompt(
       : repo.reviewedTreeOid === undefined
         ? `You are reviewing the commits since ${repo.baseOid} (${repo.baseRef}), at reviewed head ${repo.headOid}. Your working directory is a checkout of this repository, but it may be on a different ref — the pinned objects are authoritative.`
         : `You are reviewing the working-tree change since ${repo.baseOid} (${repo.baseRef}), pinned as tree ${repo.reviewedTreeOid} (uncommitted work included). Your working directory is the checkout it was captured from; the pinned tree is authoritative if it has moved.`,
-    "The context layer carries the change INVENTORY (file rows, hunk ids/headers/spans, derived signals) — not the diff content.",
+    "The context layer carries the change INVENTORY (file rows and derived signals) — not the diff content.",
     `Read the change yourself with your own tools: ${diffCommand} for the delta${
       reviewedOid === undefined
         ? ""
@@ -1210,9 +1179,9 @@ export interface BoardArrivalEvent {
 }
 
 /**
- * A board's document/validation/coverage metadata (finding 3). `draftToOps` serializes
- * only a board's ELEMENTS to the whiteboard event log; its document opening,
- * `skippedHunks`, and validation results are board-level, live only in memory, and the
+ * A board's document/validation metadata (finding 3). `draftToOps` serializes
+ * only a board's ELEMENTS to the whiteboard event log; its document opening and
+ * validation results are board-level, live only in memory, and the
  * frozen 13-kind vocabulary has no element to carry them. This is the durable home the
  * composition root supplies (a store keyed by `boardId`), persisted BEFORE a board's
  * arrival is announced so a reader never reconstructs an incomplete board.
@@ -1222,25 +1191,12 @@ export interface BoardMeta {
   readonly boardId: string;
   /** Optional only for records reconstructed from before this contract; new writes always set it. */
   readonly document?: BoardDocument;
-  readonly skippedHunks: readonly { hunk: string; reason: string }[];
   readonly blemishes: readonly Violation[];
   readonly omissions: readonly Omission[];
   readonly immutability: readonly Violation[];
   /** The reference repairs the admission pass made before this board was written (#548 D1).
    *  Recorded so a repair is accountable after the fact, never a silent rewrite. */
   readonly refRepairs?: readonly RefRepair[];
-}
-
-/** Read a board's `skippedHunks` passthrough (board-level, not an element). */
-function boardSkippedHunks(board: DraftBoard): { hunk: string; reason: string }[] {
-  const raw = (board as { skippedHunks?: unknown }).skippedHunks;
-  if (!Array.isArray(raw)) return [];
-  return raw.flatMap((e) => {
-    const o = (e ?? {}) as { hunk?: unknown; reason?: unknown };
-    return typeof o.hunk === "string"
-      ? [{ hunk: o.hunk, reason: typeof o.reason === "string" ? o.reason : "" }]
-      : [];
-  });
 }
 
 // ── One lens's outcome ──
@@ -1293,51 +1249,6 @@ export interface ReusableRoundReport {
   readonly immutability: readonly Violation[];
 }
 
-export interface DesignCoverageRequest {
-  readonly patchsetId: string;
-  readonly requirements: readonly CoverageRequirementInput[];
-  readonly hunks: readonly CoverageHunkInput[];
-}
-
-export type DesignCoverageMapper = (request: DesignCoverageRequest) => Promise<{
-  readonly status: "ok" | "failed";
-  readonly edges: readonly {
-    readonly capability: string;
-    readonly requirement: string;
-    readonly hunks: readonly string[];
-    readonly tests: number;
-  }[];
-}>;
-
-/** Build the real grounded coverage turn over one resolved Claude seat. */
-export function createDesignCoverageMapper(
-  port: HarnessPort,
-  repoRoot: string,
-  collector?: MetricsCollector,
-): DesignCoverageMapper {
-  const turn = createCoverageTurn(port, {
-    cwd: repoRoot,
-    ...(collector === undefined ? {} : { collector }),
-  });
-  return async (request) => {
-    const result = await runCoverageMapping({
-      ...request,
-      runTurn: async (prompt) => {
-        try {
-          return await turn(prompt);
-        } catch (error) {
-          return {
-            status: "failed",
-            message: error instanceof Error ? error.message : String(error),
-          };
-        }
-      },
-      budget: createInvocationBudget(2),
-    });
-    return { status: result.status, edges: result.edges };
-  };
-}
-
 // ── The scheduler deps (all injected — the runtime is pure over them) ──
 
 export interface LensPipelineDeps {
@@ -1362,23 +1273,19 @@ export interface LensPipelineDeps {
   readonly council?: CouncilResolveContext;
   /** The PR worktree the drafter sessions are rooted at (D1). */
   readonly repoRoot: string;
-  /** The change inventory the drafter prompts carry (hunk bodies redacted at render). */
+  /** The change inventory the drafter prompts carry (the hunk index redacted at render). */
   readonly deltaPacket: DeltaPacket;
   /** Exact generation visit being drafted. Older direct callers fall back to the initial
    *  content-derived generation; the rounds runtime always supplies this. */
   readonly currentGeneration?: string;
   /** Trusted durable-ask identity for a returned round. */
   readonly round?: RoundDraftContext;
-  /** The collation producer's hunk list — the coverage-assert universe (cluster 4). */
-  readonly hunks: readonly LintHunk[];
-  /** Per-lens lint context the caller assembles (files, patchsetId, scaffold globs…). */
+  /** Per-lens lint context the caller assembles (changed regions, files, patchsetId…). */
   readonly lintContextFor: (lens: LintTarget) => LintContext;
   /** Undefined keeps the legacy drafter-owned discovery path; null is a successful no-spec result. */
   readonly designArtifacts?: DesignArtifactSet | null;
   /** Pinned discovery failed before drafting. Settles Design only; sibling lenses still run. */
   readonly designArtifactFailure?: string;
-  /** Grounded requirement-to-hunk mapping. Absent means coverage was not computed. */
-  readonly mapDesignCoverage?: DesignCoverageMapper;
   /** Read a prompt file's text (node fs seam; hermetic in tests). */
   readonly readPrompt: PromptReader;
   /**
@@ -1406,12 +1313,6 @@ export interface LensPipelineDeps {
   readonly boardAttempt?: number;
   /** The per-board arrival broadcast (B09 consumes; optional). */
   readonly onBoardArrival?: (event: BoardArrivalEvent) => void | Promise<void>;
-  /**
-   * The generation's cross-lens coverage state as it moves `pending` → `complete`/`failed`
-   * (#725 D4). Coverage does NOT gate the reveal: this callback is how the surface can say
-   * "coverage pending" beside boards that are already readable.
-   */
-  readonly onCoverageState?: (coverage: GenerationCoverage) => void | Promise<void>;
   /** One phase's measured duration (#725 D4). The caller owns durability. */
   readonly onPhaseTiming?: (record: GenerationPhaseTiming) => void | Promise<void>;
   /** Content-free timing checkpoints for a classified round report only. */
@@ -1425,8 +1326,8 @@ export interface LensPipelineDeps {
    */
   readonly onLensDraftingStart?: () => void;
   /**
-   * The durable home for a board's coverage/validation metadata (finding 3): the
-   * `skippedHunks` and validation blemishes the whiteboard event log cannot carry.
+   * The durable home for a board's validation metadata (finding 3): the document
+   * opening and validation blemishes the whiteboard event log cannot carry.
    * Called after the board's ops are accepted and BEFORE its arrival is announced,
    * so a reconstructed result never announces a board whose coverage was lost. The
    * composition root supplies a real store; absent ⇒ metadata is result-only.
@@ -1700,7 +1601,6 @@ function buildClassifiedRoundReport(
       measure: "reading",
     },
     elements,
-    skippedHunks: [],
   } as DraftBoard;
 }
 
@@ -1709,20 +1609,8 @@ export interface LensPipelineResult {
   /** The Flagged board's reattachment/detachment facts, when this was a round. */
   readonly findingResolutions?: readonly FindingResolution[];
   /**
-   * Cross-lens every-hunk coverage (cluster 4), run ONCE over the frozen set.
-   *
-   * ABSENT means UNKNOWN, not clean. Coverage is computed from the drafted boards
-   * themselves (which hunks each board teaches), and those boards live only in the run
-   * that produced them: a result REBUILT from durable board metadata after a restart has
-   * the ids and the blemishes but not the boards, so it cannot recompute the coverage
-   * picture and says so rather than reporting an empty violation list — which would claim
-   * a clean round it never verified.
-   */
-  readonly coverage?: readonly Violation[];
-  /**
    * The round-report board, present only on a ROUND (a prior generation exists).
-   * It drafts FIRST and is the lens drafters' input (D3/R58); it is NOT a lens,
-   * so it is excluded from the coverage assert.
+   * It drafts FIRST and is the lens drafters' input (D3/R58); it is NOT a lens.
    */
   readonly report?: LensBoardOutcome;
   /** The authored composition (C2), present only when a `composeTurn` was supplied. */
@@ -2034,9 +1922,9 @@ async function draftOneLens(
  * Apply a validated board's ops and report whether the write was ACCEPTED (finding 2):
  * the board service validates references in order and rejects a bad batch, so the
  * pipeline must inspect `response.ok` — a rejected write is a lens failure, not a
- * silent success. On acceptance the board's coverage/validation metadata is durably
+ * silent success. On acceptance the board's validation metadata is durably
  * stored (finding 3) BEFORE the caller announces arrival, so a reconstructed result
- * never sees an announced board whose `skippedHunks` were lost.
+ * never sees an announced board whose blemishes were lost.
  */
 async function persistBoard(
   deps: LensPipelineDeps,
@@ -2078,7 +1966,6 @@ async function persistBoard(
     lens,
     boardId,
     document: resolveBoardDocument(lens, admittedBoard.document),
-    skippedHunks: boardSkippedHunks(admittedBoard),
     blemishes: validated.blemishes,
     omissions: validated.omissions,
     immutability: validated.immutability,
@@ -2090,13 +1977,13 @@ async function persistBoard(
 /**
  * Run the lens drafting pipeline for one generation. Seeds the five lens drafters,
  * validates + writes each board, and PUBLISHES EACH LANE'S SETTLEMENT THE MOMENT IT LANDS
- * (#725 D4) — there is no global barrier over the five lanes, and cross-lens coverage does
- * not gate a reveal. A required report is the one sequencing boundary: it must exist
+ * (#725 D4) — there is no global barrier over the five lanes and no cross-lens coverage
+ * gate. A required report is the one sequencing boundary: it must exist
  * before fanout (#728). Individual lens failures remain recorded outcomes rather than
  * throws.
  *
  * `Promise.allSettled` still gathers the run for BOOKKEEPING — the returned outcome array,
- * the coverage assert over the frozen set, the composition write-through — because those
+ * the composition write-through — because those
  * are the run's completion, not its reveal. The settlement publications happen inside the
  * lanes, before that gather ever resolves.
  */
@@ -2140,9 +2027,6 @@ export async function runLensPipeline(deps: LensPipelineDeps): Promise<LensPipel
   // A required report has arrived, or this generation does not need one. Only now may the
   // independent lens seats start; report failure exits above without launching hidden work.
   deps.onLensDraftingStart?.();
-  // Coverage is EXPLICITLY pending from the moment the lanes start, so a surface showing
-  // settled boards can say where coverage stands instead of implying it passed.
-  await deps.onCoverageState?.({ state: "pending" });
   const revealFrom = clock();
   /** The last moment a lane actually revealed something — an arrival or a typed absence.
    *  A failure settles the lane without revealing anything, so it does not extend the
@@ -2173,8 +2057,7 @@ export async function runLensPipeline(deps: LensPipelineDeps): Promise<LensPipel
         lastRevealAt = clock();
       }
       // #725 D4 — the lane's settlement is published HERE, the moment this board is
-      // written and its metadata is durable. Nothing waits for a sibling lane and
-      // nothing waits for cross-lens coverage.
+      // written and its metadata is durable. Nothing waits for a sibling lane.
       if (outcome.board !== undefined && outcome.boardId !== undefined) {
         const board = outcome.board;
         const boardId = outcome.boardId;
@@ -2208,17 +2091,7 @@ export async function runLensPipeline(deps: LensPipelineDeps): Promise<LensPipel
     durationMs: Math.max(0, (lastRevealAt ?? revealFrom) - revealFrom),
   });
   const rejected = settledOutcomes.find((result) => result.status === "rejected");
-  if (rejected !== undefined) {
-    // Cross-lens coverage never ran, and it never will for this generation. Say so
-    // explicitly rather than leaving the last state (`pending`) standing forever — and say
-    // it BEFORE the throw, because the throw is what used to lose it. No `coverage` timing
-    // record: that phase did not run, and a duration for it would be invented.
-    await deps.onCoverageState?.({
-      state: "failed",
-      reason: `a lens lane failed before cross-lens coverage could run — ${rejected.reason instanceof Error ? rejected.reason.message : String(rejected.reason)}`,
-    });
-    throw rejected.reason;
-  }
+  if (rejected !== undefined) throw rejected.reason;
   // Wait for every launched lane before propagating an unexpected infrastructure error.
   // This is the run's COMPLETION bookkeeping, not its reveal — every settlement above has
   // already been published. Array order remains LENS_KINDS even when persistence completed
@@ -2227,33 +2100,6 @@ export async function runLensPipeline(deps: LensPipelineDeps): Promise<LensPipel
     if (result.status === "rejected") throw result.reason;
     return result.value;
   });
-
-  // Cluster-4 coverage, ONCE over the frozen board set (the compositionGate seam stays
-  // no-op per board — this is the cross-lens obligation). It runs AFTER the boards were
-  // revealed and it ANNOTATES them: `assertCoverage` returns violations and amends no
-  // board, so a revealed board is never rewritten by the state that lands beside it.
-  const boards = outcomes.map((o) => o.board).filter((b): b is DraftBoard => b !== undefined);
-  const coverageFrom = clock();
-  let coverage: readonly Violation[] | undefined;
-  try {
-    coverage = assertCoverage(boards, deps.hunks);
-  } catch (error) {
-    // A coverage assert that throws leaves the generation's coverage UNKNOWN, and says so.
-    // The boards it would have annotated are already read; withholding them now would be
-    // the barrier this change removed.
-    await deps.onCoverageState?.({
-      state: "failed",
-      reason: error instanceof Error ? error.message : String(error),
-    });
-  }
-  await record({
-    phase: "coverage",
-    startedAtMs: coverageFrom,
-    durationMs: Math.max(0, clock() - coverageFrom),
-  });
-  if (coverage !== undefined) {
-    await deps.onCoverageState?.({ state: "complete", violations: coverage.length });
-  }
 
   // C2 — the authored composition write-through, when the orchestrator supplied a
   // free-text authoring turn. The lens boards ARE the reading surface (C3); this
@@ -2278,7 +2124,6 @@ export async function runLensPipeline(deps: LensPipelineDeps): Promise<LensPipel
 
   return {
     boards: outcomes,
-    ...(coverage === undefined ? {} : { coverage }),
     ...(findingResolutions === undefined ? {} : { findingResolutions }),
     ...(report === undefined ? {} : { report }),
     ...(composition === undefined ? {} : { composition }),
@@ -2297,7 +2142,6 @@ function verifyClassifiedRoundReport(
     generation: pipelineGenerationId(deps),
     boardId,
     document: board.document,
-    skippedHunks: boardSkippedHunks(board),
   });
   verifyRoundReportEvidence({
     board: projected,
@@ -3221,77 +3065,6 @@ function groundedDesignAbsence(
   return { absence: "no-material" };
 }
 
-function requirementInputs(board: DraftBoard): CoverageRequirementInput[] {
-  const byId = new Map(board.elements.map((element) => [element.id, element]));
-  return board.elements.flatMap((element) => {
-    if (element.kind !== "requirement") return [];
-    const data = element.data as Record<string, unknown>;
-    const shall = typeof data.shall === "string" ? data.shall : "";
-    const name = typeof data.name === "string" && data.name.length > 0 ? data.name : element.id;
-    const source =
-      typeof data.source === "object" && data.source !== null
-        ? (data.source as { path?: unknown }).path
-        : undefined;
-    const capability =
-      typeof data.capability === "string" && data.capability.length > 0
-        ? data.capability
-        : typeof source === "string" && source.length > 0
-          ? source
-          : "design";
-    const scenarioIds = Array.isArray(data.scenarios)
-      ? data.scenarios.filter((id): id is string => typeof id === "string")
-      : [];
-    const scenarios = scenarioIds.flatMap((id) => {
-      const scenario = byId.get(id);
-      if (scenario?.kind !== "prose") return [];
-      const markdown = (scenario.data as { markdown?: unknown }).markdown;
-      return typeof markdown === "string" && markdown.length > 0 ? [markdown] : [];
-    });
-    return [{ capability, name, statement: shall, scenarios }];
-  });
-}
-
-function offeredCoverageHunks(deps: LensPipelineDeps): {
-  readonly inputs: CoverageHunkInput[];
-  readonly ids: ReadonlySet<string>;
-} {
-  const artifactPaths = new Set(discoveredArtifacts(deps.designArtifacts).map(({ path }) => path));
-  const inputs = (deps.deltaPacket.hunks?.hunks ?? [])
-    .filter((hunk) => !artifactPaths.has(hunk.path) && !isScaffoldPath(hunk.path))
-    .map((hunk) => ({
-      id: hunk.id,
-      filePath: hunk.path,
-      addedLines: hunk.body
-        .filter((line) => line.startsWith("+") && !line.startsWith("+++"))
-        .map((line) => line.slice(1)),
-      deletedLines: hunk.body
-        .filter((line) => line.startsWith("-") && !line.startsWith("---"))
-        .map((line) => line.slice(1)),
-    }));
-  return { inputs, ids: new Set(inputs.map((hunk) => hunk.id)) };
-}
-
-function clearDraftedCoverage(board: DraftBoard): DraftBoard {
-  return stripDraftedDesignCoverage(board) as DraftBoard;
-}
-
-function ensureDesignScaffoldSkips(board: DraftBoard, deps: LensPipelineDeps): DraftBoard {
-  const existing = boardSkippedHunks(board);
-  const known = new Set(existing.map(({ hunk }) => hunk));
-  const scaffoldSkips = (deps.deltaPacket.hunks?.hunks ?? []).flatMap((hunk) => {
-    if (!isScaffoldPath(hunk.path) || known.has(hunk.id)) return [];
-    known.add(hunk.id);
-    return [
-      {
-        hunk: hunk.id,
-        reason: `${hunk.path} is a generated scaffold stamp owned by the Noise lens.`,
-      },
-    ];
-  });
-  if (scaffoldSkips.length === 0) return board;
-  return { ...board, skippedHunks: [...existing, ...scaffoldSkips] };
-}
-
 function containsString(value: unknown, target: string): boolean {
   if (value === target) return true;
   if (Array.isArray(value)) return value.some((item) => containsString(item, target));
@@ -3305,7 +3078,8 @@ function containsString(value: unknown, target: string): boolean {
  * Coverage and related implementation paths are host-owned evidence. Remove any
  * drafter-authored mapping while the value is still unknown input, before
  * schema/lint and again after the editor pass. A code ref used only by an invented
- * trace goes with it, so it cannot teach a hunk.
+ * trace goes with it. (The host mapping turn that used to fill these is gone with the
+ * coverage gate, D5; the Design respec decides what the seat may claim itself.)
  */
 export function stripDraftedDesignCoverage(output: unknown): unknown {
   if (typeof output !== "object" || output === null || Array.isArray(output)) return output;
@@ -3354,133 +3128,6 @@ export function stripDraftedDesignCoverage(output: unknown): unknown {
   });
 
   return { ...record, elements: withoutCoverageOnlyRefs };
-}
-
-function codeRefForCoverageHunk(
-  hunkId: string,
-  id: string,
-  patchsetId: string,
-  hunks: readonly LintHunk[],
-): DraftElement | undefined {
-  const hunk = hunks.find((candidate) => candidate.id === hunkId);
-  if (hunk === undefined) return undefined;
-  const head = hunk.newLines > 0;
-  const start = head ? hunk.newStart : hunk.oldStart;
-  const lines = head ? hunk.newLines : hunk.oldLines;
-  if (start === undefined || lines === undefined || lines <= 0) return undefined;
-  return {
-    id,
-    kind: "code_ref",
-    data: {
-      author: { kind: "orchestrator", id: "coverage-mapper" },
-      patchset_id: patchsetId,
-      path: head ? hunk.path : (hunk.previousPath ?? hunk.path),
-      side: head ? "head" : "base",
-      start_line: start,
-      end_line: start + lines - 1,
-    },
-  } as DraftElement;
-}
-
-async function groundDesignCoverage(
-  board: DraftBoard,
-  deps: LensPipelineDeps,
-): Promise<DraftBoard> {
-  const cleared = ensureDesignScaffoldSkips(clearDraftedCoverage(board), deps);
-  const requirements = requirementInputs(cleared);
-  const offered = offeredCoverageHunks(deps);
-  if (
-    requirements.length === 0 ||
-    offered.inputs.length === 0 ||
-    deps.mapDesignCoverage === undefined
-  ) {
-    return cleared;
-  }
-
-  let mapped: Awaited<ReturnType<DesignCoverageMapper>>;
-  try {
-    mapped = await deps.mapDesignCoverage({
-      patchsetId: deps.deltaPacket.patchset.id,
-      requirements,
-      hunks: offered.inputs,
-    });
-  } catch {
-    return cleared;
-  }
-  if (mapped.status !== "ok") return cleared;
-
-  const edgeByKey = new Map(
-    mapped.edges.map((edge) => [`${edge.capability}\u0000${edge.requirement}`, edge] as const),
-  );
-  const ids = new Set(cleared.elements.map((element) => element.id));
-  const refsByHunk = new Map<string, string>();
-  const pathByRef = new Map<string, string>();
-  const addedRefs: DraftElement[] = [];
-  const refForHunk = (hunkId: string): string | undefined => {
-    const known = refsByHunk.get(hunkId);
-    if (known !== undefined) return known;
-    if (!offered.ids.has(hunkId)) return undefined;
-    let id = `coverage-hunk-${hunkId}`;
-    let suffix = 2;
-    while (ids.has(id)) {
-      id = `coverage-hunk-${hunkId}-${suffix}`;
-      suffix += 1;
-    }
-    const ref = codeRefForCoverageHunk(hunkId, id, deps.deltaPacket.patchset.id, deps.hunks);
-    if (ref === undefined) return undefined;
-    ids.add(id);
-    refsByHunk.set(hunkId, id);
-    const path = (ref.data as { path?: unknown }).path;
-    if (typeof path === "string") pathByRef.set(id, path);
-    addedRefs.push(ref);
-    return id;
-  };
-
-  const elements = cleared.elements.map((element) => {
-    if (element.kind !== "requirement") return element;
-    const data = element.data as Record<string, unknown>;
-    const name = typeof data.name === "string" && data.name.length > 0 ? data.name : element.id;
-    const source =
-      typeof data.source === "object" && data.source !== null
-        ? (data.source as { path?: unknown }).path
-        : undefined;
-    const capability =
-      typeof data.capability === "string" && data.capability.length > 0
-        ? data.capability
-        : typeof source === "string" && source.length > 0
-          ? source
-          : "design";
-    const edge = edgeByKey.get(`${capability}\u0000${name}`);
-    if (edge === undefined) return element;
-    const trace = edge.hunks.flatMap((anchor) => {
-      const prefix = "rennet:hunk/";
-      const hunkId = anchor.startsWith(prefix) ? anchor.slice(prefix.length) : "";
-      const ref = hunkId.length > 0 ? refForHunk(hunkId) : undefined;
-      return ref === undefined ? [] : [ref];
-    });
-    const coverage = trace.length === 0 ? "gap" : edge.tests > 0 ? "met" : "partial";
-    const relatedFiles = [
-      ...new Set(
-        trace.flatMap((refId) => {
-          const path = pathByRef.get(refId);
-          return path === undefined ? [] : [path];
-        }),
-      ),
-    ];
-    const grounded: Record<string, unknown> = { ...data, coverage, trace, tests: edge.tests };
-    if (relatedFiles.length > 0) grounded.related_files = relatedFiles;
-    return {
-      ...element,
-      data: grounded,
-    } as DraftElement;
-  });
-  const groundedHunks = new Set(refsByHunk.keys());
-  const skippedHunks = boardSkippedHunks(cleared).filter(({ hunk }) => !groundedHunks.has(hunk));
-  return {
-    ...cleared,
-    elements: [...elements, ...addedRefs],
-    ...("skippedHunks" in cleared ? { skippedHunks } : {}),
-  };
 }
 
 /**
@@ -3876,7 +3523,7 @@ async function draftLensBoard(
   }
 
   if (lens === "design") {
-    const grounded = await groundDesignCoverage(validated.board, deps);
+    const grounded = stripDraftedDesignCoverage(validated.board) as DraftBoard;
     validated = {
       ...validated,
       board:

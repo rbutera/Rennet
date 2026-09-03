@@ -7,38 +7,29 @@
  * (`DraftBoard`, `DraftElement`, `Violation`, `SectionDeltaSchema`) verbatim and
  * re-models nothing (reconciliation 2).
  *
- * Three mechanics:
+ * Two mechanics:
  *
- * 1. **Coverage assertion** ({@link assertCoverage}) — #493's L18, staged to
- *    composition: across all five lens boards every patchset hunk is either
- *    TAUGHT (a `code_ref` overlaps it) by some lens or SKIPPED (in some lens's
- *    `skippedHunks`). A hunk in neither fails the assert. This is the real
- *    cross-lens gate wired through `validate.ts`'s `compositionGate` seam — run
- *    ONCE over the frozen set by the cluster-5 runtime, not per board (a single
- *    board has no coverage obligation). It never throws and never blocks —
- *    Rule Zero — it returns `Violation[]` the orchestrator surfaces.
- *
- * 2. **Verbatim carry on stable element ids** ({@link carriedElementIds}) — an
+ * 1. **Verbatim carry on stable element ids** ({@link carriedElementIds}) — an
  *    element whose id is stable across generations and whose content is
  *    byte-identical is carried unchanged; composition never rewrites it.
  *
- * 3. **Delta stamps** ({@link stampDeltas}) — R58: a `section` element is stamped
+ * 2. **Delta stamps** ({@link stampDeltas}) — R58: a `section` element is stamped
  *    `new` (its id is new this generation) or `reworked` (its subtree changed);
  *    an unchanged section carries no stamp (absence = carried). The stamp lives
  *    on the section element's `data.delta` (`SectionDeltaSchema`); the
  *    `LensBoard` projection's `sections[].delta` is projected from it downstream
- *    (B04/B10), not here.
+ *    (B04/B10), not here. A mark keys on what an element CITES — a `code_ref`'s
+ *    identity for the stamp is `(path, side, start_line, end_line)`, never the
+ *    patchset id it was minted under (session-bound-workspace D5), so a regenerated
+ *    board whose element still cites the same lines carries the same mark.
  */
 
-import type { DraftBoard, DraftElement, Violation } from "@rennet/protocol";
-import { type LintHunk, taughtHunkIds } from "./lint";
+import type { DraftBoard, DraftElement } from "@rennet/protocol";
 
 // ── Shared tiny board utils ──────────────────────────────────────────────────
-// ponytail: `stableStringify` + the skipped-hunks reader are ~15 trivial lines
-// duplicated from `validate.ts` (whose copies are module-private). Keeping
-// compose.ts self-contained beats coupling to validate's internals or minting a
-// board/util.ts for two helpers; extract to a shared util the day a third caller
-// needs a fourth copy.
+// ponytail: `stableStringify` is ~10 trivial lines duplicated from `validate.ts`
+// (whose copy is module-private). Keeping compose.ts self-contained beats coupling
+// to validate's internals or minting a board/util.ts for one helper.
 
 /** Stable JSON: object keys sorted, so an insertion-order shuffle is not a diff. */
 function stableStringify(value: unknown): string {
@@ -50,62 +41,25 @@ function stableStringify(value: unknown): string {
   return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${stableStringify(v)}`).join(",")}}`;
 }
 
-/** The skipped-hunk ids a board consciously left to another lens (passthrough). */
-function skippedHunkIds(board: DraftBoard): string[] {
-  const raw = (board as { skippedHunks?: unknown }).skippedHunks;
-  if (!Array.isArray(raw)) return [];
-  return raw
-    .map((e) => {
-      const hunk = (e as { hunk?: unknown })?.hunk;
-      return typeof hunk === "string" ? hunk : "";
-    })
-    .filter((h) => h.length > 0);
-}
-
-/** The patchset hunks a board TEACHES: any `code_ref` whose side-appropriate range overlaps (finding 8). */
-function boardTaughtHunks(board: DraftBoard, hunks: readonly LintHunk[]): Set<string> {
-  return taughtHunkIds(board.elements, hunks);
-}
-
-// ── 1. Coverage assertion (L18 — every hunk taught-or-skipped across all lenses) ─
-
-/**
- * The cross-lens every-hunk coverage assert. Over the five frozen lens boards,
- * a patchset hunk must be TAUGHT by some lens or SKIPPED by some lens; a hunk in
- * neither is uncovered and returns a `Violation` (visible, never blocking). Pure;
- * the cluster-5 runtime injects it through `validate.ts`'s `compositionGate` seam
- * and runs it once over the frozen set.
- */
-export function assertCoverage(
-  boards: readonly DraftBoard[],
-  hunks: readonly LintHunk[],
-): Violation[] {
-  const covered = new Set<string>();
-  for (const board of boards) {
-    for (const id of boardTaughtHunks(board, hunks)) covered.add(id);
-    for (const id of skippedHunkIds(board)) covered.add(id);
-  }
-  return hunks
-    .filter((h) => !covered.has(h.id))
-    .map((h) => ({
-      ruleId: "every-hunk-covered",
-      elementRef: `/hunks/${h.id}`,
-      message: `Hunk \`${h.id}\` (${h.path}) is taught by no lens and skipped by none — every patchset hunk must be covered by a lens or consciously skipped.`,
-    }));
-}
-
-// ── 2. Verbatim carry + 3. Delta stamps ──────────────────────────────────────
+// ── 1. Verbatim carry + 2. Delta stamps ──────────────────────────────────────
 
 /**
  * An element's content identity for carry/delta comparison. Excludes the
  * composition-set `delta` stamp (metadata, not drafter content) so a section
  * stamped `reworked` last generation still reads as carried when its content is
- * unchanged this generation.
+ * unchanged this generation. A `code_ref` is identified by what it cites —
+ * `(path, side, start_line, end_line)` — and NOT by `patchset_id`: every
+ * regenerated board is minted under the successor patchset, so keying on the id
+ * would stamp every cited section `reworked` on every round (D5).
  */
 function contentSig(el: DraftElement): string {
   const data = el.data as Record<string, unknown>;
   if (el.kind === "section" && "delta" in data) {
     return `${el.kind}:${stableStringify(withoutDelta(data))}`;
+  }
+  if (el.kind === "code_ref") {
+    const { path, side, start_line, end_line } = data;
+    return `${el.kind}:${stableStringify({ path, side, start_line, end_line })}`;
   }
   return `${el.kind}:${stableStringify(data)}`;
 }

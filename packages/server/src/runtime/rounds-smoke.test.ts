@@ -10,17 +10,14 @@ import {
   discoverCodex,
 } from "@rennet/adapters";
 import {
-  assertCoverage,
   buildDeltaPacket,
   type CodexExecutor,
   type HarnessPort,
   type LintContext,
-  type LintHunk,
   type LintTarget,
 } from "@rennet/core";
 import {
   type DossierItem,
-  type DraftBoard,
   type DraftElement,
   type Generation,
   type LensAbsenceReason,
@@ -49,12 +46,8 @@ import { createRoundsRuntime } from "./rounds";
 // evidence that the drafting pipeline executes end to end (task 1.1).
 //
 // What it proves: runRound completes without crash/hang/auth-wall/shape-mismatch,
-// mints a real Generation, and the drafters emit real boards — non-empty elements,
-// honest per-lens failures where a seat could not run, and a coverage picture that
-// CAN fail. The coverage control runs through the ROUND ITSELF: the round's hunk universe
-// carries one hunk no board can teach, so `runRound`'s own verdict must name it, and a
-// pipeline that stopped asserting coverage fails here instead of sailing past a
-// side-bound `assertCoverage` call that only proved the helper works.
+// mints a real Generation, and the drafters emit real boards — non-empty elements and
+// honest per-lens failures where a seat could not run.
 //
 // TWO harness-compat fixes were exercised FIRST by this run (both landed as
 // discrete adapter commits): (1) strip the draft-2020-12 `$schema` meta the
@@ -588,24 +581,8 @@ describe.skipIf(!SMOKE)("C15 1.1 — rounds pipeline smoke-run (LIVE ports, RENN
       const deltaPacket = buildDeltaPacket(smallPatchset(), DOSSIER, SUCCESSOR);
       expect(deltaPacket.successorAccount).not.toBeUndefined(); // isRound fires
 
-      // The COVERAGE CONTROL, driven through the real path (review finding 11's shape).
-      // The round's hunk universe carries one hunk in a file that does not exist and that
-      // no drafter can possibly teach, so `runRound`'s OWN cross-lens coverage assert must
-      // come back naming it. Binding `assertCoverage` on the side (as this used to) only
-      // ever proved the helper works — a pipeline that stopped asserting coverage at all
-      // would have sailed past it. The per-lens lint context keeps `hunks: []`, so the
-      // drafters carry no coverage obligation and their boards are judged exactly as before:
-      // this control costs zero extra model turns.
-      const UNTEACHABLE: LintHunk = {
-        id: "smoke-uncovered",
-        path: "src/nowhere.ts",
-        newStart: 999,
-        newLines: 3,
-      };
-      const hunks: readonly LintHunk[] = [UNTEACHABLE];
       const lintContextFor = (lens: LintTarget): LintContext => ({
         lens,
-        hunks: [],
         files: new Map([["src/greet.ts", 3]]),
         patchsetId: "ps-c15-smoke",
       });
@@ -651,7 +628,6 @@ describe.skipIf(!SMOKE)("C15 1.1 — rounds pipeline smoke-run (LIVE ports, RENN
               patchsetId: "ps-c15-smoke",
             }),
             deltaPacket,
-            hunks,
             lintContextFor,
             reviewDraftLintCtx: { files: new Map([["src/greet.ts", 3]]) },
             signal: abortController.signal,
@@ -678,9 +654,6 @@ describe.skipIf(!SMOKE)("C15 1.1 — rounds pipeline smoke-run (LIVE ports, RENN
         absence: b.absence ?? null,
         failure: b.failure ?? null,
       }));
-      const realBoards: DraftBoard[] = outcome.pipeline.boards
-        .map((b) => b.board)
-        .filter((b): b is DraftBoard => b !== undefined);
       console.log(
         "[smoke] RESULT:",
         JSON.stringify(
@@ -697,7 +670,6 @@ describe.skipIf(!SMOKE)("C15 1.1 — rounds pipeline smoke-run (LIVE ports, RENN
               : null,
             lenses: lensRows,
             providerCalls,
-            coverageViolations: outcome.pipeline.coverage?.length ?? "unknown",
           },
           null,
           2,
@@ -769,21 +741,6 @@ describe.skipIf(!SMOKE)("C15 1.1 — rounds pipeline smoke-run (LIVE ports, RENN
         (o) => o.board !== undefined && o.board.elements.length > 0 && parseDraft(o.board).ok,
       );
       expect(validLensBoards.some((outcome) => outcome.lens === "sequence")).toBe(true);
-
-      // POSITIVE CONTROL: coverage is not a swallow, asserted on the ROUND's own verdict.
-      // The unteachable hunk went into the round's hunk universe above, so this reads what
-      // `runLensPipeline` really concluded about it — a pipeline that stopped asserting
-      // coverage fails here, which is the failure that matters.
-      const coverage = outcome.pipeline.coverage;
-      expect(coverage, "the round reported no coverage picture at all").toBeDefined();
-      expect(
-        (coverage ?? []).map((v) => v.elementRef),
-        "the round swallowed an uncovered hunk",
-      ).toContain(`/hunks/${UNTEACHABLE.id}`);
-      // …and the verdict TRACKS the universe rather than being a constant: the same frozen
-      // boards over an empty hunk set report nothing. (Pure re-assert over the boards this
-      // run already produced — still no extra model turns.)
-      expect(assertCoverage(realBoards, [])).toEqual([]);
     } finally {
       rmSync(boardsRoot, { recursive: true, force: true });
     }

@@ -1,6 +1,6 @@
 import type { DraftBoard, DraftElement } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
-import type { LintContext, LintHunk } from "./lint";
+import type { ChangedRegion, LintContext } from "./lint";
 import {
   checkImmutability,
   LADDER_RUNGS,
@@ -26,14 +26,14 @@ const finding = (id: string, concern: string, code: string[] = []): DraftElement
 const board = (elements: DraftElement[], extra: Record<string, unknown> = {}): DraftBoard =>
   ({ elements, ...extra }) as DraftBoard;
 
-const HUNKS: LintHunk[] = [
-  { id: "h1", path: "src/auth.ts", newStart: 10, newLines: 5 },
-  { id: "h2", path: "src/util.ts", newStart: 1, newLines: 3 },
+const REGIONS: ChangedRegion[] = [
+  { path: "src/auth.ts", side: "head", start: 10, end: 14 },
+  { path: "src/util.ts", side: "head", start: 1, end: 3 },
 ];
 
 const ctx = (over: Partial<LintContext> = {}): LintContext => ({
   lens: "flagged",
-  hunks: HUNKS,
+  regions: REGIONS,
   files: new Map([
     ["src/auth.ts", 200],
     ["src/util.ts", 50],
@@ -41,20 +41,12 @@ const ctx = (over: Partial<LintContext> = {}): LintContext => ({
   ...over,
 });
 
-/** A board lint passes clean: a grounded finding + its citation, h2 skipped with a real reason. */
-const cleanBoard = (over: Record<string, unknown> = {}): DraftBoard =>
-  board(
-    [
-      finding("f1", "The refresh token is classified as an error before its code is read.", ["c1"]),
-      codeRef("c1", "src/auth.ts", 11, 12),
-    ],
-    {
-      skippedHunks: [
-        { hunk: "h2", reason: "The util rename is mechanical — the Noise board owns it." },
-      ],
-      ...over,
-    },
-  );
+/** A board lint passes clean: a grounded finding + its citation inside the change. */
+const cleanBoard = (): DraftBoard =>
+  board([
+    finding("f1", "The refresh token is classified as an error before its code is read.", ["c1"]),
+    codeRef("c1", "src/auth.ts", 11, 12),
+  ]);
 
 /** A seat that must never be asked (a clean board takes no retries). */
 const noRetry: ValidateSeams["runTurn"] = () => {
@@ -63,8 +55,6 @@ const noRetry: ValidateSeams["runTurn"] = () => {
 
 const findEl = (b: DraftBoard, id: string): DraftElement | undefined =>
   b.elements.find((e) => e.id === id);
-const skips = (b: DraftBoard): { hunk: string; reason: string }[] =>
-  ((b as { skippedHunks?: unknown }).skippedHunks as { hunk: string; reason: string }[]) ?? [];
 
 // ── A clean draft passes straight through ─────────────────────────────────────
 
@@ -75,7 +65,6 @@ describe("validateDraft — the clean path", () => {
     expect(result.blemishes).toEqual([]);
     expect(result.omissions).toEqual([]);
     expect(result.immutability).toEqual([]);
-    expect(result.composition).toEqual([]);
     expect(result.board.elements.map((e) => e.id)).toEqual(["f1", "c1"]);
   });
 });
@@ -85,31 +74,23 @@ describe("validateDraft — the clean path", () => {
 describe("validateDraft — retry channel + freeze", () => {
   it("returns pointers, re-lints the patched element, and never re-drafts a frozen one", async () => {
     // f1 + c1 lint clean (freeze); p1 carries code bytes (no-code-bytes fires).
-    const dirty = board(
-      [
-        finding("f1", "The refresh token is classified before its code is read.", ["c1"]),
-        codeRef("c1", "src/auth.ts", 11, 12),
-        el("p1", "prose", { markdown: "```ts\nconst x = 1;\n```" }),
-      ],
-      { skippedHunks: [{ hunk: "h2", reason: "The util rename is mechanical — Noise owns it." }] },
-    );
+    const dirty = board([
+      finding("f1", "The refresh token is classified before its code is read.", ["c1"]),
+      codeRef("c1", "src/auth.ts", 11, 12),
+      el("p1", "prose", { markdown: "```ts\nconst x = 1;\n```" }),
+    ]);
 
     let seen: RetryRequest | undefined;
     const seat: ValidateSeams["runTurn"] = (req) => {
       seen = req;
       // The seat fixes p1 AND tries to mutate the frozen f1 — the mutation must be ignored.
-      return board(
-        [
-          finding("f1", "MUTATED — the seat should not be allowed to change this frozen finding.", [
-            "c1",
-          ]),
-          codeRef("c1", "src/auth.ts", 11, 12),
-          el("p1", "prose", { markdown: "The token is read before classification." }),
-        ],
-        {
-          skippedHunks: [{ hunk: "h2", reason: "The util rename is mechanical — Noise owns it." }],
-        },
-      );
+      return board([
+        finding("f1", "MUTATED — the seat should not be allowed to change this frozen finding.", [
+          "c1",
+        ]),
+        codeRef("c1", "src/auth.ts", 11, 12),
+        el("p1", "prose", { markdown: "The token is read before classification." }),
+      ]);
     };
 
     const result = await validateDraft(dirty, ctx(), { runTurn: seat });
@@ -139,16 +120,13 @@ describe("validateDraft — retry channel + freeze", () => {
 // ── One repair turn ends in an honest omission ───────────────────────────────
 
 describe("validateDraft — the escalation ladder", () => {
-  it("asks once, then omits an unfixable element and sheds its hunks", async () => {
+  it("asks once, then omits an unfixable element with its reason", async () => {
     // f1's concern cites a line past the file (citation-resolves) and the seat
     // stubbornly returns the same broken board every turn.
-    const unfixable = board(
-      [
-        finding("f1", "See the overrun at src/auth.ts:9999 — this never resolves.", ["c1"]),
-        codeRef("c1", "src/auth.ts", 11, 12),
-      ],
-      { skippedHunks: [{ hunk: "h2", reason: "The util rename is mechanical — Noise owns it." }] },
-    );
+    const unfixable = board([
+      finding("f1", "See the overrun at src/auth.ts:9999 — this never resolves.", ["c1"]),
+      codeRef("c1", "src/auth.ts", 11, 12),
+    ]);
 
     const rungs: number[] = [];
     const seat: ValidateSeams["runTurn"] = (req) => {
@@ -162,9 +140,9 @@ describe("validateDraft — the escalation ladder", () => {
     expect(rungs).toEqual([1]);
     expect(findEl(result.board, "f1")).toBeUndefined();
     expect(result.omissions.map((o) => o.elementId)).toEqual(["f1"]);
-    // f1 taught h1 (via c1 @ 11-12 overlapping h1 @ 10-14) → h1 is now skipped.
-    expect(result.omissions[0]?.hunks).toEqual(["h1"]);
-    expect(skips(result.board).some((s) => s.hunk === "h1")).toBe(true);
+    expect(result.omissions[0]?.reason).toContain("`f1`");
+    // The orphaned citation goes with it; the board carries no code_ref nothing cites.
+    expect(findEl(result.board, "c1")).toBeUndefined();
     // Honest omission, not a blemish and not a throw.
     expect(result.blemishes).toEqual([]);
     expect(LADDER_RUNGS).toBe(1);
@@ -176,22 +154,22 @@ describe("validateDraft — the escalation ladder", () => {
 
 describe("validateDraft — retry cap exhaustion", () => {
   it("ships a labeled blemish with attempts once the cap is hit, not a throw or a block", async () => {
-    // A board-level violation (boilerplate skip reason) cannot become an
-    // element omission, so it ships as a blemish after the one repair turn.
-    const nagging = board([], { skippedHunks: [{ hunk: "h2", reason: "n/a" }] });
+    // A lint failure asks the seat once; its repair does not even parse, and the cap is
+    // spent — so the schema issues ship as labeled blemishes rather than a throw.
+    const dirty = board([el("p1", "prose", { markdown: "```ts\nconst x = 1;\n```" })]);
     let calls = 0;
     const seat: ValidateSeams["runTurn"] = () => {
       calls += 1;
-      return nagging;
+      return { elements: [{ id: "x", kind: "code", data: { author } }] };
     };
 
-    const result = await validateDraft(nagging, ctx(), { runTurn: seat });
+    const result = await validateDraft(dirty, ctx(), { runTurn: seat });
 
     expect(calls).toBe(1);
     expect(RETRY_CAP).toBe(1);
     expect(result.attempts).toBe(RETRY_CAP);
     expect(result.blemishes.length).toBeGreaterThan(0);
-    expect(result.blemishes[0]?.ruleId).toBe("skip-reason-specific");
+    expect(result.blemishes[0]?.ruleId).toBe("schema-invalid");
     expect(result.blemishes[0]?.attempts).toBe(RETRY_CAP);
     // The board still ships (visible, never blocking).
     expect(result.board).toBeDefined();
@@ -213,10 +191,10 @@ describe("validateDraft — retry cap exhaustion", () => {
   });
 });
 
-// ── The three gates run in order: lint → immutability → composition ──────────
+// ── The two gates run in order: lint → immutability ──────────────────────────
 
 describe("validateDraft — gate ordering", () => {
-  it("runs immutability after the lint loop and composition after immutability", async () => {
+  it("runs the post-process pass after the lint loop and immutability after it", async () => {
     const order: string[] = [];
     const seams: ValidateSeams = {
       runTurn: noRetry, // clean board — no retries
@@ -235,54 +213,33 @@ describe("validateDraft — gate ordering", () => {
           ),
         };
       },
-      compositionGate: (b) => {
-        order.push("compose");
-        // Gate 3 sees the post-processed board (proves it ran last).
-        expect((findEl(b, "f1")?.data as { concern: string } | undefined)?.concern).toBe(
-          "editor rewrote this typed field",
-        );
-        return [
-          { ruleId: "every-hunk", elementRef: "/coverage", message: "a hunk is taught by no lens" },
-        ];
-      },
     };
 
     const result = await validateDraft(cleanBoard(), ctx(), seams);
 
-    // Ordering: post-process (between lint and immutability) then composition.
-    expect(order).toEqual(["post", "compose"]);
+    expect(order).toEqual(["post"]);
     // Gate 2 caught the typed-data mutation (so it ran after post-process).
     expect(result.immutability.map((v) => v.ruleId)).toEqual(["typed-data-immutable"]);
-    // Gate 3's seam violation is surfaced.
-    expect(result.composition.map((v) => v.ruleId)).toEqual(["every-hunk"]);
   });
 
   it("checkImmutability passes when post-process only touches prose", () => {
     const before = cleanBoard();
-    const after = board(
-      [
-        finding("f1", "The refresh token is classified as an error before its code is read.", [
-          "c1",
-        ]),
-        codeRef("c1", "src/auth.ts", 11, 12),
-        el("p1", "prose", { markdown: "an added prose flourish" }),
-      ],
-      { skippedHunks: [{ hunk: "h2", reason: "The util rename is mechanical — Noise owns it." }] },
-    );
+    const after = board([
+      finding("f1", "The refresh token is classified as an error before its code is read.", ["c1"]),
+      codeRef("c1", "src/auth.ts", 11, 12),
+      el("p1", "prose", { markdown: "an added prose flourish" }),
+    ]);
     expect(checkImmutability(before, after)).toEqual([]);
   });
 
   it("discards a post-process result that invents a dangling element reference", async () => {
-    const before = board(
-      [
-        el("a1", "annotation", {
-          code_ref: "c1",
-          body: "The refresh path is annotated.",
-        }),
-        codeRef("c1", "src/auth.ts", 11, 12),
-      ],
-      { skippedHunks: [{ hunk: "h2", reason: "The util rename is mechanical noise." }] },
-    );
+    const before = board([
+      el("a1", "annotation", {
+        code_ref: "c1",
+        body: "The refresh path is annotated.",
+      }),
+      codeRef("c1", "src/auth.ts", 11, 12),
+    ]);
     const result = await validateDraft(before, ctx(), {
       runTurn: noRetry,
       postProcess: (draft) => ({
@@ -302,10 +259,8 @@ describe("validateDraft — gate ordering", () => {
 
   it("checkImmutability flags a dropped typed element", () => {
     const before = cleanBoard();
-    // The finding vanishes; the skip set is kept, so only the drop fires.
-    const afterDropped = board([codeRef("c1", "src/auth.ts", 11, 12)], {
-      skippedHunks: [{ hunk: "h2", reason: "The util rename is mechanical — Noise owns it." }],
-    });
+    // The finding vanishes, so only the drop fires.
+    const afterDropped = board([codeRef("c1", "src/auth.ts", 11, 12)]);
     expect(checkImmutability(before, afterDropped).map((v) => v.ruleId)).toEqual([
       "typed-data-immutable",
     ]);
@@ -314,15 +269,10 @@ describe("validateDraft — gate ordering", () => {
   // ── Finding 4: the bidirectional gate catches the probe's forgeries ──────
   it("checkImmutability catches a post-process-edited code_ref (finding 4 probe)", () => {
     const before = cleanBoard();
-    const after = board(
-      [
-        finding("f1", "The refresh token is classified as an error before its code is read.", [
-          "c1",
-        ]),
-        codeRef("c1", "src/auth.ts", 11, 99), // the editor forged the line span
-      ],
-      { skippedHunks: [{ hunk: "h2", reason: "The util rename is mechanical — Noise owns it." }] },
-    );
+    const after = board([
+      finding("f1", "The refresh token is classified as an error before its code is read.", ["c1"]),
+      codeRef("c1", "src/auth.ts", 11, 99), // the editor forged the line span
+    ]);
     expect(checkImmutability(before, after)).toEqual([
       {
         ruleId: "typed-data-immutable",
@@ -332,24 +282,10 @@ describe("validateDraft — gate ordering", () => {
     ]);
   });
 
-  it("checkImmutability catches an invented skippedHunks entry (finding 4 probe)", () => {
-    const before = cleanBoard();
-    // Same elements, but the editor invented coverage for h1 it never taught.
-    const after = cleanBoard({
-      skippedHunks: [
-        { hunk: "h2", reason: "The util rename is mechanical — the Noise board owns it." },
-        { hunk: "h1", reason: "invented by the editor" },
-      ],
-    });
-    expect(checkImmutability(before, after).map((v) => v.elementRef)).toEqual(["/skippedHunks"]);
-  });
-
   it("checkImmutability catches a forged typed element the editor introduced (finding 4)", () => {
     const before = cleanBoard();
-    const after = cleanBoard({}); // start from the clean board…
-    const forged = board([...after.elements, finding("fake", "editor invented a finding", [])], {
-      skippedHunks: skips(after),
-    });
+    const after = cleanBoard(); // start from the clean board…
+    const forged = board([...after.elements, finding("fake", "editor invented a finding", [])]);
     expect(checkImmutability(before, forged).map((v) => v.elementRef)).toEqual(["fake"]);
   });
 });
@@ -357,16 +293,13 @@ describe("validateDraft — gate ordering", () => {
 // ── Finding 5: honest omission never ships a dangling reference ───────────────
 
 describe("validateDraft — finding 5: the incoming-reference closure", () => {
-  it("patches a survivor that cited a dropped code_ref, sheds its hunk, no dangling ref", async () => {
+  it("patches a survivor that cited a dropped code_ref, no dangling ref", async () => {
     // c1 overruns the 200-line file → citation-resolves fires on c1 every round;
     // f1 (clean concern) cites c1. The seat never fixes c1.
-    const withBadRef = board(
-      [
-        finding("f1", "The refresh token is classified before its code is read.", ["c1"]),
-        codeRef("c1", "src/auth.ts", 11, 9999),
-      ],
-      { skippedHunks: [{ hunk: "h2", reason: "The util rename is mechanical — Noise owns it." }] },
-    );
+    const withBadRef = board([
+      finding("f1", "The refresh token is classified before its code is read.", ["c1"]),
+      codeRef("c1", "src/auth.ts", 11, 9999),
+    ]);
     const seat: ValidateSeams["runTurn"] = () => withBadRef; // the one repair stays invalid
 
     const result = await validateDraft(withBadRef, ctx(), { runTurn: seat });
@@ -376,8 +309,6 @@ describe("validateDraft — finding 5: the incoming-reference closure", () => {
     const f1 = findEl(result.board, "f1");
     expect(f1).toBeDefined();
     expect((f1?.data as { code: string[] } | undefined)?.code).toEqual([]);
-    // c1 taught h1 (11.. overlaps h1 @ 10-14); with c1 gone, h1 is shed to skippedHunks.
-    expect(skips(result.board).some((s) => s.hunk === "h1")).toBe(true);
     expect(result.omissions.map((o) => o.elementId)).toContain("c1");
     // The final board re-parses clean — no dangling ref left for the wire boundary.
     expect(result.blemishes).toEqual([]);
@@ -408,7 +339,7 @@ describe("validateDraft — finding 6: honest failure state", () => {
   });
 
   it("a genuinely empty but PARSED board reports everParsed=true (a real empty lens)", async () => {
-    const result = await validateDraft({ elements: [], skippedHunks: [] }, ctx(), {
+    const result = await validateDraft({ elements: [] }, ctx(), {
       runTurn: noRetry,
     });
     expect(result.everParsed).toBe(true);

@@ -1,6 +1,3 @@
-import { cn } from "@rennet/ui";
-import { Link2 } from "lucide-react";
-import { Icon } from "../../components/icon";
 import { AnchorReveal } from "../../review";
 import { SourceChips, SpecDeltaBadge, StoryStatus } from "../design-meta";
 import { InlineQuoteHighlight, QuoteHighlightLayer } from "../quote-highlight";
@@ -9,56 +6,9 @@ import { useBoardPatchsetId, useCodeRefs, useElements } from "./element-context"
 import { ProseElement } from "./prose";
 import { BoardElement } from "./renderers";
 
-// `requirement` (C05 3.4) — a shall-requirement and how the change covers it. A
-// coverage chip reads the `met | gap | partial` verdict (green for met, copper warn
-// for both the partial and the unimplemented gap — the prototype tints them alike); the
-// `trace` code_refs reveal on click through `AnchorReveal`. `shall` renders with the
+// `requirement` (C05 3.4) — a shall-requirement, its scenarios, and the code it cites:
+// the `trace` code_refs reveal on click through `AnchorReveal`. `shall` renders with the
 // normative-grammar bolding (SHALL/WHEN/THEN) `RichText` already carries.
-
-// The prototype's chip is a BUTTON that jumps to the claiming hunk; here the hunks are
-// already reachable through the `AnchorReveal` chips below, so this stays a span. A
-// focusable control that does nothing, or a hover tint over nothing, would read as a
-// jump the app cannot make.
-const COVERAGE_CHIP: Record<"met" | "gap" | "partial", string> = {
-  met: "border-green-line text-green",
-  gap: "border-warn-line text-warn",
-  partial: "border-warn-line text-warn",
-};
-
-function countLabel(count: number, singular: string): string {
-  return `${count} ${count === 1 ? singular : `${singular}s`}`;
-}
-
-function CoverageChip({
-  coverage,
-  hunks,
-  tests,
-}: {
-  readonly coverage: "met" | "gap" | "partial" | undefined;
-  readonly hunks: number;
-  readonly tests: number | undefined;
-}) {
-  if (coverage === undefined) return null;
-  const label =
-    coverage === "gap"
-      ? `unimplemented · ${countLabel(hunks, "hunk")}`
-      : `covered by ${countLabel(hunks, "hunk")}${
-          tests === undefined ? "" : ` · ${countLabel(tests, "test")}`
-        }${coverage === "partial" ? " · partial" : ""}`;
-  return (
-    <span
-      data-kind="coverage-chip"
-      data-coverage={coverage}
-      className={cn(
-        "inline-flex items-center gap-1 rounded-chip border px-1.5 py-0.5 text-2xs",
-        COVERAGE_CHIP[coverage],
-      )}
-    >
-      <Icon icon={Link2} className="size-3 shrink-0" />
-      {label}
-    </span>
-  );
-}
 
 function scenarioClauses(
   element: ElementOf<"prose">,
@@ -80,9 +30,7 @@ export function RequirementElement({ element }: { readonly element: ElementOf<"r
     related_files: relatedFiles,
     source,
     spec_delta: specDelta,
-    coverage,
     trace,
-    tests,
     status,
   } = element.data;
   const patchsetId = useBoardPatchsetId();
@@ -92,7 +40,6 @@ export function RequirementElement({ element }: { readonly element: ElementOf<"r
     <div
       data-kind="requirement"
       data-element-id={element.id}
-      {...(coverage ? { "data-coverage": coverage } : {})}
       {...(specDelta ? { "data-spec-delta": specDelta } : {})}
       className="flex flex-col gap-2"
     >
@@ -167,9 +114,8 @@ export function RequirementElement({ element }: { readonly element: ElementOf<"r
           })}
         </ul>
       ) : null}
-      {coverage !== undefined || source !== undefined || (relatedFiles?.length ?? 0) > 0 ? (
+      {source !== undefined || (relatedFiles?.length ?? 0) > 0 ? (
         <div className="flex flex-wrap items-center gap-1.5">
-          <CoverageChip coverage={coverage} hunks={citations.length} tests={tests} />
           <SourceChips sources={source ? [source] : []} />
           <SourceChips
             sources={(relatedFiles ?? []).map((path) => ({ path }))}

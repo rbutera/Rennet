@@ -44,7 +44,6 @@ const designBoard: LensBoard = {
       },
     },
   ],
-  skippedHunks: [],
 };
 
 function projection(reverse = false): AskProjection {

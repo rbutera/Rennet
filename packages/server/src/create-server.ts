@@ -35,7 +35,6 @@ import {
   createCodexCiRefinementTurn,
   createCodexExecutor,
   createCodexHarness,
-  createCoverageTurn,
   createDaemonSettingsStore,
   createGitHubOctokit,
   createGitHubProjectPrSource,
@@ -167,7 +166,6 @@ import {
   recordSeatSend,
   resolveAssignment,
   resolveLocus,
-  runCoverageMapping,
   runHandoffTurn as runHandoffTurnCore,
   runNoiseAngle,
   toDistroPath,
@@ -184,14 +182,12 @@ import type {
   FlaggedReview,
   ForgeRepoIdentity,
   Generation,
-  GenerationCoverage,
   GitHubAuthStatus,
   GitHubConnectPoll,
   LensBoard,
   LensKind,
   LensLane,
   NoiseReview,
-  OpenSpecCoverage,
   Patchset,
   Project,
   ProjectProcessEvent,
@@ -589,44 +585,6 @@ export async function runResolvedCodingHarnessTurn(input: {
   }
   const outcome = await input.run(resolution.port, persistedSessionId);
   return { ...outcome, harness: resolution.selection };
-}
-
-/**
- * Route one resolved coding harness to the requirement-coverage seat (#681, C14 D3).
- * The mapping turn needs the Claude Code structured-output seat, so a host that
- * resolved Codex — or nothing — yields a TYPED ABSENCE naming what resolved instead
- * of a `failed` that would read as "we tried and it broke". Exported so the branch is
- * unit-testable without standing up the composition root.
- */
-export function coverageSeatFor(resolution: CodingHarnessResolution):
-  | {
-      readonly kind: "claude";
-      readonly port: HarnessPort;
-      readonly harness: CodingHarnessSelection;
-    }
-  | { readonly kind: "absent"; readonly coverage: OpenSpecCoverage } {
-  if (resolution.status === "unavailable") {
-    return {
-      kind: "absent",
-      coverage: {
-        status: "unavailable",
-        edges: [],
-        reason: `Requirement coverage needs a Claude Code seat. ${resolution.reason}`,
-      },
-    };
-  }
-  if (resolution.selection.id !== "claude-code") {
-    return {
-      kind: "absent",
-      coverage: {
-        status: "unavailable",
-        edges: [],
-        harness: resolution.selection,
-        reason: `Requirement coverage needs a Claude Code seat; this repository resolved Codex ${resolution.selection.version}. No mapping was attempted.`,
-      },
-    };
-  }
-  return { kind: "claude", port: resolution.port, harness: resolution.selection };
 }
 
 export async function captureBranchPatchset(input: {
@@ -1484,10 +1442,6 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   function disabledHarnessesFor(execution: HandoffTurnExecution): readonly string[] {
     const source: ProjectSource = execution.kind === "host" ? "local" : `wsl:${execution.distro}`;
     return daemonSettingsStore.read().hosts?.[source]?.disabledHarnesses ?? [];
-  }
-  /** The same ruling for a repository whose execution host is the detected default. */
-  function disabledHarnessesForRepo(repoRoot: string): readonly string[] {
-    return disabledHarnessesFor(handoffTurnExecution(locusForRepo(repoRoot), repoRoot));
   }
 
   // The in-flight shares behind every detection read below (C17 review finding 2).
@@ -2381,81 +2335,6 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     return completed.result;
   }
 
-  /**
-   * The live requirement→hunk coverage producer (Rai, wireframes #9 / R53), behind the
-   * `openspec.coverage` boundary. Reads the review's OpenSpec change, decomposes the
-   * active patchset into the offered hunks, and runs the coverage-mapping turn on the
-   * user's `claude` seat, budget-gated — grounding each requirement to the offered hunks
-   * that implement it (any hallucinated hunk dropped) and completing every requirement,
-   * so `ok` yields covered-or-honest-zero per requirement. NO change ⇒ `null` (no chips).
-   * A budget refusal or a failed turn ⇒ `status: "failed"` with no edges (the Spec view
-   * renders no chips) — an uncomputed mapping never becomes a fake zero.
-   *
-   * The seat resolves through the SAME authority round dispatch uses (#681, C14 D3), so a
-   * host where Claude Code did not resolve reports a typed ABSENCE naming what resolved
-   * instead, rather than a "failed" that implies a mapping was attempted and broke. Every
-   * outcome that ran carries the harness that ran it.
-   */
-  async function runLiveCoverage(review: Review): Promise<OpenSpecCoverage | null> {
-    const patchset = activePatchset(review);
-    const change = await readOpenSpecChange(patchset, gitForRepo(patchset.repository.root));
-    if (!change) return null;
-
-    // The requirements are the authority — the producer iterates and completes them, so
-    // the model can neither invent a requirement nor silently drop one.
-    const requirements = change.specDeltas.flatMap((delta) =>
-      delta.groups.flatMap((group) =>
-        group.requirements.map((requirement) => ({
-          capability: delta.capability,
-          name: requirement.name,
-          statement: requirement.statement,
-          scenarios: requirement.scenarios.map((scenario) => scenario.name),
-        })),
-      ),
-    );
-    // No requirements ⇒ an honest empty OK (nothing to map, no chips).
-    if (requirements.length === 0) return { status: "ok", edges: [] };
-
-    const seat = coverageSeatFor(
-      await resolveCodingHarness({
-        disabledHarnesses: disabledHarnessesForRepo(review.repositoryRoot),
-        resolveClaude: () => claudeAdapterForRepo(review.repositoryRoot),
-        resolveCodex: () => codexAdapterForRepo(review.repositoryRoot),
-      }),
-    );
-    if (seat.kind === "absent") return seat.coverage;
-
-    // The offered hunks (the model may cite ONLY these; the runner grounds against them).
-    // KNOWN §7 DEVIATION (as in runFlaggedReview): the read-only harness runs with `cwd`
-    // on the live checkout rather than an immutable materialisation (that layer is not
-    // built yet). Named so it is not read as satisfied.
-    const decomposition = decompose(patchset);
-    const manifest = buildOfferedManifest(decomposition);
-    const offeredIds = new Set(
-      manifest.occurrences.filter((occurrence) => occurrence.kind === "hunk").map((occ) => occ.id),
-    );
-    const hunks = decomposition.hunks
-      .filter((hunk) => offeredIds.has(hunk.id))
-      .map((hunk) => ({
-        id: hunk.id,
-        filePath: hunk.filePath,
-        addedLines: hunk.addedLines,
-        deletedLines: hunk.deletedLines,
-      }));
-
-    const runTurn = createCoverageTurn(seat.port, { cwd: review.repositoryRoot });
-    const result = await runCoverageMapping({
-      patchsetId: patchset.id,
-      requirements,
-      hunks,
-      // Guard the seat (issue #96): a thrown session construction degrades to a failed
-      // turn (honest no-chips), never an uncaught crash of the coverage command.
-      runTurn: guardSeatTurn(runTurn),
-      budget: createInvocationBudget(DEFAULT_MAX_HARNESS_INVOCATIONS),
-    });
-    return { status: result.status, edges: result.edges, harness: seat.harness };
-  }
-
   // The provenance seed for a live noise run (issue #34), mirroring the finding seed.
   // Provenance is stamped on the RSP document but not read by the Noise lens (groups
   // map straight to the lens), so a placeholder model is honest for placement; the
@@ -3261,8 +3140,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       meta.lens === "report" &&
       meta.session === operation.sessionId &&
       meta.generation === handoff.generation &&
-      JSON.stringify(meta.document) === JSON.stringify(handoff.report.document) &&
-      JSON.stringify(meta.skippedHunks) === JSON.stringify(handoff.report.skippedHunks)
+      JSON.stringify(meta.document) === JSON.stringify(handoff.report.document)
     ) {
       roundProgress.emit(operation.reviewId, {
         type: "report",
@@ -3577,7 +3455,6 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
               generation: attempt.generation,
               boardId: event.reportBoardId,
               document: meta.document,
-              skippedHunks: meta.skippedHunks,
             });
             const handoff = recordReportHandoff({
               reportBoardId: event.reportBoardId,
@@ -3946,7 +3823,6 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     let review: Review | null =
       request.reviewId === undefined ? null : service.reviewById(request.reviewId);
     let lanes = initialPreparationLanes();
-    let coverage: GenerationCoverage | undefined;
     try {
       if (review === null) {
         await waitForPreparationDelay(
@@ -4049,15 +3925,10 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
             if (event.type === "failed") terminalReason = event.reason;
             if (event.type !== "lens") return;
             lanes = [...event.lanes];
-            // #725 D4 — the initial generation's coverage state travels with its lanes, so
-            // the preparation screen says coverage is pending beside boards it is already
-            // revealing rather than implying coverage passed.
-            if (event.coverage !== undefined) coverage = event.coverage;
             setCurrentPreparation(sessionId, controller, {
               status: "drafting",
               reviewId: draftingReview.id,
               lanes,
-              ...(coverage === undefined ? {} : { coverage }),
             });
           },
           controller.signal,
@@ -4077,7 +3948,6 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         reason,
         ...(review === null ? {} : { reviewId: review.id }),
         ...(stage === "boards" ? { lanes } : {}),
-        ...(stage === "boards" && coverage !== undefined ? { coverage } : {}),
       });
     } finally {
       if (sessionPreparations.get(sessionId) === controller) {
@@ -4181,7 +4051,6 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       generation,
       boardId: meta.boardId,
       document: meta.document,
-      skippedHunks: meta.skippedHunks,
     });
   };
 
@@ -4335,8 +4204,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
             meta.lens === "report" &&
             meta.session === operation.sessionId &&
             meta.generation === handoff.generation &&
-            JSON.stringify(meta.document) === JSON.stringify(handoff.report.document) &&
-            JSON.stringify(meta.skippedHunks) === JSON.stringify(handoff.report.skippedHunks)
+            JSON.stringify(meta.document) === JSON.stringify(handoff.report.document)
           );
         },
       });
@@ -4421,7 +4289,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     },
     // The lens-board read for `board.read` (C05 cluster 8, C18): the board this review's
     // session drafted for `(generation, lens)`, rebuilt from its two durable halves — the
-    // board-meta record (which board id, and the board-level coverage the element
+    // board-meta record (which board id, and the document opening the element
     // vocabulary cannot carry) and the whiteboard event log's projected element state.
     // Session identity is the SAME read-only target-claim derivation the rounds/transcript
     // reads use. No meta record ⇒ that lens drafted no board that generation ⇒ honest
@@ -4715,10 +4583,6 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       const patchset = activePatchset(review);
       return readOpenSpecChange(patchset, gitForRepo(patchset.repository.root));
     },
-    // The Spec view's requirement→hunk coverage (wireframes #9 / R53): the produced
-    // mapping a budget-gated model turn grounds against the offered hunks. `null` (no
-    // change) or `status:"failed"` (no seat / refusal / failed turn) ⇒ no chips.
-    openSpecCoverage: runLiveCoverage,
     // review.symbolLookup (Rai, wireframes #8): the LIVE symbol inspector port. It
     // reads the review's OWN model-free symbolic surface (context.symbol +
     // context.references) over a freshly composed backend — deterministic index

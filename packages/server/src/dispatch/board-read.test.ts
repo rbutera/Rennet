@@ -41,7 +41,6 @@ const DESIGN: LensBoard = {
       data: { author: { kind: "lens-agent", id: "t" }, markdown: "hello" },
     },
   ],
-  skippedHunks: [],
 };
 
 function harness(deps: Partial<DispatchDeps> = {}) {

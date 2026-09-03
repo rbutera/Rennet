@@ -49,7 +49,7 @@ const ROUND_PACKET = {
   successorAccount: { asks: [] },
 } as unknown as DeltaPacket;
 
-const lintContextFor = (lens: LintTarget): LintContext => ({ lens, hunks: [], files: new Map() });
+const lintContextFor = (lens: LintTarget): LintContext => ({ lens, files: new Map() });
 const readPrompt = (file: string): string => `PROMPT_FILE:${file}`;
 const lensFromPrompt = (prompt: string): string =>
   /PROMPT_FILE:prompts\/([a-z-]+)\.md/.exec(prompt)?.[1] ?? "unknown";
@@ -79,7 +79,6 @@ const cleanBody = (lens: string): DraftBoard => {
           data: { author, markdown: "The changed entry point begins the reading." },
         },
       ],
-      skippedHunks: [],
     } as DraftBoard;
   }
   if (lens === "decisions") {
@@ -112,7 +111,6 @@ const cleanBody = (lens: string): DraftBoard => {
           data: { author, markdown: "Persist each board identity independently." },
         },
       ],
-      skippedHunks: [],
     } as DraftBoard;
   }
   if (lens === "flagged") {
@@ -136,7 +134,6 @@ const cleanBody = (lens: string): DraftBoard => {
           },
         },
       ],
-      skippedHunks: [],
     } as DraftBoard;
   }
   return {
@@ -152,7 +149,6 @@ const cleanBody = (lens: string): DraftBoard => {
         data: { author, markdown: "Reads cleanly." },
       },
     ],
-    skippedHunks: [],
   } as DraftBoard;
 };
 
@@ -291,7 +287,6 @@ describe("B09 packet E2E — kill mid-generation, restart, reattach, boards cano
       // Both rounds land the SAME patchset ps-1 ⇒ the same board generation gen:ps-1.
       runWorkers: async () => ({ commitRange: { from: "c0", to: "c1" }, patchsetId: "ps-1" }),
       deltaPacket: ROUND_PACKET,
-      hunks: [],
       lintContextFor,
       reviewDraftLintCtx: { files: new Map() },
     };

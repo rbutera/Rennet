@@ -477,6 +477,20 @@ write context after an archive has already passed. And a daemon start sweeps eve
 its `includedRepoPaths`, since a workspace's other repos are invisible from `openPath` alone
 — whose session id the store no longer holds, logging the count it removed.
 
+One turn runs before any session exists: the project scout, which fires at project add. It
+writes through the same writer under the fixed id `project-scout`, so its facts land at
+`<repo>/.rennet/context/project-scout/scout-detected.json`. There is no archive to purge it
+at, so the next scout run purges the last one before writing. That is what pays for the
+scout's prompt: it used to carry `CLAUDE.md`, `AGENTS.md` and `CONTRIBUTING.md` at 8 kB each
+plus the detected facts as JSON — 19,166 bytes on Rennet's own checkout — and now names the
+three documents by path, for a seat whose `cwd` is already the repository root, at 706 bytes.
+Related-context retrieval is the same shape: its candidate dossier is written by
+`DossierStore.saveCandidates` as `candidates.json` beside the record it will become, and the
+enrichment prompt names that absolute path and the item count instead of carrying the items
+(27,543 → 414 bytes on the frozen PR #514 fixture). `candidates.json` is deliberately not
+`record.json`, because a readable record is what gates a refire and a candidate list is not a
+finished retrieval.
+
 ## Code map
 
 - `packages/server/src/t3/sidecar.ts`: claim, probe, free port, provider seeding, environment, spawn, adopt, stop.

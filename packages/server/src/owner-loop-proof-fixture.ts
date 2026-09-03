@@ -102,7 +102,6 @@ function designBoard(): DraftBoard {
         },
       },
     ],
-    skippedHunks: [],
   };
 }
 
@@ -131,7 +130,6 @@ function sequenceBoard(): DraftBoard {
         data: { author, title: "Owner value", children: ["sequence-step"] },
       },
     ],
-    skippedHunks: [],
   };
 }
 
@@ -167,7 +165,6 @@ function decisionsBoard(): DraftBoard {
         data: { author, title: "Source-controlled value", children: ["decisions-choice"] },
       },
     ],
-    skippedHunks: [],
   };
 }
 
@@ -198,7 +195,6 @@ function flaggedBoard(): DraftBoard {
         data: { author, title: "Observed behavior", children: ["flagged-finding"] },
       },
     ],
-    skippedHunks: [],
   };
 }
 
@@ -232,7 +228,6 @@ function noiseBoard(): DraftBoard {
         },
       },
     ],
-    skippedHunks: [],
   };
 }
 
@@ -267,12 +262,6 @@ export function ownerLoopScriptedHarnessPlan(
         kind: "structured",
         promptIncludes: "You are the project scout.",
         output: { facts: {}, guidanceRules: [] },
-      },
-      {
-        id: "design-coverage",
-        kind: "coverage",
-        promptIncludes: "You are mapping OpenSpec requirements to the code changes",
-        implementationPath: OWNER_LOOP_SOURCE,
       },
       {
         id: "design",

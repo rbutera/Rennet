@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { hunkIdSchema } from "../delta/citations";
 import { LENS_KINDS, type LensKind } from "../manifests";
 import {
   type BoardDocument,
@@ -83,17 +82,6 @@ export const LensSectionSchema = z.looseObject({
   delta: SectionDeltaSchema.optional(),
 });
 
-/**
- * One consciously skipped patchset hunk (`lens-pipeline.md`): left to another
- * lens's lane, with the reason. Coverage is data, not prose — composition
- * checks every hunk lands in some lens's taught-or-skipped set.
- */
-export const SkippedHunkSchema = z.looseObject({
-  /** The stable patchset hunk id (delta/ owns the id shape). */
-  hunk: hunkIdSchema,
-  reason: z.string(),
-});
-
 /** The lens board projection. Board-level extras pass through (B4 may append). */
 export const LensBoardSchema = z.looseObject({
   lens: LensKindSchema,
@@ -106,7 +94,6 @@ export const LensBoardSchema = z.looseObject({
   sections: z.array(LensSectionSchema),
   /** The element tree, in the 13-kind host vocabulary, stable element ids. */
   elements: z.array(HostElementSchema),
-  skippedHunks: z.array(SkippedHunkSchema),
 });
 
 /**
@@ -129,7 +116,6 @@ export const RoundReportBoardSchema = LensBoardSchema.extend({
 });
 
 export type LensSection = z.infer<typeof LensSectionSchema>;
-export type SkippedHunk = z.infer<typeof SkippedHunkSchema>;
 export type LensBoard = z.infer<typeof LensBoardSchema>;
 export type RoundReportBoard = z.infer<typeof RoundReportBoardSchema>;
 

@@ -9,9 +9,6 @@ import { ArrowRight } from "lucide-react";
 import { Icon } from "../components/icon";
 import {
   canRevealNewBoards,
-  coverageNote,
-  coverageStatus,
-  type GenerationCoverage,
   type LaneRow,
   type LensLane,
   type RoundState,
@@ -137,7 +134,7 @@ function laneNote(lane: LensLane): string {
  * drafters settle, DERIVED from the real phase, never pre-rendered:
  *
  *   • "Finalizing generation" is the window between the last lens arrival and the
- *     `composed` event. Cross-lens coverage runs AFTER those arrivals (#725 D4) and is
+ *     `composed` event. The reveal is
  *     reported on its own row, so this step covers the rest: any configured review
  *     composition, validating the required boards, persisting the generation and the
  *     ledger record, then emitting `composed`. While any lane is still queued or running
@@ -190,12 +187,10 @@ export function usageNote(usage: GenerationUsage): string {
 function RegenerationProgress({
   state,
   lanes,
-  coverage,
   usage,
 }: {
   readonly state: RoundState;
   readonly lanes: readonly LensLane[];
-  readonly coverage?: GenerationCoverage;
   readonly usage?: GenerationUsage;
 }) {
   const steps = finishSteps(state, lanes);
@@ -231,20 +226,6 @@ function RegenerationProgress({
             </div>
           ))}
         </div>
-      )}
-      {coverage !== undefined && (
-        <span
-          data-testid="cross-lens-coverage"
-          data-coverage={coverage.state}
-          // The RENDERED register, exposed so a test can see the glyph choice: a coverage
-          // run that completed with uncovered hunks is `warn`, never the green `done` check
-          // that would read as a clean result over text saying the opposite.
-          data-status={coverageStatus(coverage)}
-          className="flex items-center gap-1.5 pt-1 text-12-5 text-muted-foreground"
-        >
-          <StatusIcon status={coverageStatus(coverage)} compact />
-          {coverageNote(coverage)}
-        </span>
       )}
       {usage !== undefined && (
         <span
@@ -298,7 +279,6 @@ export function RoundGreeting({
       : state.phase === "composed"
         ? (state.lanes ?? NO_LANES)
         : NO_LANES;
-  const coverage = "coverage" in state ? state.coverage : undefined;
   const usage = "usage" in state ? state.usage : undefined;
   const regenerating = state.phase === "composing" || state.phase === "composed";
   return (
@@ -312,7 +292,6 @@ export function RoundGreeting({
         <RegenerationProgress
           state={state}
           lanes={lanes}
-          {...(coverage === undefined ? {} : { coverage })}
           {...(usage === undefined ? {} : { usage })}
         />
       )}

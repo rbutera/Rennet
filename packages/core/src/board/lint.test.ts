@@ -2,9 +2,9 @@ import type { DraftBoard, DraftElement, LensKind } from "@rennet/protocol";
 import { parseDraft } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import {
+  type ChangedRegion,
   DEFAULT_SCAFFOLD_GLOBS,
   type LintContext,
-  type LintHunk,
   lint,
   lintReviewDraft,
 } from "./lint";
@@ -28,14 +28,14 @@ const codeRef = (id: string, path: string, start: number, end: number): DraftEle
 const board = (elements: DraftElement[], extra: Record<string, unknown> = {}): DraftBoard =>
   ({ elements, ...extra }) as DraftBoard;
 
-const HUNKS: LintHunk[] = [
-  { id: "h1", path: "src/auth.ts", newStart: 10, newLines: 5 },
-  { id: "h2", path: "src/util.ts", newStart: 1, newLines: 3 },
+const REGIONS: ChangedRegion[] = [
+  { path: "src/auth.ts", side: "head", start: 10, end: 14 },
+  { path: "src/util.ts", side: "head", start: 1, end: 3 },
 ];
 
 const ctx = (over: Partial<LintContext> = {}): LintContext => ({
   lens: "flagged",
-  hunks: HUNKS,
+  regions: REGIONS,
   files: new Map([
     ["src/auth.ts", 200],
     ["src/util.ts", 50],
@@ -56,12 +56,7 @@ const cleanBoard = (over: Record<string, unknown> = {}): DraftBoard =>
       }),
       codeRef("c1", "src/auth.ts", 11, 12),
     ],
-    {
-      skippedHunks: [
-        { hunk: "h2", reason: "The util rename is mechanical — the Noise board owns it." },
-      ],
-      ...over,
-    },
+    over,
   );
 
 const rulesHit = (violations: { ruleId: string }[]) => new Set(violations.map((v) => v.ruleId));
@@ -74,9 +69,7 @@ describe("lint — the clean control", () => {
   });
 
   it("a Violation carries ruleId + elementRef + message", () => {
-    const bad = board([el("p1", "prose", { markdown: "```ts\nconst x = 1;\n```" })], {
-      skippedHunks: [],
-    });
+    const bad = board([el("p1", "prose", { markdown: "```ts\nconst x = 1;\n```" })]);
     const v = lint(bad, ctx())[0];
     expect(v).toBeDefined();
     expect(v?.ruleId).toBe("no-code-bytes");
@@ -123,23 +116,17 @@ describe("parse-time KIND palette (S1/S2)", () => {
 
 describe("no-code-bytes (L1 / R17 / R20 exemption)", () => {
   it("fires on a fenced code block in prose", () => {
-    const bad = board([el("p", "prose", { markdown: "See:\n```ts\nconst x = 1;\n```" })], {
-      skippedHunks: [],
-    });
+    const bad = board([el("p", "prose", { markdown: "See:\n```ts\nconst x = 1;\n```" })]);
     expect(rulesHit(lint(bad, ctx()))).toContain("no-code-bytes");
   });
 
   it("fires on an indented code block", () => {
-    const bad = board([el("p", "prose", { markdown: "    const x = 1;\n    const y = 2;" })], {
-      skippedHunks: [],
-    });
+    const bad = board([el("p", "prose", { markdown: "    const x = 1;\n    const y = 2;" })]);
     expect(rulesHit(lint(bad, ctx()))).toContain("no-code-bytes");
   });
 
   it("exempts single-backtick inline identifiers (R20)", () => {
-    const ok = board([el("p", "prose", { markdown: "The `refreshToken` guard runs first." })], {
-      skippedHunks: [],
-    });
+    const ok = board([el("p", "prose", { markdown: "The `refreshToken` guard runs first." })]);
     expect(rulesHit(lint(ok, ctx()))).not.toContain("no-code-bytes");
   });
 });
@@ -148,17 +135,14 @@ describe("no-code-bytes (L1 / R17 / R20 exemption)", () => {
 
 describe("no-dialogue (L2 / R17)", () => {
   it("fires on two-turn authored dialogue", () => {
-    const bad = board(
-      [el("p", "prose", { markdown: "Reviewer: is this safe?\nAgent: yes, the guard covers it." })],
-      { skippedHunks: [] },
-    );
+    const bad = board([
+      el("p", "prose", { markdown: "Reviewer: is this safe?\nAgent: yes, the guard covers it." }),
+    ]);
     expect(rulesHit(lint(bad, ctx()))).toContain("no-dialogue");
   });
 
   it("does not fire on a lone `Note:` label", () => {
-    const ok = board([el("p", "prose", { markdown: "Note: the guard covers the refresh path." })], {
-      skippedHunks: [],
-    });
+    const ok = board([el("p", "prose", { markdown: "Note: the guard covers the refresh path." })]);
     expect(rulesHit(lint(ok, ctx()))).not.toContain("no-dialogue");
   });
 });
@@ -167,42 +151,32 @@ describe("no-dialogue (L2 / R17)", () => {
 
 describe("citations (L3 well-formed / L4 resolves)", () => {
   it("L3 fires on an absolute path citation", () => {
-    const bad = board([el("p", "prose", { markdown: "See /src/auth.ts:11 for the guard." })], {
-      skippedHunks: [],
-    });
+    const bad = board([el("p", "prose", { markdown: "See /src/auth.ts:11 for the guard." })]);
     expect(rulesHit(lint(bad, ctx()))).toContain("citation-well-formed");
   });
 
   it("L3 fires on a bare-basename citation", () => {
-    const bad = board([el("p", "prose", { markdown: "See auth.ts:11 for the guard." })], {
-      skippedHunks: [],
-    });
+    const bad = board([el("p", "prose", { markdown: "See auth.ts:11 for the guard." })]);
     expect(rulesHit(lint(bad, ctx()))).toContain("citation-well-formed");
   });
 
   it("L4 fires when a prose citation names a file that does not resolve", () => {
-    const bad = board([el("p", "prose", { markdown: "See src/ghost.ts:11 for the guard." })], {
-      skippedHunks: [],
-    });
+    const bad = board([el("p", "prose", { markdown: "See src/ghost.ts:11 for the guard." })]);
     expect(rulesHit(lint(bad, ctx()))).toContain("citation-resolves");
   });
 
   it("L4 fires when a prose citation overruns the file", () => {
-    const bad = board([el("p", "prose", { markdown: "See src/util.ts:9000 there." })], {
-      skippedHunks: [],
-    });
+    const bad = board([el("p", "prose", { markdown: "See src/util.ts:9000 there." })]);
     expect(rulesHit(lint(bad, ctx()))).toContain("citation-resolves");
   });
 
   it("L4 fires on an unresolvable typed code_ref", () => {
-    const bad = board([codeRef("c", "src/ghost.ts", 1, 2)], { skippedHunks: [] });
+    const bad = board([codeRef("c", "src/ghost.ts", 1, 2)]);
     expect(rulesHit(lint(bad, ctx()))).toContain("citation-resolves");
   });
 
   it("passes a resolvable repo-relative citation", () => {
-    const ok = board([el("p", "prose", { markdown: "See src/auth.ts:11 for the guard." })], {
-      skippedHunks: [],
-    });
+    const ok = board([el("p", "prose", { markdown: "See src/auth.ts:11 for the guard." })]);
     const hit = rulesHit(lint(ok, ctx()));
     expect(hit).not.toContain("citation-well-formed");
     expect(hit).not.toContain("citation-resolves");
@@ -213,26 +187,19 @@ describe("citations (L3 well-formed / L4 resolves)", () => {
 
 describe("process-vocabulary (L7 / R20 / F2 / F3)", () => {
   it("fires when a section title names the machinery", () => {
-    const bad = board(
-      [el("s", "section", { title: "What the lens agents drafted", children: [] })],
-      {
-        skippedHunks: [],
-      },
-    );
+    const bad = board([
+      el("s", "section", { title: "What the lens agents drafted", children: [] }),
+    ]);
     expect(rulesHit(lint(bad, ctx()))).toContain("process-vocabulary");
   });
 
   it("exempts a backticked identifier (F2 exemption 1)", () => {
-    const ok = board([el("s", "section", { title: "The `LensBoard` projection", children: [] })], {
-      skippedHunks: [],
-    });
+    const ok = board([el("s", "section", { title: "The `LensBoard` projection", children: [] })]);
     expect(rulesHit(lint(ok, ctx()))).not.toContain("process-vocabulary");
   });
 
   it("exempts an identifier the patchset itself defines (F2 exemption 2)", () => {
-    const bad = board([el("s", "section", { title: "The lens registry", children: [] })], {
-      skippedHunks: [],
-    });
+    const bad = board([el("s", "section", { title: "The lens registry", children: [] })]);
     // Without the allowlist it fires; with `lens` in the change's vocabulary it does not.
     expect(rulesHit(lint(bad, ctx()))).toContain("process-vocabulary");
     const exempt = ctx({ patchsetIdentifiers: new Set(["lens"]) });
@@ -240,23 +207,16 @@ describe("process-vocabulary (L7 / R20 / F2 / F3)", () => {
   });
 
   it("does not screen body prose — only structural fields (§5)", () => {
-    const ok = board(
-      [
-        el("f1", "finding", {
-          severity: "low",
-          concern: "The draft agents disagree on the seat, but the board stays coherent.",
-          code: ["c1"],
-          concurrence: [],
-          status: "open",
-        }),
-        codeRef("c1", "src/auth.ts", 11, 12),
-      ],
-      {
-        skippedHunks: [
-          { hunk: "h2", reason: "mechanical rename owned by Noise, specifically the util move." },
-        ],
-      },
-    );
+    const ok = board([
+      el("f1", "finding", {
+        severity: "low",
+        concern: "The draft agents disagree on the seat, but the board stays coherent.",
+        code: ["c1"],
+        concurrence: [],
+        status: "open",
+      }),
+      codeRef("c1", "src/auth.ts", 11, 12),
+    ]);
     expect(rulesHit(lint(ok, ctx()))).not.toContain("process-vocabulary");
   });
 });
@@ -265,12 +225,9 @@ describe("process-vocabulary (L7 / R20 / F2 / F3)", () => {
 
 describe("no-remainder-narration (L9 / R18)", () => {
   it("fires on remainder narration", () => {
-    const bad = board(
-      [el("p", "prose", { markdown: "The rest of the diff is covered elsewhere." })],
-      {
-        skippedHunks: [],
-      },
-    );
+    const bad = board([
+      el("p", "prose", { markdown: "The rest of the diff is covered elsewhere." }),
+    ]);
     expect(rulesHit(lint(bad, ctx()))).toContain("no-remainder-narration");
   });
 });
@@ -279,17 +236,13 @@ describe("no-remainder-narration (L9 / R18)", () => {
 
 describe("scaffold-is-noise-lane (L10 / R22)", () => {
   it("fires when a non-Noise board cites a scaffold path", () => {
-    const bad = board([codeRef("c", "openspec/changes/auth/.openspec.yaml", 1, 1)], {
-      skippedHunks: [],
-    });
+    const bad = board([codeRef("c", "openspec/changes/auth/.openspec.yaml", 1, 1)]);
     const scoped = ctx({ files: new Map([["openspec/changes/auth/.openspec.yaml", 10]]) });
     expect(rulesHit(lint(bad, scoped))).toContain("scaffold-is-noise-lane");
   });
 
   it("does not fire on the Noise board", () => {
-    const noiseBoard = board([codeRef("c", "openspec/changes/auth/.openspec.yaml", 1, 1)], {
-      skippedHunks: [],
-    });
+    const noiseBoard = board([codeRef("c", "openspec/changes/auth/.openspec.yaml", 1, 1)]);
     const scoped = ctx({
       lens: "noise" as LensKind,
       files: new Map([["openspec/changes/auth/.openspec.yaml", 10]]),
@@ -299,7 +252,7 @@ describe("scaffold-is-noise-lane (L10 / R22)", () => {
 
   it("does not misclassify an OpenSpec source artifact as generated scaffold", () => {
     const path = "openspec/changes/auth/specs/session/spec.md";
-    const design = board([codeRef("c", path, 1, 1)], { skippedHunks: [] });
+    const design = board([codeRef("c", path, 1, 1)]);
     const scoped = ctx({ lens: "design", files: new Map([[path, 10]]) });
 
     expect(rulesHit(lint(design, scoped))).not.toContain("scaffold-is-noise-lane");
@@ -310,36 +263,62 @@ describe("scaffold-is-noise-lane (L10 / R22)", () => {
   });
 });
 
-// ── skippedHunks rules (S3-as-lint / L11 / L14 / L15) ────────────────────────
+// ── unresolvable-citation (D5 — every code_ref overlaps a changed region on its side) ──
 
-describe("skippedHunks rules (S3 / L11 / L14 / L15)", () => {
-  it("skipped-hunks-present fires when the board omits the array", () => {
-    const bad = board([el("p", "prose", { markdown: "A design note." })]); // no skippedHunks
-    expect(rulesHit(lint(bad, ctx()))).toContain("skipped-hunks-present");
+describe("unresolvable-citation (D5)", () => {
+  it("control: a citation entirely outside the change reddens, naming the nearest changed range", () => {
+    // src/auth.ts changed on 10..14; a head-side citation of 40..41 overlaps nothing.
+    const bad = board([codeRef("c", "src/auth.ts", 40, 41)]);
+    const hit = lint(bad, ctx()).filter((v) => v.ruleId === "unresolvable-citation");
+    expect(hit.map((v) => v.elementRef)).toEqual(["c"]);
+    expect(hit[0]?.message).toContain("src/auth.ts:40-41");
+    expect(hit[0]?.message).toContain("src/auth.ts:10-14");
   });
 
-  it("skip-reason-specific fires on a boilerplate reason", () => {
-    const bad = board([el("p", "prose", { markdown: "note" })], {
-      skippedHunks: [{ hunk: "h2", reason: "other lens" }],
-    });
-    expect(rulesHit(lint(bad, ctx()))).toContain("skip-reason-specific");
+  it("a citation overlapping a changed region passes, even partially", () => {
+    // 13..20 overlaps 10..14 on its last two lines.
+    const ok = board([codeRef("c", "src/auth.ts", 13, 20)]);
+    expect(rulesHit(lint(ok, ctx()))).not.toContain("unresolvable-citation");
   });
 
-  it("skipped-hunks-resolve fires when a skipped hunk is not in the patchset", () => {
-    const bad = board([el("p", "prose", { markdown: "note" })], {
-      skippedHunks: [
-        { hunk: "ghost-hunk", reason: "The migration is boilerplate for the Noise board." },
-      ],
+  it("resolves on the cited SIDE: a base-side citation never resolves against head regions", () => {
+    const base = el("c", "code_ref", {
+      patchset_id: "ps-1",
+      path: "src/auth.ts",
+      side: "base",
+      start_line: 11,
+      end_line: 12,
     });
-    expect(rulesHit(lint(bad, ctx()))).toContain("skipped-hunks-resolve");
+    const hit = lint(board([base]), ctx({ baseFiles: new Map([["src/auth.ts", 200]]) })).filter(
+      (v) => v.ruleId === "unresolvable-citation",
+    );
+    expect(hit.map((v) => v.elementRef)).toEqual(["c"]);
+    expect(hit[0]?.message).toContain("no changed lines on the base side");
+    const withBase = ctx({
+      baseFiles: new Map([["src/auth.ts", 200]]),
+      regions: [...REGIONS, { path: "src/auth.ts", side: "base", start: 11, end: 11 }],
+    });
+    expect(rulesHit(lint(board([base]), withBase))).not.toContain("unresolvable-citation");
   });
 
-  it("no-taught-and-skipped fires when a hunk is both cited and skipped", () => {
-    const bad = board([codeRef("c", "src/auth.ts", 11, 12)], {
-      skippedHunks: [{ hunk: "h1", reason: "The auth change is trivial, owned by Noise here." }],
-    });
-    // c cites src/auth.ts:11-12, which overlaps h1 (newStart 10, 5 lines) → taught AND skipped.
-    expect(rulesHit(lint(bad, ctx()))).toContain("no-taught-and-skipped");
+  it("leaves an inverted or overrunning citation to citation-resolves (no double report)", () => {
+    const inverted = board([codeRef("c", "src/auth.ts", 12, 11)]);
+    const hit = rulesHit(lint(inverted, ctx()));
+    expect(hit).toContain("citation-resolves");
+    expect(hit).not.toContain("unresolvable-citation");
+  });
+
+  it("an absent region list is unchecked; an EMPTY one is a change with no lines to cite", () => {
+    const cited = board([codeRef("c", "src/auth.ts", 40, 41)]);
+    expect(rulesHit(lint(cited, ctx({ regions: undefined })))).not.toContain(
+      "unresolvable-citation",
+    );
+    expect(rulesHit(lint(cited, ctx({ regions: [] })))).toContain("unresolvable-citation");
+  });
+
+  it("does not apply to the round-report seat, which cites the round's own diff", () => {
+    const report = board([codeRef("c", "src/auth.ts", 40, 41)]);
+    expect(rulesHit(lint(report, ctx({ lens: "report" })))).not.toContain("unresolvable-citation");
   });
 });
 
@@ -398,7 +377,7 @@ describe("report-coherent (L17 / R57 — the report seat, S1)", () => {
 
 describe("requirement-verbatim (L13 / anti-paraphrase)", () => {
   const reqBoard = (shall: string) =>
-    board([el("r", "requirement", { shall, coverage: "met", trace: [] })], { skippedHunks: [] });
+    board([el("r", "requirement", { shall, coverage: "met", trace: [] })]);
 
   it("fires when the shall text is not a verbatim substring of the source", () => {
     const scoped = ctx({
@@ -428,15 +407,12 @@ describe("requirement-verbatim (L13 / anti-paraphrase)", () => {
   });
 
   it("checks a requirement only against the exact source artifact it names", () => {
-    const bad = board(
-      [
-        el("r", "requirement", {
-          shall: "The system SHALL refresh the token",
-          source: { path: "specs/session.md" },
-        }),
-      ],
-      { skippedHunks: [] },
-    );
+    const bad = board([
+      el("r", "requirement", {
+        shall: "The system SHALL refresh the token",
+        source: { path: "specs/session.md" },
+      }),
+    ]);
     const scoped = ctx({
       lens: "design" as LensKind,
       artifacts: [
@@ -449,15 +425,12 @@ describe("requirement-verbatim (L13 / anti-paraphrase)", () => {
   });
 
   it("passes source-indexed verbatim text from the named artifact", () => {
-    const ok = board(
-      [
-        el("r", "requirement", {
-          shall: "The system SHALL preserve the session",
-          source: { path: "specs/session.md" },
-        }),
-      ],
-      { skippedHunks: [] },
-    );
+    const ok = board([
+      el("r", "requirement", {
+        shall: "The system SHALL preserve the session",
+        source: { path: "specs/session.md" },
+      }),
+    ]);
     const scoped = ctx({
       lens: "design" as LensKind,
       artifacts: [
@@ -470,15 +443,12 @@ describe("requirement-verbatim (L13 / anti-paraphrase)", () => {
   });
 
   it("rejects a requirement whose source path is not in the discovered artifact set", () => {
-    const bad = board(
-      [
-        el("r", "requirement", {
-          shall: "The system SHALL preserve the session",
-          source: { path: "specs/typo.md" },
-        }),
-      ],
-      { skippedHunks: [] },
-    );
+    const bad = board([
+      el("r", "requirement", {
+        shall: "The system SHALL preserve the session",
+        source: { path: "specs/typo.md" },
+      }),
+    ]);
     const scoped = ctx({
       lens: "design" as LensKind,
       artifacts: [{ path: "specs/session.md", text: "The system SHALL preserve the session." }],
@@ -488,10 +458,7 @@ describe("requirement-verbatim (L13 / anti-paraphrase)", () => {
   });
 
   it("rejects a sourceless requirement when discovery supplied exact artifacts", () => {
-    const bad = board(
-      [el("r", "requirement", { shall: "The system SHALL preserve the session" })],
-      { skippedHunks: [] },
-    );
+    const bad = board([el("r", "requirement", { shall: "The system SHALL preserve the session" })]);
     const scoped = ctx({
       lens: "design" as LensKind,
       artifacts: [{ path: "specs/session.md", text: "The system SHALL preserve the session." }],
@@ -501,17 +468,14 @@ describe("requirement-verbatim (L13 / anti-paraphrase)", () => {
   });
 
   it("rejects a paraphrased scenario even when the SHALL text is verbatim", () => {
-    const bad = board(
-      [
-        el("r", "requirement", {
-          shall: "The system SHALL preserve the session",
-          scenarios: ["scenario"],
-          source: { path: "specs/session.md" },
-        }),
-        el("scenario", "prose", { markdown: "WHEN it expires THEN refresh everything." }),
-      ],
-      { skippedHunks: [] },
-    );
+    const bad = board([
+      el("r", "requirement", {
+        shall: "The system SHALL preserve the session",
+        scenarios: ["scenario"],
+        source: { path: "specs/session.md" },
+      }),
+      el("scenario", "prose", { markdown: "WHEN it expires THEN refresh everything." }),
+    ]);
     const scoped = ctx({
       lens: "design" as LensKind,
       artifacts: [
@@ -530,17 +494,14 @@ describe("requirement-verbatim (L13 / anti-paraphrase)", () => {
 
   it("accepts a verbatim scenario anchored through its requirement", () => {
     const scenario = "WHEN the token expires THEN refresh the session.";
-    const ok = board(
-      [
-        el("r", "requirement", {
-          shall: "The system SHALL preserve the session",
-          scenarios: ["scenario"],
-          source: { path: "specs/session.md" },
-        }),
-        el("scenario", "prose", { markdown: scenario }),
-      ],
-      { skippedHunks: [] },
-    );
+    const ok = board([
+      el("r", "requirement", {
+        shall: "The system SHALL preserve the session",
+        scenarios: ["scenario"],
+        source: { path: "specs/session.md" },
+      }),
+      el("scenario", "prose", { markdown: scenario }),
+    ]);
     const scoped = ctx({
       lens: "design" as LensKind,
       artifacts: [
@@ -555,17 +516,14 @@ describe("requirement-verbatim (L13 / anti-paraphrase)", () => {
   });
 
   it("rejects a requirement scenario ref that resolves to a non-narrative element", () => {
-    const bad = board(
-      [
-        el("r", "requirement", {
-          shall: "The system SHALL preserve the session",
-          scenarios: ["not-a-scenario"],
-          source: { path: "specs/session.md" },
-        }),
-        codeRef("not-a-scenario", "src/auth.ts", 10, 11),
-      ],
-      { skippedHunks: [] },
-    );
+    const bad = board([
+      el("r", "requirement", {
+        shall: "The system SHALL preserve the session",
+        scenarios: ["not-a-scenario"],
+        source: { path: "specs/session.md" },
+      }),
+      codeRef("not-a-scenario", "src/auth.ts", 10, 11),
+    ]);
     const scoped = ctx({
       lens: "design",
       artifacts: [{ path: "specs/session.md", text: "The system SHALL preserve the session." }],
@@ -607,7 +565,6 @@ describe("Design source navigation grounding", () => {
           measure: "structured",
           sources: [{ path: "specs/invented.md" }],
         },
-        skippedHunks: [],
       },
     );
 
@@ -637,7 +594,6 @@ describe("Design source navigation grounding", () => {
           measure: "structured",
           sources: [{ path: "specs/session.md" }],
         },
-        skippedHunks: [],
       },
     );
 
@@ -666,7 +622,6 @@ describe("Design source navigation grounding", () => {
           measure: "structured",
           sources: [{ path: "specs/session.md", line: 11 }],
         },
-        skippedHunks: [],
       },
     );
 
@@ -695,7 +650,6 @@ describe("Design source navigation grounding", () => {
           measure: "structured",
           sources: [{ path: "specs/session.md", line: 10 }],
         },
-        skippedHunks: [],
       },
     );
 
@@ -732,7 +686,6 @@ describe("Design source navigation grounding", () => {
           measure: "structured",
           sources: [{ path: "specs/session.md", line: 2 }],
         },
-        skippedHunks: [],
       },
     );
 
@@ -757,7 +710,6 @@ describe("Design source navigation grounding", () => {
           measure: "structured",
           sources: [{ path: proposal }],
         },
-        skippedHunks: [],
       },
     );
     const complete = board(
@@ -780,7 +732,6 @@ describe("Design source navigation grounding", () => {
           measure: "structured",
           sources: [{ path: proposal }, { path: design }],
         },
-        skippedHunks: [],
       },
     );
     const completeCtx = ctx({
@@ -828,7 +779,6 @@ describe("Design source navigation grounding", () => {
             { path: targetDesign, candidate: "candidate-target" },
           ],
         },
-        skippedHunks: [],
       },
     );
     const decoyCtx = ctx({
@@ -880,7 +830,6 @@ describe("Design source navigation grounding", () => {
           measure: "structured",
           sources: [{ path: targetPath, candidate: "candidate-target" }],
         },
-        skippedHunks: [],
       },
     );
     const scoped = ctx({
@@ -951,7 +900,6 @@ describe("Design source navigation grounding", () => {
             { path: targetOnly, candidate: "candidate-target" },
           ],
         },
-        skippedHunks: [],
       },
     );
     const overlapCtx = ctx({
@@ -994,7 +942,6 @@ describe("Design source navigation grounding", () => {
           measure: "structured",
           sources: [{ path: shared }],
         },
-        skippedHunks: [],
       },
     );
     const overlapCtx = ctx({
@@ -1028,7 +975,6 @@ describe("Design source navigation grounding", () => {
           measure: "structured",
           sources: [{ path, candidate: "only" }],
         },
-        skippedHunks: [],
       },
     );
     const scoped = ctx({
@@ -1138,13 +1084,12 @@ describe("Design source navigation grounding", () => {
               { label: "Tasks", value: "1/2" },
             ],
           },
-          skippedHunks: [],
         },
       );
     const completeCtx = (over: Partial<LintContext> = {}): LintContext =>
       ctx({
         lens: "design",
-        hunks: [],
+        regions: [],
         artifacts: [
           { candidate, format: "openspec", path, role: "spec-delta", text },
           { candidate, format: "openspec", path: tasksPath, role: "tasks", text: tasksText },
@@ -1403,7 +1348,6 @@ describe("Design source navigation grounding", () => {
               { label: "Capabilities", value: "0 new / 0 modified" },
             ],
           },
-          skippedHunks: [],
         },
       );
 
@@ -1477,7 +1421,6 @@ describe("Design source navigation grounding", () => {
               { label: "Tasks", value: "0/1" },
             ],
           },
-          skippedHunks: [],
         },
       );
       const scoped = completeCtx({
@@ -1773,7 +1716,6 @@ describe("Design source navigation grounding", () => {
               { label: "Capabilities", value: "0 new / 1 modified" },
             ],
           },
-          skippedHunks: [],
         },
       );
       const scoped = completeCtx({
@@ -1931,7 +1873,6 @@ describe("Design source navigation grounding", () => {
               { label: "Tasks", value: "0/1" },
             ],
           },
-          skippedHunks: [],
         },
       );
       const planCtx = completeCtx({
@@ -2127,7 +2068,6 @@ describe("Design source navigation grounding", () => {
               { label: "Requirements", value: "1" },
             ],
           },
-          skippedHunks: [],
         },
       );
 
@@ -2251,7 +2191,6 @@ describe("Design source navigation grounding", () => {
               { label: "Tasks", value: "0/3" },
             ],
           },
-          skippedHunks: [],
         },
       );
       const scoped = completeCtx({
@@ -2350,7 +2289,6 @@ describe("Design source navigation grounding", () => {
             sources: [bugfixSource],
             stats: [{ label: "Requirements", value: "0" }],
           },
-          skippedHunks: [],
         },
       );
       const scoped = completeCtx({
@@ -2435,7 +2373,6 @@ describe("Design source navigation grounding", () => {
               { label: "Requirements", value: "2" },
             ],
           },
-          skippedHunks: [],
         },
       );
       const scoped = completeCtx({
@@ -2587,7 +2524,6 @@ describe("Design source navigation grounding", () => {
               { label: "Tasks", value: "0/3" },
             ],
           },
-          skippedHunks: [],
         },
       );
       const scoped = completeCtx({
@@ -2725,7 +2661,6 @@ describe("Design source navigation grounding", () => {
               { label: "Requirements", value: "2" },
             ],
           },
-          skippedHunks: [],
         },
       );
       const scoped = completeCtx({
@@ -2867,7 +2802,6 @@ describe("Design source navigation grounding", () => {
               { label: "Requirements", value: "0" },
             ],
           },
-          skippedHunks: [],
         },
       );
       const scoped = completeCtx({
@@ -3129,7 +3063,6 @@ describe("Design source navigation grounding", () => {
               { label: "Tasks", value: "0/2" },
             ],
           },
-          skippedHunks: [],
         },
       );
 
@@ -3188,7 +3121,6 @@ describe("Design source navigation grounding", () => {
               { label: "Capabilities", value: "0 new / 0 modified" },
             ],
           },
-          skippedHunks: [],
         },
       );
 
@@ -3261,7 +3193,6 @@ describe("Design source navigation grounding", () => {
             sources: [designSource],
             stats: [{ label: "Requirements", value: "0" }],
           },
-          skippedHunks: [],
         },
       );
       const scoped = completeCtx({
@@ -3400,7 +3331,6 @@ describe("Design source navigation grounding", () => {
                 { label: "Requirements", value: "0" },
               ],
             },
-            skippedHunks: [],
           },
         );
         const scoped = completeCtx({
@@ -3481,7 +3411,6 @@ describe("Design source navigation grounding", () => {
               { label: "Requirements", value: "0" },
             ],
           },
-          skippedHunks: [],
         },
       );
       const scoped = completeCtx({
@@ -3566,7 +3495,6 @@ describe("Design source navigation grounding", () => {
               { label: "Requirements", value: "0" },
             ],
           },
-          skippedHunks: [],
         },
       );
       const scoped = completeCtx({
@@ -3757,7 +3685,6 @@ describe("Design source navigation grounding", () => {
               { label: "Tasks", value: "0/1" },
             ],
           },
-          skippedHunks: [],
         },
       );
 
@@ -3837,7 +3764,6 @@ describe("Design source navigation grounding", () => {
               { label: "Tasks", value: "0/2" },
             ],
           },
-          skippedHunks: [],
         },
       );
       const scoped = completeCtx({
@@ -3982,7 +3908,6 @@ describe("Design source navigation grounding", () => {
               { label: "Tasks", value: "1/2" },
             ],
           },
-          skippedHunks: [],
         },
       );
       const scoped = completeCtx({
@@ -4125,7 +4050,6 @@ describe("Design source navigation grounding", () => {
               { label: "Capabilities", value: "0 new / 0 modified" },
             ],
           },
-          skippedHunks: [],
         },
       );
 
@@ -4203,12 +4127,11 @@ describe("Design source navigation grounding", () => {
               { label: "Capabilities", value: "0 new / 0 modified" },
             ],
           },
-          skippedHunks: [],
         },
       );
       const relevanceCtx = ctx({
         lens: "design",
-        hunks: [],
+        regions: [],
         artifacts: [
           {
             candidate: "companion",
@@ -4237,43 +4160,31 @@ describe("Design source navigation grounding", () => {
 describe("kind-allowlist (per-lens kinds)", () => {
   it("fires when a typed kind appears on the wrong lens board", () => {
     // A `finding` on the Noise board — findings belong to Flagged.
-    const bad = board(
-      [
-        el("f", "finding", {
-          severity: "low",
-          concern: "x",
-          code: [],
-          concurrence: [],
-          status: "open",
-        }),
-      ],
-      {
-        skippedHunks: [],
-      },
-    );
+    const bad = board([
+      el("f", "finding", {
+        severity: "low",
+        concern: "x",
+        code: [],
+        concurrence: [],
+        status: "open",
+      }),
+    ]);
     const scoped = ctx({ lens: "noise" as LensKind });
     expect(rulesHit(lint(bad, scoped))).toContain("kind-allowlist");
   });
 
   it("fires when the report seat's round_outcome appears on a lens board", () => {
-    const bad = board(
-      [el("o", "round_outcome", { status: "addressed", ask: { ref: "a", text: "t" }, note: "n" })],
-      {
-        skippedHunks: [],
-      },
-    );
+    const bad = board([
+      el("o", "round_outcome", { status: "addressed", ask: { ref: "a", text: "t" }, note: "n" }),
+    ]);
     expect(rulesHit(lint(bad, ctx()))).toContain("kind-allowlist");
   });
 
   it("allows shared structural kinds on every lens", () => {
-    const ok = board(
-      [el("p", "prose", { markdown: "A design note." }), codeRef("c", "src/auth.ts", 11, 12)],
-      {
-        skippedHunks: [
-          { hunk: "h2", reason: "The util rename is owned by the Noise board specifically." },
-        ],
-      },
-    );
+    const ok = board([
+      el("p", "prose", { markdown: "A design note." }),
+      codeRef("c", "src/auth.ts", 11, 12),
+    ]);
     const scoped = ctx({ lens: "design" as LensKind });
     expect(rulesHit(lint(ok, scoped))).not.toContain("kind-allowlist");
   });
@@ -4281,31 +4192,26 @@ describe("kind-allowlist (per-lens kinds)", () => {
   // Spec-P1: the Design prompt renders BOTH requirement regions AND the
   // implementer's stated `decision` calls, so both are legal typed kinds there.
   it("admits both `decision` and `requirement` on the Design board (Spec-P1)", () => {
-    const ok = board(
-      [
-        el("d", "decision", {
-          statement: "Injected the clock instead of reading it module-level.",
-          why: "Testability.",
-          evidence: ["c1"],
-          alternatives: ["A module-level `Date.now`."],
-        }),
-        el("r", "requirement", {
-          shall: "The system SHALL refresh first",
-          coverage: "met",
-          trace: ["c1"],
-        }),
-        codeRef("c1", "src/auth.ts", 11, 12),
-      ],
-      { skippedHunks: [] },
-    );
+    const ok = board([
+      el("d", "decision", {
+        statement: "Injected the clock instead of reading it module-level.",
+        why: "Testability.",
+        evidence: ["c1"],
+        alternatives: ["A module-level `Date.now`."],
+      }),
+      el("r", "requirement", {
+        shall: "The system SHALL refresh first",
+        coverage: "met",
+        trace: ["c1"],
+      }),
+      codeRef("c1", "src/auth.ts", 11, 12),
+    ]);
     const scoped = ctx({ lens: "design" as LensKind });
     expect(rulesHit(lint(ok, scoped))).not.toContain("kind-allowlist");
   });
 
   it("rejects a `requirement` on the Decisions board (requirement is Design's, S1)", () => {
-    const bad = board([el("r", "requirement", { shall: "x", coverage: "gap", trace: [] })], {
-      skippedHunks: [],
-    });
+    const bad = board([el("r", "requirement", { shall: "x", coverage: "gap", trace: [] })]);
     const scoped = ctx({ lens: "decisions" as LensKind });
     expect(rulesHit(lint(bad, scoped))).toContain("kind-allowlist");
   });
@@ -4315,32 +4221,25 @@ describe("kind-allowlist (per-lens kinds)", () => {
 
 describe("citation range + form (S3 / S8)", () => {
   it("citation-well-formed fires on a GitHub `#L` citation (colon-less form)", () => {
-    const bad = board([el("p", "prose", { markdown: "See src/auth.ts#L11 for the guard." })], {
-      skippedHunks: [],
-    });
+    const bad = board([el("p", "prose", { markdown: "See src/auth.ts#L11 for the guard." })]);
     expect(rulesHit(lint(bad, ctx()))).toContain("citation-well-formed");
   });
 
   it("citation-resolves fires on an inverted prose range (999-1)", () => {
-    const bad = board([el("p", "prose", { markdown: "See src/auth.ts:999-1 there." })], {
-      skippedHunks: [],
-    });
+    const bad = board([el("p", "prose", { markdown: "See src/auth.ts:999-1 there." })]);
     expect(rulesHit(lint(bad, ctx()))).toContain("citation-resolves");
   });
 
   it("citation-resolves fires on an inverted typed code_ref span", () => {
-    const bad = board(
-      [
-        el("c", "code_ref", {
-          patchset_id: "ps-1",
-          path: "src/auth.ts",
-          side: "head",
-          start_line: 20,
-          end_line: 5,
-        }),
-      ],
-      { skippedHunks: [] },
-    );
+    const bad = board([
+      el("c", "code_ref", {
+        patchset_id: "ps-1",
+        path: "src/auth.ts",
+        side: "head",
+        start_line: 20,
+        end_line: 5,
+      }),
+    ]);
     expect(rulesHit(lint(bad, ctx()))).toContain("citation-resolves");
   });
 });
@@ -4349,18 +4248,15 @@ describe("citation range + form (S3 / S8)", () => {
 
 describe("citation identity (S2 — patchset id + side)", () => {
   it("fires when a code_ref cites a different patchset than the board's", () => {
-    const bad = board(
-      [
-        el("c", "code_ref", {
-          patchset_id: "other-ps",
-          path: "src/auth.ts",
-          side: "head",
-          start_line: 11,
-          end_line: 12,
-        }),
-      ],
-      { skippedHunks: [] },
-    );
+    const bad = board([
+      el("c", "code_ref", {
+        patchset_id: "other-ps",
+        path: "src/auth.ts",
+        side: "head",
+        start_line: 11,
+        end_line: 12,
+      }),
+    ]);
     const scoped = ctx({ patchsetId: "ps-1" });
     expect(rulesHit(lint(bad, scoped))).toContain("citation-resolves");
   });
@@ -4369,35 +4265,29 @@ describe("citation identity (S2 — patchset id + side)", () => {
     // The file exists at 200 lines on head but only 8 on base; a base-side ref to
     // line 40 overruns base though it fits head — checking the head inventory
     // would wrongly pass it.
-    const bad = board(
-      [
-        el("c", "code_ref", {
-          patchset_id: "ps-1",
-          path: "src/auth.ts",
-          side: "base",
-          start_line: 40,
-          end_line: 40,
-        }),
-      ],
-      { skippedHunks: [] },
-    );
+    const bad = board([
+      el("c", "code_ref", {
+        patchset_id: "ps-1",
+        path: "src/auth.ts",
+        side: "base",
+        start_line: 40,
+        end_line: 40,
+      }),
+    ]);
     const scoped = ctx({ patchsetId: "ps-1", baseFiles: new Map([["src/auth.ts", 8]]) });
     expect(rulesHit(lint(bad, scoped))).toContain("citation-resolves");
   });
 
   it("passes a base-side ref that fits the base inventory", () => {
-    const ok = board(
-      [
-        el("c", "code_ref", {
-          patchset_id: "ps-1",
-          path: "src/auth.ts",
-          side: "base",
-          start_line: 3,
-          end_line: 5,
-        }),
-      ],
-      { skippedHunks: [] },
-    );
+    const ok = board([
+      el("c", "code_ref", {
+        patchset_id: "ps-1",
+        path: "src/auth.ts",
+        side: "base",
+        start_line: 3,
+        end_line: 5,
+      }),
+    ]);
     const scoped = ctx({ patchsetId: "ps-1", baseFiles: new Map([["src/auth.ts", 8]]) });
     expect(rulesHit(lint(ok, scoped))).not.toContain("citation-resolves");
   });
@@ -4410,28 +4300,22 @@ describe("schema-declared element references", () => {
     lint(draft, ctx({ lens })).filter(({ ruleId }) => ruleId === "element-reference-resolves");
 
   it("rejects the dangling span and evidence shapes emitted by Sequence and Decisions", () => {
-    const sequence = board(
-      [
-        el("step", "order_step", {
-          title: "Read the entry point",
-          span: "missing-sequence-code",
-          children: [],
-        }),
-      ],
-      { skippedHunks: [] },
-    );
-    const decisions = board(
-      [
-        el("decision", "decision", {
-          statement: "Keep writes atomic.",
-          evidence: ["missing-decision-code"],
-          alternatives: ["alternative"],
-          why: "Readers never observe a partial batch.",
-        }),
-        el("alternative", "prose", { markdown: "Write each event independently." }),
-      ],
-      { skippedHunks: [] },
-    );
+    const sequence = board([
+      el("step", "order_step", {
+        title: "Read the entry point",
+        span: "missing-sequence-code",
+        children: [],
+      }),
+    ]);
+    const decisions = board([
+      el("decision", "decision", {
+        statement: "Keep writes atomic.",
+        evidence: ["missing-decision-code"],
+        alternatives: ["alternative"],
+        why: "Readers never observe a partial batch.",
+      }),
+      el("alternative", "prose", { markdown: "Write each event independently." }),
+    ]);
 
     expect(referenceViolations(sequence, "sequence")).toMatchObject([{ elementRef: "step/span" }]);
     expect(referenceViolations(decisions, "decisions")).toMatchObject([
@@ -4440,35 +4324,29 @@ describe("schema-declared element references", () => {
   });
 
   it("uses the authored schema, so ordinary strings that equal element ids are not references", () => {
-    const draft = board(
-      [
-        el("decision", "decision", {
-          statement: "Keep writes atomic.",
-          evidence: [],
-          alternatives: ["alternative"],
-          why: "alternative",
-        }),
-        el("alternative", "prose", { markdown: "Write each event independently." }),
-      ],
-      { skippedHunks: [] },
-    );
+    const draft = board([
+      el("decision", "decision", {
+        statement: "Keep writes atomic.",
+        evidence: [],
+        alternatives: ["alternative"],
+        why: "alternative",
+      }),
+      el("alternative", "prose", { markdown: "Write each event independently." }),
+    ]);
 
     expect(referenceViolations(draft, "decisions")).toEqual([]);
   });
 
   it("rejects a cycle that no create-op ordering can make acceptable", () => {
-    const draft = board(
-      [
-        el("chapter", "section", { title: "Start here", children: ["step"] }),
-        el("step", "order_step", {
-          title: "Read the entry point",
-          span: "code",
-          children: ["chapter"],
-        }),
-        codeRef("code", "src/auth.ts", 11, 12),
-      ],
-      { skippedHunks: [] },
-    );
+    const draft = board([
+      el("chapter", "section", { title: "Start here", children: ["step"] }),
+      el("step", "order_step", {
+        title: "Read the entry point",
+        span: "code",
+        children: ["chapter"],
+      }),
+      codeRef("code", "src/auth.ts", 11, 12),
+    ]);
 
     expect(referenceViolations(draft, "sequence")).toMatchObject([{ elementRef: "step/children" }]);
   });
@@ -4480,49 +4358,40 @@ describe("noise_verdict.hunk resolves (L12 / P2)", () => {
   const noiseCtx = ctx({ lens: "noise" as LensKind });
 
   it("fires when a noise verdict's `hunk` references no element on the board", () => {
-    const bad = board(
-      [
-        el("n", "noise_verdict", {
-          hunk: "ghost",
-          verdict: "noise",
-          reason: "Lockfile churn from the dep bump.",
-          judge: "llm",
-        }),
-      ],
-      { skippedHunks: [] },
-    );
+    const bad = board([
+      el("n", "noise_verdict", {
+        hunk: "ghost",
+        verdict: "noise",
+        reason: "Lockfile churn from the dep bump.",
+        judge: "llm",
+      }),
+    ]);
     expect(rulesHit(lint(bad, noiseCtx))).toContain("citation-resolves");
   });
 
   it("fires when a noise verdict's `hunk` references a non-code_ref element", () => {
-    const bad = board(
-      [
-        el("n", "noise_verdict", {
-          hunk: "p",
-          verdict: "noise",
-          reason: "Lockfile churn from the dep bump.",
-          judge: "llm",
-        }),
-        el("p", "prose", { markdown: "not a code ref" }),
-      ],
-      { skippedHunks: [] },
-    );
+    const bad = board([
+      el("n", "noise_verdict", {
+        hunk: "p",
+        verdict: "noise",
+        reason: "Lockfile churn from the dep bump.",
+        judge: "llm",
+      }),
+      el("p", "prose", { markdown: "not a code ref" }),
+    ]);
     expect(rulesHit(lint(bad, noiseCtx))).toContain("citation-resolves");
   });
 
   it("passes when a noise verdict's `hunk` points at a real code_ref", () => {
-    const ok = board(
-      [
-        el("n", "noise_verdict", {
-          hunk: "c1",
-          verdict: "noise",
-          reason: "Lockfile churn from the dep bump.",
-          judge: "llm",
-        }),
-        codeRef("c1", "src/util.ts", 1, 3),
-      ],
-      { skippedHunks: [] },
-    );
+    const ok = board([
+      el("n", "noise_verdict", {
+        hunk: "c1",
+        verdict: "noise",
+        reason: "Lockfile churn from the dep bump.",
+        judge: "llm",
+      }),
+      codeRef("c1", "src/util.ts", 1, 3),
+    ]);
     expect(rulesHit(lint(ok, noiseCtx))).not.toContain("citation-resolves");
   });
 });
@@ -4532,19 +4401,16 @@ describe("noise_verdict.hunk resolves (L12 / P2)", () => {
 describe("decision-grounded (S6 / P4)", () => {
   const designCtx = ctx({ lens: "design" as LensKind });
   const decision = (over: Record<string, unknown>) =>
-    board(
-      [
-        el("d", "decision", {
-          statement: "Injected the clock.",
-          why: "Testability.",
-          evidence: ["c1"],
-          alternatives: ["A module-level `Date.now`."],
-          ...over,
-        }),
-        codeRef("c1", "src/auth.ts", 11, 12),
-      ],
-      { skippedHunks: [] },
-    );
+    board([
+      el("d", "decision", {
+        statement: "Injected the clock.",
+        why: "Testability.",
+        evidence: ["c1"],
+        alternatives: ["A module-level `Date.now`."],
+        ...over,
+      }),
+      codeRef("c1", "src/auth.ts", 11, 12),
+    ]);
 
   it("fires when a decision has no evidence anchors", () => {
     expect(rulesHit(lint(decision({ evidence: [] }), designCtx))).toContain("decision-grounded");
@@ -4593,25 +4459,19 @@ describe("requirement-order (L16 / P5)", () => {
     el(id, "requirement", { shall, coverage: "met", trace: [] });
 
   it("fires when requirements are rendered out of the artifact's order", () => {
-    const bad = board(
-      [
-        req("r1", "The system SHALL refresh the token"),
-        req("r2", "The system SHALL authenticate the user"),
-      ],
-      { skippedHunks: [] },
-    );
+    const bad = board([
+      req("r1", "The system SHALL refresh the token"),
+      req("r2", "The system SHALL authenticate the user"),
+    ]);
     const scoped = ctx({ lens: "design" as LensKind, artifactText: source });
     expect(rulesHit(lint(bad, scoped))).toContain("requirement-order");
   });
 
   it("passes requirements rendered in the artifact's order", () => {
-    const ok = board(
-      [
-        req("r1", "The system SHALL authenticate the user"),
-        req("r2", "The system SHALL refresh the token"),
-      ],
-      { skippedHunks: [] },
-    );
+    const ok = board([
+      req("r1", "The system SHALL authenticate the user"),
+      req("r2", "The system SHALL refresh the token"),
+    ]);
     const scoped = ctx({ lens: "design" as LensKind, artifactText: source });
     expect(rulesHit(lint(ok, scoped))).not.toContain("requirement-order");
   });
@@ -4619,15 +4479,12 @@ describe("requirement-order (L16 / P5)", () => {
   it("tracks ordering independently for each source artifact", () => {
     const sourceReq = (id: string, shall: string, path: string) =>
       el(id, "requirement", { shall, source: { path } });
-    const ok = board(
-      [
-        sourceReq("a1", "The system SHALL authenticate the user", "specs/auth.md"),
-        sourceReq("a2", "The system SHALL refresh the token", "specs/auth.md"),
-        sourceReq("s1", "The system SHALL create a session", "specs/session.md"),
-        sourceReq("s2", "The system SHALL expire the session", "specs/session.md"),
-      ],
-      { skippedHunks: [] },
-    );
+    const ok = board([
+      sourceReq("a1", "The system SHALL authenticate the user", "specs/auth.md"),
+      sourceReq("a2", "The system SHALL refresh the token", "specs/auth.md"),
+      sourceReq("s1", "The system SHALL create a session", "specs/session.md"),
+      sourceReq("s2", "The system SHALL expire the session", "specs/session.md"),
+    ]);
     const scoped = ctx({
       lens: "design" as LensKind,
       artifacts: [
@@ -4646,41 +4503,32 @@ describe("requirement-order (L16 / P5)", () => {
   });
 
   it("checks the section child order the reader actually renders", () => {
-    const bad = board(
-      [
-        el("section", "section", { title: "Requirements", children: ["r2", "r1"] }),
-        req("r1", "The system SHALL authenticate the user"),
-        req("r2", "The system SHALL refresh the token"),
-      ],
-      { skippedHunks: [] },
-    );
+    const bad = board([
+      el("section", "section", { title: "Requirements", children: ["r2", "r1"] }),
+      req("r1", "The system SHALL authenticate the user"),
+      req("r2", "The system SHALL refresh the token"),
+    ]);
     const scoped = ctx({ lens: "design" as LensKind, artifactText: source });
 
     expect(rulesHit(lint(bad, scoped))).toContain("requirement-order");
   });
 
   it("passes visible source order even when pool storage order differs", () => {
-    const ok = board(
-      [
-        el("section", "section", { title: "Requirements", children: ["r1", "r2"] }),
-        req("r2", "The system SHALL refresh the token"),
-        req("r1", "The system SHALL authenticate the user"),
-      ],
-      { skippedHunks: [] },
-    );
+    const ok = board([
+      el("section", "section", { title: "Requirements", children: ["r1", "r2"] }),
+      req("r2", "The system SHALL refresh the token"),
+      req("r1", "The system SHALL authenticate the user"),
+    ]);
     const scoped = ctx({ lens: "design" as LensKind, artifactText: source });
 
     expect(rulesHit(lint(ok, scoped))).not.toContain("requirement-order");
   });
 
   it("degrades to a no-op without the source artifact", () => {
-    const bad = board(
-      [
-        req("r1", "The system SHALL refresh the token"),
-        req("r2", "The system SHALL authenticate the user"),
-      ],
-      { skippedHunks: [] },
-    );
+    const bad = board([
+      req("r1", "The system SHALL refresh the token"),
+      req("r2", "The system SHALL authenticate the user"),
+    ]);
     expect(rulesHit(lint(bad, ctx({ lens: "design" as LensKind })))).not.toContain(
       "requirement-order",
     );
@@ -4725,17 +4573,17 @@ describe("lintReviewDraft (P3 — living-review register: L3/L4/L7)", () => {
 
 describe("scaffold glob root-level (S4)", () => {
   it("does not treat a root-level OpenSpec source artifact as scaffold", () => {
-    const bad = board([codeRef("c", "openspec/changes/x/proposal.md", 1, 1)], { skippedHunks: [] });
+    const bad = board([codeRef("c", "openspec/changes/x/proposal.md", 1, 1)]);
     const scoped = ctx({ files: new Map([["openspec/changes/x/proposal.md", 10]]) });
     expect(rulesHit(lint(bad, scoped))).not.toContain("scaffold-is-noise-lane");
   });
 
   it("fires on a root-level lockfile and `.openspec.yaml`", () => {
-    const lock = board([codeRef("c", "pnpm-lock.yaml", 1, 1)], { skippedHunks: [] });
+    const lock = board([codeRef("c", "pnpm-lock.yaml", 1, 1)]);
     const lockCtx = ctx({ files: new Map([["pnpm-lock.yaml", 9000]]) });
     expect(rulesHit(lint(lock, lockCtx))).toContain("scaffold-is-noise-lane");
 
-    const stamp = board([codeRef("c", ".openspec.yaml", 1, 1)], { skippedHunks: [] });
+    const stamp = board([codeRef("c", ".openspec.yaml", 1, 1)]);
     const stampCtx = ctx({ files: new Map([[".openspec.yaml", 5]]) });
     expect(rulesHit(lint(stamp, stampCtx))).toContain("scaffold-is-noise-lane");
   });

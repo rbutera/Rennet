@@ -155,7 +155,6 @@ const operationReportBoard = {
   },
   sections: [],
   elements: [],
-  skippedHunks: [],
 } as const;
 
 describe("session/ durable shapes (#466/#457)", () => {
@@ -300,8 +299,9 @@ describe("session/ durable shapes (#466/#457)", () => {
       );
     }
 
-    // The three generation-wide phases must NOT. A `coverage` record naming Design would
-    // read as "the cross-lens assert for Design", which is not a thing that exists.
+    // The generation-wide phases must NOT. A `reveal` record naming Design would read as
+    // "the reveal for Design", which is not a thing that exists. `coverage` is the retired
+    // gate's phase, kept in the vocabulary so older records parse.
     for (const phase of ["report", "coverage", "reveal"] as const) {
       expect(GenerationPhaseTimingSchema.safeParse({ ...base, phase }).success).toBe(true);
       expect(

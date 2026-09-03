@@ -392,6 +392,16 @@ export interface RetrieveRelatedContextDeps {
    * already resolved by the caller. Absent → deterministic dossier only.
    */
   readonly runTurn?: RunTurn | null;
+  /**
+   * Persist the candidate dossier and return the ABSOLUTE path the seat reads — the
+   * dossier store's own `candidates.json` under `~/.rennet` in production.
+   *
+   * The enrichment prompt NAMES that path instead of carrying the candidates
+   * (session-context-files: no prompt carries context inline). Absent ⇒ there is nothing
+   * for the seat to trim from, so the turn is skipped with that reason rather than
+   * quietly re-inlining 27 kB of dossier.
+   */
+  readonly writeCandidates?: (items: readonly DossierItem[]) => string;
   /** Budget-normal path: metered and reported, never a refusal (Rule Zero). */
   readonly budget?: InvocationBudget;
   readonly now?: () => Date;
@@ -763,19 +773,23 @@ export async function retrieveRelatedContext(
 
   // Light-tier enrichment (relevance trim + acceptance criteria), metered.
   let enrichment: EnrichmentReport = { status: "skipped", reason: "no runTurn injected" };
-  if (deps.runTurn && items.size > 0) {
+  const candidatesPath =
+    deps.runTurn && items.size > 0 ? deps.writeCandidates?.([...items.values()]) : undefined;
+  if (deps.runTurn && items.size > 0 && candidatesPath === undefined) {
+    enrichment = { status: "skipped", reason: "no candidate dossier path" };
+  } else if (deps.runTurn && items.size > 0 && candidatesPath !== undefined) {
     const grant = deps.budget
       ? deps.budget.tryConsume("related-context-retrieval")
       : absentBudgetGrant("related-context-retrieval");
     const budgetGranted = grant.granted;
     const overage = !grant.granted;
     const prompt = [
-      "You are the related-context retrieval seat. Trim the candidate dossier",
-      "for relevance to the change under review and lift acceptance criteria",
+      "You are the related-context retrieval seat. The candidate dossier is the JSON",
+      `array in ${candidatesPath} — ${items.size} ${items.size === 1 ? "item" : "items"}.`,
+      "Read it with your own tools.",
+      "Trim it for relevance to the change under review and lift acceptance criteria",
       "verbatim where a ticket states them. Return every item id with keep:",
       "true/false; optionally a tightened body (facts only, no invention).",
-      "",
-      JSON.stringify([...items.values()]),
     ].join("\n");
     try {
       const turn = await deps.runTurn(prompt, 1);

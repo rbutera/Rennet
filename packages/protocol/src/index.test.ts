@@ -482,45 +482,6 @@ describe("projectSchema — source defaults to local for pre-existing rows", () 
   });
 });
 
-// #681 / C14 D3. `unavailable` exists to say something `failed` cannot: nothing was
-// attempted, and here is what resolved instead. A bare `{status:"unavailable",edges:[]}`
-// says neither, and the Spec view could only render it as an unexplained blank — so the
-// wire refuses it rather than the UI inventing an explanation for it.
-describe("openspec.coverage — an unavailable result must account for itself", () => {
-  it("refuses an unavailable coverage result with no reason", () => {
-    expect(() =>
-      parseCommandOutput("openspec.coverage", { status: "unavailable", edges: [] }),
-    ).toThrow();
-    // An empty reason is the same absence wearing a string.
-    expect(() =>
-      parseCommandOutput("openspec.coverage", { status: "unavailable", edges: [], reason: "" }),
-    ).toThrow();
-  });
-
-  it("accepts an unavailable result carrying its reason and what did resolve", () => {
-    expect(
-      parseCommandOutput("openspec.coverage", {
-        status: "unavailable",
-        edges: [],
-        harness: { id: "codex", version: "0.146.0" },
-        reason: "Requirement coverage needs a Claude Code seat; this repository resolved Codex.",
-      }),
-    ).toMatchObject({ status: "unavailable", harness: { id: "codex" } });
-  });
-
-  it("still parses coverage persisted before unavailable existed", () => {
-    // The refinement is scoped to `unavailable`, so the two states that predate it keep
-    // parsing WITHOUT a reason — an added state must not invalidate stored history.
-    for (const status of ["ok", "failed"] as const) {
-      expect(parseCommandOutput("openspec.coverage", { status, edges: [] })).toEqual({
-        status,
-        edges: [],
-      });
-    }
-    expect(parseCommandOutput("openspec.coverage", null)).toBeNull();
-  });
-});
-
 // C17 review finding 8 — the per-host detection shapes are DISCRIMINATED UNIONS, so the
 // contradictory states are not merely discouraged, they are unrepresentable. These schemas
 // are unreleased, which is exactly when this is cheap to encode.

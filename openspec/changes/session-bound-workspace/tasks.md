@@ -1,17 +1,17 @@
 ## 1. Citations by path and line (D5)
 
-- [ ] 1.1 Replace the board citation and skipped-hunk shapes in `packages/protocol/src/board` with `codeRef` citations only; remove `SkippedHunkSchema`, `skippedHunks`, and every `hunkIdSchema` reference outside `packages/protocol/src/delta`
-- [ ] 1.2 Give lint a patchset-regions context (changed ranges per path and side) and an `unresolvable-citation` rule that carries path, side and range; delete the hunk-id resolution and the skip-reason rules; control: a citation outside the change reddens, one overlapping a changed range passes
-- [ ] 1.3 Delete the composition cross-lens coverage gate and the coverage turn (`coverage-mapping.ts`, `coverage-turn-backend.ts`, their prompt contract); add a daemon projection of cited regions if `app-ui` keeps a coverage view, and rewire or remove that view
-- [ ] 1.4 Key delta marks on `(path, side, start, end)`; recompute marks from citations on read and show no marks for a legacy id-keyed board, with the reason
-- [ ] 1.5 Remove the hunk-id vocabulary and the inventory sentences from `investigate-before-you-draft.md`, `sequence.md`, `decisions.md`, `flagged.md`, `noise.md`, `design.md`, `report.md`; state prompt size before and after in the PR
-- [ ] 1.6 Update `docs/developing/concepts` (lens pipeline, architecture contracts) for path-and-line citations and the absence of a coverage gate
+- [x] 1.1 Replace the board citation and skipped-hunk shapes in `packages/protocol/src/board` with `codeRef` citations only; remove `SkippedHunkSchema`, `skippedHunks`, and every `hunkIdSchema` reference outside `packages/protocol/src/delta`
+- [x] 1.2 Give lint a patchset-regions context (changed ranges per path and side) and an `unresolvable-citation` rule that carries path, side and range; delete the hunk-id resolution and the skip-reason rules; control: a citation outside the change reddens, one overlapping a changed range passes
+- [x] 1.3 Delete the composition cross-lens coverage gate and the coverage turn (`coverage-mapping.ts`, `coverage-turn-backend.ts`, their prompt contract); add a daemon projection of cited regions if `app-ui` keeps a coverage view, and rewire or remove that view
+- [x] 1.4 Key delta marks on `(path, side, start, end)`; recompute marks from citations on read and show no marks for a legacy id-keyed board, with the reason
+- [x] 1.5 Remove the hunk-id vocabulary and the inventory sentences from `investigate-before-you-draft.md`, `sequence.md`, `decisions.md`, `flagged.md`, `noise.md`, `design.md`, `report.md`; state prompt size before and after in the PR
+- [x] 1.6 Update `docs/developing/concepts` (lens pipeline, architecture contracts) for path-and-line citations and the absence of a coverage gate
 
 ## 2. Session context files (D3)
 
-- [ ] 2.1 Add `context/` to the managed ignore block in `map-visibility.ts` and ensure the block before any context write
-- [ ] 2.2 Implement the single writer for `.rennet/context/<sessionId>/` with its `README.md` index, and the purge; call the purge from `session.archive` beside `forgetSession`, from the round-settle re-sweep, and from a daemon-start orphan sweep that logs its count; tests with controls for write, purge on archive, orphan sweep, and never-staged
-- [ ] 2.3 Add a mechanical check on the send tap (`recordSeatSend`) that fails a test when a sent prompt contains a JSON object larger than two kilobytes, so the rule is asserted for every harness path
+- [x] 2.1 Add `context/` to the managed ignore block in `map-visibility.ts` and ensure the block before any context write
+- [x] 2.2 Implement the single writer for `.rennet/context/<sessionId>/` with its `README.md` index, and the purge; call the purge from `session.archive` beside `forgetSession`, from the round-settle re-sweep, and from a daemon-start orphan sweep that logs its count; tests with controls for write, purge on archive, orphan sweep, and never-staged
+- [x] 2.3 Add a mechanical check on the send tap (`recordSeatSend`) that fails a test when a sent prompt contains a JSON object larger than two kilobytes, so the rule is asserted for every harness path
 
 ## 3. Convert or delete the inline sites, biggest first (D4)
 
@@ -22,10 +22,10 @@
 - [ ] 3.5 Noise: offered manifest without line bodies written to `noise-offer.json`; the assembled context text referenced at its existing persisted path; `noise.md` and `NOISE_CONTRACT.input` rewritten
 - [ ] 3.6 Hypothesis and convention layers: reference `.rennet/conventions.json` and a written `hypothesis.json`
 - [ ] 3.7 Review opener, draft PR body, handoff compose and work order, delta digest: boards, asks and the work order written to the context directory; `renderComposedPrompt` and `renderHandoffPrompt` name `work-order.md` instead of embedding asks and diff fences
-- [ ] 3.8 Project scout: reference the guidance files in the cwd instead of embedding them; related context: reference the persisted dossier
+- [x] 3.8 Project scout: reference the guidance files in the cwd instead of embedding them; related context: reference the persisted dossier
 - [ ] 3.9 Finding verification, refine comment, CI classification: `pointers.json` naming file and lines; the prompt contracts' "you are shown a window" sentences rewritten
 - [ ] 3.10 Codex utility port: the retry report stays pointer-only and bounded
-- [ ] 3.11 Confirm every cold utility turn passes the bound root as `cwd`; add the missing ones
+- [x] 3.11 Confirm every cold utility turn passes the bound root as `cwd`; add the missing ones
 
 ## 4. Design lens respec (D6)
 

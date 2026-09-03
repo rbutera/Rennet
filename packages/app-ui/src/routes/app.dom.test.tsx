@@ -342,37 +342,6 @@ describe("/s/:slug during New Chat preparation (#668)", () => {
     expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
   });
 
-  it("says cross-lens coverage is pending on the initial generation's reveal too", async () => {
-    const bridge = new MemoryBridge({
-      ...frontDoorHandlers(),
-      ...sessionHandlers([
-        {
-          id: "sess-coverage",
-          projectId: "proj-1",
-          title: "feat/coverage",
-          reviewId: "rev-1",
-          preparation: {
-            status: "drafting",
-            reviewId: "rev-1",
-            lanes: [...lanes],
-            coverage: { state: "pending" },
-          },
-        },
-      ]),
-      "review.load": () => ({ review: REVIEW }),
-    } as never);
-    const history = memoryHistory("/s/sess-coverage");
-    const { findByText } = mount(<RennetRouterApp bridge={bridge} history={history} />);
-
-    expect(await findByText("Generating the Boards")).toBeTruthy();
-    // The settled Design lane is on screen while coverage is still pending — coverage is a
-    // state the surface reports, never a reason to withhold a board (#725 D4).
-    expect(document.querySelector('[data-row="design"]')?.getAttribute("data-status")).toBe("done");
-    const coverage = document.querySelector('[data-testid="cross-lens-coverage"]');
-    expect(coverage?.getAttribute("data-coverage")).toBe("pending");
-    expect(coverage?.textContent).toContain("still running");
-  });
-
   it("names the failed stage and reason while retaining retry", async () => {
     const bridge = new MemoryBridge({
       ...frontDoorHandlers(),

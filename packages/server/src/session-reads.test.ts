@@ -148,7 +148,6 @@ describe("session.rounds — the rounds ledger read (C09)", () => {
         },
       },
     ],
-    skippedHunks: [],
   });
 
   it("projects the live runtime's REAL records when the ledger is seeded", async () => {

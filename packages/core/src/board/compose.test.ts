@@ -1,14 +1,7 @@
 import type { DraftBoard } from "@rennet/protocol";
 import { parseDraft } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
-import {
-  assertCoverage,
-  carriedElementIds,
-  isCarriedForward,
-  removedSectionIds,
-  stampDeltas,
-} from "./compose";
-import type { LintHunk } from "./lint";
+import { carriedElementIds, isCarriedForward, removedSectionIds, stampDeltas } from "./compose";
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
 // Every board is built through `parseDraft` so the inputs are schema-valid by
@@ -22,98 +15,12 @@ const codeRef = (id: string, path: string, start: number, end: number) => ({
   data: { author, patchset_id: "ps-1", path, side: "head", start_line: start, end_line: end },
 });
 
-const baseRef = (id: string, path: string, start: number, end: number) => ({
-  id,
-  kind: "code_ref",
-  data: { author, patchset_id: "ps-1", path, side: "base", start_line: start, end_line: end },
-});
-
 /** Parse a raw board or throw — keeps every fixture schema-valid, no `as`. */
 const draft = (elements: unknown[], extra: Record<string, unknown> = {}): DraftBoard => {
   const parsed = parseDraft({ elements, ...extra });
   if (!parsed.ok) throw new Error(`fixture not schema-valid: ${JSON.stringify(parsed.issues)}`);
   return parsed.value;
 };
-
-const HUNKS: LintHunk[] = [
-  { id: "h1", path: "src/auth.ts", newStart: 10, newLines: 5 },
-  { id: "h2", path: "src/util.ts", newStart: 1, newLines: 3 },
-];
-
-// ── Coverage assertion (L18) ─────────────────────────────────────────────────
-
-describe("assertCoverage", () => {
-  it("passes when every hunk is taught or skipped across the lens boards", () => {
-    const flagged = draft([codeRef("c1", "src/auth.ts", 11, 12)]); // teaches h1
-    const noise = draft([], { skippedHunks: [{ hunk: "h2", reason: "generated fixture" }] }); // skips h2
-    expect(assertCoverage([flagged, noise], HUNKS)).toEqual([]);
-  });
-
-  it("fails the assert for a hunk covered by no lens", () => {
-    const flagged = draft([codeRef("c1", "src/auth.ts", 11, 12)]); // teaches h1 only
-    const violations = assertCoverage([flagged], HUNKS);
-    expect(violations).toHaveLength(1);
-    expect(violations[0]).toMatchObject({
-      ruleId: "every-hunk-covered",
-      elementRef: "/hunks/h2",
-    });
-  });
-
-  it("counts a hunk covered by ANY lens (taught on one, absent on others)", () => {
-    const flagged = draft([codeRef("c1", "src/auth.ts", 11, 12)]); // teaches h1
-    const design = draft([codeRef("c2", "src/util.ts", 1, 2)]); // teaches h2
-    expect(assertCoverage([flagged, design], HUNKS)).toEqual([]);
-  });
-
-  // ── Finding 8: side + deletion geometry ──────────────────────────────────
-  it("a BASE-side citation does not falsely cover an addition hunk (finding 8)", () => {
-    // h1 is a pure addition on the head side (new image 10..14, no old image).
-    const addHunk: LintHunk[] = [
-      { id: "h1", path: "src/auth.ts", newStart: 10, newLines: 5, oldStart: 10, oldLines: 0 },
-    ];
-    // A base-side ref whose OLD-image lines happen to land on 10..14 must NOT cover it.
-    const board = draft([baseRef("c1", "src/auth.ts", 10, 14)]);
-    expect(assertCoverage([board], addHunk)).toHaveLength(1);
-    // The matching HEAD-side ref does cover it.
-    const head = draft([codeRef("c2", "src/auth.ts", 10, 14)]);
-    expect(assertCoverage([head], addHunk)).toEqual([]);
-  });
-
-  it("a DELETION-only hunk is teachable only from the base side (finding 8)", () => {
-    // h1 has no new image (deletion), old image 20..24 on the base path.
-    const delHunk: LintHunk[] = [
-      { id: "h1", path: "src/auth.ts", newStart: 20, newLines: 0, oldStart: 20, oldLines: 5 },
-    ];
-    // A head-side ref can never teach it — there is no new image.
-    const head = draft([codeRef("c1", "src/auth.ts", 20, 24)]);
-    expect(assertCoverage([head], delHunk)).toHaveLength(1);
-    // A base-side ref citing the old image does.
-    const base = draft([baseRef("c2", "src/auth.ts", 20, 24)]);
-    expect(assertCoverage([base], delHunk)).toEqual([]);
-  });
-
-  it("a RENAME resolves each side against its own path (finding 8)", () => {
-    // File moved old.ts → new.ts; the hunk edits both images.
-    const renameHunk: LintHunk[] = [
-      {
-        id: "h1",
-        path: "src/new.ts",
-        newStart: 5,
-        newLines: 3,
-        previousPath: "src/old.ts",
-        oldStart: 5,
-        oldLines: 3,
-      },
-    ];
-    // A base-side ref must cite the PREVIOUS path; the current path does not resolve.
-    expect(assertCoverage([draft([baseRef("c1", "src/new.ts", 5, 7)])], renameHunk)).toHaveLength(
-      1,
-    );
-    expect(assertCoverage([draft([baseRef("c2", "src/old.ts", 5, 7)])], renameHunk)).toEqual([]);
-    // A head-side ref cites the CURRENT path.
-    expect(assertCoverage([draft([codeRef("c3", "src/new.ts", 5, 7)])], renameHunk)).toEqual([]);
-  });
-});
 
 // ── Verbatim carry ───────────────────────────────────────────────────────────
 
@@ -233,5 +140,50 @@ describe("stampDeltas", () => {
     const out = stampDeltas(undefined, curr);
     expect(out.elements.map((e) => e.id)).toEqual(["s1"]);
     expect(out.elements).toHaveLength(1);
+  });
+});
+
+// ── D5: a delta mark keys on what an element cites, never on the patchset id ──
+
+describe("stampDeltas — marks key on (path, side, start, end)", () => {
+  const section = (children: string[]) => ({
+    id: "s1",
+    kind: "section",
+    data: { author, title: "Auth", children },
+  });
+  const citing = (patchsetId: string, path: string, start: number, end: number) =>
+    draft([
+      section(["c1"]),
+      {
+        id: "c1",
+        kind: "code_ref",
+        data: {
+          author,
+          patchset_id: patchsetId,
+          path,
+          side: "head",
+          start_line: start,
+          end_line: end,
+        },
+      },
+    ]);
+  const deltaOf = (board: DraftBoard, id: string) =>
+    (board.elements.find((el) => el.id === id)?.data as { delta?: unknown } | undefined)?.delta;
+
+  it("a regenerated board citing the same lines under the successor patchset carries the mark", () => {
+    const previous = citing("ps-1", "src/auth.ts", 11, 12);
+    const current = citing("ps-2", "src/auth.ts", 11, 12);
+    expect(deltaOf(stampDeltas(previous, current), "s1")).toBeUndefined();
+    expect(isCarriedForward(previous, stampDeltas(previous, current))).toBe(true);
+  });
+
+  it("control: the same element citing a different range is reworked", () => {
+    const previous = citing("ps-1", "src/auth.ts", 11, 12);
+    expect(deltaOf(stampDeltas(previous, citing("ps-2", "src/auth.ts", 40, 41)), "s1")).toBe(
+      "reworked",
+    );
+    expect(deltaOf(stampDeltas(previous, citing("ps-2", "src/other.ts", 11, 12)), "s1")).toBe(
+      "reworked",
+    );
   });
 });

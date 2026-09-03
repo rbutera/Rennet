@@ -557,7 +557,6 @@ describe("#685 owner loop through a real server", () => {
     const records = invocationRecords(invocationLog);
     const targetBoardSteps = new Set([
       "design",
-      "design-coverage",
       "sequence",
       "decisions",
       "flagged",
@@ -586,7 +585,6 @@ describe("#685 owner loop through a real server", () => {
     for (const stepId of ["design", "sequence", "decisions", "flagged", "noise"]) {
       expect(records.filter((record) => record.stepId === stepId)).toHaveLength(3);
     }
-    expect(records.filter((record) => record.stepId === "design-coverage")).toHaveLength(3);
     expect(records.filter((record) => record.stepId === "report-round-one")).toHaveLength(1);
     expect(records.filter((record) => record.stepId === "report-round-two")).toHaveLength(1);
   }, 120_000);

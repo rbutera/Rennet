@@ -19,7 +19,7 @@ import type {
 import { MAX_UI_SCREENSHOTS_PER_RUN } from "./domain";
 import { forgeRepoIdentitySchema, forgeRepositoryMatchesLegacy } from "./forge";
 import type { AskProjection, AttentionEventFrame, RoundEvent } from "./session";
-import { CodingHarnessSelectionSchema, SessionPreparationSchema } from "./session/model";
+import { SessionPreparationSchema } from "./session/model";
 
 const repositoryProvenanceSchema = z.object({
   id: z.string().min(1),
@@ -1456,42 +1456,6 @@ export const openSpecChangeSchema = z.object({
   raw: openSpecChangeRawSchema.optional(),
 });
 
-// ── The Spec view's requirement→hunk coverage (wireframes #9 / R53) ────────────
-const openSpecCoverageEdgeSchema = z.object({
-  capability: z.string(),
-  requirement: z.string(),
-  hunks: z.array(z.string()),
-  tests: z.number(),
-});
-
-export const openSpecCoverageSchema = z
-  .object({
-    status: z.enum(["ok", "failed", "unavailable"]),
-    edges: z.array(openSpecCoverageEdgeSchema),
-    /**
-     * Provenance (#681 / C14 D3): the harness the mapping turn was SELECTED to run on,
-     * stamped whether or not the turn reached the model. `failed` is stamped at the seat,
-     * before the session is constructed, so this is attempted-on provenance rather than
-     * ran-on — "attempted: Claude Code 2.x" is honest for a turn that died at session
-     * construction, "ran" would not be. On `unavailable` it is the harness that DID
-     * resolve for this repository while the coverage seat wanted another — so a
-     * Codex-only install reads as "Codex resolved, coverage did not run", not as an
-     * assumed Claude default. Absent when no harness resolved at all.
-     */
-    harness: CodingHarnessSelectionSchema.optional(),
-    /** The typed account for `unavailable`: what the seat sought and what was found. */
-    reason: z.string().min(1).optional(),
-  })
-  // An `unavailable` MUST say why. The whole point of the state is that it explains
-  // itself where `failed` cannot — `{status:"unavailable",edges:[]}` is a bare absence
-  // the Spec view could only render as an unexplained blank, so the wire refuses it.
-  // `ok`/`failed` are unconstrained, so values persisted before `unavailable` existed
-  // still parse.
-  .refine((coverage) => coverage.status !== "unavailable" || coverage.reason !== undefined, {
-    path: ["reason"],
-    message: "an unavailable coverage result must carry its reason",
-  });
-
 // ── Settings: the config ladder (wireframe #15, Settings and Setup Plan) ──────
 // The settings surface edits a small, HONEST slice of the ladder the plan
 // describes: what actually exists as consumed config today. Two axes the plan
@@ -2726,26 +2690,6 @@ export type OpenSpecChangeRaw = z.infer<typeof openSpecChangeRawSchema>;
  * spec files. The `name` is the change directory name.
  */
 export type OpenSpecChange = z.infer<typeof openSpecChangeSchema>;
-/**
- * One produced coverage edge: a requirement (identified by its capability + exact
- * name, so a consumer can key it without the ui's anchor-slug logic) mapped to the
- * grounded hunks that implement it and the count of tests that exercise it. `hunks`
- * are `rennet:hunk/<id>` anchors already grounded against the offered manifest (the
- * producer dropped any the model hallucinated); an empty `hunks` is a computed zero
- * (`unimplemented`), never a fabrication.
- */
-export type OpenSpecCoverageEdge = z.infer<typeof openSpecCoverageEdgeSchema>;
-/**
- * The coverage producer's result over a whole change. `status: "ok"` means the
- * mapping RAN — every requirement has an edge (covered or an honest zero), so the
- * Spec view can render every chip. `status: "failed"` means the runner RAN and did
- * not complete (budget refused, every turn failed). `status: "unavailable"` means it
- * was never attempted because the seat's harness did not resolve — `reason` names
- * what was sought and what was found, and `harness` names the provider that resolved
- * instead. All three carry `edges: []` on anything but `ok`, and the Spec view renders
- * NO chips, keeping "not computed" distinct from a real zero. Never a fabricated edge.
- */
-export type OpenSpecCoverage = z.infer<typeof openSpecCoverageSchema>;
 // ─────────────────────────────────────────────────────────────────────────────
 // The review→agent handoff loop (issue #18, Contracts §2.1 destination B). The
 // wire shapes only; the composer, disclosure, and orchestrator live in

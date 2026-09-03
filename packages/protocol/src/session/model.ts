@@ -178,29 +178,14 @@ export const LensFailureAccountSchema = z.object({
 export type LensFailureAccount = z.infer<typeof LensFailureAccountSchema>;
 
 /**
- * The generation-keyed cross-lens coverage state (#725 D4). Coverage is NOT a reveal
- * barrier: core boards become visible as their lanes settle, and this state says
- * explicitly where the cross-lens every-hunk assert stands beside them. `complete`
- * carries the violation count the assert produced — coverage ANNOTATES the revealed
- * boards; `compose.ts` returns violations without amending a board, so a revealed board
- * is never rewritten by the state that lands after it.
- */
-export const GenerationCoverageSchema = z.discriminatedUnion("state", [
-  z.object({ state: z.literal("pending") }),
-  z.object({ state: z.literal("complete"), violations: z.number().int().nonnegative() }),
-  z.object({ state: z.literal("failed"), reason: z.string().min(1) }),
-]);
-export type GenerationCoverage = z.infer<typeof GenerationCoverageSchema>;
-
-/**
  * The phases one generation is measured in (#725 D4, and the spine #726's benchmark
  * records ride). Each is a REAL boundary in the drafting runtime, so no label can absorb
  * another phase's time: `report` is the whole report gate and `report-classification` the
  * provider turn inside it (the gate also builds and measures the evidence manifest,
  * resolves the seat and verifies the result deterministically), the three `lens-*`
  * phases split one lane's provider drafting from its repair ladder and from the
- * deterministic work between the ladder and the accepted write, `coverage` is the
- * cross-lens assert, `reveal` is the window in which settled lanes became visible, and
+ * deterministic work between the ladder and the accepted write, `reveal` is the window
+ * in which settled lanes became visible, and
  * `first-core-board` is measured from the round's own start to the first core lane's
  * arrival — the latency the reviewer actually waits.
  */
@@ -214,6 +199,8 @@ export const GenerationPhaseSchema = z.enum([
   "lens-draft",
   "lens-repair",
   "lens-post-process",
+  // Legacy: the cross-lens coverage gate that recorded this phase is gone (session-bound-
+  // workspace D5). It stays in the vocabulary so generations measured before then still parse.
   "coverage",
   "reveal",
   "first-core-board",
@@ -224,8 +211,8 @@ const councilHarnessIds = ["claude-code", "codex"] as const satisfies readonly C
 
 /**
  * The phases that measure ONE lane and therefore must name it. Everything else is
- * generation-wide and must not: a `coverage` record carrying a lens would read as "the
- * cross-lens assert for Design", which is not a thing that exists.
+ * generation-wide and must not: a `reveal` record carrying a lens would read as "the
+ * reveal for Design", which is not a thing that exists.
  */
 export const LENS_SCOPED_PHASES = [
   "lens-draft",
@@ -297,7 +284,7 @@ export type GenerationTimings = z.infer<typeof GenerationTimingsSchema>;
  * provider's own figure summed, and it is `null` unless EVERY turn ran on a metered
  * credential and reported one: a subscription session pays no per-token price, so the
  * round shows tokens and no invented dollar amount. Cumulative while the generation
- * runs (it rides the `lens` frame beside `coverage`), final on the durable record.
+ * runs (it rides the `lens` frame beside the lanes), final on the durable record.
  */
 export const GenerationUsageSchema = z.object({
   /** Every recorded seat turn, measured or not. */
@@ -336,10 +323,6 @@ export const GenerationSchema = z.object({
   failedLensAccounts: z.partialRecord(z.enum(LENS_KINDS), LensFailureAccountSchema).optional(),
   /** The orchestrator-authored composition board (L3), once composed. */
   compositionBoardId: id.optional(),
-  /** The cross-lens coverage state for THIS generation (#725 D4). APPEND-ONLY beside the
-   *  lens settlements: generations written before this field carry none, and absent means
-   *  "no coverage state was recorded", never "coverage passed". */
-  coverage: GenerationCoverageSchema.optional(),
   /** Per-phase durable timings for this generation (#725 D4). Append-only and versioned. */
   timings: GenerationTimingsSchema.optional(),
   /** What this generation's seat turns cost (#737). Append-only beside the timings:
@@ -2013,9 +1996,6 @@ export const SessionPreparationSchema = z.discriminatedUnion("status", [
     status: z.literal("drafting"),
     reviewId: id,
     lanes: z.array(LensLaneSchema),
-    /** The initial generation's cross-lens coverage state (#725 D4) — the same explicit
-     *  state the post-round reveal carries, so both generation kinds say the same thing. */
-    coverage: GenerationCoverageSchema.optional(),
   }),
   z.object({
     status: z.literal("failed"),
@@ -2023,7 +2003,6 @@ export const SessionPreparationSchema = z.discriminatedUnion("status", [
     reason: z.string().min(1),
     reviewId: id.optional(),
     lanes: z.array(LensLaneSchema).optional(),
-    coverage: GenerationCoverageSchema.optional(),
   }),
   z.object({
     status: z.literal("cancelled"),
@@ -2144,10 +2123,6 @@ const ScopedRoundReportEventSchema = z.object({
 const LegacyRoundLensEventSchema = z.object({
   type: z.literal("lens"),
   lanes: z.array(LensLaneSchema),
-  /** The generation's cross-lens coverage state at this snapshot (#725 D4). Rides the
-   *  lane snapshot rather than a sixth event type: one frame, one fold, and a reveal
-   *  that can never show lanes and coverage from two different moments. */
-  coverage: GenerationCoverageSchema.optional(),
   /** Cumulative seat spend so far, riding the same frame as the lanes (#737). */
   usage: GenerationUsageSchema.optional(),
   operationId: z.never().optional(),
@@ -2158,7 +2133,6 @@ const LegacyRoundLensEventSchema = z.object({
 const ScopedRoundLensEventSchema = z.object({
   type: z.literal("lens"),
   lanes: z.array(LensLaneSchema),
-  coverage: GenerationCoverageSchema.optional(),
   /** Cumulative seat spend so far, riding the same frame as the lanes (#737). */
   usage: GenerationUsageSchema.optional(),
   operationId: id,

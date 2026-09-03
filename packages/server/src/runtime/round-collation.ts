@@ -1,22 +1,22 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // The round collation bridge (C15 cluster 1, tasks 1.2–1.3). `runRound`'s
-// `RoundInput` needs a flat `LintHunk[]` and a per-lens `lintContextFor` that the
-// lens pipeline's coverage/lint consume; no production path built these before
-// C15. These two PURE builders turn an (immutable) patchset + its `HunkIndex`
-// into exactly those shapes. Pure and I/O-free — the trigger (1.5) supplies the
-// patchset, these derive the collation universe.
+// `RoundInput` needs a per-lens `lintContextFor` whose changed regions the lens
+// pipeline's lint resolves citations against; no production path built it before
+// C15. These PURE builders turn an (immutable) patchset + its `HunkIndex` into
+// exactly that shape. Pure and I/O-free — the trigger (1.5) supplies the patchset,
+// these derive the collation universe.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { DesignArtifactSet } from "@rennet/adapters";
 import {
   buildDeltaPacket,
+  type ChangedRegion,
   type DeltaPacket,
   type DeltaPacketFile,
   type FanInIndex,
   fanInIndexFromSnapshot,
   type HunkIndex,
   type LintContext,
-  type LintHunk,
   type LintTarget,
   type LoadedSnapshot,
   type RegisterLintContext,
@@ -41,35 +41,41 @@ import type { LensPipelineDeps, RoundDraftContext } from "./lens-pipeline";
 import type { RoundDraftPlan, RoundInput, WorkerReturn } from "./rounds";
 
 /**
- * Map a patchset's `IndexedHunk`s (whose spans are `{ new: {start,lines}, old:
- * {start,lines} }`) to the FLAT `LintHunk` `{ id, path, newStart, newLines,
- * oldStart, oldLines, previousPath? }` shape the pipeline's `assertCoverage` and
- * lint consume (`lint.ts`). The base-side `previousPath` is set only for a RENAMED
- * file (a `side:"base"` code_ref then resolves against the old path); an
- * unrenamed file's base path defaults to `path` inside `codeRefTeaches`, so it is
- * omitted here. Pure.
+ * The patchset's changed regions (D5): one `ChangedRegion` per hunk per side that has
+ * lines — the head side on the current path, the base side on the pre-image path (a
+ * RENAMED file's `previousPath`, else the same path). A pure addition yields no base
+ * region and a pure deletion no head region, so a citation on the wrong side of either
+ * can never resolve. The hunk id does not survive into this shape. Pure.
  */
-export function toLintHunks(
+export function changedRegions(
   hunks: HunkIndex,
   files: readonly (DeltaPacketFile | PatchFile)[],
-): LintHunk[] {
+): ChangedRegion[] {
   const previousPathByPath = new Map<string, string>();
   for (const file of files) {
     if (file.status === "renamed" && file.previousPath !== undefined) {
       previousPathByPath.set(file.path, file.previousPath);
     }
   }
-  return hunks.hunks.map((hunk): LintHunk => {
-    const previousPath = previousPathByPath.get(hunk.path);
-    return {
-      id: hunk.id,
-      path: hunk.path,
-      newStart: hunk.spans.new.start,
-      newLines: hunk.spans.new.lines,
-      oldStart: hunk.spans.old.start,
-      oldLines: hunk.spans.old.lines,
-      ...(previousPath === undefined ? {} : { previousPath }),
-    };
+  return hunks.hunks.flatMap((hunk): ChangedRegion[] => {
+    const regions: ChangedRegion[] = [];
+    if (hunk.spans.new.lines > 0) {
+      regions.push({
+        path: hunk.path,
+        side: "head",
+        start: hunk.spans.new.start,
+        end: hunk.spans.new.start + hunk.spans.new.lines - 1,
+      });
+    }
+    if (hunk.spans.old.lines > 0) {
+      regions.push({
+        path: previousPathByPath.get(hunk.path) ?? hunk.path,
+        side: "base",
+        start: hunk.spans.old.start,
+        end: hunk.spans.old.start + hunk.spans.old.lines - 1,
+      });
+    }
+    return regions;
   });
 }
 
@@ -153,11 +159,11 @@ function mergeByMax(
 
 /**
  * Build the per-lens `lintContextFor` the round pipeline calls once per board. The
- * hunk list + file inventories + patchsetId are the SAME for every lens (a board
- * of any lens may cite or skip any patchset hunk — `ctx.hunks` gates skip
- * resolution and taught/skipped coherence, not a per-lens partition); only
- * `ctx.lens` varies. `scaffoldGlobs` is left to the lint default. Pure — returns a
- * `(lens) => LintContext` closure over the derived universe.
+ * changed regions + file inventories + patchsetId are the SAME for every lens (a
+ * board of any lens may cite any changed region — `ctx.regions` resolves citations,
+ * not a per-lens partition); only `ctx.lens` varies. `scaffoldGlobs` is left to the
+ * lint default. Pure — returns a `(lens) => LintContext` closure over the derived
+ * universe.
  *
  * W5 — grounding is the WHOLE TREE, not the diff. Drafters are free to read past
  * the changed files, and a drafter that does so cites what it read. Grounding the
@@ -180,14 +186,14 @@ function mergeByMax(
  */
 export function buildLintContextFor(
   patchset: Patchset,
-  hunks: readonly LintHunk[],
+  regions: readonly ChangedRegion[],
   tree?: TreeInventories,
 ): (lens: LintTarget) => LintContext {
   const files = mergedHeadInventory(patchset, tree);
   const baseFiles = mergeByMax(baseFileInventory(patchset.files), tree?.base);
   return (lens: LintTarget): LintContext => ({
     lens,
-    hunks,
+    regions,
     files,
     baseFiles,
     patchsetId: patchset.id,
@@ -197,7 +203,6 @@ export function buildLintContextFor(
 /** The per-round pipeline inputs `runRound`'s `RoundInput` carries. */
 export interface RoundCollation {
   readonly deltaPacket: DeltaPacket;
-  readonly hunks: readonly LintHunk[];
   readonly lintContextFor: (lens: LintTarget) => LintContext;
   /**
    * The composed review draft's citation grounding — the SAME head inventory the
@@ -241,7 +246,7 @@ function packetFanIn(snapshot: LoadedSnapshot): FanInIndex | undefined {
  * Assemble the collation context `runRound` needs from a patchset + its protocol
  * contracts (C15 task 1.4): thread the ALREADY-BUILT `successorAccount` (stamped on
  * the review at patchset activation, `core/src/index.ts`) through `buildDeltaPacket`,
- * then derive the flat `LintHunk[]` and the per-lens `lintContextFor` off the same
+ * then derive the changed regions and the per-lens `lintContextFor` off the same
  * packet. When a successor account is present the packet carries it, so the pipeline's
  * `isRound` branch fires (the round-report drafts first); when it is absent the packet
  * is a first-generation (non-round) draft — the honest degrade, never a crash.
@@ -270,11 +275,10 @@ export function assembleRoundCollation(input: {
     input.successorAccount,
     fanIn,
   );
-  const hunks = toLintHunks(deltaPacket.hunks, input.patchset.files);
-  const lintContextFor = buildLintContextFor(input.patchset, hunks, input.tree);
+  const regions = changedRegions(deltaPacket.hunks, input.patchset.files);
+  const lintContextFor = buildLintContextFor(input.patchset, regions, input.tree);
   return {
     deltaPacket,
-    hunks,
     lintContextFor,
     reviewDraftLintCtx: { files: mergedHeadInventory(input.patchset, input.tree) },
   };

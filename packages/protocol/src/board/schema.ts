@@ -196,9 +196,7 @@ const requirementData = withAuthor({
   related_files: z.array(z.string().min(1)).optional(),
   source: SourceRefSchema.optional(),
   spec_delta: SpecDeltaSchema.optional(),
-  coverage: z.enum(["met", "gap", "partial"]).optional(),
   trace: z.array(z.string()).optional(),
-  tests: z.number().int().nonnegative().optional(),
 });
 const noiseVerdictData = withAuthor({
   hunk: z.string(),
@@ -457,7 +455,7 @@ export const AUTHORED_BOARD_SCHEMA = defineSchema({
     inferred: a("boolean", false, "False when the source artifact states the decision."),
     source: a("json", false, "Source artifact { path, candidate?, label?, line? }."),
   }),
-  requirement: authored("A shall-requirement, its source scenarios, and change coverage.", {
+  requirement: authored("A shall-requirement, its source scenarios, and the code it cites.", {
     shall: a("string", true, "The requirement text."),
     name: a("string", false, "Optional short requirement name."),
     capability: a("string", false, "Optional capability slug."),
@@ -465,9 +463,7 @@ export const AUTHORED_BOARD_SCHEMA = defineSchema({
     related_files: a("string", false, "Repo-relative related file paths.", true),
     source: a("json", false, "Source artifact { path, candidate?, label?, line? }."),
     spec_delta: a("string", false, "added | modified | removed | renamed."),
-    coverage: a("string", false, "met | gap | partial; absent when no mapping exists."),
-    trace: a("element", false, "code_ref elements tracing coverage.", true),
-    tests: a("number", false, "Nonnegative count of covering tests."),
+    trace: a("element", false, "code_ref elements the requirement cites.", true),
   }),
   noise_verdict: authored("A per-hunk noise/signal verdict.", {
     hunk: a("element", true, "The code_ref element this verdict is on."),

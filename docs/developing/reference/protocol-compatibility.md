@@ -193,8 +193,8 @@ A round's progress rows are two shapes, each a union on `status` so the illegal
 states are unrepresentable rather than guarded at every read. A **step row** (a
 prep line, the worker turn) settles `done` with its own account of itself, or
 `failed` with a reason. A **lens lane** adds `drafted` — its board is written but
-cross-lens coverage has not run — plus `absent` for a successful discovery that
-found no material for that lens. Its `done` state *requires* the `carrying
+its carried/reworked verdict is not known yet — plus `absent` for a successful
+discovery that found no material for that lens. Its `done` state *requires* the `carrying
 forward` / `reworked` verdict; `absent` and `failed` both require their honest
 reason. Step rows never use `drafted` or `absent`.
 
@@ -220,17 +220,18 @@ on `board.read`, each naming the attempt that failed and a `retryable` /
 message alone, and that absence means the classification is **unknown** — it is
 not a licence to present the lens as beyond another attempt.
 
-The generation's cross-lens **coverage state** and its per-phase **timings** follow
-the same rule. `coverage` is `pending`, `complete` (with a violation count), or
-`failed` (with a reason); it also rides the lens progress frame and the initial
-generation's session-preparation record. `timings` carries a `version` and one
-record per phase — per SEAT for a lane that ran more than one, so the Flagged
-dual seat contributes two `lens-draft` records rather than one anonymous span.
-A record's `lens` is discriminated by its phase: the lane-scoped phases require
-it and the generation-wide ones refuse it, which is a constraint on the record
-and never on the field's presence. A generation or a daemon without either field says nothing about
-coverage or duration: an absent coverage state means **unknown**, never "coverage
-passed", and the surfaces render no coverage line at all rather than a default one.
+The generation's per-phase **timings** follow the same rule. `timings` carries a
+`version` and one record per phase — per SEAT for a lane that ran more than one,
+so the Flagged dual seat contributes two `lens-draft` records rather than one
+anonymous span. A record's `lens` is discriminated by its phase: the lane-scoped
+phases require it and the generation-wide ones refuse it, which is a constraint
+on the record and never on the field's presence. A generation or a daemon without
+the field says nothing about duration. The `coverage` phase stays in the phase
+vocabulary only so records measured before the cross-lens coverage gate was
+removed still parse; nothing records it any more, and there is no coverage state
+on the generation, the lens progress frame, or the session-preparation record —
+a daemon that still emits one is older than the client, and the client ignores it
+rather than rendering a state nothing computes.
 
 The generation's **usage** follows the same rule again. It sums every seat turn the
 pipeline ran for that generation, retries included, on either harness: a turn count,

@@ -12,20 +12,18 @@
  * ZodError-shaped JSON pointers on ONE channel; the seat returns a patch; passing
  * elements FREEZE (a frozen element is never re-linted's-fault nor re-drafted). A
  * one repair turn ends in an HONEST-OMISSION exit for an offending element: the
- * element is dropped and the hunks it taught move to `skippedHunks` with a reason.
+ * element is dropped and the drop is recorded with its reason.
  * Unresolved board or schema violations ship as labeled `blemishes[]`
  * (`Violation` + `attempts`) — visible, never blocking (Rule Zero: no gate).
  *
- * Three gates, in order: **lint** (the loop above, plus a reference check after
+ * Two gates, in order: **lint** (the loop above, plus a reference check after
  * post-process) → **immutability** (typed lens-output data is byte-identical
- * across the editor pass — L19) → **composition** every-hunk coverage
- * (cluster-4 mechanics; wired here as an injected seam, defaulting to a no-op
- * until `compose` lands).
+ * across the editor pass — L19).
  */
 
 import type { Blemish, DraftBoard, DraftElement, Violation } from "@rennet/protocol";
 import { parseDraft } from "@rennet/protocol";
-import { type LintContext, lint, taughtHunkIds } from "./lint";
+import { type LintContext, lint } from "./lint";
 
 // ── Tunables ─────────────────────────────────────────────────────────────────
 
@@ -81,35 +79,25 @@ export interface ValidateSeams {
    * polish prose but the immutability gate proves it never touches typed data.
    */
   readonly postProcess?: (board: DraftBoard) => Promise<unknown> | unknown;
-  /**
-   * Gate 3 — composition every-hunk coverage. Cluster 4 supplies the real
-   * cross-lens `compose` assertion; the seam is wired here so the ordering holds
-   * the day it lands. No-op by default (single-board validation has no coverage
-   * obligation — that is cross-lens, cluster 4).
-   */
-  readonly compositionGate?: (board: DraftBoard, ctx: LintContext) => Violation[];
 }
 
 // ── The result ───────────────────────────────────────────────────────────────
 
-/** One honest-omission drop: the element the ladder gave up on and the hunks it shed. */
+/** One honest-omission drop: the element the ladder gave up on, and why. */
 export interface Omission {
   readonly elementId: string;
-  readonly hunks: readonly string[];
   readonly reason: string;
 }
 
 export interface ValidateResult {
   /** The validated board — frozen passers, patched fixes, omitted drops removed. */
   readonly board: DraftBoard;
-  /** Honest-omission drops; their hunks are already folded into `board.skippedHunks`. */
+  /** Honest-omission drops, each with its reason. */
   readonly omissions: readonly Omission[];
   /** Cap-exhaustion leftovers — visible, never blocking. */
   readonly blemishes: readonly Blemish[];
   /** Gate 2 — typed-data immutability across post-process (empty = clean). */
   readonly immutability: readonly Violation[];
-  /** Gate 3 — composition every-hunk coverage (cluster-4 seam; empty by default). */
-  readonly composition: readonly Violation[];
   /** How many model repair turns were spent. */
   readonly attempts: number;
   /**
@@ -141,7 +129,7 @@ const EDITOR_NARRATIVE_KINDS: ReadonlySet<string> = new Set(["prose", "callout",
 
 /** The element id a violation is against (elementRef is `id` or `id/field` or `/board...`). */
 function offendingId(elementRef: string): string | undefined {
-  if (elementRef.startsWith("/")) return undefined; // board-level (skippedHunks) — not an element
+  if (elementRef.startsWith("/")) return undefined; // board-level — not an element
   const slash = elementRef.indexOf("/");
   return slash === -1 ? elementRef : elementRef.slice(0, slash);
 }
@@ -149,7 +137,7 @@ function offendingId(elementRef: string): string | undefined {
 /** Turn a `Violation.elementRef` into a ZodError-shaped JSON path against `draft`. */
 function pointerPath(elementRef: string, draft: DraftBoard): (string | number)[] {
   if (elementRef.startsWith("/")) {
-    // Board-level: `/skippedHunks` or `/skippedHunks/0`.
+    // Board-level: `/elements/0` and the like.
     return elementRef
       .slice(1)
       .split("/")
@@ -163,7 +151,7 @@ function pointerPath(elementRef: string, draft: DraftBoard): (string | number)[]
   return field === undefined ? base : [...base, "data", field];
 }
 
-// ── Honest omission: the hunks a dropped element taught ──────────────────────
+// ── Honest omission: the references a dropped element owned ──────────────────
 
 /** The code_ref ids a dropped element owns — itself if it is one, plus any it references. */
 function ownedCodeRefs(el: DraftElement, codeRefIds: ReadonlySet<string>): Set<string> {
@@ -205,34 +193,6 @@ function patchOutDropped(
   return { el: changed ? ({ ...el, data: next } as DraftElement) : el, danglingScalar };
 }
 
-/** The patchset hunks a set of code_ref elements overlaps (side-aware, finding 8). */
-function hunksTaughtBy(
-  codeRefIds: ReadonlySet<string>,
-  draft: DraftBoard,
-  ctx: LintContext,
-): string[] {
-  const shed = draft.elements.filter((el) => el.kind === "code_ref" && codeRefIds.has(el.id));
-  return [...taughtHunkIds(shed, ctx.hunks)];
-}
-
-// ── Skipped-hunks passthrough helpers ────────────────────────────────────────
-
-interface SkipEntry {
-  readonly hunk: string;
-  readonly reason: string;
-}
-function readSkips(board: DraftBoard): SkipEntry[] {
-  const raw = (board as { skippedHunks?: unknown }).skippedHunks;
-  if (!Array.isArray(raw)) return [];
-  return raw.map((e) => {
-    const o = (e ?? {}) as { hunk?: unknown; reason?: unknown };
-    return {
-      hunk: typeof o.hunk === "string" ? o.hunk : "",
-      reason: typeof o.reason === "string" ? o.reason : "",
-    };
-  });
-}
-
 // ── Immutability gate (L19 — typed data survives the editor pass byte-for-byte) ─
 
 /** Stable JSON: object keys sorted, so an insertion-order shuffle is not a diff. */
@@ -250,9 +210,7 @@ function stableStringify(value: unknown): string {
  * finding 4). Every typed element (any kind outside {@link EDITOR_NARRATIVE_KINDS})
  * must survive with byte-identical `data`, its kind unchanged; a typed element may
  * neither VANISH nor APPEAR (a forged finding or a post-process-edited `code_ref`
- * is caught), and the board's SET of skipped hunk ids may not change (the editor
- * may polish a skip's reason prose, never invent or drop coverage). A fault
- * surfaces (visible), never blocks.
+ * is caught). A fault surfaces (visible), never blocks.
  */
 export function checkImmutability(before: DraftBoard, after: DraftBoard): Violation[] {
   const beforeById = new Map(before.elements.map((el) => [el.id, el]));
@@ -294,19 +252,6 @@ export function checkImmutability(before: DraftBoard, after: DraftBoard): Violat
         message: `Post-process introduced typed \`${el.kind}\` element \`${el.id}\` — the editor may add connective prose, never typed lens output.`,
       });
     }
-  }
-
-  // The board's coverage record — the SET of skipped hunk ids — is typed. Reasons
-  // are prose the editor may polish; the skip set is not the editor's to touch.
-  const beforeSkips = new Set(readSkips(before).map((s) => s.hunk));
-  const afterSkips = new Set(readSkips(after).map((s) => s.hunk));
-  if (beforeSkips.size !== afterSkips.size || [...afterSkips].some((h) => !beforeSkips.has(h))) {
-    out.push({
-      ruleId: "typed-data-immutable",
-      elementRef: "/skippedHunks",
-      message:
-        "Post-process changed the board's set of skipped hunks — coverage is typed lens output, not the editor's to invent or drop.",
-    });
   }
 
   return out;
@@ -356,29 +301,12 @@ function mergePatch(
   for (const el of patch.elements) {
     if (!placed.has(el.id) && !dropped.has(el.id)) elements.push(el);
   }
-  // The seat owns the board-level passthrough (its own skippedHunks fixes win);
-  // honest-omission additions are re-folded by `withOmissionSkips` after merge.
   return { ...(current as object), ...(patch as object), elements } as DraftBoard;
-}
-
-/** Fold the accumulated honest-omission skip entries into a board (dedup by hunk). */
-function withOmissionSkips(board: DraftBoard, omissionSkips: readonly SkipEntry[]): DraftBoard {
-  if (omissionSkips.length === 0) return board;
-  const base = readSkips(board);
-  const seen = new Set(base.map((s) => s.hunk));
-  const merged = [...base];
-  for (const s of omissionSkips) {
-    if (!seen.has(s.hunk)) {
-      seen.add(s.hunk);
-      merged.push(s);
-    }
-  }
-  return { ...(board as object), elements: board.elements, skippedHunks: merged } as DraftBoard;
 }
 
 /**
  * Validate one drafter return: run the lint retry ladder to a clean-or-flagged
- * board, then the immutability and composition gates in order. Pure over the
+ * board, then the immutability gate. Pure over the
  * injected seams. Never throws on a bad draft and never blocks — an unfixable
  * element becomes an honest omission, exhaustion becomes labeled blemishes.
  */
@@ -400,7 +328,6 @@ export async function validateDraft(
   const frozen = new Map<string, DraftElement>();
   const rungByElement = new Map<string, number>();
   const omissions: Omission[] = [];
-  const omissionSkips: SkipEntry[] = [];
   let attempts = 0;
   let blemishes: Blemish[] = [];
   const retryCap = seams.retryCap ?? RETRY_CAP;
@@ -451,7 +378,7 @@ export async function validateDraft(
 
     // Second pass: the honest-omission exit + incoming-reference closure (finding 5).
     // Drop each post-repair offender; resolve the closure so NO surviving element dangles
-    // a reference to a dropped one; shed the hunks nothing on the board still teaches.
+    // a reference to a dropped one; shed the code_refs nothing on the board still cites.
     const dropped = new Set<string>(primaryDrops);
     if (primaryDrops.size > 0) {
       const pre = current.elements;
@@ -491,7 +418,7 @@ export async function validateDraft(
       }
 
       // (b) Forward shed: a code_ref no PATCHED survivor still cites is orphaned by
-      // the drop — remove it too, so a hunk we are about to skip is not still "taught".
+      // the drop — remove it too, so the board carries no citation nothing reads.
       const survivorEls = pre
         .filter((el) => !dropped.has(el.id))
         .map((el) => patchedById.get(el.id) ?? el);
@@ -513,41 +440,13 @@ export async function validateDraft(
       }
       for (const cr of candidates) if (!citedBySurvivors.has(cr)) dropped.add(cr);
 
-      // (c) Assign shed hunks to each omission: hunks its owned code_refs taught
-      // that NO surviving code_ref still teaches. Record omissions in drop order.
-      const stillTaught = taughtHunkIds(
-        pre.filter((el) => el.kind === "code_ref" && !dropped.has(el.id)),
-        ctx.hunks,
-      );
-      for (const [id, reason] of reasonById) {
-        const el = pre.find((e) => e.id === id);
-        const ownedDropped = el
-          ? [...ownedCodeRefs(el, codeRefIds)].filter((cr) => dropped.has(cr))
-          : [];
-        const hunks = hunksTaughtBy(new Set(ownedDropped), current, ctx).filter(
-          (h) => !stillTaught.has(h),
-        );
-        omissions.push({ elementId: id, hunks, reason });
-      }
-
-      // (d) Fold the shed hunks into the accumulator, then rebuild the working board
-      // from the PATCHED survivors (dropped removed, dangling refs stripped).
-      const seen = new Set(omissionSkips.map((s) => s.hunk));
-      for (const om of omissions) {
-        for (const hunk of om.hunks) {
-          if (!seen.has(hunk)) {
-            seen.add(hunk);
-            omissionSkips.push({ hunk, reason: om.reason });
-          }
-        }
-      }
+      // (c) Record omissions in drop order, then rebuild the working board from the
+      // PATCHED survivors (dropped removed, dangling refs stripped).
+      for (const [id, reason] of reasonById) omissions.push({ elementId: id, reason });
       const finalEls = pre
         .filter((el) => !dropped.has(el.id))
         .map((el) => patchedById.get(el.id) ?? el);
-      current = withOmissionSkips(
-        { ...(current as object), elements: finalEls } as DraftBoard,
-        omissionSkips,
-      );
+      current = { ...(current as object), elements: finalEls } as DraftBoard;
     }
 
     // Re-lint after an omission. This is deterministic work and does not spend
@@ -599,10 +498,7 @@ export async function validateDraft(
     if (coerced.ok) {
       everParsed = true;
       pendingParseIssues = [];
-      current = withOmissionSkips(
-        mergePatch(current, coerced.board, frozen, dropped),
-        omissionSkips,
-      );
+      current = mergePatch(current, coerced.board, frozen, dropped);
     } else {
       // The seat's return did not parse — feed the schema issues back next round.
       pendingParseIssues = coerced.issues;
@@ -620,9 +516,6 @@ export async function validateDraft(
   current = editorReferenceViolations.length === 0 ? afterEditor : beforeEditor;
   const immutability = checkImmutability(beforeEditor, current);
 
-  // Gate 3 — composition every-hunk coverage (cluster-4 seam).
-  const composition = seams.compositionGate ? seams.compositionGate(current, ctx) : [];
-
   // Final wire-boundary check (finding 5/6): the shipped board must re-parse clean.
   // The closure strips array refs and the loop drops elements, so surface any
   // residual structural issue as a labeled blemish rather than shipping it silently.
@@ -637,5 +530,5 @@ export async function validateDraft(
     blemishes = [...blemishes, ...wire];
   }
 
-  return { board: current, omissions, blemishes, immutability, composition, attempts, everParsed };
+  return { board: current, omissions, blemishes, immutability, attempts, everParsed };
 }

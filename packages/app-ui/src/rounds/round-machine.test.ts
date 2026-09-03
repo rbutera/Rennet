@@ -381,7 +381,6 @@ describe("round-machine — the pure run state machine", () => {
       operationId: OPERATION_BASE.operationId,
       operationRevision: 4,
       lanes: [{ id: "sequence", label: "Sequence", status: "running" }],
-      coverage: { state: "pending" },
     } satisfies RoundEvent;
     const composing = advance(reporting, lens);
     expect(composing.phase).toBe("composing");
@@ -405,61 +404,14 @@ describe("round-machine — the pure run state machine", () => {
       id: "report",
       status: "done",
     });
-    // …and the lens frame it receives next opens the regeneration block with its coverage.
+    // …and the lens frame it receives next opens the regeneration block.
     const composing = advance(state, {
       type: "lens",
       operationId: OPERATION_BASE.operationId,
       operationRevision: 5,
       lanes: [{ id: "noise", label: "Noise", status: "drafted" }],
-      coverage: { state: "pending" },
     });
-    expect(composing).toMatchObject({ phase: "composing", coverage: { state: "pending" } });
-  });
-
-  it("keeps the last honest coverage state when a later lens frame carries none", () => {
-    const reporting = advance(
-      advance(
-        initialRoundState,
-        operationEvent(6, {
-          phase: "report-drafting",
-          workspace: WORKSPACE,
-          worker: WORKER,
-          gate: GATE,
-          commits: { status: "done", count: 2 },
-          report: { status: "handed-off", reportBoardId: "report-9", generation: "gen-9" },
-        }),
-      ),
-      {
-        type: "lens",
-        operationId: OPERATION_BASE.operationId,
-        operationRevision: 6,
-        lanes: [{ id: "noise", label: "Noise", status: "drafted" }],
-        coverage: { state: "complete", violations: 2 },
-      },
-    );
-    expect(reporting).toMatchObject({ coverage: { state: "complete", violations: 2 } });
-    // A frame from a daemon that reports no coverage must not silently revert the surface
-    // to "no coverage reported" — an absent field is unknown, never a retraction.
-    const next = advance(reporting, {
-      type: "lens",
-      operationId: OPERATION_BASE.operationId,
-      operationRevision: 6,
-      lanes: [{ id: "noise", label: "Noise", status: "done", verdict: "reworked" }],
-    });
-    expect(next).toMatchObject({ coverage: { state: "complete", violations: 2 } });
-
-    // …but a frame that DOES carry a state replaces it, including a step "backwards" to
-    // pending. That is the restart redraft (#725 7.2): the daemon clears the replaced
-    // attempt's coverage and the first running-lane frame says pending, so the keep-last
-    // rule above must not be the thing that pins a stale completion on the screen.
-    const redrafting = advance(next, {
-      type: "lens",
-      operationId: OPERATION_BASE.operationId,
-      operationRevision: 6,
-      lanes: [{ id: "noise", label: "Noise", status: "queued" }],
-      coverage: { state: "pending" },
-    });
-    expect(redrafting).toMatchObject({ coverage: { state: "pending" } });
+    expect(composing).toMatchObject({ phase: "composing" });
   });
 
   it("keeps a readable report attached when the same durable operation later fails", () => {
@@ -1270,7 +1222,7 @@ describe("generation usage rides the lens frame (#737)", () => {
       usage: { ...USAGE, turns: 5, totalTokens: 2600 },
     });
     expect(later).toMatchObject({ usage: { turns: 5, totalTokens: 2600 } });
-    // A frame that carries none keeps the last honest figure (same rule as coverage).
+    // A frame that carries none keeps the last honest figure.
     const none = advance(later, {
       type: "lens",
       operationId: OPERATION_BASE.operationId,

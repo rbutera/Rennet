@@ -18,8 +18,6 @@ import { BoardAccount, LensBoardDocument } from "../board";
 import { useLensBoardResolutions } from "../board/board-data";
 import { Icon } from "../components/icon";
 import { useMutation, useRefreshCommand } from "../data";
-import { coverageNote, coverageStatus } from "../rounds/round-machine";
-import { StatusIcon } from "../rounds/run-route";
 import { useRennetStore } from "../store";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -492,7 +490,6 @@ export function PreparationBench({ session, preparation, review }: PreparationBe
   // daemon stamped it, not off a second route lookup. A lens transcript is opened against
   // it so the dock can tell this review's thread from the last one's (review finding 4).
   const preparationReviewId = "reviewId" in preparation ? preparation.reviewId : undefined;
-  const coverage = "coverage" in preparation ? preparation.coverage : undefined;
   const branch = session.claim?.branch;
   const files = review?.patchsets.find((set) => set.id === review.activePatchsetId)?.files.length;
   const stage =
@@ -588,19 +585,6 @@ export function PreparationBench({ session, preparation, review }: PreparationBe
           </section>
         );
       })}
-
-      {coverage !== undefined && (
-        <p
-          data-row="coverage"
-          data-testid="cross-lens-coverage"
-          data-coverage={coverage.state}
-          data-status={coverageStatus(coverage)}
-          className="flex items-center justify-center gap-2 font-serif text-13 text-ink-soft"
-        >
-          <StatusIcon status={coverageStatus(coverage)} compact />
-          {coverageNote(coverage)}
-        </p>
-      )}
 
       <div className="flex justify-center gap-2">
         {active ? (
