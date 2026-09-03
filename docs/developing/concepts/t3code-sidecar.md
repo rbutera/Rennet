@@ -147,8 +147,9 @@ bottom instead of reserving a gap. No vendored file is edited and there is no
 gate either: it hides a composer that would otherwise start a turn on a seat's thread,
 which is confusing rather than dangerous.
 
-The workspace opens one by writing the lane's thread ref into the store
-(`uiActions.openLensThread(ref)`); `T3ChatDock` then renders `T3ThreadView` for it with a
+The workspace opens one by writing a seat's thread ref into the store
+(`uiActions.openLensThread(ref)`) — on the bench every seat's line of speech is its own
+control, so Flagged offers two, one per provider; `T3ChatDock` then renders `T3ThreadView` for it with a
 "Back to the session" control that clears it. The transcript keeps streaming while the
 seat runs — that is upstream's thread subscription, nothing Rennet drives — and stays
 readable after the seat settles and after the boards reveal.
@@ -243,9 +244,13 @@ says how long it has been quiet, rather than freezing on a stale one.
 `t3/seat-progress.ts` holds the subscription. Thread events do not carry the whole
 projection, so a re-read is an RPC and is throttled to at most four publications a second
 per lane; the idle tick re-projects the last snapshot against a fresh clock and costs no
-RPC at all. The lane carries its `thread` reference from the moment the thread exists and
-keeps it through every later state, so a settled or failed reader still opens its
-transcript. The subscription is dropped when the generation settles.
+RPC at all. A lane holds one entry per seat (`LensLane.seats`: seat id, provider, thread,
+latest line), addressed by seat id, because Flagged runs a Claude seat and a Codex seat on
+one lane and each has its own transcript and its own line. The lane's top-level `thread`
+and `latest` mirror the first seat to register (`seats[0]`) so pre-seats readers keep
+working for one release. A seat's thread is recorded from the moment it exists and kept
+through every later state, so a settled or failed reader still opens its transcripts. The
+subscription is dropped when the generation settles.
 
 ## The handoff exit
 

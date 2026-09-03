@@ -64,8 +64,14 @@ export interface T3SeatSeam {
     readonly provider: "claudeAgent" | "codex";
     readonly model: string;
   }) => Promise<T3SeatThread>;
-  /** Told the seat's thread as soon as it exists, so a lane can carry the reference. */
-  readonly onThread?: (seat: string, thread: T3SeatThread) => void;
+  /** Told the seat's thread as soon as it exists, so a lane can carry the reference. The
+   *  provider rides along because a lane can hold two seats (Flagged: Claude AND Codex)
+   *  and the surface names which one is speaking. */
+  readonly onThread?: (
+    seat: string,
+    thread: T3SeatThread,
+    provider: "claudeAgent" | "codex",
+  ) => void;
 }
 
 export interface T3SeatTurnOptions {
@@ -210,7 +216,7 @@ export function createT3SeatTurn(
     };
     try {
       const thread = await seam.threadFor({ seat, provider, model });
-      seam.onThread?.(seat, thread);
+      seam.onThread?.(seat, thread, provider);
       const client = await seam.client();
       await client.startTurn({
         threadId: thread.threadId,

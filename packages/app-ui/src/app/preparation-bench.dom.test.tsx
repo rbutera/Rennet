@@ -180,7 +180,7 @@ describe("the bench — five readers at work on the change", () => {
     await waitFor(() => expect(speechOf("decisions")).toBe("reworked"));
     expect(useRennetStore.getState().ui.lensThread).toBeNull();
 
-    const reader = document.querySelector('[data-row="decisions"]') as HTMLButtonElement;
+    const reader = document.querySelector('[data-row="decisions"] button') as HTMLButtonElement;
     expect(reader.disabled).toBe(false);
     await user.click(reader);
 
@@ -205,8 +205,8 @@ describe("the bench — five readers at work on the change", () => {
     const { user } = open(bridge);
 
     await waitFor(() => expect(speechOf("noise")).toBe("queued"));
-    const withoutThread = document.querySelector('[data-row="noise"]') as HTMLButtonElement;
-    const withThread = document.querySelector('[data-row="design"]') as HTMLButtonElement;
+    const withoutThread = document.querySelector('[data-row="noise"] button') as HTMLButtonElement;
+    const withThread = document.querySelector('[data-row="design"] button') as HTMLButtonElement;
     // The CONTRAST is the assertion: both lanes are `queued`, so what separates them is
     // the thread and nothing else. Without the second row this test would pass against a
     // bench that disabled every queued reader for the wrong reason.
@@ -215,6 +215,60 @@ describe("the bench — five readers at work on the change", () => {
 
     await user.click(withoutThread);
     expect(useRennetStore.getState().ui.lensThread).toBeNull();
+  });
+
+  it("a two-seat lane speaks with both voices, and each opens its own transcript", async () => {
+    const claude = { environmentId: "env-1", threadId: "thread-flagged-claude" };
+    const codex = { environmentId: "env-1", threadId: "thread-flagged-codex" };
+    const { bridge } = benchBridge({
+      status: "drafting",
+      reviewId: "rev-1",
+      lanes: [
+        {
+          id: "flagged",
+          label: "Flagged",
+          status: "running",
+          // The lane-level mirror of the primary seat — what a pre-seats reader sees.
+          thread: claude,
+          latest: { kind: "tool", text: "reading src/auth.ts", at: 1 },
+          seats: [
+            {
+              seat: "flagged-claude",
+              provider: "claudeAgent",
+              thread: claude,
+              latest: { kind: "tool", text: "reading src/auth.ts", at: 1 },
+            },
+            {
+              seat: "flagged-codex",
+              provider: "codex",
+              thread: codex,
+              latest: { kind: "text", text: "The token refresh races the logout.", at: 1 },
+            },
+          ],
+        },
+      ] as LensLane[],
+    });
+    const { user } = open(bridge);
+
+    const voice = (seat: string) =>
+      document.querySelector(`[data-row="flagged"] [data-seat="${seat}"]`) as HTMLButtonElement;
+    await waitFor(() => expect(voice("flagged-codex")).toBeTruthy());
+    // BOTH lines, each under its speaker's name — not the primary's line alone, and not
+    // one line flipping between the two.
+    expect(voice("flagged-claude").querySelector("[data-speech]")?.textContent).toBe(
+      "reading src/auth.ts",
+    );
+    expect(voice("flagged-codex").querySelector("[data-speech]")?.textContent).toBe(
+      "The token refresh races the logout.",
+    );
+    expect(voice("flagged-claude").textContent).toContain("Claude");
+    expect(voice("flagged-codex").textContent).toContain("Codex");
+
+    // Each voice is its own control, pointing the slot at ITS thread.
+    await user.click(voice("flagged-codex"));
+    expect(useRennetStore.getState().ui.lensThread).toEqual(codex);
+    await user.click(voice("flagged-claude"));
+    expect(useRennetStore.getState().ui.lensThread).toEqual(claude);
   });
 
   it("capture is the first beat of the same scene — both steps, on the bench, with cancel", async () => {
