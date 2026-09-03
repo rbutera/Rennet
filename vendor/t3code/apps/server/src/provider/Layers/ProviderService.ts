@@ -412,6 +412,13 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   const recoverSessionForThread = Effect.fn("recoverSessionForThread")(function* (input: {
     readonly binding: ProviderSessionDirectory.ProviderRuntimeBinding;
     readonly operation: string;
+    /**
+     * The output schema of the turn this recovery is running for. Claude's SDK
+     * fixes `outputFormat` when the query is built, so a session recovered
+     * without it can never serve that turn: the adapter refuses the turn, and
+     * the thread is stuck one dead session behind its own contract.
+     */
+    readonly outputSchema?: unknown;
   }) {
     const bindingInstanceId = yield* requireBindingInstanceId(input.operation, input.binding);
     yield* Effect.annotateCurrentSpan({
@@ -464,6 +471,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           ...(persistedModelSelection ? { modelSelection: persistedModelSelection } : {}),
           ...(hasResumeCursor ? { resumeCursor: input.binding.resumeCursor } : {}),
           runtimeMode: input.binding.runtimeMode ?? "full-access",
+          ...(input.outputSchema !== undefined ? { outputSchema: input.outputSchema } : {}),
         })
         .pipe(Effect.onError(() => clearMcpSession(input.binding.threadId)));
       if (resumed.provider !== adapter.provider) {
@@ -498,6 +506,8 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     readonly threadId: ThreadId;
     readonly operation: string;
     readonly allowRecovery: boolean;
+    /** Carried into a recovered session; see `recoverSessionForThread`. */
+    readonly outputSchema?: unknown;
   }) {
     const bindingOption = yield* directory.getBinding(input.threadId);
     const binding = Option.getOrUndefined(bindingOption);
@@ -534,6 +544,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     const recovered = yield* recoverSessionForThread({
       binding,
       operation: input.operation,
+      ...(input.outputSchema !== undefined ? { outputSchema: input.outputSchema } : {}),
     });
     return {
       adapter: recovered.adapter,
@@ -798,6 +809,9 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           threadId: input.threadId,
           operation: "ProviderService.sendTurn",
           allowRecovery: true,
+          // The session this recovery starts is the one that has to serve this
+          // turn, so it starts on this turn's structured-output contract.
+          ...(input.outputSchema !== undefined ? { outputSchema: input.outputSchema } : {}),
         });
       }
       metricProvider = routed.adapter.provider;

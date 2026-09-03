@@ -112,6 +112,12 @@ export interface TurnStart {
   readonly requestedAt: string;
 }
 
+export interface StartTurnOptions {
+  readonly signal?: AbortSignal;
+  /** How long the start may take to be ACCEPTED (the pre-read plus the dispatch reply). */
+  readonly timeoutMs?: number;
+}
+
 export interface WaitForTurnOptions {
   readonly signal?: AbortSignal;
   readonly settlementGraceMs?: number;
@@ -143,7 +149,7 @@ export interface T3Client {
   readonly createThread: (input: CreateThreadInput) => Promise<string>;
   /** Delete a thread and its transcript. A thread the sidecar no longer has is not an error. */
   readonly deleteThread: (threadId: string) => Promise<void>;
-  readonly startTurn: (input: StartTurnInput) => Promise<TurnStart>;
+  readonly startTurn: (input: StartTurnInput, options?: StartTurnOptions) => Promise<TurnStart>;
   readonly interruptTurn: (threadId: string) => Promise<void>;
   readonly respondApproval: (
     threadId: string,
@@ -312,26 +318,37 @@ export async function connectT3(options: T3ClientOptions): Promise<T3Client> {
         threadId: ThreadId.make(threadId),
       });
     },
-    startTurn: async (input) => {
+    startTurn: async (input, options) => {
+      // The wait that follows is bounded and abortable; the start it belongs to must be
+      // too, or a sidecar whose socket is up but whose command handling has stalled holds
+      // the seat here with no timer and no way to cancel.
+      const bounded = <A>(work: () => Promise<A>, what: string) =>
+        withStartBound(work, options, `T3 thread ${input.threadId} ${what}`);
       // Read before dispatching: the reply does not name the turn the server mints, and
       // the projection keeps showing the last turn until the provider reports the new one.
-      const previousTurnId = (await readThread(input.threadId)).latestTurn?.turnId ?? null;
+      const previousTurnId =
+        (await bounded(() => readThread(input.threadId), "could not be read before the turn start"))
+          .latestTurn?.turnId ?? null;
       const stamped = stamp();
-      await dispatch({
-        type: "thread.turn.start",
-        ...stamped,
-        threadId: ThreadId.make(input.threadId),
-        message: {
-          messageId: MessageId.make(randomUUID()),
-          role: "user",
-          text: input.text,
-          attachments: [],
-        },
-        ...(input.modelSelection ? { modelSelection: input.modelSelection } : {}),
-        ...(input.outputSchema === undefined ? {} : { outputSchema: input.outputSchema }),
-        runtimeMode: input.runtimeMode ?? FULL_ACCESS,
-        interactionMode: "default",
-      });
+      await bounded(
+        () =>
+          dispatch({
+            type: "thread.turn.start",
+            ...stamped,
+            threadId: ThreadId.make(input.threadId),
+            message: {
+              messageId: MessageId.make(randomUUID()),
+              role: "user",
+              text: input.text,
+              attachments: [],
+            },
+            ...(input.modelSelection ? { modelSelection: input.modelSelection } : {}),
+            ...(input.outputSchema === undefined ? {} : { outputSchema: input.outputSchema }),
+            runtimeMode: input.runtimeMode ?? FULL_ACCESS,
+            interactionMode: "default",
+          }),
+        "did not accept the turn start",
+      );
       return { previousTurnId, requestedAt: stamped.createdAt };
     },
     interruptTurn: async (threadId) => {
@@ -377,6 +394,41 @@ export async function connectT3(options: T3ClientOptions): Promise<T3Client> {
 }
 
 /** The two reads the settle wait needs; the client supplies them over the socket, tests supply fakes. */
+/**
+ * One step of a turn start, held to the start's own bound: the caller's abort signal and
+ * a deadline (two minutes unless told otherwise, the same budget the wait gives a turn to
+ * appear). The promise itself is not cancelled — an RPC in flight stays in flight — but the
+ * seat stops waiting on it and settles with a reason.
+ */
+export async function withStartBound<A>(
+  work: () => Promise<A>,
+  options: StartTurnOptions | undefined,
+  what: string,
+): Promise<A> {
+  const signal = options?.signal;
+  if (signal?.aborted) throw new Error("aborted");
+  const timeoutMs = options?.timeoutMs ?? 120_000;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let onAbort: (() => void) | undefined;
+  try {
+    return await Promise.race([
+      work(),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`${what} within ${Math.round(timeoutMs / 1000)} s`)),
+          timeoutMs,
+        );
+        timer.unref?.();
+        onAbort = () => reject(new Error("aborted"));
+        signal?.addEventListener("abort", onAbort);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+    if (onAbort) signal?.removeEventListener("abort", onAbort);
+  }
+}
+
 export interface TurnWaitDeps {
   readonly subscribeThread: (threadId: string) => AsyncIterable<OrchestrationThreadStreamItem>;
   readonly readThread: (threadId: string) => Promise<OrchestrationThread>;

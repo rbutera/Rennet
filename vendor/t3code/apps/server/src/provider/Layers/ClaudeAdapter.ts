@@ -6,6 +6,7 @@
  *
  * @module ClaudeAdapterLive
  */
+import { spawn } from "node:child_process";
 import {
   type CanUseTool,
   query,
@@ -18,6 +19,8 @@ import {
   type SettingSource,
   type SDKUserMessage,
   type ModelUsage,
+  type SpawnedProcess,
+  type SpawnOptions as ClaudeSpawnOptions,
 } from "@anthropic-ai/claude-agent-sdk";
 import { parseCliArgs } from "@t3tools/shared/cliArgs";
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
@@ -345,6 +348,64 @@ export interface ClaudeAdapterLiveOptions {
   readonly nativeEventLogPath?: string;
   readonly nativeEventLogger?: EventNdjsonLogger;
   readonly modelCatalog?: Effect.Effect<ClaudeModelCatalog>;
+}
+
+/**
+ * Spawn the Claude Code child ourselves so its stdin has an `error` listener.
+ *
+ * The SDK's own process transport writes the prompt to the child's stdin and
+ * never listens for that socket's `error` event. A `claude` that dies before
+ * the first write — a bad install, an immediate auth failure — therefore raises
+ * an unhandled `write EPIPE` that kills the whole server process and takes every
+ * other thread's session down with it. A stdin that cannot be written to is a
+ * dead transport, so terminate the child: the SDK reports the exit on the query
+ * stream, where the session already settles the turn as failed.
+ */
+function spawnClaudeCodeProcess(spawnOptions: ClaudeSpawnOptions): SpawnedProcess {
+  const child = spawn(spawnOptions.command, spawnOptions.args, {
+    ...(spawnOptions.cwd !== undefined ? { cwd: spawnOptions.cwd } : {}),
+    env: spawnOptions.env,
+    // Forwarded by the SDK, and documented as safe to hang a kill on: it aborts
+    // only after the transport's stdin-EOF plus grace window has passed.
+    signal: spawnOptions.signal,
+    stdio: ["pipe", "pipe", spawnOptions.env.DEBUG_CLAUDE_AGENT_SDK ? "inherit" : "ignore"],
+    windowsHide: true,
+  });
+  const { stdin, stdout } = child;
+  if (!stdin || !stdout) {
+    throw new Error("Claude Code process was spawned without stdio pipes.");
+  }
+  stdin.on("error", (cause: NodeJS.ErrnoException) => {
+    Effect.runFork(
+      Effect.logWarning("claude.process.stdin-error", {
+        command: spawnOptions.command,
+        code: cause.code ?? cause.message,
+      }),
+    );
+    if (!child.killed && child.exitCode === null) {
+      child.kill("SIGTERM");
+    }
+  });
+  return {
+    stdin,
+    stdout,
+    get killed(): boolean {
+      return child.killed;
+    },
+    get exitCode(): number | null {
+      return child.exitCode;
+    },
+    kill: (signal) => child.kill(signal),
+    on: (event, listener) => {
+      child.on(event, listener);
+    },
+    once: (event, listener) => {
+      child.once(event, listener);
+    },
+    off: (event, listener) => {
+      child.off(event, listener);
+    },
+  };
 }
 
 function isUuid(value: string): boolean {
@@ -4391,6 +4452,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           ? { outputFormat: { type: "json_schema" as const, schema: sessionOutputSchema } }
           : {}),
         includePartialMessages: true,
+        spawnClaudeCodeProcess,
         canUseTool,
         onUserDialog,
         supportedDialogKinds: ["resume_return"],
@@ -4579,9 +4641,12 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
   const sendTurn: ClaudeAdapterShape["sendTurn"] = Effect.fn("sendTurn")(function* (input) {
     const context = yield* requireSession(input.threadId);
     // The SDK fixes `outputFormat` when the query is built and offers no setter,
-    // so a turn asking for a DIFFERENT contract than the session was started with
-    // cannot be honoured. Fail it by name rather than silently returning output
-    // shaped to the wrong schema.
+    // so a turn asking for a contract this session's query cannot serve is failed
+    // by name rather than answered in the wrong shape. Only a LIVE session is
+    // compared: a thread whose session is gone starts a new one from the turn's
+    // own schema, which is the start path above. The two ways a live session can
+    // fail the turn read differently, and saying "differs" when the session holds
+    // no contract at all sends the reader hunting for a mismatch that is not there.
     const turnOutputSchema = asJsonSchemaRecord(input.outputSchema);
     if (
       turnOutputSchema !== undefined &&
@@ -4591,7 +4656,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         provider: PROVIDER,
         method: "thread.turn.start",
         detail:
-          "This turn's output schema differs from the one its Claude session was started with. The SDK fixes the structured-output contract when the query is created, so the session would have to be restarted.",
+          context.outputSchema === undefined
+            ? "This turn asks for structured output, but its Claude session was started without an output schema. The SDK fixes the structured-output contract when the query is created, so the session would have to be restarted."
+            : "This turn's output schema differs from the one its Claude session was started with. The SDK fixes the structured-output contract when the query is created, so the session would have to be restarted.",
       });
     }
     const modelCatalog = yield* modelCatalogEffect;

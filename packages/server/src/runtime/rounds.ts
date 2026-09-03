@@ -109,6 +109,11 @@ const LENS_LANE_LABEL: Record<LensKind, string> = {
   noise: "Noise",
 };
 
+/** The order a lane's seats are held in, primary first — Claude leads the Flagged lane
+ *  (t3-lens-threads), and the lane's own `thread`/`latest` mirror `seats[0]`. Provider
+ *  order, never arrival order: both Flagged seats start at once. */
+const SEAT_ORDER: Record<LaneSeat["provider"], number> = { claudeAgent: 0, codex: 1 };
+
 /** One lens lane's STATE — every arm of {@link LensLane} minus the identity the lane keeps
  *  across transitions. Distributive on purpose, so each arm keeps its own fields. */
 type LaneState = LensLane extends infer Arm
@@ -211,8 +216,7 @@ export function createRegenerationLanes(
       const { lens, lane: current } = found;
       // Addressed by SEAT, not by lane: Flagged runs a Claude seat and a Codex seat on
       // the same lane, and the second to arrive must join the first, never replace it.
-      // Seats are held in arrival order; `seats[0]` is the primary the lane's own
-      // `thread`/`latest` mirror.
+      // `seats[0]` is the primary the lane's own `thread`/`latest` mirror.
       const seats = [...(current.seats ?? [])];
       const index = seats.findIndex((entry) => entry.seat === seat);
       const known = index >= 0 ? seats[index] : undefined;
@@ -220,6 +224,12 @@ export function createRegenerationLanes(
       const entry: LaneSeat = { ...(known ?? { seat, provider }), thread };
       if (known === undefined) seats.push(entry);
       else seats[index] = entry;
+      // Ordered by PROVIDER, not by arrival. Both Flagged seats start concurrently, so
+      // whichever binds its thread first would otherwise become the primary — and the
+      // bench would list Codex first and mirror its line onto the lane, against the
+      // contract that names Claude the primary Flagged seat. The sort is stable, so
+      // seats sharing a provider keep the order they arrived in.
+      seats.sort((a, b) => SEAT_ORDER[a.provider] - SEAT_ORDER[b.provider]);
       const primary = seats[0];
       lanes.set(lens, {
         ...current,
