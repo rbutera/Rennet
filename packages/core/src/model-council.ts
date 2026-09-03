@@ -421,7 +421,7 @@ const TABLE_CLAUDE_ONLY: AssignmentTable = {
   "project-scout": pick("sonnet-5", "medium"), // #461 names medium (the model class); effort [extrapolated]
   // ── Board-rebuild seats (#489 B08). Effort [extrapolated]. ──
   "lens-draft": pick("opus-4.8", "high"),
-  "lens-draft-flagged": pick("sonnet-5", "medium"),
+  "lens-draft-flagged": pick("opus-4.8", "high"), // Opus, not Sonnet (Rai, 2026-09-03), as under both
   "lens-draft-noise": pick("haiku", "low"), // [extrapolated] house light model, mirrors noise-narration
   "board-post-process": pick("sonnet-5", "medium"),
   "round-report": pick("sonnet-5", "low"),
