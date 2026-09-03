@@ -36,7 +36,8 @@ const FAKE_SIDECAR = `
 const fs = require("node:fs");
 const http = require("node:http");
 const path = require("node:path");
-const line = fs.readFileSync("/dev/fd/3", "utf8").split("\\n")[0];
+// Read the pipe by descriptor number: /dev/fd/3 is not readable as a path on every Linux.
+const line = fs.readFileSync(3, "utf8").split("\\n")[0];
 const envelope = JSON.parse(line);
 const home = envelope.t3Home;
 fs.mkdirSync(path.join(home, "userdata"), { recursive: true });
