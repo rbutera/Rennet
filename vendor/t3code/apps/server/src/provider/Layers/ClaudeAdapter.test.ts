@@ -437,6 +437,90 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("names the missing contract when its session was started without a schema", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      // ProviderService recovers a thread whose session died; a recovery that did
+      // not carry the turn's schema used to leave THIS session serving a turn that
+      // asks for one, reported as a mismatch against a contract nobody set.
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      const error = yield* adapter
+        .sendTurn({
+          threadId: THREAD_ID,
+          input: "asks for a board",
+          outputSchema: { type: "object", properties: { a: { type: "string" } } },
+        })
+        .pipe(Effect.flip);
+      assert.match(error.message, /started without an output schema/u);
+      assert.notMatch(error.message, /output schema differs/u);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("terminates a Claude child whose stdin breaks instead of crashing the server", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      const spawnClaudeCodeProcess =
+        harness.getLastCreateQueryInput()?.options.spawnClaudeCodeProcess;
+      assert.equal(typeof spawnClaudeCodeProcess, "function");
+      if (!spawnClaudeCodeProcess) return;
+
+      // A child that closes its own stdin and lives on is the shape the SDK's
+      // transport cannot survive: it writes anyway, and the socket's `error`
+      // event has no listener. Writing here reproduces that write.
+      const child = spawnClaudeCodeProcess({
+        command: "/bin/sh",
+        args: ["-c", "exec 0<&-; sleep 30"],
+        env: process.env,
+        signal: new AbortController().signal,
+      });
+      yield* Effect.promise(
+        () =>
+          new Promise<void>((resolve) => {
+            setTimeout(resolve, 200);
+          }),
+      );
+      child.stdin.write("{}\n");
+
+      // The handler kills the child, which is what turns a dead transport into
+      // the ordinary process-exit failure the session settles the turn on.
+      yield* Effect.promise(
+        () =>
+          new Promise<void>((resolve) => {
+            const started = Date.now();
+            const poll = (): void => {
+              if (child.killed || child.exitCode !== null || Date.now() - started > 5_000) {
+                resolve();
+                return;
+              }
+              setTimeout(poll, 25);
+            };
+            poll();
+          }),
+      );
+      assert.equal(child.killed, true);
+      child.kill("SIGKILL");
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("derives auto permission mode from auto runtime policy without skip flag", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {

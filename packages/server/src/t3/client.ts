@@ -529,11 +529,17 @@ export async function awaitTurnSettled(
   };
   try {
     let thread: OrchestrationThread | undefined;
+    // ONE read in flight across iterations. A race the timer wins leaves the stream read
+    // pending; asking for a fresh one would orphan it, and the orphan still consumes the
+    // next item (the iterable has a single wake slot), so a settle event arriving right
+    // after the start timer fired would be eaten and the wait would sit on a settled turn.
+    let pending: ReturnType<typeof iterator.next> | undefined;
     for (;;) {
       let next: Awaited<ReturnType<typeof iterator.next>> | typeof GRACE_OVER | typeof START_OVER;
       try {
+        pending ??= iterator.next();
         next = await Promise.race([
-          iterator.next(),
+          pending,
           abort,
           ...(grace ? [grace] : []),
           ...(startOver ? [startOver] : []),
@@ -542,6 +548,7 @@ export async function awaitTurnSettled(
         if (signal?.aborted) throw error;
         return await settleFromRead(error);
       }
+      if (next !== GRACE_OVER && next !== START_OVER) pending = undefined;
       if (next === GRACE_OVER) {
         // The stream went quiet after the lifecycle settled: one last read, then answer
         // with what the projection holds. Absent facts come back absent.
