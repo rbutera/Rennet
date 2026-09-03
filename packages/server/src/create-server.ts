@@ -1219,12 +1219,17 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     dataDir,
     env,
     bundlePath: options.t3BundlePath,
+    // The sidecar runs on the host, so this is the host's own discovery (the same probe
+    // `harness.detect` discloses), not a review's locus-threaded harness.
     resolveBinaries: async () => {
       const [claude, codex] = await Promise.all([
-        getClaudeHarness().then((h) => h.discovery.chosen?.path),
-        getCodexResolution(HOST_LOCUS).then((r) => r.binPath ?? undefined),
+        discoverClaude(defaultDiscoveryDeps(), CLAUDE_TESTED_RANGE).catch(() => null),
+        discoverCodex(defaultCodexDiscoveryDeps(), {}).catch(() => null),
       ]);
-      return { ...(claude ? { claude } : {}), ...(codex ? { codex } : {}) };
+      return {
+        ...(claude?.chosen ? { claude: claude.chosen.path } : {}),
+        ...(codex?.chosen ? { codex: codex.chosen.path } : {}),
+      };
     },
   });
 

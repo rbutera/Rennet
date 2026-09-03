@@ -88,7 +88,10 @@ afterEach(async () => {
 
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), "rennet-t3-sidecar-"));
-  cleanups.push(() => rmSync(root, { recursive: true, force: true }));
+  // The real bundle keeps writing logs for a moment after SIGKILL; retry the sweep.
+  cleanups.push(() =>
+    rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }),
+  );
   const dataDir = join(root, "data");
   const bundlePath = join(root, "fake-t3.cjs");
   writeFileSync(bundlePath, FAKE_SIDECAR);
