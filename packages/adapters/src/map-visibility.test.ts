@@ -1,12 +1,14 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { escapePath } from "@rennet/core";
 import { afterEach, describe, expect, it } from "vitest";
 import type { GitExec } from "./git-range-diff";
 import {
   applyVisibilitySwitch,
   ensureManagedIgnoreBlock,
   previewVisibilitySwitch,
+  recordedVisibility,
 } from "./map-visibility";
 import { ProjectSnapshotStore } from "./project-snapshot-store";
 
@@ -66,7 +68,7 @@ describe("map-visibility switch (A.2)", () => {
     expect(store.loadConfig("-k")?.visibility).toBe("local");
   });
 
-  it("git-visible removes the managed block but preserves user-authored lines", async () => {
+  it("git-visible stops ignoring derived data, keeps `context/`, and preserves user lines", async () => {
     const repo = mkdtempSync(join(tmpdir(), "rennet-vis3-"));
     const storeDir = mkdtempSync(join(tmpdir(), "rennet-vis3-store-"));
     scratch.push(repo, storeDir);
@@ -83,8 +85,13 @@ describe("map-visibility switch (A.2)", () => {
     const written = readFileSync(join(repo, ".rennet", ".gitignore"), "utf8");
     expect(written).toContain("# my own note");
     expect(written).toContain("scratch.local");
-    expect(written).not.toContain("rennet-managed");
+    // The reviewer's derived data is theirs to stage now — that is the whole switch.
     expect(written).not.toContain("map/");
+    expect(written).not.toContain("overlays/");
+    expect(written).not.toContain("knowledge/");
+    // Rennet's own per-session scratch stays out at EVERY visibility: it belongs to a
+    // session, is purged when that session is archived, and is never the reviewer's.
+    expect(written).toContain("context/");
     expect(store.loadConfig("-k")?.visibility).toBe("git-visible");
   });
 
@@ -138,6 +145,21 @@ describe("ensureManagedIgnoreBlock (session-context-files 2.1)", () => {
     expect(written).toContain("context/");
   });
 
+  it("recordedVisibility answers what the store holds, and `local` when it holds nothing", async () => {
+    const repo = mkdtempSync(join(tmpdir(), "rennet-recvis-"));
+    const storeDir = mkdtempSync(join(tmpdir(), "rennet-recvis-store-"));
+    scratch.push(repo, storeDir);
+    const store = new ProjectSnapshotStore(storeDir);
+
+    // A repo the store has never heard of is `local` — the default it would have had.
+    expect(recordedVisibility(store, repo)).toBe("local");
+
+    await applyVisibilitySwitch(store, escapePath(realpathSync(repo)), repo, "git-visible", () =>
+      Promise.resolve(""),
+    );
+    expect(recordedVisibility(store, repo)).toBe("git-visible");
+  });
+
   it("is idempotent: a second call writes nothing and leaves the file byte-identical", () => {
     const repo = mkdtempSync(join(tmpdir(), "rennet-ensure2-"));
     scratch.push(repo);
@@ -147,6 +169,29 @@ describe("ensureManagedIgnoreBlock (session-context-files 2.1)", () => {
     const first = readFileSync(path, "utf8");
     expect(ensureManagedIgnoreBlock(repo)).toBe(false);
     expect(readFileSync(path, "utf8")).toBe(first);
+  });
+
+  it("at `git-visible` leaves the derived-data entries OUT while still ignoring `context/`", () => {
+    const repo = mkdtempSync(join(tmpdir(), "rennet-ensure-vis-"));
+    scratch.push(repo);
+    mkdirSync(join(repo, ".rennet"), { recursive: true });
+    // What a repo the reviewer switched to `git-visible` looks like on disk.
+    writeFileSync(
+      join(repo, ".rennet", ".gitignore"),
+      "# >>> rennet-managed (do not edit) >>>\ncontext/\n# <<< rennet-managed <<<\n",
+    );
+
+    // Nothing to do: `context/` is already there, and the derived entries must NOT come back.
+    expect(ensureManagedIgnoreBlock(repo, "git-visible")).toBe(false);
+    const written = readFileSync(join(repo, ".rennet", ".gitignore"), "utf8");
+    expect(written).not.toContain("map/");
+    expect(written).toContain("context/");
+
+    // CONTROL: the same call at `local` — the visibility argument is load-bearing, not
+    // decoration. Composing at a fixed `"local"` is exactly the bug: it silently undid a
+    // `git-visible` switch while the settings store still read git-visible.
+    expect(ensureManagedIgnoreBlock(repo, "local")).toBe(true);
+    expect(readFileSync(join(repo, ".rennet", ".gitignore"), "utf8")).toContain("map/");
   });
 
   it("preserves user-authored lines and rewrites a stale managed block in place", () => {

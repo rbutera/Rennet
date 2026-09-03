@@ -1,8 +1,9 @@
+import { randomUUID } from "node:crypto";
 import { basename } from "node:path";
 import {
   councilSeatTurn,
   type GitExec,
-  PROJECT_SCOUT_CONTEXT_ID,
+  PROJECT_SCOUT_CONTEXT_PREFIX,
   PROJECT_SCOUT_SCHEMA,
   type ProjectSnapshotStore,
   runProjectScout,
@@ -127,39 +128,45 @@ export function createProjectScoutRuntime(deps: ProjectScoutRuntimeDeps): Projec
                 },
                 { availability: { installed } },
               );
-        const result = await runProjectScout({
-          repoRoot: input.repoRoot,
-          git: deps.gitForRepo(input.repoRoot),
-          ...(input.defaultBranch ? { knownDefaultBranch: input.defaultBranch } : {}),
-          runTurn: seat !== null && "runTurn" in seat ? seat.runTurn : null,
-          // The scout runs for a PROJECT, before any session exists, so its context sits
-          // under the fixed `project-scout` id in the repo it is scouting — the same ONE
-          // writer, the same ignored directory. There is no archive to purge it at, so
-          // the next run purges the last one (design D4).
-          writeContext: (files) => {
-            purgeSessionContext(input.repoRoot, PROJECT_SCOUT_CONTEXT_ID);
-            return writeSessionContext(input.repoRoot, PROJECT_SCOUT_CONTEXT_ID, files);
-          },
-          onProgress: (progress) => {
-            if (!input.runId) return;
-            const line =
-              progress.step === "remotes"
-                ? "Read the git remotes"
-                : progress.step === "config"
-                  ? "Checked tracker markers and CI config"
-                  : "Scout reading README, CONTRIBUTING, and agent files";
-            narrate({
-              kind: "step",
-              runId: input.runId,
-              repo: repoLabel,
-              phase: "scout",
-              step: progress.step,
-              status: progress.status,
-              note: line,
-              ...(progress.detail ? { detail: progress.detail } : {}),
-            });
-          },
-        });
+        // The scout runs for a PROJECT, before any session exists, so its context sits in
+        // the repo it is scouting under an id of its OWN — one per run, and purged when
+        // the run returns. A fixed id was never a session id, so every daemon start read
+        // the directory as an orphan, and two scouts on one root raced purge-then-write:
+        // the second wiped the file the first one's seat was reading (review finding 5).
+        const contextId = `${PROJECT_SCOUT_CONTEXT_PREFIX}-${randomUUID()}`;
+        let result: ScoutResult;
+        try {
+          result = await runProjectScout({
+            repoRoot: input.repoRoot,
+            git: deps.gitForRepo(input.repoRoot),
+            ...(input.defaultBranch ? { knownDefaultBranch: input.defaultBranch } : {}),
+            runTurn: seat !== null && "runTurn" in seat ? seat.runTurn : null,
+            writeContext: (files) => writeSessionContext(input.repoRoot, contextId, files),
+            onProgress: (progress) => {
+              if (!input.runId) return;
+              const line =
+                progress.step === "remotes"
+                  ? "Read the git remotes"
+                  : progress.step === "config"
+                    ? "Checked tracker markers and CI config"
+                    : "Scout reading README, CONTRIBUTING, and agent files";
+              narrate({
+                kind: "step",
+                runId: input.runId,
+                repo: repoLabel,
+                phase: "scout",
+                step: progress.step,
+                status: progress.status,
+                note: line,
+                ...(progress.detail ? { detail: progress.detail } : {}),
+              });
+            },
+          });
+        } finally {
+          // There is no archive to purge a project-scoped directory at, so the run owns
+          // its own end — including the failed run, whose files nothing else would remove.
+          purgeSessionContext(input.repoRoot, contextId);
+        }
         saveScoutFacts(deps.store, input.repoKey, result);
         const questionnaire = scoutQuestionnaire(repoLabel, result);
         if (input.runId) {

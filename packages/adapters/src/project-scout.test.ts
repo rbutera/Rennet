@@ -7,7 +7,7 @@ import { loadConventionCatalogue } from "./convention-catalogue-reader";
 import type { GitExec } from "./git-range-diff";
 import {
   loadScoutFacts,
-  PROJECT_SCOUT_CONTEXT_ID,
+  PROJECT_SCOUT_CONTEXT_PREFIX,
   resolveTrackerConfig,
   runProjectScout,
   SCOUT_DETECTED_FILE,
@@ -224,7 +224,7 @@ describe("runProjectScout", () => {
       git: gitStub({}),
       writeContext: (files) => {
         written.push(...files);
-        return join(repo, ".rennet", "context", PROJECT_SCOUT_CONTEXT_ID);
+        return join(repo, ".rennet", "context", PROJECT_SCOUT_CONTEXT_PREFIX);
       },
       runTurn: (sent) => {
         prompt = sent;
@@ -243,7 +243,9 @@ describe("runProjectScout", () => {
     expect(file?.holds).not.toBe("");
     expect(file?.readWhen).not.toBe("");
     // The prompt names the path, relative to the cwd the seat runs in, and nothing else.
-    expect(prompt).toContain(`.rennet/context/${PROJECT_SCOUT_CONTEXT_ID}/${SCOUT_DETECTED_FILE}`);
+    expect(prompt).toContain(
+      `.rennet/context/${PROJECT_SCOUT_CONTEXT_PREFIX}/${SCOUT_DETECTED_FILE}`,
+    );
     expect(prompt).not.toContain('"provenance"');
     expect(inlineContextViolation(prompt)).toBeUndefined();
   });

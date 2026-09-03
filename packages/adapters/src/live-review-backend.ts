@@ -9,6 +9,7 @@ import {
 import type {
   ContextManifest,
   CouncilHarnessId,
+  DossierItem,
   HypothesisRepoContext,
   InvocationBudget,
   Patchset,
@@ -293,6 +294,16 @@ export interface RelatedContextKickDeps {
   readonly trackerConfig?: TrackerConfig;
   /** Budget-normal path: metered and reported, never a refusal (Rule Zero). */
   readonly budget?: InvocationBudget;
+  /**
+   * Write the PRE-enrichment candidate dossier where the seat can read it, and return the
+   * absolute path its prompt names. Injected by the composition root, which writes it as a
+   * run-scoped file under the session's context directory so the archive purge covers it
+   * and a concurrent open of the same target cannot overwrite it (review finding 3).
+   *
+   * Absent ⇒ there is nothing for the enrichment seat to read, so its turn is skipped with
+   * that reason rather than the candidates being quietly re-inlined into the prompt.
+   */
+  readonly writeCandidates?: (items: readonly DossierItem[]) => string;
   readonly onError?: (error: unknown) => void;
 }
 
@@ -367,7 +378,7 @@ export async function runRelatedContextRetrieval(
         ...(deps.trackerConfig ? { trackerConfig: deps.trackerConfig } : {}),
         runTurn: seat !== null && "runTurn" in seat ? seat.runTurn : null,
         // The seat reads the candidates from disk; the prompt only names the path.
-        writeCandidates: (items) => dossierStore.saveCandidates(repoKey, dossierKey, items),
+        ...(deps.writeCandidates ? { writeCandidates: deps.writeCandidates } : {}),
         ...(deps.budget ? { budget: deps.budget } : {}),
       },
     );

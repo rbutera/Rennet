@@ -123,6 +123,24 @@ export class SessionStore {
     this.cache.set(path, validated);
   }
 
+  /**
+   * Every id the store has a FILE for, parsed or not.
+   *
+   * `list()` drops a malformed record, so "absent from `list()`" cannot distinguish a
+   * session that is gone from one whose JSON will not parse — and a caller that deletes on
+   * that difference (the context-file sweep) destroys a live session's data while its own
+   * silence reads as proof the session was gone. This is the honest existence question.
+   */
+  persistedIds(): string[] {
+    try {
+      return readdirSync(this.dir)
+        .filter((name) => name.endsWith(".json"))
+        .map((name) => decodeURIComponent(name.slice(0, -".json".length)));
+    } catch {
+      return [];
+    }
+  }
+
   /** Every persisted session, newest first. Malformed entries are skipped, not thrown. */
   list(): SessionModel[] {
     let names: string[];

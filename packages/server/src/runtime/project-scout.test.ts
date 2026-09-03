@@ -1,9 +1,9 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   loadScoutFacts,
-  PROJECT_SCOUT_CONTEXT_ID,
+  PROJECT_SCOUT_CONTEXT_PREFIX,
   ProjectSnapshotStore,
   SCOUT_DETECTED_FILE,
 } from "@rennet/adapters";
@@ -104,8 +104,18 @@ describe("createProjectScoutRuntime", () => {
 
   // ── session-context-files 3.8/D4: the scout's detected facts are a FILE in the repo ──
 
-  /** A one-turn Claude port that captures the prompt and emits an empty scout body. */
-  function capturingClaudePort(sink: { prompt: string; cwd: string }): HarnessPort {
+  /**
+   * A one-turn Claude port that captures the prompt and emits an empty scout body.
+   *
+   * `onSend` runs at the exact moment the seat is handed its prompt — which is when a real
+   * seat would go and read the files that prompt names. The scout's context directory is
+   * purged when the run returns, so that instant is the only place its contents can be
+   * observed, and observing them anywhere else would be asserting about a different time.
+   */
+  function capturingClaudePort(
+    sink: { prompt: string; cwd: string },
+    onSend: () => void = () => undefined,
+  ): HarnessPort {
     const events: HarnessEvent[] = [
       {
         seq: 1,
@@ -144,6 +154,7 @@ describe("createProjectScoutRuntime", () => {
           })(),
           send: async (turn: { prompt: string }) => {
             sink.prompt = turn.prompt;
+            onSend();
             return "turn" as never;
           },
           interrupt: async () => undefined,
@@ -153,46 +164,96 @@ describe("createProjectScoutRuntime", () => {
     } as HarnessPort;
   }
 
-  it("writes scout-detected.json into the scouted repo, names it, and purges it next run", async () => {
+  /** The scout context directories present in a repo right now, newest-agnostic. */
+  function scoutContextDirs(repoRoot: string): string[] {
+    try {
+      return readdirSync(join(repoRoot, ".rennet", "context")).filter((name) =>
+        name.startsWith(PROJECT_SCOUT_CONTEXT_PREFIX),
+      );
+    } catch {
+      return [];
+    }
+  }
+
+  it("writes scout-detected.json into the scouted repo under a per-run id, names it, and purges it when the run returns", async () => {
     const repoRoot = tempDir();
     // A guidance document so the seat has something to distil, and a JIRA marker so the
     // detected object is not empty.
     writeFileSync(join(repoRoot, "CLAUDE.md"), "# Rules\nRun the gate.");
     writeFileSync(join(repoRoot, "README.md"), "Track work in ABC-1 and ABC-2.");
     const sink = { prompt: "", cwd: "" };
+    // Read at the instant the seat is handed the prompt — a real seat's read moment.
+    let seen: { dirs: string[]; detected: string; index: string } | undefined;
     const runtime = createProjectScoutRuntime({
       store: new ProjectSnapshotStore(tempDir()),
       gitForRepo: () => (_root, args) => Promise.reject(new Error(`no ${args[0]}`)),
-      resolveClaudePort: async () => capturingClaudePort(sink),
+      resolveClaudePort: async () =>
+        capturingClaudePort(sink, () => {
+          const dirs = scoutContextDirs(repoRoot);
+          const dir = join(repoRoot, ".rennet", "context", dirs[0] ?? "missing");
+          seen = {
+            dirs,
+            detected: readFileSync(join(dir, SCOUT_DETECTED_FILE), "utf8"),
+            index: readFileSync(join(dir, "README.md"), "utf8"),
+          };
+        }),
       resolveCodexExecutor: async () => null,
       narrate: () => undefined,
     });
 
     await runtime.runForRepo({ projectId: "p", repoKey: "repo", repoRoot });
 
-    const contextDir = join(repoRoot, ".rennet", "context", PROJECT_SCOUT_CONTEXT_ID);
-    const detected = join(contextDir, SCOUT_DETECTED_FILE);
+    // ONE directory during the run, and its id is a per-run id, not the bare prefix — a
+    // fixed id is never a session id, so every daemon start read it as an orphan and two
+    // concurrent scouts raced purge-then-write over each other's files.
+    expect(seen?.dirs).toHaveLength(1);
+    expect(seen?.dirs[0]).not.toBe(PROJECT_SCOUT_CONTEXT_PREFIX);
+    expect(seen?.dirs[0]).toMatch(new RegExp(`^${PROJECT_SCOUT_CONTEXT_PREFIX}-.+`));
     // The facts landed as a file in the repo the seat is scouting…
-    expect(JSON.parse(readFileSync(detected, "utf8"))).toMatchObject({
+    expect(JSON.parse(seen?.detected ?? "{}")).toMatchObject({
       trackerKind: { value: "jira", provenance: "detected" },
     });
     // …the writer's index names it…
-    expect(readFileSync(join(contextDir, "README.md"), "utf8")).toContain(SCOUT_DETECTED_FILE);
-    // …the prompt names the path and carries no facts…
-    expect(sink.prompt).toContain(
-      `.rennet/context/${PROJECT_SCOUT_CONTEXT_ID}/${SCOUT_DETECTED_FILE}`,
-    );
+    expect(seen?.index).toContain(SCOUT_DETECTED_FILE);
+    // …the prompt names that exact per-run path and carries no facts…
+    expect(sink.prompt).toContain(`.rennet/context/${seen?.dirs[0]}/${SCOUT_DETECTED_FILE}`);
     expect(sink.prompt).not.toContain('"provenance"');
     // …the seat's cwd is the repo root the path is relative to (3.11)…
     expect(sink.cwd).toBe(repoRoot);
     // …and the managed ignore block keeps it out of every git operation.
     expect(readFileSync(join(repoRoot, ".rennet", ".gitignore"), "utf8")).toContain("context/");
 
-    // The next run purges the last one: there is no archive for a project-scoped scout,
-    // so a stale file left behind would be read by the next seat as current.
-    writeFileSync(join(contextDir, "stale.json"), "{}");
+    // The run purges its OWN directory on the way out: there is no archive for a
+    // project-scoped scout, and a directory left behind is one the daemon-start sweep
+    // would have to reason about.
+    expect(scoutContextDirs(repoRoot)).toEqual([]);
+
+    // A second run leaves nothing behind either, and does not collide with the first.
     await runtime.runForRepo({ projectId: "p", repoKey: "repo", repoRoot });
-    expect(existsSync(join(contextDir, "stale.json"))).toBe(false);
-    expect(existsSync(detected)).toBe(true);
+    expect(scoutContextDirs(repoRoot)).toEqual([]);
+  });
+
+  it("purges its directory even when the run FAILS", async () => {
+    const repoRoot = tempDir();
+    writeFileSync(join(repoRoot, "CLAUDE.md"), "# Rules\nRun the gate.");
+    const sink = { prompt: "", cwd: "" };
+    const runtime = createProjectScoutRuntime({
+      store: new ProjectSnapshotStore(tempDir()),
+      gitForRepo: () => (_root, args) => Promise.reject(new Error(`no ${args[0]}`)),
+      resolveClaudePort: async () =>
+        capturingClaudePort(sink, () => {
+          // The directory really is there when the turn runs (this assertion is what makes
+          // the "purged" one below non-vacuous)…
+          expect(scoutContextDirs(repoRoot)).toHaveLength(1);
+          throw new Error("the seat died mid-turn");
+        }),
+      resolveCodexExecutor: async () => null,
+      narrate: () => undefined,
+    });
+
+    await runtime.runForRepo({ projectId: "p", repoKey: "repo", repoRoot });
+
+    // …and nothing is left for a sweep to puzzle over.
+    expect(scoutContextDirs(repoRoot)).toEqual([]);
   });
 });
