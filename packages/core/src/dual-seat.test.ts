@@ -162,7 +162,7 @@ describe("resolveDualSeat — the dual-model seat resolver (#41)", () => {
   });
 
   // B08 J1/J2: `lens-draft-flagged` is the board-era Flagged seat — the same dual
-  // shape as finding-generation. Under `both` the council picks Claude (sonnet-5),
+  // shape as finding-generation. Under `both` the council picks Claude (opus-4.8),
   // so Codex fills the second seat at the strongest-model default; under a single
   // provider it degrades to one honest seat. The merge is `reconcileFindings`
   // (proven in finding-reconcile.test.ts).
@@ -178,7 +178,7 @@ describe("resolveDualSeat — the dual-model seat resolver (#41)", () => {
       // Claude is the council-assigned primary; Codex is the second opinion.
       const claude = seats.find((s) => s.provider === "claude-code");
       const codex = seats.find((s) => s.provider === "codex");
-      expect(claude?.seed.model).toBe("sonnet-5");
+      expect(claude?.seed.model).toBe("opus-4.8");
       expect(claude?.seed.resolutionTrace).toBeDefined();
       expect(codex?.seed.model).toBe(DEFAULT_CODEX_SECOND_SEAT_MODEL);
     });

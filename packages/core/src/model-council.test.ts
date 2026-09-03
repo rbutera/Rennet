@@ -288,7 +288,7 @@ describe("resolveAssignment — the board-rebuild drafting seats (#489 B08)", ()
     });
     expect(resolveAssignment("lens-draft-flagged", ctx(BOTH))).toMatchObject({
       harness: "claude-code",
-      model: "sonnet-5",
+      model: "opus-4.8",
     });
   });
 
