@@ -43,3 +43,15 @@ The Flagged lens SHALL run its primary seat as a thread on the Claude provider a
 #### Scenario: both providers present
 - **WHEN** a generation runs with Claude and Codex both seeded in the sidecar
 - **THEN** the Flagged lane has two threads, one per provider, and the reconciled findings carry each seat's provenance
+
+### Requirement: Archiving a session deletes its threads
+
+`session.archive` (archiving, not un-archiving) SHALL delete from the sidecar the session's own bound thread and every seat thread bound to that review's generations, using T3's `thread.delete` orchestration command, and SHALL remove those bindings. Un-archiving SHALL NOT restore them: the next use of that session creates fresh threads. A sidecar that is not running SHALL still leave the bindings dropped, and a thread the sidecar no longer has SHALL NOT fail the archive.
+
+#### Scenario: archive deletes every thread bound to the review
+- **WHEN** a session whose review has drafted one generation is archived
+- **THEN** the sidecar no longer lists that session's thread or any of that generation's seat threads, and the daemon holds no binding naming them
+
+#### Scenario: un-archiving then opening the session creates a new thread
+- **WHEN** an archived session is un-archived and its chat is opened again
+- **THEN** a new thread is created and bound, and the deleted transcripts do not come back

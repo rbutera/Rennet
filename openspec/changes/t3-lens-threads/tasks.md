@@ -6,6 +6,7 @@
 - [ ] 1.4 `resolveBoardSeatDetails` routes every board job (`lens-draft*`, `board-post-process`, `round-report`) to the T3 leg; `runFlaggedDual` resolves two T3 seats on two providers
 - [ ] 1.5 `@rennet/prompts`: `renderRepairTurn(pointers, frozenIds)` as a partial; `draftOneLens` sends it as the repair turn instead of `renderRetryPrompt`; measure and record the per-repair token delta in the PR description
 - [ ] 1.6 Run one real generation on a large branch; compare per-seat timings against the 2026-09-03 baseline in `benchmarks.jsonl` and record the numbers in `docs/developing/concepts/t3code-sidecar.md`
+- [ ] 1.7 `session.archive` deletes the session thread and every seat thread bound to the review, and drops the bindings; unarchive creates fresh threads on next use
 
 ## 2. Live lanes
 

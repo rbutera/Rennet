@@ -105,6 +105,8 @@ export interface T3Client {
   /** The project whose `workspaceRoot` is this checkout, created when absent. */
   readonly ensureProject: (workspaceRoot: string, title: string) => Promise<string>;
   readonly createThread: (input: CreateThreadInput) => Promise<string>;
+  /** Delete a thread and its transcript. A thread the sidecar no longer has is not an error. */
+  readonly deleteThread: (threadId: string) => Promise<void>;
   readonly startTurn: (input: StartTurnInput) => Promise<void>;
   readonly interruptTurn: (threadId: string) => Promise<void>;
   readonly respondApproval: (
@@ -233,6 +235,13 @@ export async function connectT3(options: T3ClientOptions): Promise<T3Client> {
         worktreePath: null,
       });
       return threadId;
+    },
+    deleteThread: async (threadId) => {
+      await dispatch({
+        type: "thread.delete",
+        ...stamp(),
+        threadId: ThreadId.make(threadId),
+      });
     },
     startTurn: async (input) => {
       await dispatch({

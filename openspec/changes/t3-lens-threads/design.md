@@ -63,4 +63,4 @@ Rollback is `git revert` per PR; there is no data migration. Threads created by 
 ## Open Questions
 
 - Whether the round report should stay a thread or become a turn on the review's own thread (cheap either way; decided when the seat path is measured).
-- Thread pruning policy for old generations.
+- ~~Thread pruning policy for old generations.~~ **Resolved (Rai, 2026-09-03):** archiving a session is the pruning act — `session.archive` deletes the session's own thread and every seat thread bound to that review's generations and drops the bindings, so a live session keeps every transcript it has and an archived one leaves nothing behind (task 1.7).

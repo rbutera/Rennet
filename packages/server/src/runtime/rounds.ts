@@ -619,6 +619,8 @@ export interface RoundsRuntimeDeps {
     readonly repoRoot: string;
     readonly generationId: string;
     readonly branch: string;
+    /** The session that owns the generation, so archiving it can delete these threads. */
+    readonly sessionId: string;
   }) => Promise<T3SeatRuntime | null>;
   /** B04's boards runtime for a repo — the sole board-op writer (`WhiteboardClient`
    *  over its `service`) and the board minter (`createRennetBoard`). */
@@ -1087,6 +1089,7 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
         repoRoot: input.draftingRoot ?? input.repoRoot,
         generationId: attemptGeneration.id,
         branch: input.deltaPacket.patchset.repository.baseRef,
+        sessionId: input.session.id,
       })
       .catch(() => null);
     const seatWatches: { readonly stop: () => void }[] = [];

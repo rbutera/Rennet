@@ -256,6 +256,21 @@ export function sessionHandlers(rt: DispatchRuntime) {
       // `archived: false` is its inverse, so an accidental archive is recoverable.
       const input = parseCommandInput(name, rawInput);
       const session = rt.deps.sessions?.setArchived(input.sessionId, input.archived) ?? null;
+      // Archiving is also the sidecar's pruning act (t3-lens-threads 1.7): the session's
+      // own thread and every seat thread its generations left behind are deleted and their
+      // bindings dropped, AFTER the archive has persisted. Un-archiving restores nothing —
+      // the next use creates fresh threads. Both ids are swept because the two kinds are
+      // bound under different ones: the session thread under the REVIEW id (that is what
+      // `chat.t3Session` and the handoff bind on), the seat threads under the session id.
+      if (input.archived && session !== null) {
+        const ids = [
+          input.sessionId,
+          ...(session.reviewId === undefined ? [] : [session.reviewId]),
+        ];
+        // `forgetSession` never throws: an absent sidecar has nothing to delete and still
+        // drops the bindings. Awaited so the command answers after the cleanup, not before.
+        await rt.deps.t3Sidecar?.forgetSession(ids);
+      }
       return parseCommandOutput(name, { session });
     },
   } satisfies Record<string, CommandHandler>;

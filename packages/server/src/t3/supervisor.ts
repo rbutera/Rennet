@@ -15,7 +15,13 @@ import {
   removeSidecarClaim,
   spawnSidecar,
 } from "./sidecar";
-import { bindThread, type ThreadBinding, type ThreadBindingKey } from "./threads";
+import {
+  bindThread,
+  findBindingsForSessions,
+  removeBindings,
+  type ThreadBinding,
+  type ThreadBindingKey,
+} from "./threads";
 
 export interface T3SidecarSupervisorOptions {
   readonly dataDir: string;
@@ -42,13 +48,25 @@ export interface T3SidecarSupervisor {
     readonly title: string;
     /** The seat's council-routed model; absent ⇒ the sidecar's default. */
     readonly modelSelection?: ModelSelection;
+    /** The owning session, recorded on a seat binding so archiving can find it. */
+    readonly sessionId?: string;
   }) => Promise<ThreadBinding>;
+  /**
+   * Archiving a session is the pruning act: delete every thread bound to any of these
+   * session/review ids and drop the bindings. Never throws — a sidecar that is off has
+   * nothing to delete and a thread it no longer has is already gone, and neither of those
+   * may fail the archive the user asked for. Returns how many threads it deleted.
+   */
+  readonly forgetSession: (ids: readonly string[]) => Promise<number>;
   /** Synchronous teardown for the daemon's own shutdown path (no async budget there). */
   readonly stopSync: () => void;
 }
 
 /** The default model for a bound thread: T3's own default for its Claude driver. The composer changes it per thread. */
 const DEFAULT_MODEL = modelSelection("claudeAgent", "claude-sonnet-5");
+
+const describe = (error: unknown): string =>
+  error instanceof Error ? error.message : String(error);
 
 export function createT3SidecarSupervisor(
   options: T3SidecarSupervisorOptions,
@@ -135,7 +153,32 @@ export function createT3SidecarSupervisor(
       key: input.key,
       title: input.title,
       modelSelection: input.modelSelection ?? DEFAULT_MODEL,
+      ...(input.sessionId === undefined ? {} : { sessionId: input.sessionId }),
     });
+
+  const forgetSession: T3SidecarSupervisor["forgetSession"] = async (ids) => {
+    const bindings = findBindingsForSessions(options.dataDir, ids);
+    if (bindings.length === 0) return 0;
+    // The bindings are dropped whatever the sidecar says. A binding pointing at a thread
+    // nobody can reach is worse than none: it would rebind an archived session to a ghost.
+    const threadIds = bindings.map((binding) => binding.threadId);
+    let deleted = 0;
+    try {
+      const rpc = await client();
+      for (const threadId of threadIds) {
+        try {
+          await rpc.deleteThread(threadId);
+          deleted += 1;
+        } catch (error) {
+          warn(`rennet: T3 thread ${threadId} was not deleted: ${describe(error)}`);
+        }
+      }
+    } catch (error) {
+      warn(`rennet: T3 sidecar unavailable, dropping bindings only: ${describe(error)}`);
+    }
+    removeBindings(options.dataDir, threadIds);
+    return deleted;
+  };
 
   const session = async (): Promise<T3Session> => {
     const sidecar = await ensure();
@@ -167,5 +210,13 @@ export function createT3SidecarSupervisor(
     }
   };
 
-  return { ensure, session, status: () => status, client, threadFor, stopSync };
+  return {
+    ensure,
+    session,
+    status: () => status,
+    client,
+    threadFor,
+    forgetSession,
+    stopSync,
+  };
 }

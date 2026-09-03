@@ -1255,6 +1255,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     readonly repoRoot: string;
     readonly generationId: string;
     readonly branch: string;
+    readonly sessionId: string;
   }): Promise<T3SeatRuntime | null> => {
     let sidecar: Awaited<ReturnType<typeof t3Sidecar.ensure>>;
     try {
@@ -1272,6 +1273,10 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
             repositoryRoot: input.repoRoot,
             key: { kind: "seat", generationId: input.generationId, seat: seat as SeatKind },
             title: seatThreadTitle(input.branch, seat as SeatKind),
+            // Recorded on the row so archiving the session finds this thread. The seat
+            // key is (root, generation, seat); the drafting root is a detached worktree,
+            // so nothing else on the row ties it back to the session that made it.
+            sessionId: input.sessionId,
             // The council's own routing, in the provider's own vocabulary: T3's Claude
             // catalog uses the full ids `mapCouncilModel` already produces, and its Codex
             // catalog uses the council's model names verbatim.

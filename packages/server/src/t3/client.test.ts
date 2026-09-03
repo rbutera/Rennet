@@ -182,4 +182,38 @@ describe.skipIf(!bundle)("t3 client over the vendored sidecar", () => {
     if (item.done || item.value.kind !== "snapshot") throw new Error("no snapshot");
     expect(item.value.snapshot.thread.title).toBe("feat/x — Design");
   }, 30_000);
+
+  it("deletes a thread, and the sidecar stops resolving it", async () => {
+    const projectId = await client.ensureProject(repo, "fixture");
+    const threadId = await client.createThread({
+      projectId,
+      title: "doomed thread",
+      modelSelection: modelSelection("claudeAgent", "claude-sonnet-5"),
+    });
+    // It exists first — otherwise "gone after delete" would pass on a thread that never was.
+    const before = await readSnapshot(threadId);
+    expect(before?.title).toBe("doomed thread");
+
+    await client.deleteThread(threadId);
+
+    // The subscription no longer yields a snapshot for it. `undefined` is either a stream
+    // that ended or one that sent a non-snapshot; both mean the sidecar will not resolve it.
+    expect(await readSnapshot(threadId)).toBeUndefined();
+    // Deleting it again is not an error: archive must tolerate a thread already gone.
+    await expect(client.deleteThread(threadId)).resolves.toBeUndefined();
+  }, 30_000);
+
+  /** The thread as the sidecar currently projects it, or `undefined` when it has none. */
+  async function readSnapshot(threadId: string) {
+    const iterator = client.subscribeThread(threadId)[Symbol.asyncIterator]();
+    try {
+      const item = await iterator.next();
+      if (item.done || item.value.kind !== "snapshot") return undefined;
+      return item.value.snapshot.thread;
+    } catch {
+      return undefined;
+    } finally {
+      await iterator.return?.();
+    }
+  }
 });
