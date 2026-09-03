@@ -71,10 +71,12 @@ function mountDock(slot?: {
     ...frontDoorHandlers(),
     "settings.get": () => ({ ...emptySettings(), projects: [projectRow()] }),
     // The slug resolves to a review only when the review loads; the minimal shape the
-    // workspace tests use is enough for the dock to learn its review id.
-    "review.load": () => ({
+    // workspace tests use is enough for the dock to learn its review id. TWO reviews,
+    // because the store slice that names the open lens transcript is global and the bug
+    // it hid was only visible across a navigation (review finding 4).
+    "review.load": (input) => ({
       review: {
-        id: "review-1",
+        id: (input as { reviewId?: string }).reviewId ?? "review-1",
         repositoryRoot: "/repos/acme/checkout",
         status: "current",
         activePatchsetId: "ps-1",
@@ -85,16 +87,18 @@ function mountDock(slot?: {
     "session.list": () => ({
       sessions: [
         { id: "review-1", projectId: "p1", title: "main", target: "your-branch", createdAt: 1 },
+        { id: "review-2", projectId: "p1", title: "feat/x", target: "your-branch", createdAt: 2 },
       ],
     }),
     "chat.t3Session": (input) => {
       asks.push(input);
+      const reviewId = (input as { reviewId?: string }).reviewId ?? "review-1";
       return {
         origin: "http://127.0.0.1:43117",
         wsUrl: "ws://127.0.0.1:43117/ws",
         accessToken: "bearer-never-in-the-guest",
         environmentId: "env-1",
-        threadId: "thread-1",
+        threadId: reviewId === "review-2" ? "thread-2" : "thread-1",
         threadUrl: "http://127.0.0.1:43117/env-1/thread-1",
       };
     },
@@ -103,7 +107,8 @@ function mountDock(slot?: {
     useRennetStore.getState().uiActions.setSidebarOpen(false);
     useRennetStore.getState().uiActions.setChatOpen(true);
   });
-  const app = <RennetRouterApp bridge={bridge} history={memoryHistory("/s/review-1")} />;
+  const history = memoryHistory("/s/review-1");
+  const app = <RennetRouterApp bridge={bridge} history={history} />;
   const view = mount(
     slot ? (
       <T3ChatSlotProvider session={slot.session} thread={slot.thread}>
@@ -113,7 +118,7 @@ function mountDock(slot?: {
       app
     ),
   );
-  return { ...view, asks };
+  return { ...view, asks, history };
 }
 
 /** Both rung-two components provided, each recording its props. */
@@ -172,9 +177,10 @@ describe("the chat slot is always the T3 thread", () => {
     const dock = getByTestId("chat-dock-slot");
     await waitFor(() => expect(dock.querySelector('[data-slot="t3-native-stub"]')).not.toBeNull());
     act(() =>
-      useRennetStore
-        .getState()
-        .uiActions.openLensThread({ environmentId: "env-1", threadId: "seat-sequence" }),
+      useRennetStore.getState().uiActions.openLensThread({
+        reviewId: "review-1",
+        thread: { environmentId: "env-1", threadId: "seat-sequence" },
+      }),
     );
     await waitFor(() => expect(dock.querySelector('[data-slot="t3-thread-stub"]')).not.toBeNull());
     // The ref the store carried reached the view whole — both ids, not just the thread.
@@ -189,9 +195,10 @@ describe("the chat slot is always the T3 thread", () => {
     const { getByTestId } = mountWithSlot();
     const dock = getByTestId("chat-dock-slot");
     act(() =>
-      useRennetStore
-        .getState()
-        .uiActions.openLensThread({ environmentId: "env-1", threadId: "seat-design" }),
+      useRennetStore.getState().uiActions.openLensThread({
+        reviewId: "review-1",
+        thread: { environmentId: "env-1", threadId: "seat-design" },
+      }),
     );
     await waitFor(() => expect(dock.querySelector('[data-slot="t3-thread-stub"]')).not.toBeNull());
     const back = dock.querySelector('[data-slot="t3-thread-back"]');
@@ -202,5 +209,30 @@ describe("the chat slot is always the T3 thread", () => {
     await waitFor(() => expect(dock.querySelector('[data-slot="t3-native-stub"]')).not.toBeNull());
     expect(dock.querySelector('[data-slot="t3-thread-stub"]')).toBeNull();
     expect(useRennetStore.getState().ui.lensThread).toBeNull();
+  });
+
+  // Review finding 4. The slice is global and the dock is mounted once, so a lens left open
+  // in one review used to render UNDER THE NEXT SESSION'S HEADER — a transcript from another
+  // review, labelled as this one. The two-review fixture is what makes it visible at all.
+  it("drops a lens transcript when the route moves to another review", async () => {
+    const { getByTestId, history } = mountWithSlot();
+    const dock = getByTestId("chat-dock-slot");
+    act(() =>
+      useRennetStore.getState().uiActions.openLensThread({
+        reviewId: "review-1",
+        thread: { environmentId: "env-1", threadId: "seat-noise" },
+      }),
+    );
+    await waitFor(() => expect(dock.querySelector('[data-slot="t3-thread-stub"]')).not.toBeNull());
+
+    act(() => history.navigate("/s/review-2"));
+
+    // Review 2's own session thread fills the slot — not review 1's seat transcript.
+    await waitFor(() =>
+      expect(dock.querySelector('[data-slot="t3-native-stub"]')?.textContent).toBe("thread-2"),
+    );
+    expect(dock.querySelector('[data-slot="t3-thread-stub"]')).toBeNull();
+    // And the stale ref is gone, so coming back to review 1 does not reopen it either.
+    await waitFor(() => expect(useRennetStore.getState().ui.lensThread).toBeNull());
   });
 });

@@ -184,10 +184,11 @@ describe("the bench — five readers at work on the change", () => {
     expect(reader.disabled).toBe(false);
     await user.click(reader);
 
-    // The exact thread the LANE named — not the session's, and not another lane's.
+    // The exact thread the LANE named — not the session's, and not another lane's — under
+    // the REVIEW the preparation record stamped, so the dock can tell whose it is.
     expect(useRennetStore.getState().ui.lensThread).toEqual({
-      environmentId: "env-1",
-      threadId: "thread-decisions",
+      reviewId: "rev-1",
+      thread: { environmentId: "env-1", threadId: "thread-decisions" },
     });
     // And the slot it points at is open, because a transcript nobody can see is not opened.
     expect(useRennetStore.getState().ui.chatOpen).toBe(true);

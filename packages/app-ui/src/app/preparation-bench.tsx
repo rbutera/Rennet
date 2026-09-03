@@ -183,16 +183,22 @@ const GAZE_BY_REGISTER: Readonly<Record<Register, string>> = {
   failed: "bg-danger",
 };
 
-function Reader({ lane }: { readonly lane: LensLane }) {
+function Reader({ lane, reviewId }: { readonly lane: LensLane; readonly reviewId?: string }) {
   const openLensThread = useRennetStore((s) => s.uiActions.openLensThread);
   const setChatOpen = useRennetStore((s) => s.uiActions.setChatOpen);
-  const openThread = useRennetStore((s) => s.ui.lensThread);
+  const openRef = useRennetStore((s) => s.ui.lensThread);
   const register = registerOf(lane);
   const speech = speechOf(lane);
   const Mark = MARKS[lane.id] ?? UnknownMark;
-  const thread = lane.thread;
+  // A transcript belongs to a review, and the store slice is global (review finding 4).
+  // No review id ⇒ this bench cannot say which review its lanes are for, so its readers
+  // open nothing rather than pointing the dock at an unlabelled thread.
+  const thread = reviewId === undefined ? undefined : lane.thread;
   const reading = lane.status === "running" && lane.latest?.kind === "tool";
-  const open = thread !== undefined && openThread?.threadId === thread.threadId;
+  const open =
+    thread !== undefined &&
+    openRef?.reviewId === reviewId &&
+    openRef.thread.threadId === thread.threadId;
 
   return (
     <button
@@ -203,12 +209,12 @@ function Reader({ lane }: { readonly lane: LensLane }) {
       disabled={thread === undefined}
       aria-pressed={open}
       onClick={() => {
-        if (thread === undefined) return;
+        if (thread === undefined || reviewId === undefined) return;
         // The dock is opened HERE, not in `openLensThread`: the store action only says
         // WHICH transcript the slot shows, and the slot is hidden at zero width while
         // the chat is closed. A reader that pointed the slot at a thread nobody could
         // see would report "opened" for nothing on screen.
-        openLensThread(thread);
+        openLensThread({ reviewId, thread });
         setChatOpen(true);
       }}
       className={cn(
@@ -371,6 +377,10 @@ export function PreparationBench({ session, preparation, review }: PreparationBe
   const failed = preparation.status === "failed";
   const cancelled = preparation.status === "cancelled";
   const lanes = "lanes" in preparation ? preparation.lanes : undefined;
+  // WHICH review these lanes belong to — off the preparation record, which is where the
+  // daemon stamped it, not off a second route lookup. A lens transcript is opened against
+  // it so the dock can tell this review's thread from the last one's (review finding 4).
+  const preparationReviewId = "reviewId" in preparation ? preparation.reviewId : undefined;
   const coverage = "coverage" in preparation ? preparation.coverage : undefined;
   const branch = session.claim?.branch;
   const files = review?.patchsets.find((set) => set.id === review.activePatchsetId)?.files.length;
@@ -424,7 +434,11 @@ export function PreparationBench({ session, preparation, review }: PreparationBe
       {lanes !== undefined && lanes.length > 0 && (
         <div className="flex flex-wrap items-start justify-center gap-x-2 gap-y-6">
           {lanes.map((lane) => (
-            <Reader key={lane.id} lane={lane} />
+            <Reader
+              key={lane.id}
+              lane={lane}
+              {...(preparationReviewId === undefined ? {} : { reviewId: preparationReviewId })}
+            />
           ))}
         </div>
       )}
