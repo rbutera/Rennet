@@ -75,8 +75,8 @@ there is a board to read.
 Each lens owns a lane, and material in another lens's lane is omitted, not
 narrated. Never write prose about what is not on this board.
 
-- Design: the spec artifacts (proposal, design, requirements, tasks) and
-  requirement coverage.
+- Design: the specification this branch was written against — its intent,
+  requirements, scenarios, and tasks.
 - Sequence: the reading walk — the order of understanding.
 - Decisions: the judgment calls and their rationale.
 - Flagged: defects, with severities and failure scenarios.
