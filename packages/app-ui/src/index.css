@@ -192,7 +192,29 @@
    * away. Its keyframe still belongs here (keyframes declared in `@theme` are emitted
    * whether or not a utility references them) and the pseudo names it directly. */
   --animate-processing-pulse: processing-pulse 1.6s ease-in-out infinite;
+  /* The bench's glance (t3-lens-threads 3.1): a gold dot travelling UP a reader's gaze
+   * line toward the slab, while that seat has a tool call actually in flight. The track
+   * is `h-8` (2rem) and the dot is `size-1` (0.25rem), so 1.75rem is the full run — the
+   * two numbers are the reader's, and a change to either belongs here too.
+   *
+   * `motion-reduce:animate-none` at the call site is safe: the settled state is the dot
+   * at rest at the foot of the line, which is where `translateY(0)` already puts it. */
+  --animate-bench-glance: rn-bench-glance 1.9s cubic-bezier(0.4, 0, 0.2, 1) infinite;
 
+  @keyframes rn-bench-glance {
+    0% {
+      opacity: 0;
+      transform: translateY(0);
+    }
+    18%,
+    82% {
+      opacity: 1;
+    }
+    100% {
+      opacity: 0;
+      transform: translateY(-1.75rem);
+    }
+  }
   @keyframes rn-welcome-step-in {
     from {
       opacity: 0.2;
