@@ -2892,6 +2892,16 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     ...(options.t3BundlePath === undefined ? {} : { resolveT3Seats: resolveT3SeatRuntime }),
     boardsRuntimeFor,
     readPrompt,
+    // session-context-files: the ONE writer, bound by the rounds runtime to the root the
+    // seats are DISPATCHED with (`draftingRoot ?? repoRoot`) rather than the session's
+    // repository root. That root is stamped on the session as `contextRoot`, which is the
+    // first thing `boundRootForSession` reads, so the archive purge removes the directory
+    // from where it actually is — for a range review, the review worktree.
+    writeSessionContext: (root, sessionId, files) => {
+      const dir = writeSessionContext(root, sessionId, files);
+      sessionStore.setContextRoot(sessionId, root);
+      return dir;
+    },
     persistBoardMeta: (_repoRoot: string, meta: PersistedBoardMeta) => boardMetaStore.save(meta),
     loadDraftedBoards: (_repoRoot: string, sessionId: string, generation: string) =>
       boardMetaStore.listForGeneration(sessionId, generation),
