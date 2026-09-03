@@ -253,6 +253,13 @@ Then, once the archive has persisted, one serialized sweep deletes the session's
 and every seat thread its generations left behind (`thread.delete` over RPC) and drops those
 bindings. Un-archiving restores nothing — the next use creates fresh threads.
 
+A round in flight is covered too, from the other side. A round is driven by the durable
+round coordinator, takes no abort signal and is not waited on, so a returned generation
+drafting through an archive would bind its five seat threads after the sweep had passed.
+Instead of cancelling it, the round re-runs the identical sweep on its way out whenever
+the session it drafted for is archived by then — idempotent, and no sidecar call at all
+for the ordinary live session.
+
 A sidecar that is off still leaves the bindings dropped, because a binding pointing at a
 thread nobody can reach is worse than none, and neither an off sidecar nor a thread it no
 longer has may fail the archive. The handle is not thrown away with the binding, though: a
