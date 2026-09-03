@@ -365,6 +365,78 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("passes a session output schema to the SDK as a json_schema output format", () => {
+    const harness = makeHarness();
+    const schema = { type: "object", properties: { ok: { type: "boolean" } } };
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+        outputSchema: schema,
+      });
+
+      const createInput = harness.getLastCreateQueryInput();
+      assert.deepEqual(createInput?.options.outputFormat, {
+        type: "json_schema",
+        schema,
+      });
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("omits the output format when the session carries no output schema", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      assert.equal(harness.getLastCreateQueryInput()?.options.outputFormat, undefined);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("refuses a turn whose output schema differs from its session's", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+        outputSchema: { type: "object", properties: { a: { type: "string" } } },
+      });
+
+      // The same contract is fine: a repair turn re-states the seat's board schema.
+      yield* adapter.sendTurn({
+        threadId: THREAD_ID,
+        input: "same contract",
+        outputSchema: { type: "object", properties: { a: { type: "string" } } },
+      });
+
+      const error = yield* adapter
+        .sendTurn({
+          threadId: THREAD_ID,
+          input: "different contract",
+          outputSchema: { type: "object", properties: { b: { type: "number" } } },
+        })
+        .pipe(Effect.flip);
+      assert.match(error.message, /output schema differs/u);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("derives auto permission mode from auto runtime policy without skip flag", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {

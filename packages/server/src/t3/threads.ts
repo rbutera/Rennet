@@ -1,11 +1,17 @@
-// Session-to-thread binding (t3code-sidecar-chat, 3.2). A Rennet session gets exactly one
-// T3 thread, keyed on the REPOSITORY ROOT and the session id, never on `Project.id` or
-// `openPath`: a workspace maps many repos to one project, and two repos on the same
-// branch must resolve to two threads rooted in two checkouts. The T3 project the thread
-// hangs off is the one whose `workspaceRoot` is that checkout, created on first use.
+// Thread bindings (t3code-sidecar-chat 3.2; seat bindings from t3-lens-threads 1.1).
 //
-// Persisted as one JSON file under the sidecar's private base dir, so the binding survives
-// a daemon restart and stays beside the state it points into.
+// Two kinds share one durable file, and BOTH are keyed on the REPOSITORY ROOT first,
+// never on `Project.id` or `openPath`: a workspace maps many repos to one project, and
+// two repos on the same branch must resolve to two threads rooted in two checkouts.
+//
+//   session  (repositoryRoot, sessionId)             — the review's own conversation
+//   seat     (repositoryRoot, generationId, seat)     — one board seat of one generation
+//
+// The T3 project a thread hangs off is the one whose `workspaceRoot` is that checkout,
+// created on first use.
+//
+// Persisted as one JSON file under the sidecar's private base dir, so the binding
+// survives a daemon restart and stays beside the state it points into.
 
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
@@ -13,9 +19,45 @@ import { z } from "zod";
 import type { ModelSelection, T3Client } from "./client";
 import { sidecarBaseDir } from "./sidecar";
 
+/** One thread per seat per generation. Flagged runs two, one per provider. */
+export const SEAT_KINDS = [
+  "design",
+  "sequence",
+  "decisions",
+  "flagged-claude",
+  "flagged-codex",
+  "noise",
+  "round-report",
+] as const;
+export type SeatKind = (typeof SEAT_KINDS)[number];
+
+/** How a seat names itself in a thread title. */
+const SEAT_LABELS: Readonly<Record<SeatKind, string>> = {
+  design: "Design",
+  sequence: "Sequence",
+  decisions: "Decisions",
+  "flagged-claude": "Flagged (Claude)",
+  "flagged-codex": "Flagged (Codex)",
+  noise: "Noise",
+  "round-report": "Round report",
+};
+
+/**
+ * The identity a thread is bound to, beside its repository root. A binding is looked up
+ * on a POSITIVE match of every field of one arm — never on the absence of a field, which
+ * is what makes two repos in one workspace resolve to two threads rather than one.
+ */
+export type ThreadBindingKey =
+  | { readonly kind: "session"; readonly sessionId: string }
+  | { readonly kind: "seat"; readonly generationId: string; readonly seat: SeatKind };
+
 const bindingSchema = z.object({
+  // Rows written before seat bindings existed carry no `kind`; they are session rows.
+  kind: z.enum(["session", "seat"]).default("session"),
   repositoryRoot: z.string(),
-  sessionId: z.string(),
+  sessionId: z.string().optional(),
+  generationId: z.string().optional(),
+  seat: z.enum(SEAT_KINDS).optional(),
   projectId: z.string(),
   threadId: z.string(),
   createdAt: z.string(),
@@ -45,32 +87,44 @@ function writeBindings(dataDir: string, bindings: ThreadBinding[]): void {
   renameSync(tmp, path);
 }
 
+/** Every field of the key, and the checkout, must match — a silent field never matches. */
+function matches(row: ThreadBinding, repositoryRoot: string, key: ThreadBindingKey): boolean {
+  if (row.repositoryRoot !== repositoryRoot || row.kind !== key.kind) return false;
+  return key.kind === "session"
+    ? row.sessionId === key.sessionId
+    : row.generationId === key.generationId && row.seat === key.seat;
+}
+
 export function findBinding(
   dataDir: string,
   repositoryRoot: string,
-  sessionId: string,
+  key: ThreadBindingKey,
 ): ThreadBinding | undefined {
-  return readBindings(dataDir).find(
-    (b) => b.repositoryRoot === repositoryRoot && b.sessionId === sessionId,
-  );
+  return readBindings(dataDir).find((row) => matches(row, repositoryRoot, key));
+}
+
+/** The thread title a seat gets: the branch it is reading, then the lens. */
+export function seatThreadTitle(branch: string, seat: SeatKind): string {
+  const named = branch.trim() === "" ? "review" : branch.trim();
+  return `${named} — ${SEAT_LABELS[seat]}`;
 }
 
 export interface BindThreadInput {
   readonly dataDir: string;
   readonly client: T3Client;
-  /** The checkout the session names; the thread's cwd. */
+  /** The checkout the binding names; the thread's cwd. */
   readonly repositoryRoot: string;
-  readonly sessionId: string;
+  readonly key: ThreadBindingKey;
   readonly title: string;
   readonly modelSelection: ModelSelection;
 }
 
 /**
- * The thread bound to this session on this repository, created on first use with the
+ * The thread bound to this key on this repository, created on first use with the
  * checkout as its working directory in full-access mode. Idempotent per key.
  */
 export async function bindThread(input: BindThreadInput): Promise<ThreadBinding> {
-  const existing = findBinding(input.dataDir, input.repositoryRoot, input.sessionId);
+  const existing = findBinding(input.dataDir, input.repositoryRoot, input.key);
   if (existing) return existing;
   const projectId = await input.client.ensureProject(
     input.repositoryRoot,
@@ -83,7 +137,9 @@ export async function bindThread(input: BindThreadInput): Promise<ThreadBinding>
   });
   const binding: ThreadBinding = {
     repositoryRoot: input.repositoryRoot,
-    sessionId: input.sessionId,
+    ...(input.key.kind === "session"
+      ? { kind: "session" as const, sessionId: input.key.sessionId }
+      : { kind: "seat" as const, generationId: input.key.generationId, seat: input.key.seat }),
     projectId,
     threadId,
     createdAt: new Date().toISOString(),

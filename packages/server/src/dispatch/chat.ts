@@ -23,7 +23,7 @@ export function chatHandlers(rt: DispatchRuntime) {
       const review = rt.requireReviewById(input.reviewId);
       const binding = await deps.t3Sidecar.threadFor({
         repositoryRoot: review.repositoryRoot,
-        sessionId: input.reviewId,
+        key: { kind: "session", sessionId: input.reviewId },
         title: basename(review.repositoryRoot) || "review",
       });
       return parseCommandOutput(name, {
@@ -45,7 +45,7 @@ export function chatHandlers(rt: DispatchRuntime) {
       const review = rt.requireReviewById(input.reviewId);
       const binding = await deps.t3Sidecar.threadFor({
         repositoryRoot: review.repositoryRoot,
-        sessionId: input.reviewId,
+        key: { kind: "session", sessionId: input.reviewId },
         title: basename(review.repositoryRoot) || "review",
       });
       const client = await deps.t3Sidecar.client();
