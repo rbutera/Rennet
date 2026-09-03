@@ -92,11 +92,9 @@ read the credential file.
 
 ## The chat slot
 
-A project's chat engine is a per-project setting (`chatEngine`, `rennet` or `t3`, default
-`rennet`, stored in the project's `config.json` and edited on the Projects settings page,
-where the persistence, usage and hidden-ref facts sit beside the control). With `t3`
-selected, the review workspace's chat slot renders T3's thread view for the review's
-bound thread. Two rungs exist, and the host decides which one mounts:
+There is no engine choice: the review workspace's chat slot always renders T3's thread
+view for the review's bound thread. Two rungs exist, and the host decides which one
+mounts:
 
 - **Rung two, the desktop app.** `@rennet/t3-chat` mounts T3's `ChatView` natively:
   the vendored web app is imported by module (the desktop Vite config aliases `~/` into
@@ -112,9 +110,9 @@ bound thread. Two rungs exist, and the host decides which one mounts:
   (`packages/t3-chat/src/t3.css`, no preflight) scans only the vendored source and maps
   every T3 semantic variable onto Rennet's `--rn-*` palette; the names both kits share
   mirror `packages/theme/src/theme.css` exactly, because a utility rule is one rule for
-  the whole document. The mount is a lazy chunk: a project on the `rennet` engine never
-  downloads it. The desktop provides the components through `T3ChatSlotProvider`;
-  `app-ui` itself never imports the vendored app.
+  the whole document. The mount is a lazy chunk, fetched when a session's slot opens.
+  The desktop provides the components through `T3ChatSlotProvider`; `app-ui` itself
+  never imports the vendored app.
 - **Rung one, every other host.** An Electron `<webview>` of the sidecar's own served
   UI, first at the pairing URL (which sets T3's session cookie inside the guest) and
   then at the bound thread's route. The bearer never enters the guest.
@@ -204,8 +202,8 @@ over RPC before the signal is the daemon-side client's job and lands with it.
 - `packages/server/src/t3/supervisor.ts`: one supervisor per data dir; `ensure`, `session`, `client`, `threadFor`, `status`, `stopSync`.
 - `packages/server/src/t3/client.ts`: the daemon-side RPC client, the one Rennet module importing `effect` and `@t3tools/contracts`.
 - `packages/server/src/t3/threads.ts`: the (repository root, session id) → thread binding.
-- `packages/server/src/t3/handoff.ts`: the handoff exit; `create-server.ts` routes by the repository's `chatEngine`.
-- `packages/app-ui/src/settings/projects/chat-engine.tsx`: the engine control and its disclosure; `packages/app-ui/src/chat/engine-chat-dock.tsx`: the slot switch, the rung-one `<webview>`, the session-or-lens choice and the hand-off to the host-provided components (`chat/t3-chat-slot.tsx`); `packages/app-ui/src/store/ui.ts`: `lensThread` and `openLensThread`.
+- `packages/server/src/t3/handoff.ts`: the handoff exit, which `create-server.ts` runs for every work order that names a review.
+- `packages/app-ui/src/chat/t3-chat-dock.tsx`: the slot, the rung-one `<webview>`, the session-or-lens choice and the hand-off to the host-provided components (`chat/t3-chat-slot.tsx`); `packages/app-ui/src/store/ui.ts`: `lensThread` and `openLensThread`.
 - `packages/t3-chat/src/native-chat.tsx`: rung two (routes, providers, environment registration, the thread and draft route views mirrored from upstream's route files, and `T3ThreadView`); `session.ts`: the session-to-registration mapping and the route builder both views share; `t3.css`: the theme bridge and the read-only composer rule. `apps/desktop/vite.renderer.config.ts` carries the alias, dedupe and defines; `apps/desktop/src/renderer/index.tsx` provides both components.
 - `packages/server/src/dispatch/chat.ts`: `chat.t3Session`; `dispatch/daemon.ts` adds `t3Sidecar` to `daemon.status`.
 - `packages/protocol/src/wire.ts`: `t3SidecarStatusSchema`, `t3SessionSchema`.

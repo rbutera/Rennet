@@ -34,7 +34,7 @@ export {
   useSessionTranscript,
 } from "./chat-data";
 export { ChatDock } from "./chat-dock";
-export { EngineChatDock, T3ChatDock, useRouteChatEngine } from "./engine-chat-dock";
+export { T3ChatDock } from "./t3-chat-dock";
 export {
   type T3ChatSlotComponents,
   T3ChatSlotProvider,

@@ -531,12 +531,8 @@ pages:
   mode its stages actually name. The list is paged and states how many runs it is
   showing out of how many were recorded. Nothing here leaves your machine.
 - **Projects** — scoped to one project: its name and mark, worktree location
-  and naming pattern, chat engine, review context, issue tracker, and the
-  guidance rules the review agents read. The chat engine picks what a new
-  session's chat runs on: Rennet's own orchestrator (the default) or the T3 Code
-  sidecar the daemon owns. The facts that differ sit beside the control: T3
-  threads are persisted harness sessions, their usage shows in T3 Code's usage
-  view, and T3 Code records a hidden checkpoint ref in the repository per turn. The name is live — renaming here renames the sidebar row,
+  and naming pattern, review context, issue tracker, and the guidance rules the
+  review agents read. The name is live — renaming here renames the sidebar row,
   and emptying it restores the project's `org/repo` identity. The mark, worktree,
   issue-tracker and guidance editors have no store behind them yet; they render
   disabled and say so, rather than accepting edits that would vanish.

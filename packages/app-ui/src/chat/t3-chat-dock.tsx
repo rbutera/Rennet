@@ -1,44 +1,8 @@
 import { type ReactNode, Suspense, useEffect, useRef } from "react";
-import { useRoute } from "wouter";
 import { useCommand } from "../data/query";
-import { useSessionProjectId } from "../routes/slug";
-import { ROUTES } from "../routes/url";
-import { useSettingsProjection } from "../settings/data/projections";
 import { useRennetStore } from "../store";
 import { useRouteReviewId } from "./chat-data";
-import { ChatDock } from "./chat-dock";
 import { useT3ChatSlot } from "./t3-chat-slot";
-
-// ─────────────────────────────────────────────────────────────────────────────
-// The chat slot's engine switch (t3code-sidecar-chat, group 6). The slot is the SAME
-// always-mounted element in the layout; this decides what fills it for the session on
-// the route: Rennet's own dock, or (engine `t3`, rung one) an Electron <webview> of the
-// sidecar's served UI at the thread the daemon bound for this review. Rung one is proof,
-// not the product: literally another app in a frame, with its own theme. Whether the
-// thread view fits the slot and whether approvals and questions round-trip is what it
-// exists to answer (6.2); the native ChatView mount is rung two.
-// ─────────────────────────────────────────────────────────────────────────────
-
-function useRouteSlug(): string {
-  const [onSession, sessionParams] = useRoute(ROUTES.session);
-  const [, runParams] = useRoute(ROUTES.sessionRun);
-  const raw = (onSession ? sessionParams?.slug : runParams?.slug) ?? "";
-  return raw === "" ? "" : decodeURIComponent(raw);
-}
-
-/** The engine for the session on the route: `t3` only when the project resolved it. */
-export function useRouteChatEngine(): "rennet" | "t3" {
-  const slug = useRouteSlug();
-  const projectId = useSessionProjectId(slug);
-  const projection = useSettingsProjection();
-  if (!projectId) return "rennet";
-  return projection.chatEngineByProject[projectId]?.value ?? "rennet";
-}
-
-export function EngineChatDock({ corner }: { readonly corner?: ReactNode }) {
-  const engine = useRouteChatEngine();
-  return engine === "t3" ? <T3ChatDock corner={corner} /> : <ChatDock corner={corner} />;
-}
 
 /**
  * Rung one: the sidecar's own UI in a <webview>. The daemon brokers a pairing URL (which

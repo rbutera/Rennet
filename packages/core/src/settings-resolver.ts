@@ -155,24 +155,6 @@ const stringSetting = (
   render: (value) => (value === "" ? "(unset)" : value),
 });
 
-/** The chat engine a project's sessions use: Rennet's own orchestrator, or the owned T3
- *  Code sidecar (t3code-sidecar-chat). Repo-only: it is a fact about how this repository
- *  is worked, and the default stays `rennet` until the spike is judged. */
-export type ChatEngine = "rennet" | "t3";
-export function chatEngine(value: unknown): ChatEngine {
-  const trimmed = typeof value === "string" ? value.trim() : "";
-  if (trimmed === "rennet" || trimmed === "t3") return trimmed;
-  throw new Error(`chatEngine must be "rennet" or "t3", got ${JSON.stringify(value)}`);
-}
-const CHAT_ENGINE_SETTING: SettingDeclaration<ChatEngine> = {
-  key: "chatEngine",
-  validate: chatEngine,
-  builtinDefault: "rennet",
-  layers: ["builtin", "repo"],
-  merge: "replace",
-  render: identity,
-};
-
 const TRACKER_KIND_SETTING: SettingDeclaration<TrackerKind> = {
   key: "trackerKind",
   validate: trackerKind,
@@ -212,7 +194,6 @@ export const SETTINGS_REGISTRY = {
   // worktree pair; the naming pattern has no detector, so it is config-only.
   worktreePattern: stringSetting("worktreePattern", CONFIG_ONLY),
   projectGlyph: stringSetting("projectGlyph", REPO_ONLY),
-  chatEngine: CHAT_ENGINE_SETTING,
 } as const;
 
 /**

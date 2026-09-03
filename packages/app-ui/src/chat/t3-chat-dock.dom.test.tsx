@@ -10,10 +10,10 @@ import { emptySettings, frontDoorHandlers } from "../test/fixtures/front-door";
 import { MemoryBridge } from "../test/memory-bridge";
 import { T3ChatSlotProvider, type T3NativeChatProps, type T3ThreadViewProps } from "./t3-chat-slot";
 
-// The chat slot's engine switch (t3code-sidecar-chat, 6.1): with the session's project
-// resolved to `t3`, the slot mounts the rung-one <webview> at the daemon-brokered URLs;
-// with `rennet` (or no resolved engine at all) it stays Rennet's own dock. Positive
-// control: the `t3` mount only appears when the setting says so.
+// The chat slot (t3-lens-threads 4.1): there is no engine choice left — every session's
+// slot is the T3 thread. The project row below carries NO engine pref, which is exactly
+// the fixture that used to yield Rennet's own dock, so "it mounts T3 anyway" is the
+// converted proof that the switch is gone rather than merely defaulting the other way.
 //
 // And which THREAD the rung-two slot shows (t3-lens-threads 3.4): the review's own, or
 // the lens seat the store's `lensThread` names, with a control back to the session.
@@ -25,7 +25,7 @@ afterEach(() => {
 
 const layered = (value: string) => ({ value, layer: "builtin" as const });
 
-function projectRow(engine: "rennet" | "t3" | undefined): SettingsProject {
+function projectRow(): SettingsProject {
   return {
     projectId: "p1",
     name: "checkout",
@@ -48,7 +48,6 @@ function projectRow(engine: "rennet" | "t3" | undefined): SettingsProject {
     configMalformed: false,
     prefs: {
       glyph: layered(""),
-      ...(engine ? { chatEngine: { value: engine, layer: "repo" as const } } : {}),
       worktreeRoot: layered(""),
       worktreePattern: layered(""),
       tracker: {
@@ -62,17 +61,14 @@ function projectRow(engine: "rennet" | "t3" | undefined): SettingsProject {
   };
 }
 
-function mountWithEngine(
-  engine: "rennet" | "t3" | undefined,
-  slot?: {
-    readonly session: ComponentType<T3NativeChatProps>;
-    readonly thread: ComponentType<T3ThreadViewProps>;
-  },
-) {
+function mountDock(slot?: {
+  readonly session: ComponentType<T3NativeChatProps>;
+  readonly thread: ComponentType<T3ThreadViewProps>;
+}) {
   const asks: unknown[] = [];
   const bridge = new MemoryBridge({
     ...frontDoorHandlers(),
-    "settings.get": () => ({ ...emptySettings(), projects: [projectRow(engine)] }),
+    "settings.get": () => ({ ...emptySettings(), projects: [projectRow()] }),
     // The slug resolves to a review only when the review loads; the minimal shape the
     // workspace tests use is enough for the dock to learn its review id.
     "review.load": () => ({
@@ -120,7 +116,7 @@ function mountWithEngine(
   return { ...view, asks };
 }
 
-/** The `t3` engine with both rung-two components provided, each recording its props. */
+/** Both rung-two components provided, each recording its props. */
 function mountWithSlot() {
   const seen: T3NativeChatProps["session"][] = [];
   const opened: T3ThreadViewProps[] = [];
@@ -132,12 +128,12 @@ function mountWithSlot() {
     opened.push(props);
     return <div data-slot="t3-thread-stub">{props.thread.threadId}</div>;
   };
-  return { ...mountWithEngine("t3", { session: Session, thread: Thread }), seen, opened };
+  return { ...mountDock({ session: Session, thread: Thread }), seen, opened };
 }
 
-describe("the chat slot follows the project's chat engine", () => {
-  it("mounts the rung-one T3 view at the brokered URLs when the engine is t3", async () => {
-    const { getByTestId, asks } = mountWithEngine("t3");
+describe("the chat slot is always the T3 thread", () => {
+  it("mounts the rung-one T3 view at the brokered URLs, with no engine pref set", async () => {
+    const { getByTestId, asks } = mountDock();
     const dock = getByTestId("chat-dock-slot");
     await waitFor(() => expect(dock.querySelector('[data-slot="t3-chat-view"]')).not.toBeNull());
     const view = dock.querySelector('[data-slot="t3-chat-view"]');
@@ -197,16 +193,4 @@ describe("the chat slot follows the project's chat engine", () => {
     expect(dock.querySelector('[data-slot="t3-thread-stub"]')).toBeNull();
     expect(useRennetStore.getState().ui.lensThread).toBeNull();
   });
-
-  it.each([["rennet" as const], [undefined]])(
-    "keeps Rennet's own dock when the engine is %s",
-    async (engine) => {
-      const { getByTestId, asks } = mountWithEngine(engine);
-      const dock = getByTestId("chat-dock-slot");
-      await waitFor(() => expect(dock.querySelector("header")).not.toBeNull());
-      expect(dock.querySelector('[data-slot="t3-chat-view"]')).toBeNull();
-      expect(dock.querySelector('[data-slot="t3-chat-dock"]')).toBeNull();
-      expect(asks).toEqual([]);
-    },
-  );
 });

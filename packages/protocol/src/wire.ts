@@ -2074,8 +2074,6 @@ const layeredStringSchema = z.object({ value: z.string(), layer: settingsLayerSc
  */
 export const settingsProjectPrefsSchema = z.object({
   glyph: layeredStringSchema,
-  /** `rennet` or `t3` (t3code-sidecar-chat); optional so older daemons' rows still parse. */
-  chatEngine: layeredStringSchema.optional(),
   worktreeRoot: layeredStringSchema,
   worktreePattern: layeredStringSchema,
   tracker: z.object({
@@ -2471,7 +2469,6 @@ export type SettingsRepoWriteOutcome = z.infer<typeof settingsRepoWriteOutcomeSc
  */
 export const settingsProjectValueKeySchema = z.enum([
   "glyph",
-  "chatEngine",
   "worktreeRoot",
   "worktreePattern",
   "trackerKind",

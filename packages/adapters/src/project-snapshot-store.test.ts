@@ -19,6 +19,7 @@ import {
   defaultProjectsBaseDir,
   MANIFEST_RETENTION,
   ProjectSnapshotStore,
+  REPO_PREF_FIELDS,
   snapshotStoreFor,
   withRepoPref,
 } from "./project-snapshot-store";
@@ -294,6 +295,23 @@ describe("ProjectSnapshotStore — config.json read/write (A.1)", () => {
     // …and the file is byte-identical. (Delete the `glyph` type check in
     // `isValidProjectConfig` → this reddens: the config reads ok and is overwritten.)
     expect(readFileSync(configPath, "utf8")).toBe(before);
+  });
+
+  it("a leftover `chatEngine` key is inert: not a pref field, and it cannot make a config malformed", () => {
+    const storeDir = mkdtempSync(join(tmpdir(), "rennet-cfg7-"));
+    scratch.push(storeDir);
+    const store = new ProjectSnapshotStore(storeDir);
+    const path = store.paths("-k").configPath;
+    mkdirSync(join(path, ".."), { recursive: true });
+    // Before t3-lens-threads 4.1 a non-string `chatEngine` read as MALFORMED, because the
+    // key was a typed repo-rung pref. The engine choice is gone — every session is a T3
+    // thread — so the key is now an unknown one like any other: it parses, and it reaches
+    // nothing. LOAD-BEARING: putting "chatEngine" back in `isValidProjectConfig`'s pref
+    // loop reddens the first assertion; putting it back in `REPO_PREF_FIELDS` reddens the
+    // second, which is what the settings write addresses a field by.
+    writeFileSync(path, JSON.stringify({ version: 1, chatEngine: 7 }));
+    expect(store.loadConfigState("-k").status).toBe("ok");
+    expect(REPO_PREF_FIELDS as readonly string[]).not.toContain("chatEngine");
   });
 
   it("a malformed config reads as null (fail-safe), never a throw", () => {

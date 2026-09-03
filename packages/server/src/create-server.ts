@@ -2724,15 +2724,11 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         }),
     });
   };
-  // The T3 exit (t3code-sidecar-chat, group 7): a project whose chat engine is `t3` runs the
-  // work order as one turn on the review's bound thread instead of the session turn loop.
-  // The engine is read from the repository's own config, never from a project id.
-  const chatEngineFor = (repoRoot: string): "rennet" | "t3" => {
-    const state = snapshotStore.loadConfigState(repoRoot);
-    return state.status === "ok" && state.config.chatEngine === "t3" ? "t3" : "rennet";
-  };
+  // The T3 exit (t3code-sidecar-chat, group 7): a work order runs as one turn on the
+  // review's bound thread. A handoff with no review id has no thread to run on, so it
+  // still falls to the session turn loop (removed in t3-lens-threads 4.3).
   const runHandoffTurnByEngine = async (input: HandoffTurnInput): Promise<HandoffTurnOutcome> => {
-    if (input.reviewId !== undefined && chatEngineFor(input.repoRoot) === "t3") {
+    if (input.reviewId !== undefined) {
       return runHandoffTurnT3(
         { repoRoot: input.repoRoot, prompt: input.prompt, reviewId: input.reviewId },
         t3Sidecar,
