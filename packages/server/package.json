@@ -19,8 +19,10 @@
     "@rennet/core": "workspace:*",
     "@rennet/prompts": "workspace:*",
     "@rennet/protocol": "workspace:*",
+    "@t3tools/contracts": "workspace:*",
     "@wboard/core": "0.1.0-alpha.2",
     "@wboard/server": "0.1.0-alpha.2",
+    "effect": "catalog:",
     "ws": "8.21.1",
     "zod": "4.4.3"
   },
