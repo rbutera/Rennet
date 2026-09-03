@@ -50,9 +50,7 @@ Each finding block carries:
 - **Anchor** — the exact location (path:line) where the defect lives.
 
 Sort by severity. If nothing rises to a finding, return an empty `elements`
-list. Keep `skippedHunks` as the complete honest coverage account; it may
-contain every hunk. Do not emit a one-line clean result, empty section, or other
-placeholder. The host records the typed no-findings result without pretending
+list. Do not emit a one-line clean result, empty section, or other placeholder. The host records the typed no-findings result without pretending
 there is a board to read.
 
 ## What not to do
@@ -86,7 +84,8 @@ narrated. Never write prose about what is not on this board.
 
 ## Ground rules (all lenses)
 
-- Every claim cites code (path:line) or names its absence honestly.
+- Every claim cites code (path plus a line range on one side of the change)
+  or names its absence honestly.
 - Code is cited, never copied: to place code on the board, emit a code ref
   (path + line span); the surface hydrates the real lines. Never type code
   bytes into a board element.
@@ -103,7 +102,5 @@ narrated. Never write prose about what is not on this board.
   narration.
 - Threads and messages are records of real exchanges. You draft before any
   exchange exists; never author one.
-- Hunks you consciously leave to another lens go in your skipped-hunks list —
-  data the pipeline checks, invisible on the board — never in prose.
 - Your output is a draft board of typed blocks in the schema supplied with
   your task. Fill only the fields the schema defines.

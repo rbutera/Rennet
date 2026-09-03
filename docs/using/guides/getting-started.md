@@ -447,12 +447,6 @@ so a lane never claims a lens carried while its sections changed, or while a
 section it used to have went away. Each lane settles on its own — nothing waits for
 the slowest lens — so the lanes finish in the order the work actually finished.
 
-Beneath the lanes sits one **Cross-lens coverage** row. It runs once, after every
-lane has settled, and reads *still running*, *every hunk covered*, *N hunks
-uncovered*, or *could not be computed* with the reason. Uncovered hunks wear a
-caution mark, never a green check: coverage is a note beside boards you can already
-read, and it never rewrites one of them.
-
 The surface never locks. **View the New
 Boards** appears only after regeneration has finished and the whole new
 generation is ready, never as a disabled button waiting to light up.

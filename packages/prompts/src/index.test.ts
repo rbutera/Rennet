@@ -25,6 +25,11 @@ describe("lens prompt manifest", () => {
       expect(text).toContain("`document.introMarkdown`");
       const measure = kind === "design" ? "structured" : "reading";
       expect(text.replace(/\s+/g, " ")).toContain(`Set \`document.measure\` to \`${measure}\``);
+      // Citations are a path and a line range, resolved on the daemon: no board carries
+      // a skip list and no lens accounts for hunks it did not cite. This assertion is
+      // the whole producer-side guard against the vocabulary creeping back in a prompt.
+      expect(text, `${kind} prompt`).not.toMatch(/skipped[-\s]?hunks/i);
+      expect(text, `${kind} prompt`).not.toMatch(/hunk ids?\b/i);
     }
   });
 
@@ -40,6 +45,11 @@ describe("lens prompt manifest", () => {
     const partial = readFileSync(join(srcDir, INVESTIGATE_PARTIAL_FILE), "utf8");
     expect(partial).toMatch(/^## Investigate before you draft\n/);
     expect(partial.replace(/\s+/g, " ")).toContain("only what you actually read earns a citation");
+    // The seat reads the change itself and cites coordinates, not an offered inventory.
+    expect(partial.replace(/\s+/g, " ")).toContain(
+      "Cite by repository path and a 1-based inclusive line range",
+    );
+    expect(partial).not.toMatch(/inventory/i);
     const out = expandPromptPartials(`# T\n\n${PROMPT_PARTIAL_MARKER}\n\n## Next`, partial);
     expect(out).toContain("## Investigate before you draft");
     expect(out).toContain("earns a\ncitation.\n\n## Next");
