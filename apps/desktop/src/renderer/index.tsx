@@ -8,7 +8,7 @@ import {
 } from "@rennet/app-ui";
 import { ConnectionSupervisor, type TokenStore, WsRennetBridge } from "@rennet/client";
 import type { RennetBridge } from "@rennet/protocol";
-import { T3NativeChat } from "@rennet/t3-chat";
+import { T3NativeChat, T3ThreadView } from "@rennet/t3-chat";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { resolveDaemonTarget as resolveWslDaemonTarget } from "./wsl-connect";
@@ -121,11 +121,12 @@ function createConnection(target: ConnectionTarget): Connection {
 }
 
 // The desktop is the one host that mounts T3 Code's ChatView natively (rung two): the
-// vendored web app rides the renderer bundle as a lazy chunk. Other hosts keep the
-// rung-one <webview>, which the slot renders when no native component is provided.
+// vendored web app rides the renderer bundle as a lazy chunk. Two views share it — the
+// review's own thread with its composer, and a lens seat's transcript read-only. Other
+// hosts keep the rung-one <webview>, which the slot renders when neither is provided.
 createRoot(root).render(
   <StrictMode>
-    <T3ChatSlotProvider component={T3NativeChat}>
+    <T3ChatSlotProvider session={T3NativeChat} thread={T3ThreadView}>
       <ConnectionHost
         createConnection={createConnection}
         defaultTarget={DEFAULT_TARGET}

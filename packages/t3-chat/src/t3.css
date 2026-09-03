@@ -120,10 +120,20 @@
 
 /* Inside the mount, `accent` carries T3's meaning: the quiet hover surface. The
  * `.bg-accent` rule reads var(--accent) in this build, so the re-binding is scoped. */
-[data-slot="t3-native-chat"] {
+[data-slot="t3-native-chat"],
+[data-slot="t3-thread-view"] {
   --accent: var(--rn-raised);
   --accent-foreground: var(--rn-ink);
   --contrast-accent-foreground: var(--rn-ink);
+}
+
+/* The read-only lens transcript (t3-lens-threads 3.3). `data-chat-composer-overlay` is
+ * upstream's own hook on the whole input bar (ChatView.tsx), which is why this needs no
+ * vendored edit and no PATCHES.md row — a Tailwind class string would not survive a fold.
+ * Hiding the overlay also zeroes the clearance ChatView measures from it, so the timeline
+ * runs to the bottom instead of reserving a gap for a composer that is not there. */
+[data-slot="t3-thread-view"] [data-chat-composer-overlay="true"] {
+  display: none;
 }
 
 /* ── Tailwind theme: the shared names mirror theme.css; the rest are T3's ─── */
