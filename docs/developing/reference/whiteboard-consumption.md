@@ -117,7 +117,7 @@ injected `BoardService`. **It is the only writer of board ops in Rennet.** Reads
 may go anywhere; writes come through here, and a test asserts that no other file
 calls `BoardService.apply` or constructs board ops.
 
-The tools serve the orchestrator and the human surfaces. Lens drafters do not call
+The tools serve the host's composing turns and the human surfaces. Lens drafters do not call
 them: a drafter returns schema-validated structured output and the host writes it
 to the draft board as ops on the drafter's behalf, because agentic tool-calling
 per element is slow and expensive. See [the lens pipeline](../concepts/lens-pipeline.md).
@@ -165,7 +165,7 @@ reading as terminal by default.
 
 ```mermaid
 flowchart LR
-  o[Orchestrator or human surface] --> wc[whiteboard-client]
+  o[Composing turn or human surface] --> wc[whiteboard-client]
   wc --> svc["BoardService (@wboard/server)"]
   svc --> store[FileBoardStore]
   store --> log[".rennet/boards/&lt;id&gt;/log.jsonl"]

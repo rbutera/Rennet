@@ -6,13 +6,15 @@ description: How Rennet gathers asks, keeps the outbound documents drafted, and 
 A review ends by leaving through an exit: the posted forge review, a dispatched
 work-order round, or the pull or merge request. GitHub and GitLab.com support
 intake, CI reads, review publication, and own-branch change-request submission.
-Everything the reviewer concludes along the way gathers as asks, and the
-orchestrator keeps every outbound document drafted as it goes.
+Everything the reviewer concludes along the way gathers as asks, and Rennet keeps
+every outbound document drafted as it goes.
 
 
-There is one engine. A work order runs as one turn on the review's thread in the
-[T3 Code sidecar](./t3code-sidecar.md); the diff and the delta re-review that follow
-are unchanged.
+There is nothing to choose between. The composed work order runs as **one turn on
+the review's thread** in the [T3 Code sidecar](./t3code-sidecar.md)
+(`packages/server/src/t3/handoff.ts`), full access, with the checkout as its working
+directory; the turn's diff is T3's own checkpoint, and the delta re-review that
+follows is unchanged.
 
 ## The session is the durable root
 
@@ -73,13 +75,16 @@ Everything gathers as **asks**: typed messages carrying an anchor, text, an
 intent, and an exit lane, minted from findings, code-line comments, quote
 threads, or plain conversation, each with provenance back to its source.
 
-The orchestrator stages asks as they arise. When the reviewer states the
-conclusion or presses a shortcut, it stages directly; when it infers one, it
-drops a one-tap offer pill instead. Every staging act leaves an undecorated
-receipt at its source — a transcript line or a chip on the thread — and the
-receipt is also the undo. Findings never auto-stage; staging records the
-reviewer's judgment, not the lens output. The stage-versus-offer boundary
-lives in a versioned orchestrator prompt beside the lens prompts.
+**Staging is the reviewer's act.** An ask is minted where the reviewer decides
+one: a finding's control, a code-line comment, a highlighted span of board prose,
+or a conclusion reached in the review's own conversation — its
+[T3 Code thread](./t3code-sidecar.md), which fills the chat slot
+(`packages/app-ui/src/chat/t3-chat-dock.tsx`, sending on `chat.t3Send`). The thread
+holds no `app_*` tools today, so a conclusion drawn there is staged from the board,
+the line, or the span it belongs to rather than by the thread itself. Every staging
+act leaves an undecorated receipt at its source — a chip on the thread — and the
+receipt is also the undo. Findings never auto-stage; staging records the reviewer's
+judgment, not the lens output.
 
 The **Hand off button is the live basket**: its count ticks as asks land, and
 it carries a derived working state while a draft rework runs.
@@ -184,13 +189,13 @@ review note intact.
 
 ## Living drafts
 
-The orchestrator continuously redrafts every outbound document — the review text,
+Rennet continuously redrafts every outbound document — the review text,
 the work order, the change-request description — as the review progresses. Each
 comment, dismissal, or thread conclusion queues a rework. A rework runs as a
 **one-shot worker outside the interactive session**, and reworks are
 **serialized per document** — two edits to one board queue behind each other so
-their writes never race, while edits to different documents run in parallel. The
-orchestrator owns the initial structure and model reworks. The reviewer may also
+their writes never race, while edits to different documents run in parallel. Those
+workers own the initial structure and every model rework. The reviewer may also
 save a direct block edit. Save appends one durable `ask.edit`, replaces that
 block in the canonical ask projection, and invalidates the composed preview.
 Reload, work-order dispatch, review preview, and review post all read that same
@@ -243,8 +248,8 @@ work-order item instead of pointing at unrelated current code.
 
 ## Verdict and the approving review
 
-The orchestrator proposes the verdict from the reviewer's acts and asks in
-chat when those acts are ambiguous; the reviewer can always flip it. A flip is
+Rennet proposes the verdict from the reviewer's durable acts, and the reviewer can
+always flip it — there is no path that decides the verdict for them. A flip is
 a durable write on the ask log (`ask.setVerdictOverride`) that recomposes the
 preview, so the verdict on screen is the verdict that posts — there is no
 separate verdict argument riding along at post time. An

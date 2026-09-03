@@ -514,7 +514,7 @@ patchset generation by a light-tier Model Council seat
 from the branch name, commit messages, and PR body. GitHub is first-class via
 `gh`; JIRA and Linear work from per-project config (base URL plus a token
 environment variable). The bounded dossier is inlined verbatim into lens
-drafting prompts, and the orchestrator and round workers can receive it too.
+drafting prompts, and the round workers can receive it too.
 The landed-round report classifier intentionally receives only the successor
 patchset id, durable asks, the worker's identity, and the round's evidence
 manifest; full raw payloads stay behind a context tool. Items are structured (id, tracker, title, state, bounded body,
@@ -522,8 +522,8 @@ acceptance criteria, URL, provenance, fetched-at) and cited by id, which is
 how ticket citations reach boards. Standing project background is not fetched
 for the drafter: a drafter that wants it reads the repository it is standing in.
 Cosmetic project facts (the logo) never enter agent context. When no tracker is
-configured, the orchestrator asks in chat and persists the answer to project
-settings — the review proceeds meanwhile.
+configured, the dossier carries what the forge itself supplies and the review
+proceeds; the tracker is named in project settings, and nothing blocks on it.
 
 ### Bounding an anchored turn
 
