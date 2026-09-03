@@ -114,7 +114,9 @@ function projectBoard(stored: readonly StateElement[], identity: BoardIdentity) 
   const elements = marksStripped
     ? stored.map((el) => {
         if (!legacyMark(el)) return el;
-        const { delta: _delta, delta_basis: _basis, ...data } = el.data;
+        const data = { ...el.data };
+        delete data.delta;
+        delete data.delta_basis;
         return { ...el, data };
       })
     : stored;
