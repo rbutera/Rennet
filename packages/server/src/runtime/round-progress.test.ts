@@ -29,6 +29,7 @@ import {
 } from "@rennet/protocol";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type BoardsRuntime, createBoardsRuntime } from "../boards/boards-runtime";
+import { seatThreadTitle } from "../t3/threads";
 import {
   assembleRoundCollation,
   readPriorGeneration,
@@ -337,17 +338,18 @@ function sectioned(lens: string, body: string): DraftBoard {
  * seat; that turn must hand back the board in its own prompt. Reading that per-session
  * input keeps concurrent lens turns isolated instead of sharing one "last draft" slot.
  */
+/** Which lens a rendered prompt belongs to; `post-process` echoes its layer context back. */
+function boardAnswer(prompt: string, outputFor: (lens: string) => unknown): unknown {
+  const lens = /PROMPT_FILE:prompts\/([a-z-]+)\.md/.exec(prompt)?.[1] ?? "unknown";
+  if (lens === "post-process") {
+    const context = /rennet:layer context>>>\n(\{.*)/s.exec(prompt);
+    return context ? (JSON.parse(context[1] as string).board as unknown) : { elements: [] };
+  }
+  return outputFor(lens);
+}
+
 function fakeClaudePort(outputFor: (lens: string) => unknown): HarnessPort {
-  const lensFromPrompt = (p: string): string =>
-    /PROMPT_FILE:prompts\/([a-z-]+)\.md/.exec(p)?.[1] ?? "unknown";
-  const answer = (prompt: string): unknown => {
-    const lens = lensFromPrompt(prompt);
-    if (lens === "post-process") {
-      const context = /rennet:layer context>>>\n(\{.*)/s.exec(prompt);
-      return context ? (JSON.parse(context[1] as string).board as unknown) : { elements: [] };
-    }
-    return outputFor(lens);
-  };
+  const answer = (prompt: string): unknown => boardAnswer(prompt, outputFor);
   return {
     createSession: async () => {
       const cap: { prompt?: string } = {};
@@ -1325,5 +1327,260 @@ describe("runRound emits the real regeneration progress (C15 3.1/3.3)", () => {
     const settled = [...events].reverse().find((e) => e.type === "lens");
     if (settled?.type !== "lens") throw new Error("no lens lanes were emitted");
     for (const lane of settled.lanes) expect(verdictOf(settled.lanes, lane.id)).toBe("reworked");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// T3 is a board seat's ONLY backend (review finding 1). The daemon used to turn a sidecar
+// that would not start into `null` and hand the board jobs back to the ephemeral
+// Claude/Codex legs — which drafts the boards, but without the thread, the transcript, the
+// live line or the same-thread repair, and says nothing about losing any of them. The lane
+// now fails with the sidecar's own reason, which the bench already speaks.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("a board seat has one backend (review finding 1)", () => {
+  let root: string;
+  let boards: BoardsRuntime;
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), "t3-only-backend-"));
+    boards = createBoardsRuntime(root);
+  });
+  afterEach(() => rmSync(root, { recursive: true, force: true }));
+
+  /** The ephemeral Claude leg, counting every session a board seat would have opened. */
+  function countingClaudePort(opened: string[]): HarnessPort {
+    const inner = fakeClaudePort((lens) => sectioned(lens, "same"));
+    return {
+      ...inner,
+      createSession: (spec: Parameters<HarnessPort["createSession"]>[0]) => {
+        opened.push("createSession");
+        return inner.createSession(spec);
+      },
+    } as unknown as HarnessPort;
+  }
+
+  const runWith = async (
+    opened: string[],
+    resolveT3Seats?: Parameters<typeof createRoundsRuntime>[0]["resolveT3Seats"],
+    claimBranch?: string,
+  ): Promise<{ events: RoundEvent[]; error: unknown }> => {
+    const events: RoundEvent[] = [];
+    let error: unknown;
+    const run = createRoundsRuntime({
+      resolveClaudePort: async () => countingClaudePort(opened),
+      resolveCodexExecutor: async () => null as CodexExecutor | null,
+      boardsRuntimeFor: () => ({
+        service: boards.service,
+        createRennetBoard: boards.createRennetBoard,
+      }),
+      readPrompt,
+      ...(resolveT3Seats === undefined ? {} : { resolveT3Seats }),
+    }).runRound({
+      session: {
+        ...session,
+        id: "t3-backend-session",
+        ...(claimBranch === undefined ? {} : { claim: { branch: claimBranch } }),
+      } as SessionModel,
+      repoRoot: root,
+      asksDispatched: [],
+      runWorkers: async () => ({ commitRange: { from: "c0", to: "c1" }, patchsetId: "ps-landed" }),
+      onProgress: (event) => events.push(event),
+      ...assembleRoundCollation({ patchset: patchset(), dossier: [] }),
+    });
+    await run.catch((thrown: unknown) => {
+      error = thrown;
+    });
+    return { events, error };
+  };
+
+  const settledLanes = (events: readonly RoundEvent[]): readonly LensLane[] => {
+    const last = [...events].reverse().find((event) => event.type === "lens");
+    if (last?.type !== "lens") throw new Error("no lens lanes were emitted");
+    return last.lanes;
+  };
+
+  it("fails every lane with the sidecar's reason and opens no ephemeral board session", async () => {
+    const opened: string[] = [];
+    const { events, error } = await runWith(opened, () =>
+      Promise.reject(new Error("the vendored T3 Code server bundle is not built")),
+    );
+
+    // The load-bearing half: the ephemeral leg was RESOLVED (the port is real and the
+    // council still routes to it), and no board seat ever asked it for a session.
+    expect(opened).toEqual([]);
+    // A generation with no boards at all is a failed round, and it says why.
+    expect(String(error)).toContain("T3 sidecar unavailable");
+    const lanes = settledLanes(events);
+    expect(lanes.map((lane) => lane.id)).toEqual([
+      "design",
+      "sequence",
+      "decisions",
+      "flagged",
+      "noise",
+    ]);
+    for (const lane of lanes) {
+      expect(lane.status).toBe("failed");
+      expect(lane.status === "failed" ? lane.reason : "").toContain(
+        "T3 sidecar unavailable: the vendored T3 Code server bundle is not built",
+      );
+    }
+  });
+
+  it("positive control: the same run with no sidecar composed at all still drafts", async () => {
+    // No `resolveT3Seats` dep is the direct-call shape every pipeline test uses — nobody
+    // composed a sidecar, so nothing was lost and the ephemeral legs still run. If the
+    // assertions above passed for some other reason (a broken fixture, a run that drafts
+    // nothing at all), this run would open no session and settle no lane either.
+    const opened: string[] = [];
+    const { events, error } = await runWith(opened);
+    expect(error).toBeUndefined();
+    expect(opened.length).toBeGreaterThan(0);
+    for (const lane of settledLanes(events)) expect(lane.status).not.toBe("failed");
+  });
+
+  // Review finding 6. A seat thread is titled by the branch it is READING, and the sidecar's
+  // own thread list is how a reviewer finds one. The delta packet's repository projection
+  // carries `baseRef` alone — the ref the change is MEASURED AGAINST — so every thread of
+  // every review used to read "origin/main — Design".
+  it("names the claimed branch to the seat runtime, not the ref the change is measured against", async () => {
+    const branches: (string | undefined)[] = [];
+    // The premise, asserted rather than assumed: the claim and the base ref DIFFER on this
+    // fixture, so a reader cannot pass by picking either one.
+    expect(patchset().repository.baseRef).toBe("origin/main");
+
+    await runWith(
+      [],
+      async (input) => {
+        branches.push(input.branch);
+        return { unavailable: "no sidecar in this test" };
+      },
+      "feat/lens-threads",
+    );
+
+    expect(branches).toEqual(["feat/lens-threads"]);
+    expect(seatThreadTitle(branches[0] ?? "", "design")).toBe("feat/lens-threads — Design");
+  });
+
+  // Review finding 7. The daemon holds one subscription per running seat to feed its lane's
+  // live line. It used to be dropped only in the GENERATION's `finally`, so the first lens
+  // to finish kept a socket and a one-second idle tick alive for as long as the slowest one
+  // ran — publishing into a lane that no longer shows a line.
+  it("drops a seat's subscription when ITS lane settles, not when the generation does", async () => {
+    const stopped: string[] = [];
+    const watched: string[] = [];
+    // Frames as the reviewer sees them, each paired with what was already closed at the
+    // moment it was published. ORDER is the assertion: "was stopped eventually" would be
+    // satisfied by the old generation-wide teardown too.
+    const frames: { lanes: readonly LensLane[]; closed: readonly string[] }[] = [];
+
+    // Seats that settle at DIFFERENT times, so a lane really does finish while the others
+    // are still running. Same-time settlement could not tell per-lane teardown from the
+    // generation-wide one this replaces.
+    const SETTLE_DELAY_MS: Readonly<Record<string, number>> = {
+      design: 0,
+      sequence: 40,
+      decisions: 80,
+      "flagged-claude": 120,
+      noise: 160,
+    };
+    const promptFor = new Map<string, string>();
+    const seatOf = (threadId: string): string => threadId.replace(/^thread-/, "");
+    const t3Client = {
+      startTurn: async ({ threadId, text }: { threadId: string; text: string }) => {
+        promptFor.set(threadId, text);
+        return "turn-1";
+      },
+      waitForTurnSettled: async (threadId: string) => {
+        const delay = SETTLE_DELAY_MS[seatOf(threadId)] ?? 0;
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        return {
+          state: "completed",
+          structuredOutput: boardAnswer(promptFor.get(threadId) ?? "", (lens) =>
+            sectioned(lens, "same"),
+          ),
+          thread: {},
+        };
+      },
+    };
+
+    const events = await (async () => {
+      const collected: RoundEvent[] = [];
+      const run = createRoundsRuntime({
+        resolveClaudePort: async () => countingClaudePort([]),
+        resolveCodexExecutor: async () => null as CodexExecutor | null,
+        boardsRuntimeFor: () => ({
+          service: boards.service,
+          createRennetBoard: boards.createRennetBoard,
+        }),
+        readPrompt,
+        resolveT3Seats: async () => ({
+          environmentId: "env-1",
+          seam: {
+            client: async () => t3Client,
+            threadFor: async ({ seat }: { seat: string }) => ({
+              threadId: `thread-${seat}`,
+              projectId: "p1",
+            }),
+          },
+          watch: (threadId: string) => {
+            watched.push(threadId);
+            return {
+              stop: () => {
+                if (!stopped.includes(threadId)) stopped.push(threadId);
+              },
+            };
+          },
+        }),
+      } as unknown as Parameters<typeof createRoundsRuntime>[0]).runRound({
+        session: { ...session, id: "seat-watch-session" } as SessionModel,
+        repoRoot: root,
+        asksDispatched: [],
+        runWorkers: async () => ({
+          commitRange: { from: "c0", to: "c1" },
+          patchsetId: "ps-landed",
+        }),
+        onProgress: (event) => {
+          collected.push(event);
+          if (event.type === "lens") frames.push({ lanes: event.lanes, closed: [...stopped] });
+        },
+        ...assembleRoundCollation({ patchset: patchset(), dossier: [] }),
+      });
+      await run.catch(() => undefined);
+      return collected;
+    })();
+
+    expect(events.some((event) => event.type === "lens")).toBe(true);
+    // Every seat opened a watch — otherwise "they were all closed" is vacuous.
+    expect(watched.sort()).toContain("thread-design");
+
+    // The load-bearing frame: the FIRST one that shows Design settled must already show
+    // Design's watch closed, AND at least one other lane still running — which is what
+    // separates per-lane teardown from the generation-wide `finally` it replaces.
+    const designSettled = frames.find((candidate) =>
+      candidate.lanes.some(
+        (lane) => lane.id === "design" && lane.status !== "queued" && lane.status !== "running",
+      ),
+    );
+    expect(designSettled, "Design never settled in any published frame").toBeDefined();
+    expect(
+      designSettled?.lanes.some((lane) => lane.id !== "design" && lane.status === "running"),
+      "no other lane was still running when Design settled — the stagger did not hold",
+    ).toBe(true);
+    expect(designSettled?.closed, "Design was still watched when its lane settled").toContain(
+      "thread-design",
+    );
+
+    // And every seat's subscription is closed by the end, flagged's second provider too.
+    expect(stopped).toEqual(expect.arrayContaining(watched));
+  });
+
+  it("falls back to the base ref when the session claimed no branch", async () => {
+    // A no-target session claims nothing, so there is no branch to name; the base ref is
+    // honest rather than an invented title. Without this the fallback could be anything.
+    const branches: (string | undefined)[] = [];
+    await runWith([], async (input) => {
+      branches.push(input.branch);
+      return { unavailable: "no sidecar in this test" };
+    });
+    expect(branches).toEqual(["origin/main"]);
   });
 });

@@ -10,7 +10,7 @@
 // visible strings for the Open button are asserted in `kickoff.test.ts` through the reducer state
 // the screen renders.
 
-import { readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -26,6 +26,72 @@ const read = (path: string): string => readFileSync(path, "utf8");
  * promised "every cohort, finding, and hunk in reading order".
  */
 const admitsUnavailable = (source: string): boolean => /temporarily unavailable/i.test(source);
+
+// ── Every review screen, not just the digest (review finding 3) ─────────────
+//
+// The digest's card set was pinned here while `publish.tsx` still pushed to `turn.tsx`,
+// deleted with the orchestrator chat — the one screen nobody was enumerating. So the rule
+// is now stated over the whole directory: every literal route a review screen pushes to
+// must be a file that exists.
+//
+// The ceiling, stated so no reader inherits a wider claim: this reads `router.push`/
+// `router.replace` calls whose argument is one string or template literal, and it only
+// resolves routes that stay inside the review directory (either naming `/review/` or built
+// from the screens' own `base`). A push assembled from a variable is invisible to it.
+
+/** How a review screen writes its own route prefix: `${base}` or the full `/review/` path. */
+const REVIEW_BASE = ["$", "{base}"].join("");
+
+/** The last path segment of a route, or undefined when it is interpolated or empty. */
+function routeTarget(route: string): string | undefined {
+  const scoped = route.includes("/review/") || route.startsWith(REVIEW_BASE);
+  if (!scoped) return undefined;
+  const segment = route.split("/").at(-1) ?? "";
+  return /^[a-z][a-z0-9-]*$/.test(segment) ? segment : undefined;
+}
+
+describe("every review screen pushes only to routes that exist", () => {
+  const screens = readdirSync(reviewDir).filter((file) => file.endsWith(".tsx"));
+  const pushes = screens.flatMap((screen) =>
+    [...read(join(reviewDir, screen)).matchAll(/router\.(?:push|replace)\(\s*[`"']([^`"']*)/g)]
+      .map(([, route]) => ({ screen, target: routeTarget(route as string) }))
+      .filter((entry): entry is { screen: string; target: string } => entry.target !== undefined),
+  );
+
+  it("enumerates every screen in the directory, not a hand-kept list", () => {
+    // Anti-vacuity, both halves: if a screen appears the enumeration sees it, and if the
+    // push regex stops matching, `pushes` empties and the loop below asserts nothing.
+    expect(screens.sort()).toEqual([
+      "canvas.tsx",
+      "digest.tsx",
+      "error.tsx",
+      "finding.tsx",
+      "publish.tsx",
+    ]);
+    expect(pushes.map((entry) => `${entry.screen} → ${entry.target}`).sort()).toEqual([
+      "digest.tsx → publish",
+      "error.tsx → digest",
+    ]);
+  });
+
+  it("resolves each pushed route to a screen file", () => {
+    for (const { screen, target } of pushes) {
+      expect(
+        existsSync(join(reviewDir, `${target}.tsx`)),
+        `${screen} pushes to ${target}, which is not a screen in this directory`,
+      ).toBe(true);
+    }
+  });
+
+  it("positive control: the deleted turn screen would not resolve", () => {
+    // The exact route `publish.tsx` used to push (t3-lens-threads 4.2 deleted `turn.tsx`).
+    // Without this, "every route resolves" would be satisfied by a resolver that answers
+    // true for anything.
+    const target = routeTarget(`/daemon/${REVIEW_BASE}/review/${REVIEW_BASE}/turn`);
+    expect(target).toBe("turn");
+    expect(existsSync(join(reviewDir, `${target}.tsx`))).toBe(false);
+  });
+});
 
 describe("review digest offers no dead controls (absent-not-disabled)", () => {
   const digest = read(join(reviewDir, "digest.tsx"));

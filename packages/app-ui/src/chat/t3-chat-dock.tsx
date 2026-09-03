@@ -1,4 +1,4 @@
-import { type ReactNode, Suspense } from "react";
+import { type ReactNode, Suspense, useEffect } from "react";
 import { useCommand } from "../data/query";
 import { useRennetStore } from "../store";
 import { useChatTrail, useRouteReviewId } from "./chat-data";
@@ -21,8 +21,23 @@ export function T3ChatDock({ corner }: { readonly corner?: ReactNode }) {
   const slot = useT3ChatSlot();
   // Which thread the slot is showing: a lens seat's transcript when the reviewer opened
   // one from the bench (t3-lens-threads 3.4), the review's own thread otherwise.
-  const lensThread = useRennetStore((s) => s.ui.lensThread);
+  //
+  // The store slice is global, this dock is mounted once, and the review under it changes
+  // with the route — so a ref belonging to ANOTHER review is not this dock's transcript.
+  // It is treated as none in the same render (an effect alone would paint one frame of the
+  // previous session's thread under this session's header) and cleared right after.
+  const openRef = useRennetStore((s) => s.ui.lensThread);
   const openLensThread = useRennetStore((s) => s.uiActions.openLensThread);
+  //
+  // A POSITIVE CONTRADICTION, never silence (AGENTS.md): the route not having resolved its
+  // review yet is not evidence that this transcript belongs to another one, and treating it
+  // as such would clear the lens a bench opened while its own review was still resolving.
+  // Only a review id that is known AND different disowns the ref.
+  const foreign = openRef !== null && reviewId !== undefined && openRef.reviewId !== reviewId;
+  const lensThread = openRef !== null && !foreign ? openRef.thread : null;
+  useEffect(() => {
+    if (foreign) openLensThread(null);
+  }, [foreign, openLensThread]);
   // The trail TRANSFERS here when the dock opens (C20 state 2): the top bar hands it off,
   // so the dock has to render it or the open dock names no session at all. It rides the
   // dock's own header, above whatever fills the slot, and the header owns the corner too.

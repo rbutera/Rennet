@@ -15,13 +15,7 @@ import {
   removeSidecarClaim,
   spawnSidecar,
 } from "./sidecar";
-import {
-  bindThread,
-  findBindingsForSessions,
-  removeBindings,
-  type ThreadBinding,
-  type ThreadBindingKey,
-} from "./threads";
+import { bindThread, sweepThreads, type ThreadBinding, type ThreadBindingKey } from "./threads";
 
 export interface T3SidecarSupervisorOptions {
   readonly dataDir: string;
@@ -56,6 +50,11 @@ export interface T3SidecarSupervisor {
    * session/review ids and drop the bindings. Never throws — a sidecar that is off has
    * nothing to delete and a thread it no longer has is already gone, and neither of those
    * may fail the archive the user asked for. Returns how many threads it deleted.
+   *
+   * Sweeps are SERIALIZED, and a thread whose delete failed is remembered in the bindings
+   * file's `pendingDeletions` (out of the live bindings, so an un-archived session still
+   * gets a fresh thread) and retried on the next call or the next successful `ensure`.
+   * `forgetSession([])` is that retry and nothing else.
    */
   readonly forgetSession: (ids: readonly string[]) => Promise<number>;
   /** Synchronous teardown for the daemon's own shutdown path (no async budget there). */
@@ -115,6 +114,10 @@ export function createT3SidecarSupervisor(
             };
           }
         });
+        // A sidecar that is back up is the moment to finish what the last archive could
+        // not: every thread whose delete failed is retried here (review finding 2). Fire
+        // and forget — `forgetSession` never throws, and nothing waits on the sweep.
+        void forgetSession([]);
         return result;
       })
       .catch((error: unknown) => {
@@ -156,28 +159,40 @@ export function createT3SidecarSupervisor(
       ...(input.sessionId === undefined ? {} : { sessionId: input.sessionId }),
     });
 
-  const forgetSession: T3SidecarSupervisor["forgetSession"] = async (ids) => {
-    const bindings = findBindingsForSessions(options.dataDir, ids);
-    if (bindings.length === 0) return 0;
-    // The bindings are dropped whatever the sidecar says. A binding pointing at a thread
-    // nobody can reach is worse than none: it would rebind an archived session to a ghost.
-    const threadIds = bindings.map((binding) => binding.threadId);
-    let deleted = 0;
-    try {
-      const rpc = await client();
-      for (const threadId of threadIds) {
-        try {
+  // ONE sweep at a time (review finding 2). The bindings file is a read-modify-write over a
+  // single JSON document, so two archives running at once would lose one another's edits —
+  // and a lost edit here is a live binding pointing at a deleted thread.
+  let sweeping: Promise<unknown> = Promise.resolve();
+  const forgetSession: T3SidecarSupervisor["forgetSession"] = (ids) => {
+    const run = sweeping.then(async () => {
+      // The RPC client is resolved ONCE per sweep and its failure is remembered: a sidecar
+      // that is off would otherwise be re-dialled per thread. Every row then defers rather
+      // than being silently forgotten.
+      let rpc: T3Client | null = null;
+      let unreachable: unknown;
+      return sweepThreads({
+        dataDir: options.dataDir,
+        ids,
+        warn,
+        deleteThread: async (threadId) => {
+          if (unreachable !== undefined) throw unreachable;
+          if (rpc === null) {
+            try {
+              rpc = await client();
+            } catch (error) {
+              unreachable = error;
+              warn(
+                `rennet: T3 sidecar unavailable, deferring thread deletions: ${describe(error)}`,
+              );
+              throw error;
+            }
+          }
           await rpc.deleteThread(threadId);
-          deleted += 1;
-        } catch (error) {
-          warn(`rennet: T3 thread ${threadId} was not deleted: ${describe(error)}`);
-        }
-      }
-    } catch (error) {
-      warn(`rennet: T3 sidecar unavailable, dropping bindings only: ${describe(error)}`);
-    }
-    removeBindings(options.dataDir, threadIds);
-    return deleted;
+        },
+      });
+    });
+    sweeping = run.catch(() => undefined);
+    return run;
   };
 
   const session = async (): Promise<T3Session> => {

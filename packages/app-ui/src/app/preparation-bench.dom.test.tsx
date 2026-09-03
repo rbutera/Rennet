@@ -185,10 +185,11 @@ describe("the bench — five readers at work on the change", () => {
     expect(reader.disabled).toBe(false);
     await user.click(reader);
 
-    // The exact thread the LANE named — not the session's, and not another lane's.
+    // The exact thread the LANE named — not the session's, and not another lane's — under
+    // the REVIEW the preparation record stamped, so the dock can tell whose it is.
     expect(useRennetStore.getState().ui.lensThread).toEqual({
-      environmentId: "env-1",
-      threadId: "thread-decisions",
+      reviewId: "rev-1",
+      thread: { environmentId: "env-1", threadId: "thread-decisions" },
     });
     // And the slot it points at is open, because a transcript nobody can see is not opened.
     expect(useRennetStore.getState().ui.chatOpen).toBe(true);
@@ -267,9 +268,9 @@ describe("the bench — five readers at work on the change", () => {
 
     // Each voice is its own control, pointing the slot at ITS thread.
     await user.click(voice("flagged-codex"));
-    expect(useRennetStore.getState().ui.lensThread).toEqual(codex);
+    expect(useRennetStore.getState().ui.lensThread).toEqual({ reviewId: "rev-1", thread: codex });
     await user.click(voice("flagged-claude"));
-    expect(useRennetStore.getState().ui.lensThread).toEqual(claude);
+    expect(useRennetStore.getState().ui.lensThread).toEqual({ reviewId: "rev-1", thread: claude });
   });
 
   it("reveals each settled lens's board in place while the other readers keep working", async () => {

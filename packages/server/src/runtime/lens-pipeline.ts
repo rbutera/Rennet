@@ -1324,6 +1324,13 @@ export interface LensPipelineDeps {
    * thread. Absent ⇒ the ephemeral Claude/Codex legs, exactly as before.
    */
   readonly t3?: T3SeatSeam;
+  /**
+   * Why there is no seam (review finding 1). Set by the round runtime when the daemon
+   * composed a sidecar and could not bring it up; every board seat then fails with this
+   * reason rather than running on an ephemeral leg nobody asked for. Both absent ⇒ a
+   * caller with no sidecar at all (every direct-call test), which keeps the old legs.
+   */
+  readonly t3Unavailable?: string;
   /** Council context override; availability defaults to the resolved ports. */
   readonly council?: CouncilResolveContext;
   /** The PR worktree the drafter sessions are rooted at (D1). */
@@ -1740,8 +1747,10 @@ function resolveBoardSeat(
 /**
  * One seat of one generation. Board jobs route to the T3 leg when the daemon composed a
  * sidecar seam ({@link LensPipelineDeps.t3}), so the seat runs as a persistent thread and
- * a repair is the next turn on it. Without the seam the ephemeral legs still run, which
- * is what every direct-call test and any daemon without a vendored bundle uses.
+ * a repair is the next turn on it. A daemon that HAS a sidecar and could not bring it up
+ * passes {@link LensPipelineDeps.t3Unavailable} instead, and every board seat fails with
+ * that reason. Neither present ⇒ a direct-call caller with no sidecar behind it, which
+ * keeps the ephemeral legs.
  */
 function resolveBoardSeatDetails(
   jobId: CouncilJobId,
@@ -1758,6 +1767,7 @@ function resolveBoardSeatDetails(
       claudePort: deps.claudePort,
       codexExecutor: deps.codexExecutor,
       ...(deps.t3 === undefined ? {} : { t3: { seat, seam: deps.t3 } }),
+      ...(deps.t3Unavailable === undefined ? {} : { t3Unavailable: deps.t3Unavailable }),
       repoRoot: deps.repoRoot,
       label: `board.${jobId}`,
       ...(deps.collector === undefined ? {} : { collector: deps.collector }),
@@ -3510,7 +3520,14 @@ async function runFlaggedDual(
   const haveClaude = !("failure" in claudeSeat);
   const haveCodex = !("failure" in codexSeat);
   if (!haveClaude && !haveCodex) {
-    return { failure: "lens-draft-flagged resolved to no runnable seat" };
+    // Both reasons, not just the shape: a sidecar that would not start is why BOTH seats
+    // are unrunnable, and a lane that only says "no runnable seat" sends the reviewer
+    // looking for a missing harness that is sitting right there.
+    return {
+      failure:
+        `lens-draft-flagged resolved to no runnable seat ` +
+        `(${claudeSeat.failure}; ${codexSeat.failure})`,
+    };
   }
 
   // Single-seat degrade — honest single-model concurrence, and an honestly ATTRIBUTED

@@ -1248,20 +1248,23 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
    * The sidecar's seat runtime for one generation (t3-lens-threads). Every board seat of
    * that generation becomes one persistent thread on the review's checkout, titled by
    * branch and lens; the daemon holds each running seat's subscription so its lane can
-   * carry a live line. `null` when the sidecar cannot be brought up — no vendored bundle,
-   * a spawn failure — and the board seats fall back to the ephemeral legs.
+   * carry a live line. When the sidecar cannot be brought up — no vendored bundle, a spawn
+   * failure — this answers the REASON, and the board seats fail with it. There is no
+   * fallback to the ephemeral legs: T3 is a board seat's only backend (Rai's ruling), and
+   * a silent fallback would run the lens without its thread, transcript, live line or
+   * same-thread repair while the bench showed nothing wrong (review finding 1).
    */
   const resolveT3SeatRuntime = async (input: {
     readonly repoRoot: string;
     readonly generationId: string;
     readonly branch: string;
     readonly sessionId: string;
-  }): Promise<T3SeatRuntime | null> => {
+  }): Promise<T3SeatRuntime | { readonly unavailable: string }> => {
     let sidecar: Awaited<ReturnType<typeof t3Sidecar.ensure>>;
     try {
       sidecar = await t3Sidecar.ensure();
-    } catch {
-      return null;
+    } catch (error) {
+      return { unavailable: error instanceof Error ? error.message : String(error) };
     }
     const environmentId = sidecar.environment.environmentId;
     return {
@@ -2881,7 +2884,13 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     recordBenchmark,
     resolveClaudePort: claudeAdapterForRepo,
     resolveCodexExecutor: codexExecutorForRepo,
-    resolveT3Seats: resolveT3SeatRuntime,
+    // Wired only when this process was GIVEN a sidecar. A bundle path means a sidecar
+    // exists here, so a board seat that cannot reach it fails with the reason (review
+    // finding 1) rather than dropping to an ephemeral leg that loses the thread. No bundle
+    // path means no sidecar was ever composed — a hermetic `createServer` in a test — and
+    // the ephemeral legs stand, because nothing was lost. A packaged Rennet always has one:
+    // `rennet-desktop:build` fails outright when the bundle is not staged.
+    ...(options.t3BundlePath === undefined ? {} : { resolveT3Seats: resolveT3SeatRuntime }),
     boardsRuntimeFor,
     readPrompt,
     persistBoardMeta: (_repoRoot: string, meta: PersistedBoardMeta) => boardMetaStore.save(meta),
@@ -4317,7 +4326,16 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         const session = sessionStore.setPinned(sessionId, pinned);
         return session && sidebarSessionFor(session);
       },
-      setArchived: (sessionId, archived) => {
+      setArchived: async (sessionId, archived) => {
+        // Archiving establishes a DELETION BOUNDARY (review finding 2). The sweep that
+        // follows deletes this session's threads, so anything still able to BIND one has
+        // to be over first: a preparation mid-flight would otherwise bind a fresh seat
+        // thread after the sweep had already passed, and the archive would leave exactly
+        // the orphan it exists to prevent. Same abort-then-await the retry path uses.
+        if (archived) {
+          cancelSessionPreparation(sessionId);
+          await sessionPreparationRuns.get(sessionId)?.catch(() => undefined);
+        }
         const session = archived
           ? sessionStore.archive(sessionId)
           : sessionStore.restore(sessionId);

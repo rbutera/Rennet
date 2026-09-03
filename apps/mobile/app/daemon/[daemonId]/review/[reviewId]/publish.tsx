@@ -1,7 +1,8 @@
 // Review · publish (issue #382 M2, wireframe 23). Preview → post, from anywhere. The preview shows
 // the composed outbound review — verdict + destination — and one tap posts it; the posted screen
 // states the real URL. No sign step, no biometric, no confirmation dialog: the post button IS the
-// click. "Ask for changes" routes to a refine turn (never phone-editing the outbound review).
+// click. Asking for changes is a turn on the review's T3 thread, which lives on the desktop —
+// the screen says so rather than offering a control (the phone never edits the outbound review).
 //
 // The phone cannot compose the byte-exact payload (the DOM ui layer owns the editable collation
 // model, off-limits to the mobile boundary), so the DAEMON composes it via `publish.compose` and
@@ -373,13 +374,14 @@ export default function Publish(): ReactNode {
           </Text>
         ) : null}
 
+        {/* Absent, not disabled. "Ask for changes" pushed to `turn.tsx`, which went with the
+            orchestrator chat (t3-lens-threads 4.2). The capability moved rather than
+            vanishing, so the screen says where it went instead of offering a control that
+            lands nowhere — the phone still never text-edits the outbound review. */}
         <SectionLabel>Not right?</SectionLabel>
-        <OutlineButton
-          label="↻ Ask for changes"
-          onPress={() => router.push(`/daemon/${daemonId}/review/${reviewId}/turn`)}
-        />
         <Text style={{ color: t.faint, fontSize: type.control, marginTop: 6 }}>
-          Ask for changes runs a refine turn — the phone never text-edits the outbound review.
+          Ask for changes in the review&apos;s T3 Code thread on the desktop — the phone never
+          text-edits the outbound review.
         </Text>
 
         <View style={{ height: space.xxl }} />

@@ -582,7 +582,12 @@ export interface DispatchDeps {
     retryPreparation(sessionId: string, commandId: string): Promise<SidebarSession | undefined>;
     rename(sessionId: string, title: string): SidebarSession | undefined;
     setPinned(sessionId: string, pinned: boolean): SidebarSession | undefined;
-    setArchived(sessionId: string, archived: boolean): SidebarSession | undefined;
+    /** Async because archiving first ABORTS AND AWAITS the session's preparation: the
+     *  thread sweep that follows must not race something still able to bind a thread. */
+    setArchived(
+      sessionId: string,
+      archived: boolean,
+    ): SidebarSession | undefined | Promise<SidebarSession | undefined>;
   };
   /**
    * The lens-board read for `board.read` (C05 cluster 8, bound in C18): the PERSISTED board

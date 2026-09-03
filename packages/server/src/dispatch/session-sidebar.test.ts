@@ -1,4 +1,4 @@
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FileProjectStore, RoundRecordStore, SessionStore } from "@rennet/adapters";
@@ -9,8 +9,10 @@ import {
   type SessionModel,
   type SidebarSession,
 } from "@rennet/protocol";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { SessionEntry } from "../session/session-entry";
+import type { ModelSelection, T3Client } from "../t3/client";
+import { bindThread, findBindingsForSessions, sweepThreads } from "../t3/threads";
 import { projectHandlers } from "./project";
 import { createDispatchRuntime, type DispatchDeps } from "./runtime";
 import { sessionHandlers, sidebarSessionOf } from "./session";
@@ -461,5 +463,135 @@ describe("session.archive deletes the session's T3 threads", () => {
     await archive(handlers, "nope", true);
     // `setArchived` returned null: no session was archived, so there is nothing to prune.
     expect(spy.calls).toEqual([]);
+  });
+});
+
+// ── The archive is a DELETION BOUNDARY (review finding 2) ────────────────────
+//
+// The sweep deletes this session's threads, so everything still able to BIND one has to be
+// over before it runs. A preparation mid-flight is exactly that: it binds a seat thread as
+// it winds down, and if the sweep has already passed, the archived session is left holding
+// a live binding to a thread nobody will ever delete.
+//
+// Driven over the REAL bindings file and the REAL sweep; only the RPC delete is a stub.
+
+const SELECTION: ModelSelection = { instanceId: "claudeAgent", model: "x" } as ModelSelection;
+
+describe("session.archive waits for the preparation before sweeping", () => {
+  let dataDir: string;
+  let sessionDir: string;
+  beforeEach(() => {
+    dataDir = mkdtempSync(join(tmpdir(), "rennet-archive-boundary-"));
+    sessionDir = sessionsDir();
+  });
+  afterEach(() => {
+    rmSync(dataDir, { recursive: true, force: true });
+    rmSync(sessionDir, { recursive: true, force: true });
+  });
+
+  /**
+   * @param awaitsPreparation the composition root's shape when `true`; the pre-fix shape
+   * (archive returns while the preparation is still running) when `false`.
+   */
+  function boundaryDispatch(awaitsPreparation: boolean) {
+    let created = 0;
+    const client = {
+      ensureProject: async (root: string) => `project:${root}`,
+      createThread: async () => `thread-${++created}`,
+    } as unknown as T3Client;
+    const deleted: string[] = [];
+
+    // The in-flight preparation: released by the archive, and it binds its seat thread a
+    // tick later — a real seat resolves its thread inside an async pipeline, never in the
+    // same microtask the abort lands in.
+    let release = (): void => undefined;
+    const preparation = new Promise<void>((resolve) => {
+      release = resolve;
+    })
+      .then(() => new Promise((resolve) => setTimeout(resolve, 5)))
+      .then(() =>
+        bindThread({
+          dataDir,
+          client,
+          repositoryRoot: "/worktree",
+          key: { kind: "seat", generationId: "gen-1", seat: "design" },
+          title: "feat/x — Design",
+          modelSelection: SELECTION,
+          sessionId: "s1",
+        }),
+      );
+
+    const store = new SessionStore(sessionDir);
+    const rounds = new RoundRecordStore(join(sessionDir, "rounds"));
+    const rt = createDispatchRuntime({
+      service: { reviewById: () => undefined },
+      sessions: {
+        setArchived: async (id: string, archived: boolean) => {
+          if (archived) {
+            release();
+            if (awaitsPreparation) await preparation.catch(() => undefined);
+          }
+          const session = archived ? store.archive(id) : store.restore(id);
+          return session && sidebarSessionOf(session, rounds.read(session.id));
+        },
+      },
+      t3Sidecar: {
+        forgetSession: (ids: readonly string[]) =>
+          sweepThreads({
+            dataDir,
+            ids,
+            deleteThread: async (threadId: string) => {
+              deleted.push(threadId);
+            },
+            warn: () => undefined,
+          }),
+      },
+    } as unknown as DispatchDeps);
+    return { handlers: sessionHandlers(rt), store, client, deleted, preparation };
+  }
+
+  /** The session's own thread, bound before the archive as a live review's would be. */
+  const bindSessionThread = (client: T3Client) =>
+    bindThread({
+      dataDir,
+      client,
+      repositoryRoot: "/repo",
+      key: { kind: "session", sessionId: "rev-1" },
+      title: "feat/x",
+      modelSelection: SELECTION,
+      sessionId: "rev-1",
+    });
+
+  it("binds nothing that survives the sweep", async () => {
+    const { handlers, store, client, deleted, preparation } = boundaryDispatch(true);
+    store.save(seed("s1", "feat/x"));
+    store.attachReview("s1", "rev-1");
+    await bindSessionThread(client);
+
+    await handlers["session.archive"]({ sessionId: "s1", archived: true });
+    await preparation;
+
+    // Both threads gone: the session's own, and the seat one the preparation bound while
+    // the archive was waiting for it. Nothing is left pointing into the sidecar.
+    expect(findBindingsForSessions(dataDir, ["s1", "rev-1"])).toEqual([]);
+    expect(deleted.sort()).toEqual(["thread-1", "thread-2"]);
+  });
+
+  it("positive control: without the wait the late bind outlives the sweep", async () => {
+    // The pre-fix ordering, run through the same handler. This is the orphan the boundary
+    // exists to prevent — and it proves the assertion above is not passing vacuously
+    // (a test that never binds anything late would look identical).
+    const { handlers, store, client, deleted, preparation } = boundaryDispatch(false);
+    store.save(seed("s1", "feat/x"));
+    store.attachReview("s1", "rev-1");
+    await bindSessionThread(client);
+
+    await handlers["session.archive"]({ sessionId: "s1", archived: true });
+    await preparation;
+
+    expect(findBindingsForSessions(dataDir, ["s1", "rev-1"]).map((row) => row.seat)).toEqual([
+      "design",
+    ]);
+    expect(deleted).toEqual(["thread-1"]);
   });
 });
