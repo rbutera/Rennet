@@ -10,7 +10,12 @@ import { type RefCallback, useEffect, useMemo } from "react";
 import { useCoachAnchor } from "../coach/registry";
 import { useRefreshCommand } from "../data";
 import { ProseSelectionLayer, ReviewAnchoredAskProvider, RichText } from "../review";
-import { lensBoardsFromResolutions, lensReadsSettled, useLensBoardResolutions } from "./board-data";
+import {
+  type BoardResolution,
+  lensBoardsFromResolutions,
+  lensReadsSettled,
+  useLensBoardResolutions,
+} from "./board-data";
 import { SourceChips } from "./design-meta";
 import { DesignCapabilityGrid } from "./design-structure";
 import { GenerationSwitcher } from "./generation-switcher";
@@ -176,50 +181,84 @@ export function LensBoardView({
           forceOpen={forceOpen}
           anchorRef={highlightRef}
         />
-      ) : shown.status === "invalid" ? (
-        <div data-kind="board-error" data-reason={shown.reason} className="text-danger text-sm">
+      ) : (
+        <BoardAccount resolution={shown} />
+      )}
+    </main>
+  );
+}
+
+/**
+ * The account a NON-`valid` resolution gives of itself — the one vocabulary every board
+ * surface uses for these states, so the workspace and the bench never explain the same
+ * failure two ways. A `valid` resolution renders nothing here: its document is the
+ * caller's to place (the workspace wraps it differently from the bench).
+ *
+ * The bench used to render `null` for every one of these while its reader still read
+ * "drafted" or "reworked" — a settled lane with no board and no reason (Codex review,
+ * 2026-09-03). Reusing this component is what keeps that from happening again in a
+ * second set of words.
+ */
+export function BoardAccount({ resolution }: { readonly resolution: BoardResolution }) {
+  switch (resolution.status) {
+    case "valid":
+      return null;
+    case "invalid":
+      return (
+        <div
+          data-kind="board-error"
+          data-reason={resolution.reason}
+          className="text-danger text-sm"
+        >
           <p className="font-medium">This board could not be read.</p>
           <p className="text-muted-foreground">
-            {shown.reason === "identity"
+            {resolution.reason === "identity"
               ? "The source returned a board for a different lens or generation."
-              : shown.reason === "excluded-kind"
+              : resolution.reason === "excluded-kind"
                 ? "The board carries an element kind that no lens board renders."
-                : shown.reason === "unreadable"
+                : resolution.reason === "unreadable"
                   ? "The board read failed, so its contents are unknown."
                   : "The board data did not match the expected shape."}
           </p>
         </div>
-      ) : shown.status === "pending" ? (
+      );
+    case "pending":
+      return (
         <p data-kind="board-pending" className="text-muted-foreground text-sm">
           Reading this board…
         </p>
-      ) : shown.status === "absent" ? (
+      );
+    case "absent":
+      return (
         <div data-kind="board-absent" className="text-muted-foreground text-sm">
-          <p className="font-medium text-foreground">{absenceCopy(shown.reason).title}</p>
-          <p>{absenceCopy(shown.reason).detail}</p>
+          <p className="font-medium text-foreground">{absenceCopy(resolution.reason).title}</p>
+          <p>{absenceCopy(resolution.reason).detail}</p>
         </div>
-      ) : shown.status === "failed" ? (
+      );
+    case "failed":
+      return (
         <div
           data-kind="board-failed"
-          data-classification={shown.account?.classification}
+          data-classification={resolution.account?.classification}
           role="alert"
           className="text-danger text-sm"
         >
           <p className="font-medium">This lens failed to generate.</p>
-          <p className="text-muted-foreground">{shown.reason}</p>
-          {shown.account?.classification === "retryable" ? (
+          <p className="text-muted-foreground">{resolution.reason}</p>
+          {resolution.account?.classification === "retryable" ? (
             <p className="text-muted-foreground">
               Another drafting attempt can still produce this board.
             </p>
           ) : null}
         </div>
-      ) : (
+      );
+    default:
+      return (
         <p data-kind="board-empty" className="text-muted-foreground text-sm">
           No board for this generation yet.
         </p>
-      )}
-    </main>
-  );
+      );
+  }
 }
 
 /**
