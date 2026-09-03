@@ -149,7 +149,11 @@ export function createRegenerationLanes(emit: (lanes: readonly LensLane[]) => vo
         ? undefined
         : next.status === "running"
           ? current.seats
-          : current.seats.map(({ latest: _latest, ...seat }) => seat);
+          : current.seats.map((seat) => ({
+              seat: seat.seat,
+              provider: seat.provider,
+              ...(seat.thread === undefined ? {} : { thread: seat.thread }),
+            }));
     lanes.set(lens, {
       id: lens,
       label: LENS_LANE_LABEL[lens],
