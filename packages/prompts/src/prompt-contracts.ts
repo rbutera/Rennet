@@ -536,6 +536,29 @@ export const REPAIR_POINTERS_MAX_BYTES = 8_000;
 /** The byte bound on the frozen-id list. Ids are short; this is ~250 of them. */
 export const REPAIR_FROZEN_IDS_MAX_BYTES = 4_000;
 
+/**
+ * The byte bound on ONE pointer line. A Zod parse pointer embeds the value it rejected, so
+ * a single pointer can exceed the whole list's cap on its own — and `boundedJoin` breaks
+ * before keeping anything, which emits "Fix ONLY these issues:" with no issue under it.
+ * Capping each line first means the first pointer always survives.
+ */
+export const REPAIR_POINTER_LINE_MAX_BYTES = 1_000;
+
+/** `text` cut to `maxBytes`, on a code-point boundary, with an honest "…" marker. */
+function capBytes(text: string, maxBytes: number): string {
+  if (utf8Bytes(text) <= maxBytes) return text;
+  const budget = maxBytes - utf8Bytes("…");
+  let kept = "";
+  let bytes = 0;
+  for (const char of text) {
+    const size = utf8Bytes(char);
+    if (bytes + size > budget) break;
+    kept += char;
+    bytes += size;
+  }
+  return `${kept}…`;
+}
+
 function boundedJoin(lines: readonly string[], maxBytes: number, what: string): string {
   const encoder = new TextEncoder();
   const kept: string[] = [];
@@ -561,7 +584,8 @@ function boundedJoin(lines: readonly string[], maxBytes: number, what: string): 
  * travels is the pointers, the frozen ids, and the instruction. The output schema is NOT
  * restated here: it rides the turn as its structured-output contract.
  *
- * Both interpolations are byte-bounded with an honest omission marker.
+ * Both interpolations are byte-bounded with an honest omission marker, and each pointer
+ * line is capped on its own first, so one enormous pointer cannot starve the list.
  */
 export function renderRepairTurn(
   pointers: readonly RepairPointer[],
@@ -570,7 +594,10 @@ export function renderRepairTurn(
   const issues = boundedJoin(
     pointers.map((pointer) => {
       const where = pointer.elementId === undefined ? "" : ` (element \`${pointer.elementId}\`)`;
-      return `- ${pointer.ruleId ?? "schema"} at ${JSON.stringify(pointer.path)}${where}: ${pointer.message}`;
+      return capBytes(
+        `- ${pointer.ruleId ?? "schema"} at ${JSON.stringify(pointer.path)}${where}: ${pointer.message}`,
+        REPAIR_POINTER_LINE_MAX_BYTES,
+      );
     }),
     REPAIR_POINTERS_MAX_BYTES,
     "issues",

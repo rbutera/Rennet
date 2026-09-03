@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   REPAIR_FROZEN_IDS_MAX_BYTES,
+  REPAIR_POINTER_LINE_MAX_BYTES,
   REPAIR_POINTERS_MAX_BYTES,
   renderRepairTurn,
 } from "./prompt-contracts";
@@ -61,6 +62,31 @@ describe("renderRepairTurn", () => {
     expect(new TextEncoder().encode(unbounded).length).toBeGreaterThan(
       REPAIR_POINTERS_MAX_BYTES * 5,
     );
+  });
+
+  it("caps a single oversized pointer instead of dropping it, so the repair still names an issue", () => {
+    // A Zod parse pointer embeds the value it rejected, so one pointer can exceed the whole
+    // list's cap on its own. Uncapped, `boundedJoin` breaks before keeping anything and the
+    // prompt reads "Fix ONLY these issues:" with nothing under it.
+    const huge = "x".repeat(20_000);
+    const prompt = renderRepairTurn([
+      { path: ["elements", 0, "data", "markdown"], message: huge, ruleId: "no-code-bytes" },
+    ]);
+    // Position, not membership: the pointer is the line directly under the instruction, it
+    // ends in the truncation marker, and it is the last thing in the prompt.
+    expect(prompt).toMatch(
+      /return the whole board:\n- no-code-bytes at \["elements",0,"data","markdown"\]: x{900,960}…$/u,
+    );
+    // Nothing else was in the list, so nothing claims to have been omitted.
+    expect(prompt).not.toContain("omitted (byte cap)");
+    expect(new TextEncoder().encode(prompt).length).toBeLessThan(
+      REPAIR_POINTER_LINE_MAX_BYTES + 200,
+    );
+
+    // Positive control on WHY the cap is load-bearing: the uncapped line is bigger than the
+    // list cap by itself, which is exactly the input `boundedJoin` keeps none of.
+    const uncapped = `- no-code-bytes at ["elements",0,"data","markdown"]: ${huge}\n`;
+    expect(new TextEncoder().encode(uncapped).length).toBeGreaterThan(REPAIR_POINTERS_MAX_BYTES);
   });
 
   it("bounds the frozen-id list too", () => {

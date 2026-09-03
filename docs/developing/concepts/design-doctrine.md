@@ -72,8 +72,8 @@ and popovers.
 
 Code always sits on an opaque, high-contrast surface. The outbound preview has
 its own sheet tokens and serif text, which distinguishes the result destined for
-GitHub from the working view. The orchestrator reworks the living draft; the
-preview then renders the exact destination object.
+GitHub from the working view. Rennet's rework workers redraft the living document;
+the preview then renders the exact destination object.
 
 ## Typography has clear jobs
 

@@ -127,8 +127,8 @@ about your own installed CLI, and updating it clears the notice.
 
 ## Start a session
 
-A **session** is one conversation with the orchestrator and everything hanging
-off it. It claims exactly one **review target**: your branch, your PR, or a
+A **session** is one conversation — its own thread in the chat panel — and
+everything hanging off it. It claims exactly one **review target**: your branch, your PR, or a
 teammate PR.
 
 **New Chat** in the sidebar (`⌘N`) opens a searchable project picker. Choosing a
@@ -296,8 +296,8 @@ Three routes, one result.
 **Comment**, **Request Changes**, and **Explain**. Comment opens a small editor
 quoting the span; `⌘`/`Ctrl` + Enter saves. The quoted text keeps a durable
 highlight afterwards — click it to reopen the thread, read the replies, and add
-a follow-up. Explain asks the orchestrator a question; it is not review content
-and never counts toward an exit.
+a follow-up. Explain asks the session's chat thread a question; it is not review
+content and never counts toward an exit.
 
 **Comment on a line.** Hovering a line of code turns its line number into a
 `+`. Click it for an editor offering **Save**, **Request Changes**, and
