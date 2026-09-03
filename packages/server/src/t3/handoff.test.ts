@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { OrchestrationThread, T3Client, TurnOutcome } from "./client";
-import { lastAssistantText, runHandoffTurnT3 } from "./handoff";
+import { lastAssistantText, runHandoffTurn } from "./handoff";
 
 // The T3 exit maps a settled T3 turn onto the handoff outcome the review loop already
 // consumes. Driven with a stub client so the mapping is the thing under test; the wire
@@ -39,7 +39,7 @@ function stubs(
   return { client, startTurn, threadFor };
 }
 
-describe("runHandoffTurnT3", () => {
+describe("runHandoffTurn", () => {
   it("binds the review's thread on (repoRoot, reviewId), sends the work order as the turn, and returns T3's diff", async () => {
     const assistant = [
       { role: "user", text: "do it" },
@@ -50,7 +50,7 @@ describe("runHandoffTurnT3", () => {
       state: "completed",
       thread: thread("completed", assistant),
     });
-    const outcome = await runHandoffTurnT3(
+    const outcome = await runHandoffTurn(
       { repoRoot: "/repos/a", prompt: "WORK ORDER", reviewId: "rv-1" },
       { client: async () => client, threadFor },
     );
@@ -73,7 +73,7 @@ describe("runHandoffTurnT3", () => {
       { turnId: "turn-1", state: "error", thread: thread("error", [], "provider crashed") },
       { diff: "partial", files: [{ path: "a" }] },
     );
-    const outcome = await runHandoffTurnT3(
+    const outcome = await runHandoffTurn(
       { repoRoot: "/repos/a", prompt: "x", reviewId: "rv-1" },
       { client: async () => client, threadFor },
     );
@@ -90,7 +90,7 @@ describe("runHandoffTurnT3", () => {
     });
     expect(
       (
-        await runHandoffTurnT3(
+        await runHandoffTurn(
           { repoRoot: "/repos/a", prompt: "x", reviewId: "rv-1" },
           { client: async () => interrupted.client, threadFor: interrupted.threadFor },
         )
@@ -107,7 +107,7 @@ describe("runHandoffTurnT3", () => {
     (client.readTurnDiff as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
       new Error("no checkpoint"),
     );
-    const outcome = await runHandoffTurnT3(
+    const outcome = await runHandoffTurn(
       { repoRoot: "/repos/a", prompt: "x", reviewId: "rv-1" },
       { client: async () => client, threadFor },
     );

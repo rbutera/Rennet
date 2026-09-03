@@ -1,9 +1,9 @@
-// The T3 exit on the handoff loop (t3code-sidecar-chat, group 7). When a project's chat
-// engine is `t3`, a composed work order runs as ONE turn on the review's bound T3 thread
-// (full access, cwd = the checkout) instead of Rennet's `SessionTurnLoop`. The turn's diff
-// comes from T3's own checkpoint, and the outcome has the same shape the Rennet engine
-// returns, so `review.handoff.run` recaptures the checkout and offers the delta re-review
-// exactly as before. No Effect here: the client's Promise API is the seam.
+// The handoff exit (t3code-sidecar-chat group 7; t3-lens-threads 4.3). A composed work
+// order runs as ONE turn on the review's bound T3 thread, full access, cwd the checkout.
+// There is no other engine to choose: the `SessionTurnLoop` leg this used to sit beside is
+// gone from the review handoff. The turn's diff comes from T3's own checkpoint, and
+// `review.handoff.run` recaptures the checkout and offers the delta re-review as before.
+// No Effect here: the client's Promise API is the seam.
 
 import { basename } from "node:path";
 import type { HandoffTurnOutcome } from "@rennet/core";
@@ -35,7 +35,7 @@ export function lastAssistantText(thread: OrchestrationThread): string {
   return "";
 }
 
-export async function runHandoffTurnT3(
+export async function runHandoffTurn(
   input: T3HandoffInput,
   deps: T3HandoffDeps,
 ): Promise<HandoffTurnOutcome> {
