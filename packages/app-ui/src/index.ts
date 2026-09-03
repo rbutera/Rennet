@@ -85,6 +85,7 @@ export type {
   DetachedThreadRef,
   DetachedThreadsRow,
   SessionTranscriptProjection,
+  T3NativeChatProps,
   TranscriptRow,
   TurnRow,
   TurnStatus,
@@ -93,6 +94,7 @@ export {
   ChatDock,
   EMPTY_TRANSCRIPT,
   SessionTranscriptProvider,
+  T3ChatSlotProvider,
   useSessionTranscript,
 } from "./chat";
 // The connections surface (issue #381): the shared daemon-attachment shell both the

@@ -55,7 +55,7 @@ Contracts and rulings wins on general product and architecture conflicts, and Pr
 
 ## Package boundaries
 
-`packages/protocol` and `packages/theme` import no Rennet package. `prompts` (the prompt-text + RSP prompt-contract package, formerly `lens-instructions`, which absorbed the deleted `instructions` package in B02) may import `protocol`; `core` may import `protocol` and `prompts`; `adapters` may import those packages plus Node dependencies; `server` may import `protocol`, `prompts`, `core`, and `adapters`; `client` may import `protocol`; `ui` (the vendored shadcn/Base UI component kit) may import only `protocol` and `theme`; `app-ui` (Rennet's composites and screens) may import only `protocol`, `theme`, `ui`, and browser-safe dependencies. `apps/desktop` is the only Electron package. Spikes are excluded from the pnpm workspace.
+`packages/protocol` and `packages/theme` import no Rennet package. `prompts` (the prompt-text + RSP prompt-contract package, formerly `lens-instructions`, which absorbed the deleted `instructions` package in B02) may import `protocol`; `core` may import `protocol` and `prompts`; `adapters` may import those packages plus Node dependencies; `server` may import `protocol`, `prompts`, `core`, and `adapters`; `client` may import `protocol`; `ui` (the vendored shadcn/Base UI component kit) may import only `protocol` and `theme`; `app-ui` (Rennet's composites and screens) may import only `protocol`, `theme`, `ui`, and browser-safe dependencies; `t3-chat` (the rung-two native mount of the vendored T3 Code web app) may import `protocol` and the vendored `@t3tools/*` packages, and only `apps/desktop` consumes it. `apps/desktop` is the only Electron package. Spikes are excluded from the pnpm workspace.
 
 ## Vendored T3 Code (`vendor/t3code/`)
 
@@ -66,7 +66,7 @@ A snapshot of T3 Code (MIT) lives under `vendor/t3code/`, recorded in `UPSTREAM.
 - **Extend over edit.** Rennet code lives outside `vendor/` and imports their modules. Edit in place only when there is no seam, and send general changes upstream so the row leaves the ledger.
 - **Folds are weekly PRs whose body is the digest** from `pnpm t3:inspect`. A fold also applies the catalog and patch changes the digest's manifest diff shows, in `pnpm-workspace.yaml`, and runs `pnpm t3:test` (the upstream suites, which the local gate skips).
 - **Do not touch `t3-vendor` by hand**: no rebase, no cherry-pick. Only `assemble`/`fold` write it.
-- **`effect` and `@t3tools/*` are imported by vendored code and by exactly one Rennet module**, the daemon-side T3 client. Nowhere else.
+- **`effect` and `@t3tools/*` are imported by vendored code and by exactly two Rennet packages' worth of seam**: the daemon-side T3 client (`packages/server/src/t3/client.ts`) and the renderer-side mount (`packages/t3-chat`, which imports the vendored web app by module through the `~/` alias). Nowhere else.
 
 ## Harness prompts & token discipline
 

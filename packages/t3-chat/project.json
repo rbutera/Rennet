@@ -1,0 +1,21 @@
+{
+  "name": "rennet-t3-chat",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "packages/t3-chat/src",
+  "projectType": "library",
+  "tags": ["scope:rennet", "layer:t3-chat"],
+  "targets": {
+    "lint": {
+      "command": "pnpm exec eslint packages/t3-chat/src --max-warnings=0 && pnpm exec biome check packages/t3-chat/src"
+    },
+    "typecheck": {
+      "command": "pnpm exec tsgo --noEmit -p packages/t3-chat/tsconfig.json",
+      "inputs": ["default", "^production", "t3codeShared"]
+    },
+    "build": {
+      "command": "pnpm exec tsgo --noEmit -p packages/t3-chat/tsconfig.json",
+      "inputs": ["default", "^production", "t3codeShared"]
+    },
+    "test": { "command": "pnpm exec vitest run --passWithNoTests packages/t3-chat/src" }
+  }
+}

@@ -259,7 +259,9 @@ Skeleton, Separator, Toast, Field, InputGroup, Spinner, and the `cmdk` Command
 palette, importing only
 `protocol` and `theme`. `@rennet/app-ui` composes the kit into Rennet's screens and
 imports only `protocol`, `theme`, `ui`, and browser-safe dependencies.
-Neither imports `core`, adapters, Node, or Electron.
+Neither imports `core`, adapters, Node, or Electron. `@rennet/t3-chat` is the
+renderer-side seam to the vendored T3 Code web app (`protocol` plus `@t3tools/*`),
+consumed by `apps/desktop` alone and injected into `app-ui` through a React context.
 
 Base UI is the primary primitive family. Radix is not banned: a Radix
 dependency is fine where a shadcn component brings it (`cmdk` pulls Radix Dialog).

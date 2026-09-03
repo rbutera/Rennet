@@ -57,9 +57,9 @@ _7.3 needs a real harness turn (spends the subscription) and is driven by hand w
 
 ## 8. Chat slot, rung two (only after 6.2 passes)
 
-- [ ] 8.1 Vite alias for their `~/` imports into `vendor/t3code/apps/web/src`; one Tailwind build including their source; verify a single React and a single Base UI copy in the bundle
-- [ ] 8.2 CSS theme bridge mapping `--background`, `--foreground` and `--app-theme-*` onto Rennet's `--rn-*` palette and fonts
-- [ ] 8.3 Register the brokered environment in T3's environments store; mount atom registry provider, memory-history router with the thread route, toast and dialog hosts, and `ChatView`; wire `onDiffPanelOpen` to their `DiffPanel` in Rennet's side slot
+- [x] 8.1 Vite alias for their `~/` imports into `vendor/t3code/apps/web/src`; one Tailwind build including their source; verify a single React and a single Base UI copy in the bundle
+- [x] 8.2 CSS theme bridge mapping `--background`, `--foreground` and `--app-theme-*` onto Rennet's `--rn-*` palette and fonts
+- [x] 8.3 Register the brokered environment in T3's environments store; mount atom registry provider, memory-history router with the thread route, toast and dialog hosts, and `ChatView`; wire `onDiffPanelOpen` to their `DiffPanel` in Rennet's side slot
 - [ ] 8.4 Measure renderer bundle delta and confirm both WebSockets coexist; write the result to the spike notes
 - [ ] 8.5 If the mount needs their `_chat` layout or route loaders, implement the fallback: T3's projected thread read model under a Rennet-themed timeline for tool groups, approvals, questions and diffs
 
