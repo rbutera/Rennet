@@ -366,6 +366,8 @@ export async function runRelatedContextRetrieval(
           : {}),
         ...(deps.trackerConfig ? { trackerConfig: deps.trackerConfig } : {}),
         runTurn: seat !== null && "runTurn" in seat ? seat.runTurn : null,
+        // The seat reads the candidates from disk; the prompt only names the path.
+        writeCandidates: (items) => dossierStore.saveCandidates(repoKey, dossierKey, items),
         ...(deps.budget ? { budget: deps.budget } : {}),
       },
     );

@@ -1,4 +1,4 @@
-import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { serializeDossier } from "@rennet/protocol";
@@ -58,6 +58,23 @@ describe("DossierStore", () => {
     // side (empty here, but present) — no torn pair to observe.
     expect(store.load("repo-key", key)).not.toBeNull();
     expect(store.loadRaw("repo-key", key)).toEqual([]);
+  });
+
+  it("saveCandidates writes the canonical bytes and does NOT make the record loadable", () => {
+    const base = freshBase();
+    const key = { target: "pr-489", patchsetRef: "abc1234" };
+    const snapshotStore = new ProjectSnapshotStore(base);
+    const store = new DossierStore(snapshotStore);
+    const items = [item("github:x/y#2"), item("github:x/y#1")];
+
+    const path = store.saveCandidates("repo-key", key, items);
+
+    // The enrichment seat reads exactly the canonical dossier bytes at this path.
+    expect(path.endsWith("candidates.json")).toBe(true);
+    expect(readFileSync(path, "utf8").trim()).toBe(serializeDossier(items));
+    // And a candidate list is NOT a finished retrieval: `load` still reads absent, so
+    // the review-open refire gate in `runRelatedContextRetrieval` is not tripped by it.
+    expect(store.load("repo-key", key)).toBeNull();
   });
 
   it("rejects a malformed persisted record as an honest absence, not typed data", () => {

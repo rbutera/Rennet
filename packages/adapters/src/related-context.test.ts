@@ -1,4 +1,8 @@
-import { createInvocationBudget, type HarnessTurnResult } from "@rennet/core";
+import {
+  createInvocationBudget,
+  type HarnessTurnResult,
+  inlineContextViolation,
+} from "@rennet/core";
 import { DOSSIER_BODY_MAX_CHARS, serializeDossier } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import {
@@ -10,6 +14,10 @@ import {
   type JsonFetcher,
   retrieveRelatedContext,
 } from "./related-context";
+
+/** The stand-in for the dossier store's `saveCandidates`: it returns the path the seat reads. */
+const CANDIDATES_PATH = "/home/rai/.rennet/projects/rennet/dossier/pr-1@ps_1/candidates.json";
+const CANDIDATES_AT = (): string => CANDIDATES_PATH;
 
 describe("extractRefs", () => {
   it("extracts every GitHub ref form with per-source provenance", () => {
@@ -506,7 +514,7 @@ describe("retrieveRelatedContext", () => {
     });
     const result = await retrieveRelatedContext(
       { prBody: "See #7 and #8" },
-      { gh, repo, now, runTurn, budget },
+      { gh, repo, now, runTurn, budget, writeCandidates: CANDIDATES_AT },
     );
     expect(result.enrichment).toEqual({ status: "ran", budgetGranted: false, overage: true });
     expect(result.items).toEqual([
@@ -523,13 +531,76 @@ describe("retrieveRelatedContext", () => {
       status: "failed",
       message: "seat unavailable",
     });
-    const result = await retrieveRelatedContext({ prBody: "See #7" }, { gh, repo, now, runTurn });
+    const result = await retrieveRelatedContext(
+      { prBody: "See #7" },
+      { gh, repo, now, runTurn, writeCandidates: CANDIDATES_AT },
+    );
     expect(result.enrichment).toEqual({
       status: "failed",
       reason: "seat unavailable",
       budgetGranted: true,
       overage: false,
     });
+    expect(result.items.map((item) => item.id)).toEqual(["github:rbutera/rennet#7"]);
+  });
+
+  // ── session-context-files 3.8: the enrichment prompt names the dossier, never carries it ──
+
+  it("names the candidates file and its item count, and carries no dossier JSON", async () => {
+    // A body big enough that inlining it would be unmistakable in the prompt.
+    const marker = "ACCEPTANCE-CRITERION-SENTINEL";
+    const gh = canned({
+      ...issue(7, `${marker} ${"filler ".repeat(400)}`),
+      ...issue(8, `${marker} ${"filler ".repeat(400)}`),
+    });
+    let prompt = "";
+    const runTurn = async (sent: string): Promise<HarnessTurnResult> => {
+      prompt = sent;
+      return { status: "emitted", body: { items: [] } };
+    };
+    const written: string[] = [];
+    await retrieveRelatedContext(
+      { prBody: "See #7 and #8" },
+      {
+        gh,
+        repo,
+        now,
+        runTurn,
+        writeCandidates: (items) => {
+          written.push(...items.map((item) => item.id));
+          return CANDIDATES_PATH;
+        },
+      },
+    );
+
+    // The path is named, the count is stated, and the two item bodies stayed on disk.
+    expect(prompt).toContain(CANDIDATES_PATH);
+    expect(prompt).toContain("2 items");
+    expect(prompt).not.toContain(marker);
+    expect(written.sort()).toEqual(["github:rbutera/rennet#7", "github:rbutera/rennet#8"]);
+    // The mechanical reading of "never inline context": no JSON literal over 2 KB.
+    expect(inlineContextViolation(prompt)).toBeUndefined();
+    // A bound, not a vibe. The pre-change prompt on this fixture was over 4 KB.
+    expect(Buffer.byteLength(prompt, "utf8")).toBeLessThan(600);
+  });
+
+  it("skips the enrichment turn when no candidates path was written (the control)", async () => {
+    // The CONTROL for the assertions above, executed rather than described: with the
+    // write skipped there is no path to name, and the seat is not called at all —
+    // so the prompt assertions cannot be passing on a prompt nobody sends.
+    const gh = canned(issue(7, "keep me"));
+    let called = 0;
+    const runTurn = async (): Promise<HarnessTurnResult> => {
+      called += 1;
+      return { status: "emitted", body: { items: [] } };
+    };
+    const result = await retrieveRelatedContext({ prBody: "See #7" }, { gh, repo, now, runTurn });
+    expect(result.enrichment).toEqual({
+      status: "skipped",
+      reason: "no candidate dossier path",
+    });
+    expect(called).toBe(0);
+    // The deterministic dossier is untouched: a skipped trim is not a lost item.
     expect(result.items.map((item) => item.id)).toEqual(["github:rbutera/rennet#7"]);
   });
 });
