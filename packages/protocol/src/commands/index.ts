@@ -508,7 +508,9 @@ const definitions = {
   // the sidecar on first ask and hands back the origin, WS URL, bearer, and a pairing URL;
   // the client never reads the credential file. Loopback clients only — never remote-exposed.
   "chat.t3Session": {
-    input: z.object({}),
+    /** With a review id, the daemon also binds (creates or resumes) that review's T3 thread,
+     *  rooted in the review's repository checkout. */
+    input: z.object({ reviewId: z.string().min(1).optional() }),
     output: t3SessionSchema,
   },
   // Re-attempt the handshake to ONE host's daemon (C17 cluster 5, #533) — the operation behind

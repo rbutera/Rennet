@@ -2074,6 +2074,8 @@ const layeredStringSchema = z.object({ value: z.string(), layer: settingsLayerSc
  */
 export const settingsProjectPrefsSchema = z.object({
   glyph: layeredStringSchema,
+  /** `rennet` or `t3` (t3code-sidecar-chat); optional so older daemons' rows still parse. */
+  chatEngine: layeredStringSchema.optional(),
   worktreeRoot: layeredStringSchema,
   worktreePattern: layeredStringSchema,
   tracker: z.object({
@@ -2469,6 +2471,7 @@ export type SettingsRepoWriteOutcome = z.infer<typeof settingsRepoWriteOutcomeSc
  */
 export const settingsProjectValueKeySchema = z.enum([
   "glyph",
+  "chatEngine",
   "worktreeRoot",
   "worktreePattern",
   "trackerKind",
@@ -3219,5 +3222,9 @@ export const t3SessionSchema = z.object({
   accessToken: z.string(),
   environmentId: z.string(),
   pairingUrl: z.string().optional(),
+  /** The thread bound to the review that asked (repository root + review id), when one was. */
+  threadId: z.string().optional(),
+  /** The sidecar UI's route for that thread, for an embedded T3 view. */
+  threadUrl: z.string().optional(),
 });
 export type T3Session = z.infer<typeof t3SessionSchema>;

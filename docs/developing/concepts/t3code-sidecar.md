@@ -80,11 +80,26 @@ the claim is removed and a fresh sidecar is spawned.
 ## Access for clients
 
 `chat.t3Session` returns the sidecar's origin, its `/ws` URL, the bearer to open that
-socket with, the sidecar's environment id, and a pairing URL. The bearer is what the
+socket with, the sidecar's environment id, and a pairing URL. Called with a review id, it
+also binds that review's thread: one T3 project per repository checkout (created on first
+use), one thread per repository root and review id, full access, with `worktreePath`
+null so the thread's working directory is the checkout itself. The binding is persisted
+beside the sidecar's state and returned as `threadId` plus the sidecar UI's `threadUrl`. The bearer is what the
 vendored client runtime needs; the pairing URL (`<origin>/pair#token=…`, minted through
 `POST /api/auth/pairing-token`) is what an embedded copy of T3's own UI consumes to set its
 session cookie. The command is loopback-only and never remote-exposed. Clients do not
 read the credential file.
+
+## The chat slot
+
+A project's chat engine is a per-project setting (`chatEngine`, `rennet` or `t3`, default
+`rennet`, stored in the project's `config.json` and edited on the Projects settings page,
+where the persistence, usage and hidden-ref facts sit beside the control). With `t3`
+selected, the review workspace's chat slot renders the rung-one view: an Electron
+`<webview>` of the sidecar's own UI, first at the pairing URL (which sets T3's session
+cookie inside the guest) and then at the bound thread's route. The bearer never enters
+the guest. Rung one exists to answer whether the thread view fits the slot and whether
+approvals and questions round-trip; the native `ChatView` mount is rung two.
 
 ## Status
 
@@ -111,7 +126,10 @@ over RPC before the signal is the daemon-side client's job and lands with it.
 ## Code map
 
 - `packages/server/src/t3/sidecar.ts`: claim, probe, free port, provider seeding, environment, spawn, adopt, stop.
-- `packages/server/src/t3/supervisor.ts`: one supervisor per data dir; `ensure`, `session`, `status`, `stopSync`.
+- `packages/server/src/t3/supervisor.ts`: one supervisor per data dir; `ensure`, `session`, `client`, `threadFor`, `status`, `stopSync`.
+- `packages/server/src/t3/client.ts`: the daemon-side RPC client, the one Rennet module importing `effect` and `@t3tools/contracts`.
+- `packages/server/src/t3/threads.ts`: the (repository root, session id) → thread binding.
+- `packages/app-ui/src/settings/projects/chat-engine.tsx`: the engine control and its disclosure; `packages/app-ui/src/chat/engine-chat-dock.tsx`: the slot switch and the rung-one `<webview>`.
 - `packages/server/src/dispatch/chat.ts`: `chat.t3Session`; `dispatch/daemon.ts` adds `t3Sidecar` to `daemon.status`.
 - `packages/protocol/src/wire.ts`: `t3SidecarStatusSchema`, `t3SessionSchema`.
 - `packages/server/src/daemon-main.ts`: resolves the bundle (`RENNET_T3_BUNDLE` overrides).

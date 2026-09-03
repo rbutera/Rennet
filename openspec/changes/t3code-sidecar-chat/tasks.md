@@ -35,13 +35,15 @@ _4.1 and 4.2 are deferred: nothing in this change consumes them (lens seats stay
 
 ## 5. Engine setting and disclosure
 
-- [ ] 5.1 Add `chat.engine` per-project setting (`rennet` | `t3`), default `rennet`, to settings resolution and the protocol
-- [ ] 5.2 Settings UI control with the persistence, usage and hidden-ref statements beside it
-- [ ] 5.3 Health and connection-bar copy naming the sidecar as an owned process with harness-only egress
+- [x] 5.1 Add `chatEngine` per-project setting (`rennet` | `t3`), default `rennet`, to settings resolution and the protocol
+- [x] 5.2 Settings UI control with the persistence, usage and hidden-ref statements beside it
+- [x] 5.3 Health and connection-bar copy naming the sidecar as an owned process with harness-only egress
 
 ## 6. Chat slot, rung one
 
-- [ ] 6.1 Chat slot switches on the engine setting; T3 branch hosts an Electron `<webview>` at the sidecar's thread route, authenticated via the brokered browser session
+_6.2 and 6.3 need the desktop app driven by hand against a real harness turn (spends the subscription); they are the next thing to do after wave 4 lands, with the outcome written to the spike notes._
+
+- [x] 6.1 Chat slot switches on the engine setting; T3 branch hosts an Electron `<webview>` at the sidecar's thread route, authenticated via the brokered browser session
 - [ ] 6.2 Drive it by hand: send a turn, trigger an approval in supervised mode, answer an agent question, view a per-turn diff; record the outcome in the spike notes
 - [ ] 6.3 Observe outbound connections during a turn and confirm only the harness provider and user MCP servers are contacted
 

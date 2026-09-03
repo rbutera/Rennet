@@ -504,6 +504,8 @@ describe("ProjectsPage — live projection is honest about the unserved write st
     expect(getByLabelText("Worktree naming pattern").hasAttribute("disabled")).toBe(true);
     // Issue tracker: the segmented picker is locked.
     expect(getByRole("button", { name: "jira" }).hasAttribute("disabled")).toBe(true);
+    // Chat engine: the segmented picker is locked.
+    expect(getByRole("button", { name: "t3 code" }).hasAttribute("disabled")).toBe(true);
     // Guidance: Add Rule is locked, so no editor can open to discard a rule.
     expect(getByRole("button", { name: "Add Rule" }).hasAttribute("disabled")).toBe(true);
 
@@ -511,8 +513,9 @@ describe("ProjectsPage — live projection is honest about the unserved write st
     const notes = [...document.querySelectorAll('[data-slot="unbacked-note"]')].map(
       (n) => n.textContent ?? "",
     );
-    expect(notes.length).toBe(4);
+    expect(notes.length).toBe(5);
     expect(notes.some((t) => /Glyphs aren/.test(t))).toBe(true);
+    expect(notes.some((t) => /Chat engine choice/.test(t))).toBe(true);
     expect(notes.some((t) => /Worktree location and naming/.test(t))).toBe(true);
     expect(notes.some((t) => /Issue-tracker config/.test(t))).toBe(true);
     expect(notes.some((t) => /Guidance rules/.test(t))).toBe(true);
@@ -536,6 +539,7 @@ describe("ProjectsPage — live projection is honest about the unserved write st
 // and the surface tells the truth about which.
 const P1_PREFS: NonNullable<SettingsProject["prefs"]> = {
   glyph: { value: "", layer: "builtin" },
+  chatEngine: { value: "rennet", layer: "builtin" },
   worktreeRoot: { value: "", layer: "builtin" },
   worktreePattern: { value: "{project}-{branch}", layer: "repo" },
   tracker: {
@@ -641,6 +645,35 @@ describe("ProjectsPage — the served per-project rung (C18 group A)", () => {
       key: "worktreePattern",
       value: "{branch}",
     });
+    cleanup();
+  });
+
+  it("a chat-engine pick writes the repo rung, and the disclosure sits beside the control", async () => {
+    const { writes, view } = mountServedPrefs();
+    const t3 = await view.findByRole("button", { name: "t3 code" });
+    // The three statements are visible with no dialog opened (t3code-chat-surface spec).
+    const disclosure = view.container.querySelector('[data-slot="chat-engine-disclosure"]');
+    expect(disclosure?.textContent).toContain("persisted harness sessions");
+    expect(disclosure?.textContent).toContain("usage view");
+    expect(disclosure?.textContent).toContain("hidden checkpoint ref");
+    fireEvent.click(t3);
+    await waitFor(() => expect(writes.length).toBe(1));
+    expect(writes[0]).toEqual({
+      projectId: "p1",
+      repoPath: P1_ROW.repoPath,
+      key: "chatEngine",
+      value: "t3",
+    });
+    cleanup();
+  });
+
+  it("a daemon that serves no engine row leaves the engine control disabled, never a silent no-op", async () => {
+    const { chatEngine: _omitted, ...withoutEngine } = P1_PREFS;
+    const { writes, view } = mountServedPrefsWith(withoutEngine);
+    const t3 = await view.findByRole("button", { name: "t3 code" });
+    expect(t3).toHaveProperty("disabled", true);
+    fireEvent.click(t3);
+    expect(writes).toEqual([]);
     cleanup();
   });
 
