@@ -72,10 +72,9 @@ function renderIndex(dir: string, files: readonly SessionContextFile[]): string 
   ].join("\n");
 }
 
-/** The session's context directory, as a path relative to the bound root (`/` separators). */
-export function sessionContextRelativeDir(sessionId: string): string {
-  return `.rennet/context/${sessionId}`;
-}
+// The relative path has ONE definition, in `@rennet/core`, so the node-free prompt
+// builders and this writer cannot drift; re-exported here for the daemon's own callers.
+export { sessionContextRelativeDir };
 
 /**
  * Write this session's context files and their index, ensuring the managed ignore block
