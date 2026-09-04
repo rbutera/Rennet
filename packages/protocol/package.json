@@ -1,6 +1,6 @@
 {
   "name": "@rennet/protocol",
-  "version": "0.6.12",
+  "version": "0.7.0",
   "private": true,
   "type": "module",
   "sideEffects": false,
