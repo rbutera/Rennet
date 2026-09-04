@@ -496,12 +496,19 @@ describe("#685 owner loop through a real server", () => {
       title: "feature/shared — round 1",
       worktreePath: roundTurns[0]?.repoRoot,
     });
-    expect(roundTurns[0]?.operationId).toEqual(expect.any(String));
+    // The operation id is what keys the thread, so the round must carry ITS OWN — not the
+    // session's and not the review's, which is what the shared thread was keyed on.
+    expect(roundTurns[0]?.operationId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(roundTurns[0]?.operationId).not.toBe(sessionId);
+    expect(roundTurns[0]?.operationId).not.toBe(reviewId);
     expect(afterRoundOne[0]?.run?.checkpoint?.threadId).toBe(roundTurns[0]?.threadId);
-    // The negative half, and the load-bearing one: the round's thread is NOT the session's
-    // or the review's. Give the round the session key back and this reddens.
-    expect(roundTurns[0]?.threadId).not.toBe(sessionId);
-    expect(roundTurns[0]?.threadId).not.toBe(reviewId);
+    // What this CANNOT catch: no sidecar runs here, so nothing proves the binding resolves
+    // to a different thread than the session's — the fake mints its own id. That claim is
+    // about `bindThread`'s key and is executed in `t3/handoff.test.ts`
+    // ("binds the ROUND's own thread … and never the session's"), which asserts the only
+    // key `threadFor` is ever asked for is `round`. What this DOES catch is the wiring: the
+    // round reaches the round-turn seam at all, with its operation, its title and the bound
+    // root as its cwd. Restore the session-keyed handoff turn and `roundTurns` stays empty.
     // The receipt is honest after a commit (#811): the worker committed, so the round's
     // files come from the commit range even though the checkpoint's working tree is clean.
     expect(afterRoundOne[0]?.workerCommitRange.from).not.toBe(

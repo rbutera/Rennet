@@ -60,7 +60,7 @@ const ANSWER_HINT: Record<ProjectScoutAnswer["key"], string> = {
   trackerKind: "referenced tickets feed review context",
   defaultBranch: "the structural map reads this branch",
   worktreeBaseDir: "coding rounds create worktrees here",
-  gateCommand: "coding rounds run this before handoff",
+  gateCommand: "a coding round asks its worker to run this before committing",
   logoPath:
     "cosmetic repository evidence only; choose the sidebar mark in Settings → Projects → Identity",
 };

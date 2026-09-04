@@ -44,6 +44,7 @@ import {
   createRoundWorkerPort,
   createRoundWorkerRecoveryPort,
   createRoundWorkspacePlanner,
+  reconcileRoundReceiptWithCommits,
   resolveCodingHarness,
   runResolvedCodingHarnessTurn,
   startProjectContextMaintenance,
@@ -816,6 +817,46 @@ describe("the round runs in the session's bound root", () => {
     });
     expect(receipt.outcome).toBe("completed");
     expect(receipt.checkpoint).toEqual({ threadId: "thread-1", turnId: "turn-7", turnCount: 4 });
+  });
+
+  // Issue #811: a T3 checkpoint diffs the WORKING TREE, and a worker that obeyed the work
+  // order and committed leaves that tree clean — so the checkpoint reported "0 files
+  // changed" over a branch that had moved by two files and thirty lines.
+  describe("the worker receipt after a commit", () => {
+    const committed = {
+      diff: "diff --git a/a.ts b/a.ts\n+committed\n",
+      changedPaths: ["a.ts"],
+    };
+
+    it("takes its files from the commit range when the checkpoint's tree is clean", async () => {
+      const reconciled = await reconcileRoundReceiptWithCommits(
+        { outcome: "completed" as const, diff: "", changedPaths: [] as readonly string[] },
+        { sourceHead: "head-before", committedDiff: async () => committed },
+      );
+      expect(reconciled).toEqual({ outcome: "completed", ...committed });
+    });
+
+    it("leaves an editing-but-not-committing turn's own evidence alone", async () => {
+      // The range is empty because nothing was committed. The receipt keeps the working-tree
+      // diff, which is what the coordinator's agreement check turns into a failed round with
+      // "the turn changed 1 file but left no commit".
+      const dirty = { diff: "diff --git a/a.ts b/a.ts\n+edited\n", changedPaths: ["a.ts"] };
+      const committedDiff = vi.fn(async () => undefined);
+      expect(
+        await reconcileRoundReceiptWithCommits({ ...dirty }, { sourceHead: "h", committedDiff }),
+      ).toEqual(dirty);
+      // Not even consulted: a receipt that already has evidence is never second-guessed.
+      expect(committedDiff).not.toHaveBeenCalled();
+    });
+
+    it("stays empty when the turn committed nothing and changed nothing", async () => {
+      expect(
+        await reconcileRoundReceiptWithCommits(
+          { diff: "", changedPaths: [] as readonly string[] },
+          { sourceHead: "h", committedDiff: async () => undefined },
+        ),
+      ).toEqual({ diff: "", changedPaths: [] });
+    });
   });
 
   it("settles a restart from the turn's checkpoint, and fails naming the bound root without one", async () => {
