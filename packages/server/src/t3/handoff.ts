@@ -13,10 +13,18 @@ import type { OrchestrationThread, T3Client, TurnOutcome } from "./client";
 import type { ThreadBinding, ThreadBindingKey } from "./threads";
 
 export interface T3HandoffInput {
+  /** The REPOSITORY the review lives in — the thread's binding key and its T3 project. */
   readonly repoRoot: string;
   readonly prompt: string;
   readonly reviewId: string;
   readonly signal?: AbortSignal;
+  /**
+   * The session's bound workspace (session-bound-workspace): the turn's cwd. Absent ⇒ the
+   * repository root, which is the binding for a branch review on the reviewer's own checkout.
+   */
+  readonly worktreePath?: string;
+  /** The branch that workspace has checked out; absent for a detached PR snapshot. */
+  readonly branch?: string;
 }
 
 export interface T3HandoffDeps {
@@ -25,6 +33,8 @@ export interface T3HandoffDeps {
     readonly repositoryRoot: string;
     readonly key: ThreadBindingKey;
     readonly title: string;
+    readonly worktreePath?: string;
+    readonly branch?: string;
   }) => Promise<ThreadBinding>;
 }
 
@@ -63,6 +73,8 @@ export async function runHandoffTurn(
     repositoryRoot: input.repoRoot,
     key: { kind: "session", sessionId: input.reviewId },
     title: basename(input.repoRoot) || "review",
+    ...(input.worktreePath === undefined ? {} : { worktreePath: input.worktreePath }),
+    ...(input.branch === undefined ? {} : { branch: input.branch }),
   });
   const client = await deps.client();
   const start = await client.startTurn({ threadId: binding.threadId, text: input.prompt });

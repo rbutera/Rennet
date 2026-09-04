@@ -200,6 +200,14 @@ export interface LiveComposeDeps {
    * files the turn is pointed at are the files `session.archive` purges (review finding 1).
    */
   writeContext(review: Review, files: readonly PromptContextFile[]): string;
+  /**
+   * The session's BOUND workspace for this review (session-bound-workspace D1) — the cwd this
+   * turn runs in, and the root `writeContext` writes under. One value for both, because the
+   * context path the prompt names is RELATIVE: write under the repository while the turn runs
+   * in a worktree and the prompt points at a file that is not there. Absent ⇒ the repository
+   * root, which is the binding for a branch review on the reviewer's own checkout.
+   */
+  turnRoot?(review: Review): string;
 }
 
 /** The input to one compose call: the mechanical bundle + the reviewed repo root. */
@@ -230,7 +238,10 @@ export function createLiveComposeBundle(
   deps: LiveComposeDeps,
 ): (input: LiveComposeInput) => Promise<ComposedHandoffBundle> {
   return async ({ bundle, review, contextDir }) => {
-    const repoRoot = review.repositoryRoot;
+    // The session's bound workspace: the cwd of this turn AND the root `writeContext`
+    // writes the asks under, which have to be the same value or the prompt's relative path
+    // names a file that is not there.
+    const repoRoot = deps.turnRoot?.(review) ?? review.repositoryRoot;
     let port: ComposePort | null = null;
     // F3: a seat probe that REJECTS (e.g. codex discovery throws) must not reject the
     // whole IPC command — it sits OUTSIDE the core router's fallback boundary. Catch it

@@ -88,10 +88,21 @@ the claim is removed and a fresh sidecar is spawned.
 
 `chat.t3Session` returns the sidecar's origin, its `/ws` URL, the bearer to open that
 socket with, and the sidecar's environment id. Called with a review id, it
-also binds that review's thread: one T3 project per repository checkout (created on first
-use), one thread per repository root and review id, full access, with `worktreePath`
-null so the thread's working directory is the checkout itself. The binding is persisted
-beside the sidecar's state and returned as `threadId` plus the sidecar UI's `threadUrl`.
+also binds that review's thread: one T3 project per repository (created on first use), one
+thread per repository root and review id, full access, with the session's **bound workspace**
+as the thread's `worktreePath`. T3 resolves a turn's cwd as `worktreePath ?? project.workspaceRoot`,
+so that field is what puts every turn of the thread in the tree the session is bound to —
+the reviewer's own checkout for a branch review they are standing on, a Rennet-created
+worktree for a branch they are not, the detached worktree at the reviewed head for a
+pull-request snapshot. The binding is persisted beside the sidecar's state and returned as
+`threadId` plus the sidecar UI's `threadUrl`.
+
+The same is true of every seat thread and of the handoff thread: they are created with the
+session's bound workspace, never the project root alone, so all six lens seats, the chat and
+the work order read one tree. A thread whose bound workspace no longer exists on disk is
+refused with a message naming the missing path rather than created in the project root,
+which is a different tree a seat would draft from happily. See
+[Session-bound workspace](#session-bound-workspace) below.
 The bearer is what the vendored client runtime needs. The command is loopback-only and
 never remote-exposed. Clients do not read the credential file.
 
@@ -339,9 +350,8 @@ next sweep or the next successful `ensure`, up to five attempts, after which a t
 sidecar genuinely lost stops pinning the list.
 
 The sweep is keyed on the session and review ids rather than on a repository
-root: a session's own thread is bound under the review id at the review's checkout, while
-its seat threads are bound under the session id at the drafting worktree, so a root-scoped
-sweep would leave every seat thread behind. Seat rows written before the owner field
+root: a session's own thread is bound under the review id and its seat threads under the
+session id, so a root-scoped sweep would leave every seat thread behind. Seat rows written before the owner field
 existed carry no session id and are matched by nothing — silence never sweeps.
 
 Ten vendored files carry this: the three contract modules that gained `outputSchema` /
@@ -406,10 +416,78 @@ subscription is dropped when THAT LANE settles — not when the generation does,
 seats that finish first stop costing a socket and an idle tick while the slowest lens
 runs on.
 
+## Session-bound workspace
+
+A session binds to exactly **one** workspace when it is created, and keeps it for its whole
+life. Which one is decided from the review target, once:
+
+| Review target | Bound workspace |
+| --- | --- |
+| A branch some worktree of the repository already has checked out (usually the reviewer's own) | that checkout — nothing is created |
+| A branch nothing has checked out | a Rennet-created worktree at `~/.rennet/worktrees/<repoKey>/<branch>`, with the branch checked out |
+| A pull-request snapshot | the detached worktree at the reviewed head, the one the pull-request front door already indexes |
+
+"Some worktree already has it out" is asked of `git worktree list`, not assumed: git refuses
+`worktree add` for a branch checked out elsewhere, so binding blind would fail on exactly the
+tree that should have been bound to. Git answers in **its** spelling, which for a WSL project
+driven from a Windows host is the distro's (`/home/u/repo`), so the answer is re-spelled into
+the one the daemon addresses the repository by before it becomes `boundRoot`.
+
+A workspace that cannot be created **fails the bind** rather than falling back to the clone.
+The clone sits on whatever ref it sits on — usually the default branch — so a recorded fallback
+would run every later turn of the session against a tree the review is not about. Nothing is
+recorded, and the next use retries.
+
+The decision is recorded as `boundRoot` on the session record, and every later read is that
+field. A session with none — minted before the binding existed, or one whose first bind threw —
+**binds on the next use and records it**: `holdingReviewContext`, which every review-scoped turn
+already passes through, and the review-keyed read the chat and handoff threads are created from
+both bind before they answer. That is what makes "the next use retries" real rather than a
+sentence: a synchronous read of the empty field would answer the clone, and a thread's cwd is
+fixed at creation, so answering the clone once leaves a thread in the wrong tree for its life.
+
+When git names a directory Rennet already has a name for — the repository itself, or the
+worktree Rennet created — **Rennet's own spelling wins**. `git worktree list` prints a realpath,
+and a `boundRoot` that differs from the previous one by spelling alone reads downstream as "this
+session moved", which retires the session's threads and re-keys the new ones.
+
+Nothing re-decides a binding — but a pull-request binding is **re-pinned**
+on every read, because it is a detached checkout and a landed round advances the reviewed head;
+`ensurePrWorktree` replaces the checkout at the same path, so the recorded root does not move.
+
+The session's children run there because the thread's `worktreePath` and the turn's `cwd` are
+both that root: the six lens seats, the chat thread, the handoff thread and every cold utility
+turn (scout, repo map, delta digest, opener, pull-request body, refine, CI classification,
+finding verification). The coding round is Lane B's remaining work and still runs its own
+detached worktree per operation until [task 5.3](https://github.com/rbutera/rennet) lands.
+
+On WSL the bound root reaches the child as `wsl.exe --cd <distro path>`: the adapter bakes that
+argument at construction and `transportCwd` wins over a session's `cwd`, so a harness is
+resolved from the **turn root**, never from the repository root, or the cwd is silently ignored.
+
+A thread's cwd is fixed when the thread is created, so a binding row records the workspace it
+was created with, and the workspace is half the binding KEY — which is what puts the chat, the
+handoff and the round's turn on ONE thread. A row keyed on the repository while a workspace is
+being asked for is superseded: it carries no workspace (written before this wave) or the clone
+root (written by a read that preceded any bind), and either way its thread is rooted in the
+wrong tree. It is moved to the sidecar's pending deletions, so the existing sweep DELETES that
+thread rather than leaving an orphan transcript with no handle.
+
+The reviewer sees it: the chat header's trail names the bound workspace beside the branch, so
+"which tree did the seat read" is not invisible when it is a worktree rather than their own
+checkout.
+
+Worktrees earlier versions created per round operation (`~/.rennet/round-worktrees/`) and per
+review (`~/.rennet/worktrees/review/`) are removed by a sweep at daemon start, which leaves any
+directory a live session is bound to (compared through `realpath`, and re-read before every
+removal) and logs how many it removed. Nothing creates a `worktrees/review/` directory any
+more; the round worktrees come back until Lane B's task 5.4 deletes the planner that makes
+them.
+
 ## The handoff exit
 
 "Hand to coding agent" dispatches the composed work order as one turn on the review's
-bound thread, full access, cwd the checkout. The daemon waits for the turn to settle,
+bound thread, full access, cwd the session's bound workspace. The daemon waits for the turn to settle,
 reads T3's checkpoint diff for that turn, and returns a final text, a unified diff and
 the files touched — or a failure reason from T3's session. `review.handoff.run` then
 recaptures the checkout and offers the delta re-review exactly as before. There is no
@@ -531,15 +609,15 @@ its files. Four callers remove a directory, and nothing else does.
   files — and those whose session the store already marks archived, which is what a crash
   between `setArchived` and the purge leaves behind. The roots it looks under are each
   project's `openPath` and every one of its `includedRepoPaths` (a workspace's other repos
-  are invisible from `openPath` alone), every `contextRoot` a session recorded, and the
-  drafting roots a range review's seats run in until the workspace binding lands
-  (`~/.rennet/worktrees/review/<reviewId>` and any recorded PR worktree).
+  are invisible from `openPath` alone), every `boundRoot` a session recorded, and any
+  recorded pull-request worktree.
 - The project scout purges its own run (below).
 
-The session record carries `contextRoot`: the root its context was actually written under,
-which the purge prefers over `repositoryRoot`. They differ exactly when they must — a range
-review's seats draft in a review worktree, not the reviewer's checkout, so a purge aimed at
-`repositoryRoot` would leave those files behind forever.
+The session record carries `boundRoot`: the one workspace the session is bound to, which is
+also where its context directory lives, and which the purge prefers over `repositoryRoot`.
+They differ exactly when they must — an off-branch or pull-request session's turns run in a
+worktree, not the reviewer's checkout, so a purge aimed at `repositoryRoot` would leave those
+files behind forever.
 
 One turn runs before any session exists: the project scout, which fires at project add. It
 writes through the same writer under an id of its own, `project-scout-<uuid>`, one per run,
@@ -601,6 +679,9 @@ enumeration, so a large delta costs the turn nothing and the file stays complete
 - `packages/server/src/t3/latest-event.ts`: the pure thread → `LaneLatest` projector; `t3/seat-progress.ts`: the throttled subscription that feeds a lane.
 - `packages/adapters/src/t3-seat-turn.ts`: the seat leg (`createT3SeatTurn`); `council-seat-turn.ts` routes board jobs to it when the seam is present, and `runtime/rounds.ts` builds the seam per generation.
 - `packages/server/src/t3/handoff.ts`: the handoff exit, which `create-server.ts` runs for every work order that names a review.
+- `packages/server/src/bound-workspace.ts`: the one binding decision (`decideBoundWorkspace`); `create-server.ts` records it on the session as `boundRoot` and reads it back through `boundRootForSession` / `boundWorkspaceForReview`.
+- `packages/server/src/legacy-worktrees.ts`: the daemon-start sweep of the retired round and review worktrees.
+- `packages/adapters/src/pr-worktree.ts`: `worktreeForBranch`, `ensureBranchWorktree`, `branchWorktreePath` beside the pull-request worktree helpers.
 - `packages/app-ui/src/chat/t3-chat-dock.tsx`: the slot, its header trail, the session-or-lens choice and the hand-off to the host-provided components (`chat/t3-chat-slot.tsx`); `packages/app-ui/src/store/ui.ts`: `lensThread` and `openLensThread`.
 - `packages/t3-chat/src/native-chat.tsx`: the native mount (routes, providers, environment registration, the thread and draft route views mirrored from upstream's route files, and `T3ThreadView`); `session.ts`: the session-to-registration mapping and the route builder both views share; `t3.css`: the theme bridge and the read-only composer rule. `apps/desktop/vite.renderer.config.ts` and `vite.browser.config.ts` each carry the alias, dedupe and defines; `apps/desktop/src/renderer/index.tsx` and `src/browser/entry.tsx` each provide both components.
 - `packages/server/src/dispatch/chat.ts`: `chat.t3Session`; `dispatch/daemon.ts` adds `t3Sidecar` to `daemon.status`.

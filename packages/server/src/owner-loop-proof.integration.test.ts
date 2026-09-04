@@ -17,6 +17,7 @@ import {
   RoundOperationStore,
   SessionStore,
 } from "@rennet/adapters";
+import { escapePath } from "@rennet/core";
 import {
   type CommandOutput,
   commandIdFor,
@@ -419,8 +420,8 @@ describe("#685 owner loop through a real server", () => {
     // `writeSessionContext` line in `create-server.ts` and this reddens.
     const sessionStore = new SessionStore(join(dataDir, "sessions"));
     const roundOneSession = sessionStore.load(sessionId);
-    expect(roundOneSession?.contextRoot).toBeDefined();
-    const contextDir = join(roundOneSession?.contextRoot ?? "", ".rennet", "context", sessionId);
+    expect(roundOneSession?.boundRoot).toBeDefined();
+    const contextDir = join(roundOneSession?.boundRoot ?? "", ".rennet", "context", sessionId);
     expect(existsSync(join(contextDir, "evidence.json"))).toBe(true);
     expect(existsSync(join(contextDir, "round.json"))).toBe(true);
     const operationStore = new RoundOperationStore(join(dataDir, "round-operations"));
@@ -625,10 +626,13 @@ describe("#685 owner loop through a real server", () => {
       "report-round-two",
       "post-process",
     ]);
-    // Board seats draft in the review's EVIDENCE worktree — a detached checkout
-    // pinned at the reviewed head — never in the ambient clone, whose checked-out
-    // ref (main, holding BASE bytes) is unrelated to the reviewed branch.
-    const evidenceRoot = realpathSync(join(dataDir, "worktrees", "review", reviewId));
+    // Board seats draft in the session's BOUND workspace (session-bound-workspace D1).
+    // The ambient clone sits on `main` — BASE bytes, unrelated to the reviewed branch — so
+    // nothing has `feature/shared` out and the session binds to a worktree Rennet creates
+    // for it, keyed by the repository so a second repo on the same branch name gets its own.
+    const evidenceRoot = realpathSync(
+      join(dataDir, "worktrees", escapePath(realpathSync(target)), "feature", "shared"),
+    );
     const boardRecords = records.filter((record) => targetBoardSteps.has(String(record.stepId)));
     expect(boardRecords.length).toBeGreaterThan(0);
     expect(

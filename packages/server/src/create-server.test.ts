@@ -1043,6 +1043,85 @@ describe("session.mint — provider-qualified PR dispatch", () => {
     });
   });
 
+  it("BINDS on a read when nothing bound at capture, instead of answering the clone", async () => {
+    // The "next use retries" claim, executed. Two states reach this code path: a session
+    // minted before the binding existed, and one whose first bind threw. Both have no
+    // `boundRoot`, and the read paths used to fall back to the clone — which for a review of
+    // a branch the clone is not on is the WRONG TREE, written into a thread's cwd where it is
+    // fixed for the thread's life. Here the recorded binding is removed to reproduce that
+    // state exactly, and a pure read command has to put it back.
+    const dataDir = mkdtempSync(join(tmpdir(), "rennet-lazy-bind-data-"));
+    const repo = realpathSync(mkdtempSync(join(tmpdir(), "rennet-lazy-bind-repo-")));
+    dirs.push(dataDir, repo);
+    const runGit = (...args: string[]): string =>
+      execFileSync("git", args, { cwd: repo, encoding: "utf8" }).trim();
+    runGit("init", "-b", "main");
+    runGit("config", "user.email", "t@t");
+    runGit("config", "user.name", "t");
+    writeFileSync(join(repo, "a.txt"), "base\n");
+    runGit("add", "a.txt");
+    runGit("commit", "-m", "base");
+    runGit("checkout", "-b", "feature/lazy");
+    writeFileSync(join(repo, "a.txt"), "base\nfeature\n");
+    runGit("add", "a.txt");
+    runGit("commit", "-m", "feature");
+    // The clone is left on `main`, so the review's branch is checked out NOWHERE and the
+    // session must bind to a worktree Rennet creates — a different path from the clone, which
+    // is what makes the fallback visible at all.
+    runGit("checkout", "main");
+
+    const server = await createRennetServer({ dataDir, env: {} });
+    shutdowns.push(server.shutdown);
+    const added = (await server.dispatch("projects.add", {
+      commandId: randomUUID(),
+      discovery: {
+        path: repo,
+        kind: "repo",
+        repos: [{ name: "repo", path: repo, branches: 2 }],
+        primaryBranch: "main",
+      },
+      includedRepos: ["repo"],
+      primaryBranch: "main",
+    })) as { project: { id: string } };
+    const minted = (await server.dispatch("session.mint", {
+      projectId: added.project.id,
+      commandId: randomUUID(),
+      branch: "feature/lazy",
+    })) as { session: PreparationSession | null };
+    const sessionId = minted.session?.id ?? "";
+    const prepared = await waitForReviewSession(server, sessionId);
+
+    const store = new SessionStore(join(dataDir, "sessions"));
+    // `waitForReviewSession` returns as soon as the review is attached, which the capture does
+    // just BEFORE it binds, so the binding is awaited here on its own.
+    await vi.waitFor(() => expect(store.load(sessionId)?.boundRoot).toBeDefined(), {
+      timeout: 15_000,
+      interval: 20,
+    });
+    const bound = store.load(sessionId)?.boundRoot;
+    expect(bound).not.toBe(repo);
+
+    // Reproduce the unbound state a pre-wave record — or a bind that threw — leaves behind.
+    const unbound = store.load(sessionId);
+    if (unbound === undefined) throw new Error("the minted session was not persisted");
+    const withoutBinding = { ...unbound };
+    delete (withoutBinding as { boundRoot?: string }).boundRoot;
+    store.save(withoutBinding);
+    expect(store.load(sessionId)?.boundRoot).toBeUndefined();
+
+    // A pure READ — no harness, no sidecar — and it has to bind rather than answer the clone.
+    const transcript = (await server.dispatch("session.transcript", {
+      reviewId: prepared.reviewId ?? "",
+    })) as { trail: { workspace?: string } };
+    // Byte-identical to the capture's answer, not merely the same directory: a re-bind finds
+    // the worktree through git, which prints a realpath, and a differently-spelled `boundRoot`
+    // retires the session's threads and re-keys the new ones on the alternate name.
+    expect(transcript.trail.workspace).toBe(bound);
+    expect(transcript.trail.workspace).not.toBe(repo);
+    // ...and it RECORDED it, so the next read is a plain field read rather than a re-bind.
+    expect(store.load(sessionId)?.boundRoot).toBe(bound);
+  }, 30_000);
+
   it("keeps legacy repository + PR targets on the GitHub opener", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "rennet-legacy-pr-dispatch-"));
     const workspace = mkdtempSync(join(tmpdir(), "rennet-legacy-pr-workspace-"));

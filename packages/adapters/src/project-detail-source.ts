@@ -13,7 +13,12 @@ import type { GitExec } from "./git-range-diff";
 import { isGitHubNetworkError } from "./github-fetch";
 import { defaultProjectDiscoveryDeps, discoverProject } from "./project-discovery";
 import { type ProjectPrSource, ProjectPrSourceUnavailable } from "./project-pr-source";
-import { forgeForRemoteHost, parseRemoteIdentity, type RemoteIdentity } from "./worktree-discovery";
+import {
+  forgeForRemoteHost,
+  parseRemoteIdentity,
+  parseWorktrees,
+  type RemoteIdentity,
+} from "./worktree-discovery";
 
 /**
  * The LIVE local-work half of the project-detail substrate (issue #37, wave B1).
@@ -143,45 +148,6 @@ async function readBranchActivity(git: GitExec, root: string): Promise<BranchAct
     if (name.length > 0 && Number.isFinite(unix)) activity.set(name, unix);
   }
   return activity;
-}
-
-/** A worktree checked out on a branch, parsed from `git worktree list --porcelain`. */
-interface ParsedWorktree {
-  path: string;
-  branch: string;
-}
-
-/**
- * Parse `git worktree list --porcelain -z` into (path, branch) pairs; detached
- * skipped. The `-z` form is NUL-delimited (attributes split by `\0`, records by
- * `\0\0`), so a worktree path containing a newline or trailing whitespace survives
- * intact — a plain-`--porcelain` newline split would corrupt it.
- */
-function parseWorktrees(output: string): ParsedWorktree[] {
-  const worktrees: ParsedWorktree[] = [];
-  let path: string | undefined;
-  let branch: string | undefined;
-  const flush = (): void => {
-    if (path && branch) worktrees.push({ path, branch });
-    path = undefined;
-    branch = undefined;
-  };
-  for (const token of output.split("\0")) {
-    if (token.length === 0) {
-      flush(); // the double-NUL record separator yields an empty token
-      continue;
-    }
-    if (token.startsWith("worktree ")) {
-      flush(); // a new record starts even without the separator
-      path = token.slice("worktree ".length); // NOT trimmed: the path is exact
-    } else if (token.startsWith("branch ")) {
-      const ref = token.slice("branch ".length);
-      branch = ref.startsWith("refs/heads/") ? ref.slice("refs/heads/".length) : ref;
-    }
-    // `detached`, `bare`, `HEAD <sha>` carry no branch → the record flushes without one.
-  }
-  flush();
-  return worktrees;
 }
 
 /**

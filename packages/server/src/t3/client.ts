@@ -57,6 +57,20 @@ export interface CreateThreadInput {
   readonly modelSelection: ModelSelection;
   /** Defaults to T3's full access, the posture Rule Zero mandates. */
   readonly runtimeMode?: RuntimeMode;
+  /**
+   * The session's bound workspace (session-bound-workspace D1). T3 resolves a turn's cwd as
+   * `worktreePath ?? project.workspaceRoot`, so this is what puts every turn of the thread in
+   * the checkout the session is bound to rather than the repository root. Omitted ⇒ `null`,
+   * which is the project root — correct only when the two are the same thing.
+   */
+  readonly worktreePath?: string;
+  /**
+   * The branch that workspace has checked out, when it has one. T3 re-creates a thread's
+   * worktree from `(branch, worktreePath)` if the directory vanishes under it, which is why
+   * the pair travels together; a detached workspace (a PR snapshot) carries no branch and
+   * gets none.
+   */
+  readonly branch?: string;
 }
 
 export interface StartTurnInput {
@@ -315,9 +329,10 @@ export async function connectT3(options: T3ClientOptions): Promise<T3Client> {
         modelSelection: input.modelSelection,
         runtimeMode: input.runtimeMode ?? FULL_ACCESS,
         interactionMode: "default",
-        // The checkout itself: T3 resolves cwd as `worktreePath ?? project.workspaceRoot`.
-        branch: null,
-        worktreePath: null,
+        // The session's bound workspace: T3 resolves cwd as `worktreePath ?? project.workspaceRoot`,
+        // so an absent binding still means the project root, exactly as before.
+        branch: input.branch ?? null,
+        worktreePath: input.worktreePath ?? null,
       });
       return threadId;
     },
