@@ -256,6 +256,49 @@ describe("stampDeltas — marks survive reminted ids", () => {
     expect(dataOf(stamped, "s9")?.delta).toBe("reworked");
   });
 
+  // `symbol` is optional and seat-authored: a regeneration may rename it, or leave it out,
+  // over the very same lines. It used to be part of the citation KEY, so doing that made the
+  // section match nothing — new, with its predecessor reported removed — and the reader lost
+  // the thread of a section that had not moved. It still moves the content signature (the
+  // rework mark above), which is the mark a renamed anchor should leave.
+  it("a renamed symbol on the same range is the SAME section, not a new one and a removal", () => {
+    // Retitled too, so the title arm cannot be what carries it: the citation is.
+    const previous = withIds("s1", "c1", { symbol: "login", title: "Auth" });
+    const current = withIds("s9", "c9", { symbol: "logout", title: "Tokens" });
+    expect(dataOf(stampDeltas(previous, current), "s9")?.delta).toBe("reworked");
+    expect(removedSectionIds(previous, current)).toEqual([]);
+    // …and dropping the anchor entirely is the same fact.
+    const dropped = withIds("s9", "c9", { title: "Tokens" });
+    expect(dataOf(stampDeltas(previous, dropped), "s9")?.delta).toBe("reworked");
+    expect(removedSectionIds(previous, dropped)).toEqual([]);
+  });
+
+  // The title arm's cost, which is why it now applies only where nothing is cited: the board
+  // vocabulary is small, and two generations both writing a "Findings" section about
+  // different code is the ordinary case. Matching on the shared word made a genuinely new
+  // section read as a rework and hid the old one's removal — both halves of the delta wrong
+  // at once, silently.
+  it("a section reusing a title over a different range is NEW, and the old one is removed", () => {
+    const previous = withIds("s1", "c1", { title: "Findings", start: 11 });
+    const current = withIds("s9", "c9", { title: "Findings", start: 40 });
+    expect(dataOf(stampDeltas(previous, current), "s9")?.delta).toBe("new");
+    expect(removedSectionIds(previous, current)).toEqual(["s1"]);
+  });
+
+  it("a section that cites nothing still matches on its title — that is all it has", () => {
+    // Reminted ids, changed body, no citations anywhere: the title is the only remaining
+    // evidence that this is the same section, so it is still allowed to be the answer.
+    const prose = (sectionId: string, textId: string, markdown: string) =>
+      draft([
+        { id: sectionId, kind: "section", data: { author, title: "Overview", children: [textId] } },
+        { id: textId, kind: "prose", data: { author, markdown } },
+      ]);
+    const previous = prose("s1", "p1", "The change reshapes the reader.");
+    const current = prose("s9", "p9", "The change reshapes the reader and the writer.");
+    expect(dataOf(stampDeltas(previous, current), "s9")?.delta).toBe("reworked");
+    expect(removedSectionIds(previous, current)).toEqual([]);
+  });
+
   it("control: reminted ids under a new title citing a new range is new, and the old section removed", () => {
     const previous = withIds("s1", "c1");
     const current = withIds("s9", "c9", { title: "Tokens", start: 40 });

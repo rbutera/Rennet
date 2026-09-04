@@ -61,6 +61,7 @@ export function codexReviewOpenerPort(
         prompt,
         cwd,
         outputSchema: REVIEW_OPENER_OUTPUT_SCHEMA,
+        label: "review-opener",
       });
       return { ...emittedOpener(result.output), ...(result.model ? { model: result.model } : {}) };
     } catch (error) {

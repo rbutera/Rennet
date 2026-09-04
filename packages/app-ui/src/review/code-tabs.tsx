@@ -33,6 +33,16 @@ export function CitationBlock({ citation }: { citation: CodeRef }) {
     );
   }
   if (!data) return <p className="text-2xs text-muted-foreground">Loading {label}…</p>;
+  if (data.caption !== undefined && data.lines.length === 0) {
+    // The daemon served the citation and had no bytes for it (a truncated capture, no
+    // readable tree). That is a fact about the capture, not a bad citation, so it reads as
+    // a caption — and never as an empty code card, which is what rendering zero lines gave.
+    return (
+      <p className="text-2xs text-muted-foreground" data-kind="citation-truncated">
+        {data.caption}
+      </p>
+    );
+  }
   const block = spanToBlock(citation, data);
   return (
     // Key by the FULL ref: a citation switch remounts the surface so a half-written

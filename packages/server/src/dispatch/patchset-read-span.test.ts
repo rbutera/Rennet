@@ -383,9 +383,14 @@ describe("patchset.readSpan agrees with lint's predicate, line for line", () => 
     expect(await readerSays(dispatch, citation)).toBe(readable);
   });
 
-  it("the one deliberate divergence: a truncated capture resolves in lint and says so when opened", async () => {
-    // The seat reads the whole diff and may cite past the cut; lint must not call that
-    // "outside the change". The reader has no text for it, and names the truncation.
+  // ── The lossy tail: lint ACCEPTS it, so the card must open it ──────────────
+  //
+  // A truncated capture's tail region is open-ended on purpose — the daemon will not call a
+  // seat's citation "outside the change" over lines it chose not to keep — so lint accepts a
+  // citation past the cut. The reader used to throw for exactly that citation, which put a
+  // refusal on the card over a citation the board had accepted. The reviewed bytes are still
+  // addressable: the patchset records the tree they were captured from.
+  async function lossyDispatch(extra: Record<string, unknown> = {}) {
     const store = new SqliteReviewStore(":memory:");
     const service = new ReviewService(
       { capture: () => Promise.reject(new Error("unused")) },
@@ -401,18 +406,75 @@ describe("patchset.readSpan agrees with lint's predicate, line for line", () => 
       id: "ps-lossy",
       files: truncated,
     });
+    const file = truncated.find((f) => f.path === "src/cheese.ts") as (typeof files)[number];
     const dispatch = createDispatch({
       service,
       allowedRoots: new Set<string>(),
+      ...extra,
     } as unknown as DispatchDeps);
-    const citation = ref({ patchsetId: "ps-lossy", startLine: 39, endLine: 40 });
-    const file = truncated.find((f) => f.path === "src/cheese.ts") as (typeof files)[number];
+    return { dispatch, file };
+  }
+
+  const LOSSY_CITATION = ref({ patchsetId: "ps-lossy", startLine: 39, endLine: 40 });
+
+  it("lint accepts a citation past the truncation — the premise of the two tests below", async () => {
+    const { file } = await lossyDispatch();
     expect(
       resolveCitation(
-        { path: citation.path, side: "head", start: 39, end: 40 },
+        { path: LOSSY_CITATION.path, side: "head", start: 39, end: 40 },
         changedRegions(buildHunkIndex({ files: [file] }), [file]),
       ),
     ).toBeDefined();
-    await expect(dispatch("patchset.readSpan", citation)).rejects.toThrow(/truncated/);
+  });
+
+  it("opens a lossy-tail citation from the reviewed tree the patchset recorded", async () => {
+    // The immutable object the capture came from — the patchset's own recorded root and
+    // head oid — never the working tree. The reader asks for exactly that triple.
+    const asked: { root: string; oid: string; path: string }[] = [];
+    const { dispatch } = await lossyDispatch({
+      readBlobAtOid: async (input: { root: string; oid: string; path: string }) => {
+        asked.push(input);
+        return `${BASE.join("\n")}\n`;
+      },
+    });
+    const span = (await dispatch("patchset.readSpan", LOSSY_CITATION)) as Span & {
+      caption?: string;
+    };
+    expect(span.lines).toEqual(["const line39 = 39;", "const line40 = 40;"]);
+    expect(span.contextBefore).toEqual([
+      "const line36 = 36;",
+      "const line37 = 37;",
+      "const line38 = 38;",
+    ]);
+    expect(span.caption).toBeUndefined();
+    expect(asked).toEqual([{ root: "/vanished/repo", oid: "1".repeat(40), path: "src/cheese.ts" }]);
+  });
+
+  it("captions the truncation, and never throws, when the tree cannot be read either", async () => {
+    // No reader wired (a composition without one) and a reader that fails are the same fact
+    // to the reviewer: the citation is sound and the bytes were cut. It RESOLVES — a
+    // refusal here reads as "your citation is wrong", which it is not.
+    const readers: Record<string, unknown>[] = [
+      {},
+      { readBlobAtOid: async () => null },
+      {
+        readBlobAtOid: async () => {
+          throw new Error("repository is gone");
+        },
+      },
+      // A tree shorter than the citation cannot serve it either, and must not answer with a
+      // silently short block: line 40 is absent from these two lines.
+      { readBlobAtOid: async () => "one\ntwo\n" },
+    ];
+    for (const reader of readers) {
+      const { dispatch } = await lossyDispatch(reader);
+      const span = (await dispatch("patchset.readSpan", LOSSY_CITATION)) as Span & {
+        caption?: string;
+      };
+      expect(span.lines).toEqual([]);
+      expect(span.caption).toMatch(
+        /Rennet truncated this file's diff before src\/cheese\.ts lines 39–40 \(head\)/,
+      );
+    }
   });
 });

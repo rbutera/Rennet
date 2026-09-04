@@ -1,5 +1,5 @@
 import { buildHunkIndex, resolveCitation, sideLinesByFileLine } from "@rennet/core";
-import type { AnchorSide, PatchFile, Patchset } from "@rennet/protocol";
+import type { AnchorSide, CodeRef, PatchFile, Patchset } from "@rennet/protocol";
 import { parseCommandInput, parseCommandOutput } from "@rennet/protocol";
 import { changedRegions } from "../runtime/round-collation";
 import type { CommandHandler, DispatchRuntime } from "./runtime";
@@ -38,6 +38,45 @@ function contiguous(
 }
 
 /**
+ * Serve a span out of the REVIEWED TREE, for the one case the capture cannot answer: a
+ * truncated diff whose tail region lint deliberately leaves open-ended.
+ *
+ * The bytes come from a git object, not the working tree — `reviewedTreeOid ?? headOid` for
+ * head, `baseOid` for base — so this is still the immutable reviewed content the citation
+ * was made against, just read from the other half of the same capture. `undefined` when no
+ * reader is wired, the repository is gone, or the file is shorter than the citation; the
+ * caller then says so rather than serving blank code.
+ */
+async function readFromTree(
+  rt: DispatchRuntime,
+  patchset: Patchset,
+  file: PatchFile,
+  ref: CodeRef,
+): Promise<{ lines: string[]; contextBefore: string[]; contextAfter: string[] } | undefined> {
+  const read = rt.deps.readBlobAtOid;
+  if (read === undefined) return undefined;
+  const repository = patchset.repository;
+  const oid =
+    ref.side === "base" ? repository.baseOid : (repository.reviewedTreeOid ?? repository.headOid);
+  const path = ref.side === "base" ? (file.previousPath ?? file.path) : file.path;
+  let text: string | null;
+  try {
+    text = await read({ root: repository.root, oid, path });
+  } catch {
+    return undefined;
+  }
+  if (text === null) return undefined;
+  const all = text.split("\n");
+  if (all.length < ref.endLine) return undefined;
+  // 1-based inclusive lines, with the same three lines of orientation either side.
+  return {
+    lines: all.slice(ref.startLine - 1, ref.endLine),
+    contextBefore: all.slice(Math.max(0, ref.startLine - 1 - CONTEXT_LINES), ref.startLine - 1),
+    contextAfter: all.slice(ref.endLine, ref.endLine + CONTEXT_LINES),
+  };
+}
+
+/**
  * `patchset.readSpan` — the ONE server-side reader behind every code citation.
  *
  * B3 registered this row contract-only and left a throwing handler for "B4/B10 to bind";
@@ -45,17 +84,25 @@ function contiguous(
  * so every citation in the shipped app — every `code_ref`, finding, decision, order step,
  * annotation and round outcome that cites code — resolved to a thrown command. This binds it.
  *
- * The span is served from the CAPTURED patchset's own patch text and nothing else: no
- * working tree, no `git show`, no repository on disk. That is the #489 client-asset rule
- * (a citation must read the immutable capture, not whatever the checkout says today), and
- * it is also why a review whose repository is gone still resolves its citations — the
- * content was captured, so `repositoryPresent: false` costs a reader nothing here.
+ * The span is served from the CAPTURED patchset's own patch text — never the working tree.
+ * That is the #489 client-asset rule (a citation must read the immutable capture, not
+ * whatever the checkout says today), and it is also why a review whose repository is gone
+ * still resolves its citations: the content was captured, so `repositoryPresent: false`
+ * costs a reader nothing here.
  *
  * The cost of reading the patch is that a patchset contains only its hunks. A span the
  * diff never showed is genuinely not in the store, and this says exactly that rather than
  * returning empty lines that would render as blank code. Every rejection below names the
  * specific absence, because the message is what the reviewer reads (`CitationBlock` renders
  * it verbatim) — "not readable" tells them nothing they can act on.
+ *
+ * The ONE exception is a TRUNCATED capture, and it is not a rejection: lint deliberately
+ * accepts a citation past the cut (the tail region is open-ended, so the daemon never calls
+ * a seat's citation wrong over lines it chose not to keep), and a citation the board
+ * accepts must never come back as an error on the card. Those lines are read from the
+ * IMMUTABLE OBJECT the patchset recorded (`git show <reviewedTreeOid|baseOid>:<path>`),
+ * which is the same reviewed content the capture cut short — not the checkout as it stands.
+ * With no repository to read, the answer is an honest caption, still not a refusal.
  */
 export function patchsetHandlers(rt: DispatchRuntime) {
   return {
@@ -132,10 +179,19 @@ export function patchsetHandlers(rt: DispatchRuntime) {
         if (text === undefined) {
           // A region claims the line but the capture has no text for it: only a truncated
           // diff does that (its tail region is open-ended on purpose, so lint does not call
-          // the seat's citation wrong).
-          throw new Error(
-            `${ref.path} ${spanLabel} (${ref.side}) reaches past the point where Rennet truncated this file's diff — line ${n} was not captured.`,
-          );
+          // the seat's citation wrong). Lint ACCEPTS this citation, so the card must not
+          // throw for it — that would show the reviewer a refusal over a valid citation.
+          // The reviewed content is still addressable: read it out of the immutable tree
+          // the patchset recorded (`git show <oid>:<path>`), which is the same bytes the
+          // capture cut short, not whatever the checkout says today (#489 holds).
+          const fromTree = await readFromTree(rt, patchset, file, ref);
+          if (fromTree !== undefined) return parseCommandOutput(name, fromTree);
+          return parseCommandOutput(name, {
+            lines: [],
+            contextBefore: [],
+            contextAfter: [],
+            caption: `Rennet truncated this file's diff before ${ref.path} ${spanLabel} (${ref.side}), and the reviewed tree is not readable from here — the citation is sound, the captured bytes stop short of it.`,
+          });
         }
         lines.push(text);
       }

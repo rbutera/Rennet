@@ -19,9 +19,9 @@
  *    on the section element's `data.delta` (`SectionDeltaSchema`); the
  *    `LensBoard` projection's `sections[].delta` is projected from it downstream
  *    (B04/B10), not here. A mark keys on what a section SAYS and CITES, never on
- *    element ids: a `code_ref`'s identity for the stamp is `(path, side, start_line,
- *    end_line, symbol)`, not the patchset id it was minted under, and a section is
- *    matched by its content, then by a shared citation, never by id first
+ *    element ids: a `code_ref` CITES `(path, side, start_line, end_line)` — not the
+ *    patchset id it was minted under, and not its optional `symbol` anchor — and a
+ *    section is matched by its content, then by a shared citation, never by id first
  *    (session-bound-workspace D5). So a regenerated board whose elements cite the
  *    same lines carries the same marks, even when every id was reminted. Each mark
  *    is stamped with {@link DELTA_MARK_BASIS} so a reader can tell it from a mark
@@ -55,8 +55,23 @@ function stableStringify(value: unknown): string {
  */
 export const DELTA_MARK_BASIS = "citation";
 
-/** The fields of a `code_ref` that identify what it cites — its semantic citation key. */
-const CODE_REF_KEY_FIELDS = ["path", "side", "start_line", "end_line", "symbol"] as const;
+/**
+ * The fields of a `code_ref` that its CONTENT identity compares — the citation plus the
+ * optional seat-authored `symbol` anchor, and never `patchset_id`.
+ */
+const CODE_REF_CONTENT_FIELDS = ["path", "side", "start_line", "end_line", "symbol"] as const;
+
+/**
+ * The fields that identify WHAT a `code_ref` cites: the path, side and line range, and
+ * nothing else (D5 — "delta marks key on path and range").
+ *
+ * `symbol` is deliberately absent. It is optional and seat-authored, so a regeneration that
+ * renamed it, or simply omitted it, produced a different citation key over identical lines —
+ * and the section then matched nothing, read as new, and took its predecessor with it into
+ * the removals. The symbol still moves the CONTENT signature (a renamed anchor is a rework),
+ * which is the mark it should leave.
+ */
+const CODE_REF_CITATION_FIELDS = ["path", "side", "start_line", "end_line"] as const;
 
 /**
  * The data an element is compared by. Excludes the composition-set `delta` stamp and its
@@ -70,9 +85,18 @@ function comparedData(el: DraftElement): Record<string, unknown> {
   const data = el.data as Record<string, unknown>;
   if (el.kind === "section") return withoutDelta(data);
   if (el.kind === "code_ref") {
-    return Object.fromEntries(CODE_REF_KEY_FIELDS.map((field) => [field, data[field]]));
+    return Object.fromEntries(CODE_REF_CONTENT_FIELDS.map((field) => [field, data[field]]));
   }
   return data;
+}
+
+/** What a `code_ref` cites, as a stable string; `undefined` for every other kind. */
+function citationKey(el: DraftElement): string | undefined {
+  if (el.kind !== "code_ref") return undefined;
+  const data = el.data as Record<string, unknown>;
+  return stableStringify(
+    Object.fromEntries(CODE_REF_CITATION_FIELDS.map((field) => [field, data[field]])),
+  );
 }
 
 /** An element's content identity for the verbatim carry: its kind and compared data. */
@@ -110,8 +134,8 @@ export function carriedElementIds(previous: DraftBoard, current: DraftBoard): Se
  *    visit). No element id survives into it, so a regenerated board that mints new ids for
  *    the same content has the same signature: content, not ids, is what "the same section"
  *    means (D5).
- *  - `citations` — the semantic citation keys of every `code_ref` in the subtree, which is
- *    how a section that CHANGED is still recognised as the same section, reworked.
+ *  - `citations` — the `(path, side, start, end)` key of every `code_ref` in the subtree,
+ *    which is how a section that CHANGED is still recognised as the same section, reworked.
  */
 interface SectionIdentity {
   readonly element: DraftElement;
@@ -146,7 +170,8 @@ function sectionIdentities(board: DraftBoard): SectionIdentity[] {
       seen.add(id);
       const el = byId.get(id);
       if (el === undefined) continue;
-      if (el.kind === "code_ref") cited.add(contentSig(el));
+      const citation = citationKey(el);
+      if (citation !== undefined) cited.add(citation);
       for (const value of Object.values(el.data as Record<string, unknown>)) {
         for (const v of Array.isArray(value) ? value : [value]) {
           if (typeof v === "string" && byId.has(v)) queue.push(v);
@@ -166,14 +191,25 @@ function sectionIdentities(board: DraftBoard): SectionIdentity[] {
 
 /**
  * Is `previous` the same section as `current`, possibly reworked? Same content is the
- * strongest answer; failing that, the two cite a common line range (the citation key the
- * marks key on), carry the same title, or — for a board that kept its ids — the same id.
+ * strongest answer; failing that, the two cite a common `(path, side, start, end)` range,
+ * or — for a board that kept its ids — carry the same id.
+ *
+ * The title is the LAST resort and only when NEITHER section cites anything. A title is
+ * what a seat writes freely, and the board vocabulary is small: two boards both carrying a
+ * "Findings" section about different code are the ordinary case, not the exception. Matching
+ * on it made a genuinely new section read as a rework of the old one, and hid the old one's
+ * removal — the honest-present ruling inverted, in both directions at once. Where a section
+ * cites code, the citations answer the question; where it cites nothing (a prose-only
+ * section), the title is all there is.
  */
 function sameSection(previous: SectionIdentity, current: SectionIdentity): boolean {
   if (previous.signature === current.signature) return true;
   for (const citation of current.citations) if (previous.citations.has(citation)) return true;
-  const title = (identity: SectionIdentity) => (identity.element.data as { title?: unknown }).title;
-  if (title(previous) !== undefined && title(previous) === title(current)) return true;
+  if (previous.citations.size === 0 && current.citations.size === 0) {
+    const title = (identity: SectionIdentity) =>
+      (identity.element.data as { title?: unknown }).title;
+    if (title(previous) !== undefined && title(previous) === title(current)) return true;
+  }
   return previous.element.id === current.element.id;
 }
 

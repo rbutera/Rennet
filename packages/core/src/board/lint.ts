@@ -75,15 +75,25 @@ export const REGION_OPEN_END = Number.MAX_SAFE_INTEGER;
 /** A code_ref reduced to what citation geometry needs: its side, path, and line span. */
 export type CodeRefSpan = ChangedRegion;
 
-/** Read a `code_ref` element's citation span, or `undefined` if it is not a code_ref. */
+/**
+ * Read a `code_ref` element's citation span, or `undefined` if it is not a code_ref — or
+ * names a side that is neither `base` nor `head`.
+ *
+ * An unknown side is NOT coerced to head. It used to be, and the cost was silent: a
+ * `side: "old"` citation was linted against the head inventory, resolved against head
+ * regions and rendered on the head side, so a seat that invented a side got a board that
+ * looked checked and pointed at the wrong lines. `side` is a schema-declared enum, so the
+ * honest report is the schema's own pointer (`parseDraft` rejects the element); every rule
+ * that reads a span skips what it cannot read rather than inventing a side for it.
+ */
 export function readCodeRefSpan(el: DraftElement): CodeRefSpan | undefined {
   if (el.kind !== "code_ref") return undefined;
   const d = el.data as { path?: unknown; side?: unknown; start_line?: unknown; end_line?: unknown };
+  if (d.side !== "base" && d.side !== "head") return undefined;
   const path = typeof d.path === "string" ? d.path : "";
-  const side = d.side === "base" ? "base" : "head";
   const start = typeof d.start_line === "number" ? d.start_line : 0;
   const end = typeof d.end_line === "number" ? d.end_line : start;
-  return { path, side, start, end };
+  return { path, side: d.side, start, end };
 }
 
 /** Does the citation overlap the region — same path, same side, ranges intersect? */
@@ -546,17 +556,13 @@ const citationResolves: Rule = (draft, ctx) => {
     }
     // Typed code_ref elements: patchset identity + side inventory + range order.
     if (el.kind === "code_ref") {
-      const d = el.data as {
-        path?: unknown;
-        side?: unknown;
-        patchset_id?: unknown;
-        start_line?: unknown;
-        end_line?: unknown;
-      };
-      const path = typeof d.path === "string" ? d.path : "";
-      const side = d.side === "base" ? "base" : "head";
-      const startLine = typeof d.start_line === "number" ? d.start_line : 0;
-      const endLine = typeof d.end_line === "number" ? d.end_line : startLine;
+      // ONE reader for the span (`readCodeRefSpan`), so an unknown `side` is skipped here
+      // exactly as it is in the region rules rather than checked against the head
+      // inventory: the schema's enum pointer is the honest report for it.
+      const span = readCodeRefSpan(el);
+      if (span === undefined) continue;
+      const { path, side, start: startLine, end: endLine } = span;
+      const d = el.data as { patchset_id?: unknown };
       // ABSENT is the normal drafted shape: the host stamps `patchset_id` once, before
       // persistence, because a seat is never told the id. Only a PRESENT and DIFFERENT id
       // is a contradiction — a board composed against another capture — which is what this

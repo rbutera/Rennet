@@ -96,14 +96,18 @@ export const INLINE_CONTEXT_MAX_BYTES = 2048;
  * small rows, or a payload sitting after a stray brace in prose, is measured in full.
  *
  * Pure, and cheap: fenced blocks are lifted first (their bytes count whole, and a literal
- * inside one is not counted twice), then each LINE is scanned once with a stack of open
- * brackets, `JSON.parse` confirming only a balanced span. The stack resets at every newline:
- * a `JSON.stringify(x)` literal never spans lines (the harness rule forbids pretty-printing
- * for a model), and the reset is what stops an unpaired `{` in prose from swallowing the
- * rest of the prompt.
+ * inside one is not counted twice), then the remaining text is scanned ONCE for balanced
+ * JSON literals, `JSON.parse` confirming each candidate.
  *
- * ponytail: a stray opener on the SAME line as a literal still hides it (the literal is then
- * nested, never top-level); rescan from the stray if a real prompt ever has that shape.
+ * The scan crosses newlines. It used to reset at every one, on the reasoning that a
+ * `JSON.stringify(x)` literal never spans lines — true of the shape the harness rules ASK
+ * for, and exactly why the tap could not see the shape they forbid: a
+ * `JSON.stringify(value, null, 2)` payload is a pretty-printed literal spanning hundreds of
+ * lines, and it summed to zero. The newline reset was also doing a second job — stopping an
+ * unpaired `{` in prose from swallowing the rest of the prompt — so that job is done
+ * properly here instead: a candidate that never balances, or balances but is not JSON, is
+ * ABANDONED and the scan resumes one character after its opener, so a literal that follows
+ * a stray brace (on the same line or a later one) is still measured.
  */
 export function inlineContextViolation(prompt: string): { readonly bytes: number } | undefined {
   let bytes = 0;
@@ -111,50 +115,81 @@ export function inlineContextViolation(prompt: string): { readonly bytes: number
     bytes += UTF8_ENCODER.encode(block).length;
     return "";
   });
-  for (const line of unfenced.split("\n")) bytes += jsonLiteralBytes(line);
+  bytes += jsonLiteralBytes(unfenced);
   return bytes > INLINE_CONTEXT_MAX_BYTES ? { bytes } : undefined;
 }
 
-/** The bytes of every balanced top-level JSON literal on one line of prompt. */
-function jsonLiteralBytes(line: string): number {
-  let bytes = 0;
+/** Could a JSON value start at `text[start]`? A cheap reject for the prose `{`. */
+function opensJsonValue(text: string, start: number): boolean {
+  let i = start + 1;
+  while (i < text.length && /\s/.test(text[i] as string)) i += 1;
+  const next = text[i];
+  if (next === undefined) return false;
+  if (text[start] === "{") return next === '"' || next === "}";
+  return next === "]" || /["[{tfn\-\d]/.test(next);
+}
+
+/**
+ * The end index (exclusive) of the balanced bracket span opening at `start`, or -1 when it
+ * never balances, mismatches, or runs a string past a newline (no JSON string contains a
+ * raw one, so that candidate is prose).
+ */
+function balancedEnd(text: string, start: number): number {
   const open: string[] = [];
-  let start = -1;
   let inString = false;
   let escaped = false;
-  for (let i = 0; i < line.length; i += 1) {
-    const ch = line[i];
+  for (let i = start; i < text.length; i += 1) {
+    const ch = text[i];
     if (inString) {
       if (escaped) escaped = false;
       else if (ch === "\\") escaped = true;
       else if (ch === '"') inString = false;
+      else if (ch === "\n") return -1;
       continue;
     }
     if (ch === '"') {
-      // Only inside a candidate literal: an unpaired quote in prose must not desync the scan.
-      if (open.length > 0) inString = true;
+      inString = true;
       continue;
     }
     if (ch === "{" || ch === "[") {
-      if (open.length === 0) start = i;
       open.push(ch);
       continue;
     }
     if (ch !== "}" && ch !== "]") continue;
-    const opener = open.pop();
-    if (opener === undefined) continue; // a stray closer in prose
-    if (opener !== (ch === "}" ? "{" : "[")) {
-      open.length = 0; // mismatched: this was prose, not a literal
-      continue;
+    if (open.pop() !== (ch === "}" ? "{" : "[")) return -1;
+    if (open.length === 0) return i + 1;
+  }
+  return -1;
+}
+
+/**
+ * The bytes of every balanced top-level JSON literal in `text`, nested literals counted
+ * once (the scan jumps past a literal it counted).
+ *
+ * ponytail: quadratic in the worst case — a prompt whose prose is thousands of unclosed
+ * `{` each rescans to the end. `opensJsonValue` rejects ordinary prose braces in O(1), so
+ * the real shapes cost one pass; memoize the failures if a prompt ever proves otherwise.
+ */
+function jsonLiteralBytes(text: string): number {
+  let bytes = 0;
+  let i = 0;
+  while (i < text.length) {
+    const ch = text[i];
+    if ((ch === "{" || ch === "[") && opensJsonValue(text, i)) {
+      const end = balancedEnd(text, i);
+      if (end > 0) {
+        const literal = text.slice(i, end);
+        try {
+          JSON.parse(literal);
+          bytes += UTF8_ENCODER.encode(literal).length;
+          i = end;
+          continue;
+        } catch {
+          // Balanced brackets, but not JSON: prose. Fall through to the recovery below.
+        }
+      }
     }
-    if (open.length > 0) continue;
-    const literal = line.slice(start, i + 1);
-    try {
-      JSON.parse(literal);
-    } catch {
-      continue; // balanced brackets, but not JSON
-    }
-    bytes += UTF8_ENCODER.encode(literal).length;
+    i += 1;
   }
   return bytes;
 }
