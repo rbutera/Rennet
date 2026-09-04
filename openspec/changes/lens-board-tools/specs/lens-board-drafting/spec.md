@@ -41,3 +41,65 @@ Every board seat SHALL run as a turn on its own sidecar thread, and a repair SHA
 
 - **WHEN** the regression fixture's production `bad-ref` shape is written past the tool boundary
 - **THEN** the board service rejects the write, proving the service-side control still fails when the boundary is bypassed
+
+## ADDED Requirements
+
+### Requirement: The Noise board is the complement of the other lens boards
+
+Noise SHALL be a position, not a property of a hunk: a changed region no other lens board cites is noise, and a changed region another lens board cites is not. Membership of the Noise board SHALL be DERIVED by the host as the complement of the Design, Sequence, Decisions and Flagged boards' citations over the captured patchset, and SHALL NOT be a seat's judgement about reading effort. The host SHALL place one member per uncited changed region on the Noise board before the Noise seat's first turn.
+
+The complement SHALL be total. No member SHALL be added, removed, or handed to another lens: a seat SHALL have no verb that creates a member and none that removes one, so the board and the change agree by construction rather than by diligence.
+
+What the seat SHALL author is the account the derivation cannot give, and nothing besides. Every member SHALL be parented into exactly one group that names its pattern, and every group SHALL carry a reason specific to this change rather than a general statement about that kind of file. **That grouping SHALL be the only thing the seat can get wrong on this board**: membership is derived, citations are refused where they are made, and a member's verdict and judge are host-stamped constants, so a board satisfying the grouping rule is correct by construction in every other respect.
+
+A seat SHALL NOT mark a member as one the reviewer should read anyway, in any form — no verdict it can set, no severity, no prominence. The assurance that nothing worth reading is filed as skippable SHALL rest on the other four lenses' citation coverage: a hunk that matters and that no lens cited is a defect in the lens that missed it, and SHALL be answered by that lens rather than by a second opinion on this board.
+
+A member's verdict and its judge mark SHALL be written by the host and SHALL NOT appear on anything the seat can author, because each has exactly one admissible value once membership is derived. A one-valued field offered to a seat states a choice that does not exist.
+
+#### Scenario: A region no other board cited
+
+- **WHEN** the four other lens boards have settled and a changed region of the patchset is cited by none of them
+- **THEN** that region is a member of the Noise board, placed by the host, without any seat having judged it
+
+#### Scenario: A region another board cited
+
+- **WHEN** the Flagged board cites a changed region
+- **THEN** that region is not a member of the Noise board, whatever its content looks like
+
+#### Scenario: A seat cannot change the membership
+
+- **WHEN** the Noise seat attempts to add a member or to remove one the host placed
+- **THEN** there is no verb that adds one and the removal is refused, and the board still accounts for every uncited region
+
+#### Scenario: A member's verdict and judge are not the seat's to write
+
+- **WHEN** the Noise seat's authoring surface is examined and a settled Noise board is read
+- **THEN** the seat has no way to set a member's verdict or its judge mark, and every member on the board carries the host's constants for both
+
+### Requirement: The Noise lane runs on its siblings' settlements and never on their silence
+
+The Noise lane SHALL start only once the Design, Sequence, Decisions and Flagged lanes have all reached a terminal state, because the complement of a board that has not settled is not knowable. No other lane SHALL wait on Noise, and the Noise lane SHALL NOT delay the reveal of any other board.
+
+A lane that settled a board or declared an admissible absence has POSITIVELY stated what it cites, and an absence SHALL be subtracted as an empty citation set. A lane that FAILED has stated nothing, and its silence SHALL NOT be treated as an empty citation set. When any of the four has failed, the Noise lane SHALL NOT settle a noise board: it SHALL settle as a typed failure naming the lanes whose citations are unknown and why the complement cannot be taken, and it SHALL become runnable again when such a lane settles on retry. A complement taken over a partial set of siblings SHALL NOT be presented as noise.
+
+When the derived complement is empty, the lane SHALL settle its admissible absence WITHOUT running a seat, and that settlement SHALL mean that the other four lanes between them cited every changed region.
+
+#### Scenario: Noise starts on the four settlements
+
+- **WHEN** the four other lanes have settled and the Noise lane has not started
+- **THEN** the Noise lane starts against their citations, and no other lane waited for it
+
+#### Scenario: A sibling lane failed
+
+- **WHEN** the Flagged lane settles as a typed failure and the other three settle
+- **THEN** the Noise lane settles as a typed failure naming Flagged as the lane whose citations are unknown, and no board calls Flagged's un-cited regions noise
+
+#### Scenario: A sibling declared an absence
+
+- **WHEN** the Decisions lane settles `no-decisions` and the other three settle boards
+- **THEN** the complement is taken with Decisions contributing no citations, and the Noise lane settles a board
+
+#### Scenario: Every region was cited
+
+- **WHEN** the four settled boards between them cite every changed region of the patchset
+- **THEN** the Noise lane settles its absence without a seat turn, and the reader is told that every changed region is on another board

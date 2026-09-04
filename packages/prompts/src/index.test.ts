@@ -136,24 +136,62 @@ describe("lens prompt manifest", () => {
     expect(text).toContain("`section.data.children`");
   });
 
-  it("tells the Noise seat that an empty board IS the settlement for an all-signal change", () => {
-    // The `no-noise` absence is only ever settled from the seat's OWN empty-board claim
-    // (`draftOneLens` reads the first emitted return), so this instruction is the whole
-    // producer half of that contract. Delete it, or reverse it into "always emit a board",
-    // and the seat manufactures signal verdicts instead — which is every other lens's
-    // premise, not this one's output, and the reviewer never sees the honest absence.
+  it("tells the Noise seat its board is the complement of the other four", () => {
+    // Rai's ruling, 2026-09-04: anything not covered by one of the other boards is noise.
+    // The seat's membership question is positional, not a judgement about reading effort,
+    // and this sentence is the producer half of that definition. Reverse it into "a hunk
+    // whose content a reviewer can take on trust" and the lane goes back to judging
+    // skip-safety independently, which is what the ruling retired.
     const normalized = readFileSync(join(srcDir, LENS_PROMPT_FILES.noise), "utf8").replace(
       /\s+/g,
       " ",
     );
-    expect(normalized).toContain("## When nothing in the change is noise");
-    expect(normalized).toContain("Say so by emitting a board with NO elements");
-    expect(normalized).toContain('honest "nothing here is safely skippable"');
-    expect(normalized).toContain("Do not manufacture a board of signal verdicts");
-    // …and the other edge of the same rule: an empty board is not a way out of a change
-    // that does have skippable churn.
+    expect(normalized).toContain("Anything not covered by one of the other boards is noise");
+    expect(normalized).toContain("Noise is not a property a hunk has; it is a position");
+    expect(normalized).toContain("Membership is a position, not a verdict");
+  });
+
+  it("leaves the Noise seat no judgement to make beyond the grouping", () => {
+    // The second half of the same ruling (2026-09-04): no escape valve, no prominence mark,
+    // no seat-set verdict of any kind. `verdict` and `judge` are constants and the grouping
+    // is the only thing the seat can get wrong, so every instruction that invited a skip-
+    // safety call is asserted ABSENT. These are absence assertions and they are named as
+    // such: they catch the old sentences coming back verbatim, and they cannot catch a new
+    // sentence that invites the same judgement in different words. That is what review is
+    // for; the executable half is that the words Rai retired are gone.
+    const normalized = readFileSync(join(srcDir, LENS_PROMPT_FILES.noise), "utf8").replace(
+      /\s+/g,
+      " ",
+    );
+    expect(normalized).toContain("the grouping is the only thing here you decide");
+    expect(normalized).toContain("Do not weigh whether a region is safe to skip");
     expect(normalized).toContain(
-      "Emit an empty board only when NO hunk is skip-safe; one skip-safe hunk means a real board naming it",
+      "Every member's `verdict` is `noise` and its `judge` is `llm`. Neither is a choice",
+    );
+    expect(normalized).not.toContain("`signal`");
+    expect(normalized).not.toContain("when in doubt");
+    expect(normalized).not.toContain("safely take on trust");
+  });
+
+  it("tells the Noise seat that an empty board IS the settlement for a fully-cited change", () => {
+    // The `no-noise` absence is only ever settled from the seat's OWN empty-board claim
+    // (`draftOneLens` reads the first emitted return), so this instruction is the whole
+    // producer half of that contract. Delete it, or reverse it into "always emit a board",
+    // and the reviewer never sees the honest absence. Under the 2026-09-04 ruling the
+    // absence also MEANS something different — the other four lanes cited the whole
+    // change, not "nothing here is skippable" — so the wording is asserted too.
+    const normalized = readFileSync(join(srcDir, LENS_PROMPT_FILES.noise), "utf8").replace(
+      /\s+/g,
+      " ",
+    );
+    expect(normalized).toContain("## When the remainder is empty");
+    expect(normalized).toContain("Say so by emitting a board with NO elements");
+    expect(normalized).toContain('honest "every changed region is on another board"');
+    expect(normalized).not.toContain("nothing here is safely skippable");
+    // …and the other edge of the same rule: an empty board is not a way out of a change
+    // that does have a remainder.
+    expect(normalized).toContain(
+      "Emit an empty board only when NO region is left over; one leftover region means a real board naming it",
     );
   });
 
