@@ -6,6 +6,7 @@ import * as NodePath from "node:path";
 import {
   ApprovalRequestId,
   CodexSettings,
+  EnvironmentId,
   EventId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -36,6 +37,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as CodexErrors from "effect-codex-app-server/errors";
 
 import { ServerConfig } from "../../config.ts";
+import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderAdapterValidationError } from "../Errors.ts";
 import type { CodexAdapterShape } from "../Services/CodexAdapter.ts";
@@ -465,6 +467,154 @@ sessionErrorLayer("CodexAdapterLive session errors", (it) => {
       const runtime = runtimeFactory.lastRuntime;
       NodeAssert.ok(runtime);
       NodeAssert.equal(runtime.options.launchArgs, "--strict-config --enable env-feature");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("names the environment variable holding a caller server's bearer token", () => {
+    const runtimeFactory = makeRuntimeFactory();
+    const layer = Layer.effect(
+      CodexAdapter,
+      Effect.gen(function* () {
+        const codexConfig = decodeCodexSettings({});
+        return yield* makeCodexAdapter(codexConfig, {
+          makeRuntime: runtimeFactory.factory,
+        });
+      }),
+    ).pipe(
+      Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+      Layer.provideMerge(ServerSettingsService.layerTest()),
+      Layer.provideMerge(providerSessionDirectoryTestLayer),
+      Layer.provideMerge(NodeServices.layer),
+    );
+
+    return Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("sess-caller-mcp"),
+        runtimeMode: "full-access",
+        mcpServers: {
+          board: { url: "http://127.0.0.1:7391/board/flagged", bearerToken: "board-secret" },
+        },
+      });
+
+      const runtime = runtimeFactory.lastRuntime;
+      NodeAssert.ok(runtime);
+      // The credential itself is on no argument, which is the whole point of
+      // going through an environment variable. Asserted FIRST so a control that
+      // puts the token back on argv fails on this line and not on the shape.
+      for (const argument of runtime.options.appServerArgs ?? []) {
+        NodeAssert.doesNotMatch(argument, /board-secret/);
+      }
+      NodeAssert.deepStrictEqual(runtime.options.appServerArgs, [
+        "-c",
+        "mcp_servers.board.url=http://127.0.0.1:7391/board/flagged",
+        "-c",
+        'mcp_servers.board.bearer_token_env_var="T3_CALLER_MCP_BEARER_TOKEN_BOARD"',
+      ]);
+      NodeAssert.equal(
+        runtime.options.environment?.T3_CALLER_MCP_BEARER_TOKEN_BOARD,
+        "board-secret",
+      );
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("writes T3's own MCP server after a caller that claims its name", () => {
+    const runtimeFactory = makeRuntimeFactory();
+    const threadId = asThreadId("sess-caller-mcp-collision");
+    McpProviderSession.setMcpProviderSession({
+      environmentId: EnvironmentId.make("env-codex-mcp-collision"),
+      threadId,
+      providerSessionId: "provider-session-codex-mcp-collision",
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      endpoint: "http://127.0.0.1:9111/mcp",
+      authorizationHeader: "Bearer t3-own-secret",
+    });
+    const layer = Layer.effect(
+      CodexAdapter,
+      Effect.gen(function* () {
+        const codexConfig = decodeCodexSettings({});
+        return yield* makeCodexAdapter(codexConfig, {
+          makeRuntime: runtimeFactory.factory,
+        });
+      }),
+    ).pipe(
+      Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+      Layer.provideMerge(ServerSettingsService.layerTest()),
+      Layer.provideMerge(providerSessionDirectoryTestLayer),
+      Layer.provideMerge(NodeServices.layer),
+    );
+
+    return Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("codex"),
+        threadId,
+        runtimeMode: "full-access",
+        mcpServers: {
+          "t3-code": { url: "http://127.0.0.1:7391/board/design" },
+        },
+      });
+
+      const runtime = runtimeFactory.lastRuntime;
+      NodeAssert.ok(runtime);
+      const args = runtime.options.appServerArgs ?? [];
+      // Codex takes the LAST `-c` for a key, so position is the assertion:
+      // T3's own url has to come after the caller's for T3 to win the name.
+      const callerIndex = args.indexOf("mcp_servers.t3-code.url=http://127.0.0.1:7391/board/design");
+      const ownIndex = args.indexOf("mcp_servers.t3-code.url=http://127.0.0.1:9111/mcp");
+      NodeAssert.notEqual(callerIndex, -1);
+      NodeAssert.notEqual(ownIndex, -1);
+      NodeAssert.ok(ownIndex > callerIndex);
+    }).pipe(
+      Effect.provide(layer),
+      Effect.ensuring(Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId))),
+    );
+  });
+
+  it.effect("refuses a Codex turn whose MCP servers differ from its session's", () => {
+    const runtimeFactory = makeRuntimeFactory();
+    const threadId = asThreadId("sess-caller-mcp-mismatch");
+    const layer = Layer.effect(
+      CodexAdapter,
+      Effect.gen(function* () {
+        const codexConfig = decodeCodexSettings({});
+        return yield* makeCodexAdapter(codexConfig, {
+          makeRuntime: runtimeFactory.factory,
+        });
+      }),
+    ).pipe(
+      Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+      Layer.provideMerge(ServerSettingsService.layerTest()),
+      Layer.provideMerge(providerSessionDirectoryTestLayer),
+      Layer.provideMerge(NodeServices.layer),
+    );
+
+    return Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("codex"),
+        threadId,
+        runtimeMode: "full-access",
+        mcpServers: { board: { url: "http://127.0.0.1:7391/board/flagged" } },
+      });
+
+      // The same set is fine: a repair turn re-states the seat's own server.
+      yield* adapter.sendTurn({
+        threadId,
+        input: "same servers",
+        mcpServers: { board: { url: "http://127.0.0.1:7391/board/flagged" } },
+      });
+
+      const error = yield* adapter
+        .sendTurn({
+          threadId,
+          input: "different servers",
+          mcpServers: { board: { url: "http://127.0.0.1:7391/board/noise" } },
+        })
+        .pipe(Effect.flip);
+      NodeAssert.match(error.message, /MCP servers its Codex session was not started with/);
+      NodeAssert.match(error.message, /\(board\)/);
     }).pipe(Effect.provide(layer));
   });
 

@@ -25,6 +25,9 @@ import {
   ProviderApprovalDecision,
   ThreadId,
   ProviderSendTurnInput,
+  type TurnMcpServers,
+  differingTurnMcpServerNames,
+  normalizeTurnMcpServers,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Crypto from "effect/Crypto";
@@ -93,7 +96,65 @@ interface CodexAdapterSessionContext {
   readonly scope: Scope.Closeable;
   readonly runtime: CodexSessionRuntimeShape;
   readonly eventFiber: Fiber.Fiber<void, never>;
+  /** The caller-supplied MCP servers this session's app-server was spawned
+   * with, if any. Codex reads `-c mcp_servers.*` at spawn, so the set is fixed
+   * for the session's whole life, exactly as Claude's is. */
+  readonly mcpServers: TurnMcpServers | undefined;
   stopped: boolean;
+}
+
+/** The environment variable that carries a caller-supplied server's bearer
+ * token to the Codex child. Codex reads the token from the environment by
+ * name (`bearer_token_env_var`), which is what keeps the credential itself off
+ * the argument list. Names are sanitized and de-duplicated so two server names
+ * that sanitize alike still get one variable each. */
+function codexBearerTokenEnvVar(name: string, taken: ReadonlySet<string>): string {
+  const base = `T3_CALLER_MCP_BEARER_TOKEN_${name.replace(/[^A-Za-z0-9]/gu, "_").toUpperCase()}`;
+  if (!taken.has(base)) {
+    return base;
+  }
+  let suffix = 2;
+  while (taken.has(`${base}_${suffix}`)) {
+    suffix += 1;
+  }
+  return `${base}_${suffix}`;
+}
+
+/** The `-c` arguments and the bearer-token environment for one session's MCP
+ * servers. T3's own server is appended LAST so its `-c mcp_servers.t3-code.*`
+ * wins a name collision with a caller's. */
+function buildCodexMcpConfiguration(input: {
+  readonly callerMcpServers: TurnMcpServers | undefined;
+  readonly mcpSession: { readonly endpoint: string; readonly authorizationHeader: string } | undefined;
+}): {
+  readonly appServerArgs: ReadonlyArray<string>;
+  readonly bearerTokenEnvironment: Record<string, string>;
+} {
+  const appServerArgs: Array<string> = [];
+  const bearerTokenEnvironment: Record<string, string> = {};
+  const takenEnvVars = new Set<string>(["T3_MCP_BEARER_TOKEN"]);
+  for (const [name, server] of Object.entries(input.callerMcpServers ?? {})) {
+    appServerArgs.push("-c", `mcp_servers.${name}.url=${server.url}`);
+    if (server.bearerToken !== undefined) {
+      const envVar = codexBearerTokenEnvVar(name, takenEnvVars);
+      takenEnvVars.add(envVar);
+      bearerTokenEnvironment[envVar] = server.bearerToken;
+      appServerArgs.push("-c", `mcp_servers.${name}.bearer_token_env_var="${envVar}"`);
+    }
+  }
+  if (input.mcpSession) {
+    bearerTokenEnvironment.T3_MCP_BEARER_TOKEN = input.mcpSession.authorizationHeader.replace(
+      /^Bearer\s+/,
+      "",
+    );
+    appServerArgs.push(
+      "-c",
+      `mcp_servers.t3-code.url=${input.mcpSession.endpoint}`,
+      "-c",
+      'mcp_servers.t3-code.bearer_token_env_var="T3_MCP_BEARER_TOKEN"',
+    );
+  }
+  return { appServerArgs, bearerTokenEnvironment };
 }
 
 function mapCodexRuntimeError(
@@ -1684,6 +1745,11 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
             ? getCodexServiceTierOptionValue(input.modelSelection)
             : undefined;
         const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
+        const callerMcpServers = normalizeTurnMcpServers(input.mcpServers);
+        const mcpConfiguration = buildCodexMcpConfiguration({
+          callerMcpServers,
+          mcpSession,
+        });
         const runtimeInput: CodexSessionRuntimeOptions = {
           threadId: input.threadId,
           providerInstanceId: boundInstanceId,
@@ -1700,18 +1766,13 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
             ? { model: input.modelSelection.model }
             : {}),
           ...(serviceTier ? { serviceTier } : {}),
-          ...(mcpSession
+          ...(mcpConfiguration.appServerArgs.length > 0
             ? {
                 environment: {
                   ...(options?.environment ?? process.env),
-                  T3_MCP_BEARER_TOKEN: mcpSession.authorizationHeader.replace(/^Bearer\s+/, ""),
+                  ...mcpConfiguration.bearerTokenEnvironment,
                 },
-                appServerArgs: [
-                  "-c",
-                  `mcp_servers.t3-code.url=${mcpSession.endpoint}`,
-                  "-c",
-                  'mcp_servers.t3-code.bearer_token_env_var="T3_MCP_BEARER_TOKEN"',
-                ],
+                appServerArgs: mcpConfiguration.appServerArgs,
               }
             : {}),
         };
@@ -1781,6 +1842,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           scope: sessionScope,
           runtime,
           eventFiber,
+          mcpServers: callerMcpServers,
           stopped: false,
         });
         sessionScopeTransferred = true;
@@ -1832,6 +1894,21 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     );
 
     const session = yield* requireSession(input.threadId);
+    // Codex reads `-c mcp_servers.*` when the app-server is spawned, so this
+    // session's MCP server set is as fixed as Claude's. A turn asking for a set
+    // this session was not spawned with is refused with the names it disagrees
+    // on; a turn asking for nothing rides whatever the session holds.
+    const turnMcpServers = normalizeTurnMcpServers(input.mcpServers);
+    if (turnMcpServers !== undefined) {
+      const differingNames = differingTurnMcpServerNames(turnMcpServers, session.mcpServers);
+      if (differingNames.length > 0) {
+        return yield* new ProviderAdapterRequestError({
+          provider: PROVIDER,
+          method: "turn/start",
+          detail: `This turn asks for MCP servers its Codex session was not started with (${differingNames.join(", ")}). Codex reads its MCP configuration when the app-server is spawned, so the session would have to be restarted.`,
+        });
+      }
+    }
     const reasoningEffort =
       input.modelSelection?.instanceId === boundInstanceId
         ? getModelSelectionStringOptionValue(input.modelSelection, "reasoningEffort")

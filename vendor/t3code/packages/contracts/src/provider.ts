@@ -20,6 +20,7 @@ import {
   ProviderSandboxMode,
   ProviderUserInputAnswers,
   RuntimeMode,
+  TurnMcpServers,
 } from "./orchestration.ts";
 import { ProviderInstanceId, ProviderDriverKind } from "./providerInstance.ts";
 
@@ -66,6 +67,10 @@ export const ProviderSessionStartInput = Schema.Struct({
       fixes the output contract when the session is created (Claude's SDK
       `outputFormat` is a query-construction option). */
   outputSchema: Schema.optional(Schema.Unknown),
+  /** MCP servers the caller supplies for this session, merged with the server's
+      own at the adapter. Every provider fixes its MCP configuration when the
+      session process is created, so this is a session-level fact. */
+  mcpServers: Schema.optional(TurnMcpServers),
 });
 export type ProviderSessionStartInput = typeof ProviderSessionStartInput.Type;
 
@@ -84,6 +89,11 @@ export const ProviderSendTurnInput = Schema.Struct({
   interactionMode: Schema.optional(ProviderInteractionMode),
   /** JSON Schema for this turn's structured result. */
   outputSchema: Schema.optional(Schema.Unknown),
+  /** The MCP servers this turn expects. `ProviderService` re-decodes this input
+      and strips undeclared keys, so the field has to be here to survive the hop
+      to the adapter, which compares it against the ones its session was opened
+      with. */
+  mcpServers: Schema.optional(TurnMcpServers),
 });
 export type ProviderSendTurnInput = typeof ProviderSendTurnInput.Type;
 

@@ -254,6 +254,24 @@ Three things follow from the thread being persistent.
   `V2TurnStartParams.outputSchema`, but its runtime does not surface a settled turn's
   structured result, so the daemon parses the board out of the Codex seat's final message
   — for that provider only.
+- **A turn carries the MCP servers its caller gives it.** `startTurn` also takes an
+  `mcpServers` record of `name → { url, bearerToken? }`, on the same seam and in the same
+  shape as the output schema: the two `thread.turn.start` command shapes, the
+  `thread.turn-start-requested` payload, and both provider inputs. The adapters MERGE it
+  with whatever the sidecar configured for that thread and with whatever the user
+  configured for the provider — nothing is substituted, `strictMcpConfig` stays unset, and
+  the sidecar's own `t3-code` entry is written last so it wins a name collision. The
+  credential reaches the harness child as an `Authorization` header on Claude and as a
+  named environment variable on Codex (`-c mcp_servers.<name>.bearer_token_env_var="…"`),
+  never on an argument list. Both providers fix their MCP configuration when the session
+  process is created, exactly as Claude fixes `outputFormat` at `query()` construction, so
+  the thread's FIRST turn decides the set and a later turn asking for a different one is
+  refused with the names it disagrees on rather than run against the wrong tools. Codex's
+  `hasConfiguredMcpServer` was split for this: a caller-supplied server still earns the
+  tool-catalog reload before a turn, but `browserToolsAvailable` now asks for the
+  sidecar's own server by name, because a Codex prompt describing browser tools the
+  session does not have is a lie in the prompt. Nothing supplies a server yet — the field
+  is carried, and the daemon's own board server is the next change.
 - **Spend is per turn, and it is a delta read off the thread.** Claude's SDK reports usage
   cumulatively over a streaming session's turns, so the seat leg records each turn's own
   usage as the difference against the previous settled turn's total — which
@@ -376,6 +394,13 @@ Claude and Codex adapters that hand it to their runtimes, the provider service t
 carries the turn's schema into a session it recovers, and the runtime-ingestion layer
 that projects the `turn.settled` activity. Each has its row in `vendor/t3code/PATCHES.md`,
 all upstreamable.
+
+The per-turn `mcpServers` seam widens that surface by very little, because it sits on the
+same files: the two contract modules, the decider, the provider command reactor, the
+provider service, and the two adapters, plus the Codex session runtime for the predicate
+split and three adapter test files. `McpProviderSession` is untouched — the caller's
+servers ride alongside it and merge at the adapter, so a session re-prepare (runtime mode,
+cwd, model) cannot clobber them and turning off agent browser access cannot clear them.
 
 **A dead `claude` must not take the sidecar with it.** The SDK's process transport writes
 the prompt to the child's stdin and never listens for that socket's `error` event, so a

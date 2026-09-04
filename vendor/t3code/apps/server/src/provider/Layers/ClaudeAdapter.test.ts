@@ -14,6 +14,7 @@ import type {
 import {
   ApprovalRequestId,
   ClaudeSettings,
+  EnvironmentId,
   ProviderDriverKind,
   ProviderItemId,
   ProviderRuntimeEvent,
@@ -33,6 +34,7 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import { attachmentRelativePath } from "../../attachmentStore.ts";
+import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import {
@@ -459,6 +461,156 @@ describe("ClaudeAdapterLive", () => {
         .pipe(Effect.flip);
       assert.match(error.message, /started without an output schema/u);
       assert.notMatch(error.message, /output schema differs/u);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("merges caller-supplied MCP servers into the SDK query", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+        mcpServers: {
+          board: { url: "http://127.0.0.1:7391/board/design", bearerToken: "board-secret" },
+        },
+      });
+
+      const options = harness.getLastCreateQueryInput()?.options;
+      assert.deepEqual(options?.mcpServers, {
+        board: {
+          type: "http",
+          url: "http://127.0.0.1:7391/board/design",
+          headers: { Authorization: "Bearer board-secret" },
+        },
+      });
+      // Settings inheritance is the settled ruling: nothing on this path narrows
+      // the user's own configured servers.
+      assert.equal(
+        (options as { readonly strictMcpConfig?: unknown } | undefined)?.strictMcpConfig,
+        undefined,
+      );
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("gives T3's own server the t3-code name when a caller claims it", () => {
+    const harness = makeHarness();
+    McpProviderSession.setMcpProviderSession({
+      environmentId: EnvironmentId.make("env-mcp-collision"),
+      threadId: THREAD_ID,
+      providerSessionId: "provider-session-mcp-collision",
+      providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+      endpoint: "http://127.0.0.1:9111/mcp",
+      authorizationHeader: "Bearer t3-own-secret",
+    });
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+        mcpServers: {
+          "t3-code": { url: "http://127.0.0.1:7391/board/design", bearerToken: "board-secret" },
+          board: { url: "http://127.0.0.1:7391/board/flagged" },
+        },
+      });
+
+      const servers = harness.getLastCreateQueryInput()?.options.mcpServers;
+      // Both are present, and the name T3 owns still resolves to T3's endpoint.
+      assert.deepEqual(servers, {
+        "t3-code": {
+          type: "http",
+          url: "http://127.0.0.1:9111/mcp",
+          headers: { Authorization: "Bearer t3-own-secret" },
+        },
+        board: {
+          type: "http",
+          url: "http://127.0.0.1:7391/board/flagged",
+        },
+      });
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+      Effect.ensuring(Effect.sync(() => McpProviderSession.clearMcpProviderSession(THREAD_ID))),
+    );
+  });
+
+  it.effect("omits mcpServers when neither the caller nor T3 supplies one", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      assert.equal(harness.getLastCreateQueryInput()?.options.mcpServers, undefined);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("refuses a turn whose MCP servers differ from its session's", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+        mcpServers: { board: { url: "http://127.0.0.1:7391/board/design" } },
+      });
+
+      // The same set is fine: a repair turn re-states the seat's own server.
+      yield* adapter.sendTurn({
+        threadId: THREAD_ID,
+        input: "same servers",
+        mcpServers: { board: { url: "http://127.0.0.1:7391/board/design" } },
+      });
+
+      const error = yield* adapter
+        .sendTurn({
+          threadId: THREAD_ID,
+          input: "different servers",
+          mcpServers: { board: { url: "http://127.0.0.1:7391/board/sequence" } },
+        })
+        .pipe(Effect.flip);
+      assert.match(error.message, /MCP servers its Claude session was not started with/u);
+      // The refusal names what disagrees, and never the credential.
+      assert.match(error.message, /\(board\)/u);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("names a caller server its session was started without", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      const error = yield* adapter
+        .sendTurn({
+          threadId: THREAD_ID,
+          input: "asks for a board server",
+          mcpServers: { board: { url: "http://127.0.0.1:7391/board/design" } },
+        })
+        .pipe(Effect.flip);
+      assert.match(error.message, /\(board\)/u);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),

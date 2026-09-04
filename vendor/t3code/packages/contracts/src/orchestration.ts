@@ -900,6 +900,58 @@ const ThreadTurnStartBootstrap = Schema.Struct({
 
 export type ThreadTurnStartBootstrap = typeof ThreadTurnStartBootstrap.Type;
 
+/** An MCP server the caller that starts a turn hands to that turn. The
+ * credential, when the server wants one, reaches the provider child as an
+ * `Authorization` header or through a named environment variable — never on an
+ * argument list. */
+export const TurnMcpServer = Schema.Struct({
+  url: TrimmedNonEmptyString,
+  bearerToken: Schema.optional(TrimmedNonEmptyString),
+});
+export type TurnMcpServer = typeof TurnMcpServer.Type;
+
+/** Caller-supplied MCP servers by name. These ride ALONGSIDE whatever the
+ * server configures for the thread itself and whatever the user configured for
+ * the provider, and are merged at the adapter; a name the server owns wins a
+ * collision. */
+export const TurnMcpServers = Schema.Record(TrimmedNonEmptyString, TurnMcpServer);
+export type TurnMcpServers = typeof TurnMcpServers.Type;
+
+/** An empty record is the same fact as no record, and saying so once here keeps
+ * every hop from having to decide. */
+export function normalizeTurnMcpServers(
+  servers: TurnMcpServers | undefined,
+): TurnMcpServers | undefined {
+  if (servers === undefined || Object.keys(servers).length === 0) {
+    return undefined;
+  }
+  return servers;
+}
+
+/** The server names on which two sets disagree — present on one side only, or
+ * carrying a different endpoint or credential. Sorted, so an error built from
+ * it reads the same way twice. */
+export function differingTurnMcpServerNames(
+  left: TurnMcpServers | undefined,
+  right: TurnMcpServers | undefined,
+): ReadonlyArray<string> {
+  const leftServers = normalizeTurnMcpServers(left) ?? {};
+  const rightServers = normalizeTurnMcpServers(right) ?? {};
+  const names = new Set([...Object.keys(leftServers), ...Object.keys(rightServers)]);
+  const differing: Array<string> = [];
+  for (const name of names) {
+    const leftServer = leftServers[name];
+    const rightServer = rightServers[name];
+    if (
+      leftServer?.url !== rightServer?.url ||
+      leftServer?.bearerToken !== rightServer?.bearerToken
+    ) {
+      differing.push(name);
+    }
+  }
+  return differing.sort();
+}
+
 export const ThreadTurnStartCommand = Schema.Struct({
   type: Schema.Literal("thread.turn.start"),
   commandId: CommandId,
@@ -922,6 +974,10 @@ export const ThreadTurnStartCommand = Schema.Struct({
   // structured-output contract attach it to the turn; the settled turn then
   // carries `structuredOutput` on its `turn.settled` activity.
   outputSchema: Schema.optional(Schema.Unknown),
+  // MCP servers this turn's caller supplies, merged with the server's own at
+  // the adapter. Both providers fix their MCP configuration when the session
+  // process is created, so the thread's FIRST turn decides the set.
+  mcpServers: Schema.optional(TurnMcpServers),
   createdAt: IsoDateTime,
 });
 
@@ -945,6 +1001,8 @@ const ClientThreadTurnStartCommand = Schema.Struct({
   // structured-output contract attach it to the turn; the settled turn then
   // carries `structuredOutput` on its `turn.settled` activity.
   outputSchema: Schema.optional(Schema.Unknown),
+  // See `ThreadTurnStartCommand.mcpServers`.
+  mcpServers: Schema.optional(TurnMcpServers),
   createdAt: IsoDateTime,
 });
 
@@ -1343,6 +1401,7 @@ export const ThreadTurnStartRequestedPayload = Schema.Struct({
   ),
   sourceProposedPlan: Schema.optional(SourceProposedPlanReference),
   outputSchema: Schema.optional(Schema.Unknown),
+  mcpServers: Schema.optional(TurnMcpServers),
   createdAt: IsoDateTime,
 });
 

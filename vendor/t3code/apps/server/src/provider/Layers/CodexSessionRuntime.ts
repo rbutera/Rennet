@@ -62,8 +62,21 @@ const RECOVERABLE_THREAD_RESUME_ERROR_SNIPPETS = [
   "no rollout found",
 ];
 
+/** Whether this session was spawned with ANY inline MCP server — T3's own, or
+ * one its caller supplied. Any of them makes the tool catalog worth reloading
+ * before a turn. */
 export function hasConfiguredMcpServer(appServerArgs: ReadonlyArray<string> | undefined): boolean {
   return appServerArgs?.some((argument) => argument.includes("mcp_servers.")) === true;
+}
+
+/** Whether this session was spawned with T3's OWN server, the one that carries
+ * the preview/browser toolkit. Only this answers `browserToolsAvailable`: a
+ * caller-supplied server earns the catalog reload above, but describing browser
+ * tools the session does not have would be a lie in the Codex prompt. */
+export function hasConfiguredBrowserMcpServer(
+  appServerArgs: ReadonlyArray<string> | undefined,
+): boolean {
+  return appServerArgs?.some((argument) => argument.includes("mcp_servers.t3-code.")) === true;
 }
 
 export const CodexResumeCursorSchema = Schema.Struct({
@@ -2324,8 +2337,10 @@ export const makeCodexSessionRuntime = (
             ...(input.outputSchema !== undefined ? { outputSchema: input.outputSchema } : {}),
             // Derived from the session's own MCP configuration rather than the
             // setting, so the prompt describes the tools this turn actually
-            // has even if the setting changed after the session started.
-            browserToolsAvailable: hasConfiguredMcpServer(options.appServerArgs),
+            // has even if the setting changed after the session started. It
+            // asks for T3's own server by name: a caller-supplied server brings
+            // its own tools, not these ones.
+            browserToolsAvailable: hasConfiguredBrowserMcpServer(options.appServerArgs),
           });
           const rawResponse = yield* client.raw.request("turn/start", params);
           const response = yield* decodeV2TurnStartResponse(rawResponse).pipe(

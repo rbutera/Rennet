@@ -18,6 +18,7 @@ import { codexSessionAppServerArgs } from "./codexLaunchArgs.ts";
 import {
   buildTurnStartParams,
   describeMcpElicitation,
+  hasConfiguredBrowserMcpServer,
   hasConfiguredMcpServer,
   isRecoverableThreadResumeError,
   makeMemoryConsolidationNotificationFilter,
@@ -546,6 +547,41 @@ describe("hasConfiguredMcpServer", () => {
     NodeAssert.equal(
       hasConfiguredMcpServer(["-c", 'mcp_servers.t3-code.url="http://127.0.0.1/mcp"']),
       true,
+    );
+  });
+
+  it("earns the tool-catalog reload for a caller-supplied server too", () => {
+    NodeAssert.equal(
+      hasConfiguredMcpServer(["-c", "mcp_servers.board.url=http://127.0.0.1:7391/board/design"]),
+      true,
+    );
+  });
+});
+
+describe("hasConfiguredBrowserMcpServer", () => {
+  it("answers only for T3's own server, which is the one carrying browser tools", () => {
+    NodeAssert.equal(hasConfiguredBrowserMcpServer(undefined), false);
+    NodeAssert.equal(hasConfiguredBrowserMcpServer(["--model", "gpt-5.4"]), false);
+    NodeAssert.equal(
+      hasConfiguredBrowserMcpServer(["-c", 'mcp_servers.t3-code.url="http://127.0.0.1/mcp"']),
+      true,
+    );
+  });
+
+  it("stays false for a caller-supplied server, so the prompt claims no tools it lacks", () => {
+    // The two predicates disagree on exactly this argument list, which is the
+    // whole reason they are two: the reload is earned, the browser block is not.
+    const callerOnly = ["-c", "mcp_servers.board.url=http://127.0.0.1:7391/board/design"];
+    NodeAssert.equal(hasConfiguredMcpServer(callerOnly), true);
+    NodeAssert.equal(hasConfiguredBrowserMcpServer(callerOnly), false);
+    // And the developer instructions built from it carry no browser block.
+    NodeAssert.doesNotMatch(
+      buildCodexDeveloperInstructions(
+        "default",
+        { model: "gpt-5.3-codex", reasoningEffort: "high" },
+        hasConfiguredBrowserMcpServer(callerOnly),
+      ),
+      /preview_open/,
     );
   });
 });

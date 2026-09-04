@@ -86,6 +86,18 @@ export interface StartTurnInput {
    * different one is refused by name rather than answered in the wrong shape.
    */
   readonly outputSchema?: unknown;
+  /**
+   * MCP servers this turn's session should expose, by name, merged at the provider
+   * adapter with the sidecar's own server and with whatever the user configured. The
+   * bearer reaches the harness child as an `Authorization` header (Claude) or through a
+   * named environment variable (Codex) — never on an argument list. Both providers fix
+   * their MCP configuration when the session process is created, so a thread's FIRST
+   * turn decides the set and a later turn asking for a different one is refused by the
+   * names it disagrees on.
+   */
+  readonly mcpServers?: Readonly<
+    Record<string, { readonly url: string; readonly bearerToken?: string }>
+  >;
 }
 
 /** What the settled turn reported about itself, read off its `turn.settled` activity. */
@@ -369,6 +381,7 @@ export async function connectT3(options: T3ClientOptions): Promise<T3Client> {
             },
             ...(input.modelSelection ? { modelSelection: input.modelSelection } : {}),
             ...(input.outputSchema === undefined ? {} : { outputSchema: input.outputSchema }),
+            ...(input.mcpServers === undefined ? {} : { mcpServers: input.mcpServers }),
             runtimeMode: input.runtimeMode ?? FULL_ACCESS,
             interactionMode: "default",
           }),
