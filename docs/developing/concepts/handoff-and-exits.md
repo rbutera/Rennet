@@ -401,10 +401,12 @@ The exits themselves:
   never through a per-round worktree whose result is replayed. A bound workspace
   that is not on that branch refuses the round and names both. A restart settles the
   round from the turn's sidecar checkpoint, and a no-op round does not invent a
-  commit. That receipt is not yet reliable: on the drive of 2026-09-04 a worker that
-  committed returned no diff and no checkpoint, so the round reported no change and has
-  no handle to revert — [#811](https://github.com/rbutera/Rennet/issues/811) is open on
-  it. Board **regeneration** is the tail of the same dispatch. Once the worker
+  commit. When the worker committed rather than left a dirty tree, the receipt waits
+  for the checkpoint to materialize and then reconciles: a clean checkpoint whose
+  `sourceHead..HEAD` range is non-empty takes its diff and changed paths from that
+  range, so a committed round reports its real change and a revert handle instead of
+  "no change" ([#811](https://github.com/rbutera/Rennet/issues/811), closed by this
+  path). Board **regeneration** is the tail of the same dispatch. Once the worker
   result is written to the durable dispatch record, the successor is captured from
   the bound workspace, over the persisted source base OID through the head the
   round's commits reached. The selected base and

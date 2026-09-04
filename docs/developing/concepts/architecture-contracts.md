@@ -213,7 +213,12 @@ from it, honouring the checkpoint's own status, since a failed turn checkpoints 
 checkpoint diffs the working tree, so a worker that committed leaves it clean: when the
 checkpoint's diff is empty and the bound root's commit range for the round is not, the
 receipt's diff and changed paths come from that range, and a round that moved the branch is
-never reported as having changed nothing.
+never reported as having changed nothing. That range is `sourceHead..HEAD` whole: every
+commit landing on the branch during the turn is attributed to the round's worker, because
+the checkpoint is a working-tree snapshot and T3 exposes no per-commit worker identity to
+tell a concurrent human commit apart from the worker's. This is the same range the commit
+count already reports, so nothing new enters scope — but the receipt cannot filter a commit
+another hand landed in the window, and does not claim to.
 
 **Rennet does not run the repository's check.** A round has no gate step: after the turn
 settles, the next thing Rennet does is observe the commits. When the project scout has

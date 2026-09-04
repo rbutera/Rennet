@@ -494,9 +494,11 @@ describe("the round's work order carries the repository's check command", () => 
     const rendered = roundCommitRule(long).join("\n");
     expect(rendered).toContain("…`");
     expect(rendered).not.toContain(long);
-    // The bound is on the COMMAND, not the line: the marker is the only thing past it.
+    // The bound is on the COMPLETE quoted command, marker included — the marker's own bytes
+    // are budgeted INSIDE the cap, so the whole string never exceeds it (Codex #817-2).
     const quoted = /Run `([^`]*)`/.exec(rendered)?.[1] ?? "";
-    expect(Buffer.byteLength(quoted.replace("…", ""), "utf8")).toBe(CHECK_COMMAND_MAX_BYTES);
+    expect(quoted.endsWith("…")).toBe(true);
+    expect(Buffer.byteLength(quoted, "utf8")).toBeLessThanOrEqual(CHECK_COMMAND_MAX_BYTES);
   });
 
   it("truncates on a UTF-8 code-point boundary, never mid-character", () => {
@@ -507,10 +509,11 @@ describe("the round's work order carries the repository's check command", () => 
     expect(Buffer.byteLength(long, "utf8")).toBe(CHECK_COMMAND_MAX_BYTES + 3);
     const rendered = roundCommitRule(long).join("\n");
     const quoted = /Run `([^`]*)`/.exec(rendered)?.[1] ?? "";
-    const command = quoted.replace("…", "");
     // No mojibake: the incomplete emoji was dropped whole, not decoded to a replacement char.
-    expect(command).not.toContain("�");
-    // And still within the byte bound — the boundary back-off can only shrink the prefix.
-    expect(Buffer.byteLength(command, "utf8")).toBeLessThanOrEqual(CHECK_COMMAND_MAX_BYTES);
+    expect(quoted).not.toContain("�");
+    // The COMPLETE quoted command — marker included — stays within the byte bound. Measuring
+    // the marker too is what catches the +3 overflow the marker-stripping version masked.
+    expect(quoted.endsWith("…")).toBe(true);
+    expect(Buffer.byteLength(quoted, "utf8")).toBeLessThanOrEqual(CHECK_COMMAND_MAX_BYTES);
   });
 });
