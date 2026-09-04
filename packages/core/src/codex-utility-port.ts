@@ -40,7 +40,12 @@ import { bodyJsonSchema, computeInputDigest, validateDocument } from "@rennet/pr
 /** One structured-output `codex exec` invocation. The prompt and schema are
  *  already assembled/derived by the port; the executor is a thin process seam. */
 export interface CodexExecRequest {
-  /** Which seat is asking (`board.lens-draft.flagged-codex`); logs, metrics and test attribution only. */
+  /**
+   * Which seat is asking (`board.lens-draft.flagged-codex`, `delta-digest`, …): logs,
+   * the measurement tap and test attribution only. One executor is shared by every
+   * utility port, so without it a recorded turn cannot say which seat spent the tokens.
+   * Never reaches the model.
+   */
   readonly label?: string;
   /** The Codex model, e.g. "gpt-5.6-luna". Passed to `codex exec -m`. */
   readonly model: string;
@@ -72,12 +77,6 @@ export interface CodexExecRequest {
    */
   readonly mcpServers?: Readonly<Record<string, { readonly url: string }>>;
   readonly signal?: AbortSignal;
-  /**
-   * The job this send serves ("delta-digest", "refine-comment", …), for the measurement
-   * tap only. One executor is shared by every utility port, so without it a recorded turn
-   * cannot say which seat spent the tokens. Never reaches the model.
-   */
-  readonly label?: string;
 }
 
 /** The result of one `codex exec` call: the parsed final structured message. */
