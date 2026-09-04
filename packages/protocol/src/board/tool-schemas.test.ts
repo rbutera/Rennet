@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import { BOARD_TARGETS, type BoardTarget, TYPED_KINDS_BY_TARGET } from "./kind-tables";
+import {
+  BOARD_TARGETS,
+  type BoardTarget,
+  LEGACY_LENS_ABSENCES,
+  LENS_ADMISSIBLE_ABSENCES,
+  type LensAbsenceReason,
+  settleAbsentReasonFor,
+  TYPED_KINDS_BY_TARGET,
+} from "./kind-tables";
 import type { DraftKind } from "./schema";
 import {
   type BoardTool,
@@ -158,6 +166,43 @@ describe("the tool set is derived from the kind tables, not listed per lens (D2)
     expect(design?.description).not.toContain("no-material");
     // No reason field anywhere: a seat cannot name an absence its lens does not admit.
     expect(fieldNames(noise as BoardTool)).toEqual(["note"]);
+  });
+});
+
+describe("the settle-absent reason is derived, and refuses to guess", () => {
+  it("each lens gets the one absence it admits today, and Sequence gets none", () => {
+    expect(settleAbsentReasonFor("design")).toBe("no-spec");
+    expect(settleAbsentReasonFor("decisions")).toBe("no-decisions");
+    expect(settleAbsentReasonFor("flagged")).toBe("no-findings");
+    expect(settleAbsentReasonFor("noise")).toBe("no-noise");
+    // Zero is legitimate: an absent Sequence is a failure, not a result.
+    expect(settleAbsentReasonFor("sequence")).toBeUndefined();
+    expect(settleAbsentReasonFor("report")).toBeUndefined();
+  });
+
+  it("Design's legacy absence is filtered, not counted", () => {
+    // `no-material` stays admissible so pre-respec generations keep reading, and nothing
+    // settles it now — so Design has one LIVE absence even though the table lists two.
+    expect(LENS_ADMISSIBLE_ABSENCES.design).toEqual(["no-material", "no-spec"]);
+    expect(LEGACY_LENS_ABSENCES).toContain("no-material");
+  });
+
+  it("two live absences throw rather than silently removing the verb", () => {
+    // Returning `undefined` here would drop `settle_absent` off that lens's surface and
+    // cost the lane a settlement it is entitled to — a second live absence needs the verb
+    // to grow a way of choosing, which is a decision and not a default.
+    const table = LENS_ADMISSIBLE_ABSENCES as Record<string, readonly LensAbsenceReason[]>;
+    const original = table.noise;
+    table.noise = ["no-noise", "no-findings"];
+    try {
+      expect(() => settleAbsentReasonFor("noise")).toThrow(/admits 2 live absences/);
+      // …and it reaches the surface builder, so the tool set fails loudly too.
+      expect(() => buildBoardTools("noise")).toThrow(/admits 2 live absences/);
+    } finally {
+      table.noise = original as readonly LensAbsenceReason[];
+    }
+    // Restored, so the rest of the suite sees the real table.
+    expect(settleAbsentReasonFor("noise")).toBe("no-noise");
   });
 });
 

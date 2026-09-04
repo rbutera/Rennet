@@ -13,14 +13,16 @@
  * time. That is what makes a dangling reference and a reference cycle unconstructible
  * rather than checked.
  *
- * It is not left to that argument alone. `alternative_ids` is declared as an element
- * reference with no kind constraint, so a decision could in principle name an ancestor
- * section and close a loop through the host-maintained `children` edge, which is the one
- * edge that runs forward. Every mutation therefore goes through
- * {@link BoardWriter.introducedViolations}, which re-runs the boundary tier — including
- * `element-reference-resolves`, which owns both the dangle and the cycle — and refuses
- * any call that would make the board worse than it found it. The invariant is the
- * ordering; the check is what proves it, and `board-writer.test.ts` attempts both.
+ * It is not left to that argument alone, because the boundary does not constrain what
+ * KIND a reference names — `checkReferences` asks only whether the board holds the id.
+ * So `alternative_ids`, `evidence_ref_ids`, `scenario_ids`, `trace_ref_ids` and
+ * `code_ref_ids` can all name an ancestor section and close a loop through the
+ * host-maintained `children` edge, which is the one edge that runs forward. Every
+ * mutation therefore goes through {@link BoardWriter.introducedViolations}, which
+ * re-runs the boundary tier — including `element-reference-resolves`, which owns both
+ * the dangle and the cycle — and refuses any call that would make the board worse than
+ * it found it. The invariant is the ordering; the check is what proves it, and
+ * `board-writer.test.ts` attempts a cycle on both the add path and the update path.
  *
  * ── Validation (D5) ──────────────────────────────────────────────────────────────
  * A refusal is the BOUNDARY tier: the same rule functions `lint` runs, over the board
@@ -145,7 +147,15 @@ export class BoardWriter {
       : { document: this.document, elements: [...this.elements] };
   }
 
-  /** Drafting, settled by `finish`, or settled absent. */
+  /**
+   * Drafting, settled by `finish`, or settled absent.
+   *
+   * A settlement is a statement about the board as it stood when `finish` returned, so
+   * any later mutation takes it back to `drafting` ({@link BoardWriter.reopen}). The
+   * seat is NOT refused — writing after a finish is ordinary work, and refusing it would
+   * be a restriction dressed as bookkeeping. What is not allowed is this method going on
+   * reporting a settlement over a board that has moved since.
+   */
   status(): BoardWriterState {
     return this.state;
   }
@@ -192,6 +202,8 @@ export class BoardWriter {
   // ── Verbs ──────────────────────────────────────────────────────────────────
 
   private setDocument(tool: BoardTool, input: Record<string, unknown>): BoardToolResult {
+    const alignment = this.checkListAlignment(tool, input);
+    if (alignment !== undefined) return refuse(alignment);
     const authored = dataFromInput(tool, input, {});
     // `measure` is the target's, never the seat's: `resolveBoardDocument` is the one
     // place that decides it and it overrides whatever a board carries.
@@ -205,6 +217,7 @@ export class BoardWriter {
     const introduced = this.introducedViolations(next);
     if (introduced.length > 0) return refuse(describe(introduced));
     this.document = candidate;
+    this.reopen();
     return { ok: true, outcome: { kind: "document" } };
   }
 
@@ -218,6 +231,9 @@ export class BoardWriter {
 
     const referenceRefusal = this.checkReferences(tool, input);
     if (referenceRefusal !== undefined) return refuse(referenceRefusal);
+
+    const alignment = this.checkListAlignment(tool, input);
+    if (alignment !== undefined) return refuse(alignment);
 
     const id = this.mintId();
     const element = {
@@ -245,6 +261,7 @@ export class BoardWriter {
       return refuse(describe(introduced));
     }
     this.elements = withParent;
+    this.reopen();
     return { ok: true, outcome: { kind: "element", id } };
   }
 
@@ -262,6 +279,9 @@ export class BoardWriter {
     const referenceRefusal = this.checkReferences(tool, input);
     if (referenceRefusal !== undefined) return refuse(referenceRefusal);
 
+    const alignment = this.checkListAlignment(tool, input);
+    if (alignment !== undefined) return refuse(alignment);
+
     const patched = {
       ...current,
       data: {
@@ -277,6 +297,7 @@ export class BoardWriter {
     const introduced = this.introducedViolations(next);
     if (introduced.length > 0) return refuse(describe(introduced));
     this.elements = nextElements;
+    this.reopen();
     return { ok: true, outcome: { kind: "element", id: elementId } };
   }
 
@@ -299,6 +320,7 @@ export class BoardWriter {
     const introduced = this.introducedViolations(next);
     if (introduced.length > 0) return refuse(describe(introduced));
     this.elements = survivors;
+    this.reopen();
     return { ok: true, outcome: { kind: "removed", ids: [...doomed] } };
   }
 
@@ -375,6 +397,59 @@ export class BoardWriter {
       }
     }
     return undefined;
+  }
+
+  /**
+   * A list-valued structured field arrives as parallel arrays the seat keeps in step by
+   * index. Two ways to get that wrong, and both used to pass silently: naming a
+   * companion without its spine (the rebuilt list was sized off the spine, so an absent
+   * spine wrote an EMPTY list over whatever was there), and giving the arrays different
+   * lengths (the extras past the spine were dropped, and the entries the spine outran
+   * were built missing a key).
+   *
+   * Both are refused here, naming the field and what would be admissible. This is not a
+   * gate: it is the difference between a call doing what the tool says it does and a
+   * call quietly discarding the seat's work. `update_*` promises "only the fields given
+   * change", and an update that wipes a field it was not given is that promise broken.
+   */
+  private checkListAlignment(tool: BoardTool, input: Record<string, unknown>): string | undefined {
+    const groups = new Map<string, { spine?: string; given: { name: string; length: number }[] }>();
+    for (const field of tool.fields) {
+      const source = field.source;
+      if (source.form !== "json-part" || !source.many) continue;
+      const group = groups.get(source.dataField) ?? { given: [] };
+      // Field order is schema order, so the first part of a group is its spine.
+      group.spine ??= field.name;
+      const value = input[field.name];
+      if (Array.isArray(value)) group.given.push({ name: field.name, length: value.length });
+      groups.set(source.dataField, group);
+    }
+
+    for (const group of groups.values()) {
+      if (group.given.length === 0) continue;
+      const spineName = group.spine;
+      const spine = group.given.find((entry) => entry.name === spineName);
+      if (spine === undefined) {
+        const named = group.given.map((entry) => `\`${entry.name}\``).join(", ");
+        return `${named} needs \`${spineName}\` alongside it: this list is written whole, one entry per \`${spineName}\`. Give \`${spineName}\` too, or leave the list out entirely.`;
+      }
+      const mismatched = group.given.find((entry) => entry.length !== spine.length);
+      if (mismatched !== undefined) {
+        return `\`${mismatched.name}\` has ${mismatched.length} ${mismatched.length === 1 ? "entry" : "entries"} and \`${spine.name}\` has ${spine.length}. They are index-aligned: give exactly one \`${mismatched.name}\` per \`${spine.name}\`.`;
+      }
+    }
+    return undefined;
+  }
+
+  /**
+   * A mutation after a settlement un-settles the board. See {@link BoardWriter.status}:
+   * the call goes through, and the claim that it finished does not survive it.
+   */
+  private reopen(): void {
+    if (this.state !== "drafting") {
+      this.state = "drafting";
+      this.absence = undefined;
+    }
   }
 
   /** The wire boundary: the board a call would produce must still parse as a draft. */
@@ -491,16 +566,25 @@ function dataFromInput(
 
   for (const [dataField, parts] of single) out[dataField] = parts;
   for (const [dataField, parts] of listed) {
-    // The list form is index-aligned: the first part is the spine, and a shorter or
-    // absent companion list simply leaves that key off the entry it would have filled.
+    // The list form is index-aligned, and `checkListAlignment` has already refused a
+    // group whose spine is missing or whose arrays disagree — so by here the spine is
+    // present and every companion is the same length. Sizing off the spine when it is
+    // ABSENT is what wrote an empty list over a field the call never mentioned.
+    //
+    // The `continue` below is therefore UNREACHABLE through `call()` today, and no test
+    // exercises it: a group only reaches `listed` when the input carried one of its
+    // parts, and `checkListAlignment` refuses that group unless its spine is among them.
+    // It stays because this helper is otherwise correct only by its caller's ordering,
+    // and the failure it guards against is silent.
     const spine = tool.fields.find(
       (field) => field.source.form === "json-part" && field.source.dataField === dataField,
     );
     const spinePart =
       spine !== undefined && spine.source.form === "json-part" ? spine.source.part : undefined;
-    const length = spinePart === undefined ? 0 : (parts.get(spinePart)?.length ?? 0);
+    const spineValues = spinePart === undefined ? undefined : parts.get(spinePart);
+    if (spineValues === undefined) continue; // not this call's field to rewrite
     const entries: Record<string, unknown>[] = [];
-    for (let index = 0; index < length; index += 1) {
+    for (let index = 0; index < spineValues.length; index += 1) {
       const entry: Record<string, unknown> = {};
       for (const [part, values] of parts) {
         const value = values[index];

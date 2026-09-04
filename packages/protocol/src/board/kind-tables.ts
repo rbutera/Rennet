@@ -142,12 +142,22 @@ export const LEGACY_LENS_ABSENCES: readonly LensAbsenceReason[] = ["no-material"
  * `no-spec`, Sequence settles nothing, and the report seat is not a lens and admits none.
  *
  * The verb carries a note and no reason field, so a seat cannot name an absence its lens
- * does not admit — there is nowhere to name it.
+ * does not admit — there is nowhere to name it. Which is exactly why TWO live absences
+ * cannot be answered by returning `undefined`: the verb would silently vanish from that
+ * lens's surface and the lane would lose the settlement it is entitled to. Every sibling
+ * table in this module throws on a row it cannot read, and so does this — a second live
+ * absence needs the verb to grow a way of choosing, and that is a decision, not a
+ * default. ZERO stays legitimate: Sequence admits none and gets no verb.
  */
 export function settleAbsentReasonFor(target: BoardTarget): LensAbsenceReason | undefined {
   if (target === "report") return undefined;
   const live = LENS_ADMISSIBLE_ABSENCES[target].filter(
     (reason) => !LEGACY_LENS_ABSENCES.includes(reason),
   );
-  return live.length === 1 ? live[0] : undefined;
+  if (live.length > 1) {
+    throw new Error(
+      `board tools: the ${target} lens admits ${live.length} live absences (${live.join(", ")}). A settle-absent verb declares exactly one and has no field to choose with.`,
+    );
+  }
+  return live[0];
 }

@@ -397,6 +397,15 @@ union rendered as a bare `anyOf` with no top-level `type` and the API refused th
 turn before the model saw it. `flatInputViolations` renders each input to JSON
 Schema and reports any of those four shapes, naming the tool and the field.
 
+A structured value that is a LIST is flattened into parallel arrays the seat aligns
+by index, so it carries only the parts worth that cost: a section's sources are
+`source_paths` alone, while a requirement's single `source` keeps its candidate and
+line, where there is no index to align. Where both parts of a list are load-bearing
+— a stat is a label and a value — the writer refuses a companion given without its
+spine and refuses arrays of different lengths, naming the field. Silently rebuilding
+the shorter list is how a partial update came to wipe a field the call never
+mentioned, which is the opposite of what `update_*` tells the model it does.
+
 The fields the host owns are on no input at all: an element's author, a `code_ref`'s
 patchset id, a noise verdict's judge, a finding's draft status and its cross-seat
 concurrence and accord, a section's round-delta stamp, and the document's reading
@@ -408,11 +417,16 @@ parent — the host keeps the parent's `children` in step. So the parent graph i
 forest and every other reference names an element minted earlier, which is what
 makes a dangling reference and a reference cycle unconstructible rather than
 checked. A reference argument naming something the board does not hold is refused
-with what it does hold; every mutation re-runs the boundary tier over the board the
-call would produce and refuses whatever that call introduced, so a refusal names the
-field and says what would be admissible in the lint layer's own words. `finish` runs
-the finish tier and answers with pointers only — a rule id, an element reference and
-one sentence — or settles the board.
+with what it does hold. The boundary does not constrain what *kind* a reference
+names, so any reference field can point at an ancestor and close a loop through the
+one edge that runs forward, parenting; every mutation therefore re-runs the boundary
+tier over the board the call would produce and refuses whatever that call
+introduced, which is what actually holds the two structural guarantees. A refusal
+names the field and says what would be admissible in the lint layer's own words.
+`finish` runs the finish tier and answers with pointers only — a rule id, an element
+reference and one sentence — or settles the board. Writing after a `finish` is not
+refused; it takes the board back to drafting, because a settlement describes the
+board that finished and not the one that moved.
 
 ## The classifier evidence contract
 

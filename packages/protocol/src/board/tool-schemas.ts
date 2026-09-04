@@ -140,6 +140,15 @@ interface JsonPart {
  * How each structured (`json`) field is flattened into named scalars (D3). A `json`
  * field with no row here makes {@link buildBoardTools} throw, so a new structured
  * field cannot silently arrive as a nested object and re-open #810.
+ *
+ * A LIST-valued field carries only the parts that are worth the alignment. Its parts
+ * arrive as parallel arrays a seat has to keep in step by index, and every extra part
+ * is one more way to get that wrong: `sources` therefore carries `source_paths` alone,
+ * while the SINGLE-valued `source` on a requirement or a decision keeps the whole
+ * `path` / `candidate` / `line` triple, where candidate and line are load-bearing and
+ * there is no index to align. `stats` keeps both of its parts because a label with no
+ * value is not a stat — and the writer refuses a stat list whose two arrays disagree,
+ * rather than quietly building the shorter one.
  */
 const JSON_FLATTENING: Readonly<Record<string, readonly JsonPart[]>> = {
   source: [
@@ -147,11 +156,7 @@ const JSON_FLATTENING: Readonly<Record<string, readonly JsonPart[]>> = {
     { part: "candidate", name: "source_candidate", schema: z.string().min(1) },
     { part: "line", name: "source_line", schema: z.number().int().positive() },
   ],
-  sources: [
-    { part: "path", name: "source_path", schema: z.string().min(1) },
-    { part: "candidate", name: "source_candidate", schema: z.string().min(1) },
-    { part: "line", name: "source_line", schema: z.number().int().positive() },
-  ],
+  sources: [{ part: "path", name: "source_path", schema: z.string().min(1) }],
   ask: [
     { part: "ref", name: "ask_ref", schema: z.string().min(1) },
     { part: "text", name: "ask_text", schema: z.string() },
@@ -167,9 +172,7 @@ const JSON_PART_TEXT: Readonly<Record<string, string>> = {
   "source.path": "Repo-relative path of the source artifact.",
   "source.candidate": "Id of the discovered candidate that artifact belongs to.",
   "source.line": "1-based line in the source artifact.",
-  "sources.path": "Repo-relative path of the source artifact.",
-  "sources.candidate": "Id of the discovered candidate that artifact belongs to.",
-  "sources.line": "1-based line in the source artifact.",
+  "sources.path": "Repo-relative path of a source artifact this board reads.",
   "ask.ref": "The ask this outcome answers.",
   "ask.text": "The ask's display text.",
   "stats.label": "Stat label shown in the board header.",
@@ -417,7 +420,8 @@ function documentTool(): BoardTool {
   return {
     name: "set_document",
     verb: "set_document",
-    description: "Set the board's title and opening prose. Call it again to revise them.",
+    description:
+      "Set the board's title and opening prose. Calling it again REPLACES the document: give every field you still want.",
     fields,
     input: objectOf(fields, {}),
   };

@@ -1,4 +1,5 @@
-import type { Author, DraftElement } from "@rennet/protocol";
+import type { Author, BoardTool, DraftElement } from "@rennet/protocol";
+import { boardToolsByName } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import {
   type BoardToolResult,
@@ -106,12 +107,17 @@ describe("the host mints ids and a child names its parent (D4)", () => {
     expect(dataOf<{ children: string[] }>(w, section).children).toEqual([a, b]);
   });
 
-  it("two writers on one board mint ids that cannot collide (D9, Flagged's two voices)", () => {
+  it("two writers with different id prefixes mint ids that cannot collide", () => {
+    // NOT the D9 scenario yet: these are two writers each holding its OWN elements, so
+    // this asserts the prefix, not that two seats can write one board. Flagged's two
+    // voices share a board in group 3, and the shared-board case belongs to that change.
     const claude = writer("flagged", { idPrefix: "a" });
     const codex = writer("flagged", { idPrefix: "b" });
     const one = idOf(claude.call("add_section", { title: "Correctness" }));
     const two = idOf(codex.call("add_section", { title: "Correctness" }));
     expect(one).not.toBe(two);
+    expect(one.startsWith("a")).toBe(true);
+    expect(two.startsWith("b")).toBe(true);
   });
 
   it("a parent the board does not hold is refused, saying what it does hold", () => {
@@ -216,10 +222,13 @@ describe("a reference argument is refused when the board does not hold it (D4)",
     }
   });
 
-  it("a reference cycle is unconstructible: the one edge that runs forward is refused", () => {
-    // `alternative_ids` is the one element reference with no declared target kind, so it
-    // is the only way a decision could name an ancestor section and close a loop through
-    // the host-maintained `children` edge. Attempt exactly that.
+  it("a reference cycle is unconstructible: an update that closes a loop is refused", () => {
+    // The boundary does not constrain what KIND a reference names — `checkReferences`
+    // asks only whether the board holds the id — so `alternative_ids`,
+    // `evidence_ref_ids`, `scenario_ids`, `trace_ref_ids` and `code_ref_ids` can each
+    // name an ancestor section and close a loop through the host-maintained `children`
+    // edge, which is the one edge that runs forward. This is the UPDATE path; the add
+    // path is the test below.
     const w = writer("decisions");
     const section = idOf(w.call("add_section", { title: "Storage" }));
     const ref = idOf(
@@ -241,6 +250,31 @@ describe("a reference argument is refused when the board does not hold it (D4)",
     expect(refusal).toContain("cycle");
     // …and the board still carries the reference it had.
     expect(dataOf<{ alternatives: string[] }>(w, decision).alternatives).toEqual([ref]);
+  });
+
+  it("a reference cycle is unconstructible on the ADD path too, through evidence", () => {
+    // The same loop, closed by the call that CREATES the element rather than by a later
+    // update, and through a different reference field — so the guard is not something
+    // only `update_*` happens to run.
+    const w = writer("decisions");
+    const section = idOf(w.call("add_section", { title: "Storage" }));
+    const refusal = refusalOf(
+      w.call("add_decision", {
+        statement: "Storage stays on the caller.",
+        why: "The alternative moved the lifetime into a shared cache.",
+        // section --children--> (this decision) --evidence--> section
+        evidence_ref_ids: [section],
+        alternative_ids: [section],
+        parent_id: section,
+      }),
+    );
+    expect(refusal).toContain("cycle");
+    // Nothing was created, and the id the refused call would have taken is not spent.
+    expect(w.board().elements).toHaveLength(1);
+    const next = idOf(
+      w.call("cite", { path: "src/util.ts", side: "head", start_line: 1, end_line: 2 }),
+    );
+    expect(next).toBe("e2");
   });
 
   it("positive control: an add whose reference IS held goes through", () => {
@@ -351,15 +385,13 @@ describe("cite resolves against the captured patchset in the same call", () => {
 
   it("no changed lines on that side: refused saying exactly that", () => {
     const w = writer();
-    // `src/auth.ts` changed on head only, so a base-side citation has nothing to hit.
-    const refusal = refusalOf(
-      w.call("cite", { path: "src/legacy.ts", side: "base", start_line: 100, end_line: 101 }),
-    );
-    expect(refusal).toContain("nearest changed range");
+    // `src/util.ts` changed on head only, so a base-side citation has no region to hit
+    // and the refusal cannot offer a nearest range — it has to say the side is empty.
     const nothingChanged = refusalOf(
       w.call("cite", { path: "src/util.ts", side: "base", start_line: 1, end_line: 2 }),
     );
     expect(nothingChanged).toContain("no changed lines on the base side");
+    expect(nothingChanged).not.toContain("nearest changed range");
   });
 
   it("an inverted range is refused before anything else looks at it", () => {
@@ -474,6 +506,134 @@ describe("finish is the whole-board verdict and returns pointers only", () => {
     expect(refusalOf(w.call("settle_absent", { note: "nothing here" }))).toContain(
       "There is no `settle_absent` on this board",
     );
+  });
+});
+
+describe("a list-valued field is written whole, or the call is refused", () => {
+  // The defect this covers: `update_section {source_candidates:["c2"]}` returned ok and
+  // left `sources: []`, because the rebuilt array was sized off a spine the call never
+  // sent — while `update_*` tells the model "Only the fields given change." Two answers:
+  // the list form no longer carries companions where they were only decoration, and what
+  // remains is refused rather than silently rebuilt.
+
+  it("a partial update does not wipe a list the call never mentioned", () => {
+    const w = writer("design");
+    const section = idOf(
+      w.call("add_section", { title: "Refresh handling", source_paths: ["docs/a.md"] }),
+    );
+    expect(dataOf<{ sources: unknown[] }>(w, section).sources).toEqual([{ path: "docs/a.md" }]);
+
+    // A call that says nothing about sources leaves them exactly as they were.
+    ok(w.call("update_section", { element_id: section, title: "Refresh handling, revised" }));
+    expect(dataOf<{ sources: unknown[] }>(w, section).sources).toEqual([{ path: "docs/a.md" }]);
+    expect(dataOf<{ title: string }>(w, section).title).toBe("Refresh handling, revised");
+
+    // …and a call that DOES name the list replaces it, which is what the list form means.
+    ok(w.call("update_section", { element_id: section, source_paths: ["docs/b.md"] }));
+    expect(dataOf<{ sources: unknown[] }>(w, section).sources).toEqual([{ path: "docs/b.md" }]);
+  });
+
+  it("the alignment companions are gone from the list form, and kept on the single form", () => {
+    // A list of sources is `source_paths` alone: candidate and line were two optional
+    // fields a seat had to keep index-aligned for no gain. On a requirement's SINGLE
+    // source they carry weight and there is no index to align.
+    const design = boardToolsByName("design");
+    const sectionFields = Object.keys((design.get("add_section") as BoardTool).input.shape);
+    expect(sectionFields).toContain("source_paths");
+    expect(sectionFields).not.toContain("source_candidates");
+    expect(sectionFields).not.toContain("source_lines");
+
+    const requirementFields = Object.keys((design.get("add_requirement") as BoardTool).input.shape);
+    expect(requirementFields).toEqual(
+      expect.arrayContaining(["source_path", "source_candidate", "source_line"]),
+    );
+  });
+
+  it("a companion without its spine is refused, naming both and what is admissible", () => {
+    // `stats` keeps both parts, because a label with no value is not a stat — so this is
+    // the shape the refusal still has to answer.
+    const w = writer("design");
+    const refusal = refusalOf(
+      w.call("set_document", {
+        title: "Design",
+        intro_markdown: "Three requirements landed.",
+        stat_values: ["3"],
+      }),
+    );
+    expect(refusal).toContain("`stat_values`");
+    expect(refusal).toContain("`stat_labels`");
+    expect(refusal).toContain("written whole");
+    expect(w.board().document).toBeUndefined();
+  });
+
+  it("a length mismatch is refused, saying which array is short and by how much", () => {
+    const w = writer("design");
+    const refusal = refusalOf(
+      w.call("set_document", {
+        title: "Design",
+        intro_markdown: "Three requirements landed.",
+        stat_labels: ["requirements", "decisions"],
+        stat_values: ["3"],
+      }),
+    );
+    expect(refusal).toContain("`stat_values` has 1 entry");
+    expect(refusal).toContain("`stat_labels` has 2");
+    expect(refusal).toContain("index-aligned");
+    expect(w.board().document).toBeUndefined();
+  });
+
+  it("positive control: aligned arrays of the same length go through", () => {
+    // Without this, every assertion above is satisfied by a writer that refuses all stats.
+    const w = writer("design");
+    ok(
+      w.call("set_document", {
+        title: "Design",
+        intro_markdown: "Three requirements landed.",
+        stat_labels: ["requirements", "decisions"],
+        stat_values: ["3", "1"],
+      }),
+    );
+    expect(w.board().document).toMatchObject({
+      stats: [
+        { label: "requirements", value: "3" },
+        { label: "decisions", value: "1" },
+      ],
+    });
+  });
+});
+
+describe("status stops claiming a settlement the board has moved past", () => {
+  it("a call after finish reopens the board rather than being refused", () => {
+    const w = writer("sequence");
+    const span = idOf(
+      w.call("cite", { path: "src/auth.ts", side: "head", start_line: 11, end_line: 12 }),
+    );
+    const section = idOf(w.call("add_section", { title: "Start with refresh" }));
+    idOf(
+      w.call("add_step", { title: "Read the refresh path", span_ref_id: span, parent_id: section }),
+    );
+    expect(ok(w.call("finish")).outcome.kind).toBe("settled");
+    expect(w.status()).toBe("settled");
+
+    // Writing after a finish is ordinary work and is NOT refused…
+    const more = w.call("add_prose", { markdown: "One more note.", parent_id: section });
+    expect(more.ok).toBe(true);
+    // …but the settlement was a statement about a board that has since changed.
+    expect(w.status()).toBe("drafting");
+    expect(ok(w.call("finish")).outcome.kind).toBe("settled");
+    expect(w.status()).toBe("settled");
+  });
+
+  it("a call after settle_absent reopens it too, and drops the declared absence", () => {
+    const w = writer("noise");
+    ok(w.call("settle_absent", { note: "Every hunk carries meaning." }));
+    expect(w.status()).toBe("absent");
+    expect(w.declaredAbsence()?.reason).toBe("no-noise");
+
+    ok(w.call("add_prose", { markdown: "On reflection, the lockfile churn is skip-safe." }));
+    expect(w.status()).toBe("drafting");
+    // The absence described a board with nothing on it; it does not survive an element.
+    expect(w.declaredAbsence()).toBeUndefined();
   });
 });
 
