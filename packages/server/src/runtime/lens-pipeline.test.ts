@@ -4709,6 +4709,70 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     expect(result.composition?.violations).toEqual([]);
   });
 
+  // PR #802 wrote the reviewed pull request's own paper into the session's context
+  // directory; the Design seat is the one that needs it, because the PR body is the
+  // strongest clue to which spec this branch implements.
+  it("names `pr.md` in the DESIGN seat's prompt only, and writes it where that path points", async () => {
+    const turns: SeatCapture[] = [];
+    const written: SessionContextFile[] = [];
+    const prPaper: SessionContextFile = {
+      name: "pr.md",
+      body: "# Implement the session-bound workspace\n\nCloses #1.\n",
+      holds: "The reviewed pull request's own title and description, as the capture froze them.",
+      readWhen: "when you need what the author SAID this change is for — it names the spec.",
+    };
+    await runLensPipeline({
+      ...boardSeats(turns, (prompt, seat) => cleanBody(lensFromPrompt(prompt, seat))),
+      prPaper,
+      repoRoot: "/pr-worktree",
+      deltaPacket: PACKET,
+      lintContextFor,
+      readPrompt,
+      whiteboard: fakeWhiteboard([]),
+      boardIdFor: (lens) => `board:${lens}`,
+      writeContext: (files) => {
+        written.push(...files);
+        return ".rennet/context/s1";
+      },
+    });
+    // Written through the ONE sink, so the file lands in the root the seats run in and the
+    // directory's `README.md` indexes it — the path the Design prompt names resolves.
+    expect(written.map(({ name }) => name)).toContain("pr.md");
+    expect(written.find(({ name }) => name === "pr.md")?.body).toContain("Closes #1.");
+    const promptFor = (seat: string): string =>
+      turns.find((turn) => turn.seat === seat)?.prompt ?? "";
+    expect(promptFor("design")).toContain("`.rennet/context/s1/pr.md`");
+    expect(promptFor("design")).toContain(prPaper.readWhen);
+    // …and the body never rides the prompt: the seat opens the file.
+    expect(promptFor("design")).not.toContain("Closes #1.");
+    for (const seat of ["sequence", "decisions", "flagged-claude", "noise"]) {
+      expect(promptFor(seat), seat).not.toContain("pr.md");
+    }
+  });
+
+  it("names no `pr.md` on a branch review, which has no pull request to read", async () => {
+    // The control for the test above: same pipeline, same Design seat, no `prPaper` —
+    // and the line disappears. A prompt naming a file the capture never wrote would send
+    // the seat looking for evidence that does not exist.
+    const turns: SeatCapture[] = [];
+    const written: SessionContextFile[] = [];
+    await runLensPipeline({
+      ...boardSeats(turns, (prompt, seat) => cleanBody(lensFromPrompt(prompt, seat))),
+      repoRoot: "/pr-worktree",
+      deltaPacket: PACKET,
+      lintContextFor,
+      readPrompt,
+      whiteboard: fakeWhiteboard([]),
+      boardIdFor: (lens) => `board:${lens}`,
+      writeContext: (files) => {
+        written.push(...files);
+        return ".rennet/context/s1";
+      },
+    });
+    expect(written.map(({ name }) => name)).not.toContain("pr.md");
+    for (const turn of turns) expect(turn.prompt, turn.seat).not.toContain("pr.md");
+  });
+
   it("settles every board as a typed failure naming the missing sidecar, drafting nothing", async () => {
     // session-bound-workspace 5.7: a board seat's only backend is the sidecar. With no
     // seam composed there is nowhere for a lens to run, and the pipeline says exactly that

@@ -178,7 +178,9 @@ because `@pierre/diffs` splits every Shiki grammar into its own on-demand chunk 
 
 Every board seat of a review generation — Design, Sequence, Decisions, both Flagged seats,
 Noise, and the round report — runs as one persistent thread in this sidecar, on the
-review's checkout, instead of a cold ephemeral harness session per attempt. The binding is
+review's checkout. That is the only way a board seat runs: the ephemeral Claude and Codex
+board legs are deleted, so a generation with no sidecar drafts no board and says why. The
+binding is
 `(repository root, generation id, seat)` in the same `thread-bindings.json` as the session
 bindings, and the thread's title names the branch and the lens (`feat/x — Design`), so the
 sidecar's own thread list reads sensibly. Two repositories in one workspace on the same
@@ -200,9 +202,9 @@ Three things follow from the thread being persistent.
   fell from 7,107 bytes to 469 — the base prompt is 6,359 of the bytes that no longer
   travel, and a production base prompt is larger than the fixture's, so the real
   saving is larger. Both interpolations declare a byte bound with an honest omission
-  marker. Every seat leg — this T3 turn, the ephemeral Claude session and the Codex
-  executor — measures the prompt it actually sends for inline context (every JSON
-  literal and fenced block, summed) and stamps the total on the turn metric beside its
+  marker. Every turn leg — this T3 turn and the ephemeral Claude and Codex legs that still
+  serve the utility jobs — measures the prompt it actually sends for inline context (every
+  JSON literal and fenced block, summed) and stamps the total on the turn metric beside its
   tokens when it is over 2,048 bytes, so a payload that crept back into a prompt is
   visible in the same sink as the spend it caused.
 - **The output schema is the turn's contract, once.** `startTurn` takes an `outputSchema`
@@ -276,13 +278,30 @@ The seam is two functions. `packages/adapters/src/t3-seat-turn.ts` builds the se
 `runTurn` and knows nothing about `effect`; `create-server.ts` fills it from the
 supervisor.
 
-**T3 is a board seat's only backend.** A daemon that cannot bring the sidecar up — no
-vendored bundle, a spawn failure — answers with the reason instead of a runtime, and every
-board seat of that generation fails as `T3 sidecar unavailable: <detail>`, which the bench
-speaks in the failed reader's own voice. There is no fallback to the ephemeral
-Claude/Codex legs: those still run every non-board job (the project scout, the repo map,
-the delta digest), but a lens drafted on one would have no thread, no transcript, no live
-line and no same-thread repair, and nothing on screen would say so.
+**T3 is a board seat's only backend, structurally.** A daemon that cannot bring the sidecar
+up — no vendored bundle, a spawn failure — answers with the reason instead of a runtime, and
+every board seat of that generation fails as `T3 sidecar unavailable: <detail>`, which the
+bench speaks in the failed reader's own voice. A caller that composed no sidecar at all
+fails the same way, naming that instead. There is nothing to fall back to: the board
+pipeline holds no harness port, and `councilSeatTurn` refuses a board job without a seam
+before it reaches either ephemeral leg. Those legs still run every non-board job — the
+project scout, the repo map, the delta digest, the compose turn — but a lens drafted on one
+would have no thread, no transcript, no live line and no same-thread repair, and nothing on
+screen would say so.
+
+The **Flagged lane still holds two seats**, Claude and Codex, both of them sidecar threads:
+`t3-seat-turn.ts` binds a thread with `provider: "claudeAgent" | "codex"` through T3's model
+selection, so cross-model concurrence survives the deletion intact. What decides whether
+each seat can run is the council's installed-harness answer plus the seam — never a port the
+pipeline holds. With only one harness installed the lane degrades to a single seat and says
+so, exactly as before.
+
+One consequence worth naming: the round-report classifier's raw-response caps
+(`outputByteCap`, `outputTokenCap`) were enforced by the ephemeral legs at their own
+transport boundary, and T3's `startTurn` has no equivalent knob. They no longer travel. The
+report's shape is bounded by its output schema and its evidence manifest by
+`ROUND_EVIDENCE_MANIFEST_MAX_BYTES`; nothing pretends a response-size cap is applied when
+it is not.
 
 **Archiving a session is how threads are pruned, and it is a deletion boundary.** Transcripts
 are the product while a review is live, so nothing expires on a timer; `session.archive` is
