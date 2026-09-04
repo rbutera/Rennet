@@ -300,8 +300,13 @@ export interface SessionContextPurger {
 }
 
 export function createSessionContextPurger(
-  /** The session's bound root, or `undefined` when nothing recorded one. */
-  rootFor: (sessionId: string) => string | undefined,
+  /**
+   * EVERY root this session has context under, not just the one it is bound to. A round
+   * runs in the root that actually holds its branch, which is not always the root the
+   * session recorded — so a purge that knew only the recorded one left the round's work
+   * order behind in the reviewer's checkout after the archive said it was gone.
+   */
+  rootsFor: (sessionId: string) => readonly string[],
 ): SessionContextPurger {
   // Counted, not a flag: turns overlap on one session — a round and a refine, two
   // verification legs — and the first to settle must not declare the directory free while
@@ -312,8 +317,11 @@ export function createSessionContextPurger(
   // archived session's files sit in the reviewer's checkout until a daemon restart.
   const deferred = new Set<string>();
   const purgeNow = (sessionId: string): boolean => {
-    const root = rootFor(sessionId);
-    return root === undefined ? false : purgeSessionContext(root, sessionId);
+    let removed = false;
+    for (const root of new Set(rootsFor(sessionId))) {
+      if (purgeSessionContext(root, sessionId)) removed = true;
+    }
+    return removed;
   };
   return {
     purge(sessionId) {

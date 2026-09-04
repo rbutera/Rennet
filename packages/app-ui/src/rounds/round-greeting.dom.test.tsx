@@ -25,7 +25,8 @@ describe("RoundGreeting — where the round ran", () => {
     const provenance = container.querySelector('[data-testid="round-run-workspace"]');
     expect(provenance?.textContent).toContain("/Users/rai/code/rennet");
     expect(provenance?.textContent).toContain("turn-12");
-    expect(provenance?.textContent).toContain("3");
+    // Not "3" — any digit anywhere satisfies that, including the turn id.
+    expect(provenance?.textContent).toContain("(turn 3)");
   });
 
   // A row from before the binding carries neither fact. It says nothing rather than

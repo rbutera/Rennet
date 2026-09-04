@@ -308,19 +308,3 @@ export class GitCheckpointStore implements CheckpointPort {
     await runGit(this.locus, this.root, ["update-ref", "-d", ref.ref], { reject: false });
   }
 }
-
-/**
- * Whether a repository contains git submodules (Codex F6). A coding agent's edits
- * INSIDE a submodule leave the superproject's gitlink OID unchanged, so the checkpoint
- * turn diff and the patchset capture — both of which read the superproject — cannot
- * see them. The handoff refuses such repos rather than silently losing those edits;
- * recursive submodule checkpointing is the follow-up. `git submodule status` lists one
- * line per submodule (empty when there are none).
- */
-export async function repoHasSubmodules(
-  repoRoot: string,
-  locus: Locus = HOST_LOCUS,
-): Promise<boolean> {
-  const result = await runGit(locus, repoRoot, ["submodule", "status"], { reject: false });
-  return result.exitCode === 0 && result.stdout.trim().length > 0;
-}

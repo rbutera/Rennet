@@ -68,6 +68,8 @@ export interface RoundExecutionPorts {
   readonly observeWorker?: (
     input: RoundExecutionEffectInput<RoundWorkerAttempt>,
   ) => Promise<RoundWorkerReceipt>;
+  /** The workspace's current head, for naming what a failed attempt already committed. */
+  readonly observeCommits?: (workspace: RoundWorkspaceReceipt) => Promise<string>;
   readonly planGate: (operation: RoundOperation) => RoundGateAttempt;
   readonly runGate: (
     input: RoundExecutionEffectInput<RoundGateAttempt>,
@@ -268,6 +270,21 @@ function hasPartialWorkerEvidence(
 
 function hasPartialCommitEvidence(commits: RoundCommitReceipt): boolean {
   return commits.count > 0 !== (commits.from !== commits.to);
+}
+
+/** Why the worker's diff and the observed commit range cannot both be true. */
+function uncommittedWorkReason(
+  worker: Extract<RoundWorkerReceipt, { outcome: "completed" }>,
+  commits: RoundCommitReceipt,
+): string {
+  if (hasWorkerChanges(worker) && !hasCommitChanges(commits)) {
+    const count = worker.changedPaths.length;
+    return `the turn changed ${count} file${count === 1 ? "" : "s"} but left no commit on ${commits.from}; a round's commits are its result and nothing stages them for you`;
+  }
+  if (!hasWorkerChanges(worker) && hasCommitChanges(commits)) {
+    return `the turn reported no changes but ${commits.from}..${commits.to} carries ${commits.count} commit${commits.count === 1 ? "" : "s"}`;
+  }
+  return "worker diff and observed commit range disagree";
 }
 
 class DurableRoundExecutionCoordinator implements RoundExecutionCoordinator {
@@ -537,6 +554,25 @@ class DurableRoundExecutionCoordinator implements RoundExecutionCoordinator {
     }
   }
 
+  /**
+   * A failed worker's retry re-runs from the SAME `sourceHead`, so anything the failed
+   * attempt already committed is still in the range the retry observes and would be
+   * counted as the retry's work. The reason names that range, because it is the reviewer's
+   * to resolve — Rennet does not rewrite their branch.
+   */
+  private async priorCommitNote(
+    operation: RoundOperation,
+    receipt: Extract<RoundWorkerReceipt, { outcome: "failed" }>,
+  ): Promise<string> {
+    if (operation.state.phase !== "worker-running") return "";
+    if (receipt.changedPaths.length === 0 && receipt.diff.trim().length === 0) return "";
+    const head = await this.options.ports
+      .observeCommits?.(operation.state.workspace)
+      .catch(() => undefined);
+    if (head === undefined || head === operation.state.workspace.sourceHead) return "";
+    return `. This attempt already left commits on ${operation.state.workspace.sourceHead}..${head}; a retry runs from the same base and will count them as its own, so inspect or reset them first`;
+  }
+
   private async runWorker(
     operation: RoundOperation,
     attempt: RoundWorkerAttempt,
@@ -558,7 +594,7 @@ class DurableRoundExecutionCoordinator implements RoundExecutionCoordinator {
     if (receipt.outcome === "failed") {
       return this.fail(operation, {
         at: "worker",
-        reason: workerFailureReason(receipt),
+        reason: `${workerFailureReason(receipt)}${await this.priorCommitNote(operation, receipt)}`,
         failedAt: Math.max(this.now(), receipt.completedAt),
         workspace: operation.state.workspace,
         worker: receipt,
@@ -823,7 +859,11 @@ class DurableRoundExecutionCoordinator implements RoundExecutionCoordinator {
           ) {
             operation = this.fail(operation, {
               at: "committing",
-              reason: "worker diff and observed commit range disagree",
+              // The overwhelmingly common shape deserves its own sentence: the turn edited
+              // and did not commit. Nothing stages on the reviewer's behalf, so there is
+              // no round — and "disagree" told the reader nothing about which side was
+              // empty or what to do about it.
+              reason: uncommittedWorkReason(state.worker, receipt),
               failedAt: Math.max(this.now(), receipt.committedAt),
               workspace: state.workspace,
               worker: state.worker,

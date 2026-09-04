@@ -112,9 +112,15 @@ function seedDecoyRepo(root: string): void {
 /**
  * The round worker, as the ONE turn on the session's bound T3 thread it now is
  * (session-bound-workspace D2). No sidecar runs in a test, so this stands in for it — and
- * it stands in HONESTLY: it is handed a prompt and a cwd and nothing else, so it has to
- * READ the work order at the path the prompt names, exactly as the real turn does. A
- * prompt that named a file nobody wrote would leave it with nothing to do.
+ * it stands in HONESTLY, in the two ways that matter:
+ *
+ *   • It is handed a prompt and a cwd and nothing else, so it has to READ the work order
+ *     at the path the prompt names, exactly as the real turn does. A prompt naming a file
+ *     nobody wrote leaves it with nothing to do.
+ *   • It OBEYS the prompt about git. A fake that commits regardless is why the shipped
+ *     blocker was invisible: the round prompt carried the handoff's "do NOT commit" rule,
+ *     so every real round would have edited, committed nothing, and failed at the commit
+ *     observation — while this suite stayed green because the fake committed anyway.
  */
 function fakeT3RoundWorker(turns: Array<{ readonly repoRoot: string; readonly order: string }>) {
   let turnCount = 0;
@@ -127,13 +133,21 @@ function fakeT3RoundWorker(turns: Array<{ readonly repoRoot: string; readonly or
     turns.push({ repoRoot, order });
     const value = order.includes(OWNER_LOOP_ROUND_TWO_BODY) ? "round-two" : "round-one";
     writeFileSync(join(repoRoot, OWNER_LOOP_SOURCE), `export const ownerValue = '${value}';\n`);
-    git(repoRoot, "add", OWNER_LOOP_SOURCE);
-    git(repoRoot, "commit", "-qm", `round: ${value}`);
+    // Read the instruction, then follow it. Both the prompt and the work order have to
+    // agree that committing is wanted; either one saying "do NOT commit" is obeyed.
+    const forbidsGit = (text: string) => /do NOT commit/i.test(text);
+    const committed = !forbidsGit(prompt) && !forbidsGit(order);
+    if (committed) {
+      git(repoRoot, "add", OWNER_LOOP_SOURCE);
+      git(repoRoot, "commit", "-qm", `round: ${value}`);
+    }
     turnCount += 1;
     return {
       status: "completed" as const,
       finalText: `Set ownerValue to ${value}.`,
-      turnDiff: git(repoRoot, "show", "--format=", "HEAD"),
+      turnDiff: committed
+        ? git(repoRoot, "show", "--format=", "HEAD")
+        : git(repoRoot, "diff", "--", OWNER_LOOP_SOURCE),
       filesTouched: [OWNER_LOOP_SOURCE],
       checkpoint: { threadId: "t3-owner-loop", turnId: `turn-${value}`, turnCount },
     };

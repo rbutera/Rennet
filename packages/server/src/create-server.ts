@@ -157,7 +157,9 @@ import {
   planQuoteThreadReanchors,
   prPaperContextFile,
   ReviewService,
+  ROUND_COMMIT_RULE,
   recordSeatSend,
+  renderComposedPrompt,
   renderWorkOrder,
   resolveAssignment,
   resolveLocus,
@@ -659,28 +661,39 @@ export function createGitLabPrSubmissionResolver(
  * records one root for everything); a round that committed there would move nothing the
  * reviewer can see, advance the review anyway, and leave the branch exactly where it was.
  * That is the "many roots, one label" failure, and it is silent. So the candidates are
- * tried in order and the first one ON the round's branch — or at its detached head — wins;
- * when none is, the round fails naming what it looked for and where.
+ * tried in order and the first one ON the round's source wins; when none is, the round
+ * fails naming what it looked for and where.
+ *
+ * "On the round's source" is TWO facts, because a branch NAME is not an identity: a
+ * workspace maps many repos to one session, two of them can both have `feature/shared`
+ * checked out, and the name alone picks whichever the mapping happened to yield. So the
+ * root must also CONTAIN the reviewed head — `git merge-base --is-ancestor <reviewed> HEAD`
+ * — which rejects a same-named branch in another repository and a branch someone rewound
+ * behind the review, while still accepting the reviewer's own commits on top.
  */
 export function createRoundWorkspacePlanner(input: {
   readonly candidateRoots: (operation: RoundOperation) => readonly string[];
+  readonly reviewedHead: (operation: RoundOperation) => string;
   readonly headOf: (root: string) => Promise<string | undefined>;
   readonly branchOf: (root: string) => Promise<string | undefined>;
+  /** Whether `commit` is an ancestor of (or equal to) this root's HEAD. */
+  readonly containsCommit: (root: string, commit: string) => Promise<boolean>;
   readonly now?: () => number;
 }): RoundExecutionPorts["planWorkspace"] {
   return async (operation) => {
     const target = operation.sourceTarget;
+    const reviewed = input.reviewedHead(operation);
     const tried: string[] = [];
     for (const root of input.candidateRoots(operation)) {
       if (tried.includes(root)) continue;
       tried.push(root);
       const head = await input.headOf(root);
       if (head === undefined) continue;
-      const onSource =
-        target.kind === "branch"
-          ? (await input.branchOf(root)) === target.branch
-          : head === target.head;
-      if (!onSource) continue;
+      if (target.kind === "branch" && (await input.branchOf(root)) !== target.branch) continue;
+      if (target.kind === "detached" && head !== target.head) continue;
+      // The name matched; now the identity has to. A different repository's `feat/x` and a
+      // rewound `feat/x` both pass the name check and neither contains what was reviewed.
+      if (!(await input.containsCommit(root, reviewed))) continue;
       return {
         kind: "bound-root",
         root,
@@ -691,7 +704,7 @@ export function createRoundWorkspacePlanner(input: {
     const wanted =
       target.kind === "branch" ? `the branch ${target.branch}` : `the commit ${target.head}`;
     throw new Error(
-      `This round works on ${wanted}, and none of this session's workspaces is on it: ${tried.join(", ") || "none"}. Check it out there and dispatch again.`,
+      `This round works on ${wanted} at ${reviewed}, and none of this session's workspaces is on it: ${tried.join(", ") || "none"}. Check it out there — and make sure it still contains the reviewed commit — then dispatch again.`,
     );
   };
 }
@@ -747,6 +760,7 @@ export function createRoundWorkerRecoveryPort(input: {
   readonly readCheckpoint: (turn: {
     readonly repoRoot: string;
     readonly reviewId: string;
+    readonly prompt: string;
     readonly since: number;
   }) => Promise<RoundWorkerTurnCheckpoint | undefined>;
   readonly now?: () => number;
@@ -766,6 +780,9 @@ export function createRoundWorkerRecoveryPort(input: {
       found = await input.readCheckpoint({
         repoRoot: root,
         reviewId: operation.reviewId,
+        // The thread is shared with the interactive handoff, so the round's own prompt is
+        // what identifies its turn — never "whatever finished most recently".
+        prompt: operation.workOrderPrompt,
         since: attempt.startedAt,
       });
     } catch (error) {
@@ -787,6 +804,24 @@ export function createRoundWorkerRecoveryPort(input: {
         },
         diff: "",
         changedPaths: [],
+      };
+    }
+    // A checkpoint says the turn ENDED, not that it worked: T3 writes one for a failed
+    // turn too (status `"error"`) and for a cancelled one (`"missing"`). Only `"ready"`
+    // settles the round; the rest keep their diff — the partial edits are real and on the
+    // reviewer's branch — and fail with what T3 said about the turn.
+    if (found.status !== "ready") {
+      return {
+        ...attempt,
+        completedAt,
+        outcome: "failed",
+        termination: {
+          kind: "error",
+          reason: `Rennet restarted while this round's turn was running, and T3 recorded that turn as ${found.status === "error" ? "failed" : "cancelled or interrupted"}. Whatever it changed is in ${root}, on your own branch.`,
+        },
+        diff: found.diff,
+        changedPaths: [...found.filesTouched],
+        checkpoint: found.checkpoint,
       };
     }
     return {
@@ -2600,7 +2635,20 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   // Deferred while a round is in flight: `session.archive` awaits the session's
   // preparation, but nothing tracks a round, so an immediate purge deletes the directory
   // the round's next turn reads. The round's settle path purges instead.
-  const contextPurger = createSessionContextPurger(boundRootForSession);
+  /**
+   * The roots a ROUND wrote its work order into, per session. A round runs in the root
+   * that actually holds its branch, which is not always the root `boundRootForSession`
+   * reports — so without this the archive purge removes the recorded root's directory and
+   * silently leaves the round's `work-order.md` in the reviewer's checkout. Process-local
+   * on purpose: it covers an archive landing while the daemon is up, and the daemon-start
+   * orphan sweep covers what a crash leaves.
+   */
+  const roundWorkspaceRoots = new Map<string, string>();
+  const contextPurger = createSessionContextPurger((sessionId) => {
+    const bound = boundRootForSession(sessionId);
+    const round = roundWorkspaceRoots.get(sessionId);
+    return [bound, round].filter((root): root is string => root !== undefined);
+  });
   const purgeContextForSession = (sessionId: string): void => void contextPurger.purge(sessionId);
   /**
    * The drafting roots a range review's seats run in until task 5.1 binds one root per
@@ -3119,12 +3167,23 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // The round's work order is a FILE, not a prompt payload (session-context-files, and
     // now that the round is a turn in the session's BOUND root the pointer resolves —
     // which is exactly what the inline exception here was waiting on). Same file name and
-    // same context key as `review.handoff.run`: `bundle.prompt` already IS the short turn
-    // prompt naming `.rennet/context/<reviewId>/work-order.md`. The DOCUMENT rides the
-    // durable operation rather than being written here, because the root it belongs in is
-    // the one `planWorkspace` resolves a moment later — and writing it at the turn is also
-    // what lets a restart put it back.
-    const workOrderDocument = renderWorkOrder(input.workOrder.tasks);
+    // same context key as `review.handoff.run`. The DOCUMENT rides the durable operation
+    // rather than being written here, because the root it belongs in is the one
+    // `planWorkspace` resolves a moment later — and writing it at the turn is also what
+    // lets a restart put it back.
+    //
+    // Both are rendered HERE rather than taken from `input.workOrder.prompt`, because a
+    // round needs the opposite rule 2 from the review handoff: the handoff recaptures a
+    // dirty tree and forbids git, while a round's COMMITS ARE THE ROUND. A round sent the
+    // handoff's prompt edits files, leaves nothing committed, and fails at the commit
+    // observation — which is what shipped until this was caught in review.
+    const roundContextDir = sessionContextRelativeDir(sessionIdForReview(input.review));
+    const workOrderDocument = renderWorkOrder(input.workOrder.tasks, ROUND_COMMIT_RULE);
+    const workOrderPrompt = renderComposedPrompt(
+      input.workOrder.tasks,
+      roundContextDir,
+      ROUND_COMMIT_RULE,
+    );
     return {
       operationId: randomUUID(),
       sessionId: input.session.id,
@@ -3138,9 +3197,9 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
           ? { kind: "detached", head: patchset.repository.headOid }
           : { kind: "branch", branch: patchset.repository.headRef },
       repoRoot: input.review.repositoryRoot,
-      workOrderPrompt: input.workOrder.prompt,
+      workOrderPrompt,
       workOrderDocument,
-      workOrderDigest: sha256Hex(input.workOrder.prompt),
+      workOrderDigest: sha256Hex(workOrderPrompt),
       gatePlan:
         gateCommand === undefined || gateCommand.length === 0
           ? { kind: "absent" }
@@ -3217,8 +3276,20 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         : [boundRootForSession(operation.sessionId) as string]),
       operation.repoRoot,
     ],
+    reviewedHead: (operation) => sourcePatchsetFor(operation).repository.headOid,
     headOf: (root) => readGit(root, ["rev-parse", "HEAD"]),
     branchOf: (root) => readGit(root, ["symbolic-ref", "--quiet", "--short", "HEAD"]),
+    // `merge-base --is-ancestor` answers with its EXIT CODE and prints nothing, so this
+    // cannot go through `readGit`, which reads stdout — that reported every root as not
+    // containing anything and refused every round.
+    containsCommit: async (root, commit) => {
+      try {
+        await gitForRepo(root)(root, ["merge-base", "--is-ancestor", commit, "HEAD"]);
+        return true;
+      } catch {
+        return false;
+      }
+    },
   });
   const roundWorkerTurn = createRoundWorkerPort({
     runHandoffTurn: options.runHandoffTurn ?? runHandoffTurn,
@@ -3230,12 +3301,22 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   // resumed round find the order it was dispatched with rather than nothing at all.
   const runRoundWorker: RoundExecutionPorts["runWorker"] = async (input) => {
     const state = input.operation.state;
-    if (state.phase === "worker-running" && input.operation.workOrderDocument !== undefined) {
-      writeSessionContext(state.workspace.root, roundContextKey(input.operation), [
-        workOrderContextFileFrom(input.operation.workOrderDocument),
-      ]);
+    // The LEASE, taken before the write and held until the turn settles: `session.archive`
+    // awaits nothing the coordinator drives, so without it an archive mid-turn deletes the
+    // work order the agent is reading. The root is remembered for the purge, because it is
+    // not necessarily the one the session recorded.
+    const release = contextPurger.turnInFlight(input.operation.sessionId);
+    try {
+      if (state.phase === "worker-running" && input.operation.workOrderDocument !== undefined) {
+        roundWorkspaceRoots.set(input.operation.sessionId, state.workspace.root);
+        writeSessionContext(state.workspace.root, roundContextKey(input.operation), [
+          workOrderContextFileFrom(input.operation.workOrderDocument),
+        ]);
+      }
+      return await roundWorkerTurn(input);
+    } finally {
+      release();
     }
-    return roundWorkerTurn(input);
   };
   const recoverRoundWorker = createRoundWorkerRecoveryPort({
     readCheckpoint: (turn) => readHandoffTurnCheckpoint(turn, t3Sidecar),
@@ -3276,6 +3357,8 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     store: roundOperationStore,
     ports: {
       planWorkspace: planRoundWorkspace,
+      observeCommits: async (workspace) =>
+        (await readGit(workspace.root, ["rev-parse", "HEAD"])) ?? workspace.sourceHead,
       planWorker: () => ({ executionId: randomUUID(), startedAt: Date.now() }),
       runWorker: runRoundWorker,
       observeWorker: recoverRoundWorker,

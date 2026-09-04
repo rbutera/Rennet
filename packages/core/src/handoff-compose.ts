@@ -11,13 +11,31 @@ import { sha256Hex } from "@rennet/protocol";
 import type { SessionContextFile } from "./session-context";
 
 /**
- * The one rule both handoff prompts share verbatim: the coding agent edits, the
- * review harness captures. Shared so the two prompts cannot drift on it (#737).
+ * Rule 2 for the REVIEW HANDOFF: the coding agent edits, the review harness captures the
+ * dirty tree. Shared verbatim by that exit's two prompts so they cannot drift (#737).
  */
 export const HANDOFF_NO_GIT_RULE = [
   "2. Do NOT commit, do NOT push, do NOT run git. Just edit the files; the review harness",
   "   captures your result and re-reviews it.",
 ] as const;
+
+/**
+ * Rule 2 for a coding ROUND, which is the opposite instruction and has to be.
+ *
+ * A round is a turn in the session's bound workspace (session-bound-workspace D2): its
+ * commits ARE the round, the successor patchset is captured from them, and Rennet does not
+ * stage anything on the reviewer's behalf. A round sent the handoff's no-git rule edits
+ * files, leaves zero commits, and fails — so the two rules are named separately rather
+ * than shared, and each prompt takes the one its exit actually needs.
+ */
+export const ROUND_COMMIT_RULE = [
+  "2. COMMIT your work on the current branch before you finish — only the files this work",
+  "   order asked you to change, and do NOT push. Those commits are the round: nothing",
+  "   stages them for you, and a turn that edits without committing leaves nothing behind.",
+] as const;
+
+/** The rule-2 block a prompt carries. Defaults to the handoff's; a round passes its own. */
+export type HandoffGitRule = typeof HANDOFF_NO_GIT_RULE | typeof ROUND_COMMIT_RULE;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Handoff-bundle composition (issue #72, Model Council job M24) — the light-tier
@@ -242,7 +260,10 @@ export const WORK_ORDER_FILE = "work-order.md";
  * that path — so the asks and their diff fences reach the agent by being read, not by
  * being billed on every retry.
  */
-export function renderWorkOrder(tasks: readonly ComposedTask[]): string {
+export function renderWorkOrder(
+  tasks: readonly ComposedTask[],
+  gitRule: HandoffGitRule = HANDOFF_NO_GIT_RULE,
+): string {
   const askCount = tasks.reduce((total, task) => total + task.asks.length, 0);
   const out: string[] = [
     "# Review handoff",
@@ -252,7 +273,7 @@ export function renderWorkOrder(tasks: readonly ComposedTask[]): string {
     "",
     "Rules, in order of importance:",
     "1. Address ONLY the tasks listed below. Do not make unrelated changes.",
-    ...HANDOFF_NO_GIT_RULE,
+    ...gitRule,
     "3. If a task cannot be done as asked, leave those files unchanged and say why in your final",
     "   message — never guess or half-apply it.",
     "",
@@ -305,7 +326,11 @@ export function workOrderContextFile(tasks: readonly ComposedTask[]): SessionCon
  * Deterministic in `tasks` and the context directory, so `verifyComposedBundle` can
  * recompute it and prove the run is executing the order that was composed.
  */
-export function renderComposedPrompt(tasks: readonly ComposedTask[], contextDir: string): string {
+export function renderComposedPrompt(
+  tasks: readonly ComposedTask[],
+  contextDir: string,
+  gitRule: HandoffGitRule = HANDOFF_NO_GIT_RULE,
+): string {
   const askCount = tasks.reduce((total, task) => total + task.asks.length, 0);
   return [
     "# Review handoff",
@@ -320,7 +345,7 @@ export function renderComposedPrompt(tasks: readonly ComposedTask[], contextDir:
     "",
     "Rules, in order of importance:",
     "1. Address ONLY the tasks in that file. Do not make unrelated changes.",
-    ...HANDOFF_NO_GIT_RULE,
+    ...gitRule,
     "3. If a task cannot be done as asked, leave those files unchanged and say why in your final",
     "   message — never guess or half-apply it.",
   ].join("\n");

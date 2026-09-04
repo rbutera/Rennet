@@ -19,13 +19,22 @@ import {
 } from "@rennet/protocol";
 import { z } from "zod";
 
-export const ROUND_OPERATION_STORE_VERSION = 1;
+/**
+ * Bumped to 2 by session-bound-workspace: a round's durable shape changed under it (the
+ * workspace receipt became `bound-root`, the source-landing phases went), so every row a
+ * pre-binding daemon wrote describes a machine that no longer exists. Version 1 rows are
+ * LEGACY, not corrupt — see {@link RoundOperationStoreLegacyError}.
+ */
+export const ROUND_OPERATION_STORE_VERSION = 2;
 export const ROUND_OPERATION_STORE_FILE_NAME = "round-operations.sqlite";
 
 const roundOperationFileSchema = z.object({
   version: z.number().int(),
   operation: RoundOperationSchema,
 });
+
+/** The version stamp alone, read before the operation it wraps. */
+const roundOperationEnvelopeSchema = z.object({ version: z.number().int() });
 
 const roundOperationRowSchema = z.object({
   session_id: z.string(),
@@ -50,6 +59,30 @@ export type RoundOperationActiveList = {
   operations: RoundOperation[];
   errors: RoundOperationListError[];
 };
+
+/**
+ * A row an OLDER Rennet wrote, told apart from a damaged one.
+ *
+ * These are different facts and they need different answers. A row that fails the current
+ * schema at the current version is damage, and the daemon says so loudly — that is what
+ * `RoundOperationStoreCorruptError` is for. A row stamped with a version this build has
+ * moved past is just old: its phases and receipts describe a state machine that has been
+ * deleted, nothing can resume it, and treating it as corruption wedges the session
+ * permanently (`recover()` throws before it reaches any other session, and every later
+ * `read` for that session throws forever). So the reader DROPS it, with a logged reason,
+ * and the session dispatches fresh.
+ */
+export class RoundOperationStoreLegacyError extends Error {
+  constructor(
+    readonly sessionId: string,
+    readonly version: number,
+  ) {
+    super(
+      `round operation for session ${sessionId} was written by an older Rennet (store version ${version}, this build reads ${ROUND_OPERATION_STORE_VERSION}); dropping it`,
+    );
+    this.name = "RoundOperationStoreLegacyError";
+  }
+}
 
 export class RoundOperationStoreCorruptError extends Error {
   constructor(id: string, detail: string) {
@@ -79,15 +112,27 @@ function decodeOperationRow(rawRow: unknown, sessionId: string): RoundOperation 
     throw new RoundOperationStoreCorruptError(sessionId, "malformed JSON");
   }
 
+  // The VERSION is read before the operation, so an old row is recognised as old rather
+  // than failing the current schema and reading as damage.
+  const envelope = roundOperationEnvelopeSchema.safeParse(decoded);
+  if (!envelope.success) {
+    throw new RoundOperationStoreCorruptError(sessionId, "schema mismatch");
+  }
+  // STRICTLY older, not merely different: a row from a FUTURE version was written by a
+  // newer daemon over the same data dir, and deleting a live round on downgrade is data
+  // loss nobody asked for. That stays a refusal.
+  if (envelope.data.version < ROUND_OPERATION_STORE_VERSION) {
+    throw new RoundOperationStoreLegacyError(sessionId, envelope.data.version);
+  }
+  if (envelope.data.version !== ROUND_OPERATION_STORE_VERSION) {
+    throw new RoundOperationStoreCorruptError(
+      sessionId,
+      `unknown store version ${envelope.data.version} (expected ${ROUND_OPERATION_STORE_VERSION})`,
+    );
+  }
   const parsed = roundOperationFileSchema.safeParse(decoded);
   if (!parsed.success) {
     throw new RoundOperationStoreCorruptError(sessionId, "schema mismatch");
-  }
-  if (parsed.data.version !== ROUND_OPERATION_STORE_VERSION) {
-    throw new RoundOperationStoreCorruptError(
-      sessionId,
-      `unknown store version ${parsed.data.version} (expected ${ROUND_OPERATION_STORE_VERSION})`,
-    );
   }
   const operation = parsed.data.operation;
   if (
@@ -469,7 +514,10 @@ export function defaultRoundOperationStoreDir(): string {
 export class RoundOperationStore {
   private readonly database: DatabaseSync;
 
-  constructor(dir: string = defaultRoundOperationStoreDir()) {
+  constructor(
+    dir: string = defaultRoundOperationStoreDir(),
+    private readonly warn: (message: string) => void = console.warn,
+  ) {
     mkdirSync(dir, { recursive: true });
     this.database = new DatabaseSync(join(dir, ROUND_OPERATION_STORE_FILE_NAME));
     this.database.exec(`
@@ -493,7 +541,20 @@ export class RoundOperationStore {
          WHERE session_id = ?`,
       )
       .get(sessionId);
-    return row === undefined ? undefined : decodeOperationRow(row, sessionId);
+    if (row === undefined) return undefined;
+    try {
+      return decodeOperationRow(row, sessionId);
+    } catch (error) {
+      if (!(error instanceof RoundOperationStoreLegacyError)) throw error;
+      this.dropLegacyRow(error);
+      return undefined;
+    }
+  }
+
+  /** Remove a row an older Rennet wrote, once, saying so. Never touches a corrupt row. */
+  private dropLegacyRow(error: RoundOperationStoreLegacyError): void {
+    this.database.prepare(`DELETE FROM round_operations WHERE session_id = ?`).run(error.sessionId);
+    this.warn(`rennet: ${error.message}`);
   }
 
   listActive(): RoundOperationActiveList {
@@ -512,6 +573,13 @@ export class RoundOperationStore {
       try {
         operations.push(decodeOperationRow(row, sessionId));
       } catch (error) {
+        // A row from an older build is dropped here rather than reported: `recover()`
+        // turns this list's errors into an AggregateError and throws BEFORE driving any
+        // operation, so one pre-upgrade row would stop every other session recovering.
+        if (error instanceof RoundOperationStoreLegacyError) {
+          this.dropLegacyRow(error);
+          continue;
+        }
         if (!(error instanceof RoundOperationStoreCorruptError)) throw error;
         errors.push({ sessionId, error });
       }

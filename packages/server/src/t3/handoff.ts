@@ -25,6 +25,14 @@ export type T3HandoffTurnOutcome = HandoffTurnOutcome & {
 /** A turn's checkpoint read back off the thread, with the diff it captured. */
 export interface T3TurnCheckpointRead {
   readonly checkpoint: RoundCheckpoint;
+  /**
+   * T3's own verdict on the TURN, carried through unchanged. A failed turn still leaves a
+   * checkpoint — `checkpointStatusFromRuntime` in the vendored `CheckpointReactor` maps a
+   * failed run to `"error"` and a cancelled or interrupted one to `"missing"` — so the
+   * presence of a checkpoint says the turn ENDED, never that it succeeded. Only `"ready"`
+   * may settle a round as completed.
+   */
+  readonly status: "ready" | "missing" | "error";
   readonly diff: string;
   readonly filesTouched: readonly string[];
 }
@@ -128,13 +136,28 @@ export async function runHandoffTurn(
  *
  * Restart recovery's only evidence (session-bound-workspace D2): the daemon can die
  * mid-turn and T3 cannot be asked whether an execution id finished, but every settled turn
- * leaves a checkpoint stamped with when it completed. `since` is the round's worker attempt
- * start, so an earlier round's checkpoint on the same thread can never be mistaken for
- * this one's. `undefined` means the turn left nothing, which is a failed round, not a
- * guessed one.
+ * leaves a checkpoint.
+ *
+ * The turn is identified by its own PROMPT, not by when it finished. This thread is shared:
+ * `review.handoff.run` sends interactive turns on it too, and a handoff completing after
+ * the round started would be adopted as the round's receipt by any time-based pick. The
+ * round's prompt is deterministic and persisted on its durable operation, T3 records the
+ * user message the moment a turn starts, and every message carries its `turnId` — so the
+ * message whose text IS this round's prompt names exactly the turn to read. `since` stays
+ * as a second, independent guard against an identical re-dispatch's earlier attempt.
+ *
+ * `undefined` means no such turn left a checkpoint, which is a failed round, not a guessed
+ * one. The checkpoint's `status` rides back and is the caller's to honour: a FAILED turn
+ * checkpoints too, so "found a checkpoint" is not "the turn worked".
  */
 export async function readHandoffTurnCheckpoint(
-  input: { readonly repoRoot: string; readonly reviewId: string; readonly since: number },
+  input: {
+    readonly repoRoot: string;
+    readonly reviewId: string;
+    /** The exact turn text the round sent, which is what identifies its turn. */
+    readonly prompt: string;
+    readonly since: number;
+  },
   deps: T3HandoffDeps,
 ): Promise<T3TurnCheckpointRead | undefined> {
   const binding = await deps.threadFor({
@@ -144,14 +167,20 @@ export async function readHandoffTurnCheckpoint(
   });
   const client = await deps.client();
   const thread = await client.readThread(binding.threadId);
+  const ownTurns = new Set(
+    thread.messages
+      .filter((message) => message.role === "user" && message.text === input.prompt)
+      .flatMap((message) => (message.turnId === null ? [] : [message.turnId])),
+  );
   const summary = thread.checkpoints
-    .filter((entry) => Date.parse(entry.completedAt) >= input.since)
+    .filter((entry) => ownTurns.has(entry.turnId) && Date.parse(entry.completedAt) >= input.since)
     .at(-1);
   if (summary === undefined) return undefined;
   const diff = await client.readTurnDiff(binding.threadId, summary.turnId).catch(() => undefined);
   if (diff === undefined) return undefined;
   return {
     checkpoint: { threadId: binding.threadId, turnId: diff.turnId, turnCount: diff.turnCount },
+    status: summary.status,
     diff: diff.diff,
     filesTouched: diff.files.map((file) => file.path),
   };

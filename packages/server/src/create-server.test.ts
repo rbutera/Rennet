@@ -689,8 +689,10 @@ describe("the round runs in the session's bound root", () => {
     };
     const workspace = await createRoundWorkspacePlanner({
       candidateRoots: () => ["/drafting", "/bound"],
+      reviewedHead: () => "reviewed-oid",
       headOf: async (root) => heads[root],
       branchOf: async (root) => branches[root],
+      containsCommit: async () => true,
       now: () => 2,
     })(operation());
 
@@ -702,15 +704,36 @@ describe("the round runs in the session's bound root", () => {
     });
   });
 
-  it("fails naming the branch and the roots it looked in when none is on it", async () => {
+  // A branch NAME is not a repository identity. Two repos in one workspace both carry
+  // `feat/test`, and a name-only match takes whichever the candidate order yielded — the
+  // wrong repo's tree under the right round's label, silently. The reviewed commit being
+  // an ancestor of HEAD is the contradiction that separates them, and it also catches a
+  // branch someone rewound behind the review while still allowing commits on top.
+  it("refuses a same-named branch that does not contain the reviewed commit", async () => {
+    const contains: Record<string, boolean> = { "/other-repo": false, "/bound": true };
+    const workspace = await createRoundWorkspacePlanner({
+      candidateRoots: () => ["/other-repo", "/bound"],
+      reviewedHead: () => "reviewed-oid",
+      headOf: async () => "bound-head",
+      branchOf: async () => "feat/test",
+      containsCommit: async (root) => contains[root] ?? false,
+      now: () => 2,
+    })(operation());
+    expect(workspace.root).toBe("/bound");
+  });
+
+  it("fails naming the branch, the reviewed commit, and the roots it looked in", async () => {
     await expect(
       createRoundWorkspacePlanner({
         candidateRoots: () => ["/drafting", "/bound"],
+        reviewedHead: () => "reviewed-oid",
         headOf: async () => "bound-head",
-        branchOf: async () => "some/other-branch",
+        branchOf: async () => "feat/test",
+        // Right name everywhere, reviewed commit nowhere: a rewound branch.
+        containsCommit: async () => false,
         now: () => 2,
       })(operation()),
-    ).rejects.toThrow(/feat\/test.*\/drafting, \/bound/);
+    ).rejects.toThrow(/feat\/test at reviewed-oid.*\/drafting, \/bound/);
   });
 
   it("runs the worker turn in the bound root and keeps the turn's checkpoint as the receipt", async () => {
@@ -761,6 +784,7 @@ describe("the round runs in the session's bound root", () => {
 
     const readCheckpoint = vi.fn(async () => ({
       checkpoint: { threadId: "thread-1", turnId: "turn-7", turnCount: 4 },
+      status: "ready" as const,
       diff: "diff --git a/x b/x\n",
       filesTouched: ["x"],
     }));
@@ -778,6 +802,27 @@ describe("the round runs in the session's bound root", () => {
     expect(settled.outcome).toBe("completed");
     expect(settled.changedPaths).toEqual(["x"]);
     expect(settled.checkpoint).toEqual({ threadId: "thread-1", turnId: "turn-7", turnCount: 4 });
+
+    // A checkpoint T3 stamped "error" is a FAILED turn that happens to have left one.
+    // Settling it as completed would take the round on to its gate and its successor
+    // capture on work the agent itself reported as unfinished.
+    const errored = await createRoundWorkerRecoveryPort({
+      readCheckpoint: async () => ({
+        checkpoint: { threadId: "thread-1", turnId: "turn-7", turnCount: 4 },
+        status: "error" as const,
+        diff: "diff --git a/x b/x\n",
+        filesTouched: ["x"],
+      }),
+      now: () => 1000,
+    })({ operation: running, attempt: workerAttempt });
+    expect(errored.outcome).toBe("failed");
+    // …and it keeps the partial diff, because those edits are real and on the branch.
+    expect(errored.changedPaths).toEqual(["x"]);
+    expect(
+      errored.outcome === "failed" && errored.termination.kind === "error"
+        ? errored.termination.reason
+        : "",
+    ).toContain("failed");
 
     const failed = await createRoundWorkerRecoveryPort({
       readCheckpoint: async () => undefined,
@@ -1900,13 +1945,19 @@ describe("round.dispatch mints onto the session the reads answer (the call site,
       // The round worker is a turn in the SESSION'S BOUND ROOT and commits on the branch
       // itself — nothing lands a delta afterwards, so a turn that does not commit leaves
       // the round with zero commits, which is exactly what the coordinator refuses.
+      //
+      // It OBEYS the prompt about git rather than committing regardless: a fake that
+      // always commits is what hid the shipped blocker, where the round carried the review
+      // handoff's "do NOT commit" rule and every real round would have failed.
       runHandoffTurn: async ({ repoRoot, prompt }) => {
         workerCalls += 1;
         workerRepoRoot = repoRoot;
         workerPrompt = prompt;
         writeFileSync(join(repoRoot, "a.txt"), "base\nreviewed\nworker change\n");
-        execFileSync("git", ["add", "a.txt"], { cwd: repoRoot });
-        execFileSync("git", ["commit", "-m", "worker change"], { cwd: repoRoot });
+        if (!/do NOT commit/i.test(prompt)) {
+          execFileSync("git", ["add", "a.txt"], { cwd: repoRoot });
+          execFileSync("git", ["commit", "-m", "worker change"], { cwd: repoRoot });
+        }
         return {
           status: "completed",
           finalText: "done",

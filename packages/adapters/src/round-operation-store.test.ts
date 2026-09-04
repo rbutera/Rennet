@@ -1140,3 +1140,124 @@ if (RACE_ROLE !== undefined) {
     }, 40_000);
   });
 }
+
+// A row an OLDER Rennet wrote is not a damaged row, and conflating the two wedges the
+// daemon: `recover()` folds this list's errors into an AggregateError and throws BEFORE
+// driving anything, so ONE pre-upgrade row would stop every other session recovering,
+// and `read` would throw for that session on every dispatch thereafter — forever.
+describe("rows written before the workspace binding", () => {
+  const legacyEnvelope = (sessionId: string) =>
+    JSON.stringify({
+      version: 1,
+      operation: {
+        operationId: "operation-legacy",
+        sessionId,
+        reviewId: "review-1",
+        dispatchId: "dispatch-legacy",
+        sourcePatchsetId: "patchset-1",
+        askOccurrences: [{ id: "ask-legacy", revision: 0 }],
+        roundNumber: 1,
+        sourceTarget: { kind: "branch", branch: "feat/test" },
+        repoRoot: "/repo",
+        workOrderPrompt: "Implement the requested change.",
+        workOrderDigest: sha256Hex("Implement the requested change."),
+        gatePlan: { kind: "absent" },
+        revision: 0,
+        rerunRequested: false,
+        createdAt: 1,
+        updatedAt: 1,
+        // The pre-binding shapes, exactly: a detached worktree receipt and a landing.
+        state: {
+          phase: "source-landed",
+          workspace: {
+            kind: "detached-worktree",
+            worktreePath: "/data/round-worktrees/abc",
+            sourceTreeOid: "tree-1",
+            sourceParentHead: "head-1",
+            startedAt: 2,
+            sourceHead: "head-1",
+            preparedAt: 3,
+          },
+          worker: {
+            executionId: "worker-1",
+            startedAt: 4,
+            completedAt: 5,
+            outcome: "completed",
+            diff: "diff",
+            changedPaths: ["a.ts"],
+          },
+          gate: { outcome: "skipped", reason: "not-configured", settledAt: 6 },
+          commits: {
+            executionId: "commit-1",
+            baseHead: "head-1",
+            startedAt: 7,
+            from: "head-1",
+            to: "head-2",
+            count: 1,
+            committedAt: 8,
+          },
+          landing: {
+            effect: "source-landing",
+            executionId: "landing-1",
+            baselineCommit: "head-1",
+            workerHead: "head-2",
+            startedAt: 9,
+            outcome: "applied",
+            landedAt: 10,
+          },
+        },
+      },
+    });
+
+  function storeWithLegacyRow(): { store: RoundOperationStore; warnings: string[] } {
+    const dir = tempStoreDir();
+    new RoundOperationStore(dir).close();
+    insertStoredEnvelope(dir, {
+      sessionId: "session-legacy",
+      operationId: "operation-legacy",
+      revision: 0,
+      envelopeJson: legacyEnvelope("session-legacy"),
+    });
+    const warnings: string[] = [];
+    return { store: new RoundOperationStore(dir, (m) => warnings.push(m)), warnings };
+  }
+
+  it("drops a legacy row on read, with the reason, and lets the session dispatch again", () => {
+    const { store, warnings } = storeWithLegacyRow();
+    expect(store.read("session-legacy")).toBeUndefined();
+    expect(warnings.join("\n")).toContain("older Rennet");
+    // The load-bearing half: it is GONE, so the next read does not repeat the drop and a
+    // fresh claim succeeds rather than colliding with an undecodable row.
+    expect(store.read("session-legacy")).toBeUndefined();
+    expect(warnings).toHaveLength(1);
+    const fresh = operation({ sessionId: "session-legacy", operationId: "operation-fresh" });
+    expect(store.claimIfIdle(fresh).operationId).toBe("operation-fresh");
+    store.close();
+  });
+
+  it("keeps a legacy row out of listActive's errors, so recovery is not blocked", () => {
+    const { store } = storeWithLegacyRow();
+    const listed = store.listActive();
+    expect(listed.operations).toEqual([]);
+    expect(listed.errors).toEqual([]);
+    store.close();
+  });
+
+  it("still reports a genuinely damaged row at the current version as corrupt", () => {
+    const dir = tempStoreDir();
+    new RoundOperationStore(dir).close();
+    insertStoredEnvelope(dir, {
+      sessionId: "session-damaged",
+      operationId: "operation-damaged",
+      revision: 0,
+      envelopeJson: JSON.stringify({
+        version: ROUND_OPERATION_STORE_VERSION,
+        operation: { operationId: "operation-damaged", state: { phase: "not-a-phase" } },
+      }),
+    });
+    const store = new RoundOperationStore(dir);
+    expect(() => store.read("session-damaged")).toThrow(RoundOperationStoreCorruptError);
+    expect(store.listActive().errors).toHaveLength(1);
+    store.close();
+  });
+});

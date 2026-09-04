@@ -181,11 +181,15 @@ The successor patchset is captured from that bound workspace after the turn, pin
 to the source patchset's base OID and the head the round's own commits reached; the
 branch names remain provenance, but a concurrent ref move cannot enter the round
 result. Rennet never stages untracked files on the reviewer's behalf: the commits a
-round records are the commits its worker made. The bound workspace must be on the
-round's branch — a workspace that is not is a refused round naming both, never a
-commit somewhere the reviewer cannot see. The sidecar's per-turn checkpoint is the
-round's receipt, so the round account names the workspace root and that checkpoint,
-and the turn stays revertible through it.
+round records are the commits its worker made, and the round's own prompt is what
+asks for them — the review handoff forbids git because it recaptures a dirty tree,
+and a round says the opposite. The bound workspace must both be on the round's
+branch and contain the reviewed commit; a branch name alone is not a repository
+identity, and a workspace failing either test is a refused round naming what it
+looked for, never a commit somewhere the reviewer cannot see. The sidecar's per-turn
+checkpoint is the round's receipt: the round account names the workspace root and
+that checkpoint, and restart recovery settles from it — honouring the checkpoint's
+own status, since a failed turn checkpoints too.
 
 The first work-order round resolves one enabled installed Claude Code or Codex
 harness in the repository's execution locus and pins that provider to the durable

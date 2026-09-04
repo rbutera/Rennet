@@ -374,7 +374,7 @@ describe("createSessionContextPurger", () => {
   it("DEFERS the archive purge while a round is in flight, and the round's settle performs it", () => {
     const root = scratchDir("rennet-ctx-inflight-");
     writeSessionContext(root, "sess-1", files);
-    const purger = createSessionContextPurger(() => root);
+    const purger = createSessionContextPurger(() => [root]);
 
     // Order A — archive lands DURING a round. `session.archive` awaits the session's
     // preparation, but nothing tracks a round, so purging now deletes the directory the
@@ -391,10 +391,26 @@ describe("createSessionContextPurger", () => {
     expect(existsSync(sessionContextDir(root, "sess-1"))).toBe(false);
   });
 
+  // A round runs in the root that holds its branch, which is not always the root the
+  // session recorded. A purge that knew only the recorded one removed that directory,
+  // reported success, and left the round's work order sitting in the reviewer's checkout
+  // after the archive said it was gone.
+  it("purges every root the session has context under, not only the recorded one", () => {
+    const bound = scratchDir("rennet-ctx-bound-");
+    const roundRoot = scratchDir("rennet-ctx-round-");
+    writeSessionContext(bound, "sess-1", files);
+    writeSessionContext(roundRoot, "sess-1", files);
+    const purger = createSessionContextPurger(() => [bound, roundRoot]);
+
+    expect(purger.purge("sess-1")).toBe(true);
+    expect(existsSync(sessionContextDir(bound, "sess-1"))).toBe(false);
+    expect(existsSync(sessionContextDir(roundRoot, "sess-1"))).toBe(false);
+  });
+
   it("purges IMMEDIATELY when no turn is in flight (order B: turn finished, then archive)", () => {
     const root = scratchDir("rennet-ctx-inflight2-");
     writeSessionContext(root, "sess-1", files);
-    const purger = createSessionContextPurger(() => root);
+    const purger = createSessionContextPurger(() => [root]);
 
     purger.turnInFlight("sess-1")();
 
@@ -405,7 +421,7 @@ describe("createSessionContextPurger", () => {
   it("counts overlapping turns: the first to settle does not free the second's files", () => {
     const root = scratchDir("rennet-ctx-inflight3-");
     writeSessionContext(root, "sess-1", files);
-    const purger = createSessionContextPurger(() => root);
+    const purger = createSessionContextPurger(() => [root]);
 
     // A round and a refine on one session, or two verification legs — the shape the
     // counter exists for.
@@ -425,7 +441,7 @@ describe("createSessionContextPurger", () => {
   it("releases a lease with no archive behind it WITHOUT purging — a live session keeps its files", () => {
     const root = scratchDir("rennet-ctx-inflight4-");
     writeSessionContext(root, "sess-1", files);
-    const purger = createSessionContextPurger(() => root);
+    const purger = createSessionContextPurger(() => [root]);
 
     // The control for the test above: the release only purges when an archive ASKED. A
     // release that purged unconditionally would delete a live session's context between

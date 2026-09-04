@@ -422,9 +422,10 @@ An accepted dispatch moves you to the live run: your workspace being opened, the
 round's asks being applied, the worker's activity as a table of steps, your
 project's gate command running and resolving, the commits, and the round report
 being drafted and checked. The round works in the workspace this session is bound
-to and commits on your branch there — Rennet makes no separate checkout for it,
-and the round report names the workspace and the checkpoint the turn left, which
-is what an undo takes. Closing and reopening the run, or
+to and commits on your branch there — Rennet makes no separate checkout for it, and
+it never stages anything on your behalf: the round's commits are the ones its agent
+made. The round report names the workspace it ran in and the checkpoint the turn
+left, so you can see where the work happened and which turn produced it. Closing and reopening the run, or
 following its direct link on another launch, resumes from the latest saved step
 without dispatching the work again.
 
