@@ -24,10 +24,11 @@ type OutcomeStatus = "addressed" | "partial" | "untouched" | "beyond";
  *  and the rounds ledger reads it), so this is presentation only. */
 function askTitle(text: string): string {
   for (const line of text.split("\n")) {
-    const stripped = line.replace(/^#+\s*/, "").trim();
+    const stripped = line.trim().replace(/^#+\s*/, "");
     if (stripped.length > 0) return stripped;
   }
-  return text.trim();
+  // Every line was blank or heading-marker-only (e.g. `"###"`): no title to leak.
+  return "";
 }
 
 /** One glyph + one tint per status, no fill: the four outcomes read apart by icon and

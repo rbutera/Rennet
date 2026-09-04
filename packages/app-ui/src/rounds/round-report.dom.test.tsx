@@ -162,10 +162,35 @@ describe("RoundReportBoard — the round report as a board", () => {
     expect(title?.className).toContain("min-w-0");
 
     // The opaque ref is bounded and shrinkable — never `shrink-0` unbounded, the collapse cause.
+    // The width CAP is load-bearing (drop `max-w-[160px]` and a long ref eats the row even when
+    // shrinkable), and the full value must survive on the tooltip since the visible text truncates.
     const ref = row.querySelector("[data-ask-ref]");
     expect(ref?.className).not.toContain("shrink-0");
     expect(ref?.className).toContain("truncate");
     expect(ref?.className).toContain("min-w-0");
+    expect(ref?.className).toContain("max-w-[160px]");
+    // The visible text truncates, so the full key must live on the tooltip. jsdom's textContent
+    // is the untruncated string, so title === textContent proves the whole ref is preserved.
+    expect(ref?.getAttribute("title")).toBe(ref?.textContent);
+    expect(ref?.getAttribute("title")).toContain('finding:["gen:');
+  });
+
+  // A heading-marker-only instruction (`"###"`) has no title line: `askTitle` must yield an
+  // EMPTY header, never fall back to the raw text and leak the markers. Reddens if the fallback
+  // returns `text.trim()`.
+  it("renders an empty title, not raw `###`, when the instruction is heading-markers only", () => {
+    const bare = roundOutcome("ro-bare", {
+      status: "untouched",
+      ask: { ref: "ask-bare", text: "###" },
+      note: "Nothing to show for this one.",
+    });
+    const board: RoundReportBoardModel = {
+      ...reportBoardFixture,
+      elements: reportBoardFixture.elements.map((el) => (el.id === "ro-retry" ? bare : el)),
+    };
+    const { container } = mount(<RoundReportBoard board={board} />);
+    const title = container.querySelector('[data-element-id="ro-bare"] [data-outcome-title]');
+    expect(title?.textContent).toBe("");
   });
 
   it("reveals a code_ref only for the one outcome that carries one", () => {
