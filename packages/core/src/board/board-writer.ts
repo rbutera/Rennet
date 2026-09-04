@@ -155,8 +155,9 @@ export class BoardWriter {
     return this.absence;
   }
 
-  /** Apply one tool call. Never throws on bad input: a refusal is a result. */
-  call(name: string, rawInput: unknown): BoardToolResult {
+  /** Apply one tool call. Never throws on bad input: a refusal is a result. `finish` and
+   * every other argument-free verb take none. */
+  call(name: string, rawInput?: unknown): BoardToolResult {
     const tool = this.tools.get(name);
     if (tool === undefined) {
       return refuse(

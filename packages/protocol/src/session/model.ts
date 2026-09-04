@@ -16,7 +16,7 @@ import {
 import { codeRefSchema, patchFileSchema } from "../delta/citations";
 import type { CouncilEffort, CouncilHarnessId, CouncilModel } from "../domain";
 import { forgeRepoIdentitySchema, forgeRepositoryMatchesLegacy } from "../forge";
-import { LENS_KINDS, type LensKind } from "../manifests";
+import { LENS_KINDS } from "../manifests";
 import { sha256Hex } from "../sha256";
 
 const id = z.string().min(1);
