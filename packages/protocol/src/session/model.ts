@@ -380,6 +380,14 @@ export const RoundWorkspaceReceiptSchema = z.object({
   root: id,
   sourceHead: id,
   preparedAt: z.number().int().nonnegative(),
+  /**
+   * The workspace is on the round's branch but its head no longer contains the reviewed
+   * commit — the reviewer amended, rebased or reset it since. NOT a refusal: that is a
+   * thing people do on purpose, and the successor patchset is a fresh capture from
+   * `sourceHead` either way. Recorded so the account can say the round ran against a
+   * rewritten branch. Absent means it did contain it.
+   */
+  branchRewritten: z.literal(true).optional(),
 });
 export type RoundWorkspaceReceipt = z.infer<typeof RoundWorkspaceReceiptSchema>;
 
@@ -806,6 +814,8 @@ export const RoundRunReceiptSchema = z.object({
   workspaceRoot: id.optional(),
   /** The sidecar checkpoint that captured the round's commits. Absent on legacy rows. */
   checkpoint: RoundCheckpointSchema.optional(),
+  /** The branch had been rewritten past the reviewed head when this round started. */
+  branchRewritten: z.literal(true).optional(),
   gate: RoundRunGateReceiptSchema,
 });
 export type RoundRunReceipt = z.infer<typeof RoundRunReceiptSchema>;

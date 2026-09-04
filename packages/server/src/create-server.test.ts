@@ -692,6 +692,7 @@ describe("the round runs in the session's bound root", () => {
       reviewedHead: () => "reviewed-oid",
       headOf: async (root) => heads[root],
       branchOf: async (root) => branches[root],
+      repositoryOf: async () => "/repo/.git",
       containsCommit: async () => true,
       now: () => 2,
     })(operation());
@@ -706,34 +707,74 @@ describe("the round runs in the session's bound root", () => {
 
   // A branch NAME is not a repository identity. Two repos in one workspace both carry
   // `feat/test`, and a name-only match takes whichever the candidate order yielded — the
-  // wrong repo's tree under the right round's label, silently. The reviewed commit being
-  // an ancestor of HEAD is the contradiction that separates them, and it also catches a
-  // branch someone rewound behind the review while still allowing commits on top.
-  it("refuses a same-named branch that does not contain the reviewed commit", async () => {
-    const contains: Record<string, boolean> = { "/other-repo": false, "/bound": true };
+  // wrong repo's tree under the right round's label, silently. `--git-common-dir` is the
+  // contradiction that separates them: one value per repository, shared by every linked
+  // worktree of it.
+  it("refuses a same-named branch belonging to another repository", async () => {
+    const repositories: Record<string, string> = {
+      "/repo": "/repo/.git",
+      "/other-repo": "/other-repo/.git",
+      "/bound": "/repo/.git",
+    };
     const workspace = await createRoundWorkspacePlanner({
       candidateRoots: () => ["/other-repo", "/bound"],
       reviewedHead: () => "reviewed-oid",
       headOf: async () => "bound-head",
       branchOf: async () => "feat/test",
-      containsCommit: async (root) => contains[root] ?? false,
+      repositoryOf: async (root) => repositories[root],
+      containsCommit: async () => true,
       now: () => 2,
     })(operation());
     expect(workspace.root).toBe("/bound");
   });
 
-  it("fails naming the branch, the reviewed commit, and the roots it looked in", async () => {
+  // Amending, rebasing and resetting a branch are deliberate acts, and after a rebase the
+  // reviewed commit is unreachable — a refusal telling the reviewer to "check it out
+  // there" would be an instruction nobody can follow. So the round RUNS and the receipt
+  // carries the fact; the successor patchset is a fresh capture from this head anyway.
+  it("runs on a branch rewritten past the reviewed head, and records that", async () => {
+    const workspace = await createRoundWorkspacePlanner({
+      candidateRoots: () => ["/bound"],
+      reviewedHead: () => "reviewed-oid",
+      headOf: async () => "rebased-head",
+      branchOf: async () => "feat/test",
+      repositoryOf: async () => "/repo/.git",
+      containsCommit: async () => false,
+      now: () => 2,
+    })(operation());
+    expect(workspace).toEqual({
+      kind: "bound-root",
+      root: "/bound",
+      sourceHead: "rebased-head",
+      preparedAt: 2,
+      branchRewritten: true,
+    });
+    // Control: the ordinary branch says nothing, so the flag is not a constant.
+    const ordinary = await createRoundWorkspacePlanner({
+      candidateRoots: () => ["/bound"],
+      reviewedHead: () => "reviewed-oid",
+      headOf: async () => "bound-head",
+      branchOf: async () => "feat/test",
+      repositoryOf: async () => "/repo/.git",
+      containsCommit: async () => true,
+      now: () => 2,
+    })(operation());
+    expect(ordinary).not.toHaveProperty("branchRewritten");
+  });
+
+  it("fails naming the branch and the roots it looked in", async () => {
     await expect(
       createRoundWorkspacePlanner({
         candidateRoots: () => ["/drafting", "/bound"],
         reviewedHead: () => "reviewed-oid",
         headOf: async () => "bound-head",
-        branchOf: async () => "feat/test",
-        // Right name everywhere, reviewed commit nowhere: a rewound branch.
-        containsCommit: async () => false,
+        // Nothing is on the branch at all.
+        branchOf: async () => "some/other-branch",
+        repositoryOf: async () => "/repo/.git",
+        containsCommit: async () => true,
         now: () => 2,
       })(operation()),
-    ).rejects.toThrow(/feat\/test at reviewed-oid.*\/drafting, \/bound/);
+    ).rejects.toThrow(/feat\/test.*\/drafting, \/bound/);
   });
 
   it("runs the worker turn in the bound root and keeps the turn's checkpoint as the receipt", async () => {
@@ -2204,7 +2245,7 @@ describe("round.dispatch mints onto the session the reads answer (the call site,
   // Every other round test has them equal, so nothing in them can tell the two names apart.
   // Here the clone stays on `main` and the review's branch is checked out only in the worktree
   // the session binds to (#805), and the two have different heads for the whole run.
-  it("runs the round in the bound worktree while the clone sits on another branch", async () => {
+  it("runs a rewritten branch's round in the bound worktree, not the clone", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "rennet-round-elsewhere-data-"));
     const repo = realpathSync(mkdtempSync(join(tmpdir(), "rennet-round-elsewhere-repo-")));
     dirs.push(dataDir, repo);
@@ -2281,6 +2322,18 @@ describe("round.dispatch mints onto the session the reads answer (the call site,
       reviewId,
     })) as { review: Review };
     const priorPatchsetId = before.review.activePatchsetId;
+
+    // …and now the reviewer AMENDS the branch, in the workspace, after the capture. The
+    // reviewed commit is unreachable from here on. That is a deliberate act, not a fault:
+    // the round must still dispatch and complete, and say on its account that it ran
+    // against a rewritten branch. Refusing would be a gate, and its "check it out there"
+    // message would be an instruction nobody can follow.
+    execFileSync("git", ["commit", "-q", "--amend", "-m", "reviewed, amended"], { cwd: bound });
+    const amendedHead = execFileSync("git", ["rev-parse", "HEAD"], { cwd: bound })
+      .toString()
+      .trim();
+    expect(amendedHead).not.toBe(branchHead);
+
     await server.dispatch("ask.stage", {
       sessionId: reviewId,
       ask: {
@@ -2317,8 +2370,13 @@ describe("round.dispatch mints onto the session the reads answer (the call site,
 
     // The turn ran in the BOUND worktree, and the branch moved THERE.
     expect(workerRepoRoot).toBe(bound);
+    // …and the round completed on the rewritten branch, saying so on its account.
+    const record = new RoundRecordStore(join(dataDir, "rounds"))
+      .read(sessionId)
+      .find((candidate) => candidate.run?.workspaceRoot === bound);
+    expect(record?.run?.branchRewritten).toBe(true);
     const boundHead = execFileSync("git", ["rev-parse", "HEAD"], { cwd: bound }).toString().trim();
-    expect(boundHead).not.toBe(branchHead);
+    expect(boundHead).not.toBe(amendedHead);
     // The clone never moved: it is still on `main`, at the commit it started on.
     expect(git("rev-parse", "HEAD")).toBe(cloneHead);
 

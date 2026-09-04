@@ -158,6 +158,11 @@ export async function runHandoffTurn(
  * message whose text IS this round's prompt names exactly the turn to read. `since` stays
  * as a second, independent guard against an identical re-dispatch's earlier attempt.
  *
+ * The one window the pair does not close: attempt 1's sidecar turn outlives the daemon's
+ * wait AND the daemon dies during attempt 2, so both attempts' turns carry the same prompt
+ * and both checkpoints fall after attempt 2's `since`. The later one is taken, which is the
+ * newer work — but it is a pick, not a proof.
+ *
  * `undefined` means no such turn left a checkpoint, which is a failed round, not a guessed
  * one. The checkpoint's `status` rides back and is the caller's to honour: a FAILED turn
  * checkpoints too, so "found a checkpoint" is not "the turn worked".

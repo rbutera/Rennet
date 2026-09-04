@@ -208,7 +208,7 @@ import {
 } from "@rennet/protocol";
 import { createBenchmarkRecording } from "./benchmark-store";
 import { type BoardsRuntime, createBoardsRuntime } from "./boards/boards-runtime";
-import { decideBoundWorkspace, repinBoundWorkspace } from "./bound-workspace";
+import { comparablePath, decideBoundWorkspace, repinBoundWorkspace } from "./bound-workspace";
 import { attachCiSignal } from "./ci-signal";
 import {
   configureSessionContext,
@@ -667,15 +667,23 @@ export function createGitLabPrSubmissionResolver(
  * "On the round's source" is TWO facts, because a branch NAME is not an identity: a
  * workspace maps many repos to one session, two of them can both have `feature/shared`
  * checked out, and the name alone picks whichever the mapping happened to yield. So the
- * root must also CONTAIN the reviewed head — `git merge-base --is-ancestor <reviewed> HEAD`
- * — which rejects a same-named branch in another repository and a branch someone rewound
- * behind the review, while still accepting the reviewer's own commits on top.
+ * root must also be the SAME REPOSITORY as the review — equal `git rev-parse
+ * --git-common-dir`, which one repository shares with every linked worktree of it and no
+ * other repository can equal.
+ *
+ * Identity, deliberately, and NOT "still contains the reviewed commit". Amending, rebasing
+ * and resetting a branch are things reviewers do on purpose; refusing them would be a gate,
+ * and the message would be a lie — after a rebase the reviewed commit is unreachable and no
+ * amount of checking out brings it back. The successor patchset is a fresh capture from the
+ * head the round starts at either way. So a rewritten branch is RECORDED, not refused.
  */
 export function createRoundWorkspacePlanner(input: {
   readonly candidateRoots: (operation: RoundOperation) => readonly string[];
   readonly reviewedHead: (operation: RoundOperation) => string;
   readonly headOf: (root: string) => Promise<string | undefined>;
   readonly branchOf: (root: string) => Promise<string | undefined>;
+  /** `git rev-parse --git-common-dir`, resolved — one value per repository, worktrees included. */
+  readonly repositoryOf: (root: string) => Promise<string | undefined>;
   /** Whether `commit` is an ancestor of (or equal to) this root's HEAD. */
   readonly containsCommit: (root: string, commit: string) => Promise<boolean>;
   readonly now?: () => number;
@@ -683,6 +691,7 @@ export function createRoundWorkspacePlanner(input: {
   return async (operation) => {
     const target = operation.sourceTarget;
     const reviewed = input.reviewedHead(operation);
+    const repository = await input.repositoryOf(operation.repoRoot);
     const tried: string[] = [];
     for (const root of input.candidateRoots(operation)) {
       if (tried.includes(root)) continue;
@@ -691,20 +700,26 @@ export function createRoundWorkspacePlanner(input: {
       if (head === undefined) continue;
       if (target.kind === "branch" && (await input.branchOf(root)) !== target.branch) continue;
       if (target.kind === "detached" && head !== target.head) continue;
-      // The name matched; now the identity has to. A different repository's `feat/x` and a
-      // rewound `feat/x` both pass the name check and neither contains what was reviewed.
-      if (!(await input.containsCommit(root, reviewed))) continue;
+      // The name matched; now the repository has to. Asymmetric on purpose: an UNKNOWN
+      // repository on either side is silence, not a contradiction, and excluding on silence
+      // refuses every root git could not answer for.
+      if (repository !== undefined) {
+        const candidate = await input.repositoryOf(root);
+        if (candidate !== undefined && candidate !== repository) continue;
+      }
+      const rewritten = !(await input.containsCommit(root, reviewed));
       return {
         kind: "bound-root",
         root,
         sourceHead: head,
         preparedAt: (input.now ?? Date.now)(),
+        ...(rewritten ? { branchRewritten: true as const } : {}),
       };
     }
     const wanted =
       target.kind === "branch" ? `the branch ${target.branch}` : `the commit ${target.head}`;
     throw new Error(
-      `This round works on ${wanted} at ${reviewed}, and none of this session's workspaces is on it: ${tried.join(", ") || "none"}. Check it out there — and make sure it still contains the reviewed commit — then dispatch again.`,
+      `This round works on ${wanted}, and none of this session's workspaces for this repository is on it: ${tried.join(", ") || "none"}. Check it out there, then dispatch again.`,
     );
   };
 }
@@ -3423,6 +3438,12 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     reviewedHead: (operation) => sourcePatchsetFor(operation).repository.headOid,
     headOf: (root) => readGit(root, ["rev-parse", "HEAD"]),
     branchOf: (root) => readGit(root, ["symbolic-ref", "--quiet", "--short", "HEAD"]),
+    // Resolved, because git prints whichever spelling it was reached by and a worktree and
+    // its repository must compare equal here.
+    repositoryOf: async (root) => {
+      const dir = await readGit(root, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
+      return dir === undefined ? undefined : comparablePath(dir);
+    },
     // `merge-base --is-ancestor` answers with its EXIT CODE and prints nothing, so this
     // cannot go through `readGit`, which reads stdout — that reported every root as not
     // containing anything and refused every round.
@@ -3583,6 +3604,9 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
             // detached worktree path, because there is no longer one.
             workspaceRoot: operation.state.workspace.root,
             ...(worker.checkpoint === undefined ? {} : { checkpoint: worker.checkpoint }),
+            ...(operation.state.workspace.branchRewritten === true
+              ? { branchRewritten: true as const }
+              : {}),
             gate,
           },
           runWorkers: async (): Promise<DispatchRoundResult> => ({

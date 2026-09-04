@@ -92,6 +92,9 @@ function WorkspaceProvenance({ run }: { readonly run: RoundRunReceipt }) {
           <code>{run.checkpoint.turnId}</code> (turn {run.checkpoint.turnCount}).
         </>
       )}
+      {run.branchRewritten === true
+        ? " The branch had been rewritten past the reviewed commit when this round started."
+        : null}
     </p>
   );
 }
