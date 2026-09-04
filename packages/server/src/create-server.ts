@@ -4427,6 +4427,10 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         const written: { discard(): void }[] = [];
         // The retrieval seat reads the dossier file this writes, so the lease is held for
         // the whole kick — an archive landing mid-retrieval defers its purge (finding 2).
+        // The `catch` on the voided promise is what the `try` below cannot do: it only sees a
+        // synchronous throw, and the lease now BINDS the workspace first, which rejects when
+        // the workspace cannot be made. Without it a failed kick is an unhandled rejection
+        // rather than the garnish the comment below promises.
         void holdingReviewContext(review, () =>
           runRelatedContextRetrieval(review, {
             store: snapshotStore,
@@ -4453,7 +4457,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
           }).finally(() => {
             for (const file of written) file.discard();
           }),
-        );
+        ).catch(() => undefined);
       } catch {
         // Retrieval is garnish on the open — a failed kick never surfaces here.
       }

@@ -1104,7 +1104,8 @@ describe("session.mint — provider-qualified PR dispatch", () => {
     // Reproduce the unbound state a pre-wave record — or a bind that threw — leaves behind.
     const unbound = store.load(sessionId);
     if (unbound === undefined) throw new Error("the minted session was not persisted");
-    const { boundRoot: _dropped, ...withoutBinding } = unbound;
+    const withoutBinding = { ...unbound };
+    delete (withoutBinding as { boundRoot?: string }).boundRoot;
     store.save(withoutBinding);
     expect(store.load(sessionId)?.boundRoot).toBeUndefined();
 
@@ -1112,9 +1113,6 @@ describe("session.mint — provider-qualified PR dispatch", () => {
     const transcript = (await server.dispatch("session.transcript", {
       reviewId: prepared.reviewId ?? "",
     })) as { trail: { workspace?: string } };
-    // Byte-identical to the capture's answer, not merely the same directory: a re-bind finds
-    // the worktree through git, which prints a realpath, and a differently-spelled `boundRoot`
-    // retires the session's threads and re-keys the new ones on the alternate name.
     // Byte-identical to the capture's answer, not merely the same directory: a re-bind finds
     // the worktree through git, which prints a realpath, and a differently-spelled `boundRoot`
     // retires the session's threads and re-keys the new ones on the alternate name.

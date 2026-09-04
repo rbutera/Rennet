@@ -68,7 +68,7 @@ describe("session.transcript — the chat dock read (C07, display read-model)", 
     // session's turns ran in — for an off-branch or PR review it is a worktree, not their
     // own tree, and nothing else on the surface says so.
     const bound = (await harness({
-      boundWorkspaceForReview: () => ({ root: "/home/dev/.rennet/worktrees/acme/feat-seam" }),
+      boundWorkspaceForReview: async () => ({ root: "/home/dev/.rennet/worktrees/acme/feat-seam" }),
     } as unknown as Partial<DispatchDeps>)["session.transcript"]({ reviewId: REVIEW_ID })) as {
       trail: { title: string; workspace?: string };
     };
