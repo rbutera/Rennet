@@ -136,24 +136,44 @@ describe("lens prompt manifest", () => {
     expect(text).toContain("`section.data.children`");
   });
 
-  it("tells the Noise seat that an empty board IS the settlement for an all-signal change", () => {
-    // The `no-noise` absence is only ever settled from the seat's OWN empty-board claim
-    // (`draftOneLens` reads the first emitted return), so this instruction is the whole
-    // producer half of that contract. Delete it, or reverse it into "always emit a board",
-    // and the seat manufactures signal verdicts instead — which is every other lens's
-    // premise, not this one's output, and the reviewer never sees the honest absence.
+  it("tells the Noise seat its board is the complement of the other four", () => {
+    // Rai's ruling, 2026-09-04: anything not covered by one of the other boards is noise.
+    // The seat's membership question is positional, not a judgement about reading effort,
+    // and this sentence is the producer half of that definition. Reverse it into "a hunk
+    // whose content a reviewer can take on trust" and the lane goes back to judging
+    // skip-safety independently, which is what the ruling retired.
     const normalized = readFileSync(join(srcDir, LENS_PROMPT_FILES.noise), "utf8").replace(
       /\s+/g,
       " ",
     );
-    expect(normalized).toContain("## When nothing in the change is noise");
+    expect(normalized).toContain("Anything not covered by one of the other boards is noise");
+    expect(normalized).toContain("Noise is not a property a hunk has; it is a position");
+    // The remainder is TOTAL: nothing may be handed to another lane or dropped, so the
+    // "read this one anyway" escape lives on this board as a `signal` verdict.
+    expect(normalized).toContain("You cannot hand a hunk to another lane and you cannot drop one");
+    expect(normalized).toContain("emit its verdict as `signal`");
+    expect(normalized).toContain("an exception you name, never a default");
+  });
+
+  it("tells the Noise seat that an empty board IS the settlement for a fully-cited change", () => {
+    // The `no-noise` absence is only ever settled from the seat's OWN empty-board claim
+    // (`draftOneLens` reads the first emitted return), so this instruction is the whole
+    // producer half of that contract. Delete it, or reverse it into "always emit a board",
+    // and the reviewer never sees the honest absence. Under the 2026-09-04 ruling the
+    // absence also MEANS something different — the other four lanes cited the whole
+    // change, not "nothing here is skippable" — so the wording is asserted too.
+    const normalized = readFileSync(join(srcDir, LENS_PROMPT_FILES.noise), "utf8").replace(
+      /\s+/g,
+      " ",
+    );
+    expect(normalized).toContain("## When the remainder is empty");
     expect(normalized).toContain("Say so by emitting a board with NO elements");
-    expect(normalized).toContain('honest "nothing here is safely skippable"');
-    expect(normalized).toContain("Do not manufacture a board of signal verdicts");
+    expect(normalized).toContain('honest "every changed region is on another board"');
+    expect(normalized).not.toContain("nothing here is safely skippable");
     // …and the other edge of the same rule: an empty board is not a way out of a change
-    // that does have skippable churn.
+    // that does have a remainder.
     expect(normalized).toContain(
-      "Emit an empty board only when NO hunk is skip-safe; one skip-safe hunk means a real board naming it",
+      "Emit an empty board only when NO region is left over; one leftover region means a real board naming it",
     );
   });
 

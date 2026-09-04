@@ -74,7 +74,7 @@ narrated. Never write prose about what is not on this board.
 - Sequence: the reading walk — the order of understanding.
 - Decisions: the judgment calls and their rationale.
 - Flagged: defects, with severities and failure scenarios.
-- Noise: the skip-safe mechanical hunks, grouped and reversible.
+- Noise: everything the other four lanes do not cite, grouped and explained.
 
 ## Ground rules (all lenses)
 

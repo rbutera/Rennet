@@ -188,7 +188,7 @@ Each lens owns a lane, and material in another lane is omitted, not narrated.
 - Sequence: the reading walk.
 - Decisions: judgment calls recovered from the change.
 - Flagged: defects, severities, and failure scenarios.
-- Noise: skip-safe mechanical hunks.
+- Noise: everything the other four lanes do not cite.
 
 ## Ground rules
 
