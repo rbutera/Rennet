@@ -1,5 +1,5 @@
 import type { DispositionType, PrBodyDraftResult } from "@rennet/protocol";
-import { type SessionContextFile, sessionContextRelativeDir } from "./session-context";
+import type { SessionContextFile } from "./session-context";
 
 export type { PrBodyDraftResult };
 
@@ -172,8 +172,8 @@ export function prBodyContextFiles(input: PrBodyDraftInput): readonly SessionCon
  * never invites the model to invent content nobody gave it. The branch shape stays inline
  * — two refs are the frame of the task, not context.
  */
-export function buildPrBodyPrompt(input: PrBodyDraftInput, sessionId: string): string {
-  const dir = sessionContextRelativeDir(sessionId);
+export function buildPrBodyPrompt(input: PrBodyDraftInput, contextDir: string): string {
+  const dir = contextDir;
   const files = prBodyContextFiles(input);
   const lines: string[] = [
     "You are drafting the TITLE and DESCRIPTION for a GitHub pull request, for a developer who will edit it before they open the PR themselves.",
@@ -216,11 +216,11 @@ export function buildPrBodyPrompt(input: PrBodyDraftInput, sessionId: string): s
  */
 export async function draftPrBody(
   input: PrBodyDraftInput,
-  sessionId: string,
+  contextDir: string,
   port: PrBodyDraftPort,
   model: string,
 ): Promise<PrBodyDraftResult> {
-  const turn = await port(buildPrBodyPrompt(input, sessionId));
+  const turn = await port(buildPrBodyPrompt(input, contextDir));
   if (turn.status === "unavailable") return { status: "unavailable", reason: turn.reason };
   if (turn.status === "failed") return { status: "failed", reason: turn.reason };
   // Report the model that ACTUALLY ran when the port observed it; else the resolved

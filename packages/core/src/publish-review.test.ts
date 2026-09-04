@@ -353,7 +353,12 @@ describe("handoffDispositionsFromProjection", () => {
       },
     ]);
     expect(
-      buildHandoffBundle({ reviewId: "review", patchset: activePatchset, dispositions }).tasks,
+      buildHandoffBundle({
+        reviewId: "review",
+        contextDir: ".rennet/context/s-review",
+        patchset: activePatchset,
+        dispositions,
+      }).tasks,
     ).toEqual([
       {
         id: "stale",

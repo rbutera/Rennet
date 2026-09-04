@@ -133,15 +133,17 @@ describe("B11 E2E (b) — dispatch a round work-order twice → exactly one disp
     const dispatchRound = vi.fn(() => Promise.resolve());
     // A live composer that returns the SAME asks but a RANDOM title + digest each call, so the
     // composed work-order digest is nondeterministic (exactly the model-authored composition).
-    const composeBundle = vi.fn(async ({ bundle }: { bundle: HandoffBundle }) => {
-      const floor = mechanicalComposition(bundle);
-      const nonce = randomUUID();
-      return {
-        ...floor,
-        tasks: floor.tasks.map((t) => ({ ...t, title: `group ${nonce}` })),
-        digest: `nondeterministic-${nonce}`,
-      } as ComposedHandoffBundle;
-    });
+    const composeBundle = vi.fn(
+      async ({ bundle, contextDir }: { bundle: HandoffBundle; contextDir: string }) => {
+        const floor = mechanicalComposition(bundle, contextDir);
+        const nonce = randomUUID();
+        return {
+          ...floor,
+          tasks: floor.tasks.map((t) => ({ ...t, title: `group ${nonce}` })),
+          digest: `nondeterministic-${nonce}`,
+        } as ComposedHandoffBundle;
+      },
+    );
     const rt = createDispatchRuntime({
       askLog: store,
       service: { reviewById: (id: string) => (id === SID ? ROUND_REVIEW : undefined) },

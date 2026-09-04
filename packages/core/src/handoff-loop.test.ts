@@ -15,6 +15,11 @@ import {
 } from "./handoff-loop";
 import { inlineContextViolation } from "./harness-run-turn";
 
+// The session's context directory — deliberately NOT the review id, so a builder that
+// re-derived the dir from `reviewId` would render a path these tests do not expect
+// (review finding 1).
+const CONTEXT_DIR = ".rennet/context/sess-9";
+
 const FOO_PATCH = [
   "diff --git a/src/foo.ts b/src/foo.ts",
   "--- a/src/foo.ts",
@@ -81,6 +86,7 @@ describe("buildHandoffBundle", () => {
   it("filters out approve and question, keeping only the addressed dispositions", () => {
     const bundle = buildHandoffBundle({
       reviewId: "r1",
+      contextDir: CONTEXT_DIR,
       patchset,
       dispositions: [
         disposition({ path: "src/foo.ts", type: "request-change", body: "add a guard" }),
@@ -98,6 +104,7 @@ describe("buildHandoffBundle", () => {
   it("resolves a span anchor to its covering hunk as the task context", () => {
     const bundle = buildHandoffBundle({
       reviewId: "r1",
+      contextDir: CONTEXT_DIR,
       patchset,
       dispositions: [
         disposition({
@@ -117,6 +124,7 @@ describe("buildHandoffBundle", () => {
   it("gives a path-grained disposition the whole file patch as context", () => {
     const bundle = buildHandoffBundle({
       reviewId: "r1",
+      contextDir: CONTEXT_DIR,
       patchset,
       dispositions: [disposition({ path: "src/bar.ts", type: "request-change", body: "revert" })],
     });
@@ -126,6 +134,7 @@ describe("buildHandoffBundle", () => {
   it("gives empty context when the file is not in the active patchset (never a guess)", () => {
     const bundle = buildHandoffBundle({
       reviewId: "r1",
+      contextDir: CONTEXT_DIR,
       patchset,
       dispositions: [disposition({ path: "src/gone.ts", type: "comment", body: "?" })],
     });
@@ -135,6 +144,7 @@ describe("buildHandoffBundle", () => {
   it("is deterministic in the disposition set — same set, same digest, regardless of input order", () => {
     const a = buildHandoffBundle({
       reviewId: "r1",
+      contextDir: CONTEXT_DIR,
       patchset,
       dispositions: [
         disposition({ path: "src/foo.ts", type: "request-change", body: "x" }),
@@ -143,6 +153,7 @@ describe("buildHandoffBundle", () => {
     });
     const b = buildHandoffBundle({
       reviewId: "r1",
+      contextDir: CONTEXT_DIR,
       patchset,
       dispositions: [
         disposition({ path: "src/bar.ts", type: "comment", body: "y" }),
@@ -156,11 +167,13 @@ describe("buildHandoffBundle", () => {
   it("changes the digest when an instruction body changes (the consent binds to content)", () => {
     const base = buildHandoffBundle({
       reviewId: "r1",
+      contextDir: CONTEXT_DIR,
       patchset,
       dispositions: [disposition({ path: "src/foo.ts", type: "request-change", body: "x" })],
     });
     const edited = buildHandoffBundle({
       reviewId: "r1",
+      contextDir: CONTEXT_DIR,
       patchset,
       dispositions: [disposition({ path: "src/foo.ts", type: "request-change", body: "x!" })],
     });
@@ -170,6 +183,7 @@ describe("buildHandoffBundle", () => {
   it("carries the active patchset id as the bundle baseline", () => {
     const bundle = buildHandoffBundle({
       reviewId: "r1",
+      contextDir: CONTEXT_DIR,
       patchset,
       dispositions: [disposition({ path: "src/foo.ts", type: "comment", body: "x" })],
     });
@@ -179,6 +193,7 @@ describe("buildHandoffBundle", () => {
   it("keeps both asks when the caller supplies the same durable id twice", () => {
     const bundle = buildHandoffBundle({
       reviewId: "r1",
+      contextDir: CONTEXT_DIR,
       patchset,
       dispositions: [
         disposition({
@@ -212,6 +227,7 @@ describe("buildHandoffBundle", () => {
   it("never mints a fallback id that collides with a caller-provided id", () => {
     const bundle = buildHandoffBundle({
       reviewId: "r1",
+      contextDir: CONTEXT_DIR,
       patchset,
       dispositions: [
         disposition({ path: "src/bar.ts", type: "comment", body: "legacy ask" }),
@@ -235,12 +251,13 @@ describe("renderHandoffPrompt — the items are NAMED, never inlined (3.7)", () 
   it("names the work order, states the count, and carries no instruction body", () => {
     const bundle = buildHandoffBundle({
       reviewId: "r1",
+      contextDir: CONTEXT_DIR,
       patchset,
       dispositions: [
         disposition({ path: "src/foo.ts", type: "request-change", body: "add a guard" }),
       ],
     });
-    expect(bundle.prompt).toContain(".rennet/context/r1/work-order.md");
+    expect(bundle.prompt).toContain(`${CONTEXT_DIR}/work-order.md`);
     expect(bundle.prompt).toContain("Address ONLY the items in that file");
     expect(bundle.prompt).toContain("do NOT push");
     expect(bundle.prompt).toContain("1 requested change,");
@@ -254,14 +271,16 @@ describe("renderHandoffPrompt — the items are NAMED, never inlined (3.7)", () 
     const one = renderHandoffPrompt(
       buildHandoffBundle({
         reviewId: "r1",
+        contextDir: CONTEXT_DIR,
         patchset,
         dispositions: [disposition({ path: "src/foo.ts", type: "request-change", body: "x" })],
       }).tasks,
-      "r1",
+      CONTEXT_DIR,
     );
     const forty = renderHandoffPrompt(
       buildHandoffBundle({
         reviewId: "r1",
+        contextDir: CONTEXT_DIR,
         patchset,
         dispositions: Array.from({ length: 40 }, (_unused, index) =>
           disposition({
@@ -272,14 +291,14 @@ describe("renderHandoffPrompt — the items are NAMED, never inlined (3.7)", () 
           }),
         ),
       }).tasks,
-      "r1",
+      CONTEXT_DIR,
     );
     // Only the count differs — "1 requested change" vs "40 requested changes".
     expect(Math.abs(forty.length - one.length)).toBeLessThan(10);
   });
 
   it("renders the count as zero for an empty bundle", () => {
-    expect(renderHandoffPrompt([], "r1")).toContain("0 requested changes,");
+    expect(renderHandoffPrompt([], CONTEXT_DIR)).toContain("0 requested changes,");
   });
 });
 
@@ -287,6 +306,7 @@ describe("disclosureFor", () => {
   it("discloses write-enabled + working-tree edit and the task count", () => {
     const bundle = buildHandoffBundle({
       reviewId: "r1",
+      contextDir: CONTEXT_DIR,
       patchset,
       dispositions: [
         disposition({ path: "src/foo.ts", type: "request-change", body: "x" }),
@@ -357,6 +377,7 @@ function runPortReturning(outcome: HandoffRunOutcome): HandoffRunPort {
 const A_BUNDLE = () =>
   buildHandoffBundle({
     reviewId: "r1",
+    contextDir: CONTEXT_DIR,
     patchset,
     dispositions: [disposition({ path: "src/foo.ts", type: "request-change", body: "x" })],
   });

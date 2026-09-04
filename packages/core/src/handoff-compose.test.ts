@@ -16,6 +16,11 @@ import {
 import { buildHandoffBundle } from "./handoff-loop";
 import { inlineContextViolation } from "./harness-run-turn";
 
+// The session's context directory — deliberately NOT the review id, so a builder that
+// re-derived the dir from `reviewId` would render a path these tests do not expect
+// (review finding 1).
+const CONTEXT_DIR = ".rennet/context/sess-9";
+
 /** The executable work order for a bundle — where the verbatim bodies live (3.7). */
 function workOrder(bundle: { tasks: readonly Parameters<typeof renderWorkOrder>[0][number][] }) {
   return renderWorkOrder(bundle.tasks);
@@ -51,7 +56,7 @@ const patchset = patchsetOf([
 
 /** A three-ask bundle: two on auth.ts, one on user.ts. */
 function bundleOf(dispositions: HandoffDisposition[]) {
-  return buildHandoffBundle({ reviewId: "r1", patchset, dispositions });
+  return buildHandoffBundle({ reviewId: "r1", contextDir: CONTEXT_DIR, patchset, dispositions });
 }
 
 const THREE_ASKS: HandoffDisposition[] = [
@@ -103,6 +108,7 @@ describe("asksFromBundle", () => {
     const composed = await composeHandoffBundle(
       bundle,
       portReturning(emitted({ groups: [{ title: "Fix the finding", dispositionIds: [id] }] })),
+      CONTEXT_DIR,
     );
 
     expect(composed.composed).toBe(true);
@@ -133,6 +139,7 @@ describe("asksFromBundle", () => {
     const composed = await composeHandoffBundle(
       bundle,
       portReturning(emitted({ groups: [{ title: "Keep both", dispositionIds: ids }] })),
+      CONTEXT_DIR,
     );
 
     expect(composed.composed).toBe(true);
@@ -209,6 +216,7 @@ describe("composeHandoffBundle — valid model authoring", () => {
     const composed = await composeHandoffBundle(
       bundleOf(THREE_ASKS),
       portReturning(emitted(proposal)),
+      CONTEXT_DIR,
     );
 
     expect(composed.composed).toBe(true);
@@ -240,6 +248,7 @@ describe("composeHandoffBundle — valid model authoring", () => {
     const composed = await composeHandoffBundle(
       bundleOf(THREE_ASKS),
       portReturning(emitted(proposal)),
+      CONTEXT_DIR,
     );
     const asks = asksFromBundle(bundleOf(THREE_ASKS));
     // Every id is present exactly once, and points at a real task index.
@@ -263,6 +272,7 @@ describe("composeHandoffBundle — F1: model prose cannot enter the executable p
     const composed = await composeHandoffBundle(
       bundleOf(THREE_ASKS),
       portReturning(emitted(proposal)),
+      CONTEXT_DIR,
     );
     // The partition is a valid total cover, so it IS adopted...
     expect(composed.composed).toBe(true);
@@ -286,6 +296,7 @@ describe("composeHandoffBundle — F2: instruction bodies are byte-for-byte verb
     const composed = await composeHandoffBundle(
       bundleOf([{ path: "src/auth.ts", type: "comment", body: indented }]),
       portReturning(emitted({ groups: [{ title: "t", dispositionIds: ["d0"] }] })),
+      CONTEXT_DIR,
     );
     // The exact indented body — not a dedented/trimmed variant — is in the prompt.
     expect(workOrder(composed)).toContain(indented);
@@ -295,7 +306,7 @@ describe("composeHandoffBundle — F2: instruction bodies are byte-for-byte verb
 describe("composeHandoffBundle — F3: a rejected port falls to the floor", () => {
   it("returns the mechanical floor when the port throws, never a rejected command", async () => {
     const throwingPort: ComposePort = () => Promise.reject(new Error("the port blew up"));
-    const composed = await composeHandoffBundle(bundleOf(THREE_ASKS), throwingPort);
+    const composed = await composeHandoffBundle(bundleOf(THREE_ASKS), throwingPort, CONTEXT_DIR);
     expect(composed.composed).toBe(false);
     expect(composed.tasks).toHaveLength(3);
     expect(Object.keys(composed.traceMap).sort()).toEqual(["d0", "d1", "d2"]);
@@ -307,7 +318,11 @@ describe("composeHandoffBundle — the deterministic floor (fail-closed)", () =>
   it("falls back to pass-through when the model drops an ask", async () => {
     // An INVALID partition (d2 missing) must never be adopted.
     const bad: ComposeProposal = { groups: [{ title: "t", dispositionIds: ["d0", "d1"] }] };
-    const composed = await composeHandoffBundle(bundleOf(THREE_ASKS), portReturning(emitted(bad)));
+    const composed = await composeHandoffBundle(
+      bundleOf(THREE_ASKS),
+      portReturning(emitted(bad)),
+      CONTEXT_DIR,
+    );
 
     expect(composed.composed).toBe(false); // the floor ran
     expect(composed.tasks).toHaveLength(3); // one task per ask
@@ -320,6 +335,7 @@ describe("composeHandoffBundle — the deterministic floor (fail-closed)", () =>
     const composed = await composeHandoffBundle(
       bundleOf(THREE_ASKS),
       portReturning({ status: "failed", reason: "overloaded" }),
+      CONTEXT_DIR,
     );
     expect(composed.composed).toBe(false);
     expect(composed.tasks).toHaveLength(3);
@@ -329,13 +345,14 @@ describe("composeHandoffBundle — the deterministic floor (fail-closed)", () =>
     const composed = await composeHandoffBundle(
       bundleOf(THREE_ASKS),
       portReturning({ status: "unavailable", reason: "no seat" }),
+      CONTEXT_DIR,
     );
     expect(composed.composed).toBe(false);
   });
 
   it("does not even call the model for an empty bundle", async () => {
     const port = vi.fn<ComposePort>();
-    const composed = await composeHandoffBundle(bundleOf([]), port);
+    const composed = await composeHandoffBundle(bundleOf([]), port, CONTEXT_DIR);
     expect(composed.composed).toBe(false);
     expect(composed.tasks).toHaveLength(0);
     expect(port).not.toHaveBeenCalled();
@@ -345,7 +362,7 @@ describe("composeHandoffBundle — the deterministic floor (fail-closed)", () =>
 describe("mechanicalComposition", () => {
   it("is one task per ask with full trace coverage and no title", () => {
     const bundle = bundleOf(THREE_ASKS);
-    const floor = mechanicalComposition(bundle);
+    const floor = mechanicalComposition(bundle, CONTEXT_DIR);
     expect(floor.composed).toBe(false);
     expect(floor.tasks).toHaveLength(3);
     expect(floor.tasks.every((t) => t.title === "")).toBe(true);
@@ -355,11 +372,11 @@ describe("mechanicalComposition", () => {
 
 describe("the compose and work-order prompts NAME their files (3.7)", () => {
   it("the compose prompt names compose/asks.json and carries no note text", () => {
-    const prompt = buildComposePrompt("r1");
-    expect(prompt).toContain(".rennet/context/r1/compose/asks.json");
+    const prompt = buildComposePrompt(CONTEXT_DIR);
+    expect(prompt).toContain(`${CONTEXT_DIR}/compose/asks.json`);
     expect(prompt).not.toContain("validate the token before use");
     // Constant in the asks: the prompt does not take them at all any more.
-    expect(buildComposePrompt("r1")).toBe(prompt);
+    expect(buildComposePrompt(CONTEXT_DIR)).toBe(prompt);
     expect(inlineContextViolation(prompt)).toBeUndefined();
   });
 
@@ -393,8 +410,8 @@ describe("the compose and work-order prompts NAME their files (3.7)", () => {
   });
 
   it("the run prompt names work-order.md and carries no ask or diff fence", () => {
-    const composed = mechanicalComposition(bundleOf(THREE_ASKS));
-    expect(composed.prompt).toContain(".rennet/context/r1/work-order.md");
+    const composed = mechanicalComposition(bundleOf(THREE_ASKS), CONTEXT_DIR);
+    expect(composed.prompt).toContain(`${CONTEXT_DIR}/work-order.md`);
     expect(composed.prompt).toContain("3 tasks");
     expect(composed.prompt).toContain("3 review notes");
     expect(composed.prompt).not.toContain("validate the token before use");
@@ -403,7 +420,7 @@ describe("the compose and work-order prompts NAME their files (3.7)", () => {
   });
 
   it("work-order.md is the file the run writes, and holds the composed order", () => {
-    const composed = mechanicalComposition(bundleOf(THREE_ASKS));
+    const composed = mechanicalComposition(bundleOf(THREE_ASKS), CONTEXT_DIR);
     const written = workOrderContextFile(composed.tasks);
     expect(written.name).toBe("work-order.md");
     expect(written.body).toBe(renderWorkOrder(composed.tasks));
