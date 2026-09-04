@@ -614,5 +614,11 @@ describe("#685 owner loop through a real server", () => {
     }
     expect(records.filter((record) => record.stepId === "report-round-one")).toHaveLength(1);
     expect(records.filter((record) => record.stepId === "report-round-two")).toHaveLength(1);
+    // 3.7 — the handoff compose turn RAN, once per dispatched round. Before the plan
+    // carried a step for it the scripted port had no answer, the compose port failed and
+    // the core router fell to the mechanical floor: a real turn on the owner loop's path
+    // that this proof went green without ever exercising. Asserting the count is what
+    // makes the step load-bearing — deleting it takes this to 0, not to a silent floor.
+    expect(records.filter((record) => record.stepId === "compose-work-order")).toHaveLength(2);
   }, 120_000);
 });

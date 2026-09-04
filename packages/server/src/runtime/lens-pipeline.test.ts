@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { sanitizeSchemaForCodex, WhiteboardClient } from "@rennet/adapters";
+import { sanitizeSchemaForCodex, type T3SeatSeam, WhiteboardClient } from "@rennet/adapters";
 import {
   type DeltaPacket,
   type HarnessPort,
@@ -510,6 +510,58 @@ function lensFromPrompt(prompt: string, label?: string): string {
   const seat = label?.split(".").at(-1);
   if (seat === undefined) return "unknown";
   return seat.startsWith("flagged") ? "flagged" : seat;
+}
+
+/** One turn a seat ran on its thread, as the fake sidecar saw it. */
+interface SeatCapture {
+  readonly seat: string;
+  readonly prompt: string;
+}
+
+/**
+ * A fake T3 sidecar seam: one persistent thread per seat, every attempt a turn on it.
+ *
+ * This is where a REPAIR lives (session-bound-workspace 3.2 + Rai's ruling 2026-09-04). A
+ * repair turn carries pointers and frozen ids and nothing else, which only means anything
+ * to a session that already holds the base prompt and the draft — so only a thread can
+ * answer one, and `draftOneLens` refuses the repair on a leg without one. A pipeline test
+ * about a repair therefore has to drive this seam; on `fakeClaudePort` the same fixture
+ * settles the typed "no thread to repair on" failure instead.
+ *
+ * The seat is the attribution, exactly as it is in production: the seam is handed
+ * `{ seat, provider, model, effort }` and never sees the label the collector logs. It is
+ * passed to `bodyFor` in the label's place, and `lensFromPrompt` reads its last dot
+ * segment, so a bare seat name resolves the same way `board.lens-draft.design` does.
+ */
+function fakeT3Seam(
+  captures: SeatCapture[],
+  bodyFor: (prompt: string, seat: string) => unknown,
+): T3SeatSeam {
+  const seatOfThread = new Map<string, string>();
+  const pending = new Map<string, unknown>();
+  const client = {
+    startTurn: async ({ threadId, text }: { threadId: string; text: string }) => {
+      const seat = seatOfThread.get(threadId) ?? "unknown";
+      captures.push({ seat, prompt: text });
+      pending.set(threadId, bodyFor(text, seat));
+      return { previousTurnId: null, requestedAt: new Date().toISOString() };
+    },
+    waitForTurnSettled: async (threadId: string) => ({
+      turnId: `${threadId}:turn`,
+      state: "completed" as const,
+      structuredOutput: pending.get(threadId),
+      thread: { messages: [], session: null },
+    }),
+    interruptTurn: async () => undefined,
+  };
+  return {
+    client: async () => client,
+    threadFor: async ({ seat }: { seat: string }) => {
+      const threadId = `thread-${seat}`;
+      seatOfThread.set(threadId, seat);
+      return { threadId, projectId: "p1" };
+    },
+  } as unknown as T3SeatSeam;
 }
 
 interface Applied {
@@ -1512,6 +1564,9 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       const runtime = createBoardsRuntime(root);
       const client = new WhiteboardClient(runtime.service);
       const captures: { model?: string; prompt?: string; label?: string }[] = [];
+      // The board seats run on the sidecar seam, which is the only leg a repair can
+      // happen on; `captures` still holds whatever non-board turn opens a Claude session.
+      const seatTurns: SeatCapture[] = [];
       const arrivals: BoardArrivalEvent[] = [];
       const lensAuthor = (lens: string) => ({ kind: "lens-agent" as const, id: `${lens}-seat` });
       const lensCodeRef = (lens: string, id: string): DraftBoard["elements"][number] => {
@@ -1600,6 +1655,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
 
       const result = await runLensPipeline({
         claudePort: fakeClaudePort(captures, bodyFor),
+        t3: fakeT3Seam(seatTurns, bodyFor),
         codexExecutor: null,
         repoRoot: "/pr-worktree",
         deltaPacket: PACKET,
@@ -1622,15 +1678,14 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
         expect(outcome?.failure).toBeUndefined();
         expect(arrivals.map(({ lens: arrived }) => arrived)).toContain(lens);
       }
-      // Exactly one repair per lane, matched on the SEAT LABEL: the repair turn is
-      // pointer-only (session-bound-workspace 3.2), so its prompt carries the rule id and
-      // nothing else — no lens prompt file to match on.
+      // Exactly one repair per lane, matched on the SEAT: the repair turn is pointer-only
+      // (session-bound-workspace 3.2), so its prompt carries the rule id and nothing else
+      // — no lens prompt file to match on. It is a further turn on the SAME seat thread,
+      // which is the only place a pointer-only repair means anything.
       for (const lens of ["sequence", "decisions"] as const) {
         expect(
-          captures.filter(
-            ({ label, prompt }) =>
-              label === `board.lens-draft.${lens}` &&
-              prompt?.includes("element-reference-resolves"),
+          seatTurns.filter(
+            ({ seat, prompt }) => seat === lens && prompt.includes("element-reference-resolves"),
           ),
           `${lens} repair turns`,
         ).toHaveLength(1);
@@ -5588,6 +5643,9 @@ describe("renderRepairPrompt is pointer-only on every leg (3.2)", () => {
 describe("runLensPipeline — a citation past the change is an unresolvable-citation pointer", () => {
   it("sends the pointer on the repair turn and omits the citation the seat never moved", async () => {
     const captures: { model?: string; prompt?: string; label?: string }[] = [];
+    // On the sidecar seam, because the repair is where this test lives: a leg with no
+    // thread refuses one and settles a typed failure instead (the suite below).
+    const seatTurns: SeatCapture[] = [];
     // The seat's board, as drafted: a finding citing src/auth.ts:30-31 when the change is
     // 10..14. The Design lens gets the same citation beside its prose.
     const citingPast = (lens: string): DraftBoard => {
@@ -5613,11 +5671,13 @@ describe("runLensPipeline — a citation past the change is an unresolvable-cita
         ],
       } as DraftBoard;
     };
+    const bodyFor = (prompt: string, label?: string): unknown => {
+      const lens = lensFromPrompt(prompt, label);
+      return lens === "flagged" || lens === "design" ? citingPast(lens) : cleanBody(lens);
+    };
     const result = await runLensPipeline({
-      claudePort: fakeClaudePort(captures, (prompt, label) => {
-        const lens = lensFromPrompt(prompt, label);
-        return lens === "flagged" || lens === "design" ? citingPast(lens) : cleanBody(lens);
-      }),
+      claudePort: fakeClaudePort(captures, bodyFor),
+      t3: fakeT3Seam(seatTurns, bodyFor),
       codexExecutor: null,
       repoRoot: "/pr-worktree",
       deltaPacket: PACKET,
@@ -5633,11 +5693,9 @@ describe("runLensPipeline — a citation past the change is an unresolvable-cita
     });
 
     for (const lens of ["flagged", "design"] as const) {
-      // Attributed by SEAT LABEL: the repair turn is pointer-only, so it carries no lens
-      // prompt file to filter on (session-bound-workspace 3.2).
-      const turns = captures.filter(
-        ({ prompt, label }) => lensFromPrompt(prompt ?? "", label) === lens,
-      );
+      // Attributed by SEAT: the repair turn is pointer-only, so it carries no lens prompt
+      // file to filter on (session-bound-workspace 3.2).
+      const turns = seatTurns.filter(({ prompt, seat }) => lensFromPrompt(prompt, seat) === lens);
       // The drafting turn, then at least one repair carrying the pointer by rule and range.
       expect(turns.length).toBeGreaterThan(1);
       expect(turns[1]?.prompt).toContain("unresolvable-citation");

@@ -60,9 +60,31 @@ const PATCHSET: Patchset = {
 
 const DECOMPOSITION = decompose(PATCHSET);
 const MANIFEST = buildOfferedManifest(DECOMPOSITION);
-/** Two real offered hunk ids, so items anchored here are genuinely grounded. */
+/** Two real offered hunk ids — the ids the RUNNER mints anchors from, never the model. */
 const OFFERED_A = MANIFEST.occurrences[0]?.id ?? "h1";
 const OFFERED_B = MANIFEST.occurrences[1]?.id ?? OFFERED_A;
+
+/**
+ * The head-side changed region of an offered hunk, as the model cites it: path, side and
+ * a 1-based range, derived from the manifest so the fixture cannot drift from the offer.
+ * Since path-line-citations this is the ONLY location vocabulary a noise turn is given —
+ * the `rennet:hunk/<id>` anchor on the stored item is minted from exactly this.
+ */
+function cites(hunkId: string): {
+  readonly path: string;
+  readonly side: "head";
+  readonly startLine: number;
+  readonly endLine: number;
+} {
+  const occurrence = MANIFEST.occurrences.find((entry) => entry.id === hunkId);
+  const span = occurrence?.spans?.new ?? { start: 1, lines: 1 };
+  return {
+    path: occurrence?.path ?? "",
+    side: "head",
+    startLine: span.start,
+    endLine: span.start + span.lines - 1,
+  };
+}
 
 const CAPABILITY: RspCapabilitySnapshot = {
   structuredOutput: {
@@ -113,7 +135,7 @@ function ruleGroup(overrides: Record<string, unknown> = {}): Record<string, unkn
     category: "lockfile",
     summary: "Dependency graph unchanged; the lockfile was regenerated.",
     judgedBy: { kind: "rule", rule: "lockfile" },
-    items: [{ anchor: `rennet:hunk/${OFFERED_A}`, detail: "pnpm-lock.yaml — hashes refreshed" }],
+    items: [{ ...cites(OFFERED_A), detail: "pnpm-lock.yaml — hashes refreshed" }],
     ...overrides,
   };
 }
@@ -124,7 +146,7 @@ function noiseJobGroup(overrides: Record<string, unknown> = {}): Record<string, 
     category: "import-order",
     summary: "Imports reordered; no symbol added or removed.",
     judgedBy: { kind: "noise-job" },
-    items: [{ anchor: `rennet:hunk/${OFFERED_B}`, detail: "src/b.ts — imports sorted" }],
+    items: [{ ...cites(OFFERED_B), detail: "src/b.ts — imports sorted" }],
     ...overrides,
   };
 }
@@ -169,7 +191,7 @@ describe("runNoiseAngle — the live noise runner (issue #34)", () => {
       )[0] ?? "";
     // The payload layer NAMES the offer; the context layer NAMES the persisted text.
     expect(prompt).toContain(
-      `<<<rennet:layer payload>>>\nYour working directory is a checkout of the reviewed repository.\nThe offered hunks are listed in \`${CONTEXT_DIR}/${NOISE_OFFER_FILE}\``,
+      `<<<rennet:layer payload>>>\nYour working directory is a checkout of the reviewed repository.\nThe changed regions you may cite are listed in \`${CONTEXT_DIR}/${NOISE_OFFER_FILE}\``,
     );
     expect(prompt).toContain(`<<<rennet:layer context>>>\nRennet's assembled project context`);
     // NAMED relative to the seat's cwd, and the TEXT is in the file, not the prompt.
@@ -187,32 +209,138 @@ describe("runNoiseAngle — the live noise runner (issue #34)", () => {
     expect(Buffer.byteLength(references, "utf8")).toBeLessThan(2_048);
   });
 
-  it("writes noise-offer.json with ids, paths and spans and NO line bodies (the seat reads git diff)", async () => {
+  it("writes noise-offer.json as path+side+line-range regions, with NO hunk id and NO line bodies", async () => {
     await captureSent({});
     const offer = writtenFiles.find((file) => file.name === NOISE_OFFER_FILE);
     expect(offer).toBeDefined();
     expect(offer?.holds).toMatch(/no line bodies/);
     const parsed = JSON.parse(offer?.body ?? "{}") as {
       patchsetId: string;
-      hunks: { id: string; path?: string; spans?: unknown }[];
+      regions: { path: string; side: string; startLine: number; endLine: number }[];
     };
     expect(parsed.patchsetId).toBe(PATCHSET.id);
-    const offered = MANIFEST.occurrences.filter((o) => o.kind === "hunk");
-    expect(parsed.hunks.map((h) => h.id)).toEqual(offered.map((o) => o.id));
-    expect(parsed.hunks.map((h) => h.path)).toEqual(offered.map((o) => o.path));
-    expect(parsed.hunks[0]?.spans).toEqual({
-      old: { start: 1, lines: 0 },
-      new: { start: 1, lines: 1 },
-    });
+    // One region per side a hunk actually changed. Every offered hunk here is a pure
+    // addition (`@@ -1,0 +1,n @@`), so each offers its head side and no base side. The
+    // lockfile is not in the list because the decomposition does not offer it as a hunk.
+    expect(parsed.regions).toEqual([
+      { path: "src/a.ts", side: "head", startLine: 1, endLine: 1 },
+      { path: "src/b.ts", side: "head", startLine: 1, endLine: 2 },
+    ]);
+    // No id in the offer at all — path-line-citations: a hunk id is an internal key.
+    for (const occurrence of MANIFEST.occurrences) {
+      expect(offer?.body, `offer leaked ${occurrence.id}`).not.toContain(occurrence.id);
+    }
     // The body is the offer without `sides`: no added, deleted or context line reaches it.
     expect(offer?.body).not.toContain("resolution: {integrity: sha512-xxx}");
     expect(offer?.body).not.toContain("export const a = 1;");
     expect(offer?.body).not.toContain('"sides"');
-    // Positive control for the "no bodies" claim: the manifest itself does carry them.
+    // Positive control for BOTH absence claims: the manifest the runner holds carries the
+    // ids and the line bodies, so "not in the offer" is a real difference.
+    expect(JSON.stringify(MANIFEST)).toContain(OFFERED_A);
     expect(JSON.stringify(MANIFEST)).toContain("export const a = 1;");
   });
 
-  it("re-sends no payload on retry: the second attempt is the base, the references and the pointers", async () => {
+  it("mints the hunk anchor host-side from the region the model cited, and keeps the coordinates", async () => {
+    // The whole of path-line-citations on this leg: the model is given coordinates and
+    // gives coordinates back; the `rennet:hunk/<id>` the delta validator grounds is the
+    // RUNNER's, resolved through the offered-region map. The coordinates stay on the
+    // stored item because the model-facing body shape is what V108 re-checks on disk.
+    const result = await runNoiseAngle({
+      patchsetId: PATCHSET.id,
+      manifest: MANIFEST,
+      provenance: SEED,
+      writeContext,
+      runTurn: emits({ groups: [ruleGroup()] }),
+      budget: createInvocationBudget(5),
+    });
+    expect(result.status).toBe("ok");
+    const item = result.groups[0]?.items[0];
+    expect(item?.anchor).toBe(`rennet:hunk/${OFFERED_A}`);
+    expect({
+      path: item?.path,
+      side: item?.side,
+      startLine: item?.startLine,
+      endLine: item?.endLine,
+    }).toEqual(cites(OFFERED_A));
+    // Control that the mint is a RESOLUTION and not a constant: the second fixture group
+    // cites a different region and gets the other hunk's id.
+    const other = await runNoiseAngle({
+      patchsetId: PATCHSET.id,
+      manifest: MANIFEST,
+      provenance: SEED,
+      writeContext,
+      runTurn: emits({ groups: [noiseJobGroup()] }),
+      budget: createInvocationBudget(5),
+    });
+    expect(other.groups[0]?.items[0]?.anchor).toBe(`rennet:hunk/${OFFERED_B}`);
+    expect(OFFERED_B).not.toBe(OFFERED_A);
+  });
+
+  it("culls a citation that overruns its region rather than anchoring it to a hunk it exceeds", async () => {
+    // `src/b.ts` offers head lines 1-2. A citation of 1-3 covers a line the change does
+    // not have, so it grounds in nothing — dropped, never rounded down to the hunk.
+    const result = await runNoiseAngle({
+      patchsetId: PATCHSET.id,
+      manifest: MANIFEST,
+      provenance: SEED,
+      writeContext,
+      runTurn: emits({
+        groups: [
+          ruleGroup({
+            items: [
+              { ...cites(OFFERED_A), detail: "in range" },
+              {
+                path: "src/b.ts",
+                side: "head",
+                startLine: 1,
+                endLine: 3,
+                detail: "one line past the change",
+              },
+            ],
+          }),
+        ],
+      }),
+      budget: createInvocationBudget(5),
+    });
+    expect(result.status).toBe("ok");
+    expect(result.groups[0]?.items.map((i) => i.detail)).toEqual(["in range"]);
+    // Control: the same citation one line shorter is exactly the offered region and survives.
+    const inRange = await runNoiseAngle({
+      patchsetId: PATCHSET.id,
+      manifest: MANIFEST,
+      provenance: SEED,
+      writeContext,
+      runTurn: emits({
+        groups: [
+          ruleGroup({
+            items: [
+              {
+                path: "src/b.ts",
+                side: "head",
+                startLine: 1,
+                endLine: 2,
+                detail: "one line past the change",
+              },
+            ],
+          }),
+        ],
+      }),
+      budget: createInvocationBudget(5),
+    });
+    expect(inRange.groups[0]?.items).toHaveLength(1);
+  });
+
+  it("re-asks the whole prompt after a transport failure, and the whole prompt is references only", async () => {
+    // What this test used to claim it showed — a pointer-only repair — is not what the
+    // noise angle does, and cannot be: this leg has no thread. Every attempt opens a fresh
+    // `ephemeral: true` session (#585), so a follow-up that carried only pointers would
+    // reach a session that has never seen the offer or the base instruction. The re-ask
+    // legitimately re-sends everything.
+    //
+    // What makes that affordable is the SIZE, so the size is what is asserted. Before
+    // session-context-files the payload layer WAS the offer — up to 256 KiB of hunk bodies
+    // re-billed on every attempt. Now the whole prompt is the base instruction plus two
+    // path references, so re-sending it costs a few kilobytes.
     const sent = await captureSent({
       runTurn: (_prompt, attempt) =>
         Promise.resolve(
@@ -223,9 +351,20 @@ describe("runNoiseAngle — the live noise runner (issue #34)", () => {
     });
     expect(sent).toHaveLength(2);
     const [first, retry] = sent as [string, string];
-    // Identical: there was nothing to re-send but the same references.
+    // Identical: a transport failure produced no validator pointers to add, and there was
+    // never a payload to drop, so the re-ask is byte-for-byte the first ask.
     expect(retry).toBe(first);
+    // The whole re-billed prompt, bounded. The number is the CEILING this angle's re-ask
+    // may cost, not a measurement to keep in step: it fails loudly if a payload comes
+    // back, and the 4 KiB is roughly the base instruction plus the two reference layers.
+    expect(Buffer.byteLength(retry, "utf8")).toBeLessThan(4_096);
     expect(retry).not.toContain(OFFERED_A);
+    expect(retry).not.toContain("export const a = 1;");
+    // Positive control for those two absence claims: the manifest the runner WAS handed
+    // carries both the id and the line body, so "not in the prompt" is a real difference
+    // between what the host holds and what it sends, not a string that exists nowhere.
+    expect(JSON.stringify(MANIFEST)).toContain(OFFERED_A);
+    expect(JSON.stringify(MANIFEST)).toContain("export const a = 1;");
     expect(inlineContextViolation(retry)).toBeUndefined();
   });
 
@@ -284,8 +423,14 @@ describe("runNoiseAngle — the live noise runner (issue #34)", () => {
         groups: [
           ruleGroup({
             items: [
-              { anchor: `rennet:hunk/${OFFERED_A}`, detail: "real hunk" },
-              { anchor: "rennet:hunk/not-offered", detail: "hallucinated hunk" },
+              { ...cites(OFFERED_A), detail: "real hunk" },
+              {
+                path: "src/nowhere.ts",
+                side: "head",
+                startLine: 1,
+                endLine: 1,
+                detail: "hallucinated hunk",
+              },
             ],
           }),
         ],
@@ -308,7 +453,11 @@ describe("runNoiseAngle — the live noise runner (issue #34)", () => {
       runTurn: emits({
         groups: [
           ruleGroup(),
-          ruleGroup({ items: [{ anchor: "rennet:hunk/ghost", detail: "gone" }] }),
+          ruleGroup({
+            items: [
+              { path: "src/ghost.ts", side: "head", startLine: 1, endLine: 1, detail: "gone" },
+            ],
+          }),
         ],
       }),
       budget: createInvocationBudget(5),
@@ -351,9 +500,9 @@ describe("runNoiseAngle — the live noise runner (issue #34)", () => {
         groups: [
           noiseJobGroup({
             items: [
-              { anchor: `rennet:hunk/${OFFERED_A}`, detail: "sorted alphabetically" },
+              { ...cites(OFFERED_A), detail: "sorted alphabetically" },
               {
-                anchor: `rennet:hunk/${OFFERED_B}`,
+                ...cites(OFFERED_B),
                 detail: "added a new import symbol",
                 deviates: true,
               },
@@ -379,8 +528,8 @@ describe("runNoiseAngle — the live noise runner (issue #34)", () => {
         groups: [
           ruleGroup({
             items: [
-              { anchor: `rennet:hunk/${OFFERED_A}`, detail: "clean detail" },
-              { anchor: `rennet:hunk/${OFFERED_B}`, detail: "rennet:hunk/smuggled in prose" },
+              { ...cites(OFFERED_A), detail: "clean detail" },
+              { ...cites(OFFERED_B), detail: "rennet:hunk/smuggled in prose" },
             ],
           }),
         ],
@@ -549,26 +698,35 @@ describe("renderNoiseOffer", () => {
   );
   const bytes = (text: string): number => Buffer.byteLength(text, "utf8");
 
-  it("is compact JSON: every offered hunk, in offered order, with id, path and spans only", () => {
+  it("is compact JSON: one region per changed side, in offered order, and NO ids", () => {
     const text = renderNoiseOffer(BIG_MANIFEST, "ps_big");
     expect(text).not.toContain("\n");
     const offered = BIG_MANIFEST.occurrences.filter((o) => o.kind === "hunk");
-    const parsed = JSON.parse(text) as { hunks: Record<string, unknown>[] };
-    expect(parsed.hunks.map((h) => h.id)).toEqual(offered.map((o) => o.id));
-    for (const hunk of parsed.hunks)
-      expect(Object.keys(hunk).sort()).toEqual(["id", "path", "spans"]);
+    const parsed = JSON.parse(text) as { regions: Record<string, unknown>[] };
+    // Pure additions: one head-side region each, in the manifest's own order.
+    expect(parsed.regions.map((r) => r.path)).toEqual(offered.map((o) => o.path));
+    for (const region of parsed.regions)
+      expect(Object.keys(region).sort()).toEqual(["endLine", "path", "side", "startLine"]);
     expect(text).not.toContain("x".repeat(24));
-    // Scale: ~150 bytes per hunk against ~677 with bodies — and it is a file, not a prompt.
+    for (const occurrence of offered) expect(text).not.toContain(occurrence.id);
+    // Scale: ~65 bytes per region against ~677 with bodies — and it is a file, not a prompt.
     expect(bytes(text)).toBeLessThan(offered.length * 200);
-    // Positive control for the absence claim: the same manifest serialised whole has them.
+    // Positive control for both absence claims: the whole manifest carries the bodies and
+    // the ids, so the offer omitting them is a real difference.
     expect(JSON.stringify(BIG_MANIFEST)).toContain("x".repeat(24));
+    expect(JSON.stringify(BIG_MANIFEST)).toContain(offered[0]?.id ?? "");
   });
 
   it("carries only hunk occurrences", () => {
     const withSymbol = {
       occurrences: [...MANIFEST.occurrences, { id: "sym-1", kind: "symbol" as const }],
     };
-    const parsed = JSON.parse(renderNoiseOffer(withSymbol, "ps_1")) as { hunks: { id: string }[] };
-    expect(parsed.hunks.map((h) => h.id)).not.toContain("sym-1");
+    const text = renderNoiseOffer(withSymbol, "ps_1");
+    const parsed = JSON.parse(text) as { regions: { path: string }[] };
+    // A symbol occurrence carries no path or spans, so it offers no region at all.
+    expect(parsed.regions).toHaveLength(
+      MANIFEST.occurrences.filter((o) => o.kind === "hunk").length,
+    );
+    expect(text).not.toContain("sym-1");
   });
 });

@@ -152,11 +152,16 @@ and calls board regeneration through this runtime.
    pointer-only on every leg: it carries the pointers (each naming the element it
    is about), the frozen ids as a list so references stay valid, and the
    instruction — never the lens prompt, the previous draft, or anything of the
-   change. On a sidecar seat thread the conversation already holds the draft; on
-   the ephemeral Claude and Codex legs nothing does, and the repair still does
-   not re-send it. The host merges the frozen bodies back itself. After a turn
-   that emitted nothing, the re-ask is for the whole board. Validation spends at
-   most
+   change. That only means something to a session that already holds the draft,
+   which is the sidecar seat thread. **A leg with no thread cannot repair**: the
+   ephemeral Claude and Codex legs open a fresh session per turn, so a pointer-only
+   repair would reach a session that has never seen the board. On those legs the
+   repair is refused before a turn is spent and the lane settles as a retryable
+   failure naming the missing thread, rather than shipping the unrepaired draft as
+   though a ladder had run. The host merges the frozen bodies back itself. After a
+   turn that emitted nothing, the re-ask is for the whole board — that one carries
+   no reference to a draft the session must remember, so it runs on either leg.
+   Validation spends at most
    one model repair turn after the initial draft. An element that remains
    invalid takes an **honest-omission exit**: it is dropped and the drop is
    recorded as an omission naming the element and the reason. Unresolved
@@ -304,9 +309,10 @@ adds to the prior attempt's total rather than replacing it. The round shows it
 as one line under the lane rows, naming any turns that produced no usage record
 so a partial sum is never read as the whole. A price appears only when every
 turn was metered and priced; a subscription session shows tokens and no invented
-dollar figure. Retries are counted like any other turn; on the ephemeral legs a
-retry is a new cold session, but it carries only the repair pointers and frozen
-ids, never the base prompt again.
+dollar figure. Retries are counted like any other turn. A repair is a further turn
+on the seat's own thread; on the ephemeral legs there is no thread to repair on,
+so the only retry they run is the whole-board re-ask after a turn that emitted
+nothing, as a new cold session.
 
 Two of those records are measured from a boundary the pipeline does not own.
 `first-core-board` starts from the moment the **reviewer's** wait began — the
@@ -543,9 +549,13 @@ Every other interpolation into a seat prompt declares its bound at the call
 site too: the round-report evidence manifest is measured against its 256 KiB
 ceiling before any seat runs and then written to `evidence.json` rather than
 sent. The RSP noise seat's hunk payload is gone: the offer is written to
-`noise-offer.json` (ids, paths and line ranges, no line bodies) and the seat
-reads the lines from `git diff`, so a retry re-sends nothing of the change.
-Unbounded interpolation is a bug.
+`noise-offer.json` — one entry per changed region, each a path, a side and a
+1-based line range, with no line bodies and no hunk ids — and the seat reads
+the lines from `git diff`, so a re-ask re-sends nothing of the change. The seat
+cites a region back the same way; the daemon resolves that citation against the
+offered regions and mints the `rennet:hunk/<id>` anchor the stored document
+carries, so no hunk id travels in either direction. Unbounded interpolation is
+a bug.
 
 A tripwire keeps the drafter prompt itself honest. The `lens-pipeline`
 prompt-budget test assembles every lens's drafter prompt against the real

@@ -15,6 +15,7 @@ export const OWNER_LOOP_SEQUENCE_QUOTE = "Read `src/owner.ts` first.";
 const author: Author = { kind: "lens-agent", id: OWNER_LOOP_LANE };
 const askPlanValue = `\${askId}`;
 const evidenceIdsPlanValue = `\${evidenceIds}`;
+const askIdsPlanValue = `\${askIds}`;
 
 function codeRef(id: string): DraftBoard["elements"][number] {
   return {
@@ -292,6 +293,21 @@ export function ownerLoopScriptedHarnessPlan(
         kind: "structured",
         promptIncludes: "You draft the Noise board for a code change under review.",
         output: noiseBoard(),
+      },
+      {
+        // The handoff compose turn (3.7): the work order the round dispatches is AUTHORED,
+        // not the mechanical floor. Without a step here the scripted port has no answer,
+        // the compose port fails, and the core router silently falls back — a real turn on
+        // the owner loop's path that the proof never exercised. The ids come from
+        // `compose/asks.json`, which is a context FILE the turn reads: the prompt names a
+        // directory and carries no note text, so the plan resolves them the same way.
+        id: "compose-work-order",
+        kind: "structured",
+        promptIncludes:
+          "You are composing a code reviewer's separate review notes into ONE coherent work order",
+        output: {
+          groups: [{ title: "Advance the owner value", dispositionIds: askIdsPlanValue }],
+        },
       },
       {
         id: "report-round-one",

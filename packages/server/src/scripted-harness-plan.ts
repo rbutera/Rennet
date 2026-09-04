@@ -33,6 +33,10 @@ const ASK_PLAN_VALUE = `\${askId}`;
  *  The ids are content-derived from the coding turn's diff, so a scripted plan cannot
  *  hard-code them — it asks for whatever the host measured. */
 const EVIDENCE_IDS_PLAN_VALUE = `\${evidenceIds}`;
+/** Whole-string placeholder: becomes every note id in `compose/asks.json` (3.7). The
+ *  handoff compose turn must return a TOTAL COVER of exactly those ids, and they are
+ *  minted per staged disposition, so a scripted plan cannot hard-code them either. */
+const ASK_IDS_PLAN_VALUE = `\${askIds}`;
 
 const relativeRepoPath = z
   .string()
@@ -278,16 +282,49 @@ function findEvidenceIds(value: unknown): readonly string[] | undefined {
   return undefined;
 }
 
+/**
+ * The note ids in `compose/asks.json` — the array of `{id, kind, path, anchor, note}` the
+ * handoff compose turn is pointed at. Matched on the SHAPE rather than on a key name: the
+ * turn sees every context file the writer left, and the entries carrying a `note` beside
+ * an `id` are the reviewer's staged asks and nothing else. Every entry must have both, so
+ * a partly-matching array (a boards file, the round evidence) is skipped rather than
+ * half-read.
+ */
+function findComposeAskIds(value: unknown): readonly string[] | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  if (Array.isArray(value)) {
+    const ids = value.flatMap((entry) =>
+      typeof entry === "object" &&
+      entry !== null &&
+      "note" in entry &&
+      "id" in entry &&
+      typeof entry.id === "string"
+        ? [entry.id]
+        : [],
+    );
+    if (ids.length > 0 && ids.length === value.length) return ids;
+  }
+  for (const nested of Array.isArray(value) ? value : Object.values(value)) {
+    const found = findComposeAskIds(nested);
+    if (found !== undefined) return found;
+  }
+  return undefined;
+}
+
 function substitutePlanValues(
   value: unknown,
   values: {
     readonly patchsetId: string;
     readonly askId?: string;
     readonly evidenceIds?: readonly string[];
+    readonly askIds?: readonly string[];
   },
 ): unknown {
   if (value === EVIDENCE_IDS_PLAN_VALUE && values.evidenceIds !== undefined) {
     return [...values.evidenceIds];
+  }
+  if (value === ASK_IDS_PLAN_VALUE && values.askIds !== undefined) {
+    return [...values.askIds];
   }
   if (typeof value === "string") {
     return value
@@ -372,11 +409,12 @@ function completedOutcome(
   const needsPatchset = containsPlanValue(step.output, PATCHSET_PLAN_VALUE);
   const needsAsk = containsPlanValue(step.output, ASK_PLAN_VALUE);
   const needsEvidence = containsPlanValue(step.output, EVIDENCE_IDS_PLAN_VALUE);
+  const needsAskIds = containsPlanValue(step.output, ASK_IDS_PLAN_VALUE);
   // The values live in the session-context FILES since session-context-files: the prompt
   // names a directory and the seat opens it. A turn that still carries a JSON context
   // layer (the post-process turn, and the direct-call shapes the unit tests drive) is read
   // the old way, so both shapes resolve from whatever the turn can actually see.
-  const needsValue = needsPatchset || needsAsk || needsEvidence;
+  const needsValue = needsPatchset || needsAsk || needsEvidence || needsAskIds;
   const contextFileBodies = needsValue ? sessionContextFiles(prompt, spec.cwd) : [];
   const context = !needsValue
     ? undefined
@@ -401,6 +439,10 @@ function completedOutcome(
   if (needsEvidence && evidenceIds === undefined) {
     throw new Error(`scripted harness step ${step.id} could not resolve the round evidence ids`);
   }
+  const askIds = context === undefined ? undefined : findComposeAskIds(context);
+  if (needsAskIds && askIds === undefined) {
+    throw new Error(`scripted harness step ${step.id} could not resolve the composable ask ids`);
+  }
   return {
     outcome: {
       status: "completed",
@@ -409,6 +451,7 @@ function completedOutcome(
         patchsetId: patchsetId ?? "",
         ...(askId === undefined ? {} : { askId }),
         ...(evidenceIds === undefined ? {} : { evidenceIds }),
+        ...(askIds === undefined ? {} : { askIds }),
       }),
     },
     recovered: false,
