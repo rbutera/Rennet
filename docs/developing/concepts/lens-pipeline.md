@@ -281,8 +281,7 @@ barrier over the five lanes — and a lane whose attempts are exhausted is emitt
 moment they are, for the same reason: a failure only visible in the returned outcomes
 is a failure the surface cannot show until the slowest sibling finishes, which is how
 a seat that died at 33 s went on reading "quiet for 320 s" until the reveal. The
-returned
-outcomes still use the canonical Design, Sequence, Decisions, Flagged, Noise
+returned outcomes still use the canonical Design, Sequence, Decisions, Flagged, Noise
 order regardless of which drafter finished first, because that array is
 completion bookkeeping rather than the reveal. The rounds machinery consumes the
 arrival events to drive the reveal; the pipeline only emits them.

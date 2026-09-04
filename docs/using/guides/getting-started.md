@@ -90,8 +90,8 @@ returns. The header status reads *scouting*, then *indexing*, then *indexed*.
 
 While the map builds, a prefilled questionnaire offers the project's setup for
 a look: issue tracker, default branch, the repository's own worktree convention,
-gate command, and the
-project's mark. Every answer carries a chip reading **detected** or **guessed** —
+gate command, and the project's mark. Every answer carries a chip reading
+**detected** or **guessed** —
 the value, provenance, and evidence line come from the scout record Rennet just
 saved, rather than from canned UI defaults. A detected logo path remains cosmetic:
 it is evidence for choosing one of the fixed sidebar glyphs in **Settings →

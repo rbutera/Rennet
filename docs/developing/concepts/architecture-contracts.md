@@ -183,7 +183,7 @@ binding the session to the clone, which sits on another branch. Nothing re-decid
 a pull-request binding is re-pinned in place when the reviewed head moves. Worktrees earlier
 versions created per review are removed by a startup sweep that leaves any directory a live
 session is bound to, and nothing creates that layout again. The coding round runs in the
-bound workspace like every other child (see below); nothing creates a worktree per round.
+bound workspace like every other child of the session; no per-round worktree is created.
 
 Coding-agent handoff is an acting path. The agent receives a digest-bound bundle,
 works in the repository, and may write, test, commit, and push. Rennet then
