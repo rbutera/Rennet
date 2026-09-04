@@ -261,7 +261,7 @@ export function reviewHandlers(rt: DispatchRuntime) {
       // finding 2). The lease is released when the turn settles, and the last release
       // performs a purge the archive deferred.
       writeSessionContext(
-        deps.boundWorkspaceForReview?.(review.id)?.root ?? review.repositoryRoot,
+        (await deps.boundWorkspaceForReview?.(review.id))?.root ?? review.repositoryRoot,
         contextSessionId,
         [workOrderContextFile(bundle.tasks)],
       );
@@ -325,7 +325,7 @@ export function reviewHandlers(rt: DispatchRuntime) {
       // under this review's id and report a handoff that changed nothing.
       const updated = await service.capture(
         input.commandId,
-        deps.boundWorkspaceForReview?.(review.id)?.root ?? review.repositoryRoot,
+        (await deps.boundWorkspaceForReview?.(review.id))?.root ?? review.repositoryRoot,
         review.id,
         handoffTrace,
       );

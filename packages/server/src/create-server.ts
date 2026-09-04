@@ -2886,23 +2886,22 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   // The handoff exit (t3-lens-threads 4.3): a composed work order runs as ONE turn on the
   // review's bound T3 thread. One engine, no switch — the review is what names the thread,
   // and the thread is keyed on the review's REPOSITORY ROOT, never a project id.
-  const runHandoffTurn = (input: HandoffTurnInput): Promise<HandoffTurnOutcome> =>
-    runHandoffTurnOnThread(
-      // The work order runs in the session's bound workspace, the same tree its seats read
-      // (session-bound-workspace): the thread is keyed on the repository, its cwd is the
-      // binding.
-      (() => {
-        const bound = boundWorkspaceForReview(input.reviewId);
-        return bound === undefined
-          ? input
-          : {
-              ...input,
-              worktreePath: bound.root,
-              ...(bound.branch === undefined ? {} : { branch: bound.branch }),
-            };
-      })(),
+  const runHandoffTurn = async (input: HandoffTurnInput): Promise<HandoffTurnOutcome> => {
+    // The work order runs in the session's bound workspace, the same tree its seats read and
+    // the same one the round's turn takes — the binding is half the thread's key, so this is
+    // also what keeps chat, handoff and round on ONE thread. Bound here if nothing has.
+    const bound = await boundWorkspaceForReview(input.reviewId);
+    return runHandoffTurnOnThread(
+      bound === undefined
+        ? input
+        : {
+            ...input,
+            worktreePath: bound.root,
+            ...(bound.branch === undefined ? {} : { branch: bound.branch }),
+          },
       t3Sidecar,
     );
+  };
   // B4 broadcast wiring (reconciliation 7, recorded): board events ride the EXISTING
   // WS push path — the runtime's store-append hook feeds `wsListener.broadcastBoardEvent`
   // (late-bound: `wsListener` is assigned below, read only when a board event fires), which
@@ -3002,12 +3001,16 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   const turnRootFor = (review: Review): string =>
     boundRootForSession(sessionIdForReview(review)) ?? review.repositoryRoot;
 
-  function boundWorkspaceForReview(
+  async function boundWorkspaceForReview(
     reviewId: string,
-  ): { readonly root: string; readonly branch?: string } | undefined {
+  ): Promise<{ readonly root: string; readonly branch?: string } | undefined> {
     const review = service.reviewById(reviewId);
     if (!review) return undefined;
-    const root = turnRootFor(review);
+    // Binds if nothing has yet, rather than reading the clone through `turnRootFor`'s
+    // fallback: this is the read the CHAT and the HANDOFF thread are created from, and a
+    // thread's cwd is fixed at creation. Getting the clone here is not a degraded answer, it
+    // is a second thread for the same session rooted in the wrong tree.
+    const root = await bindWorkspaceFor(review);
     const branch =
       review.postTarget === undefined && review.retrospective !== true
         ? review.patchsets.find((entry) => entry.id === review.activePatchsetId)?.repository.headRef
@@ -3048,6 +3051,14 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
    * files outlive the archive that asked for them to go.
    */
   const holdingReviewContext = async <T>(review: Review, run: () => Promise<T>): Promise<T> => {
+    // BIND FIRST, and here rather than in each turn, because this is the one place every
+    // review-scoped turn already passes through. `turnRootFor` below is a synchronous READ of
+    // the recorded field, and its fallback is the clone — so a turn that reached it before
+    // anything had bound (a session minted before this wave whose first act is a chat, or one
+    // whose first bind threw) would run at the clone root and write its context there, which
+    // is the very split this wave exists to close. Awaiting the bind is what makes "the next
+    // use retries" true rather than a sentence in a comment.
+    await bindWorkspaceFor(review);
     const release = contextPurger.turnInFlight(sessionIdForReview(review));
     try {
       return await run();
@@ -4202,8 +4213,9 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         // The binding is decided HERE, once, the moment the review names a target
         // (session-bound-workspace D1) — not at the first seat, so the reviewer can see which
         // workspace the session owns before anything drafts in it. A worktree that cannot be
-        // created degrades to the repository root inside `bindWorkspaceFor`, so this never
-        // fails a capture.
+        // created FAILS the preparation with its reason rather than binding the session to the
+        // clone: retrying the preparation retries the bind, and every later use binds lazily
+        // through `holdingReviewContext` if this one never ran.
         await bindWorkspaceFor(review);
         if (controller.signal.aborted) {
           sessionStore.setPreparation(sessionId, {

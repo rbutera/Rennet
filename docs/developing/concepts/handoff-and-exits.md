@@ -87,10 +87,13 @@ checkout when some worktree of the repository already has the reviewed branch ou
 Rennet-created worktree at `~/.rennet/worktrees/<repoKey>/<branch>` when nothing does, the
 detached worktree at the reviewed head for a pull-request snapshot — and recorded as
 `boundRoot`. A workspace that cannot be created fails the bind and records nothing rather
-than falling back to the clone, which sits on another branch; the next use retries. Nothing
-re-decides a binding afterwards, though a pull-request binding is re-pinned when a landed
-round advances the reviewed head. A session created before the binding existed carries none
-and binds lazily, and records it, on first use.
+than falling back to the clone, which sits on another branch. Nothing re-decides a binding
+afterwards, though a pull-request binding is re-pinned when a landed round advances the
+reviewed head. A session with no recorded binding — created before the binding existed, or
+one whose first bind threw — binds on its **next use**, whichever use that is: the read the
+chat and handoff threads are created from binds, and so does the lease every review-scoped
+turn takes. None of them answers the clone while the field is empty, because a thread's cwd
+is fixed when it is created.
 
 The coding round is the one child still outside this: it runs its own detached worktree per
 operation and lands the result onto the branch. Moving it onto the bound workspace is a

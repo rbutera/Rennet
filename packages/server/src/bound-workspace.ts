@@ -10,6 +10,7 @@
 // out, a pull request whose head branch does not exist locally — and none of those are
 // reachable through a composition root.
 
+import { realpathSync } from "node:fs";
 import {
   branchWorktreePath,
   ensureBranchWorktree,
@@ -52,6 +53,25 @@ export interface BoundWorkspaceDeps {
  * Only that arrangement is rewritten. A daemon running INSIDE the distro already addresses the
  * repository the way git does, and a host-locus repository never had two spellings.
  */
+export function comparablePath(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return path;
+  }
+}
+
+/**
+ * Whether two paths name the SAME directory: resolved through symlinks, so `/var/x` and
+ * `/private/var/x` are one, and compared case-insensitively on the UNC forms where Windows is.
+ * An unresolvable path keeps its literal form, which still compares equal to itself.
+ */
+export function sameDirectory(a: string, b: string): boolean {
+  if (a === b) return true;
+  const [left, right] = [comparablePath(a), comparablePath(b)];
+  return left === right || left.toLowerCase() === right.toLowerCase();
+}
+
 export function inRepoSpelling(gitPath: string, repositoryRoot: string, locus: Locus): string {
   if (locus.kind !== "wsl") return gitPath;
   // The daemon is inside the distro when it addresses the repository distro-natively; then git's
@@ -108,14 +128,26 @@ export async function decideBoundWorkspace(
   const branch = patchset.repository.headRef;
   // A detached HEAD has no branch ref, so there is no branch to bind a worktree to.
   if (branch === undefined || branch.length === 0) return review.repositoryRoot;
-  const existing = await worktreeForBranch(git, review.repositoryRoot, branch);
-  // Git answers in ITS spelling, which is the distro's for a WSL project driven from Windows.
-  if (existing !== undefined) return inRepoSpelling(existing, review.repositoryRoot, locus);
   const worktree = branchWorktreePath(
     deps.dataDir,
     deps.repoKeyForRoot(review.repositoryRoot),
     branch,
   );
+  const existing = await worktreeForBranch(git, review.repositoryRoot, branch);
+  if (existing !== undefined) {
+    // PREFER A SPELLING RENNET ALREADY OWNS. `git worktree list` prints a realpath, and on WSL
+    // the UNC form it maps back to is `\\\\wsl.localhost\\…` while a project may be opened as
+    // `\\\\wsl$\\…`. Either would make `boundRoot` differ from the name Rennet already has for
+    // this directory — the repository root, or the worktree Rennet itself created — by
+    // SPELLING ALONE. Downstream that reads as "this session moved to another workspace": it
+    // retires the session's thread rows and re-keys the new ones on the alternate name. Same
+    // directory, same string, whichever of the two owns it.
+    if (sameDirectory(existing, review.repositoryRoot)) return review.repositoryRoot;
+    if (sameDirectory(existing, worktree)) return worktree;
+    // A worktree the reviewer made themselves: git's spelling is all there is, re-spelled into
+    // the locus the daemon addresses the repository by.
+    return inRepoSpelling(existing, review.repositoryRoot, locus);
+  }
   const { created } = await ensureBranchWorktree(git, review.repositoryRoot, worktree, branch);
   if (created) deps.onWorktreeCreated?.(worktree);
   return worktree;

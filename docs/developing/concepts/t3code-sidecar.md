@@ -420,8 +420,19 @@ would run every later turn of the session against a tree the review is not about
 recorded, and the next use retries.
 
 The decision is recorded as `boundRoot` on the session record, and every later read is that
-field. A session minted before the binding existed carries none and binds lazily, and records
-it, on its first use. Nothing re-decides a binding — but a pull-request binding is **re-pinned**
+field. A session with none — minted before the binding existed, or one whose first bind threw —
+**binds on the next use and records it**: `holdingReviewContext`, which every review-scoped turn
+already passes through, and the review-keyed read the chat and handoff threads are created from
+both bind before they answer. That is what makes "the next use retries" real rather than a
+sentence: a synchronous read of the empty field would answer the clone, and a thread's cwd is
+fixed at creation, so answering the clone once leaves a thread in the wrong tree for its life.
+
+When git names a directory Rennet already has a name for — the repository itself, or the
+worktree Rennet created — **Rennet's own spelling wins**. `git worktree list` prints a realpath,
+and a `boundRoot` that differs from the previous one by spelling alone reads downstream as "this
+session moved", which retires the session's threads and re-keys the new ones.
+
+Nothing re-decides a binding — but a pull-request binding is **re-pinned**
 on every read, because it is a detached checkout and a landed round advances the reviewed head;
 `ensurePrWorktree` replaces the checkout at the same path, so the recorded root does not move.
 
@@ -436,8 +447,12 @@ argument at construction and `transportCwd` wins over a session's `cwd`, so a ha
 resolved from the **turn root**, never from the repository root, or the cwd is silently ignored.
 
 A thread's cwd is fixed when the thread is created, so a binding row records the workspace it
-was created with. A row whose workspace is not the one being asked for — every row written
-before this wave, which has none — gets a fresh thread rather than being reused.
+was created with, and the workspace is half the binding KEY — which is what puts the chat, the
+handoff and the round's turn on ONE thread. A row keyed on the repository while a workspace is
+being asked for is superseded: it carries no workspace (written before this wave) or the clone
+root (written by a read that preceded any bind), and either way its thread is rooted in the
+wrong tree. It is moved to the sidecar's pending deletions, so the existing sweep DELETES that
+thread rather than leaving an orphan transcript with no handle.
 
 The reviewer sees it: the chat header's trail names the bound workspace beside the branch, so
 "which tree did the seat read" is not invisible when it is a worktree rather than their own

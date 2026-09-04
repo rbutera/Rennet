@@ -163,6 +163,23 @@ export function removeBindings(dataDir: string, threadIds: readonly string[]): v
   writeBindings(dataDir, remaining);
 }
 
+/**
+ * Retire a live binding whose thread must not be reused: the row leaves the live bindings so
+ * nothing looks it up again, and joins `pendingDeletions` so the next sweep DELETES the
+ * thread. Dropping the row alone would leave an orphan transcript in the sidecar with no
+ * handle left to reach it — one per upgraded session.
+ *
+ * Idempotent: a row already pending is not queued twice.
+ */
+export function deferDeletion(dataDir: string, row: ThreadBinding): void {
+  const file = readFile(dataDir);
+  if (file.pendingDeletions.some((pending) => pending.threadId === row.threadId)) return;
+  writeFile(dataDir, {
+    bindings: file.bindings.filter((live) => live.threadId !== row.threadId),
+    pendingDeletions: [...file.pendingDeletions, row],
+  });
+}
+
 const describeError = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
@@ -301,14 +318,16 @@ async function findOrCreateBinding(input: BindThreadInput): Promise<ThreadBindin
   const existing = findBinding(input.dataDir, keyRoot, input.key);
   if (existing) return existing;
   // A thread's cwd is decided when it is created and never afterwards. A session that bound a
-  // workspace AFTER its thread existed — every session minted before this wave — has a row
-  // keyed on the repository and carrying no workspace, naming a thread rooted at the project.
-  // It is retired here rather than left behind: the fresh thread below runs in the bound tree,
-  // and a row nobody will look up again is a thread nobody can reach.
+  // workspace AFTER its thread existed has a row keyed on the REPOSITORY: carrying no
+  // workspace if it was written before this wave, or carrying the clone root if its first use
+  // read the binding before anything had bound one. Either way that thread is rooted in the
+  // wrong tree, so the row is retired — on ANY workspace that is not the one now being asked
+  // for, not only on an absent one, or the session keeps two threads with its transcript split
+  // between them.
   if (keyRoot !== input.repositoryRoot) {
-    const legacy = findBinding(input.dataDir, input.repositoryRoot, input.key);
-    if (legacy !== undefined && legacy.worktreePath === undefined) {
-      removeBindings(input.dataDir, [legacy.threadId]);
+    const superseded = findBinding(input.dataDir, input.repositoryRoot, input.key);
+    if (superseded !== undefined && superseded.worktreePath !== keyRoot) {
+      deferDeletion(input.dataDir, superseded);
     }
   }
   // A bound workspace that is no longer on disk is named, not worked around

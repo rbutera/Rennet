@@ -161,7 +161,7 @@ export function sessionHandlers(rt: DispatchRuntime) {
       // construction: no store wired, or a session
       // with no captured turns yet, returns `[]` — capability present, never fabricated content.
       const rows = rt.deps.transcriptRowsForReview?.(input.reviewId) ?? [];
-      const workspace = rt.deps.boundWorkspaceForReview?.(input.reviewId)?.root;
+      const workspace = (await rt.deps.boundWorkspaceForReview?.(input.reviewId))?.root;
       return parseCommandOutput(name, {
         trail: sessionTrailForReview(review, workspace),
         rows: [...rows],

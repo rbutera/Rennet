@@ -6,6 +6,7 @@ import {
   readdirSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -156,6 +157,28 @@ describe("decideBoundWorkspace (session-bound-workspace D1)", () => {
     };
     return walk(base);
   }
+
+  it("returns the repository's OWN spelling when the checkout on the branch is the repository", async () => {
+    // `git worktree list` prints a realpath, and on WSL the UNC form it maps back to is
+    // `\\\\wsl.localhost\\…` while the project may be opened as `\\\\wsl$\\…`. Either would make
+    // `boundRoot` differ from `review.repositoryRoot` by SPELLING ALONE — which reads
+    // downstream as "this session moved to a worktree" and retires every thread row the
+    // repository has. Here the fixture's own symlinked name stands in for that pair.
+    const repo = initRepo(root, "repo");
+    git(repo, ["checkout", "-q", "feature"]);
+    const viaSymlink = join(root, "repo-link");
+    symlinkSync(repo, viaSymlink);
+    const review = reviewFor({
+      id: "r11",
+      repositoryRoot: viaSymlink,
+      headOid: headOid(repo, "feature"),
+      headRef: "feature",
+      baseOid: headOid(repo, "main"),
+    });
+    // Verbatim: the string the review carries, not git's resolved one.
+    expect(await decideBoundWorkspace(review, deps)).toBe(viaSymlink);
+    expect(createdWorktrees()).toEqual([]);
+  });
 
   it("binds a branch review to the checkout that is already on the branch, creating nothing", async () => {
     const repo = initRepo(root, "repo");

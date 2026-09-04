@@ -121,7 +121,7 @@ export interface DispatchDeps {
    */
   readonly boundWorkspaceForReview?: (
     reviewId: string,
-  ) => { readonly root: string; readonly branch?: string } | undefined;
+  ) => Promise<{ readonly root: string; readonly branch?: string } | undefined>;
   /**
    * The session id a REVIEW's context files are keyed on — the same key
    * `purgeSessionContext` above is called with, resolved by the composition root from the

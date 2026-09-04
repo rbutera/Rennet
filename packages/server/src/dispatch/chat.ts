@@ -9,11 +9,11 @@ import type { CommandHandler, DispatchRuntime } from "./runtime";
  * branch review's chat reads the branch. A host with no resolver wired answers nothing and the
  * thread falls back to the project root, exactly as before the binding existed.
  */
-function boundWorkspaceInput(
+async function boundWorkspaceInput(
   rt: DispatchRuntime,
   reviewId: string,
-): { worktreePath?: string; branch?: string } {
-  const bound = rt.deps.boundWorkspaceForReview?.(reviewId);
+): Promise<{ worktreePath?: string; branch?: string }> {
+  const bound = await rt.deps.boundWorkspaceForReview?.(reviewId);
   if (bound === undefined) return {};
   return {
     worktreePath: bound.root,
@@ -44,7 +44,7 @@ export function chatHandlers(rt: DispatchRuntime) {
         repositoryRoot: review.repositoryRoot,
         key: { kind: "session", sessionId: input.reviewId },
         title: basename(review.repositoryRoot) || "review",
-        ...boundWorkspaceInput(rt, input.reviewId),
+        ...(await boundWorkspaceInput(rt, input.reviewId)),
       });
       return parseCommandOutput(name, {
         ...session,
@@ -67,7 +67,7 @@ export function chatHandlers(rt: DispatchRuntime) {
         repositoryRoot: review.repositoryRoot,
         key: { kind: "session", sessionId: input.reviewId },
         title: basename(review.repositoryRoot) || "review",
-        ...boundWorkspaceInput(rt, input.reviewId),
+        ...(await boundWorkspaceInput(rt, input.reviewId)),
       });
       const client = await deps.t3Sidecar.client();
       await client.startTurn({ threadId: binding.threadId, text: input.text });

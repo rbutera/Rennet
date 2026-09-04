@@ -11,8 +11,9 @@
 // lazily on its first use (5.1), which is why "no session names it" is checked against the
 // recorded roots rather than against the absence of a session.
 
-import { readdirSync, realpathSync, rmSync } from "node:fs";
+import { readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
+import { comparablePath } from "./bound-workspace";
 
 /** `git(cwd, args)` — the locus-aware exec the daemon already builds per repository. */
 type GitExec = (cwd: string, args: string[], options?: { reject?: boolean }) => Promise<string>;
@@ -47,19 +48,6 @@ export interface LegacyWorktreeSweepInput {
 }
 
 /**
- * The comparable form of a path: resolved through symlinks, so `/var/…` and `/private/var/…`
- * — the same directory under two names on macOS — do not read as two. An unresolvable path
- * keeps its literal form, which still compares equal to itself.
- */
-function comparable(path: string): string {
-  try {
-    return realpathSync(path);
-  } catch {
-    return path;
-  }
-}
-
-/**
  * Remove the legacy round and review worktrees no live session is bound to, and say how many.
  *
  * `git worktree remove --force` is issued from INSIDE the worktree, which git accepts and
@@ -76,8 +64,8 @@ export async function sweepLegacyWorktrees(input: LegacyWorktreeSweepInput): Pro
     // Re-read, and compare resolved: the previous removal awaited git, and a session may have
     // bound lazily in that window. `/var/x` and `/private/var/x` are one directory, and a raw
     // string compare would let the exclusion miss it and delete a live session's workspace.
-    const bound = new Set(input.liveBoundRoots().map(comparable));
-    if (bound.has(comparable(dir))) continue;
+    const bound = new Set(input.liveBoundRoots().map(comparablePath));
+    if (bound.has(comparablePath(dir))) continue;
     const git = input.gitFor(dir);
     try {
       await git(dir, ["worktree", "remove", "--force", dir], { reject: false });
