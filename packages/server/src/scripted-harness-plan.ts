@@ -1,6 +1,13 @@
 import { createHash, randomUUID } from "node:crypto";
-import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
-import { isAbsolute, relative, resolve } from "node:path";
+import {
+  appendFileSync,
+  type Dirent,
+  existsSync,
+  readdirSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import {
   buildCapabilities,
   type CodexExecutor,
@@ -26,6 +33,10 @@ const ASK_PLAN_VALUE = `\${askId}`;
  *  The ids are content-derived from the coding turn's diff, so a scripted plan cannot
  *  hard-code them — it asks for whatever the host measured. */
 const EVIDENCE_IDS_PLAN_VALUE = `\${evidenceIds}`;
+/** Whole-string placeholder: becomes every note id in `compose/asks.json` (3.7). The
+ *  handoff compose turn must return a TOTAL COVER of exactly those ids, and they are
+ *  minted per staged disposition, so a scripted plan cannot hard-code them either. */
+const ASK_IDS_PLAN_VALUE = `\${askIds}`;
 
 const relativeRepoPath = z
   .string()
@@ -162,6 +173,45 @@ function readInvocationRecords(path: string): InvocationRecord[] {
   });
 }
 
+/**
+ * The session-context files this turn was told about, read from the seat's own cwd.
+ *
+ * Since session-context-files a prompt carries no data: it names
+ * `.rennet/context/<sessionId>/` under the working directory and the agent reads what it
+ * decides it needs. A scripted seat reads the same files, so a plan step still matches on
+ * the material the turn actually has, and `${askId}` / `${evidenceIds}` still resolve
+ * against what the host wrote rather than against a payload nobody sends any more.
+ *
+ * Never throws: a turn with no context directory simply sees nothing extra.
+ */
+function sessionContextFiles(prompt: string, cwd: string): readonly string[] {
+  const dir = /`(\.rennet\/context\/[^`/]+)\//.exec(prompt)?.[1];
+  if (dir === undefined || cwd === "") return [];
+  const root = resolve(cwd, dir);
+  let entries: readonly Dirent[];
+  try {
+    // RECURSIVE: the writer nests (`boards/<lens>.json`, `compose/asks.json`,
+    // `opener/`, `pr-body/`), and a flat read would make a step blind to exactly the
+    // files the prompts that nest were rewritten to name.
+    entries = readdirSync(root, { recursive: true, withFileTypes: true });
+  } catch {
+    return [];
+  }
+  return entries.flatMap((entry) => {
+    if (!entry.isFile() || entry.name === "README.md") return [];
+    try {
+      return [readFileSync(join(entry.parentPath, entry.name), "utf8")];
+    } catch {
+      return []; // unreadable for this turn; never fatal to step selection
+    }
+  });
+}
+
+/** Everything the turn can see: its prompt and the context files it names. */
+function visibleToTurn(prompt: string, cwd: string): string {
+  return [prompt, ...sessionContextFiles(prompt, cwd)].join("\n");
+}
+
 function jsonLayer(prompt: string, prefix: string, until?: string): unknown {
   const start = prompt.indexOf(prefix);
   if (start < 0) throw new Error(`scripted harness prompt is missing ${prefix.trim()}`);
@@ -180,6 +230,7 @@ function findPatchsetId(value: unknown): string | undefined {
     }
     return undefined;
   }
+  if ("patchsetId" in value && typeof value.patchsetId === "string") return value.patchsetId;
   if ("patchset" in value) {
     const patchset = value.patchset;
     if (typeof patchset === "object" && patchset !== null && "id" in patchset) {
@@ -231,16 +282,49 @@ function findEvidenceIds(value: unknown): readonly string[] | undefined {
   return undefined;
 }
 
+/**
+ * The note ids in `compose/asks.json` — the array of `{id, kind, path, anchor, note}` the
+ * handoff compose turn is pointed at. Matched on the SHAPE rather than on a key name: the
+ * turn sees every context file the writer left, and the entries carrying a `note` beside
+ * an `id` are the reviewer's staged asks and nothing else. Every entry must have both, so
+ * a partly-matching array (a boards file, the round evidence) is skipped rather than
+ * half-read.
+ */
+function findComposeAskIds(value: unknown): readonly string[] | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  if (Array.isArray(value)) {
+    const ids = value.flatMap((entry) =>
+      typeof entry === "object" &&
+      entry !== null &&
+      "note" in entry &&
+      "id" in entry &&
+      typeof entry.id === "string"
+        ? [entry.id]
+        : [],
+    );
+    if (ids.length > 0 && ids.length === value.length) return ids;
+  }
+  for (const nested of Array.isArray(value) ? value : Object.values(value)) {
+    const found = findComposeAskIds(nested);
+    if (found !== undefined) return found;
+  }
+  return undefined;
+}
+
 function substitutePlanValues(
   value: unknown,
   values: {
     readonly patchsetId: string;
     readonly askId?: string;
     readonly evidenceIds?: readonly string[];
+    readonly askIds?: readonly string[];
   },
 ): unknown {
   if (value === EVIDENCE_IDS_PLAN_VALUE && values.evidenceIds !== undefined) {
     return [...values.evidenceIds];
+  }
+  if (value === ASK_IDS_PLAN_VALUE && values.askIds !== undefined) {
+    return [...values.askIds];
   }
   if (typeof value === "string") {
     return value
@@ -325,8 +409,24 @@ function completedOutcome(
   const needsPatchset = containsPlanValue(step.output, PATCHSET_PLAN_VALUE);
   const needsAsk = containsPlanValue(step.output, ASK_PLAN_VALUE);
   const needsEvidence = containsPlanValue(step.output, EVIDENCE_IDS_PLAN_VALUE);
-  const context =
-    needsPatchset || needsAsk || needsEvidence ? jsonLayer(prompt, CONTEXT_PREFIX) : undefined;
+  const needsAskIds = containsPlanValue(step.output, ASK_IDS_PLAN_VALUE);
+  // The values live in the session-context FILES since session-context-files: the prompt
+  // names a directory and the seat opens it. A turn that still carries a JSON context
+  // layer (the post-process turn, and the direct-call shapes the unit tests drive) is read
+  // the old way, so both shapes resolve from whatever the turn can actually see.
+  const needsValue = needsPatchset || needsAsk || needsEvidence || needsAskIds;
+  const contextFileBodies = needsValue ? sessionContextFiles(prompt, spec.cwd) : [];
+  const context = !needsValue
+    ? undefined
+    : contextFileBodies.length > 0
+      ? contextFileBodies.flatMap((body) => {
+          try {
+            return [JSON.parse(body) as unknown];
+          } catch {
+            return []; // a non-JSON context file (a `.md` the prompt also names)
+          }
+        })
+      : jsonLayer(prompt, CONTEXT_PREFIX);
   const patchsetId = context === undefined ? "" : findPatchsetId(context);
   if (needsPatchset && patchsetId === undefined) {
     throw new Error(`scripted harness step ${step.id} could not resolve the current patchset id`);
@@ -339,6 +439,10 @@ function completedOutcome(
   if (needsEvidence && evidenceIds === undefined) {
     throw new Error(`scripted harness step ${step.id} could not resolve the round evidence ids`);
   }
+  const askIds = context === undefined ? undefined : findComposeAskIds(context);
+  if (needsAskIds && askIds === undefined) {
+    throw new Error(`scripted harness step ${step.id} could not resolve the composable ask ids`);
+  }
   return {
     outcome: {
       status: "completed",
@@ -347,6 +451,7 @@ function completedOutcome(
         patchsetId: patchsetId ?? "",
         ...(askId === undefined ? {} : { askId }),
         ...(evidenceIds === undefined ? {} : { evidenceIds }),
+        ...(askIds === undefined ? {} : { askIds }),
       }),
     },
     recovered: false,
@@ -414,6 +519,7 @@ class ScriptedHarnessSession implements HarnessSession {
 /** The one step whose prompt match is unique for this turn; ambiguity is a plan bug. */
 function selectStep(
   plan: ScriptedHarnessPlan,
+  /** The prompt PLUS the session-context files it names — what the turn can actually see. */
   prompt: string,
   wantsEdit: boolean,
 ): ScriptedHarnessStep {
@@ -480,7 +586,7 @@ export function loadScriptedCodexExecutor(path: string): CodexExecutor {
   const plan = parsePlan(path);
   return async (request) => {
     const cwd = request.cwd ?? "";
-    const step = selectStep(plan, request.prompt, false);
+    const step = selectStep(plan, visibleToTurn(request.prompt, cwd), false);
     const completed = completedOutcome(
       step,
       { cwd, outputSchema: request.outputSchema } as SessionSpec,
@@ -529,7 +635,11 @@ export function loadScriptedHarnessPlan(path: string): HarnessPort {
     health: async () => ({ state: "ready", version: SCRIPTED_HARNESS_VERSION }),
     createSession: async (spec) =>
       new ScriptedHarnessSession(harness, (prompt, executingHarness) => {
-        const step = selectStep(plan, prompt, spec.outputSchema === undefined);
+        const step = selectStep(
+          plan,
+          visibleToTurn(prompt, spec.cwd),
+          spec.outputSchema === undefined,
+        );
         if (step.kind === "edit" && consumedEdits.has(step.id)) {
           throw new Error(`scripted harness edit step ${step.id} was already consumed`);
         }

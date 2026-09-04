@@ -75,9 +75,9 @@ export const NOISE_CONTRACT: PromptContract = {
   docType: "noise",
   version: 1,
   role: "You group the churn a reviewer can safely skip; you do not decide. Rennet's deterministic validator admits or rejects what you emit, and the app renders it in the Noise lens. Your job here is to collect the low-signal churn THIS change touches — formatting, lockfile regeneration, import reordering, generated output, fixture renames, comment typos — away from the code that needs eyes, so a reviewer's attention goes to what carries a decision, not to noise.",
-  emit: 'Emit exactly one noise version 1 document body: a list of groups, each with a category (formatting, lockfile, import-order, generated, fixture-rename, comment-typo, or other), a one-line plain-speech summary, a judgedBy chip ({kind: "rule", rule: "<the mechanical rule>"} when a mechanical certainty settles the group, or {kind: "noise-job"} when it is your own judgement over ambiguous churn), and the churn items it collects — each an anchor to the single hunk it is about, a short detail, and deviates: true only for a line that breaks the group\'s pattern. The exact JSON shape is enforced separately as a structured-output constraint you must satisfy; do not describe or restate that shape here.',
+  emit: 'Emit exactly one noise version 1 document body: a list of groups, each with a category (formatting, lockfile, import-order, generated, fixture-rename, comment-typo, or other), a one-line plain-speech summary, a judgedBy chip ({kind: "rule", rule: "<the mechanical rule>"} when a mechanical certainty settles the group, or {kind: "noise-job"} when it is your own judgement over ambiguous churn), and the churn items it collects — each citing the single changed region it is about by path, side and 1-based line range, a short detail, and deviates: true only for a line that breaks the group\'s pattern. The exact JSON shape is enforced separately as a structured-output constraint you must satisfy; do not describe or restate that shape here.',
   input:
-    "You are given the offered occurrence manifest: the immutable id and the changed lines of every hunk in this change. Anchor each churn item to exactly one of those hunk ids, written `rennet:hunk/<id>`. An id you were not given is rejected at parse time, so never invent a hunk id, and group only churn you can see in the lines you were shown — never code you did not see.",
+    "Nothing about the change is sent to you inline. The context layer names the offer file (`noise-offer.json` in this session's context directory): every changed region you may cite, each a `path`, a `side` (`base` or `head`) and a 1-based `startLine`/`endLine`. Your working directory is the reviewed checkout, so read the lines of each region from `git diff` there. Cite each churn item by `path`, `side`, `startLine` and `endLine`, and keep every cited line inside ONE listed region — a citation that runs past a region, or spans two of them, is dropped, so split the churn into one item per region instead. Group only churn whose lines you actually read, never code you did not open.",
   discipline:
     "Group only genuinely low-signal churn — churn that carries no decision and changes no behaviour. Tag a group `rule` ONLY when a mechanical certainty settles it (the whole file is a lockfile; the hunk is pure whitespace reflow; the file is generated output), and name that rule; tag it `noise-job` when the call is your own judgement over ambiguous churn. The totality floor is absolute: never drop a hunk to make a group tidy. If a line inside a group actually changes behaviour — an import that adds a new symbol, a 'format-only' hunk that alters a value — mark it deviates: true so it ejects into normal review; suppressing a real change inside noise is the one thing you must never do.",
   failureValve:
@@ -581,13 +581,14 @@ function boundedJoin(lines: readonly string[], maxBytes: number, what: string): 
 }
 
 /**
- * The repair turn: the NEXT turn on a seat's own thread after its draft failed lint.
+ * The repair turn: the NEXT turn after a seat's draft failed lint, on EVERY leg.
  *
- * The thread already holds the base drafting prompt and the draft the seat emitted, so
- * neither is re-sent — that is the whole saving over the cold-session `renderRetryPrompt`
- * it replaces (a repair used to re-bill the entire base prompt plus the draft). What
- * travels is the pointers, the frozen ids, and the instruction. The output schema is NOT
- * restated here: it rides the turn as its structured-output contract.
+ * On a sidecar thread the conversation already holds the base drafting prompt and the
+ * draft; on the ephemeral Claude and Codex legs nothing does, and the repair still carries
+ * neither (session-bound-workspace 3.2): the previous draft is never written or re-sent,
+ * and the base instructions are never re-billed. What travels is the pointers, the frozen
+ * ids, and the instruction. The output schema is NOT restated here: it rides the turn as
+ * its structured-output contract.
  *
  * Both interpolations are byte-bounded with an honest omission marker, and each pointer
  * line is capped on its own first, so one enormous pointer cannot starve the list.

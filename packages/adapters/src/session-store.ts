@@ -215,6 +215,20 @@ export class SessionStore {
   }
 
   /**
+   * Stamp the root a session's context directory was written under (session-context-files),
+   * so the archive purge removes it from the root the seats actually ran in. Idempotent: an
+   * unchanged root is not re-saved. `undefined` if the session is absent.
+   */
+  setContextRoot(sessionId: string, contextRoot: string): SessionModel | undefined {
+    const session = this.load(sessionId);
+    if (!session) return undefined;
+    if (session.contextRoot === contextRoot) return session;
+    const next = { ...session, contextRoot };
+    this.save(next);
+    return next;
+  }
+
+  /**
    * Attach a captured review to a session (#587) — the 1:0..1 reference the session model
    * declares. A session that ALREADY holds a review keeps it and is returned untouched: a
    * session attaches at most one review (`core`'s `attachReview` refuses a second), and the

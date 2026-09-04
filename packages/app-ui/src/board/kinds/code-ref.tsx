@@ -1,6 +1,6 @@
 import { AnchorReveal } from "../../review";
 import type { ElementOf } from "../registry";
-import { toCodeRef } from "./element-context";
+import { toCodeRef, useBoardPatchsetId } from "./element-context";
 
 // `code_ref` (C05 3.2) — a citation into the captured patchset (code is never copied,
 // #462). The element's attrs ARE the canonical CodeRef; it hydrates through C4's
@@ -9,9 +9,10 @@ import { toCodeRef } from "./element-context";
 // that sentence is what renders. No new span-read path.
 
 export function CodeRefElement({ element }: { readonly element: ElementOf<"code_ref"> }) {
+  const patchsetId = useBoardPatchsetId();
   return (
     <div data-kind="code_ref">
-      <AnchorReveal citations={[toCodeRef(element)]} />
+      <AnchorReveal citations={[toCodeRef(element, patchsetId)]} />
     </div>
   );
 }

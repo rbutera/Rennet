@@ -305,9 +305,20 @@ function sectioned(lens: string, body: string): DraftBoard {
  * seat; that turn must hand back the board in its own prompt. Reading that per-session
  * input keeps concurrent lens turns isolated instead of sharing one "last draft" slot.
  */
-/** Which lens a rendered prompt belongs to; `post-process` echoes its layer context back. */
-function boardAnswer(prompt: string, outputFor: (lens: string) => unknown): unknown {
-  const lens = /PROMPT_FILE:prompts\/([a-z-]+)\.md/.exec(prompt)?.[1] ?? "unknown";
+/**
+ * Which lens a rendered prompt belongs to; `post-process` echoes its layer context back.
+ * A repair turn is pointer-only (session-bound-workspace 3.2) and carries no prompt file,
+ * so it is named by the session's seat label instead.
+ */
+function boardAnswer(
+  prompt: string,
+  outputFor: (lens: string) => unknown,
+  label?: string,
+): unknown {
+  const marker = /PROMPT_FILE:prompts\/([a-z-]+)\.md/.exec(prompt)?.[1];
+  const seat = label?.split(".").at(-1);
+  const lens =
+    marker ?? (seat === undefined ? "unknown" : seat.startsWith("flagged") ? "flagged" : seat);
   if (lens === "post-process") {
     const context = /rennet:layer context>>>\n(\{.*)/s.exec(prompt);
     return context ? (JSON.parse(context[1] as string).board as unknown) : { elements: [] };
@@ -316,9 +327,9 @@ function boardAnswer(prompt: string, outputFor: (lens: string) => unknown): unkn
 }
 
 function fakeClaudePort(outputFor: (lens: string) => unknown): HarnessPort {
-  const answer = (prompt: string): unknown => boardAnswer(prompt, outputFor);
+  const answer = (prompt: string, label?: string): unknown => boardAnswer(prompt, outputFor, label);
   return {
-    createSession: async () => {
+    createSession: async (options: { label?: string }) => {
       const cap: { prompt?: string } = {};
       return {
         send: async (input: { prompt: string }) => {
@@ -331,7 +342,10 @@ function fakeClaudePort(outputFor: (lens: string) => unknown): HarnessPort {
           yield {
             kind: "session.ended",
             native: {},
-            outcome: { status: "completed", structuredOutput: answer(cap.prompt ?? "") },
+            outcome: {
+              status: "completed",
+              structuredOutput: answer(cap.prompt ?? "", options.label),
+            },
           };
         })(),
       } as unknown as Awaited<ReturnType<HarnessPort["createSession"]>>;

@@ -2,8 +2,14 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { sanitizeSchemaForCodex, WhiteboardClient } from "@rennet/adapters";
-import type { DeltaPacket, HarnessPort, LintContext, LintTarget } from "@rennet/core";
+import { sanitizeSchemaForCodex, type T3SeatSeam, WhiteboardClient } from "@rennet/adapters";
+import {
+  type DeltaPacket,
+  type HarnessPort,
+  inlineContextViolation,
+  type LintContext,
+  type LintTarget,
+} from "@rennet/core";
 import {
   INVESTIGATE_PARTIAL_FILE,
   LENS_PROMPT_FILES,
@@ -23,6 +29,7 @@ import {
 } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { createBoardsRuntime } from "../boards/boards-runtime";
+import type { SessionContextFile } from "../context-files";
 import {
   admitBoardReferences,
   aggregateFailureAccount,
@@ -36,9 +43,14 @@ import {
   LENS_RETRY_BUDGET,
   lensRetryBudget,
   REPAIR_TARGET_KINDS,
+  ROUND_CONTEXT_FILE,
+  ROUND_EVIDENCE_FILE,
   reconcileFlaggedBoards,
   renderDrafterPrompt,
-  renderRetryPrompt,
+  renderRepairPrompt,
+  renderRoundReportClassifierPrompt,
+  roundContextFile,
+  roundEvidenceFile,
   runLensPipeline,
   stampSingleSeatConcurrence,
 } from "./lens-pipeline";
@@ -413,25 +425,36 @@ const designBody = (): DraftBoard =>
 
 interface HarnessCapture {
   model?: string;
+  label?: string;
   prompt?: string;
   outputSchema?: unknown;
   outputByteCap?: number;
 }
 
-/** A fake Claude port: captures the resolved session and answers a lens-appropriate board. */
+/**
+ * A fake Claude port: captures the resolved session and answers a lens-appropriate board.
+ *
+ * `bodyFor` gets the session's SEAT LABEL beside the prompt, because a repair turn is
+ * pointer-only on every leg (session-bound-workspace 3.2) and therefore carries no prompt
+ * file, no lens name and no draft. The label is what the daemon's own log and the token
+ * collector attribute a turn by; a fake that guessed from the prompt would be reading a
+ * string production no longer sends.
+ */
 function fakeClaudePort(
   captures: HarnessCapture[],
-  bodyFor: (prompt: string) => unknown,
+  bodyFor: (prompt: string, label?: string) => unknown,
 ): HarnessPort {
   return {
     createSession: async (options: {
       model?: string;
+      label?: string;
       outputSchema?: unknown;
       outputByteCap?: number;
     }) => {
       const capture: HarnessCapture = {
         model: options.model,
         outputSchema: options.outputSchema,
+        ...(options.label === undefined ? {} : { label: options.label }),
         ...(options.outputByteCap === undefined ? {} : { outputByteCap: options.outputByteCap }),
       };
       captures.push(capture);
@@ -446,7 +469,10 @@ function fakeClaudePort(
           yield {
             kind: "session.ended",
             native: {},
-            outcome: { status: "completed", structuredOutput: bodyFor(capture.prompt ?? "") },
+            outcome: {
+              status: "completed",
+              structuredOutput: bodyFor(capture.prompt ?? "", capture.label),
+            },
           };
         })(),
       } as unknown as Awaited<ReturnType<HarnessPort["createSession"]>>;
@@ -469,10 +495,73 @@ const readPrompt = (file: string): string =>
       ? `PROMPT_FILE:${file}\n${PROMPT_PARTIAL_MARKER}`
       : `PROMPT_FILE:${file}`;
 
-/** Recover the lens from the marker the fake prompt carries (design.md → design, report.md → report). */
-function lensFromPrompt(prompt: string): string {
+/**
+ * Recover the lens from the marker the fake prompt carries (design.md → design, report.md
+ * → report), falling back to the SEAT LABEL of the session the turn opened on.
+ *
+ * The fallback is not a convenience: a repair turn carries pointers and frozen ids and
+ * nothing else (session-bound-workspace 3.2), so there is no prompt file in it to read.
+ * `board.lens-draft.design` → `design`; the Flagged lane's two provider seats
+ * (`flagged-claude`, `flagged-codex`) both answer for `flagged`.
+ */
+function lensFromPrompt(prompt: string, label?: string): string {
   const match = /PROMPT_FILE:prompts\/([a-z-]+)\.md/.exec(prompt);
-  return match?.[1] ?? "unknown";
+  if (match?.[1] !== undefined) return match[1];
+  const seat = label?.split(".").at(-1);
+  if (seat === undefined) return "unknown";
+  return seat.startsWith("flagged") ? "flagged" : seat;
+}
+
+/** One turn a seat ran on its thread, as the fake sidecar saw it. */
+interface SeatCapture {
+  readonly seat: string;
+  readonly prompt: string;
+}
+
+/**
+ * A fake T3 sidecar seam: one persistent thread per seat, every attempt a turn on it.
+ *
+ * This is where a REPAIR lives (session-bound-workspace 3.2 + Rai's ruling 2026-09-04). A
+ * repair turn carries pointers and frozen ids and nothing else, which only means anything
+ * to a session that already holds the base prompt and the draft — so only a thread can
+ * answer one, and `draftOneLens` refuses the repair on a leg without one. A pipeline test
+ * about a repair therefore has to drive this seam; on `fakeClaudePort` the same fixture
+ * settles the typed "no thread to repair on" failure instead.
+ *
+ * The seat is the attribution, exactly as it is in production: the seam is handed
+ * `{ seat, provider, model, effort }` and never sees the label the collector logs. It is
+ * passed to `bodyFor` in the label's place, and `lensFromPrompt` reads its last dot
+ * segment, so a bare seat name resolves the same way `board.lens-draft.design` does.
+ */
+function fakeT3Seam(
+  captures: SeatCapture[],
+  bodyFor: (prompt: string, seat: string) => unknown,
+): T3SeatSeam {
+  const seatOfThread = new Map<string, string>();
+  const pending = new Map<string, unknown>();
+  const client = {
+    startTurn: async ({ threadId, text }: { threadId: string; text: string }) => {
+      const seat = seatOfThread.get(threadId) ?? "unknown";
+      captures.push({ seat, prompt: text });
+      pending.set(threadId, bodyFor(text, seat));
+      return { previousTurnId: null, requestedAt: new Date().toISOString() };
+    },
+    waitForTurnSettled: async (threadId: string) => ({
+      turnId: `${threadId}:turn`,
+      state: "completed" as const,
+      structuredOutput: pending.get(threadId),
+      thread: { messages: [], session: null },
+    }),
+    interruptTurn: async () => undefined,
+  };
+  return {
+    client: async () => client,
+    threadFor: async ({ seat }: { seat: string }) => {
+      const threadId = `thread-${seat}`;
+      seatOfThread.set(threadId, seat);
+      return { threadId, projectId: "p1" };
+    },
+  } as unknown as T3SeatSeam;
 }
 
 interface Applied {
@@ -1351,16 +1440,41 @@ describe("composeReviewDraft — the authored composition write-through (C2)", (
       ["design", mkBoard([keep, prose("new1", "A fresh observation.")])] as const,
     ]);
 
+    const written: SessionContextFile[] = [];
+    let prompt = "";
     const result = await composeReviewDraft({
       boards: current,
       previous,
       voicePromptText: "VOICE RULES",
-      authorTurn: (p) =>
-        `AUTHORED for ${p.includes("VOICE RULES") ? "voice" : "?"}: the change reads cleanly.`,
+      writeContext: (files) => {
+        written.push(...files);
+        return ".rennet/context/s1";
+      },
+      authorTurn: (p) => {
+        prompt = p;
+        return "AUTHORED: the change reads cleanly.";
+      },
       lintCtx: { files: new Map() },
     });
 
     expect(result.prose).toContain("the change reads cleanly");
+    // session-context-files 3.3: the prompt NAMES the voice rules and the boards; it
+    // carries neither. The boards used to ride as one JSON context layer.
+    expect(prompt).toContain("`.rennet/context/s1/review-draft-voice.md`");
+    expect(prompt).toContain("`.rennet/context/s1/boards/`");
+    expect(prompt).toContain("`design.json`");
+    expect(prompt).not.toContain("VOICE RULES");
+    expect(prompt).not.toContain("A fresh observation.");
+    expect(prompt).not.toContain("rennet:layer context");
+    expect(inlineContextViolation(prompt)).toBeUndefined();
+    expect(Buffer.byteLength(prompt, "utf8")).toBeLessThan(2_048);
+    // The files hold what the prompt no longer does.
+    expect(written.map((file) => file.name)).toEqual([
+      "review-draft-voice.md",
+      "boards/design.json",
+    ]);
+    expect(written[0]?.body).toBe("VOICE RULES");
+    expect(JSON.parse(written[1]?.body ?? "{}")).toEqual(current.get("design"));
     // The byte-identical element carried; the new one did not.
     expect([...(result.carried.get("design") ?? [])]).toEqual(["keep"]);
     // Clean prose (no machinery, no citations) ⇒ no register violations.
@@ -1371,10 +1485,27 @@ describe("composeReviewDraft — the authored composition write-through (C2)", (
     const result = await composeReviewDraft({
       boards: new Map(),
       voicePromptText: "VOICE",
+      writeContext: () => ".rennet/context/s1",
       authorTurn: () => "This lens board was drafted by an agent seat.",
       lintCtx: { files: new Map() },
     });
     expect(result.violations.length).toBeGreaterThan(0);
+  });
+
+  it("says so when no context directory was written (the direct-call shape), naming no path", async () => {
+    let prompt = "";
+    await composeReviewDraft({
+      boards: new Map([["design", mkBoard([prose("p", "Some prose.")])] as const]),
+      voicePromptText: "VOICE",
+      writeContext: () => undefined,
+      authorTurn: (p) => {
+        prompt = p;
+        return "prose";
+      },
+      lintCtx: { files: new Map() },
+    });
+    expect(prompt).toContain("No context directory was written");
+    expect(prompt).not.toContain("boards/");
   });
 });
 
@@ -1384,7 +1515,8 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     const applied: Applied[] = [];
     const arrivals: BoardArrivalEvent[] = [];
 
-    const bodyFor = (prompt: string): unknown => cleanBody(lensFromPrompt(prompt));
+    const bodyFor = (prompt: string, label?: string): unknown =>
+      cleanBody(lensFromPrompt(prompt, label));
 
     const result = await runLensPipeline({
       claudePort: fakeClaudePort(captures, bodyFor),
@@ -1431,7 +1563,10 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     try {
       const runtime = createBoardsRuntime(root);
       const client = new WhiteboardClient(runtime.service);
-      const captures: { model?: string; prompt?: string }[] = [];
+      const captures: { model?: string; prompt?: string; label?: string }[] = [];
+      // The board seats run on the sidecar seam, which is the only leg a repair can
+      // happen on; `captures` still holds whatever non-board turn opens a Claude session.
+      const seatTurns: SeatCapture[] = [];
       const arrivals: BoardArrivalEvent[] = [];
       const lensAuthor = (lens: string) => ({ kind: "lens-agent" as const, id: `${lens}-seat` });
       const lensCodeRef = (lens: string, id: string): DraftBoard["elements"][number] => {
@@ -1502,8 +1637,8 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       for (const lens of ["design", "sequence", "decisions", "flagged", "noise"] as const) {
         boardIds.set(lens, await runtime.createRennetBoard());
       }
-      const bodyFor = (prompt: string): unknown => {
-        const lens = lensFromPrompt(prompt);
+      const bodyFor = (prompt: string, label?: string): unknown => {
+        const lens = lensFromPrompt(prompt, label);
         if (lens === "post-process") {
           const context = /rennet:layer context>>>\n(\{.*)/s.exec(prompt);
           return context ? (JSON.parse(context[1] as string).board as unknown) : { elements: [] };
@@ -1520,6 +1655,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
 
       const result = await runLensPipeline({
         claudePort: fakeClaudePort(captures, bodyFor),
+        t3: fakeT3Seam(seatTurns, bodyFor),
         codexExecutor: null,
         repoRoot: "/pr-worktree",
         deltaPacket: PACKET,
@@ -1542,20 +1678,18 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
         expect(outcome?.failure).toBeUndefined();
         expect(arrivals.map(({ lens: arrived }) => arrived)).toContain(lens);
       }
-      expect(
-        captures.filter(
-          ({ prompt }) =>
-            prompt?.includes("PROMPT_FILE:prompts/sequence.md") &&
-            prompt.includes("element-reference-resolves"),
-        ),
-      ).toHaveLength(1);
-      expect(
-        captures.filter(
-          ({ prompt }) =>
-            prompt?.includes("PROMPT_FILE:prompts/decisions.md") &&
-            prompt.includes("element-reference-resolves"),
-        ),
-      ).toHaveLength(1);
+      // Exactly one repair per lane, matched on the SEAT: the repair turn is pointer-only
+      // (session-bound-workspace 3.2), so its prompt carries the rule id and nothing else
+      // — no lens prompt file to match on. It is a further turn on the SAME seat thread,
+      // which is the only place a pointer-only repair means anything.
+      for (const lens of ["sequence", "decisions"] as const) {
+        expect(
+          seatTurns.filter(
+            ({ seat, prompt }) => seat === lens && prompt.includes("element-reference-resolves"),
+          ),
+          `${lens} repair turns`,
+        ).toHaveLength(1);
+      }
 
       const sequenceState = await runtime.service.getState(boardIds.get("sequence") ?? "");
       const decisionsState = await runtime.service.getState(boardIds.get("decisions") ?? "");
@@ -1614,8 +1748,8 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       }
       const metas: BoardMeta[] = [];
       const result = await runLensPipeline({
-        claudePort: fakeClaudePort([], (prompt) => {
-          const lens = lensFromPrompt(prompt);
+        claudePort: fakeClaudePort([], (prompt, label) => {
+          const lens = lensFromPrompt(prompt, label);
           if (lens === "post-process") {
             const context = /rennet:layer context>>>\n(\{.*)/s.exec(prompt);
             return context ? (JSON.parse(context[1] as string).board as unknown) : { elements: [] };
@@ -1688,8 +1822,8 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     const applied: Applied[] = [];
     const arrivals: BoardArrivalEvent[] = [];
     const result = await runLensPipeline({
-      claudePort: fakeClaudePort([], (prompt) => {
-        const lens = lensFromPrompt(prompt);
+      claudePort: fakeClaudePort([], (prompt, label) => {
+        const lens = lensFromPrompt(prompt, label);
         return lens === "design" ? { absence: "no-spec" } : cleanBody(lens);
       }),
       codexExecutor: null,
@@ -1716,8 +1850,8 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
   it("settles the Design lane absent when the no-spec return arrives on a repair turn", async () => {
     let designTurns = 0;
     const result = await runLensPipeline({
-      claudePort: fakeClaudePort([], (prompt) => {
-        const lens = lensFromPrompt(prompt);
+      claudePort: fakeClaudePort([], (prompt, label) => {
+        const lens = lensFromPrompt(prompt, label);
         if (lens !== "design") return cleanBody(lens);
         designTurns += 1;
         // Turn 1 does not parse as a board, so the lint ladder re-asks; turn 2 names it.
@@ -1750,8 +1884,8 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       const applied: Applied[] = [];
       const arrivals: BoardArrivalEvent[] = [];
       const result = await runLensPipeline({
-        claudePort: fakeClaudePort([], (prompt) => {
-          const lens = lensFromPrompt(prompt);
+        claudePort: fakeClaudePort([], (prompt, label) => {
+          const lens = lensFromPrompt(prompt, label);
           if (lens === emptyLens) {
             emptyLensTurns += 1;
             return { elements: [] };
@@ -1786,8 +1920,8 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
   it("refuses an absence for the Sequence lane, which admits none (#549)", async () => {
     const applied: Applied[] = [];
     const result = await runLensPipeline({
-      claudePort: fakeClaudePort([], (prompt) => {
-        const lens = lensFromPrompt(prompt);
+      claudePort: fakeClaudePort([], (prompt, label) => {
+        const lens = lensFromPrompt(prompt, label);
         if (lens === "sequence") return { elements: [] };
         if (lens === "post-process" && prompt.includes('"elements":[]')) {
           return { elements: [] };
@@ -1817,8 +1951,8 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     // is re-asked and its second draw settles the lane as a board, not a failure.
     const noiseTurns: string[] = [];
     const result = await runLensPipeline({
-      claudePort: fakeClaudePort([], (prompt) => {
-        const lens = lensFromPrompt(prompt);
+      claudePort: fakeClaudePort([], (prompt, label) => {
+        const lens = lensFromPrompt(prompt, label);
         if (lens !== "noise") return cleanBody(lens);
         noiseTurns.push(prompt);
         // `undefined` structured output ⇒ the harness completed WITHOUT emitting.
@@ -1841,27 +1975,29 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     // was satisfied by any second prompt at all, including one that re-asks for nothing.
     expect(noiseTurns).toHaveLength(2);
     const reask = noiseTurns[1] ?? "";
-    // The base prompt is carried verbatim and the prior-failure layer is appended AFTER it,
-    // so the seat re-reads its instructions and then what went wrong — in that order.
-    expect(reask.startsWith(noiseTurns[0] ?? "")).toBe(true);
+    // Pointer-only on the ephemeral leg too (session-bound-workspace 3.2): the re-ask is
+    // the repair turn alone — the base prompt is NOT carried again.
+    expect(reask.startsWith("<<<rennet:layer task>>>")).toBe(true);
+    expect(reask).not.toContain(noiseTurns[0] ?? "NEVER");
+    expect(reask).not.toContain("PROMPT_FILE:");
     // Nothing was emitted, so nothing is frozen or open: the re-ask is for the WHOLE
     // board, never a patch of nothing (#743 review).
-    expect(reask.slice((noiseTurns[0] ?? "").length)).toContain(
-      "Your previous draft did not pass. Fix ONLY these issues and return the whole board:",
+    expect(reask).toContain(
+      "Your last board did not pass. Fix ONLY these issues and return the whole board:",
     );
     // The pointers are the PARSE issues the non-emission produced — `validateDraft` cannot
     // coerce a turn that emitted nothing into a board, so the ladder's first rung is the
     // schema itself rather than a lens rule about a board that does not exist.
     expect(reask).toMatch(/- schema at \[[^\]]*\]: /);
-    expect(reask).toContain("Previous draft:");
+    expect(reask).not.toContain("Previous draft");
     expect(reask).not.toContain("elementsToFix");
   });
 
   it("settles TERMINAL only after the re-asks are spent, naming the non-emission (#549)", async () => {
     const noiseTurns: string[] = [];
     const result = await runLensPipeline({
-      claudePort: fakeClaudePort([], (prompt) => {
-        const lens = lensFromPrompt(prompt);
+      claudePort: fakeClaudePort([], (prompt, label) => {
+        const lens = lensFromPrompt(prompt, label);
         if (lens !== "noise") return cleanBody(lens);
         noiseTurns.push(prompt);
         return undefined;
@@ -1890,12 +2026,14 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
   it("carries an aggregated account when BOTH flagged seats fail (#549)", async () => {
     // Both seats emit nothing, on every turn, so both spend their ladders — the lens is
     // terminal, and it says so with an account rather than a bare sentence.
-    const noBoard = (prompt: string): unknown =>
-      lensFromPrompt(prompt) === "flagged" ? undefined : cleanBody(lensFromPrompt(prompt));
+    const noBoard = (prompt: string, label?: string): unknown =>
+      lensFromPrompt(prompt, label) === "flagged"
+        ? undefined
+        : cleanBody(lensFromPrompt(prompt, label));
     const result = await runLensPipeline({
       claudePort: fakeClaudePort([], noBoard),
-      codexExecutor: (async (req: { prompt: string }) => ({
-        output: noBoard(req.prompt),
+      codexExecutor: (async (req: { prompt: string; label?: string }) => ({
+        output: noBoard(req.prompt, req.label),
       })) as never,
       repoRoot: "/pr-worktree",
       deltaPacket: PACKET,
@@ -1953,8 +2091,8 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     // and a signal-only change whose Noise seat draws an empty board settles `no-noise`.
     const noiseTurns: string[] = [];
     const result = await runLensPipeline({
-      claudePort: fakeClaudePort([], (prompt) => {
-        const lens = lensFromPrompt(prompt);
+      claudePort: fakeClaudePort([], (prompt, label) => {
+        const lens = lensFromPrompt(prompt, label);
         if (lens !== "noise") return cleanBody(lens);
         noiseTurns.push(prompt);
         return noiseTurns.length === 1 ? undefined : { elements: [] };
@@ -1976,8 +2114,8 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
 
   it("classifies a lane that never parsed across its ladder as TERMINAL (#549)", async () => {
     const result = await runLensPipeline({
-      claudePort: fakeClaudePort([], (prompt) => {
-        const lens = lensFromPrompt(prompt);
+      claudePort: fakeClaudePort([], (prompt, label) => {
+        const lens = lensFromPrompt(prompt, label);
         // Structurally impossible output on every attempt, including the retries.
         return lens === "noise" ? { document: 5, elements: "not-a-list" } : cleanBody(lens);
       }),
@@ -2019,8 +2157,8 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       const applied: Applied[] = [];
       const arrivals: BoardArrivalEvent[] = [];
       const result = await runLensPipeline({
-        claudePort: fakeClaudePort(captures, (prompt) => {
-          const lens = lensFromPrompt(prompt);
+        claudePort: fakeClaudePort(captures, (prompt, label) => {
+          const lens = lensFromPrompt(prompt, label);
           if (lens === "post-process") {
             const context = /rennet:layer context>>>\n(\{.*)/s.exec(prompt);
             return context ? (JSON.parse(context[1] as string).board as unknown) : { elements: [] };
@@ -2068,8 +2206,8 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       let sequenceTurns = 0;
       const captures: { model?: string; prompt?: string }[] = [];
       const result = await runLensPipeline({
-        claudePort: fakeClaudePort(captures, (prompt) => {
-          const lens = lensFromPrompt(prompt);
+        claudePort: fakeClaudePort(captures, (prompt, label) => {
+          const lens = lensFromPrompt(prompt, label);
           if (lens === "sequence") {
             sequenceTurns += 1;
             return sequenceBody();
@@ -2108,8 +2246,8 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     async (lensUnderTest, kind, rootId, body) => {
       const applied: Applied[] = [];
       const result = await runLensPipeline({
-        claudePort: fakeClaudePort([], (prompt) => {
-          const lens = lensFromPrompt(prompt);
+        claudePort: fakeClaudePort([], (prompt, label) => {
+          const lens = lensFromPrompt(prompt, label);
           if (lens === "post-process") {
             const context = /rennet:layer context>>>\n(\{.*)/s.exec(prompt);
             return context ? (JSON.parse(context[1] as string).board as unknown) : { elements: [] };
@@ -2141,8 +2279,8 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       let requiredTurns = 0;
       const arrivals: BoardArrivalEvent[] = [];
       const result = await runLensPipeline({
-        claudePort: fakeClaudePort([], (prompt) => {
-          const lens = lensFromPrompt(prompt);
+        claudePort: fakeClaudePort([], (prompt, label) => {
+          const lens = lensFromPrompt(prompt, label);
           if (lens === requiredLens) {
             requiredTurns += 1;
             return { elements: [] };
@@ -2178,8 +2316,8 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     const applied: Applied[] = [];
     const designBoard = cleanBody("design");
     const result = await runLensPipeline({
-      claudePort: fakeClaudePort([], (prompt) => {
-        const lens = lensFromPrompt(prompt);
+      claudePort: fakeClaudePort([], (prompt, label) => {
+        const lens = lensFromPrompt(prompt, label);
         if (lens !== "design") return cleanBody(lens);
         return { ...designBoard, absence: "no-spec" };
       }),
@@ -2206,8 +2344,8 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     // lint judges them like any other. Stripping them here lost real citations silently.
     const applied: Applied[] = [];
     const result = await runLensPipeline({
-      claudePort: fakeClaudePort([], (prompt) => {
-        const lens = lensFromPrompt(prompt);
+      claudePort: fakeClaudePort([], (prompt, label) => {
+        const lens = lensFromPrompt(prompt, label);
         return lens === "design" ? designBody() : cleanBody(lens);
       }),
       codexExecutor: null,
@@ -2240,8 +2378,8 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
   });
 
   it("keeps Design title, source navigation, stats, and verbatim scenarios without a rewrite turn", async () => {
-    const bodyFor = (prompt: string): unknown => {
-      const lens = lensFromPrompt(prompt);
+    const bodyFor = (prompt: string, label?: string): unknown => {
+      const lens = lensFromPrompt(prompt, label);
       if (lens === "design") {
         const drafted = designBody();
         return {
@@ -2411,8 +2549,8 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
   });
 
   it("keeps source-backed typed roots in drafter order without a rewrite turn", async () => {
-    const bodyFor = (prompt: string): unknown => {
-      const lens = lensFromPrompt(prompt);
+    const bodyFor = (prompt: string, label?: string): unknown => {
+      const lens = lensFromPrompt(prompt, label);
       if (lens === "design") {
         const drafted = designBody();
         return {
@@ -2505,8 +2643,8 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
 
   it("never runs the poisoned Design rewrite turn", async () => {
     const captures: HarnessCapture[] = [];
-    const bodyFor = (prompt: string): unknown => {
-      const lens = lensFromPrompt(prompt);
+    const bodyFor = (prompt: string, label?: string): unknown => {
+      const lens = lensFromPrompt(prompt, label);
       if (lens === "design") {
         const board = designBody();
         return {
@@ -2597,10 +2735,10 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     expect(design?.immutability).toEqual([]);
   });
 
-  it("seeds each drafter turn with the DeltaPacket + lens prompt, and NOT the host schema (#737)", async () => {
+  it("seeds each drafter turn with the lens prompt and the reviewed range, and NOT the packet or the host schema (#737)", async () => {
     const captures: { model?: string; prompt?: string }[] = [];
     await runLensPipeline({
-      claudePort: fakeClaudePort(captures, (p) => cleanBody(lensFromPrompt(p))),
+      claudePort: fakeClaudePort(captures, (p, label) => cleanBody(lensFromPrompt(p, label))),
       codexExecutor: null,
       repoRoot: "/pr-worktree",
       deltaPacket: PACKET,
@@ -2611,7 +2749,12 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     });
     const designTurn = captures.find((c) => c.prompt?.includes("design.md"))?.prompt ?? "";
     expect(designTurn).toContain("PROMPT_FILE:prompts/design.md"); // the lens prompt
-    expect(designTurn).toContain("ps-1"); // the inlined DeltaPacket (patchset id)
+    // The DeltaPacket does NOT ride any more (session-context-files): the seat's cwd is
+    // the reviewed checkout and it runs the diff itself. `ps-1` is the packet's patchset
+    // id — it was the marker the inlined payload was recognised by, and its absence is
+    // what says the payload is gone.
+    expect(designTurn).not.toContain("ps-1");
+    expect(inlineContextViolation(designTurn)).toBeUndefined();
     // The board schema travels ONCE, as the SDK `outputFormat` (#737); never as prompt text.
     expect(designTurn).not.toContain("hostSchema");
     // The shared partial is spliced by the PRODUCTION read path: its body is in the turn and
@@ -2626,7 +2769,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     const applied: Applied[] = [];
 
     await runLensPipeline({
-      claudePort: fakeClaudePort(captures, (p) => cleanBody(lensFromPrompt(p))),
+      claudePort: fakeClaudePort(captures, (p, label) => cleanBody(lensFromPrompt(p, label))),
       codexExecutor: null,
       repoRoot: "/pr-worktree",
       deltaPacket: PACKET,
@@ -2659,8 +2802,8 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
         mkCodeRef("c1", "src/auth.ts", 11, 12),
         mkSection("findings", "Findings", ["f1"]),
       ]);
-    const bodyFor = (prompt: string): unknown => {
-      const lens = lensFromPrompt(prompt);
+    const bodyFor = (prompt: string, label?: string): unknown => {
+      const lens = lensFromPrompt(prompt, label);
       if (lens === "flagged") return flaggedBody();
       if (lens === "post-process") {
         const ctx = /rennet:layer context>>>\n(\{.*)/s.exec(prompt);
@@ -2668,9 +2811,9 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       }
       return cleanBody(lens);
     };
-    const codexExecutor = async (req: { model: string; prompt: string }) => {
+    const codexExecutor = async (req: { model: string; prompt: string; label?: string }) => {
       codexCaptures.push({ model: req.model, prompt: req.prompt });
-      return { output: bodyFor(req.prompt) };
+      return { output: bodyFor(req.prompt, req.label) };
     };
 
     const flaggedCtx: LintContext = {
@@ -2742,7 +2885,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     } as unknown as DeltaPacket;
 
     await runLensPipeline({
-      claudePort: fakeClaudePort(captures, (p) => cleanBody(lensFromPrompt(p))),
+      claudePort: fakeClaudePort(captures, (p, label) => cleanBody(lensFromPrompt(p, label))),
       codexExecutor: null,
       repoRoot: "/pr-worktree",
       deltaPacket: roundPacket,
@@ -2760,9 +2903,14 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     expect(arrivals[0]?.lens).toBe("report");
     // The report seat routed to the round-report pick (claude-only ⇒ sonnet-5).
     expect(captures.find((c) => c.prompt?.includes("report.md"))?.model).toBe("sonnet-5");
-    // Every LENS drafter prompt carried the round report as input.
+    // The report reaches the lens drafters as `round.json`, never as prompt text
+    // (session-context-files). This direct-call shape injects no writer, so nothing is
+    // written and no lens prompt carries the report — asserted here only as the absence it
+    // is; the positive threading (round.json holds the frozen report board, and every lens
+    // turn runs after that write) is the ordering test further down this file.
     const lensPrompts = captures.filter((c) => c.prompt?.includes("design.md"));
-    expect(lensPrompts.every((c) => c.prompt?.includes("roundReport"))).toBe(true);
+    expect(lensPrompts.length).toBeGreaterThan(0);
+    expect(lensPrompts.every((c) => !c.prompt?.includes("roundReport"))).toBe(true);
   });
 
   it("drafts a landed round report from one compact classification turn and host-owned structure", async () => {
@@ -2781,6 +2929,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     // by altering it.
     const diagnosticTimes = [90, 100, 110, 110, 105, 120, 120, 115, 130, 125];
     const reportTimings: GenerationPhaseTiming[] = [];
+    const contextFiles = new Map<string, SessionContextFile>();
     let reportTurns = 0;
     // Three hunks, so the round has three manifest entries and the classification can
     // partition them across an addressed ask, a partial ask, and one beyond entry.
@@ -2830,8 +2979,8 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     };
 
     const result = await runLensPipeline({
-      claudePort: fakeClaudePort(captures, (prompt) => {
-        const lens = lensFromPrompt(prompt);
+      claudePort: fakeClaudePort(captures, (prompt, label) => {
+        const lens = lensFromPrompt(prompt, label);
         if (lens === "report") {
           reportTurns += 1;
           return {
@@ -2877,6 +3026,10 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       readPrompt,
       whiteboard: fakeWhiteboard(applied),
       boardIdFor: (lens) => `board:${lens}`,
+      writeContext: (files) => {
+        for (const file of files) contextFiles.set(file.name, file);
+        return ".rennet/context/s1";
+      },
       onBoardArrival: (event) => {
         arrivals.push(event);
       },
@@ -2932,9 +3085,12 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     expect(untouchedSchema?.properties).not.toHaveProperty("evidenceIds");
     expect(untouchedSchema?.additionalProperties).toBe(false);
     const reportPrompt = reportCaptures[0]?.prompt ?? "";
-    const reportContext = /rennet:layer context>>>\n(\{.*)/s.exec(reportPrompt);
-    expect(reportContext).not.toBeNull();
-    expect(JSON.parse(reportContext?.[1] ?? "{}")).toEqual({
+    // The evidence is a FILE the prompt names (session-bound-workspace 3.4). What the
+    // classifier judges on is asserted on the written body; what the PROMPT carries is
+    // asserted to be the path and nothing else, below.
+    expect(reportPrompt).toContain(`\`.rennet/context/s1/${ROUND_EVIDENCE_FILE}\``);
+    expect(inlineContextViolation(reportPrompt)).toBeUndefined();
+    expect(JSON.parse(contextFiles.get(ROUND_EVIDENCE_FILE)?.body ?? "{}")).toEqual({
       patchsetId: "ps-1",
       dispatchedAsks: [
         {
@@ -2958,6 +3114,10 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     expect(reportPrompt).not.toContain("deltaPacket");
     expect(reportPrompt).not.toContain("MUST_NOT_REACH_REPORT");
     expect(reportPrompt).not.toContain("SECRET_STALE_PRIOR_DIFF_CONTEXT");
+    // Nor does the FILE carry the stale prior-diff context an ask happens to hold.
+    expect(contextFiles.get(ROUND_EVIDENCE_FILE)?.body).not.toContain(
+      "SECRET_STALE_PRIOR_DIFF_CONTEXT",
+    );
     expect(diagnostics.map(({ stage }) => stage)).toEqual([
       "turn-started",
       "provider-settled",
@@ -3034,11 +3194,17 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     expect(section?.kind === "section" ? section.data.children : []).toEqual(
       outcomes.map((element) => element.id),
     );
-    expect(
-      captures
-        .filter(({ prompt }) => prompt?.includes("prompts/design.md"))
-        .every(({ prompt }) => prompt?.includes('"roundReport"')),
-    ).toBe(true);
+    // The frozen report reaches the lens drafters as `round.json` — NAMED, never carried.
+    const designTurns = captures.filter(({ prompt }) => prompt?.includes("prompts/design.md"));
+    expect(designTurns.length).toBeGreaterThan(0);
+    for (const { prompt } of designTurns) {
+      expect(prompt).toContain(`\`.rennet/context/s1/${ROUND_CONTEXT_FILE}\``);
+      expect(prompt).not.toContain('"roundReport"');
+    }
+    const roundBody = JSON.parse(contextFiles.get(ROUND_CONTEXT_FILE)?.body ?? "{}") as {
+      report?: { elements: unknown[] };
+    };
+    expect(roundBody.report?.elements.length).toBeGreaterThan(0);
   });
 
   it("awaits classified report handoff before starting any lens and aborts on rejection", async () => {
@@ -3084,10 +3250,10 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       let lensStarts = 0;
       return {
         run: runLensPipeline({
-          claudePort: fakeClaudePort([], (prompt) => {
-            if (lensFromPrompt(prompt) === "report") return classification;
+          claudePort: fakeClaudePort([], (prompt, label) => {
+            if (lensFromPrompt(prompt, label) === "report") return classification;
             lensTurns += 1;
-            return cleanBody(lensFromPrompt(prompt));
+            return cleanBody(lensFromPrompt(prompt, label));
           }),
           codexExecutor: null,
           repoRoot: "/pr-worktree",
@@ -3151,7 +3317,9 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     ].join("\n");
 
     const result = await runLensPipeline({
-      claudePort: fakeClaudePort(captures, (prompt) => cleanBody(lensFromPrompt(prompt))),
+      claudePort: fakeClaudePort(captures, (prompt, label) =>
+        cleanBody(lensFromPrompt(prompt, label)),
+      ),
       codexExecutor: null,
       repoRoot: "/pr-worktree",
       deltaPacket: PACKET,
@@ -3202,8 +3370,8 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     let reportTurns = 0;
     const applied: Applied[] = [];
     const result = await runLensPipeline({
-      claudePort: fakeClaudePort([], (prompt) => {
-        const lens = lensFromPrompt(prompt);
+      claudePort: fakeClaudePort([], (prompt, label) => {
+        const lens = lensFromPrompt(prompt, label);
         if (lens === "report") {
           reportTurns += 1;
           return {
@@ -3332,8 +3500,8 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     };
 
     const result = await runLensPipeline({
-      claudePort: fakeClaudePort([], (prompt) => {
-        const lens = lensFromPrompt(prompt);
+      claudePort: fakeClaudePort([], (prompt, label) => {
+        const lens = lensFromPrompt(prompt, label);
         if (lens === "report") {
           reportTurns += 1;
           return {
@@ -3485,8 +3653,8 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       let lensDraftingStarts = 0;
       const applied: Applied[] = [];
       const run = runLensPipeline({
-        claudePort: fakeClaudePort([], (prompt) => {
-          const lens = lensFromPrompt(prompt);
+        claudePort: fakeClaudePort([], (prompt, label) => {
+          const lens = lensFromPrompt(prompt, label);
           if (lens === "report") {
             reportTurns += 1;
             return classification;
@@ -3571,8 +3739,8 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       );
     }
 
-    const codexExecutor = async (req: { prompt: string }) => {
-      const lens = lensFromPrompt(req.prompt);
+    const codexExecutor = async (req: { prompt: string; label?: string }) => {
+      const lens = lensFromPrompt(req.prompt, req.label);
       providerCalls.push(lens);
       if (lens !== "report" && lenses.includes(lens as LensKind)) {
         const lensKind = lens as LensKind;
@@ -3687,7 +3855,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     const timings: GenerationPhaseTiming[] = [];
 
     const result = await runLensPipeline({
-      claudePort: fakeClaudePort([], (prompt) => cleanBody(lensFromPrompt(prompt))),
+      claudePort: fakeClaudePort([], (prompt, label) => cleanBody(lensFromPrompt(prompt, label))),
       codexExecutor: null,
       repoRoot: "/pr-worktree",
       deltaPacket: PACKET,
@@ -3736,9 +3904,9 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     // seat names no harness" passed because there was no dual seat.
     const timings: GenerationPhaseTiming[] = [];
     const result = await runLensPipeline({
-      claudePort: fakeClaudePort([], (prompt) => cleanBody(lensFromPrompt(prompt))),
-      codexExecutor: (async (req: { prompt: string }) => ({
-        output: cleanBody(lensFromPrompt(req.prompt)),
+      claudePort: fakeClaudePort([], (prompt, label) => cleanBody(lensFromPrompt(prompt, label))),
+      codexExecutor: (async (req: { prompt: string; label?: string }) => ({
+        output: cleanBody(lensFromPrompt(req.prompt, req.label)),
       })) as never,
       repoRoot: "/pr-worktree",
       deltaPacket: PACKET,
@@ -3802,8 +3970,8 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
 
     const pipeline = runLensPipeline({
       claudePort: null,
-      codexExecutor: (async (req: { prompt: string }) => {
-        const lens = lensFromPrompt(req.prompt) as LensKind;
+      codexExecutor: (async (req: { prompt: string; label?: string }) => {
+        const lens = lensFromPrompt(req.prompt, req.label) as LensKind;
         await gates.get(lens);
         ticks += 1;
         // Design never emits a parseable board, so it settles as a FAILURE — a settlement
@@ -3858,9 +4026,9 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
 
     await expect(
       runLensPipeline({
-        claudePort: fakeClaudePort([], (prompt) => {
+        claudePort: fakeClaudePort([], (prompt, label) => {
           ticks += 10;
-          return cleanBody(lensFromPrompt(prompt));
+          return cleanBody(lensFromPrompt(prompt, label));
         }),
         codexExecutor: null,
         repoRoot: "/pr-worktree",
@@ -3906,8 +4074,8 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     };
 
     await runLensPipeline({
-      claudePort: fakeClaudePort([], (prompt) => {
-        const lens = lensFromPrompt(prompt);
+      claudePort: fakeClaudePort([], (prompt, label) => {
+        const lens = lensFromPrompt(prompt, label);
         advance(lens === "report" ? 1 : 100);
         return lens === "report" ? cleanBody("report") : cleanBody(lens);
       }),
@@ -3986,8 +4154,8 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       const sequenceTurns: string[] = [];
       const applied: Applied[] = [];
       const result = await runLensPipeline({
-        claudePort: fakeClaudePort([], (prompt) => {
-          const lens = lensFromPrompt(prompt);
+        claudePort: fakeClaudePort([], (prompt, label) => {
+          const lens = lensFromPrompt(prompt, label);
           if (lens !== "sequence") return cleanBody(lens);
           sequenceTurns.push(prompt);
           // The first return never parses, so the ladder is what decides whether this lane
@@ -4025,8 +4193,8 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     // "across 0 attempts" read as a contradiction — it claimed a ladder was spent and that
     // none was. The sentence now says what was allotted and what was used.
     const result = await runLensPipeline({
-      claudePort: fakeClaudePort([], (prompt) => {
-        const lens = lensFromPrompt(prompt);
+      claudePort: fakeClaudePort([], (prompt, label) => {
+        const lens = lensFromPrompt(prompt, label);
         return lens === "sequence" ? { not: "a board" } : cleanBody(lens);
       }),
       codexExecutor: null,
@@ -4075,8 +4243,8 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       announceFirstLensStart = resolve;
     });
 
-    const codexExecutor = async (req: { prompt: string }) => {
-      const lens = lensFromPrompt(req.prompt);
+    const codexExecutor = async (req: { prompt: string; label?: string }) => {
+      const lens = lensFromPrompt(req.prompt, req.label);
       if (lens === "post-process") {
         const context = /rennet:layer context>>>\n(\{.*)/s.exec(req.prompt);
         return {
@@ -4153,8 +4321,8 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     const arrivals: BoardArrivalEvent[] = [];
 
     const run = runLensPipeline({
-      claudePort: fakeClaudePort([], (prompt) => {
-        const lens = lensFromPrompt(prompt);
+      claudePort: fakeClaudePort([], (prompt, label) => {
+        const lens = lensFromPrompt(prompt, label);
         if (lens === "report") {
           reportTurns += 1;
           return { elements: [] };
@@ -4219,8 +4387,8 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       "+insideRetry();",
     ].join("\n");
     const result = await runLensPipeline({
-      claudePort: fakeClaudePort([], (prompt) => {
-        const lens = lensFromPrompt(prompt);
+      claudePort: fakeClaudePort([], (prompt, label) => {
+        const lens = lensFromPrompt(prompt, label);
         if (lens === "post-process") {
           const context = /rennet:layer context>>>\n(\{.*)/s.exec(prompt);
           return context ? (JSON.parse(context[1] as string).board as unknown) : { elements: [] };
@@ -4327,8 +4495,8 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     };
 
     const result = await runLensPipeline({
-      claudePort: fakeClaudePort([], (prompt) => {
-        const lens = lensFromPrompt(prompt);
+      claudePort: fakeClaudePort([], (prompt, label) => {
+        const lens = lensFromPrompt(prompt, label);
         if (lens === "flagged") return currentFlagged;
         if (lens === "report") return cleanBody("report");
         if (lens === "post-process") {
@@ -4417,8 +4585,8 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     let flaggedTurns = 0;
 
     const result = await runLensPipeline({
-      claudePort: fakeClaudePort([], (prompt) => {
-        const lens = lensFromPrompt(prompt);
+      claudePort: fakeClaudePort([], (prompt, label) => {
+        const lens = lensFromPrompt(prompt, label);
         if (lens === "flagged") {
           flaggedTurns += 1;
           return { elements: [] };
@@ -4471,7 +4639,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     let persistenceCalls = 0;
 
     const result = await runLensPipeline({
-      claudePort: fakeClaudePort([], (prompt) => cleanBody(lensFromPrompt(prompt))),
+      claudePort: fakeClaudePort([], (prompt, label) => cleanBody(lensFromPrompt(prompt, label))),
       codexExecutor: null,
       repoRoot: "/pr-worktree",
       deltaPacket: PACKET,
@@ -4526,8 +4694,8 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     ]);
 
     const result = await runLensPipeline({
-      claudePort: fakeClaudePort([], (prompt) => {
-        const lens = lensFromPrompt(prompt);
+      claudePort: fakeClaudePort([], (prompt, label) => {
+        const lens = lensFromPrompt(prompt, label);
         if (lens === "flagged") return flaggedBoard;
         if (lens === "report") return cleanBody("report");
         if (lens === "post-process") {
@@ -4582,7 +4750,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
   it("does NOT run the round-report on a first generation (no successor account)", async () => {
     const applied: Applied[] = [];
     const result = await runLensPipeline({
-      claudePort: fakeClaudePort([], (p) => cleanBody(lensFromPrompt(p))),
+      claudePort: fakeClaudePort([], (p, label) => cleanBody(lensFromPrompt(p, label))),
       codexExecutor: null,
       repoRoot: "/pr-worktree",
       deltaPacket: PACKET,
@@ -4598,7 +4766,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
   it("runs the authored composition when a composeTurn is supplied (C2)", async () => {
     const applied: Applied[] = [];
     const result = await runLensPipeline({
-      claudePort: fakeClaudePort([], (p) => cleanBody(lensFromPrompt(p))),
+      claudePort: fakeClaudePort([], (p, label) => cleanBody(lensFromPrompt(p, label))),
       codexExecutor: null,
       repoRoot: "/pr-worktree",
       deltaPacket: PACKET,
@@ -4654,8 +4822,8 @@ describe("runLensPipeline — persistence honesty (findings 2/3/6)", () => {
       mkCodeRef("c1", "src/auth.ts", 11, 12),
       mkSection("findings", "Findings", ["f1"]),
     ]);
-  const bodyForFlagged = (prompt: string): unknown => {
-    const lens = lensFromPrompt(prompt);
+  const bodyForFlagged = (prompt: string, label?: string): unknown => {
+    const lens = lensFromPrompt(prompt, label);
     if (lens === "flagged") return flaggedBody();
     if (lens === "post-process") {
       const ctx = /rennet:layer context>>>\n(\{.*)/s.exec(prompt);
@@ -4787,7 +4955,7 @@ describe("runLensPipeline — persistence honesty (findings 2/3/6)", () => {
       },
     };
     const result = await runLensPipeline({
-      claudePort: fakeClaudePort([], (p) => cleanBody(lensFromPrompt(p))),
+      claudePort: fakeClaudePort([], (p, label) => cleanBody(lensFromPrompt(p, label))),
       codexExecutor: null,
       repoRoot: "/pr-worktree",
       deltaPacket: PACKET,
@@ -4908,7 +5076,7 @@ describe("createNodePromptReader (perf audit §4 M)", () => {
   });
 });
 
-describe("renderDrafterPrompt — the inventory travels, the hunk index does not (D5)", () => {
+describe("renderDrafterPrompt — nothing of the change travels; the context is a path (3.1)", () => {
   const HUNK_BODY = "+const SECRET_BODY_LINE = 42;";
   const RANGE_PACKET = {
     patchset: {
@@ -4937,17 +5105,85 @@ describe("renderDrafterPrompt — the inventory travels, the hunk index does not
     },
   } as unknown as DeltaPacket;
 
-  it("sends neither hunk bodies nor hunk ids/headers/spans — the seat cites by path and line", () => {
-    const prompt = renderDrafterPrompt("lens instructions", RANGE_PACKET);
-    // Positive control: the id, header and body ARE in the packet — a hunk index creeping
-    // back into the context layer turns the assertions below red.
-    expect(JSON.stringify(RANGE_PACKET.hunks.hunks)).toContain(SECRET(HUNK_BODY));
-    expect(JSON.stringify(RANGE_PACKET.hunks.hunks)).toContain("hunk-1");
-    expect(prompt).not.toContain(SECRET(HUNK_BODY));
-    expect(prompt).not.toContain("hunk-1");
-    expect(prompt).not.toContain("@@ -1,1 +1,1 @@");
-    // The rest of the inventory still rides: the reviewed range and its diff command.
+  /**
+   * The packet with EVERY derived section populated — including `noisePreclass`, whose
+   * records carry a `hunkId` (review finding on 3.1: a fixture without it cannot see the
+   * id leak through the projection). Any of these reaching the prompt reddens below.
+   */
+  const FULL_PACKET = {
+    ...RANGE_PACKET,
+    blastRadius: [{ kind: "fan-in", path: "src/a.ts", detail: "BLAST_SENTINEL" }],
+    noisePreclass: [{ hunkId: "hunk-1", path: "src/a.ts", reason: "PRECLASS_SENTINEL" }],
+    counterpartHints: [{ path: "src/a.ts", counterpart: "src/a.test.ts", note: "HINT_SENTINEL" }],
+    dossier: [{ title: "DOSSIER_SENTINEL" }],
+    openspec: { changes: [{ name: "OPENSPEC_SENTINEL", artifactPaths: [] }] },
+  } as unknown as DeltaPacket;
+  const CONTEXT = { dir: ".rennet/context/s1", files: [] };
+
+  it("carries nothing of the packet: no hunk body, id, header, span, blast radius, preclass, hint, dossier or openspec touch", () => {
+    const prompt = renderDrafterPrompt("lens instructions", FULL_PACKET, CONTEXT);
+    // Positive control: every sentinel IS in the packet — anything of it creeping back
+    // into a layer turns the assertions below red.
+    const packetJson = JSON.stringify(FULL_PACKET);
+    for (const sentinel of [
+      SECRET(HUNK_BODY),
+      "hunk-1",
+      "@@ -1,1 +1,1 @@",
+      "BLAST_SENTINEL",
+      "PRECLASS_SENTINEL",
+      "HINT_SENTINEL",
+      "DOSSIER_SENTINEL",
+      "OPENSPEC_SENTINEL",
+      '"files":[]',
+    ]) {
+      expect(packetJson, sentinel).toContain(sentinel);
+      expect(prompt, sentinel).not.toContain(sentinel);
+    }
+    expect(inlineContextViolation(prompt)).toBeUndefined();
+    // What still rides: the reviewed range, its diff command, and the path reference.
     expect(prompt).toContain(`git diff ${"b".repeat(40)}...${"h".repeat(40)}`);
+    expect(prompt).toContain("<<<rennet:layer context>>>");
+    expect(prompt).toContain("`.rennet/context/s1/`");
+    expect(prompt).toContain("`README.md`");
+    // The task layer no longer contradicts the partial's "read it yourself".
+    expect(prompt).not.toContain("INVENTORY");
+  });
+
+  it("the context layer is a path reference under two kilobytes whatever the change's size", () => {
+    const big = {
+      ...FULL_PACKET,
+      patchset: {
+        ...FULL_PACKET.patchset,
+        files: Array.from({ length: 74 }, (_, i) => ({
+          path: `src/file-${i}.ts`,
+          status: "modified",
+          additions: 40,
+          deletions: 4,
+          binary: false,
+        })),
+      },
+    } as unknown as DeltaPacket;
+    const roundFile = roundContextFile({
+      number: 2,
+      previousGeneration: "g1",
+      dispatchedAsks: [],
+      findingDispositions: {},
+    });
+    const withRound = { dir: ".rennet/context/s1", files: [roundFile] };
+    const small = renderDrafterPrompt("lens instructions", FULL_PACKET, withRound);
+    const large = renderDrafterPrompt("lens instructions", big, withRound);
+    // Byte-identical: the change's size does not reach the prompt at all.
+    expect(large).toBe(small);
+    const layer = small.slice(small.indexOf("<<<rennet:layer context>>>"));
+    expect(Buffer.byteLength(layer, "utf8")).toBeLessThan(2_048);
+    expect(layer).toContain(`\`.rennet/context/s1/${ROUND_CONTEXT_FILE}\``);
+    expect(layer).toContain(roundFile.holds);
+  });
+
+  it("names no directory in the direct-call shape (no writer), and says so by omission", () => {
+    const prompt = renderDrafterPrompt("lens instructions", FULL_PACKET);
+    expect(prompt).not.toContain("<<<rennet:layer context>>>");
+    expect(prompt).not.toContain(".rennet/context");
   });
 
   it("names the three-dot merge-base range on a range capture, never two-dot", () => {
@@ -4979,14 +5215,34 @@ describe("renderDrafterPrompt — the inventory travels, the hunk index does not
     expect(prompt).toContain(`git show ${tree}:<path>`);
   });
 
-  it("carries the round context beside the inventory, and no design bundle", () => {
-    const prompt = renderDrafterPrompt("lens instructions", RANGE_PACKET, undefined, {
-      number: 2,
-      dispatchedAsks: [],
-    } as never);
-    expect(prompt).toContain('"number":2');
-    // D6 — the Design seat finds the spec itself; no bundle rides in any prompt.
-    expect(prompt).not.toContain("designArtifacts");
+  it("round.json holds the asks, the worker's identity and the frozen report — the prompt only names it", () => {
+    const report = { document: { title: "REPORT_TITLE_SENTINEL" }, elements: [] } as never;
+    const file = roundContextFile(
+      {
+        number: 2,
+        previousGeneration: "g1",
+        dispatchedAsks: [{ id: "ask-1", path: "src/a.ts", instruction: "ASK_SENTINEL" }] as never,
+        findingDispositions: {},
+      },
+      report,
+    );
+    expect(file.name).toBe(ROUND_CONTEXT_FILE);
+    const body = JSON.parse(file.body) as Record<string, unknown>;
+    expect(body.number).toBe(2);
+    expect(body.dispatchedAsks).toEqual([
+      { id: "ask-1", path: "src/a.ts", instruction: "ASK_SENTINEL" },
+    ]);
+    expect(body.report).toEqual(report);
+    // Compact: no pretty-print surcharge in a file a model reads either.
+    expect(file.body).not.toContain("\n");
+    const prompt = renderDrafterPrompt("lens instructions", RANGE_PACKET, {
+      dir: ".rennet/context/s1",
+      files: [file],
+    });
+    expect(prompt).toContain(`\`.rennet/context/s1/${ROUND_CONTEXT_FILE}\``);
+    expect(prompt).not.toContain("ASK_SENTINEL");
+    expect(prompt).not.toContain("REPORT_TITLE_SENTINEL");
+    expect(prompt).not.toContain('"number":2');
   });
 
   it("keeps the worker's verbatim turn diff out of every drafter prompt", () => {
@@ -5003,22 +5259,219 @@ describe("renderDrafterPrompt — the inventory travels, the hunk index does not
         commitRange: { from: "c0", to: "c1" },
       },
     } as never;
-    const lens = renderDrafterPrompt("lens instructions", RANGE_PACKET, undefined, round);
-    expect(lens).not.toContain(SECRET(WORKER_DIFF));
-    expect(lens).toContain('"changedPaths":["src/a.ts"]');
-    const report = renderDrafterPrompt("report instructions", RANGE_PACKET, undefined, round, {
+    const file = roundContextFile(round);
+    // The file carries the worker's identity, never its diff — the seat reads the turn's
+    // change from the checkout at the commit range.
+    expect(file.body).not.toContain(SECRET(WORKER_DIFF));
+    expect(file.body).toContain('"changedPaths":["src/a.ts"]');
+    expect(file.body).toContain('"commitRange":{"from":"c0","to":"c1"}');
+    const context = { dir: ".rennet/context/s1", files: [file] };
+    const lens = renderDrafterPrompt("lens instructions", RANGE_PACKET, context);
+    const report = renderDrafterPrompt("report instructions", RANGE_PACKET, context, {
       omitTaskLayer: true,
     });
-    expect(report).not.toContain(SECRET(WORKER_DIFF));
-    expect(report).toContain('"commitRange":{"from":"c0","to":"c1"}');
+    for (const prompt of [lens, report]) {
+      expect(prompt).not.toContain(SECRET(WORKER_DIFF));
+      expect(prompt).not.toContain("changedPaths");
+      expect(prompt).not.toContain("commitRange");
+    }
   });
 
   it("omits the task layer for the legacy report seat", () => {
-    const prompt = renderDrafterPrompt("report instructions", RANGE_PACKET, undefined, undefined, {
+    const prompt = renderDrafterPrompt("report instructions", RANGE_PACKET, CONTEXT, {
       omitTaskLayer: true,
     });
     expect(prompt).not.toContain("rennet:layer task");
     expect(prompt).toContain("rennet:layer context");
+  });
+});
+
+describe("round-report classifier — the evidence is a file the prompt names (3.4)", () => {
+  const DIFF = [
+    "diff --git a/src/a.ts b/src/a.ts",
+    "--- a/src/a.ts",
+    "+++ b/src/a.ts",
+    "@@ -1 +1 @@",
+    "-old",
+    "+EVIDENCE_BODY_SENTINEL",
+    "",
+  ].join("\n");
+  const round = {
+    number: 3,
+    previousGeneration: "g2",
+    dispatchedAsks: [{ id: "ask-9", path: "src/a.ts", instruction: "ASK_TEXT_SENTINEL" }],
+    findingDispositions: {},
+    worker: {
+      outcome: "completed",
+      diff: DIFF,
+      changedPaths: ["src/a.ts"],
+      commitRange: { from: "c0", to: "c1" },
+    },
+  } as never;
+  const manifest = buildRoundEvidenceManifest(DIFF);
+  const evidenceJson = JSON.stringify(manifest);
+
+  it("evidence.json is one object with exactly patchsetId, dispatchedAsks, worker and the measured manifest bytes", () => {
+    const file = roundEvidenceFile("ps-9", round, evidenceJson);
+    expect(file.name).toBe(ROUND_EVIDENCE_FILE);
+    const body = JSON.parse(file.body) as Record<string, unknown>;
+    expect(Object.keys(body)).toEqual(["patchsetId", "dispatchedAsks", "worker", "evidence"]);
+    expect(body.patchsetId).toBe("ps-9");
+    expect(body.dispatchedAsks).toEqual([
+      { id: "ask-9", path: "src/a.ts", instruction: "ASK_TEXT_SENTINEL" },
+    ]);
+    expect(body.worker).toEqual({
+      outcome: "completed",
+      changedPaths: ["src/a.ts"],
+      commitRange: { from: "c0", to: "c1" },
+    });
+    // Spliced verbatim: the measured bytes are the file's bytes.
+    expect(file.body.endsWith(`,"evidence":${evidenceJson}}`)).toBe(true);
+    expect(file.body).toContain("EVIDENCE_BODY_SENTINEL");
+    expect(file.body).toMatch(/"id":"ev-[0-9a-f]{16}"/);
+  });
+
+  it("the prompt names evidence.json and carries none of it", () => {
+    const file = roundEvidenceFile("ps-9", round, evidenceJson);
+    const prompt = renderRoundReportClassifierPrompt("report instructions", {
+      dir: ".rennet/context/s1",
+      files: [file],
+    });
+    expect(prompt).toContain(`\`.rennet/context/s1/${ROUND_EVIDENCE_FILE}\``);
+    expect(prompt).toContain(file.holds);
+    for (const sentinel of ["EVIDENCE_BODY_SENTINEL", "ASK_TEXT_SENTINEL", '"evidence":', "ev-"]) {
+      expect(prompt, sentinel).not.toContain(sentinel);
+    }
+    expect(inlineContextViolation(prompt)).toBeUndefined();
+    const layer = prompt.slice(prompt.indexOf("<<<rennet:layer context>>>"));
+    expect(Buffer.byteLength(layer, "utf8")).toBeLessThan(2_048);
+    // Direct-call shape: no directory, so only the instructions.
+    expect(renderRoundReportClassifierPrompt("report instructions", undefined)).toBe(
+      "<<<rennet:layer payload>>>\nreport instructions",
+    );
+  });
+});
+
+describe("runLensPipeline writes the session context through the ONE writer, before the seats read it", () => {
+  const widgetDiff = [
+    "diff --git a/src/widget.ts b/src/widget.ts",
+    "--- a/src/widget.ts",
+    "+++ b/src/widget.ts",
+    "@@ -1 +1 @@",
+    "-export const widget = 2;",
+    "+export const widget = 3;",
+  ].join("\n");
+
+  it("evidence.json lands before the classifier turn, round.json (with the report) before the first lens turn, boards/ and the voice before compose", async () => {
+    /** Every write, in order, with the names it carried; and every seat prompt, in order. */
+    const writes: string[][] = [];
+    const written = new Map<string, SessionContextFile>();
+    const prompts: { lens: string; prompt: string; writesSoFar: number }[] = [];
+    const writeContext = (files: readonly SessionContextFile[]): string => {
+      writes.push(files.map((file) => file.name));
+      for (const file of files) written.set(file.name, file);
+      return ".rennet/context/s1";
+    };
+    let composePrompt = "";
+    const result = await runLensPipeline({
+      claudePort: fakeClaudePort([], (prompt, label) => {
+        const lens = lensFromPrompt(prompt, label);
+        prompts.push({ lens, prompt, writesSoFar: writes.length });
+        if (lens === "report") {
+          return {
+            outcomes: [
+              {
+                askId: "ask-one",
+                status: "addressed",
+                note: "The exact changed line now carries the requested value.",
+                evidenceIds: manifestIds(widgetDiff),
+              },
+            ],
+            beyond: [],
+          };
+        }
+        return cleanBody(lens);
+      }),
+      codexExecutor: null,
+      repoRoot: "/pr-worktree",
+      writeContext,
+      deltaPacket: PACKET,
+      currentGeneration: "gen:ps-1:dispatch:context",
+      round: {
+        number: 1,
+        previousGeneration: "gen:ps-0",
+        dispatchedAsks: [
+          {
+            id: "ask-one",
+            path: "src/widget.ts",
+            type: "request-change",
+            instruction: "Bump the widget.",
+            context: "",
+          },
+        ],
+        findingDispositions: {},
+        worker: {
+          outcome: "completed",
+          diff: widgetDiff,
+          changedPaths: ["src/widget.ts"],
+          commitRange: { from: "before", to: "after" },
+        },
+      },
+      lintContextFor,
+      readPrompt,
+      whiteboard: fakeWhiteboard([]),
+      boardIdFor: (lens) => `board:${lens}`,
+      composeTurn: (prompt) => {
+        composePrompt = prompt;
+        return "The change reads cleanly.";
+      },
+      reviewDraftLintCtx: { files: new Map() },
+    });
+    expect(result.report?.board).toBeDefined();
+
+    // 1. The classifier's turn came AFTER the write that carried evidence.json.
+    const report = prompts.find((entry) => entry.lens === "report");
+    expect(report).toBeDefined();
+    expect(writes[0]).toEqual([ROUND_EVIDENCE_FILE]);
+    expect(report?.writesSoFar).toBeGreaterThanOrEqual(1);
+    expect(report?.prompt).toContain(`\`.rennet/context/s1/${ROUND_EVIDENCE_FILE}\``);
+    expect(report?.prompt).not.toContain("export const widget = 3;");
+    expect(inlineContextViolation(report?.prompt ?? "")).toBeUndefined();
+
+    // 2. Every lens seat's first turn came AFTER the write that carried round.json, whose
+    //    body holds the frozen report board — and the index still lists evidence.json.
+    expect(writes[1]).toEqual([ROUND_EVIDENCE_FILE, ROUND_CONTEXT_FILE]);
+    const lensTurns = prompts.filter((entry) => entry.lens !== "report");
+    expect(lensTurns.map((entry) => entry.lens).sort()).toEqual(
+      ["decisions", "design", "flagged", "noise", "sequence"].sort(),
+    );
+    for (const turn of lensTurns) {
+      expect(turn.writesSoFar, turn.lens).toBeGreaterThanOrEqual(2);
+      expect(turn.prompt, turn.lens).toContain("`.rennet/context/s1/`");
+      expect(turn.prompt, turn.lens).toContain(`\`.rennet/context/s1/${ROUND_CONTEXT_FILE}\``);
+      expect(turn.prompt, turn.lens).not.toContain("Bump the widget.");
+      expect(inlineContextViolation(turn.prompt), turn.lens).toBeUndefined();
+    }
+    const roundBody = JSON.parse(written.get(ROUND_CONTEXT_FILE)?.body ?? "{}") as {
+      report?: { elements: unknown[] };
+      dispatchedAsks: { id: string }[];
+    };
+    expect(roundBody.dispatchedAsks.map((ask) => ask.id)).toEqual(["ask-one"]);
+    expect(roundBody.report?.elements.length).toBeGreaterThan(0);
+
+    // 3. Compose: the boards, the voice rules and the index — named, never carried.
+    const last = writes.at(-1) ?? [];
+    expect(last).toContain("review-draft-voice.md");
+    expect(last).toContain("boards/design.json");
+    // The round report is its own board, drafted before the lenses; the composition
+    // connects the LENS boards, so `boards/` holds one file per lens and no report.
+    expect(last).not.toContain("boards/report.json");
+    expect(last).toContain(ROUND_EVIDENCE_FILE);
+    expect(last).toContain(ROUND_CONTEXT_FILE);
+    expect(composePrompt).toContain("`.rennet/context/s1/review-draft-voice.md`");
+    expect(composePrompt).toContain("`.rennet/context/s1/boards/`");
+    expect(composePrompt).not.toContain("PROMPT_FILE:prompts/review-draft-voice.md");
+    expect(inlineContextViolation(composePrompt)).toBeUndefined();
   });
 });
 
@@ -5125,7 +5578,7 @@ describe("the report gate times a turn that DIED (#731 O4)", () => {
 
 // ── The repair prompt is a PATCH (#737) ──────────────────────────────────────
 
-describe("renderRetryPrompt sends pointers and only the open elements", () => {
+describe("renderRepairPrompt is pointer-only on every leg (3.2)", () => {
   const FROZEN_BODY = "FROZEN_SENTINEL: the accepted finding's concern";
   const OPEN_BODY = "OPEN_SENTINEL: the prose that failed lint";
   const draft = {
@@ -5142,29 +5595,27 @@ describe("renderRetryPrompt sends pointers and only the open elements", () => {
     },
   ];
 
-  it("carries the failing element and the frozen id, not the frozen element's body", () => {
-    const prompt = renderRetryPrompt("BASE", draft, pointers, ["f1"]);
-    expect(prompt).toContain(OPEN_BODY);
-    expect(prompt).not.toContain(FROZEN_BODY);
-    expect(prompt).toContain('"frozenElementIds":["f1"]');
+  it("carries the pointers (each naming its element) and the frozen ids — no draft, no base", () => {
+    const prompt = renderRepairPrompt(draft, pointers, ["f1"]);
+    expect(prompt.startsWith("<<<rennet:layer task>>>")).toBe(true);
     // The pointer indexes the WHOLE previous draft, which the seat no longer sees, so
     // the element it is about is named beside it (#743 review).
     expect(prompt).toContain(
       'no-code-bytes at ["elements",1,"data","markdown"] (element `p1`): no code bytes',
     );
-    expect(prompt.startsWith("BASE\n\n")).toBe(true);
-  });
-
-  it("with nothing frozen every element body rides (positive control)", () => {
-    const prompt = renderRetryPrompt("BASE", draft, pointers, []);
-    expect(prompt).toContain(FROZEN_BODY);
-    expect(prompt).toContain(OPEN_BODY);
-    expect(prompt).toContain('"frozenElementIds":[]');
+    expect(prompt).toContain("- `f1`");
+    // Positive control for the absence claims: both bodies ARE in the draft.
+    expect(JSON.stringify(draft)).toContain(OPEN_BODY);
+    expect(JSON.stringify(draft)).toContain(FROZEN_BODY);
+    expect(prompt).not.toContain(OPEN_BODY);
+    expect(prompt).not.toContain(FROZEN_BODY);
+    expect(prompt).not.toContain("Previous draft");
+    expect(prompt).not.toContain("elementsToFix");
+    expect(inlineContextViolation(prompt)).toBeUndefined();
   });
 
   it("a parse pointer names no element (its path indexes the rejected return, not this draft)", () => {
-    const prompt = renderRetryPrompt(
-      "BASE",
+    const prompt = renderRepairPrompt(
       draft,
       [{ path: ["elements", 0, "kind"], message: "invalid kind" }],
       ["f1"],
@@ -5173,10 +5624,11 @@ describe("renderRetryPrompt sends pointers and only the open elements", () => {
     expect(prompt).not.toContain("(element `f1`)");
   });
 
-  it("asks for the whole board when nothing is open and nothing is frozen", () => {
-    const prompt = renderRetryPrompt("BASE", { elements: [] } as never, pointers, []);
+  it("asks for the whole board when nothing is frozen, still without the draft", () => {
+    const prompt = renderRepairPrompt(draft, pointers, []);
     expect(prompt).toContain("and return the whole board:");
-    expect(prompt).not.toContain("elementsToFix");
+    expect(prompt).not.toContain(OPEN_BODY);
+    expect(prompt).not.toContain(FROZEN_BODY);
   });
 });
 
@@ -5190,7 +5642,10 @@ describe("renderRetryPrompt sends pointers and only the open elements", () => {
 
 describe("runLensPipeline — a citation past the change is an unresolvable-citation pointer", () => {
   it("sends the pointer on the repair turn and omits the citation the seat never moved", async () => {
-    const captures: { model?: string; prompt?: string }[] = [];
+    const captures: { model?: string; prompt?: string; label?: string }[] = [];
+    // On the sidecar seam, because the repair is where this test lives: a leg with no
+    // thread refuses one and settles a typed failure instead (the suite below).
+    const seatTurns: SeatCapture[] = [];
     // The seat's board, as drafted: a finding citing src/auth.ts:30-31 when the change is
     // 10..14. The Design lens gets the same citation beside its prose.
     const citingPast = (lens: string): DraftBoard => {
@@ -5216,11 +5671,13 @@ describe("runLensPipeline — a citation past the change is an unresolvable-cita
         ],
       } as DraftBoard;
     };
+    const bodyFor = (prompt: string, label?: string): unknown => {
+      const lens = lensFromPrompt(prompt, label);
+      return lens === "flagged" || lens === "design" ? citingPast(lens) : cleanBody(lens);
+    };
     const result = await runLensPipeline({
-      claudePort: fakeClaudePort(captures, (prompt) => {
-        const lens = lensFromPrompt(prompt);
-        return lens === "flagged" || lens === "design" ? citingPast(lens) : cleanBody(lens);
-      }),
+      claudePort: fakeClaudePort(captures, bodyFor),
+      t3: fakeT3Seam(seatTurns, bodyFor),
       codexExecutor: null,
       repoRoot: "/pr-worktree",
       deltaPacket: PACKET,
@@ -5236,7 +5693,9 @@ describe("runLensPipeline — a citation past the change is an unresolvable-cita
     });
 
     for (const lens of ["flagged", "design"] as const) {
-      const turns = captures.filter((c) => lensFromPrompt(c.prompt ?? "") === lens);
+      // Attributed by SEAT: the repair turn is pointer-only, so it carries no lens prompt
+      // file to filter on (session-bound-workspace 3.2).
+      const turns = seatTurns.filter(({ prompt, seat }) => lensFromPrompt(prompt, seat) === lens);
       // The drafting turn, then at least one repair carrying the pointer by rule and range.
       expect(turns.length).toBeGreaterThan(1);
       expect(turns[1]?.prompt).toContain("unresolvable-citation");
@@ -5247,5 +5706,120 @@ describe("runLensPipeline — a citation past the change is an unresolvable-cita
       expect(outcome?.failure).toBeUndefined();
       expect(outcome?.omissions.map((o) => o.elementId)).toContain("c-past");
     }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// A leg with no thread cannot repair, and says so (Rai's ruling, 2026-09-04).
+// Every ephemeral turn opens a fresh `ephemeral: true` session, so a pointer-only
+// repair would reach a session that has never seen the draft. The lane used to settle
+// on the UNREPAIRED draft and read as though the ladder had run.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("a lint failure on a leg with no thread settles a typed failure, never the draft", () => {
+  /** A board whose finding cites a line outside the change — fails `unresolvable-citation`. */
+  const citingPast = (lens: string): DraftBoard => {
+    const base = cleanBody(lens);
+    const author = { kind: "lens-agent" as const, id: `${lens}-seat` };
+    return {
+      elements: [
+        ...base.elements.map((el) =>
+          el.kind === "finding" ? { ...el, data: { ...el.data, code: ["c-past"] } } : el,
+        ),
+        {
+          id: "c-past",
+          kind: "code_ref",
+          data: { author, path: "src/auth.ts", side: "head", start_line: 30, end_line: 31 },
+        },
+      ],
+    } as DraftBoard;
+  };
+  const lintContextForRegions = (lens: LintTarget): LintContext => ({
+    lens,
+    regions: [{ path: "src/auth.ts", side: "head", start: 10, end: 14 }],
+    files: new Map([["src/auth.ts", 200]]),
+    patchsetId: "ps-1",
+  });
+
+  const run = async (over: Partial<Parameters<typeof runLensPipeline>[0]>) => {
+    const captures: HarnessCapture[] = [];
+    const result = await runLensPipeline({
+      claudePort: fakeClaudePort(captures, (prompt, label) => {
+        const lens = lensFromPrompt(prompt, label);
+        return lens === "flagged" || lens === "design" ? citingPast(lens) : cleanBody(lens);
+      }),
+      codexExecutor: null,
+      repoRoot: "/pr-worktree",
+      deltaPacket: PACKET,
+      lintContextFor: lintContextForRegions,
+      readPrompt,
+      whiteboard: fakeWhiteboard([]),
+      boardIdFor: (lens) => `board:${lens}`,
+      ...over,
+    } as Parameters<typeof runLensPipeline>[0]);
+    return { result, captures };
+  };
+
+  it("settles the lane as a RETRYABLE failure naming the missing thread, and spends no turn on it", async () => {
+    const { result, captures } = await run({});
+    for (const lens of ["design", "flagged"] as const) {
+      const outcome = result.boards.find((board) => board.lens === lens);
+      expect(outcome?.board, `${lens} shipped a board`).toBeUndefined();
+      expect(outcome?.failure, lens).toContain("no thread to repair on");
+      // RETRYABLE: nothing about the lane is spent — a generation with a sidecar behind
+      // it can draft this lens again and repair it properly.
+      expect(outcome?.failureAccount?.classification, lens).toBe("retryable");
+      // The refusal happens BEFORE the turn: exactly one session per seat, the draft.
+      const turns = captures.filter(
+        ({ prompt, label }) => lensFromPrompt(prompt ?? "", label) === lens,
+      );
+      expect(turns, `${lens} spent a repair turn`).toHaveLength(1);
+      // …and no repair prompt was ever rendered.
+      expect(turns[0]?.prompt).not.toContain("Fix ONLY these issues");
+    }
+  });
+
+  it("the CODEX ephemeral leg refuses the same way (the Flagged lane's second seat)", async () => {
+    // Only the FLAGGED lane's Codex seat: with a Codex executor present the council routes
+    // other lenses to it too, and those lanes are not what this test is about.
+    const codexPrompts: string[] = [];
+    const { result } = await run({
+      codexExecutor: (async (req: { prompt: string; label?: string }) => {
+        const lens = lensFromPrompt(req.prompt, req.label);
+        if (lens === "flagged") codexPrompts.push(req.prompt);
+        return { output: lens === "flagged" ? citingPast(lens) : cleanBody(lens) };
+      }) as never,
+    });
+    const flagged = result.boards.find((board) => board.lens === "flagged");
+    expect(flagged?.board).toBeUndefined();
+    expect(flagged?.failure).toContain("no thread to repair on");
+    // One Codex turn: the draft. No repair was attempted on a session that could not hold one.
+    expect(codexPrompts).toHaveLength(1);
+    expect(codexPrompts[0]).not.toContain("Fix ONLY these issues");
+  });
+
+  it("CONTROL: the same seats settle boards when the citation resolves", () => {
+    // Proves the two tests above are about the missing THREAD and not about a fixture that
+    // can never pass lint: move the changed region to cover the cited lines and the very
+    // same boards settle, with no failure and no repair.
+    //
+    // What this control CANNOT show, stated rather than implied: it does not prove that a
+    // sidecar thread would have repaired the out-of-range citation. That path is the T3
+    // leg's, exercised by its own suite; here the claim is only that the refusal is caused
+    // by the leg, since nothing else about these lanes changed.
+    return run({
+      lintContextFor: (lens: LintTarget): LintContext => ({
+        lens,
+        regions: [{ path: "src/auth.ts", side: "head", start: 10, end: 40 }],
+        files: new Map([["src/auth.ts", 200]]),
+        patchsetId: "ps-1",
+      }),
+    }).then(({ result }) => {
+      for (const lens of ["design", "flagged"] as const) {
+        const outcome = result.boards.find((board) => board.lens === lens);
+        expect(outcome?.failure, lens).toBeUndefined();
+        expect(outcome?.board, lens).toBeDefined();
+      }
+    });
   });
 });

@@ -383,21 +383,27 @@ const decisionRecordBodySchema = z
  * changeset touches, grouped away from the code that needs eyes. Each group carries
  * a `category` (the closed churn vocabulary), a plain-speech `summary`, a
  * `judgedBy` chip (a deterministic mechanical `rule` naming the rule, OR the LLM
- * `noise-job`), and the `items` it collects — each an `anchor` to exactly one
- * offered hunk (a `rennet:` code anchor the generic V005/V008 walk byte-checks
- * against the offered manifest; an unresolvable or minted anchor rejects the whole
- * document, so the runner culls ungrounded items before this gate), a plain
+ * `noise-job`), and the `items` it collects — each a CITATION of exactly one offered
+ * changed region (`path` + `side` + a 1-based `startLine`/`endLine`), a plain
  * `detail`, and an optional `deviates` flag (a line that BREAKS its group's pattern
  * and must eject into normal review rather than be suppressed).
  *
  * This is the MODEL-FACING structured-output shape: it names what the agent emits.
- * Two runner-owned fields are stamped AFTER the turn and are deliberately NOT
+ * THREE runner-owned fields are stamped AFTER the turn and are deliberately NOT
  * required here (agents never mint identity, and never assert the model label): the
- * per-group `groupId`, and the `model` on a `noise-job` chip (the runner stamps
- * which model ran). The schema is `.loose()` so the ON-DISK document — which carries
- * both stamped fields — also satisfies it when the atomic validator re-checks the
- * body shape (V108); it is not a second gate that would reject the runner's own
- * well-formed output.
+ * per-group `groupId`, the `model` on a `noise-job` chip (the runner stamps which
+ * model ran), and each item's `anchor` — the `rennet:hunk/<id>` the runner MINTS by
+ * resolving the cited region against the offered manifest (path-line-citations: no
+ * hunk id reaches a model, in either direction). The generic V005/V008 walk still
+ * byte-checks that minted anchor against the manifest, so a document whose citation
+ * resolved to nothing never gets one and is culled before this gate.
+ *
+ * The schema is `.loose()` so the ON-DISK document — which carries all three stamped
+ * fields BESIDE the coordinates the model gave — also satisfies it when the atomic
+ * validator re-checks the body shape (V108); it is not a second gate that would reject
+ * the runner's own well-formed output. Keeping the coordinates on the stored item is
+ * what makes that re-check pass, and is the reason `cullItems` does not replace them
+ * with the anchor it mints.
  */
 const noiseCategoryBodySchema = z.enum([
   "formatting",
@@ -416,7 +422,10 @@ const noiseJudgedByBodySchema = z.union([
 
 const noiseItemBodySchema = z
   .object({
-    anchor: z.string().min(1),
+    path: z.string().min(1),
+    side: z.enum(["base", "head"]),
+    startLine: z.number().int().positive(),
+    endLine: z.number().int().positive(),
     detail: z.string(),
     deviates: z.boolean().optional(),
   })

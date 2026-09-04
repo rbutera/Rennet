@@ -170,6 +170,7 @@ import {
   renderWorkOrder,
   resolveAssignment,
   resolveLocus,
+  reviewedDiffCommand,
   runHandoffTurn as runHandoffTurnCore,
   runNoiseAngle,
   toDistroPath,
@@ -2447,6 +2448,12 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       // degrades to a turn-failure rather than crashing the command.
       runTurn: recordedDesktopSeatTurn(runNoiseTurn, "noise", contextFeed),
       budget,
+      // session-context-files: the offer AND the assembled project context are written
+      // under the seat's cwd and NAMED there. Nothing about the change rides inline, and
+      // no prompt names the daemon's own store path, which a seat in another locus
+      // (a WSL distro) cannot open.
+      writeContext: (files) => writeReviewContext(review, files),
+      diffCommand: reviewedDiffCommand(patchset.repository),
       ...(contextFeed.assembledContext === undefined
         ? {}
         : { assembledContext: contextFeed.assembledContext }),
@@ -2914,6 +2921,16 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     ...(options.t3BundlePath === undefined ? {} : { resolveT3Seats: resolveT3SeatRuntime }),
     boardsRuntimeFor,
     readPrompt,
+    // session-context-files: the ONE writer, bound by the rounds runtime to the root the
+    // seats are DISPATCHED with (`draftingRoot ?? repoRoot`) rather than the session's
+    // repository root. That root is stamped on the session as `contextRoot`, which is the
+    // first thing `boundRootForSession` reads, so the archive purge removes the directory
+    // from where it actually is — for a range review, the review worktree.
+    writeSessionContext: (root, sessionId, files) => {
+      const dir = writeSessionContext(root, sessionId, files);
+      sessionStore.setContextRoot(sessionId, root);
+      return dir;
+    },
     persistBoardMeta: (_repoRoot: string, meta: PersistedBoardMeta) => boardMetaStore.save(meta),
     loadDraftedBoards: (_repoRoot: string, sessionId: string, generation: string) =>
       boardMetaStore.listForGeneration(sessionId, generation),
