@@ -11,6 +11,7 @@ import {
   type ProviderSession,
   type RuntimeMode,
   type TurnId,
+  type TurnMcpServers,
 } from "@t3tools/contracts";
 import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
 import { isTemporaryWorktreeBranch, WORKTREE_BRANCH_PREFIX } from "@t3tools/shared/git";
@@ -526,6 +527,7 @@ const make = Effect.gen(function* () {
       readonly modelSelection?: ModelSelection;
       readonly pendingTurnStart?: boolean;
       readonly outputSchema?: unknown;
+      readonly mcpServers?: TurnMcpServers;
     },
   ) {
     const thread = yield* resolveThread(threadId);
@@ -679,6 +681,7 @@ const make = Effect.gen(function* () {
           ...(input?.resumeCursor !== undefined ? { resumeCursor: input.resumeCursor } : {}),
           runtimeMode: desiredRuntimeMode,
           ...(options?.outputSchema !== undefined ? { outputSchema: options.outputSchema } : {}),
+          ...(options?.mcpServers !== undefined ? { mcpServers: options.mcpServers } : {}),
         })
         .pipe(Effect.tap(() => refreshWorkspaceSnapshot));
 
@@ -791,6 +794,7 @@ const make = Effect.gen(function* () {
     readonly modelSelection?: ModelSelection;
     readonly interactionMode?: "default" | "plan";
     readonly outputSchema?: unknown;
+    readonly mcpServers?: TurnMcpServers;
     readonly createdAt: string;
   }) {
     const thread = yield* resolveThread(input.threadId);
@@ -805,6 +809,9 @@ const make = Effect.gen(function* () {
       // The session that starts for this turn is created with the turn's output
       // contract: Claude's SDK fixes `outputFormat` when the query is built.
       ...(input.outputSchema !== undefined ? { outputSchema: input.outputSchema } : {}),
+      // Same reason for the turn's MCP servers: both providers fix their MCP
+      // configuration when the session process is created.
+      ...(input.mcpServers !== undefined ? { mcpServers: input.mcpServers } : {}),
     });
     if (input.modelSelection !== undefined) {
       threadModelSelections.set(input.threadId, input.modelSelection);
@@ -846,6 +853,7 @@ const make = Effect.gen(function* () {
       ...(modelForTurn !== undefined ? { modelSelection: modelForTurn } : {}),
       ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
       ...(input.outputSchema !== undefined ? { outputSchema: input.outputSchema } : {}),
+      ...(input.mcpServers !== undefined ? { mcpServers: input.mcpServers } : {}),
     };
   });
 
@@ -1237,6 +1245,9 @@ const make = Effect.gen(function* () {
       interactionMode: event.payload.interactionMode,
       ...(event.payload.outputSchema !== undefined
         ? { outputSchema: event.payload.outputSchema }
+        : {}),
+      ...(event.payload.mcpServers !== undefined
+        ? { mcpServers: event.payload.mcpServers }
         : {}),
       createdAt: event.payload.createdAt,
     }).pipe(

@@ -60,22 +60,27 @@ The per-group `title` SHALL be preview-only metadata. `renderComposedPrompt` SHA
 
 ### Requirement: The run executes the composed bundle, bound by its digest
 
-`review.handoff.run` SHALL execute the ordered, grouped, verbatim `prompt` produced by `review.handoff.compose`. It SHALL NOT rebuild a mechanical bundle from raw dispositions. The run input SHALL carry the `ComposedHandoffBundle`. Before running, `verifyComposedBundle` SHALL recompute its `digest` and `prompt` from its `tasks`, and the handler SHALL confirm that the bundle names the active patchset. A failed verification or patchset mismatch SHALL return `status: "refused"` without invoking the coding agent. The run SHALL always execute as one turn on the review's T3 thread in full-access mode; there is no other engine to choose.
+`review.handoff.run` SHALL execute the ordered, grouped, verbatim `prompt` produced by `review.handoff.compose`, in the session's bound workspace. It SHALL NOT rebuild a mechanical bundle from raw dispositions. The run input SHALL carry the `ComposedHandoffBundle`. Before running, `verifyComposedBundle` SHALL recompute its `digest` and `prompt` from its `tasks`, and the handler SHALL confirm that the bundle names the active patchset. The composed work order SHALL be written to the session's context directory and the turn's prompt SHALL name that file; the asks' bodies and their anchored diff context SHALL NOT be embedded in the turn's prompt text. A failed verification or patchset mismatch SHALL return `status: "refused"` without invoking the coding agent. The run SHALL always execute as one turn on the review's T3 thread in full-access mode; there is no other engine to choose.
 
 #### Scenario: a reversed composition reaches the write turn reversed
 
 - **WHEN** the model reversed a two-ask bundle and the composed bundle is run
-- **THEN** the write turn receives the composed prompt in the reversed order, not the mechanical order
+- **THEN** the work-order file the turn is pointed at carries the composed order, not the mechanical order
 
 #### Scenario: a merged composition reaches the write turn as one task
 
 - **WHEN** the model merged two asks into one group and the composed bundle is run
-- **THEN** the write turn receives a single-task prompt carrying both asks' bodies
+- **THEN** the work-order file carries a single task holding both asks' bodies
 
 #### Scenario: a tampered or stale bundle is refused, never run
 
-- **WHEN** a run is handed a bundle whose prompt or a body was swapped after composition, or a bundle composed against a patchset that is no longer active
-- **THEN** the handler returns `status: "refused"` and the write turn is never invoked
+- **WHEN** a run is handed a bundle whose recomputed digest differs or whose patchset is not the active one
+- **THEN** the run returns `status: "refused"` and no coding agent turn is started
+
+#### Scenario: the turn runs where the session lives
+
+- **WHEN** a composed bundle is run
+- **THEN** the coding turn's working directory is the session's bound root and its commits land on the session's branch
 
 #### Scenario: the run is a T3 turn
 
@@ -139,4 +144,23 @@ The renderer SHALL surface the `review.handoff.run` outcome exactly as the comma
 
 - **WHEN** a run has been triggered and has not yet returned
 - **THEN** the surface shows a pending state until the outcome arrives
+
+### Requirement: A round's work order names the repository's check command when one is known
+
+The work order composed for a coding round SHALL carry, alongside its commit rule, an instruction to run the repository's discovered check command before committing, to commit only when it passes, and to state in the final message why it could not when it fails. The instruction SHALL name the command exactly as the project scout discovered it, bounded to a fixed size with an honest truncation marker beyond it. When the scout discovered no check command, the work order SHALL omit the instruction entirely rather than render it with an empty command. The review handoff's work order, which forbids git entirely, SHALL be unaffected.
+
+#### Scenario: The command is known
+
+- **WHEN** a round's work order is composed for a repository whose scout discovered `pnpm check`
+- **THEN** both the turn's prompt and the `work-order.md` file it names carry one instruction to run `pnpm check` before committing
+
+#### Scenario: The command is unknown
+
+- **WHEN** a round's work order is composed for a repository with no discovered check command
+- **THEN** neither the prompt nor the work-order file mentions a check command, and no placeholder is rendered
+
+#### Scenario: The review handoff is unchanged
+
+- **WHEN** a review handoff bundle is composed
+- **THEN** its work order still forbids git entirely and carries no check instruction
 

@@ -51,6 +51,11 @@ import {
   type TaskRunHandles,
   ThreadId,
   TurnId,
+  type TurnMcpServers,
+  SIDECAR_OWNED_MCP_SERVER_NAME,
+  collidingTurnMcpServerNames,
+  differingTurnMcpServerNames,
+  normalizeTurnMcpServers,
   type UserInputQuestion,
 } from "@t3tools/contracts";
 import {
@@ -323,6 +328,10 @@ interface ClaudeSessionContext {
    * SDK's `outputFormat` is a query-construction option with no in-session
    * setter, so the contract is fixed for the session's whole life. */
   readonly outputSchema: Record<string, unknown> | undefined;
+  /** The caller-supplied MCP servers this session's `query()` was constructed
+   * with, if any. `mcpServers` is a query-construction option too, with the
+   * same consequence for a later turn that asks for a different set. */
+  readonly mcpServers: TurnMcpServers | undefined;
   lastKnownContextWindow: number | undefined;
   lastKnownTokenUsage: ThreadTokenUsageSnapshot | undefined;
   lastKnownTotalProcessedTokens: number | undefined;
@@ -4428,6 +4437,74 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         serverConfig.attachmentsDir,
       ];
       const sessionOutputSchema = asJsonSchemaRecord(input.outputSchema);
+      // The caller's servers ride alongside whatever `McpProviderSession` holds
+      // for this thread, and T3's own name is written LAST so it wins a
+      // collision — a caller cannot take the `t3-code` name off T3's server.
+      // `strictMcpConfig` is deliberately not set here or anywhere on this
+      // path: the user's own configured servers keep merging in.
+      //
+      // Every credential here is a `${VAR}` REFERENCE, the caller's and T3's
+      // own alike. The SDK serialises this whole option into one
+      // `--mcp-config <json>` argument, so a literal token would be on the
+      // child's argument list for anyone with `ps`; `claude` expands `${VAR}`
+      // from the child's own environment when it resolves an MCP header, so
+      // only the name travels. T3's own token therefore goes into the child
+      // environment under the same variable name the Codex leg uses.
+      const callerMcpServers = normalizeTurnMcpServers(input.mcpServers);
+      // A name T3 owns is refused, not silently dropped. Dropping it left the
+      // session storing one set and comparing another, so the very turn that
+      // opened the session was then rejected as a mismatch against itself.
+      const collidingNames = collidingTurnMcpServerNames(
+        callerMcpServers,
+        mcpSession ? [SIDECAR_OWNED_MCP_SERVER_NAME] : [],
+      );
+      if (collidingNames.length > 0) {
+        return yield* new ProviderAdapterRequestError({
+          provider: PROVIDER,
+          method: "thread.turn.start",
+          detail: `This turn supplies MCP servers under names this session already holds (${collidingNames.join(", ")}). Those names belong to T3's own tool server; give the servers different names.`,
+        });
+      }
+      const sidecarBearerTokenEnvVar = "T3_MCP_BEARER_TOKEN";
+      const mergedMcpServers: NonNullable<ClaudeQueryOptions["mcpServers"]> = {
+        ...(callerMcpServers
+          ? Object.fromEntries(
+              Object.entries(callerMcpServers).map(([name, server]) => [
+                name,
+                {
+                  type: "http" as const,
+                  url: server.url,
+                  ...(server.bearerTokenEnvVar
+                    ? {
+                        headers: {
+                          Authorization: `Bearer \${${server.bearerTokenEnvVar}}`,
+                        },
+                      }
+                    : {}),
+                },
+              ]),
+            )
+          : {}),
+        ...(mcpSession
+          ? {
+              [SIDECAR_OWNED_MCP_SERVER_NAME]: {
+                type: "http" as const,
+                url: mcpSession.endpoint,
+                headers: {
+                  Authorization: `Bearer \${${sidecarBearerTokenEnvVar}}`,
+                },
+              },
+            }
+          : {}),
+      };
+      // T3's own bearer reaches the child the same way a caller's does: by
+      // name, in the environment, never through the argument vector.
+      const sessionEnvironment = mcpSession
+        ? {
+            ...claudeEnvironment,
+            [sidecarBearerTokenEnvVar]: mcpSession.authorizationHeader.replace(/^Bearer\s+/, ""),
+          }
+        : claudeEnvironment;
       const queryOptions: ClaudeQueryOptions = {
         ...(input.cwd ? { cwd: input.cwd } : {}),
         ...(apiModelId ? { model: apiModelId } : {}),
@@ -4456,22 +4533,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         canUseTool,
         onUserDialog,
         supportedDialogKinds: ["resume_return"],
-        env: claudeEnvironment,
+        env: sessionEnvironment,
         additionalDirectories,
         ...(Object.keys(extraArgs).length > 0 ? { extraArgs } : {}),
-        ...(mcpSession
-          ? {
-              mcpServers: {
-                "t3-code": {
-                  type: "http",
-                  url: mcpSession.endpoint,
-                  headers: {
-                    Authorization: mcpSession.authorizationHeader,
-                  },
-                },
-              },
-            }
-          : {}),
+        ...(Object.keys(mergedMcpServers).length > 0 ? { mcpServers: mergedMcpServers } : {}),
       };
 
       yield* Effect.annotateCurrentSpan({
@@ -4554,6 +4619,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         liveTaskIds,
         turnState: undefined,
         outputSchema: sessionOutputSchema,
+        mcpServers: callerMcpServers,
         lastKnownContextWindow: initialContextWindow,
         lastKnownTokenUsage: undefined,
         lastKnownTotalProcessedTokens: undefined,
@@ -4660,6 +4726,22 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
             ? "This turn asks for structured output, but its Claude session was started without an output schema. The SDK fixes the structured-output contract when the query is created, so the session would have to be restarted."
             : "This turn's output schema differs from the one its Claude session was started with. The SDK fixes the structured-output contract when the query is created, so the session would have to be restarted.",
       });
+    }
+    // Same story for the session's MCP servers: `mcpServers` is fixed when the
+    // query is built, so a turn asking for a set this session cannot serve is
+    // refused with the names it disagrees on rather than run against the wrong
+    // tools. A turn that asks for nothing rides whatever the session holds,
+    // exactly as it does for the output schema.
+    const turnMcpServers = normalizeTurnMcpServers(input.mcpServers);
+    if (turnMcpServers !== undefined) {
+      const differingNames = differingTurnMcpServerNames(turnMcpServers, context.mcpServers);
+      if (differingNames.length > 0) {
+        return yield* new ProviderAdapterRequestError({
+          provider: PROVIDER,
+          method: "thread.turn.start",
+          detail: `This turn asks for MCP servers its Claude session was not started with, or with different settings for (${differingNames.join(", ")}). The SDK fixes the MCP server set when the query is created, so the session would have to be restarted.`,
+        });
+      }
     }
     const modelCatalog = yield* modelCatalogEffect;
     const selectedModel =

@@ -1584,6 +1584,56 @@ routing.layer("ProviderServiceLive routing", (it) => {
     }),
   );
 
+  it.effect("recovers a stale claudeAgent session on the turn's own MCP servers", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const mcpServers = {
+        board: {
+          url: "http://127.0.0.1:7391/board/design",
+          bearerTokenEnvVar: "RENNET_BOARD_TOKEN",
+        },
+      };
+
+      const initial = yield* provider.startSession(asThreadId("thread-claude-mcp-recover"), {
+        provider: ProviderDriverKind.make("claudeAgent"),
+        providerInstanceId: claudeAgentInstanceId,
+        threadId: asThreadId("thread-claude-mcp-recover"),
+        cwd: "/tmp/project-claude-mcp-recover",
+        runtimeMode: "full-access",
+        mcpServers,
+      });
+
+      // Same story as the output schema above: every provider fixes its MCP
+      // configuration when the session process is created, so a recovery that
+      // dropped the servers would leave the next turn refused against a set the
+      // recovered session was never given. This is also the only test that
+      // crosses `ProviderSendTurnInput`, which is re-decoded here and strips any
+      // key it does not declare.
+      yield* routing.claude.stopAll();
+      routing.claude.startSession.mockClear();
+      routing.claude.sendTurn.mockClear();
+
+      yield* provider.sendTurn({
+        threadId: initial.threadId,
+        input: "second turn, same servers",
+        attachments: [],
+        mcpServers,
+      });
+
+      assert.equal(routing.claude.startSession.mock.calls.length, 1);
+      const resumedStartInput = routing.claude.startSession.mock.calls[0]?.[0];
+      assert.deepEqual(
+        (resumedStartInput as { mcpServers?: unknown } | undefined)?.mcpServers,
+        mcpServers,
+      );
+      assert.equal(routing.claude.sendTurn.mock.calls.length, 1);
+      // And the turn itself still carries them, which is what the adapter
+      // compares against the session it just recovered.
+      const sentTurn = routing.claude.sendTurn.mock.calls[0]?.[0];
+      assert.deepEqual((sentTurn as { mcpServers?: unknown } | undefined)?.mcpServers, mcpServers);
+    }),
+  );
+
   it.effect("lists no sessions after adapter runtime clears", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService.ProviderService;
