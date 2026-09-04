@@ -110,6 +110,25 @@ export interface DispatchDeps {
    */
   readonly purgeSessionContext?: (sessionId: string) => void;
   /**
+   * The session id a REVIEW's context files are keyed on — the same key
+   * `purgeSessionContext` above is called with, resolved by the composition root from the
+   * session store (`sessionIdForReview`).
+   *
+   * One key, or the two ends disagree (review finding 1): the handoff work order used to
+   * be written under `review.id` while the archive purged the session id, so a live
+   * review's work order was never purged at archive and the daemon-start sweep deleted it
+   * as an orphan. Absent ⇒ no session store is wired (a hermetic `createServer` in a
+   * test), and the review id keys BOTH ends consistently.
+   */
+  readonly reviewContextSessionId?: (review: Review) => string;
+  /**
+   * Hold a session's context files for the life of one turn, releasing with the returned
+   * callback (review finding 2). An archive that lands while a lease is held DEFERS its
+   * purge to the last release, so the handoff run cannot have the work order it is reading
+   * deleted underneath it. Absent ⇒ nothing purges in this composition, so nothing to hold.
+   */
+  readonly holdSessionContext?: (sessionId: string) => () => void;
+  /**
    * Push-token registry for `device.registerPush` (issue #383 M1). Present only when the
    * daemon wired the attention system; a connection's authenticated `ctx.deviceId` keys the
    * token. Absent ⇒ the command is unreachable (the daemon never advertised `attention`, so
@@ -196,6 +215,18 @@ export interface DispatchDeps {
    * for tests; defaults to `node:fs` existsSync.
    */
   repositoryExists?(root: string): boolean;
+  /**
+   * Read one file's text at a git object id (`git show <oid>:<path>`), or `null` when the
+   * repository, the object or the path is gone. An immutable read of the reviewed content,
+   * NOT the working tree — `patchset.readSpan` uses it for the lines a truncated capture
+   * cut short, so a citation lint accepts still opens. Absent ⇒ the reader answers with its
+   * honest truncation caption instead. Never throws into the command.
+   */
+  readonly readBlobAtOid?: (input: {
+    root: string;
+    oid: string;
+    path: string;
+  }) => Promise<string | null>;
   isRepositoryDirty(): boolean;
   setRepositoryDirty(dirty: boolean): void;
   /**
@@ -256,7 +287,8 @@ export interface DispatchDeps {
    */
   readonly composeBundle?: (input: {
     bundle: HandoffBundle;
-    repoRoot: string;
+    review: Review;
+    contextDir: string;
   }) => Promise<ComposedHandoffBundle>;
   /**
    * The front door (issue #29): the persisted projects list and the read-only

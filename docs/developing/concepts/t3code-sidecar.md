@@ -204,7 +204,18 @@ Three things follow from the thread being persistent.
   executor — measures the prompt it actually sends for inline context (every JSON
   literal and fenced block, summed) and stamps the total on the turn metric beside its
   tokens when it is over 2,048 bytes, so a payload that crept back into a prompt is
-  visible in the same sink as the spend it caused.
+  visible in the same sink as the spend it caused. The scan crosses newlines, so a
+  pretty-printed `JSON.stringify(value, null, 2)` payload — the shape the harness rules
+  forbid — is measured in full rather than summing to nothing; a `{` in prose that never
+  closes is abandoned at its opener and the scan resumes, so it cannot swallow the
+  literal after it. The measurement reaches the metric even when the turn THREW after its
+  prompt was sent: those tokens are spent and there is no frame to read, which is exactly
+  when recording nothing would hide the spend. The one-off utility turns behind a command
+  — the delta digest, refine-comment, PR-body, review-opener and handoff-compose seats —
+  drive `codex exec` rather than a session; their executor is wrapped once at composition
+  so each of those sends records a `TurnMetric` too, labelled with its job. They belong to
+  no generation, so that metric lands in the daemon log rather than a durable `usage`
+  record.
 - **The output schema is the turn's contract, once.** `startTurn` takes an `outputSchema`
   and T3 attaches it to the turn; it is never restated in prompt text. A settled turn's
   structured result, duration, usage and cost come back on a `turn.settled` activity the
@@ -466,7 +477,8 @@ as a file under `<bound root>/.rennet/context/<sessionId>/`, and the prompt name
 the agent reads what it decides it needs with its own tools, the way it reads the checkout.
 `packages/server/src/context-files.ts` is the only writer and the only purge. Each write
 puts a `README.md` in that directory listing every file, what it holds and when to read it,
-stamps an `.owner` file naming the data dir of the daemon that wrote it, and ensures
+stamps an `.owner` file naming the *incarnation* of the daemon that wrote it — its data
+dir, its pid and its start time — and ensures
 `context/` is in the repository's Rennet-managed `.rennet/.gitignore` block before the first
 file lands — so a round committing in the reviewer's own checkout cannot stage it. The block
 is composed at the repository's *own* recorded visibility, so ensuring it never re-ignores
@@ -478,16 +490,23 @@ The purge is at archive, not at settle: a reopened transcript or a resumed round
 its files. Four callers remove a directory, and nothing else does.
 
 - `session.archive` purges beside the thread sweep, on the same deletion boundary — unless a
-  round is in flight for that session, in which case the purge is deferred, because archive
-  awaits the session's *preparation* and nothing tracks a round, so an immediate purge would
-  delete the directory the round's next turn reads.
-- The round's `sweepIfArchived` re-sweep purges on its way out, both for a round that wrote
-  context after an archive had already passed and for the deferral above.
-- A daemon start sweeps context directories **it owns** — matched on the `.owner` stamp,
-  because a second daemon over the same repository (a dev daemon beside the packaged app,
-  any isolated data dir) has its own session store in which every one of the first daemon's
-  live sessions is absent, and would otherwise delete them mid-turn. An unknown owner is
-  left, with a log line. Of the directories it owns it removes those whose id is absent from
+  turn holds a **lease** on that session, in which case the purge is remembered and the last
+  release performs it. Archive awaits the session's *preparation* and nothing else, so
+  without the lease an archive landing mid-turn deletes the directory the seat is reading.
+  Every context-consuming turn holds one for its whole life: the round, the opener, the
+  PR-body draft, compose, the handoff run, verification, refine, CI classification, noise,
+  the scout and related-context retrieval.
+- The round's `sweepIfArchived` re-sweep purges on its way out, for a round that wrote
+  context after an archive had already passed.
+- A daemon start sweeps context directories **it owns** — matched on the `.owner`
+  incarnation, because a second daemon over the same repository (a dev daemon beside the
+  packaged app, any isolated data dir) has its own session store in which every one of the
+  first daemon's live sessions is absent, and would otherwise delete them mid-turn. The data
+  dir alone was not enough, since two daemons can share one and then each reads the other's
+  live directories as its own; a directory is reclaimed only when it carries this exact
+  incarnation, or a **provably dead** one of this data dir (its pid resolves to no running
+  process). Another data dir's, a live sibling's and an unparseable stamp are all left, with
+  a log line. Of the directories it owns it removes those whose id is absent from
   the store's **raw persisted ids** — not the parsed list, since a record that will not parse
   is skipped by `list()` and reading that silence as "the session is gone" deletes live
   files — and those whose session the store already marks archived, which is what a crash
@@ -515,7 +534,9 @@ path, for a seat whose `cwd` is already the repository root, at 706 bytes.
 
 Related-context retrieval is the same shape with the same lifecycle: its candidate dossier is
 a run-scoped file under the review's session context directory, and the enrichment prompt
-names that absolute path and the item count instead of carrying the items (27,543 → 414 bytes
+names that path — relative to the repository root, which *is* the seat's `cwd`, because an
+absolute daemon-locus path is unopenable from a WSL seat inside the distro — and the item
+count instead of carrying the items (27,543 → 414 bytes
 on the frozen PR #514 fixture). It is written run-scoped and under the session rather than as
 a `candidates.json` in the global dossier store, so a concurrent open of the same target
 cannot overwrite the file the first seat is mid-read of, and so the archive purge covers it if
@@ -523,9 +544,13 @@ the turn never returns; the kick discards it as soon as the turn does. It is del
 `record.json`, because a readable record is what gates a refire and a candidate list is not a
 finished retrieval.
 
-The five review-side utility turns are the same shape, keyed on the review id — the id the
-sidecar already binds the review's thread under. Each writes immediately before it sends, and
-each names only what it wrote: the **review opener** writes `opener/boards/<lens>.json`,
+The five review-side utility turns are the same shape, keyed — like every other context
+write — on the **session id**, which is the id `session.archive` purges and the id the
+daemon-start sweep knows. They used to be keyed on the review id instead, which meant an
+archived review's work order was never purged and a *live* review's was deleted as an orphan
+at the next start. Each writes through `writeReviewContext`, takes the directory that write
+returns rather than deriving one, writes immediately before it sends, and names only what it
+wrote: the **review opener** writes `opener/boards/<lens>.json`,
 `opener/asks.json`, `opener/dispositions.json`, `opener/review-facts.json` and
 `opener/voice-rules.md` (the voice rules travel as a file because they live inside the
 installed `@rennet/prompts` bundle, which the seat's `cwd` cannot reach); the **PR-body
@@ -533,7 +558,15 @@ drafter** writes `pr-body/narration.json`, `pr-body/dispositions.json`,
 `pr-body/requirements.json` and `pr-body/decisions.json`, and writes only the ones the input
 actually carries, so the prompt still never invites an invented section; **handoff compose**
 writes `compose/asks.json` and gets back a partition over the ids in it; the **handoff run**
-writes `work-order.md`; the **delta digest** writes `digest-input.json`. Measured on the
+writes `work-order.md`; the **delta digest** writes `digest-input.json`.
+
+Board drafting writes one more before the first seat turn: `pr.md`, the reviewed pull
+request's own title and description, for a review that has a post target and a capture that
+recorded one. The Design seat is told the pull request body is its strongest clue to which
+specification the branch was written against, and a PR-snapshot review drafts in a detached
+worktree where `gh pr view` has no branch to resolve — so the clue the prompt calls strongest
+was the one it could not reach. A working-tree capture, and a PR whose author wrote nothing,
+write no file rather than an empty one. Measured on the
 packages' own fixtures at branch scale — 40 asks, 40 beyond-ask hunks, four boards — the five
 prompts go 10,623 → 1,253, 7,222 → 1,600, 8,582 → 1,237, 15,598 → 771 and 6,250 → 1,035
 bytes. Every one of them is now **constant in the material**: the enumeration caps those

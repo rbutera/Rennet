@@ -11,9 +11,8 @@ import {
   reviewOpenerContextFiles,
   reviewOpenerSourceId,
 } from "@rennet/core";
-import { REVIEW_DRAFT_VOICE_FILE } from "@rennet/prompts";
+import { type PromptContextFile, REVIEW_DRAFT_VOICE_FILE } from "@rennet/prompts";
 import type { CouncilHarnessId, Review } from "@rennet/protocol";
-import { writeSessionContext } from "./context-files";
 
 const REVIEW_OPENER_JOB_ID = "publish-comment-prose";
 
@@ -62,6 +61,7 @@ export function codexReviewOpenerPort(
         prompt,
         cwd,
         outputSchema: REVIEW_OPENER_OUTPUT_SCHEMA,
+        label: "review-opener",
       });
       return { ...emittedOpener(result.output), ...(result.model ? { model: result.model } : {}) };
     } catch (error) {
@@ -147,6 +147,13 @@ export interface LiveReviewOpenerDeps {
   codexExecutor(repoRoot: string): Promise<CodexExecutor | null>;
   readPrompt(file: string): string | Promise<string>;
   readonly store: PublishCompositionStore;
+  /**
+   * The ONE session-context writer, bound to the review's session id by the composition
+   * root (`writeReviewContext`). Returns the directory it wrote into, relative to the
+   * bound root — the prompt names THAT, never a dir re-derived from a review id, so the
+   * files the turn is pointed at are the files `session.archive` purges (review finding 1).
+   */
+  writeContext(review: Review, files: readonly PromptContextFile[]): string;
 }
 
 export function createLiveReviewOpenerPort(
@@ -230,12 +237,11 @@ export function createLiveReviewOpenerPort(
         // The boards, the asks, the dismissals and the voice rules go to disk under the
         // repo root the seat runs in, BEFORE the turn starts (session-context-files). The
         // prompt then names them by relative path and the seat reads what it needs.
-        writeSessionContext(
-          input.review.repositoryRoot,
-          input.review.id,
+        const contextDir = deps.writeContext(
+          input.review,
           reviewOpenerContextFiles(input.draft, await readVoiceRules()),
         );
-        const drafted = await draftReviewOpener(input.review.id, port, resolution.model);
+        const drafted = await draftReviewOpener(contextDir, port, resolution.model);
         if (drafted.status !== "drafted") return drafted;
 
         const stored = deps.store.saveReviewOpener({

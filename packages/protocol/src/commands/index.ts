@@ -627,6 +627,14 @@ const definitions = {
       /** A few lines either side of the span, for orientation. */
       contextBefore: z.array(z.string()),
       contextAfter: z.array(z.string()),
+      /**
+       * An honest sentence about what the reader could NOT serve, shown in place of the
+       * code. Present only when the capture was truncated across the cited span and the
+       * reviewed tree could not be read either — a citation the board's own lint ACCEPTS
+       * (a truncated file's tail region is open-ended on purpose), so refusing it would
+       * make a valid citation read as a bad one. Absent on every served span.
+       */
+      caption: z.string().optional(),
     }),
   },
   "board.read": {

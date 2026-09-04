@@ -9,10 +9,12 @@ import {
   type HarnessEvent,
   type HarnessPort,
   type ReviewOpenerDraftInput,
+  sessionContextRelativeDir,
 } from "@rennet/core";
+import type { PromptContextFile } from "@rennet/prompts";
 import type { Patchset, Review } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
-import { sessionContextDir } from "./context-files";
+import { sessionContextDir, writeSessionContext } from "./context-files";
 import {
   claudeReviewOpenerPort,
   createLiveReviewOpenerPort,
@@ -28,9 +30,19 @@ function repoRoot(): string {
   return mkdtempSync(join(tmpdir(), "rennet-opener-repo-"));
 }
 
+// The daemon's ONE context writer as this port sees it, keyed on the SESSION id — which
+// is DELIBERATELY NOT the review id (`review-1`). A port that re-derived its directory
+// from `review.id` would write, and point the seat, somewhere no assertion below looks
+// (review finding 1).
+const SESSION_ID = "sess-opener-7";
+const recordContext = (review: Review, files: readonly PromptContextFile[]): string => {
+  writeSessionContext(review.repositoryRoot, SESSION_ID, files);
+  return sessionContextRelativeDir(SESSION_ID);
+};
+
 /** Read one of the files the port wrote for this review. */
 function contextFile(root: string, name: string): string {
-  return readFileSync(join(sessionContextDir(root, "review-1"), name), "utf8");
+  return readFileSync(join(sessionContextDir(root, SESSION_ID), name), "utf8");
 }
 
 function review(root: string): Review {
@@ -176,6 +188,7 @@ describe("createLiveReviewOpenerPort", () => {
     let firstCalls = 0;
     let seenRequest: CodexExecRequest | undefined;
     const first = createLiveReviewOpenerPort({
+      writeContext: recordContext,
       claudePort: async () => null,
       codexExecutor: async () =>
         executorReturning("The retry path still needs outcome reconciliation.", (request) => {
@@ -198,8 +211,9 @@ describe("createLiveReviewOpenerPort", () => {
     // The turn runs in the checkout, so a relative path in the prompt resolves.
     expect(seenRequest?.cwd).toBe(root);
     // The prompt NAMES the files; not one fact travels with it (3.7).
-    expect(seenRequest?.prompt).toContain(".rennet/context/review-1/opener/review-facts.json");
-    expect(seenRequest?.prompt).toContain(".rennet/context/review-1/opener/asks.json");
+    expect(seenRequest?.prompt).toContain(".rennet/context/sess-opener-7/opener/review-facts.json");
+    expect(seenRequest?.prompt).not.toContain(".rennet/context/review-1/");
+    expect(seenRequest?.prompt).toContain(".rennet/context/sess-opener-7/opener/asks.json");
     expect(seenRequest?.prompt).not.toContain("REQUEST_CHANGES");
     expect(seenRequest?.prompt).not.toContain("Reconcile the outcome before retrying.");
     expect(seenRequest?.prompt).not.toContain("Write in the reviewer's own voice.");
@@ -217,6 +231,7 @@ describe("createLiveReviewOpenerPort", () => {
 
     let restartedCalls = 0;
     const restarted = createLiveReviewOpenerPort({
+      writeContext: recordContext,
       claudePort: async () => null,
       codexExecutor: async () => {
         restartedCalls += 1;
@@ -235,6 +250,7 @@ describe("createLiveReviewOpenerPort", () => {
     const root = repoRoot();
     let calls = 0;
     const live = createLiveReviewOpenerPort({
+      writeContext: recordContext,
       claudePort: async () => null,
       codexExecutor: async () => async (request) => {
         calls += 1;
@@ -258,6 +274,7 @@ describe("createLiveReviewOpenerPort", () => {
 
   it("routes a Claude-only machine and records the actual runtime model", async () => {
     const live = createLiveReviewOpenerPort({
+      writeContext: recordContext,
       claudePort: async () =>
         harnessClaudePort([
           started("claude-haiku-runtime"),
@@ -276,6 +293,7 @@ describe("createLiveReviewOpenerPort", () => {
 
   it("returns honest unavailable and empty-output failures without persisting prose", async () => {
     const unavailable = createLiveReviewOpenerPort({
+      writeContext: recordContext,
       claudePort: async () => null,
       codexExecutor: async () => null,
       readPrompt: async () => "voice",
@@ -286,6 +304,7 @@ describe("createLiveReviewOpenerPort", () => {
     ).resolves.toMatchObject({ status: "unavailable" });
 
     const empty = createLiveReviewOpenerPort({
+      writeContext: recordContext,
       claudePort: async () => null,
       codexExecutor: async () => executorReturning("   "),
       readPrompt: async () => "voice",
@@ -301,6 +320,7 @@ describe("createLiveReviewOpenerPort", () => {
   it("evicts a rejected voice prompt read so the next held-open retry can draft", async () => {
     let promptReads = 0;
     const live = createLiveReviewOpenerPort({
+      writeContext: recordContext,
       claudePort: async () => null,
       codexExecutor: async () => executorReturning("The second attempt can draft."),
       readPrompt: async () => {

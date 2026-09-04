@@ -10,8 +10,13 @@ import {
   providerHarness,
   resolveAssignment,
 } from "@rennet/core";
-import type { ComposedHandoffBundle, CouncilHarnessId, HandoffBundle } from "@rennet/protocol";
-import { writeSessionContext } from "./context-files";
+import type { PromptContextFile } from "@rennet/prompts";
+import type {
+  ComposedHandoffBundle,
+  CouncilHarnessId,
+  HandoffBundle,
+  Review,
+} from "@rennet/protocol";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // review.handoff.compose — the LIVE producer (issue #72, Model Council job M24).
@@ -120,6 +125,7 @@ export function codexComposePort(
         prompt,
         cwd,
         outputSchema: COMPOSE_OUTPUT_SCHEMA,
+        label: "handoff-compose",
       });
       return mapComposeOutput(result.output);
     } catch (error) {
@@ -187,13 +193,30 @@ export interface LiveComposeDeps {
   /** The Codex executor resolved to the absolute binary, or null when no `codex`.
    *  Receives the reviewed repo root (#334) so a WSL project resolves the distro seat. */
   codexExecutor(repoRoot: string): Promise<CodexExecutor | null>;
+  /**
+   * The ONE session-context writer, bound to the review's session id by the composition
+   * root (`writeReviewContext`). Returns the directory it wrote into, relative to the
+   * bound root — the prompt names THAT, never a dir re-derived from a review id, so the
+   * files the turn is pointed at are the files `session.archive` purges (review finding 1).
+   */
+  writeContext(review: Review, files: readonly PromptContextFile[]): string;
 }
 
 /** The input to one compose call: the mechanical bundle + the reviewed repo root. */
 export interface LiveComposeInput {
   readonly bundle: HandoffBundle;
-  /** The reviewed repo root — the read-only Claude compose session's working directory. */
-  readonly repoRoot: string;
+  /**
+   * The review being composed for. It carries the repo root the read-only compose session
+   * runs in AND the identity the context writer keys on — a bare `repoRoot` could not
+   * answer which review's session directory this turn's notes belong to.
+   */
+  readonly review: Review;
+  /**
+   * The session's context directory, relative and `/`-separated, as the dispatch resolved
+   * it from the SAME key the writer uses. The composed bundle's executable prompt names
+   * `<contextDir>/work-order.md`, and `verifyComposedBundle` recomputes against it.
+   */
+  readonly contextDir: string;
 }
 
 /**
@@ -206,7 +229,8 @@ export interface LiveComposeInput {
 export function createLiveComposeBundle(
   deps: LiveComposeDeps,
 ): (input: LiveComposeInput) => Promise<ComposedHandoffBundle> {
-  return async ({ bundle, repoRoot }) => {
+  return async ({ bundle, review, contextDir }) => {
+    const repoRoot = review.repositoryRoot;
     let port: ComposePort | null = null;
     // F3: a seat probe that REJECTS (e.g. codex discovery throws) must not reject the
     // whole IPC command — it sits OUTSIDE the core router's fallback boundary. Catch it
@@ -236,14 +260,12 @@ export function createLiveComposeBundle(
     // (session-context-files); the prompt names the file and the turn answers with a
     // partition over the ids in it. Written even when no seat is installed: the write is
     // cheap, and a seat that appears between the probe and the turn still finds its notes.
-    writeSessionContext(repoRoot, bundle.reviewId, [
-      composeAsksContextFile(asksFromBundle(bundle)),
-    ]);
+    deps.writeContext(review, [composeAsksContextFile(asksFromBundle(bundle))]);
     // No seat (or a probe rejected): compose with an unavailable port so the core
     // router returns the deterministic mechanical floor (a real, complete bundle).
     const composePort: ComposePort =
       port ??
       (() => Promise.resolve({ status: "unavailable", reason: "no compose seat installed" }));
-    return composeHandoffBundle(bundle, composePort);
+    return composeHandoffBundle(bundle, composePort, contextDir);
   };
 }

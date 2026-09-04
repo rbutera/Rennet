@@ -199,7 +199,13 @@ export function codexRefinePort(
 ): RefinePort {
   return async (prompt) => {
     try {
-      const result = await executor({ model, effort, prompt, outputSchema: REFINE_OUTPUT_SCHEMA });
+      const result = await executor({
+        model,
+        effort,
+        prompt,
+        outputSchema: REFINE_OUTPUT_SCHEMA,
+        label: "refine-comment",
+      });
       return mapRefineOutput(result.output);
     } catch (error) {
       return { status: "failed", reason: `the refine turn failed: ${describeThrow(error)}` };
