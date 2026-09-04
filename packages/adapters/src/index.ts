@@ -305,6 +305,7 @@ export {
   type VersionRange,
   wslDiscoveryDeps,
 } from "./harness-discovery";
+export { readKiroSpec, selectedKiroFeatureName } from "./kiro-spec-reader";
 export {
   activePatchset,
   type BuildReviewContextManifestDeps,
