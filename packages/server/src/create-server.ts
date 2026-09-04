@@ -9,8 +9,6 @@ import { randomUUID } from "node:crypto";
 import {
   existsSync,
   constants as fsConstants,
-  mkdirSync,
-  readdirSync,
   readFileSync,
   realpathSync,
   writeFileSync,
