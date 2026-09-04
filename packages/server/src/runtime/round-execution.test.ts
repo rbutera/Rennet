@@ -947,6 +947,81 @@ describe("createRoundExecutionCoordinator", () => {
     expect(test.calls).not.toContain("plan-gate");
   });
 
+  // The shape every real round took while the round carried the review handoff's "do NOT
+  // commit" rule: the turn edits, commits nothing, and the round has no result. The reason
+  // is the only thing the reviewer sees, and "worker diff and observed commit range
+  // disagree" named neither which side was empty nor what to do about it.
+  it("names an edited-but-uncommitted turn instead of reporting a disagreement", async () => {
+    const test = scenario({ commitCount: 0 });
+    const failed = await createRoundExecutionCoordinator({
+      store: test.store,
+      ports: test.ports,
+    }).submit(operation());
+
+    expect(failed.state.phase).toBe("failed");
+    if (failed.state.phase !== "failed") throw new Error("expected a failed round");
+    expect(failed.state.failure.at).toBe("committing");
+    expect(failed.state.failure.reason).toBe(
+      "the turn changed 1 file but left no commit on head-before; a round's commits are its result and nothing stages them for you",
+    );
+  });
+
+  // The mirror image, and the reason it is a separate sentence: commits with no reported
+  // edits is a different problem from edits with no commits.
+  it("names the commits a turn that reported nothing nonetheless left", async () => {
+    const worker = {
+      executionId: "worker-1",
+      startedAt: 13,
+      completedAt: 14,
+      outcome: "completed",
+      diff: "",
+      changedPaths: [],
+    } satisfies RoundWorkerReceipt;
+    const test = scenario({ commitCount: 2, worker });
+    const failed = await createRoundExecutionCoordinator({
+      store: test.store,
+      ports: test.ports,
+    }).submit(operation());
+
+    if (failed.state.phase !== "failed") throw new Error("expected a failed round");
+    expect(failed.state.failure.reason).toContain("reported no changes but head-before..");
+    expect(failed.state.failure.reason).toContain("carries 2 commits");
+  });
+
+  // A retry re-runs from the SAME `sourceHead`, so a failed attempt's commits are still in
+  // the range the retry observes and would be counted as its work. The reviewer is the one
+  // who resolves that — Rennet does not rewrite their branch — so the reason has to say so.
+  it("names the commits a failed worker already left, because a retry would adopt them", async () => {
+    const worker = {
+      executionId: "worker-1",
+      startedAt: 13,
+      completedAt: 14,
+      outcome: "failed",
+      termination: { kind: "signal", signal: "SIGTERM" },
+      diff: "partial diff",
+      changedPaths: ["partial.ts"],
+    } satisfies RoundWorkerReceipt;
+    const test = scenario({ worker });
+    const failed = await createRoundExecutionCoordinator({
+      store: test.store,
+      ports: { ...test.ports, observeCommits: async () => "head-after-partial" },
+    }).submit(operation());
+
+    if (failed.state.phase !== "failed") throw new Error("expected a failed worker round");
+    expect(failed.state.failure.reason).toContain("worker stopped by signal SIGTERM");
+    expect(failed.state.failure.reason).toContain("head-before..head-after-partial");
+
+    // Control: an attempt that left the head where it started gets no note, so the sentence
+    // cannot be a constant that reads as evidence.
+    const still = scenario({ worker });
+    const clean = await createRoundExecutionCoordinator({
+      store: still.store,
+      ports: { ...still.ports, observeCommits: async () => "head-before" },
+    }).submit(operation());
+    if (clean.state.phase !== "failed") throw new Error("expected a failed worker round");
+    expect(clean.state.failure.reason).toBe("worker stopped by signal SIGTERM");
+  });
+
   it.each([
     {
       name: "passes a configured gate from its real zero exit receipt",

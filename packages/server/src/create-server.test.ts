@@ -792,11 +792,13 @@ describe("the round runs in the session's bound root", () => {
       operation: running,
       attempt: workerAttempt,
     });
-    // The checkpoint search is scoped to THIS attempt, so an earlier round's checkpoint on
-    // the same thread cannot be read as this round's work.
+    // The search is scoped by the round's OWN PROMPT and by this attempt's start, because
+    // the thread is shared with the interactive handoff: neither an earlier round's turn
+    // nor somebody else's handoff may be read as this round's work.
     expect(readCheckpoint).toHaveBeenCalledWith({
       repoRoot: "/bound",
       reviewId: "review-1",
+      prompt: "apply the round",
       since: 900,
     });
     expect(settled.outcome).toBe("completed");

@@ -1146,7 +1146,7 @@ if (RACE_ROLE !== undefined) {
 // driving anything, so ONE pre-upgrade row would stop every other session recovering,
 // and `read` would throw for that session on every dispatch thereafter — forever.
 describe("rows written before the workspace binding", () => {
-  const legacyEnvelope = (sessionId: string) =>
+  const legacyEnvelope = (sessionId: string, phase = "source-landed") =>
     JSON.stringify({
       version: 1,
       operation: {
@@ -1168,7 +1168,7 @@ describe("rows written before the workspace binding", () => {
         updatedAt: 1,
         // The pre-binding shapes, exactly: a detached worktree receipt and a landing.
         state: {
-          phase: "source-landed",
+          phase,
           workspace: {
             kind: "detached-worktree",
             worktreePath: "/data/round-worktrees/abc",
@@ -1209,14 +1209,17 @@ describe("rows written before the workspace binding", () => {
       },
     });
 
-  function storeWithLegacyRow(): { store: RoundOperationStore; warnings: string[] } {
+  function storeWithLegacyRow(phase?: string): {
+    store: RoundOperationStore;
+    warnings: string[];
+  } {
     const dir = tempStoreDir();
     new RoundOperationStore(dir).close();
     insertStoredEnvelope(dir, {
       sessionId: "session-legacy",
       operationId: "operation-legacy",
       revision: 0,
-      envelopeJson: legacyEnvelope("session-legacy"),
+      envelopeJson: legacyEnvelope("session-legacy", phase),
     });
     const warnings: string[] = [];
     return { store: new RoundOperationStore(dir, (m) => warnings.push(m)), warnings };
@@ -1232,6 +1235,17 @@ describe("rows written before the workspace binding", () => {
     expect(warnings).toHaveLength(1);
     const fresh = operation({ sessionId: "session-legacy", operationId: "operation-fresh" });
     expect(store.claimIfIdle(fresh).operationId).toBe("operation-fresh");
+    store.close();
+  });
+
+  // `drainTerminal` RETAINS a completed row, so after an upgrade the row most sessions
+  // carry is a finished one, not a mid-round one. It is dropped the same way — and it has
+  // to be, because the version stamp is read BEFORE any phase is, which is the whole point:
+  // the drop cannot be keyed on a phase name this build happens to have deleted.
+  it("drops a retained completed row from before the binding too", () => {
+    const { store, warnings } = storeWithLegacyRow("completed");
+    expect(store.read("session-legacy")).toBeUndefined();
+    expect(warnings.join("\n")).toContain("store version 1");
     store.close();
   });
 
