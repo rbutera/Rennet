@@ -79,29 +79,52 @@ const CONTEXT_MD = `# Glossary
   _Avoid_: diff, changeset
 `;
 
+const CONTEXT_MAP_MD = `# System context map
+
+## Contexts
+
+- [Ordering](src/ordering/CONTEXT.md) - Receives and tracks orders
+- [Billing](src/billing/CONTEXT.md)
+
+## Relationships
+
+- Ordering → Billing
+`;
+
 describe("selectedGrillDocPaths", () => {
-  it("splits changed paths into ADRs and CONTEXT docs, deterministically sorted", () => {
+  it("splits changed paths into ADRs, CONTEXT docs, and CONTEXT-MAP docs, deterministically sorted", () => {
     const selected = selectedGrillDocPaths([
       "docs/adr/0007-tree.md",
       "docs/adr/0002-base-ui.md",
       "docs/decisions/routing.md",
+      "src/ordering/docs/adr/0001-event-sourced.md",
       "packages/core/CONTEXT.md",
+      "CONTEXT-MAP.md",
       "src/other.ts",
       "docs/adr/README.md",
     ]);
+    // Context-local ADRs (any-depth `docs/adr/`) are recognised alongside the root's.
     expect(selected.adrs).toEqual([
       "docs/adr/0002-base-ui.md",
       "docs/adr/0007-tree.md",
       "docs/adr/README.md",
       "docs/decisions/routing.md",
+      "src/ordering/docs/adr/0001-event-sourced.md",
     ]);
     expect(selected.contextDocs).toEqual(["packages/core/CONTEXT.md"]);
+    expect(selected.contextMaps).toEqual(["CONTEXT-MAP.md"]);
   });
 
-  it("ignores paths that are neither ADRs nor CONTEXT docs", () => {
+  it("does not match a docs/adr segment that is not on a path boundary", () => {
+    // `mydocs/adr/` shares the letters but not the boundary — it is not an ADR dir.
+    expect(selectedGrillDocPaths(["mydocs/adr/note.md"]).adrs).toEqual([]);
+  });
+
+  it("ignores paths that are neither ADRs nor CONTEXT/CONTEXT-MAP docs", () => {
     expect(selectedGrillDocPaths(["src/a.ts", "README.md", "docs/guide.md"])).toEqual({
       adrs: [],
       contextDocs: [],
+      contextMaps: [],
     });
   });
 });
@@ -137,7 +160,47 @@ describe("readGrillSpec", () => {
     ]);
     expect(spec.glossary.map((entry) => entry.term)).toEqual(["Patchset"]);
     expect(present(spec.glossary[0]).avoid).toEqual(["diff", "changeset"]);
+    // Raw source rides along verbatim for the viewer's raw-flip (#239).
+    expect(spec.raw.adrs).toEqual([{ path: "docs/adr/0007-tree.md", md: ADR_MD }]);
+    expect(spec.raw.contextDocs).toEqual([{ path: "CONTEXT.md", md: CONTEXT_MD }]);
     expect(git).toHaveBeenCalled();
+  });
+
+  it("reads a context-local ADR and a root CONTEXT-MAP.md in a multi-context repo", async () => {
+    const reviewedTreeOid = "reviewed-tree";
+    const localAdr = "src/ordering/docs/adr/0001-event-sourced.md";
+    const git = fakeGit({
+      [`${reviewedTreeOid}:${localAdr}`]: ADR_MD,
+      [`${reviewedTreeOid}:CONTEXT-MAP.md`]: CONTEXT_MAP_MD,
+    });
+    const spec = present(
+      await readGrillSpec(
+        patchsetOf({
+          root: "/tmp/repo",
+          headOid: "head000",
+          reviewedTreeOid,
+          surface: "working-tree",
+          paths: [localAdr, "CONTEXT-MAP.md"],
+        }),
+        git,
+      ),
+    );
+    expect(spec.decisions.map((decision) => decision.title)).toEqual([
+      "Store the reviewed tree as an immutable Git object",
+    ]);
+    expect(present(spec.decisions[0]).source.path).toBe(localAdr);
+    expect(spec.contextMaps).toHaveLength(1);
+    const map = present(spec.contextMaps[0]);
+    expect(map.contexts.map((context) => context.name)).toEqual(["Ordering", "Billing"]);
+    expect(map.relationships).toEqual([
+      {
+        from: "Ordering",
+        to: "Billing",
+        direction: "->",
+        source: { path: "CONTEXT-MAP.md", line: 10 },
+      },
+    ]);
+    expect(spec.raw.contextMaps).toEqual([{ path: "CONTEXT-MAP.md", md: CONTEXT_MAP_MD }]);
   });
 
   it("reads at headOid for a PR review, and omits a doc absent at that OID", async () => {

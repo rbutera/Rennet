@@ -7,11 +7,13 @@ function present<T>(value: T | undefined | null): T {
   return value;
 }
 
-// The fixtures are the exact markdown shapes grill-with-docs documents take: an MADR-
-// style ADR (a `#` title, a rationale, a `## Considered Options` list) and a
-// `CONTEXT.md` with a `## Language` glossary carrying `**term**: definition` /
-// `_Avoid_:` entries, plus a context-map table. They are the shapes the obligation
-// parser's grill branch reads, so this rich parser is exercised against the same input.
+// The fixtures are the EXACT on-disk shapes grill-with-docs (domain-modeling) writes,
+// per docs/developing/reference/spec-formats/grill-with-docs.md: an ADR (a `#` title,
+// a rationale, an optional `## Considered Options` list); a `CONTEXT.md` `## Language`
+// glossary whose entries are a `**term**:` line, the definition on the NEXT line, and
+// an `_Avoid_: a, b` line; and — multi-context only — a `CONTEXT-MAP.md` with a
+// `## Contexts` link-list and a `## Relationships` directional-edge list. There is no
+// context-map "table" in this format; the earlier fixture invented one.
 
 const ADR_MD = `# Store the reviewed tree as an immutable Git object
 
@@ -38,31 +40,45 @@ const THIN_ADR_MD = `# Adopt Base UI over Radix
 Radix pulls a heavier tree and forks our theming.
 `;
 
-const CONTEXT_MD = `# Project glossary
+// A real CONTEXT.md: term key on one line, definition on the next, then `_Avoid_`.
+// Grouped under `###` subheadings, and one term with no `_Avoid_` (Customer).
+const CONTEXT_MD = `# Ordering
+
+Receives and tracks customer orders through to dispatch.
 
 ## Language
 
-Words this project uses precisely.
+### Orders
 
-### Review objects
+**Order**:
+A customer's request for goods, from placement to dispatch.
+_Avoid_: Purchase, transaction
 
-- **Patchset**: the immutable capture of a change under review, addressed by its
-  head OID.
-  _Avoid_: diff, changeset
+**Invoice**:
+A request for payment sent to a customer after delivery.
+_Avoid_: Bill, payment request
 
-- **Board**: the readable object a lens renders from a patchset.
-  _Avoid_: canvas, panel
+### People
 
-### Roles
+**Customer**:
+A person or organization that places orders.
+`;
 
-- **Seat**: a single provider turn in a lens run.
+// A real CONTEXT-MAP.md: a `## Contexts` link-list and a `## Relationships` edge-list.
+const CONTEXT_MAP_MD = `# System context map
 
-## Tech Stack
+The bounded contexts and how they relate.
 
-| Layer | Technology | Rationale |
-|---|---|---|
-| Runtime | Node 22 | LTS, native fetch |
-| Bundler | Vite | Nx inference plugin |
+## Contexts
+
+- [Ordering](src/ordering/CONTEXT.md) - Receives and tracks customer orders
+- [Billing](src/billing/CONTEXT.md) - Issues invoices and records payments
+- [Fulfillment](src/fulfillment/CONTEXT.md)
+
+## Relationships
+
+- Ordering → Fulfillment
+- Ordering ↔ Billing: shares customer identity
 `;
 
 describe("parseGrillSpec — ADRs", () => {
@@ -102,58 +118,147 @@ describe("parseGrillSpec — ADRs", () => {
 });
 
 describe("parseGrillSpec — CONTEXT.md glossary", () => {
-  it("extracts grouped terms with definition, avoid list, and source line", () => {
+  it("extracts grouped terms (definition on the next line), avoid list, and source line", () => {
     const spec = parseGrillSpec({ contextDocs: [{ path: "CONTEXT.md", md: CONTEXT_MD }] });
     const byTerm = new Map(spec.glossary.map((entry) => [entry.term, entry]));
 
-    const patchset = present(byTerm.get("Patchset"));
-    expect(patchset.definition).toBe(
-      "the immutable capture of a change under review, addressed by its head OID.",
-    );
-    expect(patchset.avoid).toEqual(["diff", "changeset"]);
-    expect(patchset.group).toBe("Review objects");
+    const order = present(byTerm.get("Order"));
+    expect(order.definition).toBe("A customer's request for goods, from placement to dispatch.");
+    expect(order.avoid).toEqual(["Purchase", "transaction"]);
+    expect(order.group).toBe("Orders");
+    // The `**Order**:` line is line 9 (1-based) of the fixture.
+    expect(order.source).toEqual({ path: "CONTEXT.md", line: 9 });
 
-    const board = present(byTerm.get("Board"));
-    expect(board.avoid).toEqual(["canvas", "panel"]);
-    expect(board.group).toBe("Review objects");
+    const invoice = present(byTerm.get("Invoice"));
+    expect(invoice.avoid).toEqual(["Bill", "payment request"]);
+    expect(invoice.group).toBe("Orders");
   });
 
   it("keeps avoid empty (not invented) for a term that states no `_Avoid_`", () => {
     const spec = parseGrillSpec({ contextDocs: [{ path: "CONTEXT.md", md: CONTEXT_MD }] });
-    const seat = present(spec.glossary.find((entry) => entry.term === "Seat"));
-    expect(seat.definition).toBe("a single provider turn in a lens run.");
-    expect(seat.avoid).toEqual([]);
-    expect(seat.group).toBe("Roles");
+    const customer = present(spec.glossary.find((entry) => entry.term === "Customer"));
+    expect(customer.definition).toBe("A person or organization that places orders.");
+    expect(customer.avoid).toEqual([]);
+    expect(customer.group).toBe("People");
   });
 
   it("finds no glossary without a `## Language` section", () => {
     const spec = parseGrillSpec({
-      contextDocs: [{ path: "CONTEXT.md", md: "# Notes\n\n**Patchset**: a thing.\n" }],
+      contextDocs: [{ path: "CONTEXT.md", md: "# Notes\n\n**Order**:\na thing.\n" }],
     });
     expect(spec.glossary).toEqual([]);
   });
 });
 
-describe("parseGrillSpec — context-map tables", () => {
-  it("records each table's headers and rows with per-row source lines", () => {
-    const spec = parseGrillSpec({ contextDocs: [{ path: "CONTEXT.md", md: CONTEXT_MD }] });
+describe("parseGrillSpec — CONTEXT-MAP.md", () => {
+  it("extracts contexts (name, href, summary) and directional relationships", () => {
+    const spec = parseGrillSpec({
+      contextMaps: [{ path: "CONTEXT-MAP.md", md: CONTEXT_MAP_MD }],
+    });
     expect(spec.contextMaps).toHaveLength(1);
     const map = present(spec.contextMaps[0]);
-    expect(map.heading).toBe("Tech Stack");
-    expect(map.headers).toEqual(["Layer", "Technology", "Rationale"]);
-    expect(map.rows.map((row) => row.cells)).toEqual([
-      ["Runtime", "Node 22", "LTS, native fetch"],
-      ["Bundler", "Vite", "Nx inference plugin"],
+
+    expect(map.contexts).toEqual([
+      {
+        name: "Ordering",
+        href: "src/ordering/CONTEXT.md",
+        summary: "Receives and tracks customer orders",
+        source: { path: "CONTEXT-MAP.md", line: 7 },
+      },
+      {
+        name: "Billing",
+        href: "src/billing/CONTEXT.md",
+        summary: "Issues invoices and records payments",
+        source: { path: "CONTEXT-MAP.md", line: 8 },
+      },
+      {
+        // No summary stated — the field is absent, not an empty string.
+        name: "Fulfillment",
+        href: "src/fulfillment/CONTEXT.md",
+        source: { path: "CONTEXT-MAP.md", line: 9 },
+      },
     ]);
-    // Rows carry distinct source lines so each is a distinct disposition anchor.
-    const lines = map.rows.map((row) => row.source.line);
-    expect(new Set(lines).size).toBe(lines.length);
+
+    expect(map.relationships).toEqual([
+      {
+        from: "Ordering",
+        to: "Fulfillment",
+        direction: "->",
+        source: { path: "CONTEXT-MAP.md", line: 13 },
+      },
+      {
+        from: "Ordering",
+        to: "Billing",
+        direction: "<->",
+        label: "shares customer identity",
+        source: { path: "CONTEXT-MAP.md", line: 14 },
+      },
+    ]);
+  });
+
+  it("normalises a reversed arrow by swapping from/to", () => {
+    const md = "# Map\n\n## Relationships\n\n- Fulfillment ← Ordering\n";
+    const map = present(
+      parseGrillSpec({ contextMaps: [{ path: "CONTEXT-MAP.md", md }] }).contextMaps[0],
+    );
+    expect(map.relationships).toEqual([
+      {
+        from: "Ordering",
+        to: "Fulfillment",
+        direction: "->",
+        source: { path: "CONTEXT-MAP.md", line: 5 },
+      },
+    ]);
+  });
+
+  it("does not split a hyphenated context name on its hyphen", () => {
+    const md = "# Map\n\n## Relationships\n\n- Order-Management -> Fulfillment\n";
+    const map = present(
+      parseGrillSpec({ contextMaps: [{ path: "CONTEXT-MAP.md", md }] }).contextMaps[0],
+    );
+    const edge = present(map.relationships[0]);
+    expect(edge.from).toBe("Order-Management");
+    expect(edge.to).toBe("Fulfillment");
+    expect(edge.direction).toBe("->");
+  });
+
+  it("emits an empty map (presence is the multi-context signal) when sections are absent", () => {
+    const map = present(
+      parseGrillSpec({ contextMaps: [{ path: "CONTEXT-MAP.md", md: "# Map\n\nprose only\n" }] })
+        .contextMaps[0],
+    );
+    expect(map.contexts).toEqual([]);
+    expect(map.relationships).toEqual([]);
+  });
+});
+
+describe("parseGrillSpec — raw source (#239)", () => {
+  it("carries every source document verbatim, in reading order", () => {
+    const source: GrillSpecSource = {
+      adrs: [{ path: "docs/adr/0007-reviewed-tree.md", md: ADR_MD }],
+      contextDocs: [{ path: "CONTEXT.md", md: CONTEXT_MD }],
+      contextMaps: [{ path: "CONTEXT-MAP.md", md: CONTEXT_MAP_MD }],
+    };
+    const spec = parseGrillSpec(source);
+    expect(spec.raw.adrs).toEqual([{ path: "docs/adr/0007-reviewed-tree.md", md: ADR_MD }]);
+    expect(spec.raw.contextDocs).toEqual([{ path: "CONTEXT.md", md: CONTEXT_MD }]);
+    expect(spec.raw.contextMaps).toEqual([{ path: "CONTEXT-MAP.md", md: CONTEXT_MAP_MD }]);
+    // Verbatim, not a re-serialization: prose the parser drops still rides along.
+    expect(present(spec.raw.contextMaps[0]).md).toContain(
+      "The bounded contexts and how they relate.",
+    );
+    expect(present(spec.raw.adrs[0]).md).toContain("## Decision Outcome");
   });
 });
 
 describe("parseGrillSpec — sparse and absent input", () => {
-  it("returns three empty arrays for an empty source (absence, not invention)", () => {
-    expect(parseGrillSpec({})).toEqual({ decisions: [], glossary: [], contextMaps: [] });
+  it("returns empty arrays and empty raw for an empty source (absence, not invention)", () => {
+    expect(parseGrillSpec({})).toEqual({
+      decisions: [],
+      glossary: [],
+      contextMaps: [],
+      raw: { adrs: [], contextDocs: [], contextMaps: [] },
+    });
   });
 
   it("returns empty arrays for documents that carry nothing structured", () => {
@@ -166,9 +271,12 @@ describe("parseGrillSpec — sparse and absent input", () => {
     expect(spec.contextMaps).toEqual([]);
   });
 
-  it("does not mistake a table inside a fenced code block for a context map", () => {
-    const md = "# Doc\n\n```\n| a | b |\n|---|---|\n| 1 | 2 |\n```\n";
-    expect(parseGrillSpec({ contextDocs: [{ path: "CONTEXT.md", md }] }).contextMaps).toEqual([]);
+  it("does not treat a relationships list inside a fenced code block as edges", () => {
+    const md = "# Map\n\n## Relationships\n\n```\n- Ordering -> Billing\n```\n";
+    const map = present(
+      parseGrillSpec({ contextMaps: [{ path: "CONTEXT-MAP.md", md }] }).contextMaps[0],
+    );
+    expect(map.relationships).toEqual([]);
   });
 });
 
@@ -179,6 +287,7 @@ describe("parseGrillSpec — positive control", () => {
   const source: GrillSpecSource = {
     adrs: [{ path: "docs/adr/0007-reviewed-tree.md", md: ADR_MD }],
     contextDocs: [{ path: "CONTEXT.md", md: CONTEXT_MD }],
+    contextMaps: [{ path: "CONTEXT-MAP.md", md: CONTEXT_MAP_MD }],
   };
 
   it("reflects a removed considered-options section (alternatives go empty)", () => {
@@ -195,14 +304,22 @@ describe("parseGrillSpec — positive control", () => {
   });
 
   it("reflects a dropped `_Avoid_` line (avoid goes empty)", () => {
-    const withoutAvoid = CONTEXT_MD.replace(/\n\s*_Avoid_: diff, changeset/, "");
+    const withoutAvoid = CONTEXT_MD.replace(/\n_Avoid_: Purchase, transaction/, "");
     const spec = parseGrillSpec({ contextDocs: [{ path: "CONTEXT.md", md: withoutAvoid }] });
-    const patchset = present(spec.glossary.find((entry) => entry.term === "Patchset"));
-    expect(patchset.avoid).toEqual([]);
+    const order = present(spec.glossary.find((entry) => entry.term === "Order"));
+    expect(order.avoid).toEqual([]);
     // Control: the unmutated fixture carries the avoid list.
     const original = present(
-      parseGrillSpec(source).glossary.find((entry) => entry.term === "Patchset"),
+      parseGrillSpec(source).glossary.find((entry) => entry.term === "Order"),
     );
-    expect(original.avoid).toEqual(["diff", "changeset"]);
+    expect(original.avoid).toEqual(["Purchase", "transaction"]);
+  });
+
+  it("reflects a dropped relationship edge (one fewer edge)", () => {
+    const withoutEdge = CONTEXT_MAP_MD.replace(/\n- Ordering → Fulfillment/, "");
+    const spec = parseGrillSpec({ contextMaps: [{ path: "CONTEXT-MAP.md", md: withoutEdge }] });
+    expect(present(spec.contextMaps[0]).relationships).toHaveLength(1);
+    // Control: the unmutated fixture carries both edges.
+    expect(present(parseGrillSpec(source).contextMaps[0]).relationships).toHaveLength(2);
   });
 });

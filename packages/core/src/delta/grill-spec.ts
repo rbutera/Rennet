@@ -1,35 +1,33 @@
 import type {
+  GrillContext,
   GrillContextMap,
-  GrillContextRow,
   GrillDecision,
   GrillGlossaryTerm,
+  GrillRelationship,
   GrillSpec,
 } from "@rennet/protocol";
 
 /**
  * Parse a grill-with-docs specification's markdown into a STRUCTURED model.
  *
- * grill-with-docs is the sparse, doc-driven spec format: architecture decision
- * records (`docs/adr/**`, `docs/decisions/**`) and a `CONTEXT.md` carrying a
- * glossary (a `## Language` section) and context-map tables. Unlike an OpenSpec
- * change, it ships no fixed artifact set and no requirement/scenario tree — a thin
- * ADR is a legitimate whole specification. This module is the parser that mirrors
- * `openspec-change.ts`: it is node-free (pure string work, no fs), so the reader is
- * a plain function of the document text and every rule is unit-testable.
+ * grill-with-docs is the sparse, doc-driven spec format written by Matt Pocock's
+ * `domain-modeling` companion: architecture decision records (`docs/adr/**`,
+ * `docs/decisions/**`), a `CONTEXT.md` glossary (a `## Language` list of
+ * `**term**` / definition / `_Avoid_` entries), and — only in a multi-context repo —
+ * a root `CONTEXT-MAP.md` naming each context (`## Contexts`) and the directional
+ * edges between them (`## Relationships`). Unlike an OpenSpec change, it ships no
+ * fixed artifact set and no requirement/scenario tree — a thin ADR is a legitimate
+ * whole specification. This module is the parser that mirrors `openspec-change.ts`:
+ * it is node-free (pure string work, no fs), so the reader is a plain function of the
+ * document text and every rule is unit-testable.
  *
  * It is deliberately tolerant: any document may be absent, a section may be missing
  * or empty, and it never throws on well-formed-but-sparse input. Absence is
  * represented HONESTLY — a decision that states no alternatives carries an empty
  * array, a glossary entry with no stated `_Avoid_` carries an empty `avoid`, and a
- * source with nothing of a kind contributes nothing rather than an invented
- * placeholder. Nothing is inferred from the diff; the model says only what the
- * documents say.
- *
- * The extracted shapes match what `parseDesignSourceObligations`' grill branch reads
- * (`parseGrillAdr`, `parseGrillGlossary` in `board/design-obligations.ts`): a
- * decision's verbatim title, rationale, and considered options; a glossary term's
- * definition and words to avoid, grouped. Context-map tables are additive — the
- * surface renders each row's cells as `source_cells`.
+ * single-context repo (no `CONTEXT-MAP.md`) carries an empty `contextMaps`. Nothing
+ * is inferred from the diff; the model says only what the documents say. The verbatim
+ * source text rides along in `raw` (#239) so a viewer can flip to it unchanged.
  */
 
 /** One grill document read off disk: its repo-relative path and raw markdown. */
@@ -40,10 +38,12 @@ export interface GrillDoc {
 
 /** The raw document text for one grill-with-docs specification (what an adapter reads). */
 export interface GrillSpecSource {
-  /** Architecture decision records (`docs/adr/**`, `docs/decisions/**`). */
+  /** Architecture decision records (`docs/adr/**`, `docs/decisions/**`, at any depth). */
   readonly adrs?: readonly GrillDoc[];
-  /** `CONTEXT.md` documents carrying a glossary and/or context-map tables. */
+  /** `CONTEXT.md` documents carrying a `## Language` glossary. */
   readonly contextDocs?: readonly GrillDoc[];
+  /** `CONTEXT-MAP.md` documents (the multi-context marker) carrying contexts + relationships. */
+  readonly contextMaps?: readonly GrillDoc[];
 }
 
 /** Split into lines, tolerating CRLF, with no trailing carriage returns. */
@@ -57,7 +57,7 @@ function normalizeText(text: string): string {
 }
 
 /**
- * Blank out fenced code blocks so headings and tables inside a fence are never
+ * Blank out fenced code blocks so headings and lists inside a fence are never
  * mistaken for structure (mirrors `design-obligations.ts`' `visibleMarkdownLines`).
  * Real content outside fences is preserved intact.
  */
@@ -155,6 +155,22 @@ function bulletItems(lines: readonly string[], start: number, end: number): stri
   return items;
 }
 
+/** A single-line `- item` bullet with its 0-based line index (no continuation folding). */
+interface ListItem {
+  readonly text: string;
+  readonly index: number;
+}
+
+/** Every `- item` bullet in a slice, each carrying its own source line. */
+function listItems(lines: readonly string[], start: number, end: number): ListItem[] {
+  const items: ListItem[] = [];
+  for (let index = start; index < end; index += 1) {
+    const text = /^\s*[-*+]\s+(.+?)\s*$/.exec(lines[index] ?? "")?.[1];
+    if (text !== undefined) items.push({ text: text.trim(), index });
+  }
+  return items;
+}
+
 // ── ADRs ─────────────────────────────────────────────────────────────────────
 
 function parseAdr(doc: GrillDoc): GrillDecision[] {
@@ -188,7 +204,7 @@ function parseAdr(doc: GrillDoc): GrillDecision[] {
 
 // ── CONTEXT.md glossary (a `## Language` section) ──────────────────────────────
 
-/** A `**term**: definition` line-start (optionally bulleted). */
+/** A `**term**:` line-start (optionally bulleted), definition possibly on the next line. */
 function glossaryTermStart(
   line: string,
 ): { readonly term: string; readonly definition: string } | undefined {
@@ -267,70 +283,132 @@ function parseGlossary(doc: GrillDoc): GrillGlossaryTerm[] {
   return terms;
 }
 
-// ── Context-map tables (tech-stack / architecture tables) ──────────────────────
+// ── CONTEXT-MAP.md (multi-context: `## Contexts` + `## Relationships`) ─────────
 
-function isTableRow(line: string): boolean {
-  return /^\s*\|.*\|\s*$/.test(line.trimEnd());
+/** Strip a leading summary separator (` - `, ` — `, `:`) off a contexts-list tail. */
+function stripSummarySeparator(tail: string): string {
+  return tail.replace(/^\s*[-–—:]\s*/, "").trim();
 }
 
-function isTableSeparator(line: string): boolean {
-  return /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$/.test(line);
+/**
+ * One `## Contexts` entry: a Markdown link `[name](href)` with an optional trailing
+ * summary, or a bare `name` with an optional `- summary` / `: summary`.
+ */
+function parseContextItem(item: ListItem, path: string): GrillContext {
+  const source = { path, line: item.index + 1 };
+  const link = /^\[([^\]]+)\]\(([^)]+)\)\s*(.*)$/.exec(item.text);
+  if (link !== null) {
+    const summary = stripSummarySeparator(link[3] ?? "");
+    return {
+      name: normalizeText(link[1] ?? ""),
+      href: (link[2] ?? "").trim(),
+      ...(summary.length === 0 ? {} : { summary }),
+      source,
+    };
+  }
+  // Bare name: split off an optional summary at the first ` - ` / ` — ` / `: `.
+  const bare = /^(.+?)(?:\s+[-–—:]\s+(.*))?$/.exec(item.text);
+  const summary = normalizeText(bare?.[2] ?? "");
+  return {
+    name: normalizeText(bare?.[1] ?? item.text),
+    ...(summary.length === 0 ? {} : { summary }),
+    source,
+  };
 }
 
-/** Split a table row into trimmed cell texts (dropping the leading/trailing pipes). */
-function tableCells(line: string): string[] {
-  return line
-    .trim()
-    .replace(/^\|/, "")
-    .replace(/\|$/, "")
-    .split("|")
-    .map((cell) => normalizeText(cell));
+// Directional arrows the format uses, ascii and unicode.
+const RELATIONSHIP_ARROW = /\s(<->|<-|->|↔|→|←)\s/;
+
+/**
+ * One `## Relationships` edge (`Ordering → Fulfillment`, `Ordering ↔ Billing`), with
+ * an optional trailing `: label` / `— label`. A reversed arrow (`←`/`<-`) is
+ * normalised by swapping `from`/`to`. Returns `undefined` for a line with no arrow.
+ */
+function parseRelationshipItem(item: ListItem, path: string): GrillRelationship | undefined {
+  const arrow = RELATIONSHIP_ARROW.exec(item.text);
+  if (arrow === null || arrow.index === undefined) return undefined;
+  const token = arrow[1] ?? "";
+  const left = normalizeText(item.text.slice(0, arrow.index));
+  let rest = item.text.slice(arrow.index + arrow[0].length);
+
+  // A label may trail after a `:` or em/en dash separator. A hyphen is NOT a label
+  // separator here — context names routinely contain hyphens.
+  let label: string | undefined;
+  const labelMatch = /\s*[:–—]\s*(.*)$/.exec(rest);
+  if (labelMatch !== null && labelMatch.index !== undefined) {
+    label = normalizeText(labelMatch[1] ?? "");
+    rest = rest.slice(0, labelMatch.index);
+  }
+  const right = normalizeText(rest);
+  if (left.length === 0 || right.length === 0) return undefined;
+
+  const reversed = token === "<-" || token === "←";
+  const bidirectional = token === "<->" || token === "↔";
+  return {
+    from: reversed ? right : left,
+    to: reversed ? left : right,
+    direction: bidirectional ? "<->" : "->",
+    ...(label === undefined || label.length === 0 ? {} : { label }),
+    source: { path, line: item.index + 1 },
+  };
 }
 
-function parseContextMaps(doc: GrillDoc): GrillContextMap[] {
+/**
+ * Parse a `CONTEXT-MAP.md` into one context map: its `## Contexts` entries and
+ * `## Relationships` edges. The file's mere presence marks the repo multi-context, so
+ * one map is emitted per file even when a section is missing (its list is then empty).
+ */
+function parseContextMap(doc: GrillDoc): GrillContextMap[] {
   const lines = visibleLines(toLines(doc.md));
   const headings = findHeadings(lines);
-  const maps: GrillContextMap[] = [];
 
-  for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index] ?? "";
-    const next = lines[index + 1] ?? "";
-    if (!isTableRow(line) || !isTableSeparator(next)) continue;
+  const contextsHeading = headings.find(
+    (heading) => heading.level === 2 && /^Contexts$/i.test(heading.title),
+  );
+  const relationshipsHeading = headings.find(
+    (heading) => heading.level === 2 && /^Relationships$/i.test(heading.title),
+  );
 
-    const headers = tableCells(line);
-    const rows: GrillContextRow[] = [];
-    let cursor = index + 2;
-    while (cursor < lines.length) {
-      const rowLine = lines[cursor] ?? "";
-      if (!isTableRow(rowLine) || isTableSeparator(rowLine)) break;
-      rows.push({ cells: tableCells(rowLine), source: { path: doc.path, line: cursor + 1 } });
-      cursor += 1;
-    }
+  const contexts =
+    contextsHeading === undefined
+      ? []
+      : listItems(
+          lines,
+          contextsHeading.index + 1,
+          sectionEnd(lines, headings, contextsHeading),
+        ).map((item) => parseContextItem(item, doc.path));
 
-    if (rows.length > 0) {
-      const heading = [...headings].reverse().find((candidate) => candidate.index < index);
-      maps.push({
-        ...(heading === undefined ? {} : { heading: heading.title }),
-        headers,
-        rows,
-        source: { path: doc.path, line: index + 1 },
-      });
-    }
-    index = cursor - 1;
-  }
-  return maps;
+  const relationships =
+    relationshipsHeading === undefined
+      ? []
+      : listItems(
+          lines,
+          relationshipsHeading.index + 1,
+          sectionEnd(lines, headings, relationshipsHeading),
+        )
+          .map((item) => parseRelationshipItem(item, doc.path))
+          .filter((edge): edge is GrillRelationship => edge !== undefined);
+
+  return [{ contexts, relationships, source: { path: doc.path, line: 1 } }];
 }
 
 /**
  * Parse a whole grill-with-docs specification into the structured model the Design
  * board renders. Every array is empty (never absent) when the source states nothing
- * of that kind; a `CONTEXT.md` may contribute both glossary terms and context maps.
+ * of that kind. The verbatim source text rides along in `raw` (#239).
  */
 export function parseGrillSpec(source: GrillSpecSource): GrillSpec {
+  const adrs = source.adrs ?? [];
   const contextDocs = source.contextDocs ?? [];
+  const contextMaps = source.contextMaps ?? [];
   return {
-    decisions: (source.adrs ?? []).flatMap(parseAdr),
+    decisions: adrs.flatMap(parseAdr),
     glossary: contextDocs.flatMap(parseGlossary),
-    contextMaps: contextDocs.flatMap(parseContextMaps),
+    contextMaps: contextMaps.flatMap(parseContextMap),
+    raw: {
+      adrs: adrs.map((doc) => ({ path: doc.path, md: doc.md })),
+      contextDocs: contextDocs.map((doc) => ({ path: doc.path, md: doc.md })),
+      contextMaps: contextMaps.map((doc) => ({ path: doc.path, md: doc.md })),
+    },
   };
 }
