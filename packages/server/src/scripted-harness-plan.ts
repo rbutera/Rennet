@@ -703,6 +703,8 @@ export function loadScriptedT3Seats(path: string): {
   /** The `resolveT3Seats` dep, bound to this plan. */
   readonly resolve: (input: {
     readonly repoRoot: string;
+    /** The bound workspace the turn actually runs in (session-bound-workspace 5.2). */
+    readonly worktreePath?: string;
     readonly generationId: string;
     readonly branch: string;
     readonly sessionId: string;
@@ -715,6 +717,13 @@ export function loadScriptedT3Seats(path: string): {
   return {
     threads,
     resolve: async (input) => {
+      // The turn's CWD, exactly as `resolveT3SeatRuntime` computes it: `repoRoot` names the
+      // repository (one T3 project per repository, however many worktrees of it exist) and
+      // `worktreePath` names the bound workspace the thread runs in. A session-context file
+      // is written under that workspace and a prompt names it relatively, so a scripted seat
+      // reading the repository root instead sees an empty context directory and silently
+      // matches no step (#805 + 5.7).
+      const workspace = input.worktreePath ?? input.repoRoot;
       const byThread = new Map<string, ScriptedSeatThread>();
       const settled = new Map<string, T3SettledTurn>();
       const seam: T3SeatSeam = {
@@ -726,14 +735,14 @@ export function loadScriptedT3Seats(path: string): {
             thread.prompts.push(text);
             // The whole conversation, because that is what the thread holds.
             const conversation = thread.prompts.join("\n");
-            const step = selectStep(plan, visibleToTurn(conversation, input.repoRoot), false);
+            const step = selectStep(plan, visibleToTurn(conversation, workspace), false);
             const completed = completedOutcome(
               step,
-              { cwd: input.repoRoot, outputSchema } as SessionSpec,
+              { cwd: workspace, outputSchema } as SessionSpec,
               conversation,
             );
             recordInvocation(plan, step, {
-              cwd: input.repoRoot,
+              cwd: workspace,
               prompt: text,
               resumed: thread.prompts.length > 1,
               recovered: completed.recovered,

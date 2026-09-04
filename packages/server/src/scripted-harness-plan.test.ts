@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -239,6 +239,67 @@ describe("scripted harness JSON plan", () => {
       {},
     );
     expect(echoed).toMatchObject({ status: "completed", structuredOutput: board });
+  });
+
+  it("reads the seat's context files from the BOUND WORKSPACE, not the repository root", async () => {
+    // `resolveT3Seats` takes both: `repoRoot` names the repository (one T3 project however
+    // many worktrees of it exist) and `worktreePath` names the workspace the thread's turns
+    // run in (session-bound-workspace 5.2). `resolveT3SeatRuntime` uses `worktreePath ??
+    // repoRoot` as the turn cwd, so this seam must too — a prompt names its context file
+    // RELATIVELY, and reading it from the repository root instead finds an empty directory
+    // and matches no step, with nothing on the way past to say why.
+    const root = mkdtempSync(join(tmpdir(), "rennet-scripted-seat-root-"));
+    const worktreePath = join(root, "worktree");
+    const sessionDir = join(worktreePath, ".rennet", "context", "s1");
+    mkdirSync(sessionDir, { recursive: true });
+    writeFileSync(join(sessionDir, "evidence.json"), JSON.stringify({ ask: "THE ASK BODY" }));
+    // The decoy: the repository root has a context directory of its own, holding the wrong
+    // answer. Reading the wrong root is then a wrong ANSWER, not just a miss.
+    const decoyDir = join(root, ".rennet", "context", "s1");
+    mkdirSync(decoyDir, { recursive: true });
+    writeFileSync(join(decoyDir, "evidence.json"), JSON.stringify({ ask: "THE WRONG BODY" }));
+
+    const seats = loadScriptedT3Seats(
+      writePlan(root, {
+        schemaVersion: 1,
+        lane: "owner-loop-685",
+        invocationLog: join(root, "invocations.jsonl"),
+        steps: [
+          {
+            id: "report",
+            kind: "structured",
+            promptIncludes: ["# Round report", "THE ASK BODY"],
+            output: { outcomes: [], beyond: [] },
+          },
+        ],
+      }),
+    );
+    const runtime = await seats.resolve({
+      repoRoot: root,
+      worktreePath,
+      generationId: "gen-1",
+      branch: "feature/x",
+      sessionId: "s1",
+    });
+    const client = await runtime.seam.client();
+    const { threadId } = await runtime.seam.threadFor({
+      seat: "round-report",
+      provider: "claudeAgent",
+      model: "opus",
+      effort: "medium",
+    });
+    await client.startTurn({
+      threadId,
+      // Exactly what the classifier prompt carries: the header and the RELATIVE path.
+      text: "# Round report\nread `.rennet/context/s1/evidence.json` with your own tools",
+      outputSchema: { type: "object" },
+    });
+    const settled = await client.waitForTurnSettled(threadId);
+    expect(settled.state).toBe("completed");
+    expect(settled.structuredOutput).toEqual({ outcomes: [], beyond: [] });
+    // And the ledger records the cwd the turn actually ran in.
+    const ledger = readFileSync(join(root, "invocations.jsonl"), "utf8").trim().split("\n");
+    expect(JSON.parse(ledger[0] ?? "{}").cwd).toBe(worktreePath);
   });
 
   it("answers a repair turn on the thread that already holds the draft", async () => {
