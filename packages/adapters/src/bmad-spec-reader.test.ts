@@ -91,11 +91,13 @@ prd:
 architecture:
   architectureFile: docs/architecture.md
   architectureSharded: true
+  architectureShardedLocation: docs/architecture
 devStoryLocation: docs/stories
 `;
     const paths = resolveBmadPaths(config);
     expect(paths.prdFile).toBe("docs/prd.md");
     expect(paths.architectureFile).toBe("docs/architecture.md");
+    expect(paths.architectureShardedLocation).toBe("docs/architecture");
     expect(paths.storyLocation).toBe("docs/stories");
     expect(paths.epicLocation).toBe("docs/prd");
     expect(paths.epicBasename("epic-1-foundation.md")).toBe(true);
@@ -113,6 +115,17 @@ describe("selectedBmadSpec", () => {
 
   it("returns null when no changed path is a BMAD document", () => {
     expect(selectedBmadSpec(["src/a.ts", "README.md"], resolveBmadPaths(undefined))).toBeNull();
+  });
+
+  it("does not activate BMAD for an epic-named file outside the configured epic directory", () => {
+    // `notes/epic-1.md` matches the epic basename pattern but is not under epicLocation.
+    const selected = selectedBmadSpec(["notes/epic-1.md"], resolveBmadPaths(undefined));
+    expect(selected).toBeNull();
+  });
+
+  it("selects an epic that IS under the configured epic directory", () => {
+    const selected = selectedBmadSpec([".bmad/epics/epic-1.md"], resolveBmadPaths(undefined));
+    expect(selected?.epicPaths).toEqual([".bmad/epics/epic-1.md"]);
   });
 });
 
@@ -182,6 +195,61 @@ devStoryLocation: docs/stories
         headOid: "head000",
         surface: "working-tree",
         paths: ["src/only.ts"],
+      }),
+      fakeGit({}),
+    );
+    expect(spec).toBeNull();
+  });
+
+  // Control for defect 1: a change to a sharded architecture doc must activate BMAD and
+  // render the shard's Tech Stack. Pre-fix, selection did not recognize the shard location
+  // and readBmadSpec returned null — this block reddens.
+  it("selects a sharded architecture doc and renders its Tech Stack from the shard", async () => {
+    const oid = "head000";
+    const config = `architecture:
+  architectureFile: docs/architecture.md
+  architectureSharded: true
+  architectureShardedLocation: docs/architecture
+devStoryLocation: docs/stories
+`;
+    const techStackShard = `# Tech Stack
+
+## Tech Stack
+
+| Category | Technology | Version | Rationale |
+| --- | --- | --- | --- |
+| Language | TypeScript | 5.x | Type safety |
+`;
+    const git = fakeGit({
+      [`${oid}:.bmad-core/core-config.yaml`]: config,
+      // No monolithic docs/architecture.md — the doc is fully sharded.
+      [`${oid}:docs/architecture/tech-stack.md`]: techStackShard,
+    });
+    const spec = await readBmadSpec(
+      patchsetOf({
+        root: "/tmp/bmad-repo",
+        headOid: oid,
+        surface: "working-tree",
+        paths: ["docs/architecture/tech-stack.md"],
+      }),
+      git,
+    );
+    expect(spec).not.toBeNull();
+    expect(spec?.architecture?.techStack?.rows).toHaveLength(1);
+    expect(spec?.architecture?.techStack?.rows[0]?.cells[1]).toBe("TypeScript");
+  });
+
+  // Control for defect 3: a deletion-only change selects a BMAD path whose bytes are gone
+  // at the reviewed tree. Pre-fix, parseBmadSpec still ran and yielded a hollow named spec;
+  // now every-read-absent returns null.
+  it("returns null when the selected document is absent at the reviewed tree (deletion-only)", async () => {
+    const spec = await readBmadSpec(
+      patchsetOf({
+        root: "/tmp/bmad-repo",
+        headOid: "head000",
+        surface: "working-tree",
+        // A story path is selected, but the empty tree has no bytes for it (nor PRD/arch).
+        paths: [".bmad/stories/3.4.story.md"],
       }),
       fakeGit({}),
     );

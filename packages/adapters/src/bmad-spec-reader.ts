@@ -24,6 +24,7 @@ import type { GitExec } from "./git-range-diff";
 const CONVENTIONAL = {
   prdFile: ".bmad/prd.md",
   architectureFile: ".bmad/architecture.md",
+  architectureShardedLocation: ".bmad/architecture",
   storyLocation: ".bmad/stories",
   epicLocation: ".bmad/epics",
 } as const;
@@ -32,6 +33,8 @@ const CONVENTIONAL = {
 interface BmadPaths {
   readonly prdFile: string;
   readonly architectureFile: string;
+  /** Where a sharded architecture explodes (`docs/architecture/tech-stack.md`, …). */
+  readonly architectureShardedLocation: string;
   readonly storyLocation: string;
   readonly epicLocation: string;
   /** Matches an epic document's file basename (default `epic-*.md` / `*.epic.md`). */
@@ -61,13 +64,15 @@ function epicPatternMatcher(pattern: string | undefined): (basename: string) => 
 
 /**
  * Read the load-bearing keys out of `.bmad-core/core-config.yaml`: the PRD file, the
- * sharded-PRD (epic) location, the epic file pattern, the architecture file, and the
- * story location. A minimal targeted scan — the file's other keys are irrelevant to
- * where the documents live — that stays dependency-free (mirrors `parseWorkspaceGlobs`).
+ * sharded-PRD (epic) location, the epic file pattern, the architecture file, the
+ * sharded-architecture location, and the story location. A minimal targeted scan — the
+ * file's other keys are irrelevant to where the documents live — that stays
+ * dependency-free (mirrors `parseWorkspaceGlobs`).
  */
 export function resolveBmadPaths(configYaml: string | undefined): BmadPaths {
   let prdFile: string = CONVENTIONAL.prdFile;
   let architectureFile: string = CONVENTIONAL.architectureFile;
+  let architectureShardedLocation: string = CONVENTIONAL.architectureShardedLocation;
   let storyLocation: string = CONVENTIONAL.storyLocation;
   let epicLocation: string = CONVENTIONAL.epicLocation;
   let epicPattern: string | undefined;
@@ -97,8 +102,9 @@ export function resolveBmadPaths(configYaml: string | undefined): BmadPaths {
         if (key === "prdFile") prdFile = value;
         if (key === "prdShardedLocation") epicLocation = value;
         if (key === "epicFilePattern") epicPattern = value;
-      } else if (section === "architecture" && key === "architectureFile") {
-        architectureFile = value;
+      } else if (section === "architecture") {
+        if (key === "architectureFile") architectureFile = value;
+        if (key === "architectureShardedLocation") architectureShardedLocation = value;
       }
     }
   }
@@ -106,6 +112,7 @@ export function resolveBmadPaths(configYaml: string | undefined): BmadPaths {
   return {
     prdFile: normalise(prdFile),
     architectureFile: normalise(architectureFile),
+    architectureShardedLocation: normalise(architectureShardedLocation).replace(/\/$/, ""),
     storyLocation: normalise(storyLocation).replace(/\/$/, ""),
     epicLocation: normalise(epicLocation).replace(/\/$/, ""),
     epicBasename: epicPatternMatcher(epicPattern),
@@ -124,7 +131,23 @@ function isStoryPath(path: string, paths: BmadPaths): boolean {
 
 function isEpicPath(path: string, paths: BmadPaths): boolean {
   const p = normalise(path);
-  return isMarkdown(p) && paths.epicBasename(basenameOf(p)) && !isStoryPath(p, paths);
+  return (
+    isMarkdown(p) &&
+    underDir(p, paths.epicLocation) &&
+    paths.epicBasename(basenameOf(p)) &&
+    !isStoryPath(p, paths)
+  );
+}
+
+/** A shard of an exploded architecture document (`docs/architecture/tech-stack.md`, …). */
+function isArchitectureShardPath(path: string, paths: BmadPaths): boolean {
+  const p = normalise(path);
+  return (
+    isMarkdown(p) &&
+    underDir(p, paths.architectureShardedLocation) &&
+    !isStoryPath(p, paths) &&
+    !isEpicPath(p, paths)
+  );
 }
 
 /**
@@ -136,9 +159,15 @@ function isEpicPath(path: string, paths: BmadPaths): boolean {
 export function selectedBmadSpec(
   changedFilePaths: readonly string[],
   paths: BmadPaths,
-): { name: string; epicPaths: string[]; storyPaths: string[] } | null {
+): {
+  name: string;
+  epicPaths: string[];
+  storyPaths: string[];
+  architectureShardPaths: string[];
+} | null {
   const epicPaths = new Set<string>();
   const storyPaths = new Set<string>();
+  const architectureShardPaths = new Set<string>();
   let touchesPrd = false;
   let touchesArchitecture = false;
 
@@ -148,11 +177,19 @@ export function selectedBmadSpec(
     else if (path === paths.architectureFile) touchesArchitecture = true;
     else if (isStoryPath(path, paths)) storyPaths.add(path);
     else if (isEpicPath(path, paths)) epicPaths.add(path);
+    else if (isArchitectureShardPath(path, paths)) architectureShardPaths.add(path);
   }
 
   const stories = [...storyPaths].sort(byName);
   const epics = [...epicPaths].sort(byName);
-  if (!touchesPrd && !touchesArchitecture && stories.length === 0 && epics.length === 0) {
+  const architectureShards = [...architectureShardPaths].sort(byName);
+  if (
+    !touchesPrd &&
+    !touchesArchitecture &&
+    stories.length === 0 &&
+    epics.length === 0 &&
+    architectureShards.length === 0
+  ) {
     return null;
   }
 
@@ -166,16 +203,23 @@ export function selectedBmadSpec(
         ? basenameOf(firstEpic).replace(/\.md$/i, "")
         : "prd";
 
-  return { name, epicPaths: epics, storyPaths: stories };
+  return {
+    name,
+    epicPaths: epics,
+    storyPaths: stories,
+    architectureShardPaths: architectureShards,
+  };
 }
 
 /**
  * Read the BMAD specification the reviewed patchset selected, parsed into the structured
  * `BmadSpec` the Design lens renders — reading each document from the immutable reviewed
  * tree (`reviewedTreeOid ?? headOid`) and honoring `.bmad-core/core-config.yaml` path
- * overrides. The PRD and architecture documents are always read (once BMAD is selected),
- * plus every touched epic and story — the bounded, review-relevant document set. Returns
- * `null` when the patchset touches no BMAD document.
+ * overrides. The PRD and architecture documents are always read (once BMAD is selected);
+ * a sharded architecture is recovered from its touched shards when the monolith is gone.
+ * Every touched epic and story is read too — the bounded, review-relevant document set.
+ * Returns `null` when the patchset touches no BMAD document, or when every selected
+ * document is absent at the reviewed tree (a deletion-only change).
  */
 export async function readBmadSpec(patchset: Patchset, git: GitExec): Promise<BmadSpec | null> {
   const root = patchset.repository.root;
@@ -192,10 +236,22 @@ export async function readBmadSpec(patchset: Patchset, git: GitExec): Promise<Bm
   );
   if (selected === null) return null;
 
-  const [prdMd, architectureMd] = await Promise.all([
+  const [prdMd, architectureMonolith] = await Promise.all([
     read(paths.prdFile),
     read(paths.architectureFile),
   ]);
+
+  // A sharded architecture explodes the monolith into `docs/architecture/*.md`; when the
+  // monolith is absent, the touched shards (e.g. `tech-stack.md`) ARE the architecture
+  // document — parse their concatenation so the Tech Stack table still renders.
+  const architectureShards: string[] = [];
+  for (const path of selected.architectureShardPaths) {
+    const md = await read(path);
+    if (md !== undefined) architectureShards.push(md);
+  }
+  const architectureMd =
+    architectureMonolith ??
+    (architectureShards.length > 0 ? architectureShards.join("\n\n") : undefined);
 
   const epics: { path: string; md: string }[] = [];
   for (const path of selected.epicPaths) {
@@ -206,6 +262,18 @@ export async function readBmadSpec(patchset: Patchset, git: GitExec): Promise<Bm
   for (const path of selected.storyPaths) {
     const md = await read(path);
     if (md !== undefined) stories.push({ path, md });
+  }
+
+  // A deletion-only patchset selects a BMAD path whose bytes are gone at the reviewed
+  // tree: every read comes back absent. There is no document to render — return null
+  // rather than a hollow spec that is a name wrapping empty arrays.
+  if (
+    prdMd === undefined &&
+    architectureMd === undefined &&
+    epics.length === 0 &&
+    stories.length === 0
+  ) {
+    return null;
   }
 
   return parseBmadSpec({
