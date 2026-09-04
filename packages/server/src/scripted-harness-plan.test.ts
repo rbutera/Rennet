@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { OWNER_LOOP_ROUND_ONE_ASK, ownerLoopScriptedHarnessPlan } from "./owner-loop-proof-fixture";
-import { loadScriptedHarnessPlan } from "./scripted-harness-plan";
+import { loadScriptedHarnessPlan, loadScriptedT3Seats } from "./scripted-harness-plan";
 
 const askPlanValue = `\${askId}`;
 const evidenceIdsPlanValue = `\${evidenceIds}`;
@@ -239,6 +239,58 @@ describe("scripted harness JSON plan", () => {
       {},
     );
     expect(echoed).toMatchObject({ status: "completed", structuredOutput: board });
+  });
+
+  it("answers a repair turn on the thread that already holds the draft", async () => {
+    // A repair turn carries LINT POINTERS and no prompt file, so `selectStep` over that turn
+    // alone matches nothing and the seat would settle "no step for this prompt" with the
+    // unrepaired draft kept (PR #800). The thread remembers its own board, so the step is
+    // chosen from the whole conversation and the drafting step answers again.
+    const root = mkdtempSync(join(tmpdir(), "rennet-scripted-seat-repair-"));
+    const seats = loadScriptedT3Seats(
+      writePlan(root, {
+        schemaVersion: 1,
+        lane: "owner-loop-685",
+        invocationLog: join(root, "invocations.jsonl"),
+        steps: [
+          {
+            id: "draft-sequence",
+            kind: "structured",
+            promptIncludes: "Sequence fixture",
+            output: { elements: [{ id: "p", kind: "prose", data: { markdown: "drafted" } }] },
+          },
+        ],
+      }),
+    );
+    const runtime = await seats.resolve({
+      repoRoot: root,
+      generationId: "gen-1",
+      branch: "feature/x",
+      sessionId: "session-1",
+    });
+    const client = await runtime.seam.client();
+    const { threadId } = await runtime.seam.threadFor({
+      seat: "sequence",
+      provider: "claudeAgent",
+      model: "opus",
+      effort: "medium",
+    });
+    const outputSchema = { type: "object" };
+    await client.startTurn({ threadId, text: "Sequence fixture", outputSchema });
+    await client.waitForTurnSettled(threadId);
+    // Pointers only — nothing in this text matches any step on its own.
+    await client.startTurn({
+      threadId,
+      text: "repair: element p failed lint at .data.markdown",
+      outputSchema,
+    });
+    const repaired = await client.waitForTurnSettled(threadId);
+    expect(repaired.state).toBe("completed");
+    expect(repaired.structuredOutput).toEqual({
+      elements: [{ id: "p", kind: "prose", data: { markdown: "drafted" } }],
+    });
+    expect(seats.threads).toHaveLength(1);
+    expect(seats.threads[0]?.prompts).toHaveLength(2);
   });
 
   it("rejects invalid plans and repository escapes before creating a session", async () => {
