@@ -4440,21 +4440,33 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       // collision — a caller cannot take the `t3-code` name off T3's server.
       // `strictMcpConfig` is deliberately not set here or anywhere on this
       // path: the user's own configured servers keep merging in.
+      //
+      // The header is written as a `${VAR}` REFERENCE, never as a credential.
+      // The SDK serialises this whole option into one `--mcp-config <json>`
+      // argument, so a literal token here would be on the child's argument list
+      // for anyone with `ps`; `claude` expands `${VAR}` from the child's own
+      // environment when it resolves an MCP header, so only the name travels.
       const callerMcpServers = normalizeTurnMcpServers(input.mcpServers);
+      const sidecarOwnedNames = new Set(mcpSession ? ["t3-code"] : []);
       const mergedMcpServers: NonNullable<ClaudeQueryOptions["mcpServers"]> = {
         ...(callerMcpServers
           ? Object.fromEntries(
-              Object.entries(callerMcpServers).map(([name, server]) => [
-                name,
-                {
-                  type: "http" as const,
-                  url: server.url,
-                  // The credential travels as a header. It is never an argument.
-                  ...(server.bearerToken
-                    ? { headers: { Authorization: `Bearer ${server.bearerToken}` } }
-                    : {}),
-                },
-              ]),
+              Object.entries(callerMcpServers)
+                .filter(([name]) => !sidecarOwnedNames.has(name))
+                .map(([name, server]) => [
+                  name,
+                  {
+                    type: "http" as const,
+                    url: server.url,
+                    ...(server.bearerTokenEnvVar
+                      ? {
+                          headers: {
+                            Authorization: `Bearer \${${server.bearerTokenEnvVar}}`,
+                          },
+                        }
+                      : {}),
+                  },
+                ]),
             )
           : {}),
         ...(mcpSession
@@ -4469,6 +4481,17 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
             }
           : {}),
       };
+      // What the session can actually serve for the caller, which is what a
+      // later turn is compared against. A name T3 owns is NOT the caller's, so
+      // recording the caller's entry for it would make the context claim a url
+      // the live query does not hold.
+      const boundCallerMcpServers = normalizeTurnMcpServers(
+        callerMcpServers === undefined
+          ? undefined
+          : Object.fromEntries(
+              Object.entries(callerMcpServers).filter(([name]) => !sidecarOwnedNames.has(name)),
+            ),
+      );
       const queryOptions: ClaudeQueryOptions = {
         ...(input.cwd ? { cwd: input.cwd } : {}),
         ...(apiModelId ? { model: apiModelId } : {}),
@@ -4583,7 +4606,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         liveTaskIds,
         turnState: undefined,
         outputSchema: sessionOutputSchema,
-        mcpServers: callerMcpServers,
+        mcpServers: boundCallerMcpServers,
         lastKnownContextWindow: initialContextWindow,
         lastKnownTokenUsage: undefined,
         lastKnownTotalProcessedTokens: undefined,
@@ -4703,7 +4726,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         return yield* new ProviderAdapterRequestError({
           provider: PROVIDER,
           method: "thread.turn.start",
-          detail: `This turn asks for MCP servers its Claude session was not started with (${differingNames.join(", ")}). The SDK fixes the MCP server set when the query is created, so the session would have to be restarted.`,
+          detail: `This turn asks for MCP servers its Claude session was not started with, or with different settings for (${differingNames.join(", ")}). The SDK fixes the MCP server set when the query is created, so the session would have to be restarted.`,
         });
       }
     }

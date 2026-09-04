@@ -69,7 +69,9 @@ export const ProviderSessionStartInput = Schema.Struct({
   outputSchema: Schema.optional(Schema.Unknown),
   /** MCP servers the caller supplies for this session, merged with the server's
       own at the adapter. Every provider fixes its MCP configuration when the
-      session process is created, so this is a session-level fact. */
+      session process is created, so this is a session-level fact. Each server
+      names the environment variable holding its credential; the credential
+      itself is never carried here. */
   mcpServers: Schema.optional(TurnMcpServers),
 });
 export type ProviderSessionStartInput = typeof ProviderSessionStartInput.Type;

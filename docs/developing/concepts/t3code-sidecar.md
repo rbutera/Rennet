@@ -254,24 +254,50 @@ Three things follow from the thread being persistent.
   `V2TurnStartParams.outputSchema`, but its runtime does not surface a settled turn's
   structured result, so the daemon parses the board out of the Codex seat's final message
   — for that provider only.
-- **A turn carries the MCP servers its caller gives it.** `startTurn` also takes an
-  `mcpServers` record of `name → { url, bearerToken? }`, on the same seam and in the same
-  shape as the output schema: the two `thread.turn.start` command shapes, the
-  `thread.turn-start-requested` payload, and both provider inputs. The adapters MERGE it
-  with whatever the sidecar configured for that thread and with whatever the user
-  configured for the provider — nothing is substituted, `strictMcpConfig` stays unset, and
-  the sidecar's own `t3-code` entry is written last so it wins a name collision. The
-  credential reaches the harness child as an `Authorization` header on Claude and as a
-  named environment variable on Codex (`-c mcp_servers.<name>.bearer_token_env_var="…"`),
-  never on an argument list. Both providers fix their MCP configuration when the session
-  process is created, exactly as Claude fixes `outputFormat` at `query()` construction, so
-  the thread's FIRST turn decides the set and a later turn asking for a different one is
-  refused with the names it disagrees on rather than run against the wrong tools. Codex's
-  `hasConfiguredMcpServer` was split for this: a caller-supplied server still earns the
-  tool-catalog reload before a turn, but `browserToolsAvailable` now asks for the
-  sidecar's own server by name, because a Codex prompt describing browser tools the
-  session does not have is a lie in the prompt. Nothing supplies a server yet — the field
-  is carried, and the daemon's own board server is the next change.
+- **A turn carries the MCP servers its caller gives it, and names their credentials
+  rather than carrying them.** `startTurn` also takes an `mcpServers` record of
+  `name → { url, bearerTokenEnvVar? }`, on the same seam and in the same shape as the
+  output schema: the two `thread.turn.start` command shapes, the
+  `thread.turn-start-requested` payload, and both provider inputs. **The field names an
+  environment variable; it never carries a token.** That is the only shape that can be
+  true here, because a command is written to the sidecar's event store and replayed from
+  it, and because Claude's SDK serialises its entire MCP option into one
+  `--mcp-config <json>` argument — a token placed here would be both a durable database
+  row and a string on a child process's command line. The daemon puts the secret in the
+  sidecar's environment, which the harness child inherits, and names it on the turn:
+  Codex reads the name as `bearer_token_env_var`, and `claude` expands `${VAR}` when it
+  resolves an MCP header, so only the name is ever serialised. Server names must be TOML
+  bare keys, because Codex writes them into a dotted config path where a dot silently
+  becomes a nested table.
+
+  The adapters MERGE these with whatever the sidecar configured for that thread and with
+  whatever the user configured for the provider — nothing is substituted,
+  `strictMcpConfig` stays unset, and a name the sidecar owns stays the sidecar's. Both
+  providers fix their MCP configuration when the session process is created, exactly as
+  Claude fixes `outputFormat` at `query()` construction, so the thread's FIRST turn
+  decides the set and a later turn asking for a different one is refused with the names it
+  disagrees on rather than run against the wrong tools. A same-name server pointed at a
+  new endpoint, or reading a new credential variable, counts as a different server: the
+  session was opened against the old one and cannot serve the new one.
+
+  Whether the sidecar's own browser server is attached now travels as an explicit fact
+  (`sidecarMcpServerConfigured`) rather than being read back off the argument list.
+  `hasConfiguredMcpServer` still answers the tool-catalog reload for any inline server,
+  but it cannot answer the browser question, because a caller can name its own server
+  `t3-code` and a name is not provenance — and a Codex prompt describing browser tools the
+  session does not have is a lie in the prompt.
+
+  One thing does NOT hold, and it is Codex's, not Rennet's: `-c` is a deep merge into the
+  user's own config at every depth, and there is no way to remove an inherited key.
+  Verified against codex-cli 0.148.0 — neither a leaf override, nor an inline table, nor
+  replacing the whole `mcp_servers` table detaches a same-named server from the user's.
+  The credential leaf is therefore always written, empty when the caller declared none, so
+  a user's token can never end up pointed at a caller's endpoint; the other keys of a
+  same-named user server (headers, timeouts) do survive. Name a server the user already
+  has and you inherit the rest of it.
+
+  Nothing supplies a server yet — the field is carried, and the daemon's own board server
+  is the next change.
 - **Spend is per turn, and it is a delta read off the thread.** Claude's SDK reports usage
   cumulatively over a streaming session's turns, so the seat leg records each turn's own
   usage as the difference against the previous settled turn's total — which
@@ -395,12 +421,13 @@ carries the turn's schema into a session it recovers, and the runtime-ingestion 
 that projects the `turn.settled` activity. Each has its row in `vendor/t3code/PATCHES.md`,
 all upstreamable.
 
-The per-turn `mcpServers` seam widens that surface by very little, because it sits on the
+The per-turn `mcpServers` seam widens that surface by little, because it sits mostly on the
 same files: the two contract modules, the decider, the provider command reactor, the
-provider service, and the two adapters, plus the Codex session runtime for the predicate
-split and three adapter test files. `McpProviderSession` is untouched — the caller's
-servers ride alongside it and merge at the adapter, so a session re-prepare (runtime mode,
-cwd, model) cannot clobber them and turning off agent browser access cannot clear them.
+provider service, and the two adapters, plus the Codex session runtime for the provenance
+option, four test files and the scripted app-server fixture. `McpProviderSession` is
+untouched — the caller's servers ride alongside it and merge at the adapter, so a session
+re-prepare (runtime mode, cwd, model) cannot clobber them and turning off agent browser
+access cannot clear them.
 
 **A dead `claude` must not take the sidecar with it.** The SDK's process transport writes
 the prompt to the child's stdin and never listens for that socket's `error` event, so a

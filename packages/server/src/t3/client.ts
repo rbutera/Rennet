@@ -88,15 +88,23 @@ export interface StartTurnInput {
   readonly outputSchema?: unknown;
   /**
    * MCP servers this turn's session should expose, by name, merged at the provider
-   * adapter with the sidecar's own server and with whatever the user configured. The
-   * bearer reaches the harness child as an `Authorization` header (Claude) or through a
-   * named environment variable (Codex) — never on an argument list. Both providers fix
-   * their MCP configuration when the session process is created, so a thread's FIRST
-   * turn decides the set and a later turn asking for a different one is refused by the
-   * names it disagrees on.
+   * adapter with the sidecar's own server and with whatever the user configured.
+   *
+   * A server names the ENVIRONMENT VARIABLE holding its credential; it never carries
+   * the credential. The command is persisted to T3's event log and replayed from it,
+   * and Claude's SDK puts its whole MCP option on the child's argument list as
+   * `--mcp-config <json>`, so a token placed here would be both a database row and a
+   * command line. The daemon puts the secret in the sidecar's environment, which the
+   * harness child inherits, and names it here: Codex reads it as
+   * `bearer_token_env_var`, Claude expands `${VAR}` inside the MCP header.
+   *
+   * Names must be TOML bare keys (`[A-Za-z0-9_-]+`), because Codex writes them into a
+   * dotted config path. Both providers fix their MCP configuration when the session
+   * process is created, so a thread's FIRST turn decides the set and a later turn
+   * asking for a different one is refused by the names it disagrees on.
    */
   readonly mcpServers?: Readonly<
-    Record<string, { readonly url: string; readonly bearerToken?: string }>
+    Record<string, { readonly url: string; readonly bearerTokenEnvVar?: string }>
   >;
 }
 

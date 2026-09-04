@@ -97,50 +97,51 @@ interface CodexAdapterSessionContext {
   readonly runtime: CodexSessionRuntimeShape;
   readonly eventFiber: Fiber.Fiber<void, never>;
   /** The caller-supplied MCP servers this session's app-server was spawned
-   * with, if any. Codex reads `-c mcp_servers.*` at spawn, so the set is fixed
-   * for the session's whole life, exactly as Claude's is. */
+   * with, if any, minus any name the sidecar owns. Codex reads
+   * `-c mcp_servers.*` at spawn, so the set is fixed for the session's whole
+   * life, exactly as Claude's is. */
   readonly mcpServers: TurnMcpServers | undefined;
   stopped: boolean;
 }
 
-/** The environment variable that carries a caller-supplied server's bearer
- * token to the Codex child. Codex reads the token from the environment by
- * name (`bearer_token_env_var`), which is what keeps the credential itself off
- * the argument list. Names are sanitized and de-duplicated so two server names
- * that sanitize alike still get one variable each. */
-function codexBearerTokenEnvVar(name: string, taken: ReadonlySet<string>): string {
-  const base = `T3_CALLER_MCP_BEARER_TOKEN_${name.replace(/[^A-Za-z0-9]/gu, "_").toUpperCase()}`;
-  if (!taken.has(base)) {
-    return base;
-  }
-  let suffix = 2;
-  while (taken.has(`${base}_${suffix}`)) {
-    suffix += 1;
-  }
-  return `${base}_${suffix}`;
-}
-
-/** The `-c` arguments and the bearer-token environment for one session's MCP
- * servers. T3's own server is appended LAST so its `-c mcp_servers.t3-code.*`
- * wins a name collision with a caller's. */
+/** The `-c` arguments for one session's caller-supplied MCP servers.
+ *
+ * Codex applies every `-c` as a DEEP MERGE into the config it already loaded,
+ * at every depth. Verified against codex-cli 0.148.0: neither a leaf override,
+ * nor an inline table (`-c 'mcp_servers.x={...}'`), nor replacing the whole
+ * `mcp_servers` table detaches a same-named server from the user's own — a
+ * user's `startup_timeout_sec` and `http_headers` survive all three. There is
+ * no way to remove an inherited key.
+ *
+ * So `bearer_token_env_var` is written for EVERY caller server, including one
+ * that declared no credential, where it is written empty. Leaving it out would
+ * let a same-named server in the user's own config point THEIR credential at
+ * the caller's endpoint, which is the one inherited leaf that must not survive.
+ * The rest of a same-named user server's keys do survive; that is Codex's
+ * merge, it cannot be undone from here, and it is why a caller should not name
+ * a server the user already has.
+ *
+ * T3's own server keeps upstream's two leaf writes unchanged, and is appended
+ * LAST so it wins the name.
+ */
 function buildCodexMcpConfiguration(input: {
   readonly callerMcpServers: TurnMcpServers | undefined;
-  readonly mcpSession: { readonly endpoint: string; readonly authorizationHeader: string } | undefined;
+  readonly mcpSession:
+    | { readonly endpoint: string; readonly authorizationHeader: string }
+    | undefined;
 }): {
   readonly appServerArgs: ReadonlyArray<string>;
   readonly bearerTokenEnvironment: Record<string, string>;
 } {
   const appServerArgs: Array<string> = [];
   const bearerTokenEnvironment: Record<string, string> = {};
-  const takenEnvVars = new Set<string>(["T3_MCP_BEARER_TOKEN"]);
   for (const [name, server] of Object.entries(input.callerMcpServers ?? {})) {
-    appServerArgs.push("-c", `mcp_servers.${name}.url=${server.url}`);
-    if (server.bearerToken !== undefined) {
-      const envVar = codexBearerTokenEnvVar(name, takenEnvVars);
-      takenEnvVars.add(envVar);
-      bearerTokenEnvironment[envVar] = server.bearerToken;
-      appServerArgs.push("-c", `mcp_servers.${name}.bearer_token_env_var="${envVar}"`);
-    }
+    appServerArgs.push(
+      "-c",
+      `mcp_servers.${name}.url=${server.url}`,
+      "-c",
+      `mcp_servers.${name}.bearer_token_env_var="${server.bearerTokenEnvVar ?? ""}"`,
+    );
   }
   if (input.mcpSession) {
     bearerTokenEnvironment.T3_MCP_BEARER_TOKEN = input.mcpSession.authorizationHeader.replace(
@@ -1745,7 +1746,20 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
             ? getCodexServiceTierOptionValue(input.modelSelection)
             : undefined;
         const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
-        const callerMcpServers = normalizeTurnMcpServers(input.mcpServers);
+        // A name the sidecar owns is not the caller's to bind: dropping it here
+        // is what stops a caller-supplied `t3-code` from ever being mistaken for
+        // the sidecar's own server further down.
+        const sidecarOwnedNames = new Set(mcpSession ? ["t3-code"] : []);
+        const requestedMcpServers = normalizeTurnMcpServers(input.mcpServers);
+        const callerMcpServers = normalizeTurnMcpServers(
+          requestedMcpServers === undefined
+            ? undefined
+            : Object.fromEntries(
+                Object.entries(requestedMcpServers).filter(
+                  ([name]) => !sidecarOwnedNames.has(name),
+                ),
+              ),
+        );
         const mcpConfiguration = buildCodexMcpConfiguration({
           callerMcpServers,
           mcpSession,
@@ -1775,6 +1789,11 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
                 appServerArgs: mcpConfiguration.appServerArgs,
               }
             : {}),
+          // Provenance, not inference. Whether the session carries the sidecar's
+          // OWN server is a fact known here and nowhere else: reading it back
+          // off the argument list would let a caller turn on the browser tool
+          // block by naming its server `t3-code`.
+          sidecarMcpServerConfigured: mcpSession !== undefined,
         };
         const sessionScope = yield* Scope.make("sequential");
         let sessionScopeTransferred = false;
@@ -1905,7 +1924,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
         return yield* new ProviderAdapterRequestError({
           provider: PROVIDER,
           method: "turn/start",
-          detail: `This turn asks for MCP servers its Codex session was not started with (${differingNames.join(", ")}). Codex reads its MCP configuration when the app-server is spawned, so the session would have to be restarted.`,
+          detail: `This turn asks for MCP servers its Codex session was not started with, or with different settings for (${differingNames.join(", ")}). Codex reads its MCP configuration when the app-server is spawned, so the session would have to be restarted.`,
         });
       }
     }

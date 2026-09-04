@@ -900,13 +900,39 @@ const ThreadTurnStartBootstrap = Schema.Struct({
 
 export type ThreadTurnStartBootstrap = typeof ThreadTurnStartBootstrap.Type;
 
-/** An MCP server the caller that starts a turn hands to that turn. The
- * credential, when the server wants one, reaches the provider child as an
- * `Authorization` header or through a named environment variable — never on an
- * argument list. */
+/** A server name that is safe in every place a provider writes one.
+ *
+ * Codex takes its inline MCP configuration as `-c mcp_servers.<name>.<key>`,
+ * a DOTTED path: a name containing `.` silently becomes a nested table and the
+ * server never exists (verified against codex-cli 0.148.0, where
+ * `-c mcp_servers.board.design.url=…` produced a `design` sub-table under the
+ * server `board` and no server named `board.design`). Quoting the segment does
+ * not help. So the contract admits only a TOML bare key, which is the grammar
+ * every provider can carry — the schema telling the truth about what it
+ * accepts, rather than a validator bolted on downstream. */
+const TurnMcpServerName = TrimmedNonEmptyString.check(
+  Schema.isPattern(/^[A-Za-z0-9_-]+$/),
+).check(Schema.isMaxLength(64));
+
+/** A POSIX environment-variable name. */
+const TurnMcpServerEnvVarName = TrimmedNonEmptyString.check(
+  Schema.isPattern(/^[A-Za-z_][A-Za-z0-9_]*$/),
+).check(Schema.isMaxLength(128));
+
+/** An MCP server the caller that starts a turn hands to that turn.
+ *
+ * The field names the ENVIRONMENT VARIABLE holding the credential; it never
+ * carries the credential itself. That is not caution, it is the only shape that
+ * can be true: a command is persisted to the event log and replayed from it,
+ * and the Claude SDK serialises its whole `mcpServers` option into a single
+ * `--mcp-config <json>` argument, so anything placed here would be both a
+ * durable database row and an argument on a child process's command line. The
+ * caller puts the secret in the provider child's environment and names it here;
+ * Codex consumes exactly this shape as `bearer_token_env_var`, and Claude
+ * expands `${VAR}` inside an MCP header, so only the name ever travels. */
 export const TurnMcpServer = Schema.Struct({
   url: TrimmedNonEmptyString,
-  bearerToken: Schema.optional(TrimmedNonEmptyString),
+  bearerTokenEnvVar: Schema.optional(TurnMcpServerEnvVarName),
 });
 export type TurnMcpServer = typeof TurnMcpServer.Type;
 
@@ -914,7 +940,7 @@ export type TurnMcpServer = typeof TurnMcpServer.Type;
  * server configures for the thread itself and whatever the user configured for
  * the provider, and are merged at the adapter; a name the server owns wins a
  * collision. */
-export const TurnMcpServers = Schema.Record(TrimmedNonEmptyString, TurnMcpServer);
+export const TurnMcpServers = Schema.Record(TurnMcpServerName, TurnMcpServer);
 export type TurnMcpServers = typeof TurnMcpServers.Type;
 
 /** An empty record is the same fact as no record, and saying so once here keeps
@@ -929,8 +955,10 @@ export function normalizeTurnMcpServers(
 }
 
 /** The server names on which two sets disagree — present on one side only, or
- * carrying a different endpoint or credential. Sorted, so an error built from
- * it reads the same way twice. */
+ * carrying a different endpoint or a different credential variable. A same-name
+ * server pointed at a new endpoint, or reading a new variable, is a DIFFERENT
+ * server, because the session was opened against the old one. Sorted, so an
+ * error built from it reads the same way twice. */
 export function differingTurnMcpServerNames(
   left: TurnMcpServers | undefined,
   right: TurnMcpServers | undefined,
@@ -944,7 +972,7 @@ export function differingTurnMcpServerNames(
     const rightServer = rightServers[name];
     if (
       leftServer?.url !== rightServer?.url ||
-      leftServer?.bearerToken !== rightServer?.bearerToken
+      leftServer?.bearerTokenEnvVar !== rightServer?.bearerTokenEnvVar
     ) {
       differing.push(name);
     }

@@ -4,6 +4,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { query as realClaudeQuery } from "@anthropic-ai/claude-agent-sdk";
 import type {
   Options as ClaudeQueryOptions,
   PermissionMode,
@@ -467,7 +468,7 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
-  it.effect("merges caller-supplied MCP servers into the SDK query", () => {
+  it.effect("puts an environment-variable reference in the MCP header, not a credential", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
@@ -476,7 +477,10 @@ describe("ClaudeAdapterLive", () => {
         provider: ProviderDriverKind.make("claudeAgent"),
         runtimeMode: "full-access",
         mcpServers: {
-          board: { url: "http://127.0.0.1:7391/board/design", bearerToken: "board-secret" },
+          board: {
+            url: "http://127.0.0.1:7391/board/design",
+            bearerTokenEnvVar: "RENNET_BOARD_TOKEN",
+          },
         },
       });
 
@@ -485,7 +489,9 @@ describe("ClaudeAdapterLive", () => {
         board: {
           type: "http",
           url: "http://127.0.0.1:7391/board/design",
-          headers: { Authorization: "Bearer board-secret" },
+          // `claude` expands this from the child's own environment when it
+          // resolves the header; the SDK only ever serialises the name.
+          headers: { Authorization: "Bearer ${RENNET_BOARD_TOKEN}" },
         },
       });
       // Settings inheritance is the settled ruling: nothing on this path narrows
@@ -494,6 +500,91 @@ describe("ClaudeAdapterLive", () => {
         (options as { readonly strictMcpConfig?: unknown } | undefined)?.strictMcpConfig,
         undefined,
       );
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("keeps the credential off the child's argument list, through the real SDK", () => {
+    const harness = makeHarness();
+    // What a resolved credential would look like if the header carried one.
+    const sentinel = "rennet-sentinel-board-credential";
+
+    // The SDK serialises its whole `mcpServers` option into ONE
+    // `--mcp-config <json>` argument, so reading the adapter alone cannot see
+    // whether a credential reaches argv: the serialisation is downstream of it.
+    // This drives the REAL SDK and reads the argument vector it built, with the
+    // spawn hook standing in for the child so no `claude` runs.
+    const captureArgs = (options: ClaudeQueryOptions) =>
+      Effect.promise(async () => {
+        let args: ReadonlyArray<string> = [];
+        try {
+          // The SDK builds the argument vector and calls the spawn hook while
+          // the query is being constructed, so the construction is inside the
+          // try: the hook throws once it has the args, and no child is spawned.
+          const run = realClaudeQuery({
+            prompt: (async function* () {
+              await new Promise(() => {});
+            })() as AsyncIterable<SDKUserMessage>,
+            options: {
+              ...options,
+              env: { ...process.env, RENNET_BOARD_TOKEN: sentinel },
+              spawnClaudeCodeProcess: (spawnOptions) => {
+                args = spawnOptions.args;
+                throw new Error("rennet test: args captured");
+              },
+            },
+          });
+          await run.next();
+        } catch {
+          // Expected: the capture hook refuses to spawn.
+        }
+        return args;
+      });
+
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+        mcpServers: {
+          board: {
+            url: "http://127.0.0.1:7391/board/design",
+            bearerTokenEnvVar: "RENNET_BOARD_TOKEN",
+          },
+        },
+      });
+      const options = harness.getLastCreateQueryInput()?.options;
+      assert.isDefined(options);
+      if (!options) return;
+
+      const referenceArgs = yield* captureArgs(options);
+      assert.isAbove(referenceArgs.length, 0);
+      const mcpConfigIndex = referenceArgs.indexOf("--mcp-config");
+      assert.isAbove(mcpConfigIndex, -1);
+      // The reference is on argv, and the value it names is not.
+      assert.include(referenceArgs[mcpConfigIndex + 1] ?? "", "${RENNET_BOARD_TOKEN}");
+      for (const argument of referenceArgs) {
+        assert.notInclude(argument, sentinel);
+      }
+
+      // The same path, given a header that carries the credential instead of
+      // naming it, puts that credential on argv. This is the control: it is the
+      // shape this adapter used to build, it runs through the same real SDK,
+      // and it proves the assertion above is capable of failing.
+      const literalArgs = yield* captureArgs({
+        ...options,
+        mcpServers: {
+          board: {
+            type: "http",
+            url: "http://127.0.0.1:7391/board/design",
+            headers: { Authorization: `Bearer ${sentinel}` },
+          },
+        },
+      });
+      assert.isTrue(literalArgs.some((argument) => argument.includes(sentinel)));
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
@@ -517,7 +608,10 @@ describe("ClaudeAdapterLive", () => {
         provider: ProviderDriverKind.make("claudeAgent"),
         runtimeMode: "full-access",
         mcpServers: {
-          "t3-code": { url: "http://127.0.0.1:7391/board/design", bearerToken: "board-secret" },
+          "t3-code": {
+            url: "http://127.0.0.1:7391/board/design",
+            bearerTokenEnvVar: "RENNET_BOARD_TOKEN",
+          },
           board: { url: "http://127.0.0.1:7391/board/flagged" },
         },
       });
@@ -585,8 +679,49 @@ describe("ClaudeAdapterLive", () => {
         })
         .pipe(Effect.flip);
       assert.match(error.message, /MCP servers its Claude session was not started with/u);
-      // The refusal names what disagrees, and never the credential.
       assert.match(error.message, /\(board\)/u);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("treats a new credential variable on the same name as a different server", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+        mcpServers: {
+          board: {
+            url: "http://127.0.0.1:7391/board/design",
+            bearerTokenEnvVar: "RENNET_BOARD_TOKEN_FIRST",
+          },
+        },
+      });
+
+      const error = yield* adapter
+        .sendTurn({
+          threadId: THREAD_ID,
+          input: "same name and url, rotated credential variable",
+          mcpServers: {
+            board: {
+              url: "http://127.0.0.1:7391/board/design",
+              bearerTokenEnvVar: "RENNET_BOARD_TOKEN_SECOND",
+            },
+          },
+        })
+        .pipe(Effect.flip);
+      // The session was opened against the old variable and cannot read the new
+      // one, so this is a different server under the same name.
+      assert.match(error.message, /\(board\)/u);
+      // The refusal names the server and nothing else about it: neither
+      // variable name, nor the endpoint.
+      assert.notMatch(error.message, /RENNET_BOARD_TOKEN_FIRST/u);
+      assert.notMatch(error.message, /RENNET_BOARD_TOKEN_SECOND/u);
+      assert.notMatch(error.message, /127\.0\.0\.1/u);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
