@@ -91,6 +91,11 @@ function seedTargetRepo(root: string): void {
   writeRepoFile(root, OWNER_LOOP_SOURCE, "export const ownerValue = 'reviewed';\n");
   git(root, "add", OWNER_LOOP_SOURCE);
   git(root, "commit", "-qm", "reviewed owner value");
+  // The clone goes back to `main` and stays there. Nothing has `feature/shared` out, so the
+  // session binds to a worktree Rennet creates — which is what makes "the seats and the
+  // round run in the BOUND workspace" falsifiable at all: the clone's bytes are the base
+  // ones, so a turn that read the clone reads visibly different content.
+  git(root, "checkout", "-q", "main");
 }
 
 function seedDecoyRepo(root: string): void {
@@ -592,13 +597,14 @@ describe("#685 owner loop through a real server", () => {
       await restarted.dispatch("review.load", { commandId: randomUUID(), reviewId }),
     ).review;
     expect(finalReview.activePatchsetId).toBe(generations.load(roundTwoGeneration)?.patchsetId);
-    // A round moves the reviewer's OWN branch in their OWN checkout now — that is the
-    // asked-for behaviour (session-bound-workspace D2), and the checkpoint the round
-    // account names is what makes it revertible. `main` is untouched, and so is the decoy
-    // repository that happens to carry the same branch name.
-    expect(git(target, "branch", "--show-current")).toBe("feature/shared");
+    // A round moves the session's OWN branch in the workspace it is bound to — that is the
+    // asked-for behaviour (session-bound-workspace D2), and the checkpoint the round account
+    // names is what makes it revertible. The branch REF carries both rounds; the clone, which
+    // sits on `main`, never moved and was never staged in; `main` is untouched, and so is the
+    // decoy repository that happens to carry the same branch name.
+    expect(git(target, "branch", "--show-current")).toBe("main");
     expect(readFileSync(join(target, OWNER_LOOP_SOURCE), "utf8")).toBe(
-      "export const ownerValue = 'round-two';\n",
+      "export const ownerValue = 'base';\n",
     );
     expect(git(target, "show", `main:${OWNER_LOOP_SOURCE}`)).toBe(
       "export const ownerValue = 'base';",
@@ -616,11 +622,23 @@ describe("#685 owner loop through a real server", () => {
     );
     expect(git(decoy, "status", "--porcelain")).toBe("");
 
-    // Both rounds ran as turns in the session's BOUND ROOT — the reviewer's checkout —
-    // and each one READ its work order from the context directory rather than being sent
-    // it. No round worktree was ever created under the data directory, and the repository
-    // still has exactly the checkouts it started with plus the review's evidence one.
-    expect(roundTurns.map((turn) => turn.repoRoot)).toEqual([target, target]);
+    // The session's bound workspace: the clone sits on `main`, nothing else has
+    // `feature/shared` out, so Rennet created one for it, keyed by the repository so a
+    // second repo on the same branch name gets its own (#805).
+    const evidenceRoot = realpathSync(
+      join(dataDir, "worktrees", escapePath(realpathSync(target)), "feature", "shared"),
+    );
+
+    // Both rounds ran as turns in that BOUND ROOT, not in the clone, and each one READ its
+    // work order from the context directory rather than being sent it. No round worktree was
+    // ever created under the data directory.
+    expect(roundTurns.map((turn) => realpathSync(turn.repoRoot))).toEqual([
+      evidenceRoot,
+      evidenceRoot,
+    ]);
+    expect(roundTurns.some((turn) => realpathSync(turn.repoRoot) === realpathSync(target))).toBe(
+      false,
+    );
     expect(roundTurns[0]?.order).toContain(OWNER_LOOP_ROUND_ONE_BODY);
     expect(roundTurns[1]?.order).toContain(OWNER_LOOP_ROUND_TWO_BODY);
     expect(existsSync(join(dataDir, "round-worktrees"))).toBe(false);
@@ -641,13 +659,9 @@ describe("#685 owner loop through a real server", () => {
       "report-round-two",
       "post-process",
     ]);
-    // Board seats draft in the session's BOUND workspace (session-bound-workspace D1).
-    // The ambient clone sits on `main` — BASE bytes, unrelated to the reviewed branch — so
-    // nothing has `feature/shared` out and the session binds to a worktree Rennet creates
-    // for it, keyed by the repository so a second repo on the same branch name gets its own.
-    const evidenceRoot = realpathSync(
-      join(dataDir, "worktrees", escapePath(realpathSync(target)), "feature", "shared"),
-    );
+    // Board seats draft in the same BOUND workspace the round's turns did
+    // (session-bound-workspace D1). The ambient clone sits on `main` — BASE bytes, unrelated
+    // to the reviewed branch — so a seat that read it would read visibly different content.
     const boardRecords = records.filter((record) => targetBoardSteps.has(String(record.stepId)));
     expect(boardRecords.length).toBeGreaterThan(0);
     expect(
