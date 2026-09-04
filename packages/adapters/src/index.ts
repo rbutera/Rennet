@@ -649,6 +649,7 @@ export {
   createMetricsCollector,
   extractClaudeUsage,
   type InstrumentedRunTurnOptions,
+  instrumentCodexExecutor,
   type MetricsCollector,
   mergeGenerationUsage,
   summarizeUsage,

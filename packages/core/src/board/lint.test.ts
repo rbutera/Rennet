@@ -4335,6 +4335,53 @@ describe("citation identity (S2 — patchset id + side)", () => {
     const scoped = ctx({ patchsetId: "ps-1", baseFiles: new Map([["src/auth.ts", 8]]) });
     expect(rulesHit(lint(ok, scoped))).not.toContain("citation-resolves");
   });
+
+  // `side` is a schema-declared enum, and the SCHEMA is what reports a value outside it. The
+  // span reader used to coerce anything that was not "base" to head instead, so `side: "old"`
+  // was linted against the head inventory, resolved against head regions, and rendered on
+  // the head side — a citation checked on a side its author never named, silently.
+  it("an unknown side is the schema's report, and is never linted as head", () => {
+    const raw = {
+      elements: [
+        {
+          id: "c",
+          kind: "code_ref",
+          data: {
+            author,
+            patchset_id: "ps-1",
+            path: "src/ghost.ts",
+            side: "old",
+            start_line: 40,
+            end_line: 41,
+          },
+        },
+      ],
+    };
+    // The pointer that fires: the schema refuses the element and names the field.
+    const parsed = parseDraft(raw);
+    expect(parsed.ok).toBe(false);
+    expect(JSON.stringify(parsed.ok === false ? parsed.issues : [])).toContain("side");
+
+    // Control that this element is one lint WOULD have reported on the head side: with
+    // `side: "head"` it fires BOTH citation rules (no such file, and outside every changed
+    // region). With the side unknown neither fires — the element is the schema's business,
+    // and lint no longer answers a question about a side its author never named.
+    const asHead = board([
+      el("c", "code_ref", {
+        patchset_id: "ps-1",
+        path: "src/ghost.ts",
+        side: "head",
+        start_line: 40,
+        end_line: 41,
+      }),
+    ]);
+    expect(rulesHit(lint(asHead, ctx({ patchsetId: "ps-1" })))).toContain("citation-resolves");
+    expect(rulesHit(lint(asHead, ctx({ patchsetId: "ps-1" })))).toContain("unresolvable-citation");
+    const unknownSide = board(raw.elements as unknown as DraftElement[]);
+    const hit = rulesHit(lint(unknownSide, ctx({ patchsetId: "ps-1" })));
+    expect(hit).not.toContain("unresolvable-citation");
+    expect(hit).not.toContain("citation-resolves");
+  });
 });
 
 // ── Schema-declared element references resolve and are orderable ──────────────

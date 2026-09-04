@@ -194,7 +194,9 @@ and calls board regeneration through this runtime.
      path, the range and the nearest changed range (a rename's base side answers
      to either name; a truncated capture's tail counts as changed rather than
      being claimed outside; a range past the end of the file is the
-     citation-resolves overrun pointer alone);
+     citation-resolves overrun pointer alone; a citation naming a side that is
+     neither `base` nor `head` is the board schema's own pointer, and lint
+     answers nothing about it rather than checking it against head);
    - **element references resolve** — every schema-declared element reference
      names an element in that exact board, and the reference graph is acyclic so
      the host can create each target before its citer;
@@ -728,6 +730,14 @@ ruling lines remain visible in the progress region but never count as completion
   carries only its hunks, so a citation into a region the diff never showed
   cannot be served — the surface says which absence it hit ("outside the diff
   this patchset captured") rather than rendering an empty block.
+- The one span the reader goes outside the patch text for is a **truncated
+  capture's tail**, because lint accepts a citation there on purpose: the tail
+  region is open-ended, so the daemon never calls a seat's citation wrong over
+  lines it chose not to keep. Those lines come from the immutable object the
+  patchset recorded (`git show <reviewedTreeOid|baseOid>:<path>`) — the same
+  reviewed content, not the checkout as it stands today. With no repository to
+  read, the card shows an honest caption saying the diff was cut short, never a
+  refusal: a citation the board accepted must not read as a bad citation.
 - Multi-site evidence (a decision's excerpts) renders as one tabbed code
   viewer: quiet pill tabs, one visible code block card.
 - A finding is document flow, not a boxed card: severity and claim title,

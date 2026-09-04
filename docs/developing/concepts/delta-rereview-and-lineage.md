@@ -189,7 +189,14 @@ verified report when the round produced one.
 ## Delta marks
 
 Composition stamps each touched section of a regenerated lens board `new` or
-`reworked`; absence of a stamp means the section carried. The marks read as
+`reworked`; absence of a stamp means the section carried. Which section is
+which is decided by content first, then by a shared citation keyed on
+`(path, side, start line, end line)` — never on the optional `symbol` anchor a
+seat may rename or drop over the same lines, and never on the patchset the
+citation was minted under. A section that cites nothing falls back to its title;
+one that cites code does not, because two generations both writing a "Findings"
+section about different code is ordinary, and matching on the shared word made a
+new section read as a rework while hiding the old one's removal. The marks read as
 unread state rather than as a changelog: a touched section opens expanded while
 a carried section folds to its gist, so the board's own shape states what moved.
 A small transient accent dot per touched section rolls up to the lens segment,

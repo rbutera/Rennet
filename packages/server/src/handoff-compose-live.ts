@@ -125,6 +125,7 @@ export function codexComposePort(
         prompt,
         cwd,
         outputSchema: COMPOSE_OUTPUT_SCHEMA,
+        label: "handoff-compose",
       });
       return mapComposeOutput(result.output);
     } catch (error) {

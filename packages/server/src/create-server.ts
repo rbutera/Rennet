@@ -78,6 +78,7 @@ import {
   type GitLabForgeCommandRunner,
   type GitLabPrSubmissionCommandRunner,
   gitForRepoFactory,
+  instrumentCodexExecutor,
   isGitHubNetworkError,
   landRoundBranch,
   landRoundChanges,
@@ -129,6 +130,7 @@ import {
   settleRoundCommits,
   snapshotStoreFor,
   TranscriptStore,
+  type TurnMetric,
   validateGitHubToken,
   withRepoPref,
   wslDiscoveryDeps,
@@ -1363,6 +1365,25 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   // `locusCommand` — a WSL review is dual-harness rather than degrading to
   // single-Claude. The same resolution now owns the agentic adapter used by Codex-backed
   // coding rounds, so discovery, version provenance, and executable choice cannot drift.
+  // The sink for every Codex utility turn's measurement. These turns belong to no
+  // generation — they are one-off producers behind a command, not round legs — so there is
+  // no durable `usage` record to add them to, and the daemon log is where the figure lands.
+  // The point is that it lands somewhere: the user's subscription pays for the turn, and a
+  // prompt's cost is invisible in a diff. Never throws into a send.
+  const codexUtilityMetrics = {
+    record(metric: TurnMetric): void {
+      const parts = [
+        `${metric.label} ${metric.status}`,
+        `model=${metric.model ?? "unknown"}`,
+        `${metric.latencyMs}ms`,
+        metric.usage === null ? "tokens=unreported" : `tokens=${metric.usage.totalTokens}`,
+      ];
+      if (metric.inlineContextBytes !== undefined) {
+        parts.push(`inlineContextBytes=${metric.inlineContextBytes}`);
+      }
+      console.log(`[codex-utility] ${parts.join(" ")}`);
+    },
+  };
   const codexResolutions = new Map<string, Promise<CodexResolution>>();
   function getCodexResolution(locus: Locus): Promise<CodexResolution> {
     const key = locus.kind === "wsl" ? `wsl:${locus.distro}` : "host";
@@ -1400,14 +1421,21 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
             adapter: null,
           };
         }
+        // Every utility send through this executor records its measurement (#737 tap):
+        // the ports call `codex exec` directly, so nothing else on that path sees the
+        // tokens or the inlined bytes.
         const makeExecutor = (repoRoot: string): CodexExecutor =>
-          createCodexExecutor(defaultCodexExecEffects, {
-            bin: chosen.path,
-            harnessVersion: chosen.version,
-            ...(chosen.runtimePath === undefined ? {} : { runtimePath: chosen.runtimePath }),
-            ...(locus.kind === "wsl" ? { locus } : {}),
-            repoRoot,
-          });
+          instrumentCodexExecutor(
+            createCodexExecutor(defaultCodexExecEffects, {
+              bin: chosen.path,
+              harnessVersion: chosen.version,
+              ...(chosen.runtimePath === undefined ? {} : { runtimePath: chosen.runtimePath }),
+              ...(locus.kind === "wsl" ? { locus } : {}),
+              repoRoot,
+            }),
+            codexUtilityMetrics,
+            "codex-utility",
+          );
         return {
           availability: { available: true, version: chosen.version },
           makeExecutor,
@@ -4218,6 +4246,16 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
 
   dispatch = createDispatch({
     t3Sidecar,
+    // The lines a truncated capture cut short, read from the immutable object the patchset
+    // recorded rather than the working tree (`patchset.readSpan`). Best-effort: a missing
+    // repository, object or path answers `null` and the reader captions the gap.
+    readBlobAtOid: async ({ root, oid, path }) => {
+      try {
+        return await gitForRepo(root)(root, ["show", `${oid}:${path}`]);
+      } catch {
+        return null;
+      }
+    },
     // Archive is the deletion boundary for the session's context files as much as for its
     // threads; the host resolves the bound root the wire never carries.
     purgeSessionContext: purgeContextForSession,
