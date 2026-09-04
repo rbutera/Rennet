@@ -81,20 +81,28 @@ because a session the store does not hold is a session no surface can read back.
 ### One workspace per session
 
 Beside the repository, a session records the one **workspace** it is bound to, and every
-turn it spawns runs there: the six lens seats, the chat thread, the handoff thread, the
-round worker and every cold utility turn. The binding is decided once, from the review
-target — the reviewer's own checkout when some worktree of the repository already has the
-reviewed branch out, a Rennet-created worktree at `~/.rennet/worktrees/<repoKey>/<branch>`
-when nothing does, the detached worktree at the reviewed head for a pull-request snapshot —
-and recorded as `boundRoot`. Nothing re-decides it afterwards; a landed round advances the
-reviewed head and the bound worktree is re-pinned in place. A session created before the
-binding existed carries none and binds lazily, and records it, on first use.
+turn it spawns runs there: the six lens seats, the chat thread, the handoff thread and every
+cold utility turn. The binding is decided once, from the review target — the reviewer's own
+checkout when some worktree of the repository already has the reviewed branch out, a
+Rennet-created worktree at `~/.rennet/worktrees/<repoKey>/<branch>` when nothing does, the
+detached worktree at the reviewed head for a pull-request snapshot — and recorded as
+`boundRoot`. A workspace that cannot be created fails the bind and records nothing rather
+than falling back to the clone, which sits on another branch; the next use retries. Nothing
+re-decides a binding afterwards, though a pull-request binding is re-pinned when a landed
+round advances the reviewed head. A session created before the binding existed carries none
+and binds lazily, and records it, on first use.
+
+The coding round is the one child still outside this: it runs its own detached worktree per
+operation and lands the result onto the branch. Moving it onto the bound workspace is a
+separate change.
 
 The workspace is where the session's `.rennet/context/<sessionId>/` directory lives, which
 is what makes the relative paths in every prompt resolve: a turn's cwd and the root its
-context was written under are the same thing by construction. The chat header's trail names
-the bound workspace beside the branch, so a session drafting in a worktree rather than the
-reviewer's own tree says so. Full detail: [T3 Code sidecar](t3code-sidecar.md#session-bound-workspace).
+context was written under are the same thing by construction. The handoff run captures its
+successor from that workspace too — it is where the agent wrote. The chat header's trail
+names the bound workspace beside the branch, so a session drafting in a worktree rather than
+the reviewer's own tree says so. Full detail:
+[T3 Code sidecar](t3code-sidecar.md#session-bound-workspace).
 
 Anchored threads keep their content in the session transcript; the boards and
 the diff hold only anchor→thread references, so a code-line comment, a

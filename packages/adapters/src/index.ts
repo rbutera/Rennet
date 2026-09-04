@@ -391,7 +391,6 @@ export {
   prWorktreePath,
   readSetupLogTail,
   readSetupStatus,
-  reviewWorktreePath,
   runPrWorktreeSetup,
   type SetupStatus,
   worktreeForBranch,

@@ -10,10 +10,15 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { escapePath } from "@rennet/core";
+import { escapePath, HOST_LOCUS } from "@rennet/core";
 import type { Review } from "@rennet/protocol";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { type BoundWorkspaceDeps, decideBoundWorkspace } from "./bound-workspace";
+import {
+  type BoundWorkspaceDeps,
+  decideBoundWorkspace,
+  inRepoSpelling,
+  repinBoundWorkspace,
+} from "./bound-workspace";
 
 // Real git repositories, because every interesting answer here comes from git: which worktree
 // already has a branch out, whether `worktree add` will accept a path, whether a detached
@@ -121,11 +126,11 @@ describe("decideBoundWorkspace (session-bound-workspace D1)", () => {
     gitCalls = [];
     deps = {
       gitFor: () => gitExec,
+      locusOf: () => HOST_LOCUS,
       repoKeyForRoot: (repoRoot) => escapePath(repoRoot),
       dataDir,
       prWorktreeFor: (reviewId) => prIndex.get(reviewId),
       recordPrWorktree: (reviewId, path) => void prIndex.set(reviewId, path),
-      reviewWorktreePath: (reviewId) => join(dataDir, "worktrees", "review", reviewId),
       onWorktreeCreated: (path) => void created.push(path),
     };
   });
@@ -209,7 +214,10 @@ describe("decideBoundWorkspace (session-bound-workspace D1)", () => {
       pullRequest: true,
     });
     const bound = await decideBoundWorkspace(review, deps);
-    expect(bound).toBe(join(dataDir, "worktrees", "review", "r3"));
+    // The per-PULL-REQUEST path, never `worktrees/review/<id>`: that layout is the one the
+    // startup sweep now retires, and re-creating it would make that half of the sweep a
+    // no-op forever.
+    expect(bound).toBe(join(dataDir, "worktrees", "o", "n", "pr-7"));
     expect(prIndex.get("r3")).toBe(bound);
     expect(git(bound, ["rev-parse", "HEAD"]).trim()).toBe(head);
     expect(git(bound, ["rev-parse", "--abbrev-ref", "HEAD"]).trim()).toBe("HEAD"); // detached
@@ -225,9 +233,10 @@ describe("decideBoundWorkspace (session-bound-workspace D1)", () => {
       baseOid: headOid(repo, "main"),
       retrospective: true,
     });
-    expect(await decideBoundWorkspace(review, deps)).toBe(
-      join(dataDir, "worktrees", "review", "r4"),
-    );
+    // A retrospective review carries no post target, so there is no pull-request path to
+    // name and nothing to create; it binds to the repository, where its pinned reads resolve.
+    expect(await decideBoundWorkspace(review, deps)).toBe(repo);
+    expect(createdWorktrees()).toEqual([]);
   });
 
   it("reuses a pull-request worktree the index already names, rather than a second checkout", async () => {
@@ -310,5 +319,104 @@ describe("decideBoundWorkspace (session-bound-workspace D1)", () => {
     expect(await decideBoundWorkspace(review, deps)).toBe(theirs);
     expect(createdWorktrees()).toEqual([]);
     expect(attemptedWorktreeAdd()).toBe(false);
+  });
+
+  it("RE-PINS a pull-request binding when the reviewed head has moved", async () => {
+    // A landed round advances the reviewed head. The binding is a DETACHED checkout at the
+    // old one, so without a re-pin every generation after the first drafts from the previous
+    // patchset's bytes while the bench names the new one.
+    const repo = initRepo(root, "repo");
+    const firstHead = headOid(repo, "feature");
+    const review = reviewFor({
+      id: "r8",
+      repositoryRoot: repo,
+      headOid: firstHead,
+      baseOid: headOid(repo, "main"),
+      pullRequest: true,
+    });
+    const bound = await decideBoundWorkspace(review, deps);
+    expect(git(bound, ["rev-parse", "HEAD"]).trim()).toBe(firstHead);
+
+    // The branch moves, exactly as a round's commits move it.
+    git(repo, ["checkout", "-q", "feature"]);
+    writeFileSync(join(repo, "round.txt"), "round one\n");
+    git(repo, ["add", "."]);
+    git(repo, ["commit", "-q", "-m", "round one"]);
+    git(repo, ["checkout", "-q", "main"]);
+    const movedHead = headOid(repo, "feature");
+    expect(movedHead).not.toBe(firstHead);
+
+    const advanced = reviewFor({
+      id: "r8",
+      repositoryRoot: repo,
+      headOid: movedHead,
+      baseOid: headOid(repo, "main"),
+      pullRequest: true,
+    });
+    // The SAME path — a re-pin, not a re-decision — now holding the new head.
+    expect(await repinBoundWorkspace(advanced, bound, deps)).toBe(bound);
+    expect(git(bound, ["rev-parse", "HEAD"]).trim()).toBe(movedHead);
+    expect(existsSync(join(bound, "round.txt"))).toBe(true);
+  });
+
+  it("leaves a branch binding alone: its worktree has the branch out and follows the ref", async () => {
+    const repo = initRepo(root, "repo");
+    const review = reviewFor({
+      id: "r9",
+      repositoryRoot: repo,
+      headOid: headOid(repo, "feature"),
+      headRef: "feature",
+      baseOid: headOid(repo, "main"),
+    });
+    const bound = await decideBoundWorkspace(review, deps);
+    gitCalls = [];
+    expect(await repinBoundWorkspace(review, bound, deps)).toBe(bound);
+    expect(gitCalls).toEqual([]);
+  });
+
+  it("THROWS rather than binding the session to the clone when a worktree cannot be made", async () => {
+    // The clone sits on `main`. Recording it as the binding would run every later turn of a
+    // `feature` review against `main` — silently, under the right label, for the session's
+    // whole life. The caller records nothing on a throw, so the next use retries.
+    const repo = initRepo(root, "repo");
+    const review = reviewFor({
+      id: "r10",
+      repositoryRoot: repo,
+      headOid: headOid(repo, "feature"),
+      headRef: "feature",
+      baseOid: headOid(repo, "main"),
+    });
+    // `worktree add` cannot create a directory under a path that is a FILE.
+    const blocked = join(dataDir, "worktrees", escapePath(repo));
+    mkdirSync(join(blocked, ".."), { recursive: true });
+    writeFileSync(blocked, "not a directory\n");
+    await expect(decideBoundWorkspace(review, deps)).rejects.toThrow();
+  });
+});
+
+describe("inRepoSpelling — git's answer in the daemon's spelling (task 5.2, PR #789)", () => {
+  const wsl = { kind: "wsl", distro: "Ubuntu" } as const;
+
+  it("re-spells a distro path into the UNC view a Windows-host daemon addresses the repo by", () => {
+    // The daemon runs on Windows and holds `\\wsl$\Ubuntu\home\u\repo`; the git it drives
+    // lives INSIDE the distro and answers `/home/u/repo`. Stored raw, that path makes
+    // `existsSync` refuse every thread, `detectLocus` read the workspace as the HOST, and the
+    // context writer mkdir `C:\home\u\...`.
+    expect(inRepoSpelling("/home/u/repo", "\\\\wsl$\\Ubuntu\\home\\u\\repo", wsl)).toBe(
+      "\\\\wsl.localhost\\Ubuntu\\home\\u\\repo",
+    );
+  });
+
+  it("leaves git's answer alone when the daemon runs INSIDE the distro", () => {
+    // Same locus, different arrangement: the daemon addresses the repository distro-natively,
+    // so git's spelling already IS the daemon's and re-spelling would invent a UNC path
+    // nothing uses.
+    expect(inRepoSpelling("/home/u/repo", "/home/u/repo", wsl)).toBe("/home/u/repo");
+  });
+
+  it("leaves a host-locus path alone", () => {
+    expect(inRepoSpelling("/Users/rai/repo", "/Users/rai/repo", HOST_LOCUS)).toBe(
+      "/Users/rai/repo",
+    );
   });
 });

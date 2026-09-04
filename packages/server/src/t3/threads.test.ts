@@ -341,4 +341,57 @@ describe("bindThread carries the session's bound workspace", () => {
     });
     expect(inputs[0]?.worktreePath).toBeUndefined();
   });
+
+  it("gives a legacy project-root binding a FRESH thread once the session binds a workspace", async () => {
+    // The pre-wave case, and the one this whole wave exists to fix: a thread's cwd is fixed
+    // when it is created, so a row written before the binding existed is a thread rooted at
+    // the project. Reusing it would leave the chat and the handoff in the project root while
+    // every seat of the same session ran in the bound worktree.
+    const workspace = mkdtempSync(join(tmpdir(), "rennet-bound-legacy-wt-"));
+    const repositoryRoot = mkdtempSync(join(tmpdir(), "rennet-bound-legacy-repo-"));
+    try {
+      const key = { kind: "session", sessionId: "s-legacy" } as const;
+      const legacy = await bindThread({
+        dataDir,
+        client,
+        repositoryRoot,
+        key,
+        title: "t",
+        modelSelection: SELECTION,
+      });
+      expect(inputs[0]?.worktreePath).toBeUndefined();
+
+      const rebound = await bindThread({
+        dataDir,
+        client,
+        repositoryRoot,
+        worktreePath: workspace,
+        key,
+        title: "t",
+        modelSelection: SELECTION,
+      });
+      expect(rebound.threadId).not.toBe(legacy.threadId);
+      expect(inputs[1]?.worktreePath).toBe(workspace);
+      // The old row is gone, so the next ask cannot find its way back to the wrong tree.
+      const found = findBinding(dataDir, repositoryRoot, key);
+      expect(found?.threadId).toBe(rebound.threadId);
+      expect(found?.worktreePath).toBe(workspace);
+
+      // And an ask for the SAME workspace reuses the thread — this is not "always recreate".
+      const again = await bindThread({
+        dataDir,
+        client,
+        repositoryRoot,
+        worktreePath: workspace,
+        key,
+        title: "t",
+        modelSelection: SELECTION,
+      });
+      expect(again.threadId).toBe(rebound.threadId);
+      expect(inputs).toHaveLength(2);
+    } finally {
+      rmSync(workspace, { recursive: true, force: true });
+      rmSync(repositoryRoot, { recursive: true, force: true });
+    }
+  });
 });

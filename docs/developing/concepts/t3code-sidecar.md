@@ -410,18 +410,34 @@ life. Which one is decided from the review target, once:
 
 "Some worktree already has it out" is asked of `git worktree list`, not assumed: git refuses
 `worktree add` for a branch checked out elsewhere, so binding blind would fail on exactly the
-tree that should have been bound to, and degrade to the repository root.
+tree that should have been bound to. Git answers in **its** spelling, which for a WSL project
+driven from a Windows host is the distro's (`/home/u/repo`), so the answer is re-spelled into
+the one the daemon addresses the repository by before it becomes `boundRoot`.
+
+A workspace that cannot be created **fails the bind** rather than falling back to the clone.
+The clone sits on whatever ref it sits on — usually the default branch — so a recorded fallback
+would run every later turn of the session against a tree the review is not about. Nothing is
+recorded, and the next use retries.
 
 The decision is recorded as `boundRoot` on the session record, and every later read is that
 field. A session minted before the binding existed carries none and binds lazily, and records
-it, on its first use. Nothing re-decides a binding: a landed round advances the reviewed head
-and the round path re-pins the bound worktree in place.
+it, on its first use. Nothing re-decides a binding — but a pull-request binding is **re-pinned**
+on every read, because it is a detached checkout and a landed round advances the reviewed head;
+`ensurePrWorktree` replaces the checkout at the same path, so the recorded root does not move.
 
-Everything the session spawns runs there — the six lens seats, the chat thread, the handoff
-thread, the round worker and every cold utility turn — because the thread's `worktreePath` and
-the turn's `cwd` are both that root. On a WSL project the bound root is a distro path, and the
-same `locusContextForRepo` translation every harness site already threads carries it to
-`wsl.exe --cd`.
+The session's children run there because the thread's `worktreePath` and the turn's `cwd` are
+both that root: the six lens seats, the chat thread, the handoff thread and every cold utility
+turn (scout, repo map, delta digest, opener, pull-request body, refine, CI classification,
+finding verification). The coding round is Lane B's remaining work and still runs its own
+detached worktree per operation until [task 5.3](https://github.com/rbutera/rennet) lands.
+
+On WSL the bound root reaches the child as `wsl.exe --cd <distro path>`: the adapter bakes that
+argument at construction and `transportCwd` wins over a session's `cwd`, so a harness is
+resolved from the **turn root**, never from the repository root, or the cwd is silently ignored.
+
+A thread's cwd is fixed when the thread is created, so a binding row records the workspace it
+was created with. A row whose workspace is not the one being asked for — every row written
+before this wave, which has none — gets a fresh thread rather than being reused.
 
 The reviewer sees it: the chat header's trail names the bound workspace beside the branch, so
 "which tree did the seat read" is not invisible when it is a worktree rather than their own
@@ -429,7 +445,9 @@ checkout.
 
 Worktrees earlier versions created per round operation (`~/.rennet/round-worktrees/`) and per
 review (`~/.rennet/worktrees/review/`) are removed by a sweep at daemon start, which leaves any
-directory a live session's `boundRoot` names and logs how many it removed. Nothing recreates
+directory a live session is bound to (compared through `realpath`, and re-read before every
+removal) and logs how many it removed. Nothing creates a `worktrees/review/` directory any
+more; the round worktrees come back until Lane B's task 5.4 deletes the planner that makes
 them.
 
 ## The handoff exit

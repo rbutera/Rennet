@@ -114,7 +114,6 @@ import {
   repositoryIdentity,
   resolveGitHubAuth,
   resolveTrackerConfig,
-  reviewWorktreePath,
   runConfiguredRoundGate,
   detectForges as runForgeDetection,
   runGitHubDeviceFlow,
@@ -217,7 +216,7 @@ import {
 } from "@rennet/protocol";
 import { createBenchmarkRecording } from "./benchmark-store";
 import { type BoardsRuntime, createBoardsRuntime } from "./boards/boards-runtime";
-import { decideBoundWorkspace } from "./bound-workspace";
+import { decideBoundWorkspace, repinBoundWorkspace } from "./bound-workspace";
 import { attachCiSignal } from "./ci-signal";
 import {
   configureSessionContext,
@@ -1992,39 +1991,55 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
    * A working-tree capture is the degenerate branch case: its evidence IS the live checkout
    * the capture froze, so it binds there.
    *
-   * Honest degrade: a worktree that cannot be ensured falls back to the repository root —
-   * the task-layer prompt already teaches pinned reads (`git show <oid>:<path>`), so a seat
-   * there is degraded, not lied to.
-   *
    * The decision is RECORDED on the session, so it is made once for the session's life and
    * every later read is the recorded field. A session minted before this wave has no
-   * recorded root and binds here, lazily, on its first use (D migration step 4).
+   * recorded root and binds here, lazily, on its first use (D migration step 4). A workspace
+   * that could NOT be created records nothing and throws: the clone sits on whatever ref it
+   * sits on, so a recorded fallback would run every later turn of the session against a tree
+   * the review is not about. The next use retries the bind.
+   *
+   * Single-flighted per session, because the six seats ask together with the capture: two
+   * concurrent decisions would race `git worktree add` against itself, and the loser's
+   * failure is exactly the fallback this refuses to record.
    */
-  async function bindWorkspaceFor(review: Review): Promise<string> {
+  const bindingsInFlight = new Map<string, Promise<string>>();
+  function bindWorkspaceFor(review: Review): Promise<string> {
     const sessionId = sessionIdForReview(review);
+    const inFlight = bindingsInFlight.get(sessionId);
+    if (inFlight) return inFlight;
+    const binding = resolveBoundWorkspace(review, sessionId).finally(() =>
+      bindingsInFlight.delete(sessionId),
+    );
+    bindingsInFlight.set(sessionId, binding);
+    return binding;
+  }
+
+  async function resolveBoundWorkspace(review: Review, sessionId: string): Promise<string> {
+    const workspaceDeps = {
+      gitFor: gitForRepo,
+      locusOf: locusForRepo,
+      repoKeyForRoot,
+      dataDir,
+      prWorktreeFor: (reviewId: string) => readPrWorktreeIndex()[reviewId]?.path,
+      recordPrWorktree,
+      // Fire and forget, exactly as the pull-request front door runs it: a slow install
+      // must never delay the capture, and a failed one is honest status rather than a wall.
+      onWorktreeCreated: (worktree: string) =>
+        void runPrWorktreeSetup(worktree).catch(() => undefined),
+    };
     const recorded = sessionStore.load(sessionId)?.boundRoot;
-    const root =
-      recorded ??
-      (await decideBoundWorkspace(review, {
-        gitFor: gitForRepo,
-        repoKeyForRoot,
-        dataDir,
-        prWorktreeFor: (reviewId) => readPrWorktreeIndex()[reviewId]?.path,
-        recordPrWorktree,
-        reviewWorktreePath: (reviewId) => reviewWorktreePath(dataDir, reviewId),
-        // Fire and forget, exactly as the pull-request front door runs it: a slow install
-        // must never delay the capture, and a failed one is honest status rather than a wall.
-        onWorktreeCreated: (worktree) => void runPrWorktreeSetup(worktree).catch(() => undefined),
-      }));
+    // A recorded binding is RE-PINNED, never re-decided: a landed round advances the reviewed
+    // head, and a pull-request snapshot's workspace is a detached checkout at the old one.
+    if (recorded !== undefined) return repinBoundWorkspace(review, recorded, workspaceDeps);
+    const root = await decideBoundWorkspace(review, workspaceDeps);
     sessionStore.setBoundRoot(sessionId, root);
     return root;
   }
 
   /**
    * The seam the round path reaches the bound workspace through — the name and signature the
-   * round collation already binds. It is now a read of the session's binding, not a decision
-   * of its own: a landed round advances the reviewed head and the round path re-pins the
-   * bound worktree, it does not re-decide the binding.
+   * round collation already binds. It is a read of the session's binding plus the re-pin a
+   * moved head needs; it never re-decides which workspace the session took.
    */
   const draftingRootFor = (review: Review): Promise<string> => bindWorkspaceFor(review);
 
@@ -2258,8 +2273,13 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     session: ReviewIntelligenceSession,
   ): Promise<FlaggedReviewRun> {
     const patchset = activePatchset(review);
-    const { locus, distroCwd } = locusContextForRepo(review.repositoryRoot);
-    const adapter = await claudeAdapterForRepo(review.repositoryRoot);
+    // The session's bound workspace, not the repository: on a WSL locus the distro cwd is
+    // BAKED into the adapter's `wsl.exe --cd` argv and `transportCwd` wins over the spec's
+    // `cwd`, so a harness resolved from the repository root ignores the turn's cwd entirely
+    // and every seat drafts in the wrong tree (task 5.2, PR #789).
+    const turnRoot = turnRootFor(review);
+    const { locus, distroCwd } = locusContextForRepo(turnRoot);
+    const adapter = await claudeAdapterForRepo(turnRoot);
     const sharedBudget = session.budget;
     const codexResolution = await getCodexResolution(locus);
     const codex = codexResolution.availability;
@@ -2274,8 +2294,9 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     const ciAssignment = resolveAssignment("ci-failure-classification", {
       availability: { installed },
     });
-    // The Codex leg roots at the repository, like the Claude leg right below it (W5).
-    const codexUtilityExecutor = codexResolution.makeExecutor?.(distroCwd ?? review.repositoryRoot);
+    // The Codex leg roots at the session's bound workspace, like the Claude leg right below
+    // it — the same root its context files were written under.
+    const codexUtilityExecutor = codexResolution.makeExecutor?.(distroCwd ?? turnRoot);
     const ciRefinementTurn =
       ciAssignment.kind !== "model"
         ? undefined
@@ -2286,7 +2307,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
             })
           : ciAssignment.harness === "claude-code" && adapter
             ? createClaudeCiRefinementTurn(adapter, {
-                cwd: turnRootFor(review),
+                cwd: turnRoot,
                 model: ciAssignment.model,
               })
             : undefined;
@@ -2315,7 +2336,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         hunks: decomposition.hunks,
         git: gitForRepo(patchset.repository.root),
       });
-      const runTurn = createVerificationTurn(adapter, { cwd: turnRootFor(review) });
+      const runTurn = createVerificationTurn(adapter, { cwd: turnRoot });
       // BUDGET-GATE (Rule 75, vital money circuit): `maxVerifications` caps how many
       // findings are verified — the over-cap remainder surfaces an honest "not verified"
       // caveat chip (CAP_CAVEAT), NEVER a silent skip that would read as an all-clear —
@@ -2447,7 +2468,10 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     contextFeed: ReviewContextFeed,
   ): Promise<NoiseReview> {
     const patchset = activePatchset(review);
-    const adapter = await claudeAdapterForRepo(review.repositoryRoot);
+    // Resolved from the BOUND workspace: a WSL adapter bakes its distro cwd at construction,
+    // so resolving from the repository root would ignore the `cwd` the turn asks for below.
+    const turnRoot = turnRootFor(review);
+    const adapter = await claudeAdapterForRepo(turnRoot);
     if (!adapter) {
       return { status: "failed", reason: "no model harness is available to classify noise" };
     }
@@ -2459,7 +2483,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // to an app-owned cache and point `cwd` there. Do NOT read this as satisfied.
     const runNoiseTurn = createHarnessRunTurn(adapter, {
       docType: "noise",
-      cwd: turnRootFor(review),
+      cwd: turnRoot,
     });
     // A noise run is its own live-budget-gated user action, distinct from
     // review.canvases; the ceiling stops spend, never the review (R10, fail-closed).
@@ -2684,17 +2708,40 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   const contextPurger = createSessionContextPurger(boundRootForSession);
   const purgeContextForSession = (sessionId: string): void => void contextPurger.purge(sessionId);
   /**
-   * Every workspace a session could have been bound to, for the context sweep: the roots the
-   * live sessions actually record, plus the PR worktrees the index knows. A context directory
-   * written in a worktree is invisible to a sweep that looks only at project roots, so it
-   * would survive every start (review finding 8).
+   * Every workspace a context directory could be UNDER, for the context sweep: every recorded
+   * bound root — archived sessions included, since theirs is exactly what that sweep collects —
+   * plus every worktree the pull-request index has ever named. A directory written in a
+   * worktree is invisible to a sweep that looks only at project roots (review finding 8).
+   *
+   * Deliberately a superset: the context sweep decides what to delete from the `.owner` stamp
+   * and the session id, so a root it looks in but owns nothing under costs one `readdir`.
    */
-  const boundRoots = (): string[] => [
+  const contextSweepRoots = (): string[] => [
     ...sessionStore
       .list()
       .flatMap((session) => (session.boundRoot === undefined ? [] : [session.boundRoot])),
     ...Object.values(readPrWorktreeIndex()).map((entry) => entry.path),
   ];
+  /**
+   * The workspaces a LIVE session is bound to, for the legacy-worktree sweep — which DELETES,
+   * so this has to be exact, not a superset.
+   *
+   * The pull-request worktree index only ever grows, and the version before this wave recorded
+   * every range review's `worktrees/review/<id>` in it; unioning the whole index would spare
+   * every legacy review worktree forever and make that half of the sweep a no-op. So: only
+   * sessions the store still holds and has not archived, and for those the index entry their
+   * own review holds, which is where a pre-wave session's workspace still is.
+   */
+  const liveBoundRoots = (): string[] => {
+    const index = readPrWorktreeIndex();
+    return sessionStore
+      .list()
+      .filter((session) => session.archivedAt === undefined)
+      .flatMap((session) => [
+        ...(session.boundRoot === undefined ? [] : [session.boundRoot]),
+        ...(session.reviewId === undefined ? [] : [index[session.reviewId]?.path ?? []].flat()),
+      ]);
+  };
   // The daemon-start orphan sweep (session-context-files): a crash between a context write
   // and an archive leaves a directory nobody would ever purge, so the next start collects
   // every one THIS daemon wrote whose session the store no longer holds or already marks
@@ -2707,7 +2754,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       ...projectStore
         .list()
         .flatMap((project) => [project.openPath, ...(project.includedRepoPaths ?? [])]),
-      ...boundRoots(),
+      ...contextSweepRoots(),
     ],
     {
       // RAW ids: a record that will not parse is skipped by `list()`, and treating that
@@ -2728,7 +2775,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   // names are touched.
   void sweepLegacyWorktrees({
     dataDir,
-    boundRoots: boundRoots(),
+    liveBoundRoots,
     gitFor: gitForRepo,
   }).catch(() => undefined);
   const sessionPreparations = new Map<string, AbortController>();
@@ -3232,6 +3279,9 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     claudePort: claudeAdapterForRepo,
     codexExecutor: codexExecutorForRepo,
     writeContext: writeReviewContext,
+    // The same root the writer wrote under, by construction: the context path the
+    // prompt names is relative, so the turn's cwd and the write root are one value.
+    turnRoot: turnRootFor,
   });
 
   // Bound after the round coordinator because its ports dispatch report regeneration.
@@ -4732,6 +4782,9 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         claudePort: claudeAdapterForRepo,
         codexExecutor: codexExecutorForRepo,
         writeContext: writeReviewContext,
+        // The same root the writer wrote under, by construction: the context path the
+        // prompt names is relative, so the turn's cwd and the write root are one value.
+        turnRoot: turnRootFor,
       })({
         review,
         type,
@@ -4937,6 +4990,9 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         claudePort: claudeAdapterForRepo,
         codexExecutor: codexExecutorForRepo,
         writeContext: writeReviewContext,
+        // The same root the writer wrote under, by construction: the context path the
+        // prompt names is relative, so the turn's cwd and the write root are one value.
+        turnRoot: turnRootFor,
       }),
     ),
     // review.draftPrBody (issue #74, M26): the LIVE PR-body drafting producer. The
@@ -4951,6 +5007,9 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         claudePort: claudeAdapterForRepo,
         codexExecutor: codexExecutorForRepo,
         writeContext: writeReviewContext,
+        // The same root the writer wrote under, by construction: the context path the
+        // prompt names is relative, so the turn's cwd and the write root are one value.
+        turnRoot: turnRootFor,
       }),
     ),
     // publish.compose(mode:"review") (#621): the authored opening paragraph is drafted from
@@ -4965,6 +5024,9 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
           readPrompt,
           store: publishCompositionStore,
           writeContext: writeReviewContext,
+          // The same root the writer wrote under, by construction: the context path the
+          // prompt names is relative, so the turn's cwd and the write root are one value.
+          turnRoot: turnRootFor,
         }),
     ),
     // review.deltaDigest (issue #73 / M25): the LIVE delta re-review digest producer.
@@ -4979,6 +5041,9 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         claudePort: claudeAdapterForRepo,
         codexExecutor: codexExecutorForRepo,
         writeContext: writeReviewContext,
+        // The same root the writer wrote under, by construction: the context path the
+        // prompt names is relative, so the turn's cwd and the write root are one value.
+        turnRoot: turnRootFor,
       }),
     ),
     // The handoff-bundle composer (issue #72, M24): the light-tier authoring step over

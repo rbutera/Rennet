@@ -56,10 +56,11 @@ cannot reach a private repository, Rennet asks you for a local clone.
 
 Rennet checks out a detached worktree at the reviewed commit, so review
 conversations have an executable copy of the pull request. That worktree is the
-session's **workspace**: every seat, every chat turn and every work order for this
-review runs there, not in your own checkout, so nothing Rennet does for a pull
-request moves the branch you are standing on. The chat header names the path beside
-the branch.
+session's **workspace**: the boards, the chat and the work order run there rather
+than in your own checkout, so reviewing a pull request does not move the branch you
+are standing on. The chat header names the path beside the branch. A review you
+started before this behaviour existed keeps whichever chat thread it already had —
+it binds its workspace the next time it needs one.
 
 A repository can carry `.rennet/setup` with one shell command per line; lines
 starting with `#` are comments. Rennet runs those commands after checkout and

@@ -1,5 +1,13 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -37,11 +45,15 @@ describe("sweepLegacyWorktrees (session-bound-workspace 5.5)", () => {
   let dataDir: string;
   let repo: string;
   let logs: string[];
+  let symlinkedDataDir: string;
 
   beforeEach(() => {
     root = realpathSync(mkdtempSync(join(tmpdir(), "rennet-legacy-wt-")));
     dataDir = join(root, "data");
     mkdirSync(dataDir, { recursive: true });
+    // A second NAME for the same directory, which is what a `/var` vs `/private/var` pair is.
+    symlinkedDataDir = join(root, "data-link");
+    symlinkSync(dataDir, symlinkedDataDir);
     repo = join(root, "repo");
     mkdirSync(repo, { recursive: true });
     git(repo, ["init", "-q", "-b", "main"]);
@@ -61,10 +73,10 @@ describe("sweepLegacyWorktrees (session-bound-workspace 5.5)", () => {
     return path;
   };
 
-  const sweep = (boundRoots: readonly string[]) =>
+  const sweep = (boundRoots: readonly string[] | (() => readonly string[])) =>
     sweepLegacyWorktrees({
       dataDir,
-      boundRoots,
+      liveBoundRoots: typeof boundRoots === "function" ? boundRoots : () => boundRoots,
       gitFor: () => gitExec,
       log: (m) => void logs.push(m),
     });
@@ -115,5 +127,35 @@ describe("sweepLegacyWorktrees (session-bound-workspace 5.5)", () => {
     writeFileSync(join(stranded, ".git"), "gitdir: /nowhere/that/exists\n");
     expect(await sweep([])).toBe(1);
     expect(existsSync(stranded)).toBe(false);
+  });
+
+  it("spares a workspace a session binds to WHILE the sweep is walking", async () => {
+    // The sweep awaits git between directories, and a session can bind lazily on its first
+    // use in that window. A snapshot taken once at the start would delete the workspace it
+    // had just taken, so the live set is re-read before every removal.
+    const first = addWorktree(join(dataDir, "round-worktrees", "aaa"));
+    const late = addWorktree(join(dataDir, "worktrees", "review", "bound-late"));
+    let live: string[] = [];
+    const removed = await sweep(() => {
+      // Binds after the first directory has been considered, not before.
+      if (!existsSync(first)) live = [late];
+      return live;
+    });
+    expect(removed).toBe(1);
+    expect(existsSync(first)).toBe(false);
+    expect(existsSync(late)).toBe(true);
+  });
+
+  it("spares a live workspace named through a symlinked spelling of the same directory", async () => {
+    // `/var/x` and `/private/var/x` are ONE directory on macOS, and a session's recorded
+    // root and the sweep's `readdir` path routinely disagree about which name they use. A
+    // raw string compare reads them as two and deletes the live one.
+    const bound = addWorktree(join(dataDir, "worktrees", "review", "review-symlinked"));
+    const viaSymlink = join(symlinkedDataDir, "worktrees", "review", "review-symlinked");
+    expect(viaSymlink).not.toBe(bound);
+    expect(realpathSync(viaSymlink)).toBe(realpathSync(bound));
+
+    expect(await sweep([viaSymlink])).toBe(0);
+    expect(existsSync(bound)).toBe(true);
   });
 });

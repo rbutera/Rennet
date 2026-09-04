@@ -68,6 +68,14 @@ const bindingSchema = z.object({
   projectId: z.string(),
   threadId: z.string(),
   createdAt: z.string(),
+  /**
+   * The workspace the thread was CREATED with (session-bound-workspace). Recorded because a
+   * thread's cwd is fixed at creation: a session that bound after its thread existed — every
+   * session minted before this wave — would otherwise keep reusing a thread rooted at the
+   * project while every other child of the session ran in the bound worktree. Absent on a row
+   * written before this field, which is exactly the `worktreePath: null` case.
+   */
+  worktreePath: z.string().optional(),
   /** Only on a `pendingDeletions` row: how many sweeps have tried and failed. */
   attempts: z.number().int().nonnegative().optional(),
 });
@@ -278,7 +286,12 @@ export function bindThread(input: BindThreadInput): Promise<ThreadBinding> {
 
 async function findOrCreateBinding(input: BindThreadInput): Promise<ThreadBinding> {
   const existing = findBinding(input.dataDir, input.repositoryRoot, input.key);
-  if (existing) return existing;
+  // A thread's cwd is decided when it is created and never afterwards, so a row whose
+  // workspace is not the one being asked for cannot be reused: reusing it runs every turn in
+  // the wrong tree, and the row written before this field existed is a thread at the project
+  // root, which is precisely the case this wave exists to fix. Same workspace ⇒ same thread.
+  if (existing && existing.worktreePath === input.worktreePath) return existing;
+  if (existing) removeBindings(input.dataDir, [existing.threadId]);
   // A bound workspace that is no longer on disk is named, not worked around
   // (session-bound-workspace, t3code-sidecar spec). Creating the thread anyway would put
   // every turn of it in the project root — a different tree — and the seat would draft
@@ -312,6 +325,7 @@ async function findOrCreateBinding(input: BindThreadInput): Promise<ThreadBindin
     projectId,
     threadId,
     createdAt: new Date().toISOString(),
+    ...(input.worktreePath === undefined ? {} : { worktreePath: input.worktreePath }),
   };
   // Re-read before writing: another bind for a different key may have landed meanwhile.
   writeBindings(input.dataDir, [...readBindings(input.dataDir), binding]);

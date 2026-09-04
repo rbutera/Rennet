@@ -154,6 +154,14 @@ export interface LiveReviewOpenerDeps {
    * files the turn is pointed at are the files `session.archive` purges (review finding 1).
    */
   writeContext(review: Review, files: readonly PromptContextFile[]): string;
+  /**
+   * The session's BOUND workspace for this review (session-bound-workspace D1) — the cwd this
+   * turn runs in, and the root `writeContext` writes under. One value for both, because the
+   * context path the prompt names is RELATIVE: write under the repository while the turn runs
+   * in a worktree and the prompt points at a file that is not there. Absent ⇒ the repository
+   * root, which is the binding for a branch review on the reviewer's own checkout.
+   */
+  turnRoot?(review: Review): string;
 }
 
 export function createLiveReviewOpenerPort(
@@ -197,10 +205,13 @@ export function createLiveReviewOpenerPort(
     if (existing) return existing;
 
     const run = (async (): Promise<ReviewOpenerDraftResult> => {
+      // The session's bound workspace: this turn's cwd and the root its context files were
+      // written under, which have to be the same value (session-bound-workspace 5.2).
+      const turnRoot = deps.turnRoot?.(input.review) ?? input.review.repositoryRoot;
       try {
         const [claudePort, executor] = await Promise.all([
-          deps.claudePort(input.review.repositoryRoot),
-          deps.codexExecutor(input.review.repositoryRoot),
+          deps.claudePort(turnRoot),
+          deps.codexExecutor(turnRoot),
         ]);
         const installed: CouncilHarnessId[] = [];
         if (claudePort !== null) installed.push("claude-code");
@@ -218,14 +229,9 @@ export function createLiveReviewOpenerPort(
         const harness = providerHarness(resolution.model);
         const port =
           harness === "codex" && executor !== null
-            ? codexReviewOpenerPort(
-                executor,
-                resolution.model,
-                resolution.effort,
-                input.review.repositoryRoot,
-              )
+            ? codexReviewOpenerPort(executor, resolution.model, resolution.effort, turnRoot)
             : harness === "claude-code" && claudePort !== null
-              ? claudeReviewOpenerPort(claudePort, input.review.repositoryRoot)
+              ? claudeReviewOpenerPort(claudePort, turnRoot)
               : null;
         if (port === null) {
           return {

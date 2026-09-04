@@ -290,6 +290,14 @@ export interface LiveRefineInput {
 /** The deps the live port is bound to (all injected so the module stays testable). */
 export interface LiveRefineDeps {
   /**
+   * The session's BOUND workspace for this review (session-bound-workspace D1) — the cwd this
+   * turn runs in, and the root `writeContext` writes under. One value for both, because the
+   * context path the prompt names is RELATIVE: write under the repository while the turn runs
+   * in a worktree and the prompt points at a file that is not there. Absent ⇒ the repository
+   * root, which is the binding for a branch review on the reviewer's own checkout.
+   */
+  turnRoot?(review: Review): string;
+  /**
    * The Claude harness adapter, or null when no `claude` is installed. Null is both
    * the "Claude not installed" half of the council availability and the "no Claude
    * seat to run" signal.
@@ -322,13 +330,16 @@ export function createLiveRefinePort(
   deps: LiveRefineDeps,
 ): (input: LiveRefineInput) => Promise<RefinementResult> {
   return async (input) => {
+    // The session's bound workspace: this turn's cwd and the root its context files were
+    // written under, which have to be the same value (session-bound-workspace 5.2).
+    const turnRoot = deps.turnRoot?.(input.review) ?? input.review.repositoryRoot;
     // Probe both seats once; each probe is both an availability signal and the
     // executable. The council resolves comment-refinement to Codex (Terra) whenever
     // Codex is installed (Table 1 + Table 3), and to Claude (Sonnet) on a
     // Claude-only machine (Table 2); both are now live.
     const [claudePort, executor] = await Promise.all([
-      deps.claudePort(input.review.repositoryRoot),
-      deps.codexExecutor(input.review.repositoryRoot),
+      deps.claudePort(turnRoot),
+      deps.codexExecutor(turnRoot),
     ]);
     const installed: CouncilHarnessId[] = [];
     if (claudePort !== null) installed.push("claude-code");
@@ -347,7 +358,7 @@ export function createLiveRefinePort(
       // Follow the pipeline's Claude-seat convention: the council model rides the
       // result as provenance, but the session runs on the adapter's own default
       // model (the pipeline does not re-model its Claude seats either).
-      port = claudeRefinePort(claudePort, input.review.repositoryRoot);
+      port = claudeRefinePort(claudePort, turnRoot);
     }
     if (port === null) {
       // Neither seat backs the resolved harness — no model to refine with.

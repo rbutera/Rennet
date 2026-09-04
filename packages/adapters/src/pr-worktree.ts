@@ -20,17 +20,6 @@ import { parseWorktrees } from "./worktree-discovery";
  * reading a diff needs no installed deps; a failed setup is honest status, not a wall.
  */
 
-/**
- * Where per-REVIEW evidence worktrees live under the app data dir: the detached
- * checkout board-drafting seats read reviewed bytes from when the review is a
- * range capture (a branch or PR review) and the ambient clone may sit on any
- * ref. Keyed by review id; `ensurePrWorktree` replaces it in place when a round
- * advances the reviewed head.
- */
-export function reviewWorktreePath(dataDir: string, reviewId: string): string {
-  return join(dataDir, "worktrees", "review", reviewId);
-}
-
 /** Where per-PR worktrees live under the app data dir. */
 export function prWorktreePath(
   dataDir: string,

@@ -318,9 +318,14 @@ export function reviewHandlers(rt: DispatchRuntime) {
       // the coding agent's own writes land during this capture, and a clear afterwards
       // would swallow whatever arrived after the diff was taken.
       deps.setRepositoryDirty(false);
+      // Captured from the workspace the TURN RAN IN, not from the repository (Codex review of
+      // #805). The handoff thread runs in the session's bound workspace, so for a review of a
+      // branch the clone is not on, the agent's edits are in the worktree while the clone still
+      // sits on the default branch — capturing the repository would return that branch's bytes
+      // under this review's id and report a handoff that changed nothing.
       const updated = await service.capture(
         input.commandId,
-        review.repositoryRoot,
+        deps.boundWorkspaceForReview?.(review.id)?.root ?? review.repositoryRoot,
         review.id,
         handoffTrace,
       );
