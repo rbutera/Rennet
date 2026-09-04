@@ -2,11 +2,18 @@ import type { DraftBoard, DraftElement, LensKind } from "@rennet/protocol";
 import { parseDraft } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import {
+  BOUNDARY_RULES,
   type ChangedRegion,
   DEFAULT_SCAFFOLD_GLOBS,
+  FINISH_ONLY_RULES,
+  FINISH_RULES,
+  LENS_RULES,
   type LintContext,
   lint,
   lintReviewDraft,
+  lintTier,
+  REPORT_RULES,
+  rulesForTier,
 } from "./lint";
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
@@ -4677,5 +4684,87 @@ describe("scaffold glob root-level (S4)", () => {
     const stamp = board([codeRef("c", ".openspec.yaml", 1, 1)]);
     const stampCtx = ctx({ files: new Map([[".openspec.yaml", 5]]) });
     expect(rulesHit(lint(stamp, stampCtx))).toContain("scaffold-is-noise-lane");
+  });
+});
+
+// ── The two-tier partition (`lens-board-tools` 1.5 / D5) ─────────────────────
+
+describe("LENS_RULES partitions into the boundary tier and the finish tier", () => {
+  // The whole point of authoring the two tiers separately, rather than deriving
+  // LENS_RULES from them: this assertion can fail, and it fails the moment a rule
+  // lands in the registry without being assigned a tier.
+  const name = (rule: unknown) => (rule as { name?: string }).name ?? "(anonymous)";
+
+  it("the two partitions reunite to exactly LENS_RULES", () => {
+    const assigned = [...BOUNDARY_RULES, ...FINISH_RULES];
+    const unassigned = LENS_RULES.filter((rule) => !assigned.includes(rule));
+    expect(unassigned.map(name)).toEqual([]);
+    const foreign = assigned.filter((rule) => !LENS_RULES.includes(rule));
+    expect(foreign.map(name)).toEqual([]);
+    // …and nothing is in both tiers, so the counts have to agree.
+    expect(assigned.length).toBe(LENS_RULES.length);
+    expect(new Set(assigned).size).toBe(LENS_RULES.length);
+  });
+
+  it("no rule is in both tiers", () => {
+    const boundary = new Set(BOUNDARY_RULES);
+    const both = FINISH_RULES.filter((rule) => boundary.has(rule));
+    expect(both.map(name)).toEqual([]);
+  });
+
+  it("the two rules that move from the drafting runtime stay outside the registry", () => {
+    // They were never lint rules — `lens-pipeline.ts` asked them after the ladder — so
+    // keeping them out of LENS_RULES is what lets the reunion assertion above mean
+    // something rather than absorb any new arrival.
+    for (const rule of FINISH_ONLY_RULES) expect(LENS_RULES.includes(rule)).toBe(false);
+    expect(FINISH_ONLY_RULES.length).toBe(2);
+  });
+
+  it("the report seat's narrower registry splits the same way, derived not re-assigned", () => {
+    const boundary = rulesForTier("report", "boundary");
+    const finish = rulesForTier("report", "finish");
+    const fromRegistry = [...boundary, ...finish].filter((rule) => REPORT_RULES.includes(rule));
+    expect(new Set(fromRegistry).size).toBe(REPORT_RULES.length);
+    // `report-coherent` is the report's one whole-board rule.
+    expect(finish.some((rule) => name(rule) === "reportCoherent")).toBe(true);
+    expect(boundary.some((rule) => name(rule) === "reportCoherent")).toBe(false);
+  });
+
+  it("lint still runs every rule, so the split changed no verdict", () => {
+    const dirty = board([
+      el("p1", "prose", { markdown: "The lens found this:\n```ts\nconst x = 1;\n```\n" }),
+      codeRef("c1", "src/auth.ts", 180, 190),
+    ]);
+    const all = rulesHit(lint(dirty, ctx()));
+    const tiered = new Set([
+      ...rulesHit(lintTier(dirty, ctx(), "boundary")),
+      ...rulesHit(lintTier(dirty, ctx(), "finish")),
+    ]);
+    for (const ruleId of all) expect(tiered).toContain(ruleId);
+  });
+
+  it("D5's assignment holds for the rows a seat feels: refusals at the call, the rest at finish", () => {
+    const atBoundary = (draft: DraftBoard, over: Partial<LintContext> = {}) =>
+      rulesHit(lintTier(draft, ctx(over), "boundary"));
+    const atFinish = (draft: DraftBoard, over: Partial<LintContext> = {}) =>
+      rulesHit(lintTier(draft, ctx(over), "finish"));
+
+    const codeBytes = board([el("p1", "prose", { markdown: "```ts\nconst x = 1;\n```" })]);
+    expect(atBoundary(codeBytes)).toContain("no-code-bytes");
+    expect(atFinish(codeBytes)).not.toContain("no-code-bytes");
+
+    const machinery = board([el("s1", "section", { title: "What the lens found", children: [] })]);
+    expect(atBoundary(machinery)).toContain("process-vocabulary");
+    expect(atFinish(machinery)).not.toContain("process-vocabulary");
+
+    const outside = board([codeRef("c1", "src/auth.ts", 180, 190)]);
+    expect(atBoundary(outside)).toContain("unresolvable-citation");
+    expect(atFinish(outside)).not.toContain("unresolvable-citation");
+
+    const ungrounded = board([
+      el("d1", "decision", { statement: "A call.", why: "Why.", evidence: [], alternatives: [] }),
+    ]);
+    expect(atBoundary(ungrounded, { lens: "decisions" })).toContain("decision-grounded");
+    expect(atFinish(ungrounded, { lens: "decisions" })).not.toContain("decision-grounded");
   });
 });

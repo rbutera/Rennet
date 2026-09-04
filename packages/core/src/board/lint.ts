@@ -33,9 +33,11 @@
 
 import {
   AUTHORED_BOARD_SCHEMA,
+  type BoardTarget,
   type DraftBoard,
   type DraftElement,
-  type LensKind,
+  SHARED_KINDS,
+  typedKindsFor,
   type Violation,
 } from "@rennet/protocol";
 import { parseOpenSpecChange } from "../delta/openspec-change";
@@ -49,8 +51,13 @@ import {
 
 // ── The lint context (plain data the caller assembles) ───────────────────────
 
-/** The lint target: one of the five lens boards, or the round-report seat. */
-export type LintTarget = LensKind | "report";
+/**
+ * The lint target: one of the five lens boards, or the round-report seat. The
+ * vocabulary is `protocol`'s {@link BoardTarget} — the same table the board tool
+ * surface is derived from, so a lens's kinds cannot mean one thing to lint and
+ * another to the verbs a seat is given.
+ */
+export type LintTarget = BoardTarget;
 
 /**
  * One changed region of the patchset: a 1-based inclusive line range on one side of
@@ -207,36 +214,11 @@ export const DEFAULT_SCAFFOLD_GLOBS: readonly string[] = [
   "**/yarn.lock",
 ];
 
-/**
- * The typed domain kinds each target owns. Shared structural kinds (`prose`,
- * `section`, `callout`, `annotation`, `code_ref`) are legal everywhere; a typed
- * kind on the wrong board is a lane violation. Grounded in the lens prompts
- * (`packages/prompts`): the Design prompt renders BOTH requirement regions AND
- * the implementer's stated `decision` calls (a projection the Decisions board
- * shares), so Design admits `decision` + `requirement`; the Decisions prompt is
- * decision-only. The report seat's `round_outcome` is legal ONLY on the report
- * target and never on a lens board (S1).
- */
-const SHARED_KINDS: ReadonlySet<string> = new Set([
-  "prose",
-  "section",
-  "callout",
-  "annotation",
-  "code_ref",
-]);
-const LENS_TYPED_KINDS: Readonly<Record<LensKind, readonly string[]>> = {
-  design: ["decision", "requirement"],
-  sequence: ["order_step"],
-  decisions: ["decision"],
-  flagged: ["finding"],
-  noise: ["noise_verdict"],
-};
-const REPORT_TYPED_KINDS: readonly string[] = ["round_outcome"];
-
-/** The typed kinds the target authors (the report seat, or a named lens). */
-function typedKindsFor(target: LintTarget): readonly string[] {
-  return target === "report" ? REPORT_TYPED_KINDS : LENS_TYPED_KINDS[target];
-}
+// The typed kinds each target owns live in `@rennet/protocol`
+// (`board/kind-tables.ts`). They used to live here, and `lens-board-tools` moved
+// them: the per-seat board tool surface is DERIVED from the same rows, and
+// `protocol` imports no Rennet package, so one copy had to be the copy. The
+// `kind-allowlist` rule below reads them exactly as it always did.
 
 // ── Field extraction (frozen-schema aware, one field-role table) ─────────────
 
@@ -2619,6 +2601,200 @@ export const REPORT_RULES: readonly Rule[] = [
   processVocabulary,
   reportCoherent,
 ];
+
+/**
+ * ── The two tiers (`lens-board-tools` D5) ───────────────────────────────────
+ *
+ * A board is written call by call, so a rule is answered wherever it can be
+ * DECIDED, and what a rule reads is what decides its tier:
+ *
+ * - **Boundary** — decidable from the one element a call carries plus the daemon's
+ *   own knowledge of the patchset. It is refused in the same call, the element is
+ *   never created, and the refusal names the field.
+ * - **Finish** — only decidable over the whole board. It runs when the seat calls
+ *   `finish`, and comes back as a pointer list the seat answers with further calls
+ *   in the same turn.
+ *
+ * This is a PARTITION of one registry, not a second rule set: `lint` is unchanged
+ * and still runs every rule. {@link BOUNDARY_RULES} and {@link FINISH_RULES} are
+ * authored separately and `lint.test.ts` asserts they reunite to exactly
+ * {@link LENS_RULES} with nothing in both and nothing in neither — which is the
+ * point of authoring them separately rather than deriving `LENS_RULES` from them,
+ * since a derived union would make that assertion tautological and a new rule
+ * could land unassigned without anything noticing.
+ *
+ * Two rules of D5's finish tier are NOT in `LENS_RULES` because they are not part
+ * of the draft lint today — they live in the drafting runtime, and they move here
+ * as {@link FINISH_ONLY_RULES}.
+ */
+export const BOUNDARY_RULES: readonly Rule[] = [
+  // Impossible through the tool surface — the lens has no verb for a foreign kind.
+  kindAllowlist,
+  // Impossible through the tool surface — a reference can only name what the board
+  // already holds (D4), so it cannot dangle and cannot cycle.
+  elementReferencesResolve,
+  // The prose field the call carries.
+  noCodeBytes,
+  noDialogue,
+  citationWellFormed,
+  noRemainderNarration,
+  // The structural field the call carries.
+  processVocabulary,
+  // Inside `cite`: file existence, side inventory, range order, patchset identity;
+  // the nearest changed range; and the Noise lane's scaffold paths.
+  citationResolves,
+  unresolvableCitation,
+  scaffoldIsNoiseLane,
+  // The evidence and alternative ids the decision call carries.
+  decisionGrounded,
+  // The source and related-file fields the call carries.
+  designSourcesKnown,
+  requirementSourceKnown,
+];
+
+/** The whole-board tier: what `finish` answers with pointers. */
+export const FINISH_RULES: readonly Rule[] = [
+  reportCoherent,
+  requirementOrder,
+  requirementScenariosNarrative,
+  requirementVerbatim,
+  designArtifactSetComplete,
+  designArtifactContentComplete,
+  designHeaderComplete,
+  designIncompletenessVisible,
+];
+
+// ── The two finish-tier rules that move here from the drafting runtime ───────
+
+/**
+ * Domain elements reachable from the board's top-level section roots. A board is a
+ * tree; an element nobody's `children` reaches is written but never rendered, so
+ * "produced" and "readable" are not the same question. `lens-pipeline.ts` has asked
+ * it since the served board existed.
+ */
+function reachableOfKind(
+  elements: readonly DraftElement[],
+  kind: DraftElement["kind"],
+): DraftElement[] {
+  const byId = new Map(elements.map((element) => [element.id, element]));
+  const nested = new Set<string>();
+  for (const element of elements) {
+    const children = (element.data as { children?: unknown }).children;
+    if (!Array.isArray(children)) continue;
+    for (const child of children) if (typeof child === "string") nested.add(child);
+  }
+  const matches: DraftElement[] = [];
+  const visited = new Set<string>();
+  const visit = (id: string): void => {
+    if (visited.has(id)) return;
+    visited.add(id);
+    const element = byId.get(id);
+    if (element === undefined) return;
+    if (element.kind === kind) matches.push(element);
+    if (element.kind !== "section" && element.kind !== "order_step") return;
+    const children = (element.data as { children?: unknown }).children;
+    if (!Array.isArray(children)) return;
+    for (const child of children) if (typeof child === "string") visit(child);
+  };
+  for (const element of elements) {
+    if (element.kind === "section" && !nested.has(element.id)) visit(element.id);
+  }
+  return matches;
+}
+
+/**
+ * D5 — every step is reachable from a top-level section. A step the reading order
+ * cannot reach is a step the reviewer never sees, which is why this was a lane
+ * failure in `lens-pipeline.ts` and is now a pointer the seat can act on: it names
+ * the step, and re-parenting it is one call.
+ */
+const sequenceStepsReachable: Rule = (draft, ctx) => {
+  if (ctx.lens !== "sequence") return [];
+  const reachable = new Set(reachableOfKind(draft.elements, "order_step").map(({ id }) => id));
+  return draft.elements.flatMap((element) =>
+    element.kind === "order_step" && !reachable.has(element.id)
+      ? [
+          {
+            ruleId: "sequence-step-reachable",
+            elementRef: ref(element.id),
+            message: `Step \`${element.id}\` hangs off no top-level section, so the reading order never reaches it. Give it a parent.`,
+          },
+        ]
+      : [],
+  );
+};
+
+/**
+ * The material kind each target must actually produce something of. Absent means
+ * any element counts. Mirrors `lens-pipeline.ts`'s own table.
+ */
+const MATERIAL_KIND: Readonly<Partial<Record<LintTarget, DraftElement["kind"]>>> = {
+  sequence: "order_step",
+  decisions: "decision",
+  flagged: "finding",
+};
+
+/**
+ * D5 — the emptiness check that today authorizes an absence. A board with nothing
+ * on it does not finish: the seat either writes something or declares the absence
+ * its lens admits. It is a pointer rather than a silent settlement precisely
+ * because a lane that settles over nothing without saying so is the defect
+ * `lens-board-drafting` exists to forbid.
+ */
+const boardHasMaterial: Rule = (draft, ctx) => {
+  const kind = MATERIAL_KIND[ctx.lens];
+  const has =
+    kind === undefined
+      ? draft.elements.length > 0
+      : reachableOfKind(draft.elements, kind).length > 0;
+  return has
+    ? []
+    : [
+        {
+          ruleId: "board-has-material",
+          elementRef: "/elements",
+          message:
+            kind === undefined
+              ? `The ${ctx.lens} board is empty. Write what you found, or settle the absence this lens admits.`
+              : `The ${ctx.lens} board holds no reachable \`${kind}\`. Write one, or settle the absence this lens admits.`,
+        },
+      ];
+};
+
+/**
+ * Finish-tier rules that are not part of the draft lint registry, because they
+ * were never lint rules: `lens-pipeline.ts` asked both of these AFTER the ladder,
+ * as lane settlement questions. `finish` is where they belong now — the seat can
+ * answer a pointer, and could never answer a lane failure.
+ *
+ * They stay out of {@link LENS_RULES} deliberately, so the partition assertion
+ * over that registry keeps meaning what it says.
+ */
+export const FINISH_ONLY_RULES: readonly Rule[] = [sequenceStepsReachable, boardHasMaterial];
+
+/** Which tier a rule is answered in. */
+export type LintTier = "boundary" | "finish";
+
+const BOUNDARY_SET: ReadonlySet<Rule> = new Set(BOUNDARY_RULES);
+
+/**
+ * The rules of one tier for one target, DERIVED by filtering that target's own
+ * registry through the partition — so the report seat's narrower set splits the
+ * same way a lens's does, with no second assignment to keep in step.
+ */
+export function rulesForTier(target: LintTarget, tier: LintTier): readonly Rule[] {
+  const registry = target === "report" ? REPORT_RULES : LENS_RULES;
+  const partitioned = registry.filter((rule) => BOUNDARY_SET.has(rule) === (tier === "boundary"));
+  return tier === "finish" ? [...partitioned, ...FINISH_ONLY_RULES] : partitioned;
+}
+
+/**
+ * Lint one tier of a board. Pure, and the same rule functions `lint` runs — the
+ * tool boundary and `finish` differ in WHEN they ask, never in what they know.
+ */
+export function lintTier(draft: DraftBoard, ctx: LintContext, tier: LintTier): Violation[] {
+  return rulesForTier(ctx.lens, tier).flatMap((rule) => rule(draft, ctx));
+}
 
 /**
  * Lint a draft board against its context. Pure. Returns every {@link Violation}
