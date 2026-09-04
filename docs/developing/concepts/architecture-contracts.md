@@ -168,6 +168,12 @@ has no hosted backend. The review patchset, Repo Map, and local state remain
 local except for the context deliberately supplied to an installed harness or
 external service as part of a requested operation.
 
+Tool servers the daemon supplies to a harness turn are **bound to the local interface**, so
+a tool call is not egress. The board server a lens seat writes through is one of these: an
+HTTP MCP listener on `127.0.0.1` that the daemon owns, addressed per seat, described in
+[T3 Code sidecar](./t3code-sidecar.md#the-board-server). Its credential reaches the harness
+child by environment variable and is on no argument list.
+
 A session binds to exactly **one workspace** when it is created and keeps that binding for
 its whole life: the reviewer's own checkout when some worktree of the repository already has
 the reviewed branch out, a Rennet-created worktree for that branch when nothing does, the

@@ -117,9 +117,8 @@ describe("the host mints ids and a child names its parent (D4)", () => {
   });
 
   it("two writers with different id prefixes mint ids that cannot collide", () => {
-    // NOT the D9 scenario yet: these are two writers each holding its OWN elements, so
-    // this asserts the prefix, not that two seats can write one board. Flagged's two
-    // voices share a board in group 3, and the shared-board case belongs to that change.
+    // NOT the D9 scenario: these are two writers each holding its OWN elements, so this
+    // asserts the prefix alone. The shared-board case is the next test.
     const claude = writer("flagged", { idPrefix: "a" });
     const codex = writer("flagged", { idPrefix: "b" });
     const one = idOf(claude.call("add_section", { title: "Correctness" }));
@@ -127,6 +126,55 @@ describe("the host mints ids and a child names its parent (D4)", () => {
     expect(one).not.toBe(two);
     expect(one.startsWith("a")).toBe(true);
     expect(two.startsWith("b")).toBe(true);
+  });
+
+  it("two voices on ONE board are handed ids that cannot collide (D9)", () => {
+    // The Flagged scenario: one writer, one element list, two voices. The daemon's board
+    // server gives each of the lane's two addresses one of these handles.
+    const board = writer("flagged");
+    const claude = board.voice({
+      author: { kind: "lens-agent", id: "lens:flagged:claudeAgent" },
+      idPrefix: "f",
+    });
+    const codex = board.voice({
+      author: { kind: "lens-agent", id: "lens:flagged:codex" },
+      idPrefix: "g",
+    });
+    const one = idOf(claude.call("add_section", { title: "Correctness" }));
+    const two = idOf(codex.call("add_section", { title: "Risk" }));
+
+    expect(one).not.toBe(two);
+    expect(one.startsWith("f")).toBe(true);
+    expect(two.startsWith("g")).toBe(true);
+    // ONE board holding both, in call order — which two separate writers cannot produce.
+    expect(board.board().elements.map((element) => element.id)).toEqual([one, two]);
+    expect(claude.board().elements).toHaveLength(2);
+    // Each element carries the voice that wrote it, not the writer's own author.
+    expect(dataOf<{ author: Author }>(board, one).author.id).toBe("lens:flagged:claudeAgent");
+    expect(dataOf<{ author: Author }>(board, two).author.id).toBe("lens:flagged:codex");
+  });
+
+  it("one voice can reference an element the other voice created, because it is one board", () => {
+    const board = writer("flagged");
+    const claude = board.voice({
+      author: { kind: "lens-agent", id: "lens:flagged:claudeAgent" },
+      idPrefix: "f",
+    });
+    const codex = board.voice({
+      author: { kind: "lens-agent", id: "lens:flagged:codex" },
+      idPrefix: "g",
+    });
+    const cited = idOf(
+      claude.call("cite", { path: "src/auth.ts", side: "head", start_line: 11, end_line: 12 }),
+    );
+    const finding = idOf(
+      codex.call("add_finding", {
+        severity: "medium",
+        concern: "The classification happens before the code is read.",
+        code_ref_ids: [cited],
+      }),
+    );
+    expect(dataOf<{ code: string[] }>(board, finding).code).toEqual([cited]);
   });
 
   it("a parent the board does not hold is refused, saying what it does hold", () => {

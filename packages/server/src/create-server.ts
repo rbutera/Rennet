@@ -205,6 +205,11 @@ import {
   sha256Hex,
 } from "@rennet/protocol";
 import { createBenchmarkRecording } from "./benchmark-store";
+import {
+  type BoardMcpServer,
+  generationBoards,
+  startBoardMcpServer,
+} from "./board/board-mcp-server";
 import { type BoardsRuntime, createBoardsRuntime } from "./boards/boards-runtime";
 import { comparablePath, decideBoundWorkspace, repinBoundWorkspace } from "./bound-workspace";
 import { attachCiSignal } from "./ci-signal";
@@ -322,7 +327,14 @@ import {
 } from "./t3/handoff";
 import { type SeatThreadWatch, watchSeatThread } from "./t3/seat-progress";
 import { createT3SidecarSupervisor } from "./t3/supervisor";
-import { roundThreadTitle, type SeatKind, seatThreadTitle, sweepIfArchived } from "./t3/threads";
+import {
+  roundThreadTitle,
+  SEAT_BOARD_TARGET,
+  SEAT_BOARD_VOICE,
+  type SeatKind,
+  seatThreadTitle,
+  sweepIfArchived,
+} from "./t3/threads";
 import { startWsListener, type WsListener } from "./ws-listener";
 import { createWslRunner } from "./wsl-daemon";
 import { ensureWslDaemon, probeWslDaemon } from "./wsl-supervisor";
@@ -1355,6 +1367,19 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
    * a silent fallback would run the lens without its thread, transcript, live line or
    * same-thread repair while the bench showed nothing wrong (review finding 1).
    */
+  /**
+   * The daemon's loopback board server (`lens-board-tools` D8), started on first use.
+   *
+   * Its process bearer is the sidecar's own: the value the daemon put in the sidecar's
+   * environment at spawn, which every harness child inherits. A daemon that never opens a
+   * board lane never binds this port — {@link generationBoards} is what starts it.
+   */
+  let boardMcpServer: Promise<BoardMcpServer> | null = null;
+  const ensureBoardMcpServer = (bearer: string): Promise<BoardMcpServer> => {
+    boardMcpServer ??= startBoardMcpServer({ bearer });
+    return boardMcpServer;
+  };
+
   const resolveT3SeatRuntime = async (input: {
     /** The REPOSITORY the generation belongs to: the T3 project, and half the binding key. */
     readonly repoRoot: string;
@@ -1376,8 +1401,15 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       return { unavailable: error instanceof Error ? error.message : String(error) };
     }
     const environmentId = sidecar.environment.environmentId;
+    // This generation's board lanes. Nothing is open until the drafting pipeline opens
+    // one, and a seat whose lane is not open is given no address — so a turn names no
+    // board server rather than one that resolves to nothing.
+    const boards = generationBoards(input.generationId, () =>
+      ensureBoardMcpServer(sidecar.boardBearer),
+    );
     return {
       environmentId,
+      boards,
       seam: {
         client: () => t3Sidecar.client(),
         threadFor: async ({ seat, provider, model, effort }) => {
@@ -1403,7 +1435,20 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
               { effort },
             ),
           });
-          return { threadId: binding.threadId, projectId: binding.projectId };
+          // The seat's own address onto its lane's board, minted on the seat's first turn
+          // and refreshed on every later one. Flagged's two seats resolve to the ONE
+          // flagged lane and are given two addresses onto it (D9).
+          const seatKind = seat as SeatKind;
+          const voice = SEAT_BOARD_VOICE[seatKind];
+          const boardServer =
+            voice === undefined
+              ? undefined
+              : boards.lane(SEAT_BOARD_TARGET[seatKind])?.address({ seat, ...voice });
+          return {
+            threadId: binding.threadId,
+            projectId: binding.projectId,
+            ...(boardServer === undefined ? {} : { boardServer }),
+          };
         },
       },
       watch: (threadId, publish) => {
@@ -5341,6 +5386,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     store?.close();
     pushTokenStore.close();
     roundOperationStore.close();
+    void boardMcpServer?.then((server) => server.close());
     void wsListener?.close();
   };
   return {

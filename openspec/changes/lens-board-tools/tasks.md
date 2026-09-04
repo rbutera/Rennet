@@ -18,9 +18,9 @@ Ships on its own: a seat thread can call one tool and get an answer, with no boa
 - [x] 2.2 Vendored: merge at both adapters — Claude with the sidecar's own name last so it wins a collision, Codex as `-c mcp_servers.<name>.url=…` plus `-c mcp_servers.<name>.bearer_token_env_var="…"` with the token in the child environment and never on argv. Copy `ClaudeAdapter`'s existing output-schema mismatch machinery for the session-level fix at `query()` construction. Do not set `strictMcpConfig`
 - [x] 2.3 Vendored: split `hasConfiguredMcpServer` so a caller-supplied server still earns the tool-catalog reload but does NOT set `browserToolsAvailable` — today it substring-matches `mcp_servers.`, so a board server would make Codex's prompt claim browser tools it does not have. Test both halves
 - [x] 2.4 Vendored: a `PATCHES.md` row per touched file (path, reason, upstreamable, upstream PR), on the shape the twelve `outputSchema` rows already use; `pnpm t3:check-ledger` green
-- [ ] 2.5 Daemon: the loopback HTTP MCP board server — bound to the local interface, one address per seat, credential minted per seat as random bytes with only its digest stored, liveness refreshed per turn, revoked eagerly when the lane settles. Its own listener, not mounted inside the sidecar's `/mcp`. Controls: a stale credential is refused, a revoked one stops working at once, and no credential appears on a child's argument list
-- [ ] 2.6 `createThread` / the seat turn carries the seat's server through `packages/server/src/t3/{client,threads}.ts`; a Flagged lane gets two addresses onto one board and the ids they receive cannot collide
-- [ ] 2.7 State in the PR the size of the tool surface each seat now receives, in bytes, beside the output schema it replaces
+- [x] 2.5 Daemon: the loopback HTTP MCP board server — bound to the local interface, one address per seat, credential minted per seat as random bytes with only its digest stored, liveness refreshed per turn, revoked eagerly when the lane settles. Its own listener, not mounted inside the sidecar's `/mcp`. Controls: a stale credential is refused, a revoked one stops working at once, and no credential appears on a child's argument list
+- [x] 2.6 `createThread` / the seat turn carries the seat's server through `packages/server/src/t3/{client,threads}.ts`; a Flagged lane gets two addresses onto one board and the ids they receive cannot collide
+- [x] 2.7 State in the PR the size of the tool surface each seat now receives, in bytes, beside the output schema it replaces
 
 ## 3. Seats write with tools (D1, D6)
 

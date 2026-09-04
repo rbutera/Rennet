@@ -73,6 +73,15 @@ The environment handed to the sidecar drops every `T3CODE_*` key the parent shel
 carried and sets `T3CODE_TELEMETRY_ENABLED=false`. No relay URL and no Clerk keys are
 passed, so T3 Connect is unavailable in the sidecar and nothing leaves the machine
 except the harness's own provider traffic and any MCP servers the user configured.
+Rennet's own board server is reached over loopback and is not egress; it is described
+under [The board server](#the-board-server) below.
+
+One variable is also SET on that environment: `RENNET_BOARD_BEARER`, the daemon-minted
+credential for that board server. It is set rather than inherited — a value the parent
+shell happened to carry under that name is dropped like a `T3CODE_*` key — and it is the
+one credential that travels by environment, because a caller-supplied MCP server names an
+environment variable and the harness child reads the value out of the environment it
+inherited from here. It is on no argument list.
 
 ## Claim and adoption
 
@@ -83,6 +92,12 @@ answers, T3's runtime record agrees on pid and port, the snapshot commit matches
 bundle this daemon would spawn, and the stored bearer still opens an authenticated
 route (re-exchanged from the bootstrap grant when it does not). Anything less is stale:
 the claim is removed and a fresh sidecar is spawned.
+
+The stored credentials also carry the board-server bearer, and adoption requires it. That
+value is fixed in an environment already handed to running children, so an adopting daemon
+cannot re-mint it — it reads it back. A sidecar spawned before the board server existed
+carries no such variable and its seats could never reach a board, so it is refused for the
+same reason a snapshot mismatch is, and respawned.
 
 ## Access for clients
 
@@ -466,6 +481,65 @@ when the write loses that race against a `claude` that exits immediately, the tu
 left unsettled instead — about one run in ten against a stand-in that exits at once. The
 sidecar now survives it, so the blast radius is one thread rather than every seat, but a
 turn that never settles is its own defect and is not fixed here.
+
+## The board server
+
+A lens seat writes its board by CALLING TOOLS, and the tools live on a second listener the
+daemon owns: an HTTP MCP server bound to `127.0.0.1`, with one address per seat
+(`lens-board-tools` D8). It is not mounted inside the sidecar's own `/mcp`, whose comment
+records that it sits outside T3's environment auth stack; this one is Rennet's, and its only
+client is a harness child on the same machine. The listener starts when a generation opens
+its first board lane, and a daemon that never drafts a board binds no port.
+
+```mermaid
+flowchart LR
+  daemon[Rennet daemon] -->|opens a lane per lens| boards[Board server\n127.0.0.1, one address per seat]
+  daemon -->|spawns, with RENNET_BOARD_BEARER in its env| sidecar[T3 Code sidecar]
+  sidecar -->|inherits the env| harness[claude, codex]
+  harness -->|POST /board/&lt;seat token&gt;, Bearer from the env| boards
+  boards -->|one BoardWriter per lane| board[(The lens board)]
+```
+
+**The address names the board, and that is all it does.** A seat writes its own board
+because that is what its endpoint is for, exactly as a file handle names a file. Nothing
+is being withheld from a seat and nothing here is a consent step. Flagged's two seats get
+TWO addresses onto ONE board: one lane, one writer, one element list, two voices, one mint
+counter — which is why the ids the two are handed cannot collide, and why either voice can
+cite an element the other created.
+
+**A seat's credential has two halves, and the seam decides that it must.** A caller-supplied
+MCP server carries the NAME of an environment variable and never a value, and the harness
+child reads that variable out of the environment it inherited from the sidecar — so a
+variable's value is fixed for the sidecar's life and cannot be minted per seat. Therefore:
+
+- The **seat token** is per seat: 32 random bytes, of which only the SHA-256 is stored, its
+  liveness refreshed on every turn and revoked the moment its lane settles. It travels in
+  the address path, which is on the harness child's argument list, because a url is.
+- The **process bearer** is the sidecar's: minted when the daemon spawns it, placed in its
+  environment as `RENNET_BOARD_BEARER`, and on no argument list, because only the variable's
+  name is ever serialised.
+
+Both are required on every call, so reading `ps` yields an address and not access, and a
+lane that settles stops its seats writing at once rather than at the end of a window. When
+the vendored seam can carry a per-turn credential value into the child environment — which
+`CodexAdapter` already does for T3's own server — the seat token moves into the
+`Authorization` header and the address becomes a plain seat id.
+
+**The protocol is MCP over Streamable HTTP, hand-rolled**: `initialize`,
+`notifications/initialized`, `tools/list`, `tools/call`, `ping`. Requests are answered as
+`application/json`, which the transport permits in place of an SSE stream, and no
+`Mcp-Session-Id` is issued, because session management is optional and the address already
+identifies the seat. `GET` — the server-to-client stream — is answered `405`, which the
+transport also permits. A tool REFUSAL comes back as a tool result marked `isError`, never
+as a JSON-RPC error: the seat reads it and fixes the call inside the same turn, and a
+protocol error would never reach it as words it can act on.
+
+The tools themselves are derived per lens from the kind tables
+(`packages/protocol/src/board/tool-schemas.ts`) and applied by the board writer
+(`packages/core/src/board/board-writer.ts`). Measured 2026-09-05, the served tool surface
+is 8,860 B (Sequence) to 13,918 B (Design) per seat, against the 9,675–9,697 B output
+schema it is on course to replace in the next group: 62,283 B against 58,072 B across one
+generation's seven seats, or 7.3% more.
 
 ## The live line on a lane
 
@@ -990,7 +1064,8 @@ enumeration, so a large delta costs the turn nothing and the file stays complete
 - `packages/server/src/t3/sidecar.ts`: claim, probe, free port, provider seeding, environment, spawn, adopt, stop.
 - `packages/server/src/t3/supervisor.ts`: one supervisor per data dir; `ensure`, `session`, `client`, `threadFor`, `forgetSession`, `status`, `stopSync`.
 - `packages/server/src/t3/client.ts`: the daemon-side RPC client, the one Rennet module importing `effect` and `@t3tools/contracts`.
-- `packages/server/src/t3/threads.ts`: the (repository root, session id) and (repository root, generation id, seat) → thread bindings, and `seatThreadTitle`.
+- `packages/server/src/t3/threads.ts`: the (repository root, session id) and (repository root, generation id, seat) → thread bindings, `seatThreadTitle`, and the seat → board target and seat → voice tables.
+- `packages/server/src/board/board-mcp-server.ts`: the loopback MCP board server — lanes, per-seat addresses, liveness and revocation, and the MCP wire. `create-server.ts` starts it on the first lane and closes it on shutdown.
 - `packages/server/src/t3/latest-event.ts`: the pure thread → `LaneLatest` projector; `t3/seat-progress.ts`: the throttled subscription that feeds a lane.
 - `packages/adapters/src/t3-seat-turn.ts`: the seat leg (`createT3SeatTurn`); `council-seat-turn.ts` routes board jobs to it when the seam is present, and `runtime/rounds.ts` builds the seam per generation.
 - `packages/server/src/t3/handoff.ts`: the handoff exit, which `create-server.ts` runs for every work order that names a review.

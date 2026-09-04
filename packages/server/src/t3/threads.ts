@@ -16,6 +16,7 @@
 
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
+import type { Author, BoardTarget } from "@rennet/protocol";
 import { z } from "zod";
 import type { ModelSelection, T3Client } from "./client";
 import { sidecarBaseDir } from "./sidecar";
@@ -31,6 +32,45 @@ export const SEAT_KINDS = [
   "round-report",
 ] as const;
 export type SeatKind = (typeof SEAT_KINDS)[number];
+
+/**
+ * Which board a seat writes (`lens-board-tools` D8/D9). Flagged's two seats write ONE
+ * board, which is why this is a map and not the identity: the seat is the thread, the
+ * target is the board, and the two are not the same thing.
+ */
+export const SEAT_BOARD_TARGET: Readonly<Record<SeatKind, BoardTarget>> = {
+  design: "design",
+  sequence: "sequence",
+  decisions: "decisions",
+  "flagged-claude": "flagged",
+  "flagged-codex": "flagged",
+  noise: "noise",
+  "round-report": "report",
+};
+
+/**
+ * The voice each seat writes with: the author its elements carry, and the prefix on every
+ * id the host hands it.
+ *
+ * The prefix is per SEAT, not per board, so a Flagged element says on sight which of the
+ * lane's two seats was handed it. Ids could not collide without it either — the lane's two
+ * seats share one board and one mint counter — but a prefix is what makes the two voices
+ * legible in a list of ids.
+ */
+export const SEAT_BOARD_VOICE: Readonly<
+  Record<SeatKind, { readonly author: Author; readonly idPrefix: string }>
+> = {
+  design: { author: { kind: "lens-agent", id: "lens:design" }, idPrefix: "d" },
+  sequence: { author: { kind: "lens-agent", id: "lens:sequence" }, idPrefix: "q" },
+  decisions: { author: { kind: "lens-agent", id: "lens:decisions" }, idPrefix: "k" },
+  "flagged-claude": {
+    author: { kind: "lens-agent", id: "lens:flagged:claudeAgent" },
+    idPrefix: "f",
+  },
+  "flagged-codex": { author: { kind: "lens-agent", id: "lens:flagged:codex" }, idPrefix: "g" },
+  noise: { author: { kind: "lens-agent", id: "lens:noise" }, idPrefix: "n" },
+  "round-report": { author: { kind: "lens-agent", id: "lens:report" }, idPrefix: "r" },
+};
 
 /** How a seat names itself in a thread title. */
 const SEAT_LABELS: Readonly<Record<SeatKind, string>> = {
