@@ -20,7 +20,7 @@ export {
   BoardMetaRecordSchema,
   BoardMetaStore,
 } from "./board-meta-store";
-export { checkpointGitCommand, GitCheckpointStore, repoHasSubmodules } from "./checkpoint-store";
+export { checkpointGitCommand, GitCheckpointStore } from "./checkpoint-store";
 export {
   type ClaudeCiRefinementTurnOptions,
   createClaudeCiRefinementTurn,
@@ -538,37 +538,9 @@ export {
 } from "./repo-composition-discovery";
 export { RepoCompositionStore } from "./repo-composition-store";
 export { RepoWatcher } from "./repo-watcher";
-export {
-  createOrAdoptRoundSourceCommit,
-  execaRoundProcess,
-  inspectRoundWorktree,
-  landRoundBranch,
-  landRoundChanges,
-  planRoundBranchLanding,
-  prepareRoundWorkspace,
-  prepareRoundWorktree,
-  ROUND_COMMIT_MESSAGE,
-  ROUND_SOURCE_COMMIT_MESSAGE,
-  RoundBaseHeadNotAncestorError,
-  RoundBranchLandingConflictError,
-  type RoundCommitSettlement,
-  type RoundGateExecution,
-  RoundLandingConflictError,
-  type RoundLandingResult,
-  type RoundProcessExec,
-  type RoundProcessResult,
-  type RoundSourceCommit,
-  RoundSourceRefMismatchError,
-  RoundWorktreeDirtyError,
-  type RoundWorktreeInspection,
-  RoundWorktreeMismatchError,
-  releaseRoundSourceCommit,
-  removeRoundWorktree,
-  roundSourceRef,
-  roundWorktreeGitPath,
-  runConfiguredRoundGate,
-  settleRoundCommits,
-} from "./round-execution-effects";
+// Only what the daemon actually calls. The rest of this module's surface existed for the
+// round's detached-worktree landing and has no consumer since it went.
+export { observeRoundCommits, runConfiguredRoundGate } from "./round-execution-effects";
 export {
   defaultRoundOperationStoreDir,
   ROUND_OPERATION_STORE_FILE_NAME,
@@ -581,26 +553,6 @@ export {
   RoundOperationStoreCorruptError,
   type RoundOperationTransition,
 } from "./round-operation-store";
-export {
-  type AnchoredRoundSourceLandingFileSystem,
-  type BoundRoundSourceLandingGit,
-  cleanupTransactionalRoundSourceLanding,
-  landTransactionalRoundSourceUnit,
-  planTransactionalRoundSourceLanding,
-  RoundSourceLandingConflictError,
-  type RoundSourceLandingObservedPathDescriptor,
-  type RoundSourceLandingRelativePath,
-} from "./round-source-landing";
-export {
-  type BoundRoundSourceLandingGitWithInput,
-  type CreateNativeRoundSourceLandingFileSystemInput,
-  createNativeRoundSourceLandingFileSystem,
-  defaultRootedLandingAddonPath,
-  type LoadRootedLandingNativeBinding,
-  type NativeRoundSourceLandingFileSystemHandle,
-  type RootedLandingNativeBinding,
-  type RootedLandingNativeHost,
-} from "./round-source-landing-native-host";
 export {
   defaultGenerationStoreDir,
   defaultRoundRecordStoreDir,

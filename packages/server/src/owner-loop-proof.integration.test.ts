@@ -91,6 +91,10 @@ function seedTargetRepo(root: string): void {
   writeRepoFile(root, OWNER_LOOP_SOURCE, "export const ownerValue = 'reviewed';\n");
   git(root, "add", OWNER_LOOP_SOURCE);
   git(root, "commit", "-qm", "reviewed owner value");
+  // The clone goes back to `main` and stays there. Nothing has `feature/shared` out, so the
+  // session binds to a worktree Rennet creates — which is what makes "the seats and the
+  // round run in the BOUND workspace" falsifiable at all: the clone's bytes are the base
+  // ones, so a turn that read the clone reads visibly different content.
   git(root, "checkout", "-q", "main");
 }
 
@@ -109,6 +113,51 @@ function seedDecoyRepo(root: string): void {
   git(root, "add", OWNER_LOOP_SOURCE);
   git(root, "commit", "-qm", "decoy reviewed value");
   git(root, "checkout", "-q", "main");
+}
+
+/**
+ * The round worker, as the ONE turn on the session's bound T3 thread it now is
+ * (session-bound-workspace D2). No sidecar runs in a test, so this stands in for it — and
+ * it stands in HONESTLY, in the two ways that matter:
+ *
+ *   • It is handed a prompt and a cwd and nothing else, so it has to READ the work order
+ *     at the path the prompt names, exactly as the real turn does. A prompt naming a file
+ *     nobody wrote leaves it with nothing to do.
+ *   • It OBEYS the prompt about git. A fake that commits regardless is why the shipped
+ *     blocker was invisible: the round prompt carried the handoff's "do NOT commit" rule,
+ *     so every real round would have edited, committed nothing, and failed at the commit
+ *     observation — while this suite stayed green because the fake committed anyway.
+ */
+function fakeT3RoundWorker(turns: Array<{ readonly repoRoot: string; readonly order: string }>) {
+  let turnCount = 0;
+  return async ({ repoRoot, prompt }: { readonly repoRoot: string; readonly prompt: string }) => {
+    const named = /(\.rennet\/context\/[\w-]+\/work-order\.md)/.exec(prompt)?.[1];
+    if (named === undefined) {
+      throw new Error(`round prompt named no work order: ${prompt}`);
+    }
+    const order = readFileSync(join(repoRoot, named), "utf8");
+    turns.push({ repoRoot, order });
+    const value = order.includes(OWNER_LOOP_ROUND_TWO_BODY) ? "round-two" : "round-one";
+    writeFileSync(join(repoRoot, OWNER_LOOP_SOURCE), `export const ownerValue = '${value}';\n`);
+    // Read the instruction, then follow it. Both the prompt and the work order have to
+    // agree that committing is wanted; either one saying "do NOT commit" is obeyed.
+    const forbidsGit = (text: string) => /do NOT commit/i.test(text);
+    const committed = !forbidsGit(prompt) && !forbidsGit(order);
+    if (committed) {
+      git(repoRoot, "add", OWNER_LOOP_SOURCE);
+      git(repoRoot, "commit", "-qm", `round: ${value}`);
+    }
+    turnCount += 1;
+    return {
+      status: "completed" as const,
+      finalText: `Set ownerValue to ${value}.`,
+      turnDiff: committed
+        ? git(repoRoot, "show", "--format=", "HEAD")
+        : git(repoRoot, "diff", "--", OWNER_LOOP_SOURCE),
+      filesTouched: [OWNER_LOOP_SOURCE],
+      checkpoint: { threadId: "t3-owner-loop", turnId: `turn-${value}`, turnCount },
+    };
+  };
 }
 
 function invocationRecords(path: string): Array<Record<string, unknown>> {
@@ -219,10 +268,10 @@ async function waitForRoundReturn(
       expect(operation?.state.phase).toBe("completed");
       if (operation?.state.phase === "completed") {
         expect(operation.state.returnedAt).toBeDefined();
-        expect(operation.state.landing.strategy).toBe("branch-ref-v1");
-        if (operation.state.landing.strategy === "branch-ref-v1") {
-          expect(operation.state.landing.branch).toBe("feature/shared");
-        }
+        // The round ran in the session's bound root and its commits are already on the
+        // branch; there is no landing step left to assert.
+        expect(operation.state.workspace.kind).toBe("bound-root");
+        expect(operation.sourceTarget).toEqual({ kind: "branch", branch: "feature/shared" });
       }
       records = rounds.records;
     },
@@ -268,11 +317,16 @@ describe("#685 owner loop through a real server", () => {
       RENNET_DISABLE_HARNESS: "1",
     };
 
+    const roundTurns: Array<{ readonly repoRoot: string; readonly order: string }> = [];
     const first = await createRennetServer({
       dataDir,
       env,
       testHarnessPort: loadScriptedHarnessPlan(planPath),
+      // Two seams, two different turns. `testT3Seats` serves the BOARD seats as sidecar
+      // threads (5.7); `runHandoffTurn` serves the ROUND's coding turn on the session's
+      // bound workspace (5.6). Neither stands in for the other.
       testT3Seats: scriptedSeats.resolve,
+      runHandoffTurn: fakeT3RoundWorker(roundTurns),
     });
     shutdowns.push(first.shutdown);
     const added = parseCommandOutput(
@@ -481,16 +535,17 @@ describe("#685 owner loop through a real server", () => {
 
     first.shutdown();
     shutdowns.pop();
-    const editRecordsBeforeRestart = invocationRecords(invocationLog).filter(
-      (record) => record.kind === "edit",
-    );
-    expect(editRecordsBeforeRestart.map((record) => record.stepId)).toEqual(["round-one-edit"]);
+    expect(roundTurns).toHaveLength(1);
 
     const restarted = await createRennetServer({
       dataDir,
       env,
       testHarnessPort: loadScriptedHarnessPlan(planPath),
+      // Two seams, two different turns. `testT3Seats` serves the BOARD seats as sidecar
+      // threads (5.7); `runHandoffTurn` serves the ROUND's coding turn on the session's
+      // bound workspace (5.6). Neither stands in for the other.
       testT3Seats: scriptedSeats.resolve,
+      runHandoffTurn: fakeT3RoundWorker(roundTurns),
     });
     shutdowns.push(restarted.shutdown);
     parseCommandOutput("projects.list", await restarted.dispatch("projects.list", {}));
@@ -515,9 +570,9 @@ describe("#685 owner loop through a real server", () => {
       operationRevision: reportHandoff.operationRevision,
       report: reportHandoff.report,
     });
-    expect(
-      invocationRecords(invocationLog).filter((record) => record.kind === "edit"),
-    ).toHaveLength(1);
+    // The restart replayed no coding turn: round one is durably settled, and its work is
+    // a commit on the branch, not something to redo.
+    expect(roundTurns).toHaveLength(1);
 
     await restarted.dispatch("ask.stage", {
       sessionId: reviewId,
@@ -581,6 +636,11 @@ describe("#685 owner loop through a real server", () => {
       await restarted.dispatch("review.load", { commandId: randomUUID(), reviewId }),
     ).review;
     expect(finalReview.activePatchsetId).toBe(generations.load(roundTwoGeneration)?.patchsetId);
+    // A round moves the session's OWN branch in the workspace it is bound to — that is the
+    // asked-for behaviour (session-bound-workspace D2), and the checkpoint the round account
+    // names is what makes it revertible. The branch REF carries both rounds; the clone, which
+    // sits on `main`, never moved and was never staged in; `main` is untouched, and so is the
+    // decoy repository that happens to carry the same branch name.
     expect(git(target, "branch", "--show-current")).toBe("main");
     expect(readFileSync(join(target, OWNER_LOOP_SOURCE), "utf8")).toBe(
       "export const ownerValue = 'base';\n",
@@ -601,20 +661,32 @@ describe("#685 owner loop through a real server", () => {
     );
     expect(git(decoy, "status", "--porcelain")).toBe("");
 
-    const editRecords = invocationRecords(invocationLog).filter((record) => record.kind === "edit");
-    expect(editRecords.map((record) => record.stepId)).toEqual([
-      "round-one-edit",
-      "round-two-edit",
+    // The session's bound workspace: the clone sits on `main`, nothing else has
+    // `feature/shared` out, so Rennet created one for it, keyed by the repository so a
+    // second repo on the same branch name gets its own (#805).
+    const evidenceRoot = realpathSync(
+      join(dataDir, "worktrees", escapePath(realpathSync(target)), "feature", "shared"),
+    );
+
+    // Both rounds ran as turns in that BOUND ROOT, not in the clone, and each one READ its
+    // work order from the context directory rather than being sent it. No round worktree was
+    // ever created under the data directory.
+    expect(roundTurns.map((turn) => realpathSync(turn.repoRoot))).toEqual([
+      evidenceRoot,
+      evidenceRoot,
     ]);
-    expect(editRecords.every((record) => record.cwd !== target)).toBe(true);
+    expect(roundTurns.some((turn) => realpathSync(turn.repoRoot) === realpathSync(target))).toBe(
+      false,
+    );
+    expect(roundTurns[0]?.order).toContain(OWNER_LOOP_ROUND_ONE_BODY);
+    expect(roundTurns[1]?.order).toContain(OWNER_LOOP_ROUND_TWO_BODY);
+    expect(existsSync(join(dataDir, "round-worktrees"))).toBe(false);
     expect(
-      editRecords.every(
-        (record) =>
-          typeof record.cwd === "string" &&
-          record.cwd.startsWith(realpathSync(join(dataDir, "round-worktrees"))),
-      ),
-    ).toBe(true);
-    expect(editRecords[1]?.resumed).toBe(true);
+      git(target, "worktree", "list")
+        .split(/\r?\n/)
+        .filter((line) => line.includes("round-worktrees")),
+    ).toEqual([]);
+    expect(invocationRecords(invocationLog).filter((record) => record.kind === "edit")).toEqual([]);
     const records = invocationRecords(invocationLog);
     const targetBoardSteps = new Set([
       "design",
@@ -626,13 +698,9 @@ describe("#685 owner loop through a real server", () => {
       "report-round-two",
       "post-process",
     ]);
-    // Board seats draft in the session's BOUND workspace (session-bound-workspace D1).
-    // The ambient clone sits on `main` — BASE bytes, unrelated to the reviewed branch — so
-    // nothing has `feature/shared` out and the session binds to a worktree Rennet creates
-    // for it, keyed by the repository so a second repo on the same branch name gets its own.
-    const evidenceRoot = realpathSync(
-      join(dataDir, "worktrees", escapePath(realpathSync(target)), "feature", "shared"),
-    );
+    // Board seats draft in the same BOUND workspace the round's turns did
+    // (session-bound-workspace D1). The ambient clone sits on `main` — BASE bytes, unrelated
+    // to the reviewed branch — so a seat that read it would read visibly different content.
     const boardRecords = records.filter((record) => targetBoardSteps.has(String(record.stepId)));
     expect(boardRecords.length).toBeGreaterThan(0);
     expect(

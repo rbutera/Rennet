@@ -58,7 +58,8 @@ See proposal.md for why. The state this design starts from, measured on 2026-09-
 2. Land the context-file waves; the first daemon start after each adds `context/` to the managed ignore block of every mapped repo on first write.
 3. Land the Design respec; the lane's `no-spec` absence is a new admissible reason in the existing absence domain, so old sessions read unchanged.
 4. Land the binding wave; on first start the sweep removes `~/.rennet/round-worktrees` and `~/.rennet/worktrees/review` and logs the count; sessions created before the wave bind lazily to their review's branch on first use.
-5. Rollback is per wave by revert; no data migration is written that a revert cannot ignore.
+5. Land the round-as-turn wave; `ROUND_OPERATION_STORE_VERSION` goes to 2 and a v1 round row is DROPPED on read with a logged reason rather than reported as corrupt (one corrupt row makes `recover()` throw before it drives any session, and wedges that session's `read` forever). The visible cost, accepted: a retained COMPLETED row from before the wave is dropped too, so the last round's live account disappears from the client — the rounds ledger entry, which is a separate store, stays. Nothing can decode a v1 row either way, so keeping it would only make the next dispatch collide with a row nothing can read.
+6. Rollback is per wave by revert; no data migration is written that a revert cannot ignore.
 
 ## Open Questions
 

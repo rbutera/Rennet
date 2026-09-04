@@ -192,16 +192,21 @@ deterministic successor account. The handoff does not grant model output permiss
 to rewrite the identity of the review it started from.
 
 For a branch review, that identity includes the exact selected branch. The coding
-worker runs from its captured head in a detached worktree, then Rennet advances
-that branch. The successor range is pinned to the source patchset's base OID and
-the durable landing receipt's worker OID; the branch names remain provenance, but
-a concurrent ref move cannot enter the round result. The repository's
-ambient checkout is not a substitute for the selected branch and remains untouched
-when it names another branch. If the selected branch is checked out in this or a
-sibling worktree, Rennet fast-forwards that checkout so its ref, index, and files
-stay coherent; unrelated local edits remain in place, while Git reports an overlap
-instead of partially landing it. An unmounted branch advances by compare-and-swap.
-The durable landing receipt makes an interrupted or repeated landing idempotent.
+worker runs as one turn in the **session's bound workspace** and commits there, on
+that branch — Rennet creates no worktree per round and replays no delta afterwards.
+The successor patchset is captured from that bound workspace after the turn, pinned
+to the source patchset's base OID and the head the round's own commits reached; the
+branch names remain provenance, but a concurrent ref move cannot enter the round
+result. Rennet never stages untracked files on the reviewer's behalf: the commits a
+round records are the commits its worker made, and the round's own prompt is what
+asks for them — the review handoff forbids git because it recaptures a dirty tree,
+and a round says the opposite. The bound workspace must both be on the round's
+branch and contain the reviewed commit; a branch name alone is not a repository
+identity, and a workspace failing either test is a refused round naming what it
+looked for, never a commit somewhere the reviewer cannot see. The sidecar's per-turn
+checkpoint is the round's receipt: the round account names the workspace root and
+that checkpoint, and restart recovery settles from it — honouring the checkpoint's
+own status, since a failed turn checkpoints too.
 
 The first work-order round resolves one enabled installed Claude Code or Codex
 harness in the repository's execution locus and pins that provider to the durable

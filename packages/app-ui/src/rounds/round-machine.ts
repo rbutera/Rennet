@@ -208,8 +208,8 @@ function durationLabel(durationMs: number): string {
 function preparedRows(operation: RoundRunIdentity, asks: "running" | "done"): readonly LaneRow[] {
   return [
     {
-      id: "worktree",
-      label: "Created detached worktree",
+      id: "workspace",
+      label: "Opened the session's workspace",
       status: "done",
       detail: `${roundTargetLabel(operation.sourceTarget)} @ round-${operation.roundNumber}`,
     },
@@ -369,14 +369,6 @@ function durableState(snapshot: RoundOperationProgressSnapshot): DurableRoundSta
   switch (state.phase) {
     case "claimed":
       return { phase: "dispatching", operation, prep: [], worker: [], tail: [] };
-    case "workspace-preparing":
-      return {
-        phase: "preparing",
-        operation,
-        prep: [{ id: "worktree", label: "Creating detached worktree", status: "running" }],
-        worker: [],
-        tail: [],
-      };
     case "prepared":
       return {
         phase: "preparing",
@@ -529,8 +521,8 @@ function durableState(snapshot: RoundOperationProgressSnapshot): DurableRoundSta
             reason: failure.workspace.reason,
             prep: [
               {
-                id: "worktree",
-                label: "Creating detached worktree",
+                id: "workspace",
+                label: "Opening the session's workspace",
                 status: "failed",
                 reason: failure.workspace.reason,
               },

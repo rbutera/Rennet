@@ -15,19 +15,26 @@ import {
   type RoundReportDraftReceipt,
   type RoundReportReceipt,
   type RoundReportVerificationAttempt,
-  type RoundSourceLandingAttempt,
   type RoundWorkerAttempt,
-  type RoundWorkspaceAttempt,
 } from "@rennet/protocol";
 import { z } from "zod";
 
-export const ROUND_OPERATION_STORE_VERSION = 1;
+/**
+ * Bumped to 2 by session-bound-workspace: a round's durable shape changed under it (the
+ * workspace receipt became `bound-root`, the source-landing phases went), so every row a
+ * pre-binding daemon wrote describes a machine that no longer exists. Version 1 rows are
+ * LEGACY, not corrupt — see {@link RoundOperationStoreLegacyError}.
+ */
+export const ROUND_OPERATION_STORE_VERSION = 2;
 export const ROUND_OPERATION_STORE_FILE_NAME = "round-operations.sqlite";
 
 const roundOperationFileSchema = z.object({
   version: z.number().int(),
   operation: RoundOperationSchema,
 });
+
+/** The version stamp alone, read before the operation it wraps. */
+const roundOperationEnvelopeSchema = z.object({ version: z.number().int() });
 
 const roundOperationRowSchema = z.object({
   session_id: z.string(),
@@ -52,6 +59,30 @@ export type RoundOperationActiveList = {
   operations: RoundOperation[];
   errors: RoundOperationListError[];
 };
+
+/**
+ * A row an OLDER Rennet wrote, told apart from a damaged one.
+ *
+ * These are different facts and they need different answers. A row that fails the current
+ * schema at the current version is damage, and the daemon says so loudly — that is what
+ * `RoundOperationStoreCorruptError` is for. A row stamped with a version this build has
+ * moved past is just old: its phases and receipts describe a state machine that has been
+ * deleted, nothing can resume it, and treating it as corruption wedges the session
+ * permanently (`recover()` throws before it reaches any other session, and every later
+ * `read` for that session throws forever). So the reader DROPS it, with a logged reason,
+ * and the session dispatches fresh.
+ */
+export class RoundOperationStoreLegacyError extends Error {
+  constructor(
+    readonly sessionId: string,
+    readonly version: number,
+  ) {
+    super(
+      `round operation for session ${sessionId} was written by an older Rennet (store version ${version}, this build reads ${ROUND_OPERATION_STORE_VERSION}); dropping it`,
+    );
+    this.name = "RoundOperationStoreLegacyError";
+  }
+}
 
 export class RoundOperationStoreCorruptError extends Error {
   constructor(id: string, detail: string) {
@@ -81,15 +112,27 @@ function decodeOperationRow(rawRow: unknown, sessionId: string): RoundOperation 
     throw new RoundOperationStoreCorruptError(sessionId, "malformed JSON");
   }
 
+  // The VERSION is read before the operation, so an old row is recognised as old rather
+  // than failing the current schema and reading as damage.
+  const envelope = roundOperationEnvelopeSchema.safeParse(decoded);
+  if (!envelope.success) {
+    throw new RoundOperationStoreCorruptError(sessionId, "schema mismatch");
+  }
+  // STRICTLY older, not merely different: a row from a FUTURE version was written by a
+  // newer daemon over the same data dir, and deleting a live round on downgrade is data
+  // loss nobody asked for. That stays a refusal.
+  if (envelope.data.version < ROUND_OPERATION_STORE_VERSION) {
+    throw new RoundOperationStoreLegacyError(sessionId, envelope.data.version);
+  }
+  if (envelope.data.version !== ROUND_OPERATION_STORE_VERSION) {
+    throw new RoundOperationStoreCorruptError(
+      sessionId,
+      `unknown store version ${envelope.data.version} (expected ${ROUND_OPERATION_STORE_VERSION})`,
+    );
+  }
   const parsed = roundOperationFileSchema.safeParse(decoded);
   if (!parsed.success) {
     throw new RoundOperationStoreCorruptError(sessionId, "schema mismatch");
-  }
-  if (parsed.data.version !== ROUND_OPERATION_STORE_VERSION) {
-    throw new RoundOperationStoreCorruptError(
-      sessionId,
-      `unknown store version ${parsed.data.version} (expected ${ROUND_OPERATION_STORE_VERSION})`,
-    );
   }
   const operation = parsed.data.operation;
   if (
@@ -120,52 +163,6 @@ function sameCommitAttempt(left: RoundCommitAttempt, right: RoundCommitAttempt):
     left.executionId === right.executionId &&
     left.baseHead === right.baseHead &&
     left.startedAt === right.startedAt
-  );
-}
-
-function sameSourceLandingAttempt(
-  left: RoundSourceLandingAttempt,
-  right: RoundSourceLandingAttempt,
-): boolean {
-  const sameBase =
-    left.effect === right.effect &&
-    left.executionId === right.executionId &&
-    left.baselineCommit === right.baselineCommit &&
-    left.workerHead === right.workerHead &&
-    left.startedAt === right.startedAt;
-  if (!sameBase) return false;
-  if (left.strategy === undefined || right.strategy === undefined) {
-    return left.strategy === right.strategy;
-  }
-  if (left.strategy === "branch-ref-v1" || right.strategy === "branch-ref-v1") {
-    if (left.strategy !== "branch-ref-v1" || right.strategy !== "branch-ref-v1") return false;
-    return left.branch === right.branch && left.expectedHead === right.expectedHead;
-  }
-  return sameReceipt(left.units, right.units) && sameReceipt(left.unitReceipts, right.unitReceipts);
-}
-
-function extendsSourceLandingPrefix(
-  current: RoundSourceLandingAttempt,
-  next: RoundSourceLandingAttempt,
-): boolean {
-  if (current.strategy !== "exclusive-move-v1" || next.strategy !== "exclusive-move-v1") {
-    return false;
-  }
-  if (
-    current.effect !== next.effect ||
-    current.executionId !== next.executionId ||
-    current.baselineCommit !== next.baselineCommit ||
-    current.workerHead !== next.workerHead ||
-    current.startedAt !== next.startedAt ||
-    !sameReceipt(current.units, next.units) ||
-    next.unitReceipts.length !== current.unitReceipts.length + 1
-  ) {
-    return false;
-  }
-  const nextReceipt = next.unitReceipts[current.unitReceipts.length];
-  return (
-    sameReceipt(current.unitReceipts, next.unitReceipts.slice(0, -1)) &&
-    nextReceipt?.unitId === current.units[current.unitReceipts.length]?.id
   );
 }
 
@@ -244,16 +241,6 @@ function sameVerificationAttempt(
   );
 }
 
-function sameWorkspaceAttempt(left: RoundWorkspaceAttempt, right: RoundWorkspaceAttempt): boolean {
-  return (
-    left.kind === right.kind &&
-    left.worktreePath === right.worktreePath &&
-    left.sourceTreeOid === right.sourceTreeOid &&
-    left.sourceParentHead === right.sourceParentHead &&
-    left.startedAt === right.startedAt
-  );
-}
-
 function hasChangedEvidence(
   worker: { diff: string; changedPaths: string[] },
   commits: { count: number; from: string; to: string },
@@ -269,10 +256,7 @@ function hasChangedEvidence(
 function isLegalFailedRetry(failure: RoundOperationFailure, next: RoundOperationState): boolean {
   switch (failure.at) {
     case "preparing":
-      return (
-        next.phase === "workspace-preparing" &&
-        sameWorkspaceAttempt(failure.workspace, next.workspace)
-      );
+      return next.phase === "claimed";
     case "worker":
       return next.phase === "prepared" && sameReceipt(failure.workspace, next.workspace);
     case "gate":
@@ -289,23 +273,6 @@ function isLegalFailedRetry(failure: RoundOperationFailure, next: RoundOperation
         sameReceipt(failure.gate, next.gate) &&
         sameCommitAttempt(failure.commit, next.commit)
       );
-    case "source-landing-planning":
-      return (
-        next.phase === "commits-settled" &&
-        sameReceipt(failure.workspace, next.workspace) &&
-        sameReceipt(failure.worker, next.worker) &&
-        sameReceipt(failure.gate, next.gate) &&
-        sameReceipt(failure.commits, next.commits)
-      );
-    case "source-landing":
-      return (
-        next.phase === "source-landing" &&
-        sameReceipt(failure.workspace, next.workspace) &&
-        sameReceipt(failure.worker, next.worker) &&
-        sameReceipt(failure.gate, next.gate) &&
-        sameReceipt(failure.commits, next.commits) &&
-        sameSourceLandingAttempt(failure.landing, next.landing)
-      );
     case "round-recording":
       return (
         next.phase === "round-recording" &&
@@ -313,7 +280,6 @@ function isLegalFailedRetry(failure: RoundOperationFailure, next: RoundOperation
         sameReceipt(failure.worker, next.worker) &&
         sameReceipt(failure.gate, next.gate) &&
         sameReceipt(failure.commits, next.commits) &&
-        sameReceipt(failure.landing, next.landing) &&
         sameRoundRecordingAttempt(failure.recording, next.recording)
       );
     case "report-drafting":
@@ -323,7 +289,6 @@ function isLegalFailedRetry(failure: RoundOperationFailure, next: RoundOperation
         sameReceipt(failure.worker, next.worker) &&
         sameReceipt(failure.gate, next.gate) &&
         sameReceipt(failure.commits, next.commits) &&
-        sameReceipt(failure.landing, next.landing) &&
         sameReceipt(failure.recording, next.recording) &&
         sameReportDraftAttempt(failure.report, next.report)
       );
@@ -334,7 +299,6 @@ function isLegalFailedRetry(failure: RoundOperationFailure, next: RoundOperation
         sameReceipt(failure.worker, next.worker) &&
         sameReceipt(failure.gate, next.gate) &&
         sameReceipt(failure.commits, next.commits) &&
-        sameReceipt(failure.landing, next.landing) &&
         sameReceipt(failure.recording, next.recording) &&
         sameReceipt(failure.report, next.report) &&
         sameReceipt(failure.verification, next.verification)
@@ -346,15 +310,8 @@ function isLegalTransition(currentOperation: RoundOperation, next: RoundOperatio
   const current = currentOperation.state;
   switch (current.phase) {
     case "claimed":
-      return next.phase === "workspace-preparing";
-    case "workspace-preparing":
-      if (next.phase === "prepared") {
-        return sameWorkspaceAttempt(current.workspace, next.workspace);
-      }
       return (
-        next.phase === "failed" &&
-        next.failure.at === "preparing" &&
-        sameWorkspaceAttempt(current.workspace, next.failure.workspace)
+        next.phase === "prepared" || (next.phase === "failed" && next.failure.at === "preparing")
       );
     case "prepared":
       return next.phase === "worker-running" && sameReceipt(current.workspace, next.workspace);
@@ -424,58 +381,12 @@ function isLegalTransition(currentOperation: RoundOperation, next: RoundOperatio
         sameCommitAttempt(current.commit, next.failure.commit)
       );
     case "commits-settled":
-      if (next.phase === "source-landing") {
-        return (
-          sameReceipt(current.workspace, next.workspace) &&
-          sameReceipt(current.worker, next.worker) &&
-          sameReceipt(current.gate, next.gate) &&
-          sameReceipt(current.commits, next.commits)
-        );
-      }
-      return (
-        next.phase === "failed" &&
-        next.failure.at === "source-landing-planning" &&
-        sameReceipt(current.workspace, next.failure.workspace) &&
-        sameReceipt(current.worker, next.failure.worker) &&
-        sameReceipt(current.gate, next.failure.gate) &&
-        sameReceipt(current.commits, next.failure.commits)
-      );
-    case "source-landing":
-      if (next.phase === "source-landing") {
-        return (
-          sameReceipt(current.workspace, next.workspace) &&
-          sameReceipt(current.worker, next.worker) &&
-          sameReceipt(current.gate, next.gate) &&
-          sameReceipt(current.commits, next.commits) &&
-          extendsSourceLandingPrefix(current.landing, next.landing)
-        );
-      }
-      if (next.phase === "source-landed") {
-        return (
-          sameReceipt(current.workspace, next.workspace) &&
-          sameReceipt(current.worker, next.worker) &&
-          sameReceipt(current.gate, next.gate) &&
-          sameReceipt(current.commits, next.commits) &&
-          sameSourceLandingAttempt(current.landing, next.landing)
-        );
-      }
-      return (
-        next.phase === "failed" &&
-        next.failure.at === "source-landing" &&
-        sameReceipt(current.workspace, next.failure.workspace) &&
-        sameReceipt(current.worker, next.failure.worker) &&
-        sameReceipt(current.gate, next.failure.gate) &&
-        sameReceipt(current.commits, next.failure.commits) &&
-        sameSourceLandingAttempt(current.landing, next.failure.landing)
-      );
-    case "source-landed":
       return (
         next.phase === "round-recording" &&
         sameReceipt(current.workspace, next.workspace) &&
         sameReceipt(current.worker, next.worker) &&
         sameReceipt(current.gate, next.gate) &&
-        sameReceipt(current.commits, next.commits) &&
-        sameReceipt(current.landing, next.landing)
+        sameReceipt(current.commits, next.commits)
       );
     case "round-recording":
       if (next.phase === "round-recorded") {
@@ -484,7 +395,6 @@ function isLegalTransition(currentOperation: RoundOperation, next: RoundOperatio
           sameReceipt(current.worker, next.worker) &&
           sameReceipt(current.gate, next.gate) &&
           sameReceipt(current.commits, next.commits) &&
-          sameReceipt(current.landing, next.landing) &&
           sameRoundRecordingAttempt(current.recording, next.recording)
         );
       }
@@ -495,7 +405,6 @@ function isLegalTransition(currentOperation: RoundOperation, next: RoundOperatio
         sameReceipt(current.worker, next.failure.worker) &&
         sameReceipt(current.gate, next.failure.gate) &&
         sameReceipt(current.commits, next.failure.commits) &&
-        sameReceipt(current.landing, next.failure.landing) &&
         sameRoundRecordingAttempt(current.recording, next.failure.recording)
       );
     case "round-recorded":
@@ -506,7 +415,6 @@ function isLegalTransition(currentOperation: RoundOperation, next: RoundOperatio
           sameReceipt(current.worker, next.worker) &&
           sameReceipt(current.gate, next.gate) &&
           sameReceipt(current.commits, next.commits) &&
-          sameReceipt(current.landing, next.landing) &&
           sameReceipt(current.recording, next.recording)
         );
       }
@@ -517,7 +425,6 @@ function isLegalTransition(currentOperation: RoundOperation, next: RoundOperatio
         sameReceipt(current.worker, next.worker) &&
         sameReceipt(current.gate, next.gate) &&
         sameReceipt(current.commits, next.commits) &&
-        sameReceipt(current.landing, next.landing) &&
         sameReceipt(current.recording, next.recording)
       );
     case "report-drafting":
@@ -527,7 +434,6 @@ function isLegalTransition(currentOperation: RoundOperation, next: RoundOperatio
           sameReceipt(current.worker, next.worker) &&
           sameReceipt(current.gate, next.gate) &&
           sameReceipt(current.commits, next.commits) &&
-          sameReceipt(current.landing, next.landing) &&
           sameReceipt(current.recording, next.recording) &&
           extendsReportHandoffEpoch(currentOperation, next.report)
         );
@@ -538,7 +444,6 @@ function isLegalTransition(currentOperation: RoundOperation, next: RoundOperatio
           sameReceipt(current.worker, next.worker) &&
           sameReceipt(current.gate, next.gate) &&
           sameReceipt(current.commits, next.commits) &&
-          sameReceipt(current.landing, next.landing) &&
           sameReceipt(current.recording, next.recording) &&
           sameReportDraftAttempt(current.report, next.report)
         );
@@ -550,7 +455,6 @@ function isLegalTransition(currentOperation: RoundOperation, next: RoundOperatio
         sameReceipt(current.worker, next.failure.worker) &&
         sameReceipt(current.gate, next.failure.gate) &&
         sameReceipt(current.commits, next.failure.commits) &&
-        sameReceipt(current.landing, next.failure.landing) &&
         sameReceipt(current.recording, next.failure.recording) &&
         sameReceipt(current.report, next.failure.report)
       );
@@ -561,7 +465,6 @@ function isLegalTransition(currentOperation: RoundOperation, next: RoundOperatio
           sameReceipt(current.worker, next.worker) &&
           sameReceipt(current.gate, next.gate) &&
           sameReceipt(current.commits, next.commits) &&
-          sameReceipt(current.landing, next.landing) &&
           sameReceipt(current.recording, next.recording) &&
           sameReportDraft(current.report, next.result.report) &&
           sameVerificationAttempt(current.verification, next.result.report)
@@ -574,7 +477,6 @@ function isLegalTransition(currentOperation: RoundOperation, next: RoundOperatio
         sameReceipt(current.worker, next.failure.worker) &&
         sameReceipt(current.gate, next.failure.gate) &&
         sameReceipt(current.commits, next.failure.commits) &&
-        sameReceipt(current.landing, next.failure.landing) &&
         sameReceipt(current.recording, next.failure.recording) &&
         sameReceipt(current.report, next.failure.report) &&
         sameReceipt(current.verification, next.failure.verification)
@@ -612,7 +514,10 @@ export function defaultRoundOperationStoreDir(): string {
 export class RoundOperationStore {
   private readonly database: DatabaseSync;
 
-  constructor(dir: string = defaultRoundOperationStoreDir()) {
+  constructor(
+    dir: string = defaultRoundOperationStoreDir(),
+    private readonly warn: (message: string) => void = console.warn,
+  ) {
     mkdirSync(dir, { recursive: true });
     this.database = new DatabaseSync(join(dir, ROUND_OPERATION_STORE_FILE_NAME));
     this.database.exec(`
@@ -636,7 +541,20 @@ export class RoundOperationStore {
          WHERE session_id = ?`,
       )
       .get(sessionId);
-    return row === undefined ? undefined : decodeOperationRow(row, sessionId);
+    if (row === undefined) return undefined;
+    try {
+      return decodeOperationRow(row, sessionId);
+    } catch (error) {
+      if (!(error instanceof RoundOperationStoreLegacyError)) throw error;
+      this.dropLegacyRow(error);
+      return undefined;
+    }
+  }
+
+  /** Remove a row an older Rennet wrote, once, saying so. Never touches a corrupt row. */
+  private dropLegacyRow(error: RoundOperationStoreLegacyError): void {
+    this.database.prepare(`DELETE FROM round_operations WHERE session_id = ?`).run(error.sessionId);
+    this.warn(`rennet: ${error.message}`);
   }
 
   listActive(): RoundOperationActiveList {
@@ -655,6 +573,13 @@ export class RoundOperationStore {
       try {
         operations.push(decodeOperationRow(row, sessionId));
       } catch (error) {
+        // A row from an older build is dropped here rather than reported: `recover()`
+        // turns this list's errors into an AggregateError and throws BEFORE driving any
+        // operation, so one pre-upgrade row would stop every other session recovering.
+        if (error instanceof RoundOperationStoreLegacyError) {
+          this.dropLegacyRow(error);
+          continue;
+        }
         if (!(error instanceof RoundOperationStoreCorruptError)) throw error;
         errors.push({ sessionId, error });
       }

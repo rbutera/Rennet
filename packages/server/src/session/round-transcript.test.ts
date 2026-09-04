@@ -30,11 +30,8 @@ function completed(result: "changed" | "unchanged" = "changed"): RoundOperation 
     state: {
       phase: "completed",
       workspace: {
-        kind: "detached-worktree",
-        worktreePath: "/worktree",
-        sourceTreeOid: "source-tree",
-        sourceParentHead: "source-head",
-        startedAt: 1,
+        kind: "bound-root",
+        root: "/repo",
         sourceHead: "source-head",
         preparedAt: 2,
       },
@@ -63,16 +60,12 @@ function completed(result: "changed" | "unchanged" = "changed"): RoundOperation 
         from: "before",
         to: "after",
       },
-      landing: {
-        effect: "source-landing",
-        executionId: "landing-1",
-        baselineCommit: "before",
-        workerHead: "after",
-        startedAt: 5,
-        outcome: "applied",
-        landedAt: 6,
+      recording: {
+        effect: "round-recording",
+        executionId: "record-1",
+        startedAt: 6,
+        recordedAt: 7,
       },
-      recording: { executionId: "record-1", startedAt: 6, recordedAt: 7 },
       result:
         result === "changed"
           ? {

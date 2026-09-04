@@ -31,12 +31,7 @@ import type {
   RoundOperation,
   SidebarSession,
 } from "@rennet/protocol";
-import {
-  generationIdForPatchset,
-  ROUND_NO_REGEN,
-  roundSourceLandingTransactionPath,
-  sha256Hex,
-} from "@rennet/protocol";
+import { generationIdForPatchset, ROUND_NO_REGEN, sha256Hex } from "@rennet/protocol";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   captureBranchPatchset,
@@ -46,18 +41,15 @@ import {
   createGitLabPrSubmissionResolver,
   createRennetServer,
   createRoundRegenerationProgressQueue,
-  createRoundSourceLandingPorts,
   createRoundWorkerPort,
+  createRoundWorkerRecoveryPort,
   createRoundWorkspacePlanner,
-  type HandoffTurnExecution,
-  type RoundSourceLandingInjection,
   resolveCodingHarness,
   runResolvedCodingHarnessTurn,
   startProjectContextMaintenance,
 } from "./create-server";
 import { createGitHubTokenStore } from "./github-token-store";
 import type { ProjectProcessJournalRecord } from "./project-process-journal";
-import type { RoundExecutionPorts } from "./runtime/round-execution";
 
 type TestServer = Awaited<ReturnType<typeof createRennetServer>>;
 type PreparationSession = {
@@ -664,146 +656,229 @@ describe("selected-branch patchset recapture", () => {
   });
 });
 
-describe("round worker execution context", () => {
-  it("carries a distro-native WSL branch capture through the round planner and worker", async () => {
-    const git: GitExec = async (_root, arguments_) => {
-      if (arguments_[0] === "rev-parse" && arguments_[1] === "--show-toplevel") {
-        return "/home/rai/repo\n";
-      }
-      if (arguments_[0] === "rev-parse" && arguments_[1] === "--verify") {
-        return "worker-head\n";
-      }
-      if (arguments_[0] === "rev-parse" && arguments_[1] === "--git-common-dir") {
-        return "/home/rai/repo/.git\n";
-      }
-      if (arguments_[0] === "merge-base") return "base-head\n";
-      if (arguments_[0] === "diff") return "";
-      throw new Error(`unexpected git call: ${arguments_.join(" ")}`);
-    };
-    const resolveProjectSnapshotId = vi.fn(async () => "snapshot-1");
-    const patchset = await captureBranchPatchset({
-      git,
-      locus: { kind: "wsl", distro: "Ubuntu" },
-      repoPath: "\\\\wsl.localhost\\Ubuntu\\home\\rai\\repo",
-      head: "feat/test",
-      base: "main",
-      resolveProjectSnapshotId,
-    });
-    const sourceRepoRoot = patchset.repository.root;
-    expect(resolveProjectSnapshotId).toHaveBeenCalledWith(sourceRepoRoot, "base-head");
-    const prompt = "apply the round";
-    const operation: RoundOperation = {
-      operationId: "operation-1",
-      sessionId: "session-1",
-      reviewId: "review-1",
-      dispatchId: "dispatch-1",
-      sourcePatchsetId: "patchset-1",
-      askOccurrences: [{ id: "ask-1", revision: 1 }],
-      roundNumber: 1,
-      sourceTarget: { kind: "branch", branch: "feat/test" },
-      repoRoot: sourceRepoRoot,
-      workOrderPrompt: prompt,
-      workOrderDigest: sha256Hex(prompt),
-      gatePlan: { kind: "absent" },
-      revision: 0,
-      rerunRequested: false,
-      createdAt: 1,
-      updatedAt: 1,
-      state: { phase: "claimed" },
-    };
-    const planner = createRoundWorkspacePlanner({
-      dataDir: "C:\\Users\\rai\\AppData\\Roaming\\Rennet",
-      sourceRepositoryFor: () => patchset.repository,
-      now: () => 2,
-    });
-    const workspace = planner(operation);
-    const key = sha256Hex(operation.operationId).slice(0, 32);
-    const expectedWorktree = `\\\\wsl.localhost\\Ubuntu\\home\\rai\\repo\\.git\\rennet-round-worktrees\\${key}`;
-    expect(workspace.worktreePath).toBe(expectedWorktree);
-    expect(workspace.worktreePath).not.toContain("C:\\Users");
+describe("the round runs in the session's bound root", () => {
+  const operation = (): RoundOperation => ({
+    operationId: "operation-1",
+    sessionId: "session-1",
+    reviewId: "review-1",
+    dispatchId: "dispatch-1",
+    sourcePatchsetId: "patchset-1",
+    askOccurrences: [{ id: "ask-1", revision: 1 }],
+    roundNumber: 1,
+    sourceTarget: { kind: "branch", branch: "feat/test" },
+    repoRoot: "/repo",
+    workOrderPrompt: "apply the round",
+    workOrderDigest: sha256Hex("apply the round"),
+    gatePlan: { kind: "absent" },
+    revision: 0,
+    rerunRequested: false,
+    createdAt: 1,
+    updatedAt: 1,
+    state: { phase: "claimed" },
+  });
 
-    const workerAttempt = { executionId: "worker-1", startedAt: 3 };
-    const workerRunning: RoundOperation = {
-      ...operation,
-      state: {
-        phase: "worker-running",
-        workspace: { ...workspace, sourceHead: "source-head", preparedAt: 3 },
-        worker: workerAttempt,
-      },
+  it("plans the first bound root that is ON the round's branch, creating nothing", async () => {
+    // `/drafting` is the shape that made this necessary: a checkout DETACHED at the
+    // reviewed head. Its head looks right and its branch is absent, so a planner that
+    // took the first recorded root would commit the round somewhere the reviewer's branch
+    // never moves — silently, with the review advancing anyway.
+    const heads: Record<string, string> = { "/drafting": "bound-head", "/bound": "bound-head" };
+    const branches: Record<string, string | undefined> = {
+      "/drafting": undefined,
+      "/bound": "feat/test",
     };
+    const workspace = await createRoundWorkspacePlanner({
+      candidateRoots: () => ["/drafting", "/bound"],
+      reviewedHead: () => "reviewed-oid",
+      headOf: async (root) => heads[root],
+      branchOf: async (root) => branches[root],
+      repositoryOf: async () => "/repo/.git",
+      containsCommit: async () => true,
+      now: () => 2,
+    })(operation());
+
+    expect(workspace).toEqual({
+      kind: "bound-root",
+      root: "/bound",
+      sourceHead: "bound-head",
+      preparedAt: 2,
+    });
+  });
+
+  // A branch NAME is not a repository identity. Two repos in one workspace both carry
+  // `feat/test`, and a name-only match takes whichever the candidate order yielded — the
+  // wrong repo's tree under the right round's label, silently. `--git-common-dir` is the
+  // contradiction that separates them: one value per repository, shared by every linked
+  // worktree of it.
+  it("refuses a same-named branch belonging to another repository", async () => {
+    const repositories: Record<string, string> = {
+      "/repo": "/repo/.git",
+      "/other-repo": "/other-repo/.git",
+      "/bound": "/repo/.git",
+    };
+    const workspace = await createRoundWorkspacePlanner({
+      candidateRoots: () => ["/other-repo", "/bound"],
+      reviewedHead: () => "reviewed-oid",
+      headOf: async () => "bound-head",
+      branchOf: async () => "feat/test",
+      repositoryOf: async (root) => repositories[root],
+      containsCommit: async () => true,
+      now: () => 2,
+    })(operation());
+    expect(workspace.root).toBe("/bound");
+  });
+
+  // Amending, rebasing and resetting a branch are deliberate acts, and after a rebase the
+  // reviewed commit is unreachable — a refusal telling the reviewer to "check it out
+  // there" would be an instruction nobody can follow. So the round RUNS and the receipt
+  // carries the fact; the successor patchset is a fresh capture from this head anyway.
+  it("runs on a branch rewritten past the reviewed head, and records that", async () => {
+    const workspace = await createRoundWorkspacePlanner({
+      candidateRoots: () => ["/bound"],
+      reviewedHead: () => "reviewed-oid",
+      headOf: async () => "rebased-head",
+      branchOf: async () => "feat/test",
+      repositoryOf: async () => "/repo/.git",
+      containsCommit: async () => false,
+      now: () => 2,
+    })(operation());
+    expect(workspace).toEqual({
+      kind: "bound-root",
+      root: "/bound",
+      sourceHead: "rebased-head",
+      preparedAt: 2,
+      branchRewritten: true,
+    });
+    // Control: the ordinary branch says nothing, so the flag is not a constant.
+    const ordinary = await createRoundWorkspacePlanner({
+      candidateRoots: () => ["/bound"],
+      reviewedHead: () => "reviewed-oid",
+      headOf: async () => "bound-head",
+      branchOf: async () => "feat/test",
+      repositoryOf: async () => "/repo/.git",
+      containsCommit: async () => true,
+      now: () => 2,
+    })(operation());
+    expect(ordinary).not.toHaveProperty("branchRewritten");
+  });
+
+  it("fails naming the branch and the roots it looked in", async () => {
+    await expect(
+      createRoundWorkspacePlanner({
+        candidateRoots: () => ["/drafting", "/bound"],
+        reviewedHead: () => "reviewed-oid",
+        headOf: async () => "bound-head",
+        // Nothing is on the branch at all.
+        branchOf: async () => "some/other-branch",
+        repositoryOf: async () => "/repo/.git",
+        containsCommit: async () => true,
+        now: () => 2,
+      })(operation()),
+    ).rejects.toThrow(/feat\/test.*\/drafting, \/bound/);
+  });
+
+  it("runs the worker turn in the bound root and keeps the turn's checkpoint as the receipt", async () => {
+    const workspace = {
+      kind: "bound-root" as const,
+      root: "/bound",
+      sourceHead: "bound-head",
+      preparedAt: 3,
+    };
+    const workerAttempt = { executionId: "worker-1", startedAt: 3 };
     const runHandoffTurn = vi.fn(async () => ({
       status: "completed" as const,
       finalText: "done",
-      turnDiff: "",
-      filesTouched: [],
-      harness: { id: "codex" as const, version: "0.146.0" },
+      turnDiff: "diff --git a/x b/x\n",
+      filesTouched: ["x"],
+      checkpoint: { threadId: "thread-1", turnId: "turn-7", turnCount: 4 },
     }));
+
     const receipt = await createRoundWorkerPort({ runHandoffTurn, now: () => 4 })({
-      operation: workerRunning,
+      operation: {
+        ...operation(),
+        state: { phase: "worker-running", workspace, worker: workerAttempt },
+      },
       attempt: workerAttempt,
     });
 
     expect(runHandoffTurn).toHaveBeenCalledWith({
-      repoRoot: expectedWorktree,
-      prompt,
-      sessionId: operation.sessionId,
-      execution: {
-        kind: "wsl",
-        distro: "Ubuntu",
-        cwd: `/home/rai/repo/.git/rennet-round-worktrees/${key}`,
-      },
+      repoRoot: "/bound",
+      prompt: "apply the round",
+      reviewId: "review-1",
     });
-    expect(receipt.harness).toEqual({ id: "codex", version: "0.146.0" });
+    expect(receipt.outcome).toBe("completed");
+    expect(receipt.checkpoint).toEqual({ threadId: "thread-1", turnId: "turn-7", turnCount: 4 });
   });
-});
 
-describe("round source landing composition", () => {
-  it("keeps legacy landing as the default and wires the complete injected unit operation", () => {
-    const legacyPlan: RoundExecutionPorts["planSourceLanding"] = () => ({
-      effect: "source-landing",
-      executionId: "legacy-landing",
-      baselineCommit: "baseline",
-      workerHead: "worker",
-      startedAt: 1,
-    });
-    const legacyLand: RoundExecutionPorts["landSourceChanges"] = async ({ attempt }) => ({
-      ...attempt,
-      outcome: "applied",
-      landedAt: 2,
-    });
-    const injection = {
-      plan: vi.fn(async () => ({
-        effect: "source-landing" as const,
-        strategy: "exclusive-move-v1" as const,
-        executionId: "transactional-landing",
-        baselineCommit: "baseline",
-        workerHead: "worker",
-        startedAt: 3,
-        units: [],
-        unitReceipts: [],
-      })),
-      landUnit: vi.fn<NonNullable<RoundExecutionPorts["landSourceUnit"]>>(),
-      cleanup: vi.fn<NonNullable<RoundExecutionPorts["cleanupSourceLanding"]>>(),
-    } satisfies RoundSourceLandingInjection;
+  it("settles a restart from the turn's checkpoint, and fails naming the bound root without one", async () => {
+    const workspace = {
+      kind: "bound-root" as const,
+      root: "/bound",
+      sourceHead: "bound-head",
+      preparedAt: 3,
+    };
+    const workerAttempt = { executionId: "worker-1", startedAt: 900 };
+    const running: RoundOperation = {
+      ...operation(),
+      state: { phase: "worker-running", workspace, worker: workerAttempt },
+    };
 
-    const defaults = createRoundSourceLandingPorts({
-      planLegacy: legacyPlan,
-      landLegacy: legacyLand,
+    const readCheckpoint = vi.fn(async () => ({
+      checkpoint: { threadId: "thread-1", turnId: "turn-7", turnCount: 4 },
+      status: "ready" as const,
+      diff: "diff --git a/x b/x\n",
+      filesTouched: ["x"],
+    }));
+    const settled = await createRoundWorkerRecoveryPort({ readCheckpoint, now: () => 1000 })({
+      operation: running,
+      attempt: workerAttempt,
     });
-    expect(defaults.planSourceLanding).toBe(legacyPlan);
-    expect(defaults.landSourceChanges).toBe(legacyLand);
-    expect(defaults.landSourceUnit).toBeUndefined();
-    expect(defaults.cleanupSourceLanding).toBeUndefined();
+    // The search is scoped by the round's OWN PROMPT and by this attempt's start, because
+    // the thread is shared with the interactive handoff: neither an earlier round's turn
+    // nor somebody else's handoff may be read as this round's work.
+    expect(readCheckpoint).toHaveBeenCalledWith({
+      repoRoot: "/bound",
+      reviewId: "review-1",
+      prompt: "apply the round",
+      since: 900,
+    });
+    expect(settled.outcome).toBe("completed");
+    expect(settled.changedPaths).toEqual(["x"]);
+    expect(settled.checkpoint).toEqual({ threadId: "thread-1", turnId: "turn-7", turnCount: 4 });
 
-    const injected = createRoundSourceLandingPorts({
-      planLegacy: legacyPlan,
-      landLegacy: legacyLand,
-      injection,
-    });
-    expect(injected.planSourceLanding).toBe(injection.plan);
-    expect(injected.landSourceChanges).toBe(legacyLand);
-    expect(injected.landSourceUnit).toBe(injection.landUnit);
-    expect(injected.cleanupSourceLanding).toBe(injection.cleanup);
+    // A checkpoint T3 stamped "error" is a FAILED turn that happens to have left one.
+    // Settling it as completed would take the round on to its gate and its successor
+    // capture on work the agent itself reported as unfinished.
+    const errored = await createRoundWorkerRecoveryPort({
+      readCheckpoint: async () => ({
+        checkpoint: { threadId: "thread-1", turnId: "turn-7", turnCount: 4 },
+        status: "error" as const,
+        diff: "diff --git a/x b/x\n",
+        filesTouched: ["x"],
+      }),
+      now: () => 1000,
+    })({ operation: running, attempt: workerAttempt });
+    expect(errored.outcome).toBe("failed");
+    // …and it keeps the partial diff, because those edits are real and on the branch.
+    expect(errored.changedPaths).toEqual(["x"]);
+    expect(
+      errored.outcome === "failed" && errored.termination.kind === "error"
+        ? errored.termination.reason
+        : "",
+    ).toContain("failed");
+
+    const failed = await createRoundWorkerRecoveryPort({
+      readCheckpoint: async () => undefined,
+      now: () => 1000,
+    })({ operation: running, attempt: workerAttempt });
+    expect(failed.outcome).toBe("failed");
+    // The reason names the BOUND ROOT — the reviewer's own checkout, where any partial
+    // edits actually are — not a detached worktree they never see.
+    expect(
+      failed.outcome === "failed" && failed.termination.kind === "error"
+        ? failed.termination.reason
+        : "",
+    ).toContain("/bound");
   });
 });
 
@@ -1533,7 +1608,6 @@ describe("durable round execution recovery", () => {
     const workspace = mkdtempSync(join(tmpdir(), "rennet-round-root-recovery-workspace-"));
     const primaryRepo = join(workspace, "primary");
     const includedRepo = join(workspace, "included");
-    const recoveryWorktree = join(workspace, "recovery-worktree");
     dirs.push(dataDir, workspace);
     for (const repo of [primaryRepo, includedRepo]) {
       execFileSync("git", ["init", "-b", "main", repo]);
@@ -1606,15 +1680,12 @@ describe("durable round execution recovery", () => {
         { state, updatedAt },
       );
     };
-    const workspaceAttempt = {
-      kind: "detached-worktree" as const,
-      worktreePath: recoveryWorktree,
-      sourceTreeOid: sourceHead,
-      sourceParentHead: sourceHead,
-      startedAt: 2,
+    const workspaceReceipt = {
+      kind: "bound-root" as const,
+      root: includedRepo,
+      sourceHead,
+      preparedAt: 3,
     };
-    transition({ phase: "workspace-preparing", workspace: workspaceAttempt }, 2);
-    const workspaceReceipt = { ...workspaceAttempt, sourceHead, preparedAt: 3 };
     transition({ phase: "prepared", workspace: workspaceReceipt }, 3);
     const workerAttempt = { executionId: "worker-root-recovery", startedAt: 4 };
     transition({ phase: "worker-running", workspace: workspaceReceipt, worker: workerAttempt }, 4);
@@ -1663,36 +1734,6 @@ describe("durable round execution recovery", () => {
       },
       8,
     );
-    const landingAttempt = {
-      effect: "source-landing" as const,
-      executionId: "landing-root-recovery",
-      baselineCommit: sourceHead,
-      workerHead: commits.to,
-      startedAt: 9,
-    };
-    transition(
-      {
-        phase: "source-landing",
-        workspace: workspaceReceipt,
-        worker: workerReceipt,
-        gate,
-        commits,
-        landing: landingAttempt,
-      },
-      9,
-    );
-    const landing = { ...landingAttempt, outcome: "applied" as const, landedAt: 10 };
-    transition(
-      {
-        phase: "source-landed",
-        workspace: workspaceReceipt,
-        worker: workerReceipt,
-        gate,
-        commits,
-        landing,
-      },
-      10,
-    );
     const recordingAttempt = {
       effect: "round-recording" as const,
       executionId: "recording-root-recovery",
@@ -1705,7 +1746,6 @@ describe("durable round execution recovery", () => {
         worker: workerReceipt,
         gate,
         commits,
-        landing,
         recording: recordingAttempt,
       },
       11,
@@ -1718,7 +1758,6 @@ describe("durable round execution recovery", () => {
         worker: workerReceipt,
         gate,
         commits,
-        landing,
         recording,
       },
       12,
@@ -1730,7 +1769,6 @@ describe("durable round execution recovery", () => {
         worker: workerReceipt,
         gate,
         commits,
-        landing,
         recording,
         report: {
           executionId: "00000000-0000-4000-8000-000000000013",
@@ -1778,9 +1816,7 @@ describe("durable round execution recovery", () => {
   it("recovers a worker-running operation into preserved partial evidence without a second turn", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "rennet-round-recovery-data-"));
     const repo = realpathSync(mkdtempSync(join(tmpdir(), "rennet-round-recovery-repo-")));
-    const worktreeParent = mkdtempSync(join(tmpdir(), "rennet-round-recovery-worktree-"));
-    const worktree = join(worktreeParent, "worker");
-    dirs.push(dataDir, repo, worktreeParent);
+    dirs.push(dataDir, repo);
     const git = (cwd: string, ...args: string[]) =>
       execFileSync("git", args, { cwd }).toString().trim();
     git(repo, "init", "-b", "main");
@@ -1790,9 +1826,9 @@ describe("durable round execution recovery", () => {
     git(repo, "add", "a.ts");
     git(repo, "commit", "-m", "base");
     const sourceHead = git(repo, "rev-parse", "HEAD");
-    const sourceTreeOid = git(repo, "rev-parse", `${sourceHead}^{tree}`);
-    git(repo, "worktree", "add", "--detach", worktree, sourceHead);
-    writeFileSync(join(worktree, "a.ts"), "export const value = 2;\n");
+    // The round's partial edits are in the reviewer's OWN checkout now — there is no
+    // detached worktree to inspect them in (session-bound-workspace D2).
+    writeFileSync(join(repo, "a.ts"), "export const value = 2;\n");
     const prompt = "apply the round";
     const attempt = { executionId: "worker-recovery", startedAt: 4 };
     const operation: RoundOperation = {
@@ -1814,15 +1850,7 @@ describe("durable round execution recovery", () => {
       updatedAt: 4,
       state: {
         phase: "worker-running",
-        workspace: {
-          kind: "detached-worktree",
-          worktreePath: worktree,
-          sourceTreeOid,
-          sourceParentHead: sourceHead,
-          sourceHead,
-          startedAt: 2,
-          preparedAt: 3,
-        },
+        workspace: { kind: "bound-root", root: repo, sourceHead, preparedAt: 3 },
         worker: attempt,
       },
     };
@@ -1832,30 +1860,17 @@ describe("durable round execution recovery", () => {
       updatedAt: 1,
       state: { phase: "claimed" },
     });
-    const workspaceAttempt = {
-      kind: "detached-worktree" as const,
-      worktreePath: worktree,
-      sourceTreeOid,
-      sourceParentHead: sourceHead,
-      startedAt: 2,
+    const workspace = {
+      kind: "bound-root" as const,
+      root: repo,
+      sourceHead,
+      preparedAt: 3,
     };
-    const preparing = operationStore.compareAndSwap(
+    const prepared = operationStore.compareAndSwap(
       {
         sessionId: claimed.sessionId,
         operationId: claimed.operationId,
         revision: claimed.revision,
-      },
-      {
-        state: { phase: "workspace-preparing", workspace: workspaceAttempt },
-        updatedAt: 2,
-      },
-    );
-    const workspace = { ...workspaceAttempt, sourceHead, preparedAt: 3 };
-    const prepared = operationStore.compareAndSwap(
-      {
-        sessionId: preparing.sessionId,
-        operationId: preparing.operationId,
-        revision: preparing.revision,
       },
       { state: { phase: "prepared", workspace }, updatedAt: 3 },
     );
@@ -1899,14 +1914,11 @@ describe("durable round execution recovery", () => {
     expect(recovered.state.failure.worker).toMatchObject({
       executionId: attempt.executionId,
       outcome: "failed",
-      changedPaths: ["a.ts"],
     });
-    if (!("outcome" in recovered.state.failure.worker)) {
-      throw new Error("expected reconstructed worker receipt");
-    }
-    expect(recovered.state.failure.worker.diff).toContain("+export const value = 2;");
-    expect(recovered.state.failure.reason).toContain(worktree);
-    expect(readFileSync(join(worktree, "a.ts"), "utf8")).toBe("export const value = 2;\n");
+    // The reason points the reviewer at their OWN checkout, which is where the round's
+    // partial edits actually are, and the recovery never touches them.
+    expect(recovered.state.failure.reason).toContain(repo);
+    expect(readFileSync(join(repo, "a.ts"), "utf8")).toBe("export const value = 2;\n");
   });
 });
 
@@ -2031,7 +2043,7 @@ describe("round.dispatch mints onto the session the reads answer (the call site,
     expect(existsSync(join(home, ".rennet"))).toBe(false);
   }, 30_000);
 
-  it("recaptures and starts successor drafting from checkpoint diff even when HEAD stays equal", async () => {
+  it("runs the round in the bound checkout, records its root, and recaptures the successor", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "rennet-round-equal-head-data-"));
     const repo = realpathSync(mkdtempSync(join(tmpdir(), "rennet-round-equal-head-repo-")));
     dirs.push(dataDir, repo);
@@ -2045,22 +2057,36 @@ describe("round.dispatch mints onto the session the reads answer (the call site,
     writeFileSync(join(repo, "a.txt"), "base\nreviewed\n");
     const head = git("rev-parse", "HEAD");
     let workerCalls = 0;
-    let workerExecution: HandoffTurnExecution | undefined;
+    let workerRepoRoot: string | undefined;
+    let workerPrompt = "";
     let placeholderObserved = false;
     let roundSessionId = "";
     const server = await createRennetServer({
       dataDir,
       env: { RENNET_DISABLE_HARNESS: "1" },
-      runHandoffTurn: async ({ repoRoot, execution }) => {
+      // The round worker is a turn in the SESSION'S BOUND ROOT and commits on the branch
+      // itself — nothing lands a delta afterwards, so a turn that does not commit leaves
+      // the round with zero commits, which is exactly what the coordinator refuses.
+      //
+      // It OBEYS the prompt about git rather than committing regardless: a fake that
+      // always commits is what hid the shipped blocker, where the round carried the review
+      // handoff's "do NOT commit" rule and every real round would have failed.
+      runHandoffTurn: async ({ repoRoot, prompt }) => {
         workerCalls += 1;
-        workerExecution = execution;
+        workerRepoRoot = repoRoot;
+        workerPrompt = prompt;
         writeFileSync(join(repoRoot, "a.txt"), "base\nreviewed\nworker change\n");
+        if (!/do NOT commit/i.test(prompt)) {
+          execFileSync("git", ["add", "a.txt"], { cwd: repoRoot });
+          execFileSync("git", ["commit", "-m", "worker change"], { cwd: repoRoot });
+        }
         return {
           status: "completed",
           finalText: "done",
           turnDiff: "diff --git a/a.txt b/a.txt\n+worker change",
           filesTouched: ["a.txt"],
           harness: { id: "codex", version: "0.146.0" },
+          checkpoint: { threadId: "thread-round", turnId: "turn-round", turnCount: 1 },
         };
       },
       onRoundPlaceholderCommitted: ({ sessionId, dispatchId }) => {
@@ -2072,31 +2098,16 @@ describe("round.dispatch mints onto the session the reads answer (the call site,
         if (operation?.state.phase !== "round-recording") {
           throw new Error("round placeholder was recorded outside its durable recording attempt");
         }
-        expect(operation.state.landing.outcome).toBe("applied");
-        if (process.platform !== "win32") {
-          expect(operation.state.landing.strategy).toBe("exclusive-move-v1");
-          if (operation.state.landing.strategy !== "exclusive-move-v1") {
-            throw new Error("POSIX production round did not use rooted transactional landing");
-          }
-          expect(operation.state.landing.units.map((unit) => unit.path)).toEqual(["a.txt"]);
-          expect(operation.state.landing.unitReceipts).toHaveLength(1);
-          expect(
-            existsSync(
-              join(repo, roundSourceLandingTransactionPath(operation.state.landing.executionId)),
-            ),
-          ).toBe(false);
-          const infoExcludePath = git(
-            "rev-parse",
-            "--path-format=absolute",
-            "--git-path",
-            "info/exclude",
-          );
-          expect(
-            readFileSync(infoExcludePath, "utf8")
-              .split(/\r?\n/)
-              .filter((line) => line === "/.rennet/round-landings/"),
-          ).toHaveLength(1);
-        }
+        // The commits the round observed are the ones the worker made ON THE BRANCH, in
+        // the bound root — never a replayed delta and never a blanket `git add -A`.
+        expect(operation.state.workspace).toEqual({
+          kind: "bound-root",
+          root: repo,
+          sourceHead: head,
+          preparedAt: expect.any(Number),
+        });
+        expect(operation.state.commits.from).toBe(head);
+        expect(operation.state.commits.count).toBe(1);
         expect(operation.state.recording.effect).toBe("round-recording");
         expect(readFileSync(join(repo, "a.txt"), "utf8")).toContain("worker change");
         const record = new RoundRecordStore(join(dataDir, "rounds"))
@@ -2109,6 +2120,8 @@ describe("round.dispatch mints onto the session the reads answer (the call site,
           startedAt: operation.createdAt,
           sourceTarget: operation.sourceTarget,
           harness: { id: "codex", version: "0.146.0" },
+          workspaceRoot: repo,
+          checkpoint: { threadId: "thread-round", turnId: "turn-round", turnCount: 1 },
           gate: { outcome: "skipped", reason: "not-configured" },
         });
         // This hook runs before create-server enters PR-draft ripening. If placeholder
@@ -2191,9 +2204,203 @@ describe("round.dispatch mints onto the session the reads answer (the call site,
       { timeout: 15_000, interval: 50 },
     );
     expect(workerCalls).toBe(1);
-    expect(workerExecution).toEqual({ kind: "host" });
-    expect(git("rev-parse", "HEAD")).toBe(head);
+    // The turn ran in the session's bound root — the reviewer's own checkout — and the
+    // branch moved there, which is the whole point: nothing replays a delta afterwards.
+    expect(workerRepoRoot).toBe(repo);
+    const afterRound = git("rev-parse", "HEAD");
+    expect(afterRound).not.toBe(head);
+
+    // The successor patchset is captured after the turn from the tree the round committed
+    // in: its head is that checkout's head, not a detached worktree's. What this CANNOT
+    // catch on its own is which recapture path ran — a current-checkout review recaptures
+    // through `review.regenerate`, whose repo path and the bound root are the same value
+    // here, so swapping one for the other leaves this green. The branch-landing capture's
+    // own head argument is pinned by the operation-state assertions above.
+    const after = (await server.dispatch("review.load", {
+      commandId: randomUUID(),
+      reviewId,
+    })) as { review: Review };
+    const successorPatchset = after.review.patchsets.find(
+      (candidate) => candidate.id === after.review.activePatchsetId,
+    );
+    expect(successorPatchset?.repository.headOid).toBe(afterRound);
+
+    // The work order is a FILE the prompt NAMES, not a payload the prompt carries: the
+    // path in the prompt resolves, in the bound root, to the composed order. Asserting the
+    // string alone would pass for a prompt naming a file nobody ever wrote.
+    const named = /`?([\w./-]*\.rennet\/context\/[\w-]+\/work-order\.md)`?/.exec(workerPrompt);
+    expect(named?.[1]).toBeDefined();
+    const workOrderPath = join(repo, named?.[1] ?? "");
+    expect(existsSync(workOrderPath)).toBe(true);
+    expect(readFileSync(workOrderPath, "utf8")).toContain("make the worker change");
+    expect(workerPrompt).not.toContain("make the worker change");
+
+    // The worktree zoo is gone: no per-round worktree under the data dir, and the repo
+    // still has exactly the one checkout the reviewer opened.
+    expect(existsSync(join(dataDir, "round-worktrees"))).toBe(false);
+    expect(git("worktree", "list").split(/\r?\n/).filter(Boolean)).toHaveLength(1);
   }, 30_000);
+
+  // The fixture where the bound root and `review.repositoryRoot` are DIFFERENT DIRECTORIES.
+  // Every other round test has them equal, so nothing in them can tell the two names apart.
+  // Here the clone stays on `main` and the review's branch is checked out only in the worktree
+  // the session binds to (#805), and the two have different heads for the whole run.
+  it("runs a rewritten branch's round in the bound worktree, not the clone", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "rennet-round-elsewhere-data-"));
+    const repo = realpathSync(mkdtempSync(join(tmpdir(), "rennet-round-elsewhere-repo-")));
+    dirs.push(dataDir, repo);
+    const git = (...args: string[]) => execFileSync("git", args, { cwd: repo }).toString().trim();
+    git("init", "-b", "main");
+    git("config", "user.email", "t@t");
+    git("config", "user.name", "t");
+    writeFileSync(join(repo, "a.txt"), "base\n");
+    git("add", "a.txt");
+    git("commit", "-m", "base");
+    git("checkout", "-b", "feature/elsewhere");
+    writeFileSync(join(repo, "a.txt"), "base\nreviewed\n");
+    git("add", "a.txt");
+    git("commit", "-m", "reviewed");
+    const branchHead = git("rev-parse", "HEAD");
+    // …and the clone goes back to `main`, where it stays. `review.repositoryRoot` is now a
+    // tree that does not have the reviewed commit at its head at all.
+    git("checkout", "main");
+    const cloneHead = git("rev-parse", "HEAD");
+    expect(cloneHead).not.toBe(branchHead);
+
+    let workerRepoRoot: string | undefined;
+    const server = await createRennetServer({
+      dataDir,
+      env: { RENNET_DISABLE_HARNESS: "1" },
+      runHandoffTurn: async ({ repoRoot, prompt }) => {
+        workerRepoRoot = repoRoot;
+        writeFileSync(join(repoRoot, "a.txt"), "base\nreviewed\nworker change\n");
+        if (!/do NOT commit/i.test(prompt)) {
+          execFileSync("git", ["add", "a.txt"], { cwd: repoRoot });
+          execFileSync("git", ["commit", "-m", "worker change"], { cwd: repoRoot });
+        }
+        return {
+          status: "completed",
+          finalText: "done",
+          turnDiff: "diff --git a/a.txt b/a.txt\n+worker change",
+          filesTouched: ["a.txt"],
+          harness: { id: "codex", version: "0.146.0" },
+          checkpoint: { threadId: "thread-round", turnId: "turn-round", turnCount: 1 },
+        };
+      },
+    });
+    shutdowns.push(server.shutdown);
+    const added = (await server.dispatch("projects.add", {
+      commandId: randomUUID(),
+      discovery: {
+        path: repo,
+        kind: "repo",
+        repos: [{ name: "repo", path: repo, branches: 2 }],
+        primaryBranch: "main",
+      },
+      includedRepos: ["repo"],
+      primaryBranch: "main",
+    })) as { project: { id: string } };
+    const minted = (await server.dispatch("session.mint", {
+      projectId: added.project.id,
+      commandId: randomUUID(),
+      branch: "feature/elsewhere",
+    })) as { session: { id: string } | null };
+    const sessionId = minted.session?.id ?? "";
+    const reviewId = (await waitForReviewSession(server, sessionId)).reviewId ?? "";
+
+    const store = new SessionStore(join(dataDir, "sessions"));
+    await vi.waitFor(() => expect(store.load(sessionId)?.boundRoot).toBeDefined(), {
+      timeout: 15_000,
+      interval: 20,
+    });
+    const bound = store.load(sessionId)?.boundRoot ?? "";
+    // The premise of the whole test: the two roots really are different directories.
+    expect(bound).not.toBe(repo);
+
+    const before = (await server.dispatch("review.load", {
+      commandId: randomUUID(),
+      reviewId,
+    })) as { review: Review };
+    const priorPatchsetId = before.review.activePatchsetId;
+
+    // …and now the reviewer AMENDS the branch, in the workspace, after the capture. The
+    // reviewed commit is unreachable from here on. That is a deliberate act, not a fault:
+    // the round must still dispatch and complete, and say on its account that it ran
+    // against a rewritten branch. Refusing would be a gate, and its "check it out there"
+    // message would be an instruction nobody can follow.
+    execFileSync("git", ["commit", "-q", "--amend", "-m", "reviewed, amended"], { cwd: bound });
+    const amendedHead = execFileSync("git", ["rev-parse", "HEAD"], { cwd: bound })
+      .toString()
+      .trim();
+    expect(amendedHead).not.toBe(branchHead);
+
+    await server.dispatch("ask.stage", {
+      sessionId: reviewId,
+      ask: {
+        id: "elsewhere-ask",
+        anchor: "a.txt:2",
+        type: "request-change",
+        body: "make the worker change",
+      },
+    });
+    await server.dispatch("round.dispatch", { reviewId });
+
+    await vi.waitFor(
+      async () => {
+        const operationStore = new RoundOperationStore(join(dataDir, "round-operations"));
+        const current = operationStore.read(sessionId);
+        operationStore.close();
+        // The successor is activated INSIDE `draftReport`, before its report seat runs — and
+        // that seat cannot run with the harness disabled. So a failure at `report-drafting`
+        // is this fixture's normal end and says nothing about the capture; anything earlier
+        // is a real round failure and is reported rather than waited out.
+        if (current?.state.phase === "failed" && current.state.failure.at !== "report-drafting") {
+          throw new Error(
+            `round failed at ${current.state.failure.at}: ${current.state.failure.reason}`,
+          );
+        }
+        const loaded = (await server.dispatch("review.load", {
+          commandId: randomUUID(),
+          reviewId,
+        })) as { review: Review };
+        expect(loaded.review.activePatchsetId).not.toBe(priorPatchsetId);
+      },
+      { timeout: 20_000, interval: 50 },
+    );
+
+    // The turn ran in the BOUND worktree, and the branch moved THERE.
+    expect(workerRepoRoot).toBe(bound);
+    // …and the round completed on the rewritten branch, saying so on its account.
+    const record = new RoundRecordStore(join(dataDir, "rounds"))
+      .read(sessionId)
+      .find((candidate) => candidate.run?.workspaceRoot === bound);
+    expect(record?.run?.branchRewritten).toBe(true);
+    const boundHead = execFileSync("git", ["rev-parse", "HEAD"], { cwd: bound }).toString().trim();
+    expect(boundHead).not.toBe(amendedHead);
+    // The clone never moved: it is still on `main`, at the commit it started on.
+    expect(git("rev-parse", "HEAD")).toBe(cloneHead);
+
+    const after = (await server.dispatch("review.load", {
+      commandId: randomUUID(),
+      reviewId,
+    })) as { review: Review };
+    const successor = after.review.patchsets.find(
+      (candidate) => candidate.id === after.review.activePatchsetId,
+    );
+    // The successor advances to the commit the round made in the bound worktree, which is not
+    // the clone's head.
+    expect(successor?.repository.headOid).toBe(boundHead);
+    expect(successor?.repository.headOid).not.toBe(cloneHead);
+
+    // WHAT THIS CANNOT CATCH, established by running the control rather than reasoning about
+    // it: pointing `draftReport`'s capture at `operation.repoRoot` instead of
+    // `operation.state.workspace.root` leaves every assertion above GREEN. A linked worktree
+    // shares the repository's objects and refs, and `captureLandedBranchPatchset` is handed
+    // the head OID explicitly, so a branch capture answers identically from either directory.
+    // The capture's ROOT is therefore not falsifiable by any fixture of this shape; what is
+    // falsifiable, and what this test does own, is where the TURN ran — pointing
+    // `candidateRoots` at the clone reddens it, because the clone is not on the branch.
+  }, 40_000);
 
   it("restarts a completed no-code dispatch and runs a distinct queued second ask", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "rennet-round-restart-data-"));
@@ -2236,7 +2443,7 @@ describe("round.dispatch mints onto the session the reads answer (the call site,
         if (operation?.state.phase !== "round-recording") {
           throw new Error("unchanged round was recorded outside its durable recording attempt");
         }
-        expect(operation.state.landing.outcome).toBe("unchanged");
+        expect(operation.state.commits.count).toBe(0);
         return new Promise<void>(() => undefined);
       },
     });

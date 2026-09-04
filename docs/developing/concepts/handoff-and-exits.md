@@ -21,12 +21,12 @@ The work order itself is **a file, not a prompt**. Before the run,
 anchor and its diff fence — to `.rennet/context/<reviewId>/work-order.md` under the
 session's **bound workspace**, and the turn's prompt names that path relative to it.
 That is the same root the turn runs in, so the agent reads the order the way it reads
-the rest of the checkout; written under the repository while the turn ran in a worktree,
-the path would name a file that is not there. The bundle's `prompt` is that short pointer
-text, and `verifyComposedBundle` still recomputes both it and the digest from `tasks`, so a
-run still refuses an order nobody composed. The round worker is the one exception today:
-it runs in a detached worktree the path would not resolve against, so its work order
-is still sent inline until the round binds to the session's own root.
+the rest of the checkout. The bundle's `prompt` is that short pointer text, and
+`verifyComposedBundle` still recomputes both it and the digest from `tasks`, so a run
+still refuses an order nobody composed. A coding **round** uses the same file and the
+same pointer prompt: the composed document rides its durable operation and is written
+into the bound workspace at the moment the turn starts, so a resumed round finds the
+exact order it was dispatched with.
 
 ## The session is the durable root
 
@@ -383,17 +383,16 @@ The exits themselves:
   **exactly one** work-order and hands it to the rounds runtime **serialized per
   session** (one round in flight; the second dispatch of the same asks coalesces
   onto the first rather than racing a second). A failed kick is evicted so an
-  identical re-dispatch retries. A branch round lands on the branch selected by
-  the New-chat row, never whichever branch happens to be checked out at the
-  repository path. An unmounted selected branch advances atomically from its
-  captured head; a selected branch checked out in this or a sibling worktree is
-  fast-forwarded there so its ref, index, and files remain coherent. Unrelated
-  local edits survive, while an overlapping edit leaves both the branch and
-  checkout unchanged. A restart adopts the durable landing receipt instead of
-  landing twice, and a no-op round does not invent a commit. Board
-  **regeneration** is the tail of the same dispatch. Once the worker result is
-  written to the durable dispatch record, the successor is captured from the
-  persisted source base OID through the landed worker OID. The selected base and
+  identical re-dispatch retries. A branch round runs as one turn in the session's
+  bound workspace and its worker commits there, on the branch the New-chat row
+  selected — never whichever branch happens to be checked out somewhere else, and
+  never through a per-round worktree whose result is replayed. A bound workspace
+  that is not on that branch refuses the round and names both. A restart settles the
+  round from the turn's sidecar checkpoint, and a no-op round does not invent a
+  commit. Board **regeneration** is the tail of the same dispatch. Once the worker
+  result is written to the durable dispatch record, the successor is captured from
+  the bound workspace, over the persisted source base OID through the head the
+  round's commits reached. The selected base and
   head branch names remain provenance, but later ref moves cannot change that
   round result. The round then assembles its collation from the active patchset
   and runs the drafting pipeline for real, minting a new generation and freezing
@@ -445,8 +444,8 @@ that host's repair.
 ## Rounds: the own-branch loop
 
 1. Gather asks into *Changes*.
-2. Dispatch — one round at a time, one worker in a detached worktree; asks
-   gathered mid-run queue for the next round.
+2. Dispatch — one round at a time, one worker running as a turn in the session's
+   bound workspace; asks gathered mid-run queue for the next round.
 3. Watch the run live. Until the daemon answers, what the view shows is the
    *intent*: you asked for a round, and nothing has come back. The daemon's
    receipt is what promotes it, and a refused dispatch reads as the refusal it
@@ -454,8 +453,8 @@ that host's repair.
    one under way. Dispatch takes over a dedicated run view (`/s/:slug/run`)
    that reads the durable operation receipt as the prep, worker, gate, commit,
    report-drafting, and report-verification phases settle. The visible commit
-   step coarsens separate detached-commit, source-landing, and round-recording
-   receipts; each remains its own restart boundary. The view is
+   step coarsens the commit observation and round-recording receipts; each remains
+   its own restart boundary. The view is
    deep-linkable and cold: opening it mid-round reattaches to the newest durable
    receipt and never re-dispatches. The first round pins one enabled installed
    Claude Code or Codex harness to the session; later rounds use that exact harness,
@@ -479,8 +478,8 @@ that host's repair.
    durably queued and replaces the prior operation without exposing round one's
    completion as the new run. A terminal failure stays on the run with its failure
    receipt and offers both **Return to Review** and **Retry**. Retry resumes the same
-   operation from the exact failed checkpoint, preserving its worktree, asks, logs,
-   and completed effect receipts. A failure after source landing retries only the
+   operation from the exact failed checkpoint, preserving its workspace, asks, logs,
+   and completed effect receipts. A failure after the commits settle retries only the
    recording or board-regeneration tail; it does not repeat worker edits, gates,
    commits, or board identities. Once a round has returned, the session row carries the durable
    ledger ordinal as *Round N is back*. The display transcript keeps every

@@ -102,12 +102,9 @@ function failedOperationWithReportHandoff(): RoundOperation {
     startedAt: 8,
   };
   const workspace = {
-    kind: "detached-worktree" as const,
-    worktreePath: "/worktree",
-    sourceTreeOid: "tree-1",
-    sourceParentHead: "head-1",
+    kind: "bound-root" as const,
+    root: "/repo",
     sourceHead: "head-1",
-    startedAt: 2,
     preparedAt: 3,
   };
   const worker = {
@@ -154,15 +151,6 @@ function failedOperationWithReportHandoff(): RoundOperation {
         worker,
         gate: { outcome: "skipped", reason: "not-configured", settledAt: 5 },
         commits,
-        landing: {
-          effect: "source-landing",
-          executionId: "landing-1",
-          baselineCommit: commits.from,
-          workerHead: commits.to,
-          startedAt: 6,
-          outcome: "applied",
-          landedAt: 7,
-        },
         recording: {
           effect: "round-recording",
           executionId: "recording-1",
@@ -198,7 +186,6 @@ function draftingOperationWithReportHandoff(
       worker: failure.worker,
       gate: failure.gate,
       commits: failure.commits,
-      landing: failure.landing,
       recording: failure.recording,
       report: failure.report,
     },

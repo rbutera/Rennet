@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { filesTouchedByDiff } from "@rennet/core";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { captureReviewedTree, GitCheckpointStore, repoHasSubmodules } from "./checkpoint-store";
+import { captureReviewedTree, GitCheckpointStore } from "./checkpoint-store";
 
 // win32 git operations on a cold disk exceed vitest's 5s default (measured 6-11s on
 // lancelot); give this git-heavy suite room. Not a hang — the same tests pass fast on
@@ -207,10 +207,5 @@ describe("GitCheckpointStore.changedPaths + F5/F6/F7", () => {
     const ref = await store.capture();
     await store.discard(ref);
     await expect(store.discard(ref)).resolves.toBeUndefined(); // second discard: no throw
-  });
-
-  it("repoHasSubmodules is false for a plain repository (F6)", async () => {
-    const root = repository();
-    expect(await repoHasSubmodules(root)).toBe(false);
   });
 });
