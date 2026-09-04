@@ -51,7 +51,7 @@ import type {
   RegisterLintContext,
 } from "@rennet/core";
 import { sessionContextRelativeDir } from "@rennet/core";
-import type { GenerationUsage } from "@rennet/protocol";
+import type { CouncilHarnessId, GenerationUsage } from "@rennet/protocol";
 import {
   type AskOccurrence,
   type BenchmarkRun,
@@ -584,6 +584,10 @@ export interface RoundInput {
   /** The pinned packet over the current patchset. A landed round carries the new
    *  `successorAccount`; the no-code boundary removes any stale prior account. */
   readonly deltaPacket: DeltaPacket;
+  /** The reviewed pull request's own paper (`pr.md`), when this review has a pull request.
+   *  Written into the session's context directory and named in the Design seat's prompt
+   *  (PR #802); a branch review has none and names none. */
+  readonly prPaper?: SessionContextFile;
   readonly lintContextFor: (lens: LintTarget) => LintContext;
   /** The prior generation's boards, for the pipeline's R58 delta stamps (optional). */
   readonly previous?: ReadonlyMap<LintTarget, DraftBoard>;
@@ -1135,10 +1139,19 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
     // leaves the replacement attempt identifiable by these exact reserved ids.
     await deps.persistGeneration?.(attemptGeneration);
 
+    // The INSTALLED-HARNESS answer, not the ports themselves. Since
+    // session-bound-workspace 5.7 a board seat holds no port — it runs on a sidecar
+    // thread — so what the pipeline needs from these probes is only whether each harness
+    // exists on this host, which is what the council routes over and what decides whether
+    // the Flagged lane can seat two providers.
     const [claudePort, codexExecutor] = await Promise.all([
       deps.resolveClaudePort(input.repoRoot),
       deps.resolveCodexExecutor(input.repoRoot),
     ]);
+    const installed: readonly CouncilHarnessId[] = [
+      ...(claudePort === null ? [] : (["claude-code"] as const)),
+      ...(codexExecutor === null ? [] : (["codex"] as const)),
+    ];
     // t3-lens-threads — the sidecar's seat runtime for THIS generation. A resolver that
     // rejects is the same answer as one that says `unavailable`: the daemon has a sidecar
     // and could not bring it up, so the board seats FAIL with the reason rather than
@@ -1368,8 +1381,8 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
 
     const writeSessionContext = deps.writeSessionContext;
     const pipelineInput = {
-      claudePort,
-      codexExecutor,
+      council: { availability: { installed } },
+      ...(input.prPaper === undefined ? {} : { prPaper: input.prPaper }),
       ...(t3Seam === undefined ? {} : { t3: t3Seam }),
       ...(t3Unavailable === undefined ? {} : { t3Unavailable }),
       repoRoot: input.draftingRoot ?? input.repoRoot,

@@ -67,8 +67,6 @@ import {
   type LensKind,
   parseDraft,
   ROUND_REPORT_MAX_BEYOND_ENTRIES,
-  ROUND_REPORT_OUTPUT_MAX_BYTES,
-  ROUND_REPORT_OUTPUT_MAX_TOKENS,
   type RoundEvidenceAnchor,
   type RoundEvidenceUnit,
   type RoundReportDiagnosticMilestone,
@@ -1312,25 +1310,32 @@ export interface ReusableRoundReport {
 // ── The scheduler deps (all injected — the runtime is pure over them) ──
 
 export interface LensPipelineDeps {
-  /** The Claude harness port, or null when no `claude` resolved. */
-  readonly claudePort: HarnessPort | null;
-  /** The codex utility executor, or null when no `codex` resolved. */
-  readonly codexExecutor: CodexExecutor | null;
   /**
-   * The T3 sidecar seam (t3-lens-threads). Present ⇒ every BOARD seat runs as a turn on
-   * its own persistent thread for this generation, and a repair is the next turn on that
-   * thread. Absent ⇒ the ephemeral Claude/Codex legs, exactly as before.
+   * The T3 sidecar seam (t3-lens-threads). Every BOARD seat runs as a turn on its own
+   * persistent thread for this generation, and a repair is the next turn on that thread.
+   * Absent ⇒ every board seat settles as a typed failure naming the missing sidecar
+   * (session-bound-workspace 5.7): there are no ephemeral board legs left to fall to.
    */
   readonly t3?: T3SeatSeam;
   /**
    * Why there is no seam (review finding 1). Set by the round runtime when the daemon
-   * composed a sidecar and could not bring it up; every board seat then fails with this
-   * reason rather than running on an ephemeral leg nobody asked for. Both absent ⇒ a
-   * caller with no sidecar at all (every direct-call test), which keeps the old legs.
+   * composed a sidecar and could not bring it up, so a board seat's failure names the real
+   * reason rather than the generic "no sidecar seam".
    */
   readonly t3Unavailable?: string;
-  /** Council context override; availability defaults to the resolved ports. */
-  readonly council?: CouncilResolveContext;
+  /**
+   * Which harnesses this host has, and the routing over them. REQUIRED since 5.7: a board
+   * seat no longer holds a port, so the council's installed-harness answer is the only
+   * thing that says whether Claude or Codex can seat a lens at all.
+   */
+  readonly council: CouncilResolveContext;
+  /**
+   * The reviewed pull request's own paper (`pr.md`), when the review has a pull request.
+   * Written into the session's context directory beside the seats' own files and named in
+   * the DESIGN seat's prompt only — it is the clue to which spec this branch implements
+   * (PR #802). A branch review has no PR, writes no `pr.md`, and names none.
+   */
+  readonly prPaper?: SessionContextFile;
   /** The PR worktree the drafter sessions are rooted at (D1). */
   readonly repoRoot: string;
   /**
@@ -1753,12 +1758,10 @@ function resolveBoardSeat(
 }
 
 /**
- * One seat of one generation. Board jobs route to the T3 leg when the daemon composed a
- * sidecar seam ({@link LensPipelineDeps.t3}), so the seat runs as a persistent thread and
- * a repair is the next turn on it. A daemon that HAS a sidecar and could not bring it up
- * passes {@link LensPipelineDeps.t3Unavailable} instead, and every board seat fails with
- * that reason. Neither present ⇒ a direct-call caller with no sidecar behind it, which
- * keeps the ephemeral legs.
+ * One seat of one generation. Every board job routes to the T3 leg, so the seat runs as a
+ * persistent thread and a repair is the next turn on it. No seam ⇒ a typed failure naming
+ * the missing sidecar ({@link LensPipelineDeps.t3Unavailable} when the daemon knows why);
+ * there is no ephemeral board leg to fall to, and no port here to open one with.
  */
 function resolveBoardSeatDetails(
   jobId: CouncilJobId,
@@ -1772,8 +1775,6 @@ function resolveBoardSeatDetails(
     jobId,
     outputSchema,
     {
-      claudePort: deps.claudePort,
-      codexExecutor: deps.codexExecutor,
       ...(deps.t3 === undefined ? {} : { t3: { seat, seam: deps.t3 } }),
       ...(deps.t3Unavailable === undefined ? {} : { t3Unavailable: deps.t3Unavailable }),
       repoRoot: deps.repoRoot,
@@ -1784,17 +1785,12 @@ function resolveBoardSeatDetails(
       // a test fake have. `board.lens-draft.design`, `board.lens-draft-flagged.flagged-codex`.
       label: `board.${jobId}.${seat}`,
       ...(deps.collector === undefined ? {} : { collector: deps.collector }),
-      // The classifier's raw response cap rides the session spec, so the adapter
-      // rejects an oversized response at the transport boundary — core only ever
-      // sees decoded values, so a core-side check would already be too late. The
-      // token cap rides beside it and reaches only the Claude leg, which is the only
-      // transport with a knob for it; the byte cap is the backstop on both.
-      ...(jobId === "round-report"
-        ? {
-            outputByteCap: ROUND_REPORT_OUTPUT_MAX_BYTES,
-            outputTokenCap: ROUND_REPORT_OUTPUT_MAX_TOKENS,
-          }
-        : {}),
+      // No raw-response cap travels here any more. The classifier's `outputByteCap` /
+      // `outputTokenCap` were enforced by the EPHEMERAL Claude and Codex legs at their own
+      // transport boundary, and a board job no longer reaches either (5.7): T3's
+      // `startTurn` has no knob for a response bound, so passing them would be a guard
+      // nothing applies. The report's shape is bounded by its output schema, and its
+      // evidence manifest by `ROUND_EVIDENCE_MANIFEST_MAX_BYTES`, both unchanged.
       ...(deps.signal === undefined ? {} : { signal: deps.signal }),
       ...(onProviderSettled === undefined ? {} : { onProviderSettled }),
     },
@@ -1806,20 +1802,6 @@ function resolveBoardSeatDetails(
 function bodyOr(result: HarnessTurnResult, fallback: unknown): unknown {
   return result.status === "emitted" ? result.body : fallback;
 }
-
-/**
- * Raised INSTEAD of a repair turn on a leg that has no thread to repair on.
- *
- * A repair carries pointers and frozen ids and nothing else (session-bound-workspace
- * 3.2). On the sidecar seat thread that is exactly right — the conversation already holds
- * the base prompt and the draft. On an ephemeral leg it is not: every turn opens a fresh
- * `ephemeral: true` session (`persistSession: false`, #585), so the repair would reach a
- * session that has never seen the board it is told to fix. The lane then settled on the
- * UNREPAIRED draft and read as though a ladder had run. A board presented as having
- * passed a repair nothing performed is a lie in the UI, so the lane settles as a typed
- * failure instead — and no turn is spent saying so.
- */
-class NoThreadToRepairSignal extends Error {}
 
 class DesignNoSpecSignal extends Error {
   constructor() {
@@ -1886,19 +1868,16 @@ function requiredBoardFailure(lens: LensKind): string {
  * exactly the resolution-failure path — so one crashed retry never aborts a lens
  * that already has passing elements.
  *
- * `canRepair` says whether this leg HAS a thread to repair on. The sidecar seat thread
- * does; an ephemeral leg does not, and a repair sent there would reach a session that has
- * never seen the draft — so on that leg a lint failure settles the lane as a typed failure
- * rather than shipping the unrepaired board (Rai's ruling, 2026-09-04: the ephemeral
- * board-drafting legs are a leftover the T3 seat leg superseded, and group 5.7 deletes
- * them; until then they must fail honestly rather than pretend).
+ * Every board seat is a persistent sidecar thread (session-bound-workspace 5.7), so a
+ * repair is ALWAYS the next turn on the thread that already holds the base prompt and the
+ * draft. There is no leg left that could be handed pointers it cannot resolve, which is
+ * why nothing here asks whether a repair is possible.
  */
 function draftOneLens(
   basePrompt: string,
   seatTurn: (prompt: string, attempt: number) => Promise<HarnessTurnResult>,
   ctx: LintContext,
   retryCap: number,
-  canRepair: boolean,
   transformOutput?: (output: unknown) => unknown,
 ): Promise<DraftedLens | LensDraftFailure>;
 function draftOneLens(
@@ -1906,7 +1885,6 @@ function draftOneLens(
   seatTurn: (prompt: string, attempt: number) => Promise<HarnessTurnResult>,
   ctx: LintContext,
   retryCap: number,
-  canRepair: boolean,
   transformOutput: ((output: unknown) => unknown) | undefined,
   initialAbsence: (output: unknown) => { readonly absence: "no-spec" } | undefined,
 ): Promise<DraftedLens | LensDraftFailure | { readonly absence: "no-spec" }>;
@@ -1915,7 +1893,6 @@ async function draftOneLens(
   seatTurn: (prompt: string, attempt: number) => Promise<HarnessTurnResult>,
   ctx: LintContext,
   retryCap: number,
-  canRepair: boolean,
   transformOutput: ((output: unknown) => unknown) | undefined = (output) => output,
   initialAbsence?: (output: unknown) => { readonly absence: "no-spec" } | undefined,
 ): Promise<DraftedLens | LensDraftFailure | { readonly absence: "no-spec" }> {
@@ -1952,13 +1929,6 @@ async function draftOneLens(
         // draws a reduced ladder, so the seat is never handed a refreshed full one.
         retryCap,
         runTurn: async (req) => {
-          // No thread ⇒ no REPAIR. Narrow on purpose: this seam serves two asks. A draft
-          // that failed lint needs the thread, because the pointers only mean anything
-          // beside the board they point INTO — that is the one refused here. A turn that
-          // emitted NOTHING is the #549 re-ask, whose draft is empty and whose ask is for
-          // the whole board; it carries no reference to a draft the session must remember,
-          // so it is left exactly as it was.
-          if (!canRepair && req.draft.elements.length > 0) throw new NoThreadToRepairSignal();
           try {
             const retry = await seatTurn(
               // A repair is pointer-only (session-bound-workspace 3.2): the pointers, the
@@ -1979,7 +1949,6 @@ async function draftOneLens(
             return transformOutput(bodyOr(retry, req.draft));
           } catch (error) {
             if (error instanceof DesignNoSpecSignal) throw error;
-            if (error instanceof NoThreadToRepairSignal) throw error;
             // A THROWN retry (a live-harness crash mid-loop) degrades the same way —
             // keep the draft, let the loop escalate; one crashed retry is not fatal.
             return req.draft;
@@ -1989,15 +1958,6 @@ async function draftOneLens(
     } catch (error) {
       if (error instanceof DesignNoSpecSignal && retryAbsence !== undefined) {
         return retryAbsence;
-      }
-      if (error instanceof NoThreadToRepairSignal) {
-        // RETRYABLE, not terminal: the draft failed lint and no repair was possible on
-        // this leg. Nothing about the lane is spent — a generation with a sidecar behind
-        // it can draft this lens again and repair it properly.
-        return {
-          failure: `${who}: the draft did not pass lint and there is no thread to repair on — this leg opens a fresh session per turn, so a pointer-only repair would reach a session that has never seen the board. Settled as a failure rather than shipping the unrepaired draft.`,
-          failureAccount: { attempt: 0, classification: "retryable" },
-        };
       }
       throw error;
     }
@@ -2102,14 +2062,7 @@ export async function runLensPipeline(deps: LensPipelineDeps): Promise<LensPipel
   const record = async (timing: GenerationPhaseTiming): Promise<void> => {
     await deps.onPhaseTiming?.(timing);
   };
-  const council: CouncilResolveContext = deps.council ?? {
-    availability: {
-      installed: [
-        ...(deps.claudePort ? (["claude-code"] as const) : []),
-        ...(deps.codexExecutor ? (["codex"] as const) : []),
-      ],
-    },
-  };
+  const council: CouncilResolveContext = deps.council;
 
   // The generation's context files (session-context-files): ONE sink, so each write
   // through the daemon's writer lists every file written so far in the index.
@@ -2146,9 +2099,20 @@ export async function runLensPipeline(deps: LensPipelineDeps): Promise<LensPipel
   const roundFile =
     deps.round === undefined ? undefined : roundContextFile(deps.round, reportBoard);
   const seatFiles = roundFile === undefined ? [] : [roundFile];
-  const contextDir = context.add(seatFiles);
+  // `pr.md` is WRITTEN for the whole session — through this sink, so it lands in the root
+  // the seats actually run in, which for a PR-snapshot review is not the repository root
+  // the review was opened from — and NAMED to the Design seat alone (PR #802). It is the
+  // clue to which spec this branch implements; no other lens has a use for it, and a line
+  // in every prompt would be four seats paying for one seat's evidence.
+  const contextDir = context.add(
+    deps.prPaper === undefined ? seatFiles : [...seatFiles, deps.prPaper],
+  );
   const seatContext: DrafterContextRef | undefined =
     contextDir === undefined ? undefined : { dir: contextDir, files: seatFiles };
+  const designContext: DrafterContextRef | undefined =
+    contextDir === undefined || deps.prPaper === undefined
+      ? seatContext
+      : { dir: contextDir, files: [...seatFiles, deps.prPaper] };
 
   // A required report has arrived, or this generation does not need one. Only now may the
   // independent lens seats start; report failure exits above without launching hidden work.
@@ -2177,7 +2141,13 @@ export async function runLensPipeline(deps: LensPipelineDeps): Promise<LensPipel
   };
   const settledOutcomes = await Promise.allSettled(
     LENS_KINDS.map(async (lens) => {
-      const outcome = await runLensBoard(lens, deps, council, seatContext, reportBoard);
+      const outcome = await runLensBoard(
+        lens,
+        deps,
+        council,
+        lens === "design" ? designContext : seatContext,
+        reportBoard,
+      );
       if (outcome.absence !== undefined) {
         await publish(() => deps.onLensAbsence?.(lens, outcome.absence as LensAbsenceReason));
         lastRevealAt = clock();
@@ -2633,7 +2603,6 @@ async function runLegacyRoundReport(
     seat,
     ctx,
     lensRetryBudget("report", deps.boardAttempt ?? 0),
-    deps.t3 !== undefined,
   );
   if ("failure" in validated) {
     return {
@@ -2749,11 +2718,16 @@ export function aggregateFailureAccount(
  * The Flagged dual seat (J1/J2, cluster 5.2): run `lens-draft-flagged` as TWO
  * independent seats — Claude and Codex, each forced to its own provider — and
  * reconcile their findings by location into per-finding cross-model concurrence.
- * Degrades to a SINGLE seat (honest single-seat concurrence) when only one
- * harness resolves. Returns a failure only when neither seat can run.
+ * Both are SIDECAR THREADS (`provider: "claudeAgent" | "codex"` through T3's model
+ * selection), so the lane still holds two seats after 5.7 deleted the ephemeral legs;
+ * what decides whether each one can run is the council's installed-harness answer plus
+ * the seam, not a port this pipeline holds. Degrades to a SINGLE seat (honest single-seat
+ * concurrence) when only one harness is installed. Returns a failure only when neither
+ * seat can run.
  */
 async function runFlaggedDual(
   deps: LensPipelineDeps,
+  council: CouncilResolveContext,
   basePrompt: string,
   ctx: LintContext,
   retryCap: number,
@@ -2766,7 +2740,8 @@ async function runFlaggedDual(
   // model the Council actually routed to, and every timing record this lane emits names
   // the seat that produced it (#726 D8) — including the single-seat degrade, which ran
   // exactly one resolved seat and can say which.
-  const claudeSeat = deps.claudePort
+  const installed = council.availability.installed;
+  const claudeSeat = installed.includes("claude-code")
     ? resolveBoardSeatDetails(
         "lens-draft-flagged",
         "flagged-claude",
@@ -2775,7 +2750,7 @@ async function runFlaggedDual(
         boardOutputSchema(),
       )
     : { failure: "no claude harness" };
-  const codexSeat = deps.codexExecutor
+  const codexSeat = installed.includes("codex")
     ? resolveBoardSeatDetails(
         "lens-draft-flagged",
         "flagged-codex",
@@ -2810,7 +2785,6 @@ async function runFlaggedDual(
       wrapSeat(resolved.runTurn, { harness: resolved.harness, model: resolved.model }),
       ctx,
       retryCap,
-      deps.t3 !== undefined,
     );
     // Carry the account, not just the words: the sole seat's classification IS the lens's.
     if ("failure" in single) return single;
@@ -2826,14 +2800,12 @@ async function runFlaggedDual(
       wrapSeat(claude.runTurn, { harness: claude.harness, model: claude.model }),
       ctx,
       retryCap,
-      deps.t3 !== undefined,
     ),
     draftOneLens(
       basePrompt,
       wrapSeat(codex.runTurn, { harness: codex.harness, model: codex.model }),
       ctx,
       retryCap,
-      deps.t3 !== undefined,
     ),
   ]);
   const aOk = !("failure" in a);
@@ -2970,7 +2942,7 @@ async function draftLensBoard(
   let validated: DraftedLens;
   if (lens === "flagged") {
     // The flagged lens is the dual seat (Claude + Codex, cross-model concurrence).
-    const dual = await runFlaggedDual(deps, basePrompt, ctx, retryCap, spans.wrap);
+    const dual = await runFlaggedDual(deps, council, basePrompt, ctx, retryCap, spans.wrap);
     if ("failure" in dual) {
       return failedLensOutcome(lens, dual);
     }
@@ -2996,16 +2968,8 @@ async function draftLensBoard(
     // it against — so it settles the lane on the first turn or on any repair turn.
     const drafted =
       lens === "design"
-        ? await draftOneLens(
-            basePrompt,
-            seat,
-            ctx,
-            retryCap,
-            deps.t3 !== undefined,
-            undefined,
-            designNoSpecAbsence,
-          )
-        : await draftOneLens(basePrompt, seat, ctx, retryCap, deps.t3 !== undefined);
+        ? await draftOneLens(basePrompt, seat, ctx, retryCap, undefined, designNoSpecAbsence)
+        : await draftOneLens(basePrompt, seat, ctx, retryCap);
     if ("failure" in drafted) {
       return failedLensOutcome(lens, drafted);
     }

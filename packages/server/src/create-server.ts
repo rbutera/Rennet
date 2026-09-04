@@ -308,6 +308,7 @@ import {
   createRoundsRuntime,
   type DispatchRoundResult,
   type PersistedBoardMeta,
+  type RoundsRuntimeDeps,
   type T3SeatRuntime,
 } from "./runtime/rounds";
 import { verifyStoredRoundReport } from "./runtime/stored-round-report-verification";
@@ -1046,6 +1047,13 @@ export interface RennetServerOptions {
   readonly testHarnessPort?: HarnessPort;
   /** Test-composition seam for the Codex utility executor (the council's Codex seats). */
   readonly testCodexExecutor?: CodexExecutor;
+  /**
+   * Test-composition seam for the T3 SIDECAR's seat runtime. Board seats have no other
+   * backend (session-bound-workspace 5.7), so a hermetic proof of the board pipeline
+   * supplies a scripted sidecar here — `loadScriptedT3Seats` — exactly as it supplies a
+   * scripted harness port for the utility turns. The production daemon never supplies it.
+   */
+  readonly testT3Seats?: RoundsRuntimeDeps["resolveT3Seats"];
   /** Hermetic production-mapping seam for the ROUND WORKER's coding turn. Tests use it to
    * prove the composition root carries checkpoint evidence even when HEAD does not move.
    * The REVIEW handoff has no such seam any more: it always runs on the review's T3 thread
@@ -2929,7 +2937,11 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // path means no sidecar was ever composed — a hermetic `createServer` in a test — and
     // the ephemeral legs stand, because nothing was lost. A packaged Rennet always has one:
     // `rennet-desktop:build` fails outright when the bundle is not staged.
-    ...(options.t3BundlePath === undefined ? {} : { resolveT3Seats: resolveT3SeatRuntime }),
+    ...(options.testT3Seats !== undefined
+      ? { resolveT3Seats: options.testT3Seats }
+      : options.t3BundlePath === undefined
+        ? {}
+        : { resolveT3Seats: resolveT3SeatRuntime }),
     boardsRuntimeFor,
     readPrompt,
     // session-context-files: the ONE writer, bound by the rounds runtime to the root the
@@ -3098,8 +3110,15 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       // (review finding 4). Cleared before the sweep, which is what then performs it.
       const settle = contextPurger.turnInFlight(session.id);
       try {
+        // The reviewed PR's own paper travels with the generation, so the Design seat's
+        // prompt can name `pr.md` (PR #802). Read from the LIVE review — a PR opened after
+        // the session was minted still has its paper — and written by the pipeline through
+        // the same context sink as the seats' own files, which is what puts it in the root
+        // the seats actually run in rather than the repository root alone.
+        const prPaper = prPaperContextFile(reviewNow());
         return await roundsRuntime.runRound({
           ...input,
+          ...(prPaper === undefined ? {} : { prPaper }),
           ...(awaitReport === undefined ? {} : { onReportProgress: awaitReport }),
         });
       } finally {

@@ -8,6 +8,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
+import type { T3SeatSeam, T3SettledTurn } from "@rennet/adapters";
 import {
   buildCapabilities,
   type CodexExecutor,
@@ -20,6 +21,7 @@ import {
   type TurnInput,
 } from "@rennet/core";
 import { z } from "zod";
+import type { T3SeatRuntime } from "./runtime/rounds";
 
 /** The version every scripted seat reports — the marker the bundle-boundary check greps. */
 const SCRIPTED_HARNESS_VERSION = "685-scripted-v1";
@@ -665,5 +667,112 @@ export function loadScriptedHarnessPlan(path: string): HarnessPort {
             : {}),
         };
       }),
+  };
+}
+
+// ── The plan as a T3 sidecar (session-bound-workspace 5.7) ───────────────────
+
+/** One seat thread the scripted sidecar opened, and every turn that ran on it. */
+export interface ScriptedSeatThread {
+  readonly threadId: string;
+  readonly seat: string;
+  /** EXACTLY what `threadFor` was called with — provider, model, effort, and whatever
+   *  binding fields the seam grows (the bound `worktreePath`). Recorded whole so a proof
+   *  asserting on a field this file has never heard of still sees it. */
+  readonly created: Readonly<Record<string, unknown>>;
+  /** Each turn's prompt, in order: `[0]` is the drafting turn, the rest are repairs. */
+  readonly prompts: string[];
+}
+
+/**
+ * The scripted plan as the daemon's T3 seat runtime.
+ *
+ * Board seats run ONLY on sidecar threads (session-bound-workspace 5.7), so a launched
+ * proof that used to answer them through the scripted `HarnessPort` answers them here
+ * instead: one thread per seat, every attempt a turn on it, each turn's answer chosen from
+ * the same plan by the same prompt match. A repair therefore lands on the thread that
+ * already holds the draft — which is the whole point, and the thing a fresh scripted
+ * session could never do (found by PR #800).
+ *
+ * The invocation ledger is written exactly as the port writes it, so the proofs' existing
+ * assertions over `invocationLog` see seat turns whichever backend ran them.
+ */
+export function loadScriptedT3Seats(path: string): {
+  /** The `resolveT3Seats` dep, bound to this plan. */
+  readonly resolve: (input: {
+    readonly repoRoot: string;
+    readonly generationId: string;
+    readonly branch: string;
+    readonly sessionId: string;
+  }) => Promise<T3SeatRuntime>;
+  /** Every thread opened so far, newest last. */
+  readonly threads: readonly ScriptedSeatThread[];
+} {
+  const plan = parsePlan(path);
+  const threads: ScriptedSeatThread[] = [];
+  return {
+    threads,
+    resolve: async (input) => {
+      const byThread = new Map<string, ScriptedSeatThread>();
+      const settled = new Map<string, T3SettledTurn>();
+      const seam: T3SeatSeam = {
+        client: async () => ({
+          startTurn: async ({ threadId, text, outputSchema }) => {
+            const thread = byThread.get(threadId);
+            if (thread === undefined)
+              throw new Error(`scripted sidecar: unknown thread ${threadId}`);
+            thread.prompts.push(text);
+            const step = selectStep(plan, visibleToTurn(text, input.repoRoot), false);
+            const completed = completedOutcome(
+              step,
+              { cwd: input.repoRoot, outputSchema } as SessionSpec,
+              text,
+            );
+            recordInvocation(plan, step, {
+              cwd: input.repoRoot,
+              prompt: text,
+              resumed: thread.prompts.length > 1,
+              recovered: completed.recovered,
+              harness: thread.created.provider === "codex" ? "codex" : "claude-code",
+            });
+            settled.set(threadId, {
+              turnId: `${threadId}:${thread.prompts.length}`,
+              state: completed.outcome.status === "completed" ? "completed" : "error",
+              ...(completed.outcome.status === "completed" &&
+              completed.outcome.structuredOutput !== undefined
+                ? { structuredOutput: completed.outcome.structuredOutput }
+                : {}),
+              thread: { messages: [], session: null },
+            });
+            return { previousTurnId: null, requestedAt: new Date().toISOString() };
+          },
+          waitForTurnSettled: async (threadId) => {
+            const turn = settled.get(threadId);
+            if (turn === undefined) throw new Error(`scripted sidecar: no turn on ${threadId}`);
+            return turn;
+          },
+          interruptTurn: async () => undefined,
+        }),
+        threadFor: async (created) => {
+          const threadId = `${plan.lane}:${input.generationId}:${created.seat}`;
+          const existing = byThread.get(threadId);
+          if (existing !== undefined) return { threadId, projectId: plan.lane };
+          const thread: ScriptedSeatThread = {
+            threadId,
+            seat: created.seat,
+            created: { ...created } as Record<string, unknown>,
+            prompts: [],
+          };
+          byThread.set(threadId, thread);
+          threads.push(thread);
+          return { threadId, projectId: plan.lane };
+        },
+      };
+      return {
+        seam,
+        environmentId: `scripted:${plan.lane}`,
+        watch: () => ({ stop: () => undefined }),
+      };
+    },
   };
 }

@@ -16,7 +16,7 @@ import type { HarnessTurnResult } from "@rennet/core";
 import type { CouncilEffort } from "@rennet/protocol";
 import { normalizeOutputSchema } from "./claude-query";
 import { sanitizeSchemaForCodex, stripNullDeep } from "./codex-exec";
-import type { RunTurn } from "./council-seat-turn";
+import type { ProviderTurnSettlement, RunTurn } from "./council-seat-turn";
 import { type ClaudeTurnUsage, inlineContextMetric, type MetricsCollector } from "./turn-metrics";
 
 /** The thread a seat runs on, as the supervisor's binding reports it. */
@@ -101,6 +101,10 @@ export interface T3SeatTurnOptions {
   readonly label: string;
   readonly collector?: MetricsCollector;
   readonly signal?: AbortSignal;
+  /** Content-free provider settlement, the same milestone the ephemeral legs emit. The
+   *  round-report's diagnostic stream reads it, and a seat leg that dropped it would make
+   *  a slow sidecar turn indistinguishable from a slow host (5.7 review). */
+  readonly onProviderSettled?: (milestone: ProviderTurnSettlement) => void;
 }
 
 function logSeat(label: string, line: string): void {
@@ -308,6 +312,20 @@ export function createT3SeatTurn(
       });
     };
     const signal = options.signal;
+    let providerSettled = false;
+    const settleProvider = (outcome: ProviderTurnSettlement["outcome"]): void => {
+      if (providerSettled) return;
+      providerSettled = true;
+      try {
+        options.onProviderSettled?.({
+          stage: "provider-settled",
+          outcome,
+          elapsedMs: Math.max(0, Math.floor(now() - started)),
+        });
+      } catch {
+        // Diagnostics never change the provider result they describe.
+      }
+    };
     try {
       const thread = await seam.threadFor({ seat, provider, model, effort });
       seam.onThread?.(seat, thread, provider);
@@ -358,6 +376,13 @@ export function createT3SeatTurn(
         signal?.removeEventListener("abort", onAbort);
         clearTimeout(stopTimer);
       }
+      settleProvider(
+        settled.state === "completed"
+          ? "completed"
+          : settled.state === "interrupted"
+            ? "cancelled"
+            : "failed",
+      );
       if (settled.state !== "completed") {
         const message =
           settled.errorMessage ??
@@ -384,6 +409,7 @@ export function createT3SeatTurn(
       record("emitted", settled);
       return { status: "emitted", body, observed: { model, apiKeySource: null } };
     } catch (error) {
+      settleProvider("threw");
       const message = signal?.aborted ? INTERRUPTED : describeError(error);
       record("failed", null, message);
       return { status: "failed", message };
