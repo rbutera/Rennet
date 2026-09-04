@@ -2826,14 +2826,23 @@ export const FINISH_RULES: readonly Rule[] = [
  * partition covers them — but {@link lint} does NOT run them, and that exclusion is
  * declared here rather than achieved by keeping them out of the registry.
  *
- * The reason is a cost the diff cannot show. `lint` is the DOCUMENT path's entry
- * point: `validateDraft` runs it over a seat's returned board, and an empty parsed
- * board is a legitimate result there — it is exactly what the Noise prompt asks for
- * when nothing in the change is skip-safe, and `lens-pipeline.ts` turns it into a
- * typed `no-noise` absence afterwards. Running `board-has-material` inside `lint`
- * would make every clean Noise run spend a model repair turn arguing with a board
- * that was right, and ship a blemish for it. Three tests in `validate.test.ts` say so
- * ("a genuinely empty but PARSED board reports everParsed=true" among them).
+ * DO NOT "FIX" {@link DRAFT_LINT_RULES} BY ADDING THESE BACK. A rule a seat cannot
+ * SATISFY at draft time does not belong in the draft ladder, and neither of these can
+ * be satisfied there:
+ *
+ * `lint` is the DOCUMENT path's entry point — `validateDraft` runs it over a seat's
+ * returned board — and an EMPTY board is a legitimate draft on that path. It is
+ * exactly what the Noise prompt asks for when nothing in the change is skip-safe, and
+ * `lens-pipeline.ts` settles it afterwards as a typed `no-noise` absence. So asking
+ * `board-has-material` at draft time would bill a model repair turn, on every clean
+ * Noise run, to correct a board that was already correct — and ship a blemish for it.
+ * That is a per-session cost no diff shows, which is the kind `CLAUDE.md`'s harness
+ * section makes part of the definition of done rather than a nice-to-have. Reviewed
+ * and ruled 2026-09-04: keep the exclusion, declared.
+ *
+ * Three tests in `validate.test.ts` fail if you do it anyway — "a genuinely empty but
+ * PARSED board reports everParsed=true (a real empty lens)" among them. That is the
+ * cheap signal; the expensive one is the token bill, which no test can see.
  *
  * So: one registry, one partition over what the tool path runs, and one named subset
  * for the document path. Nothing sits outside the registry unasserted.
@@ -2842,7 +2851,14 @@ export const SETTLEMENT_RULES: readonly Rule[] = [sequenceStepsReachable, boardH
 
 const SETTLEMENT_SET: ReadonlySet<Rule> = new Set(SETTLEMENT_RULES);
 
-/** What {@link lint} runs: the canonical registry minus {@link SETTLEMENT_RULES}. */
+/**
+ * What {@link lint} runs: the canonical registry minus {@link SETTLEMENT_RULES}.
+ *
+ * The subtraction is deliberate and reasoned, not an omission — read
+ * {@link SETTLEMENT_RULES} before changing it. A rule list that is visibly "the
+ * registry minus two" invites being restored to the registry by a reader who has not
+ * seen why it is not.
+ */
 export const DRAFT_LINT_RULES: readonly Rule[] = LENS_RULES.filter(
   (rule) => !SETTLEMENT_SET.has(rule),
 );
