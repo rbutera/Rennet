@@ -2940,6 +2940,7 @@ describe("createRoundsRuntime", () => {
         releaseSiblings = resolve;
       });
       const laneFrames: string[][] = [];
+      const failedEvents: string[] = [];
       const writes: Generation[] = [];
       let attemptRecord: Generation | undefined;
       const runtime = createRoundsRuntime(
@@ -2963,6 +2964,10 @@ describe("createRoundsRuntime", () => {
       const round = runtime.runRound(
         roundInput({
           onProgress: (event) => {
+            if (event.type === "failed") {
+              failedEvents.push(event.reason);
+              return;
+            }
             if (event.type !== "lens") return;
             laneFrames.push(event.lanes.map((lane) => `${lane.id}:${lane.status}`));
           },
@@ -2974,7 +2979,7 @@ describe("createRoundsRuntime", () => {
       releaseSiblings();
       if (supersede) await expect(round).rejects.toThrow(/superseded/);
       else await round;
-      return { laneFrames, writes };
+      return { laneFrames, failedEvents, writes };
     };
 
     // Control: the attempt owns its generation, so the failed lane DOES reach the screen
@@ -2993,6 +2998,95 @@ describe("createRoundsRuntime", () => {
     // …and nothing terminal was written under the generation id a later attempt holds.
     expect(dead.writes.some(({ lensBoards }) => Object.keys(lensBoards).length > 0)).toBe(false);
     expect(dead.writes.some(({ failedLenses }) => failedLenses !== undefined)).toBe(false);
+    // …and NO top-level `failed` event either (#816 re-review P1). The supersession throw
+    // used to reach `reported`'s catch, which painted the run machine a terminal `failed`
+    // over the LIVE generation a later attempt was settling — the same wrong-content
+    // publish, one layer up from the lanes. `GenerationSupersededError` is rethrown without
+    // emitting, so a superseded attempt announces nothing at all.
+    expect(dead.failedEvents).toEqual([]);
+  });
+
+  it("refuses the terminal write when a later attempt claims the generation mid-verify (#816 re-review P1)", async () => {
+    // The TOCTOU the first fix missed: the ownership boundary reads a `superseded` flag
+    // COPIED when `draft` returned, then awaits `verifyDraftedReport` and more work before
+    // the terminal generation write. A competitor that claims the id DURING that await lands
+    // after the copy was taken, so the copied flag cannot see it. Only a re-read at the
+    // write itself catches it — which is what `persistOwned` now does.
+    const settledWrite = (gen: Generation): boolean =>
+      // `withLensBoards` strips the attempt's drafting slots; `persistReveal`'s in-flight
+      // writes keep them. So a settled generation is one with lens boards and NO slots.
+      gen.draftingBoardIds === undefined && Object.keys(gen.lensBoards).length > 0;
+
+    const run = async (stealDuringVerify: boolean) => {
+      let stolen = false;
+      let attemptRecord: Generation | undefined;
+      const writes: Generation[] = [];
+      const transitions: string[] = [];
+      const records: string[] = [];
+      const failedEvents: string[] = [];
+      const runtime = createRoundsRuntime(
+        withFakeT3Seats(
+          baseDeps({
+            persistGeneration: (generation) => {
+              const snapshot = JSON.parse(JSON.stringify(generation)) as Generation;
+              writes.push(snapshot);
+              // The attempt's identity is the FIRST write that carries drafting slots.
+              if (attemptRecord === undefined && generation.draftingBoardIds !== undefined) {
+                attemptRecord = snapshot;
+              }
+            },
+            loadGeneration: () => {
+              if (attemptRecord === undefined) return undefined;
+              // A competitor owns the id: durable carries DIFFERENT slots than ours.
+              return stolen
+                ? { ...attemptRecord, draftingReportBoardId: "board:a-later-attempt" }
+                : attemptRecord;
+            },
+            onGenerationTransition: () => {
+              transitions.push("transition");
+            },
+            recordRound: () => {
+              records.push("record");
+            },
+          }),
+        ),
+      );
+      const round = runtime.runRound(
+        roundInput({
+          session: { id: "s1", projectId: "p1", reviewId: "review-1", threads: [], createdAt: 0 },
+          onProgress: (event) => {
+            if (event.type === "failed") failedEvents.push(event.reason);
+          },
+          verifyDraftedReport: () => {
+            // The claim lands here — after the copied `superseded` snapshot passed, before
+            // the terminal generation write. The pre-await snapshot cannot catch this.
+            if (stealDuringVerify) stolen = true;
+          },
+        }),
+      );
+      if (stealDuringVerify) await expect(round).rejects.toThrow(/superseded/);
+      else await round;
+      return { writes, transitions, records, failedEvents };
+    };
+
+    // Control: nobody steals, so the attempt files its successor, freezes the predecessor,
+    // broadcasts the transition and records the round. Without this the assertions below
+    // would pass over a round that never reached its terminal write at all.
+    const owned = await run(false);
+    expect(owned.writes.some(settledWrite)).toBe(true);
+    expect(owned.transitions).toEqual(["transition"]);
+    expect(owned.records).toEqual(["record"]);
+    expect(owned.failedEvents).toEqual([]);
+
+    // A competitor claims the id mid-verify. The snapshot check already passed; the re-read
+    // at the terminal write is the only thing that sees it. No settled generation is written
+    // under the stolen id, no predecessor frozen, no transition broadcast, no round recorded
+    // — and no `failed` painted over the live generation the winner is settling.
+    const stolen = await run(true);
+    expect(stolen.writes.some(settledWrite)).toBe(false);
+    expect(stolen.transitions).toEqual([]);
+    expect(stolen.records).toEqual([]);
+    expect(stolen.failedEvents).toEqual([]);
   });
 
   it("rejects a reveal write from a superseded generation attempt", async () => {

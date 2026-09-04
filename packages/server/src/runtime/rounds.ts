@@ -351,6 +351,23 @@ function lensAbsenceMessage(reason: LensAbsenceReason): string {
 }
 
 /**
+ * A drafting attempt found a LATER attempt owning its generation and refused to file (#816
+ * review P1). It is thrown, not returned, at the ownership boundary and at every terminal
+ * write that rechecks ownership — a superseded attempt has no honest `RoundRecord` to give.
+ * Its own type is load-bearing: `reported` rethrows it WITHOUT emitting a terminal `failed`,
+ * because a superseded attempt did not fail — a newer one holds the generation, and the run
+ * machine must not paint the reviewer a failure for a turn that was simply overtaken.
+ */
+export class GenerationSupersededError extends Error {
+  constructor(generationId: string) {
+    super(
+      `The drafting attempt for generation ${generationId} was superseded by a later attempt; its result was not filed.`,
+    );
+    this.name = "GenerationSupersededError";
+  }
+}
+
+/**
  * Do two records describe the SAME drafting attempt (#725 7.2)? The attempt's identity is
  * its pre-minted board slots: a later attempt mints new ones, and a generation that has
  * settled drops `draftingBoardIds` entirely. So a durable record that no longer matches
@@ -1783,12 +1800,35 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
     // `RoundRecord`, and a superseded attempt has no honest one to give — the attempt that
     // owns the generation writes it. The caller records nothing and announces nothing,
     // which is the same exit the terminal checks below already take.
-
+    //
+    // This flag is a SNAPSHOT taken when `draft` returned. It is a fast path, not the
+    // guarantee: the guarantee is `persistOwned` below, which re-reads durable ownership at
+    // the instant of every terminal write. A competing attempt that claims this generation
+    // AFTER this check but BEFORE a terminal write — during the `verifyDraftedReport` await,
+    // say — is caught there, not here, because the copied flag cannot see a claim that lands
+    // after the copy was made.
     if (restoredOrDrafted.superseded) {
-      throw new Error(
-        `The drafting attempt for generation ${boardGeneration.id} was superseded by a later attempt; its result was not filed.`,
-      );
+      throw new GenerationSupersededError(boardGeneration.id);
     }
+    // Write a generation ONLY while this attempt still owns it, re-read at the write itself.
+    // `GenerationStore.save` overwrites by id, and the terminal writes below strip this
+    // attempt's drafting slots (`withLensBoards`) — so a stale attempt reaching this far,
+    // whose competitor claimed the id during an intervening await, would otherwise clobber
+    // the live result under the right label. Every write to THIS generation id routes here;
+    // a competitor is a durable record for our id that no longer describes our attempt (a
+    // positive contradiction, per the workspace rule — not mere silence). The frozen
+    // predecessor write is a DIFFERENT id and does not pass through here: it is reached only
+    // after `persistOwned` accepted the successor, and rechecking it against our id would
+    // false-positive on the slots our own successor write just dropped.
+    const persistOwned = async (gen: Generation): Promise<void> => {
+      const persist = deps.persistGeneration;
+      if (persist === undefined) return;
+      const durable = deps.loadGeneration?.(boardGeneration.id);
+      if (durable !== undefined && !sameDraftingAttempt(durable, restoredOrDrafted.generation)) {
+        throw new GenerationSupersededError(boardGeneration.id);
+      }
+      await persist(gen);
+    };
 
     // Durable BoardMeta is keyed only by generation, so evidence for an existing
     // generation may contain the report from the round that minted it. A no-code round
@@ -1819,7 +1859,7 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
     try {
       const draftedLensBoards = pipeline.boards.filter((outcome) => outcome.boardId !== undefined);
       if (draftedLensBoards.length === 0) {
-        await deps.persistGeneration?.(withLensBoards(restoredOrDrafted.generation, pipeline));
+        await persistOwned(withLensBoards(restoredOrDrafted.generation, pipeline));
         throw new Error(`The regeneration drafted no lens boards: ${failureReasons(pipeline)}`);
       }
       if (input.verifyDraftedReport !== undefined) {
@@ -1834,16 +1874,21 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
       }
       const missingCoreLens = missingRequiredCoreLens(pipeline.boards);
       if (missingCoreLens !== undefined) {
-        await deps.persistGeneration?.(withLensBoards(restoredOrDrafted.generation, pipeline));
+        await persistOwned(withLensBoards(restoredOrDrafted.generation, pipeline));
         throw new Error(
           `The required core lens ${missingCoreLens} did not produce review evidence: ${failureReasons(pipeline)}`,
         );
       }
     } catch (error) {
-      archiveBenchmark?.(
-        input.signal?.aborted === true ? "aborted" : "failed",
-        error instanceof Error ? error.message : String(error),
-      );
+      // A supersession caught here is NOT a benchmark failure: nothing failed, a later
+      // attempt owns the generation. Archiving it would inflate the export's failure rate
+      // with turns that were merely overtaken. Rethrow it clean for `reported` to swallow.
+      if (!(error instanceof GenerationSupersededError)) {
+        archiveBenchmark?.(
+          input.signal?.aborted === true ? "aborted" : "failed",
+          error instanceof Error ? error.message : String(error),
+        );
+      }
       throw error;
     }
     archiveBenchmark?.("complete");
@@ -1875,7 +1920,7 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
     // the ledger yet) rather than a row whose generation was never written — a drill-down
     // into nothing. There is no transaction across two stores; ordering is the guarantee.
     const liveSuccessor = withLensBoards(restoredOrDrafted.generation, pipeline);
-    await deps.persistGeneration?.(liveSuccessor);
+    await persistOwned(liveSuccessor);
     const frozenPrevious = predecessor === undefined ? undefined : freezeGeneration(predecessor);
     if (frozenPrevious !== undefined) await deps.persistGeneration?.(frozenPrevious);
     if (frozenPrevious !== undefined && input.session.reviewId !== undefined) {
@@ -1935,6 +1980,12 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
     try {
       return await body();
     } catch (error) {
+      // Supersession is not a round failure — a LATER attempt owns the generation, and the
+      // attempt that owns it announces its own terminal state. Emitting `failed` here would
+      // paint the reviewer a failure over a turn that was merely overtaken, and (worse) do
+      // it over the LIVE generation the winning attempt is settling. Rethrow it silently;
+      // the error still propagates so the caller knows this attempt filed nothing.
+      if (error instanceof GenerationSupersededError) throw error;
       onProgress?.({
         type: "failed",
         reason: error instanceof Error ? error.message : String(error),
