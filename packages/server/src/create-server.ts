@@ -296,6 +296,7 @@ import { RoundProgressHub, roundEventsForDurableOperation } from "./runtime/roun
 import {
   createRoundsRuntime,
   type DispatchRoundResult,
+  GenerationSupersededError,
   type PersistedBoardMeta,
   type RoundsRuntimeDeps,
   type T3SeatRuntime,
@@ -3971,6 +3972,12 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       )
     ).session;
     const head = patchset.repository.headOid;
+    // Supersession is NOT caught here (#816 re-review P1). A `false` return means "did not
+    // settle", and the coordinator turns that into a `did not settle` throw that
+    // `runSessionPreparation` paints as a FAILED preparation. But a superseded attempt did not
+    // fail — a later attempt owns this generation. Let `GenerationSupersededError` propagate
+    // through the coordinator so preparation exits without painting failure. A genuine drafting
+    // failure still throws its own error and still paints failed, as it should.
     const settled = await runBoardRegeneration(
       boardDraftingDeps(
         review,
@@ -4224,6 +4231,15 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       setCurrentPreparation(sessionId, controller, undefined);
     } catch (error) {
       if (!preparationIsCurrent(sessionId, controller)) return;
+      // A superseded drafting attempt did NOT fail (#816 re-review P1): a later attempt owns
+      // this review's generation and will compose it. Painting `failed` here would show the
+      // reviewer a failure for a draft that was merely overtaken — the passive counterpart of
+      // the active path's abandon in round-execution.ts. Clear the in-flight status, the same
+      // exit the success path takes, and let the owning attempt file the boards.
+      if (error instanceof GenerationSupersededError) {
+        setCurrentPreparation(sessionId, controller, undefined);
+        return;
+      }
       const reason = error instanceof Error ? error.message : String(error);
       setCurrentPreparation(sessionId, controller, {
         status: "failed",

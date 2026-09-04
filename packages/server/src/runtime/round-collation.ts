@@ -39,6 +39,7 @@ import {
 } from "@rennet/protocol";
 import type { LensPipelineDeps, RoundDraftContext } from "./lens-pipeline";
 import type { RoundDraftPlan, RoundInput, WorkerReturn } from "./rounds";
+import { GenerationSupersededError } from "./rounds";
 
 /**
  * The patchset's changed regions (D5): one `ChangedRegion` per hunk per side that has
@@ -578,13 +579,23 @@ export async function runBoardRegeneration(
         ...(input.signal === undefined ? {} : { signal: input.signal }),
         ...collation,
       });
-    } catch {
-      // `createRoundsRuntime.runRound` already emitted the terminal failure through this
-      // same sink. Return failure to the caller without appending a duplicate event.
+    } catch (error) {
+      // Supersession is NOT a round failure: a LATER attempt owns the generation, and
+      // `createRoundsRuntime.runRound` (via `reported`) deliberately rethrew it WITHOUT
+      // emitting a terminal `failed`. Collapsing it to `false` here erased its type, and the
+      // coordinator then read it as a failed round — a failure snapshot painted over the live
+      // generation the winning attempt is settling (#816 re-review P1). Preserve the type so
+      // the caller abandons this stale attempt instead of failing it.
+      if (error instanceof GenerationSupersededError) throw error;
+      // Any OTHER rejection already emitted its terminal failure through this same sink.
+      // Return failure to the caller without appending a duplicate event.
       return false;
     }
     return true;
   } catch (error) {
+    // The supersession the inner catch rethrew must reach the caller with its type intact —
+    // emitting `failed` here would repaint exactly the failure the rethrow exists to avoid.
+    if (error instanceof GenerationSupersededError) throw error;
     deps.emit({ type: "failed", reason: error instanceof Error ? error.message : String(error) });
     return false;
   }

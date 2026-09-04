@@ -1421,6 +1421,20 @@ export interface LensPipelineDeps {
   /** A successful lens absence, emitted as soon as discovery settles it. */
   readonly onLensAbsence?: (lens: LensKind, reason: LensAbsenceReason) => void | Promise<void>;
   /**
+   * This lens produced no board and no absence — emitted the moment its attempts are
+   * EXHAUSTED, on the same settlement tail as an arrival or an absence (#813).
+   *
+   * Without it a failure was only visible in the pipeline's returned `boards`, which the
+   * caller reads after the LAST lane finishes: a seat that died at 33 s left its lane
+   * `running` for the rest of the generation, still publishing "quiet for 320 s" from a
+   * thread that had already stopped. A reviewer cannot tell that from a slow seat.
+   */
+  readonly onLensFailure?: (
+    lens: LensKind,
+    failure: string,
+    account?: LensFailureAccount,
+  ) => void | Promise<void>;
+  /**
    * The lens drafters are about to start. Fires exactly once per pipeline, immediately
    * before the first lens drafts. A required report must already have arrived; a report
    * failure aborts the pipeline before this callback or any lens seat starts.
@@ -2193,6 +2207,20 @@ export async function runLensPipeline(deps: LensPipelineDeps): Promise<LensPipel
           }),
         );
         lastRevealAt = clock();
+      }
+      // No board and no absence: this lane is DONE and it is done failed. Published here
+      // rather than left for the caller's post-pipeline sweep (#813) — that sweep runs
+      // after the slowest sibling, and until it did the lane read `running` with a live
+      // line off a thread that had already stopped. A failure reveals nothing, so it does
+      // not move `lastRevealAt`.
+      if (outcome.boardId === undefined && outcome.absence === undefined) {
+        await publish(() =>
+          deps.onLensFailure?.(
+            lens,
+            outcome.failure ?? "the drafter produced no board",
+            outcome.failureAccount,
+          ),
+        );
       }
       return outcome;
     }),

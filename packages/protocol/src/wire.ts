@@ -601,7 +601,9 @@ export type ProjectProcessPhase = z.infer<typeof projectProcessPhaseSchema>;
 export const projectProcessStepStatusSchema = z.enum(["queued", "running", "done", "failed"]);
 export type ProjectProcessStepStatus = z.infer<typeof projectProcessStepStatusSchema>;
 
-/** The five persisted scout answers shown while the structural map is built. */
+/** The scout answer keys. `worktreeBaseDir` is still scouted and stored as a fact, but it
+ *  no longer rides the questionnaire (#812): it steers nothing, so the four keys below are
+ *  what the map surface shows while it builds. */
 export const projectScoutAnswerKeySchema = z.enum([
   "trackerKind",
   "defaultBranch",
@@ -626,7 +628,7 @@ export type ProjectScoutAnswer = z.infer<typeof projectScoutAnswerSchema>;
 
 export const projectScoutQuestionnaireSchema = z.object({
   repo: z.string().min(1),
-  answers: z.array(projectScoutAnswerSchema).length(5),
+  answers: z.array(projectScoutAnswerSchema).length(4),
   detected: z.number().int().nonnegative(),
   guessed: z.number().int().nonnegative(),
 });

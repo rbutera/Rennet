@@ -51,6 +51,19 @@ function Harness({ newChatEnabled = true }: { newChatEnabled?: boolean }) {
   );
 }
 
+/** Only the Dispatch anchor is on screen, so Dispatch is the mark that elects. */
+function DispatchHarness() {
+  const ref = useCoachAnchor("dispatch");
+  return (
+    <div>
+      <button type="button" ref={ref} data-testid="dispatch-anchor">
+        send the asks
+      </button>
+      <Coachmark />
+    </div>
+  );
+}
+
 function mountHarness(store: SettingsStore, props?: { newChatEnabled?: boolean }) {
   return mount(
     <BridgeProvider bridge={new MemoryBridge(store.handlers())}>
@@ -89,6 +102,33 @@ describe("coach mount + anchors (C13 Cluster 4)", () => {
     // Nothing elects: start-review is unregistered, new-chat is disabled.
     expect(queryByText("Ready to Go")).toBeNull();
     expect(queryByText("Start Here")).toBeNull();
+    cleanup();
+  });
+
+  // #812 — this card told reviewers a round runs "in a detached worktree" long after
+  // session-bound-workspace made a round a TURN in the session's own workspace. The
+  // Changes screen's own round card says "Opened the session's workspace" a minute later,
+  // so the two surfaces contradicted each other on the same screen.
+  //
+  // POSITIVE CONTROL RUN, 2026-09-04: `marks.ts`'s dispatch body restored to "…runs them
+  // in a detached worktree and returns a fresh board." → this test failed on the body
+  // assertion (`findByText` timed out on the new sentence). Restored, green.
+  it("the Dispatch card says a round runs in the session's workspace, not a detached worktree", async () => {
+    const { findByText, queryByText } = mount(
+      <BridgeProvider bridge={new MemoryBridge(new SettingsStore().handlers())}>
+        <CoachDataProvider>
+          <DispatchHarness />
+        </CoachDataProvider>
+      </BridgeProvider>,
+    );
+    expect(
+      await findByText(
+        "Asks become a work order. Dispatch runs it in this session's workspace, commits there, and returns a fresh board.",
+      ),
+    ).toBeTruthy();
+    // The retired claim, gone from the one surface that made it. (Vacuous if the sentence
+    // above already rendered — it is the named regression, not an independent proof.)
+    expect(queryByText(/detached worktree/)).toBeNull();
     cleanup();
   });
 
