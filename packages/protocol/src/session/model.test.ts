@@ -22,12 +22,7 @@ import {
   RoundReportDraftReceiptSchema,
   RoundReportReceiptSchema,
   RoundRunReceiptSchema,
-  RoundSourceLandingAttemptSchema,
-  RoundSourceLandingReceiptSchema,
-  RoundWorkspaceAttemptSchema,
-  RoundWorkspaceReceiptSchema,
   roundOperationProgressSnapshot,
-  roundSourceLandingArtifactPaths,
   SessionModelSchema,
   SessionThreadSchema,
   SessionTranscriptRowSchema,
@@ -82,15 +77,9 @@ const operationBase = {
   createdAt: 100,
   updatedAt: 100,
 } as const;
-const operationWorkspaceAttempt = {
-  kind: "detached-worktree",
-  worktreePath: "/worktrees/round-1",
-  sourceTreeOid: "tree123",
-  sourceParentHead: "abc123",
-  startedAt: 105,
-} as const;
 const operationWorkspace = {
-  ...operationWorkspaceAttempt,
+  kind: "bound-root",
+  root: "/repo",
   sourceHead: "abc123",
   preparedAt: 110,
 } as const;
@@ -118,22 +107,13 @@ const operationCommits = {
   count: 1,
   committedAt: 160,
 } as const;
-const operationLandingAttempt = {
-  effect: "source-landing",
-  executionId: "landing-1",
-  baselineCommit: operationCommits.from,
-  workerHead: operationCommits.to,
-  startedAt: 161,
-} as const;
-const operationLanding = {
-  ...operationLandingAttempt,
-  outcome: "applied",
-  landedAt: 162,
-} as const;
-const operationRecording = {
+const operationRecordingAttempt = {
   effect: "round-recording",
   executionId: "recording-1",
   startedAt: 163,
+} as const;
+const operationRecording = {
+  ...operationRecordingAttempt,
   recordedAt: 164,
 } as const;
 const operationBoardIds = {
@@ -468,205 +448,6 @@ describe("session/ durable shapes (#466/#457)", () => {
     ).toBe(false);
   });
 
-  it("accepts only an exact transactional source-landing receipt prefix", () => {
-    const unitAId = "a".repeat(64);
-    const unitBId = "b".repeat(64);
-    const units = [
-      {
-        id: unitAId,
-        path: "a.txt",
-        baseline: {
-          kind: "git",
-          mode: "100644",
-          oid: "a".repeat(40),
-          rawSha256: "1".repeat(64),
-        },
-        target: {
-          kind: "git",
-          mode: "100644",
-          oid: "b".repeat(40),
-          rawSha256: "2".repeat(64),
-        },
-        ...roundSourceLandingArtifactPaths("landing-transaction", unitAId),
-      },
-      {
-        id: unitBId,
-        path: "b.txt",
-        baseline: { kind: "absent" },
-        target: {
-          kind: "git",
-          mode: "100644",
-          oid: "c".repeat(40),
-          rawSha256: "3".repeat(64),
-        },
-        ...roundSourceLandingArtifactPaths("landing-transaction", unitBId),
-      },
-    ] as const;
-    const attempt = {
-      effect: "source-landing",
-      strategy: "exclusive-move-v1",
-      executionId: "landing-transaction",
-      baselineCommit: "baseline",
-      workerHead: "worker",
-      startedAt: 1,
-      units,
-      unitReceipts: [{ unitId: unitAId, outcome: "applied", landedAt: 2 }],
-    } as const;
-
-    expect(RoundSourceLandingAttemptSchema.parse(attempt)).toEqual(attempt);
-    expect(
-      RoundSourceLandingAttemptSchema.safeParse({
-        ...attempt,
-        unitReceipts: [{ unitId: unitBId, outcome: "applied", landedAt: 2 }],
-      }).success,
-    ).toBe(false);
-    expect(
-      RoundSourceLandingAttemptSchema.safeParse({
-        ...attempt,
-        units: [{ ...units[0], stagePath: units[0].backupPath }, units[1]],
-      }).success,
-    ).toBe(false);
-    expect(
-      RoundSourceLandingAttemptSchema.safeParse({
-        ...attempt,
-        unitReceipts: [{ ...attempt.unitReceipts[0], unitId: "a/backup/x" }],
-        units: [
-          {
-            ...units[0],
-            id: "a/backup/x",
-            ...roundSourceLandingArtifactPaths("landing-transaction", "a/backup/x"),
-          },
-          units[1],
-        ],
-      }).success,
-    ).toBe(false);
-    expect(
-      RoundSourceLandingAttemptSchema.safeParse({
-        ...attempt,
-        units: [{ ...units[0], path: ".rennet/round-landings/live.txt" }, units[1]],
-      }).success,
-    ).toBe(false);
-    for (const path of [".RENNET/round-landings/live.txt", ".ReNnEt/round-landings/live.txt"]) {
-      expect(
-        RoundSourceLandingAttemptSchema.safeParse({
-          ...attempt,
-          units: [{ ...units[0], path }, units[1]],
-        }).success,
-      ).toBe(false);
-    }
-    expect(
-      RoundSourceLandingAttemptSchema.safeParse({
-        ...attempt,
-        units: [{ ...units[0], path: "nested/.rennet/live.txt" }, units[1]],
-      }).success,
-    ).toBe(true);
-    expect(
-      RoundSourceLandingAttemptSchema.safeParse({
-        ...attempt,
-        units: [
-          {
-            ...units[0],
-            baseline: { kind: "git", mode: "100644", oid: "a".repeat(40) },
-          },
-          units[1],
-        ],
-      }).success,
-    ).toBe(false);
-    expect(
-      RoundSourceLandingAttemptSchema.safeParse({
-        ...attempt,
-        units: [
-          {
-            ...units[0],
-            baseline: { kind: "git", mode: "160000", oid: "a".repeat(40) },
-          },
-          units[1],
-        ],
-      }).success,
-    ).toBe(false);
-    expect(
-      RoundSourceLandingReceiptSchema.safeParse({
-        ...attempt,
-        outcome: "applied",
-        landedAt: 3,
-      }).success,
-    ).toBe(false);
-    expect(
-      RoundSourceLandingReceiptSchema.parse({
-        ...attempt,
-        unitReceipts: [
-          ...attempt.unitReceipts,
-          { unitId: unitBId, outcome: "already-applied", landedAt: 3 },
-        ],
-        outcome: "applied",
-        landedAt: 4,
-      }).outcome,
-    ).toBe("applied");
-  });
-
-  it("binds branch-ref landing to the selected branch head", () => {
-    const selectedHead = "a".repeat(40);
-    const workerHead = "b".repeat(40);
-    const attempt = {
-      effect: "source-landing",
-      strategy: "branch-ref-v1",
-      executionId: "landing-selected-branch",
-      branch: "feat/round",
-      expectedHead: selectedHead,
-      baselineCommit: selectedHead,
-      workerHead,
-      startedAt: 1,
-    } as const;
-
-    expect(RoundSourceLandingAttemptSchema.parse(attempt)).toEqual(attempt);
-    expect(
-      RoundSourceLandingAttemptSchema.safeParse({
-        ...attempt,
-        baselineCommit: "c".repeat(40),
-      }).success,
-    ).toBe(false);
-    expect(
-      RoundSourceLandingReceiptSchema.parse({
-        ...attempt,
-        outcome: "already-applied",
-        landedAt: 2,
-      }),
-    ).toMatchObject({
-      strategy: "branch-ref-v1",
-      branch: "feat/round",
-      expectedHead: selectedHead,
-      outcome: "already-applied",
-    });
-
-    const operation = {
-      ...operationBase,
-      state: {
-        phase: "source-landing",
-        workspace: {
-          ...operationWorkspace,
-          sourceParentHead: selectedHead,
-          sourceHead: selectedHead,
-        },
-        worker: operationWorker,
-        gate: operationGate,
-        commits: {
-          ...operationCommits,
-          baseHead: selectedHead,
-          from: selectedHead,
-          to: workerHead,
-        },
-        landing: attempt,
-      },
-    } as const;
-    expect(RoundOperationSchema.safeParse(operation).success).toBe(true);
-    expect(
-      RoundOperationSchema.safeParse({
-        ...operation,
-        sourceTarget: { kind: "branch", branch: "feat/other" },
-      }).success,
-    ).toBe(false);
-  });
-
   // ── The rework count (review finding 10) ──────────────────────────────────
   it("carries the report-derived rework count, and honestly none when no report drafted", () => {
     const round = {
@@ -836,6 +617,55 @@ describe("session/ durable shapes (#466/#457)", () => {
     }
   });
 
+  // The evidence a round carries has to stay bound to the round's own source. Both of
+  // these were silently parseable while the bound-root receipt replaced the detached one:
+  // a workspace head from some other checkout, and a detached target the round never sat
+  // on. That is the "many repos, one identity" family — nothing errors, and you get the
+  // wrong tree's range under the right round's label.
+  it("refuses a commit range measured from a head the round's workspace never had", () => {
+    expect(
+      RoundOperationSchema.safeParse({
+        ...operationBase,
+        state: {
+          phase: "commits-settled",
+          workspace: operationWorkspace,
+          worker: operationWorker,
+          gate: operationGate,
+          commits: { ...operationCommits, baseHead: "other99", from: "other99" },
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      RoundOperationSchema.safeParse({
+        ...operationBase,
+        state: {
+          phase: "commits-settled",
+          workspace: operationWorkspace,
+          worker: operationWorker,
+          gate: operationGate,
+          commits: operationCommits,
+        },
+      }).success,
+    ).toBe(true);
+  });
+
+  it("refuses a detached round whose workspace head is not the reviewed head", () => {
+    expect(
+      RoundOperationSchema.safeParse({
+        ...operationBase,
+        sourceTarget: { kind: "detached", head: "somewhere-else" },
+        state: { phase: "prepared", workspace: operationWorkspace },
+      }).success,
+    ).toBe(false);
+    expect(
+      RoundOperationSchema.safeParse({
+        ...operationBase,
+        sourceTarget: { kind: "detached", head: operationWorkspace.sourceHead },
+        state: { phase: "prepared", workspace: operationWorkspace },
+      }).success,
+    ).toBe(true);
+  });
+
   it("makes a durable round operation's active and terminal phases explicit", () => {
     const claimed = RoundOperationSchema.parse({
       ...operationBase,
@@ -846,10 +676,10 @@ describe("session/ durable shapes (#466/#457)", () => {
       RoundOperationSchema.parse({
         ...operationBase,
         revision: 1,
-        updatedAt: 105,
-        state: { phase: "workspace-preparing", workspace: operationWorkspaceAttempt },
+        updatedAt: 110,
+        state: { phase: "prepared", workspace: operationWorkspace },
       }).state.phase,
-    ).toBe("workspace-preparing");
+    ).toBe("prepared");
     const completed = RoundOperationSchema.parse({
       ...operationBase,
       revision: 8,
@@ -860,7 +690,6 @@ describe("session/ durable shapes (#466/#457)", () => {
         worker: operationWorker,
         gate: operationGate,
         commits: operationCommits,
-        landing: operationLanding,
         recording: operationRecording,
         result: {
           kind: "changed",
@@ -889,7 +718,6 @@ describe("session/ durable shapes (#466/#457)", () => {
           worker: operationWorker,
           gate: operationGate,
           commits: operationCommits,
-          landing: operationLanding,
           recording: operationRecording,
           result: { kind: "changed" },
           completedAt: 180,
@@ -905,13 +733,6 @@ describe("session/ durable shapes (#466/#457)", () => {
           worker: { ...operationWorker, diff: "", changedPaths: [] },
           gate: operationGate,
           commits: { ...operationCommits, count: 0, from: "abc123", to: "abc123" },
-          landing: {
-            ...operationLandingAttempt,
-            baselineCommit: "abc123",
-            workerHead: "abc123",
-            outcome: "unchanged",
-            landedAt: 162,
-          },
           recording: operationRecording,
           result: {
             kind: "changed",
@@ -1005,7 +826,6 @@ describe("session/ durable shapes (#466/#457)", () => {
           worker: operationWorker,
           gate: operationGate,
           commits: operationCommits,
-          landing: operationLanding,
           recording: operationRecording,
           report,
         },
@@ -1054,39 +874,6 @@ describe("session/ durable shapes (#466/#457)", () => {
     ).toBe(false);
   });
 
-  it("persists the reviewed tree before preparing a detached dirty snapshot", () => {
-    const attempt = RoundWorkspaceAttemptSchema.parse(operationWorkspaceAttempt);
-    expect(attempt).toEqual({
-      kind: "detached-worktree",
-      worktreePath: "/worktrees/round-1",
-      sourceTreeOid: "tree123",
-      sourceParentHead: "abc123",
-      startedAt: 105,
-    });
-    expect("sourceHead" in attempt).toBe(false);
-
-    const receipt = RoundWorkspaceReceiptSchema.parse({
-      ...attempt,
-      sourceHead: "synthetic-dirty-tree-commit",
-      preparedAt: 110,
-    });
-    expect(receipt.sourceHead).not.toBe(receipt.sourceParentHead);
-    expect(
-      RoundOperationSchema.parse({
-        ...operationBase,
-        sourceTarget: { kind: "detached", head: "abc123" },
-        state: { phase: "prepared", workspace: receipt },
-      }).state.phase,
-    ).toBe("prepared");
-    expect(
-      RoundOperationSchema.safeParse({
-        ...operationBase,
-        sourceTarget: { kind: "detached", head: "different-parent" },
-        state: { phase: "workspace-preparing", workspace: attempt },
-      }).success,
-    ).toBe(false);
-  });
-
   it("projects a durable operation to a UI-safe receipt snapshot", () => {
     const operation = RoundOperationSchema.parse({
       ...operationBase,
@@ -1098,7 +885,6 @@ describe("session/ durable shapes (#466/#457)", () => {
         worker: operationWorker,
         gate: { ...operationGate, projectCount: 14 },
         commits: { ...operationCommits, count: 2 },
-        landing: operationLanding,
         recording: operationRecording,
         result: {
           kind: "changed",
@@ -1150,7 +936,6 @@ describe("session/ durable shapes (#466/#457)", () => {
     const encoded = JSON.stringify(snapshot);
     for (const privateValue of [
       "/repo",
-      "/worktrees/round-1",
       operationPrompt,
       "diff --git a/a b/a",
       "worker-1",
@@ -1174,7 +959,6 @@ describe("session/ durable shapes (#466/#457)", () => {
         worker: operationWorker,
         gate: operationGate,
         commits: operationCommits,
-        landing: operationLanding,
         recording: operationRecording,
         result: {
           kind: "changed",
@@ -1233,7 +1017,6 @@ describe("session/ durable shapes (#466/#457)", () => {
         worker: operationWorker,
         gate: operationGate,
         commits: operationCommits,
-        landing: operationLanding,
         recording: operationRecording,
         report: {
           executionId: "report-draft-1",
@@ -1297,19 +1080,19 @@ describe("session/ durable shapes (#466/#457)", () => {
     });
   });
 
-  it("coarsens landing and recording without advancing visible commit progress early", () => {
-    const landing = RoundOperationSchema.parse({
+  it("coarsens recording without advancing visible commit progress early", () => {
+    const recording = RoundOperationSchema.parse({
       ...operationBase,
       state: {
-        phase: "source-landing",
+        phase: "round-recording",
         workspace: operationWorkspace,
         worker: operationWorker,
         gate: operationGate,
         commits: operationCommits,
-        landing: operationLandingAttempt,
+        recording: operationRecordingAttempt,
       },
     });
-    expect(roundOperationProgressSnapshot(landing).state).toMatchObject({
+    expect(roundOperationProgressSnapshot(recording).state).toMatchObject({
       phase: "committing",
       commits: { status: "running" },
     });
@@ -1322,7 +1105,6 @@ describe("session/ durable shapes (#466/#457)", () => {
         worker: operationWorker,
         gate: operationGate,
         commits: operationCommits,
-        landing: operationLanding,
         recording: operationRecording,
       },
     });
@@ -1356,7 +1138,6 @@ describe("session/ durable shapes (#466/#457)", () => {
             worker,
             gate,
             commits: operationCommits,
-            landing: operationLanding,
             recording: operationRecording,
             result: {
               kind: "changed",
@@ -1401,13 +1182,6 @@ describe("session/ durable shapes (#466/#457)", () => {
           worker: operationWorker,
           gate: operationGate,
           commits: contradictoryCommits,
-          landing: {
-            ...operationLandingAttempt,
-            baselineCommit: contradictoryCommits.from,
-            workerHead: contradictoryCommits.to,
-            outcome: "unchanged",
-            landedAt: 162,
-          },
           recording: operationRecording,
           result: { kind: "unchanged" },
           completedAt: 180,
@@ -1447,11 +1221,6 @@ describe("session/ durable shapes (#466/#457)", () => {
       to: operationCommits.from,
       count: 0,
     } as const;
-    const unchangedLanding = {
-      ...operationLanding,
-      workerHead: noCommits.to,
-      outcome: "unchanged",
-    } as const;
     expect(
       RoundOperationSchema.parse({
         ...operationBase,
@@ -1462,7 +1231,6 @@ describe("session/ durable shapes (#466/#457)", () => {
           worker: { ...operationWorker, diff: "", changedPaths: [] },
           gate: skippedGate,
           commits: noCommits,
-          landing: unchangedLanding,
           recording: operationRecording,
           result: { kind: "unchanged" },
           completedAt: 180,
@@ -1489,7 +1257,6 @@ describe("session/ durable shapes (#466/#457)", () => {
           worker: operationWorker,
           gate: operationGate,
           commits: operationCommits,
-          landing: operationLanding,
           recording: operationRecording,
         },
       }).success,
@@ -1503,7 +1270,6 @@ describe("session/ durable shapes (#466/#457)", () => {
           worker: operationWorker,
           gate: operationGate,
           commits: operationCommits,
-          landing: operationLanding,
           recording: operationRecording,
           report: {
             executionId: "report-draft-1",

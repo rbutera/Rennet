@@ -42,14 +42,16 @@ describe("locus threading in MAIN", () => {
     // the one exception; C17's review finding 2 deleted it, because reusing this cache
     // (which holds a live adapter bound to a binary path) for the DISCLOSURE line is what
     // pinned the codex row until the daemon restarted. Detection now probes directly.
-    // The review-ask site resolves through `codexExecutorForRepo`; coding rounds resolve
-    // through `codexAdapterForRepo`. Both thread the locus and root the seat at the
-    // checkout. There is NO zero-arg form — the default parameter was removed, so
+    // The surviving sites resolve through `codexExecutorForRepo`, threading the locus and
+    // rooting the seat at the checkout. The third was `codexAdapterForRepo`, which existed
+    // only for the ephemeral round worker and went with it (session-bound-workspace D2 — a
+    // round is a turn on the session's bound T3 thread and resolves no harness here).
+    // There is NO zero-arg form — the default parameter was removed, so
     // `getCodexResolution()` no longer typechecks. Exact, not `>=`: a new host-default site
     // added later must fail this, not slip under a floor.
-    expect(calls).toHaveLength(3);
+    expect(calls).toHaveLength(2);
     expect(calls.filter((arg) => arg === "HOST_LOCUS")).toHaveLength(0);
-    expect(calls.filter((arg) => arg.startsWith("locus"))).toHaveLength(3);
+    expect(calls.filter((arg) => arg.startsWith("locus"))).toHaveLength(2);
   });
 
   // The CONSUMER half, restored (#681 residue / C14 D3). Folding the three read-pipeline
@@ -62,11 +64,12 @@ describe("locus threading in MAIN", () => {
   // was addressed with. A project path, a workspace path, or a host default reddens this.
   it("passes a caller-owned turn root into every claudeAdapterForRepo consumer", () => {
     const calls = callArgs("claudeAdapterForRepo");
-    // Exact, not `>=`. THREE consumers: the flagged runner and the noise runner — both on
-    // the `turnRoot` local — plus the round worker's coding turn, which receives `repoRoot`
-    // as a parameter. The fourth was the coverage seat (#681), gone with the coverage turn
-    // (session-bound-workspace D5); the fifth was the review-ask run port, gone with the
-    // orchestrator chat (t3-lens-threads 4.2). Bare references
+    // Exact, not `>=`. TWO consumers: the flagged runner and the noise runner, both on
+    // the `turnRoot` local. The third was the round worker's own coding turn, gone with the
+    // ephemeral round leg (session-bound-workspace D2 — a round is a turn on the session's
+    // bound T3 thread now, and reaches no adapter here); the fourth was the coverage seat
+    // (#681), gone with the coverage turn; the fifth was the review-ask run port, gone with
+    // the orchestrator chat (t3-lens-threads 4.2). Bare references
     // (`resolveClaudePort: claudeAdapterForRepo`) are not calls and do not match; they hand
     // the function on, and the site that CALLS it is counted here.
     //
@@ -76,7 +79,7 @@ describe("locus threading in MAIN", () => {
     // harness actually runs in. Resolving from the repository while the turn asks for the
     // bound worktree silently drops the request. The two are the same value for a branch
     // review on the reviewer's own checkout and differ exactly when it matters.
-    expect(calls).toHaveLength(3);
+    expect(calls).toHaveLength(2);
     expect(calls.filter((arg) => arg === "turnRoot")).toHaveLength(2);
     for (const arg of calls) {
       expect(

@@ -69,6 +69,36 @@ function harnessSummary(harness: RoundRunReceipt["harness"]): string {
   return ` using ${name} ${harness.version}`;
 }
 
+/**
+ * Where the round ran and what captured it (round-harness-dispatch). A round is a turn in
+ * the session's BOUND workspace, so the provenance line names that root and the sidecar
+ * checkpoint whose ref a revert takes — never a detached worktree path, because there is
+ * no longer one. A legacy row that carries neither says nothing rather than guessing.
+ */
+function WorkspaceProvenance({ run }: { readonly run: RoundRunReceipt }) {
+  if (run.workspaceRoot === undefined && run.checkpoint === undefined) return null;
+  return (
+    <p data-testid="round-run-workspace">
+      {run.workspaceRoot === undefined ? null : (
+        <>
+          Ran in <code>{run.workspaceRoot}</code>
+        </>
+      )}
+      {run.checkpoint === undefined ? (
+        "."
+      ) : (
+        <>
+          {run.workspaceRoot === undefined ? "Checkpoint " : ", checkpoint "}
+          <code>{run.checkpoint.turnId}</code> (turn {run.checkpoint.turnCount}).
+        </>
+      )}
+      {run.branchRewritten === true
+        ? " The branch had been rewritten past the reviewed commit when this round started."
+        : null}
+    </p>
+  );
+}
+
 function RunReceiptSummary({
   record,
   roundNumber,
@@ -88,6 +118,7 @@ function RunReceiptSummary({
         {roundTargetLabel(record.run.sourceTarget)}
         {harnessSummary(record.run.harness)}.
       </p>
+      <WorkspaceProvenance run={record.run} />
       <p>{gateSummary(record.run.gate)}</p>
     </div>
   );

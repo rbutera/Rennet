@@ -442,7 +442,7 @@ describe("the durable ledger refresh receipt", () => {
           phase: "failed",
           failure: {
             at: "preparing",
-            workspace: { status: "failed", reason: "worktree failed" },
+            workspace: { status: "failed", reason: "the bound workspace is gone" },
           },
         },
         4,
@@ -561,17 +561,13 @@ describe("the mounted transcript refresh receipts", () => {
 
   it.each([
     {
-      name: "workspace preparation",
-      event: operationEvent({ phase: "workspace-preparing", workspace: { status: "running" } }, 1),
-    },
-    {
       name: "pre-worker failure",
       event: operationEvent(
         {
           phase: "failed",
           failure: {
             at: "preparing",
-            workspace: { status: "failed", reason: "worktree failed" },
+            workspace: { status: "failed", reason: "the bound workspace is gone" },
           },
         },
         2,

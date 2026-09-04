@@ -10,11 +10,8 @@ import {
   type RoundReportBoard,
   type RoundReportDraftAttempt,
   type RoundReportHandoff,
-  type RoundSourceLandingAttempt,
   type RoundWorkerCompletedReceipt,
-  type RoundWorkspaceAttempt,
   type RoundWorkspaceReceipt,
-  roundSourceLandingArtifactPaths,
   sha256Hex,
 } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
@@ -33,15 +30,9 @@ const RACE_DIR = process.env.RENNET_ROUND_STORE_RACE_DIR;
 const RACE_SESSION_ID = "session-race";
 const WORKSPACE_ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 const RACE_WAIT_CELL = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT));
-const workspaceAttempt: RoundWorkspaceAttempt = {
-  kind: "detached-worktree",
-  worktreePath: "/round-worktree",
-  sourceTreeOid: "tree123",
-  sourceParentHead: "abc123",
-  startedAt: 2,
-};
 const workspace: RoundWorkspaceReceipt = {
-  ...workspaceAttempt,
+  kind: "bound-root",
+  root: "/repo",
   sourceHead: "abc123",
   preparedAt: 3,
 };
@@ -68,15 +59,6 @@ const changedCommits = {
   to: "def456",
   count: 1,
   committedAt: 8,
-} as const;
-const changedLanding = {
-  effect: "source-landing",
-  executionId: "landing-1",
-  baselineCommit: "abc123",
-  workerHead: "def456",
-  startedAt: 9,
-  outcome: "applied",
-  landedAt: 10,
 } as const;
 const recordingReceipt = {
   effect: "round-recording",
@@ -126,7 +108,6 @@ const changedRoundEvidence = {
   worker: changedWorker,
   gate: changedGate,
   commits: changedCommits,
-  landing: changedLanding,
   recording: recordingReceipt,
 } as const;
 
@@ -259,30 +240,17 @@ function failDuringPreparation(
   },
 ): RoundOperation {
   const claimed = store.claimIfIdle(operation(options));
-  const preparing = store.compareAndSwap(expectation(claimed), {
-    state: { phase: "workspace-preparing", workspace: workspaceAttempt },
-    updatedAt: 2,
-  });
-  return store.compareAndSwap(expectation(preparing), {
+  return store.compareAndSwap(expectation(claimed), {
     state: {
       phase: "failed",
-      failure: {
-        at: "preparing",
-        reason: "worktree preparation stopped",
-        failedAt: 3,
-        workspace: workspaceAttempt,
-      },
+      failure: { at: "preparing", reason: "workspace preparation stopped", failedAt: 3 },
     },
     updatedAt: 3,
   });
 }
 
 function advanceToPrepared(store: RoundOperationStore, claimed: RoundOperation): RoundOperation {
-  const preparing = store.compareAndSwap(expectation(claimed), {
-    state: { phase: "workspace-preparing", workspace: workspaceAttempt },
-    updatedAt: 2,
-  });
-  return store.compareAndSwap(expectation(preparing), {
+  return store.compareAndSwap(expectation(claimed), {
     state: { phase: "prepared", workspace },
     updatedAt: 3,
   });
@@ -378,10 +346,7 @@ if (RACE_ROLE !== undefined) {
       let result: "success" | "conflict";
       try {
         store.compareAndSwap(expectation(current), {
-          state: {
-            phase: "workspace-preparing",
-            workspace: workspaceAttempt,
-          },
+          state: { phase: "prepared", workspace },
           updatedAt: current.updatedAt + 1,
         });
         result = "success";
@@ -414,18 +379,6 @@ if (RACE_ROLE !== undefined) {
         version: ROUND_OPERATION_STORE_VERSION,
         operation: claimed,
       });
-    });
-
-    it("persists the intended worktree before preparation can have side effects", () => {
-      const dir = tempStoreDir();
-      const store = new RoundOperationStore(dir);
-      const claimed = store.claimIfIdle(operation({ operationId: "workspace-intent" }));
-      const preparing = store.compareAndSwap(expectation(claimed), {
-        state: { phase: "workspace-preparing", workspace: workspaceAttempt },
-        updatedAt: 2,
-      });
-
-      expect(new RoundOperationStore(dir).read(claimed.sessionId)).toEqual(preparing);
     });
 
     it("returns the existing operation when a session is already claimed", () => {
@@ -521,7 +474,7 @@ if (RACE_ROLE !== undefined) {
       const store = new RoundOperationStore(tempStoreDir());
       const claimed = store.claimIfIdle(operation({ operationId: "cas" }));
       const attemptedMutation = {
-        state: { phase: "workspace-preparing", workspace: workspaceAttempt },
+        state: { phase: "prepared", workspace },
         updatedAt: 2,
         workOrderPrompt: "replace the frozen work order",
         gatePlan: { kind: "absent" },
@@ -533,7 +486,7 @@ if (RACE_ROLE !== undefined) {
 
       expect(() =>
         store.compareAndSwap(expectation(claimed), {
-          state: { phase: "workspace-preparing", workspace: workspaceAttempt },
+          state: { phase: "prepared", workspace },
           updatedAt: 2,
         }),
       ).toThrow(RoundOperationConflictError);
@@ -572,30 +525,62 @@ if (RACE_ROLE !== undefined) {
 
     it("allows only the exact durable checkpoint out of a failed operation", () => {
       const store = new RoundOperationStore(tempStoreDir());
-      const failed = failDuringPreparation(store, {
-        operationId: "failed-retry",
-        sessionId: "failed-retry",
+      const preparingFailure = failDuringPreparation(store, {
+        operationId: "failed-preparing",
+        sessionId: "failed-preparing",
+      });
+
+      // A preparation failure never bound a workspace, so its only retry is a fresh claim:
+      // resuming at `prepared` would assert a root this operation never reached.
+      expect(() =>
+        store.compareAndSwap(expectation(preparingFailure), {
+          state: { phase: "prepared", workspace },
+          updatedAt: 4,
+        }),
+      ).toThrow(RoundOperationConflictError);
+      expect(
+        store.compareAndSwap(expectation(preparingFailure), {
+          state: { phase: "claimed" },
+          updatedAt: 4,
+        }).state,
+      ).toEqual({ phase: "claimed" });
+
+      const prepared = advanceToPrepared(
+        store,
+        store.claimIfIdle(operation({ operationId: "failed-worker", sessionId: "failed-worker" })),
+      );
+      const worker = { executionId: "worker-1", startedAt: 3 } as const;
+      const running = store.compareAndSwap(expectation(prepared), {
+        state: { phase: "worker-running", workspace, worker },
+        updatedAt: 3,
+      });
+      const failed = store.compareAndSwap(expectation(running), {
+        state: {
+          phase: "failed",
+          failure: {
+            at: "worker",
+            reason: "the worker turn stopped",
+            failedAt: 4,
+            workspace,
+            worker,
+          },
+        },
+        updatedAt: 4,
       });
 
       expect(() =>
         store.compareAndSwap(expectation(failed), {
-          state: {
-            phase: "workspace-preparing",
-            workspace: { ...workspaceAttempt, worktreePath: "/different-worktree" },
-          },
-          updatedAt: 4,
+          state: { phase: "prepared", workspace: { ...workspace, sourceHead: "rewritten" } },
+          updatedAt: 5,
         }),
       ).toThrow(RoundOperationConflictError);
 
       const retrying = store.compareAndSwap(expectation(failed), {
-        state: { phase: "workspace-preparing", workspace: workspaceAttempt },
-        updatedAt: 4,
+        state: { phase: "prepared", workspace },
+        updatedAt: 5,
       });
 
-      expect(retrying.state).toEqual({
-        phase: "workspace-preparing",
-        workspace: workspaceAttempt,
-      });
+      expect(retrying.state).toEqual({ phase: "prepared", workspace });
     });
 
     it("rejects a drafted report receipt that rewrites a lens board id", () => {
@@ -814,7 +799,7 @@ if (RACE_ROLE !== undefined) {
       ).toThrow(RoundOperationConflictError);
     });
 
-    it("carries unchanged evidence through landing and recording with exact attempt identity", () => {
+    it("carries unchanged evidence through recording with exact attempt identity", () => {
       const store = new RoundOperationStore(tempStoreDir());
       const workerSettled = advanceToWorkerSettled(
         store,
@@ -887,73 +872,18 @@ if (RACE_ROLE !== undefined) {
       const settledWorker = commitsSettled.state.worker;
       const settledGate = commitsSettled.state.gate;
       const settledCommits = commitsSettled.state.commits;
-      const landingAttempt = {
-        effect: "source-landing",
-        executionId: "landing-1",
-        baselineCommit: settledCommits.from,
-        workerHead: settledCommits.to,
-        startedAt: 9,
-      } satisfies RoundSourceLandingAttempt;
-      const landing = store.compareAndSwap(expectation(commitsSettled), {
-        state: {
-          phase: "source-landing",
-          workspace,
-          worker: settledWorker,
-          gate: settledGate,
-          commits: settledCommits,
-          landing: landingAttempt,
-        },
-        updatedAt: 9,
-      });
-      if (landing.state.phase !== "source-landing") {
-        throw new Error("landing fixture did not start");
-      }
-      expect(() =>
-        store.compareAndSwap(expectation(landing), {
-          state: {
-            phase: "source-landed",
-            workspace,
-            worker: settledWorker,
-            gate: settledGate,
-            commits: settledCommits,
-            landing: {
-              ...landingAttempt,
-              executionId: "other-landing",
-              outcome: "unchanged",
-              landedAt: 10,
-            },
-          },
-          updatedAt: 10,
-        }),
-      ).toThrow(RoundOperationConflictError);
-      const sourceLanded = store.compareAndSwap(expectation(landing), {
-        state: {
-          phase: "source-landed",
-          workspace,
-          worker: settledWorker,
-          gate: settledGate,
-          commits: settledCommits,
-          landing: { ...landingAttempt, outcome: "unchanged", landedAt: 10 },
-        },
-        updatedAt: 10,
-      });
-      if (sourceLanded.state.phase !== "source-landed") {
-        throw new Error("landing fixture did not settle");
-      }
-      const settledLanding = sourceLanded.state.landing;
       const recordingAttempt = {
         effect: "round-recording",
         executionId: "recording-1",
         startedAt: 11,
       } satisfies RoundRecordingAttempt;
-      const recording = store.compareAndSwap(expectation(sourceLanded), {
+      const recording = store.compareAndSwap(expectation(commitsSettled), {
         state: {
           phase: "round-recording",
           workspace,
           worker: settledWorker,
           gate: settledGate,
           commits: settledCommits,
-          landing: settledLanding,
           recording: recordingAttempt,
         },
         updatedAt: 11,
@@ -969,7 +899,6 @@ if (RACE_ROLE !== undefined) {
             worker: settledWorker,
             gate: settledGate,
             commits: settledCommits,
-            landing: settledLanding,
             recording: {
               ...recordingAttempt,
               executionId: "other-recording",
@@ -986,7 +915,6 @@ if (RACE_ROLE !== undefined) {
           worker: settledWorker,
           gate: settledGate,
           commits: settledCommits,
-          landing: settledLanding,
           recording: { ...recordingAttempt, recordedAt: 12 },
         },
         updatedAt: 12,
@@ -1004,7 +932,6 @@ if (RACE_ROLE !== undefined) {
             worker: settledWorker,
             gate: settledGate,
             commits: settledCommits,
-            landing: settledLanding,
             recording: settledRecording,
             report: {
               executionId: "report-1",
@@ -1032,7 +959,6 @@ if (RACE_ROLE !== undefined) {
             worker: settledWorker,
             gate: settledGate,
             commits: settledCommits,
-            landing: settledLanding,
             recording: settledRecording,
             result: { kind: "unchanged" },
             completedAt: 13,
@@ -1040,180 +966,6 @@ if (RACE_ROLE !== undefined) {
           updatedAt: 13,
         }).state.phase,
       ).toBe("completed");
-    });
-
-    it("allows only the next exact transactional landing receipt prefix", () => {
-      const unitAId = "a".repeat(64);
-      const unitBId = "b".repeat(64);
-      const landingAttempt = {
-        effect: "source-landing",
-        strategy: "exclusive-move-v1",
-        executionId: "landing-prefix",
-        baselineCommit: changedCommits.from,
-        workerHead: changedCommits.to,
-        startedAt: 9,
-        units: [
-          {
-            id: unitAId,
-            path: "a.txt",
-            baseline: {
-              kind: "git",
-              mode: "100644",
-              oid: "a".repeat(40),
-              rawSha256: "1".repeat(64),
-            },
-            target: {
-              kind: "git",
-              mode: "100644",
-              oid: "b".repeat(40),
-              rawSha256: "2".repeat(64),
-            },
-            ...roundSourceLandingArtifactPaths("landing-prefix", unitAId),
-          },
-          {
-            id: unitBId,
-            path: "b.txt",
-            baseline: { kind: "absent" },
-            target: {
-              kind: "git",
-              mode: "100644",
-              oid: "c".repeat(40),
-              rawSha256: "3".repeat(64),
-            },
-            ...roundSourceLandingArtifactPaths("landing-prefix", unitBId),
-          },
-        ],
-        unitReceipts: [],
-      } satisfies RoundSourceLandingAttempt;
-      const landingState = {
-        phase: "source-landing",
-        workspace,
-        worker: changedWorker,
-        gate: changedGate,
-        commits: changedCommits,
-        landing: landingAttempt,
-      } satisfies Extract<RoundOperation["state"], { phase: "source-landing" }>;
-      const active = operation({ revision: 10, state: landingState });
-      const store = storeWithPersistedOperation(active);
-      const firstReceipt = { unitId: unitAId, outcome: "applied", landedAt: 11 } as const;
-
-      expect(() =>
-        store.compareAndSwap(expectation(active), {
-          state: {
-            ...landingState,
-            landing: {
-              ...landingAttempt,
-              unitReceipts: [
-                firstReceipt,
-                { unitId: unitBId, outcome: "applied", landedAt: 12 } as const,
-              ],
-            },
-          },
-          updatedAt: 12,
-        }),
-      ).toThrow(RoundOperationConflictError);
-      expect(() =>
-        store.compareAndSwap(expectation(active), {
-          state: {
-            ...landingState,
-            landing: {
-              ...landingAttempt,
-              units: landingAttempt.units.map((unit) =>
-                unit.id === unitBId ? { ...unit, path: "rewritten.txt" } : unit,
-              ),
-              unitReceipts: [firstReceipt],
-            },
-          },
-          updatedAt: 11,
-        }),
-      ).toThrow(RoundOperationConflictError);
-
-      const first = store.compareAndSwap(expectation(active), {
-        state: {
-          ...landingState,
-          landing: { ...landingAttempt, unitReceipts: [firstReceipt] },
-        },
-        updatedAt: 11,
-      });
-      if (first.state.phase !== "source-landing") throw new Error("prefix did not persist");
-      if (first.state.landing.strategy !== "exclusive-move-v1") {
-        throw new Error("transactional landing strategy changed");
-      }
-      expect(first.state.landing.unitReceipts.map(({ unitId }) => unitId)).toEqual([unitAId]);
-    });
-
-    it("reloads and settles the exact selected-branch landing after restart", () => {
-      const selectedHead = "a".repeat(40);
-      const workerHead = "b".repeat(40);
-      const branchWorkspace = {
-        ...workspace,
-        sourceParentHead: selectedHead,
-        sourceHead: selectedHead,
-      };
-      const branchCommits = {
-        ...changedCommits,
-        baseHead: selectedHead,
-        from: selectedHead,
-        to: workerHead,
-      };
-      const landingAttempt = {
-        effect: "source-landing",
-        strategy: "branch-ref-v1",
-        executionId: "landing-selected-branch",
-        branch: "feat/test",
-        expectedHead: selectedHead,
-        baselineCommit: selectedHead,
-        workerHead,
-        startedAt: 9,
-      } satisfies RoundSourceLandingAttempt;
-      const active = operation({
-        revision: 10,
-        state: {
-          phase: "source-landing",
-          workspace: branchWorkspace,
-          worker: changedWorker,
-          gate: changedGate,
-          commits: branchCommits,
-          landing: landingAttempt,
-        },
-      });
-      const dir = tempStoreDir();
-      const firstStore = new RoundOperationStore(dir);
-      firstStore.close();
-      insertStoredEnvelope(dir, {
-        sessionId: active.sessionId,
-        operationId: active.operationId,
-        revision: active.revision,
-        envelopeJson: JSON.stringify({
-          version: ROUND_OPERATION_STORE_VERSION,
-          operation: active,
-        }),
-      });
-      const restarted = new RoundOperationStore(dir);
-      const recovered = restarted.read(active.sessionId);
-      if (recovered?.state.phase !== "source-landing") {
-        throw new Error("selected-branch landing did not survive restart");
-      }
-
-      const settled = restarted.compareAndSwap(expectation(recovered), {
-        state: {
-          ...recovered.state,
-          phase: "source-landed",
-          landing: { ...landingAttempt, outcome: "applied", landedAt: 10 },
-        },
-        updatedAt: 10,
-      });
-
-      expect(settled.state).toMatchObject({
-        phase: "source-landed",
-        landing: {
-          strategy: "branch-ref-v1",
-          branch: "feat/test",
-          expectedHead: selectedHead,
-          outcome: "applied",
-        },
-      });
-      restarted.close();
     });
 
     it("claims only an initial claimed operation", () => {
@@ -1388,3 +1140,138 @@ if (RACE_ROLE !== undefined) {
     }, 40_000);
   });
 }
+
+// A row an OLDER Rennet wrote is not a damaged row, and conflating the two wedges the
+// daemon: `recover()` folds this list's errors into an AggregateError and throws BEFORE
+// driving anything, so ONE pre-upgrade row would stop every other session recovering,
+// and `read` would throw for that session on every dispatch thereafter — forever.
+describe("rows written before the workspace binding", () => {
+  const legacyEnvelope = (sessionId: string, phase = "source-landed") =>
+    JSON.stringify({
+      version: 1,
+      operation: {
+        operationId: "operation-legacy",
+        sessionId,
+        reviewId: "review-1",
+        dispatchId: "dispatch-legacy",
+        sourcePatchsetId: "patchset-1",
+        askOccurrences: [{ id: "ask-legacy", revision: 0 }],
+        roundNumber: 1,
+        sourceTarget: { kind: "branch", branch: "feat/test" },
+        repoRoot: "/repo",
+        workOrderPrompt: "Implement the requested change.",
+        workOrderDigest: sha256Hex("Implement the requested change."),
+        gatePlan: { kind: "absent" },
+        revision: 0,
+        rerunRequested: false,
+        createdAt: 1,
+        updatedAt: 1,
+        // The pre-binding shapes, exactly: a detached worktree receipt and a landing.
+        state: {
+          phase,
+          workspace: {
+            kind: "detached-worktree",
+            worktreePath: "/data/round-worktrees/abc",
+            sourceTreeOid: "tree-1",
+            sourceParentHead: "head-1",
+            startedAt: 2,
+            sourceHead: "head-1",
+            preparedAt: 3,
+          },
+          worker: {
+            executionId: "worker-1",
+            startedAt: 4,
+            completedAt: 5,
+            outcome: "completed",
+            diff: "diff",
+            changedPaths: ["a.ts"],
+          },
+          gate: { outcome: "skipped", reason: "not-configured", settledAt: 6 },
+          commits: {
+            executionId: "commit-1",
+            baseHead: "head-1",
+            startedAt: 7,
+            from: "head-1",
+            to: "head-2",
+            count: 1,
+            committedAt: 8,
+          },
+          landing: {
+            effect: "source-landing",
+            executionId: "landing-1",
+            baselineCommit: "head-1",
+            workerHead: "head-2",
+            startedAt: 9,
+            outcome: "applied",
+            landedAt: 10,
+          },
+        },
+      },
+    });
+
+  function storeWithLegacyRow(phase?: string): {
+    store: RoundOperationStore;
+    warnings: string[];
+  } {
+    const dir = tempStoreDir();
+    new RoundOperationStore(dir).close();
+    insertStoredEnvelope(dir, {
+      sessionId: "session-legacy",
+      operationId: "operation-legacy",
+      revision: 0,
+      envelopeJson: legacyEnvelope("session-legacy", phase),
+    });
+    const warnings: string[] = [];
+    return { store: new RoundOperationStore(dir, (m) => warnings.push(m)), warnings };
+  }
+
+  it("drops a legacy row on read, with the reason, and lets the session dispatch again", () => {
+    const { store, warnings } = storeWithLegacyRow();
+    expect(store.read("session-legacy")).toBeUndefined();
+    expect(warnings.join("\n")).toContain("older Rennet");
+    // The load-bearing half: it is GONE, so the next read does not repeat the drop and a
+    // fresh claim succeeds rather than colliding with an undecodable row.
+    expect(store.read("session-legacy")).toBeUndefined();
+    expect(warnings).toHaveLength(1);
+    const fresh = operation({ sessionId: "session-legacy", operationId: "operation-fresh" });
+    expect(store.claimIfIdle(fresh).operationId).toBe("operation-fresh");
+    store.close();
+  });
+
+  // `drainTerminal` RETAINS a completed row, so after an upgrade the row most sessions
+  // carry is a finished one, not a mid-round one. It is dropped the same way — and it has
+  // to be, because the version stamp is read BEFORE any phase is, which is the whole point:
+  // the drop cannot be keyed on a phase name this build happens to have deleted.
+  it("drops a retained completed row from before the binding too", () => {
+    const { store, warnings } = storeWithLegacyRow("completed");
+    expect(store.read("session-legacy")).toBeUndefined();
+    expect(warnings.join("\n")).toContain("store version 1");
+    store.close();
+  });
+
+  it("keeps a legacy row out of listActive's errors, so recovery is not blocked", () => {
+    const { store } = storeWithLegacyRow();
+    const listed = store.listActive();
+    expect(listed.operations).toEqual([]);
+    expect(listed.errors).toEqual([]);
+    store.close();
+  });
+
+  it("still reports a genuinely damaged row at the current version as corrupt", () => {
+    const dir = tempStoreDir();
+    new RoundOperationStore(dir).close();
+    insertStoredEnvelope(dir, {
+      sessionId: "session-damaged",
+      operationId: "operation-damaged",
+      revision: 0,
+      envelopeJson: JSON.stringify({
+        version: ROUND_OPERATION_STORE_VERSION,
+        operation: { operationId: "operation-damaged", state: { phase: "not-a-phase" } },
+      }),
+    });
+    const store = new RoundOperationStore(dir);
+    expect(() => store.read("session-damaged")).toThrow(RoundOperationStoreCorruptError);
+    expect(store.listActive().errors).toHaveLength(1);
+    store.close();
+  });
+});

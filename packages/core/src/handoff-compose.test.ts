@@ -9,6 +9,8 @@ import {
   composeAsksContextFile,
   composeHandoffBundle,
   mechanicalComposition,
+  ROUND_COMMIT_RULE,
+  renderComposedPrompt,
   renderWorkOrder,
   validateComposition,
   workOrderContextFile,
@@ -426,5 +428,27 @@ describe("the compose and work-order prompts NAME their files (3.7)", () => {
     expect(written.body).toBe(renderWorkOrder(composed.tasks));
     expect(written.body).toContain("validate the token before use");
     expect(written.body).toContain("```diff");
+  });
+});
+
+// The two exits need OPPOSITE rule 2, and sharing one constant between them shipped a
+// round that forbade the commit it depends on. The review handoff recaptures a dirty tree,
+// so it forbids git; a round's commits ARE the round, and nothing stages them for it.
+describe("rule 2 differs by exit, and neither can be the other's", () => {
+  const tasks = mechanicalComposition(bundleOf(THREE_ASKS), CONTEXT_DIR).tasks;
+
+  it("the review handoff forbids git in both the prompt and the document", () => {
+    expect(renderComposedPrompt(tasks, CONTEXT_DIR)).toContain("Do NOT commit");
+    expect(renderWorkOrder(tasks)).toContain("Do NOT commit");
+  });
+
+  it("a round asks for the commit, in both, and never forbids it", () => {
+    const prompt = renderComposedPrompt(tasks, CONTEXT_DIR, ROUND_COMMIT_RULE);
+    const document = renderWorkOrder(tasks, ROUND_COMMIT_RULE);
+    for (const text of [prompt, document]) {
+      expect(text).toContain("COMMIT your work on the current branch");
+      expect(text).toContain("do NOT push");
+      expect(text).not.toContain("Do NOT commit");
+    }
   });
 });

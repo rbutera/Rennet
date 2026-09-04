@@ -122,6 +122,8 @@ export const completedRoundRecord: RoundLedgerRecord = {
     startedAt: Date.UTC(2026, 7, 29, 9, 30),
     sourceTarget: { kind: "branch", branch: "fix/token-refresh-observability" },
     harness: { id: "codex", version: "0.146.0" },
+    workspaceRoot: "/Users/rai/code/rennet",
+    checkpoint: { threadId: "thread-7", turnId: "turn-12", turnCount: 3 },
     gate: { outcome: "passed", command: "pnpm check", durationMs: 12_400, projectCount: 7 },
   },
   report: reportBoardFixture,
