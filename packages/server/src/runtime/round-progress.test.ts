@@ -25,6 +25,7 @@ import {
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type BoardsRuntime, createBoardsRuntime } from "../boards/boards-runtime";
 import { seatThreadTitle } from "../t3/threads";
+import { withFakeT3Seats } from "../t3-seat-fake";
 import {
   assembleRoundCollation,
   readPriorGeneration,
@@ -616,15 +617,17 @@ describe("runRound emits the real regeneration progress (C15 3.1/3.3)", () => {
   afterEach(() => rmSync(root, { recursive: true, force: true }));
 
   function runtimeWith(outputFor: (lens: string) => unknown) {
-    return createRoundsRuntime({
-      resolveClaudePort: async () => fakeClaudePort(outputFor),
-      resolveCodexExecutor: async () => null as CodexExecutor | null,
-      boardsRuntimeFor: () => ({
-        service: boards.service,
-        createRennetBoard: boards.createRennetBoard,
+    return createRoundsRuntime(
+      withFakeT3Seats({
+        resolveClaudePort: async () => fakeClaudePort(outputFor),
+        resolveCodexExecutor: async () => null as CodexExecutor | null,
+        boardsRuntimeFor: () => ({
+          service: boards.service,
+          createRennetBoard: boards.createRennetBoard,
+        }),
+        readPrompt,
       }),
-      readPrompt,
-    });
+    );
   }
 
   it("walks report → lens lanes → composed, with the generation the reveal lands on", async () => {
@@ -835,8 +838,10 @@ describe("runRound emits the real regeneration progress (C15 3.1/3.3)", () => {
   it("no seat resolves: terminal failed, and no report is recorded that was never written", async () => {
     const events: RoundEvent[] = [];
     const persisted: Generation[] = [];
+    // NOT wrapped in `withFakeT3Seats`: no sidecar was ever composed, which since
+    // session-bound-workspace 5.7 is exactly what "no seat resolves" means for a board job
+    // — there is no ephemeral leg left for it to fall to.
     const noSeats = createRoundsRuntime({
-      // Neither harness is installed, so the required report cannot resolve a seat.
       resolveClaudePort: async () => null,
       resolveCodexExecutor: async () => null as CodexExecutor | null,
       boardsRuntimeFor: () => ({
@@ -861,7 +866,7 @@ describe("runRound emits the real regeneration progress (C15 3.1/3.3)", () => {
         onProgress: (event) => events.push(event),
         ...collationFor(),
       }),
-    ).rejects.toThrow("round-report resolved to claude-code, which is unavailable");
+    ).rejects.toThrow("runs only on a T3 sidecar seat");
 
     // No real-generation record is filed for pre-minted empty boards or a report-only result.
     // The reserved ids remain as the durable identity of this failed attempt; reservation is
@@ -924,12 +929,17 @@ describe("runRound emits the real regeneration progress (C15 3.1/3.3)", () => {
     const settled = [...events].reverse().find((event) => event.type === "lens");
     if (settled?.type !== "lens") throw new Error("no lens lanes were emitted");
     const design = settled.lanes.find((lane) => lane.id === "design");
+    const designThread = { environmentId: "fake-environment", threadId: "gen:ps-no-spec:design" };
     expect(design).toEqual({
       id: "design",
       label: "Design",
       status: "absent",
       // The bench reader prints this lane reason verbatim — the copy is the daemon's.
       reason: "No spec found for this branch.",
+      // Every board seat is a sidecar thread now (5.7), so an absent lane still carries
+      // the thread its seat ran on and the reader can open the transcript that decided it.
+      thread: designThread,
+      seats: [{ seat: "design", provider: "claudeAgent", thread: designThread }],
     });
     const absentAt = events.findIndex(
       (event) =>
@@ -964,21 +974,23 @@ describe("runRound emits the real regeneration progress (C15 3.1/3.3)", () => {
 
     // Every lens drafts "generation one" until `moved` names it — then that lens alone moves.
     let moved = "";
-    const runtime = createRoundsRuntime({
-      resolveClaudePort: async () =>
-        fakeClaudePort((lens) =>
-          sectioned(lens, lens === moved ? "generation two" : "generation one"),
-        ),
-      resolveCodexExecutor: async () => null as CodexExecutor | null,
-      boardsRuntimeFor: () => ({
-        service: boards.service,
-        createRennetBoard: boards.createRennetBoard,
+    const runtime = createRoundsRuntime(
+      withFakeT3Seats({
+        resolveClaudePort: async () =>
+          fakeClaudePort((lens) =>
+            sectioned(lens, lens === moved ? "generation two" : "generation one"),
+          ),
+        resolveCodexExecutor: async () => null as CodexExecutor | null,
+        boardsRuntimeFor: () => ({
+          service: boards.service,
+          createRennetBoard: boards.createRennetBoard,
+        }),
+        readPrompt,
+        persistBoardMeta: (_repo, meta) => metaStore.save(meta),
+        persistGeneration: (gen) => genStore.save(gen),
+        loadGeneration: (id) => genStore.load(id),
       }),
-      readPrompt,
-      persistBoardMeta: (_repo, meta) => metaStore.save(meta),
-      persistGeneration: (gen) => genStore.save(gen),
-      loadGeneration: (id) => genStore.load(id),
-    });
+    );
 
     // A review that walks ps-1 → ps-2 → ps-3, one activation per round.
     const made = [patchsetAt("ps-1"), patchsetAt("ps-2"), patchsetAt("ps-3")];
@@ -1103,25 +1115,27 @@ describe("runRound emits the real regeneration progress (C15 3.1/3.3)", () => {
 
     let activeVisit = 0;
     let draftingRound = 0;
-    const runtime = createRoundsRuntime({
-      resolveClaudePort: async () =>
-        fakeClaudePort((lens) =>
-          lens === "report"
-            ? reportFor(draftingRound)
-            : sectioned(lens, `${lens} visit ${activeVisit}`),
-        ),
-      resolveCodexExecutor: async () => null as CodexExecutor | null,
-      boardsRuntimeFor: () => ({
-        service: boards.service,
-        createRennetBoard: boards.createRennetBoard,
+    const runtime = createRoundsRuntime(
+      withFakeT3Seats({
+        resolveClaudePort: async () =>
+          fakeClaudePort((lens) =>
+            lens === "report"
+              ? reportFor(draftingRound)
+              : sectioned(lens, `${lens} visit ${activeVisit}`),
+          ),
+        resolveCodexExecutor: async () => null as CodexExecutor | null,
+        boardsRuntimeFor: () => ({
+          service: boards.service,
+          createRennetBoard: boards.createRennetBoard,
+        }),
+        readPrompt,
+        persistBoardMeta: (_repo, meta) => metaStore.save(meta),
+        loadDraftedBoards: (_repo, sessionId, generation) =>
+          metaStore.listForGeneration(sessionId, generation),
+        persistGeneration: (generation) => genStore.save(generation),
+        loadGeneration: (id) => genStore.load(id),
       }),
-      readPrompt,
-      persistBoardMeta: (_repo, meta) => metaStore.save(meta),
-      loadDraftedBoards: (_repo, sessionId, generation) =>
-        metaStore.listForGeneration(sessionId, generation),
-      persistGeneration: (generation) => genStore.save(generation),
-      loadGeneration: (id) => genStore.load(id),
-    });
+    );
     const outcomes: RoundOutcome[] = [];
     const regenerate = async (input: {
       readonly priorPatchsetId: string;
@@ -1336,16 +1350,18 @@ describe("a board seat has one backend (review finding 1)", () => {
   ): Promise<{ events: RoundEvent[]; error: unknown }> => {
     const events: RoundEvent[] = [];
     let error: unknown;
-    const run = createRoundsRuntime({
-      resolveClaudePort: async () => countingClaudePort(opened),
-      resolveCodexExecutor: async () => null as CodexExecutor | null,
-      boardsRuntimeFor: () => ({
-        service: boards.service,
-        createRennetBoard: boards.createRennetBoard,
+    const run = createRoundsRuntime(
+      withFakeT3Seats({
+        resolveClaudePort: async () => countingClaudePort(opened),
+        resolveCodexExecutor: async () => null as CodexExecutor | null,
+        boardsRuntimeFor: () => ({
+          service: boards.service,
+          createRennetBoard: boards.createRennetBoard,
+        }),
+        readPrompt,
+        ...(resolveT3Seats === undefined ? {} : { resolveT3Seats }),
       }),
-      readPrompt,
-      ...(resolveT3Seats === undefined ? {} : { resolveT3Seats }),
-    }).runRound({
+    ).runRound({
       session: {
         ...session,
         id: "t3-backend-session",
@@ -1475,33 +1491,35 @@ describe("a board seat has one backend (review finding 1)", () => {
 
     const events = await (async () => {
       const collected: RoundEvent[] = [];
-      const run = createRoundsRuntime({
-        resolveClaudePort: async () => countingClaudePort([]),
-        resolveCodexExecutor: async () => null as CodexExecutor | null,
-        boardsRuntimeFor: () => ({
-          service: boards.service,
-          createRennetBoard: boards.createRennetBoard,
-        }),
-        readPrompt,
-        resolveT3Seats: async () => ({
-          environmentId: "env-1",
-          seam: {
-            client: async () => t3Client,
-            threadFor: async ({ seat }: { seat: string }) => ({
-              threadId: `thread-${seat}`,
-              projectId: "p1",
-            }),
-          },
-          watch: (threadId: string) => {
-            watched.push(threadId);
-            return {
-              stop: () => {
-                if (!stopped.includes(threadId)) stopped.push(threadId);
-              },
-            };
-          },
-        }),
-      } as unknown as Parameters<typeof createRoundsRuntime>[0]).runRound({
+      const run = createRoundsRuntime(
+        withFakeT3Seats({
+          resolveClaudePort: async () => countingClaudePort([]),
+          resolveCodexExecutor: async () => null as CodexExecutor | null,
+          boardsRuntimeFor: () => ({
+            service: boards.service,
+            createRennetBoard: boards.createRennetBoard,
+          }),
+          readPrompt,
+          resolveT3Seats: async () => ({
+            environmentId: "env-1",
+            seam: {
+              client: async () => t3Client,
+              threadFor: async ({ seat }: { seat: string }) => ({
+                threadId: `thread-${seat}`,
+                projectId: "p1",
+              }),
+            },
+            watch: (threadId: string) => {
+              watched.push(threadId);
+              return {
+                stop: () => {
+                  if (!stopped.includes(threadId)) stopped.push(threadId);
+                },
+              };
+            },
+          }),
+        } as unknown as Parameters<typeof createRoundsRuntime>[0]),
+      ).runRound({
         session: { ...session, id: "seat-watch-session" } as SessionModel,
         repoRoot: root,
         asksDispatched: [],

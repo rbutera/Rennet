@@ -1,6 +1,10 @@
 import { PROTOCOL_VERSION } from "@rennet/protocol";
 import { createRennetServer, removeDaemonFile, writeDaemonFile } from "@rennet/server";
-import { loadScriptedCodexExecutor, loadScriptedHarnessPlan } from "@rennet/server/testing";
+import {
+  loadScriptedCodexExecutor,
+  loadScriptedHarnessPlan,
+  loadScriptedT3Seats,
+} from "@rennet/server/testing";
 
 async function main(): Promise<void> {
   const dataDir = process.env.RENNET_USER_DATA;
@@ -25,6 +29,10 @@ async function main(): Promise<void> {
     env: process.env,
     serverVersion,
     testHarnessPort,
+    // The board seats' ONLY backend is the sidecar (session-bound-workspace 5.7), so the
+    // hermetic daemon serves them the same plan as seat threads: one thread per seat,
+    // every attempt a turn on it, the repair included.
+    testT3Seats: loadScriptedT3Seats(planPath).resolve,
     ...(testHarnessPort.descriptor.id === "codex" || dualSeat
       ? { testCodexExecutor: loadScriptedCodexExecutor(planPath) }
       : {}),

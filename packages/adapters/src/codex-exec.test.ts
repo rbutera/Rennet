@@ -9,7 +9,6 @@ import {
   sanitizeSchemaForCodex,
   stripNullDeep,
 } from "./codex-exec";
-import { councilSeatTurn } from "./council-seat-turn";
 
 // ── A fake SpawnAppServer scripting one utility turn (no process) ──────────────
 
@@ -411,65 +410,6 @@ describe("createCodexExecutor (app-server)", () => {
       "-c",
       'mcp_servers={"Playwright"={command="false",args=[],enabled=false},"computer-history"={command="false",args=[],enabled=false},"context7"={url="http://127.0.0.1",enabled=false}}',
     ]);
-  });
-
-  it("starts every board-pipeline model seat with an empty MCP table", async () => {
-    const { effects, spawns, mcpLists } = fakeExecEffects({
-      finalText: "{}",
-      mcpList: MCP_INVENTORY,
-    });
-    const executor = createCodexExecutor(effects, { repoRoot: "/repo" });
-    const council = { availability: { installed: ["codex" as const] } };
-    const scope = councilSeatTurn(
-      "lens-draft",
-      { type: "object" },
-      { codexExecutor: executor, repoRoot: "/repo" },
-      council,
-    );
-    const worker = councilSeatTurn(
-      "lens-draft-noise",
-      { type: "object" },
-      { codexExecutor: executor, repoRoot: "/repo" },
-      council,
-    );
-    const verify = councilSeatTurn(
-      "round-report",
-      { type: "object" },
-      { codexExecutor: executor, repoRoot: "/repo" },
-      council,
-    );
-
-    expect("failure" in scope ? scope.failure : null).toBeNull();
-    expect("failure" in worker ? worker.failure : null).toBeNull();
-    expect("failure" in verify ? verify.failure : null).toBeNull();
-    if ("failure" in scope || "failure" in worker || "failure" in verify) return;
-
-    await scope.runTurn("scope", 1);
-    await worker.runTurn("worker", 1);
-    await verify.runTurn("verify", 1);
-
-    expect((spawns[0] as SpawnCall).args).toEqual([
-      "app-server",
-      "--disable",
-      "plugins",
-      "-c",
-      'mcp_servers={"Playwright"={command="false",args=[],enabled=false},"computer-history"={command="false",args=[],enabled=false},"context7"={url="http://127.0.0.1",enabled=false}}',
-    ]);
-    expect((spawns[1] as SpawnCall).args).toEqual([
-      "app-server",
-      "--disable",
-      "plugins",
-      "-c",
-      'mcp_servers={"Playwright"={command="false",args=[],enabled=false},"computer-history"={command="false",args=[],enabled=false},"context7"={url="http://127.0.0.1",enabled=false}}',
-    ]);
-    expect((spawns[2] as SpawnCall).args).toEqual([
-      "app-server",
-      "--disable",
-      "plugins",
-      "-c",
-      'mcp_servers={"Playwright"={command="false",args=[],enabled=false},"computer-history"={command="false",args=[],enabled=false},"context7"={url="http://127.0.0.1",enabled=false}}',
-    ]);
-    expect(mcpLists).toHaveLength(3);
   });
 
   it("pins Rennet's loopback servers when it has them", async () => {

@@ -29,6 +29,8 @@ export {
 export {
   loadScriptedCodexExecutor,
   loadScriptedHarnessPlan,
+  loadScriptedT3Seats,
   type ScriptedHarnessPlan,
   ScriptedHarnessPlanSchema,
+  type ScriptedSeatThread,
 } from "./scripted-harness-plan";

@@ -23,6 +23,7 @@ import {
   type DispatchRoundResult,
   type RoundsRuntimeDeps,
 } from "./runtime/rounds";
+import { withFakeT3Seats } from "./t3-seat-fake";
 
 // B11 cluster 4 — the round exit's dispatch. Two surfaces: the `round.dispatch` HANDLER
 // (asks → ONE work-order, coalesced so the runtime is kicked once per distinct work-order) and
@@ -618,18 +619,20 @@ describe("round.dispatch (B11 4.2) — asks → one work-order, coalesced", () =
       },
     } as unknown as HarnessPort;
     const progress: RoundEvent[] = [];
-    const rounds = createRoundsRuntime({
-      ...runtimeDeps(),
-      resolveClaudePort: async () => reportOnlyPort,
-      boardsRuntimeFor: () =>
-        ({
-          service: { apply: async () => ({ ok: true }) },
-          createRennetBoard: async () => `board:${boardSequence++}`,
-        }) as unknown as ReturnType<RoundsRuntimeDeps["boardsRuntimeFor"]>,
-      readPrompt: (file) => `PROMPT_FILE:${file}`,
-      recordRound: (sessionId, record) => roundRecords.record(sessionId, record),
-      readRounds: (sessionId) => roundRecords.read(sessionId),
-    });
+    const rounds = createRoundsRuntime(
+      withFakeT3Seats({
+        ...runtimeDeps(),
+        resolveClaudePort: async () => reportOnlyPort,
+        boardsRuntimeFor: () =>
+          ({
+            service: { apply: async () => ({ ok: true }) },
+            createRennetBoard: async () => `board:${boardSequence++}`,
+          }) as unknown as ReturnType<RoundsRuntimeDeps["boardsRuntimeFor"]>,
+        readPrompt: (file) => `PROMPT_FILE:${file}`,
+        recordRound: (sessionId, record) => roundRecords.record(sessionId, record),
+        readRounds: (sessionId) => roundRecords.read(sessionId),
+      }),
+    );
     const dispatchRound = async (input: DispatchKickInput) =>
       acceptedOutcome(
         (async () => {
@@ -660,7 +663,13 @@ describe("round.dispatch (B11 4.2) — asks → one work-order, coalesced", () =
               patchsetId: "ps-2",
             }),
             deltaPacket: {
-              patchset: { id: "ps-2", createdAt: "", truncated: false, files: [] },
+              patchset: {
+                id: "ps-2",
+                createdAt: "",
+                truncated: false,
+                files: [],
+                repository: { baseRef: "origin/main", baseOid: "base", headOid: "head" },
+              },
               successorAccount: { asks: [] },
             } as never,
             lintContextFor: (lens: LintTarget) => ({ lens, regions: [], files: new Map() }),
@@ -722,7 +731,7 @@ const SERIAL_DISPATCH = {
 
 describe("createRoundsRuntime.dispatchRound (B11 4.2) — one round in flight per session", () => {
   it("serializes concurrent dispatches on one session (the second waits for the first)", async () => {
-    const runtime = createRoundsRuntime(runtimeDeps());
+    const runtime = createRoundsRuntime(withFakeT3Seats(runtimeDeps()));
     const order: string[] = [];
     let release!: () => void;
     const gate = new Promise<void>((resolve) => {
@@ -758,7 +767,7 @@ describe("createRoundsRuntime.dispatchRound (B11 4.2) — one round in flight pe
   });
 
   it("finding 4: a FAILED worker turn rejects the round (memo evicts → retryable) without wedging the session", async () => {
-    const runtime = createRoundsRuntime(runtimeDeps());
+    const runtime = createRoundsRuntime(withFakeT3Seats(runtimeDeps()));
     // The create-server wiring throws when `runHandoffTurn` returns `{status:"failed"}`; model
     // that here — a failed turn must REJECT the round so `round.dispatch`'s per-key memo drops
     // the key and an identical re-dispatch retries, rather than memoizing a failure forever.
@@ -786,10 +795,12 @@ describe("createRoundsRuntime.dispatchRound (B11 4.2) — one round in flight pe
 
   it("fsyncs the completed placeholder before post-dispatch ripening can start", async () => {
     const order: string[] = [];
-    const runtime = createRoundsRuntime({
-      ...runtimeDeps(),
-      recordRound: () => order.push("placeholder-fsynced"),
-    });
+    const runtime = createRoundsRuntime(
+      withFakeT3Seats({
+        ...runtimeDeps(),
+        recordRound: () => order.push("placeholder-fsynced"),
+      }),
+    );
     await runtime.dispatchRound({
       ...SERIAL_DISPATCH,
       session: session("s1"),
@@ -804,7 +815,7 @@ describe("createRoundsRuntime.dispatchRound (B11 4.2) — one round in flight pe
   });
 
   it("runs dispatches on different sessions concurrently (the lock is per session)", async () => {
-    const runtime = createRoundsRuntime(runtimeDeps());
+    const runtime = createRoundsRuntime(withFakeT3Seats(runtimeDeps()));
     const started: string[] = [];
     let release!: () => void;
     const gate = new Promise<void>((resolve) => {
@@ -879,12 +890,12 @@ const ORDER_DISPATCH = {
 
 describe("createRoundsRuntime.dispatchRound — records a RoundRecord (part a: record only)", () => {
   it("un-dispatched session ⇒ empty ledger (no fabricated round)", () => {
-    const runtime = createRoundsRuntime(runtimeDeps());
+    const runtime = createRoundsRuntime(withFakeT3Seats(runtimeDeps()));
     expect(runtime.ledger("s1")).toEqual([]);
   });
 
   it("a completed dispatch records a real RoundRecord: asks, diff, paths, commits, honest no-regen generation", async () => {
-    const runtime = createRoundsRuntime(runtimeDeps());
+    const runtime = createRoundsRuntime(withFakeT3Seats(runtimeDeps()));
     await runtime.dispatchRound({
       ...ORDER_DISPATCH,
       session: session("s1"),
@@ -913,7 +924,7 @@ describe("createRoundsRuntime.dispatchRound — records a RoundRecord (part a: r
   });
 
   it("a FAILED round STILL records its diff, then rejects so the dispatch retries", async () => {
-    const runtime = createRoundsRuntime(runtimeDeps());
+    const runtime = createRoundsRuntime(withFakeT3Seats(runtimeDeps()));
     const failed: DispatchRoundResult = {
       outcome: "failed",
       diff: "diff --git a/a.ts b/a.ts\n+partial-before-crash",

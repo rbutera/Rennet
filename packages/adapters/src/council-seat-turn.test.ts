@@ -59,14 +59,18 @@ function fakePort(events: HarnessEvent[], state: FakeState): HarnessPort {
 }
 
 describe("councilSeatTurn — the Claude branch", () => {
-  it("hands a board-pipeline Claude seat a spec with no settings narrowing", async () => {
+  it("hands a utility Claude seat a spec with no settings narrowing", async () => {
     const state: FakeState = { closed: false };
     const port = fakePort(
       [endedEvent({ status: "completed", finalText: "{}", structuredOutput: {} })],
       state,
     );
     const seat = councilSeatTurn(
-      "lens-draft",
+      // A UTILITY job, because the ephemeral leg is all that is left of this branch: a
+      // board job runs only on a sidecar thread (session-bound-workspace 5.7) and never
+      // reaches `createSession` at all. The narrowing this test guards against is the
+      // session spec's, so it belongs on whichever job still opens one.
+      "project-scout",
       { type: "object" },
       { claudePort: port, repoRoot: "/repo" },
       { availability: { installed: ["claude-code" as const] } },
@@ -114,6 +118,38 @@ describe("councilSeatTurn — the Claude branch", () => {
     );
     // No session was ever opened — resolution failed before any harness was touched.
     expect(state.spec).toBeUndefined();
+  });
+
+  // session-bound-workspace 5.7: the ephemeral BOARD legs are deleted. A board job with no
+  // seam at all — a direct-call caller, a test that composed no sidecar — is a typed
+  // failure, not a quiet cold session. Control: break the guard in `councilSeatTurn` (drop
+  // the `isBoardJob` early return) and both expectations below redden, the second because
+  // the Claude leg immediately opens a session.
+  it("fails a board job that has NO seam, and touches neither harness doing it", () => {
+    const state: FakeState = { closed: false };
+    let codexCalls = 0;
+    const codexExecutor: CodexExecutor = async () => {
+      codexCalls += 1;
+      return { output: {} };
+    };
+    for (const job of [
+      "lens-draft",
+      "lens-draft-flagged",
+      "lens-draft-noise",
+      "round-report",
+    ] as const) {
+      const seat = councilSeatTurn(
+        job,
+        { type: "object" },
+        { claudePort: fakePort([], state), codexExecutor, repoRoot: "/repo" },
+        { availability: { installed: ["claude-code" as const, "codex" as const] } },
+      );
+      expect("failure" in seat ? seat.failure : null, job).toContain(
+        "runs only on a T3 sidecar seat",
+      );
+    }
+    expect(state.spec).toBeUndefined();
+    expect(codexCalls).toBe(0);
   });
 
   it("leaves a NON-board job on the ephemeral leg when the sidecar is unavailable", async () => {

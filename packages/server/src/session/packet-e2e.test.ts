@@ -16,6 +16,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { type BoardsRuntime, createBoardsRuntime } from "../boards/boards-runtime";
 import type { PersistedBoardMeta } from "../runtime/rounds";
 import { createRoundsRuntime } from "../runtime/rounds";
+import { withFakeT3Seats } from "../t3-seat-fake";
 import { SessionEntry, type Target } from "./session-entry";
 import { SessionTurnLoop, type TurnRow } from "./turn-loop";
 
@@ -272,16 +273,18 @@ describe("B09 packet E2E — kill mid-generation, restart, reattach, boards cano
     //    A RE-ENTRY resolving to the SAME patchset generation must NOT re-draft.
     const boards1 = createBoardsRuntime(root);
     const mints = { count: 0 };
-    const runtime = createRoundsRuntime({
-      resolveClaudePort: async () => fakeClaudePort(),
-      resolveCodexExecutor: async () => null as CodexExecutor | null,
-      boardsRuntimeFor: realBoardsRuntimeFor(boards1, mints),
-      readPrompt,
-      persistBoardMeta: (_repo, meta: PersistedBoardMeta) => metaStore1.save(meta),
-      loadDraftedBoards: (_repo, s, g) => metaStore1.listForGeneration(s, g),
-      persistGeneration: (generation) => generationStore1.save(generation),
-      loadGeneration: (id) => generationStore1.load(id),
-    });
+    const runtime = createRoundsRuntime(
+      withFakeT3Seats({
+        resolveClaudePort: async () => fakeClaudePort(),
+        resolveCodexExecutor: async () => null as CodexExecutor | null,
+        boardsRuntimeFor: realBoardsRuntimeFor(boards1, mints),
+        readPrompt,
+        persistBoardMeta: (_repo, meta: PersistedBoardMeta) => metaStore1.save(meta),
+        loadDraftedBoards: (_repo, s, g) => metaStore1.listForGeneration(s, g),
+        persistGeneration: (generation) => generationStore1.save(generation),
+        loadGeneration: (id) => generationStore1.load(id),
+      }),
+    );
 
     const roundInput = {
       session: live,
@@ -357,16 +360,18 @@ describe("B09 packet E2E — kill mid-generation, restart, reattach, boards cano
     //    this fresh runtime re-mints six new ids — mints2 jumps to 6 and the stable-id
     //    assertion reddens (the "12 boards" the review named).
     const mints2 = { count: 0 };
-    const runtime2 = createRoundsRuntime({
-      resolveClaudePort: async () => fakeClaudePort(),
-      resolveCodexExecutor: async () => null as CodexExecutor | null,
-      boardsRuntimeFor: realBoardsRuntimeFor(boards2, mints2),
-      readPrompt,
-      persistBoardMeta: (_repo, meta: PersistedBoardMeta) => metaStore2.save(meta),
-      loadDraftedBoards: (_repo, s, g) => metaStore2.listForGeneration(s, g),
-      persistGeneration: (generation) => generationStore2.save(generation),
-      loadGeneration: (id) => generationStore2.load(id),
-    });
+    const runtime2 = createRoundsRuntime(
+      withFakeT3Seats({
+        resolveClaudePort: async () => fakeClaudePort(),
+        resolveCodexExecutor: async () => null as CodexExecutor | null,
+        boardsRuntimeFor: realBoardsRuntimeFor(boards2, mints2),
+        readPrompt,
+        persistBoardMeta: (_repo, meta: PersistedBoardMeta) => metaStore2.save(meta),
+        loadDraftedBoards: (_repo, s, g) => metaStore2.listForGeneration(s, g),
+        persistGeneration: (generation) => generationStore2.save(generation),
+        loadGeneration: (id) => generationStore2.load(id),
+      }),
+    );
     const rejoined = await runtime2.runRound({ ...roundInput, session: rejoin.session });
     expect(mints2.count).toBe(0); // never re-minted — reconstructed from durable evidence
     expect(rejoined.record.boardGeneration).toBe("gen:ps-1");

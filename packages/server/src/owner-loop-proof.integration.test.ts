@@ -36,7 +36,7 @@ import {
   OWNER_LOOP_SPEC,
   writeOwnerLoopScriptedHarnessPlan,
 } from "./owner-loop-proof-fixture";
-import { loadScriptedHarnessPlan } from "./scripted-harness-plan";
+import { loadScriptedHarnessPlan, loadScriptedT3Seats } from "./scripted-harness-plan";
 
 function git(root: string, ...args: string[]): string {
   return execFileSync("git", args, { cwd: root }).toString().trim();
@@ -255,6 +255,11 @@ describe("#685 owner loop through a real server", () => {
     seedTargetRepo(target);
     seedDecoyRepo(decoy);
     const { planPath, invocationLog } = writeOwnerLoopScriptedHarnessPlan(root);
+    // The board seats run on the sidecar and nowhere else (session-bound-workspace 5.7),
+    // so the same plan is served as SEAT THREADS: one thread per seat per generation, with
+    // every attempt a further turn on it. `scriptedSeats.threads` is what the assertions
+    // below read to see which seat opened which thread, and with what.
+    const scriptedSeats = loadScriptedT3Seats(planPath);
     vi.stubEnv("HOME", home);
     const env = {
       ...process.env,
@@ -266,6 +271,7 @@ describe("#685 owner loop through a real server", () => {
       dataDir,
       env,
       testHarnessPort: loadScriptedHarnessPlan(planPath),
+      testT3Seats: scriptedSeats.resolve,
     });
     shutdowns.push(first.shutdown);
     const added = parseCommandOutput(
@@ -326,6 +332,32 @@ describe("#685 owner loop through a real server", () => {
       initialGeneration,
       initial.activePatchsetId,
     );
+    // Every board that just landed came off a SIDECAR SEAT THREAD, one per seat, opened in
+    // the checkout the review is bound to — there is no ephemeral leg left for one to have
+    // taken (session-bound-workspace 5.7). The seam recorded the whole `threadFor` input,
+    // so the binding fields are asserted as the runtime actually passed them.
+    const seatsOfGeneration = scriptedSeats.threads.filter(({ threadId }) =>
+      threadId.includes(initialGeneration),
+    );
+    expect(seatsOfGeneration.map(({ seat }) => seat).sort()).toEqual([
+      "decisions",
+      "design",
+      "flagged-claude",
+      "noise",
+      "sequence",
+    ]);
+    for (const thread of seatsOfGeneration) {
+      expect(thread.created.provider, thread.seat).toBe("claudeAgent");
+      expect(thread.created.model, thread.seat).toEqual(expect.any(String));
+      // One turn per seat on a clean draft: the board passed lint, so no repair followed.
+      expect(thread.prompts, thread.seat).toHaveLength(1);
+      // The seat is pointed at the checkout and at its context directory, never handed
+      // the change: the drafting turn names the diff command and the directory, and the
+      // agent reads what it decides it needs.
+      expect(thread.prompts[0], thread.seat).toContain("git diff");
+      expect(thread.prompts[0], thread.seat).toContain(".rennet/context/");
+    }
+
     const missing = parseCommandOutput(
       "board.read",
       await first.dispatch("board.read", {
@@ -457,6 +489,7 @@ describe("#685 owner loop through a real server", () => {
       dataDir,
       env,
       testHarnessPort: loadScriptedHarnessPlan(planPath),
+      testT3Seats: scriptedSeats.resolve,
     });
     shutdowns.push(restarted.shutdown);
     parseCommandOutput("projects.list", await restarted.dispatch("projects.list", {}));

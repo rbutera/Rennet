@@ -16,6 +16,7 @@ import {
 } from "@rennet/protocol";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type BoardsRuntime, createBoardsRuntime } from "../boards/boards-runtime";
+import { withFakeT3Seats } from "../t3-seat-fake";
 import {
   assembleRoundCollation,
   type BoardRegenerationDeps,
@@ -206,15 +207,17 @@ describe("C15 1.5 — runRound trigger over the assembled collation (fake ports)
   afterEach(() => rmSync(root, { recursive: true, force: true }));
 
   function runtimeWith(order: string[]) {
-    return createRoundsRuntime({
-      resolveClaudePort: async () => orderedFakeClaudePort(order),
-      resolveCodexExecutor: async () => null as CodexExecutor | null,
-      boardsRuntimeFor: () => ({
-        service: boards.service,
-        createRennetBoard: boards.createRennetBoard,
+    return createRoundsRuntime(
+      withFakeT3Seats({
+        resolveClaudePort: async () => orderedFakeClaudePort(order),
+        resolveCodexExecutor: async () => null as CodexExecutor | null,
+        boardsRuntimeFor: () => ({
+          service: boards.service,
+          createRennetBoard: boards.createRennetBoard,
+        }),
+        readPrompt,
       }),
-      readPrompt,
-    });
+    );
   }
 
   it("mints a new generation with the report drafting before the lenses (a landed round)", async () => {
