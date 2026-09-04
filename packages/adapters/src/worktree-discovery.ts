@@ -113,6 +113,45 @@ export async function discoverWorktreeIdentities(
   return { root, commonDir, identities: identitiesFromRemoteVerbose(remotes) };
 }
 
+/** A worktree checked out on a branch, parsed from `git worktree list --porcelain`. */
+export interface ParsedWorktree {
+  path: string;
+  branch: string;
+}
+
+/**
+ * Parse `git worktree list --porcelain -z` into (path, branch) pairs; detached
+ * skipped. The `-z` form is NUL-delimited (attributes split by `\0`, records by
+ * `\0\0`), so a worktree path containing a newline or trailing whitespace survives
+ * intact — a plain-`--porcelain` newline split would corrupt it.
+ */
+export function parseWorktrees(output: string): ParsedWorktree[] {
+  const worktrees: ParsedWorktree[] = [];
+  let path: string | undefined;
+  let branch: string | undefined;
+  const flush = (): void => {
+    if (path && branch) worktrees.push({ path, branch });
+    path = undefined;
+    branch = undefined;
+  };
+  for (const token of output.split("\0")) {
+    if (token.length === 0) {
+      flush(); // the double-NUL record separator yields an empty token
+      continue;
+    }
+    if (token.startsWith("worktree ")) {
+      flush(); // a new record starts even without the separator
+      path = token.slice("worktree ".length); // NOT trimmed: the path is exact
+    } else if (token.startsWith("branch ")) {
+      const ref = token.slice("branch ".length);
+      branch = ref.startsWith("refs/heads/") ? ref.slice("refs/heads/".length) : ref;
+    }
+    // `detached`, `bare`, `HEAD <sha>` carry no branch → the record flushes without one.
+  }
+  flush();
+  return worktrees;
+}
+
 /** A named git remote that points at a forge repo (the name + its parsed identity). */
 export interface NamedForgeRemote {
   /** The git remote name (`origin`, `upstream`, …) — the ref to push to. */

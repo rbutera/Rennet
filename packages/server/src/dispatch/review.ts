@@ -252,13 +252,19 @@ export function reviewHandlers(rt: DispatchRuntime) {
       // cannot carry an order nobody composed — and under the SAME session id the prompt
       // was verified against, which is the id the archive purges (review finding 1).
       //
+      // Under the session's BOUND workspace (session-bound-workspace), because that is the
+      // turn's cwd and the prompt's path is relative to it. Written under the repository
+      // while the turn runs in a worktree, it names a file that is not there.
+      //
       // The purge is held for the whole turn, not just the write: an archive landing while
       // the agent is reading the work order would otherwise delete it mid-turn (review
       // finding 2). The lease is released when the turn settles, and the last release
       // performs a purge the archive deferred.
-      writeSessionContext(review.repositoryRoot, contextSessionId, [
-        workOrderContextFile(bundle.tasks),
-      ]);
+      writeSessionContext(
+        (await deps.boundWorkspaceForReview?.(review.id))?.root ?? review.repositoryRoot,
+        contextSessionId,
+        [workOrderContextFile(bundle.tasks)],
+      );
       const releaseContext = deps.holdSessionContext?.(contextSessionId);
       const turn = await deps
         .runHandoffTurn({
@@ -312,9 +318,14 @@ export function reviewHandlers(rt: DispatchRuntime) {
       // the coding agent's own writes land during this capture, and a clear afterwards
       // would swallow whatever arrived after the diff was taken.
       deps.setRepositoryDirty(false);
+      // Captured from the workspace the TURN RAN IN, not from the repository (Codex review of
+      // #805). The handoff thread runs in the session's bound workspace, so for a review of a
+      // branch the clone is not on, the agent's edits are in the worktree while the clone still
+      // sits on the default branch — capturing the repository would return that branch's bytes
+      // under this review's id and report a handoff that changed nothing.
       const updated = await service.capture(
         input.commandId,
-        review.repositoryRoot,
+        (await deps.boundWorkspaceForReview?.(review.id))?.root ?? review.repositoryRoot,
         review.id,
         handoffTrace,
       );

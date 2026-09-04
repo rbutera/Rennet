@@ -18,6 +18,8 @@ import { ROUTES } from "../routes/url";
 export interface ChatTrail {
   readonly title: string;
   readonly projectName?: string;
+  /** The workspace every turn of this session runs in (session-bound-workspace). */
+  readonly workspace?: string;
   readonly target?: "your-branch" | "your-pr" | "teammate-pr";
   readonly targetState?: "needs-you" | "merged" | "reviewed";
 }
