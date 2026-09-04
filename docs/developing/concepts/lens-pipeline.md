@@ -211,18 +211,36 @@ and calls board regeneration through this runtime.
    below, so a kind reassigned between lenses cannot mean one thing to the rules and
    another to the verbs a seat is given.
 
+   Every rule above screens the board's **document** as well as its elements. The
+   document is not an element, so a fenced code block in the board's opening prose
+   used to pass a lint that rejects the same bytes one line below it; document
+   violations report at a board-level pointer (`/document/introMarkdown`).
+
    The rule registry is **partitioned into two tiers** by what each rule reads.
    A rule decidable from a single element plus the daemon's knowledge of the
    patchset is a **boundary** rule: code bytes and dialogue in prose, malformed and
    unresolvable citations, machinery vocabulary, an ungrounded decision, an unknown
    source. A rule that can only be decided over the whole board is a **finish**
-   rule: report coherence, requirement order and verbatim quoting, the Design
-   artifact-set checks, and — moved down from the drafting runtime, where they used
-   to be lane failures a seat could not answer — every Sequence step being reachable
-   from a top-level section, and the board holding material at all. `lint` still
-   runs every rule over a whole draft; the tiers say *when* each becomes answerable,
-   and a test asserts they reunite to exactly the registry, so a new rule cannot
-   land unassigned.
+   rule: report coherence, requirement order and verbatim quoting, and the Design
+   artifact-set checks. The partition is asserted over the rules the tool path
+   actually receives, not over the authored lists, so a rule cannot be in the
+   registry and in neither tier.
+
+   Two **settlement rules** sit in that registry and in the finish tier, moved down
+   from the drafting runtime where they were lane failures a seat could not answer:
+   every Sequence step must be reachable from a top-level section, and the board
+   must hold material at all. `lint` — the document path's entry point — does not
+   run them, and that exclusion is declared as its own named subset rather than
+   achieved by keeping a rule out of the registry. The reason is cost: the Noise
+   prompt asks for an empty board when nothing in the change is skip-safe, and the
+   runtime settles that as a typed `no-noise` absence, so asking "does this board
+   hold material?" during document validation would spend a model repair turn
+   arguing with a board that was right.
+
+   The two settlement rules ask one question each. Material presence counts what
+   exists; reachability answers for itself and names the step to re-parent. They
+   used to overlap, and a Sequence board holding one orphaned step got both — an
+   "the board is empty" pointer over a board with a step on it.
 
    The core validator retains its typed-data immutability result for
    callers that provide a deterministic transform; the production lens scheduler

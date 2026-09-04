@@ -5,7 +5,7 @@ import {
   BOUNDARY_RULES,
   type ChangedRegion,
   DEFAULT_SCAFFOLD_GLOBS,
-  FINISH_ONLY_RULES,
+  DRAFT_LINT_RULES,
   FINISH_RULES,
   LENS_RULES,
   type LintContext,
@@ -14,6 +14,7 @@ import {
   lintTier,
   REPORT_RULES,
   rulesForTier,
+  SETTLEMENT_RULES,
 } from "./lint";
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
@@ -4693,17 +4694,31 @@ describe("LENS_RULES partitions into the boundary tier and the finish tier", () 
   // The whole point of authoring the two tiers separately, rather than deriving
   // LENS_RULES from them: this assertion can fail, and it fails the moment a rule
   // lands in the registry without being assigned a tier.
+  //
+  // It asserts over `rulesForTier`, the function the writer actually calls — NOT over
+  // the authored constants. An earlier revision kept two rules in a third list outside
+  // LENS_RULES and appended it at call time, so the constants reunited perfectly while
+  // the set that ran was `LENS_RULES + 2` and `lint` ran neither of them. A partition
+  // assertion that does not cover what runs is the hole 1.5 exists to close.
   const name = (rule: unknown) => (rule as { name?: string }).name ?? "(anonymous)";
 
-  it("the two partitions reunite to exactly LENS_RULES", () => {
-    const assigned = [...BOUNDARY_RULES, ...FINISH_RULES];
-    const unassigned = LENS_RULES.filter((rule) => !assigned.includes(rule));
+  it("the two tiers, as the writer gets them, reunite to exactly LENS_RULES", () => {
+    const running = [...rulesForTier("flagged", "boundary"), ...rulesForTier("flagged", "finish")];
+    const unassigned = LENS_RULES.filter((rule) => !running.includes(rule));
     expect(unassigned.map(name)).toEqual([]);
-    const foreign = assigned.filter((rule) => !LENS_RULES.includes(rule));
+    const foreign = running.filter((rule) => !LENS_RULES.includes(rule));
     expect(foreign.map(name)).toEqual([]);
     // …and nothing is in both tiers, so the counts have to agree.
-    expect(assigned.length).toBe(LENS_RULES.length);
-    expect(new Set(assigned).size).toBe(LENS_RULES.length);
+    expect(running.length).toBe(LENS_RULES.length);
+    expect(new Set(running).size).toBe(LENS_RULES.length);
+  });
+
+  it("the authored constants agree with what runs, so neither can drift alone", () => {
+    const authored = [...BOUNDARY_RULES, ...FINISH_RULES];
+    const running = [...rulesForTier("flagged", "boundary"), ...rulesForTier("flagged", "finish")];
+    expect(new Set(authored).size).toBe(authored.length);
+    expect([...new Set(running)].every((rule) => authored.includes(rule))).toBe(true);
+    expect(authored.every((rule) => running.includes(rule))).toBe(true);
   });
 
   it("no rule is in both tiers", () => {
@@ -4712,35 +4727,79 @@ describe("LENS_RULES partitions into the boundary tier and the finish tier", () 
     expect(both.map(name)).toEqual([]);
   });
 
-  it("the two rules that move from the drafting runtime stay outside the registry", () => {
-    // They were never lint rules — `lens-pipeline.ts` asked them after the ladder — so
-    // keeping them out of LENS_RULES is what lets the reunion assertion above mean
-    // something rather than absorb any new arrival.
-    for (const rule of FINISH_ONLY_RULES) expect(LENS_RULES.includes(rule)).toBe(false);
-    expect(FINISH_ONLY_RULES.length).toBe(2);
+  it("the two settlement rules are registry members the finish tier runs", () => {
+    // They are not a third list appended at call time — that is what made the old
+    // assertion true of the constants and false of what ran.
+    for (const rule of SETTLEMENT_RULES) {
+      expect(LENS_RULES.includes(rule)).toBe(true);
+      expect(FINISH_RULES.includes(rule)).toBe(true);
+      expect(BOUNDARY_RULES.includes(rule)).toBe(false);
+    }
+    expect(rulesForTier("sequence", "finish")).toEqual(
+      expect.arrayContaining([...SETTLEMENT_RULES]),
+    );
+
+    const empty = board([]);
+    const orphan = board([
+      el("s1", "section", { title: "Reading order", children: [] }),
+      el("st1", "order_step", { title: "Read the refresh path", span: "c1", children: [] }),
+      codeRef("c1", "src/auth.ts", 11, 12),
+    ]);
+    const sequenceCtx = ctx({ lens: "sequence" });
+    expect(rulesHit(lintTier(empty, sequenceCtx, "finish"))).toContain("board-has-material");
+    expect(rulesHit(lintTier(orphan, sequenceCtx, "finish"))).toContain("sequence-step-reachable");
+  });
+
+  it("lint does NOT run the settlement rules, because an empty board is a real result", () => {
+    // The Noise prompt asks for an empty board when nothing is skip-safe, and the
+    // document path settles that as a typed `no-noise` absence. If `lint` asked
+    // `board-has-material`, every clean Noise run would spend a model repair turn
+    // arguing with a board that was right. `DRAFT_LINT_RULES` is that exclusion,
+    // declared rather than achieved by hiding a rule outside the registry.
+    expect(DRAFT_LINT_RULES.length).toBe(LENS_RULES.length - SETTLEMENT_RULES.length);
+    for (const rule of SETTLEMENT_RULES) expect(DRAFT_LINT_RULES.includes(rule)).toBe(false);
+    expect(lint(board([]), ctx({ lens: "noise" }))).toEqual([]);
+    expect(lint(board([]), ctx({ lens: "sequence" }))).toEqual([]);
   });
 
   it("the report seat's narrower registry splits the same way, derived not re-assigned", () => {
     const boundary = rulesForTier("report", "boundary");
     const finish = rulesForTier("report", "finish");
-    const fromRegistry = [...boundary, ...finish].filter((rule) => REPORT_RULES.includes(rule));
-    expect(new Set(fromRegistry).size).toBe(REPORT_RULES.length);
+    const running = [...boundary, ...finish];
+    expect(new Set(running).size).toBe(REPORT_RULES.length);
+    expect(REPORT_RULES.every((rule) => running.includes(rule))).toBe(true);
     // `report-coherent` is the report's one whole-board rule.
     expect(finish.some((rule) => name(rule) === "reportCoherent")).toBe(true);
     expect(boundary.some((rule) => name(rule) === "reportCoherent")).toBe(false);
   });
 
-  it("lint still runs every rule, so the split changed no verdict", () => {
+  it("the two tiers together are lint's verdict plus exactly the settlement rules", () => {
+    // Multiset equality, not membership: a rule dropped from one tier and duplicated in
+    // the other would satisfy a `toContain` sweep and fail this. The fixture trips a
+    // boundary rule, a finish rule and both settlement rules at once.
     const dirty = board([
       el("p1", "prose", { markdown: "The lens found this:\n```ts\nconst x = 1;\n```\n" }),
+      el("s1", "section", { title: "Reading order", children: [] }),
+      el("st1", "order_step", { title: "Read the refresh path", span: "c1", children: [] }),
       codeRef("c1", "src/auth.ts", 180, 190),
     ]);
-    const all = rulesHit(lint(dirty, ctx()));
-    const tiered = new Set([
-      ...rulesHit(lintTier(dirty, ctx(), "boundary")),
-      ...rulesHit(lintTier(dirty, ctx(), "finish")),
-    ]);
-    for (const ruleId of all) expect(tiered).toContain(ruleId);
+    const sequenceCtx = ctx({ lens: "sequence" });
+    const key = (v: { ruleId: string; elementRef: string }) => `${v.ruleId} ${v.elementRef}`;
+
+    const tiered = [
+      ...lintTier(dirty, sequenceCtx, "boundary"),
+      ...lintTier(dirty, sequenceCtx, "finish"),
+    ]
+      .map(key)
+      .sort();
+    const settlement = SETTLEMENT_RULES.flatMap((rule) => rule(dirty, sequenceCtx))
+      .map(key)
+      .sort();
+    const whole = [...lint(dirty, sequenceCtx).map(key), ...settlement].sort();
+
+    expect(settlement.length).toBeGreaterThan(0);
+    expect(tiered.length).toBeGreaterThan(settlement.length);
+    expect(tiered).toEqual(whole);
   });
 
   it("D5's assignment holds for the rows a seat feels: refusals at the call, the rest at finish", () => {
@@ -4766,5 +4825,58 @@ describe("LENS_RULES partitions into the boundary tier and the finish tier", () 
     ]);
     expect(atBoundary(ungrounded, { lens: "decisions" })).toContain("decision-grounded");
     expect(atFinish(ungrounded, { lens: "decisions" })).not.toContain("decision-grounded");
+  });
+});
+
+describe("the board document is authored text, and the prose screens read it", () => {
+  // It used to escape every one of them: the rules walked `draft.elements`, and the
+  // document is not an element — so a fenced block in `introMarkdown` passed a lint
+  // that rejects the same bytes in a `prose` element beside it.
+  const withDocument = (document: Record<string, unknown>) =>
+    board([], { document: { measure: "reading", ...document } });
+
+  it("a fenced code block in the document intro is reported at a document pointer", () => {
+    const hits = lint(
+      withDocument({ title: "Flagged", introMarkdown: "Like so:\n```ts\nconst x = 1;\n```\n" }),
+      ctx(),
+    );
+    const codeBytes = hits.filter((v) => v.ruleId === "no-code-bytes");
+    expect(codeBytes).toHaveLength(1);
+    expect(codeBytes[0]?.elementRef).toBe("/document/introMarkdown");
+  });
+
+  it("machinery vocabulary in the document title is reported", () => {
+    const hits = rulesHit(
+      lint(withDocument({ title: "What the lens found", introMarkdown: "" }), ctx()),
+    );
+    expect(hits).toContain("process-vocabulary");
+  });
+
+  it("an unresolvable citation in the document intro is reported", () => {
+    const hits = lint(
+      withDocument({ title: "Flagged", introMarkdown: "See `src/auth.ts:900`." }),
+      ctx(),
+    );
+    const citation = hits.filter((v) => v.ruleId === "citation-resolves");
+    expect(citation).toHaveLength(1);
+    expect(citation[0]?.elementRef).toBe("/document/introMarkdown");
+  });
+
+  it("positive control: a clean document raises nothing", () => {
+    // Without this the three assertions above are satisfied by a screen that rejects
+    // every document it is shown. The board carries a finding so `board-has-material`
+    // is not the thing answering.
+    expect(
+      lint(
+        cleanBoard({
+          document: {
+            measure: "reading",
+            title: "Flagged",
+            introMarkdown: "Two concerns sit on the refresh path; `src/auth.ts:11` is the first.",
+          },
+        }),
+        ctx(),
+      ),
+    ).toEqual([]);
   });
 });

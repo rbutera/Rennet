@@ -26,15 +26,24 @@ const REGIONS: ChangedRegion[] = [
   { path: "src/legacy.ts", side: "base", start: 40, end: 44 },
 ];
 
-const lintCtx = (over: Partial<LintContext> = {}): LintContext => ({
-  lens: "flagged",
+// The writer takes patchset knowledge WITHOUT a lens: the lens is the target, and the
+// writer sets it. So this fixture cannot name one either.
+type WriterLint = Omit<LintContext, "lens">;
+
+const lintCtx = (over: Partial<WriterLint> = {}): WriterLint => ({
   regions: REGIONS,
   files: new Map([
     ["src/auth.ts", 200],
     ["src/util.ts", 50],
     ["pnpm-lock.yaml", 9000],
   ]),
-  baseFiles: new Map([["src/legacy.ts", 120]]),
+  // `src/util.ts` is in the BASE inventory and has no base-side region, which is the
+  // fixture the "no changed lines on that side" case needs: the file exists, so
+  // `citation-resolves` says nothing, and the only answer left is the empty side.
+  baseFiles: new Map([
+    ["src/legacy.ts", 120],
+    ["src/util.ts", 50],
+  ]),
   ...over,
 });
 
@@ -43,7 +52,7 @@ const writer = (target: LintTarget = "flagged", over: Partial<BoardWriterOptions
   return new BoardWriter({
     target,
     author,
-    lint: { ...lintCtx({ lens: target }), ...(lintOver ?? {}) },
+    lint: { ...lintCtx(), ...(lintOver ?? {}) },
     ...rest,
   });
 };
@@ -209,7 +218,11 @@ describe("a reference argument is refused when the board does not hold it (D4)",
     expect(removal).toContain("element-reference-resolves");
     expect(elementById(w, ref)).toBeDefined();
 
-    // Nothing on the board dangles, and no rule was run over it to find that out.
+    // Nothing on the board dangles. Note what did the work: the boundary tier ran on
+    // every one of those calls, and `element-reference-resolves` is what refused (c) —
+    // the earlier version of this comment claimed no rule was run, while the assertion
+    // above depends on that exact rule's message. "Unconstructible through the tools"
+    // means every path that would build one is refused, not that nothing checks.
     const ids = new Set(w.board().elements.map((element) => element.id));
     for (const element of w.board().elements) {
       for (const value of Object.values(element.data as Record<string, unknown>)) {
@@ -248,6 +261,9 @@ describe("a reference argument is refused when the board does not hold it (D4)",
       w.call("update_decision", { element_id: decision, alternative_ids: [section] }),
     );
     expect(refusal).toContain("cycle");
+    // Name what refuses it: the boundary tier's `element-reference-resolves`, which is
+    // the mechanism D5 assigns and the one the control below removes.
+    expect(refusal).toContain("element-reference-resolves");
     // …and the board still carries the reference it had.
     expect(dataOf<{ alternatives: string[] }>(w, decision).alternatives).toEqual([ref]);
   });
@@ -269,6 +285,7 @@ describe("a reference argument is refused when the board does not hold it (D4)",
       }),
     );
     expect(refusal).toContain("cycle");
+    expect(refusal).toContain("element-reference-resolves");
     // Nothing was created, and the id the refused call would have taken is not spent.
     expect(w.board().elements).toHaveLength(1);
     const next = idOf(
@@ -392,15 +409,46 @@ describe("cite resolves against the captured patchset in the same call", () => {
     );
     expect(nothingChanged).toContain("no changed lines on the base side");
     expect(nothingChanged).not.toContain("nearest changed range");
+    // …and ONLY that. The file is in the base inventory, so `citation-resolves` has
+    // nothing to say; without it there the refusal carried a "no such file" report too
+    // and this test passed while testing a different case.
+    expect(nothingChanged).not.toContain("no such file");
+    expect(nothingChanged).not.toContain("citation-resolves");
   });
 
-  it("an inverted range is refused before anything else looks at it", () => {
+  it("an inverted range is refused, naming the inputs and not a rolled-back id", () => {
     const w = writer();
     const refusal = refusalOf(
       w.call("cite", { path: "src/auth.ts", side: "head", start_line: 14, end_line: 10 }),
     );
     expect(refusal).toContain("citation-resolves");
     expect(refusal).toContain("inverted");
+    // Task 1.6: a refusal names the FIELD. The element id the host minted for this call
+    // was rolled back, so naming it would point the seat at nothing it has ever seen.
+    for (const field of ["`path`", "`side`", "`start_line`", "`end_line`"]) {
+      expect(refusal).toContain(field);
+    }
+    expect(refusal).not.toMatch(/`e\d+`/);
+  });
+
+  it("a refusal against another element keeps that element's ref, because it is real", () => {
+    // The translation above applies only to the element THIS call touched. An element
+    // already on the board is addressable, so its id is the useful pointer.
+    const w = writer("decisions");
+    const ref = idOf(
+      w.call("cite", { path: "src/util.ts", side: "head", start_line: 1, end_line: 2 }),
+    );
+    idOf(
+      w.call("add_decision", {
+        statement: "Storage stays on the caller.",
+        why: "The alternative moved the lifetime into a shared cache.",
+        evidence_ref_ids: [ref],
+        alternative_ids: [ref],
+      }),
+    );
+    const refusal = refusalOf(w.call("remove_element", { element_id: ref }));
+    expect(refusal).toContain("element-reference-resolves");
+    expect(refusal).toMatch(/`e\d+/);
   });
 
   it("a scaffold path is refused on every seat but Noise", () => {
@@ -420,7 +468,6 @@ describe("cite resolves against the captured patchset in the same call", () => {
     // assertion above would be satisfied by a writer that refuses lockfiles outright.
     const noise = writer("noise", {
       lint: {
-        lens: "noise",
         regions: [...REGIONS, { path: "pnpm-lock.yaml", side: "head", start: 1, end: 4000 }],
         files: new Map([["pnpm-lock.yaml", 9000]]),
       },
@@ -441,32 +488,47 @@ describe("finish is the whole-board verdict and returns pointers only", () => {
     expect(w.status()).toBe("drafting");
   });
 
-  it("a Sequence step no section reaches comes back as one pointer naming that step", () => {
+  it("a board holding one orphaned step comes back as exactly one pointer", () => {
+    // The COMPLETE list, not a filtered one. It used to add a second, reachable step and
+    // then filter by rule id, so it never tested the case its name describes — and the
+    // case it avoided returned TWO pointers, because the emptiness rule counted only
+    // reachable steps and reported `/elements` as well. "The board is empty" over a
+    // board with a step on it is a false statement, so material presence now counts
+    // what exists and reachability answers for itself.
     const w = writer("sequence");
     const span = idOf(
       w.call("cite", { path: "src/auth.ts", side: "head", start_line: 11, end_line: 12 }),
     );
-    const section = idOf(w.call("add_section", { title: "Start with refresh" }));
-    idOf(
-      w.call("add_step", { title: "Read the refresh path", span_ref_id: span, parent_id: section }),
-    );
-    const orphan = idOf(w.call("add_step", { title: "Then the classifier", span_ref_id: span }));
+    const orphan = idOf(w.call("add_step", { title: "Read the refresh path", span_ref_id: span }));
 
     const pointers = pointersOf(w.call("finish"));
-    const reach = pointers.filter((pointer) => pointer.ruleId === "sequence-step-reachable");
-    expect(reach).toHaveLength(1);
-    expect(reach[0]?.elementRef).toBe(orphan);
+    expect(pointers).toHaveLength(1);
+    expect(pointers[0]?.ruleId).toBe("sequence-step-reachable");
+    expect(pointers[0]?.elementRef).toBe(orphan);
     expect(w.status()).toBe("drafting");
 
     // The seat answers the pointer with further calls in the same turn, and finishes.
+    const section = idOf(w.call("add_section", { title: "Start with refresh" }));
     ok(w.call("remove_element", { element_id: orphan }));
-    ok(w.call("add_step", { title: "Then the classifier", span_ref_id: span, parent_id: section }));
+    ok(
+      w.call("add_step", { title: "Read the refresh path", span_ref_id: span, parent_id: section }),
+    );
     const settled = ok(w.call("finish")).outcome;
     expect(settled.kind).toBe("settled");
     expect(w.status()).toBe("settled");
   });
 
-  it("a pointer carries a rule, an element and one sentence — no prose, no draft", () => {
+  it("an empty Sequence board reports emptiness alone, and never both", () => {
+    // The other side of the same split: with no step at all it is the emptiness rule's
+    // case, and reachability has nothing to name.
+    const w = writer("sequence");
+    const pointers = pointersOf(w.call("finish"));
+    expect(pointers).toHaveLength(1);
+    expect(pointers[0]?.ruleId).toBe("board-has-material");
+    expect(pointers[0]?.elementRef).toBe("/elements");
+  });
+
+  it("a pointer carries a rule, an element and one sentence — no board, no draft", () => {
     // Point it at a board that HAS content, so the assertion is about what the pointer
     // leaves out rather than about a board with nothing to leave out.
     const w = writer("sequence");
@@ -484,6 +546,8 @@ describe("finish is the whole-board verdict and returns pointers only", () => {
       // Three strings. A pointer cannot carry a draft, because it has nowhere to put one.
       for (const value of Object.values(pointer)) expect(typeof value).toBe("string");
       // …and it does not quote the board back at the seat, which is already holding it.
+      // The message itself stays: it is the correction, and it is the only part that
+      // says WHAT rather than WHERE.
       expect(pointer.message).not.toContain(prose);
     }
     expect(pointers.some((pointer) => pointer.elementRef === orphan)).toBe(true);

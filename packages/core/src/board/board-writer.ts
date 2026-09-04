@@ -31,8 +31,9 @@
  * the lint messages, not a second vocabulary written to sit beside them.
  *
  * `finish` is the FINISH tier over the whole board, and it returns pointers only: a
- * rule id, an element ref and one sentence. No prose, no draft, no restated
- * instructions — the seat is holding all of that already.
+ * rule id, an element ref and one sentence. No board, no draft, no restated
+ * instructions — the seat is holding all of that already. The sentence stays, because
+ * it is the correction; see {@link FinishPointer}.
  */
 
 import {
@@ -59,6 +60,17 @@ import { type LintContext, type LintTarget, lintTier } from "./lint";
  * One pointer from `finish`: which rule, which element (and field, where the rule
  * knows it), and one sentence. Structurally a {@link Violation} — the pointer grammar
  * the repair channel already speaks.
+ *
+ * **A pointer carries its message, and that is the contract.** "Pointers only" in the
+ * spec means the verdict does not re-send the board, the draft or the base prompt —
+ * all of which the seat is already holding — and not that a pointer is an address with
+ * no words. The words are the correction: a rule id and an element ref tell a seat
+ * WHERE, and the sentence is the only part that tells it WHAT, for a handful of tokens.
+ * Recorded here because the alias to the full {@link Violation} would otherwise read as
+ * an oversight next to a doc that says "pointers only".
+ *
+ * What is genuinely unbounded is the LIST: a board with many violations returns many
+ * pointers, and nothing caps that yet. It is a group-3 item, named in the PR.
  */
 export type FinishPointer = Violation;
 
@@ -88,8 +100,17 @@ export type BoardWriterState = "drafting" | "settled" | "absent";
 export interface BoardWriterOptions {
   /** Which board this is: one of the five lenses, or the round-report seat. */
   readonly target: LintTarget;
-  /** The patchset knowledge every boundary rule reads. `lens` must match `target`. */
-  readonly lint: LintContext;
+  /**
+   * The patchset knowledge every boundary rule reads, WITHOUT its lens: the lens is
+   * {@link BoardWriterOptions.target}, and the writer sets it.
+   *
+   * It used to be a whole {@link LintContext} whose `lens` was documented as having to
+   * match `target` and was never checked — so a Flagged writer could be handed a Noise
+   * lint context, hand out Flagged verbs, and let `scaffold-is-noise-lane` through
+   * because the rules believed they were linting Noise. One source, no agreement to
+   * keep.
+   */
+  readonly lint: Omit<LintContext, "lens">;
   /** The seat that wrote each element. Host-supplied: it is on no tool input. */
   readonly author: Author;
   /**
@@ -130,8 +151,11 @@ export class BoardWriter {
   private state: BoardWriterState = "drafting";
   private absence: { reason: LensAbsenceReason; note: string } | undefined;
 
+  private readonly lint: LintContext;
+
   constructor(options: BoardWriterOptions) {
     this.options = options;
+    this.lint = { ...options.lint, lens: options.target };
     this.tools = boardToolsByName(options.target, options.typedKinds ?? TYPED_KINDS_BY_TARGET);
   }
 
@@ -215,7 +239,7 @@ export class BoardWriter {
     const structural = this.structuralRefusal(next);
     if (structural !== undefined) return refuse(structural);
     const introduced = this.introducedViolations(next);
-    if (introduced.length > 0) return refuse(describe(introduced));
+    if (introduced.length > 0) return refuse(describe(introduced, tool, "/document"));
     this.document = candidate;
     this.reopen();
     return { ok: true, outcome: { kind: "document" } };
@@ -258,7 +282,7 @@ export class BoardWriter {
     const introduced = this.introducedViolations(next);
     if (introduced.length > 0) {
       this.minted -= 1;
-      return refuse(describe(introduced));
+      return refuse(describe(introduced, tool, id));
     }
     this.elements = withParent;
     this.reopen();
@@ -295,7 +319,7 @@ export class BoardWriter {
     const structural = this.structuralRefusal(next);
     if (structural !== undefined) return refuse(structural);
     const introduced = this.introducedViolations(next);
-    if (introduced.length > 0) return refuse(describe(introduced));
+    if (introduced.length > 0) return refuse(describe(introduced, tool, elementId));
     this.elements = nextElements;
     this.reopen();
     return { ok: true, outcome: { kind: "element", id: elementId } };
@@ -339,7 +363,7 @@ export class BoardWriter {
   }
 
   private finish(): BoardToolResult {
-    const pointers = lintTier(this.board(), this.options.lint, "finish");
+    const pointers = lintTier(this.board(), this.lint, "finish");
     if (pointers.length > 0) return { ok: true, outcome: { kind: "pointers", pointers } };
     this.state = "settled";
     return { ok: true, outcome: { kind: "settled" } };
@@ -468,8 +492,8 @@ export class BoardWriter {
    * for what IT did rather than for something a caller cannot fix from here.
    */
   private introducedViolations(next: DraftBoard): Violation[] {
-    const before = new Set(lintTier(this.board(), this.options.lint, "boundary").map(violationKey));
-    return lintTier(next, this.options.lint, "boundary").filter(
+    const before = new Set(lintTier(this.board(), this.lint, "boundary").map(violationKey));
+    return lintTier(next, this.lint, "boundary").filter(
       (violation) => !before.has(violationKey(violation)),
     );
   }
@@ -498,10 +522,62 @@ const refuse = (refusal: string): BoardToolResult => ({ ok: false, refusal });
 const violationKey = (violation: Violation): string =>
   `${violation.ruleId} ${violation.elementRef} ${violation.message}`;
 
-/** A refusal reads as the rules that refused it — the lint messages, verbatim. */
-function describe(violations: readonly Violation[]): string {
+/**
+ * The tool inputs a rule is ABOUT, for the rules that report against a whole element
+ * rather than one of its fields. Without this a `cite` refusal named `e7` — an id the
+ * host minted and then rolled back, so it names nothing the seat has ever seen or can
+ * act on — where task 1.6 asks a refusal to name the field.
+ */
+const RULE_INPUT_FIELDS: Readonly<Record<string, readonly string[]>> = {
+  "citation-resolves": ["path", "side", "start_line", "end_line"],
+  "unresolvable-citation": ["path", "side", "start_line", "end_line"],
+  "scaffold-is-noise-lane": ["path"],
+};
+
+/**
+ * What a violation should be called in a refusal: the tool INPUT field it is about.
+ *
+ * A violation's `elementRef` is `<id>` or `<id>/<dataField>`, in the element vocabulary
+ * — which is the right pointer for `finish`, where the seat holds the ids, and the
+ * wrong one for a refusal, where the element does not exist and the id has been
+ * returned to the pool. So a violation against the element this call touched is
+ * translated: by its data field where it has one, and by {@link RULE_INPUT_FIELDS}
+ * where the rule reports element-wide. A violation against any OTHER element keeps its
+ * element ref, because that one really is on the board and the seat can address it.
+ */
+function pointerLabel(
+  tool: BoardTool,
+  touchedId: string | undefined,
+  violation: Violation,
+): string {
+  const { elementRef, ruleId } = violation;
+  const slash = elementRef.indexOf("/");
+  const id = slash === -1 ? elementRef : elementRef.slice(0, slash);
+  if (touchedId === undefined || id !== touchedId) return `\`${elementRef}\``;
+
+  const dataField = slash === -1 ? undefined : elementRef.slice(slash + 1);
+  if (dataField !== undefined) {
+    const named = tool.fields.find((field) => field.source.dataField === dataField);
+    return `\`${named?.name ?? dataField}\``;
+  }
+  const own = new Set(tool.fields.map((field) => field.name));
+  const about = (RULE_INPUT_FIELDS[ruleId] ?? []).filter((name) => own.has(name));
+  return about.length > 0 ? about.map((name) => `\`${name}\``).join(", ") : `\`${tool.name}\``;
+}
+
+/**
+ * A refusal reads as the rules that refused it — the lint messages, verbatim — under
+ * the name of the input the seat actually sent.
+ */
+function describe(violations: readonly Violation[], tool?: BoardTool, touchedId?: string): string {
   return violations
-    .map((violation) => `\`${violation.elementRef}\` (${violation.ruleId}): ${violation.message}`)
+    .map((violation) => {
+      const label =
+        tool === undefined
+          ? `\`${violation.elementRef}\``
+          : pointerLabel(tool, touchedId, violation);
+      return `${label} (${violation.ruleId}): ${violation.message}`;
+    })
     .join(" ");
 }
 
