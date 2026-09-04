@@ -32,7 +32,7 @@
 
 ## 5. The owner-loop proof is rebuilt for the new shape
 
-- [x] 5.1 `packages/server/src/owner-loop-proof.integration.test.ts`: the fake round worker runs on its own fake thread — it receives the round's thread identity and records it — and the proof asserts the round's thread is a `round` key, that the session's thread received no round turn, and that the ledger rows carry no gate facts
+- [x] 5.1 `packages/server/src/owner-loop-proof.integration.test.ts`: the fake round worker runs on its own fake thread — it receives the round's thread identity and records it — and the proof asserts the round carries its own operation id (not the session's or the review's), its own title, the bound root as its cwd, and a distinct thread per round, and that the ledger rows carry no gate facts. What the proof CANNOT assert, because no sidecar runs in it: that the binding resolves to a thread other than the session's. That claim is about `bindThread`'s key and is executed in `t3/handoff.test.ts`, which asserts the only key `threadFor` is ever asked for is `round`; the test says so in place
 - [x] 5.2 The proof's round-one and round-two assertions drop `run.gate` and gain the round thread and the committed-file receipt
 - [x] 5.3 Run the proof with `ASDF_DATA_DIR=/Users/rai/.asdf`
 
