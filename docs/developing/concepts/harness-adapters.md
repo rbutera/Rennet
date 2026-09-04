@@ -208,14 +208,20 @@ unimplemented (capability flag `false`): a resume spec against Codex simply
 never surfaces a cursor, the loop never builds one for it, and each Codex turn
 starts fresh — the honest degrade, no fabricated cursor.
 
-The lens pipeline's seats do not resume either, by construction rather than by
-omission: every internal seat turn is `ephemeral`, which the Claude adapter maps
-to the SDK's `persistSession: false`, and a session that was never persisted has
-no transcript to resume. A lens repair turn is therefore a fresh cold session
-that re-sends its base prompt; what it no longer re-sends is the accepted part
-of the draft (the validator merges frozen elements back itself). Holding one
-multi-turn session open for draft and repair is the follow-up, justified only
-once the generation's recorded usage shows the base re-send dominating.
+Rennet's own **utility** turns do not resume either, by construction rather than
+by omission: the project scout, the repo map, the delta digest and their kind run
+as `ephemeral` sessions, which the Claude adapter maps to the SDK's
+`persistSession: false`, and a session that was never persisted has no transcript
+to resume. Each carries everything it needs and is re-billed in full on a retry,
+which is why their prompts name paths instead of holding content.
+
+The **board seats** are the other shape, and they do not run on these adapters at
+all: a lens seat, the Flagged lane's two provider seats and the round report are
+persistent threads in the T3 sidecar, one per seat per generation. A repair there
+is the next turn on the thread that already holds the base prompt and the failing
+draft, so it carries only the lint pointers and the frozen ids. There is no
+ephemeral board leg to fall back to — a generation with no sidecar drafts no board
+and says why. See [the T3 Code sidecar](./t3code-sidecar.md).
 
 When a persisted cursor points at a harness session the CLI no longer has (the
 transcript is gone), the loop does not fail and does not pretend. It surfaces a

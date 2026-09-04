@@ -45,7 +45,7 @@ function codeRef(id: string, path: string): DraftBoard["elements"][number] {
     data: {
       author,
       // NO `patchset_id`, and no `${patchsetId}` placeholder to resolve it with: a seat is
-      // never told the captured patchset's identity (commit dcaff8a5 stamps it once, host
+      // never told the captured patchset's identity (commit dcaff8a85 stamps it once, host
       // side, on the board `validateDraft` returns). A scripted seat that emitted one
       // would be modelling a channel that does not exist — and since the placeholder
       // resolved off a JSON context layer no prompt carries any more, it made every board

@@ -689,10 +689,12 @@ export interface ScriptedSeatThread {
  *
  * Board seats run ONLY on sidecar threads (session-bound-workspace 5.7), so a launched
  * proof that used to answer them through the scripted `HarnessPort` answers them here
- * instead: one thread per seat, every attempt a turn on it, each turn's answer chosen from
- * the same plan by the same prompt match. A repair therefore lands on the thread that
- * already holds the draft — which is the whole point, and the thing a fresh scripted
- * session could never do (found by PR #800).
+ * instead: one thread per seat, every attempt a turn on it. The step is selected from
+ * everything the THREAD has been sent, not from this turn's text alone, which is what lets
+ * a repair be answered at all: a repair turn carries pointers and no prompt file, so a
+ * cold `selectStep` over it matches nothing (found by PR #800). Matching over the
+ * conversation re-answers with the drafting step, exactly as a thread that still remembers
+ * its own board would.
  *
  * The invocation ledger is written exactly as the port writes it, so the proofs' existing
  * assertions over `invocationLog` see seat turns whichever backend ran them.
@@ -722,11 +724,13 @@ export function loadScriptedT3Seats(path: string): {
             if (thread === undefined)
               throw new Error(`scripted sidecar: unknown thread ${threadId}`);
             thread.prompts.push(text);
-            const step = selectStep(plan, visibleToTurn(text, input.repoRoot), false);
+            // The whole conversation, because that is what the thread holds.
+            const conversation = thread.prompts.join("\n");
+            const step = selectStep(plan, visibleToTurn(conversation, input.repoRoot), false);
             const completed = completedOutcome(
               step,
               { cwd: input.repoRoot, outputSchema } as SessionSpec,
-              text,
+              conversation,
             );
             recordInvocation(plan, step, {
               cwd: input.repoRoot,

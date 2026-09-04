@@ -315,6 +315,50 @@ describe("createT3SeatTurn", () => {
   });
 });
 
+describe("createT3SeatTurn reports provider settlement (the milestone the ephemeral legs emit)", () => {
+  // The round-report's diagnostic stream reads `provider-settled`. When the board seats
+  // moved onto threads it was the one milestone with no producer on this leg, so a slow
+  // sidecar turn and a slow host looked identical from outside.
+  const settlements = async (outcomes: T3SettledTurn[] | Error) => {
+    const seen: { outcome: string; elapsedMs: number }[] = [];
+    const seam = Array.isArray(outcomes)
+      ? stubs(outcomes).seam
+      : ({
+          client: async () => {
+            throw outcomes;
+          },
+          threadFor: async () => ({ threadId: "t-design", projectId: "p1" }),
+        } as unknown as T3SeatSeam);
+    const runTurn = createT3SeatTurn(seam, {
+      ...options,
+      onProviderSettled: ({ outcome, elapsedMs }) => seen.push({ outcome, elapsedMs }),
+    });
+    await runTurn("BASE PROMPT", 0);
+    return seen;
+  };
+
+  it("reports `completed` exactly once for a settled turn", async () => {
+    const seen = await settlements([settled({ structuredOutput: { a: 1 } })]);
+    expect(seen.map(({ outcome }) => outcome)).toEqual(["completed"]);
+    expect(seen[0]?.elapsedMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it("reports `failed` for a turn the sidecar settled as an error", async () => {
+    const seen = await settlements([settled({ state: "error", errorMessage: "provider died" })]);
+    expect(seen.map(({ outcome }) => outcome)).toEqual(["failed"]);
+  });
+
+  it("reports `cancelled` for an interrupted turn", async () => {
+    const seen = await settlements([settled({ state: "interrupted" })]);
+    expect(seen.map(({ outcome }) => outcome)).toEqual(["cancelled"]);
+  });
+
+  it("reports `threw` when the seam itself blows up, and still only once", async () => {
+    const seen = await settlements(new Error("the sidecar is gone"));
+    expect(seen.map(({ outcome }) => outcome)).toEqual(["threw"]);
+  });
+});
+
 describe("parseFinalMessageJson", () => {
   it("reads a fenced block, a bare object, and refuses prose", () => {
     expect(parseFinalMessageJson('```json\n{"a":1}\n```')).toEqual({ a: 1 });
