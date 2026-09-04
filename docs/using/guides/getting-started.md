@@ -340,6 +340,11 @@ with the cited lines into the same thread and opens the chat on the answer.
 Nothing the thread says stages anything: you stage an ask yourself, from the board,
 a line, or a highlighted span.
 
+Clicking a file the thread mentions opens it in **Diff**, Rennet's own viewer, at
+that file — not in a second file pane inside the chat. A file the review never
+captured is not a Diff destination, so those still open the chat's own viewer
+rather than moving you nowhere.
+
 ## Stage asks
 
 An **ask** is the staged unit of the hand-off: text, an intent (comment or
