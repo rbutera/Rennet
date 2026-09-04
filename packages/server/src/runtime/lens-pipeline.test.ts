@@ -5650,3 +5650,118 @@ describe("runLensPipeline — a citation past the change is an unresolvable-cita
     }
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// A leg with no thread cannot repair, and says so (Rai's ruling, 2026-09-04).
+// Every ephemeral turn opens a fresh `ephemeral: true` session, so a pointer-only
+// repair would reach a session that has never seen the draft. The lane used to settle
+// on the UNREPAIRED draft and read as though the ladder had run.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("a lint failure on a leg with no thread settles a typed failure, never the draft", () => {
+  /** A board whose finding cites a line outside the change — fails `unresolvable-citation`. */
+  const citingPast = (lens: string): DraftBoard => {
+    const base = cleanBody(lens);
+    const author = { kind: "lens-agent" as const, id: `${lens}-seat` };
+    return {
+      elements: [
+        ...base.elements.map((el) =>
+          el.kind === "finding" ? { ...el, data: { ...el.data, code: ["c-past"] } } : el,
+        ),
+        {
+          id: "c-past",
+          kind: "code_ref",
+          data: { author, path: "src/auth.ts", side: "head", start_line: 30, end_line: 31 },
+        },
+      ],
+    } as DraftBoard;
+  };
+  const lintContextForRegions = (lens: LintTarget): LintContext => ({
+    lens,
+    regions: [{ path: "src/auth.ts", side: "head", start: 10, end: 14 }],
+    files: new Map([["src/auth.ts", 200]]),
+    patchsetId: "ps-1",
+  });
+
+  const run = async (over: Partial<Parameters<typeof runLensPipeline>[0]>) => {
+    const captures: HarnessCapture[] = [];
+    const result = await runLensPipeline({
+      claudePort: fakeClaudePort(captures, (prompt, label) => {
+        const lens = lensFromPrompt(prompt, label);
+        return lens === "flagged" || lens === "design" ? citingPast(lens) : cleanBody(lens);
+      }),
+      codexExecutor: null,
+      repoRoot: "/pr-worktree",
+      deltaPacket: PACKET,
+      lintContextFor: lintContextForRegions,
+      readPrompt,
+      whiteboard: fakeWhiteboard([]),
+      boardIdFor: (lens) => `board:${lens}`,
+      ...over,
+    } as Parameters<typeof runLensPipeline>[0]);
+    return { result, captures };
+  };
+
+  it("settles the lane as a RETRYABLE failure naming the missing thread, and spends no turn on it", async () => {
+    const { result, captures } = await run({});
+    for (const lens of ["design", "flagged"] as const) {
+      const outcome = result.boards.find((board) => board.lens === lens);
+      expect(outcome?.board, `${lens} shipped a board`).toBeUndefined();
+      expect(outcome?.failure, lens).toContain("no thread to repair on");
+      // RETRYABLE: nothing about the lane is spent — a generation with a sidecar behind
+      // it can draft this lens again and repair it properly.
+      expect(outcome?.failureAccount?.classification, lens).toBe("retryable");
+      // The refusal happens BEFORE the turn: exactly one session per seat, the draft.
+      const turns = captures.filter(
+        ({ prompt, label }) => lensFromPrompt(prompt ?? "", label) === lens,
+      );
+      expect(turns, `${lens} spent a repair turn`).toHaveLength(1);
+      // …and no repair prompt was ever rendered.
+      expect(turns[0]?.prompt).not.toContain("Fix ONLY these issues");
+    }
+  });
+
+  it("the CODEX ephemeral leg refuses the same way (the Flagged lane's second seat)", async () => {
+    // Only the FLAGGED lane's Codex seat: with a Codex executor present the council routes
+    // other lenses to it too, and those lanes are not what this test is about.
+    const codexPrompts: string[] = [];
+    const { result } = await run({
+      codexExecutor: (async (req: { prompt: string; label?: string }) => {
+        const lens = lensFromPrompt(req.prompt, req.label);
+        if (lens === "flagged") codexPrompts.push(req.prompt);
+        return { output: lens === "flagged" ? citingPast(lens) : cleanBody(lens) };
+      }) as never,
+    });
+    const flagged = result.boards.find((board) => board.lens === "flagged");
+    expect(flagged?.board).toBeUndefined();
+    expect(flagged?.failure).toContain("no thread to repair on");
+    // One Codex turn: the draft. No repair was attempted on a session that could not hold one.
+    expect(codexPrompts).toHaveLength(1);
+    expect(codexPrompts[0]).not.toContain("Fix ONLY these issues");
+  });
+
+  it("CONTROL: the same seats settle boards when the citation resolves", () => {
+    // Proves the two tests above are about the missing THREAD and not about a fixture that
+    // can never pass lint: move the changed region to cover the cited lines and the very
+    // same boards settle, with no failure and no repair.
+    //
+    // What this control CANNOT show, stated rather than implied: it does not prove that a
+    // sidecar thread would have repaired the out-of-range citation. That path is the T3
+    // leg's, exercised by its own suite; here the claim is only that the refusal is caused
+    // by the leg, since nothing else about these lanes changed.
+    return run({
+      lintContextFor: (lens: LintTarget): LintContext => ({
+        lens,
+        regions: [{ path: "src/auth.ts", side: "head", start: 10, end: 40 }],
+        files: new Map([["src/auth.ts", 200]]),
+        patchsetId: "ps-1",
+      }),
+    }).then(({ result }) => {
+      for (const lens of ["design", "flagged"] as const) {
+        const outcome = result.boards.find((board) => board.lens === lens);
+        expect(outcome?.failure, lens).toBeUndefined();
+        expect(outcome?.board, lens).toBeDefined();
+      }
+    });
+  });
+});
