@@ -7,6 +7,7 @@ export * from "./benchmarks";
 export * from "./board";
 export * from "./commands";
 export * from "./delta";
+export * from "./design/bmad-model";
 export * from "./design/kiro-model";
 export * from "./design/superpowers-model";
 // Parked residue (B3 reconciliation 7): these surfaces have no contract folder
