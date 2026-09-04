@@ -37,7 +37,7 @@ import {
   OWNER_LOOP_SPEC,
   writeOwnerLoopScriptedHarnessPlan,
 } from "./owner-loop-proof-fixture";
-import { loadScriptedHarnessPlan } from "./scripted-harness-plan";
+import { loadScriptedHarnessPlan, loadScriptedT3Seats } from "./scripted-harness-plan";
 
 function git(root: string, ...args: string[]): string {
   return execFileSync("git", args, { cwd: root }).toString().trim();
@@ -305,6 +305,11 @@ describe("#685 owner loop through a real server", () => {
     seedTargetRepo(target);
     seedDecoyRepo(decoy);
     const { planPath, invocationLog } = writeOwnerLoopScriptedHarnessPlan(root);
+    // The board seats run on the sidecar and nowhere else (session-bound-workspace 5.7),
+    // so the same plan is served as SEAT THREADS: one thread per seat per generation, with
+    // every attempt a further turn on it. `scriptedSeats.threads` is what the assertions
+    // below read to see which seat opened which thread, and with what.
+    const scriptedSeats = loadScriptedT3Seats(planPath);
     vi.stubEnv("HOME", home);
     const env = {
       ...process.env,
@@ -317,6 +322,10 @@ describe("#685 owner loop through a real server", () => {
       dataDir,
       env,
       testHarnessPort: loadScriptedHarnessPlan(planPath),
+      // Two seams, two different turns. `testT3Seats` serves the BOARD seats as sidecar
+      // threads (5.7); `runHandoffTurn` serves the ROUND's coding turn on the session's
+      // bound workspace (5.6). Neither stands in for the other.
+      testT3Seats: scriptedSeats.resolve,
       runHandoffTurn: fakeT3RoundWorker(roundTurns),
     });
     shutdowns.push(first.shutdown);
@@ -378,6 +387,32 @@ describe("#685 owner loop through a real server", () => {
       initialGeneration,
       initial.activePatchsetId,
     );
+    // Every board that just landed came off a SIDECAR SEAT THREAD, one per seat, opened in
+    // the checkout the review is bound to — there is no ephemeral leg left for one to have
+    // taken (session-bound-workspace 5.7). The seam recorded the whole `threadFor` input,
+    // so the binding fields are asserted as the runtime actually passed them.
+    const seatsOfGeneration = scriptedSeats.threads.filter(({ threadId }) =>
+      threadId.includes(initialGeneration),
+    );
+    expect(seatsOfGeneration.map(({ seat }) => seat).sort()).toEqual([
+      "decisions",
+      "design",
+      "flagged-claude",
+      "noise",
+      "sequence",
+    ]);
+    for (const thread of seatsOfGeneration) {
+      expect(thread.created.provider, thread.seat).toBe("claudeAgent");
+      expect(thread.created.model, thread.seat).toEqual(expect.any(String));
+      // One turn per seat on a clean draft: the board passed lint, so no repair followed.
+      expect(thread.prompts, thread.seat).toHaveLength(1);
+      // The seat is pointed at the checkout and at its context directory, never handed
+      // the change: the drafting turn names the diff command and the directory, and the
+      // agent reads what it decides it needs.
+      expect(thread.prompts[0], thread.seat).toContain("git diff");
+      expect(thread.prompts[0], thread.seat).toContain(".rennet/context/");
+    }
+
     const missing = parseCommandOutput(
       "board.read",
       await first.dispatch("board.read", {
@@ -506,6 +541,10 @@ describe("#685 owner loop through a real server", () => {
       dataDir,
       env,
       testHarnessPort: loadScriptedHarnessPlan(planPath),
+      // Two seams, two different turns. `testT3Seats` serves the BOARD seats as sidecar
+      // threads (5.7); `runHandoffTurn` serves the ROUND's coding turn on the session's
+      // bound workspace (5.6). Neither stands in for the other.
+      testT3Seats: scriptedSeats.resolve,
       runHandoffTurn: fakeT3RoundWorker(roundTurns),
     });
     shutdowns.push(restarted.shutdown);
@@ -687,4 +726,72 @@ describe("#685 owner loop through a real server", () => {
     // makes the step load-bearing — deleting it takes this to 0, not to a silent floor.
     expect(records.filter((record) => record.stepId === "compose-work-order")).toHaveLength(2);
   }, 120_000);
+
+  // A dev daemon whose sidecar bundle is not built used to reach the lanes as
+  // "this caller composed no sidecar seam" — true of the composition, useless to whoever
+  // has to fix it. `create-server.ts` wires the seat runtime unconditionally now, so the
+  // supervisor's own answer is what the reader gets.
+  it("names the unbuilt sidecar bundle on every lane when no bundle path resolved", async () => {
+    const root = mkdtempSync(join(tmpdir(), "rennet-no-bundle-"));
+    const home = join(root, "home");
+    const dataDir = join(root, "data");
+    const workspace = join(root, "workspace");
+    mkdirSync(join(workspace, "target"), { recursive: true });
+    const target = realpathSync(join(workspace, "target"));
+    mkdirSync(home, { recursive: true });
+    mkdirSync(dataDir, { recursive: true });
+    dirs.push(root);
+    seedTargetRepo(target);
+    const { planPath } = writeOwnerLoopScriptedHarnessPlan(root);
+    vi.stubEnv("HOME", home);
+
+    // No `t3BundlePath` and no `testT3Seats`: exactly the shape a `pnpm dev` daemon has
+    // before `nx run t3code-server:build`. The scripted harness is still resolved, so the
+    // council routes normally and the ONLY thing missing is the sidecar.
+    const server = await createRennetServer({
+      dataDir,
+      env: { ...process.env, HOME: home, RENNET_DISABLE_HARNESS: "1" },
+      testHarnessPort: loadScriptedHarnessPlan(planPath),
+    });
+    shutdowns.push(server.shutdown);
+    const added = parseCommandOutput(
+      "projects.add",
+      await server.dispatch("projects.add", {
+        commandId: randomUUID(),
+        discovery: {
+          path: workspace,
+          kind: "workspace",
+          repos: [{ name: "target", path: target, branches: 2 }],
+          primaryBranch: "main",
+          source: "local",
+        },
+        includedRepos: ["target"],
+        primaryBranch: "main",
+      }),
+    );
+    await server.dispatch("project.process", {
+      commandId: commandIdFor(`project.process:${added.project.id}`),
+      projectId: added.project.id,
+    });
+    const minted = parseCommandOutput(
+      "session.mint",
+      await server.dispatch("session.mint", {
+        projectId: added.project.id,
+        commandId: randomUUID(),
+        branch: "feature/shared",
+        repository: "owner/target",
+      }),
+    );
+    // Preparation fails, because no lane can draft — and the reason it reports is the
+    // supervisor's own, per lens, not the composition's.
+    const reason = await waitForPreparedSession(server, minted.session?.id ?? "").then(
+      () => "the session prepared with no sidecar",
+      (error: unknown) => String(error),
+    );
+    for (const lens of LENS_KINDS) expect(reason, lens).toContain(`${lens}:`);
+    expect(reason).toContain("T3 sidecar unavailable");
+    // The CAUSE, not the composition: the path the reader has to build.
+    expect(reason).toContain("vendor/t3code/apps/server/dist/bin.mjs");
+    expect(reason).not.toContain("composed no sidecar seam");
+  }, 60_000);
 });

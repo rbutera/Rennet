@@ -28,6 +28,7 @@ import {
 } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { type BoardsRuntime, createBoardsRuntime } from "../boards/boards-runtime";
+import { withFakeT3Seats } from "../t3-seat-fake";
 import type { BoardArrivalEvent, BoardMeta } from "./lens-pipeline";
 import { buildRoundEvidenceManifest } from "./round-evidence-manifest";
 import {
@@ -45,7 +46,15 @@ import {
 
 /** A round packet — carries a successor account, so the pipeline drafts the report FIRST. */
 const ROUND_PACKET = {
-  patchset: { id: "ps-1", createdAt: "", truncated: false, files: [] },
+  patchset: {
+    id: "ps-1",
+    createdAt: "",
+    truncated: false,
+    files: [],
+    // The seat threads are titled from the session's claimed branch, falling back to this
+    // base ref, so a packet without it is not a packet a generation can draft over.
+    repository: { baseRef: "origin/main", baseOid: "base", headOid: "head" },
+  },
   successorAccount: { asks: [] },
 } as unknown as DeltaPacket;
 
@@ -493,12 +502,14 @@ describe("createRoundsRuntime", () => {
     const rootsWrittenFor = async (over: Partial<RoundInput>): Promise<readonly string[]> => {
       const calls: { root: string; sessionId: string }[] = [];
       const runtime = createRoundsRuntime(
-        baseDeps({
-          writeSessionContext: (root, sessionId) => {
-            calls.push({ root, sessionId });
-            return `${root}/.rennet/context/${sessionId}`;
-          },
-        }),
+        withFakeT3Seats(
+          baseDeps({
+            writeSessionContext: (root, sessionId) => {
+              calls.push({ root, sessionId });
+              return `${root}/.rennet/context/${sessionId}`;
+            },
+          }),
+        ),
       );
       await runtime.runRound(roundInput(over));
       expect(calls.length).toBeGreaterThan(0);
@@ -514,7 +525,7 @@ describe("createRoundsRuntime", () => {
   });
 
   it("records a RoundRecord pinning asks, commit range, minted+board generation, and report board", async () => {
-    const runtime = createRoundsRuntime(baseDeps());
+    const runtime = createRoundsRuntime(withFakeT3Seats(baseDeps()));
     const { record, boardGeneration, frozenPrevious } = await runtime.runRound(roundInput());
 
     expect(record.asksDispatched).toEqual(["t1", "t2"]);
@@ -540,16 +551,18 @@ describe("createRoundsRuntime", () => {
       readonly successorGeneration: string;
     }> = [];
     const runtime = createRoundsRuntime(
-      baseDeps({
-        persistGeneration: (generation) => {
-          order.push(`generation:${generation.id}`);
-        },
-        onGenerationTransition: (transition) => {
-          order.push("quote-transition");
-          transitions.push(transition);
-        },
-        recordRound: () => order.push("round-record"),
-      }),
+      withFakeT3Seats(
+        baseDeps({
+          persistGeneration: (generation) => {
+            order.push(`generation:${generation.id}`);
+          },
+          onGenerationTransition: (transition) => {
+            order.push("quote-transition");
+            transitions.push(transition);
+          },
+          recordRound: () => order.push("round-record"),
+        }),
+      ),
     );
 
     await runtime.runRound(
@@ -581,24 +594,26 @@ describe("createRoundsRuntime", () => {
     const order: string[] = [];
     const persisted: Generation[] = [];
     const runtime = createRoundsRuntime(
-      baseDeps({
-        resolveClaudePort: async () =>
-          fakeClaudePort([], (prompt, label) =>
-            lensFromPrompt(prompt, label) === "flagged"
-              ? ({
-                  elements: [{ id: "invalid", kind: "not-a-kind", data: {} }],
-                } as unknown as DraftBoard)
-              : cleanBody(lensFromPrompt(prompt, label)),
-          ),
-        persistGeneration: (generation) => {
-          order.push(`generation:${generation.id}`);
-          persisted.push(generation);
-        },
-        onGenerationTransition: () => {
-          order.push("quote-transition");
-        },
-        recordRound: () => order.push("round-record"),
-      }),
+      withFakeT3Seats(
+        baseDeps({
+          resolveClaudePort: async () =>
+            fakeClaudePort([], (prompt, label) =>
+              lensFromPrompt(prompt, label) === "flagged"
+                ? ({
+                    elements: [{ id: "invalid", kind: "not-a-kind", data: {} }],
+                  } as unknown as DraftBoard)
+                : cleanBody(lensFromPrompt(prompt, label)),
+            ),
+          persistGeneration: (generation) => {
+            order.push(`generation:${generation.id}`);
+            persisted.push(generation);
+          },
+          onGenerationTransition: () => {
+            order.push("quote-transition");
+          },
+          recordRound: () => order.push("round-record"),
+        }),
+      ),
     );
 
     await expect(
@@ -627,12 +642,14 @@ describe("createRoundsRuntime", () => {
     const generationStore = new GenerationStore(genDir);
     const roundStore = new RoundRecordStore(roundDir);
     const runtime = createRoundsRuntime(
-      baseDeps({
-        persistGeneration: (gen) => generationStore.save(gen),
-        recordRound: (sessionId, record) => roundStore.record(sessionId, record),
-        readRounds: (sessionId) => roundStore.read(sessionId),
-        loadGeneration: (id) => generationStore.load(id),
-      }),
+      withFakeT3Seats(
+        baseDeps({
+          persistGeneration: (gen) => generationStore.save(gen),
+          recordRound: (sessionId, record) => roundStore.record(sessionId, record),
+          readRounds: (sessionId) => roundStore.read(sessionId),
+          loadGeneration: (id) => generationStore.load(id),
+        }),
+      ),
     );
     // The prior generation carries a real drafted board, so drilling back reaches boards.
     const priorWithBoards: Generation = {
@@ -649,7 +666,7 @@ describe("createRoundsRuntime", () => {
 
     // Both generations are reachable by id from a fresh store instance (restart-durable).
     const reader = createRoundsRuntime(
-      baseDeps({ loadGeneration: (id) => new GenerationStore(genDir).load(id) }),
+      withFakeT3Seats(baseDeps({ loadGeneration: (id) => new GenerationStore(genDir).load(id) })),
     );
     const frozen = reader.generation("gen:ps-0");
     const live = reader.generation("gen:ps-1");
@@ -679,20 +696,22 @@ describe("createRoundsRuntime", () => {
       elements: [outcome("o1", "addressed"), outcome("o2", "partial"), outcome("o3", "untouched")],
     } as unknown as DraftBoard;
     const runtime = createRoundsRuntime(
-      baseDeps({
-        // The report seat's own turn AND its post-process pass both answer the report
-        // board — otherwise the editor pass would hand back prose and the typed outcomes
-        // would read as dropped. (The lens drafters receive the report as CONTEXT, so the
-        // post-process branch is keyed on the file it is polishing, not on the context.)
-        resolveClaudePort: async () =>
-          fakeClaudePort([], (prompt, label) => {
-            const polishingReport =
-              prompt.includes("prompts/post-process.md") && prompt.includes("round_outcome");
-            return prompt.includes("prompts/report.md") || polishingReport
-              ? reportBoard
-              : cleanBody(lensFromPrompt(prompt, label));
-          }),
-      }),
+      withFakeT3Seats(
+        baseDeps({
+          // The report seat's own turn AND its post-process pass both answer the report
+          // board — otherwise the editor pass would hand back prose and the typed outcomes
+          // would read as dropped. (The lens drafters receive the report as CONTEXT, so the
+          // post-process branch is keyed on the file it is polishing, not on the context.)
+          resolveClaudePort: async () =>
+            fakeClaudePort([], (prompt, label) => {
+              const polishingReport =
+                prompt.includes("prompts/post-process.md") && prompt.includes("round_outcome");
+              return prompt.includes("prompts/report.md") || polishingReport
+                ? reportBoard
+                : cleanBody(lensFromPrompt(prompt, label));
+            }),
+        }),
+      ),
     );
     const { record } = await runtime.runRound(roundInput({ asksDispatched: ["t1", "t2", "t3"] }));
     expect(record.asksDispatched).toHaveLength(3);
@@ -701,7 +720,7 @@ describe("createRoundsRuntime", () => {
 
   it("a round whose report never drafted records NO rework count, not a zero", async () => {
     // No report seat resolves ⇒ no report board ⇒ the count is honestly unknown.
-    const runtime = createRoundsRuntime(baseDeps());
+    const runtime = createRoundsRuntime(withFakeT3Seats(baseDeps()));
     const { record, pipeline } = await runtime.runRound(roundInput());
     // (The fake report board carries no `round_outcome` items, so the count is a real 0.)
     expect(record.reworkCount).toBe(0);
@@ -773,15 +792,17 @@ describe("createRoundsRuntime", () => {
       loadGeneration: (id: string) => generations.load(id),
     } satisfies Partial<RoundsRuntimeDeps>;
     const firstRuntime = createRoundsRuntime(
-      baseDeps({
-        ...durableDeps,
-        resolveClaudePort: async () =>
-          fakeClaudePort(firstCaptures, (prompt, label) =>
-            lensFromPrompt(prompt, label) === "report"
-              ? classification
-              : cleanBody(lensFromPrompt(prompt, label)),
-          ),
-      }),
+      withFakeT3Seats(
+        baseDeps({
+          ...durableDeps,
+          resolveClaudePort: async () =>
+            fakeClaudePort(firstCaptures, (prompt, label) =>
+              lensFromPrompt(prompt, label) === "report"
+                ? classification
+                : cleanBody(lensFromPrompt(prompt, label)),
+            ),
+        }),
+      ),
     );
     const input = roundInput({
       repoRoot,
@@ -808,16 +829,18 @@ describe("createRoundsRuntime", () => {
     const retryCaptures: { prompt?: string }[] = [];
     const progress: RoundEvent[] = [];
     const recovered = await createRoundsRuntime(
-      baseDeps({
-        ...durableDeps,
-        resolveClaudePort: async () =>
-          fakeClaudePort(retryCaptures, (prompt, label) => {
-            if (lensFromPrompt(prompt, label) === "report") {
-              throw new Error("a persisted report must not open another provider turn");
-            }
-            return cleanBody(lensFromPrompt(prompt, label));
-          }),
-      }),
+      withFakeT3Seats(
+        baseDeps({
+          ...durableDeps,
+          resolveClaudePort: async () =>
+            fakeClaudePort(retryCaptures, (prompt, label) => {
+              if (lensFromPrompt(prompt, label) === "report") {
+                throw new Error("a persisted report must not open another provider turn");
+              }
+              return cleanBody(lensFromPrompt(prompt, label));
+            }),
+        }),
+      ),
     ).runRound({
       ...input,
       draftPlan: { generation: attempt.id, boardIds },
@@ -927,7 +950,7 @@ describe("createRoundsRuntime", () => {
 
     const firstCaptures: { prompt?: string }[] = [];
     await expect(
-      createRoundsRuntime(withClassifier(firstCaptures)).runRound(input),
+      createRoundsRuntime(withFakeT3Seats(withClassifier(firstCaptures))).runRound(input),
     ).rejects.toThrow("crash before report projection");
     expect(
       firstCaptures.filter(({ prompt }) => prompt?.includes("prompts/report.md")),
@@ -935,7 +958,9 @@ describe("createRoundsRuntime", () => {
     expect(meta.load(boardIds.report)).toBeUndefined();
 
     const secondCaptures: { prompt?: string }[] = [];
-    const recovered = await createRoundsRuntime(withClassifier(secondCaptures)).runRound(input);
+    const recovered = await createRoundsRuntime(
+      withFakeT3Seats(withClassifier(secondCaptures)),
+    ).runRound(input);
 
     // The provider call repeats — that is explicitly allowed, and NOT what is exactly-once.
     expect(
@@ -1056,7 +1081,7 @@ describe("createRoundsRuntime", () => {
 
     const firstCaptures: { prompt?: string }[] = [];
     await expect(
-      createRoundsRuntime(withClassifier(firstCaptures)).runRound(input),
+      createRoundsRuntime(withFakeT3Seats(withClassifier(firstCaptures))).runRound(input),
     ).rejects.toThrow("crash before report apply");
     expect(
       firstCaptures.filter(({ prompt }) => prompt?.includes("prompts/report.md")),
@@ -1066,7 +1091,9 @@ describe("createRoundsRuntime", () => {
     expect(meta.load(boardIds.report)).toBeUndefined();
 
     const secondCaptures: { prompt?: string }[] = [];
-    const recovered = await createRoundsRuntime(withClassifier(secondCaptures)).runRound(input);
+    const recovered = await createRoundsRuntime(
+      withFakeT3Seats(withClassifier(secondCaptures)),
+    ).runRound(input);
 
     // Two provider calls across the two runs — explicitly allowed, and NOT what is
     // exactly-once. Exactly one projection is.
@@ -1105,7 +1132,7 @@ describe("createRoundsRuntime", () => {
       loadGeneration: (id: string) => generations.load(id),
     } satisfies Partial<RoundsRuntimeDeps>;
 
-    await createRoundsRuntime(baseDeps(durableDeps)).runRound(input);
+    await createRoundsRuntime(withFakeT3Seats(baseDeps(durableDeps))).runRound(input);
     expect(LENS_KINDS.every((lens) => meta.load(boardIds[lens])?.lens === lens)).toBe(true);
     expect(meta.load(boardIds.report)?.lens).toBe("report");
     meta.remove(boardIds.report);
@@ -1113,10 +1140,12 @@ describe("createRoundsRuntime", () => {
 
     const captures: { prompt?: string }[] = [];
     const recovered = await createRoundsRuntime(
-      baseDeps({
-        ...durableDeps,
-        resolveClaudePort: async () => fakeClaudePort(captures),
-      }),
+      withFakeT3Seats(
+        baseDeps({
+          ...durableDeps,
+          resolveClaudePort: async () => fakeClaudePort(captures),
+        }),
+      ),
     ).runRound(input);
 
     expect(captures.some(({ prompt }) => prompt?.includes("prompts/report.md"))).toBe(true);
@@ -1140,20 +1169,22 @@ describe("createRoundsRuntime", () => {
     });
     let crashBeforeSequenceMeta = true;
     const first = createRoundsRuntime(
-      baseDeps({
-        boardsRuntimeFor: () => boards,
-        persistBoardMeta: (_repo, record) => {
-          if (record.lens === "sequence" && crashBeforeSequenceMeta) {
-            crashBeforeSequenceMeta = false;
-            throw new Error("crash before Sequence BoardMeta");
-          }
-          meta.save(record);
-        },
-        loadDraftedBoards: (_repo, sessionId, generation) =>
-          meta.listForGeneration(sessionId, generation),
-        persistGeneration: (generation) => generations.save(generation),
-        loadGeneration: (id) => generations.load(id),
-      }),
+      withFakeT3Seats(
+        baseDeps({
+          boardsRuntimeFor: () => boards,
+          persistBoardMeta: (_repo, record) => {
+            if (record.lens === "sequence" && crashBeforeSequenceMeta) {
+              crashBeforeSequenceMeta = false;
+              throw new Error("crash before Sequence BoardMeta");
+            }
+            meta.save(record);
+          },
+          loadDraftedBoards: (_repo, sessionId, generation) =>
+            meta.listForGeneration(sessionId, generation),
+          persistGeneration: (generation) => generations.save(generation),
+          loadGeneration: (id) => generations.load(id),
+        }),
+      ),
     );
 
     await expect(first.runRound(input)).rejects.toThrow("crash before Sequence BoardMeta");
@@ -1177,19 +1208,21 @@ describe("createRoundsRuntime", () => {
     const recoveryBoardsRuntime = () => ({ ...boards, service: recoveryService });
     const captures: { prompt?: string }[] = [];
     const recovered = await createRoundsRuntime(
-      baseDeps({
-        boardsRuntimeFor: recoveryBoardsRuntime,
-        resolveClaudePort: async () => fakeClaudePort(captures),
-        persistBoardMeta: (_repo, record) => meta.save(record),
-        removeBoardMeta: (_repo, boardId) => {
-          recoveryOrder.push(`remove:${boardId}`);
-          meta.remove(boardId);
-        },
-        loadDraftedBoards: (_repo, sessionId, generation) =>
-          meta.listForGeneration(sessionId, generation),
-        persistGeneration: (generation) => generations.save(generation),
-        loadGeneration: (id) => generations.load(id),
-      }),
+      withFakeT3Seats(
+        baseDeps({
+          boardsRuntimeFor: recoveryBoardsRuntime,
+          resolveClaudePort: async () => fakeClaudePort(captures),
+          persistBoardMeta: (_repo, record) => meta.save(record),
+          removeBoardMeta: (_repo, boardId) => {
+            recoveryOrder.push(`remove:${boardId}`);
+            meta.remove(boardId);
+          },
+          loadDraftedBoards: (_repo, sessionId, generation) =>
+            meta.listForGeneration(sessionId, generation),
+          persistGeneration: (generation) => generations.save(generation),
+          loadGeneration: (id) => generations.load(id),
+        }),
+      ),
     ).runRound(input);
 
     for (const boardId of Object.values(boardIds)) {
@@ -1211,24 +1244,26 @@ describe("createRoundsRuntime", () => {
     );
     const input = roundInput();
     const first = await createRoundsRuntime(
-      baseDeps({
-        resolveClaudePort: async () =>
-          fakeClaudePort([], (prompt, label) => {
-            const lens = lensFromPrompt(prompt, label);
-            if (lens === "design") return { absence: "no-spec" };
-            if (
-              lens === "decisions" ||
-              lens === "flagged" ||
-              (lens === "post-process" && prompt.includes('"elements":[]'))
-            ) {
-              return { elements: [] } as unknown as DraftBoard;
-            }
-            return cleanBody(lens);
-          }),
-        persistBoardMeta: (_repo, record) => meta.save(record),
-        persistGeneration: (generation) => generations.save(generation),
-        loadGeneration: (id) => generations.load(id),
-      }),
+      withFakeT3Seats(
+        baseDeps({
+          resolveClaudePort: async () =>
+            fakeClaudePort([], (prompt, label) => {
+              const lens = lensFromPrompt(prompt, label);
+              if (lens === "design") return { absence: "no-spec" };
+              if (
+                lens === "decisions" ||
+                lens === "flagged" ||
+                (lens === "post-process" && prompt.includes('"elements":[]'))
+              ) {
+                return { elements: [] } as unknown as DraftBoard;
+              }
+              return cleanBody(lens);
+            }),
+          persistBoardMeta: (_repo, record) => meta.save(record),
+          persistGeneration: (generation) => generations.save(generation),
+          loadGeneration: (id) => generations.load(id),
+        }),
+      ),
     ).runRound(input);
     expect(first.boardGeneration.absentLenses?.design).toBe("no-spec");
     expect(first.boardGeneration.absentLenses?.decisions).toBe("no-decisions");
@@ -1236,15 +1271,17 @@ describe("createRoundsRuntime", () => {
     expect(first.boardGeneration.lensBoards.sequence).toBeDefined();
 
     const recovered = await createRoundsRuntime(
-      baseDeps({
-        resolveClaudePort: async () => {
-          throw new Error("complete evidence must reconstruct without a model");
-        },
-        loadDraftedBoards: (_repo, sessionId, generation) =>
-          meta.listForGeneration(sessionId, generation),
-        persistGeneration: (generation) => generations.save(generation),
-        loadGeneration: (id) => generations.load(id),
-      }),
+      withFakeT3Seats(
+        baseDeps({
+          resolveClaudePort: async () => {
+            throw new Error("complete evidence must reconstruct without a model");
+          },
+          loadDraftedBoards: (_repo, sessionId, generation) =>
+            meta.listForGeneration(sessionId, generation),
+          persistGeneration: (generation) => generations.save(generation),
+          loadGeneration: (id) => generations.load(id),
+        }),
+      ),
     ).runRound(input);
 
     expect(recovered.pipeline.boards.find((outcome) => outcome.lens === "design")?.absence).toBe(
@@ -1270,18 +1307,20 @@ describe("createRoundsRuntime", () => {
     const generations = new GenerationStore(mkdtempSync(join(tmpdir(), "rounds-account-gen-")));
     const input = roundInput();
     const first = await createRoundsRuntime(
-      baseDeps({
-        resolveClaudePort: async () =>
-          fakeClaudePort([], (prompt, label) => {
-            const lens = lensFromPrompt(prompt, label);
-            // The Noise seat completes every turn WITHOUT emitting — the production
-            // no-board shape, which spends the ladder and settles terminal.
-            return lens === "noise" ? undefined : cleanBody(lens);
-          }),
-        persistBoardMeta: (_repo, record) => meta.save(record),
-        persistGeneration: (generation) => generations.save(generation),
-        loadGeneration: (id) => generations.load(id),
-      }),
+      withFakeT3Seats(
+        baseDeps({
+          resolveClaudePort: async () =>
+            fakeClaudePort([], (prompt, label) => {
+              const lens = lensFromPrompt(prompt, label);
+              // The Noise seat completes every turn WITHOUT emitting — the production
+              // no-board shape, which spends the ladder and settles terminal.
+              return lens === "noise" ? undefined : cleanBody(lens);
+            }),
+          persistBoardMeta: (_repo, record) => meta.save(record),
+          persistGeneration: (generation) => generations.save(generation),
+          loadGeneration: (id) => generations.load(id),
+        }),
+      ),
     ).runRound(input);
 
     const drafted = first.pipeline.boards.find((outcome) => outcome.lens === "noise");
@@ -1291,15 +1330,17 @@ describe("createRoundsRuntime", () => {
 
     // A FRESH runtime over the same on-disk evidence: no model, nothing in memory.
     const recovered = await createRoundsRuntime(
-      baseDeps({
-        resolveClaudePort: async () => {
-          throw new Error("complete evidence must reconstruct without a model");
-        },
-        loadDraftedBoards: (_repo, sessionId, generation) =>
-          meta.listForGeneration(sessionId, generation),
-        persistGeneration: (generation) => generations.save(generation),
-        loadGeneration: (id) => generations.load(id),
-      }),
+      withFakeT3Seats(
+        baseDeps({
+          resolveClaudePort: async () => {
+            throw new Error("complete evidence must reconstruct without a model");
+          },
+          loadDraftedBoards: (_repo, sessionId, generation) =>
+            meta.listForGeneration(sessionId, generation),
+          persistGeneration: (generation) => generations.save(generation),
+          loadGeneration: (id) => generations.load(id),
+        }),
+      ),
     ).runRound(input);
 
     const restored = recovered.pipeline.boards.find((outcome) => outcome.lens === "noise");
@@ -1327,17 +1368,19 @@ describe("createRoundsRuntime", () => {
       const generations = new GenerationStore(mkdtempSync(join(tmpdir(), "rounds-restart-gen-")));
       const input = roundInput();
       const first = await createRoundsRuntime(
-        baseDeps({
-          resolveClaudePort: async () =>
-            fakeClaudePort([], (prompt, label) => {
-              const lens = lensFromPrompt(prompt, label);
-              // The production no-board shape: the seat completes without emitting.
-              return lens === "noise" ? undefined : cleanBody(lens);
-            }),
-          persistBoardMeta: (_repo, record) => meta.save(record),
-          persistGeneration: (generation) => generations.save(generation),
-          loadGeneration: (id) => generations.load(id),
-        }),
+        withFakeT3Seats(
+          baseDeps({
+            resolveClaudePort: async () =>
+              fakeClaudePort([], (prompt, label) => {
+                const lens = lensFromPrompt(prompt, label);
+                // The production no-board shape: the seat completes without emitting.
+                return lens === "noise" ? undefined : cleanBody(lens);
+              }),
+            persistBoardMeta: (_repo, record) => meta.save(record),
+            persistGeneration: (generation) => generations.save(generation),
+            loadGeneration: (id) => generations.load(id),
+          }),
+        ),
       ).runRound(input);
 
       const settled = first.boardGeneration;
@@ -1356,19 +1399,21 @@ describe("createRoundsRuntime", () => {
       // so "did the lens re-draft?" is answered by whether a board arrives.
       let noiseTurns = 0;
       const recovered = await createRoundsRuntime(
-        baseDeps({
-          resolveClaudePort: async () =>
-            fakeClaudePort([], (prompt, label) => {
-              const lens = lensFromPrompt(prompt, label);
-              if (lens === "noise") noiseTurns += 1;
-              return cleanBody(lens);
-            }),
-          persistBoardMeta: (_repo, record) => meta.save(record),
-          loadDraftedBoards: (_repo, sessionId, generation) =>
-            meta.listForGeneration(sessionId, generation),
-          persistGeneration: (generation) => generations.save(generation),
-          loadGeneration: (id) => generations.load(id),
-        }),
+        withFakeT3Seats(
+          baseDeps({
+            resolveClaudePort: async () =>
+              fakeClaudePort([], (prompt, label) => {
+                const lens = lensFromPrompt(prompt, label);
+                if (lens === "noise") noiseTurns += 1;
+                return cleanBody(lens);
+              }),
+            persistBoardMeta: (_repo, record) => meta.save(record),
+            loadDraftedBoards: (_repo, sessionId, generation) =>
+              meta.listForGeneration(sessionId, generation),
+            persistGeneration: (generation) => generations.save(generation),
+            loadGeneration: (id) => generations.load(id),
+          }),
+        ),
       ).runRound(input);
 
       const noise = recovered.pipeline.boards.find((outcome) => outcome.lens === "noise");
@@ -1398,17 +1443,19 @@ describe("createRoundsRuntime", () => {
     );
     const input = roundInput();
     const first = await createRoundsRuntime(
-      baseDeps({
-        resolveClaudePort: async () =>
-          fakeClaudePort([], (prompt, label) =>
-            lensFromPrompt(prompt, label) === "noise"
-              ? undefined
-              : cleanBody(lensFromPrompt(prompt, label)),
-          ),
-        persistBoardMeta: (_repo, record) => meta.save(record),
-        persistGeneration: (generation) => generations.save(generation),
-        loadGeneration: (id) => generations.load(id),
-      }),
+      withFakeT3Seats(
+        baseDeps({
+          resolveClaudePort: async () =>
+            fakeClaudePort([], (prompt, label) =>
+              lensFromPrompt(prompt, label) === "noise"
+                ? undefined
+                : cleanBody(lensFromPrompt(prompt, label)),
+            ),
+          persistBoardMeta: (_repo, record) => meta.save(record),
+          persistGeneration: (generation) => generations.save(generation),
+          loadGeneration: (id) => generations.load(id),
+        }),
+      ),
     ).runRound(input);
     const settled = first.boardGeneration;
     expect(settled.failedLensAccounts?.noise).toBeDefined();
@@ -1425,18 +1472,20 @@ describe("createRoundsRuntime", () => {
     // could freeze, and the state a later reader would find.
     const snapshots: Generation[] = [];
     await createRoundsRuntime(
-      baseDeps({
-        resolveClaudePort: async () =>
-          fakeClaudePort([], (prompt, label) => cleanBody(lensFromPrompt(prompt, label))),
-        persistBoardMeta: (_repo, record) => meta.save(record),
-        loadDraftedBoards: (_repo, sessionId, generation) =>
-          meta.listForGeneration(sessionId, generation),
-        persistGeneration: (generation) => {
-          snapshots.push(generation);
-          generations.save(generation);
-        },
-        loadGeneration: (id) => generations.load(id),
-      }),
+      withFakeT3Seats(
+        baseDeps({
+          resolveClaudePort: async () =>
+            fakeClaudePort([], (prompt, label) => cleanBody(lensFromPrompt(prompt, label))),
+          persistBoardMeta: (_repo, record) => meta.save(record),
+          loadDraftedBoards: (_repo, sessionId, generation) =>
+            meta.listForGeneration(sessionId, generation),
+          persistGeneration: (generation) => {
+            snapshots.push(generation);
+            generations.save(generation);
+          },
+          loadGeneration: (id) => generations.load(id),
+        }),
+      ),
     ).runRound(input);
 
     expect(snapshots.length).toBeGreaterThan(0);
@@ -1488,15 +1537,17 @@ describe("createRoundsRuntime", () => {
 
       await expect(
         createRoundsRuntime(
-          baseDeps({
-            ...durableDeps,
-            resolveClaudePort: async () =>
-              fakeClaudePort([], (prompt, label) =>
-                lensFromPrompt(prompt, label) === failedCoreLens
-                  ? invalid
-                  : cleanBody(lensFromPrompt(prompt, label)),
-              ),
-          }),
+          withFakeT3Seats(
+            baseDeps({
+              ...durableDeps,
+              resolveClaudePort: async () =>
+                fakeClaudePort([], (prompt, label) =>
+                  lensFromPrompt(prompt, label) === failedCoreLens
+                    ? invalid
+                    : cleanBody(lensFromPrompt(prompt, label)),
+                ),
+            }),
+          ),
         ).runRound(input),
       ).rejects.toThrow(`required core lens ${failedCoreLens}`);
 
@@ -1509,10 +1560,12 @@ describe("createRoundsRuntime", () => {
 
       const retryCaptures: { prompt?: string }[] = [];
       const recovered = await createRoundsRuntime(
-        baseDeps({
-          ...durableDeps,
-          resolveClaudePort: async () => fakeClaudePort(retryCaptures),
-        }),
+        withFakeT3Seats(
+          baseDeps({
+            ...durableDeps,
+            resolveClaudePort: async () => fakeClaudePort(retryCaptures),
+          }),
+        ),
       ).runRound(input);
 
       expect(
@@ -1525,12 +1578,14 @@ describe("createRoundsRuntime", () => {
       expect(recovered.record.boardGeneration).toBe("gen:ps-1");
 
       const reconstructed = await createRoundsRuntime(
-        baseDeps({
-          ...durableDeps,
-          resolveClaudePort: async () => {
-            throw new Error("successful core evidence must reconstruct without a model");
-          },
-        }),
+        withFakeT3Seats(
+          baseDeps({
+            ...durableDeps,
+            resolveClaudePort: async () => {
+              throw new Error("successful core evidence must reconstruct without a model");
+            },
+          }),
+        ),
       ).runRound(input);
 
       expect(reconstructed.boardGeneration.lensBoards[failedCoreLens]).toBe(
@@ -1545,19 +1600,21 @@ describe("createRoundsRuntime", () => {
       mkdtempSync(join(tmpdir(), "rounds-failure-generation-")),
     );
     const first = await createRoundsRuntime(
-      baseDeps({
-        resolveClaudePort: async () =>
-          fakeClaudePort([], (prompt, label) =>
-            lensFromPrompt(prompt, label) === "design"
-              ? ({
-                  elements: [{ id: "invalid", kind: "not-a-kind", data: {} }],
-                } as unknown as DraftBoard)
-              : cleanBody(lensFromPrompt(prompt, label)),
-          ),
-        persistBoardMeta: (_repo, record) => meta.save(record),
-        persistGeneration: (generation) => generations.save(generation),
-        loadGeneration: (id) => generations.load(id),
-      }),
+      withFakeT3Seats(
+        baseDeps({
+          resolveClaudePort: async () =>
+            fakeClaudePort([], (prompt, label) =>
+              lensFromPrompt(prompt, label) === "design"
+                ? ({
+                    elements: [{ id: "invalid", kind: "not-a-kind", data: {} }],
+                  } as unknown as DraftBoard)
+                : cleanBody(lensFromPrompt(prompt, label)),
+            ),
+          persistBoardMeta: (_repo, record) => meta.save(record),
+          persistGeneration: (generation) => generations.save(generation),
+          loadGeneration: (id) => generations.load(id),
+        }),
+      ),
     ).runRound(roundInput());
     const firstFailure = first.pipeline.boards.find(({ lens }) => lens === "design")?.failure;
     expect(firstFailure).toEqual(expect.any(String));
@@ -1565,14 +1622,16 @@ describe("createRoundsRuntime", () => {
     expect(Object.keys(first.boardGeneration.lensBoards)).toHaveLength(4);
 
     const recovered = await createRoundsRuntime(
-      baseDeps({
-        resolveClaudePort: async () => {
-          throw new Error("complete failure evidence must reconstruct without a model");
-        },
-        loadDraftedBoards: (_repo, sessionId, generation) =>
-          meta.listForGeneration(sessionId, generation),
-        loadGeneration: (id) => generations.load(id),
-      }),
+      withFakeT3Seats(
+        baseDeps({
+          resolveClaudePort: async () => {
+            throw new Error("complete failure evidence must reconstruct without a model");
+          },
+          loadDraftedBoards: (_repo, sessionId, generation) =>
+            meta.listForGeneration(sessionId, generation),
+          loadGeneration: (id) => generations.load(id),
+        }),
+      ),
     ).runRound(roundInput());
 
     expect(recovered.pipeline.boards.map(({ lens }) => lens)).toEqual([...LENS_KINDS]);
@@ -1588,11 +1647,13 @@ describe("createRoundsRuntime", () => {
       mkdtempSync(join(tmpdir(), "rounds-settled-generation-")),
     );
     const seeded = await createRoundsRuntime(
-      baseDeps({
-        persistBoardMeta: (_repo, record) => meta.save(record),
-        persistGeneration: (generation) => generations.save(generation),
-        loadGeneration: (id) => generations.load(id),
-      }),
+      withFakeT3Seats(
+        baseDeps({
+          persistBoardMeta: (_repo, record) => meta.save(record),
+          persistGeneration: (generation) => generations.save(generation),
+          loadGeneration: (id) => generations.load(id),
+        }),
+      ),
     ).runRound(roundInput());
     const fourBoards = { ...seeded.boardGeneration.lensBoards };
     delete fourBoards.flagged;
@@ -1601,17 +1662,19 @@ describe("createRoundsRuntime", () => {
     const captures: { prompt?: string }[] = [];
 
     const recovered = await createRoundsRuntime(
-      baseDeps({
-        resolveClaudePort: async () => fakeClaudePort(captures),
-        loadDraftedBoards: (_repo, sessionId, generation) =>
-          meta.listForGeneration(sessionId, generation),
-        persistBoardMeta: (_repo, record) => meta.save(record),
-        persistGeneration: (generation) => {
-          if (generation.draftingBoardIds !== undefined) attemptWrites += 1;
-          generations.save(generation);
-        },
-        loadGeneration: (id) => generations.load(id),
-      }),
+      withFakeT3Seats(
+        baseDeps({
+          resolveClaudePort: async () => fakeClaudePort(captures),
+          loadDraftedBoards: (_repo, sessionId, generation) =>
+            meta.listForGeneration(sessionId, generation),
+          persistBoardMeta: (_repo, record) => meta.save(record),
+          persistGeneration: (generation) => {
+            if (generation.draftingBoardIds !== undefined) attemptWrites += 1;
+            generations.save(generation);
+          },
+          loadGeneration: (id) => generations.load(id),
+        }),
+      ),
     ).runRound(roundInput());
 
     expect(attemptWrites).toBeGreaterThan(0);
@@ -1620,14 +1683,16 @@ describe("createRoundsRuntime", () => {
     expect(recovered.boardGeneration.lensBoards.flagged).toBeDefined();
 
     const reconstructed = await createRoundsRuntime(
-      baseDeps({
-        resolveClaudePort: async () => {
-          throw new Error("complete replacement evidence must reconstruct without a model");
-        },
-        loadDraftedBoards: (_repo, sessionId, generation) =>
-          meta.listForGeneration(sessionId, generation),
-        loadGeneration: (id) => generations.load(id),
-      }),
+      withFakeT3Seats(
+        baseDeps({
+          resolveClaudePort: async () => {
+            throw new Error("complete replacement evidence must reconstruct without a model");
+          },
+          loadDraftedBoards: (_repo, sessionId, generation) =>
+            meta.listForGeneration(sessionId, generation),
+          loadGeneration: (id) => generations.load(id),
+        }),
+      ),
     ).runRound(roundInput());
 
     expect(reconstructed.pipeline.boards.map(({ lens }) => lens)).toEqual([...LENS_KINDS]);
@@ -1657,15 +1722,17 @@ describe("createRoundsRuntime", () => {
     const captures: { prompt?: string }[] = [];
 
     const recovered = await createRoundsRuntime(
-      baseDeps({
-        resolveClaudePort: async () => fakeClaudePort(captures),
-        loadDraftedBoards: () => [],
-        persistGeneration: (generation) => {
-          if (generation.draftingBoardIds !== undefined) attemptWrites += 1;
-          generations.save(generation);
-        },
-        loadGeneration: (id) => generations.load(id),
-      }),
+      withFakeT3Seats(
+        baseDeps({
+          resolveClaudePort: async () => fakeClaudePort(captures),
+          loadDraftedBoards: () => [],
+          persistGeneration: (generation) => {
+            if (generation.draftingBoardIds !== undefined) attemptWrites += 1;
+            generations.save(generation);
+          },
+          loadGeneration: (id) => generations.load(id),
+        }),
+      ),
     ).runRound(roundInput());
 
     expect(attemptWrites).toBeGreaterThan(0);
@@ -1683,11 +1750,13 @@ describe("createRoundsRuntime", () => {
       mkdtempSync(join(tmpdir(), "rounds-partial-generation-")),
     );
     const seeded = await createRoundsRuntime(
-      baseDeps({
-        persistBoardMeta: (_repo, meta) => completeMeta.save(meta),
-        persistGeneration: (generation) => generationStore.save(generation),
-        loadGeneration: (id) => generationStore.load(id),
-      }),
+      withFakeT3Seats(
+        baseDeps({
+          persistBoardMeta: (_repo, meta) => completeMeta.save(meta),
+          persistGeneration: (generation) => generationStore.save(generation),
+          loadGeneration: (id) => generationStore.load(id),
+        }),
+      ),
     ).runRound(roundInput());
     for (const meta of completeMeta.list()) {
       if (meta.lens !== "flagged") partialMeta.save(meta);
@@ -1701,17 +1770,19 @@ describe("createRoundsRuntime", () => {
     const captures: { prompt?: string }[] = [];
     const recoveryWrites: LintTarget[] = [];
     const recovered = await createRoundsRuntime(
-      baseDeps({
-        resolveClaudePort: async () => fakeClaudePort(captures),
-        persistBoardMeta: (_repo, meta) => {
-          recoveryWrites.push(meta.lens);
-          partialMeta.save(meta);
-        },
-        loadDraftedBoards: (_repo, session, generation) =>
-          partialMeta.listForGeneration(session, generation),
-        persistGeneration: (generation) => generationStore.save(generation),
-        loadGeneration: (id) => generationStore.load(id),
-      }),
+      withFakeT3Seats(
+        baseDeps({
+          resolveClaudePort: async () => fakeClaudePort(captures),
+          persistBoardMeta: (_repo, meta) => {
+            recoveryWrites.push(meta.lens);
+            partialMeta.save(meta);
+          },
+          loadDraftedBoards: (_repo, session, generation) =>
+            partialMeta.listForGeneration(session, generation),
+          persistGeneration: (generation) => generationStore.save(generation),
+          loadGeneration: (id) => generationStore.load(id),
+        }),
+      ),
     ).runRound(roundInput());
 
     expect(captures.some(({ prompt }) => prompt?.includes("prompts/flagged.md"))).toBe(true);
@@ -1719,15 +1790,17 @@ describe("createRoundsRuntime", () => {
     expect(recovered.boardGeneration.lensBoards.flagged).toBeDefined();
 
     const reconstructed = await createRoundsRuntime(
-      baseDeps({
-        resolveClaudePort: async () => {
-          throw new Error("a complete generation must not re-draft");
-        },
-        loadDraftedBoards: (_repo, session, generation) =>
-          partialMeta.listForGeneration(session, generation),
-        persistGeneration: (generation) => generationStore.save(generation),
-        loadGeneration: (id) => generationStore.load(id),
-      }),
+      withFakeT3Seats(
+        baseDeps({
+          resolveClaudePort: async () => {
+            throw new Error("a complete generation must not re-draft");
+          },
+          loadDraftedBoards: (_repo, session, generation) =>
+            partialMeta.listForGeneration(session, generation),
+          persistGeneration: (generation) => generationStore.save(generation),
+          loadGeneration: (id) => generationStore.load(id),
+        }),
+      ),
     ).runRound(roundInput());
 
     expect(reconstructed.pipeline.boards.map(({ lens }) => lens)).toEqual([...LENS_KINDS]);
@@ -1896,7 +1969,9 @@ describe("createRoundsRuntime", () => {
       });
 
     await expect(
-      createRoundsRuntime(deps("attempt-a", previousFlagged, true)).runRound(input()),
+      createRoundsRuntime(withFakeT3Seats(deps("attempt-a", previousFlagged, true))).runRound(
+        input(),
+      ),
     ).rejects.toThrow("crash after Flagged migration");
     const attemptAFinding = {
       generation: "gen:ps-1",
@@ -1915,9 +1990,9 @@ describe("createRoundsRuntime", () => {
     expect(generations.load("gen:ps-1")?.draftingBoardIds?.flagged).toBe("attempt-a:flagged");
 
     const retryFlagged = flagged("A different concern reused the model's finding id.");
-    const recovered = await createRoundsRuntime(deps("attempt-b", retryFlagged, false)).runRound(
-      input(),
-    );
+    const recovered = await createRoundsRuntime(
+      withFakeT3Seats(deps("attempt-b", retryFlagged, false)),
+    ).runRound(input());
     const retryBoardId = recovered.boardGeneration.lensBoards.flagged;
     const retryOutcome = recovered.pipeline.boards.find((outcome) => outcome.lens === "flagged");
     const retrySection = retryOutcome?.board?.elements.find((element) => element.id === "findings");
@@ -1941,7 +2016,7 @@ describe("createRoundsRuntime", () => {
   it("never reconstructs one generation from BoardMeta written by different draft attempts", async () => {
     const seedMeta = new BoardMetaStore(mkdtempSync(join(tmpdir(), "rounds-attempt-seed-")));
     await createRoundsRuntime(
-      baseDeps({ persistBoardMeta: (_repo, meta) => seedMeta.save(meta) }),
+      withFakeT3Seats(baseDeps({ persistBoardMeta: (_repo, meta) => seedMeta.save(meta) })),
     ).runRound(roundInput());
 
     const mixedMeta = new BoardMetaStore(mkdtempSync(join(tmpdir(), "rounds-attempt-mixed-")));
@@ -1970,17 +2045,19 @@ describe("createRoundsRuntime", () => {
     const captures: { prompt?: string }[] = [];
     const persisted: Generation[] = [];
     const recovered = await createRoundsRuntime(
-      baseDeps({
-        resolveClaudePort: async () => fakeClaudePort(captures),
-        loadDraftedBoards: (_repo, sessionId, generation) =>
-          mixedMeta.listForGeneration(sessionId, generation),
-        persistBoardMeta: (_repo, meta) => mixedMeta.save(meta),
-        persistGeneration: (generation) => {
-          persisted.push(generation);
-          generations.save(generation);
-        },
-        loadGeneration: (id) => generations.load(id),
-      }),
+      withFakeT3Seats(
+        baseDeps({
+          resolveClaudePort: async () => fakeClaudePort(captures),
+          loadDraftedBoards: (_repo, sessionId, generation) =>
+            mixedMeta.listForGeneration(sessionId, generation),
+          persistBoardMeta: (_repo, meta) => mixedMeta.save(meta),
+          persistGeneration: (generation) => {
+            persisted.push(generation);
+            generations.save(generation);
+          },
+          loadGeneration: (id) => generations.load(id),
+        }),
+      ),
     ).runRound(roundInput());
 
     // Positive control: the old one-row-per-lens fallback returned before resolving a
@@ -2006,7 +2083,7 @@ describe("createRoundsRuntime", () => {
   it("reconstructs the current attempt's report after earlier partial attempts left report rows", async () => {
     const templates = new BoardMetaStore(mkdtempSync(join(tmpdir(), "rounds-report-template-")));
     await createRoundsRuntime(
-      baseDeps({ persistBoardMeta: (_repo, meta) => templates.save(meta) }),
+      withFakeT3Seats(baseDeps({ persistBoardMeta: (_repo, meta) => templates.save(meta) })),
     ).runRound(roundInput());
     const byLens = new Map(templates.list().map((meta) => [meta.lens, meta]));
     const reportTemplate = byLens.get("report");
@@ -2043,15 +2120,17 @@ describe("createRoundsRuntime", () => {
     });
 
     const recovered = await createRoundsRuntime(
-      baseDeps({
-        resolveClaudePort: async () => {
-          throw new Error("complete exact-attempt evidence must reconstruct");
-        },
-        loadDraftedBoards: (_repo, sessionId, generation) =>
-          evidence.listForGeneration(sessionId, generation),
-        persistGeneration: (generation) => generations.save(generation),
-        loadGeneration: (id) => generations.load(id),
-      }),
+      withFakeT3Seats(
+        baseDeps({
+          resolveClaudePort: async () => {
+            throw new Error("complete exact-attempt evidence must reconstruct");
+          },
+          loadDraftedBoards: (_repo, sessionId, generation) =>
+            evidence.listForGeneration(sessionId, generation),
+          persistGeneration: (generation) => generations.save(generation),
+          loadGeneration: (id) => generations.load(id),
+        }),
+      ),
     ).runRound(roundInput());
 
     expect(recovered.pipeline.report?.boardId).toBe("attempt-b:report");
@@ -2065,7 +2144,7 @@ describe("createRoundsRuntime", () => {
     const captures: { prompt?: string }[] = [];
     const events: RoundEvent[] = [];
     const runtime = createRoundsRuntime(
-      baseDeps({ resolveClaudePort: async () => fakeClaudePort(captures) }),
+      withFakeT3Seats(baseDeps({ resolveClaudePort: async () => fakeClaudePort(captures) })),
     );
     const input = roundInput({
       deltaPacket: {
@@ -2092,11 +2171,13 @@ describe("createRoundsRuntime", () => {
   it("persists an unchanged round before emitting its terminal receipt", async () => {
     const order: string[] = [];
     const runtime = createRoundsRuntime(
-      baseDeps({
-        recordRound: (_sessionId, record) => {
-          order.push(`persisted:${record.regeneration}`);
-        },
-      }),
+      withFakeT3Seats(
+        baseDeps({
+          recordRound: (_sessionId, record) => {
+            order.push(`persisted:${record.regeneration}`);
+          },
+        }),
+      ),
     );
 
     const record = await runtime.finalizeUnchanged({
@@ -2115,7 +2196,7 @@ describe("createRoundsRuntime", () => {
   it("keeps askless first-generation drafting on the no-code path", async () => {
     const captures: { prompt?: string }[] = [];
     const outcome = await createRoundsRuntime(
-      baseDeps({ resolveClaudePort: async () => fakeClaudePort(captures) }),
+      withFakeT3Seats(baseDeps({ resolveClaudePort: async () => fakeClaudePort(captures) })),
     ).runRound(
       roundInput({
         previousGeneration: undefined,
@@ -2135,14 +2216,16 @@ describe("createRoundsRuntime", () => {
     );
     const meta = new BoardMetaStore(mkdtempSync(join(tmpdir(), "rounds-context-meta-")));
     const runtime = createRoundsRuntime(
-      baseDeps({
-        resolveClaudePort: async () => fakeClaudePort(captures),
-        persistBoardMeta: (_repo, record) => meta.save(record),
-        loadDraftedBoards: (_repo, sessionId, generation) =>
-          meta.listForGeneration(sessionId, generation),
-        persistGeneration: (generation) => generations.save(generation),
-        loadGeneration: (id) => generations.load(id),
-      }),
+      withFakeT3Seats(
+        baseDeps({
+          resolveClaudePort: async () => fakeClaudePort(captures),
+          persistBoardMeta: (_repo, record) => meta.save(record),
+          loadDraftedBoards: (_repo, sessionId, generation) =>
+            meta.listForGeneration(sessionId, generation),
+          persistGeneration: (generation) => generations.save(generation),
+          loadGeneration: (id) => generations.load(id),
+        }),
+      ),
     );
     const inputFor = (projectContextRevision: string): RoundInput =>
       roundInput({
@@ -2173,21 +2256,23 @@ describe("createRoundsRuntime", () => {
     } as const;
     const events: RoundEvent[] = [];
     const reportOnly = createRoundsRuntime(
-      baseDeps({
-        resolveClaudePort: async () =>
-          fakeClaudePort([], (prompt) =>
-            prompt.includes("prompts/report.md") || prompt.includes("prompts/post-process.md")
-              ? cleanBody("report")
-              : ({ invalid: true } as unknown as DraftBoard),
-          ),
-        persistBoardMeta: (_repo, meta) => metaStore.save(meta),
-        loadDraftedBoards: (_repo, sessionId, generation) =>
-          metaStore.listForGeneration(sessionId, generation),
-        persistGeneration: (generation) => generationStore.save(generation),
-        loadGeneration: (id) => generationStore.load(id),
-        recordRound: (sessionId, record) => roundStore.record(sessionId, record),
-        readRounds: (sessionId) => roundStore.read(sessionId),
-      }),
+      withFakeT3Seats(
+        baseDeps({
+          resolveClaudePort: async () =>
+            fakeClaudePort([], (prompt) =>
+              prompt.includes("prompts/report.md") || prompt.includes("prompts/post-process.md")
+                ? cleanBody("report")
+                : ({ invalid: true } as unknown as DraftBoard),
+            ),
+          persistBoardMeta: (_repo, meta) => metaStore.save(meta),
+          loadDraftedBoards: (_repo, sessionId, generation) =>
+            metaStore.listForGeneration(sessionId, generation),
+          persistGeneration: (generation) => generationStore.save(generation),
+          loadGeneration: (id) => generationStore.load(id),
+          recordRound: (sessionId, record) => roundStore.record(sessionId, record),
+          readRounds: (sessionId) => roundStore.read(sessionId),
+        }),
+      ),
     );
     await reportOnly.dispatchRound({
       ...identity,
@@ -2218,15 +2303,17 @@ describe("createRoundsRuntime", () => {
     expect(events.some((event) => event.type === "composed")).toBe(false);
 
     const recovered = await createRoundsRuntime(
-      baseDeps({
-        persistBoardMeta: (_repo, meta) => metaStore.save(meta),
-        loadDraftedBoards: (_repo, sessionId, generation) =>
-          metaStore.listForGeneration(sessionId, generation),
-        persistGeneration: (generation) => generationStore.save(generation),
-        loadGeneration: (id) => generationStore.load(id),
-        recordRound: (sessionId, record) => roundStore.record(sessionId, record),
-        readRounds: (sessionId) => roundStore.read(sessionId),
-      }),
+      withFakeT3Seats(
+        baseDeps({
+          persistBoardMeta: (_repo, meta) => metaStore.save(meta),
+          loadDraftedBoards: (_repo, sessionId, generation) =>
+            metaStore.listForGeneration(sessionId, generation),
+          persistGeneration: (generation) => generationStore.save(generation),
+          loadGeneration: (id) => generationStore.load(id),
+          recordRound: (sessionId, record) => roundStore.record(sessionId, record),
+          readRounds: (sessionId) => roundStore.read(sessionId),
+        }),
+      ),
     ).runRound(roundInput({ ...identity, asksDispatched: ["t1"] }));
     expect(recovered.pipeline.boards.some((board) => board.boardId !== undefined)).toBe(true);
     expect(roundStore.read("s1")).toHaveLength(1);
@@ -2239,11 +2326,13 @@ describe("createRoundsRuntime", () => {
   it("never exposes a prior generation report as the report for a later no-code round", async () => {
     const metaStore = new BoardMetaStore(mkdtempSync(join(tmpdir(), "rounds-no-code-report-")));
     const runtime = createRoundsRuntime(
-      baseDeps({
-        persistBoardMeta: (_repo, meta: BoardMeta) => metaStore.save(meta),
-        loadDraftedBoards: (_repo, sessionId, generation) =>
-          metaStore.listForGeneration(sessionId, generation),
-      }),
+      withFakeT3Seats(
+        baseDeps({
+          persistBoardMeta: (_repo, meta: BoardMeta) => metaStore.save(meta),
+          loadDraftedBoards: (_repo, sessionId, generation) =>
+            metaStore.listForGeneration(sessionId, generation),
+        }),
+      ),
     );
     const first = await runtime.runRound(roundInput());
     const priorEvidence = metaStore.listForGeneration("s1", first.boardGeneration.id);
@@ -2267,11 +2356,13 @@ describe("createRoundsRuntime", () => {
   it("drafts the round-report FIRST, then reveals each board (arrival order)", async () => {
     const arrivals: BoardArrivalEvent[] = [];
     const runtime = createRoundsRuntime(
-      baseDeps({
-        onBoardArrival: (event) => {
-          arrivals.push(event);
-        },
-      }),
+      withFakeT3Seats(
+        baseDeps({
+          onBoardArrival: (event) => {
+            arrivals.push(event);
+          },
+        }),
+      ),
     );
     await runtime.runRound(roundInput());
     // The report announces its arrival ahead of the lens boards (R58).
@@ -2328,17 +2419,19 @@ describe("createRoundsRuntime", () => {
       const captures: { prompt?: string }[] = [];
       const arrivals: BoardArrivalEvent[] = [];
       const runtime = createRoundsRuntime(
-        baseDeps({
-          resolveClaudePort: async () =>
-            fakeClaudePort(captures, (prompt, label) =>
-              lensFromPrompt(prompt, label) === "report"
-                ? classification
-                : cleanBody(lensFromPrompt(prompt, label)),
-            ),
-          onBoardArrival: (event) => {
-            arrivals.push(event);
-          },
-        }),
+        withFakeT3Seats(
+          baseDeps({
+            resolveClaudePort: async () =>
+              fakeClaudePort(captures, (prompt, label) =>
+                lensFromPrompt(prompt, label) === "report"
+                  ? classification
+                  : cleanBody(lensFromPrompt(prompt, label)),
+              ),
+            onBoardArrival: (event) => {
+              arrivals.push(event);
+            },
+          }),
+        ),
       );
       return {
         captures,
@@ -2396,7 +2489,7 @@ describe("createRoundsRuntime", () => {
   it("persists each board's meta durably; a reconstruction reads it back", async () => {
     const store = new BoardMetaStore(mkdtempSync(join(tmpdir(), "rounds-meta-")));
     const runtime = createRoundsRuntime(
-      baseDeps({ persistBoardMeta: (_repo, meta: BoardMeta) => store.save(meta) }),
+      withFakeT3Seats(baseDeps({ persistBoardMeta: (_repo, meta: BoardMeta) => store.save(meta) })),
     );
     await runtime.runRound(roundInput());
     // Report + five lenses each persisted a meta record, keyed by board id.
@@ -2420,15 +2513,17 @@ describe("createRoundsRuntime", () => {
     const generationStore = new GenerationStore(genDir);
     const roundStore = new RoundRecordStore(roundDir);
     const runtime = createRoundsRuntime(
-      baseDeps({
-        // The disk gives out exactly between the two writes.
-        persistGeneration: () => {
-          throw new Error("disk went away");
-        },
-        recordRound: (sessionId, record) => roundStore.record(sessionId, record),
-        readRounds: (sessionId) => roundStore.read(sessionId),
-        loadGeneration: (id) => generationStore.load(id),
-      }),
+      withFakeT3Seats(
+        baseDeps({
+          // The disk gives out exactly between the two writes.
+          persistGeneration: () => {
+            throw new Error("disk went away");
+          },
+          recordRound: (sessionId, record) => roundStore.record(sessionId, record),
+          readRounds: (sessionId) => roundStore.read(sessionId),
+          loadGeneration: (id) => generationStore.load(id),
+        }),
+      ),
     );
 
     await expect(
@@ -2438,10 +2533,12 @@ describe("createRoundsRuntime", () => {
     // Restart: fresh stores over the SAME on-disk state. The round is honestly absent —
     // never a ledger row pointing at a generation that does not exist.
     const afterRestart = createRoundsRuntime(
-      baseDeps({
-        readRounds: (sessionId) => new RoundRecordStore(roundDir).read(sessionId),
-        loadGeneration: (id) => new GenerationStore(genDir).load(id),
-      }),
+      withFakeT3Seats(
+        baseDeps({
+          readRounds: (sessionId) => new RoundRecordStore(roundDir).read(sessionId),
+          loadGeneration: (id) => new GenerationStore(genDir).load(id),
+        }),
+      ),
     );
     expect(afterRestart.ledger("crashy")).toEqual([]);
     expect(afterRestart.generation("gen:ps-1")).toBeUndefined();
@@ -2454,19 +2551,21 @@ describe("createRoundsRuntime", () => {
     const metaStore = new BoardMetaStore(metaDir);
     const sessionId = "no-spec-crash";
     const first = createRoundsRuntime(
-      baseDeps({
-        resolveClaudePort: async () => fakeClaudePort([], noSpecBodyFor),
-        persistBoardMeta: (_repo, meta) => metaStore.save(meta),
-        loadDraftedBoards: (_repo, session, generation) =>
-          metaStore.listForGeneration(session, generation),
-        persistGeneration: (generation) => {
-          if (Object.keys(generation.lensBoards).length > 0) {
-            throw new Error("crashed after board metadata");
-          }
-          generationStore.save(generation);
-        },
-        loadGeneration: (id) => generationStore.load(id),
-      }),
+      withFakeT3Seats(
+        baseDeps({
+          resolveClaudePort: async () => fakeClaudePort([], noSpecBodyFor),
+          persistBoardMeta: (_repo, meta) => metaStore.save(meta),
+          loadDraftedBoards: (_repo, session, generation) =>
+            metaStore.listForGeneration(session, generation),
+          persistGeneration: (generation) => {
+            if (Object.keys(generation.lensBoards).length > 0) {
+              throw new Error("crashed after board metadata");
+            }
+            generationStore.save(generation);
+          },
+          loadGeneration: (id) => generationStore.load(id),
+        }),
+      ),
     );
 
     await expect(
@@ -2482,15 +2581,17 @@ describe("createRoundsRuntime", () => {
     expect(metaStore.listForGeneration(sessionId, "gen:ps-1").length).toBeGreaterThan(0);
 
     const restarted = createRoundsRuntime(
-      baseDeps({
-        resolveClaudePort: async () => {
-          throw new Error("durable evidence must not re-draft");
-        },
-        loadDraftedBoards: (_repo, session, generation) =>
-          metaStore.listForGeneration(session, generation),
-        persistGeneration: (generation) => generationStore.save(generation),
-        loadGeneration: (id) => generationStore.load(id),
-      }),
+      withFakeT3Seats(
+        baseDeps({
+          resolveClaudePort: async () => {
+            throw new Error("durable evidence must not re-draft");
+          },
+          loadDraftedBoards: (_repo, session, generation) =>
+            metaStore.listForGeneration(session, generation),
+          persistGeneration: (generation) => generationStore.save(generation),
+          loadGeneration: (id) => generationStore.load(id),
+        }),
+      ),
     );
     const recovered = await restarted.runRound(
       roundInput({
@@ -2509,14 +2610,16 @@ describe("createRoundsRuntime", () => {
     // timings some earlier write had carried.
     const store = new Map<string, Generation>();
     const runtime = createRoundsRuntime(
-      baseDeps({
-        persistGeneration: (generation) => {
-          const snapshot = JSON.parse(JSON.stringify(generation)) as Generation;
-          writes.push(snapshot);
-          store.set(snapshot.id, snapshot);
-        },
-        loadGeneration: (id) => store.get(id),
-      }),
+      withFakeT3Seats(
+        baseDeps({
+          persistGeneration: (generation) => {
+            const snapshot = JSON.parse(JSON.stringify(generation)) as Generation;
+            writes.push(snapshot);
+            store.set(snapshot.id, snapshot);
+          },
+          loadGeneration: (id) => store.get(id),
+        }),
+      ),
     );
     const outcome = await runtime.runRound(roundInput());
 
@@ -2568,19 +2671,21 @@ describe("createRoundsRuntime", () => {
     // measured — the failure is exactly when someone wants to read it.
     const store = new Map<string, Generation>();
     const runtime = createRoundsRuntime(
-      baseDeps({
-        // Sequence admits no absence, so an empty Sequence board is a MISSING required core
-        // lens — one of the two paths that persists the generation and then throws.
-        resolveClaudePort: async () =>
-          fakeClaudePort([], (prompt, label) => {
-            const lens = lensFromPrompt(prompt, label);
-            return lens === "sequence" ? { elements: [] } : cleanBody(lens);
-          }),
-        persistGeneration: (generation) => {
-          store.set(generation.id, JSON.parse(JSON.stringify(generation)) as Generation);
-        },
-        loadGeneration: (id) => store.get(id),
-      }),
+      withFakeT3Seats(
+        baseDeps({
+          // Sequence admits no absence, so an empty Sequence board is a MISSING required core
+          // lens — one of the two paths that persists the generation and then throws.
+          resolveClaudePort: async () =>
+            fakeClaudePort([], (prompt, label) => {
+              const lens = lensFromPrompt(prompt, label);
+              return lens === "sequence" ? { elements: [] } : cleanBody(lens);
+            }),
+          persistGeneration: (generation) => {
+            store.set(generation.id, JSON.parse(JSON.stringify(generation)) as Generation);
+          },
+          loadGeneration: (id) => store.get(id),
+        }),
+      ),
     );
     await expect(runtime.runRound(roundInput())).rejects.toThrow(
       "The required core lens sequence did not produce review evidence",
@@ -2603,16 +2708,18 @@ describe("createRoundsRuntime", () => {
       // ONLY thing that can differ between the two runs below.
       let ticks = 10_000;
       const runtime = createRoundsRuntime(
-        baseDeps({
-          now: () => {
-            ticks += 1;
-            return ticks;
-          },
-          persistGeneration: (generation) => {
-            store.set(generation.id, JSON.parse(JSON.stringify(generation)) as Generation);
-          },
-          loadGeneration: (id) => store.get(id),
-        }),
+        withFakeT3Seats(
+          baseDeps({
+            now: () => {
+              ticks += 1;
+              return ticks;
+            },
+            persistGeneration: (generation) => {
+              store.set(generation.id, JSON.parse(JSON.stringify(generation)) as Generation);
+            },
+            loadGeneration: (id) => store.get(id),
+          }),
+        ),
       );
       await runtime.runRound(
         roundInput(firstBoardWaitOriginMs === undefined ? {} : { firstBoardWaitOriginMs }),
@@ -2645,22 +2752,24 @@ describe("createRoundsRuntime", () => {
       const laneFrames: string[][] = [];
       let attemptRecord: Generation | undefined;
       const runtime = createRoundsRuntime(
-        baseDeps({
-          persistGeneration: (generation) => {
-            attemptRecord ??= JSON.parse(JSON.stringify(generation)) as Generation;
-          },
-          loadGeneration: () => {
-            if (attemptRecord === undefined) return undefined;
-            return supersede
-              ? { ...attemptRecord, draftingReportBoardId: "board:a-later-attempt" }
-              : attemptRecord;
-          },
-          onBoardArrival: (event) => {
-            // The report's handoff is not a reveal write and takes its own branch; the
-            // supersession gate is about the five LENS settlements.
-            if (event.lens !== "report") arrivals.push(event.lens);
-          },
-        }),
+        withFakeT3Seats(
+          baseDeps({
+            persistGeneration: (generation) => {
+              attemptRecord ??= JSON.parse(JSON.stringify(generation)) as Generation;
+            },
+            loadGeneration: () => {
+              if (attemptRecord === undefined) return undefined;
+              return supersede
+                ? { ...attemptRecord, draftingReportBoardId: "board:a-later-attempt" }
+                : attemptRecord;
+            },
+            onBoardArrival: (event) => {
+              // The report's handoff is not a reveal write and takes its own branch; the
+              // supersession gate is about the five LENS settlements.
+              if (event.lens !== "report") arrivals.push(event.lens);
+            },
+          }),
+        ),
       );
       await runtime.runRound(
         roundInput({
@@ -2696,21 +2805,23 @@ describe("createRoundsRuntime", () => {
       const writes: Generation[] = [];
       let attemptRecord: Generation | undefined;
       const runtime = createRoundsRuntime(
-        baseDeps({
-          persistGeneration: (generation) => {
-            const snapshot = JSON.parse(JSON.stringify(generation)) as Generation;
-            writes.push(snapshot);
-            attemptRecord ??= snapshot;
-          },
-          loadGeneration: () => {
-            if (attemptRecord === undefined) return undefined;
-            return supersedeAfterAttempt
-              ? // A LATER attempt took the generation over: it minted its own report slot,
-                // so this run's remaining reveal writes belong to nobody.
-                { ...attemptRecord, draftingReportBoardId: "board:a-later-attempt" }
-              : attemptRecord;
-          },
-        }),
+        withFakeT3Seats(
+          baseDeps({
+            persistGeneration: (generation) => {
+              const snapshot = JSON.parse(JSON.stringify(generation)) as Generation;
+              writes.push(snapshot);
+              attemptRecord ??= snapshot;
+            },
+            loadGeneration: () => {
+              if (attemptRecord === undefined) return undefined;
+              return supersedeAfterAttempt
+                ? // A LATER attempt took the generation over: it minted its own report slot,
+                  // so this run's remaining reveal writes belong to nobody.
+                  { ...attemptRecord, draftingReportBoardId: "board:a-later-attempt" }
+                : attemptRecord;
+            },
+          }),
+        ),
       );
       await runtime.runRound(roundInput());
       return writes;
@@ -2764,34 +2875,36 @@ describe("createRoundsRuntime", () => {
     });
 
     const runtime = createRoundsRuntime(
-      baseDeps({
-        resolveClaudePort: async () =>
-          fakeClaudePort([], (prompt, label) => {
-            const lens = lensFromPrompt(prompt, label);
-            if (lens === "design") return { absence: "no-spec" };
-            if (lens === "flagged") {
-              announceFlaggedDraft();
-              return { elements: [] } as unknown as DraftBoard;
+      withFakeT3Seats(
+        baseDeps({
+          resolveClaudePort: async () =>
+            fakeClaudePort([], (prompt, label) => {
+              const lens = lensFromPrompt(prompt, label);
+              if (lens === "design") return { absence: "no-spec" };
+              if (lens === "flagged") {
+                announceFlaggedDraft();
+                return { elements: [] } as unknown as DraftBoard;
+              }
+              return cleanBody(lens);
+            }),
+          persistGeneration: async (generation) => {
+            const snapshot = copyGeneration(generation);
+            const absent = Object.keys(snapshot.absentLenses ?? {});
+            // ONE write carries exactly the design absence: design's own absence
+            // notification, which settles while the other four lens seats are already
+            // running (the seat reports `no-spec` now, so the attempt write at mint carries
+            // no absence at all). That single save is the one this test delays.
+            if (snapshot.draftingBoardIds !== undefined && absent.length === 1) {
+              designOnlyWrites += 1;
+              if (designOnlyWrites === 1) {
+                announceDelayedSave();
+                await delayedSaveRelease;
+              }
             }
-            return cleanBody(lens);
-          }),
-        persistGeneration: async (generation) => {
-          const snapshot = copyGeneration(generation);
-          const absent = Object.keys(snapshot.absentLenses ?? {});
-          // ONE write carries exactly the design absence: design's own absence
-          // notification, which settles while the other four lens seats are already
-          // running (the seat reports `no-spec` now, so the attempt write at mint carries
-          // no absence at all). That single save is the one this test delays.
-          if (snapshot.draftingBoardIds !== undefined && absent.length === 1) {
-            designOnlyWrites += 1;
-            if (designOnlyWrites === 1) {
-              announceDelayedSave();
-              await delayedSaveRelease;
-            }
-          }
-          durable = snapshot;
-        },
-      }),
+            durable = snapshot;
+          },
+        }),
+      ),
     );
 
     const run = runtime.runRound(
@@ -2839,7 +2952,7 @@ describe("createRoundsRuntime", () => {
   // per known failure site: the throws that matter are the ones nobody predicted.
   it("a thrown worker emits a TERMINAL failed and leaves the session dispatchable", async () => {
     const events: RoundEvent[] = [];
-    const runtime = createRoundsRuntime(baseDeps());
+    const runtime = createRoundsRuntime(withFakeT3Seats(baseDeps()));
     const workOrder = { tasks: [] } as unknown as ComposedHandoffBundle;
 
     await expect(
@@ -2870,7 +2983,7 @@ describe("createRoundsRuntime", () => {
 
   it("a FAILED work order reports the same terminal failure (recorded, then rejected)", async () => {
     const events: RoundEvent[] = [];
-    const runtime = createRoundsRuntime(baseDeps());
+    const runtime = createRoundsRuntime(withFakeT3Seats(baseDeps()));
     await expect(
       runtime.dispatchRound({
         ...DISPATCH_FIELDS,
@@ -2897,7 +3010,7 @@ describe("createRoundsRuntime", () => {
       releaseA = r;
     });
 
-    const runtime = createRoundsRuntime(baseDeps());
+    const runtime = createRoundsRuntime(withFakeT3Seats(baseDeps()));
     const pA = runtime.runRound(
       roundInput({
         runWorkers: async () => {
@@ -2950,7 +3063,7 @@ describe("what a round archives, and when (#731 N3)", () => {
 
   it("archives a COMPLETE run once, identified by generation and attempt", async () => {
     const { deps, recorded } = archiving();
-    await createRoundsRuntime(deps).runRound(roundInput());
+    await createRoundsRuntime(withFakeT3Seats(deps)).runRound(roundInput());
     expect(recorded).toHaveLength(1);
     expect(recorded[0]?.outcome).toBe("complete");
     expect(recorded[0]?.kind).toBe("generation");
@@ -2976,7 +3089,7 @@ describe("what a round archives, and when (#731 N3)", () => {
             : cleanBody(lensFromPrompt(prompt, label)),
         ),
     });
-    await expect(createRoundsRuntime(deps).runRound(roundInput())).rejects.toThrow(
+    await expect(createRoundsRuntime(withFakeT3Seats(deps)).runRound(roundInput())).rejects.toThrow(
       "required core lens sequence",
     );
     expect(recorded).toHaveLength(1);
@@ -2997,7 +3110,9 @@ describe("what a round archives, and when (#731 N3)", () => {
     const { deps, recorded } = archiving({
       resolveClaudePort: async () => dyingPort("the drafting turn fell over"),
     });
-    await expect(createRoundsRuntime(deps).runRound(roundInput())).rejects.toThrow();
+    await expect(
+      createRoundsRuntime(withFakeT3Seats(deps)).runRound(roundInput()),
+    ).rejects.toThrow();
     // One record, not one per lane and not none: the run is the unit, and its failure
     // carries the runner's own words.
     expect(recorded).toHaveLength(1);
@@ -3013,14 +3128,18 @@ describe("what a round archives, and when (#731 N3)", () => {
       resolveClaudePort: async () => dyingPort("cancelled"),
     });
     await expect(
-      createRoundsRuntime(deps).runRound(roundInput({ signal: AbortSignal.abort() })),
+      createRoundsRuntime(withFakeT3Seats(deps)).runRound(
+        roundInput({ signal: AbortSignal.abort() }),
+      ),
     ).rejects.toThrow();
     expect(recorded).toHaveLength(1);
     expect(recorded[0]?.outcome).toBe("aborted");
     // The control on the discrimination: the SAME failure with no aborted signal is
     // `failed`, so this is reading the signal rather than the error.
     const plain = archiving({ resolveClaudePort: async () => dyingPort("cancelled") });
-    await expect(createRoundsRuntime(plain.deps).runRound(roundInput())).rejects.toThrow();
+    await expect(
+      createRoundsRuntime(withFakeT3Seats(plain.deps)).runRound(roundInput()),
+    ).rejects.toThrow();
     expect(plain.recorded[0]?.outcome).toBe("failed");
   });
 
@@ -3044,7 +3163,7 @@ describe("what a round archives, and when (#731 N3)", () => {
         return reads > 1 ? superseded : undefined;
       },
     });
-    await createRoundsRuntime(deps)
+    await createRoundsRuntime(withFakeT3Seats(deps))
       .runRound(roundInput())
       .catch(() => undefined);
     expect(reads).toBeGreaterThan(1);

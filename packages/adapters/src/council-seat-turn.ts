@@ -319,34 +319,26 @@ export interface CouncilSeatDeps {
   readonly outputTokenCap?: number;
   readonly onProviderSettled?: SwarmTurnOptions["onProviderSettled"];
   /**
-   * The T3 sidecar seam (t3-lens-threads). Present ⇒ BOARD jobs run as turns on their
-   * seat's persistent thread instead of a cold ephemeral session; the caller names which
-   * seat this resolution is for. The ephemeral Claude/Codex legs stay for every other
-   * job (the project scout, the repo map, utility turns).
+   * The T3 sidecar seam (t3-lens-threads). A BOARD job runs as a turn on its seat's
+   * persistent thread and has NO other backend (session-bound-workspace 5.7): absent, the
+   * job resolves to a typed failure, never to a fresh ephemeral session. The ephemeral
+   * Claude/Codex legs below serve every other job — the project scout, the repo map, the
+   * utility turns — which have no thread and want none.
    */
   readonly t3?: {
     readonly seat: string;
     readonly seam: T3SeatSeam;
   };
   /**
-   * Why the daemon has NO seam to give (t3-lens-threads, review finding 1). T3 is the only
-   * backend a board seat has — Rai's ruling — so a daemon that tried to bring the sidecar
-   * up and could not says so here, and every board job fails with this reason instead of
-   * silently taking an ephemeral leg that loses the thread, the transcript, the live line
-   * and the same-thread repair. Absent AND no seam ⇒ nobody ever composed a sidecar (a
-   * direct-call test, the scout's own deps), which is not a fallback: it is a caller that
-   * has no board pipeline behind it.
+   * Why the daemon has no seam to give (t3-lens-threads, review finding 1). A daemon that
+   * tried to bring the sidecar up and could not says so here, so a board job fails naming
+   * the real reason instead of the generic one.
    */
   readonly t3Unavailable?: string;
 }
 
-// Board-pipeline jobs run one-shot on their inlined prompt and native
-// repository tools. Codex starts configured MCP servers eagerly, so these jobs
-// hand it an explicit empty MCP table. This is the ONLY narrowing a council
-// seat applies: Claude seats always inherit the user's own filesystem settings,
-// because auth routing (e.g. a settings-env ANTHROPIC_BASE_URL credential
-// proxy) lives there and skipping them breaks authentication (2026-09-01).
-const CODEX_MCP_SUPPRESSED_JOB_IDS: ReadonlySet<CouncilJobId> = new Set([
+/** The board pipeline's own jobs — the ones that run as seats on the review's threads. */
+const BOARD_JOB_IDS: ReadonlySet<CouncilJobId> = new Set([
   "lens-draft",
   "lens-draft-flagged",
   "lens-draft-noise",
@@ -354,13 +346,8 @@ const CODEX_MCP_SUPPRESSED_JOB_IDS: ReadonlySet<CouncilJobId> = new Set([
   "round-report",
 ] satisfies readonly BoardCouncilJobId[]);
 
-function suppressesCodexMcpServers(jobId: CouncilJobId): boolean {
-  return CODEX_MCP_SUPPRESSED_JOB_IDS.has(jobId);
-}
-
-/** The board pipeline's own jobs — the ones that run as seats on the review's threads. */
 function isBoardJob(jobId: CouncilJobId): boolean {
-  return CODEX_MCP_SUPPRESSED_JOB_IDS.has(jobId);
+  return BOARD_JOB_IDS.has(jobId);
 }
 
 /**
@@ -379,18 +366,34 @@ export function councilSeatTurn(
   if (resolution.kind !== "model") {
     return { failure: `${jobId} resolved to no model (${resolution.trace.summary})` };
   }
-  // A board job with the sidecar seam present runs on its own persistent thread, on
-  // whichever provider the council routed. Both providers are T3 instances there, so the
-  // harness availability the council already checked is the same check.
+  // A board job runs on its seat's persistent thread, on whichever provider the council
+  // routed. Both providers are T3 instances there, so the harness availability the council
+  // already checked is the same check.
   //
-  // And when the daemon HAS a sidecar but could not bring it up, the board seat fails with
-  // that reason rather than dropping to the ephemeral legs: T3 is the only backend a board
-  // seat has, so a fallback here would run the lens without its thread, its transcript, its
-  // live line or its same-thread repair, and say nothing about it.
-  if (isBoardJob(jobId) && deps.t3 === undefined && deps.t3Unavailable !== undefined) {
-    return { failure: `T3 sidecar unavailable: ${deps.t3Unavailable}` };
-  }
-  if (deps.t3 !== undefined && isBoardJob(jobId)) {
+  // No seam ⇒ an honest typed failure, never an ephemeral session (session-bound-workspace
+  // 5.7). The sidecar is a board seat's ONLY backend — Rai's ruling — because a cold
+  // one-shot leg loses the thread, the transcript, the live line and the same-thread
+  // repair, and says nothing about having lost them. A daemon that HAS a sidecar and could
+  // not start it names the real reason; a caller that composed none at all is told that.
+  if (isBoardJob(jobId)) {
+    // The host's own answer about what it HAS, checked before anything is dispatched.
+    // `resolveAssignment` routes a job to a harness from the council's table; it does not
+    // refuse one the host lacks, and the ephemeral legs used to catch that on the way past
+    // (`resolved to codex, which is unavailable`). With them gone the seam would happily
+    // open a thread on a provider the host said is absent and spend a turn discovering it,
+    // so the check moves here. An honest early failure, not a gate: the lane says which
+    // harness it wanted and that this machine has not got it.
+    if (!council.availability.installed.includes(resolution.harness)) {
+      return { failure: `${jobId} resolved to ${resolution.harness}, which is not installed` };
+    }
+    if (deps.t3 === undefined) {
+      return {
+        failure:
+          deps.t3Unavailable === undefined
+            ? `${jobId} is a board job and runs only on a T3 sidecar seat; this caller composed no sidecar seam`
+            : `T3 sidecar unavailable: ${deps.t3Unavailable}`,
+      };
+    }
     const provider = resolution.harness === "codex" ? "codex" : "claudeAgent";
     return {
       harness: resolution.harness,
@@ -405,6 +408,9 @@ export function councilSeatTurn(
         label: deps.label ?? "council.seat",
         ...(deps.collector === undefined ? {} : { collector: deps.collector }),
         ...(deps.signal === undefined ? {} : { signal: deps.signal }),
+        ...(deps.onProviderSettled === undefined
+          ? {}
+          : { onProviderSettled: deps.onProviderSettled }),
       }),
     };
   }
@@ -426,10 +432,6 @@ export function councilSeatTurn(
           ...(deps.outputByteCap === undefined ? {} : { outputByteCap: deps.outputByteCap }),
           ...(deps.label === undefined ? {} : { label: deps.label }),
           ...(deps.collector === undefined ? {} : { collector: deps.collector }),
-          // Board-pipeline jobs use only their inlined prompt and
-          // native repository tools. Codex starts configured MCP servers eagerly,
-          // so suppress them for those jobs while unrelated Council work inherits.
-          ...(suppressesCodexMcpServers(jobId) ? { mcpServers: {} } : {}),
           ...(deps.signal === undefined ? {} : { signal: deps.signal }),
           ...(deps.onProviderSettled === undefined
             ? {}

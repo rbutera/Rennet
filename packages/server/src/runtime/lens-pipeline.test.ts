@@ -5,7 +5,6 @@ import { join } from "node:path";
 import { sanitizeSchemaForCodex, type T3SeatSeam, WhiteboardClient } from "@rennet/adapters";
 import {
   type DeltaPacket,
-  type HarnessPort,
   inlineContextViolation,
   type LintContext,
   type LintTarget,
@@ -17,6 +16,7 @@ import {
 } from "@rennet/prompts";
 import {
   AUTHORED_BOARD_SCHEMA,
+  type CouncilHarnessId,
   type DraftBoard,
   findingRefKey,
   type GenerationPhaseTiming,
@@ -24,7 +24,6 @@ import {
   lensAdmitsAbsence,
   ROUND_EVIDENCE_MANIFEST_MAX_BYTES,
   ROUND_REPORT_MAX_BEYOND_ENTRIES,
-  ROUND_REPORT_OUTPUT_MAX_BYTES,
   type RoundReportDiagnosticMilestone,
 } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
@@ -41,6 +40,7 @@ import {
   designDraftOutputSchema,
   draftToOps,
   LENS_RETRY_BUDGET,
+  type LensPipelineDeps,
   lensRetryBudget,
   REPAIR_TARGET_KINDS,
   ROUND_CONTEXT_FILE,
@@ -423,63 +423,6 @@ const designBody = (): DraftBoard =>
     ],
   }) as unknown as DraftBoard;
 
-interface HarnessCapture {
-  model?: string;
-  label?: string;
-  prompt?: string;
-  outputSchema?: unknown;
-  outputByteCap?: number;
-}
-
-/**
- * A fake Claude port: captures the resolved session and answers a lens-appropriate board.
- *
- * `bodyFor` gets the session's SEAT LABEL beside the prompt, because a repair turn is
- * pointer-only on every leg (session-bound-workspace 3.2) and therefore carries no prompt
- * file, no lens name and no draft. The label is what the daemon's own log and the token
- * collector attribute a turn by; a fake that guessed from the prompt would be reading a
- * string production no longer sends.
- */
-function fakeClaudePort(
-  captures: HarnessCapture[],
-  bodyFor: (prompt: string, label?: string) => unknown,
-): HarnessPort {
-  return {
-    createSession: async (options: {
-      model?: string;
-      label?: string;
-      outputSchema?: unknown;
-      outputByteCap?: number;
-    }) => {
-      const capture: HarnessCapture = {
-        model: options.model,
-        outputSchema: options.outputSchema,
-        ...(options.label === undefined ? {} : { label: options.label }),
-        ...(options.outputByteCap === undefined ? {} : { outputByteCap: options.outputByteCap }),
-      };
-      captures.push(capture);
-      return {
-        send: async (input: { prompt: string }) => {
-          capture.prompt = input.prompt;
-        },
-        close: async () => {
-          /* nothing to release */
-        },
-        events: (async function* () {
-          yield {
-            kind: "session.ended",
-            native: {},
-            outcome: {
-              status: "completed",
-              structuredOutput: bodyFor(capture.prompt ?? "", capture.label),
-            },
-          };
-        })(),
-      } as unknown as Awaited<ReturnType<HarnessPort["createSession"]>>;
-    },
-  } as unknown as HarnessPort;
-}
-
 /** The shared partial's stand-in body: what the production splice must put in the prompt. */
 const PARTIAL_BODY = "PARTIAL_BODY:investigate-before-you-draft";
 
@@ -514,19 +457,26 @@ function lensFromPrompt(prompt: string, label?: string): string {
 
 /** One turn a seat ran on its thread, as the fake sidecar saw it. */
 interface SeatCapture {
+  /** The seat the thread belongs to — `design`, `flagged-codex`, `report`. */
   readonly seat: string;
+  /** The thread this turn ran on. A repair must be a further turn on the SAME one. */
+  readonly threadId: string;
+  /** Whichever provider the council routed this seat to, in T3's own vocabulary. */
+  readonly provider: "claudeAgent" | "codex";
+  readonly model: string;
+  readonly effort: string;
+  /** The turn's structured-output contract, sent once as the turn's schema, never in text. */
+  readonly outputSchema: unknown;
   readonly prompt: string;
 }
 
 /**
  * A fake T3 sidecar seam: one persistent thread per seat, every attempt a turn on it.
  *
- * This is where a REPAIR lives (session-bound-workspace 3.2 + Rai's ruling 2026-09-04). A
- * repair turn carries pointers and frozen ids and nothing else, which only means anything
- * to a session that already holds the base prompt and the draft — so only a thread can
- * answer one, and `draftOneLens` refuses the repair on a leg without one. A pipeline test
- * about a repair therefore has to drive this seam; on `fakeClaudePort` the same fixture
- * settles the typed "no thread to repair on" failure instead.
+ * Since session-bound-workspace 5.7 this is the ONLY backend a board seat has, so it is
+ * what every pipeline test drives. It is also where a REPAIR lives: a repair turn carries
+ * pointers and frozen ids and nothing else, which only means anything to a session that
+ * already holds the base prompt and the draft — so only a thread can answer one.
  *
  * The seat is the attribution, exactly as it is in production: the seam is handed
  * `{ seat, provider, model, effort }` and never sees the label the collector logs. It is
@@ -537,13 +487,24 @@ function fakeT3Seam(
   captures: SeatCapture[],
   bodyFor: (prompt: string, seat: string) => unknown,
 ): T3SeatSeam {
-  const seatOfThread = new Map<string, string>();
+  const opened = new Map<string, Omit<SeatCapture, "prompt" | "outputSchema">>();
   const pending = new Map<string, unknown>();
   const client = {
-    startTurn: async ({ threadId, text }: { threadId: string; text: string }) => {
-      const seat = seatOfThread.get(threadId) ?? "unknown";
-      captures.push({ seat, prompt: text });
-      pending.set(threadId, bodyFor(text, seat));
+    startTurn: async ({
+      threadId,
+      text,
+      outputSchema,
+    }: {
+      threadId: string;
+      text: string;
+      outputSchema?: unknown;
+    }) => {
+      const thread = opened.get(threadId);
+      if (thread === undefined) throw new Error(`fake sidecar: no thread ${threadId}`);
+      captures.push({ ...thread, prompt: text, outputSchema });
+      // Awaited here, where the sidecar's own dispatch blocks: a fixture that gates a seat
+      // on a barrier gates the TURN, not the settlement read.
+      pending.set(threadId, await bodyFor(text, thread.seat));
       return { previousTurnId: null, requestedAt: new Date().toISOString() };
     },
     waitForTurnSettled: async (threadId: string) => ({
@@ -556,12 +517,36 @@ function fakeT3Seam(
   };
   return {
     client: async () => client,
-    threadFor: async ({ seat }: { seat: string }) => {
+    threadFor: async ({
+      seat,
+      provider,
+      model,
+      effort,
+    }: {
+      seat: string;
+      provider: "claudeAgent" | "codex";
+      model: string;
+      effort: string;
+    }) => {
       const threadId = `thread-${seat}`;
-      seatOfThread.set(threadId, seat);
+      opened.set(threadId, { threadId, seat, provider, model, effort });
       return { threadId, projectId: "p1" };
     },
   } as unknown as T3SeatSeam;
+}
+
+/**
+ * The board-seat half of a pipeline's deps: the fake sidecar every board job runs on, and
+ * the council's installed-harness answer, which is now the ONLY thing that says whether a
+ * lens can be seated on Claude, on Codex, or on both (session-bound-workspace 5.7).
+ * The pipeline holds no harness port at all.
+ */
+function boardSeats(
+  captures: SeatCapture[],
+  bodyFor: (prompt: string, seat: string) => unknown,
+  installed: readonly CouncilHarnessId[] = ["claude-code"],
+): Pick<LensPipelineDeps, "t3" | "council"> {
+  return { t3: fakeT3Seam(captures, bodyFor), council: { availability: { installed } } };
 }
 
 interface Applied {
@@ -1511,7 +1496,7 @@ describe("composeReviewDraft — the authored composition write-through (C2)", (
 
 describe("runLensPipeline — the real drafting path (fake harness, no live model)", () => {
   it("drafts all five lenses, writes each board via whiteboard, and announces each lane as it settles", async () => {
-    const captures: { model?: string; prompt?: string }[] = [];
+    const captures: SeatCapture[] = [];
     const applied: Applied[] = [];
     const arrivals: BoardArrivalEvent[] = [];
 
@@ -1519,8 +1504,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       cleanBody(lensFromPrompt(prompt, label));
 
     const result = await runLensPipeline({
-      claudePort: fakeClaudePort(captures, bodyFor),
-      codexExecutor: null,
+      ...boardSeats(captures, bodyFor),
       repoRoot: "/pr-worktree",
       deltaPacket: PACKET,
       lintContextFor,
@@ -1563,9 +1547,6 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     try {
       const runtime = createBoardsRuntime(root);
       const client = new WhiteboardClient(runtime.service);
-      const captures: { model?: string; prompt?: string; label?: string }[] = [];
-      // The board seats run on the sidecar seam, which is the only leg a repair can
-      // happen on; `captures` still holds whatever non-board turn opens a Claude session.
       const seatTurns: SeatCapture[] = [];
       const arrivals: BoardArrivalEvent[] = [];
       const lensAuthor = (lens: string) => ({ kind: "lens-agent" as const, id: `${lens}-seat` });
@@ -1654,9 +1635,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       };
 
       const result = await runLensPipeline({
-        claudePort: fakeClaudePort(captures, bodyFor),
-        t3: fakeT3Seam(seatTurns, bodyFor),
-        codexExecutor: null,
+        ...boardSeats(seatTurns, bodyFor),
         repoRoot: "/pr-worktree",
         deltaPacket: PACKET,
         lintContextFor: (lens) => ({
@@ -1748,7 +1727,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       }
       const metas: BoardMeta[] = [];
       const result = await runLensPipeline({
-        claudePort: fakeClaudePort([], (prompt, label) => {
+        ...boardSeats([], (prompt, label) => {
           const lens = lensFromPrompt(prompt, label);
           if (lens === "post-process") {
             const context = /rennet:layer context>>>\n(\{.*)/s.exec(prompt);
@@ -1756,7 +1735,6 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
           }
           return cleanBody(lens);
         }),
-        codexExecutor: null,
         repoRoot: "/pr-worktree",
         deltaPacket: PACKET,
         currentGeneration: "gen:ps-1",
@@ -1822,11 +1800,10 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     const applied: Applied[] = [];
     const arrivals: BoardArrivalEvent[] = [];
     const result = await runLensPipeline({
-      claudePort: fakeClaudePort([], (prompt, label) => {
+      ...boardSeats([], (prompt, label) => {
         const lens = lensFromPrompt(prompt, label);
         return lens === "design" ? { absence: "no-spec" } : cleanBody(lens);
       }),
-      codexExecutor: null,
       repoRoot: "/pr-worktree",
       deltaPacket: PACKET,
       lintContextFor,
@@ -1850,14 +1827,13 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
   it("settles the Design lane absent when the no-spec return arrives on a repair turn", async () => {
     let designTurns = 0;
     const result = await runLensPipeline({
-      claudePort: fakeClaudePort([], (prompt, label) => {
+      ...boardSeats([], (prompt, label) => {
         const lens = lensFromPrompt(prompt, label);
         if (lens !== "design") return cleanBody(lens);
         designTurns += 1;
         // Turn 1 does not parse as a board, so the lint ladder re-asks; turn 2 names it.
         return designTurns === 1 ? { nonsense: true } : { absence: "no-spec" };
       }),
-      codexExecutor: null,
       repoRoot: "/pr-worktree",
       deltaPacket: PACKET,
       lintContextFor,
@@ -1884,7 +1860,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       const applied: Applied[] = [];
       const arrivals: BoardArrivalEvent[] = [];
       const result = await runLensPipeline({
-        claudePort: fakeClaudePort([], (prompt, label) => {
+        ...boardSeats([], (prompt, label) => {
           const lens = lensFromPrompt(prompt, label);
           if (lens === emptyLens) {
             emptyLensTurns += 1;
@@ -1895,7 +1871,6 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
           }
           return cleanBody(lens);
         }),
-        codexExecutor: null,
         repoRoot: "/pr-worktree",
         deltaPacket: PACKET,
         lintContextFor,
@@ -1920,7 +1895,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
   it("refuses an absence for the Sequence lane, which admits none (#549)", async () => {
     const applied: Applied[] = [];
     const result = await runLensPipeline({
-      claudePort: fakeClaudePort([], (prompt, label) => {
+      ...boardSeats([], (prompt, label) => {
         const lens = lensFromPrompt(prompt, label);
         if (lens === "sequence") return { elements: [] };
         if (lens === "post-process" && prompt.includes('"elements":[]')) {
@@ -1928,7 +1903,6 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
         }
         return cleanBody(lens);
       }),
-      codexExecutor: null,
       repoRoot: "/pr-worktree",
       deltaPacket: PACKET,
       lintContextFor,
@@ -1951,14 +1925,13 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     // is re-asked and its second draw settles the lane as a board, not a failure.
     const noiseTurns: string[] = [];
     const result = await runLensPipeline({
-      claudePort: fakeClaudePort([], (prompt, label) => {
+      ...boardSeats([], (prompt, label) => {
         const lens = lensFromPrompt(prompt, label);
         if (lens !== "noise") return cleanBody(lens);
         noiseTurns.push(prompt);
         // `undefined` structured output ⇒ the harness completed WITHOUT emitting.
         return noiseTurns.length === 1 ? undefined : cleanBody("noise");
       }),
-      codexExecutor: null,
       repoRoot: "/pr-worktree",
       deltaPacket: PACKET,
       lintContextFor,
@@ -1996,13 +1969,12 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
   it("settles TERMINAL only after the re-asks are spent, naming the non-emission (#549)", async () => {
     const noiseTurns: string[] = [];
     const result = await runLensPipeline({
-      claudePort: fakeClaudePort([], (prompt, label) => {
+      ...boardSeats([], (prompt, label) => {
         const lens = lensFromPrompt(prompt, label);
         if (lens !== "noise") return cleanBody(lens);
         noiseTurns.push(prompt);
         return undefined;
       }),
-      codexExecutor: null,
       repoRoot: "/pr-worktree",
       deltaPacket: PACKET,
       lintContextFor,
@@ -2031,10 +2003,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
         ? undefined
         : cleanBody(lensFromPrompt(prompt, label));
     const result = await runLensPipeline({
-      claudePort: fakeClaudePort([], noBoard),
-      codexExecutor: (async (req: { prompt: string; label?: string }) => ({
-        output: noBoard(req.prompt, req.label),
-      })) as never,
+      ...boardSeats([], noBoard, ["claude-code", "codex"]),
       repoRoot: "/pr-worktree",
       deltaPacket: PACKET,
       lintContextFor,
@@ -2057,8 +2026,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     // Sequence (which admits none) fails, and Design fails because only the seat's own
     // `no-spec` return — never an empty board — proves its absence.
     const result = await runLensPipeline({
-      claudePort: fakeClaudePort([], () => ({ elements: [] })),
-      codexExecutor: null,
+      ...boardSeats([], () => ({ elements: [] })),
       repoRoot: "/pr-worktree",
       deltaPacket: PACKET,
       lintContextFor,
@@ -2091,13 +2059,12 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     // and a signal-only change whose Noise seat draws an empty board settles `no-noise`.
     const noiseTurns: string[] = [];
     const result = await runLensPipeline({
-      claudePort: fakeClaudePort([], (prompt, label) => {
+      ...boardSeats([], (prompt, label) => {
         const lens = lensFromPrompt(prompt, label);
         if (lens !== "noise") return cleanBody(lens);
         noiseTurns.push(prompt);
         return noiseTurns.length === 1 ? undefined : { elements: [] };
       }),
-      codexExecutor: null,
       repoRoot: "/pr-worktree",
       deltaPacket: PACKET,
       lintContextFor,
@@ -2114,12 +2081,11 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
 
   it("classifies a lane that never parsed across its ladder as TERMINAL (#549)", async () => {
     const result = await runLensPipeline({
-      claudePort: fakeClaudePort([], (prompt, label) => {
+      ...boardSeats([], (prompt, label) => {
         const lens = lensFromPrompt(prompt, label);
         // Structurally impossible output on every attempt, including the retries.
         return lens === "noise" ? { document: 5, elements: "not-a-list" } : cleanBody(lens);
       }),
-      codexExecutor: null,
       repoRoot: "/pr-worktree",
       deltaPacket: PACKET,
       lintContextFor,
@@ -2153,11 +2119,11 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     "records a non-empty %s %s result as a precise failure without restarting the drafter",
     async (malformedLens, _shape, malformedBody) => {
       let malformedLensTurns = 0;
-      const captures: { model?: string; prompt?: string }[] = [];
+      const captures: SeatCapture[] = [];
       const applied: Applied[] = [];
       const arrivals: BoardArrivalEvent[] = [];
       const result = await runLensPipeline({
-        claudePort: fakeClaudePort(captures, (prompt, label) => {
+        ...boardSeats(captures, (prompt, label) => {
           const lens = lensFromPrompt(prompt, label);
           if (lens === "post-process") {
             const context = /rennet:layer context>>>\n(\{.*)/s.exec(prompt);
@@ -2169,7 +2135,6 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
           }
           return cleanBody(lens);
         }),
-        codexExecutor: null,
         repoRoot: "/pr-worktree",
         deltaPacket: PACKET,
         lintContextFor,
@@ -2204,9 +2169,9 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     "records a %s Sequence result as a precise failure without restarting the drafter",
     async (_shape, sequenceBody) => {
       let sequenceTurns = 0;
-      const captures: { model?: string; prompt?: string }[] = [];
+      const captures: SeatCapture[] = [];
       const result = await runLensPipeline({
-        claudePort: fakeClaudePort(captures, (prompt, label) => {
+        ...boardSeats(captures, (prompt, label) => {
           const lens = lensFromPrompt(prompt, label);
           if (lens === "sequence") {
             sequenceTurns += 1;
@@ -2218,7 +2183,6 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
           }
           return cleanBody(lens);
         }),
-        codexExecutor: null,
         repoRoot: "/pr-worktree",
         deltaPacket: PACKET,
         lintContextFor,
@@ -2246,7 +2210,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     async (lensUnderTest, kind, rootId, body) => {
       const applied: Applied[] = [];
       const result = await runLensPipeline({
-        claudePort: fakeClaudePort([], (prompt, label) => {
+        ...boardSeats([], (prompt, label) => {
           const lens = lensFromPrompt(prompt, label);
           if (lens === "post-process") {
             const context = /rennet:layer context>>>\n(\{.*)/s.exec(prompt);
@@ -2254,7 +2218,6 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
           }
           return lens === lensUnderTest ? body() : cleanBody(lens);
         }),
-        codexExecutor: null,
         repoRoot: "/pr-worktree",
         deltaPacket: PACKET,
         lintContextFor,
@@ -2279,7 +2242,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       let requiredTurns = 0;
       const arrivals: BoardArrivalEvent[] = [];
       const result = await runLensPipeline({
-        claudePort: fakeClaudePort([], (prompt, label) => {
+        ...boardSeats([], (prompt, label) => {
           const lens = lensFromPrompt(prompt, label);
           if (lens === requiredLens) {
             requiredTurns += 1;
@@ -2290,7 +2253,6 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
           }
           return cleanBody(lens);
         }),
-        codexExecutor: null,
         repoRoot: "/pr-worktree",
         deltaPacket: PACKET,
         lintContextFor,
@@ -2316,12 +2278,11 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     const applied: Applied[] = [];
     const designBoard = cleanBody("design");
     const result = await runLensPipeline({
-      claudePort: fakeClaudePort([], (prompt, label) => {
+      ...boardSeats([], (prompt, label) => {
         const lens = lensFromPrompt(prompt, label);
         if (lens !== "design") return cleanBody(lens);
         return { ...designBoard, absence: "no-spec" };
       }),
-      codexExecutor: null,
       repoRoot: "/pr-worktree",
       deltaPacket: PACKET,
       lintContextFor,
@@ -2344,11 +2305,10 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     // lint judges them like any other. Stripping them here lost real citations silently.
     const applied: Applied[] = [];
     const result = await runLensPipeline({
-      claudePort: fakeClaudePort([], (prompt, label) => {
+      ...boardSeats([], (prompt, label) => {
         const lens = lensFromPrompt(prompt, label);
         return lens === "design" ? designBody() : cleanBody(lens);
       }),
-      codexExecutor: null,
       repoRoot: "/pr-worktree",
       deltaPacket: DESIGN_PACKET,
       lintContextFor: (lens) => ({
@@ -2481,8 +2441,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     };
 
     const result = await runLensPipeline({
-      claudePort: fakeClaudePort([], bodyFor),
-      codexExecutor: null,
+      ...boardSeats([], bodyFor),
       repoRoot: "/pr-worktree",
       deltaPacket: DESIGN_PACKET,
       lintContextFor: (lens) => ({
@@ -2604,8 +2563,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     };
 
     const result = await runLensPipeline({
-      claudePort: fakeClaudePort([], bodyFor),
-      codexExecutor: null,
+      ...boardSeats([], bodyFor),
       repoRoot: "/pr-worktree",
       deltaPacket: DESIGN_PACKET,
       lintContextFor: (lens) => ({
@@ -2642,7 +2600,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
   });
 
   it("never runs the poisoned Design rewrite turn", async () => {
-    const captures: HarnessCapture[] = [];
+    const captures: SeatCapture[] = [];
     const bodyFor = (prompt: string, label?: string): unknown => {
       const lens = lensFromPrompt(prompt, label);
       if (lens === "design") {
@@ -2696,8 +2654,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     };
 
     const result = await runLensPipeline({
-      claudePort: fakeClaudePort(captures, bodyFor),
-      codexExecutor: null,
+      ...boardSeats(captures, bodyFor),
       repoRoot: "/pr-worktree",
       deltaPacket: DESIGN_PACKET,
       lintContextFor: (lens) => ({
@@ -2736,10 +2693,9 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
   });
 
   it("seeds each drafter turn with the lens prompt and the reviewed range, and NOT the packet or the host schema (#737)", async () => {
-    const captures: { model?: string; prompt?: string }[] = [];
+    const captures: SeatCapture[] = [];
     await runLensPipeline({
-      claudePort: fakeClaudePort(captures, (p, label) => cleanBody(lensFromPrompt(p, label))),
-      codexExecutor: null,
+      ...boardSeats(captures, (p, label) => cleanBody(lensFromPrompt(p, label))),
       repoRoot: "/pr-worktree",
       deltaPacket: PACKET,
       lintContextFor,
@@ -2765,12 +2721,11 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
   });
 
   it("council-routes each seat to the right model (claude-only scenario)", async () => {
-    const captures: { model?: string; prompt?: string }[] = [];
+    const captures: SeatCapture[] = [];
     const applied: Applied[] = [];
 
     await runLensPipeline({
-      claudePort: fakeClaudePort(captures, (p, label) => cleanBody(lensFromPrompt(p, label))),
-      codexExecutor: null,
+      ...boardSeats(captures, (p, label) => cleanBody(lensFromPrompt(p, label))),
       repoRoot: "/pr-worktree",
       deltaPacket: PACKET,
       lintContextFor,
@@ -2788,8 +2743,10 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
   });
 
   it("runs the Flagged lens as a dual seat under both harnesses — cross-model concurrence", async () => {
-    const claudeCaptures: { model?: string; prompt?: string }[] = [];
-    const codexCaptures: { model?: string; prompt?: string }[] = [];
+    // Both seats are SIDECAR THREADS after session-bound-workspace 5.7 — one on
+    // `provider: "claudeAgent"`, one on `"codex"`, through T3's model selection. The lane
+    // still holds two seats; what it no longer holds is two harness ports.
+    const seatTurns: SeatCapture[] = [];
     const applied: Applied[] = [];
 
     // A clean flagged board both seats return: a grounded finding citing c1 (covers
@@ -2811,11 +2768,6 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       }
       return cleanBody(lens);
     };
-    const codexExecutor = async (req: { model: string; prompt: string; label?: string }) => {
-      codexCaptures.push({ model: req.model, prompt: req.prompt });
-      return { output: bodyFor(req.prompt, req.label) };
-    };
-
     const flaggedCtx: LintContext = {
       lens: "flagged",
       regions: [
@@ -2829,8 +2781,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     };
 
     const result = await runLensPipeline({
-      claudePort: fakeClaudePort(claudeCaptures, bodyFor),
-      codexExecutor: codexExecutor as never,
+      ...boardSeats(seatTurns, bodyFor, ["claude-code", "codex"]),
       repoRoot: "/pr-worktree",
       deltaPacket: PACKET,
       lintContextFor: (lens) => (lens === "flagged" ? flaggedCtx : lintContextFor(lens)),
@@ -2851,16 +2802,21 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       { model: "Claude", agree: 1, total: 1 },
       { model: "Codex", agree: 1, total: 1 },
     ]);
-    // Each seat was forced to its own provider's flagged pick.
+    // Each seat was forced to its own provider's flagged pick, on its own thread: the
+    // Claude seat's thread is bound `provider: "claudeAgent"`, the Codex seat's `"codex"`,
+    // which is how one lane holds two providers on one sidecar.
     expect(
-      claudeCaptures.some((c) => c.prompt?.includes("flagged.md") && c.model === "opus-4.8"),
+      seatTurns.some(
+        (c) =>
+          c.seat === "flagged-claude" && c.provider === "claudeAgent" && c.model === "opus-4.8",
+      ),
     ).toBe(true);
     expect(
-      codexCaptures.some((c) => c.prompt?.includes("flagged.md") && c.model === "gpt-5.6-sol"),
+      seatTurns.some(
+        (c) => c.seat === "flagged-codex" && c.provider === "codex" && c.model === "gpt-5.6-sol",
+      ),
     ).toBe(true);
-    const providerCalls = [...claudeCaptures, ...codexCaptures].map(({ prompt }) =>
-      lensFromPrompt(prompt ?? ""),
-    );
+    const providerCalls = seatTurns.map(({ prompt }) => lensFromPrompt(prompt ?? ""));
     expect(providerCalls).toHaveLength(6);
     expect(
       Object.fromEntries(
@@ -2874,7 +2830,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
   });
 
   it("runs the round-report FIRST on a round and threads it into the lens drafters (D3/R58)", async () => {
-    const captures: { model?: string; prompt?: string }[] = [];
+    const captures: SeatCapture[] = [];
     const applied: Applied[] = [];
     const arrivals: BoardArrivalEvent[] = [];
 
@@ -2885,8 +2841,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     } as unknown as DeltaPacket;
 
     await runLensPipeline({
-      claudePort: fakeClaudePort(captures, (p, label) => cleanBody(lensFromPrompt(p, label))),
-      codexExecutor: null,
+      ...boardSeats(captures, (p, label) => cleanBody(lensFromPrompt(p, label))),
       repoRoot: "/pr-worktree",
       deltaPacket: roundPacket,
       lintContextFor,
@@ -2914,7 +2869,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
   });
 
   it("drafts a landed round report from one compact classification turn and host-owned structure", async () => {
-    const captures: HarnessCapture[] = [];
+    const captures: SeatCapture[] = [];
     const applied: Applied[] = [];
     const arrivals: BoardArrivalEvent[] = [];
     const diagnostics: RoundReportDiagnosticMilestone[] = [];
@@ -2979,7 +2934,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     };
 
     const result = await runLensPipeline({
-      claudePort: fakeClaudePort(captures, (prompt, label) => {
+      ...boardSeats(captures, (prompt, label) => {
         const lens = lensFromPrompt(prompt, label);
         if (lens === "report") {
           reportTurns += 1;
@@ -3014,7 +2969,6 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
         }
         return cleanBody(lens);
       }),
-      codexExecutor: null,
       repoRoot: "/pr-worktree",
       deltaPacket: {
         ...PACKET,
@@ -3044,8 +2998,6 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     expect(reportTurns).toBe(1);
     expect(reportCaptures).toHaveLength(1);
     expect(reportCaptures[0]?.model).toBe("sonnet-5");
-    // The classifier's raw-response cap rides the session spec into the adapter (#727).
-    expect(reportCaptures[0]?.outputByteCap).toBe(ROUND_REPORT_OUTPUT_MAX_BYTES);
     const outputSchema = reportCaptures[0]?.outputSchema;
     const reportSchema = JSON.stringify(outputSchema);
     expect(reportSchema).toContain('"askId"');
@@ -3250,12 +3202,11 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       let lensStarts = 0;
       return {
         run: runLensPipeline({
-          claudePort: fakeClaudePort([], (prompt, label) => {
+          ...boardSeats([], (prompt, label) => {
             if (lensFromPrompt(prompt, label) === "report") return classification;
             lensTurns += 1;
             return cleanBody(lensFromPrompt(prompt, label));
           }),
-          codexExecutor: null,
           repoRoot: "/pr-worktree",
           deltaPacket: PACKET,
           currentGeneration: "gen:ps-1:dispatch:handoff",
@@ -3304,7 +3255,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
 
   it("fails an over-budget evidence manifest with zero provider calls and no truncation", async () => {
     const applied: Applied[] = [];
-    const captures: HarnessCapture[] = [];
+    const captures: SeatCapture[] = [];
     // One hunk whose body alone exceeds the manifest budget: the round is honestly too
     // big to classify, which is a typed local failure, never a shortened manifest.
     const hugeDiff = [
@@ -3317,10 +3268,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     ].join("\n");
 
     const result = await runLensPipeline({
-      claudePort: fakeClaudePort(captures, (prompt, label) =>
-        cleanBody(lensFromPrompt(prompt, label)),
-      ),
-      codexExecutor: null,
+      ...boardSeats(captures, (prompt, label) => cleanBody(lensFromPrompt(prompt, label))),
       repoRoot: "/pr-worktree",
       deltaPacket: PACKET,
       currentGeneration: "gen:ps-1:dispatch:oversized",
@@ -3370,7 +3318,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     let reportTurns = 0;
     const applied: Applied[] = [];
     const result = await runLensPipeline({
-      claudePort: fakeClaudePort([], (prompt, label) => {
+      ...boardSeats([], (prompt, label) => {
         const lens = lensFromPrompt(prompt, label);
         if (lens === "report") {
           reportTurns += 1;
@@ -3392,7 +3340,6 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
         }
         return cleanBody(lens);
       }),
-      codexExecutor: null,
       repoRoot: "/pr-worktree",
       deltaPacket: PACKET,
       currentGeneration: "gen:ps-1:dispatch:one-line-positive",
@@ -3500,7 +3447,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     };
 
     const result = await runLensPipeline({
-      claudePort: fakeClaudePort([], (prompt, label) => {
+      ...boardSeats([], (prompt, label) => {
         const lens = lensFromPrompt(prompt, label);
         if (lens === "report") {
           reportTurns += 1;
@@ -3522,7 +3469,6 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
         }
         return cleanBody(lens);
       }),
-      codexExecutor: null,
       repoRoot: "/pr-worktree",
       deltaPacket: PACKET,
       currentGeneration: "gen:ps-1:dispatch:recovered",
@@ -3653,7 +3599,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       let lensDraftingStarts = 0;
       const applied: Applied[] = [];
       const run = runLensPipeline({
-        claudePort: fakeClaudePort([], (prompt, label) => {
+        ...boardSeats([], (prompt, label) => {
           const lens = lensFromPrompt(prompt, label);
           if (lens === "report") {
             reportTurns += 1;
@@ -3666,7 +3612,6 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
           lensTurns += 1;
           return cleanBody(lens);
         }),
-        codexExecutor: null,
         repoRoot: "/pr-worktree",
         deltaPacket: PACKET,
         currentGeneration: "gen:ps-1:dispatch:one-line",
@@ -3739,8 +3684,8 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       );
     }
 
-    const codexExecutor = async (req: { prompt: string; label?: string }) => {
-      const lens = lensFromPrompt(req.prompt, req.label);
+    const codexSeat = async (prompt: string, seat: string): Promise<unknown> => {
+      const lens = lensFromPrompt(prompt, seat);
       providerCalls.push(lens);
       if (lens !== "report" && lenses.includes(lens as LensKind)) {
         const lensKind = lens as LensKind;
@@ -3750,7 +3695,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
         }
         await lensBarriers.get(lensKind);
       }
-      return { output: cleanBody(lens) };
+      return cleanBody(lens);
     };
 
     const whiteboard = {
@@ -3763,8 +3708,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     };
 
     const pipeline = runLensPipeline({
-      claudePort: null,
-      codexExecutor: codexExecutor as never,
+      ...boardSeats([], codexSeat, ["codex"]),
       repoRoot: "/pr-worktree",
       deltaPacket: {
         ...PACKET,
@@ -3855,8 +3799,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     const timings: GenerationPhaseTiming[] = [];
 
     const result = await runLensPipeline({
-      claudePort: fakeClaudePort([], (prompt, label) => cleanBody(lensFromPrompt(prompt, label))),
-      codexExecutor: null,
+      ...boardSeats([], (prompt, label) => cleanBody(lensFromPrompt(prompt, label))),
       repoRoot: "/pr-worktree",
       deltaPacket: PACKET,
       lintContextFor,
@@ -3898,16 +3841,16 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
   });
 
   it("emits ONE lens-draft record per Flagged seat, each naming what ran it (#726 D8)", async () => {
-    // A genuinely dual lane: BOTH fake harnesses are installed, so `runFlaggedDual` runs
-    // two seats rather than degrading. That is load-bearing — the previous version of this
-    // assertion ran with `codexExecutor: null`, so exactly one seat ever ran, and "the dual
+    // A genuinely dual lane: BOTH harnesses are installed, so `runFlaggedDual` runs two
+    // seats rather than degrading. That is load-bearing — an earlier version of this
+    // assertion ran with only one harness, so exactly one seat ever ran, and "the dual
     // seat names no harness" passed because there was no dual seat.
     const timings: GenerationPhaseTiming[] = [];
     const result = await runLensPipeline({
-      claudePort: fakeClaudePort([], (prompt, label) => cleanBody(lensFromPrompt(prompt, label))),
-      codexExecutor: (async (req: { prompt: string; label?: string }) => ({
-        output: cleanBody(lensFromPrompt(req.prompt, req.label)),
-      })) as never,
+      ...boardSeats([], (prompt, seat) => cleanBody(lensFromPrompt(prompt, seat)), [
+        "claude-code",
+        "codex",
+      ]),
       repoRoot: "/pr-worktree",
       deltaPacket: PACKET,
       lintContextFor,
@@ -3969,15 +3912,18 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     const revealing = lenses.filter((lens) => lens !== "design");
 
     const pipeline = runLensPipeline({
-      claudePort: null,
-      codexExecutor: (async (req: { prompt: string; label?: string }) => {
-        const lens = lensFromPrompt(req.prompt, req.label) as LensKind;
-        await gates.get(lens);
-        ticks += 1;
-        // Design never emits a parseable board, so it settles as a FAILURE — a settlement
-        // that reveals nothing, which is exactly the case the window must exclude.
-        return { output: lens === "design" ? { not: "a board" } : cleanBody(lens) };
-      }) as never,
+      ...boardSeats(
+        [],
+        async (prompt, seat) => {
+          const lens = lensFromPrompt(prompt, seat) as LensKind;
+          await gates.get(lens);
+          ticks += 1;
+          // Design never emits a parseable board, so it settles as a FAILURE — a settlement
+          // that reveals nothing, which is exactly the case the window must exclude.
+          return lens === "design" ? { not: "a board" } : cleanBody(lens);
+        },
+        ["codex"],
+      ),
       repoRoot: "/pr-worktree",
       deltaPacket: PACKET,
       lintContextFor,
@@ -4026,11 +3972,10 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
 
     await expect(
       runLensPipeline({
-        claudePort: fakeClaudePort([], (prompt, label) => {
+        ...boardSeats([], (prompt, label) => {
           ticks += 10;
           return cleanBody(lensFromPrompt(prompt, label));
         }),
-        codexExecutor: null,
         repoRoot: "/pr-worktree",
         deltaPacket: PACKET,
         lintContextFor,
@@ -4074,12 +4019,11 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     };
 
     await runLensPipeline({
-      claudePort: fakeClaudePort([], (prompt, label) => {
+      ...boardSeats([], (prompt, label) => {
         const lens = lensFromPrompt(prompt, label);
         advance(lens === "report" ? 1 : 100);
         return lens === "report" ? cleanBody("report") : cleanBody(lens);
       }),
-      codexExecutor: null,
       repoRoot: "/pr-worktree",
       deltaPacket: { ...PACKET, successorAccount: { asks: [], beyondAsks: [] } },
       lintContextFor,
@@ -4154,7 +4098,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       const sequenceTurns: string[] = [];
       const applied: Applied[] = [];
       const result = await runLensPipeline({
-        claudePort: fakeClaudePort([], (prompt, label) => {
+        ...boardSeats([], (prompt, label) => {
           const lens = lensFromPrompt(prompt, label);
           if (lens !== "sequence") return cleanBody(lens);
           sequenceTurns.push(prompt);
@@ -4162,7 +4106,6 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
           // gets a second chance. A budget of 0 means it does not.
           return sequenceTurns.length === 1 ? { not: "a board" } : cleanBody("sequence");
         }),
-        codexExecutor: null,
         repoRoot: "/pr-worktree",
         deltaPacket: PACKET,
         boardAttempt,
@@ -4193,11 +4136,10 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     // "across 0 attempts" read as a contradiction — it claimed a ladder was spent and that
     // none was. The sentence now says what was allotted and what was used.
     const result = await runLensPipeline({
-      claudePort: fakeClaudePort([], (prompt, label) => {
+      ...boardSeats([], (prompt, label) => {
         const lens = lensFromPrompt(prompt, label);
         return lens === "sequence" ? { not: "a board" } : cleanBody(lens);
       }),
-      codexExecutor: null,
       repoRoot: "/pr-worktree",
       deltaPacket: PACKET,
       lintContextFor,
@@ -4243,13 +4185,11 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       announceFirstLensStart = resolve;
     });
 
-    const codexExecutor = async (req: { prompt: string; label?: string }) => {
-      const lens = lensFromPrompt(req.prompt, req.label);
+    const codexSeat = async (prompt: string, seat: string): Promise<unknown> => {
+      const lens = lensFromPrompt(prompt, seat);
       if (lens === "post-process") {
-        const context = /rennet:layer context>>>\n(\{.*)/s.exec(req.prompt);
-        return {
-          output: context ? (JSON.parse(context[1] as string).board as unknown) : { elements: [] },
-        };
+        const context = /rennet:layer context>>>\n(\{.*)/s.exec(prompt);
+        return context ? (JSON.parse(context[1] as string).board as unknown) : { elements: [] };
       }
       if (modelLenses.includes(lens as LensKind)) {
         const lensKind = lens as LensKind;
@@ -4259,19 +4199,15 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
         }
         await lensRelease;
       }
-      return {
-        output:
-          lens === "design"
-            ? { absence: "no-spec" }
-            : lens === "decisions"
-              ? { elements: [] }
-              : cleanBody(lens),
-      };
+      return lens === "design"
+        ? { absence: "no-spec" }
+        : lens === "decisions"
+          ? { elements: [] }
+          : cleanBody(lens);
     };
 
     const pipeline = runLensPipeline({
-      claudePort: null,
-      codexExecutor: codexExecutor as never,
+      ...boardSeats([], codexSeat, ["codex"]),
       repoRoot: "/pr-worktree",
       deltaPacket: PACKET,
       lintContextFor,
@@ -4321,7 +4257,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     const arrivals: BoardArrivalEvent[] = [];
 
     const run = runLensPipeline({
-      claudePort: fakeClaudePort([], (prompt, label) => {
+      ...boardSeats([], (prompt, label) => {
         const lens = lensFromPrompt(prompt, label);
         if (lens === "report") {
           reportTurns += 1;
@@ -4333,7 +4269,6 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
         lensTurns += 1;
         return cleanBody(lens);
       }),
-      codexExecutor: null,
       repoRoot: "/pr-worktree",
       deltaPacket: {
         ...PACKET,
@@ -4387,7 +4322,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       "+insideRetry();",
     ].join("\n");
     const result = await runLensPipeline({
-      claudePort: fakeClaudePort([], (prompt, label) => {
+      ...boardSeats([], (prompt, label) => {
         const lens = lensFromPrompt(prompt, label);
         if (lens === "post-process") {
           const context = /rennet:layer context>>>\n(\{.*)/s.exec(prompt);
@@ -4408,7 +4343,6 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
         }
         return cleanBody(lens);
       }),
-      codexExecutor: null,
       repoRoot: "/pr-worktree",
       // Legacy reviews can have durable AskLog asks without a reconstructed
       // successorAccount. The explicit generation lineage still makes this a round.
@@ -4495,7 +4429,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     };
 
     const result = await runLensPipeline({
-      claudePort: fakeClaudePort([], (prompt, label) => {
+      ...boardSeats([], (prompt, label) => {
         const lens = lensFromPrompt(prompt, label);
         if (lens === "flagged") return currentFlagged;
         if (lens === "report") return cleanBody("report");
@@ -4505,7 +4439,6 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
         }
         return cleanBody(lens);
       }),
-      codexExecutor: null,
       repoRoot: "/pr-worktree",
       deltaPacket: {
         ...PACKET,
@@ -4585,7 +4518,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     let flaggedTurns = 0;
 
     const result = await runLensPipeline({
-      claudePort: fakeClaudePort([], (prompt, label) => {
+      ...boardSeats([], (prompt, label) => {
         const lens = lensFromPrompt(prompt, label);
         if (lens === "flagged") {
           flaggedTurns += 1;
@@ -4593,7 +4526,6 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
         }
         return cleanBody(lens);
       }),
-      codexExecutor: null,
       repoRoot: "/pr-worktree",
       deltaPacket: {
         ...PACKET,
@@ -4639,8 +4571,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     let persistenceCalls = 0;
 
     const result = await runLensPipeline({
-      claudePort: fakeClaudePort([], (prompt, label) => cleanBody(lensFromPrompt(prompt, label))),
-      codexExecutor: null,
+      ...boardSeats([], (prompt, label) => cleanBody(lensFromPrompt(prompt, label))),
       repoRoot: "/pr-worktree",
       deltaPacket: PACKET,
       round: {
@@ -4694,7 +4625,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     ]);
 
     const result = await runLensPipeline({
-      claudePort: fakeClaudePort([], (prompt, label) => {
+      ...boardSeats([], (prompt, label) => {
         const lens = lensFromPrompt(prompt, label);
         if (lens === "flagged") return flaggedBoard;
         if (lens === "report") return cleanBody("report");
@@ -4704,7 +4635,6 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
         }
         return cleanBody(lens);
       }),
-      codexExecutor: null,
       repoRoot: "/pr-worktree",
       deltaPacket: {
         ...PACKET,
@@ -4750,8 +4680,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
   it("does NOT run the round-report on a first generation (no successor account)", async () => {
     const applied: Applied[] = [];
     const result = await runLensPipeline({
-      claudePort: fakeClaudePort([], (p, label) => cleanBody(lensFromPrompt(p, label))),
-      codexExecutor: null,
+      ...boardSeats([], (p, label) => cleanBody(lensFromPrompt(p, label))),
       repoRoot: "/pr-worktree",
       deltaPacket: PACKET,
       lintContextFor,
@@ -4766,8 +4695,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
   it("runs the authored composition when a composeTurn is supplied (C2)", async () => {
     const applied: Applied[] = [];
     const result = await runLensPipeline({
-      claudePort: fakeClaudePort([], (p, label) => cleanBody(lensFromPrompt(p, label))),
-      codexExecutor: null,
+      ...boardSeats([], (p, label) => cleanBody(lensFromPrompt(p, label))),
       repoRoot: "/pr-worktree",
       deltaPacket: PACKET,
       lintContextFor,
@@ -4781,11 +4709,79 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     expect(result.composition?.violations).toEqual([]);
   });
 
-  it("records an honest failure (never a throw) when no harness resolves the seat", async () => {
+  // PR #802 wrote the reviewed pull request's own paper into the session's context
+  // directory; the Design seat is the one that needs it, because the PR body is the
+  // strongest clue to which spec this branch implements.
+  it("names `pr.md` in the DESIGN seat's prompt only, and writes it where that path points", async () => {
+    const turns: SeatCapture[] = [];
+    const written: SessionContextFile[] = [];
+    const prPaper: SessionContextFile = {
+      name: "pr.md",
+      body: "# Implement the session-bound workspace\n\nCloses #1.\n",
+      holds: "The reviewed pull request's own title and description, as the capture froze them.",
+      readWhen: "when you need what the author SAID this change is for — it names the spec.",
+    };
+    await runLensPipeline({
+      ...boardSeats(turns, (prompt, seat) => cleanBody(lensFromPrompt(prompt, seat))),
+      prPaper,
+      repoRoot: "/pr-worktree",
+      deltaPacket: PACKET,
+      lintContextFor,
+      readPrompt,
+      whiteboard: fakeWhiteboard([]),
+      boardIdFor: (lens) => `board:${lens}`,
+      writeContext: (files) => {
+        written.push(...files);
+        return ".rennet/context/s1";
+      },
+    });
+    // Written through the ONE sink, so the file lands in the root the seats run in and the
+    // directory's `README.md` indexes it — the path the Design prompt names resolves.
+    expect(written.map(({ name }) => name)).toContain("pr.md");
+    expect(written.find(({ name }) => name === "pr.md")?.body).toContain("Closes #1.");
+    const promptFor = (seat: string): string =>
+      turns.find((turn) => turn.seat === seat)?.prompt ?? "";
+    expect(promptFor("design")).toContain("`.rennet/context/s1/pr.md`");
+    expect(promptFor("design")).toContain(prPaper.readWhen);
+    // …and the body never rides the prompt: the seat opens the file.
+    expect(promptFor("design")).not.toContain("Closes #1.");
+    for (const seat of ["sequence", "decisions", "flagged-claude", "noise"]) {
+      expect(promptFor(seat), seat).not.toContain("pr.md");
+    }
+  });
+
+  it("names no `pr.md` on a branch review, which has no pull request to read", async () => {
+    // The control for the test above: same pipeline, same Design seat, no `prPaper` —
+    // and the line disappears. A prompt naming a file the capture never wrote would send
+    // the seat looking for evidence that does not exist.
+    const turns: SeatCapture[] = [];
+    const written: SessionContextFile[] = [];
+    await runLensPipeline({
+      ...boardSeats(turns, (prompt, seat) => cleanBody(lensFromPrompt(prompt, seat))),
+      repoRoot: "/pr-worktree",
+      deltaPacket: PACKET,
+      lintContextFor,
+      readPrompt,
+      whiteboard: fakeWhiteboard([]),
+      boardIdFor: (lens) => `board:${lens}`,
+      writeContext: (files) => {
+        written.push(...files);
+        return ".rennet/context/s1";
+      },
+    });
+    expect(written.map(({ name }) => name)).not.toContain("pr.md");
+    for (const turn of turns) expect(turn.prompt, turn.seat).not.toContain("pr.md");
+  });
+
+  it("settles every board as a typed failure naming the missing sidecar, drafting nothing", async () => {
+    // session-bound-workspace 5.7: a board seat's only backend is the sidecar. With no
+    // seam composed there is nowhere for a lens to run, and the pipeline says exactly that
+    // — it does not quietly open a session, because it no longer holds a port to open one
+    // with. Control: give the same deps a seam (`boardSeats`) and every lane drafts, which
+    // is what the suite above already does on every other test in this file.
     const applied: Applied[] = [];
     const result = await runLensPipeline({
-      claudePort: null,
-      codexExecutor: null,
+      council: { availability: { installed: ["claude-code", "codex"] } },
       repoRoot: "/pr-worktree",
       deltaPacket: PACKET,
       lintContextFor,
@@ -4794,7 +4790,66 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       boardIdFor: (lens) => `board:${lens}`,
     });
     expect(applied).toEqual([]);
-    for (const outcome of result.boards) expect(outcome.failure).toBeDefined();
+    for (const outcome of result.boards) {
+      expect(outcome.board).toBeUndefined();
+      expect(outcome.failure).toContain("T3 sidecar");
+    }
+  });
+
+  it("refuses a board seat whose harness the host has not got, before opening a thread", async () => {
+    // The ephemeral legs used to catch this on the way past ("resolved to codex, which is
+    // unavailable"). With them gone the council's own installed list is the only thing that
+    // can, and the refusal has to land BEFORE the seam — a thread opened on an absent
+    // provider spends a turn discovering what the host already said.
+    const turns: SeatCapture[] = [];
+    const applied: Applied[] = [];
+    const result = await runLensPipeline({
+      ...boardSeats(turns, () => cleanBody("sequence"), []),
+      repoRoot: "/pr-worktree",
+      deltaPacket: PACKET,
+      lintContextFor,
+      readPrompt,
+      whiteboard: fakeWhiteboard(applied),
+      boardIdFor: (lens) => `board:${lens}`,
+    });
+    // No turn was dispatched at all — not one thread, not one prompt.
+    expect(turns).toEqual([]);
+    expect(applied).toEqual([]);
+    for (const outcome of result.boards) {
+      expect(outcome.board, outcome.lens).toBeUndefined();
+      // The Flagged lane checks the same list one level up, per seat, and names both
+      // absences; every other lane gets the seat resolution's own words.
+      expect(outcome.failure, outcome.lens).toContain(
+        outcome.lens === "flagged"
+          ? "no claude harness; no codex harness"
+          : "which is not installed",
+      );
+    }
+  });
+
+  it("names the daemon's OWN reason when the sidecar was composed and would not start", async () => {
+    const applied: Applied[] = [];
+    const result = await runLensPipeline({
+      // BOTH installed, so the Flagged lane's two seats fail for the same reason — the
+      // sidecar — and nothing else can account for either.
+      council: { availability: { installed: ["claude-code", "codex"] } },
+      t3Unavailable: "the vendored bundle is not staged",
+      repoRoot: "/pr-worktree",
+      deltaPacket: PACKET,
+      lintContextFor,
+      readPrompt,
+      whiteboard: fakeWhiteboard(applied),
+      boardIdFor: (lens) => `board:${lens}`,
+    });
+    for (const outcome of result.boards) {
+      expect(outcome.failure).toContain("the vendored bundle is not staged");
+      // Once, not twice. One cause taking both Flagged seats out and printed twice reads
+      // as two different problems the reviewer has to go and find.
+      expect(
+        outcome.failure?.match(/the vendored bundle is not staged/g),
+        outcome.lens,
+      ).toHaveLength(1);
+    }
   });
 });
 
@@ -4898,8 +4953,7 @@ describe("runLensPipeline — persistence honesty (findings 2/3/6)", () => {
       const meta: BoardMeta[] = [];
       const arrivals: BoardArrivalEvent[] = [];
       const result = await runLensPipeline({
-        claudePort: fakeClaudePort([], bodyForFlagged),
-        codexExecutor: null,
+        ...boardSeats([], bodyForFlagged),
         repoRoot: "/pr-worktree",
         deltaPacket: PACKET,
         lintContextFor: (l) => (l === "flagged" ? flaggedCtx : lintContextFor(l)),
@@ -4955,8 +5009,7 @@ describe("runLensPipeline — persistence honesty (findings 2/3/6)", () => {
       },
     };
     const result = await runLensPipeline({
-      claudePort: fakeClaudePort([], (p, label) => cleanBody(lensFromPrompt(p, label))),
-      codexExecutor: null,
+      ...boardSeats([], (p, label) => cleanBody(lensFromPrompt(p, label))),
       repoRoot: "/pr-worktree",
       deltaPacket: PACKET,
       lintContextFor,
@@ -4975,8 +5028,7 @@ describe("runLensPipeline — persistence honesty (findings 2/3/6)", () => {
   it("surfaces a never-parseable drafter as a lens failure, never an empty board (finding 6)", async () => {
     const applied: Applied[] = [];
     const result = await runLensPipeline({
-      claudePort: fakeClaudePort([], () => ({ not: "a board" })), // never parses
-      codexExecutor: null,
+      ...boardSeats([], () => ({ not: "a board" })), // never parses
       repoRoot: "/pr-worktree",
       deltaPacket: PACKET,
       lintContextFor,
@@ -4992,15 +5044,11 @@ describe("runLensPipeline — persistence honesty (findings 2/3/6)", () => {
   });
 
   it("degrades a thrown drafting turn to a recorded failure, never an uncaught throw (finding 6/opus F1)", async () => {
-    const throwingPort = {
-      createSession: async () => {
-        throw new Error("live claude crashed");
-      },
-    } as unknown as HarnessPort;
     const applied: Applied[] = [];
     const result = await runLensPipeline({
-      claudePort: throwingPort,
-      codexExecutor: null,
+      ...boardSeats([], () => {
+        throw new Error("live claude crashed");
+      }),
       repoRoot: "/pr-worktree",
       deltaPacket: PACKET,
       lintContextFor,
@@ -5013,21 +5061,21 @@ describe("runLensPipeline — persistence honesty (findings 2/3/6)", () => {
   });
 
   it("keeps the harness's own words in the failure, under a spent-ladder terminal account", async () => {
-    const failingPort = {
-      createSession: async () => ({
-        send: async () => undefined,
-        close: async () => undefined,
-        events: (async function* () {
-          yield {
-            kind: "error",
-            error: { message: "structured output exceeded the seat capability" },
-          };
-        })(),
-      }),
-    } as unknown as HarnessPort;
+    const failing = fakeT3Seam([], () => undefined);
     const result = await runLensPipeline({
-      claudePort: failingPort,
-      codexExecutor: null,
+      council: { availability: { installed: ["claude-code"] } },
+      t3: {
+        ...failing,
+        client: async () => ({
+          ...(await failing.client()),
+          waitForTurnSettled: async (threadId: string) => ({
+            turnId: `${threadId}:turn`,
+            state: "error" as const,
+            errorMessage: "structured output exceeded the seat capability",
+            thread: { messages: [], session: null },
+          }),
+        }),
+      },
       repoRoot: "/pr-worktree",
       deltaPacket: PACKET,
       lintContextFor,
@@ -5374,7 +5422,7 @@ describe("runLensPipeline writes the session context through the ONE writer, bef
     };
     let composePrompt = "";
     const result = await runLensPipeline({
-      claudePort: fakeClaudePort([], (prompt, label) => {
+      ...boardSeats([], (prompt, label) => {
         const lens = lensFromPrompt(prompt, label);
         prompts.push({ lens, prompt, writesSoFar: writes.length });
         if (lens === "report") {
@@ -5392,7 +5440,6 @@ describe("runLensPipeline writes the session context through the ONE writer, bef
         }
         return cleanBody(lens);
       }),
-      codexExecutor: null,
       repoRoot: "/pr-worktree",
       writeContext,
       deltaPacket: PACKET,
@@ -5515,31 +5562,17 @@ describe("the report gate times a turn that DIED (#731 O4)", () => {
   it("still emits report-classification, with its harness, when the turn dies without emitting", async () => {
     const timings: GenerationPhaseTiming[] = [];
     let failure: unknown;
-    // The classification seat is the only one that caps its raw response, so this throws
-    // for THAT session and no other. The failure message asserted below is what proves it:
-    // a different session dying reports a different sentence.
-    const port = {
-      createSession: async (options: { outputByteCap?: number }) => {
-        if (options.outputByteCap !== undefined) {
+    // The classification seat is `report`, and the fake sidecar dies on THAT seat's thread
+    // and no other. The failure message asserted below is what proves it: a different
+    // seat's turn dying reports a different sentence.
+    await runLensPipeline({
+      ...boardSeats([], (_prompt, seat) => {
+        // The classification seat is `round-report`; every other seat answers normally.
+        if (seat === "round-report") {
           throw new Error("the classification session could not start");
         }
-        return {
-          send: async () => undefined,
-          close: async () => undefined,
-          events: (async function* () {
-            yield {
-              kind: "session.ended",
-              native: {},
-              outcome: { status: "completed", structuredOutput: cleanBody("design") },
-            };
-          })(),
-        };
-      },
-    } as unknown as HarnessPort;
-
-    await runLensPipeline({
-      claudePort: port,
-      codexExecutor: null,
+        return cleanBody("design");
+      }),
       repoRoot: "/pr-worktree",
       deltaPacket: PACKET,
       currentGeneration: "gen:ps-1:dispatch:o4",
@@ -5642,9 +5675,9 @@ describe("renderRepairPrompt is pointer-only on every leg (3.2)", () => {
 
 describe("runLensPipeline — a citation past the change is an unresolvable-citation pointer", () => {
   it("sends the pointer on the repair turn and omits the citation the seat never moved", async () => {
-    const captures: { model?: string; prompt?: string; label?: string }[] = [];
-    // On the sidecar seam, because the repair is where this test lives: a leg with no
-    // thread refuses one and settles a typed failure instead (the suite below).
+    // On the sidecar seam, because the repair is where this test lives: it is a further
+    // turn on the seat's own thread, which is the only place a pointer-only ask means
+    // anything (session-bound-workspace 3.2 + 5.7).
     const seatTurns: SeatCapture[] = [];
     // The seat's board, as drafted: a finding citing src/auth.ts:30-31 when the change is
     // 10..14. The Design lens gets the same citation beside its prose.
@@ -5676,9 +5709,7 @@ describe("runLensPipeline — a citation past the change is an unresolvable-cita
       return lens === "flagged" || lens === "design" ? citingPast(lens) : cleanBody(lens);
     };
     const result = await runLensPipeline({
-      claudePort: fakeClaudePort(captures, bodyFor),
-      t3: fakeT3Seam(seatTurns, bodyFor),
-      codexExecutor: null,
+      ...boardSeats(seatTurns, bodyFor),
       repoRoot: "/pr-worktree",
       deltaPacket: PACKET,
       lintContextFor: (lens) => ({
@@ -5710,13 +5741,12 @@ describe("runLensPipeline — a citation past the change is an unresolvable-cita
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// A leg with no thread cannot repair, and says so (Rai's ruling, 2026-09-04).
-// Every ephemeral turn opens a fresh `ephemeral: true` session, so a pointer-only
-// repair would reach a session that has never seen the draft. The lane used to settle
-// on the UNREPAIRED draft and read as though the ladder had run.
+// A repair is the NEXT TURN on the seat's own thread (session-bound-workspace 5.7).
+// Every board seat has one, so a repair never has to re-send what the conversation
+// already holds: it carries the violation pointers and the frozen ids and nothing else.
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe("a lint failure on a leg with no thread settles a typed failure, never the draft", () => {
+describe("a repair is a second turn on the SAME seat thread, carrying pointers only", () => {
   /** A board whose finding cites a line outside the change — fails `unresolvable-citation`. */
   const citingPast = (lens: string): DraftBoard => {
     const base = cleanBody(lens);
@@ -5729,97 +5759,99 @@ describe("a lint failure on a leg with no thread settles a typed failure, never 
         {
           id: "c-past",
           kind: "code_ref",
-          data: { author, path: "src/auth.ts", side: "head", start_line: 30, end_line: 31 },
+          data: {
+            author,
+            patchset_id: "ps-1",
+            path: "src/auth.ts",
+            side: "head",
+            start_line: 30,
+            end_line: 31,
+          },
         },
       ],
     } as DraftBoard;
   };
-  const lintContextForRegions = (lens: LintTarget): LintContext => ({
-    lens,
-    regions: [{ path: "src/auth.ts", side: "head", start: 10, end: 14 }],
-    files: new Map([["src/auth.ts", 200]]),
-    patchsetId: "ps-1",
-  });
 
-  const run = async (over: Partial<Parameters<typeof runLensPipeline>[0]>) => {
-    const captures: HarnessCapture[] = [];
+  const run = async (over: Partial<Parameters<typeof runLensPipeline>[0]> = {}) => {
+    const turns: SeatCapture[] = [];
     const result = await runLensPipeline({
-      claudePort: fakeClaudePort(captures, (prompt, label) => {
-        const lens = lensFromPrompt(prompt, label);
-        return lens === "flagged" || lens === "design" ? citingPast(lens) : cleanBody(lens);
-      }),
-      codexExecutor: null,
+      ...boardSeats(
+        turns,
+        (prompt, seat) => {
+          const lens = lensFromPrompt(prompt, seat);
+          return lens === "flagged" || lens === "design" ? citingPast(lens) : cleanBody(lens);
+        },
+        ["claude-code", "codex"],
+      ),
       repoRoot: "/pr-worktree",
       deltaPacket: PACKET,
-      lintContextFor: lintContextForRegions,
+      lintContextFor: (lens: LintTarget): LintContext => ({
+        lens,
+        regions: [{ path: "src/auth.ts", side: "head", start: 10, end: 14 }],
+        files: new Map([["src/auth.ts", 200]]),
+        patchsetId: "ps-1",
+      }),
       readPrompt,
       whiteboard: fakeWhiteboard([]),
       boardIdFor: (lens) => `board:${lens}`,
       ...over,
     } as Parameters<typeof runLensPipeline>[0]);
-    return { result, captures };
+    return { result, turns };
   };
 
-  it("settles the lane as a RETRYABLE failure naming the missing thread, and spends no turn on it", async () => {
-    const { result, captures } = await run({});
-    for (const lens of ["design", "flagged"] as const) {
-      const outcome = result.boards.find((board) => board.lens === lens);
-      expect(outcome?.board, `${lens} shipped a board`).toBeUndefined();
-      expect(outcome?.failure, lens).toContain("no thread to repair on");
-      // RETRYABLE: nothing about the lane is spent — a generation with a sidecar behind
-      // it can draft this lens again and repair it properly.
-      expect(outcome?.failureAccount?.classification, lens).toBe("retryable");
-      // The refusal happens BEFORE the turn: exactly one session per seat, the draft.
-      const turns = captures.filter(
-        ({ prompt, label }) => lensFromPrompt(prompt ?? "", label) === lens,
-      );
-      expect(turns, `${lens} spent a repair turn`).toHaveLength(1);
-      // …and no repair prompt was ever rendered.
-      expect(turns[0]?.prompt).not.toContain("Fix ONLY these issues");
+  it("repairs on the drafting turn's own thread, and sends no board and no base prompt", async () => {
+    const { turns } = await run();
+    // Every seat that failed lint: the three single-provider lanes plus BOTH Flagged
+    // seats, which are two sidecar threads on two providers — the lane kept its pair.
+    const repairing = [...new Set(turns.map(({ seat }) => seat))].filter(
+      (seat) => turns.filter((turn) => turn.seat === seat).length > 1,
+    );
+    expect(repairing.sort()).toEqual(["design", "flagged-claude", "flagged-codex"]);
+    for (const seat of repairing) {
+      const seatTurns = turns.filter((turn) => turn.seat === seat);
+      const draft = seatTurns[0];
+      const repair = seatTurns[1];
+      expect(draft, seat).toBeDefined();
+      expect(repair, seat).toBeDefined();
+      // THE SAME THREAD. A repair on a fresh one would reach a conversation that has
+      // never seen the board it is told to fix.
+      expect(repair?.threadId, seat).toBe(draft?.threadId);
+      // Pointers only: the rule and the range travel, the board and the base prompt do
+      // not. 2 KiB is the bound the send tap enforces on any JSON a prompt carries.
+      const bytes = Buffer.byteLength(repair?.prompt ?? "", "utf8");
+      expect(bytes, `${seat} repair prompt bytes`).toBeLessThan(2_048);
+      expect(repair?.prompt, seat).toContain("unresolvable-citation");
+      expect(repair?.prompt, seat).not.toContain("PROMPT_FILE:");
+      expect(repair?.prompt, seat).not.toContain('"kind":"code_ref"');
+      expect(repair?.prompt, seat).not.toContain('c-past",');
+      // Not compared against the draft's size: this fixture's prompt files are one-line
+      // stubs, so the draft turn here is smaller than any real one. The measured saving
+      // (7,107 → 469 bytes) is on the production prompt; the bound above is the claim.
     }
   });
 
-  it("the CODEX ephemeral leg refuses the same way (the Flagged lane's second seat)", async () => {
-    // Only the FLAGGED lane's Codex seat: with a Codex executor present the council routes
-    // other lenses to it too, and those lanes are not what this test is about.
-    const codexPrompts: string[] = [];
-    const { result } = await run({
-      codexExecutor: (async (req: { prompt: string; label?: string }) => {
-        const lens = lensFromPrompt(req.prompt, req.label);
-        if (lens === "flagged") codexPrompts.push(req.prompt);
-        return { output: lens === "flagged" ? citingPast(lens) : cleanBody(lens) };
-      }) as never,
-    });
-    const flagged = result.boards.find((board) => board.lens === "flagged");
-    expect(flagged?.board).toBeUndefined();
-    expect(flagged?.failure).toContain("no thread to repair on");
-    // One Codex turn: the draft. No repair was attempted on a session that could not hold one.
-    expect(codexPrompts).toHaveLength(1);
-    expect(codexPrompts[0]).not.toContain("Fix ONLY these issues");
-  });
-
-  it("CONTROL: the same seats settle boards when the citation resolves", () => {
-    // Proves the two tests above are about the missing THREAD and not about a fixture that
-    // can never pass lint: move the changed region to cover the cited lines and the very
-    // same boards settle, with no failure and no repair.
-    //
-    // What this control CANNOT show, stated rather than implied: it does not prove that a
-    // sidecar thread would have repaired the out-of-range citation. That path is the T3
-    // leg's, exercised by its own suite; here the claim is only that the refusal is caused
-    // by the leg, since nothing else about these lanes changed.
-    return run({
+  it("CONTROL: no repair turn at all when the citation resolves", async () => {
+    // Proves the test above is about the failing citation and not about a fixture that
+    // always takes a second turn: widen the changed region to cover the cited lines and
+    // every seat runs exactly once.
+    const { result, turns } = await run({
       lintContextFor: (lens: LintTarget): LintContext => ({
         lens,
         regions: [{ path: "src/auth.ts", side: "head", start: 10, end: 40 }],
         files: new Map([["src/auth.ts", 200]]),
         patchsetId: "ps-1",
       }),
-    }).then(({ result }) => {
-      for (const lens of ["design", "flagged"] as const) {
-        const outcome = result.boards.find((board) => board.lens === lens);
-        expect(outcome?.failure, lens).toBeUndefined();
-        expect(outcome?.board, lens).toBeDefined();
-      }
     });
+    for (const seat of new Set(turns.map(({ seat: id }) => id))) {
+      expect(
+        turns.filter((turn) => turn.seat === seat),
+        seat,
+      ).toHaveLength(1);
+    }
+    for (const lens of ["design", "flagged"] as const) {
+      const outcome = result.boards.find((board) => board.lens === lens);
+      expect(outcome?.failure, lens).toBeUndefined();
+      expect(outcome?.board, lens).toBeDefined();
+    }
   });
 });

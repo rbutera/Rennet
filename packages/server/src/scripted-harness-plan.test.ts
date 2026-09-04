@@ -1,9 +1,9 @@
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { OWNER_LOOP_ROUND_ONE_ASK, ownerLoopScriptedHarnessPlan } from "./owner-loop-proof-fixture";
-import { loadScriptedHarnessPlan } from "./scripted-harness-plan";
+import { loadScriptedHarnessPlan, loadScriptedT3Seats } from "./scripted-harness-plan";
 
 const askPlanValue = `\${askId}`;
 const evidenceIdsPlanValue = `\${evidenceIds}`;
@@ -239,6 +239,119 @@ describe("scripted harness JSON plan", () => {
       {},
     );
     expect(echoed).toMatchObject({ status: "completed", structuredOutput: board });
+  });
+
+  it("reads the seat's context files from the BOUND WORKSPACE, not the repository root", async () => {
+    // `resolveT3Seats` takes both: `repoRoot` names the repository (one T3 project however
+    // many worktrees of it exist) and `worktreePath` names the workspace the thread's turns
+    // run in (session-bound-workspace 5.2). `resolveT3SeatRuntime` uses `worktreePath ??
+    // repoRoot` as the turn cwd, so this seam must too — a prompt names its context file
+    // RELATIVELY, and reading it from the repository root instead finds an empty directory
+    // and matches no step, with nothing on the way past to say why.
+    const root = mkdtempSync(join(tmpdir(), "rennet-scripted-seat-root-"));
+    const worktreePath = join(root, "worktree");
+    const sessionDir = join(worktreePath, ".rennet", "context", "s1");
+    mkdirSync(sessionDir, { recursive: true });
+    writeFileSync(join(sessionDir, "evidence.json"), JSON.stringify({ ask: "THE ASK BODY" }));
+    // The decoy: the repository root has a context directory of its own, holding the wrong
+    // answer. Reading the wrong root is then a wrong ANSWER, not just a miss.
+    const decoyDir = join(root, ".rennet", "context", "s1");
+    mkdirSync(decoyDir, { recursive: true });
+    writeFileSync(join(decoyDir, "evidence.json"), JSON.stringify({ ask: "THE WRONG BODY" }));
+
+    const seats = loadScriptedT3Seats(
+      writePlan(root, {
+        schemaVersion: 1,
+        lane: "owner-loop-685",
+        invocationLog: join(root, "invocations.jsonl"),
+        steps: [
+          {
+            id: "report",
+            kind: "structured",
+            promptIncludes: ["# Round report", "THE ASK BODY"],
+            output: { outcomes: [], beyond: [] },
+          },
+        ],
+      }),
+    );
+    const runtime = await seats.resolve({
+      repoRoot: root,
+      worktreePath,
+      generationId: "gen-1",
+      branch: "feature/x",
+      sessionId: "s1",
+    });
+    const client = await runtime.seam.client();
+    const { threadId } = await runtime.seam.threadFor({
+      seat: "round-report",
+      provider: "claudeAgent",
+      model: "opus",
+      effort: "medium",
+    });
+    await client.startTurn({
+      threadId,
+      // Exactly what the classifier prompt carries: the header and the RELATIVE path.
+      text: "# Round report\nread `.rennet/context/s1/evidence.json` with your own tools",
+      outputSchema: { type: "object" },
+    });
+    const settled = await client.waitForTurnSettled(threadId);
+    expect(settled.state).toBe("completed");
+    expect(settled.structuredOutput).toEqual({ outcomes: [], beyond: [] });
+    // And the ledger records the cwd the turn actually ran in.
+    const ledger = readFileSync(join(root, "invocations.jsonl"), "utf8").trim().split("\n");
+    expect(JSON.parse(ledger[0] ?? "{}").cwd).toBe(worktreePath);
+  });
+
+  it("answers a repair turn on the thread that already holds the draft", async () => {
+    // A repair turn carries LINT POINTERS and no prompt file, so `selectStep` over that turn
+    // alone matches nothing and the seat would settle "no step for this prompt" with the
+    // unrepaired draft kept (PR #800). The thread remembers its own board, so the step is
+    // chosen from the whole conversation and the drafting step answers again.
+    const root = mkdtempSync(join(tmpdir(), "rennet-scripted-seat-repair-"));
+    const seats = loadScriptedT3Seats(
+      writePlan(root, {
+        schemaVersion: 1,
+        lane: "owner-loop-685",
+        invocationLog: join(root, "invocations.jsonl"),
+        steps: [
+          {
+            id: "draft-sequence",
+            kind: "structured",
+            promptIncludes: "Sequence fixture",
+            output: { elements: [{ id: "p", kind: "prose", data: { markdown: "drafted" } }] },
+          },
+        ],
+      }),
+    );
+    const runtime = await seats.resolve({
+      repoRoot: root,
+      generationId: "gen-1",
+      branch: "feature/x",
+      sessionId: "session-1",
+    });
+    const client = await runtime.seam.client();
+    const { threadId } = await runtime.seam.threadFor({
+      seat: "sequence",
+      provider: "claudeAgent",
+      model: "opus",
+      effort: "medium",
+    });
+    const outputSchema = { type: "object" };
+    await client.startTurn({ threadId, text: "Sequence fixture", outputSchema });
+    await client.waitForTurnSettled(threadId);
+    // Pointers only — nothing in this text matches any step on its own.
+    await client.startTurn({
+      threadId,
+      text: "repair: element p failed lint at .data.markdown",
+      outputSchema,
+    });
+    const repaired = await client.waitForTurnSettled(threadId);
+    expect(repaired.state).toBe("completed");
+    expect(repaired.structuredOutput).toEqual({
+      elements: [{ id: "p", kind: "prose", data: { markdown: "drafted" } }],
+    });
+    expect(seats.threads).toHaveLength(1);
+    expect(seats.threads[0]?.prompts).toHaveLength(2);
   });
 
   it("rejects invalid plans and repository escapes before creating a session", async () => {

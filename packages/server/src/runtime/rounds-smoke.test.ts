@@ -29,6 +29,7 @@ import {
 import { describe, expect, it } from "vitest";
 import { createBoardsRuntime } from "../boards/boards-runtime";
 import { DELTA_DIGEST_OUTPUT_SCHEMA } from "../delta-digest-live";
+import { withFakeT3Seats } from "../t3-seat-fake";
 import { createNodePromptReader } from "./lens-pipeline";
 import { createRoundsRuntime } from "./rounds";
 
@@ -595,15 +596,17 @@ describe.skipIf(!SMOKE)("C15 1.1 — rounds pipeline smoke-run (LIVE ports, RENN
         createdAt: Date.now(),
       } as unknown as SessionModel;
 
-      const runtime = createRoundsRuntime({
-        resolveClaudePort: async () => observedClaudePort,
-        resolveCodexExecutor: async () => codexExecutor,
-        boardsRuntimeFor: () => ({
-          service: boards.service,
-          createRennetBoard: boards.createRennetBoard,
+      const runtime = createRoundsRuntime(
+        withFakeT3Seats({
+          resolveClaudePort: async () => observedClaudePort,
+          resolveCodexExecutor: async () => codexExecutor,
+          boardsRuntimeFor: () => ({
+            service: boards.service,
+            createRennetBoard: boards.createRennetBoard,
+          }),
+          readPrompt: createNodePromptReader(promptsSrcDir),
         }),
-        readPrompt: createNodePromptReader(promptsSrcDir),
-      });
+      );
 
       const started = Date.now();
       let latestProgress: unknown;

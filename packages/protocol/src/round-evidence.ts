@@ -23,31 +23,6 @@ export const ROUND_EVIDENCE_MANIFEST_MAX_BYTES = 262_144;
 export const ROUND_EVIDENCE_MANIFEST_MAX_ENTRIES = 400;
 
 /**
- * The classifier's raw response cap, enforced at the harness TRANSPORT boundary in
- * both the Claude and the Codex adapter — before structured-output decoding, because
- * core only ever sees decoded values.
- */
-export const ROUND_REPORT_OUTPUT_MAX_BYTES = 131_072;
-
-/**
- * The classifier's provider-side output-TOKEN cap — the limit the provider itself is
- * told about, so an over-long classification stops at the source instead of being
- * paid for and then rejected. Sized as the byte cap's peer (~4 UTF-8 bytes per token
- * for this JSON), which keeps {@link ROUND_REPORT_OUTPUT_MAX_BYTES} the backstop: the
- * byte cap is what actually FAILS the turn, at the transport boundary, on either
- * harness.
- *
- * ASYMMETRIC BY TRANSPORT, and honestly so. The Claude harness reads the cap from its
- * child environment (`CLAUDE_CODE_MAX_OUTPUT_TOKENS`). `codex` exposes no
- * model-output-token knob at all — neither an app-server turn parameter nor a config
- * override (verified against codex-cli 0.147.0; its `max_output_tokens` is the
- * code-mode `exec` TOOL's own budget, a different thing). A Codex classification is
- * therefore bounded by the byte cap alone. Enforce where enforcement exists; do not
- * pretend a limit is in force on a transport that has no way to hear it.
- */
-export const ROUND_REPORT_OUTPUT_MAX_TOKENS = 32_768;
-
-/**
  * The decoded cardinality limit on the `beyond asks` bucket, enforced before
  * persistence. Outcome cardinality needs no separate constant: it is exactly the
  * dispatched-ask count, one entry each, checked by the partition pass.

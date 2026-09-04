@@ -37,7 +37,6 @@ export const LENS_SETTLEMENT_FLAGGED_FINDING = "flag-finding";
 export const LENS_SETTLEMENT_FLAGGED_SECTION = "flag-section";
 
 const author: Author = { kind: "lens-agent", id: LENS_SETTLEMENT_LANE };
-const patchsetPlanValue = `\${patchsetId}`;
 
 function codeRef(id: string, path: string): DraftBoard["elements"][number] {
   return {
@@ -45,7 +44,12 @@ function codeRef(id: string, path: string): DraftBoard["elements"][number] {
     kind: "code_ref",
     data: {
       author,
-      patchset_id: patchsetPlanValue,
+      // NO `patchset_id`, and no `${patchsetId}` placeholder to resolve it with: a seat is
+      // never told the captured patchset's identity (commit dcaff8a85 stamps it once, host
+      // side, on the board `validateDraft` returns). A scripted seat that emitted one
+      // would be modelling a channel that does not exist — and since the placeholder
+      // resolved off a JSON context layer no prompt carries any more, it made every board
+      // seat of this proof fail before it drafted anything.
       path,
       side: "head",
       start_line: 1,

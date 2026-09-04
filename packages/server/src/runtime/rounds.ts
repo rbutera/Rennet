@@ -51,7 +51,7 @@ import type {
   RegisterLintContext,
 } from "@rennet/core";
 import { sessionContextRelativeDir } from "@rennet/core";
-import type { GenerationUsage } from "@rennet/protocol";
+import type { CouncilHarnessId, GenerationUsage } from "@rennet/protocol";
 import {
   type AskOccurrence,
   type BenchmarkRun,
@@ -584,6 +584,10 @@ export interface RoundInput {
   /** The pinned packet over the current patchset. A landed round carries the new
    *  `successorAccount`; the no-code boundary removes any stale prior account. */
   readonly deltaPacket: DeltaPacket;
+  /** The reviewed pull request's own paper (`pr.md`), when this review has a pull request.
+   *  Written into the session's context directory and named in the Design seat's prompt
+   *  (PR #802); a branch review has none and names none. */
+  readonly prPaper?: SessionContextFile;
   readonly lintContextFor: (lens: LintTarget) => LintContext;
   /** The prior generation's boards, for the pipeline's R58 delta stamps (optional). */
   readonly previous?: ReadonlyMap<LintTarget, DraftBoard>;
@@ -677,9 +681,10 @@ export interface RoundsRuntimeDeps {
   /**
    * The T3 sidecar's seat runtime for one generation (t3-lens-threads). Every board seat
    * runs on it — T3 is their only backend — so a daemon that cannot bring the sidecar up
-   * answers `{ unavailable: <detail> }` and the lanes FAIL with that reason. The dep being
-   * absent altogether is the direct-call shape (no sidecar was ever composed), which keeps
-   * the ephemeral legs; there is no path from a sidecar failure to one.
+   * answers `{ unavailable: <detail> }` and the lanes FAIL with that reason. Absent ⇒ every
+   * board seat settles as a typed failure naming the missing sidecar; `create-server.ts`
+   * always fills it, so the absent case is a direct-call caller with no board pipeline
+   * behind it.
    */
   readonly resolveT3Seats?: (input: {
     /** The REPOSITORY the generation belongs to — the T3 project every seat thread hangs off. */
@@ -1138,15 +1143,24 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
     // leaves the replacement attempt identifiable by these exact reserved ids.
     await deps.persistGeneration?.(attemptGeneration);
 
+    // The INSTALLED-HARNESS answer, not the ports themselves. Since
+    // session-bound-workspace 5.7 a board seat holds no port — it runs on a sidecar
+    // thread — so what the pipeline needs from these probes is only whether each harness
+    // exists on this host, which is what the council routes over and what decides whether
+    // the Flagged lane can seat two providers.
     const [claudePort, codexExecutor] = await Promise.all([
       deps.resolveClaudePort(input.repoRoot),
       deps.resolveCodexExecutor(input.repoRoot),
     ]);
+    const installed: readonly CouncilHarnessId[] = [
+      ...(claudePort === null ? [] : (["claude-code"] as const)),
+      ...(codexExecutor === null ? [] : (["codex"] as const)),
+    ];
     // t3-lens-threads — the sidecar's seat runtime for THIS generation. A resolver that
     // rejects is the same answer as one that says `unavailable`: the daemon has a sidecar
-    // and could not bring it up, so the board seats FAIL with the reason rather than
-    // dropping to the ephemeral legs (review finding 1). Only a caller with no resolver at
-    // all — a direct-call test — leaves those legs in place.
+    // and could not bring it up, so the board seats FAIL with the reason. No resolver at
+    // all — a direct-call test — is the same outcome with a blunter reason: every board
+    // seat settles as a typed failure naming the missing sidecar.
     const t3Resolved = await deps
       .resolveT3Seats?.({
         // The REPOSITORY, and separately the bound WORKSPACE the seats run in: one T3 project
@@ -1375,8 +1389,8 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
 
     const writeSessionContext = deps.writeSessionContext;
     const pipelineInput = {
-      claudePort,
-      codexExecutor,
+      council: { availability: { installed } },
+      ...(input.prPaper === undefined ? {} : { prPaper: input.prPaper }),
       ...(t3Seam === undefined ? {} : { t3: t3Seam }),
       ...(t3Unavailable === undefined ? {} : { t3Unavailable }),
       repoRoot: input.draftingRoot ?? input.repoRoot,

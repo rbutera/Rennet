@@ -296,6 +296,7 @@ import {
   createRoundsRuntime,
   type DispatchRoundResult,
   type PersistedBoardMeta,
+  type RoundsRuntimeDeps,
   type T3SeatRuntime,
 } from "./runtime/rounds";
 import { verifyStoredRoundReport } from "./runtime/stored-round-report-verification";
@@ -1071,6 +1072,13 @@ export interface RennetServerOptions {
   readonly testHarnessPort?: HarnessPort;
   /** Test-composition seam for the Codex utility executor (the council's Codex seats). */
   readonly testCodexExecutor?: CodexExecutor;
+  /**
+   * Test-composition seam for the T3 SIDECAR's seat runtime. Board seats have no other
+   * backend (session-bound-workspace 5.7), so a hermetic proof of the board pipeline
+   * supplies a scripted sidecar here — `loadScriptedT3Seats` — exactly as it supplies a
+   * scripted harness port for the utility turns. The production daemon never supplies it.
+   */
+  readonly testT3Seats?: RoundsRuntimeDeps["resolveT3Seats"];
   /** Hermetic production-mapping seam for the ROUND WORKER's coding turn. Tests use it to
    * prove the composition root carries checkpoint evidence even when HEAD does not move.
    * The REVIEW handoff has no such seam any more: it always runs on the review's T3 thread
@@ -3021,28 +3029,21 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     <I extends { readonly review: Review }, O>(run: (input: I) => Promise<O>) =>
     (input: I): Promise<O> =>
       holdingReviewContext(input.review, () => run(input));
-  /**
-   * The reviewed pull request's own paper, into the session's context directory through
-   * the one writer (review finding 6). `prPaperContextFile` owns what goes in it and when
-   * there is nothing to write; this is only the write.
-   */
-  const writePrPaper = (review: Review): void => {
-    const file = prPaperContextFile(review);
-    if (file !== undefined) writeReviewContext(review, [file]);
-  };
   const roundsRuntime = createRoundsRuntime({
     // One generation's archive (#731 9.3/9.4), taken from the phase records the reveal
     // block already persisted — the spine stays authoritative and unconditional.
     recordBenchmark,
     resolveClaudePort: claudeAdapterForRepo,
     resolveCodexExecutor: codexExecutorForRepo,
-    // Wired only when this process was GIVEN a sidecar. A bundle path means a sidecar
-    // exists here, so a board seat that cannot reach it fails with the reason (review
-    // finding 1) rather than dropping to an ephemeral leg that loses the thread. No bundle
-    // path means no sidecar was ever composed — a hermetic `createServer` in a test — and
-    // the ephemeral legs stand, because nothing was lost. A packaged Rennet always has one:
-    // `rennet-desktop:build` fails outright when the bundle is not staged.
-    ...(options.t3BundlePath === undefined ? {} : { resolveT3Seats: resolveT3SeatRuntime }),
+    // ALWAYS wired, bundle or no bundle. A board seat has no other backend, so what a
+    // daemon owes a lane is the CAUSE: `resolveT3SeatRuntime` asks the supervisor to come
+    // up and reports whatever it says, and a supervisor with no bundle path says "the
+    // vendored T3 Code server bundle is not built (vendor/t3code/apps/server/dist/bin.mjs)".
+    // Leaving the dep off instead made a dev daemon with an unbuilt sidecar report the
+    // developer-only "this caller composed no sidecar seam", which names the composition
+    // rather than the thing the reader has to fix. A packaged Rennet always has a bundle:
+    // `rennet-desktop:build` fails outright when it is not staged.
+    resolveT3Seats: options.testT3Seats ?? resolveT3SeatRuntime,
     boardsRuntimeFor,
     readPrompt,
     // session-context-files: the ONE writer, bound by the rounds runtime to the root the
@@ -3213,8 +3214,15 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       // (review finding 4). Cleared before the sweep, which is what then performs it.
       const settle = contextPurger.turnInFlight(session.id);
       try {
+        // The reviewed PR's own paper travels with the generation, so the Design seat's
+        // prompt can name `pr.md` (PR #802). Read from the LIVE review — a PR opened after
+        // the session was minted still has its paper — and written by the pipeline through
+        // the same context sink as the seats' own files, which is what puts it in the root
+        // the seats actually run in rather than the repository root alone.
+        const prPaper = prPaperContextFile(reviewNow());
         return await roundsRuntime.runRound({
           ...input,
+          ...(prPaper === undefined ? {} : { prPaper }),
           ...(awaitReport === undefined ? {} : { onReportProgress: awaitReport }),
         });
       } finally {
@@ -4004,14 +4012,10 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
    *  persisted the version; drafting is single-flight and never turns capture/regenerate into a
    *  failed command. A later compose can join or retry the same recovery path. */
   const kickBoardDrafting = (review: Review): void => {
-    // BEFORE the first seat turn (session-context-files: "context written before the seats
-    // start"): the reviewed PR's own title and body, which the Design seat is told to treat
-    // as its strongest clue and cannot otherwise reach from a detached worktree.
-    try {
-      writePrPaper(review);
-    } catch {
-      // A repo we cannot write into still gets its boards; the seat just has one fewer clue.
-    }
+    // `pr.md` is NOT written here. It rides the generation as `prPaper` and goes through
+    // the pipeline's own context sink, which is bound to the root the seats are dispatched
+    // with — a PR-snapshot review drafts in a worktree, and a copy written at the
+    // repository root is one the Design seat's prompt does not name.
     void ensureBoardDrafting(review).catch(() => undefined);
   };
 

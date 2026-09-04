@@ -229,6 +229,9 @@ test("Sequence and Decisions settle with anchors into the captured patchset (#54
       (element) => element.kind === "code_ref" && element.id === step?.data.span,
     );
     if (cited?.kind !== "code_ref") throw new Error("the repaired span names no code_ref");
+    // The seat never sends a patchset id — the host stamps it once, on the board it
+    // persists — so this is the one place the proof can see that it was stamped at all.
+    expect(cited.data.patchset_id).toBe(patchsetId);
     const hydrated = await bridge.invoke("patchset.readSpan", {
       patchsetId,
       path: cited.data.path,
