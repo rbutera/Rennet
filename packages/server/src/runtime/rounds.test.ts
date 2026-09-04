@@ -3089,6 +3089,64 @@ describe("createRoundsRuntime", () => {
     expect(stolen.failedEvents).toEqual([]);
   });
 
+  it("refuses to freeze a predecessor a later attempt now owns, and drops its pointer (#816 re-review P3)", async () => {
+    // gen:<patchset> is GLOBAL across sessions/reviews on one patchset. Another session can
+    // re-draft the PREDECESSOR patchset into a fresh live generation while this round drives;
+    // freezing our stale copy would overwrite that session's live boards under the shared id.
+    // The freeze, the transition and the record's `frozenPredecessor` pointer are all conditioned
+    // on the durable predecessor still matching the generation this round superseded.
+    const priorWithBoards: Generation = {
+      id: "gen:ps-0",
+      patchsetId: "ps-0",
+      lensBoards: { design: "board:gen1-design" },
+      status: "live",
+    };
+    const run = async (predecessorStolen: boolean) => {
+      const store = new Map<string, Generation>();
+      // The predecessor patchset's durable generation. In the control it is the same generation
+      // this round holds; in the steal it is a DIFFERENT session's live re-draft (new boards).
+      store.set(
+        priorWithBoards.id,
+        predecessorStolen
+          ? { ...priorWithBoards, lensBoards: { design: "board:b-owns-ps0" } }
+          : { ...priorWithBoards },
+      );
+      const transitions: string[] = [];
+      const deps = baseDeps({
+        persistGeneration: (generation) => {
+          store.set(generation.id, JSON.parse(JSON.stringify(generation)) as Generation);
+        },
+        loadGeneration: (id) => store.get(id),
+        onGenerationTransition: (transition) => transitions.push(transition.sourceGeneration),
+      });
+      const { record } = await createRoundsRuntime(withFakeT3Seats(deps)).runRound(
+        roundInput({
+          previousGeneration: priorWithBoards,
+          session: { id: "s1", projectId: "p1", reviewId: "review-1", threads: [], createdAt: 0 },
+        }),
+      );
+      return { predecessor: store.get(priorWithBoards.id), transitions, record };
+    };
+
+    // Control: the durable predecessor still matches, so the round freezes it, points the record
+    // at it and broadcasts the transition. Without this the steal assertions would pass over a
+    // round that never froze a predecessor at all.
+    const owned = await run(false);
+    expect(owned.predecessor?.status).toBe("frozen");
+    expect(owned.predecessor?.lensBoards.design).toBe("board:gen1-design");
+    expect(owned.record.frozenPredecessor).toBe(priorWithBoards.id);
+    expect(owned.transitions).toEqual([priorWithBoards.id]);
+
+    // A later session re-drafted the predecessor patchset. This round must not overwrite it:
+    // B's live boards survive untouched, no transition fires, and the record carries no pointer
+    // to a predecessor this round no longer owns — a drill-back must never land on B's boards.
+    const stolen = await run(true);
+    expect(stolen.predecessor?.status).toBe("live");
+    expect(stolen.predecessor?.lensBoards.design).toBe("board:b-owns-ps0");
+    expect(stolen.record.frozenPredecessor).toBeUndefined();
+    expect(stolen.transitions).toEqual([]);
+  });
+
   it("rejects a reveal write from a superseded generation attempt", async () => {
     const runAndCollect = async (supersedeAfterAttempt: boolean): Promise<Generation[]> => {
       const writes: Generation[] = [];
@@ -3460,5 +3518,50 @@ describe("what a round archives, and when (#731 N3)", () => {
       .catch(() => undefined);
     expect(reads).toBeGreaterThan(1);
     expect(recorded).toEqual([]);
+  });
+
+  it("archives NO complete benchmark for a round superseded at the terminal write (#816 re-review P2)", async () => {
+    // The archive used to be taken BEFORE `persistOwned` re-read ownership, so an attempt
+    // overtaken during the terminal write's await filed a `complete` benchmark for a round that
+    // never composed. The steal here lands mid-verify — after the copied `superseded` flag,
+    // before the terminal write — so only the write-time re-read catches it. Archiving it
+    // `complete` would count a superseded turn as a clean round in the export.
+    const run = async (steal: boolean): Promise<BenchmarkRun[]> => {
+      let stolen = false;
+      let attemptRecord: Generation | undefined;
+      const { deps, recorded } = archiving({
+        persistGeneration: (generation) => {
+          if (attemptRecord === undefined && generation.draftingBoardIds !== undefined) {
+            attemptRecord = JSON.parse(JSON.stringify(generation)) as Generation;
+          }
+        },
+        loadGeneration: () => {
+          if (attemptRecord === undefined) return undefined;
+          return stolen
+            ? { ...attemptRecord, draftingReportBoardId: "board:a-later-attempt" }
+            : attemptRecord;
+        },
+      });
+      const round = createRoundsRuntime(withFakeT3Seats(deps)).runRound(
+        roundInput({
+          verifyDraftedReport: () => {
+            if (steal) stolen = true;
+          },
+        }),
+      );
+      if (steal) await expect(round).rejects.toThrow(/superseded/);
+      else await round;
+      return recorded;
+    };
+
+    // Control: nobody steals, so the round files exactly one `complete` benchmark. Without this
+    // the assertion below would pass over a run that never reached its terminal archive at all.
+    const owned = await run(false);
+    expect(owned.map((r) => r.outcome)).toEqual(["complete"]);
+
+    // Superseded at the terminal write: nothing is archived — not `complete` (the archive now
+    // follows the ownership-checked write), and not `failed` (the catch skips supersession).
+    const stolen = await run(true);
+    expect(stolen).toEqual([]);
   });
 });

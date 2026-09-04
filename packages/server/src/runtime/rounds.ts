@@ -1891,23 +1891,24 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
       }
       throw error;
     }
-    // Archived BEFORE the `persistOwned` re-read below, and that ordering is SAFE — not a
-    // race (#816 re-review P2, ruled unreachable). A "complete" benchmark could only lie if a
-    // competitor claimed this generation between here and `persistOwned`, but no competitor
-    // can exist: round drives are single-flight per session (the coordinator's `inFlight`
-    // map in round-execution.ts and this runtime's `enqueue` tail both admit ONE drive per
-    // session), a generation belongs to one session, and `deps.persistGeneration` is the only
-    // writer of a generation id — reached exclusively from inside a drive. The supersession
-    // re-check `persistOwned` performs guards the SEQUENTIAL cross-restart reconstruction
-    // handoff (old process dead, new one reconstructing), never a live concurrent claim, so
-    // there is no interleave between this archive and that check to protect against. Guarding
-    // it anyway would be robustness for a race the serialization already forecloses.
-    archiveBenchmark?.("complete");
-    // The frozen predecessor (C15 2.2, un-parks C09 F3): when the code moved AND a real
-    // prior generation exists, it freezes and its id is the earlier generation the ledger's
-    // switcher drills back to. Absent on a no-move round and on a first generation —
-    // honestly, there is no distinct predecessor to point at.
+    // The frozen predecessor (C15 2.2, un-parks C09 F3): when the code moved AND a real prior
+    // generation exists, its id is the earlier generation the ledger's switcher drills back to.
+    // gen:<patchset> is GLOBAL across sessions/reviews on one patchset (`generationIdForPatchset`),
+    // so another session may have re-drafted this patchset into a fresh LIVE generation after
+    // this round read its predecessor. Freezing our stale copy would overwrite that session's
+    // live boards (#816 re-review P3). So claim the predecessor ONLY while the durable copy is
+    // still the generation we superseded — same lens-board slots, since a redraft mints new
+    // ones. Otherwise leave it be and drop BOTH the frozen write below and the record's
+    // `frozenPredecessor` pointer: a drill-back must not land on boards another attempt owns.
     const predecessor = landed ? input.previousGeneration : undefined;
+    const durablePredecessor =
+      predecessor === undefined ? undefined : deps.loadGeneration?.(predecessor.id);
+    const predecessorStillOurs =
+      predecessor !== undefined &&
+      (durablePredecessor === undefined ||
+        LENS_KINDS.every(
+          (lens) => durablePredecessor.lensBoards[lens] === predecessor.lensBoards[lens],
+        ));
     // The REPORT-DERIVED rework count (C15 finding 10): what the round's own report says
     // it did, persisted here so the ledger reads a number instead of inferring one from
     // how many asks went out.
@@ -1923,27 +1924,31 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
       boardGeneration: boardGeneration.id,
       reportBoard,
       ...(reworkCount === undefined ? {} : { reworkCount }),
-      ...(predecessor === undefined ? {} : { frozenPredecessor: predecessor.id }),
+      ...(predecessorStillOurs && predecessor !== undefined
+        ? { frozenPredecessor: predecessor.id }
+        : {}),
     };
-    // WRITE ORDER, and it is load-bearing: the generations go down FIRST, the record that
-    // points at them LAST. The record is the ledger row the switcher drills through, so a
-    // crash between the two writes must leave a missing row (honest: the round is not in
-    // the ledger yet) rather than a row whose generation was never written — a drill-down
-    // into nothing. There is no transaction across two stores; ordering is the guarantee.
+    // WRITE ORDER, and it is load-bearing: the successor generation goes down FIRST, through
+    // `persistOwned` — the one ownership-checked writer of this id — then the ledger record
+    // that points at it (below). A crash between leaves a missing row (honest: not in the
+    // ledger yet) rather than a row drilling into a generation that was never written.
+    // `persistOwned` throws `GenerationSupersededError` if a later attempt claimed this id
+    // mid-await, and `reported` swallows that without painting a failure.
     const liveSuccessor = withLensBoards(restoredOrDrafted.generation, pipeline);
     await persistOwned(liveSuccessor);
-    // The terminal tail below (frozen-predecessor write, generation transition, round record,
-    // `composed` broadcast) runs UNGUARDED after this one ownership check, and that is correct
-    // (#816 re-review P3, ruled unreachable). It would only misfire if a competitor claimed
-    // this generation after `persistOwned` resolved — but the same single-flight invariant
-    // holds (one drive per session via the coordinator `inFlight` map + this runtime's
-    // `enqueue`; a generation is per-session; `persistGeneration` is the sole writer, only
-    // from inside a drive), so no live competitor exists. And `persistOwned` just wrote the
-    // SETTLED generation — `withLensBoards` drops the drafting slots — so any later
-    // (sequential) attempt reads a generation that no longer matches its slots and supersedes
-    // ITSELF rather than clobbering this record. Conditioning the tail on a re-read would
-    // guard a claim the serialization cannot produce.
-    const frozenPrevious = predecessor === undefined ? undefined : freezeGeneration(predecessor);
+    // Timed `complete` ONLY after the ownership-protected write landed (#816 re-review P2).
+    // Archiving before `persistOwned` filed a `complete` benchmark for an attempt a later one
+    // may have superseded during the write's await — a turn that never composed, counted in the
+    // export as a clean round. The `catch` above already timed a real failure or an abort; a
+    // supersession is timed as neither.
+    archiveBenchmark?.("complete");
+    // Freeze the predecessor ONLY while this round still owns it (see the predecessor note
+    // above): a redraft by another session on this global patchset id makes the durable copy a
+    // different live generation, and overwriting it with our frozen copy would erase it. The
+    // successor record and `composed` below still fire regardless — we own `liveSuccessor`
+    // (just written, settled; a later attempt on it reads dropped slots and supersedes ITSELF).
+    const frozenPrevious =
+      predecessorStillOurs && predecessor !== undefined ? freezeGeneration(predecessor) : undefined;
     if (frozenPrevious !== undefined) await deps.persistGeneration?.(frozenPrevious);
     if (frozenPrevious !== undefined && input.session.reviewId !== undefined) {
       await deps.onGenerationTransition?.({
