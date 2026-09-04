@@ -235,8 +235,9 @@ export interface BindThreadInput {
   readonly dataDir: string;
   readonly client: T3Client;
   /**
-   * The REPOSITORY the binding names. Half the binding key, and the T3 project the thread
-   * hangs off — one project per repository, however many worktrees of it a reviewer has.
+   * The REPOSITORY the thread belongs to: the T3 project it hangs off — one project per
+   * repository, however many worktrees of it a reviewer has. It is also half the binding KEY,
+   * unless a workspace is bound, in which case the workspace is (see `worktreePath`).
    */
   readonly repositoryRoot: string;
   readonly key: ThreadBindingKey;
@@ -258,11 +259,22 @@ export interface BindThreadInput {
 /** One creation per (data dir, repository root, key) in flight at a time. */
 const bindingsInFlight = new Map<string, Promise<ThreadBinding>>();
 
+/**
+ * The root half of the binding key: the session's bound WORKSPACE when it has one, else the
+ * repository. One session's chat thread, its handoff thread and its round turn must land on
+ * ONE thread, and the round reaches this seam with the bound root — so keying on the
+ * repository here would give a branch review bound to `~/.rennet/worktrees/...` two threads,
+ * one per caller, with the transcript split between them.
+ */
+function keyRootOf(input: Pick<BindThreadInput, "repositoryRoot" | "worktreePath">): string {
+  return input.worktreePath ?? input.repositoryRoot;
+}
+
 function flightKey(input: BindThreadInput): string {
   const key = input.key;
   return JSON.stringify([
     input.dataDir,
-    input.repositoryRoot,
+    keyRootOf(input),
     key.kind,
     key.kind === "session" ? key.sessionId : [key.generationId, key.seat],
   ]);
@@ -285,13 +297,20 @@ export function bindThread(input: BindThreadInput): Promise<ThreadBinding> {
 }
 
 async function findOrCreateBinding(input: BindThreadInput): Promise<ThreadBinding> {
-  const existing = findBinding(input.dataDir, input.repositoryRoot, input.key);
-  // A thread's cwd is decided when it is created and never afterwards, so a row whose
-  // workspace is not the one being asked for cannot be reused: reusing it runs every turn in
-  // the wrong tree, and the row written before this field existed is a thread at the project
-  // root, which is precisely the case this wave exists to fix. Same workspace ⇒ same thread.
-  if (existing && existing.worktreePath === input.worktreePath) return existing;
-  if (existing) removeBindings(input.dataDir, [existing.threadId]);
+  const keyRoot = keyRootOf(input);
+  const existing = findBinding(input.dataDir, keyRoot, input.key);
+  if (existing) return existing;
+  // A thread's cwd is decided when it is created and never afterwards. A session that bound a
+  // workspace AFTER its thread existed — every session minted before this wave — has a row
+  // keyed on the repository and carrying no workspace, naming a thread rooted at the project.
+  // It is retired here rather than left behind: the fresh thread below runs in the bound tree,
+  // and a row nobody will look up again is a thread nobody can reach.
+  if (keyRoot !== input.repositoryRoot) {
+    const legacy = findBinding(input.dataDir, input.repositoryRoot, input.key);
+    if (legacy !== undefined && legacy.worktreePath === undefined) {
+      removeBindings(input.dataDir, [legacy.threadId]);
+    }
+  }
   // A bound workspace that is no longer on disk is named, not worked around
   // (session-bound-workspace, t3code-sidecar spec). Creating the thread anyway would put
   // every turn of it in the project root — a different tree — and the seat would draft
@@ -313,7 +332,8 @@ async function findOrCreateBinding(input: BindThreadInput): Promise<ThreadBindin
     ...(input.branch === undefined ? {} : { branch: input.branch }),
   });
   const binding: ThreadBinding = {
-    repositoryRoot: input.repositoryRoot,
+    // The KEY root, which is the bound workspace when there is one — see `keyRootOf`.
+    repositoryRoot: keyRoot,
     ...(input.key.kind === "session"
       ? { kind: "session" as const, sessionId: input.key.sessionId }
       : {

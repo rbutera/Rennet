@@ -372,10 +372,25 @@ describe("bindThread carries the session's bound workspace", () => {
       });
       expect(rebound.threadId).not.toBe(legacy.threadId);
       expect(inputs[1]?.worktreePath).toBe(workspace);
-      // The old row is gone, so the next ask cannot find its way back to the wrong tree.
-      const found = findBinding(dataDir, repositoryRoot, key);
+      // The binding keys on the WORKSPACE now, which is what makes the chat thread, the
+      // handoff thread and the round's turn land on ONE thread: the round reaches this seam
+      // with the bound root, so a repository-keyed row would give them two.
+      const found = findBinding(dataDir, workspace, key);
       expect(found?.threadId).toBe(rebound.threadId);
       expect(found?.worktreePath).toBe(workspace);
+      // Asking the way the round does — the bound root as the repository root, no separate
+      // workspace — resolves to that same thread rather than minting a second one.
+      const asRound = await bindThread({
+        dataDir,
+        client,
+        repositoryRoot: workspace,
+        key,
+        title: "t",
+        modelSelection: SELECTION,
+      });
+      expect(asRound.threadId).toBe(rebound.threadId);
+      // And the legacy row is gone, so nothing can find its way back to the project root.
+      expect(findBinding(dataDir, repositoryRoot, key)).toBeUndefined();
 
       // And an ask for the SAME workspace reuses the thread — this is not "always recreate".
       const again = await bindThread({
