@@ -3117,7 +3117,9 @@ describe("createRoundsRuntime", () => {
           store.set(generation.id, JSON.parse(JSON.stringify(generation)) as Generation);
         },
         loadGeneration: (id) => store.get(id),
-        onGenerationTransition: (transition) => transitions.push(transition.sourceGeneration),
+        onGenerationTransition: (transition) => {
+          transitions.push(transition.sourceGeneration);
+        },
       });
       const { record } = await createRoundsRuntime(withFakeT3Seats(deps)).runRound(
         roundInput({
