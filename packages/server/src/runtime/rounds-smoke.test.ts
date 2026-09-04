@@ -799,8 +799,13 @@ describe.skipIf(!SMOKE)("C15 1.1 — rounds pipeline smoke-run (LIVE ports, RENN
   it("Design's output schema is accepted by the API on a real turn", async () => {
     const { adapter } = await createClaudeHarness({ env: process.env });
     expect(adapter, "no claude harness resolved").not.toBeNull();
+    // An EMPTY checkout, so the absence the seat is asked about is actually true. Pointed
+    // at the Rennet worktree the seat reads `openspec/changes/session-bound-workspace`,
+    // correctly refuses to claim there is no spec, and drafts a board instead — which
+    // proves the API accepts the schema but says nothing about the absence branch.
+    const emptyCheckout = mkdtempSync(join(tmpdir(), "rennet-design-nospec-"));
     const session = await (adapter as NonNullable<typeof adapter>).createSession({
-      cwd: process.cwd(),
+      cwd: emptyCheckout,
       model: "haiku",
       ephemeral: true,
       outputSchema: designDraftOutputSchema(),
@@ -809,8 +814,9 @@ describe.skipIf(!SMOKE)("C15 1.1 — rounds pipeline smoke-run (LIVE ports, RENN
     let structured: unknown;
     try {
       await session.send({
+        // Semantic, not a restated schema: the shape travels once, as the output format.
         prompt:
-          'This repository has no specification for the current branch. Return exactly {"absence": "no-spec"} and nothing else.',
+          "You are the Design seat, reviewing a branch in the checkout you are standing in. Look for the specification this branch was written against — an openspec change, a design document, an ADR, anything. If the checkout holds none, report that absence in the form your output format allows rather than inventing a board.",
       });
       for await (const event of session.events as AsyncIterable<never>) {
         const e = event as {
@@ -830,11 +836,14 @@ describe.skipIf(!SMOKE)("C15 1.1 — rounds pipeline smoke-run (LIVE ports, RENN
       }
     } finally {
       await session.close();
+      rmSync(emptyCheckout, { recursive: true, force: true });
     }
     console.log(
       `[smoke] design schema via real API: status=${status} structured=${JSON.stringify(structured)}`,
     );
     expect(status, "the API refused the Design output schema").toBe("completed");
-    expect(structured, "Design turn emitted no structured output").toBeDefined();
+    // Exactly the absence — not "some structured value". The union's absence branch is
+    // `additionalProperties: false`, so this also shows the provider enforcing it.
+    expect(structured).toEqual({ absence: "no-spec" });
   }, 300_000);
 });

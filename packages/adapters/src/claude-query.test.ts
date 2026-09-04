@@ -204,27 +204,17 @@ describe("toSdkOptions", () => {
     expect(normalizeOutputSchema(bare)).toEqual(bare);
   });
 
-  it("normalizeOutputSchema names an all-object anyOf envelope an object (#810)", () => {
-    // Zod renders a union with no top-level `type`; the API refuses a custom tool whose
-    // input_schema has none ("tools.N.custom.input_schema.type: Field required"), which is
-    // how the Design seat died on every branch. The branches themselves are untouched.
+  it("normalizeOutputSchema does NOT rescue a top-level union (#810)", () => {
+    // Measured live: an `anyOf` root is refused by the API whether or not it carries a
+    // `type`, so inventing one here would only hide which 400 the caller is about to get.
     const union = {
       $schema: "https://json-schema.org/draft/2020-12/schema",
-      anyOf: [
-        { type: "object", properties: { elements: { type: "array" } } },
-        { type: "object", properties: { absence: { const: "no-spec" } } },
-      ],
+      anyOf: [{ type: "object" }, { type: "object" }],
     };
     const out = normalizeOutputSchema(union);
-    expect(out.type).toBe("object");
+    expect(out.type).toBeUndefined();
     expect(out.anyOf).toEqual(union.anyOf);
-  });
-
-  it("normalizeOutputSchema does not invent a type for a mixed-kind anyOf", () => {
-    // A union of an object and a string is not an object; claiming otherwise would send a
-    // schema that contradicts its own branches.
-    const mixed = { anyOf: [{ type: "object" }, { type: "string" }] };
-    expect(normalizeOutputSchema(mixed).type).toBeUndefined();
+    expect(out.$schema).toBeUndefined();
   });
 
   it("maps the council's versioned model aliases to the binary's full ids, else passes through", () => {
