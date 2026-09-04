@@ -45,7 +45,7 @@ See proposal.md for why. The state this design starts from, measured on 2026-09-
 ## Risks / Trade-offs
 
 - [A round now moves the reviewer's own branch in their own checkout] → that is the asked-for behaviour and T3's; the checkpoint ref makes every round revertible through `thread.checkpoint.revert`, and the round account names it.
-- [A seat reads a file that a purge removed mid-turn] → purge happens only at archive, and archive already awaits the preparation and re-sweeps after a round; a seat turn cannot outlive an archive without #773's hook seeing it.
+- [A seat reads a file that a purge removed mid-turn] → purge happens only at archive, and every context-consuming turn holds a lease on the session for its whole life, so an archive landing mid-turn is DEFERRED to the last release rather than deleting the directory the seat is reading. Archive awaits only the session's *preparation*, and #773's round re-sweep sees only rounds — a seat turn can and does outlive an archive, which is why the lease is the answer rather than the ordering.
 - [The managed ignore block is absent in a repo Rennet has never mapped] → `writeSessionContext` ensures the block before writing; the existing map-visibility writer is reused, not duplicated.
 - [Removing hunk ids breaks delta marks for boards persisted under the old keying] → marks are recomputed from citations on read; a legacy board with id-keyed marks shows no marks rather than wrong ones, and says so.
 - [Lint's "unresolvable citation" becomes line-based and a seat cites a context line next to a change] → the resolver accepts a range that overlaps a changed region on the named side; a range entirely outside the change is the violation, with the nearest changed range in the pointer.

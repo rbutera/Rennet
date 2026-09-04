@@ -10,6 +10,11 @@ import {
   reviewOpenerSourceId,
 } from "./review-opener";
 
+// The session's context directory, as the daemon's writer returns it. Deliberately NOT
+// derivable from any review id in this file: a builder that re-derived the directory
+// would render paths these assertions do not expect (review finding 1).
+const CONTEXT_DIR = ".rennet/context/sess-9";
+
 const author = { kind: "lens-agent" as const, id: "design" };
 const designBoard: LensBoard = {
   lens: "design",
@@ -170,14 +175,14 @@ describe("review opener context", () => {
   });
 
   it("NAMES the context files and carries no fact inline (session-context-files 3.7)", () => {
-    const prompt = buildReviewOpenerPrompt("review-7");
+    const prompt = buildReviewOpenerPrompt(CONTEXT_DIR);
     // The paths, relative to the turn's cwd, which is the session's bound root.
-    expect(prompt).toContain(".rennet/context/review-7/opener/voice-rules.md");
-    expect(prompt).toContain(".rennet/context/review-7/opener/review-facts.json");
-    expect(prompt).toContain(".rennet/context/review-7/opener/asks.json");
-    expect(prompt).toContain(".rennet/context/review-7/opener/dispositions.json");
-    expect(prompt).toContain(".rennet/context/review-7/opener/boards/");
-    expect(prompt).toContain(".rennet/context/review-7/README.md");
+    expect(prompt).toContain(`${CONTEXT_DIR}/opener/voice-rules.md`);
+    expect(prompt).toContain(`${CONTEXT_DIR}/opener/review-facts.json`);
+    expect(prompt).toContain(`${CONTEXT_DIR}/opener/asks.json`);
+    expect(prompt).toContain(`${CONTEXT_DIR}/opener/dispositions.json`);
+    expect(prompt).toContain(`${CONTEXT_DIR}/opener/boards/`);
+    expect(prompt).toContain(`${CONTEXT_DIR}/README.md`);
     // The instructions survive; the material does not travel with them.
     expect(prompt).toContain("Do not claim the reviewer viewed or walked every section");
     expect(prompt).not.toContain("REQUEST_CHANGES");

@@ -7,7 +7,7 @@ import {
   sha256Hex,
 } from "@rennet/protocol";
 import type { ForgeReviewEvent } from "./publish-review";
-import { type SessionContextFile, sessionContextRelativeDir } from "./session-context";
+import type { SessionContextFile } from "./session-context";
 
 export interface ReviewOpenerDraftInput {
   readonly verdict: ForgeReviewEvent;
@@ -230,8 +230,8 @@ export function reviewOpenerContextFiles(
  * Everything it names is relative to the turn's working directory, which is the session's
  * bound root, so the seat reads them with its own tools the way it reads the checkout.
  */
-export function buildReviewOpenerPrompt(sessionId: string): string {
-  const dir = sessionContextRelativeDir(sessionId);
+export function buildReviewOpenerPrompt(contextDir: string): string {
+  const dir = contextDir;
   const task = [
     "Write the opening paragraph for the signed GitHub review this session holds.",
     "The opener must be concise Markdown prose and correct for the recorded verdict.",
@@ -255,11 +255,11 @@ export function buildReviewOpenerPrompt(sessionId: string): string {
 }
 
 export async function draftReviewOpener(
-  sessionId: string,
+  contextDir: string,
   port: ReviewOpenerPort,
   resolvedModel: string,
 ): Promise<ReviewOpenerDraftResult> {
-  const turn = await port(buildReviewOpenerPrompt(sessionId));
+  const turn = await port(buildReviewOpenerPrompt(contextDir));
   if (turn.status !== "emitted") return turn;
   const opener = (turn.opener ?? "").trim();
   if (opener === "") {

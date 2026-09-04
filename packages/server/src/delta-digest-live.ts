@@ -8,13 +8,13 @@ import {
   providerHarness,
   resolveAssignment,
 } from "@rennet/core";
+import type { PromptContextFile } from "@rennet/prompts";
 import type {
   CouncilHarnessId,
   DeltaDigestResult,
   Review,
   SuccessorAccount,
 } from "@rennet/protocol";
-import { writeSessionContext } from "./context-files";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // review.deltaDigest — the LIVE producer (issue #73 / M25).
@@ -182,6 +182,13 @@ export interface LiveDeltaDigestDeps {
   /** The Codex executor resolved to the absolute binary, or null. Receives the
    *  review's repo root (#334) so a WSL project resolves the distro seat. */
   codexExecutor(repoRoot: string): Promise<CodexExecutor | null>;
+  /**
+   * The ONE session-context writer, bound to the review's session id by the composition
+   * root (`writeReviewContext`). Returns the directory it wrote into, relative to the
+   * bound root — the prompt names THAT, never a dir re-derived from a review id, so the
+   * files a turn is pointed at are the files `session.archive` purges (review finding 1).
+   */
+  writeContext(review: Review, files: readonly PromptContextFile[]): string;
 }
 
 /**
@@ -226,9 +233,7 @@ export function createLiveDeltaDigestPort(
     // The account goes to disk under the repo root the turn runs in, BEFORE the turn
     // (session-context-files); the prompt names it by relative path. The grounding
     // guarantee is unchanged — that file is still the only thing the turn may state.
-    writeSessionContext(input.review.repositoryRoot, input.review.id, [
-      deltaDigestContextFile(input.account),
-    ]);
-    return draftDeltaDigest(input.review.id, port, resolution.model);
+    const contextDir = deps.writeContext(input.review, [deltaDigestContextFile(input.account)]);
+    return draftDeltaDigest(contextDir, port, resolution.model);
   };
 }

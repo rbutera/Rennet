@@ -8,6 +8,11 @@ import {
 } from "./delta-digest";
 import { inlineContextViolation } from "./harness-run-turn";
 
+// The session's context directory, as the daemon's writer returns it. Deliberately NOT
+// derivable from any review id in this file: a builder that re-derived the directory
+// would render paths these assertions do not expect (review finding 1).
+const CONTEXT_DIR = ".rennet/context/sess-9";
+
 const account: SuccessorAccount = {
   asks: [
     {
@@ -34,9 +39,9 @@ const account: SuccessorAccount = {
 
 describe("buildDeltaDigestPrompt — the account is NAMED, never inlined (3.7)", () => {
   it("names digest-input.json and carries no path, status or summary of its own", () => {
-    const prompt = buildDeltaDigestPrompt("review-7");
+    const prompt = buildDeltaDigestPrompt(CONTEXT_DIR);
     // The one path, relative to the turn's cwd, which is the session's bound root.
-    expect(prompt).toContain(".rennet/context/review-7/digest-input.json");
+    expect(prompt).toContain(`${CONTEXT_DIR}/digest-input.json`);
     // Not one fact from the account travels with the instructions.
     expect(prompt).not.toContain("src/rate/keys.ts");
     expect(prompt).not.toContain("src/rate/middleware.ts");
@@ -60,9 +65,9 @@ describe("buildDeltaDigestPrompt — the account is NAMED, never inlined (3.7)",
       })),
       beyondAsks: Array.from({ length: 20 }, (_unused, index) => `src/m${index}.ts`),
     };
-    expect(buildDeltaDigestPrompt("review-7")).toBe(buildDeltaDigestPrompt("review-7"));
+    expect(buildDeltaDigestPrompt(CONTEXT_DIR)).toBe(buildDeltaDigestPrompt(CONTEXT_DIR));
     expect(deltaDigestContextFile(big).body.length).toBeGreaterThan(
-      buildDeltaDigestPrompt("review-7").length,
+      buildDeltaDigestPrompt(CONTEXT_DIR).length,
     );
   });
 });
@@ -104,7 +109,7 @@ describe("draftDeltaDigest — the honesty floor (#73/M25)", () => {
       text: "Addressed two, left one, and touched a file nobody asked about.",
       model: "haiku",
     });
-    const result = await draftDeltaDigest("review-7", port, "planned-model");
+    const result = await draftDeltaDigest(CONTEXT_DIR, port, "planned-model");
     expect(result).toEqual({
       status: "drafted",
       text: "Addressed two, left one, and touched a file nobody asked about.",
@@ -114,19 +119,19 @@ describe("draftDeltaDigest — the honesty floor (#73/M25)", () => {
 
   it("falls back to the resolved model when the port did not observe one", async () => {
     const port: DeltaDigestPort = async () => ({ status: "emitted", text: "A digest." });
-    const result = await draftDeltaDigest("review-7", port, "resolved-model");
+    const result = await draftDeltaDigest(CONTEXT_DIR, port, "resolved-model");
     expect(result).toEqual({ status: "drafted", text: "A digest.", model: "resolved-model" });
   });
 
   it("MODEL-FREE FLOOR: an empty/whitespace turn is FAILED, never a blank digest", async () => {
     const port: DeltaDigestPort = async () => ({ status: "emitted", text: "   " });
-    const result = await draftDeltaDigest("review-7", port, "m");
+    const result = await draftDeltaDigest(CONTEXT_DIR, port, "m");
     expect(result.status).toBe("failed");
   });
 
   it("MODEL-FREE FLOOR: an unavailable seat passes through as unavailable (no fabrication)", async () => {
     const port: DeltaDigestPort = async () => ({ status: "unavailable", reason: "no seat" });
-    expect(await draftDeltaDigest("review-7", port, "m")).toEqual({
+    expect(await draftDeltaDigest(CONTEXT_DIR, port, "m")).toEqual({
       status: "unavailable",
       reason: "no seat",
     });
@@ -137,7 +142,7 @@ describe("draftDeltaDigest — the honesty floor (#73/M25)", () => {
       status: "failed" as const,
       reason: "the turn threw",
     }));
-    const result = await draftDeltaDigest("review-7", port, "m");
+    const result = await draftDeltaDigest(CONTEXT_DIR, port, "m");
     expect(result).toEqual({ status: "failed", reason: "the turn threw" });
     expect(port).toHaveBeenCalledOnce();
   });

@@ -9,6 +9,11 @@ import {
 } from "./draft-pr-body";
 import { inlineContextViolation } from "./harness-run-turn";
 
+// The session's context directory, as the daemon's writer returns it. Deliberately NOT
+// derivable from any review id in this file: a builder that re-derived the directory
+// would render paths these assertions do not expect (review finding 1).
+const CONTEXT_DIR = ".rennet/context/sess-9";
+
 // A representative reviewed changeset: branch shape + narration + dispositions +
 // one requirement + one decision — the honest-account inputs M26 draws from.
 const INPUT: PrBodyDraftInput = {
@@ -40,15 +45,15 @@ function portReturning(result: PrBodyDraftPortResult): PrBodyDraftPort {
 
 describe("buildPrBodyPrompt — the material is NAMED, never inlined (3.7)", () => {
   it("names the file for every section the input carries, and no material", () => {
-    const prompt = buildPrBodyPrompt(INPUT, "review-7");
+    const prompt = buildPrBodyPrompt(INPUT, CONTEXT_DIR);
     // The frame stays inline: two refs are the task, not context.
     expect(prompt).toContain("feat/rate-limit-fallback");
     expect(prompt).toContain("main");
     // The material is named by relative path, resolved against the turn's cwd.
-    expect(prompt).toContain(".rennet/context/review-7/pr-body/narration.json");
-    expect(prompt).toContain(".rennet/context/review-7/pr-body/dispositions.json");
-    expect(prompt).toContain(".rennet/context/review-7/pr-body/requirements.json");
-    expect(prompt).toContain(".rennet/context/review-7/pr-body/decisions.json");
+    expect(prompt).toContain(`${CONTEXT_DIR}/pr-body/narration.json`);
+    expect(prompt).toContain(`${CONTEXT_DIR}/pr-body/dispositions.json`);
+    expect(prompt).toContain(`${CONTEXT_DIR}/pr-body/requirements.json`);
+    expect(prompt).toContain(`${CONTEXT_DIR}/pr-body/decisions.json`);
     // And none of it travels.
     expect(prompt).not.toContain("The limiter MUST bound the fail-open path");
     expect(prompt).not.toContain("process-local bucket over a shared store");
@@ -117,7 +122,7 @@ describe("draftPrBody — mapping the port outcome", () => {
       body: "Adds a process-local fallback bucket. Documents the migration note (decision 2).",
       model: "gpt-5.6-luna",
     });
-    const result = await draftPrBody(INPUT, "review-7", port, "resolved-model");
+    const result = await draftPrBody(INPUT, CONTEXT_DIR, port, "resolved-model");
     expect(result).toEqual({
       status: "drafted",
       title: "Bound the rate limiter's fail-open path",
@@ -128,7 +133,7 @@ describe("draftPrBody — mapping the port outcome", () => {
 
   it("falls back to the resolved model when the port does not observe the runtime model", async () => {
     const port = portReturning({ status: "emitted", title: "A title", body: "A body." });
-    const result = await draftPrBody(INPUT, "review-7", port, "resolved-model");
+    const result = await draftPrBody(INPUT, CONTEXT_DIR, port, "resolved-model");
     expect(result).toEqual({
       status: "drafted",
       title: "A title",
@@ -144,7 +149,7 @@ describe("draftPrBody — mapping the port outcome", () => {
       body: "\n  Body with surround \n",
       model: "m",
     });
-    const result = await draftPrBody(INPUT, "review-7", port, "resolved-model");
+    const result = await draftPrBody(INPUT, CONTEXT_DIR, port, "resolved-model");
     expect(result).toMatchObject({
       status: "drafted",
       title: "Trim me",
@@ -161,31 +166,31 @@ describe("draftPrBody — the honesty floor", () => {
       body: "A real body.",
       model: "m",
     });
-    const result = await draftPrBody(INPUT, "review-7", port, "resolved-model");
+    const result = await draftPrBody(INPUT, CONTEXT_DIR, port, "resolved-model");
     expect(result.status).toBe("failed");
   });
 
   it("maps an emitted result with an empty body to `failed`", async () => {
     const port = portReturning({ status: "emitted", title: "A real title", body: "", model: "m" });
-    const result = await draftPrBody(INPUT, "review-7", port, "resolved-model");
+    const result = await draftPrBody(INPUT, CONTEXT_DIR, port, "resolved-model");
     expect(result.status).toBe("failed");
   });
 
   it("maps an emitted result missing both fields to `failed`", async () => {
     const port = portReturning({ status: "emitted", model: "m" });
-    const result = await draftPrBody(INPUT, "review-7", port, "resolved-model");
+    const result = await draftPrBody(INPUT, CONTEXT_DIR, port, "resolved-model");
     expect(result.status).toBe("failed");
   });
 
   it("passes an unavailable turn straight through", async () => {
     const port = portReturning({ status: "unavailable", reason: "no seat" });
-    const result = await draftPrBody(INPUT, "review-7", port, "resolved-model");
+    const result = await draftPrBody(INPUT, CONTEXT_DIR, port, "resolved-model");
     expect(result).toEqual({ status: "unavailable", reason: "no seat" });
   });
 
   it("passes a failed turn straight through", async () => {
     const port = portReturning({ status: "failed", reason: "the turn threw" });
-    const result = await draftPrBody(INPUT, "review-7", port, "resolved-model");
+    const result = await draftPrBody(INPUT, CONTEXT_DIR, port, "resolved-model");
     expect(result).toEqual({ status: "failed", reason: "the turn threw" });
   });
 });
@@ -211,10 +216,10 @@ describe("draftPrBody — the port receives the prompt that NAMES the material (
         model: "m",
       };
     };
-    const result = await draftPrBody(INPUT, "review-7", echoingPort, "resolved-model");
+    const result = await draftPrBody(INPUT, CONTEXT_DIR, echoingPort, "resolved-model");
     expect(result.status).toBe("drafted");
-    expect(seen).toContain(".rennet/context/review-7/pr-body/requirements.json");
-    expect(seen).toContain(".rennet/context/review-7/pr-body/decisions.json");
+    expect(seen).toContain(`${CONTEXT_DIR}/pr-body/requirements.json`);
+    expect(seen).toContain(`${CONTEXT_DIR}/pr-body/decisions.json`);
     // The material is on the other end of those paths, byte for byte.
     const files = new Map(prBodyContextFiles(INPUT).map((file) => [file.name, file.body]));
     expect(files.get("pr-body/requirements.json")).toContain(

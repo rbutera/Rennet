@@ -9,9 +9,11 @@ import type {
   HarnessEvent,
   HarnessPort,
 } from "@rennet/core";
+import { sessionContextRelativeDir } from "@rennet/core";
+import type { PromptContextFile } from "@rennet/prompts";
 import type { Patchset, Review, SuccessorAccount } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
-import { sessionContextDir } from "./context-files";
+import { sessionContextDir, writeSessionContext } from "./context-files";
 import { createLiveDeltaDigestPort } from "./delta-digest-live";
 
 // A REAL repository root: the live ports write the turn's context under it before the
@@ -19,9 +21,19 @@ import { createLiveDeltaDigestPort } from "./delta-digest-live";
 // it. A fixture root that does not exist cannot exercise the turn at all.
 const REPO_ROOT = mkdtempSync(join(tmpdir(), "rennet-digest-repo-"));
 
+// The daemon's ONE context writer as these ports see it, keyed on the SESSION id — which
+// is DELIBERATELY NOT the review id (review finding 1). The review below is `review-1`.
+// A port that re-derived its directory from `review.id` would write, and point the seat,
+// somewhere none of the assertions below look.
+const SESSION_ID = "sess-digest-7";
+const recordContext = (review: Review, files: readonly PromptContextFile[]): string => {
+  writeSessionContext(review.repositoryRoot, SESSION_ID, files);
+  return sessionContextRelativeDir(SESSION_ID);
+};
+
 /** Read one of the files the port wrote for this review. */
 function contextFile(name: string): string {
-  return readFileSync(join(sessionContextDir(REPO_ROOT, "review-1"), name), "utf8");
+  return readFileSync(join(sessionContextDir(REPO_ROOT, SESSION_ID), name), "utf8");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -146,6 +158,7 @@ describe("createLiveDeltaDigestPort — Codex seat", () => {
     let seenPrompt = "";
     let seenCwd: string | undefined;
     const producer = createLiveDeltaDigestPort({
+      writeContext: recordContext,
       claudePort: async () => null,
       codexExecutor: async () =>
         fakeExecutor(
@@ -169,7 +182,9 @@ describe("createLiveDeltaDigestPort — Codex seat", () => {
     // The prompt NAMES the account and carries no fact of its own (3.7); the account
     // is on disk under the root the turn runs in, so the grounding guarantee is the same
     // one — that file is still the only thing the turn may state.
-    expect(seenPrompt).toContain(".rennet/context/review-1/digest-input.json");
+    expect(seenPrompt).toContain(".rennet/context/sess-digest-7/digest-input.json");
+    // ...and NOT the review id, which is what the prompt used to name (finding 1).
+    expect(seenPrompt).not.toContain(".rennet/context/review-1/");
     expect(seenPrompt).not.toContain("src/rate/keys.ts");
     expect(seenPrompt).not.toContain("src/metrics/emit.ts");
     expect(seenCwd).toBe(REPO_ROOT);
@@ -181,6 +196,7 @@ describe("createLiveDeltaDigestPort — Codex seat", () => {
 
   it("MODEL-FREE FLOOR: a THROWING Codex seat degrades to failed — never a fabricated digest", async () => {
     const producer = createLiveDeltaDigestPort({
+      writeContext: recordContext,
       claudePort: async () => null,
       codexExecutor: async () => async () => {
         throw new Error("codex exited 1");
@@ -192,6 +208,7 @@ describe("createLiveDeltaDigestPort — Codex seat", () => {
 
   it("maps an empty digest from the model to failed (the honesty floor holds live)", async () => {
     const producer = createLiveDeltaDigestPort({
+      writeContext: recordContext,
       claudePort: async () => null,
       codexExecutor: async () => fakeExecutor({ digest: "" }),
     });
@@ -202,6 +219,7 @@ describe("createLiveDeltaDigestPort — Codex seat", () => {
 describe("createLiveDeltaDigestPort — Claude seat", () => {
   it("digests on the Claude adapter and reports the ACTUAL runtime model", async () => {
     const producer = createLiveDeltaDigestPort({
+      writeContext: recordContext,
       claudePort: async () =>
         fakeClaudePort(() => [
           startedEvent("haiku-actual"),
@@ -215,6 +233,7 @@ describe("createLiveDeltaDigestPort — Claude seat", () => {
 
   it("MODEL-FREE FLOOR: a Claude turn with no structured output is failed", async () => {
     const producer = createLiveDeltaDigestPort({
+      writeContext: recordContext,
       claudePort: async () => fakeClaudePort(() => [completedEvent(undefined)]),
       codexExecutor: async () => null,
     });
@@ -269,6 +288,7 @@ describe("createLiveDeltaDigestPort — the Codex send reaches the metrics sink"
 describe("createLiveDeltaDigestPort — no seat installed", () => {
   it("MODEL-FREE FLOOR: is UNAVAILABLE when NEITHER seat is installed (never a fabricated digest)", async () => {
     const producer = createLiveDeltaDigestPort({
+      writeContext: recordContext,
       claudePort: async () => null,
       codexExecutor: async () => null,
     });

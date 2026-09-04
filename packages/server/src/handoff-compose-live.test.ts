@@ -10,10 +10,12 @@ import {
   type HarnessHealth,
   type HarnessPort,
   type SessionSpec,
+  sessionContextRelativeDir,
 } from "@rennet/core";
-import type { HandoffDisposition, Patchset } from "@rennet/protocol";
+import type { PromptContextFile } from "@rennet/prompts";
+import type { HandoffDisposition, Patchset, Review } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
-import { sessionContextDir } from "./context-files";
+import { sessionContextDir, writeSessionContext } from "./context-files";
 import {
   claudeComposePort,
   createLiveComposeBundle,
@@ -71,7 +73,34 @@ const DISPOSITIONS: HandoffDisposition[] = [
 ];
 
 function bundle() {
-  return buildHandoffBundle({ reviewId: "r1", patchset, dispositions: DISPOSITIONS });
+  return buildHandoffBundle({
+    reviewId: "r1",
+    contextDir: sessionContextRelativeDir(SESSION_ID),
+    patchset,
+    dispositions: DISPOSITIONS,
+  });
+}
+
+// The daemon's ONE context writer as this port sees it, keyed on the SESSION id — which
+// is DELIBERATELY NOT the review id (`r1`). A composer that re-derived its directory from
+// `bundle.reviewId` would write, and point the seat, somewhere no assertion below looks
+// (review finding 1).
+const SESSION_ID = "sess-compose-7";
+const recordContext = (review: Review, files: readonly PromptContextFile[]): string => {
+  writeSessionContext(review.repositoryRoot, SESSION_ID, files);
+  return sessionContextRelativeDir(SESSION_ID);
+};
+
+/** The review the compose input now carries: it names the repo root AND the identity the
+ *  writer keys on, which a bare `repoRoot` could not. */
+function composeReview(): Review {
+  return {
+    id: "r1",
+    repositoryRoot: REPO_ROOT,
+    activePatchsetId: patchset.id,
+    patchsets: [patchset],
+    dispositions: [],
+  } as unknown as Review;
 }
 
 const VALID_PROPOSAL = {
@@ -175,6 +204,7 @@ describe("createLiveComposeBundle", () => {
     let seenPrompt = "";
     let seenCwd: string | undefined;
     const compose = createLiveComposeBundle({
+      writeContext: recordContext,
       claudePort: () => Promise.resolve(null),
       codexExecutor: () =>
         Promise.resolve(
@@ -184,19 +214,24 @@ describe("createLiveComposeBundle", () => {
           }),
         ),
     });
-    const composed = await compose({ bundle: bundle(), repoRoot: REPO_ROOT });
+    const composed = await compose({
+      bundle: bundle(),
+      review: composeReview(),
+      contextDir: sessionContextRelativeDir(SESSION_ID),
+    });
     expect(composed.composed).toBe(true);
     expect(composed.tasks).toHaveLength(2);
     expect(composed.tasks[0]?.sourceDispositions).toEqual(["d0", "d1"]);
     // The notes went to disk under the root the turn runs in, BEFORE the turn, and the
     // prompt named that file rather than carrying them (session-context-files 3.7).
-    expect(JSON.parse(contextFile("r1", "compose/asks.json"))).toEqual([
+    expect(JSON.parse(contextFile(SESSION_ID, "compose/asks.json"))).toEqual([
       expect.objectContaining({ id: "d0", note: "handle expiry too" }),
       expect.objectContaining({ id: "d1", note: "validate the token" }),
       expect.objectContaining({ id: "d2", note: "return 404 not 500" }),
     ]);
-    expect(contextFile("r1", "README.md")).toContain("compose/asks.json");
-    expect(seenPrompt).toContain(".rennet/context/r1/compose/asks.json");
+    expect(contextFile(SESSION_ID, "README.md")).toContain("compose/asks.json");
+    expect(seenPrompt).toContain(".rennet/context/sess-compose-7/compose/asks.json");
+    expect(seenPrompt).not.toContain(".rennet/context/r1/");
     expect(seenPrompt).not.toContain("validate the token");
     expect(seenCwd).toBe(REPO_ROOT);
   });
@@ -204,20 +239,30 @@ describe("createLiveComposeBundle", () => {
   it("adopts a valid authoring from the Claude seat when Codex is absent", async () => {
     const { port } = fakeClaude(VALID_PROPOSAL);
     const compose = createLiveComposeBundle({
+      writeContext: recordContext,
       claudePort: () => Promise.resolve(port),
       codexExecutor: () => Promise.resolve(null),
     });
-    const composed = await compose({ bundle: bundle(), repoRoot: REPO_ROOT });
+    const composed = await compose({
+      bundle: bundle(),
+      review: composeReview(),
+      contextDir: sessionContextRelativeDir(SESSION_ID),
+    });
     expect(composed.composed).toBe(true);
     expect(composed.tasks).toHaveLength(2);
   });
 
   it("returns the mechanical floor when NO seat is installed", async () => {
     const compose = createLiveComposeBundle({
+      writeContext: recordContext,
       claudePort: () => Promise.resolve(null),
       codexExecutor: () => Promise.resolve(null),
     });
-    const composed = await compose({ bundle: bundle(), repoRoot: REPO_ROOT });
+    const composed = await compose({
+      bundle: bundle(),
+      review: composeReview(),
+      contextDir: sessionContextRelativeDir(SESSION_ID),
+    });
     expect(composed.composed).toBe(false);
     expect(composed.tasks).toHaveLength(3); // one per ask, nothing lost
     expect(Object.keys(composed.traceMap).sort()).toEqual(["d0", "d1", "d2"]);
@@ -225,10 +270,15 @@ describe("createLiveComposeBundle", () => {
 
   it("falls to the floor when the seat returns a malformed authoring", async () => {
     const compose = createLiveComposeBundle({
+      writeContext: recordContext,
       claudePort: () => Promise.resolve(null),
       codexExecutor: () => Promise.resolve(fakeCodex({ groups: "garbage" })),
     });
-    const composed = await compose({ bundle: bundle(), repoRoot: REPO_ROOT });
+    const composed = await compose({
+      bundle: bundle(),
+      review: composeReview(),
+      contextDir: sessionContextRelativeDir(SESSION_ID),
+    });
     expect(composed.composed).toBe(false);
     expect(composed.tasks).toHaveLength(3);
   });
@@ -237,10 +287,15 @@ describe("createLiveComposeBundle", () => {
 describe("F3: rejections fall to the floor, never a rejected command", () => {
   it("createLiveComposeBundle returns the mechanical floor when a seat probe throws", async () => {
     const compose = createLiveComposeBundle({
+      writeContext: recordContext,
       claudePort: () => Promise.reject(new Error("claude discovery blew up")),
       codexExecutor: () => Promise.resolve(null),
     });
-    const composed = await compose({ bundle: bundle(), repoRoot: REPO_ROOT });
+    const composed = await compose({
+      bundle: bundle(),
+      review: composeReview(),
+      contextDir: sessionContextRelativeDir(SESSION_ID),
+    });
     expect(composed.composed).toBe(false);
     expect(composed.tasks).toHaveLength(3); // one per ask, nothing lost
     expect(Object.keys(composed.traceMap).sort()).toEqual(["d0", "d1", "d2"]);

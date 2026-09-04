@@ -393,8 +393,14 @@ export interface RetrieveRelatedContextDeps {
    */
   readonly runTurn?: RunTurn | null;
   /**
-   * Persist the candidate dossier and return the ABSOLUTE path the seat reads — the
-   * dossier store's own `candidates.json` under `~/.rennet` in production.
+   * Persist the candidate dossier and return the path the seat reads, RELATIVE to the
+   * repository root and `/`-separated — a run-scoped file under the session's context
+   * directory in production.
+   *
+   * Relative because the seat's cwd IS that root and the prompt names this string
+   * verbatim: an absolute path is the DAEMON's locus, which a WSL seat running inside the
+   * distro cannot open, and `path.join` would put Windows backslashes into prompt text
+   * (review finding 4).
    *
    * The enrichment prompt NAMES that path instead of carrying the candidates
    * (session-context-files: no prompt carries context inline). Absent ⇒ there is nothing
@@ -785,7 +791,7 @@ export async function retrieveRelatedContext(
     const overage = !grant.granted;
     const prompt = [
       "You are the related-context retrieval seat. The candidate dossier is the JSON",
-      `array in ${candidatesPath} — ${items.size} ${items.size === 1 ? "item" : "items"}.`,
+      `array in \`${candidatesPath}\`, in your working directory — ${items.size} ${items.size === 1 ? "item" : "items"}.`,
       "Read it with your own tools.",
       "Trim it for relevance to the change under review and lift acceptance criteria",
       "verbatim where a ticket states them. Return every item id with keep:",

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AskLogStore, buildGitHubReviewRequest, PublishReceiptStore } from "@rennet/adapters";
@@ -51,7 +51,11 @@ import {
   type ReviewRoleMapping,
 } from "@rennet/protocol";
 import { describe, expect, it, vi } from "vitest";
-import { sessionContextDir } from "./context-files";
+import {
+  purgeSessionContext,
+  sessionContextDir,
+  sweepOrphanedSessionContext,
+} from "./context-files";
 import { createDispatch, type DispatchDeps } from "./dispatch";
 import { publishCompositionId } from "./dispatch/runtime";
 import { InFlightReviews } from "./in-flight-reviews";
@@ -216,6 +220,7 @@ function harness(
     onReviewOpened?: DispatchDeps["onReviewOpened"];
     lensBoardForReview?: DispatchDeps["lensBoardForReview"];
     compositionBoardsForReview?: DispatchDeps["compositionBoardsForReview"];
+    reviewContextSessionId?: DispatchDeps["reviewContextSessionId"];
   } = {},
 ): {
   dispatch: ReturnType<typeof createDispatch>;
@@ -379,6 +384,9 @@ function harness(
           opener: "This review focuses on the concrete changes and the remaining asks.",
           model: "test-model",
         })),
+    ...(extra.reviewContextSessionId === undefined
+      ? {}
+      : { reviewContextSessionId: extra.reviewContextSessionId }),
     symbolLookup: opts.symbolLookup,
     openInEditor: opts.openInEditor,
     openSpecChange: opts.openSpecChange,
@@ -4243,8 +4251,8 @@ describe("createDispatch — review.handoff.* (the review→agent loop, issue #1
           ],
         },
       });
-    const composeBundle = vi.fn<NonNullable<DispatchDeps["composeBundle"]>>(({ bundle }) =>
-      composeHandoffBundle(bundle, reversingPort),
+    const composeBundle = vi.fn<NonNullable<DispatchDeps["composeBundle"]>>(
+      ({ bundle, contextDir }) => composeHandoffBundle(bundle, reversingPort, contextDir),
     );
     let ranPrompt = "";
     const runHandoffTurn = vi.fn<NonNullable<DispatchDeps["runHandoffTurn"]>>(
@@ -4281,6 +4289,63 @@ describe("createDispatch — review.handoff.* (the review→agent loop, issue #1
     expect(order.indexOf("BETA-SECOND-ASK")).toBeLessThan(order.indexOf("ALPHA-FIRST-ASK"));
   });
 
+  it("writes and names the work order under the SESSION key, so archive purges it and the start sweep spares a LIVE review (review finding 1)", async () => {
+    // The two-keys defect, end to end. The handoff work order used to be written under
+    // `review.id` while `session.archive` purged the SESSION id, so an archived review's
+    // work order was never purged — and the daemon-start orphan sweep, which knows only
+    // session ids, deleted a LIVE review's work order as an orphan, so a restart lost the
+    // persistent handoff thread's order.
+    const SESSION = "sess-bound-1";
+    let ranPrompt = "";
+    const runHandoffTurn = vi.fn<NonNullable<DispatchDeps["runHandoffTurn"]>>(
+      async ({ prompt }) => {
+        ranPrompt = prompt;
+        return HANDOFF_TURN;
+      },
+    );
+    const { dispatch } = harness(
+      undefined,
+      {},
+      {
+        capturePort: twoPhaseCapture(),
+        runHandoffTurn,
+        reviewContextSessionId: () => SESSION,
+      },
+    );
+    const review = await capturedReview(dispatch);
+    const bundle = await composeBundleFor(dispatch, review.id);
+    const out = (await dispatch("review.handoff.run", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      bundle,
+    })) as { status: string };
+    expect(out.status).toBe("ran");
+
+    // Written AND named under the session key — and the review id names nothing, which is
+    // the assertion the old code fails.
+    expect(ranPrompt).toContain(`.rennet/context/${SESSION}/work-order.md`);
+    expect(ranPrompt).not.toContain(`.rennet/context/${review.id}/`);
+    expect(existsSync(join(sessionContextDir(REPO, SESSION), "work-order.md"))).toBe(true);
+    expect(existsSync(sessionContextDir(REPO, review.id))).toBe(false);
+
+    // A LIVE review's files survive a daemon-start sweep: the sweep's store knows the
+    // SESSION id, and that is now the id on disk. Keyed on the review id this directory
+    // was an orphan to every sweep, and a restart lost the handoff thread's work order.
+    // (The removed COUNT is not asserted: `REPO` is shared with every other test in this
+    // file, so the sweep also collects their directories. What is asserted is the one
+    // directory this test is about.)
+    sweepOrphanedSessionContext(
+      [REPO],
+      { persistedIds: new Set([SESSION]), archivedIds: new Set() },
+      () => undefined,
+    );
+    expect(existsSync(join(sessionContextDir(REPO, SESSION), "work-order.md"))).toBe(true);
+
+    // ...and the archive purge, called with that same session id, takes the work order.
+    expect(purgeSessionContext(REPO, SESSION)).toBe(true);
+    expect(existsSync(sessionContextDir(REPO, SESSION))).toBe(false);
+  });
+
   it("run executes a MERGED composition as one task (issue #72)", async () => {
     const dispositions = [
       { path: "src/a.ts", type: "request-change" as const, body: "MERGE-ONE" },
@@ -4291,8 +4356,8 @@ describe("createDispatch — review.handoff.* (the review→agent loop, issue #1
         status: "emitted",
         proposal: { groups: [{ title: "one task", dispositionIds: ["d0", "d1"] }] },
       });
-    const composeBundle = vi.fn<NonNullable<DispatchDeps["composeBundle"]>>(({ bundle }) =>
-      composeHandoffBundle(bundle, mergingPort),
+    const composeBundle = vi.fn<NonNullable<DispatchDeps["composeBundle"]>>(
+      ({ bundle, contextDir }) => composeHandoffBundle(bundle, mergingPort, contextDir),
     );
     let ranPrompt = "";
     const runHandoffTurn = vi.fn<NonNullable<DispatchDeps["runHandoffTurn"]>>(
@@ -4411,8 +4476,10 @@ describe("createDispatch — review.handoff.compose (issue #72)", () => {
     })) as { bundle: { composed: boolean; tasks: { title: string }[] } };
 
     expect(composeBundle).toHaveBeenCalledTimes(1);
-    // It was handed the reviewed repo root for the compose session's cwd.
-    expect(composeBundle.mock.calls[0]?.[0]?.repoRoot).toBe(review.repositoryRoot);
+    // It was handed the REVIEW, which names the repo root the compose session runs in and
+    // the identity the context writer keys on — a bare root could answer neither.
+    expect(composeBundle.mock.calls[0]?.[0]?.review.repositoryRoot).toBe(review.repositoryRoot);
+    expect(composeBundle.mock.calls[0]?.[0]?.contextDir).toBe(`.rennet/context/${review.id}`);
     expect(out.bundle.composed).toBe(true);
     expect(out.bundle.tasks[0]?.title).toBe("Guard and log");
   });

@@ -136,8 +136,11 @@ function loopHarness() {
   });
   // The optional model composer, wired to the mechanical floor. Its call site is inside the
   // dispatch run, so its position in the trace is production's.
-  const composeBundle: NonNullable<DispatchDeps["composeBundle"]> = async ({ bundle }) => {
-    const workOrder = mechanicalComposition(bundle);
+  const composeBundle: NonNullable<DispatchDeps["composeBundle"]> = async ({
+    bundle,
+    contextDir,
+  }) => {
+    const workOrder = mechanicalComposition(bundle, contextDir);
     trace.push(`compose:tasks=${workOrder.tasks.length}`);
     return workOrder;
   };

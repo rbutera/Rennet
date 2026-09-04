@@ -1,5 +1,5 @@
 import type { DeltaDigestResult, SuccessorAccount } from "@rennet/protocol";
-import { type SessionContextFile, sessionContextRelativeDir } from "./session-context";
+import type { SessionContextFile } from "./session-context";
 
 export type { DeltaDigestResult };
 
@@ -63,9 +63,13 @@ export function deltaDigestContextFile(account: SuccessorAccount): SessionContex
  * the ONLY thing the turn may state is what `digest-input.json` holds, and that file is
  * the structured account — no diff, no file content — so the model can rephrase what the
  * account states and nothing else. The account is named by path, never interpolated.
+ *
+ * `contextDir` is the session's context directory AS THE WRITER RETURNED IT, never
+ * re-derived from a review id here (review finding 1). One key for the write and for the
+ * pointer, or the seat reads a directory the archive purge has never heard of.
  */
-export function buildDeltaDigestPrompt(sessionId: string): string {
-  const dir = sessionContextRelativeDir(sessionId);
+export function buildDeltaDigestPrompt(contextDir: string): string {
+  const dir = contextDir;
   return [
     "You are writing a ONE- or TWO-SENTENCE plain-English summary of what a coding agent did to a code review's requests, for the reviewer to read at a glance.",
     "",
@@ -90,11 +94,11 @@ export function buildDeltaDigestPrompt(sessionId: string): string {
  * turn returns that state, and the panel shows the facts with no headline.
  */
 export async function draftDeltaDigest(
-  sessionId: string,
+  contextDir: string,
   port: DeltaDigestPort,
   model: string,
 ): Promise<DeltaDigestResult> {
-  const turn = await port(buildDeltaDigestPrompt(sessionId));
+  const turn = await port(buildDeltaDigestPrompt(contextDir));
   if (turn.status === "unavailable") return { status: "unavailable", reason: turn.reason };
   if (turn.status === "failed") return { status: "failed", reason: turn.reason };
   // Report the model that ACTUALLY ran when the port observed it; else the resolved
