@@ -6,6 +6,11 @@
 // tokened daemon as a selectable source. Dialling the currently-attached daemon and
 // discarding the token — the blocker-1 bug — paired nothing; a single-bridge mock hid it.
 // Opened the way the sidebar opens it: `ui.openDialog("add-environment")` through the store.
+//
+// The two failure cases at the bottom moved here from `connection-host.dom.test.tsx` when
+// the corner switcher's own pairing form was removed. They pin `pairAtAddress`'s error
+// paths — a malformed address that must never dial, and a temporary bridge that never
+// comes up — through the only surface that still reaches them.
 import type { CommandInput, FsListDirResult } from "@rennet/protocol";
 import { afterEach, describe, expect, it } from "vitest";
 import { useRennetStore } from "../store";
@@ -126,5 +131,40 @@ describe("AddRemoteDialog", () => {
     await screen.findByRole("button", { name: "Source: build-server" });
     // The one-shot hop is consumed, so a later manual reopen is clean.
     expect(useRennetStore.getState().ui.pendingAddProjectSource).toBeUndefined();
+  });
+
+  it("refuses a malformed address without dialling it, and leaves Connect usable", async () => {
+    const { user, bridges } = mountApp(() => ({}));
+    openRemote();
+
+    await user.type(screen.getByLabelText("Address"), "host:70000");
+    await user.type(screen.getByLabelText("Pairing code"), "abcd-1234");
+    await user.click(await screen.findByRole("button", { name: "Connect" }));
+
+    expect((await screen.findByRole("alert")).textContent).toContain("Enter a host");
+    // The port is out of range, so nothing was dialled: the local daemon is the only
+    // bridge that ever got built — no stray `pairing:*` connection was opened.
+    expect([...bridges.keys()]).toEqual(["local"]);
+    // Back to idle, not stuck on "Connecting…" — the button is still Connect and live.
+    const connect = screen.getByRole("button", { name: "Connect" }) as HTMLButtonElement;
+    expect(connect.disabled).toBe(false);
+  });
+
+  it("surfaces a temporary bridge that never came up, and leaves Connect usable", async () => {
+    const { user } = mountApp(() => ({}), {
+      failBridgeFor: (target) =>
+        target.id.startsWith("pairing:") ? new Error("bridge construction failed") : undefined,
+    });
+    openRemote();
+
+    await user.type(screen.getByLabelText("Address"), "build-server.tailnet.ts.net");
+    await user.type(screen.getByLabelText("Pairing code"), "abcd-1234");
+    await user.click(await screen.findByRole("button", { name: "Connect" }));
+
+    // The dial threw before there was anything to close; the cause reaches the reader
+    // rather than leaving the dialog spinning forever.
+    expect((await screen.findByRole("alert")).textContent).toContain("bridge construction failed");
+    const connect = screen.getByRole("button", { name: "Connect" }) as HTMLButtonElement;
+    expect(connect.disabled).toBe(false);
   });
 });

@@ -10,12 +10,14 @@
 # The full gate runs on Linux, including both Linux native artifacts. A focused
 # matrix below compiles both first-party artifacts, exercises their native
 # semantics, proves repeatable host builds, and uploads the exact platform
-# payload on Linux, macOS, and Windows. CI
-# deliberately does NOT run:
+# payload on Linux, macOS, and Windows. That matrix runs only when its own
+# inputs changed (see the `changes` job). CI deliberately does NOT run:
 #   - `e2e`     (Playwright + Electron; needs a display, not part of `pnpm check`)
 #   - `package` / `package-smoke` (Electron packaging; macOS-only, lives in the
 #                 signed release workflows and issue #298's distribution slice)
 #   - `audit`   (network-dependent; not part of the local gate)
+#   - `t3:test` (the upstream T3 Code suites — T3 test their own code, and we are
+#                not responsible for it. The script stays as a manual tool.)
 #
 # Security: read-only token, no secrets, `pull_request` (never `pull_request_target`).
 name: CI
@@ -103,15 +105,83 @@ jobs:
         env:
           NX_SELF_HOSTED_REMOTE_CACHE_SERVER: http://127.0.0.1:4210
 
-      # The vendored T3 Code suites (upstream's own tests, ~3 min cold) run here and on
-      # folds, not in the local gate: `pnpm check` excludes `t3code-*` from `test`.
-      - name: Upstream T3 Code tests
-        run: pnpm t3:test
+  # Decide whether the native matrix below has anything to say. The matrix is
+  # three OS jobs, and macOS bills at 10x with Windows at 2x, so a day of ~35
+  # runs spent ~840 billed minutes recompiling a helper nobody touched. This is
+  # not a gate on anyone: when none of the matrix's inputs changed, the verdict
+  # it would produce is the one it already produced, so it does not need to run
+  # again. Anything it cannot decide (force push, branch creation, the release
+  # calling in) resolves to running the matrix.
+  changes:
+    name: native inputs changed?
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      native: ${{ steps.filter.outputs.native }}
+    steps:
+      # fetch-depth: 0 so the base commit of the comparison is present locally.
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Did anything the native matrix builds change?
+        id: filter
         env:
-          NX_SELF_HOSTED_REMOTE_CACHE_SERVER: http://127.0.0.1:4210
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          run_matrix() {
+            echo "native=true" >> "$GITHUB_OUTPUT"
+            echo "$1"
+            exit 0
+          }
+          case "$EVENT" in
+            pull_request) base="$PR_BASE" ;;
+            push)         base="$PUSH_BEFORE" ;;
+            # A reusable workflow reports the CALLER's event, never
+            # "workflow_call", so anything that is not this workflow's own
+            # pull_request/push trigger is auto-release calling in. The release
+            # must produce the native artifacts, so always build them.
+            *) run_matrix "invoked via workflow_call (caller event: ${EVENT}) — building native artifacts" ;;
+          esac
+          # Empty base, the all-zero SHA (branch creation), or a base this clone
+          # cannot resolve (a force push rewrote it) means the diff is unknowable.
+          if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ] \
+            || ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
+            run_matrix "cannot resolve base '${base}' — building native artifacts"
+          fi
+          # Every file whose content decides what this matrix compiles or asserts:
+          # the C sources and their build/layout/determinism scripts, the tests
+          # that exercise them, the adapters project (which defines the targets),
+          # the lockfile and Node pin the toolchain resolves from, and this file.
+          changed=$(git diff --name-only "$base" HEAD -- \
+            packages/adapters/native \
+            'packages/adapters/project.json' \
+            'packages/adapters/src/exclusive-namespace-move*.ts' \
+            'packages/adapters/src/rooted-landing-host*.ts' \
+            'scripts/build-exclusive-namespace-move.mjs' \
+            'scripts/check-exclusive-namespace-move-determinism.mjs' \
+            'scripts/check-native-artifact-layout.mjs' \
+            'scripts/native-artifact-staging.mjs' \
+            'pnpm-lock.yaml' \
+            '.nvmrc' \
+            '.github/workflows/ci.yml')
+          if [ -n "$changed" ]; then
+            echo "native=true" >> "$GITHUB_OUTPUT"
+            echo "native inputs changed:"
+            echo "$changed"
+          else
+            echo "native=false" >> "$GITHUB_OUTPUT"
+            echo "no native input changed between ${base} and $(git rev-parse HEAD) — skipping the matrix"
+          fi
 
   exclusive-namespace-move:
     name: exclusive namespace move (${{ matrix.os }})
+    needs: changes
+    if: ${{ needs.changes.outputs.native == 'true' }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     strategy:

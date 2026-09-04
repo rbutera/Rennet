@@ -48,8 +48,12 @@ jobs:
   decide:
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read # read CI's own run history for this commit
     outputs:
       release: ${{ steps.diff.outputs.release }}
+      gate_passed: ${{ steps.gate.outputs.gate_passed }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -78,16 +82,49 @@ jobs:
             echo "no app-source change since ${latest} — skipping"
           fi
 
-  # 1. Full gate on the release commit. Skipping cascades to every downstream
-  #    job (each `needs` it, transitively).
+      # Every commit on main arrives through a push, and CI runs the full gate on
+      # that push. Run 33919954862 re-ran it on SHA 69f500f9 thirty-six seconds
+      # after run 33919909013 had already passed on that exact SHA. Reusing the
+      # verdict is deduplication of an identical answer about an identical
+      # commit, not a gate on anything: the gate still has to have passed, it
+      # just does not have to pass twice. Anything unknown (no matching run, an
+      # API hiccup) resolves to running it.
+      - name: Has CI already passed on this exact commit?
+        id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # `--workflow CI` is the workflow's `name:`; `--status success` filters
+          # on the conclusion, so a queued or failed run never counts.
+          passed="$(gh run list --workflow CI --commit "$GITHUB_SHA" \
+            --event push --status success --json databaseId --jq 'length' || true)"
+          case "$passed" in
+            ''|*[!0-9]*) passed=0 ;;
+          esac
+          if [ "$passed" -gt 0 ]; then
+            echo "gate_passed=true" >> "$GITHUB_OUTPUT"
+            echo "CI already passed on ${GITHUB_SHA} (${passed} successful run(s)) — not re-running it"
+          else
+            echo "gate_passed=false" >> "$GITHUB_OUTPUT"
+            echo "no successful CI run for ${GITHUB_SHA} — running the gate"
+          fi
+
+  # 1. Full gate on the release commit, unless CI already passed on this exact
+  #    SHA (see `decide`). A skip here does NOT cascade: `version` accepts a
+  #    skipped `check` and every later job hangs off `version`.
   check:
     needs: decide
-    if: ${{ needs.decide.outputs.release == 'true' }}
+    if: ${{ needs.decide.outputs.release == 'true' && needs.decide.outputs.gate_passed != 'true' }}
     uses: ./.github/workflows/ci.yml
 
   # 2. Compute next patch, rewrite versions, commit + annotated tag, push.
+  #    `always()` is what lets a skipped (already-green) `check` through; the
+  #    result check keeps a FAILED gate blocking, which is the load-bearing half.
   version:
-    needs: check
+    needs: [decide, check]
+    if: ${{ always() && needs.decide.outputs.release == 'true' && (needs.check.result == 'success' || needs.check.result == 'skipped') }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -254,7 +291,15 @@ jobs:
           set -euo pipefail
           rm -rf apps/desktop/out
           pnpm nx run rennet-desktop:make
-          pnpm nx run rennet-desktop:package-smoke
+          # The smoke script directly, NOT `nx run rennet-desktop:package-smoke`.
+          # Forge's `make` packages, signs and notarizes the .app on its way to
+          # the DMG, and the Nx target `dependsOn: ["package"]`, so going through
+          # Nx here rebuilt adapters/server/desktop and signed and notarized the
+          # whole app a second time — 3.5 minutes at the 10x macOS multiplier for
+          # a byte-identical result. The Nx target stays as it is: it is the right
+          # shape for a local run that starts with no `out/`. Here the app already
+          # exists, so smoke exactly that one.
+          node scripts/smoke-packaged-app.mjs apps/desktop/out/Rennet-darwin-arm64/Rennet.app
           node scripts/check-native-artifact-layout.mjs darwin-arm64
 
           version="${{ needs.version.outputs.version }}"
