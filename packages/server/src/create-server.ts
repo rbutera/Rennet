@@ -192,7 +192,6 @@ import type {
   RoundEvent,
   RoundOperation,
   RoundReportHandoff,
-  RoundRunReceipt,
   SessionModel,
   SessionPreparation,
 } from "@rennet/protocol";

@@ -44,13 +44,6 @@ const changedWorker = {
   diff: "diff --git a/file.ts b/file.ts",
   changedPaths: ["file.ts"],
 } satisfies RoundWorkerCompletedReceipt;
-const changedGate = {
-  executionId: "gate-1",
-  startedAt: 5,
-  completedAt: 6,
-  outcome: "passed",
-  exitCode: 0,
-} as const;
 const changedCommits = {
   executionId: "commit-1",
   baseHead: "abc123",

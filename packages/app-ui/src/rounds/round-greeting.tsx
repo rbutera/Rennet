@@ -41,12 +41,6 @@ const NO_LANES: readonly LensLane[] = Object.freeze([]);
 /** …and the same for the synthetic tail STEPS, which are step rows, not lens lanes. */
 const NO_STEPS: readonly LaneRow[] = Object.freeze([]);
 
-function durationLabel(durationMs: number): string {
-  if (durationMs < 1_000) return `${durationMs} ms`;
-  const seconds = durationMs / 1_000;
-  return `${seconds < 10 ? seconds.toFixed(1) : Math.round(seconds)} s`;
-}
-
 function harnessSummary(harness: RoundRunReceipt["harness"]): string {
   if (harness === undefined) return "";
   const name = harness.id === "claude-code" ? "Claude Code" : "Codex";

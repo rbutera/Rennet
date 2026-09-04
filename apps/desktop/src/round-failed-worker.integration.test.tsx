@@ -22,7 +22,7 @@ import { createRennetServer, type RennetServer } from "@rennet/server";
 import { cleanup, render, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const KILLED_GATE = "kill -TERM $$";
+const WORKER_FAILURE = "the coding turn was killed by SIGTERM";
 const directories: string[] = [];
 const servers: RennetServer[] = [];
 const bridges: WsRennetBridge[] = [];
@@ -32,7 +32,7 @@ function git(root: string, ...arguments_: string[]): string {
 }
 
 function createRepository(): string {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "rennet-killed-gate-repo-")));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "rennet-failed-worker-repo-")));
   directories.push(root);
   git(root, "init", "-q", "-b", "main");
   git(root, "config", "user.email", "test@example.invalid");
@@ -62,23 +62,26 @@ afterEach(() => {
   }
 });
 
-describe.skipIf(process.platform === "win32")("a killed production round gate", () => {
+// Rennet runs no gate of its own any more (round-worker-thread), so the failure this proves
+// a cold reattach over is the WORKER's own — the first step that can fail and the one whose
+// receipt a reviewer has to be able to come back to.
+describe.skipIf(process.platform === "win32")("a failed production round worker", () => {
   it("survives daemon restart as the failed UI receipt without replaying the worker", async () => {
     useNodeAbortGlobals();
     const repository = createRepository();
-    const dataDir = mkdtempSync(join(tmpdir(), "rennet-killed-gate-data-"));
-    const home = mkdtempSync(join(tmpdir(), "rennet-killed-gate-home-"));
+    const dataDir = mkdtempSync(join(tmpdir(), "rennet-failed-worker-data-"));
+    const home = mkdtempSync(join(tmpdir(), "rennet-failed-worker-home-"));
     directories.push(dataDir, home);
     vi.stubEnv("HOME", home);
     vi.stubEnv("USERPROFILE", home);
 
     let workerCalls = 0;
-    const runHandoffTurn = async ({ repoRoot }: { readonly repoRoot: string }) => {
+    const runRoundTurn = async ({ repoRoot }: { readonly repoRoot: string }) => {
       workerCalls += 1;
       writeFileSync(join(repoRoot, "worker.txt"), "worker change\n");
       return {
-        status: "completed" as const,
-        finalText: "changed one file",
+        status: "failed" as const,
+        reason: WORKER_FAILURE,
         turnDiff: "diff --git a/worker.txt b/worker.txt\nnew file mode 100644\n+worker change\n",
         filesTouched: ["worker.txt"],
       };
@@ -103,7 +106,7 @@ describe.skipIf(process.platform === "win32")("a killed production round gate", 
     const projectId = review.repositoryRoot;
     const session = attachReview(
       {
-        ...mintSession(projectId, { id: () => "session-killed-gate", now: () => 1 }),
+        ...mintSession(projectId, { id: () => "session-failed-worker", now: () => 1 }),
         repositoryRoot: review.repositoryRoot,
       },
       review.id,
@@ -116,9 +119,9 @@ describe.skipIf(process.platform === "win32")("a killed production round gate", 
       {
         facts: {
           gateCommand: {
-            value: KILLED_GATE,
+            value: "true",
             provenance: "detected",
-            source: "controlled killed-gate integration",
+            source: "controlled failed-worker integration",
           },
         },
         guidanceSeeded: 0,
@@ -126,7 +129,7 @@ describe.skipIf(process.platform === "win32")("a killed production round gate", 
       },
     );
 
-    const first = await createRennetServer({ dataDir, env, runHandoffTurn });
+    const first = await createRennetServer({ dataDir, env, runRoundTurn });
     servers.push(first);
     const sessionId = session.id;
     const reviewId = review.id;
@@ -155,12 +158,11 @@ describe.skipIf(process.platform === "win32")("a killed production round gate", 
         expect(current).toMatchObject({
           type: "operation",
           snapshot: {
-            gatePlan: { kind: "configured", command: KILLED_GATE },
             state: {
               phase: "failed",
               failure: {
-                at: "gate",
-                gate: { status: "failed", reason: "gate stopped by signal SIGTERM" },
+                at: "worker",
+                worker: { status: "failed", reason: WORKER_FAILURE },
               },
             },
           },
@@ -175,7 +177,7 @@ describe.skipIf(process.platform === "win32")("a killed production round gate", 
     );
     const failedOperation = failedEvents.events.findLast((event) => event.type === "operation");
     if (failedOperation?.type !== "operation") {
-      throw new Error("the killed gate did not leave a durable operation receipt");
+      throw new Error("the failed worker did not leave a durable operation receipt");
     }
     // The progress hub publishes only after this session-keyed CAS. Prove the row exists
     // before restart so the cold read cannot inherit success from first-process memory.
@@ -186,11 +188,11 @@ describe.skipIf(process.platform === "win32")("a killed production round gate", 
         state: {
           phase: "failed",
           failure: {
-            at: "gate",
-            reason: "gate stopped by signal SIGTERM",
-            gate: {
+            at: "worker",
+            reason: WORKER_FAILURE,
+            worker: {
               outcome: "failed",
-              termination: { kind: "signal", signal: "SIGTERM" },
+              termination: { kind: "error", reason: WORKER_FAILURE },
             },
           },
         },
@@ -200,7 +202,7 @@ describe.skipIf(process.platform === "win32")("a killed production round gate", 
     }
 
     first.shutdown();
-    const restarted = await createRennetServer({ dataDir, env, runHandoffTurn });
+    const restarted = await createRennetServer({ dataDir, env, runRoundTurn });
     servers.push(restarted);
     // No Project is persisted, so establish the post-welcome shell before mounting the route.
     await restarted.dispatch("settings.completeWelcome", {});
@@ -222,8 +224,8 @@ describe.skipIf(process.platform === "win32")("a killed production round gate", 
         state: {
           phase: "failed",
           failure: {
-            at: "gate",
-            gate: { status: "failed", reason: "gate stopped by signal SIGTERM" },
+            at: "worker",
+            worker: { status: "failed", reason: WORKER_FAILURE },
           },
         },
       },
@@ -241,11 +243,11 @@ describe.skipIf(process.platform === "win32")("a killed production round gate", 
       },
       { timeout: 15_000 },
     );
-    const gateRow = view.container.querySelector('[data-row="gate"]');
-    expect(gateRow?.textContent).toContain("Ran the gate");
-    expect(gateRow?.textContent).toContain(KILLED_GATE);
-    expect(gateRow?.textContent).toContain("gate stopped by signal SIGTERM");
-    expect(view.getByRole("alert").textContent).toContain("gate stopped by signal SIGTERM");
+    // No gate row exists to render any more, and the run says so by not having one.
+    expect(view.container.querySelector('[data-row="gate"]')).toBeNull();
+    const workerRow = view.container.querySelector('[data-row="worker"]');
+    expect(workerRow?.textContent).toContain(WORKER_FAILURE);
+    expect(view.getByRole("alert").textContent).toContain(WORKER_FAILURE);
     expect(view.container.querySelector('[data-row="commit"]')).toBeNull();
     expect(view.container.querySelector('[data-row="report"]')).toBeNull();
     expect(history.history).toEqual([route]);

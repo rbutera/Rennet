@@ -156,7 +156,7 @@ describe("runHandoffTurn", () => {
     (client.readTurnDiff as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
       new Error("T3 thread t1 has no checkpoint for turn turn-1"),
     );
-    const sleep = vi.fn(async () => {});
+    const sleep = vi.fn(async () => undefined);
     const outcome = await runHandoffTurn(
       { repoRoot: "/repos/a", prompt: "x", reviewId: "rv-1", checkpointWait: { sleep } },
       { client: async () => client, threadFor },
@@ -184,7 +184,7 @@ describe("runHandoffTurn", () => {
         repoRoot: "/repos/a",
         prompt: "x",
         reviewId: "rv-1",
-        checkpointWait: { waitMs: 0, sleep: async () => {} },
+        checkpointWait: { waitMs: 0, sleep: async () => undefined },
       },
       { client: async () => client, threadFor },
     );

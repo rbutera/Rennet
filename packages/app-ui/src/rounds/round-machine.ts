@@ -192,12 +192,6 @@ function countLabel(count: number, singular: string, plural = `${singular}s`): s
   return `${count} ${count === 1 ? singular : plural}`;
 }
 
-function durationLabel(durationMs: number): string {
-  if (durationMs < 1_000) return `${durationMs} ms`;
-  const seconds = durationMs / 1_000;
-  return `${seconds < 10 ? seconds.toFixed(1) : Math.round(seconds)} s`;
-}
-
 function preparedRows(operation: RoundRunIdentity, asks: "running" | "done"): readonly LaneRow[] {
   return [
     {
