@@ -455,8 +455,12 @@ function ScoutQuestionnaire({
             {questionnaire.detected} detected · {questionnaire.guessed} guessed
           </span>
         </span>
+        {/* No "everything stays editable in Settings" (#812 review): the logo path is not
+            editable there by design (it is evidence for choosing a glyph), and the worktree
+            location that used to be the clearest example of an editable one is gone —
+            nothing placed a worktree from it. The promise now claims only what is true. */}
         <span className="text-xs text-ink-soft">
-          The map is already continuing. Skipping is fine; everything stays editable in Settings.
+          The map is already continuing. Skipping is fine — nothing here blocks it.
         </span>
       </div>
 

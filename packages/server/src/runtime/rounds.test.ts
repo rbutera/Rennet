@@ -2771,7 +2771,7 @@ describe("createRoundsRuntime", () => {
           }),
         ),
       );
-      await runtime.runRound(
+      const round = runtime.runRound(
         roundInput({
           onProgress: (event) => {
             if (event.type === "lens") {
@@ -2785,6 +2785,12 @@ describe("createRoundsRuntime", () => {
           },
         }),
       );
+      // A superseded attempt now refuses the WHOLE round (#816 review P1): it throws at the
+      // ownership boundary rather than filing a result a later attempt owns. The owned arm
+      // still resolves, which is what keeps the assertions below about supersession rather
+      // than about a round that fails for any reason.
+      if (supersede) await expect(round).rejects.toThrow(/superseded/);
+      else await round;
       return { arrivals, laneFrames };
     };
 
@@ -2798,6 +2804,195 @@ describe("createRoundsRuntime", () => {
     const dead = await run(true);
     expect(dead.arrivals).toEqual([]);
     expect(Math.max(...dead.laneFrames.map((frame) => frame.length), 0)).toBe(0);
+  });
+
+  // ── #813 through the PRODUCTION wiring (#816 review P1) ──
+  //
+  // The pipeline test injects `onLensFailure` and the bench test injects an already-failed
+  // lane; neither touches `createRoundsRuntime`, so reverting the callback wiring, deleting
+  // the double-settle skip, or restoring the unchecked backstop left both green. These two
+  // drive the real runtime.
+  //
+  /** A Claude port whose Design seat settles with NO structured output (the drive's own
+   *  failure) while every other lens seat waits on `gate`. The report seat answers at once,
+   *  because it is what releases the lens seats to start at all. */
+  const designFailsWhileSiblingsWait = (gate: Promise<void>): HarnessPort =>
+    ({
+      createSession: async (options: { label?: string }) => {
+        const capture: { prompt?: string; label?: string } = { label: options.label };
+        return {
+          send: async (input: { prompt: string }) => {
+            capture.prompt = input.prompt;
+          },
+          close: async () => undefined,
+          events: (async function* () {
+            const lens = lensFromPrompt(capture.prompt ?? "", capture.label);
+            if (lens !== "design" && lens !== "report") await gate;
+            yield {
+              kind: "session.ended",
+              native: {},
+              outcome: {
+                status: "completed",
+                // Design: absent structured output ⇒ the drafting ladder never parses a
+                // board and the lane settles failed. Design is not a required core lens,
+                // so the round still completes and the terminal writes still happen —
+                // which is what lets the second test see them suppressed.
+                ...(lens === "design" ? {} : { structuredOutput: cleanBody(lens) }),
+              },
+            };
+          })(),
+        } as unknown as Awaited<ReturnType<HarnessPort["createSession"]>>;
+      },
+    }) as unknown as HarnessPort;
+
+  const designLaneIn = (lanes: readonly { id: string; status: string }[]) =>
+    lanes.find(({ id }) => id === "design")?.status;
+
+  it("settles a failed lane on disk and on screen before its siblings finish, once", async () => {
+    let releaseSiblings = (): void => undefined;
+    const gate = new Promise<void>((resolve) => {
+      releaseSiblings = resolve;
+    });
+    let announceDesignFailed = (): void => undefined;
+    const designFailed = new Promise<void>((resolve) => {
+      announceDesignFailed = resolve;
+    });
+
+    const laneFrames: string[][] = [];
+    /** The SAME frames unprojected. The `id:status` view above drops the thread refs and
+     *  live lines, so two different frames collapse onto one string in it — which would
+     *  make the duplicate-frame check below fire on every thread binding. */
+    const wholeFrames: string[] = [];
+    const writes: Generation[] = [];
+    /** The frames and writes as they stood the instant Design's lane read `failed`. */
+    let atFailure: { frames: number; durable: boolean } | undefined;
+
+    const runtime = createRoundsRuntime(
+      withFakeT3Seats(
+        baseDeps({
+          resolveClaudePort: async () => designFailsWhileSiblingsWait(gate),
+          persistGeneration: (generation) => {
+            writes.push(JSON.parse(JSON.stringify(generation)) as Generation);
+          },
+        }),
+      ),
+    );
+    const round = runtime.runRound(
+      roundInput({
+        onProgress: (event) => {
+          if (event.type !== "lens") return;
+          laneFrames.push(event.lanes.map((lane) => `${lane.id}:${lane.status}`));
+          wholeFrames.push(JSON.stringify(event.lanes));
+          if (designLaneIn(event.lanes) !== "failed" || atFailure !== undefined) return;
+          atFailure = {
+            frames: laneFrames.length,
+            durable: writes.some(({ failedLenses }) => failedLenses?.design !== undefined),
+          };
+          announceDesignFailed();
+        },
+      }),
+    );
+
+    // THE TIMING IS THE CLAIM. If the settlement moved back behind the pipeline's own
+    // return, this await never resolves and the test dies by timeout rather than by a
+    // wrong value — the four sibling seats are still parked on `gate`.
+    await designFailed;
+    // Durable before the screen, by the same write: the lane a reviewer sees failed is a
+    // lane the daemon has already recorded as failed.
+    expect(atFailure?.durable).toBe(true);
+    // …and not one sibling had settled when it happened: `queued` and `running` are the
+    // two unsettled states, and every other lane was in one of them.
+    const atThatMoment = laneFrames[(atFailure?.frames ?? 1) - 1] ?? [];
+    expect(atThatMoment).toContain("design:failed");
+    expect(
+      atThatMoment.filter(
+        (entry) =>
+          !entry.startsWith("design:") && !entry.endsWith(":queued") && !entry.endsWith(":running"),
+      ),
+    ).toEqual([]);
+
+    releaseSiblings();
+    await round;
+
+    // EXACTLY ONE settlement. The backstop after the pipeline settles the same lens again,
+    // and a second settlement re-emits a byte-identical snapshot. Every other emitter on
+    // this path changes something in the frame it emits (`set` changes a status, `thread`
+    // returns early on an unchanged ref, `progress` changes a line) and `refresh()` is
+    // never called here, so a frame identical to the one before it IS the double settle.
+    const repeated = wholeFrames.filter(
+      (frame, index) => index > 0 && frame === wholeFrames[index - 1],
+    );
+    expect(repeated).toEqual([]);
+    // The lane reached `failed` exactly once, counted as transitions rather than as
+    // occurrences — a settled lane is repeated in every later snapshot by design.
+    const transitions = laneFrames.filter(
+      (frame, index) =>
+        frame.includes("design:failed") && !(laneFrames[index - 1] ?? []).includes("design:failed"),
+    );
+    expect(transitions).toHaveLength(1);
+    expect(laneFrames.at(-1)).toContain("design:failed");
+  });
+
+  it("announces no failed lane and files nothing when the attempt was superseded", async () => {
+    const run = async (supersede: boolean) => {
+      let releaseSiblings = (): void => undefined;
+      const gate = new Promise<void>((resolve) => {
+        releaseSiblings = resolve;
+      });
+      const laneFrames: string[][] = [];
+      const writes: Generation[] = [];
+      let attemptRecord: Generation | undefined;
+      const runtime = createRoundsRuntime(
+        withFakeT3Seats(
+          baseDeps({
+            resolveClaudePort: async () => designFailsWhileSiblingsWait(gate),
+            persistGeneration: (generation) => {
+              const snapshot = JSON.parse(JSON.stringify(generation)) as Generation;
+              writes.push(snapshot);
+              attemptRecord ??= snapshot;
+            },
+            loadGeneration: () => {
+              if (attemptRecord === undefined) return undefined;
+              return supersede
+                ? { ...attemptRecord, draftingReportBoardId: "board:a-later-attempt" }
+                : attemptRecord;
+            },
+          }),
+        ),
+      );
+      const round = runtime.runRound(
+        roundInput({
+          onProgress: (event) => {
+            if (event.type !== "lens") return;
+            laneFrames.push(event.lanes.map((lane) => `${lane.id}:${lane.status}`));
+          },
+        }),
+      );
+      // Nothing gates the assertions here: the failure is what we are watching for, and it
+      // must not reach the screen at all, so there is no moment to synchronise on. The
+      // siblings are released immediately and the whole round is awaited.
+      releaseSiblings();
+      if (supersede) await expect(round).rejects.toThrow(/superseded/);
+      else await round;
+      return { laneFrames, writes };
+    };
+
+    // Control: the attempt owns its generation, so the failed lane DOES reach the screen
+    // and the terminal write DOES land. Without this the assertions below would pass over
+    // a round that simply never failed a lane.
+    const owned = await run(false);
+    expect(owned.laneFrames.some((frame) => frame.includes("design:failed"))).toBe(true);
+    expect(owned.writes.some(({ lensBoards }) => Object.keys(lensBoards).length > 0)).toBe(true);
+
+    const dead = await run(true);
+    // The backstop used to call `lanes.failed` directly, outside the ownership check — so a
+    // dead attempt whose reveal callbacks had all been refused still pushed five failed
+    // lanes onto every connected client, over a live attempt that may already have
+    // succeeded. Not one frame claims a settled lane now.
+    expect(dead.laneFrames.some((frame) => frame.includes("design:failed"))).toBe(false);
+    // …and nothing terminal was written under the generation id a later attempt holds.
+    expect(dead.writes.some(({ lensBoards }) => Object.keys(lensBoards).length > 0)).toBe(false);
+    expect(dead.writes.some(({ failedLenses }) => failedLenses !== undefined)).toBe(false);
   });
 
   it("rejects a reveal write from a superseded generation attempt", async () => {
@@ -2823,29 +3018,32 @@ describe("createRoundsRuntime", () => {
           }),
         ),
       );
-      await runtime.runRound(roundInput());
+      const round = runtime.runRound(roundInput());
+      if (supersedeAfterAttempt) await expect(round).rejects.toThrow(/superseded/);
+      else await round;
       return writes;
     };
 
-    // A REVEAL write is identified by the attempt identity it carries: the final settle
-    // runs through `withLensBoards`, which drops `draftingBoardIds`. Filtering on that is
-    // what keeps this test about supersession rather than about the settle, which is a
-    // different write on a different path.
-    const revealWrites = (writes: readonly Generation[]): readonly Generation[] =>
-      writes.filter(({ draftingBoardIds }) => draftingBoardIds !== undefined);
+    // NO FILTER (#816 review P1). This used to look only at writes carrying
+    // `draftingBoardIds`, which excluded the attempt's TERMINAL writes — and those were
+    // exactly the ones the gate did not cover: `withLensBoards`, the frozen predecessor
+    // and the round record all went to `deps.persistGeneration` directly, and
+    // `GenerationStore.save` overwrites by generation id. So the filter hid the hole it
+    // was meant to be watching. Every write this attempt makes is now in scope.
 
-    // Control first: with the durable record still naming THIS attempt, the reveal writes
-    // land — so the assertion below is about supersession, not about a missing seam.
-    const current = revealWrites(await runAndCollect(false));
+    // Control first: with the durable record still naming THIS attempt, the writes land —
+    // so the assertion below is about supersession, not about a missing seam.
+    const current = await runAndCollect(false);
     expect(current.some(({ timings }) => timings !== undefined)).toBe(true);
     expect(current.some(({ lensBoards }) => Object.keys(lensBoards).length > 0)).toBe(true);
 
-    const superseded = revealWrites(await runAndCollect(true));
-    // Every reveal write was dropped. What remains is the attempt write alone — the
-    // superseded attempt's settlements and timings were never folded into the
+    const superseded = await runAndCollect(true);
+    // Not one write carried a settlement or a timing. What remains is the attempt write
+    // alone — nothing this dead attempt produced was folded into, or laid over, the
     // generation a later attempt now owns.
     expect(superseded.some(({ timings }) => timings !== undefined)).toBe(false);
     expect(superseded.some(({ lensBoards }) => Object.keys(lensBoards).length > 0)).toBe(false);
+    expect(superseded.some(({ failedLenses }) => failedLenses !== undefined)).toBe(false);
   });
 
   it("serializes concurrent absence saves so a delayed partial snapshot cannot win", async () => {

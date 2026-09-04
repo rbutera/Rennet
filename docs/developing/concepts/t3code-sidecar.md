@@ -652,7 +652,10 @@ lens is not proven by this drive**, in either direction.
 
 While the seat was dead the bench went on reading *"Design — quiet for 320 s"*, and the durable
 lane stayed `running`, for the five minutes after its last attempt failed at 33 s
-([#813](https://github.com/rbutera/Rennet/issues/813)).
+([#813](https://github.com/rbutera/Rennet/issues/813), fixed in
+[#816](https://github.com/rbutera/Rennet/pull/816): a lens failure is published on the same
+settlement tail as an arrival, so the lane leaves `running` when the seat does, not when the
+slowest sibling finishes).
 
 ### The round: right workspace, empty receipt
 
@@ -696,11 +699,14 @@ the gate, the round prompt tells the worker to run the project's check command b
 commits, and the round runs on its own sidecar thread — a subagent of the session, bound to the
 same worktree — instead of sharing the session's chat thread as it did here.
 
-The app's own copy has not caught up with the binding either: the Dispatch coach mark still
-says a round runs "in a detached worktree", the scout records `worktreeBaseDir` with the hint
-"coding rounds create worktrees here", and Settings → Projects → Worktrees previews
+On the drive the app's own copy had not caught up with the binding either: the Dispatch coach
+mark said a round runs "in a detached worktree", the scout recorded `worktreeBaseDir` with the
+hint "coding rounds create worktrees here", and Settings → Projects → Worktrees previewed
 `~/.rennet/worktrees/{project}-{branch}`, which is not the path anything bound to
-([#812](https://github.com/rbutera/Rennet/issues/812)).
+([#812](https://github.com/rbutera/Rennet/issues/812), fixed in
+[#816](https://github.com/rbutera/Rennet/pull/816): the mark names the session's workspace,
+the scout's hint names the repository's own convention and the answer left the questionnaire,
+and the Worktrees card states the binding instead of previewing a path).
 
 ### What the drive found that the tests could not
 
@@ -715,10 +721,12 @@ The empty round receipt is the reverse: a fake seam hands the round a diff, so e
 a receipt. Only a real agent, really committing in a real worktree against the real sidecar,
 produces the case where the checkpoint read comes back with nothing to record.
 
-The stale copy is a third kind again. Nothing asserts the three shipped strings — the Dispatch
-coach mark, the scout's `worktreeBaseDir` hint, the Settings worktree preview — against the
-binding contract they describe, so they stayed true-sounding and wrong through the change that
-falsified them. A string only a person reads is only caught by a person reading it.
+The stale copy was a third kind again. Nothing asserted the three shipped strings — the
+Dispatch coach mark, the scout's `worktreeBaseDir` hint, the Settings worktree preview —
+against the binding contract they describe, so they stayed true-sounding and wrong through the
+change that falsified them. A string only a person reads is only caught by a person reading
+it. Each of the three now has a dom test over the rendered surface, which closes these three
+and not the class: a fourth string nobody thought to assert would go the same way.
 
 The bench's "quiet for 320 s" and the round's "0 files changed" are both true sentences about
 the wrong quantity, which no assertion about the same quantity would catch. You find them by

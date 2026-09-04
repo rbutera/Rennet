@@ -168,47 +168,75 @@ describe("the bench — five readers at work on the change", () => {
   });
 
   // #813 — the Design seat failed both attempts at 33 s and the bench went on saying
-  // "quiet for 320 s" for five more minutes. The daemon half of that is fixed where the
-  // failure settles (`onLensFailure`, so the lane leaves `running` at 33 s rather than
-  // when the slowest sibling finishes). This is the CLIENT half: a settled lane must not
-  // speak a live line at all, even when the frame still carries one — "quiet" is the same
-  // word the bench uses for a seat that is thinking, so a dead lane wearing it is the lie.
+  // "quiet for 320 s" for five more minutes. The daemon half is fixed where the failure
+  // settles (`onLensFailure`, so the lane leaves `running` at 33 s rather than when the
+  // slowest sibling finishes; `rounds.test.ts` drives that through the real runtime). This
+  // is the CLIENT half, and it is the TRANSITION that matters: the reviewer watched a lane
+  // read quiet, and what they needed was for the arriving failure to replace that word
+  // and never let it back. So this drives the two frames in order over the app's own poll.
   //
-  // POSITIVE CONTROLS RUN, 2026-09-04, and the FIRST one is why this comment is long:
+  // It deliberately does NOT hand the bench a failed lane carrying `latest`. That shape
+  // cannot come off the wire — `LensLaneSchema`'s `failed` arm has no `latest` field, and
+  // the daemon's own lane store drops `latest` on every transition out of `running` — so a
+  // test built on it pins the client against an input production cannot produce.
   //
-  //   1. deleting `lane.status === "running" &&` from both arms of `voicesOf` alone →
-  //      STILL GREEN. `speechOf` switches on the lane's status, so dropping that guard
-  //      changes nothing on its own. The two guards are one mechanism, not two.
-  //   2. that mutation PLUS `speechOf`'s settled arm preferring `latest` when it has one
-  //      (the shape a bench that simply printed the newest line would have) → failed on
-  //      the speech assertion, reading "quiet for 320 s" with `data-speech="quiet"`.
+  // POSITIVE CONTROLS RUN, 2026-09-04, and the negative result is the useful one:
   //
-  // Both reverted; the file is back to origin/main plus nothing. So what this test pins is
-  // the PAIR, and a reader changing either half alone should not read control 1 as
-  // permission — it means the other half is still holding.
-  it("a failed lane reads failed and never quiet, even when its frame still carries a live line", async () => {
-    const stale = { kind: "idle", text: "quiet for 320 s", at: 1 } as const;
-    const { bridge } = benchBridge({
+  //   1. `speechOf`'s settled arm made to prefer `latest`, plus `voicesOf` passing
+  //      `latest` through on any status — a bench that simply printed the newest line →
+  //      STILL GREEN. The failure frame carries no `latest` at all (that is the honest
+  //      wire shape), so neither guard is even reached. **This test cannot control those
+  //      two guards, and nothing can: no wire-legal frame supplies the input they refuse.**
+  //   2. `speechOf`'s failed arm returning `lane.status` instead of `lane.reason` → failed,
+  //      reading "failed" where the drafter's reason belongs. Reverted.
+  //
+  // So what this test pins is the TRANSITION — the quiet line being replaced by the
+  // failure the daemon sent, over the app's own poll — and not the client guards. Those
+  // two are redundant belt-and-braces (`voicesOf` never hands a settled lane's line on,
+  // and `speechOf` would ignore it if it did), and they sit over an input production
+  // cannot produce; an earlier version of this comment called them one mechanism, which
+  // was a wrong explanation sitting over a true assertion.
+  it("replaces a quiet lane's line with its failure the moment the failure arrives", async () => {
+    const running = {
+      status: "drafting" as const,
+      reviewId: "rev-1",
+      lanes: [
+        lane({
+          id: "design",
+          label: "Design",
+          status: "running",
+          latest: { kind: "idle", text: "quiet for 40 s", at: 1 },
+        }),
+      ] as LensLane[],
+    };
+    const live = benchBridge(running);
+    open(live.bridge);
+
+    // The lie, as the reviewer met it: a lane that is quiet and reads as merely slow.
+    await waitFor(() => expect(speechOf("design")).toBe("quiet for 40 s"));
+    expect(
+      document.querySelector('[data-row="design"] [data-speech]')?.getAttribute("data-speech"),
+    ).toBe("quiet");
+
+    // The daemon settles the lane. Nothing here re-renders the tree — the app's own
+    // `session.list` poll is what carries the new frame, which is why this is the
+    // transition and not two independent renders.
+    live.set({
       status: "drafting",
       reviewId: "rev-1",
       lanes: [
-        // The exact shape the daemon left on screen: settled failed, with the last line
-        // its (already stopped) thread had published still attached.
-        {
+        lane({
           id: "design",
           label: "Design",
           status: "failed",
           reason: "the seat turn settled without structured output",
-          thread: THREAD,
-          latest: stale,
-          seats: [{ seat: "design", provider: "claudeAgent", thread: THREAD, latest: stale }],
-        },
-      ] as unknown as LensLane[],
+        }),
+      ] as LensLane[],
     });
-    open(bridge);
 
-    await waitFor(() =>
-      expect(speechOf("design")).toBe("the seat turn settled without structured output"),
+    await waitFor(
+      () => expect(speechOf("design")).toBe("the seat turn settled without structured output"),
+      { timeout: 4_000 },
     );
     const reader = document.querySelector('[data-row="design"]');
     expect(reader?.getAttribute("data-status")).toBe("failed");
@@ -217,9 +245,9 @@ describe("the bench — five readers at work on the change", () => {
     expect(
       document.querySelector('[data-row="design"] [data-speech]')?.getAttribute("data-speech"),
     ).toBe("live");
-    // …and the stale count reaches no part of the screen. (This one passes vacuously if
-    // the assertions above already hold — it is here to catch a second surface printing
-    // the line the reader dropped, which nothing above would see.)
+    // …and the word never comes back on any part of the screen. (Vacuous if the assertions
+    // above already hold — it is here to catch a second surface still printing the line
+    // the reader dropped, which nothing above would see.)
     expect(document.body.textContent).not.toContain("quiet for");
   });
 

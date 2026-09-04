@@ -57,7 +57,7 @@ function fakeGenerator(perRepo: (repoRoot: string) => Partial<GenerateResult> | 
 const QUESTIONNAIRE: ProjectScoutQuestionnaire = {
   repo: "orbital",
   detected: 2,
-  guessed: 3,
+  guessed: 2,
   answers: [
     {
       key: "trackerKind",
@@ -73,13 +73,6 @@ const QUESTIONNAIRE: ProjectScoutQuestionnaire = {
       provenance: "detected",
       source: "origin/HEAD",
       hint: "the structural map reads this branch",
-    },
-    {
-      key: "worktreeBaseDir",
-      value: "~/.rennet/worktrees",
-      provenance: "guessed",
-      source: "Rennet default",
-      hint: "where this repository's own worktrees live",
     },
     {
       key: "gateCommand",

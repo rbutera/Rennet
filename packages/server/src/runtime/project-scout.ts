@@ -75,10 +75,14 @@ const ANSWER_OPTIONS: Partial<Record<ProjectScoutAnswer["key"], readonly string[
 
 /** Project the exact stored scout facts into the renderer-safe questionnaire. */
 export function scoutQuestionnaire(repo: string, result: ScoutResult): ProjectScoutQuestionnaire {
+  // `worktreeBaseDir` is DELIBERATELY absent (#812). It is still scouted and still stored —
+  // it is an honest fact about the repository — but it steers nothing: a session binds to
+  // the checkout that already has its branch out, or to a worktree under Rennet's own data
+  // directory, and no setting moves that. Asking the reviewer to confirm it put a field on
+  // screen that changes nothing, and with no sibling worktree to detect it was a blank one.
   const keys: readonly ProjectScoutAnswer["key"][] = [
     "trackerKind",
     "defaultBranch",
-    "worktreeBaseDir",
     "gateCommand",
     "logoPath",
   ];

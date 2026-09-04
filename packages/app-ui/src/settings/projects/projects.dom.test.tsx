@@ -269,24 +269,38 @@ describe("ProjectsPage — dual-source settings", () => {
   });
 
   // #812 — the card used to offer a location and a `{project}-{branch}` pattern with a
-  // live preview, and neither reached the code that places a worktree. It states the
-  // binding now. LOAD-BEARING: putting either editor back reddens the last two
-  // assertions, and restoring the `{project}-{branch}` preview reddens the third.
+  // live preview, and neither reached the code that places a worktree. It names the four
+  // cases the binding really has instead.
   //
-  // POSITIVE CONTROL RUN, 2026-09-04: `worktrees.tsx` reverted to the editor version →
-  // this test failed on `queryByLabelText("Worktree location")` (found an input) and on
-  // the shape query (no `~/.rennet/worktrees/<repo>/<branch>` node). Restored, green.
-  it("worktrees: the card states where a session actually binds, and offers no pattern", async () => {
+  // The title says "in words" on purpose (#816 review): the card deliberately prints NO
+  // copyable path. `branchWorktreePath` resolves against the daemon's data directory,
+  // which is `~/.rennet` only by default, and its middle segment is the repository's whole
+  // escaped absolute path rather than its name — so any concrete path here would be a
+  // third wrong one. The absence of a path is therefore asserted, not just its wording.
+  //
+  // POSITIVE CONTROL RUN, 2026-09-04: `worktrees.tsx` + `projects-page.tsx` +
+  // `assets/worktree.ts` reverted to origin/main → this test failed on the case-label
+  // query, and again on `queryByLabelText("Worktree location")` finding an input.
+  // Restored, green.
+  it("worktrees: the card names the four binding cases in words, with no path and no pattern", async () => {
     const { findByText, getByText, queryByLabelText, queryByText } = mount(<StatefulProjects />);
 
-    // The two cases the binding really has, in the daemon's own shape.
+    // The four cases, each said as what it IS rather than as a path.
     await findByText("A branch you already have out");
     expect(getByText("your own checkout")).toBeTruthy();
-    expect(getByText("~/.rennet/worktrees/<repo>/<branch>")).toBeTruthy();
+    expect(getByText("A branch nothing has out")).toBeTruthy();
+    expect(getByText("A pull request")).toBeTruthy();
     // A round is a turn in that workspace — it creates nothing (session-bound-workspace).
     expect(getByText("the session's workspace")).toBeTruthy();
 
-    // …and nothing here pretends to configure it.
+    // No path a reader could copy, and nothing pretending to configure one. `~/.rennet` is
+    // the specific wrong answer this card gave twice, so it is named — scoped to THIS
+    // section, because Identity legitimately names `~/.rennet/projects/<repo>/config.json`
+    // as its own backing file and a document-wide query would pass or fail on that.
+    const worktreeCard = getByText("Worktrees").closest('[data-slot="settings-section"]');
+    expect(worktreeCard).toBeTruthy();
+    expect(worktreeCard?.textContent).not.toContain("~/.rennet");
+    expect(worktreeCard?.textContent).not.toContain("/worktrees/");
     expect(queryByLabelText("Worktree location")).toBeNull();
     expect(queryByLabelText("Worktree naming pattern")).toBeNull();
     expect(queryByText("{branch}")).toBeNull();

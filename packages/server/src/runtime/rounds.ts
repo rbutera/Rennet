@@ -1041,6 +1041,9 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
       outcome: "complete" | "failed" | "aborted",
       failure?: string,
     ) => void;
+    /** A LATER attempt owns this generation, so nothing this attempt produced may be
+     *  filed or announced. `runOnce` refuses the whole attempt on it. */
+    readonly superseded: boolean;
   }> {
     const boards = deps.boardsRuntimeFor(input.repoRoot);
     const whiteboard = new WhiteboardClient(boards.service);
@@ -1231,6 +1234,13 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
       failedLensAccounts: {} as Partial<Record<LensKind, LensFailureAccount>>,
       timings: [] as GenerationPhaseTiming[],
     };
+    /** A LATER attempt owns this generation. Set once, by `persistReveal`'s own check. */
+    let superseded = false;
+    /** Lenses `onLensFailure` has already been called for, so the backstop below can tell
+     *  "the pipeline published this" from "the pipeline returned it without publishing".
+     *  Membership, NOT the lane's status: a settlement the ownership check refused leaves
+     *  the lane untouched and must still count as attempted, or the backstop re-runs it. */
+    const settledFailures = new Set<LensKind>();
     /**
      * Write the reveal state durably, unless a LATER attempt (or the settle that dropped
      * this attempt's slots) already owns the generation. Rejecting here rather than at the
@@ -1248,7 +1258,17 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
       const persist = deps.persistGeneration;
       if (persist === undefined) return true;
       const durable = deps.loadGeneration?.(attemptGeneration.id);
-      if (durable !== undefined && !sameDraftingAttempt(durable, attemptGeneration)) return false;
+      if (durable !== undefined && !sameDraftingAttempt(durable, attemptGeneration)) {
+        // Latched at the ONE place the rejection is decided, and returned to `runOnce` —
+        // which is the door this gate did not cover. `persistReveal` only ever guarded
+        // reveal writes; the attempt's TERMINAL writes (`withLensBoards`, the frozen
+        // predecessor, the round record) went through `deps.persistGeneration` directly,
+        // and `GenerationStore.save` overwrites by generation id. So a slow dead attempt
+        // could still replace a newer attempt's finished result under the right label —
+        // refused the disk hunk by hunk and then handed the whole file at the end.
+        superseded = true;
+        return false;
+      }
       await persist({
         ...attemptGeneration,
         lensBoards: { ...reveal.lensBoards },
@@ -1367,6 +1387,7 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
       failure: string,
       account?: LensFailureAccount,
     ): Promise<void> => {
+      settledFailures.add(lens);
       reveal.failedLenses[lens] = failure;
       if (account !== undefined) reveal.failedLensAccounts[lens] = account;
       if (!(await persistReveal())) return;
@@ -1520,13 +1541,15 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
     const benchmarkFrom = Math.floor(clock());
     const benchmarkAttempt = start === "partial" ? 1 : 0;
     let benchmarkArchived = false;
-    let benchmarkSuperseded = false;
     const archiveBenchmark = (
       outcome: "complete" | "failed" | "aborted",
       failure?: string,
     ): void => {
       const record = deps.recordBenchmark;
-      if (record === undefined || benchmarkArchived || benchmarkSuperseded) return;
+      // `superseded` rather than a second flag set at the last write only: any refused
+      // reveal write means this attempt lost the generation, and every write after it is
+      // as dead as the last one.
+      if (record === undefined || benchmarkArchived || superseded) return;
       benchmarkArchived = true;
       record(
         generationBenchmarkRun({
@@ -1567,17 +1590,28 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
     // settled every lane the pipeline published a failure for, at the moment it failed
     // (#813); this catches a lane the pipeline returned as failed without publishing —
     // and it is what kept a lane out of a permanent `queued`/`running` before that
-    // callback existed. A lane that already settled is skipped rather than re-emitted.
+    // callback existed.
+    //
+    // It goes through `onLensFailure` ITSELF, not `lanes.failed` directly. Called
+    // directly it was the one settlement outside the ownership check: a superseded
+    // attempt's reveal callbacks return without broadcasting, leaving its lanes locally
+    // `running`, and this loop then pushed every one of them onto the screen as `failed`
+    // — a dead attempt's lane snapshot landing over a live attempt that had already
+    // succeeded. Routing it here means one door, checked once.
     for (const outcome of pipeline.boards) {
       if (outcome.boardId !== undefined || outcome.lens === "report") continue;
       if (outcome.absence !== undefined) continue;
-      if (lanes?.statusOf(outcome.lens) === "failed") continue;
-      lanes?.failed(outcome.lens, outcome.failure ?? "the drafter produced no board");
+      if (settledFailures.has(outcome.lens)) continue;
+      await onLensFailure(
+        outcome.lens,
+        outcome.failure ?? "the drafter produced no board",
+        outcome.failureAccount,
+      );
     }
     // One last write so the timings recorded after the final settlement (reveal, the
     // lens post-process tails) reach durable state too. A REFUSED write means a later
-    // attempt owns this generation, and this attempt archives nothing.
-    if (!(await persistReveal())) benchmarkSuperseded = true;
+    // attempt owns this generation; `persistReveal` latches `superseded` for it.
+    await persistReveal();
     // …and the generation handed back carries them, because that record is what the final
     // settle and BOTH failure paths persist. `withLensBoards` spreads the generation it is
     // given and deletes only the attempt-scoped drafting fields, so the timings ride
@@ -1596,6 +1630,8 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
       },
       pipeline,
       archiveBenchmark,
+      // Carried out so `runOnce` can refuse to file this attempt at all (#816 review P1).
+      superseded,
     };
   }
 
@@ -1723,6 +1759,9 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
           // Reconstructed from durable metadata: no pipeline ran, so there is nothing to
           // time. An archive here would file a cache hit as a very fast generation.
           archiveBenchmark: undefined,
+          // Reconstruction READ the durable generation and found it complete, so it is
+          // this attempt's by definition — there is nothing a later attempt supersedes.
+          superseded: false,
         }
       : hasPartialDurableState
         ? await draft(draftingInput, boardGeneration, "partial")
@@ -1731,6 +1770,26 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
             `${boardGeneration.id}:${boardGeneration.projectContextRevision ?? "legacy"}`,
             () => draft(draftingInput, boardGeneration, "fresh"),
           );
+    // ── The attempt's OWNERSHIP boundary (#816 review P1) ──
+    // A LATER attempt owns this generation: `persistReveal` refused at least one of this
+    // attempt's writes. Everything below is a terminal write or a broadcast keyed on that
+    // generation id — `withLensBoards`, the frozen predecessor, the generation-transition
+    // announcement, the round record — and `GenerationStore.save` overwrites by id. So
+    // continuing would let this dead attempt replace the live one's finished result under
+    // the right label, which is precisely the wrong-content publish the reveal gate exists
+    // to stop, arriving through the one door the gate never covered.
+    //
+    // It THROWS rather than returning a hollow outcome: `RoundOutcome` requires a
+    // `RoundRecord`, and a superseded attempt has no honest one to give — the attempt that
+    // owns the generation writes it. The caller records nothing and announces nothing,
+    // which is the same exit the terminal checks below already take.
+
+    if (restoredOrDrafted.superseded) {
+      throw new Error(
+        `The drafting attempt for generation ${boardGeneration.id} was superseded by a later attempt; its result was not filed.`,
+      );
+    }
+
     // Durable BoardMeta is keyed only by generation, so evidence for an existing
     // generation may contain the report from the round that minted it. A no-code round
     // can reuse those lens boards, but that old report is not evidence about this turn.

@@ -56,7 +56,7 @@ function deferred<T>(): {
 const QUESTIONNAIRE: ProjectScoutQuestionnaire = {
   repo: "rennet",
   detected: 3,
-  guessed: 2,
+  guessed: 1,
   answers: [
     {
       key: "trackerKind",
@@ -72,13 +72,6 @@ const QUESTIONNAIRE: ProjectScoutQuestionnaire = {
       provenance: "detected",
       source: "origin/HEAD",
       hint: "the structural map reads this branch",
-    },
-    {
-      key: "worktreeBaseDir",
-      value: "~/.rennet/worktrees",
-      provenance: "guessed",
-      source: "Rennet default",
-      hint: "where this repository's own worktrees live",
     },
     {
       key: "gateCommand",
@@ -194,7 +187,10 @@ describe("IndexingView — one durable project run", () => {
     expect((screen.getByLabelText("Default branch") as HTMLInputElement).value).toBe("trunk");
     expect((screen.getByLabelText("Logo / mark") as HTMLInputElement).value).toBe("docs/mark.svg");
     expect(screen.getAllByText("detected")).toHaveLength(3);
-    expect(screen.getAllByText("guessed")).toHaveLength(2);
+    expect(screen.getAllByText("guessed")).toHaveLength(1);
+    // Four rows, not five: the worktree convention is scouted but never asked about
+    // (#812) — it steers nothing, so a field for it changed nothing.
+    expect(screen.queryByLabelText("Worktree location")).toBeNull();
     expect(screen.getByText(/origin\/HEAD/)).toBeTruthy();
 
     run.emit({
