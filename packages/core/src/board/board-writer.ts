@@ -435,6 +435,15 @@ export class BoardWriter {
    * gate: it is the difference between a call doing what the tool says it does and a
    * call quietly discarding the seat's work. `update_*` promises "only the fields given
    * change", and an update that wipes a field it was not given is that promise broken.
+   *
+   * REACHABLE FROM `set_document` ONLY, today. Both branches need a group of two or
+   * more parts, and `stats` on `set_document` is the only such group on any tool of any
+   * target — every other list flattening carries one part, for which the spine is
+   * always present and there is nothing to misalign. So the calls in `add` and `update`
+   * cannot fire, and a mutation that deletes the `update` one reddens nothing: measured
+   * PASS 273 FAIL 0. They stay because the reachable set is decided by the flattening
+   * table, not by this file, and a kind gaining a second list part must not also have
+   * to remember to re-add a guard. Do not read their presence as coverage.
    */
   private checkListAlignment(tool: BoardTool, input: Record<string, unknown>): string | undefined {
     const groups = new Map<string, { spine?: string; given: { name: string; length: number }[] }>();

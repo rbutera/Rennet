@@ -614,8 +614,10 @@ describe("a list-valued field is written whole, or the call is refused", () => {
   });
 
   it("a companion without its spine is refused, naming both and what is admissible", () => {
-    // `stats` keeps both parts, because a label with no value is not a stat — so this is
-    // the shape the refusal still has to answer.
+    // Through `set_document`, which is the ONLY reach this guard has: `stats` is the one
+    // list group on any tool with two parts, so the calls in `add` and `update` cannot
+    // fire and deleting either reddens nothing. Recorded on `checkListAlignment` and in
+    // the PR ledger rather than implied to be covered.
     const w = writer("design");
     const refusal = refusalOf(
       w.call("set_document", {
