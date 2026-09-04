@@ -1,6 +1,7 @@
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createMetricsCollector, instrumentCodexExecutor } from "@rennet/adapters";
 import type {
   CodexExecRequest,
   CodexExecResult,
@@ -218,6 +219,50 @@ describe("createLiveDeltaDigestPort — Claude seat", () => {
       codexExecutor: async () => null,
     });
     expect((await producer(input())).status).toBe("failed");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The measurement tap on the Codex leg. This port drives `codex exec` directly, so none of
+// the session instrumentation sees it: without the wrapped executor the turn spends the
+// user's subscription and records nothing at all — not the tokens, not the inlined bytes.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("createLiveDeltaDigestPort — the Codex send reaches the metrics sink", () => {
+  it("records one TurnMetric carrying the turn's tokens and the prompt's measurement", async () => {
+    const collector = createMetricsCollector();
+    const digest = fakeExecutor({ digest: "A tight summary." });
+    const producer = createLiveDeltaDigestPort({
+      claudePort: async () => null,
+      codexExecutor: async () =>
+        instrumentCodexExecutor(
+          async (req) => ({
+            ...(await digest(req)),
+            tokens: {
+              input: 4_000,
+              output: 120,
+              cacheRead: 0,
+              cacheWrite: 0,
+              reasoning: null,
+              total: 4_120,
+            },
+          }),
+          collector,
+          "codex-utility",
+        ),
+    });
+
+    expect((await producer(input())).status).toBe("drafted");
+
+    expect(collector.metrics).toHaveLength(1);
+    // The port names the job, so one shared executor's metric still says which seat spent it.
+    expect(collector.metrics[0]?.label).toBe("delta-digest");
+    expect(collector.metrics[0]?.usage).toMatchObject({ totalTokens: 4_120 });
+    expect(collector.metrics[0]?.status).toBe("emitted");
+    // The prompt points at the account FILE rather than carrying it, which is the whole
+    // point of the conversion — so the honest reading here is absence, not a number. The
+    // wrapper's own tests carry the over-the-limit case.
+    expect(collector.metrics[0]?.inlineContextBytes).toBeUndefined();
   });
 });
 

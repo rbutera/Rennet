@@ -196,6 +196,18 @@ export interface DispatchDeps {
    * for tests; defaults to `node:fs` existsSync.
    */
   repositoryExists?(root: string): boolean;
+  /**
+   * Read one file's text at a git object id (`git show <oid>:<path>`), or `null` when the
+   * repository, the object or the path is gone. An immutable read of the reviewed content,
+   * NOT the working tree — `patchset.readSpan` uses it for the lines a truncated capture
+   * cut short, so a citation lint accepts still opens. Absent ⇒ the reader answers with its
+   * honest truncation caption instead. Never throws into the command.
+   */
+  readonly readBlobAtOid?: (input: {
+    root: string;
+    oid: string;
+    path: string;
+  }) => Promise<string | null>;
   isRepositoryDirty(): boolean;
   setRepositoryDirty(dirty: boolean): void;
   /**

@@ -121,6 +121,7 @@ export function codexDraftPrBodyPort(
         prompt,
         cwd,
         outputSchema: PR_BODY_OUTPUT_SCHEMA,
+        label: "draft-pr-body",
       });
       const mapped = mapDraftOutput(result.output);
       // Report the model Codex OBSERVABLY ran (from its session log, #74 MED-3), not

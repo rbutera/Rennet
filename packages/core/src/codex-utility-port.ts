@@ -70,6 +70,12 @@ export interface CodexExecRequest {
    */
   readonly mcpServers?: Readonly<Record<string, { readonly url: string }>>;
   readonly signal?: AbortSignal;
+  /**
+   * The job this send serves ("delta-digest", "refine-comment", …), for the measurement
+   * tap only. One executor is shared by every utility port, so without it a recorded turn
+   * cannot say which seat spent the tokens. Never reaches the model.
+   */
+  readonly label?: string;
 }
 
 /** The result of one `codex exec` call: the parsed final structured message. */

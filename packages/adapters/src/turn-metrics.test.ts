@@ -1,9 +1,20 @@
+import type {
+  CodexExecRequest,
+  CodexExecResult,
+  HarnessDescriptor,
+  HarnessEvent,
+  HarnessHealth,
+  HarnessPort,
+  HarnessSession,
+} from "@rennet/core";
 import type { GenerationUsage } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import {
+  createInstrumentedRunTurn,
   createMetricsCollector,
   extractClaudeUsage,
   inlineContextMetric,
+  instrumentCodexExecutor,
   mergeGenerationUsage,
   summarizeUsage,
   type TurnMetric,
@@ -169,6 +180,182 @@ describe("mergeGenerationUsage (#741 review)", () => {
     expect(mergeGenerationUsage(undefined, usage())).toEqual(usage());
     expect(mergeGenerationUsage(usage(), undefined)).toEqual(usage());
     expect(mergeGenerationUsage(undefined, undefined)).toBeUndefined();
+  });
+});
+
+// ── A turn that THROWS still spent its prompt ─────────────────────────────────
+//
+// `session.send` and the event iterator are both after the prompt is handed over, so a
+// throw from either is money spent with no frame to read. The tap recorded nothing for
+// them: no tokens (there are none to read) and, worse, no `inlineContextBytes` — the one
+// figure that IS knowable, because it is measured from the prompt itself.
+
+/** A prompt carrying an obvious inline payload, so the recorded measurement is non-trivial. */
+const PAYLOAD_PROMPT = `Draft.\n${JSON.stringify({
+  rows: Array.from({ length: 200 }, (_, i) => ({ i, p: `src/${i}.ts` })),
+})}`;
+
+function throwingPort(where: "send" | "events", closed: { value: boolean }): HarnessPort {
+  const boom = new Error("the transport died mid-turn");
+  return {
+    descriptor: { id: "claude-code" } as unknown as HarnessDescriptor,
+    health: (): Promise<HarnessHealth> => Promise.resolve({ state: "ready", version: "2.1.0" }),
+    createSession: (): Promise<HarnessSession> =>
+      Promise.resolve({
+        id: "s1",
+        harness: "claude-code",
+        events: {
+          async *[Symbol.asyncIterator](): AsyncIterator<HarnessEvent> {
+            if (where === "events") throw boom;
+            // The "send" case never gets here: `send` rejects before the stream is drained.
+            yield* [] as HarnessEvent[];
+          },
+        },
+        send: (): Promise<string> =>
+          where === "send" ? Promise.reject(boom) : Promise.resolve("t1"),
+        interrupt: (): Promise<void> => Promise.resolve(),
+        close: (): Promise<void> => {
+          closed.value = true;
+          return Promise.resolve();
+        },
+      }),
+  };
+}
+
+describe("createInstrumentedRunTurn — a thrown turn is still a recorded turn", () => {
+  it.each(["send", "events"] as const)(
+    "records one failed metric when %s throws",
+    async (where) => {
+      const collector = createMetricsCollector();
+      const closed = { value: false };
+      const runTurn = createInstrumentedRunTurn(
+        throwingPort(where, closed),
+        { docType: "finding", cwd: "/repo" },
+        collector,
+        "flagged",
+      );
+
+      // The throw still propagates — this is a tap, not a handler; `guardSeatTurn` upstream
+      // owns the degradation, and swallowing here would change what the seat sees.
+      await expect(runTurn(PAYLOAD_PROMPT, 2)).rejects.toThrow("the transport died mid-turn");
+
+      expect(collector.metrics).toHaveLength(1);
+      expect(collector.metrics[0]).toMatchObject({
+        label: "flagged",
+        attempt: 2,
+        status: "failed",
+        error: "the transport died mid-turn",
+        usage: null,
+      });
+      // The load-bearing half: the prompt's own measurement, which no frame was needed for.
+      expect(collector.metrics[0]?.inlineContextBytes).toBeGreaterThan(5_000);
+      expect(closed.value).toBe(true);
+    },
+  );
+
+  it("control: the same turn completing records one EMITTED metric, so the record is not a constant", async () => {
+    const collector = createMetricsCollector();
+    const ended: HarnessEvent = {
+      seq: 1,
+      harness: "claude-code",
+      sessionId: "s1",
+      turnId: "t1",
+      receivedAt: 0,
+      native: { usage: { input_tokens: 9 } },
+      kind: "session.ended",
+      outcome: { status: "completed", finalText: "done", structuredOutput: { ok: true } },
+    } as HarnessEvent;
+    const port: HarnessPort = {
+      descriptor: { id: "claude-code" } as unknown as HarnessDescriptor,
+      health: (): Promise<HarnessHealth> => Promise.resolve({ state: "ready", version: "2.1.0" }),
+      createSession: (): Promise<HarnessSession> =>
+        Promise.resolve({
+          id: "s1",
+          harness: "claude-code",
+          events: {
+            async *[Symbol.asyncIterator](): AsyncIterator<HarnessEvent> {
+              yield ended;
+            },
+          },
+          send: (): Promise<string> => Promise.resolve("t1"),
+          interrupt: (): Promise<void> => Promise.resolve(),
+          close: (): Promise<void> => Promise.resolve(),
+        }),
+    };
+    const runTurn = createInstrumentedRunTurn(
+      port,
+      { docType: "finding", cwd: "/repo" },
+      collector,
+      "flagged",
+    );
+    await expect(runTurn(PAYLOAD_PROMPT, 0)).resolves.toMatchObject({ status: "emitted" });
+    expect(collector.metrics).toHaveLength(1);
+    expect(collector.metrics[0]?.status).toBe("emitted");
+  });
+});
+
+// ── The Codex utility ports ──────────────────────────────────────────────────
+//
+// Those ports drive `codex exec` directly: no session, so none of the instrumentation
+// above sees them, and their sends carried neither their tokens nor their inlined bytes
+// anywhere. Wrapping the EXECUTOR is the one place that covers every port, because a port
+// cannot opt out of its own executor.
+
+describe("instrumentCodexExecutor", () => {
+  const request: CodexExecRequest = {
+    model: "gpt-x",
+    effort: "low",
+    prompt: PAYLOAD_PROMPT,
+    label: "delta-digest",
+  };
+
+  it("records the tokens and the inlined bytes of an emitted utility turn", async () => {
+    const collector = createMetricsCollector();
+    const executor = (): Promise<CodexExecResult> =>
+      Promise.resolve({
+        output: { digest: "it did the thing" },
+        model: "gpt-x-2026-09",
+        tokens: {
+          input: 1_000,
+          output: 200,
+          cacheRead: 30,
+          cacheWrite: 5,
+          reasoning: null,
+          total: 1_235,
+        },
+      });
+
+    const result = await instrumentCodexExecutor(executor, collector, "codex-utility")(request);
+
+    expect(result.output).toEqual({ digest: "it did the thing" });
+    expect(collector.metrics).toHaveLength(1);
+    expect(collector.metrics[0]).toMatchObject({
+      // The per-call label wins over the executor's, so one shared executor still says
+      // WHICH seat spent the tokens.
+      label: "delta-digest",
+      status: "emitted",
+      model: "gpt-x-2026-09",
+      // A subscription seat: no credential source, so `summarizeUsage` never prices it.
+      apiKeySource: null,
+    });
+    expect(collector.metrics[0]?.usage).toMatchObject({ totalTokens: 1_235, reportedUsd: null });
+    expect(collector.metrics[0]?.inlineContextBytes).toBeGreaterThan(5_000);
+  });
+
+  it("records a failed metric for a thrown exec and rethrows for the port's own catch", async () => {
+    const collector = createMetricsCollector();
+    const executor = (): Promise<CodexExecResult> => Promise.reject(new Error("codex exited 1"));
+    const wrapped = instrumentCodexExecutor(executor, collector, "codex-utility");
+
+    await expect(wrapped(request)).rejects.toThrow("codex exited 1");
+    expect(collector.metrics).toHaveLength(1);
+    expect(collector.metrics[0]).toMatchObject({
+      label: "delta-digest",
+      status: "failed",
+      error: "codex exited 1",
+      usage: null,
+    });
+    expect(collector.metrics[0]?.inlineContextBytes).toBeGreaterThan(5_000);
   });
 });
 

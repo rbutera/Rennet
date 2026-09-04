@@ -204,7 +204,18 @@ Three things follow from the thread being persistent.
   executor — measures the prompt it actually sends for inline context (every JSON
   literal and fenced block, summed) and stamps the total on the turn metric beside its
   tokens when it is over 2,048 bytes, so a payload that crept back into a prompt is
-  visible in the same sink as the spend it caused.
+  visible in the same sink as the spend it caused. The scan crosses newlines, so a
+  pretty-printed `JSON.stringify(value, null, 2)` payload — the shape the harness rules
+  forbid — is measured in full rather than summing to nothing; a `{` in prose that never
+  closes is abandoned at its opener and the scan resumes, so it cannot swallow the
+  literal after it. The measurement reaches the metric even when the turn THREW after its
+  prompt was sent: those tokens are spent and there is no frame to read, which is exactly
+  when recording nothing would hide the spend. The one-off utility turns behind a command
+  — the delta digest, refine-comment, PR-body, review-opener and handoff-compose seats —
+  drive `codex exec` rather than a session; their executor is wrapped once at composition
+  so each of those sends records a `TurnMetric` too, labelled with its job. They belong to
+  no generation, so that metric lands in the daemon log rather than a durable `usage`
+  record.
 - **The output schema is the turn's contract, once.** `startTurn` takes an `outputSchema`
   and T3 attaches it to the turn; it is never restated in prompt text. A settled turn's
   structured result, duration, usage and cost come back on a `turn.settled` activity the

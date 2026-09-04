@@ -16,21 +16,28 @@
  * and writes one `TurnMetric` per attempt into a caller-owned `MetricsCollector`.
  *
  * It lives behind the harness (adapters), is used by the cost-baseline harness and
- * any future measurement, and does NOT touch the hot product path. A turn is one
- * `record` call; a runner's retries produce one metric each, so the collector's
- * sum is the true spend (R10: every retry is money-relevant).
+ * any future measurement. A turn is one `record` call; a runner's retries produce one
+ * metric each, so the collector's sum is the true spend (R10: every retry is
+ * money-relevant) — including a turn that THREW after its prompt was sent, which is spend
+ * with no frame to read and must never be spend with no metric either.
+ *
+ * {@link instrumentCodexExecutor} is the same tap for the Codex utility ports, which drive
+ * a `codex exec` rather than a session and so pass through none of the above.
  *
  * The usage extraction is a pure function (`extractClaudeUsage`) tested against a
  * synthetic result frame, so the parse is verified independent of a live turn.
  */
 
 import {
+  type CodexExecRequest,
+  type CodexExecResult,
+  type CodexExecutor,
   type HarnessPort,
   type HarnessTurnResult,
   inlineContextViolation,
   METERED_API_KEY_SOURCES,
 } from "@rennet/core";
-import type { GenerationUsage, RspDocType } from "@rennet/protocol";
+import type { GenerationUsage, RspDocType, RspTokenUsage } from "@rennet/protocol";
 import { bodyJsonSchema } from "@rennet/protocol";
 
 /** Token accounting extracted from a Claude Agent SDK `result` frame's `usage`. */
@@ -54,7 +61,12 @@ export interface ClaudeTurnUsage {
 export interface TurnMetric {
   /** The logical producer this turn served, e.g. "finding" or "decomposition". */
   readonly label: string;
-  readonly docType: RspDocType;
+  /**
+   * The RSP document type, when the turn emits one. Absent for a utility turn constrained
+   * to an inline schema (the delta digest, refine-comment, PR-body, opener and compose
+   * seats), which has no RSP doc type — `label` names those.
+   */
+  readonly docType?: RspDocType;
   /** The attempt index within the runner's retry loop (0 = first). */
   readonly attempt: number;
   /** The model the harness reported on `session.started`, or null if unseen. */
@@ -117,6 +129,17 @@ export function extractClaudeUsage(native: unknown): ClaudeTurnUsage | null {
     totalTokens: inputTokens + outputTokens + cacheReadTokens + cacheCreationTokens,
     reportedUsd,
   };
+}
+
+/** Render a thrown value into a metric's `error`; never throws itself. */
+function describeMetricThrow(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "string") return error;
+  try {
+    return String(error);
+  } catch {
+    return "an uncoercible non-Error value";
+  }
 }
 
 /** A sink the instrumented turn writes one `TurnMetric` into per attempt. */
@@ -200,6 +223,75 @@ export function mergeGenerationUsage(
       prior.reportedUsd === null || current.reportedUsd === null
         ? null
         : prior.reportedUsd + current.reportedUsd,
+  };
+}
+
+/** A Codex turn's in-protocol token usage, in the shape the collector sums. */
+function codexUsage(tokens: RspTokenUsage | undefined): ClaudeTurnUsage | null {
+  if (tokens === undefined) return null;
+  return {
+    inputTokens: tokens.input,
+    outputTokens: tokens.output,
+    cacheReadTokens: tokens.cacheRead,
+    cacheCreationTokens: tokens.cacheWrite,
+    totalTokens: tokens.total,
+    // Codex reports no monetary figure per call; `null` keeps it out of any dollar sum
+    // rather than substituting one (the RSP reportedUsd/derivedUsd discipline).
+    reportedUsd: null,
+  };
+}
+
+/**
+ * Wrap a `CodexExecutor` so every utility send through it records one `TurnMetric`.
+ *
+ * The Codex utility ports (delta digest, refine comment, PR body, review opener, handoff
+ * compose) call their executor directly: no session, no collector, so their sends carried
+ * neither the tokens they spent nor the bytes of context they inlined to any sink, on a
+ * subscription the user pays for. Wrapping the executor is the ONE place that covers all of
+ * them — a port cannot opt out of its own executor — and it measures the prompt that is
+ * actually sent, after the port assembled it.
+ *
+ * `label` names the job; `request.label` overrides it per call so one shared executor still
+ * attributes its turns. A throw records a failed metric and rethrows unchanged: the port's
+ * own catch still owns the honest failure.
+ */
+export function instrumentCodexExecutor(
+  executor: CodexExecutor,
+  collector: Pick<MetricsCollector, "record">,
+  label: string,
+  now: () => number = Date.now,
+): CodexExecutor {
+  return async (request: CodexExecRequest): Promise<CodexExecResult> => {
+    const started = now();
+    const inline = inlineContextMetric(request.prompt);
+    const record = (
+      status: TurnMetric["status"],
+      usage: ClaudeTurnUsage | null,
+      model: string,
+      error?: string,
+    ): void => {
+      collector.record({
+        label: request.label ?? label,
+        attempt: 0,
+        model,
+        // A Codex utility seat runs on the user's own subscription; the executor reports no
+        // credential source, and claiming one would make `summarizeUsage` price it.
+        apiKeySource: null,
+        ...inline,
+        status,
+        latencyMs: now() - started,
+        usage,
+        ...(error === undefined ? {} : { error }),
+      });
+    };
+    try {
+      const result = await executor(request);
+      record("emitted", codexUsage(result.tokens), result.model ?? request.model);
+      return result;
+    } catch (error) {
+      record("failed", null, request.model, describeMetricThrow(error));
+      throw error;
+    }
   };
 }
 
@@ -297,6 +389,15 @@ export function createInstrumentedRunTurn(
         { status: "failed", message: "the harness stream ended without a terminal frame" },
         null,
       );
+    } catch (error) {
+      // The prompt was handed to the harness before this threw, so the tokens are spent
+      // whether or not a frame came back. Recording nothing here was the one way a turn
+      // could cost money and leave no metric — invisible spend, the failure `collector`
+      // exists to prevent. One failed metric, carrying the same `inlineContextBytes`
+      // measurement an emitted turn carries, then the throw continues unchanged: this is a
+      // tap, not a handler, and `guardSeatTurn` upstream still owns the degradation.
+      finish({ status: "failed", message: describeMetricThrow(error) }, null);
+      throw error;
     } finally {
       await session.close();
     }
