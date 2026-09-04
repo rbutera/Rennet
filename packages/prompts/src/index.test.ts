@@ -148,11 +148,29 @@ describe("lens prompt manifest", () => {
     );
     expect(normalized).toContain("Anything not covered by one of the other boards is noise");
     expect(normalized).toContain("Noise is not a property a hunk has; it is a position");
-    // The remainder is TOTAL: nothing may be handed to another lane or dropped, so the
-    // "read this one anyway" escape lives on this board as a `signal` verdict.
-    expect(normalized).toContain("You cannot hand a hunk to another lane and you cannot drop one");
-    expect(normalized).toContain("emit its verdict as `signal`");
-    expect(normalized).toContain("an exception you name, never a default");
+    expect(normalized).toContain("Membership is a position, not a verdict");
+  });
+
+  it("leaves the Noise seat no judgement to make beyond the grouping", () => {
+    // The second half of the same ruling (2026-09-04): no escape valve, no prominence mark,
+    // no seat-set verdict of any kind. `verdict` and `judge` are constants and the grouping
+    // is the only thing the seat can get wrong, so every instruction that invited a skip-
+    // safety call is asserted ABSENT. These are absence assertions and they are named as
+    // such: they catch the old sentences coming back verbatim, and they cannot catch a new
+    // sentence that invites the same judgement in different words. That is what review is
+    // for; the executable half is that the words Rai retired are gone.
+    const normalized = readFileSync(join(srcDir, LENS_PROMPT_FILES.noise), "utf8").replace(
+      /\s+/g,
+      " ",
+    );
+    expect(normalized).toContain("the grouping is the only thing here you decide");
+    expect(normalized).toContain("Do not weigh whether a region is safe to skip");
+    expect(normalized).toContain(
+      "Every member's `verdict` is `noise` and its `judge` is `llm`. Neither is a choice",
+    );
+    expect(normalized).not.toContain("`signal`");
+    expect(normalized).not.toContain("when in doubt");
+    expect(normalized).not.toContain("safely take on trust");
   });
 
   it("tells the Noise seat that an empty board IS the settlement for a fully-cited change", () => {

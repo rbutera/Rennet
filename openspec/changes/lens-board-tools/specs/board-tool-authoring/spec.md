@@ -168,16 +168,16 @@ The live line published for a running seat SHALL render a board tool call as a r
 
 ### Requirement: A board whose membership the host derives is handed its members, not asked for them
 
-Where a board's membership is derived by the host rather than authored by a seat — the Noise board, whose members are the changed regions no other board cited — the host SHALL create those members before the seat's first turn, and the seat's tool set SHALL carry no verb that creates a member of that kind and no verb that removes one. The remove verb SHALL refuse a derived member while continuing to remove the elements the seat itself authored. The update verb for that kind SHALL be how the seat parents a member into a group, writes its reason, and changes its verdict.
+Where a board's membership is derived by the host rather than authored by a seat — the Noise board, whose members are the changed regions no other board cited — the host SHALL create those members before the seat's first turn, and the seat's tool set SHALL carry no verb that creates a member of that kind and no verb that removes one. The remove verb SHALL refuse a derived member while continuing to remove the elements the seat itself authored. The update verb for that kind SHALL be how the seat parents a member into a group and writes its reason, and SHALL carry no field for a member's verdict or its judge mark: each has one admissible value once membership is derived, and a one-valued field on a tool input offers a choice that does not exist.
 
 A lens whose absence is decided by the host from that derivation SHALL carry no settle-absent verb, because there is nothing left for the seat to declare that the host does not already know before the turn.
 
-`finish` SHALL refuse to settle such a board while any member is unparented or any group carries no reason, returning one pointer per unaccounted member. That check SHALL be an ordinary member of the finish tier of the one rule registry, covered by the partition assertion like every other rule.
+`finish` SHALL refuse to settle such a board while any member is unparented or any group carries no reason, returning one pointer per unaccounted member. That check SHALL be an ordinary member of the finish tier of the one rule registry, covered by the partition assertion like every other rule — and on a derived board it is the ONLY whole-board question left to ask, because everything else the board asserts was written by the host.
 
 #### Scenario: The Noise set has no member verb
 
 - **WHEN** the Noise seat's tool set is built
-- **THEN** it carries no verb that creates a noise verdict and none that removes one, and it carries the update verb by which a member is grouped, reasoned and re-judged
+- **THEN** it carries no verb that creates a noise verdict and none that removes one, and its update verb carries a parent and a reason and no field for a verdict or a judge mark
 
 #### Scenario: The remove verb refuses a member and still removes a section
 

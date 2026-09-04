@@ -50,9 +50,11 @@ Noise SHALL be a position, not a property of a hunk: a changed region no other l
 
 The complement SHALL be total. No member SHALL be added, removed, or handed to another lens: a seat SHALL have no verb that creates a member and none that removes one, so the board and the change agree by construction rather than by diligence.
 
-What the seat SHALL author is the account the derivation cannot give. Every member SHALL be parented into exactly one group that names its pattern, and every group SHALL carry a reason specific to this change rather than a general statement about that kind of file. A member the seat judges the reviewer must read anyway SHALL remain on the board and carry a `signal` verdict naming what to look at, because the remainder is total and there is nowhere else for it to go.
+What the seat SHALL author is the account the derivation cannot give, and nothing besides. Every member SHALL be parented into exactly one group that names its pattern, and every group SHALL carry a reason specific to this change rather than a general statement about that kind of file. **That grouping SHALL be the only thing the seat can get wrong on this board**: membership is derived, citations are refused where they are made, and a member's verdict and judge are host-stamped constants, so a board satisfying the grouping rule is correct by construction in every other respect.
 
-A member's judge mark SHALL record how its VERDICT was reached — derived by the host, or changed by the seat — and SHALL NOT be read as a statement about how its membership was decided, which is always derivation.
+A seat SHALL NOT mark a member as one the reviewer should read anyway, in any form — no verdict it can set, no severity, no prominence. The assurance that nothing worth reading is filed as skippable SHALL rest on the other four lenses' citation coverage: a hunk that matters and that no lens cited is a defect in the lens that missed it, and SHALL be answered by that lens rather than by a second opinion on this board.
+
+A member's verdict and its judge mark SHALL be written by the host and SHALL NOT appear on anything the seat can author, because each has exactly one admissible value once membership is derived. A one-valued field offered to a seat states a choice that does not exist.
 
 #### Scenario: A region no other board cited
 
@@ -69,10 +71,10 @@ A member's judge mark SHALL record how its VERDICT was reached — derived by th
 - **WHEN** the Noise seat attempts to add a member or to remove one the host placed
 - **THEN** there is no verb that adds one and the removal is refused, and the board still accounts for every uncited region
 
-#### Scenario: A leftover region the reviewer must read
+#### Scenario: A member's verdict and judge are not the seat's to write
 
-- **WHEN** the seat judges that a member is not safe to take on trust
-- **THEN** it stays on the board, its verdict reads `signal` with a reason naming what to look at, and its judge mark says the seat reached that verdict
+- **WHEN** the Noise seat's authoring surface is examined and a settled Noise board is read
+- **THEN** the seat has no way to set a member's verdict or its judge mark, and every member on the board carries the host's constants for both
 
 ### Requirement: The Noise lane runs on its siblings' settlements and never on their silence
 

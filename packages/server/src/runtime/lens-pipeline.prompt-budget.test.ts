@@ -57,7 +57,7 @@ const bigPacket = buildDeltaPacket(synthetic(), []);
 
 // Measured 2026-09-04 on this fixture (2 files, 3 hunks) once the context layer became a
 // path reference (session-bound-workspace 3.1), rendered WITHOUT a context directory:
-// design 12,152 B, flagged 6,673, sequence 6,288, noise 7,095, decisions 6,004. The
+// design 12,152 B, flagged 6,673, sequence 6,288, noise 6,636, decisions 6,004. The
 // DeltaPacket no longer rides, so there is no per-file term any more — on the
 // 74-file/292-hunk packet below every one of these numbers is IDENTICAL, which is the
 // property the second test pins. Each budget is its measurement plus 10% headroom; one
@@ -66,17 +66,20 @@ const bigPacket = buildDeltaPacket(synthetic(), []);
 // What this cannot catch, stated so no reader inherits a wider claim: the prompt is
 // rendered with no context directory, so the path-reference layer (bounded under 2 KB by
 // its own test in `lens-pipeline.test.ts`) is not measured here.
-// Noise moved 6,088 → 7,095 B on 2026-09-04, deliberately: Rai's ruling made the lens the
-// COMPLEMENT of the other four boards rather than an independent skip-safety verdict, and
-// `noise.md` had to carry the new definition, the total-remainder rule, and the `signal`
-// escape that replaces "when in doubt, it is signal" (openspec `lens-board-tools` D16).
-// The budget is raised in the same change, which is what this tripwire asks for.
+// Noise moved 6,088 → 6,636 B on 2026-09-04, deliberately: Rai's ruling made the lens the
+// COMPLEMENT of the other four boards rather than an independent skip-safety verdict, so
+// `noise.md` carries the new definition and the total-remainder rule (openspec
+// `lens-board-tools` D16). It grew and then shrank again in the same change, because the
+// second half of the ruling deleted every instruction that invited the seat to judge.
+// 6,636 still fits the old 6,750 budget, but only by 1.7% — the number below is restated
+// as measurement + 10% so this file's own convention stays true and the next harmless
+// edit reddens for a real reason rather than for the leftover headroom.
 const BUDGET: Record<(typeof LENS_KINDS)[number], number> = {
   design: 13_400,
   sequence: 6_950,
   decisions: 6_650,
   flagged: 7_400,
-  noise: 7_800,
+  noise: 7_300,
 };
 
 describe("drafter prompt byte budget (tripwire, #737)", () => {
