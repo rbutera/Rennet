@@ -5,6 +5,7 @@
  * Node — the direct analogue of B06's `core/knowledge/`. This is the folder's
  * import surface.
  */
+export * from "./board-writer";
 export * from "./compose";
 export * from "./design-obligations";
 export * from "./finding-round";

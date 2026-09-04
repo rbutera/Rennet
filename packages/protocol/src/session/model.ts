@@ -8,6 +8,7 @@ import { z } from "zod";
 import {
   AskLifecycleSchema,
   generationIdForPatchset,
+  LensAbsenceReasonSchema,
   QuoteAnchorSchema,
   RoundReportBoardSchema,
 } from "../board";
@@ -15,7 +16,7 @@ import {
 import { codeRefSchema, patchFileSchema } from "../delta/citations";
 import type { CouncilEffort, CouncilHarnessId, CouncilModel } from "../domain";
 import { forgeRepoIdentitySchema, forgeRepositoryMatchesLegacy } from "../forge";
-import { LENS_KINDS, type LensKind } from "../manifests";
+import { LENS_KINDS } from "../manifests";
 import { sha256Hex } from "../sha256";
 
 const id = z.string().min(1);
@@ -116,51 +117,23 @@ export const SessionThreadSchema = z.union([
 ]);
 export type SessionThread = z.infer<typeof SessionThreadSchema>;
 
+// Absence admissibility moved to `board/kind-tables.ts` in `lens-board-tools`: a seat's
+// board tool set is derived from it (whether the lens gets a settle-absent verb, and which
+// absence that verb declares) and `protocol/board` cannot import `protocol/session`.
+// Re-exported here so every existing importer keeps its path.
+export {
+  LENS_ADMISSIBLE_ABSENCES,
+  type LensAbsenceReason,
+  LensAbsenceReasonSchema,
+  lensAdmitsAbsence,
+} from "../board";
+
 /**
  * A generation (#457): one immutable visit to a review's boards over a patchset.
  * `patchsetId` identifies the content; `id` distinguishes later visits to the same
  * content. Live boards are append-only logs; when the code moves, the generation
  * freezes immutable and a successor is minted — the successor account compares N vs N+1.
  */
-export const LensAbsenceReasonSchema = z.enum([
-  "no-material",
-  "no-spec",
-  "no-decisions",
-  "no-findings",
-  "no-noise",
-]);
-export type LensAbsenceReason = z.infer<typeof LensAbsenceReasonSchema>;
-
-/**
- * Which absence each lens may honestly settle with (#549). This is the admissibility
- * half of the ONE canonical settlement domain — board / absence / failure, as
- * `lensBoards` / `absentLenses` / `failedLenses` already model it. Nothing may
- * introduce a second settlement model beside it.
- *
- * Sequence admits none: a review whose order board never arrived has nothing to read,
- * so an absent Sequence is a failure and never a clean result. Noise's `no-noise` is a
- * first-class SUCCESS — a change carrying no mechanical noise settled correctly, it did
- * not fail — and Design's `no-spec` is the same kind of success: the seat looked for the
- * specification this branch was written against and the repository holds none, so there is
- * nothing to render and no empty board is drafted.
- *
- * Design's `no-material` predates the spec respec (session-bound-workspace D6), when a host
- * bundle offered candidates and Design's absence was a grounded dismissal of them. It stays
- * admissible so generations persisted before the respec keep reading; nothing settles it now.
- */
-export const LENS_ADMISSIBLE_ABSENCES: Readonly<Record<LensKind, readonly LensAbsenceReason[]>> = {
-  design: ["no-material", "no-spec"],
-  sequence: [],
-  decisions: ["no-decisions"],
-  flagged: ["no-findings"],
-  noise: ["no-noise"],
-};
-
-/** True when `reason` is an absence `lens` may settle with as a success. */
-export function lensAdmitsAbsence(lens: LensKind, reason: LensAbsenceReason): boolean {
-  return LENS_ADMISSIBLE_ABSENCES[lens].includes(reason);
-}
-
 /**
  * Whether a further attempt at a failed lens could plausibly succeed (#549). A drafting
  * turn that emitted no board is `retryable` — the seat ran and produced nothing, which

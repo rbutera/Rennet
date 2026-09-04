@@ -205,6 +205,43 @@ and calls board regeneration through this runtime.
    - **a process-vocabulary screen** flags structural-field prose that names
      lenses, boards, agents, seats, or drafts.
 
+   Which kinds a lens may author is one table, `LENS_TYPED_KINDS` in
+   `packages/protocol/src/board/kind-tables.ts`, beside the shared authoring kinds
+   every lens gets. The kind allowlist reads it, and so does the board tool surface
+   below, so a kind reassigned between lenses cannot mean one thing to the rules and
+   another to the verbs a seat is given.
+
+   Every rule above screens the board's **document** as well as its elements. The
+   document is not an element, so a fenced code block in the board's opening prose
+   used to pass a lint that rejects the same bytes one line below it; document
+   violations report at a board-level pointer (`/document/introMarkdown`).
+
+   The rule registry is **partitioned into two tiers** by what each rule reads.
+   A rule decidable from a single element plus the daemon's knowledge of the
+   patchset is a **boundary** rule: code bytes and dialogue in prose, malformed and
+   unresolvable citations, machinery vocabulary, an ungrounded decision, an unknown
+   source. A rule that can only be decided over the whole board is a **finish**
+   rule: report coherence, requirement order and verbatim quoting, and the Design
+   artifact-set checks. The partition is asserted over the rules the tool path
+   actually receives, not over the authored lists, so a rule cannot be in the
+   registry and in neither tier.
+
+   Two **settlement rules** sit in that registry and in the finish tier, moved down
+   from the drafting runtime where they were lane failures a seat could not answer:
+   every Sequence step must be reachable from a top-level section, and the board
+   must hold material at all. `lint` — the document path's entry point — does not
+   run them, and that exclusion is declared as its own named subset rather than
+   achieved by keeping a rule out of the registry. The reason is cost: the Noise
+   prompt asks for an empty board when nothing in the change is skip-safe, and the
+   runtime settles that as a typed `no-noise` absence, so asking "does this board
+   hold material?" during document validation would spend a model repair turn
+   arguing with a board that was right.
+
+   The two settlement rules ask one question each. Material presence counts what
+   exists; reachability answers for itself and names the step to re-parent. They
+   used to overlap, and a Sequence board holding one orphaned step got both — an
+   "the board is empty" pointer over a board with a step on it.
+
    The core validator retains its typed-data immutability result for
    callers that provide a deterministic transform; the production lens scheduler
    supplies no model-backed post-process transform. Immutability is its own
@@ -356,6 +393,61 @@ attempt: remove its metadata first, clear its board state second, then draft. Th
 order is repeatable after a crash and prevents stale metadata from presenting a
 partially cleared board as complete. A malformed or semantically invalid report
 is scrubbed the same way before one fresh classification turn.
+
+## Writing a board with verbs
+
+The pipeline above parses one returned document per seat. The pieces of a second
+way to write a board are built and not yet connected: `lens-board-tools` group 1
+landed the surface and the writer, and groups 2 and 3 wire them to the daemon and
+the seats.
+
+A seat's tool set is **derived**, never listed per lens. `buildBoardTools` in
+`packages/protocol/src/board/tool-schemas.ts` walks the shared authoring kinds plus
+that target's typed kinds over the authored board schema, the way the orchestrator's
+`app_*` tools walk the command registry: each kind yields an `add` verb and an
+`update` verb, plus `set_document`, `cite`, `remove_element`, `finish`, and — only
+where the lens admits an absence — a `settle_absent` whose reason is fixed in its
+description with no field to name another. Sequence admits no absence and gets no
+such verb.
+
+Every input is one flat object of scalars, string enums and arrays of scalars. No
+nested object, no array of objects, no union at any depth: a source reference is
+`source_path` / `source_candidate` / `source_line`, and a citation is an id `cite`
+returns rather than an object. This is the shape rule that closes #810, where a
+union rendered as a bare `anyOf` with no top-level `type` and the API refused the
+turn before the model saw it. `flatInputViolations` renders each input to JSON
+Schema and reports any of those four shapes, naming the tool and the field.
+
+A structured value that is a LIST is flattened into parallel arrays the seat aligns
+by index, so it carries only the parts worth that cost: a section's sources are
+`source_paths` alone, while a requirement's single `source` keeps its candidate and
+line, where there is no index to align. Where both parts of a list are load-bearing
+— a stat is a label and a value — the writer refuses a companion given without its
+spine and refuses arrays of different lengths, naming the field. Silently rebuilding
+the shorter list is how a partial update came to wipe a field the call never
+mentioned, which is the opposite of what `update_*` tells the model it does.
+
+The fields the host owns are on no input at all: an element's author, a `code_ref`'s
+patchset id, a noise verdict's judge, a finding's draft status and its cross-seat
+concurrence and accord, a section's round-delta stamp, and the document's reading
+measure.
+
+`BoardWriter` in `packages/core/src/board/board-writer.ts` applies one call at a
+time, purely. The **host mints every id** and returns it, and a child names its
+parent — the host keeps the parent's `children` in step. So the parent graph is a
+forest and every other reference names an element minted earlier, which is what
+makes a dangling reference and a reference cycle unconstructible rather than
+checked. A reference argument naming something the board does not hold is refused
+with what it does hold. The boundary does not constrain what *kind* a reference
+names, so any reference field can point at an ancestor and close a loop through the
+one edge that runs forward, parenting; every mutation therefore re-runs the boundary
+tier over the board the call would produce and refuses whatever that call
+introduced, which is what actually holds the two structural guarantees. A refusal
+names the field and says what would be admissible in the lint layer's own words.
+`finish` runs the finish tier and answers with pointers only — a rule id, an element
+reference and one sentence — or settles the board. Writing after a `finish` is not
+refused; it takes the board back to drafting, because a settlement describes the
+board that finished and not the one that moved.
 
 ## The classifier evidence contract
 
@@ -576,6 +668,12 @@ kind, severity, cited code, and concurrence are typed fields, so a claim in the
 wrong shape fails to parse, not merely reads badly); the lint makes the
 mechanical rules guarantees; the prompts carry what only judgment can check. A
 rule that lives in a prompt alone is a wish.
+
+The tool surface is the same argument taken one step further. A rule the schema
+cannot express and the lint has to catch after the fact — a lens authoring
+another lens's kind, a reference to an element that does not exist — becomes a
+verb that was never offered or an argument that cannot resolve. What is left for
+the lint is what a call genuinely cannot decide on its own.
 
 ## Honest states
 

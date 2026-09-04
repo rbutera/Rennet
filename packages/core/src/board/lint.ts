@@ -33,9 +33,11 @@
 
 import {
   AUTHORED_BOARD_SCHEMA,
+  type BoardTarget,
   type DraftBoard,
   type DraftElement,
-  type LensKind,
+  SHARED_KINDS,
+  typedKindsFor,
   type Violation,
 } from "@rennet/protocol";
 import { parseOpenSpecChange } from "../delta/openspec-change";
@@ -49,8 +51,13 @@ import {
 
 // ── The lint context (plain data the caller assembles) ───────────────────────
 
-/** The lint target: one of the five lens boards, or the round-report seat. */
-export type LintTarget = LensKind | "report";
+/**
+ * The lint target: one of the five lens boards, or the round-report seat. The
+ * vocabulary is `protocol`'s {@link BoardTarget} — the same table the board tool
+ * surface is derived from, so a lens's kinds cannot mean one thing to lint and
+ * another to the verbs a seat is given.
+ */
+export type LintTarget = BoardTarget;
 
 /**
  * One changed region of the patchset: a 1-based inclusive line range on one side of
@@ -207,36 +214,11 @@ export const DEFAULT_SCAFFOLD_GLOBS: readonly string[] = [
   "**/yarn.lock",
 ];
 
-/**
- * The typed domain kinds each target owns. Shared structural kinds (`prose`,
- * `section`, `callout`, `annotation`, `code_ref`) are legal everywhere; a typed
- * kind on the wrong board is a lane violation. Grounded in the lens prompts
- * (`packages/prompts`): the Design prompt renders BOTH requirement regions AND
- * the implementer's stated `decision` calls (a projection the Decisions board
- * shares), so Design admits `decision` + `requirement`; the Decisions prompt is
- * decision-only. The report seat's `round_outcome` is legal ONLY on the report
- * target and never on a lens board (S1).
- */
-const SHARED_KINDS: ReadonlySet<string> = new Set([
-  "prose",
-  "section",
-  "callout",
-  "annotation",
-  "code_ref",
-]);
-const LENS_TYPED_KINDS: Readonly<Record<LensKind, readonly string[]>> = {
-  design: ["decision", "requirement"],
-  sequence: ["order_step"],
-  decisions: ["decision"],
-  flagged: ["finding"],
-  noise: ["noise_verdict"],
-};
-const REPORT_TYPED_KINDS: readonly string[] = ["round_outcome"];
-
-/** The typed kinds the target authors (the report seat, or a named lens). */
-function typedKindsFor(target: LintTarget): readonly string[] {
-  return target === "report" ? REPORT_TYPED_KINDS : LENS_TYPED_KINDS[target];
-}
+// The typed kinds each target owns live in `@rennet/protocol`
+// (`board/kind-tables.ts`). They used to live here, and `lens-board-tools` moved
+// them: the per-seat board tool surface is DERIVED from the same rows, and
+// `protocol` imports no Rennet package, so one copy had to be the copy. The
+// `kind-allowlist` rule below reads them exactly as it always did.
 
 // ── Field extraction (frozen-schema aware, one field-role table) ─────────────
 
@@ -283,6 +265,49 @@ function fieldsOf(el: DraftElement, role: "prose" | "structural"): Field[] {
 }
 const proseFields = (el: DraftElement): Field[] => fieldsOf(el, "prose");
 const structuralFields = (el: DraftElement): Field[] => fieldsOf(el, "structural");
+
+/**
+ * The board DOCUMENT is authored text too, and it used to escape every prose screen —
+ * the rules walked `draft.elements` and the document is not an element, so a fenced code
+ * block in `introMarkdown` passed a lint that rejects the same bytes in a `prose`
+ * element one line below it. `set_document` made that reachable in one call.
+ *
+ * Its pointer is board-level (`/document/introMarkdown`), which the retry channel
+ * already understands: `offendingId` reads a leading `/` as "not an element", so a
+ * document violation is reported and never mistaken for an element to drop.
+ */
+const DOCUMENT_FIELD_ROLES: Readonly<{
+  prose: readonly string[];
+  structural: readonly string[];
+}> = {
+  prose: ["introMarkdown"],
+  structural: ["title"],
+};
+
+function documentFields(draft: DraftBoard, role: "prose" | "structural"): Field[] {
+  const document = draft.document as Record<string, unknown> | undefined;
+  if (document === undefined) return [];
+  const out: Field[] = [];
+  for (const field of DOCUMENT_FIELD_ROLES[role]) {
+    const value = document[field];
+    if (typeof value === "string" && value.length > 0) {
+      out.push({ elementId: "/document", field, text: value });
+    }
+  }
+  return out;
+}
+
+/** Every authored prose field on the board: the document's, then each element's. */
+const allProseFields = (draft: DraftBoard): Field[] => [
+  ...documentFields(draft, "prose"),
+  ...draft.elements.flatMap(proseFields),
+];
+
+/** Every authored structural field on the board: the document's title, then each element's. */
+const allStructuralFields = (draft: DraftBoard): Field[] => [
+  ...documentFields(draft, "structural"),
+  ...draft.elements.flatMap(structuralFields),
+];
 
 const ref = (elementId: string, field?: string): string =>
   field === undefined ? elementId : `${elementId}/${field}`;
@@ -414,48 +439,42 @@ const INDENTED_BLOCK = /^ {4,}\S.*(?:\r?\n {4,}\S.*)+/m;
  * identifier (R20-required) matches neither, so it is exempt by construction.
  */
 const noCodeBytes: Rule = (draft) =>
-  draft.elements.flatMap((el) =>
-    proseFields(el).flatMap(({ elementId, field, text }) => {
-      if (FENCE.test(text) || INDENTED_BLOCK.test(text)) {
-        return [
-          {
-            ruleId: "no-code-bytes",
-            elementRef: ref(elementId, field),
-            message:
-              "R17/R26: code on a board is a `code_ref`, not bytes in prose. Cite the patchset; single-backtick identifiers are fine.",
-          },
-        ];
-      }
-      return [];
-    }),
-  );
+  allProseFields(draft).flatMap(({ elementId, field, text }) => {
+    if (FENCE.test(text) || INDENTED_BLOCK.test(text)) {
+      return [
+        {
+          ruleId: "no-code-bytes",
+          elementRef: ref(elementId, field),
+          message:
+            "R17/R26: code on a board is a `code_ref`, not bytes in prose. Cite the patchset; single-backtick identifiers are fine.",
+        },
+      ];
+    }
+    return [];
+  });
 
 const DIALOGUE = /^\s*(?:\*\*)?(?:User|Reviewer|Orchestrator|Assistant|Agent|Q|A)(?:\*\*)?\s*:/gim;
 /** L2 — no authored dialogue smuggled into a prose field (R17). Two-turn threshold. */
 const noDialogue: Rule = (draft) =>
-  draft.elements.flatMap((el) =>
-    proseFields(el).flatMap(({ elementId, field, text }) => {
-      const turns = text.match(DIALOGUE);
-      if (turns !== null && turns.length >= 2) {
-        return [
-          {
-            ruleId: "no-dialogue",
-            elementRef: ref(elementId, field),
-            message:
-              "R17: authored dialogue does not belong in prose — the thread/message kinds are curation-only, never a drafter's.",
-          },
-        ];
-      }
-      return [];
-    }),
-  );
+  allProseFields(draft).flatMap(({ elementId, field, text }) => {
+    const turns = text.match(DIALOGUE);
+    if (turns !== null && turns.length >= 2) {
+      return [
+        {
+          ruleId: "no-dialogue",
+          elementRef: ref(elementId, field),
+          message:
+            "R17: authored dialogue does not belong in prose — the thread/message kinds are curation-only, never a drafter's.",
+        },
+      ];
+    }
+    return [];
+  });
 
 /** L3 — prose citations are full repo-relative `path:line`, never absolute/GitHub/basename. */
 const citationWellFormed: Rule = (draft) =>
-  draft.elements.flatMap((el) =>
-    proseFields(el).flatMap(({ elementId, field, text }) =>
-      checkCitationWellFormed(text, ref(elementId, field)),
-    ),
+  allProseFields(draft).flatMap(({ elementId, field, text }) =>
+    checkCitationWellFormed(text, ref(elementId, field)),
   );
 
 export interface ElementReference {
@@ -549,11 +568,11 @@ const elementReferencesResolve: Rule = (draft) => {
 const citationResolves: Rule = (draft, ctx) => {
   const out: Violation[] = [];
   const byId = new Map(draft.elements.map((el) => [el.id, el]));
+  // Prose path:line mentions — HEAD side. The document's intro is prose too.
+  for (const { elementId, field, text } of allProseFields(draft)) {
+    out.push(...checkCitationResolves(text, ctx.files, ref(elementId, field)));
+  }
   for (const el of draft.elements) {
-    // Prose path:line mentions — HEAD side.
-    for (const { elementId, field, text } of proseFields(el)) {
-      out.push(...checkCitationResolves(text, ctx.files, ref(elementId, field)));
-    }
     // Typed code_ref elements: patchset identity + side inventory + range order.
     if (el.kind === "code_ref") {
       // ONE reader for the span (`readCodeRefSpan`), so an unknown `side` is skipped here
@@ -670,29 +689,25 @@ const unresolvableCitation: Rule = (draft, ctx) => {
 
 /** L7 — no machinery vocabulary in structural fields (R20), with the F2 exemptions. */
 const processVocabulary: Rule = (draft, ctx) =>
-  draft.elements.flatMap((el) =>
-    structuralFields(el).flatMap(({ elementId, field, text }) =>
-      checkProcessVocab(text, ctx, ref(elementId, field)),
-    ),
+  allStructuralFields(draft).flatMap(({ elementId, field, text }) =>
+    checkProcessVocab(text, ctx, ref(elementId, field)),
   );
 
 const REMAINDER =
   /\b(?:not (?:covered|shown|discussed) (?:here|on this)|left to (?:another|the other)|covered elsewhere|out of scope (?:here|for this)|handled separately|the rest of the (?:diff|change))\b/i;
 /** L9 — no remainder narration; a board says what it cites, never what it leaves out. */
 const noRemainderNarration: Rule = (draft) =>
-  draft.elements.flatMap((el) =>
-    proseFields(el).flatMap(({ elementId, field, text }) =>
-      REMAINDER.test(text)
-        ? [
-            {
-              ruleId: "no-remainder-narration",
-              elementRef: ref(elementId, field),
-              message:
-                "R18: a board never narrates what it leaves out. Drop the remainder sentence; cite what you read and say nothing about the rest.",
-            },
-          ]
-        : [],
-    ),
+  allProseFields(draft).flatMap(({ elementId, field, text }) =>
+    REMAINDER.test(text)
+      ? [
+          {
+            ruleId: "no-remainder-narration",
+            elementRef: ref(elementId, field),
+            message:
+              "R18: a board never narrates what it leaves out. Drop the remainder sentence; cite what you read and say nothing about the rest.",
+          },
+        ]
+      : [],
   );
 
 function matchesGlob(path: string, glob: string): boolean {
@@ -2576,6 +2591,115 @@ const kindAllowlist: Rule = (draft, ctx) => {
   );
 };
 
+// ── The two finish-tier rules that move here from the drafting runtime ───────
+
+/**
+ * Domain elements reachable from the board's top-level section roots. A board is a
+ * tree; an element nobody's `children` reaches is written but never rendered, so
+ * "produced" and "readable" are not the same question. `lens-pipeline.ts` has asked
+ * it since the served board existed.
+ */
+function reachableOfKind(
+  elements: readonly DraftElement[],
+  kind: DraftElement["kind"],
+): DraftElement[] {
+  const byId = new Map(elements.map((element) => [element.id, element]));
+  const nested = new Set<string>();
+  for (const element of elements) {
+    const children = (element.data as { children?: unknown }).children;
+    if (!Array.isArray(children)) continue;
+    for (const child of children) if (typeof child === "string") nested.add(child);
+  }
+  const matches: DraftElement[] = [];
+  const visited = new Set<string>();
+  const visit = (id: string): void => {
+    if (visited.has(id)) return;
+    visited.add(id);
+    const element = byId.get(id);
+    if (element === undefined) return;
+    if (element.kind === kind) matches.push(element);
+    if (element.kind !== "section" && element.kind !== "order_step") return;
+    const children = (element.data as { children?: unknown }).children;
+    if (!Array.isArray(children)) return;
+    for (const child of children) if (typeof child === "string") visit(child);
+  };
+  for (const element of elements) {
+    if (element.kind === "section" && !nested.has(element.id)) visit(element.id);
+  }
+  return matches;
+}
+
+/**
+ * D5 — every step is reachable from a top-level section. A step the reading order
+ * cannot reach is a step the reviewer never sees, which is why this was a lane
+ * failure in `lens-pipeline.ts` and is now a pointer the seat can act on: it names
+ * the step, and re-parenting it is one call.
+ */
+const sequenceStepsReachable: Rule = (draft, ctx) => {
+  if (ctx.lens !== "sequence") return [];
+  const reachable = new Set(reachableOfKind(draft.elements, "order_step").map(({ id }) => id));
+  return draft.elements.flatMap((element) =>
+    element.kind === "order_step" && !reachable.has(element.id)
+      ? [
+          {
+            ruleId: "sequence-step-reachable",
+            elementRef: ref(element.id),
+            message: `Step \`${element.id}\` hangs off no top-level section, so the reading order never reaches it. Give it a parent.`,
+          },
+        ]
+      : [],
+  );
+};
+
+/**
+ * The material kind each target must actually produce something of. Absent means
+ * any element counts. Mirrors `lens-pipeline.ts`'s own table.
+ */
+const MATERIAL_KIND: Readonly<Partial<Record<LintTarget, DraftElement["kind"]>>> = {
+  sequence: "order_step",
+  decisions: "decision",
+  flagged: "finding",
+};
+
+/**
+ * D5 — the emptiness check that today authorizes an absence. A board with nothing
+ * on it does not finish: the seat either writes something or declares the absence
+ * its lens admits. It is a pointer rather than a silent settlement precisely
+ * because a lane that settles over nothing without saying so is the defect
+ * `lens-board-drafting` exists to forbid.
+ *
+ * It asks whether the material EXISTS, not whether it is reachable. It used to ask
+ * the reachable question, which `lens-pipeline.ts` asks — and the two rules then
+ * double-reported: a Sequence board holding one orphaned step got a reachability
+ * pointer naming the step AND an emptiness pointer naming `/elements`, which reads
+ * as "you wrote nothing" over a board with a step on it. One question per rule:
+ * {@link sequenceStepsReachable} owns reachability and names the step to re-parent.
+ *
+ * The gap that leaves is real and named: Decisions and Flagged have no reachability
+ * rule, so `finish` accepts an unreachable `decision` or `finding` where
+ * `hasLensMaterial` in `lens-pipeline.ts` would not. That check is still in the
+ * runtime and still runs; wiring the two together is group 3's.
+ */
+const boardHasMaterial: Rule = (draft, ctx) => {
+  const kind = MATERIAL_KIND[ctx.lens];
+  const has =
+    kind === undefined
+      ? draft.elements.length > 0
+      : draft.elements.some((element) => element.kind === kind);
+  return has
+    ? []
+    : [
+        {
+          ruleId: "board-has-material",
+          elementRef: "/elements",
+          message:
+            kind === undefined
+              ? `The ${ctx.lens} board is empty. Write what you found, or settle the absence this lens admits.`
+              : `The ${ctx.lens} board holds no \`${kind}\`. Write one, or settle the absence this lens admits.`,
+        },
+      ];
+};
+
 /**
  * The per-draft rule registry for a LENS board, in evaluation order. The report
  * seat runs {@link REPORT_RULES} instead — it cites the round's own diff, not the
@@ -2603,6 +2727,8 @@ export const LENS_RULES: readonly Rule[] = [
   requirementScenariosNarrative,
   requirementVerbatim,
   requirementOrder,
+  sequenceStepsReachable,
+  boardHasMaterial,
 ];
 
 /**
@@ -2621,13 +2747,169 @@ export const REPORT_RULES: readonly Rule[] = [
 ];
 
 /**
+ * ── The two tiers (`lens-board-tools` D5) ───────────────────────────────────
+ *
+ * A board is written call by call, so a rule is answered wherever it can be
+ * DECIDED, and what a rule reads is what decides its tier:
+ *
+ * - **Boundary** — decidable from the one element a call carries plus the daemon's
+ *   own knowledge of the patchset. It is refused in the same call, the element is
+ *   never created, and the refusal names the field.
+ * - **Finish** — only decidable over the whole board. It runs when the seat calls
+ *   `finish`, and comes back as a pointer list the seat answers with further calls
+ *   in the same turn.
+ *
+ * This is a PARTITION of one registry, not a second rule set. {@link BOUNDARY_RULES}
+ * and {@link FINISH_RULES} are authored separately, and `lint.test.ts` asserts they
+ * reunite to exactly {@link LENS_RULES} with nothing in both and nothing in neither,
+ * failing BY NAME — which is the point of authoring them separately rather than
+ * deriving `LENS_RULES` from them, since a derived union would make that assertion
+ * tautological and a new rule could land unassigned without anything noticing.
+ *
+ * `lint` does NOT run the whole registry: it runs {@link DRAFT_LINT_RULES}, which is
+ * the registry minus {@link SETTLEMENT_RULES}. Read that constant before assuming
+ * otherwise — the two settlement rules are answerable only at `finish`.
+ */
+export const BOUNDARY_RULES: readonly Rule[] = [
+  // Impossible through the tool surface — the lens has no verb for a foreign kind.
+  kindAllowlist,
+  // Impossible through the tool surface — a reference can only name what the board
+  // already holds (D4), so it cannot dangle and cannot cycle.
+  elementReferencesResolve,
+  // The prose field the call carries.
+  noCodeBytes,
+  noDialogue,
+  citationWellFormed,
+  noRemainderNarration,
+  // The structural field the call carries.
+  processVocabulary,
+  // Inside `cite`: file existence, side inventory, range order, patchset identity;
+  // the nearest changed range; and the Noise lane's scaffold paths.
+  citationResolves,
+  unresolvableCitation,
+  scaffoldIsNoiseLane,
+  // The evidence and alternative ids the decision call carries.
+  decisionGrounded,
+  // The source and related-file fields the call carries.
+  designSourcesKnown,
+  requirementSourceKnown,
+];
+
+/**
+ * The whole-board tier: what `finish` answers with pointers.
+ *
+ * The last two moved down from `lens-pipeline.ts`, where they were lane settlement
+ * questions asked after the ladder — a seat could not answer a lane failure, and it
+ * can answer a pointer. They are ordinary members of {@link LENS_RULES}, so the
+ * partition assertion covers them; they are the {@link SETTLEMENT_RULES}, so `lint`
+ * is the one caller that does not run them, for the reason recorded there.
+ */
+export const FINISH_RULES: readonly Rule[] = [
+  reportCoherent,
+  requirementOrder,
+  requirementScenariosNarrative,
+  requirementVerbatim,
+  designArtifactSetComplete,
+  designArtifactContentComplete,
+  designHeaderComplete,
+  designIncompletenessVisible,
+  sequenceStepsReachable,
+  boardHasMaterial,
+];
+
+/**
+ * The two settlement rules: only answerable when a seat says it is DONE, and both
+ * moved down here from `lens-pipeline.ts`, where they were lane failures asked after
+ * the ladder rather than rules a seat could answer.
+ *
+ * They are ordinary members of {@link LENS_RULES} and of {@link FINISH_RULES}, so the
+ * partition covers them — but {@link lint} does NOT run them, and that exclusion is
+ * declared here rather than achieved by keeping them out of the registry.
+ *
+ * DO NOT "FIX" {@link DRAFT_LINT_RULES} BY ADDING THESE BACK. A rule a seat cannot
+ * SATISFY at draft time does not belong in the draft ladder, and neither of these can
+ * be satisfied there:
+ *
+ * `lint` is the DOCUMENT path's entry point — `validateDraft` runs it over a seat's
+ * returned board — and an EMPTY board is a legitimate draft on that path. It is
+ * exactly what the Noise prompt asks for when nothing in the change is skip-safe, and
+ * `lens-pipeline.ts` settles it afterwards as a typed `no-noise` absence. So asking
+ * `board-has-material` at draft time would bill a model repair turn, on every clean
+ * Noise run, to correct a board that was already correct — and ship a blemish for it.
+ * That is a per-session cost no diff shows, which is the kind `CLAUDE.md`'s harness
+ * section makes part of the definition of done rather than a nice-to-have. Reviewed
+ * and ruled 2026-09-04: keep the exclusion, declared.
+ *
+ * Three tests in `validate.test.ts` fail if you do it anyway — "a genuinely empty but
+ * PARSED board reports everParsed=true (a real empty lens)" among them. That is the
+ * cheap signal; the expensive one is the token bill, which no test can see.
+ *
+ * So: one registry, one partition over what the tool path runs, and one named subset
+ * for the document path. Nothing sits outside the registry unasserted.
+ */
+export const SETTLEMENT_RULES: readonly Rule[] = [sequenceStepsReachable, boardHasMaterial];
+
+const SETTLEMENT_SET: ReadonlySet<Rule> = new Set(SETTLEMENT_RULES);
+
+/**
+ * What {@link lint} runs: the canonical registry minus {@link SETTLEMENT_RULES}.
+ *
+ * The subtraction is deliberate and reasoned, not an omission — read
+ * {@link SETTLEMENT_RULES} before changing it. A rule list that is visibly "the
+ * registry minus two" invites being restored to the registry by a reader who has not
+ * seen why it is not.
+ */
+export const DRAFT_LINT_RULES: readonly Rule[] = LENS_RULES.filter(
+  (rule) => !SETTLEMENT_SET.has(rule),
+);
+
+/** Which tier a rule is answered in. */
+export type LintTier = "boundary" | "finish";
+
+const BOUNDARY_SET: ReadonlySet<Rule> = new Set(BOUNDARY_RULES);
+
+/**
+ * The rules of one tier for one target, DERIVED by filtering that target's own
+ * registry through the partition — so the report seat's narrower set splits the
+ * same way a lens's does, with no second assignment to keep in step.
+ *
+ * Nothing is appended here. An earlier revision kept the two settlement rules in a
+ * third list outside {@link LENS_RULES} and added it to the finish tier at call time,
+ * which made the partition assertion true of the authored constants and false of the
+ * set that actually ran — the exact hole 1.5 exists to close, since a rule could land
+ * in that third list and be asserted by nothing. They are in the registry now.
+ *
+ * Note what this derivation CANNOT catch on its own: the finish tier is the boundary
+ * tier's complement over the registry, so a rule dropped from {@link BOUNDARY_RULES}
+ * silently reappears here rather than going missing. The assertion that a rule is in
+ * exactly one AUTHORED tier is what catches that, and it names the rule when it fails.
+ */
+export function rulesForTier(target: LintTarget, tier: LintTier): readonly Rule[] {
+  const registry = target === "report" ? REPORT_RULES : LENS_RULES;
+  return registry.filter((rule) => BOUNDARY_SET.has(rule) === (tier === "boundary"));
+}
+
+/**
+ * Lint one tier of a board. Pure, and the same rule functions `lint` runs — the
+ * tool boundary and `finish` differ in WHEN they ask, never in what they know.
+ */
+export function lintTier(draft: DraftBoard, ctx: LintContext, tier: LintTier): Violation[] {
+  return rulesForTier(ctx.lens, tier).flatMap((rule) => rule(draft, ctx));
+}
+
+/**
  * Lint a draft board against its context. Pure. Returns every {@link Violation}
- * across all rules; an empty array is a clean board. The report seat runs a
- * report-specific rule set; every lens runs {@link LENS_RULES}. The retry
- * channel that feeds violations back to the drafter is cluster 3 (`validate.ts`).
+ * across the rules the DOCUMENT path runs; an empty array is a clean board. The
+ * report seat runs a report-specific rule set; every lens runs
+ * {@link DRAFT_LINT_RULES}, which is {@link LENS_RULES} minus the two
+ * {@link SETTLEMENT_RULES} a seat answers at `finish`. The retry channel that feeds
+ * violations back to the drafter is cluster 3 (`validate.ts`).
  */
 export function lint(draft: DraftBoard, ctx: LintContext): Violation[] {
-  const rules = ctx.lens === "report" ? REPORT_RULES : LENS_RULES;
+  // {@link DRAFT_LINT_RULES}, not the whole registry: the settlement rules are the
+  // seat's to answer at `finish`, and the document path settles an empty board as a
+  // typed absence rather than arguing with it. `REPORT_RULES` never held either.
+  const rules = ctx.lens === "report" ? REPORT_RULES : DRAFT_LINT_RULES;
   return rules.flatMap((rule) => rule(draft, ctx));
 }
 
