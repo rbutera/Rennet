@@ -26,6 +26,10 @@ export function buildOfferedManifest(decomposition: Decomposition): OfferedManif
           deletions: hunk.deletedLines,
           context: hunk.contextLines,
         },
+        spans: {
+          old: { start: hunk.oldStart, lines: hunk.oldLines },
+          new: { start: hunk.newStart, lines: hunk.newLines },
+        },
       })),
   };
 }

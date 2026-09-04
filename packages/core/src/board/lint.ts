@@ -557,8 +557,12 @@ const citationResolves: Rule = (draft, ctx) => {
       const side = d.side === "base" ? "base" : "head";
       const startLine = typeof d.start_line === "number" ? d.start_line : 0;
       const endLine = typeof d.end_line === "number" ? d.end_line : startLine;
-      const cited = typeof d.patchset_id === "string" ? d.patchset_id : "";
-      if (ctx.patchsetId !== undefined && cited !== ctx.patchsetId) {
+      // ABSENT is the normal drafted shape: the host stamps `patchset_id` once, before
+      // persistence, because a seat is never told the id. Only a PRESENT and DIFFERENT id
+      // is a contradiction — a board composed against another capture — which is what this
+      // rule was written for. Matching on silence would fail every fresh draft.
+      const cited = typeof d.patchset_id === "string" ? d.patchset_id : undefined;
+      if (ctx.patchsetId !== undefined && cited !== undefined && cited !== ctx.patchsetId) {
         out.push({
           ruleId: "citation-resolves",
           elementRef: ref(el.id),

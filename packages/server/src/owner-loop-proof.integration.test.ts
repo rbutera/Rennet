@@ -1,9 +1,22 @@
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { BoardMetaStore, GenerationStore, RoundOperationStore } from "@rennet/adapters";
+import {
+  BoardMetaStore,
+  GenerationStore,
+  RoundOperationStore,
+  SessionStore,
+} from "@rennet/adapters";
 import {
   type CommandOutput,
   commandIdFor,
@@ -364,6 +377,20 @@ describe("#685 owner loop through a real server", () => {
     });
     expect(roundOneGeneration).not.toBe(initialGeneration);
     expect(afterRoundOne[0]?.frozenPredecessor).toBe(initialGeneration);
+
+    // session-context-files: PRODUCTION wired the one writer. `createRennetServer` builds
+    // the rounds runtime, and the dep that carries the writer is optional — so a
+    // composition root that forgot it still compiles and every seat silently drafts with
+    // no context directory at all. This asserts the daemon's own round wrote the
+    // classifier's evidence under the root the seats were dispatched with, and stamped
+    // that root on the session so the archive purge can find it again. Delete the
+    // `writeSessionContext` line in `create-server.ts` and this reddens.
+    const sessionStore = new SessionStore(join(dataDir, "sessions"));
+    const roundOneSession = sessionStore.load(sessionId);
+    expect(roundOneSession?.contextRoot).toBeDefined();
+    const contextDir = join(roundOneSession?.contextRoot ?? "", ".rennet", "context", sessionId);
+    expect(existsSync(join(contextDir, "evidence.json"))).toBe(true);
+    expect(existsSync(join(contextDir, "round.json"))).toBe(true);
     const operationStore = new RoundOperationStore(join(dataDir, "round-operations"));
     const completedRoundOne = operationStore.read(sessionId);
     operationStore.close();

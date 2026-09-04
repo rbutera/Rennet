@@ -102,6 +102,25 @@ function openspecTouch(files: Patchset["files"]): OpenSpecTouch | undefined {
 }
 
 /**
+ * The one `git diff` a seat runs to read the reviewed change from the checkout it is
+ * standing in. Two capture shapes, two commands, and neither lets the prompt claim the
+ * working directory IS the reviewed state, because it may not be:
+ *  - a working-tree capture pins the reviewed bytes as `reviewedTreeOid` (`base..head`
+ *    would omit uncommitted work), and the live tree can move after capture;
+ *  - a range capture (PR / branch) diffs `base...head` (THREE-dot: from the merge base —
+ *    an advanced base with two dots invents base-only deletions), and the checkout may
+ *    sit on a different ref entirely.
+ * Pinned objects are always readable: `git show <oid>:<path>`.
+ */
+export function reviewedDiffCommand(
+  repository: Pick<Patchset["repository"], "baseOid" | "headOid" | "reviewedTreeOid">,
+): string {
+  return repository.reviewedTreeOid === undefined
+    ? `git diff ${repository.baseOid}...${repository.headOid}`
+    : `git diff ${repository.baseOid} ${repository.reviewedTreeOid}`;
+}
+
+/**
  * Assemble the Delta packet — pure, deterministic, no I/O, no model call. The
  * patchset supplies every derived section (hunk index, blast radius, noise
  * pre-classification, counterpart hints, openspec touch); the dossier and the

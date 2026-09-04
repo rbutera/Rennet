@@ -30,6 +30,7 @@ import {
   type Omission,
   type RegisterLintContext,
   reconcileFindingsWithProvenance,
+  reviewedDiffCommand,
   stampDeltas,
   validateDraft,
 } from "@rennet/core";
@@ -76,6 +77,7 @@ import {
   type Violation,
 } from "@rennet/protocol";
 import { z } from "zod";
+import type { SessionContextFile } from "../context-files";
 import type { SeatKind as BoardSeatId } from "../t3/threads";
 import { projectRoundReportBoard } from "./lens-board-read";
 import {
@@ -96,9 +98,11 @@ import {
 /**
  * The lens drafting pipeline SCHEDULER (#464 + #493 + #486, B08 cluster 5): the
  * `server/runtime/` home the packet names, the direct sibling of B06's
- * `council-seat-turn.ts`. It seeds one drafter harness session per lens IN THE PR
- * WORKTREE with the inlined DeltaPacket (B5) + the lens prompt (`@rennet/prompts`)
- * + the host board schema (D1), validates each structured return through the
+ * `council-seat-turn.ts`. It seeds one drafter harness session per lens IN THE
+ * SESSION'S BOUND ROOT with the lens prompt (`@rennet/prompts`), a path reference to
+ * the session's context directory (session-context-files: nothing rides inline — the
+ * seat reads `git diff` and the files the index names) + the host board schema (D1),
+ * validates each structured return through the
  * cluster-3 loop (`validateDraft` over `parseDraft`/`lint`), and — as the SOLE
  * op writer — writes the validated board through `whiteboard-client` (the drafters
  * never call whiteboard tools). Council-routed: every seat resolves through
@@ -805,17 +809,88 @@ export interface ComposeInput {
   readonly authorTurn: (prompt: string) => Promise<string> | string;
   /** The review-draft register lint context (citation files + R20 identifiers). */
   readonly lintCtx: RegisterLintContext;
-  /** Curation feedback threaded from the prior generation (C2) — inlined into the authoring prompt. */
+  /** Curation feedback threaded from the prior generation (C2), written as a context file. */
   readonly curationFeedback?: string;
+  /**
+   * The session-context writer (session-context-files): the boards, the voice rules and
+   * the curation feedback are written through it and NAMED in the prompt. It returns the
+   * directory as the seat should name it (relative to its cwd), or `undefined` in the
+   * direct-call shape, in which case the prompt says so rather than naming a path that
+   * does not exist.
+   */
+  readonly writeContext: (files: readonly SessionContextFile[]) => string | undefined;
 }
 
-/** Assemble the composition authoring prompt: the voice rules + the boards + prior curation. */
-export function renderComposePrompt(input: ComposeInput): string {
-  const context = JSON.stringify({
-    boards: [...input.boards.values()],
-    ...(input.curationFeedback === undefined ? {} : { curationFeedback: input.curationFeedback }),
-  });
-  return `${renderLayer("payload", input.voicePromptText)}\n\n${renderLayer("context", context)}`;
+/** The voice rules' file in the context directory (the prompts bundle is not on the seat's path). */
+export const COMPOSE_VOICE_FILE = "review-draft-voice.md";
+/** The reviewer's curation feedback, when the prior generation left any. */
+export const COMPOSE_CURATION_FILE = "curation-feedback.md";
+
+/** The context files the composition seat reads: voice rules, one board per lens, feedback. */
+export function composeContextFiles(
+  input: Pick<ComposeInput, "boards" | "voicePromptText" | "curationFeedback">,
+): SessionContextFile[] {
+  return [
+    {
+      name: COMPOSE_VOICE_FILE,
+      body: input.voicePromptText,
+      holds: "The reviewer-voice rules and post-process steps the composed prose must follow.",
+      readWhen: "first, before you write a word of the composition.",
+    },
+    ...[...input.boards].map(([lens, board]) => ({
+      name: `boards/${lens}.json`,
+      body: JSON.stringify(board),
+      holds: `The frozen ${lens} board of this generation, as the reader sees it.`,
+      readWhen: "before you write: the boards are the surface your prose connects.",
+    })),
+    ...(input.curationFeedback === undefined
+      ? []
+      : [
+          {
+            name: COMPOSE_CURATION_FILE,
+            body: input.curationFeedback,
+            holds: "The reviewer's curation feedback from the prior generation.",
+            readWhen: "before you write, and honour it.",
+          },
+        ]),
+  ];
+}
+
+/**
+ * The composition authoring prompt: path references only. The voice rules used to be
+ * the payload layer and the boards a JSON context layer — the boards alone were the
+ * generation's every element, re-billed on each authoring turn. Now the seat is told
+ * where each file is and reads what it needs.
+ */
+export function renderComposePrompt(
+  contextDir: string | undefined,
+  lenses: readonly LintTarget[],
+): string {
+  if (contextDir === undefined) {
+    return renderLayer(
+      "payload",
+      "Author the connective review prose for this generation. No context directory was written for it, so there are no boards or voice rules to read.",
+    );
+  }
+  const dir = contextDir.replace(/\/$/, "");
+  const boards =
+    lenses.length === 0
+      ? "This generation froze no lens board, so there is nothing to connect; say so in one sentence."
+      : `The frozen lens boards are in \`${dir}/boards/\` — ${lenses
+          .map((lens) => `\`${lens}.json\``)
+          .join(
+            ", ",
+          )} — read each one before you write; they are the reading surface your prose connects.`;
+  return renderLayer(
+    "payload",
+    [
+      "Author the connective review prose for this generation.",
+      `Your voice rules are in \`${dir}/${COMPOSE_VOICE_FILE}\`: read them first and apply their post-process steps to what you write.`,
+      boards,
+      `If \`${dir}/${COMPOSE_CURATION_FILE}\` exists it holds the reviewer's curation feedback from the prior generation; read it and honour it.`,
+      `\`${dir}/README.md\` indexes every file there.`,
+    ].join("\n"),
+  );
 }
 
 /**
@@ -829,7 +904,8 @@ export function renderComposePrompt(input: ComposeInput): string {
  * Pure over the injected authoring turn — no live model in the gate.
  */
 export async function composeReviewDraft(input: ComposeInput): Promise<ComposeResult> {
-  const prose = await input.authorTurn(renderComposePrompt(input));
+  const contextDir = input.writeContext(composeContextFiles(input));
+  const prose = await input.authorTurn(renderComposePrompt(contextDir, [...input.boards.keys()]));
   const carried = new Map<LintTarget, ReadonlySet<string>>();
   for (const [lens, board] of input.boards) {
     const prev = input.previous?.get(lens);
@@ -838,25 +914,100 @@ export async function composeReviewDraft(input: ComposeInput): Promise<ComposeRe
   return { prose, carried, violations: lintReviewDraft(prose, input.lintCtx) };
 }
 
-// ── Prompt assembly (each turn is a fresh stateless session — carry everything) ──
+// ── Session context (session-context-files D3/D4) ──
 
 /**
- * The drafter's base prompt: the lens instructions (payload), the reviewed-range
- * task line, and the packet's INVENTORY (context). The session's cwd IS the
- * reviewed checkout, so the prompt carries identity and derived signals — never
- * the hunk index (D5: a citation is a path and a line range, so the seat needs no
- * hunk ids to copy back) — and the drafter reads the change itself with its own
- * tools. Inlining the whole diff here is what used to blow
- * the model's context on any large branch: the capture cap (2 MB) sits far
- * above what a prompt can carry, and no budget stood between them. Every turn
- * re-sends this — the harness turn builders open a fresh session per call, so
- * nothing may rely on prior turn state.
+ * The generation's context files, accumulated so that every write through the ONE
+ * writer lists the whole set: the writer re-renders `README.md` for exactly the files
+ * it is given, and a second call with only the new file would drop the first from the
+ * index. `add` replaces by name and returns the directory RELATIVE to the seat's cwd —
+ * the form a prompt names — or `undefined` when no writer was injected (the direct-call
+ * shape), in which case nothing is written and no prompt names a directory.
+ */
+export interface ContextSink {
+  readonly add: (files: readonly SessionContextFile[]) => string | undefined;
+}
+
+export function createContextSink(write: LensPipelineDeps["writeContext"]): ContextSink {
+  const byName = new Map<string, SessionContextFile>();
+  return {
+    add(files) {
+      for (const file of files) byName.set(file.name, file);
+      return write?.([...byName.values()]);
+    },
+  };
+}
+
+/** What a drafter prompt names: the context directory and the files this seat should read. */
+export interface DrafterContextRef {
+  /** The session's context directory, relative to the seat's cwd. */
+  readonly dir: string;
+  /** The files this seat is told about, one line each; the index lists the rest. */
+  readonly files: readonly Pick<SessionContextFile, "name" | "holds" | "readWhen">[];
+}
+
+/** The round context file a regeneration's seats read. */
+export const ROUND_CONTEXT_FILE = "round.json";
+
+/**
+ * `round.json`: the dispatched asks, the worker's identity (never its diff — the seat
+ * reads that from the checkout) and, once it has been drafted, the frozen round report
+ * board that is the lens drafters' input on a round (D3/R58).
+ */
+export function roundContextFile(
+  round: RoundDraftContext,
+  report?: DraftBoard,
+): SessionContextFile {
+  return {
+    name: ROUND_CONTEXT_FILE,
+    body: JSON.stringify({
+      number: round.number,
+      dispatchedAsks: round.dispatchedAsks,
+      ...(round.worker === undefined
+        ? {}
+        : {
+            worker: {
+              outcome: round.worker.outcome,
+              changedPaths: round.worker.changedPaths,
+              commitRange: round.worker.commitRange,
+            },
+          }),
+      ...(report === undefined ? {} : { report }),
+    }),
+    holds:
+      "This round's number, the asks the reviewer dispatched, the worker's changed paths and commit range, and the frozen round report board.",
+    readWhen: "before you draft: a regeneration answers those asks, and the report is your input.",
+  };
+}
+
+/** The context layer: a path reference, under two kilobytes whatever the change's size. */
+function renderContextReference(context: DrafterContextRef): string {
+  const dir = context.dir.replace(/\/$/, "");
+  return [
+    `Your session's context directory is \`${dir}/\`; its \`README.md\` indexes every file there — what each holds and when to read it. Nothing is sent to you inline: read a file with your own tools when its line says to.`,
+    ...context.files.map(
+      (file) => `- \`${dir}/${file.name}\` — ${file.holds} Read it ${file.readWhen}`,
+    ),
+  ].join("\n");
+}
+
+// ── Prompt assembly ──
+
+/**
+ * The drafter's base prompt: the lens instructions (payload), the reviewed-range task
+ * line naming the one diff command for this capture, and a path reference to the
+ * session's context directory (context). Nothing derived from the change rides here —
+ * no inventory, no hunk index, no blast radius, no counterpart hints, no artifact
+ * bundle (session-context-files): the seat's cwd is the reviewed checkout and it reads
+ * `git diff` and the named files itself. The lens prompts never read those signals, so
+ * they are not written as files either; the daemon keeps the packet for lint and
+ * persistence. Measured on the 74-file/292-hunk synthetic packet the prompt no longer
+ * grows with the change at all.
  */
 export function renderDrafterPrompt(
   promptText: string,
   packet: DeltaPacket,
-  reportBoard?: DraftBoard,
-  round?: RoundDraftContext,
+  context?: DrafterContextRef,
   options?: {
     /**
      * Drop the reviewed-range task layer. The legacy round-report seat verifies
@@ -866,69 +1017,28 @@ export function renderDrafterPrompt(
     readonly omitTaskLayer?: boolean;
   },
 ): string {
-  // The hunk index never travels: the seat cites by path and line and reads the
-  // content from the checkout it is standing in (D5). `JSON.stringify` drops an
-  // undefined key, so the context carries no `hunks` at all.
-  const context = JSON.stringify({
-    deltaPacket: { ...packet, hunks: undefined },
-    // On rounds the round-report drafts FIRST and is the lens drafters' input (D3/R58).
-    ...(reportBoard === undefined ? {} : { roundReport: reportBoard }),
-    ...(round === undefined
-      ? {}
-      : {
-          round: {
-            number: round.number,
-            dispatchedAsks: round.dispatchedAsks,
-            // The worker's verbatim turn diff never rides here: the classified
-            // round-report path carries a measured evidence manifest (#727), and
-            // every drafter gets the worker's identity and shape and reads the
-            // content from the checkout like everything else.
-            ...(round.worker === undefined
-              ? {}
-              : {
-                  worker: {
-                    outcome: round.worker.outcome,
-                    changedPaths: round.worker.changedPaths,
-                    commitRange: round.worker.commitRange,
-                  },
-                }),
-          },
-        }),
-  });
   const repo = packet.patchset?.repository;
-  // Two capture shapes, two diff commands — and neither lets the prompt claim
-  // the working directory IS the reviewed state, because it may not be:
-  //  - a working-tree capture pins the reviewed bytes as `reviewedTreeOid`
-  //    (`base..head` would omit uncommitted work), and the live tree can move
-  //    after capture;
-  //  - a range capture (PR / branch) diffs `base...head` (THREE-dot: from the
-  //    merge base — an advanced base with two dots invents base-only
-  //    deletions), and the checkout may sit on a different ref entirely.
-  // Pinned objects are always readable: `git show <oid>:<path>`.
-  const diffCommand =
-    repo === undefined
-      ? "`git diff`"
-      : repo.reviewedTreeOid === undefined
-        ? `\`git diff ${repo.baseOid}...${repo.headOid}\``
-        : `\`git diff ${repo.baseOid} ${repo.reviewedTreeOid}\``;
   const reviewedOid = repo?.reviewedTreeOid ?? repo?.headOid;
+  // The partial (`investigate-before-you-draft.md`) owns "read it yourself"; this layer
+  // owns only what the partial says it names: the range and the exact commands.
   const task = [
     repo === undefined
       ? "Your working directory is a checkout of the reviewed repository."
       : repo.reviewedTreeOid === undefined
         ? `You are reviewing the commits since ${repo.baseOid} (${repo.baseRef}), at reviewed head ${repo.headOid}. Your working directory is a checkout of this repository, but it may be on a different ref — the pinned objects are authoritative.`
         : `You are reviewing the working-tree change since ${repo.baseOid} (${repo.baseRef}), pinned as tree ${repo.reviewedTreeOid} (uncommitted work included). Your working directory is the checkout it was captured from; the pinned tree is authoritative if it has moved.`,
-    "The context layer carries the change INVENTORY (file rows and derived signals) — not the diff content.",
-    `Read the change yourself with your own tools: ${diffCommand} for the delta${
+    `The diff command for this review is \`${repo === undefined ? "git diff" : reviewedDiffCommand(repo)}\`${
       reviewedOid === undefined
-        ? ""
-        : `, \`git show ${reviewedOid}:<path>\` for reviewed file content`
-    }, \`git log\`, file reads, grep — and cite only what you actually read.`,
+        ? "."
+        : `; \`git show ${reviewedOid}:<path>\` reads reviewed file content.`
+    }`,
   ].join("\n");
-  if (options?.omitTaskLayer === true) {
-    return `${renderLayer("payload", promptText)}\n\n${renderLayer("context", context)}`;
-  }
-  return `${renderLayer("payload", promptText)}\n\n${renderLayer("task", task)}\n\n${renderLayer("context", context)}`;
+  const layers = [
+    renderLayer("payload", promptText),
+    ...(options?.omitTaskLayer === true ? [] : [renderLayer("task", task)]),
+    ...(context === undefined ? [] : [renderLayer("context", renderContextReference(context))]),
+  ];
+  return layers.join("\n\n");
 }
 
 /**
@@ -953,50 +1063,25 @@ export function elementIdForPointer(
     : undefined;
 }
 
-export function renderRetryPrompt(
-  basePrompt: string,
+/**
+ * The repair prompt on EVERY leg: pointers, frozen ids, the instruction — never the base
+ * prompt and never the draft (session-bound-workspace 3.2). The sidecar thread already
+ * holds both; the ephemeral legs do not, and still do not get them back, because a
+ * repair that re-sent the base prompt plus the failing board cost ~55k tokens to deliver
+ * a ~500-token correction.
+ */
+export function renderRepairPrompt(
   draft: DraftBoard,
   pointers: readonly { path: readonly (string | number)[]; message: string; ruleId?: string }[],
   frozenIds: readonly string[] = [],
 ): string {
-  const elementIdAt = (p: (typeof pointers)[number]): string | undefined =>
-    elementIdForPointer(draft, p);
-  const issues = pointers
-    .map((p) => {
-      const id = elementIdAt(p);
-      const where = id === undefined ? "" : ` (element \`${id}\`)`;
-      return `- ${p.ruleId ?? "schema"} at ${JSON.stringify(p.path)}${where}: ${p.message}`;
-    })
-    .join("\n");
-  // The repair is a PATCH (#737): the host keeps every frozen element verbatim
-  // (`mergePatch`), so only the elements still open ride here, with the frozen ids
-  // listed so references to them stay valid. A repair turn is a fresh cold session
-  // (ephemeral sessions cannot be resumed), so the base prompt still travels; the
-  // draft it carries no longer re-sends what is already accepted.
-  const frozen = new Set(frozenIds);
-  const { elements, ...boardRest } = draft;
-  const elementsToFix = elements.filter((el) => !frozen.has(el.id));
-  // Nothing open and nothing frozen is the re-ask after a non-emission or an
-  // unparseable return: there is no patch to make, the seat drafts the whole board.
-  // Asking for a patch of nothing invites `{ elements: [] }`, which reads as a clean
-  // absence (#743 review).
-  if (elementsToFix.length === 0 && frozen.size === 0) {
-    const whole = renderLayer(
-      "task",
-      `Your previous draft did not pass. Fix ONLY these issues and return the whole board:\n${issues}\n\nPrevious draft:\n${JSON.stringify(draft)}`,
-    );
-    return `${basePrompt}\n\n${whole}`;
-  }
-  const patchInput = {
-    ...boardRest,
-    elementsToFix,
-    frozenElementIds: [...frozen],
-  };
-  const prior = renderLayer(
-    "task",
-    `Your previous draft did not pass. Fix ONLY these issues:\n${issues}\n\nReturn a PATCH board: the elements under \`elementsToFix\` below, corrected, plus any new element you need. Elements in \`frozenElementIds\` are already accepted and are kept verbatim by the host — do not resend them; references to their ids remain valid. Each issue names the element it is about; pointer paths index the previous whole draft's \`elements\`.\n\nPrevious draft (open elements only):\n${JSON.stringify(patchInput)}`,
+  return renderRepairTurn(
+    pointers.map((pointer) => {
+      const elementId = elementIdForPointer(draft, pointer);
+      return { ...pointer, ...(elementId === undefined ? {} : { elementId }) };
+    }),
+    frozenIds,
   );
-  return `${basePrompt}\n\n${prior}`;
 }
 
 // ── The prompt-file reader seam (prompts is node-free; the caller resolves files) ──
@@ -1248,7 +1333,22 @@ export interface LensPipelineDeps {
   readonly council?: CouncilResolveContext;
   /** The PR worktree the drafter sessions are rooted at (D1). */
   readonly repoRoot: string;
-  /** The change inventory the drafter prompts carry (the hunk index redacted at render). */
+  /**
+   * The daemon's ONE session-context writer, bound to {@link repoRoot} and the session id
+   * (session-context-files D3). Every file a seat is told about goes through it, and it
+   * returns the directory RELATIVE to the seat's cwd with `/` separators — the form a
+   * prompt names. Relative and `/`-separated is load-bearing twice over: the seat's tools
+   * resolve against its own cwd (which on WSL is a distro path the daemon's absolute path
+   * does not name), and `path.relative` would emit backslashes on Windows that a prompt
+   * cannot carry. The pipeline re-writes the whole set on each addition, so the
+   * `README.md` index always lists every file of the generation.
+   *
+   * Absent ⇒ the direct-call shape (a test with a fake root): nothing is written and no
+   * prompt names a directory. The rounds runtime always binds one in production.
+   */
+  readonly writeContext?: (files: readonly SessionContextFile[]) => string;
+  /** The change's identity and inventory. Only `patchset.repository` reaches a prompt (the
+   *  diff command); the rows and derived signals feed lint and persistence, never a seat. */
   readonly deltaPacket: DeltaPacket;
   /** Exact generation visit being drafted. Older direct callers fall back to the initial
    *  content-derived generation; the rounds runtime always supplies this. */
@@ -1359,23 +1459,25 @@ type LandedRoundDraftContext = RoundDraftContext & {
   readonly worker: NonNullable<RoundDraftContext["worker"]>;
 };
 
+/** The round-report classifier's evidence file in the session's context directory. */
+export const ROUND_EVIDENCE_FILE = "evidence.json";
+
 /**
- * The report classifier receives only the identity and evidence needed to judge this
- * coding turn. The full DeltaPacket and all-kind board schema belong to lens drafting,
+ * `evidence.json`: the identity and evidence the classifier judges this coding turn on
+ * — only that. The full DeltaPacket and all-kind board schema belong to lens drafting,
  * not to the per-ask classification boundary.
  *
  * `evidenceJson` is the manifest's MEASURED serialization, spliced in verbatim rather
  * than re-serialized here (#727): the bytes the budget was measured on are then the
- * exact bytes on the wire by construction, not because two call sites happen to agree.
+ * exact bytes in the file by construction, not because two call sites happen to agree.
  * It REPLACES the verbatim `worker.diff` that used to ride here uncapped. The worker's
  * own account (paths, commit range) still travels as identity; it was never authority.
  */
-export function renderRoundReportClassifierPrompt(
-  promptText: string,
+export function roundEvidenceFile(
   patchsetId: string,
   round: LandedRoundDraftContext,
   evidenceJson: string,
-): string {
+): SessionContextFile {
   // The wrapper is serialized without `evidence`, then its closing brace is replaced by
   // the measured bytes. The wrapper always has keys, so `slice(0, -1)` leaves a valid
   // object prefix and no key can collide with the appended one.
@@ -1394,8 +1496,28 @@ export function renderRoundReportClassifierPrompt(
       commitRange: round.worker.commitRange,
     },
   });
-  const context = `${wrapper.slice(0, -1)},"evidence":${evidenceJson}}`;
-  return `${renderLayer("payload", promptText)}\n\n${renderLayer("context", context)}`;
+  return {
+    name: ROUND_EVIDENCE_FILE,
+    body: `${wrapper.slice(0, -1)},"evidence":${evidenceJson}}`,
+    // The index line names what the file holds; it does not restate the file's own
+    // vocabulary — an id prefix written here is a token spent on every turn, and the
+    // instructions already teach the citation form.
+    holds:
+      "The successor patchset id, the dispatched asks, the worker's changed paths and commit range, and the evidence manifest of the exact turn diff, each unit carrying the id you cite it by.",
+    readWhen: "before you classify anything; it is the whole change and the only change.",
+  };
+}
+
+/**
+ * The classifier prompt: the instructions and the path of `evidence.json`. The file
+ * used to be the context layer itself — 124 kB on a 74-file turn, re-billed per turn.
+ */
+export function renderRoundReportClassifierPrompt(
+  promptText: string,
+  context: DrafterContextRef | undefined,
+): string {
+  if (context === undefined) return renderLayer("payload", promptText);
+  return `${renderLayer("payload", promptText)}\n\n${renderLayer("context", renderContextReference(context))}`;
 }
 
 interface ClassifiedRoundOutcome {
@@ -1655,7 +1777,12 @@ function resolveBoardSeatDetails(
       ...(deps.t3 === undefined ? {} : { t3: { seat, seam: deps.t3 } }),
       ...(deps.t3Unavailable === undefined ? {} : { t3Unavailable: deps.t3Unavailable }),
       repoRoot: deps.repoRoot,
-      label: `board.${jobId}`,
+      // The SEAT, not just the job: `lens-draft` runs Design, Sequence and Decisions, and
+      // `lens-draft-flagged` runs two providers. Since a repair turn is pointer-only on
+      // every leg (session-bound-workspace 3.2) the prompt no longer says which seat it
+      // belongs to, so the label is the only attribution the log, the token collector and
+      // a test fake have. `board.lens-draft.design`, `board.lens-draft-flagged.flagged-codex`.
+      label: `board.${jobId}.${seat}`,
       ...(deps.collector === undefined ? {} : { collector: deps.collector }),
       // The classifier's raw response cap rides the session spec, so the adapter
       // rejects an oversized response at the transport boundary — core only ever
@@ -1734,13 +1861,6 @@ function requiredBoardFailure(lens: LensKind): string {
   }
 }
 
-/** Extras a caller hands the drafting ladder without disturbing its positional shape. */
-interface DraftLensOptions {
-  /** The seat's turns run on ONE persistent thread (the T3 leg), so a repair is a
-   *  follow-up turn and carries pointers only, never the base prompt again. */
-  readonly sameThread?: boolean;
-}
-
 /**
  * Draft one lens: seed the seat, run the cluster-3 deterministic validation loop,
  * and return the validated board — or an honest `failure` (finding 6). A failure is recorded, never a
@@ -1758,7 +1878,6 @@ function draftOneLens(
   ctx: LintContext,
   retryCap: number,
   transformOutput?: (output: unknown) => unknown,
-  options?: DraftLensOptions,
 ): Promise<DraftedLens | LensDraftFailure>;
 function draftOneLens(
   basePrompt: string,
@@ -1767,7 +1886,6 @@ function draftOneLens(
   retryCap: number,
   transformOutput: ((output: unknown) => unknown) | undefined,
   initialAbsence: (output: unknown) => { readonly absence: "no-spec" } | undefined,
-  options?: DraftLensOptions,
 ): Promise<DraftedLens | LensDraftFailure | { readonly absence: "no-spec" }>;
 async function draftOneLens(
   basePrompt: string,
@@ -1775,19 +1893,8 @@ async function draftOneLens(
   ctx: LintContext,
   retryCap: number,
   transformOutput: ((output: unknown) => unknown) | undefined = (output) => output,
-  initialAbsenceOrOptions?:
-    | ((output: unknown) => { readonly absence: "no-spec" } | undefined)
-    | DraftLensOptions,
-  maybeOptions?: DraftLensOptions,
+  initialAbsence?: (output: unknown) => { readonly absence: "no-spec" } | undefined,
 ): Promise<DraftedLens | LensDraftFailure | { readonly absence: "no-spec" }> {
-  const initialAbsence =
-    typeof initialAbsenceOrOptions === "function" ? initialAbsenceOrOptions : undefined;
-  const options =
-    maybeOptions ??
-    (typeof initialAbsenceOrOptions === "object" ? initialAbsenceOrOptions : undefined);
-  // The seat's turns run on ONE persistent thread, so the base prompt and the failing
-  // draft are already in the conversation and a repair carries only its pointers.
-  const sameThread = options?.sameThread === true;
   const who = ctx.lens === "report" ? "round-report seat" : `${ctx.lens} lens`;
   try {
     const first = await seatTurn(basePrompt, 0);
@@ -1823,22 +1930,11 @@ async function draftOneLens(
         runTurn: async (req) => {
           try {
             const retry = await seatTurn(
-              // t3-lens-threads 1.5 — a repair is the NEXT TURN on the seat's own thread,
-              // which already holds the base prompt and the draft. Only the pointers, the
-              // frozen ids and the instruction travel. On the ephemeral legs (no sidecar
-              // seam) the base prompt still has to ride, because a cold session has no
-              // memory of the draft it is being asked to fix.
-              sameThread
-                ? renderRepairTurn(
-                    req.pointers.map((pointer) => ({
-                      ...pointer,
-                      ...(elementIdForPointer(req.draft, pointer) === undefined
-                        ? {}
-                        : { elementId: elementIdForPointer(req.draft, pointer) as string }),
-                    })),
-                    req.frozenIds,
-                  )
-                : renderRetryPrompt(basePrompt, req.draft, req.pointers, req.frozenIds),
+              // A repair is pointer-only on EVERY leg (session-bound-workspace 3.2): the
+              // pointers, the frozen ids and the instruction travel; the base prompt and
+              // the draft never do, on the sidecar thread (which holds them) or on the
+              // ephemeral legs (which do not get them back).
+              renderRepairPrompt(req.draft, req.pointers, req.frozenIds),
               req.attempt,
             );
             if (retry.status === "emitted") {
@@ -1975,11 +2071,15 @@ export async function runLensPipeline(deps: LensPipelineDeps): Promise<LensPipel
     },
   };
 
+  // The generation's context files (session-context-files): ONE sink, so each write
+  // through the daemon's writer lists every file written so far in the index.
+  const context = createContextSink(deps.writeContext);
+
   // Whether a report drafts at all is `draftsRoundReport` (R58/D3, defined with the
   // predicate). It drafts FIRST and announces its own arrival, ahead of every lens.
   const reportRequired = draftsRoundReport(deps);
   const reportFrom = clock();
-  const report = reportRequired ? await runRoundReport(deps, council) : undefined;
+  const report = reportRequired ? await runRoundReport(deps, council, context) : undefined;
   // The report phase is measured on its own, whether it produced a board or died: a
   // classifier failure routes to the durable round-failure path and its time still
   // belongs to `report` — a phase that only records its successes hides its slow half.
@@ -1997,6 +2097,18 @@ export async function runLensPipeline(deps: LensPipelineDeps): Promise<LensPipel
     );
   }
   const reportBoard = report?.board;
+
+  // The context directory exists, indexed, with the files the seats are told about BEFORE
+  // the first seat turn is dispatched (session-context-files). On a round that is
+  // `round.json` — the asks, the worker's identity and the frozen report board that is the
+  // lens drafters' input (D3/R58); an initial generation writes only the index, and the
+  // seats read `git diff` for everything else.
+  const roundFile =
+    deps.round === undefined ? undefined : roundContextFile(deps.round, reportBoard);
+  const seatFiles = roundFile === undefined ? [] : [roundFile];
+  const contextDir = context.add(seatFiles);
+  const seatContext: DrafterContextRef | undefined =
+    contextDir === undefined ? undefined : { dir: contextDir, files: seatFiles };
 
   // A required report has arrived, or this generation does not need one. Only now may the
   // independent lens seats start; report failure exits above without launching hidden work.
@@ -2025,7 +2137,7 @@ export async function runLensPipeline(deps: LensPipelineDeps): Promise<LensPipel
   };
   const settledOutcomes = await Promise.allSettled(
     LENS_KINDS.map(async (lens) => {
-      const outcome = await runLensBoard(lens, deps, council, reportBoard);
+      const outcome = await runLensBoard(lens, deps, council, seatContext, reportBoard);
       if (outcome.absence !== undefined) {
         await publish(() => deps.onLensAbsence?.(lens, outcome.absence as LensAbsenceReason));
         lastRevealAt = clock();
@@ -2087,6 +2199,7 @@ export async function runLensPipeline(deps: LensPipelineDeps): Promise<LensPipel
       ...(deps.previous === undefined ? {} : { previous: deps.previous }),
       voicePromptText: await deps.readPrompt(REVIEW_DRAFT_VOICE_FILE),
       authorTurn: deps.composeTurn,
+      writeContext: (files) => context.add(files),
       lintCtx: deps.reviewDraftLintCtx ?? { files: new Map() },
       ...(deps.curationFeedback === undefined ? {} : { curationFeedback: deps.curationFeedback }),
     });
@@ -2243,6 +2356,7 @@ async function runClassifiedRoundReport(
   deps: LensPipelineDeps,
   council: CouncilResolveContext,
   round: LandedRoundDraftContext,
+  context: ContextSink,
 ): Promise<LensBoardOutcome | undefined> {
   const now = deps.now ?? (() => performance.now());
   const startedAt = now();
@@ -2292,11 +2406,13 @@ async function runClassifiedRoundReport(
   }
 
   const promptText = await deps.readPrompt(ROUND_REPORT_FILE);
+  // The evidence is a FILE the seat reads (session-context-files), written before the
+  // turn and named in the prompt; the measured bytes land in it verbatim.
+  const evidence = roundEvidenceFile(deps.deltaPacket.patchset.id, round, measured.json);
+  const dir = context.add([evidence]);
   const prompt = renderRoundReportClassifierPrompt(
     promptText,
-    deps.deltaPacket.patchset.id,
-    round,
-    measured.json,
+    dir === undefined ? undefined : { dir, files: [evidence] },
   );
   const turnStarted = roundReportTurnStartedMilestone(seat, elapsedMs());
   if (turnStarted !== undefined) emitDiagnostic(turnStarted);
@@ -2439,14 +2555,15 @@ const LEGACY_ROUND_REPORT_NOTE = [
   "This caller supplies no evidence manifest and binds you to the full board schema.",
   "On that shape, express the same verified classifications as `round_outcome` elements",
   "(each with an element `id`, an `author`, and the `ask` it answers; a `code_ref`",
-  "element where the context layer's inventory grounds one), under one small document",
-  "and one section. The context layer carries the change inventory; there is no diff",
-  "command on this path.",
+  "element where a change you read in the checkout grounds one), under one small",
+  "document and one section. The context directory's `round.json` names the asks and",
+  "the worker's commit range; read the turn's change from the checkout with `git diff`.",
 ].join("\n");
 
 async function runLegacyRoundReport(
   deps: LensPipelineDeps,
   council: CouncilResolveContext,
+  context: ContextSink,
 ): Promise<LensBoardOutcome | undefined> {
   const seat = resolveBoardSeat("round-report", "round-report", deps, council);
   if ("failure" in seat) {
@@ -2460,11 +2577,12 @@ async function runLegacyRoundReport(
   }
 
   const promptText = await deps.readPrompt(ROUND_REPORT_FILE);
+  const roundFile = deps.round === undefined ? undefined : roundContextFile(deps.round);
+  const dir = roundFile === undefined ? undefined : context.add([roundFile]);
   const basePrompt = renderDrafterPrompt(
     `${promptText}\n\n${LEGACY_ROUND_REPORT_NOTE}`,
     deps.deltaPacket,
-    undefined,
-    deps.round,
+    dir === undefined || roundFile === undefined ? undefined : { dir, files: [roundFile] },
     // The reviewed-range task line would name a second, contradicting range
     // for a report seat.
     { omitTaskLayer: true },
@@ -2475,8 +2593,6 @@ async function runLegacyRoundReport(
     seat,
     ctx,
     lensRetryBudget("report", deps.boardAttempt ?? 0),
-    undefined,
-    { sameThread: deps.t3 !== undefined },
   );
   if ("failure" in validated) {
     return {
@@ -2538,6 +2654,7 @@ async function runLegacyRoundReport(
 async function runRoundReport(
   deps: LensPipelineDeps,
   council: CouncilResolveContext,
+  context: ContextSink,
 ): Promise<LensBoardOutcome | undefined> {
   if (deps.round?.worker !== undefined) {
     const round = deps.round as LandedRoundDraftContext;
@@ -2545,9 +2662,9 @@ async function runRoundReport(
       const reused = await reuseClassifiedRoundReport(deps, round, deps.reusableRoundReport);
       if (reused !== undefined) return reused;
     }
-    return runClassifiedRoundReport(deps, council, round);
+    return runClassifiedRoundReport(deps, council, round, context);
   }
-  return runLegacyRoundReport(deps, council);
+  return runLegacyRoundReport(deps, council, context);
 }
 
 /** Draft, validate, write, and announce one lens board. */
@@ -2652,8 +2769,6 @@ async function runFlaggedDual(
       wrapSeat(resolved.runTurn, { harness: resolved.harness, model: resolved.model }),
       ctx,
       retryCap,
-      undefined,
-      { sameThread: deps.t3 !== undefined },
     );
     // Carry the account, not just the words: the sole seat's classification IS the lens's.
     if ("failure" in single) return single;
@@ -2669,16 +2784,12 @@ async function runFlaggedDual(
       wrapSeat(claude.runTurn, { harness: claude.harness, model: claude.model }),
       ctx,
       retryCap,
-      undefined,
-      { sameThread: deps.t3 !== undefined },
     ),
     draftOneLens(
       basePrompt,
       wrapSeat(codex.runTurn, { harness: codex.harness, model: codex.model }),
       ctx,
       retryCap,
-      undefined,
-      { sameThread: deps.t3 !== undefined },
     ),
   ]);
   const aOk = !("failure" in a);
@@ -2732,6 +2843,7 @@ async function runLensBoard(
   lens: LensKind,
   deps: LensPipelineDeps,
   council: CouncilResolveContext,
+  context: DrafterContextRef | undefined,
   reportBoard?: DraftBoard,
 ): Promise<LensBoardOutcome> {
   const clock = deps.now ?? Date.now;
@@ -2746,6 +2858,7 @@ async function runLensBoard(
       () => {
         postProcessFrom = clock();
       },
+      context,
       reportBoard,
     );
   } finally {
@@ -2796,13 +2909,15 @@ async function draftLensBoard(
   council: CouncilResolveContext,
   spans: ReturnType<typeof createSeatSpans>,
   markPostProcess: () => void,
+  context: DrafterContextRef | undefined,
+  /** The frozen round report, the composition pass's input on a round; the seat reads it from `round.json`. */
   reportBoard?: DraftBoard,
 ): Promise<LensBoardOutcome> {
   const promptText = expandPromptPartials(
     await deps.readPrompt(LENS_PROMPT_FILES[lens]),
     await deps.readPrompt(INVESTIGATE_PARTIAL_FILE),
   );
-  const basePrompt = renderDrafterPrompt(promptText, deps.deltaPacket, reportBoard, deps.round);
+  const basePrompt = renderDrafterPrompt(promptText, deps.deltaPacket, context);
   const ctx: LintContext = deps.lintContextFor(lens);
 
   // #725 D4 — this lane's repair budget for this whole-board attempt.
@@ -2837,12 +2952,8 @@ async function draftLensBoard(
     // it against — so it settles the lane on the first turn or on any repair turn.
     const drafted =
       lens === "design"
-        ? await draftOneLens(basePrompt, seat, ctx, retryCap, undefined, designNoSpecAbsence, {
-            sameThread: deps.t3 !== undefined,
-          })
-        : await draftOneLens(basePrompt, seat, ctx, retryCap, undefined, {
-            sameThread: deps.t3 !== undefined,
-          });
+        ? await draftOneLens(basePrompt, seat, ctx, retryCap, undefined, designNoSpecAbsence)
+        : await draftOneLens(basePrompt, seat, ctx, retryCap);
     if ("failure" in drafted) {
       return failedLensOutcome(lens, drafted);
     }

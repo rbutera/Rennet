@@ -50,6 +50,7 @@ import type {
   LintTarget,
   RegisterLintContext,
 } from "@rennet/core";
+import { sessionContextRelativeDir } from "@rennet/core";
 import type { GenerationUsage } from "@rennet/protocol";
 import {
   type AskOccurrence,
@@ -79,6 +80,7 @@ import {
 } from "@rennet/protocol";
 import { generationBenchmarkRun } from "../benchmark-recorder";
 import type { BoardsRuntime } from "../boards/boards-runtime";
+import type { SessionContextFile } from "../context-files";
 import { PipelineStartGuard } from "../session/pipeline-guard";
 import {
   type BoardArrivalEvent,
@@ -693,6 +695,19 @@ export interface RoundsRuntimeDeps {
   ) => Pick<BoardsRuntime, "service" | "createRennetBoard">;
   /** Read a prompt file's text (`createNodePromptReader` in production; hermetic in tests). */
   readonly readPrompt: PromptReader;
+  /**
+   * The daemon's ONE session-context writer (session-context-files D3). This runtime binds
+   * it to the root the seats are DISPATCHED with (`draftingRoot ?? repoRoot`) and the
+   * session id, so every file the pipeline writes sits in the seat's own cwd. Absent ⇒ the
+   * direct-call shape (a test with a fake root): nothing is written and no prompt names a
+   * directory. Its return value is ignored here — the pipeline is handed the relative
+   * directory, which this runtime derives from the session id it already holds.
+   */
+  readonly writeSessionContext?: (
+    root: string,
+    sessionId: string,
+    files: readonly SessionContextFile[],
+  ) => string;
   /** The durable board-meta store's write (B08 finding 3); absent ⇒ metadata is
    *  result-only. Carries the (session, generation) linkage so the durable
    *  idempotency read below can find it (B09 F1). */
@@ -1351,12 +1366,26 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
             },
           };
 
+    const writeSessionContext = deps.writeSessionContext;
     const pipelineInput = {
       claudePort,
       codexExecutor,
       ...(t3Seam === undefined ? {} : { t3: t3Seam }),
       ...(t3Unavailable === undefined ? {} : { t3Unavailable }),
       repoRoot: input.draftingRoot ?? input.repoRoot,
+      // Bound to the SAME root the seats run in, never `repoRoot` alone: a range review
+      // drafts in the review worktree, and a relative path only resolves in the cwd it was
+      // written under (review finding on session-bound-workspace 3.1).
+      ...(writeSessionContext === undefined
+        ? {}
+        : {
+            writeContext: (files: readonly SessionContextFile[]) => {
+              writeSessionContext(input.draftingRoot ?? input.repoRoot, input.session.id, files);
+              // The RELATIVE, `/`-separated form is what a prompt names: the seat's tools
+              // resolve it against its own cwd, which is that same root.
+              return sessionContextRelativeDir(input.session.id);
+            },
+          }),
       deltaPacket: input.deltaPacket,
       currentGeneration: attemptGeneration.id,
       ...(input.round === undefined

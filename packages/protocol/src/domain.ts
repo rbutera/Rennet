@@ -399,6 +399,15 @@ export interface ManifestOccurrence {
   path?: string;
   /** Side line text (1-based access via span), for span bounds and quotes. */
   sides?: Partial<Record<AnchorSide, readonly string[]>>;
+  /**
+   * The hunk's 1-based line ranges in the old and new file, so a seat that is NOT
+   * handed `sides` (session-context-files: the offer names path and ranges, the seat
+   * reads the lines from the checkout) can still find the lines it is grouping.
+   */
+  spans?: {
+    readonly old: { readonly start: number; readonly lines: number };
+    readonly new: { readonly start: number; readonly lines: number };
+  };
 }
 
 /** A prior-patchset id mapped forward by the lineage graph. */

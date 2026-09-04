@@ -13,7 +13,6 @@ export const OWNER_LOOP_ROUND_TWO_BODY = "Set `ownerValue` to `round-two`.";
 export const OWNER_LOOP_SEQUENCE_QUOTE = "Read `src/owner.ts` first.";
 
 const author: Author = { kind: "lens-agent", id: OWNER_LOOP_LANE };
-const patchsetPlanValue = `\${patchsetId}`;
 const askPlanValue = `\${askId}`;
 const evidenceIdsPlanValue = `\${evidenceIds}`;
 
@@ -23,7 +22,9 @@ function codeRef(id: string): DraftBoard["elements"][number] {
     kind: "code_ref",
     data: {
       author,
-      patchset_id: patchsetPlanValue,
+      // NO `patchset_id`: a seat is never told the captured patchset's identity, so a
+      // scripted seat that emitted one would be modelling a channel that does not exist.
+      // `validateDraft` stamps it once, on the board it returns for persistence.
       path: OWNER_LOOP_SOURCE,
       side: "head",
       start_line: 1,
