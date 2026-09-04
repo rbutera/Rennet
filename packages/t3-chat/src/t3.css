@@ -604,3 +604,107 @@
 [data-slot="t3-thread-view"] [data-chat-header] {
   display: none;
 }
+
+/* ── Fitting T3's chat to Rennet's own geometry and type (Rai, 2026-09-04) ──
+ *
+ * All of it is CSS in this file, scoped to the two mounts, because upstream already
+ * carries a `data-slot` or a variable on every element involved — no vendored edit and
+ * no PATCHES.md row. Each rule below names the upstream class it is overriding, so a
+ * fold that changes one shows up as a rule that no longer matches anything.
+ *
+ * These are OVERRIDES of utilities, never redefinitions of them. Redefining `.text-sm`
+ * in this build would change it for the whole document, Rennet's own screens included —
+ * the hazard this file's header warns about — so every rule here is a descendant
+ * selector under the mount, which cannot leak.
+ */
+
+/* 1. CORNERS. T3's composer is a 22px stack (20px on the inner surface); Rennet's
+ *    largest surface step is 12px, and a chat box is a surface. `composer-shell`'s
+ *    ::before, `composer-host` and the two composer surfaces are the four corners a
+ *    reader sees, and they must move together or the outline shows a seam. */
+[data-slot="t3-native-chat"] [data-slot="composer-host"],
+[data-slot="t3-thread-view"] [data-slot="composer-host"],
+[data-slot="t3-native-chat"] [data-chat-composer-main-surface="true"],
+[data-slot="t3-thread-view"] [data-chat-composer-main-surface="true"] {
+  border-radius: var(--radius-surface, 0.75rem);
+}
+[data-slot="t3-native-chat"] [data-chat-composer-surface="true"],
+[data-slot="t3-thread-view"] [data-chat-composer-surface="true"] {
+  /* One step down Rennet's ramp from the host, not a `calc()` off it: upstream's inner
+   * surface is 2px inside its host (20 in 22), and 12 − 2 = 10px is not on the 4/6/8/12/16
+   * scale. `control` is the step below `surface` and keeps the inset visible. */
+  border-radius: var(--radius-control, 0.5rem);
+}
+[data-slot="t3-native-chat"] [data-slot="composer-shell"]::before,
+[data-slot="t3-thread-view"] [data-slot="composer-shell"]::before {
+  border-radius: var(--radius-surface, 0.75rem);
+}
+
+/* 2. TYPE. T3's rem steps are one notch above Rennet's desktop ramp throughout, which is
+ *    what makes the chat read as a different application docked inside this one. Each
+ *    step moves down to the neighbouring Rennet size: base 16→14, sm 14→13, xs 12→11,
+ *    lg 18→16, xl 20→18.
+ *
+ *    Scoped overrides rather than a retuned `@theme`, and rather than a `zoom` on the
+ *    mount: `rem` resolves against the document root no matter what the mount declares,
+ *    so there is no scale-the-subtree lever that a font-size could pull. T3's own fixed
+ *    px steps (11px and below) are left alone — they are already at or under Rennet's
+ *    10px floor and shrinking them further would put chrome below the ramp. */
+[data-slot="t3-native-chat"] .text-base,
+[data-slot="t3-thread-view"] .text-base {
+  font-size: 0.875rem;
+  line-height: 1.4;
+}
+[data-slot="t3-native-chat"] .text-sm,
+[data-slot="t3-thread-view"] .text-sm {
+  font-size: 0.8125rem;
+  line-height: 1.4;
+}
+[data-slot="t3-native-chat"] .text-xs,
+[data-slot="t3-thread-view"] .text-xs {
+  font-size: 0.6875rem;
+  line-height: 1.3;
+}
+[data-slot="t3-native-chat"] .text-lg,
+[data-slot="t3-thread-view"] .text-lg {
+  font-size: 1rem;
+  line-height: 1.4;
+}
+[data-slot="t3-native-chat"] .text-xl,
+[data-slot="t3-thread-view"] .text-xl {
+  font-size: 1.125rem;
+  line-height: 1.3;
+}
+
+/* The composer's own prompt text has a purpose-built upstream variable
+ * (`ComposerPromptEditor`: `[font-size:var(--font-size-prompt,0.875rem)]`), set by
+ * `applyAppearanceFonts` from T3's settings — which Rennet's mount never calls, so the
+ * 14px fallback is what shipped. 13px puts the composer on the same step as the
+ * transcript around it. */
+[data-slot="t3-native-chat"],
+[data-slot="t3-thread-view"] {
+  --font-size-prompt: 0.8125rem;
+}
+
+/* 3. THE COMPOSER'S CONTEXT STRIP — the environment, project and branch pickers on the
+ *    little bar under the chat box. It is the workspace's own chrome, like the thread
+ *    header above it: Rennet's frame already names the repository and the branch, and
+ *    the review is bound to one workspace the reader cannot switch from here.
+ *
+ *    Hiding the strip alone is not enough. Upstream carves the composer's outline and
+ *    its glass ::before to leave a seam for the strip's corners, keyed on
+ *    `data-with-context` — so the strip going away leaves a notch bitten out of the
+ *    bottom of the composer for a control that is not there. Both clip-paths are
+ *    cleared with it, which is why this is one block and not two. */
+[data-slot="t3-native-chat"] [data-slot="composer-context-strip"],
+[data-slot="t3-thread-view"] [data-slot="composer-context-strip"] {
+  display: none;
+}
+[data-slot="t3-native-chat"] [data-slot="composer-shell"][data-with-context]::before,
+[data-slot="t3-thread-view"] [data-slot="composer-shell"][data-with-context]::before,
+[data-slot="t3-native-chat"] [data-slot="composer-host"]::after,
+[data-slot="t3-thread-view"] [data-slot="composer-host"]::after,
+[data-slot="t3-native-chat"] [data-chat-composer-main-surface="true"]::after,
+[data-slot="t3-thread-view"] [data-chat-composer-main-surface="true"]::after {
+  clip-path: none;
+}
