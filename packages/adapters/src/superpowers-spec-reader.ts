@@ -67,11 +67,23 @@ export function selectedSuperpowersArtifacts(
   };
 }
 
-/** The feature name: the first plan's stem (date prefix stripped), else the first spec's stem. */
+/**
+ * The feature name: a plan's stem (date prefix stripped), else a spec's stem, else the
+ * progress ledger's session DIRECTORY (`.superpowers/sdd/<feature>/progress.md` — the
+ * basename is always `progress`, so the feature is the parent dir).
+ */
 function featureName(paths: SuperpowersArtifactPaths): string {
-  const first = paths.plans[0] ?? paths.specs[0] ?? paths.progress[0] ?? "";
-  const base = first.split("/").at(-1)?.replace(/\.md$/i, "") ?? "superpowers";
-  return base.replace(/^\d{4}-\d{2}-\d{2}-/, "");
+  const named = paths.plans[0] ?? paths.specs[0];
+  if (named !== undefined) {
+    const base = named.split("/").at(-1)?.replace(/\.md$/i, "") ?? "superpowers";
+    return base.replace(/^\d{4}-\d{2}-\d{2}-/, "");
+  }
+  const progress = paths.progress[0];
+  if (progress !== undefined) {
+    const dir = normalise(progress).split("/").at(-2);
+    if (dir !== undefined && dir.length > 0) return dir;
+  }
+  return "superpowers";
 }
 
 /** A repo-relative `**Spec:**` pointer from a plan's header, or `undefined`. */
@@ -89,7 +101,8 @@ function planSpecPointer(md: string): string | undefined {
  * Read the Superpowers feature the reviewed patchset selected, parsed into the
  * structured `SuperpowersSpec` the Spec angle renders — reading each artifact from
  * the immutable reviewed tree (`reviewedTreeOid ?? headOid`). Returns `null` when the
- * patchset touches no Superpowers artifact.
+ * patchset touches no Superpowers artifact, or when every selected artifact is absent at
+ * the reviewed tree (a deletion-only review).
  */
 export async function readSuperpowersSpec(
   patchset: Patchset,
@@ -129,6 +142,11 @@ export async function readSuperpowersSpec(
     if (md !== undefined) specByPath.set(pointer, { path: pointer, md });
   }
   const specs = [...specByPath.values()].sort((left, right) => byName(left.path, right.path));
+
+  // Deletion-only review: the paths classified as artifacts, but every one is absent at the
+  // reviewed tree (the diff removed them). There is nothing to render — return null, not an
+  // empty spec that reads as "a Superpowers feature with no content".
+  if (plans.length === 0 && specs.length === 0 && progress.length === 0) return null;
 
   const source: SuperpowersSpecSource = {
     name: featureName(paths),

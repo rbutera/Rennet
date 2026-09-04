@@ -142,6 +142,38 @@ describe("readSuperpowersSpec", () => {
     expect(spec).toBeNull();
   });
 
+  it("returns null when the patchset only deletes its Superpowers artifacts", async () => {
+    // The diff touches the plan and progress by path (they are classified), but both are
+    // GONE at the reviewed tree — a deletion-only review. `git show` fails on each, so every
+    // read is absent. The result must be null, not an empty-but-non-null spec.
+    const spec = await readSuperpowersSpec(
+      patchsetOf({
+        root: "/repo",
+        headOid: "head000",
+        surface: "working-tree",
+        paths: [PLAN_REL, PROGRESS_REL],
+      }),
+      fakeGit({}),
+    );
+    expect(spec).toBeNull();
+  });
+
+  it("names a progress-ledger-only review from its session directory, not the file basename", async () => {
+    // Only the ledger is in the diff; its path is `.superpowers/sdd/session/progress.md`.
+    // The feature is the session dir "session" — NOT the basename "progress".
+    const spec = await readSuperpowersSpec(
+      patchsetOf({
+        root: "/repo",
+        headOid: "head000",
+        surface: "working-tree",
+        paths: [PROGRESS_REL],
+      }),
+      fakeGit({ [`head000:${PROGRESS_REL}`]: PROGRESS_MD }),
+    );
+    expect(spec?.name).toBe("session");
+    expect(spec?.progressLedgers[0]?.planPath).toBe(PLAN_REL);
+  });
+
   it("reads at the head OID for a PR review, not the checkout, and omits absent artifacts", async () => {
     const root = "/repo";
     const headOid = "abc123";

@@ -347,6 +347,10 @@ function parsePlan(artifact: SuperpowersArtifactText): SuperpowersPlan {
     globalConstraints: parseGlobalConstraints(lines, headings),
     taskGroups,
     total: taskGroups.length,
+    // ponytail: this rollup counts a group "done" only from its own step checkboxes. It can
+    // disagree with design-obligations' deriveDesignTaskProgress, which also folds the
+    // progress ledger's task-complete markers. Reconcile the two when the board assembler
+    // consumes both this model and the ledger — not here (this parser stays ledger-agnostic).
     done: taskGroups.filter((group) => group.state === "complete").length,
   };
 }
