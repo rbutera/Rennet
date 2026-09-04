@@ -30,7 +30,7 @@ import { describe, expect, it } from "vitest";
 import { createBoardsRuntime } from "../boards/boards-runtime";
 import { DELTA_DIGEST_OUTPUT_SCHEMA } from "../delta-digest-live";
 import { withFakeT3Seats } from "../t3-seat-fake";
-import { createNodePromptReader } from "./lens-pipeline";
+import { createNodePromptReader, designDraftOutputSchema } from "./lens-pipeline";
 import { createRoundsRuntime } from "./rounds";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -788,5 +788,53 @@ describe.skipIf(!SMOKE)("C15 1.1 — rounds pipeline smoke-run (LIVE ports, RENN
     );
     expect(status, "delta-digest turn did not complete").toBe("completed");
     expect(hasStructured, "delta-digest emitted no structured output").toBe(true);
+  }, 300_000);
+
+  // #810: Design's output schema was a top-level `z.union`, which renders with no
+  // top-level `type`, and the API refused the request before the model saw it
+  // ("tools.9.custom.input_schema.type: Field required") — on every branch, for every
+  // Design turn, taking the `no-spec` absence down with it. No hermetic test could see
+  // this: the refusal happens at the provider. So this sends the REAL Design schema on a
+  // real turn. A regression re-reddens it as `status=error:API Error: 400 …`.
+  it("Design's output schema is accepted by the API on a real turn", async () => {
+    const { adapter } = await createClaudeHarness({ env: process.env });
+    expect(adapter, "no claude harness resolved").not.toBeNull();
+    const session = await (adapter as NonNullable<typeof adapter>).createSession({
+      cwd: process.cwd(),
+      model: "haiku",
+      ephemeral: true,
+      outputSchema: designDraftOutputSchema(),
+    } as never);
+    let status = "no-terminal-frame";
+    let structured: unknown;
+    try {
+      await session.send({
+        prompt:
+          'This repository has no specification for the current branch. Return exactly {"absence": "no-spec"} and nothing else.',
+      });
+      for await (const event of session.events as AsyncIterable<never>) {
+        const e = event as {
+          kind: string;
+          error?: { message: string };
+          outcome?: { status: string; structuredOutput?: unknown };
+        };
+        if (e.kind === "error") {
+          status = `error:${e.error?.message}`;
+          break;
+        }
+        if (e.kind === "session.ended") {
+          status = e.outcome?.status ?? "unknown";
+          structured = e.outcome?.structuredOutput;
+          break;
+        }
+      }
+    } finally {
+      await session.close();
+    }
+    console.log(
+      `[smoke] design schema via real API: status=${status} structured=${JSON.stringify(structured)}`,
+    );
+    expect(status, "the API refused the Design output schema").toBe("completed");
+    expect(structured, "Design turn emitted no structured output").toBeDefined();
   }, 300_000);
 });

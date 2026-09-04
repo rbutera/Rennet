@@ -147,6 +147,21 @@ export function normalizeOutputSchema(schema: unknown): Record<string, unknown> 
   const rest = { ...(schema as Record<string, unknown>) };
   delete rest.$schema;
   delete rest.$id;
+  // A Zod union renders as `{ anyOf: [...] }` with no top-level `type`, and the API
+  // refuses a custom tool whose input_schema carries none ("tools.N.custom.input_schema
+  // .type: Field required", #810 — the Design seat was rejected before it could draft).
+  // When every branch is an object the envelope IS an object, so say so; the branches'
+  // own constraints are untouched. Design's schema is now a single object at the root
+  // (`lens-pipeline.ts`), so this covers any future union reaching the same choke point.
+  if (rest.type === undefined && Array.isArray(rest.anyOf) && rest.anyOf.length > 0) {
+    const allObjects = rest.anyOf.every(
+      (member) =>
+        typeof member === "object" &&
+        member !== null &&
+        (member as Record<string, unknown>).type === "object",
+    );
+    if (allObjects) rest.type = "object";
+  }
   return rest;
 }
 

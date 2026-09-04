@@ -178,7 +178,20 @@ let cachedRoundReportClassificationSchema: unknown;
  * host offers no candidate bundle any more — so the shape is the reason alone.
  */
 const DesignNoSpecSchema = z.object({ absence: z.literal("no-spec") });
-const DesignDraftOutputSchema = z.union([DraftBoardSchema, DesignNoSpecSchema]);
+/**
+ * The ONE object shape Design's draft turn carries as its output schema. Both returns —
+ * a board, or `{ absence: "no-spec" }` — fit it, because a top-level `z.union` renders as
+ * `{ anyOf: [...] }` with NO top-level `type` and the Anthropic API refuses a custom tool
+ * whose `input_schema` has none ("tools.N.custom.input_schema.type: Field required", #810).
+ * Design was rejected before it could draft on every branch, which also made the `no-spec`
+ * absence unreachable in production — it rode the same union. Still derived from the frozen
+ * `DraftBoardSchema` (never hand-authored): every board field, relaxed to optional so the
+ * absence-only return validates, plus the absence key. This is the WIRE shape only;
+ * `designNoSpecAbsence` still discriminates the two returns with the strict schemas.
+ */
+const DesignDraftOutputSchema = DraftBoardSchema.partial().extend({
+  absence: z.literal("no-spec").optional(),
+});
 let cachedDesignDraftSchema: unknown;
 
 /**

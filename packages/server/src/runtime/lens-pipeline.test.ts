@@ -2,7 +2,12 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { sanitizeSchemaForCodex, type T3SeatSeam, WhiteboardClient } from "@rennet/adapters";
+import {
+  normalizeOutputSchema,
+  sanitizeSchemaForCodex,
+  type T3SeatSeam,
+  WhiteboardClient,
+} from "@rennet/adapters";
 import {
   type DeltaPacket,
   inlineContextViolation,
@@ -1083,6 +1088,31 @@ describe("boardOutputSchema", () => {
     expect(encoded).toContain('"structured"');
     // Memoized — the same object every call.
     expect(boardOutputSchema()).toBe(schema);
+  });
+});
+
+describe("designDraftOutputSchema — what the Claude leg actually receives (#810)", () => {
+  // The bug was invisible to every hermetic test because none of them ran the schema
+  // through the adapter's normalizer, which is the last thing that touches it before the
+  // SDK hands it to the API as a custom tool's `input_schema`. A union rendered as
+  // `{ $schema, anyOf }`; the normalizer stripped `$schema`; the API refused the request
+  // with "tools.9.custom.input_schema.type: Field required" and Design never drafted.
+  it("survives normalizeOutputSchema with a top-level object type", () => {
+    const wire = normalizeOutputSchema(designDraftOutputSchema());
+    expect(wire.type, `no top-level type on the wire: ${JSON.stringify(wire)}`).toBe("object");
+    expect(wire.$schema).toBeUndefined();
+  });
+
+  it("admits BOTH Design returns: it carries the board fields AND the absence key, and requires neither", () => {
+    // A `type: "object"` schema that then requires `elements` would be the same outage in
+    // a different coat — the absence return would be refused instead of the request. What
+    // this CANNOT catch is whether the provider's validator agrees; only the live turn in
+    // `rounds-smoke.test.ts` ("Design's output schema is accepted by the API") shows that.
+    const schema = designDraftOutputSchema() as Record<string, unknown>;
+    const properties = schema.properties as Record<string, unknown>;
+    expect(Object.keys(properties).sort()).toEqual(["absence", "document", "elements"]);
+    expect(properties.absence).toMatchObject({ const: "no-spec" });
+    expect(schema.required ?? []).toEqual([]);
   });
 });
 

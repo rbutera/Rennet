@@ -204,6 +204,29 @@ describe("toSdkOptions", () => {
     expect(normalizeOutputSchema(bare)).toEqual(bare);
   });
 
+  it("normalizeOutputSchema names an all-object anyOf envelope an object (#810)", () => {
+    // Zod renders a union with no top-level `type`; the API refuses a custom tool whose
+    // input_schema has none ("tools.N.custom.input_schema.type: Field required"), which is
+    // how the Design seat died on every branch. The branches themselves are untouched.
+    const union = {
+      $schema: "https://json-schema.org/draft/2020-12/schema",
+      anyOf: [
+        { type: "object", properties: { elements: { type: "array" } } },
+        { type: "object", properties: { absence: { const: "no-spec" } } },
+      ],
+    };
+    const out = normalizeOutputSchema(union);
+    expect(out.type).toBe("object");
+    expect(out.anyOf).toEqual(union.anyOf);
+  });
+
+  it("normalizeOutputSchema does not invent a type for a mixed-kind anyOf", () => {
+    // A union of an object and a string is not an object; claiming otherwise would send a
+    // schema that contradicts its own branches.
+    const mixed = { anyOf: [{ type: "object" }, { type: "string" }] };
+    expect(normalizeOutputSchema(mixed).type).toBeUndefined();
+  });
+
   it("maps the council's versioned model aliases to the binary's full ids, else passes through", () => {
     // The council pins a version per role; the installed claude rejects the short versioned
     // alias but accepts the canonical full id for the SAME version (confirmed live).
