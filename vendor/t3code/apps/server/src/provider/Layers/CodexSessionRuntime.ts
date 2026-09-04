@@ -62,6 +62,15 @@ const RECOVERABLE_THREAD_RESUME_ERROR_SNIPPETS = [
   "no rollout found",
 ];
 
+/** Whether this session was spawned with ANY inline MCP server — T3's own, or
+ * one its caller supplied. Any of them makes the tool catalog worth reloading
+ * before a turn.
+ *
+ * This answers the RELOAD only. Whether the session carries T3's own browser
+ * toolkit is a separate question that this cannot answer, because a name is not
+ * provenance: a caller supplying a server called `t3-code` would satisfy any
+ * name test written here. `CodexSessionRuntimeOptions.sidecarMcpServerConfigured`
+ * carries that fact from the one place that knows it. */
 export function hasConfiguredMcpServer(appServerArgs: ReadonlyArray<string> | undefined): boolean {
   return appServerArgs?.some((argument) => argument.includes("mcp_servers.")) === true;
 }
@@ -166,6 +175,12 @@ export interface CodexSessionRuntimeOptions {
   readonly serviceTier?: CodexServiceTier | undefined;
   readonly resumeCursor?: CodexResumeCursor;
   readonly appServerArgs?: ReadonlyArray<string>;
+  /** Whether T3's OWN MCP server — the one carrying the preview/browser toolkit
+   * — is attached to this session. Stated by the adapter, which is the only
+   * place that knows it, rather than inferred from a server name on
+   * `appServerArgs`, which a caller can choose. Decides
+   * `browserToolsAvailable` on every turn's collaboration mode. */
+  readonly sidecarMcpServerConfigured?: boolean;
 }
 
 export interface CodexSessionRuntimeSendTurnInput {
@@ -2323,9 +2338,12 @@ export const makeCodexSessionRuntime = (
             ...(input.interactionMode ? { interactionMode: input.interactionMode } : {}),
             ...(input.outputSchema !== undefined ? { outputSchema: input.outputSchema } : {}),
             // Derived from the session's own MCP configuration rather than the
-            // setting, so the prompt describes the tools this turn actually
-            // has even if the setting changed after the session started.
-            browserToolsAvailable: hasConfiguredMcpServer(options.appServerArgs),
+            // setting, so the prompt describes the tools this turn actually has
+            // even if the setting changed after the session started. It reads
+            // the adapter's own statement of whether T3's browser server is
+            // attached, never the argument list: a caller-supplied server brings
+            // its own tools, not these ones, whatever it is called.
+            browserToolsAvailable: options.sidecarMcpServerConfigured === true,
           });
           const rawResponse = yield* client.raw.request("turn/start", params);
           const response = yield* decodeV2TurnStartResponse(rawResponse).pipe(

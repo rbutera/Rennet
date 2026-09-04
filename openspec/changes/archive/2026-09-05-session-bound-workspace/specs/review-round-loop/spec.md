@@ -13,3 +13,8 @@ Whenever a session holds a dispatchable review — the reviewer's own current-br
 
 - **WHEN** the round state machine is driven through N dispatch/land cycles for arbitrary N
 - **THEN** every cycle's transitions are identical, with no ordinal-dependent branch and no per-round workspace
+
+#### Scenario: Positive control introduces an ordinal assumption
+
+- **WHEN** a control caps or special-cases dispatch by round ordinal
+- **THEN** the N-round loop proof fails

@@ -31,11 +31,21 @@ const BASELINE: MemoryBridgeHandlers = {
  */
 export function mountApp(
   handlersFor: (target: ConnectionTarget) => MemoryBridgeHandlers,
-  options: { readonly initialPath?: string } = {},
+  options: {
+    readonly initialPath?: string;
+    /**
+     * Fail bridge CONSTRUCTION for a target rather than building one — the pairing dial's
+     * own failure mode (the temporary connection never comes up at all, so there is no
+     * bridge to invoke on and none to close). Returning undefined builds it as usual.
+     */
+    readonly failBridgeFor?: (target: ConnectionTarget) => Error | undefined;
+  } = {},
 ) {
   const bridges = new Map<string, MemoryBridge>();
   const history = memoryHistory(options.initialPath ?? "/new-chat");
   const bridgeFor = (target: ConnectionTarget): MemoryBridge => {
+    const failure = options.failBridgeFor?.(target);
+    if (failure) throw failure;
     let bridge = bridges.get(target.id);
     if (!bridge) {
       bridge = new MemoryBridge({ ...BASELINE, ...handlersFor(target) });

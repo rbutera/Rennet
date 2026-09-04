@@ -28,6 +28,15 @@ rl.on("line", (line) => {
     return;
   }
   const { id, method } = message;
+  // Opt-in, separate from `recordRequests` (which records `thread/resume` only,
+  // and whose file existing assertions compare exactly): every request the
+  // runtime sends, in order, so a test can assert what ran before what.
+  if (script.recordAllRequests && method !== undefined) {
+    NodeFS.appendFileSync(
+      `${process.env.T3_CODEX_COLLAB_SCRIPT}.allRequests`,
+      `${JSON.stringify({ method, params: message.params })}\n`,
+    );
+  }
   if (method === undefined && script.serverRequests?.some((request) => request.id === id)) {
     NodeFS.appendFileSync(
       `${process.env.T3_CODEX_COLLAB_SCRIPT}.responses`,

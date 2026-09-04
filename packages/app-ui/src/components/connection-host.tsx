@@ -1,5 +1,5 @@
 import type { ProjectKind, ProjectSource, RennetBridge } from "@rennet/protocol";
-import { Popover, PopoverContent, PopoverTrigger, Toaster } from "@rennet/ui";
+import { Toaster } from "@rennet/ui";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { RennetRouterApp } from "../routes/app";
 import type { RennetHistory } from "../routes/history";
@@ -15,12 +15,19 @@ import type { SourceOption } from "./source-switcher";
 // never imports `@rennet/client`. Switching daemons is a clean RennetApp REMOUNT keyed
 // on the active connection (a daemon is a world; its reviews/threads live server-side),
 // never a mid-session bridge mutation.
+//
+// It renders NO chrome of its own beyond the daemon-lost banner. The corner
+// "This machine" pill and its pair/forget/switch popover are gone: the sidebar's Add
+// Environment dialog pairs a machine (`pairAtAddress`), the add flow's source switcher
+// attaches one (`connectSource`), and Settings → Environments lists and removes them.
+// Those all reach this component's machinery through the connection-capabilities
+// context, so the capability survived; only the duplicate surface went.
 
 /** A daemon this window can attach to. The shell turns it into a real bridge. */
 export interface ConnectionTarget {
   /** Stable id; the localhost default reserves `"local"`. */
   readonly id: string;
-  /** Human label shown in the picker + indicator. */
+  /** Human label shown in the add flow's source switcher. */
   readonly label: string;
   /** Host (`127.0.0.1`, a Tailscale IP, a hostname); the shell builds the ws(s) URL. */
   readonly host: string;
@@ -344,34 +351,6 @@ function foldStatus(current: BannerFold, status: ConnectionStatus): BannerFold {
   }
 }
 
-/**
- * The connection indicator's truthful announcement + dot state. A null status (legacy
- * `createBridge` path, no reachability) reads as connected — the label it always had, so
- * existing call sites are unchanged. Every string keeps "Switch daemon." (the switcher's
- * accessible handle) and names the daemon; only `error` also carries its cause.
- */
-function describeConnection(
-  label: string,
-  status: ConnectionStatus | null,
-): { announce: string; dotState: ConnectionState } {
-  const state: ConnectionState = status?.state ?? "online";
-  const suffix = "Switch daemon.";
-  switch (state) {
-    case "connecting":
-    case "idle":
-      return { announce: `Connecting to ${label}. ${suffix}`, dotState: "connecting" };
-    case "offline":
-      return { announce: `Offline from ${label}, reconnecting. ${suffix}`, dotState: "offline" };
-    case "error":
-      return {
-        announce: `Connection to ${label} failed: ${status?.error ?? "unknown error"}. ${suffix}`,
-        dotState: "error",
-      };
-    default:
-      return { announce: `Connected to ${label}. ${suffix}`, dotState: "online" };
-  }
-}
-
 export function ConnectionHost({
   createConnection,
   createBridge,
@@ -418,13 +397,6 @@ export function ConnectionHost({
   // Installed WSL distros for the add flow's source switcher — fetched once (desktop only). The
   // shell's `listWslDistros` never rejects (it answers `[]` off win32 / with no WSL).
   const [wslDistros, setWslDistros] = useState<readonly string[]>([]);
-  const [switcherOpen, setSwitcherOpen] = useState(false);
-  const [adding, setAdding] = useState(false);
-  const [addLabel, setAddLabel] = useState("");
-  const [addHost, setAddHost] = useState("");
-  const [addCode, setAddCode] = useState("");
-  const [addBusy, setAddBusy] = useState(false);
-  const [addError, setAddError] = useState<string | null>(null);
 
   const hydratedDefault = useMemo(() => {
     if (defaultTarget.deviceToken) return defaultTarget;
@@ -451,9 +423,6 @@ export function ConnectionHost({
     readonly target: ConnectionTarget;
     readonly bridge: Connection["bridge"];
   } | null>(null);
-  // null ⇒ the connection reports no status (legacy `createBridge` path): the indicator keeps
-  // its plain connected label. A supervisor-backed connection drives it through every state.
-  const [status, setStatus] = useState<ConnectionStatus | null>(null);
   const [fold, setFold] = useState(INITIAL_FOLD);
   const banner = fold.banner;
   // The re-dial seam: Retry bumps the nonce, tearing down the dead connection and
@@ -468,7 +437,6 @@ export function ConnectionHost({
     void retryNonce;
     const connection = makeConnection(activeTarget);
     setActiveBridge({ target: activeTarget, bridge: connection.bridge });
-    setStatus(null);
     const sameTarget = foldTargetId.current === activeTarget.id;
     foldTargetId.current = activeTarget.id;
     setFold((current) => {
@@ -479,8 +447,9 @@ export function ConnectionHost({
         ? { everOnline: current.everOnline, banner: { kind: "outage", since: Date.now() } }
         : current;
     });
+    // The banner is the ONLY reader of reachability now that the corner indicator is
+    // gone, so the raw status is folded straight in rather than also held as state.
     const unsubscribe = connection.subscribe?.((next) => {
-      setStatus(next);
       setFold((current) => foldStatus(current, next));
     });
     return () => {
@@ -513,20 +482,8 @@ export function ConnectionHost({
     (id: string) => {
       setActiveId(id);
       persistDaemons(key, saved, id);
-      setSwitcherOpen(false);
     },
     [key, saved],
-  );
-
-  const removeDaemon = useCallback(
-    (id: string) => {
-      const next = saved.filter((target) => target.id !== id);
-      const nextActiveId = activeId === id ? defaultTarget.id : activeId;
-      setSaved(next);
-      setActiveId(nextActiveId);
-      persistDaemons(key, next, nextActiveId);
-    },
-    [activeId, defaultTarget.id, key, saved],
   );
 
   // Dial a TEMPORARY tokenless bridge at (host, port), exchange the one-time code ON it (the
@@ -557,42 +514,6 @@ export function ConnectionHost({
     },
     [makeConnection],
   );
-
-  const submitAdd = useCallback(async () => {
-    setAddError(null);
-    const parsed = parseHostPort(addHost);
-    if (!parsed) {
-      setAddError("Enter a host, optionally host:port.");
-      return;
-    }
-    const code = addCode.trim();
-    if (code.length === 0) {
-      setAddError("Enter the pairing code shown on the daemon.");
-      return;
-    }
-    const label = addLabel.trim() || parsed.host;
-    setAddBusy(true);
-    try {
-      const target = await exchangeAtEndpoint(parsed.host, parsed.port, code, label);
-      setSaved((current) => {
-        const next = [...current.filter((t) => t.id !== target.id), target];
-        persistDaemons(key, next, target.id);
-        return next;
-      });
-      setAdding(false);
-      setAddLabel("");
-      setAddHost("");
-      setAddCode("");
-      setActiveId(target.id);
-      setSwitcherOpen(false);
-    } catch (error) {
-      setAddError(
-        error instanceof Error ? error.message : "Pairing failed. Check the code and host.",
-      );
-    } finally {
-      setAddBusy(false);
-    }
-  }, [addHost, addCode, addLabel, exchangeAtEndpoint, key]);
 
   // Pair a NEW machine at an address (Add Environment dialog, blocker 1). Dials the address,
   // exchanges the code, and persists the tokened daemon as a selectable source — WITHOUT
@@ -628,7 +549,6 @@ export function ConnectionHost({
         return next;
       });
       setActiveId(target.id);
-      setSwitcherOpen(false);
     },
     [key],
   );
@@ -734,145 +654,6 @@ export function ConnectionHost({
     [activeId, defaultTarget.id, resolveDaemonTarget, activateLocalTarget, saved, switchTo],
   );
 
-  const { announce, dotState } = describeConnection(activeTarget.label, status);
-  // The dot is a redundant non-text cue (the indicator's aria-label carries the truth):
-  // green when live, ink-faint while idle/connecting, danger when offline/failed.
-  const dotColor =
-    dotState === "online"
-      ? "bg-green"
-      : dotState === "offline" || dotState === "error"
-        ? "bg-danger"
-        : "bg-ink-faint";
-  const connectionBar = (
-    // The switcher rides the kit Popover: it owns the anchored positioning, the
-    // portal, and the outside-click / Escape dismissal the bare toggle lacked.
-    <Popover open={switcherOpen} onOpenChange={setSwitcherOpen}>
-      <div className="connection-bar relative ml-auto inline-flex items-center">
-        <PopoverTrigger
-          render={
-            <button
-              type="button"
-              className="connection-indicator inline-flex cursor-pointer items-center gap-1.5 rounded-chip border border-line bg-surface px-2.5 py-1 text-xs text-ink-soft hover:bg-raised"
-              data-state={dotState}
-              aria-label={announce}
-            />
-          }
-        >
-          <span
-            className={`connection-dot h-2 w-2 flex-none rounded-full ${dotColor}`}
-            data-state={dotState}
-            aria-hidden="true"
-          />
-          <span className="connection-name text-ink">{activeTarget.label}</span>
-        </PopoverTrigger>
-        <PopoverContent
-          align="start"
-          sideOffset={6}
-          aria-label="Connection switcher"
-          className="connection-switcher block w-auto min-w-[280px] rounded-surface border border-line bg-overlay p-2 shadow-overlay ring-0"
-        >
-          <ul className="connection-list mb-1.5 list-none">
-            {allTargets.map((target) => (
-              <li key={target.id} className="connection-item flex items-center gap-1.5">
-                <button
-                  type="button"
-                  className="connection-choose flex-1 cursor-pointer rounded-chip px-2 py-1.5 text-left text-sm text-ink hover:bg-raised aria-[current=true]:bg-accent-soft"
-                  onClick={() => switchTo(target.id)}
-                  aria-current={target.id === activeId}
-                >
-                  {target.label}
-                  {target.host === defaultTarget.host && target.id === defaultTarget.id
-                    ? " (this machine)"
-                    : ` — ${target.host}${target.port ? `:${target.port}` : ""}`}
-                </button>
-                {target.id !== defaultTarget.id ? (
-                  <button
-                    type="button"
-                    className="connection-remove flex-none cursor-pointer px-1 text-sm text-ink-faint hover:text-danger"
-                    onClick={() => removeDaemon(target.id)}
-                    aria-label={`Forget ${target.label}`}
-                  >
-                    ×
-                  </button>
-                ) : null}
-              </li>
-            ))}
-          </ul>
-          {adding ? (
-            <form
-              className="connection-add-form flex flex-col gap-1.5"
-              onSubmit={(event) => {
-                event.preventDefault();
-                void submitAdd();
-              }}
-            >
-              <label className="connection-field flex flex-col gap-1 text-2xs text-ink-faint">
-                Name
-                <input
-                  className="rounded-chip border border-line bg-surface px-2 py-1.5 text-sm text-ink"
-                  value={addLabel}
-                  onChange={(e) => setAddLabel(e.target.value)}
-                  placeholder="My laptop"
-                />
-              </label>
-              <label className="connection-field flex flex-col gap-1 text-2xs text-ink-faint">
-                Host
-                <input
-                  className="rounded-chip border border-line bg-surface px-2 py-1.5 text-sm text-ink"
-                  value={addHost}
-                  onChange={(e) => setAddHost(e.target.value)}
-                  placeholder="100.x.y.z or host:port"
-                />
-              </label>
-              <label className="connection-field flex flex-col gap-1 text-2xs text-ink-faint">
-                Pairing code
-                <input
-                  className="rounded-chip border border-line bg-surface px-2 py-1.5 text-sm text-ink"
-                  value={addCode}
-                  onChange={(e) => setAddCode(e.target.value)}
-                  placeholder="8 characters"
-                />
-              </label>
-              {addError ? (
-                <p className="connection-error text-2xs text-danger" role="alert">
-                  {addError}
-                </p>
-              ) : null}
-              <div className="connection-add-actions flex gap-1.5">
-                <button
-                  type="submit"
-                  className="cursor-pointer rounded-control bg-accent-fill px-3 py-1.5 text-xs font-semibold text-accent-ink disabled:opacity-60"
-                  disabled={addBusy}
-                >
-                  {addBusy ? "Pairing…" : "Pair and add"}
-                </button>
-                <button
-                  type="button"
-                  className="cursor-pointer rounded-control border border-line px-3 py-1.5 text-xs text-ink-soft hover:bg-raised disabled:opacity-60"
-                  onClick={() => setAdding(false)}
-                  disabled={addBusy}
-                >
-                  Cancel
-                </button>
-              </div>
-            </form>
-          ) : (
-            <button
-              type="button"
-              className="connection-add w-full cursor-pointer rounded-chip border border-dashed border-line-strong px-2 py-1.5 text-xs text-ink-soft hover:bg-raised"
-              onClick={() => setAdding(true)}
-            >
-              Add a daemon
-            </button>
-          )}
-          <p className="connection-note mt-2 text-2xs leading-relaxed text-ink-faint">
-            A remote daemon shows only repo references, never a host path. Pairing is one-time.
-          </p>
-        </PopoverContent>
-      </div>
-    </Popover>
-  );
-
   const daemonBanner =
     banner === null ? null : (
       // A fixed, non-modal strip over whatever the app is showing — nothing blocks. It
@@ -927,10 +708,6 @@ export function ConnectionHost({
   return bridge ? (
     <ConnectionCapabilitiesProvider value={capabilities}>
       <RennetRouterApp key={activeId} bridge={bridge} history={history} />
-      {/* The daemon switcher — a fixed overlay in the interim (C03 cutover): the router
-          frame has no chrome slot for it until a later surface change gives it a home.
-          It keeps daemon switching reachable — a capable client is the product. */}
-      <div className="fixed bottom-3 right-4 z-40">{connectionBar}</div>
       {daemonBanner}
       {/* One app-root toast channel (issue: transient feedback). The manager is a
           module singleton, so any `toast(...)` in the tree routes here; mounted

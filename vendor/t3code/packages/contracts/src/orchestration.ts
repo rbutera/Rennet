@@ -900,6 +900,110 @@ const ThreadTurnStartBootstrap = Schema.Struct({
 
 export type ThreadTurnStartBootstrap = typeof ThreadTurnStartBootstrap.Type;
 
+/** A server name that is safe in every place a provider writes one.
+ *
+ * Codex takes its inline MCP configuration as `-c mcp_servers.<name>.<key>`,
+ * a DOTTED path: a name containing `.` silently becomes a nested table and the
+ * server never exists (verified against codex-cli 0.148.0, where
+ * `-c mcp_servers.board.design.url=…` produced a `design` sub-table under the
+ * server `board` and no server named `board.design`). Quoting the segment does
+ * not help. So the contract admits only a TOML bare key, which is the grammar
+ * every provider can carry — the schema telling the truth about what it
+ * accepts, rather than a validator bolted on downstream. */
+const TurnMcpServerName = TrimmedNonEmptyString.check(
+  Schema.isPattern(/^[A-Za-z0-9_-]+$/),
+).check(Schema.isMaxLength(64));
+
+/** A POSIX environment-variable name. */
+const TurnMcpServerEnvVarName = TrimmedNonEmptyString.check(
+  Schema.isPattern(/^[A-Za-z_][A-Za-z0-9_]*$/),
+).check(Schema.isMaxLength(128));
+
+/** An MCP server the caller that starts a turn hands to that turn.
+ *
+ * The field names the ENVIRONMENT VARIABLE holding the credential; it never
+ * carries the credential itself. That is not caution, it is the only shape that
+ * can be true: a command is persisted to the event log and replayed from it,
+ * and the Claude SDK serialises its whole `mcpServers` option into a single
+ * `--mcp-config <json>` argument, so anything placed here would be both a
+ * durable database row and an argument on a child process's command line. The
+ * caller puts the secret in the provider child's environment and names it here;
+ * Codex consumes exactly this shape as `bearer_token_env_var`, and Claude
+ * expands `${VAR}` inside an MCP header, so only the name ever travels. */
+export const TurnMcpServer = Schema.Struct({
+  url: TrimmedNonEmptyString,
+  bearerTokenEnvVar: Schema.optional(TurnMcpServerEnvVarName),
+});
+export type TurnMcpServer = typeof TurnMcpServer.Type;
+
+/** Caller-supplied MCP servers by name. These ride ALONGSIDE whatever the
+ * server configures for the thread itself and whatever the user configured for
+ * the provider, and are merged at the adapter; a name the server owns wins a
+ * collision. */
+export const TurnMcpServers = Schema.Record(TurnMcpServerName, TurnMcpServer);
+export type TurnMcpServers = typeof TurnMcpServers.Type;
+
+/** The name the server owns for its own MCP endpoint. A caller cannot bind it.
+ * Exported so every adapter refuses the same name, and so a test cannot drift
+ * from the production check by spelling it again. */
+export const SIDECAR_OWNED_MCP_SERVER_NAME = "t3-code";
+
+/** Caller-supplied names that some other configuration already holds.
+ *
+ * A collision is REFUSED rather than resolved, and that is the cheap correct
+ * answer rather than a restriction: on Codex there is no way to detach a
+ * same-named server from the user's own (`-c` deep-merges at every depth, so
+ * their headers and helpers ride to whichever endpoint wins), and silently
+ * merging somebody's server into ours is not something anyone asked for. The
+ * caller mints its own names, so a collision is a visible config quirk with a
+ * one-word fix, not a capability anyone is denied. */
+export function collidingTurnMcpServerNames(
+  servers: TurnMcpServers | undefined,
+  takenNames: Iterable<string>,
+): ReadonlyArray<string> {
+  const taken = new Set(takenNames);
+  return Object.keys(servers ?? {})
+    .filter((name) => taken.has(name))
+    .sort();
+}
+
+/** An empty record is the same fact as no record, and saying so once here keeps
+ * every hop from having to decide. */
+export function normalizeTurnMcpServers(
+  servers: TurnMcpServers | undefined,
+): TurnMcpServers | undefined {
+  if (servers === undefined || Object.keys(servers).length === 0) {
+    return undefined;
+  }
+  return servers;
+}
+
+/** The server names on which two sets disagree — present on one side only, or
+ * carrying a different endpoint or a different credential variable. A same-name
+ * server pointed at a new endpoint, or reading a new variable, is a DIFFERENT
+ * server, because the session was opened against the old one. Sorted, so an
+ * error built from it reads the same way twice. */
+export function differingTurnMcpServerNames(
+  left: TurnMcpServers | undefined,
+  right: TurnMcpServers | undefined,
+): ReadonlyArray<string> {
+  const leftServers = normalizeTurnMcpServers(left) ?? {};
+  const rightServers = normalizeTurnMcpServers(right) ?? {};
+  const names = new Set([...Object.keys(leftServers), ...Object.keys(rightServers)]);
+  const differing: Array<string> = [];
+  for (const name of names) {
+    const leftServer = leftServers[name];
+    const rightServer = rightServers[name];
+    if (
+      leftServer?.url !== rightServer?.url ||
+      leftServer?.bearerTokenEnvVar !== rightServer?.bearerTokenEnvVar
+    ) {
+      differing.push(name);
+    }
+  }
+  return differing.sort();
+}
+
 export const ThreadTurnStartCommand = Schema.Struct({
   type: Schema.Literal("thread.turn.start"),
   commandId: CommandId,
@@ -922,6 +1026,10 @@ export const ThreadTurnStartCommand = Schema.Struct({
   // structured-output contract attach it to the turn; the settled turn then
   // carries `structuredOutput` on its `turn.settled` activity.
   outputSchema: Schema.optional(Schema.Unknown),
+  // MCP servers this turn's caller supplies, merged with the server's own at
+  // the adapter. Both providers fix their MCP configuration when the session
+  // process is created, so the thread's FIRST turn decides the set.
+  mcpServers: Schema.optional(TurnMcpServers),
   createdAt: IsoDateTime,
 });
 
@@ -945,6 +1053,8 @@ const ClientThreadTurnStartCommand = Schema.Struct({
   // structured-output contract attach it to the turn; the settled turn then
   // carries `structuredOutput` on its `turn.settled` activity.
   outputSchema: Schema.optional(Schema.Unknown),
+  // See `ThreadTurnStartCommand.mcpServers`.
+  mcpServers: Schema.optional(TurnMcpServers),
   createdAt: IsoDateTime,
 });
 
@@ -1343,6 +1453,7 @@ export const ThreadTurnStartRequestedPayload = Schema.Struct({
   ),
   sourceProposedPlan: Schema.optional(SourceProposedPlanReference),
   outputSchema: Schema.optional(Schema.Unknown),
+  mcpServers: Schema.optional(TurnMcpServers),
   createdAt: IsoDateTime,
 });
 

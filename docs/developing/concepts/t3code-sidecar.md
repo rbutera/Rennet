@@ -267,6 +267,62 @@ Three things follow from the thread being persistent.
   `V2TurnStartParams.outputSchema`, but its runtime does not surface a settled turn's
   structured result, so the daemon parses the board out of the Codex seat's final message
   — for that provider only.
+- **A turn carries the MCP servers its caller gives it, and names their credentials
+  rather than carrying them.** `startTurn` also takes an `mcpServers` record of
+  `name → { url, bearerTokenEnvVar? }`, on the same seam and in the same shape as the
+  output schema: the two `thread.turn.start` command shapes, the
+  `thread.turn-start-requested` payload, and both provider inputs. **The field names an
+  environment variable; it never carries a token.** That is the only shape that can be
+  true here, because a command is written to the sidecar's event store and replayed from
+  it, and because Claude's SDK serialises its entire MCP option into one
+  `--mcp-config <json>` argument — a token placed here would be both a durable database
+  row and a string on a child process's command line. The daemon puts the secret in the
+  sidecar's environment, which the harness child inherits, and names it on the turn:
+  Codex reads the name as `bearer_token_env_var`, and `claude` expands `${VAR}` when it
+  resolves an MCP header, so only the name is ever serialised. Server names must be TOML
+  bare keys, because Codex writes them into a dotted config path where a dot silently
+  becomes a nested table.
+
+  The guarantee is about that field and no other: `url` is any trimmed string, so a caller
+  that puts a token in a query parameter has put it in the event store and on the argument
+  list. The dedicated credential field is the one that cannot carry a secret.
+
+  The adapters MERGE these with whatever the sidecar configured for that thread and with
+  whatever the user configured for the provider — nothing is substituted, and
+  `strictMcpConfig` stays unset. A NAME COLLISION IS REFUSED rather than resolved: a
+  caller server under a name the sidecar owns, or under a name the user's own Codex config
+  already declares, fails the session start naming the server. That is the cheap correct
+  answer rather than a restriction. Codex's `-c` is a deep merge into the user's config at
+  every depth and nothing detaches a same-named server from theirs — not a leaf override,
+  not an inline table, not replacing the whole `mcp_servers` table (verified against
+  codex-cli 0.148.0) — so two servers sharing a name trade credentials and headers, and
+  a caller endpoint receives the user's `X-Ambient-Secret` along with its own bearer.
+  Nobody asked for their own server to be merged into ours, the caller mints its own
+  names, and a collision is a visible config quirk with a one-word fix.
+
+  Both providers fix their MCP configuration when the session process is created, exactly
+  as Claude fixes `outputFormat` at `query()` construction, so the thread's FIRST turn
+  decides the set and a later turn asking for a different one is refused with the names it
+  disagrees on rather than run against the wrong tools. A same-name server pointed at a
+  new endpoint, or reading a new credential variable, counts as a different server: the
+  session was opened against the old one and cannot serve the new one. Nothing is filtered
+  out of the caller's set on the way in, because a session that stored one set and
+  compared another rejected the very turn it had just been opened for.
+
+  Whether the sidecar's own browser server is attached now travels as an explicit fact
+  (`sidecarMcpServerConfigured`) rather than being read back off the argument list.
+  `hasConfiguredMcpServer` still answers the tool-catalog reload for any inline server,
+  but it cannot answer the browser question, because a caller can name its own server
+  `t3-code` and a name is not provenance — and a Codex prompt describing browser tools the
+  session does not have is a lie in the prompt.
+
+  A caller server that declares no credential gets no credential key written at all. An
+  empty `bearer_token_env_var` was tried and is worse than nothing: Codex then expects a
+  bearer it can never resolve, and against a real local MCP server that is zero requests
+  where omitting the key handshakes normally.
+
+  Nothing supplies a server yet — the field is carried, and the daemon's own board server
+  is the next change.
 - **Spend is per turn, and it is a delta read off the thread.** Claude's SDK reports usage
   cumulatively over a streaming session's turns, so the seat leg records each turn's own
   usage as the difference against the previous settled turn's total — which
@@ -389,6 +445,14 @@ Claude and Codex adapters that hand it to their runtimes, the provider service t
 carries the turn's schema into a session it recovers, and the runtime-ingestion layer
 that projects the `turn.settled` activity. Each has its row in `vendor/t3code/PATCHES.md`,
 all upstreamable.
+
+The per-turn `mcpServers` seam widens that surface by little, because it sits mostly on the
+same files: the two contract modules, the decider, the provider command reactor, the
+provider service, and the two adapters, plus the Codex session runtime for the provenance
+option, six test files and the scripted app-server fixture. `McpProviderSession` is
+untouched — the caller's servers ride alongside it and merge at the adapter, so a session
+re-prepare (runtime mode, cwd, model) cannot clobber them and turning off agent browser
+access cannot clear them.
 
 **A dead `claude` must not take the sidecar with it.** The SDK's process transport writes
 the prompt to the child's stdin and never listens for that socket's `error` event, so a
@@ -801,6 +865,96 @@ And the prompt-size result — the one thing that went right — is the same sha
 reverse. No test asserts "the Decisions prompt does not grow with the change"; two drives
 against a 1-file branch and a 95-file branch, reading the bytes the sidecar actually received,
 do.
+
+## Measured: v0.7.1 — Design drafts, and the round settles a checkpointed account
+
+The same six seats, re-driven on 2026-09-04 against the signed **v0.7.1** release build with a
+fresh isolated data directory on a new clone (`rennet-g6-redrive`). Two branches, chosen to
+exercise both arms of the binding and both directions of the Design lens:
+
+- **`withspec`** — the clone's own checked-out branch, carrying
+  `openspec/changes/session-bound-workspace/` with its commit messages naming it, so the Design
+  seat has a specification to find. Because the branch *is* the checkout, the session binds to
+  the clone root itself, not to a Rennet-created worktree.
+- **`nospec-big`** — a large branch off the same clone with no specification of any kind. It is
+  not the checkout, so the session binds to a Rennet-created worktree under the data directory,
+  `<dataDir>/worktrees/-Volumes-ExternalNVMe-tmp-rennet-g6-redrive/nospec-big`.
+
+Every figure is read from the same sources as the v0.7.0 table above. Claude seats on Opus 4.8
+at high effort, Codex seats on GPT-5.6.
+
+| Seat | Prompt (bytes) | Draft, withspec | Repair, withspec | Draft, nospec-big | Repair, nospec-big |
+| --- | --- | --- | --- | --- | --- |
+| Design (Opus, high) | 12,441 | 441.0 s → board | 22.3 s | 72.3 s → `no-spec` | — |
+| Sequence (Opus, high) | 6,577 | 247.7 s | 110.4 s | 608.8 s | 68.2 s |
+| Decisions (Opus, high) | 6,293 | 246.4 s | 205.6 s | 208.5 s | 201.2 s |
+| Flagged / Claude (Opus, high) | 6,962 | 289.2 s | — | 201.2 s | — |
+| Flagged / Codex (high) | 6,962 | 214.5 s | 37.1 s | 265.5 s | 14.8 s |
+| Noise (Codex, low) | 6,377 | 104.4 s | 48.2 s | 153.5 s | 9.5 s |
+
+**Design crosses the wire now, both ways.** On `withspec` it drafted a board in 441.0 s and
+its repair turn on the same thread carried 2,776 bytes of lint pointers; the generation settled
+with all five lens boards present. On `nospec-big` the seat returned the `no-spec` absence in
+72.3 s, the generation recorded `absentLenses: { design: "no-spec" }`, four boards, and the
+switcher omitted the Design tab. This is the pair the v0.7.0 drive could not produce: the
+`400 tools.9.custom.input_schema.type` refusal of [#810](https://github.com/rbutera/Rennet/issues/810)
+is fixed by holding the lens's two returns apart at the host instead of on the wire, so the
+board draft and the `no-spec` absence each travel as an API-admissible schema. The prompt sizes
+are byte-identical to v0.7.0 — nothing about assembly changed — so the only difference in this
+table is that the Design row now holds timings instead of "refused".
+
+Wall clock from branch pick to the last board was **7 min 43 s** on `withspec` (first core
+board at 290.5 s, reveal at 463.4 s) and **11 min 17 s** on `nospec-big` (first core board at
+281.5 s, reveal at 677.0 s). The `withspec` generation billed 4,514,108 tokens across 11 turns,
+3,965,816 of them cache reads; `nospec-big` billed 3,995,145 across 10.
+
+One thing the drive surfaces for later work: on a branch that *has* a spec, the Design draft
+(441.0 s) is the single slowest lens, because the seat reproduces the OpenSpec change by hand
+before it drafts. Rennet already parses that change deterministically to check the board, so the
+draft is the strongest candidate for a deterministic assembly that skips the hand-reproduction;
+on `nospec-big`, where the hunt finds nothing, the same seat settles in 72.3 s.
+
+### The round: a checkpointed account on the bound branch
+
+One round ran on the `nospec-big` session. The reviewer staged one finding, and the work order
+reached the worker as a **path**, `.rennet/context/<sessionId>/work-order.md` under the bound
+root, never a payload. The worker committed on the session's branch, in the bound worktree:
+
+```
+59ed8f555 fix: pin round commit settlement to worker's attributed HEAD
+ 5 files changed, 191 insertions(+), 34 deletions(-)
+```
+
+on top of the recorded `sourceHead` `1388fb9df`, and the clone stayed on `withspec`. This time
+the durable account is not empty. The operation's worker record carries a real checkpoint —
+`{ threadId, turnId, turnCount: 1 }`, `outcome: "completed"` — and its commit record names the
+range the reviewer's branch actually moved through, `{ from: 1388fb9df, to: 59ed8f555, count:
+1 }`, pinned to the worker's attributed HEAD rather than a re-derived tip. Pinning that range to
+the worker's own HEAD is exactly what commit `59ed8f555` above does; the empty receipt of
+[#811](https://github.com/rbutera/Rennet/issues/811) — `diff: ""`, `changedPaths: []`, no
+checkpoint — is gone. No directory appeared under `round-worktrees/` or `worktrees/review/`, and
+on archive the session's whole `.rennet/context/<sessionId>/` directory went from six files to
+empty.
+
+Two things this drive does **not** settle, named because a green result is only honest with its
+frontier:
+
+- The receipt's `worker.diff` snapshot still carries 50 of its 55 paths from `.nx-isolated/cache/`.
+  The worker ran the project's gate, and the cache artifacts landed in the uncommitted working
+  tree that the receipt snapshots; the commit itself is the clean five files above. Pinning the
+  receipt's *diff* to the commit range, the way its commit record already is, is the remaining
+  half of the story.
+- The operation's terminal phase is `failed`, at `report-drafting`: the post-commit re-review
+  generation's Sequence lens drafted a board with no reachable `order_step`. That is a lens-draft
+  flake in the follow-up generation, downstream of and independent from the four round-mechanics
+  facts above — the round landed its commit and its checkpointed account first.
+
+The stale-copy strings of [#812](https://github.com/rbutera/Rennet/issues/812) and the
+still-`running` lane of [#813](https://github.com/rbutera/Rennet/issues/813) are both fixed in
+[#816](https://github.com/rbutera/Rennet/pull/816): the surfaces state the session's binding,
+and a lens failure leaves `running` when the seat does. So of the four defects the v0.7.0 drive
+named, the Design refusal, the empty round receipt, the stale copy and the stuck lane are all
+answered; the two caveats above are what this drive leaves for the next one.
 
 ## Stopping
 
