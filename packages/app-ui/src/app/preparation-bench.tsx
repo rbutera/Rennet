@@ -501,6 +501,15 @@ export function PreparationBench({ session, preparation, review }: PreparationBe
     const read = boards[lane.id as LensKind];
     return read !== undefined && (read.status === "missing" || read.status === "pending");
   });
+  // The lanes with something to SHOW — a board, or the account of a read that went wrong.
+  // Resolved once, up here, because the line above the stack has to know whether the stack
+  // exists before either is rendered.
+  const landed = settled.flatMap((lane) => {
+    const read = boards[lane.id as LensKind];
+    return read === undefined || read.status === "missing" || read.status === "pending"
+      ? []
+      : [{ lane, read }];
+  });
 
   useEffect(() => {
     if (!active) return;
@@ -516,7 +525,16 @@ export function PreparationBench({ session, preparation, review }: PreparationBe
   // WHICH review these lanes belong to — off the preparation record, which is where the
   // daemon stamped it, not off a second route lookup. A lens transcript is opened against
   // it so the dock can tell this review's thread from the last one's (review finding 4).
-  const preparationReviewId = "reviewId" in preparation ? preparation.reviewId : undefined;
+  //
+  // The SESSION's own `reviewId` is the fallback, and it is not decoration (#819): only the
+  // `drafting` arm REQUIRES `reviewId`, while `failed` and `cancelled` make it optional and
+  // both of them keep their lanes — threads and all. A preparation that failed after its
+  // seats bound their threads therefore drew five readers holding real transcripts that no
+  // click could open. `SidebarSession.reviewId` is the durable attach for the same review,
+  // written by `attachReview` before drafting starts, so it answers the same question
+  // rather than guessing at one.
+  const preparationReviewId =
+    ("reviewId" in preparation ? preparation.reviewId : undefined) ?? session.reviewId;
   const branch = session.claim?.branch;
   const files = review?.patchsets.find((set) => set.id === review.activePatchsetId)?.files.length;
   const stage =
@@ -536,74 +554,92 @@ export function PreparationBench({ session, preparation, review }: PreparationBe
       data-screen="session-preparation"
       data-status={preparation.status}
       role={failed ? "alert" : "status"}
-      // `min-h-full` with SAFE centring, not `h-full` + `justify-center`: once the revealed
-      // boards make the bench taller than its pane, plain centring pushes the overflow out
-      // of BOTH ends and the top half (the slab and the first readers) is clipped where no
-      // scroll can reach it (drive 1.6, third run: four of five readers off-screen).
-      className="mx-auto flex min-h-full w-full max-w-4xl flex-col justify-center-safe gap-8 p-8"
+      // THE BENCH IS ITS OWN PRIMARY SCROLLER (#819). The outlet is a flex column and the
+      // shell root is `fixed inset-0 overflow-hidden`, so a surface that does not declare
+      // `min-h-0 flex-1 overflow-y-auto` is simply CLIPPED at the fold — which is what put
+      // every landed board out of reach on the 0.7.0 drive. Same three classes the review
+      // workspace's scroller carries; `chrome-scroll-clearance` is how a session surface
+      // passes under the floating chip layer instead of starting beneath it.
+      className="chrome-scroll-clearance min-h-0 flex-1 overflow-y-auto"
     >
-      {/* THE SLAB — the change under review, the centrepiece the readers look at. */}
-      <div className="flex flex-col gap-3 rounded-window border border-line bg-surface p-6">
-        <span className="flex flex-wrap items-center gap-2 text-2xs font-medium uppercase tracking-wide text-ink-faint">
-          <span>{prNumber === undefined ? "Your branch" : `Pull request #${prNumber}`}</span>
-          <span aria-hidden="true">·</span>
-          {/* The stage keeps its OWN element so it is one findable string. Folded into the
+      {/* `min-h-full` with SAFE centring, not `h-full` + `justify-center`: once the revealed
+          boards make the bench taller than its pane, plain centring pushes the overflow out
+          of BOTH ends and the top half (the slab and the first readers) is clipped where no
+          scroll can reach it (drive 1.6, third run: four of five readers off-screen). It is
+          INSIDE the scroller, so the short bench still centres and the tall one scrolls. */}
+      <div className="mx-auto flex min-h-full w-full max-w-4xl flex-col justify-center-safe gap-8 p-8">
+        {/* THE SLAB — the change under review, the centrepiece the readers look at. */}
+        <div className="flex flex-col gap-3 rounded-window border border-line bg-surface p-6">
+          <span className="flex flex-wrap items-center gap-2 text-2xs font-medium uppercase tracking-wide text-ink-faint">
+            <span>{prNumber === undefined ? "Your branch" : `Pull request #${prNumber}`}</span>
+            <span aria-hidden="true">·</span>
+            {/* The stage keeps its OWN element so it is one findable string. Folded into the
               eyebrow's prose it became a fragment of a longer node, which is exactly the
               shape a text query cannot see. */}
-          <span data-testid="preparation-stage" className={failed ? "text-danger" : undefined}>
-            {failed ? `${stage} failed` : cancelled ? `${stage} cancelled` : stage}
+            <span data-testid="preparation-stage" className={failed ? "text-danger" : undefined}>
+              {failed ? `${stage} failed` : cancelled ? `${stage} cancelled` : stage}
+            </span>
           </span>
-        </span>
-        <h1 className="font-display text-2xl font-medium leading-tight text-ink">
-          {session.title}
-        </h1>
-        <p className={cn("font-serif text-15", failed ? "text-danger" : "text-ink-soft")}>
-          {failed
-            ? preparation.reason
-            : cancelled
-              ? "The review is still here. Retry when you’re ready."
-              : slabLine(preparation, branch, files)}
-        </p>
-        {preparation.status === "capturing" && <CaptureRail step={preparation.step} />}
-      </div>
+          <h1 className="font-display text-2xl font-medium leading-tight text-ink">
+            {session.title}
+          </h1>
+          <p className={cn("font-serif text-15", failed ? "text-danger" : "text-ink-soft")}>
+            {failed
+              ? preparation.reason
+              : cancelled
+                ? "The review is still here. Retry when you’re ready."
+                : slabLine(preparation, branch, files)}
+          </p>
+          {preparation.status === "capturing" && <CaptureRail step={preparation.step} />}
+        </div>
 
-      {/* THE READERS — five presences at work on the slab above. While capture runs the
+        {/* THE READERS — five presences at work on the slab above. While capture runs the
           daemon has not opened a lane yet, so they are not drawn: an empty bench is
           honest, five invented "queued" readers would not be. */}
-      {lanes !== undefined && lanes.length > 0 && (
-        // ONE ROW, always. The old `flex-wrap basis-36` orphaned the fifth reader onto
-        // a line of its own below ~750px — visible in the app, and it broke the scene:
-        // five readers under one slab became four under the slab and one adrift. An
-        // explicit template of exactly as many equal columns as the daemon opened
-        // lanes cannot wrap, and it stays honest when there are fewer than five.
-        <div
-          data-testid="bench-readers"
-          className="grid items-start gap-x-2 gap-y-6"
-          style={{ gridTemplateColumns: `repeat(${lanes.length}, minmax(0, 1fr))` }}
-        >
-          {lanes.map((lane) => (
-            <Reader
-              key={lane.id}
-              lane={lane}
-              {...(preparationReviewId === undefined ? {} : { reviewId: preparationReviewId })}
-            />
-          ))}
-        </div>
-      )}
+        {lanes !== undefined && lanes.length > 0 && (
+          // ONE ROW, always. The old `flex-wrap basis-36` orphaned the fifth reader onto
+          // a line of its own below ~750px — visible in the app, and it broke the scene:
+          // five readers under one slab became four under the slab and one adrift. An
+          // explicit template of exactly as many equal columns as the daemon opened
+          // lanes cannot wrap, and it stays honest when there are fewer than five.
+          <div
+            data-testid="bench-readers"
+            className="grid items-start gap-x-2 gap-y-6"
+            style={{ gridTemplateColumns: `repeat(${lanes.length}, minmax(0, 1fr))` }}
+          >
+            {lanes.map((lane) => (
+              <Reader
+                key={lane.id}
+                lane={lane}
+                {...(preparationReviewId === undefined ? {} : { reviewId: preparationReviewId })}
+              />
+            ))}
+          </div>
+        )}
 
-      {/* THE BOARDS THAT HAVE LANDED — each settled lens's board, readable now, in lane
+        {/* THE BOARDS THAT HAVE LANDED — each settled lens's board, readable now, in lane
           order. The reader above stays as the way back to that lens's transcript.
           A read that answered with something OTHER than a board — malformed, wrong
           generation, unreadable, failed — shows its account in the board's place, in the
           workspace's own words (`BoardAccount`). Rendering null there left the reader
           saying "drafted" over an empty bench with no reason (Codex review, 2026-09-03).
           `missing` and `pending` are the only silent ones: the draft is on disk a beat
-          before `board.read` is re-asked, and the poll above is already chasing them. */}
-      {settled.map((lane) => {
-        const read = boards[lane.id as LensKind];
-        if (read === undefined || read.status === "missing" || read.status === "pending")
-          return null;
-        return (
+          before `board.read` is re-asked, and the poll above is already chasing them.
+
+          The line above the stack says the stack is still being built — once, and only while
+          lenses are still working, because after they stop it would be a promise nothing is
+          keeping. A board here is a board that landed early, not the finished review, and a
+          reviewer who is not told that reads a half-built stack as the whole of it (#819). */}
+        {landed.length > 0 && active && (
+          <p
+            data-testid="bench-boards-landing"
+            className="text-center font-serif text-13 text-ink-faint"
+          >
+            Boards land here as each lens finishes. The review opens in full once every lens has
+            settled.
+          </p>
+        )}
+        {landed.map(({ lane, read }) => (
           <section
             key={lane.id}
             data-bench-board={lane.id}
@@ -619,27 +655,29 @@ export function PreparationBench({ session, preparation, review }: PreparationBe
               <BoardAccount resolution={read} />
             )}
           </section>
-        );
-      })}
+        ))}
 
-      <div className="flex justify-center gap-2">
-        {active ? (
-          <Button
-            variant="outline"
-            disabled={cancel.pending}
-            onClick={() => void cancel.mutate({ sessionId: session.id })}
-          >
-            Cancel
-          </Button>
-        ) : (
-          <Button
-            variant="accent"
-            disabled={retry.pending}
-            onClick={() => void retry.mutate({ sessionId: session.id, commandId: newCommandId() })}
-          >
-            Retry
-          </Button>
-        )}
+        <div className="flex justify-center gap-2">
+          {active ? (
+            <Button
+              variant="outline"
+              disabled={cancel.pending}
+              onClick={() => void cancel.mutate({ sessionId: session.id })}
+            >
+              Cancel
+            </Button>
+          ) : (
+            <Button
+              variant="accent"
+              disabled={retry.pending}
+              onClick={() =>
+                void retry.mutate({ sessionId: session.id, commandId: newCommandId() })
+              }
+            >
+              Retry
+            </Button>
+          )}
+        </div>
       </div>
     </section>
   );
