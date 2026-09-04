@@ -2200,12 +2200,11 @@ describe("round.dispatch mints onto the session the reads answer (the call site,
     expect(git("worktree", "list").split(/\r?\n/).filter(Boolean)).toHaveLength(1);
   }, 30_000);
 
-  // The falsifying fixture for "captured from the bound root". In every other round test the
-  // session's bound root IS `review.repositoryRoot`, so swapping one for the other in the
-  // capture leaves them all green — the two names hold the same value. Here the clone stays on
-  // `main` and the review's branch is checked out only in the worktree the session binds to
-  // (#805), so the two roots have DIFFERENT heads and only one of them is right.
-  it("captures the successor from the bound worktree when the clone is on another branch", async () => {
+  // The fixture where the bound root and `review.repositoryRoot` are DIFFERENT DIRECTORIES.
+  // Every other round test has them equal, so nothing in them can tell the two names apart.
+  // Here the clone stays on `main` and the review's branch is checked out only in the worktree
+  // the session binds to (#805), and the two have different heads for the whole run.
+  it("runs the round in the bound worktree while the clone sits on another branch", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "rennet-round-elsewhere-data-"));
     const repo = realpathSync(mkdtempSync(join(tmpdir(), "rennet-round-elsewhere-repo-")));
     dirs.push(dataDir, repo);
@@ -2298,8 +2297,14 @@ describe("round.dispatch mints onto the session the reads answer (the call site,
         const operationStore = new RoundOperationStore(join(dataDir, "round-operations"));
         const current = operationStore.read(sessionId);
         operationStore.close();
-        if (current?.state.phase === "failed") {
-          throw new Error(`round failed: ${current.state.failure.reason}`);
+        // The successor is activated INSIDE `draftReport`, before its report seat runs — and
+        // that seat cannot run with the harness disabled. So a failure at `report-drafting`
+        // is this fixture's normal end and says nothing about the capture; anything earlier
+        // is a real round failure and is reported rather than waited out.
+        if (current?.state.phase === "failed" && current.state.failure.at !== "report-drafting") {
+          throw new Error(
+            `round failed at ${current.state.failure.at}: ${current.state.failure.reason}`,
+          );
         }
         const loaded = (await server.dispatch("review.load", {
           commandId: randomUUID(),
@@ -2324,17 +2329,19 @@ describe("round.dispatch mints onto the session the reads answer (the call site,
     const successor = after.review.patchsets.find(
       (candidate) => candidate.id === after.review.activePatchsetId,
     );
-    // THE ASSERTION: the successor is the bound worktree's head, and the clone's head is a
-    // DIFFERENT commit, so the two roots can be told apart here — which is the thing no other
-    // round fixture can do.
+    // The successor advances to the commit the round made in the bound worktree, which is not
+    // the clone's head.
     expect(successor?.repository.headOid).toBe(boundHead);
     expect(successor?.repository.headOid).not.toBe(cloneHead);
-    // Control run, and what it actually showed: pointing `draftReport`'s capture at
-    // `operation.repoRoot` instead of `operation.state.workspace.root` reddens this — but by
-    // never activating a successor at all, so the round runs on to its report seat and the
-    // waitFor above reports THAT failure. It is a real reddening and not a tautology; it is
-    // not evidence about which head a wrong-rooted capture would have recorded, because the
-    // worktree shares this repository's objects and refs and only its working tree differs.
+
+    // WHAT THIS CANNOT CATCH, established by running the control rather than reasoning about
+    // it: pointing `draftReport`'s capture at `operation.repoRoot` instead of
+    // `operation.state.workspace.root` leaves every assertion above GREEN. A linked worktree
+    // shares the repository's objects and refs, and `captureLandedBranchPatchset` is handed
+    // the head OID explicitly, so a branch capture answers identically from either directory.
+    // The capture's ROOT is therefore not falsifiable by any fixture of this shape; what is
+    // falsifiable, and what this test does own, is where the TURN ran — pointing
+    // `candidateRoots` at the clone reddens it, because the clone is not on the branch.
   }, 40_000);
 
   it("restarts a completed no-code dispatch and runs a distinct queued second ask", async () => {
