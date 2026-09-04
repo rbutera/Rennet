@@ -131,6 +131,45 @@ describe("rennet CLI ↔ real daemon lifecycle (#379)", () => {
     expect(gone.stdout).toContain("not running");
     expect(readDaemonFile(dataDir)).toBeNull();
   }, 30_000);
+
+  it("POST /shutdown: the whole ack arrives, and THEN the daemon exits (#820)", async () => {
+    // Executed against a real daemon process, because the sentence being checked is about a
+    // process ending: a shutdown that tore the socket down before flushing would be
+    // indistinguishable from a crash, and only a real exit can show the difference. The
+    // ordering is the assertion — the parsed body first, the child's `exit` after.
+    dataDir = mkdtempSync(resolve(tmpdir(), "rennet-shutdown-"));
+    const child = spawn("node", [bundle, "serve", "--data-dir", dataDir], { stdio: "ignore" });
+    serveChild = child;
+    const claim = await poll(() => readDaemonFile(dataDir));
+
+    const order: string[] = [];
+    const exited = new Promise<void>((resolvePromise) => {
+      child.once("exit", () => {
+        order.push("exit");
+        resolvePromise();
+      });
+    });
+
+    const response = await fetch(`http://127.0.0.1:${claim.wsPort}/shutdown`, { method: "POST" });
+    expect(response.status).toBe(200);
+    // `.json()` reads the body to completion: a truncated ack throws here rather than passing.
+    const ack = await response.json();
+    order.push("ack");
+    expect(ack).toEqual({
+      pid: claim.pid,
+      wsPort: claim.wsPort,
+      version: claim.version,
+      protocolVersion: claim.protocolVersion,
+      claimPath: resolve(dataDir, "daemon.json"),
+      shuttingDown: true,
+    });
+
+    await exited;
+    expect(order).toEqual(["ack", "exit"]);
+    // The same stop SIGTERM runs: the claim goes with the process.
+    expect(child.exitCode).toBe(0);
+    expect(readDaemonFile(dataDir)).toBeNull();
+  }, 30_000);
 });
 
 describe("rennet CLI argument and daemon-identity handling", () => {
