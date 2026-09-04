@@ -94,10 +94,10 @@ describe("theme packs are complete re-bindings", () => {
     ]);
   });
 
-  // The set is real (47 semantic roles), so the equality checks below cannot pass
+  // The set is real (52 semantic roles), so the equality checks below cannot pass
   // vacuously, and the roles the design contract names all survive the mapping.
   it("the reference token set carries every semantic role", () => {
-    expect(referenceTokens.length).toBe(47);
+    expect(referenceTokens.length).toBe(52);
     for (const role of [
       "accent",
       "green",
@@ -110,6 +110,13 @@ describe("theme packs are complete re-bindings", () => {
       "canvas",
       "surface",
       "raised",
+      // The lens register: five portable identity slots. Named here so a pack that
+      // drops one is caught by role, not only by the arithmetic above.
+      "lensRed",
+      "lensYellow",
+      "lensBlue",
+      "lensGreen",
+      "lensNeutral",
     ]) {
       expect(referenceTokens, `role ${role} present`).toContain(role);
     }

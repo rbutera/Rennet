@@ -67,6 +67,20 @@
   --color-model: var(--rn-model);
   --color-model-soft: var(--rn-model-soft);
   --color-model-line: var(--rn-model-line);
+  /* the lens register — five portable hue slots, one per lens. A surface that shows
+   * several lenses at once sets `--rn-lens` on each lens's own subtree (from the
+   * app's slot mapping) and everything inside it reads `lens` / `lens-soft` /
+   * `lens-line` without knowing which lens it is in. `@theme inline` is what makes
+   * that work: the utilities emit `var(--rn-lens)` at the call site rather than
+   * baking a value, so the nearest ancestor's binding wins. The fallback is
+   * ink-soft, so an unbound subtree is quiet rather than invisible.
+   *
+   * `soft` and `line` are DERIVED, not palette entries — the documented `color-mix`
+   * exception (see --color-secondary-hover). A pack rebinds the five hues and
+   * inherits both, so the register cannot go half-themed. */
+  --color-lens: var(--rn-lens, var(--rn-ink-soft));
+  --color-lens-soft: color-mix(in oklch, var(--rn-lens, var(--rn-ink-soft)), transparent 88%);
+  --color-lens-line: color-mix(in oklch, var(--rn-lens, var(--rn-ink-soft)), transparent 62%);
   /* the update control's fill (INVENTORY §1: accent-filled). Tokenised here so the
    * sidebar's Update control reads `bg-update`/`text-update-ink` from the theme
    * instead of inlining the accent, keeping the hex fence the proof. */

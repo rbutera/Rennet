@@ -150,15 +150,27 @@ captured. Capture is the bench's first beat rather than a page in front of it:
 two named steps, *resolving the repository* then *capturing the change*, with
 cancel beside them.
 
-Five readers stand under it, one per lens. Each has its own mark, a lantern that
-is lit only while that seat is actually working, and a line of what it is doing
-right now, read straight off that seat's own thread — the file it is reading,
-the command it is running, or the last thing it said. A seat that has gone quiet
-says so instead of freezing on its last line. A settled reader turns green and
-its board opens on the bench right beneath the readers, readable at once while
-the other seats keep working — you do not wait for the slowest lens to read the
-fastest one's board. A failed reader turns red and speaks the reason it failed,
-rather than spinning forever.
+Five readers stand under it, one per lens, in one row. Each holds the core
+sample it drew out of the change: a small plug on a shaft rising into the slab
+above it, in that lens's own colour — Flagged red, Decisions yellow, Design
+blue, Sequence green, Noise neutral. The colour tells you *which* reader, and it
+is the same colour that lens carries on the rail once the boards arrive, so the
+two surfaces agree.
+
+How the reader is doing is the way its sample is cut, not what colour it is. An
+empty tube is queued. Dashed layers, with a lamp travelling down the plug, mean
+the seat is reading right now. Solid layers mean it is cut clean and finished; a
+doubled seam across the middle means that lens came back with something changed.
+A snapped plug — in its own colour, never red — means the seat failed. A dashed
+outline means the lens had nothing to say.
+
+Under each sample is a line of what that seat is doing right now, read straight
+off its own thread: the file it is reading, the command it is running, or the
+last thing it said. A seat that has gone quiet says so instead of freezing on
+its last line. A settled reader's board opens on the bench right beneath the
+readers, readable at once while the other seats keep working — you do not wait
+for the slowest lens to read the fastest one's board. A failed reader speaks the
+reason it failed, rather than spinning forever.
 
 Every reader's line is also a control: activating it opens that seat's full
 transcript in the chat slot, read-only, and it keeps streaming while the seat
@@ -230,7 +242,11 @@ identity rather than its display name.
 ## Read the boards
 
 Each lens is its own board. The session top bar centres the lens rail and keeps
-the boards in the order shown below. The session URL owns the selection:
+the boards in the order shown below. Every tab carries a coloured stop along its
+foot — the same colour that lens had on the bench, at full strength on the tab
+you are reading and dimmed on the rest. The stop says which lens; which one is
+selected is still said by the raised fill and the ink, so the rail reads the
+same with colour ignored. The session URL owns the selection:
 Flagged is the address-free default and another lens uses `?lens=`. A completed
 frozen generation without Flagged falls back to its first available board and
 replaces the URL with that honest address. A live generation keeps the requested
