@@ -164,7 +164,6 @@ function StatefulProjects({
           <ProjectsPage />
           <div data-testid="probe-name">{names.p1 ?? ""}</div>
           <div data-testid="probe-glyph">{glyphs.p1 ?? ""}</div>
-          <div data-testid="probe-pattern">{worktrees.p1?.pattern.value ?? ""}</div>
           {/* Value AND rung: the surface renders no provenance badge any more, so the
               ladder move (detected → global) is proven here, at the projection. */}
           <div data-testid="probe-tracker">
@@ -269,22 +268,28 @@ describe("ProjectsPage — dual-source settings", () => {
     cleanup();
   });
 
-  it("worktree: a token insert appends to the pattern and the preview flattens slashes", async () => {
-    // Seed the starting pattern (the field text carries braces userEvent would parse as keys).
-    const seed: Partial<SettingsProjection> = {
-      worktreeByProject: {
-        p1: {
-          root: { value: "~/wt", layer: "global" },
-          pattern: { value: "{project}-", layer: "global" },
-        },
-      },
-    };
-    const { findByText, getByText, getByTestId, user } = mount(<StatefulProjects seed={seed} />);
-    await user.click(await findByText("{branch}"));
-    expect(getByTestId("probe-pattern").textContent).toBe("{project}-{branch}");
-    // {project} resolves to the name; {branch} sample is `fix/session-scope` — the preview
-    // flattens the slash to a dash, so a real worktree folder name never nests a directory.
-    expect(getByText("~/wt/checkout-fix-session-scope")).toBeTruthy();
+  // #812 — the card used to offer a location and a `{project}-{branch}` pattern with a
+  // live preview, and neither reached the code that places a worktree. It states the
+  // binding now. LOAD-BEARING: putting either editor back reddens the last two
+  // assertions, and restoring the `{project}-{branch}` preview reddens the third.
+  //
+  // POSITIVE CONTROL RUN, 2026-09-04: `worktrees.tsx` reverted to the editor version →
+  // this test failed on `queryByLabelText("Worktree location")` (found an input) and on
+  // the shape query (no `~/.rennet/worktrees/<repo>/<branch>` node). Restored, green.
+  it("worktrees: the card states where a session actually binds, and offers no pattern", async () => {
+    const { findByText, getByText, queryByLabelText, queryByText } = mount(<StatefulProjects />);
+
+    // The two cases the binding really has, in the daemon's own shape.
+    await findByText("A branch you already have out");
+    expect(getByText("your own checkout")).toBeTruthy();
+    expect(getByText("~/.rennet/worktrees/<repo>/<branch>")).toBeTruthy();
+    // A round is a turn in that workspace — it creates nothing (session-bound-workspace).
+    expect(getByText("the session's workspace")).toBeTruthy();
+
+    // …and nothing here pretends to configure it.
+    expect(queryByLabelText("Worktree location")).toBeNull();
+    expect(queryByLabelText("Worktree naming pattern")).toBeNull();
+    expect(queryByText("{branch}")).toBeNull();
     cleanup();
   });
 
@@ -497,16 +502,14 @@ describe("ProjectsPage — stable route identity", () => {
 
 describe("ProjectsPage — live projection is honest about the unserved write store", () => {
   it("disables every unbacked editor and discloses the gap (no silent no-op controls)", async () => {
-    const { findByLabelText, getByLabelText, getByRole } = mountLiveProjects();
+    const { findByLabelText, getByRole } = mountLiveProjects();
 
     // Identity: the name field is LIVE — `project.rename` is served (C18), so it is the one
     // project editor that is not disabled here.
     expect((await findByLabelText("Project name")).hasAttribute("disabled")).toBe(false);
     // Identity: the glyph choices are locked (the group disables its members).
     expect(getByRole("button", { name: "rocket" }).hasAttribute("disabled")).toBe(true);
-    // Worktrees: both fields disabled.
-    expect(getByLabelText("Worktree location").hasAttribute("disabled")).toBe(true);
-    expect(getByLabelText("Worktree naming pattern").hasAttribute("disabled")).toBe(true);
+    // Worktrees carries no editor at all any more (#812) — it states the binding.
     // Issue tracker: the segmented picker is locked.
     expect(getByRole("button", { name: "jira" }).hasAttribute("disabled")).toBe(true);
     // Guidance: Add Rule is locked, so no editor can open to discard a rule.
@@ -516,9 +519,8 @@ describe("ProjectsPage — live projection is honest about the unserved write st
     const notes = [...document.querySelectorAll('[data-slot="unbacked-note"]')].map(
       (n) => n.textContent ?? "",
     );
-    expect(notes.length).toBe(4);
+    expect(notes.length).toBe(3);
     expect(notes.some((t) => /Glyphs aren/.test(t))).toBe(true);
-    expect(notes.some((t) => /Worktree location and naming/.test(t))).toBe(true);
     expect(notes.some((t) => /Issue-tracker config/.test(t))).toBe(true);
     expect(notes.some((t) => /Guidance rules/.test(t))).toBe(true);
     cleanup();
@@ -540,7 +542,10 @@ describe("ProjectsPage — live projection is honest about the unserved write st
 // case above is the other half of the pair — one daemon serves the rung, one does not,
 // and the surface tells the truth about which.
 const P1_PREFS: NonNullable<SettingsProject["prefs"]> = {
-  glyph: { value: "", layer: "builtin" },
+  // A SERVED value on the repo rung, so "renders the resolved prefs" has something that
+  // is not the client default to prove. (It used to be `worktreePattern`; that editor is
+  // gone — nothing placed a worktree from it — so the glyph carries the proof now, #812.)
+  glyph: { value: "rocket", layer: "repo" },
   worktreeRoot: { value: "", layer: "builtin" },
   worktreePattern: { value: "{project}-{branch}", layer: "repo" },
   tracker: {
@@ -622,29 +627,27 @@ function mountServedPrefsWith(prefs: NonNullable<SettingsProject["prefs"]>): {
 describe("ProjectsPage — the served per-project rung (C18 group A)", () => {
   it("renders the RESOLVED prefs and enables their editors", async () => {
     const { view } = mountServedPrefs();
-    const pattern = (await view.findByLabelText("Worktree naming pattern")) as HTMLInputElement;
-    // The served repo-rung value, not the client default.
-    expect(pattern.value).toBe("{project}-{branch}");
-    expect(pattern.hasAttribute("disabled")).toBe(false);
-    // An UNSET location resolves empty, so the client's own default shows.
-    expect(((await view.findByLabelText("Worktree location")) as HTMLInputElement).value).toBe(
-      "~/.rennet/worktrees",
+    const rocket = await view.findByRole("button", { name: "rocket" });
+    // The served repo-rung glyph is the one lit — not `layers`, the client default.
+    expect(rocket.getAttribute("aria-pressed")).toBe("true");
+    expect(rocket.hasAttribute("disabled")).toBe(false);
+    expect((await view.findByRole("button", { name: "layers" })).getAttribute("aria-pressed")).toBe(
+      "false",
     );
     // No gap notes: every editor on this page is backed now.
     expect(document.querySelectorAll('[data-slot="unbacked-note"]').length).toBe(0);
     cleanup();
   });
 
-  it("a worktree-pattern edit writes the repo rung for THIS project's repoPath", async () => {
+  it("a glyph choice writes the repo rung for THIS project's repoPath", async () => {
     const { writes, view } = mountServedPrefs();
-    const pattern = await view.findByLabelText("Worktree naming pattern");
-    fireEvent.change(pattern, { target: { value: "{branch}" } });
+    fireEvent.click(await view.findByRole("button", { name: "flask" }));
     await waitFor(() => expect(writes.length).toBe(1));
     expect(writes[0]).toEqual({
       projectId: "p1",
       repoPath: P1_ROW.repoPath,
-      key: "worktreePattern",
-      value: "{branch}",
+      key: "glyph",
+      value: "flask",
     });
     cleanup();
   });
@@ -698,7 +701,7 @@ describe("ProjectsPage — the served per-project rung (C18 group A)", () => {
       },
       { platform: "darwin", version: "1.0.1" },
     );
-    const { findByLabelText } = mount(
+    const { findByRole } = mount(
       <BridgeProvider bridge={served}>
         <Router hook={history.hook} searchHook={history.searchHook}>
           <LiveSettingsProjectionProvider>
@@ -707,12 +710,12 @@ describe("ProjectsPage — the served per-project rung (C18 group A)", () => {
         </Router>
       </BridgeProvider>,
     );
-    expect((await findByLabelText("Worktree naming pattern")).hasAttribute("disabled")).toBe(true);
+    expect((await findByRole("button", { name: "rocket" })).hasAttribute("disabled")).toBe(true);
     cleanup();
 
     // …and the SAME served view leaves p1 — the project that has a row — editable.
     const { view } = mountServedPrefs();
-    expect((await view.findByLabelText("Worktree naming pattern")).hasAttribute("disabled")).toBe(
+    expect((await view.findByRole("button", { name: "rocket" })).hasAttribute("disabled")).toBe(
       false,
     );
     cleanup();

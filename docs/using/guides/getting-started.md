@@ -89,7 +89,8 @@ detected and how many it guessed. The structural map is built when the scout
 returns. The header status reads *scouting*, then *indexing*, then *indexed*.
 
 While the map builds, a prefilled questionnaire offers the project's setup for
-a look: issue tracker, default branch, worktree location, gate command, and the
+a look: issue tracker, default branch, the repository's own worktree convention,
+gate command, and the
 project's mark. Every answer carries a chip reading **detected** or **guessed** —
 the value, provenance, and evidence line come from the scout record Rennet just
 saved, rather than from canned UI defaults. A detected logo path remains cosmetic:
@@ -540,12 +541,16 @@ pages:
   history of recorded runs, each broken down by stage and grouped by the harness
   mode its stages actually name. The list is paged and states how many runs it is
   showing out of how many were recorded. Nothing here leaves your machine.
-- **Projects** — scoped to one project: its name and mark, worktree location
-  and naming pattern, review context, issue tracker, and the guidance rules the
-  review agents read. The name is live — renaming here renames the sidebar row,
-  and emptying it restores the project's `org/repo` identity. The mark, worktree,
-  issue-tracker and guidance editors have no store behind them yet; they render
-  disabled and say so, rather than accepting edits that would vanish.
+- **Projects** — scoped to one project: its name and mark, review context, issue
+  tracker, and the guidance rules the review agents read. The name is live —
+  renaming here renames the sidebar row, and emptying it restores the project's
+  `org/repo` identity. **Worktrees** is a statement, not a setting: it names where a
+  review binds — your own checkout when it already has the reviewed branch out, a
+  Rennet worktree at `~/.rennet/worktrees/<repo>/<branch>` when nothing does, a
+  detached checkout at `~/.rennet/worktrees/<owner>/<repo>/pr-<number>` for a pull
+  request — and states that a coding round is a turn in that workspace rather than a
+  worktree of its own. Editors the daemon has no store for render disabled and say
+  so, rather than accepting edits that would vanish.
 
 Every layered value shows a chip naming where it resolved from — builtin,
 detected, global, or repo — and every section states the file behind it.

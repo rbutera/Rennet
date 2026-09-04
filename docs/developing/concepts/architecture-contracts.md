@@ -182,8 +182,8 @@ is not invertible. A workspace that cannot be created fails the bind rather than
 binding the session to the clone, which sits on another branch. Nothing re-decides a binding;
 a pull-request binding is re-pinned in place when the reviewed head moves. Worktrees earlier
 versions created per review are removed by a startup sweep that leaves any directory a live
-session is bound to, and nothing creates that layout again. The coding round still runs its
-own detached worktree per operation; moving it onto the bound workspace is a separate change.
+session is bound to, and nothing creates that layout again. The coding round runs in the
+bound workspace like every other child (see below); nothing creates a worktree per round.
 
 Coding-agent handoff is an acting path. The agent receives a digest-bound bundle,
 works in the repository, and may write, test, commit, and push. Rennet then

@@ -4249,6 +4249,70 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     expect(pipelineSettled).toBe(true);
   });
 
+  // #813 — the Design seat exhausted both attempts 33 s into the generation and the bench
+  // went on saying "quiet for 320 s" until the reveal, because a failure was only visible
+  // in `boards`, which the caller reads after the SLOWEST lane finishes. The proof that
+  // matters is the TIMING, so the four sibling lanes are held on a gate the assertion runs
+  // in front of: if the publication moved back behind the pipeline's own settlement, this
+  // deadlocks on `designSettled` rather than failing an equality.
+  //
+  // POSITIVE CONTROL RUN, 2026-09-04: the `onLensFailure` publish deleted from
+  // `lens-pipeline.ts` → this test failed by timing out on `await designSettled` (5s), the
+  // gate never released. Restored, green.
+  it("publishes a lens failure the moment its attempts are exhausted, not after the last sibling", async () => {
+    const applied: Applied[] = [];
+    const failures: { lens: LensKind; failure: string }[] = [];
+    let releaseSiblings = (): void => undefined;
+    let announceDesignFailed = (): void => undefined;
+    const siblingGate = new Promise<void>((resolve) => {
+      releaseSiblings = resolve;
+    });
+    const designSettled = new Promise<void>((resolve) => {
+      announceDesignFailed = resolve;
+    });
+
+    const seat = async (prompt: string, label: string): Promise<unknown> => {
+      const lens = lensFromPrompt(prompt, label);
+      if (lens === "post-process") {
+        const context = /rennet:layer context>>>\n(\{.*)/s.exec(prompt);
+        return context ? (JSON.parse(context[1] as string).board as unknown) : { elements: [] };
+      }
+      // The drive's own failure: the seat turn settles with no structured output, on every
+      // attempt, so the lane exhausts its ladder and settles failed.
+      if (lens === "design") return undefined;
+      await siblingGate;
+      return cleanBody(lens);
+    };
+
+    const pipeline = runLensPipeline({
+      ...boardSeats([], seat, ["codex"]),
+      repoRoot: "/repo",
+      deltaPacket: PACKET,
+      lintContextFor,
+      readPrompt,
+      whiteboard: fakeWhiteboard(applied),
+      boardIdFor: (lens) => `board:${lens}`,
+      onLensFailure: (lens, failure) => {
+        failures.push({ lens, failure });
+        announceDesignFailed();
+      },
+    });
+
+    // Published while every other lane is still blocked — the whole point.
+    await designSettled;
+    expect(failures.map((entry) => entry.lens)).toEqual(["design"]);
+    expect(failures[0]?.failure).toMatch(/did not emit a board/);
+
+    releaseSiblings();
+    const result = await pipeline;
+    // One settlement, not two: the reason the caller records at the end is the SAME string
+    // the lane already showed, so the bench never contradicts the durable record.
+    expect(result.boards.find((board) => board.lens === "design")?.failure).toBe(
+      failures[0]?.failure,
+    );
+    expect(failures).toHaveLength(1);
+  });
+
   it("fails an empty round report after its first draft without starting lens work", async () => {
     let reportTurns = 0;
     let lensTurns = 0;

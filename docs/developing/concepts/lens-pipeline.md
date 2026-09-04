@@ -273,11 +273,15 @@ and calls board regeneration through this runtime.
    machinery screen) — visible, never blocking.
 
 Each successful board persists its metadata as soon as its lane settles, so live
-progress follows completion order. Both successful typed absences and
-**per-board arrival events** are published in that same settlement order through
-one serialized callback, which keeps cumulative generation snapshots monotonic.
-A lane's arrival is emitted the moment its board is written — no global barrier
-over the five lanes. The returned
+progress follows completion order. Successful typed absences, **per-board arrival
+events**, and **lens failures** are all published in that same settlement order
+through one serialized callback, which keeps cumulative generation snapshots
+monotonic. A lane's arrival is emitted the moment its board is written — no global
+barrier over the five lanes — and a lane whose attempts are exhausted is emitted the
+moment they are, for the same reason: a failure only visible in the returned outcomes
+is a failure the surface cannot show until the slowest sibling finishes, which is how
+a seat that died at 33 s went on reading "quiet for 320 s" until the reveal. The
+returned
 outcomes still use the canonical Design, Sequence, Decisions, Flagged, Noise
 order regardless of which drafter finished first, because that array is
 completion bookkeeping rather than the reveal. The rounds machinery consumes the

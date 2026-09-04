@@ -1351,6 +1351,27 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
       if (inadmissible !== undefined) lanes?.failed(lens, inadmissible);
       else lanes?.absent(lens, lensAbsenceMessage(reason));
     };
+    /**
+     * A lens whose attempts are EXHAUSTED, settled the moment it happens (#813).
+     *
+     * The post-pipeline sweep below already recorded these — but it runs after the last
+     * lane finishes, so a seat that died in the first half-minute left its lane `running`,
+     * publishing "quiet for N s" off a thread that had already stopped, right up to the
+     * reveal. "Quiet" is the word the bench uses for a seat that is thinking, so a
+     * reviewer had no way to tell a live lane from a dead one and waited out the whole
+     * generation for neither. Durable first, screen second, and both behind the same
+     * superseded-attempt gate every other settlement uses.
+     */
+    const onLensFailure = async (
+      lens: LensKind,
+      failure: string,
+      account?: LensFailureAccount,
+    ): Promise<void> => {
+      reveal.failedLenses[lens] = failure;
+      if (account !== undefined) reveal.failedLensAccounts[lens] = account;
+      if (!(await persistReveal())) return;
+      lanes?.failed(lens, failure);
+    };
 
     // The seam the pipeline sees: the sidecar's own `client`/`threadFor`, plus the lane
     // wiring. A seat's thread reference reaches its lane the moment the thread exists,
@@ -1443,6 +1464,7 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
       boardAttempt: start === "partial" ? 1 : 0,
       ...(onReportDiagnostic === undefined ? {} : { onReportDiagnostic }),
       onLensAbsence,
+      onLensFailure,
       ...(lanes === undefined ? {} : { onLensDraftingStart: () => lanes.start() }),
       ...(persistBoardMeta === undefined && lanes === undefined
         ? {}
@@ -1541,12 +1563,15 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
       seatWatches.length = 0;
       seatWatchesByLens.clear();
     }
-    // A drafter that produced no board settles its lane as failed. Without this the lane
-    // sits at `queued`/`running` after the round is over — the surface reads "still
-    // working" forever, which is the same stall a silent crash leaves behind.
+    // The BACKSTOP for a drafter that produced no board. `onLensFailure` above already
+    // settled every lane the pipeline published a failure for, at the moment it failed
+    // (#813); this catches a lane the pipeline returned as failed without publishing —
+    // and it is what kept a lane out of a permanent `queued`/`running` before that
+    // callback existed. A lane that already settled is skipped rather than re-emitted.
     for (const outcome of pipeline.boards) {
       if (outcome.boardId !== undefined || outcome.lens === "report") continue;
       if (outcome.absence !== undefined) continue;
+      if (lanes?.statusOf(outcome.lens) === "failed") continue;
       lanes?.failed(outcome.lens, outcome.failure ?? "the drafter produced no board");
     }
     // One last write so the timings recorded after the final settlement (reveal, the

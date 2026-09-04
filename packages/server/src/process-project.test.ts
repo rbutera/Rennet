@@ -79,7 +79,7 @@ const QUESTIONNAIRE: ProjectScoutQuestionnaire = {
       value: "~/.rennet/worktrees",
       provenance: "guessed",
       source: "Rennet default",
-      hint: "coding rounds create worktrees here",
+      hint: "where this repository's own worktrees live",
     },
     {
       key: "gateCommand",

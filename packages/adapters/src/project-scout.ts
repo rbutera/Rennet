@@ -374,7 +374,10 @@ const SCOUT_FALLBACKS: Record<
 > = {
   trackerKind: { value: "none", source: "no issue-tracker marker found" },
   defaultBranch: { value: "main", source: "no default-branch evidence found" },
-  worktreeBaseDir: { value: "~/.rennet/worktrees", source: "no worktree convention found" },
+  // EMPTY, not `~/.rennet/worktrees` (#812). This fact is the repository's own worktree
+  // convention, read off `git worktree list`; naming Rennet's own directory as the guess
+  // said the round works there, which it does not — it runs in the session's workspace.
+  worktreeBaseDir: { value: "", source: "no worktree convention found" },
   gateCommand: { value: "", source: "no repository gate command found" },
   logoPath: { value: "", source: "no repository logo found" },
 };

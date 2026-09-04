@@ -95,9 +95,9 @@ chat and handoff threads are created from binds, and so does the lease every rev
 turn takes. None of them answers the clone while the field is empty, because a thread's cwd
 is fixed when it is created.
 
-The coding round is the one child still outside this: it runs its own detached worktree per
-operation and lands the result onto the branch. Moving it onto the bound workspace is a
-separate change.
+The coding round is a child like the rest: it runs as one turn in the bound workspace and
+commits there, on the session's branch. Rennet creates no worktree per round and replays no
+delta afterwards.
 
 The workspace is where the session's `.rennet/context/<sessionId>/` directory lives, which
 is what makes the relative paths in every prompt resolve: a turn's cwd and the root its

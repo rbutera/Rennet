@@ -167,6 +167,62 @@ describe("the bench — five readers at work on the change", () => {
     expect(reader?.getAttribute("data-status")).toBe("failed");
   });
 
+  // #813 — the Design seat failed both attempts at 33 s and the bench went on saying
+  // "quiet for 320 s" for five more minutes. The daemon half of that is fixed where the
+  // failure settles (`onLensFailure`, so the lane leaves `running` at 33 s rather than
+  // when the slowest sibling finishes). This is the CLIENT half: a settled lane must not
+  // speak a live line at all, even when the frame still carries one — "quiet" is the same
+  // word the bench uses for a seat that is thinking, so a dead lane wearing it is the lie.
+  //
+  // POSITIVE CONTROLS RUN, 2026-09-04, and the FIRST one is why this comment is long:
+  //
+  //   1. deleting `lane.status === "running" &&` from both arms of `voicesOf` alone →
+  //      STILL GREEN. `speechOf` switches on the lane's status, so dropping that guard
+  //      changes nothing on its own. The two guards are one mechanism, not two.
+  //   2. that mutation PLUS `speechOf`'s settled arm preferring `latest` when it has one
+  //      (the shape a bench that simply printed the newest line would have) → failed on
+  //      the speech assertion, reading "quiet for 320 s" with `data-speech="quiet"`.
+  //
+  // Both reverted; the file is back to origin/main plus nothing. So what this test pins is
+  // the PAIR, and a reader changing either half alone should not read control 1 as
+  // permission — it means the other half is still holding.
+  it("a failed lane reads failed and never quiet, even when its frame still carries a live line", async () => {
+    const stale = { kind: "idle", text: "quiet for 320 s", at: 1 } as const;
+    const { bridge } = benchBridge({
+      status: "drafting",
+      reviewId: "rev-1",
+      lanes: [
+        // The exact shape the daemon left on screen: settled failed, with the last line
+        // its (already stopped) thread had published still attached.
+        {
+          id: "design",
+          label: "Design",
+          status: "failed",
+          reason: "the seat turn settled without structured output",
+          thread: THREAD,
+          latest: stale,
+          seats: [{ seat: "design", provider: "claudeAgent", thread: THREAD, latest: stale }],
+        },
+      ] as unknown as LensLane[],
+    });
+    open(bridge);
+
+    await waitFor(() =>
+      expect(speechOf("design")).toBe("the seat turn settled without structured output"),
+    );
+    const reader = document.querySelector('[data-row="design"]');
+    expect(reader?.getAttribute("data-status")).toBe("failed");
+    expect(reader?.getAttribute("data-register")).toBe("failed");
+    // The failed voice is not the quiet voice: a reason is a result, not a lull.
+    expect(
+      document.querySelector('[data-row="design"] [data-speech]')?.getAttribute("data-speech"),
+    ).toBe("live");
+    // …and the stale count reaches no part of the screen. (This one passes vacuously if
+    // the assertions above already hold — it is here to catch a second surface printing
+    // the line the reader dropped, which nothing above would see.)
+    expect(document.body.textContent).not.toContain("quiet for");
+  });
+
   it("an absent Design reader says no spec was found for this branch", async () => {
     // session-bound-workspace D6 — the Design seat looks for the specification itself
     // and finds none, so the lane settles ABSENT with the daemon's own reason. The bench

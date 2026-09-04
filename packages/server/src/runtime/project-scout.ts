@@ -59,7 +59,11 @@ export interface ProjectScoutRuntime {
 const ANSWER_HINT: Record<ProjectScoutAnswer["key"], string> = {
   trackerKind: "referenced tickets feed review context",
   defaultBranch: "the structural map reads this branch",
-  worktreeBaseDir: "coding rounds create worktrees here",
+  // NOT where Rennet works: a session binds to the checkout that already has its branch
+  // out, or to a worktree Rennet makes under `~/.rennet/worktrees`, and a coding round is
+  // a turn in that workspace (#812). This fact is the repo's OWN convention, read off
+  // `git worktree list`.
+  worktreeBaseDir: "where this repository's own worktrees live",
   gateCommand: "coding rounds run this before handoff",
   logoPath:
     "cosmetic repository evidence only; choose the sidebar mark in Settings → Projects → Identity",
