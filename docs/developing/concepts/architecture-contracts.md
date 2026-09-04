@@ -182,8 +182,8 @@ is not invertible. A workspace that cannot be created fails the bind rather than
 binding the session to the clone, which sits on another branch. Nothing re-decides a binding;
 a pull-request binding is re-pinned in place when the reviewed head moves. Worktrees earlier
 versions created per review are removed by a startup sweep that leaves any directory a live
-session is bound to, and nothing creates that layout again. The coding round still runs its
-own detached worktree per operation; moving it onto the bound workspace is a separate change.
+session is bound to, and nothing creates that layout again. The coding round runs in the
+bound workspace like every other child of the session; no per-round worktree is created.
 A round runs on a sidecar thread of its **own**, keyed on the session and the round's durable
 operation, created with that bound workspace — never on the session's chat thread, which is
 the reviewer's conversation.

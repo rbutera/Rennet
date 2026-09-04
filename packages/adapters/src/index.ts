@@ -46,6 +46,7 @@ export {
   type LoadClaudeQuery,
   type LoadClaudeTooling,
   mapCouncilModel,
+  normalizeOutputSchema,
   toSdkOptions,
 } from "./claude-query";
 export { type CleanupWorktreeDeps, cleanupWorktree } from "./cleanup-worktree";
