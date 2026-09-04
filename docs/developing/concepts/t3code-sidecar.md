@@ -458,8 +458,8 @@ on every read, because it is a detached checkout and a landed round advances the
 The session's children run there because the thread's `worktreePath` and the turn's `cwd` are
 both that root: the six lens seats, the chat thread, the handoff thread and every cold utility
 turn (scout, repo map, delta digest, opener, pull-request body, refine, CI classification,
-finding verification). The coding round is Lane B's remaining work and still runs its own
-detached worktree per operation until [task 5.3](https://github.com/rbutera/rennet) lands.
+finding verification). The coding round runs there too: it is a turn on the session's bound
+thread, and its worker commits on the session's branch in that root.
 
 On WSL the bound root reaches the child as `wsl.exe --cd <distro path>`: the adapter bakes that
 argument at construction and `transportCwd` wins over a session's `cwd`, so a harness is
@@ -480,9 +480,9 @@ checkout.
 Worktrees earlier versions created per round operation (`~/.rennet/round-worktrees/`) and per
 review (`~/.rennet/worktrees/review/`) are removed by a sweep at daemon start, which leaves any
 directory a live session is bound to (compared through `realpath`, and re-read before every
-removal) and logs how many it removed. Nothing creates a `worktrees/review/` directory any
-more; the round worktrees come back until Lane B's task 5.4 deletes the planner that makes
-them.
+removal) and logs how many it removed. Nothing creates either directory any more: two full
+drives of the packaged v0.7.0 app, one of them running a coding round, produced neither at any
+point (the drive below watched for both every two seconds and never saw one).
 
 ## The handoff exit
 
@@ -553,6 +553,162 @@ not available on the host these runs used; the comparison here is between the tw
 sidecar builds. On the same branch the ephemeral legs ran on 2026-09-03 the core lenses
 were still drafting past eight minutes, so the thread-backed seats are not slower, and
 their repairs no longer re-send the base prompt.
+
+## Measured: the same six seats after the payloads left
+
+Group 6 of `session-bound-workspace`, driven on 2026-09-04 against the signed **v0.7.0**
+release build with an isolated data directory, two reviews in one sitting on a clone of
+Rennet itself. Both Claude seats ran on Opus 4.8 at high effort, both Codex seats on GPT-5.6.
+
+- **`drive/group5`** — the whole group 5 wave against a `main` reset to `cff9b9f1c`.
+  95 files, +6,320 −10,219. Its checkout holds `openspec/changes/session-bound-workspace/`
+  and its commit messages name it, so the Design seat had a specification to find.
+- **`drive/no-spec`** — one unrelated documentation commit off the same `main`. 1 file.
+
+| Seat | Prompt (bytes) | Draft, 95 files | Repair, 95 files | Draft, 1 file | Repair, 1 file |
+| --- | --- | --- | --- | --- | --- |
+| Design (Opus, high) | 12,441 | 33.3 s, refused | 1.3 s, refused | 35.5 s, refused | 0.8 s, refused |
+| Sequence (Opus, high) | 6,577 | 314.9 s | 84.3 s | 70.0 s | 5.3 s |
+| Decisions (Opus, high) | 6,293 | 315.6 s | 182.8 s | 54.1 s | — |
+| Flagged / Claude (Opus, high) | 6,962 | 336.2 s | 22.9 s | 53.2 s | — |
+| Flagged / Codex (high) | 6,962 | 294.9 s | 15.2 s | 40.3 s | — |
+| Noise (Codex, low) | 6,377 | 69.4 s | — | 39.3 s | — |
+
+**The prompt sizes are the result.** They are byte-identical across the two branches — the
+same 6,293 bytes reach the Decisions seat whether the change is one file or ninety-five —
+because no seat is handed the change any more. On 2026-09-03 the same six prompts were about
+110,000 characters each and Design was 241,848; the five bundle-less seats are now 6.3–7.0 KB
+and Design is 12.4 KB, which is the range the constants of #800 predicted. A repair is
+smaller still: the Design repair turn carried **133 bytes** of lint pointers, against a
+12,441-byte drafting turn on the same thread.
+
+Wall clock from branch pick to the last board was **9 min 32 s** on the 95-file branch (capture
+and scout took 72 s of it; the first core board reached the bench at 360 s and the generation
+settled at 499 s) and **1 min 35 s** on the one-file branch (19 s of capture and scout, reveal
+at 76 s). The 95-file generation billed 6,687,639 tokens across 11 turns, of which 6,231,962
+were cache reads; the one-file generation billed 617,178 across 8.
+
+### What the two drives established about the binding
+
+Neither review ran in the clone. The clone's working tree stayed on `main` throughout, and
+each session bound to a Rennet-created worktree under the data directory:
+
+```
+<dataDir>/worktrees/-Volumes-ExternalNVMe-tmp-rennet-g6-repo/drive/group5
+<dataDir>/worktrees/-Volumes-ExternalNVMe-tmp-rennet-g6-repo/drive/no-spec
+```
+
+Both are `branchWorktreePath(dataDir, repoKey, branch)` with the branch laid down as path
+segments, both had their branch checked out, and `git worktree list` in the clone showed all
+three trees with `main` still at `cff9b9f1c`. Every one of the thirteen `thread-bindings.json`
+rows written across the two sessions — six seats and one session thread each — carried
+`worktreePath` equal to its session's bound root. The chat header's trail named it beside the
+branch, and the chat composer's footer read `Rennet sidecar · Worktree · drive/group5`.
+
+`.rennet/context/<sessionId>/` appeared under the bound root with its `README.md` index and its
+`.owner` stamp, `context/` was in the repository's managed `.rennet/.gitignore` block before the
+first file landed, and `git status` in the bound worktree stayed clean — nothing was ever staged.
+On archive the whole directory was gone and all seven of that session's threads carried a
+`deleted_at` in the sidecar's projection, within 200 ms.
+
+No directory ever appeared under `round-worktrees/` or `worktrees/review/`. A watcher polled
+both paths every two seconds for the length of both drives, including the round, and recorded
+nothing.
+
+### The Design lens is refused before it drafts
+
+Design failed on **both** branches, identically, and the failure has nothing to do with whether
+a specification exists. Its seat turns are rejected by the API:
+
+```
+API Error: 400 tools.9.custom.input_schema.type: Field required
+```
+
+`designDraftOutputSchema()` derives its schema from `z.union([DraftBoardSchema,
+DesignNoSpecSchema])`, and `z.toJSONSchema` renders a union as `{ $schema, anyOf }` with no
+top-level `type`; `normalizeOutputSchema` then strips `$schema`. A custom tool needs `type`,
+so the request never reaches the model. Both boards recorded the honest failure — "This lens
+failed to generate." — rather than an empty board, which is the behaviour the wave asked for,
+but the `no-spec` absence of task 4.3 travels on that same union and is therefore unreachable
+in production: the branch with no specification produced the same refusal, not "No spec found
+for this branch." Filed as [#810](https://github.com/rbutera/Rennet/issues/810). **The Design
+lens is not proven by this drive**, in either direction.
+
+While the seat was dead the bench went on reading *"Design — quiet for 320 s"*, and the durable
+lane stayed `running`, for the five minutes after its last attempt failed at 33 s
+([#813](https://github.com/rbutera/Rennet/issues/813)).
+
+### The round: right workspace, empty receipt
+
+One round ran on the `drive/group5` session. The reviewer staged one finding as an ask
+("Request This Change"), and the work order reached the worker as a **path**, not a payload —
+`.rennet/context/<sessionId>/work-order.md`, 3,080 bytes, present under the bound root for the
+whole run and gone after archive.
+
+The worker did the work in the right place. It committed on the session's branch, in the bound
+worktree:
+
+```
+fe2520976 sweep a legacy round worktree only once git status proves it clean
+ packages/server/src/legacy-worktrees.test.ts | 14 ++++++++++++++
+ packages/server/src/legacy-worktrees.ts      | 16 ++++++++++++++++
+```
+
+on top of the recorded `sourceHead` `f5279d0f0`, and the clone's `main` did not move. The
+durable operation's workspace receipt is `{"kind": "bound-root", "root": "<bound
+worktree>", "sourceHead": "f5279d0f0…"}` — a bound root, never a detached per-round tree — and
+the round card said so on screen: *"Opened the session's workspace · drive/group5 @ round-1"*.
+
+Two things then went wrong, and both are why group 6's second task is not ticked.
+
+The worker's receipt came back **empty**: `diff: ""`, `changedPaths: []`, no `checkpoint`, and
+the round card told the reviewer *"Ran the round worker · 0 files changed"* while their branch
+had moved by two files and thirty lines. The checkpoint itself exists — the sidecar's
+`projection_turns` has turn 2 on the bound thread with `checkpoint_status: ready` — so
+`readTurnDiff` is what failed, and with it both the delta and the handle a revert would take
+([#811](https://github.com/rbutera/Rennet/issues/811)). A checkpoint diff taken after the agent
+has committed sees a clean working tree; the round needs the committed range.
+
+Then the gate ran `pnpm check` over 14 projects in the bound worktree for **391 s** and exited
+1 — the worktree has no installed dependencies, and nothing offered to install them. The round
+failed at the gate, so it never advanced the review to a successor patchset. The failure state
+carries `{"outcome": "failed", "termination": {"kind": "exit", "exitCode": 1}}` and nothing
+else: **the gate's stdout and stderr are persisted nowhere a reviewer can read them**, not in
+the operation, not in `daemon.log`. A reviewer is told a 6½-minute command failed and is given
+no way to learn why. Rai's ruling of 2026-09-04 is that Rennet stops running the gate itself —
+the round prompt tells the worker to run the project's check command before it commits — and
+that the round runs on its own sidecar thread, a subagent of the session bound to the same
+worktree, rather than sharing the session's chat thread as it did here. A follow-up change
+carries both.
+
+The app's own copy has not caught up with the binding either: the Dispatch coach mark still
+says a round runs "in a detached worktree", the scout records `worktreeBaseDir` with the hint
+"coding rounds create worktrees here", and Settings → Projects → Worktrees previews
+`~/.rennet/worktrees/{project}-{branch}`, which is not the path anything bound to
+([#812](https://github.com/rbutera/Rennet/issues/812)).
+
+### What the drive found that the tests could not
+
+Every defect above is invisible from the suite, and each is invisible for its own reason.
+
+The Design refusal is a **provider** rejection of a schema the tests never send: the dom and
+pipeline tests exercise the `no-spec` absence by handing the pipeline a parsed value, so the
+union that cannot cross the wire is never asked to. A green `no-spec` test and a lens that can
+never return `no-spec` coexisted happily until something ran it against the real API.
+
+The empty round receipt is the reverse: the code did what it says, called `readTurnDiff`, and
+swallowed the answer with `.catch(() => undefined)`. A fake seam returns a diff, so the test
+sees a receipt. Only a real agent that really commits produces the case where the working tree
+is clean and the interesting change is in the commit range.
+
+The bench's "quiet for 320 s" and the round's "0 files changed" are both true sentences about
+the wrong quantity, which no assertion about the same quantity would catch. You find them by
+watching a screen while knowing what the disk says.
+
+And the prompt-size result — the one thing that went right — is the same shape of evidence in
+reverse. No test asserts "the Decisions prompt does not grow with the change"; two drives
+against a 1-file branch and a 95-file branch, reading the bytes the sidecar actually received,
+do.
 
 ## Stopping
 
