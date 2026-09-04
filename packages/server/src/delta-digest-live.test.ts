@@ -253,6 +253,7 @@ describe("createLiveDeltaDigestPort — the Codex send reaches the metrics sink"
     const digest = fakeExecutor({ digest: "A tight summary." });
     const producer = createLiveDeltaDigestPort({
       claudePort: async () => null,
+      writeContext: recordContext,
       codexExecutor: async () =>
         instrumentCodexExecutor(
           async (req) => ({
