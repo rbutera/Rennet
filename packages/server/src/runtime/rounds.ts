@@ -682,11 +682,14 @@ export interface RoundsRuntimeDeps {
    * the ephemeral legs; there is no path from a sidecar failure to one.
    */
   readonly resolveT3Seats?: (input: {
+    /** The REPOSITORY the generation belongs to — the T3 project every seat thread hangs off. */
     readonly repoRoot: string;
     readonly generationId: string;
     readonly branch: string;
     /** The session that owns the generation, so archiving it can delete these threads. */
     readonly sessionId: string;
+    /** The session's bound workspace (session-bound-workspace): every seat thread's cwd. */
+    readonly worktreePath?: string;
   }) => Promise<T3SeatRuntime | { readonly unavailable: string }>;
   /** B04's boards runtime for a repo — the sole board-op writer (`WhiteboardClient`
    *  over its `service`) and the board minter (`createRennetBoard`). */
@@ -1146,7 +1149,11 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
     // all — a direct-call test — leaves those legs in place.
     const t3Resolved = await deps
       .resolveT3Seats?.({
-        repoRoot: input.draftingRoot ?? input.repoRoot,
+        // The REPOSITORY, and separately the bound WORKSPACE the seats run in: one T3 project
+        // per repository however many worktrees of it exist, one thread cwd per session
+        // (session-bound-workspace 5.2).
+        repoRoot: input.repoRoot,
+        worktreePath: input.draftingRoot ?? input.repoRoot,
         generationId: attemptGeneration.id,
         // The branch the seat is READING, which titles its thread in the sidecar
         // ("feat/x — Design"). The SESSION'S CLAIM is what names it: the delta packet's

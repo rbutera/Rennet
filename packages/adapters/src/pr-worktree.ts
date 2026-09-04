@@ -3,6 +3,7 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { execa } from "execa";
 import type { GitExec } from "./git-range-diff";
+import { parseWorktrees } from "./worktree-discovery";
 
 /**
  * A worktree per reviewed PR (historical-PR review): every PR review opened from a
@@ -37,6 +38,71 @@ export function prWorktreePath(
   prNumber: number,
 ): string {
   return join(dataDir, "worktrees", repo.owner, repo.name, `pr-${prNumber}`);
+}
+
+/**
+ * Where a session's Rennet-created BRANCH worktree lives (session-bound-workspace D1): one
+ * per `(repository, branch)`, so a second session on the same branch of the same repo binds
+ * to the same workspace rather than a second checkout of it.
+ *
+ * The branch is laid down as PATH SEGMENTS, not an escaped single name: `git check-ref-format`
+ * already forbids every character `join` would have to escape (`..`, a trailing `/`, control
+ * characters, `\`, `~`, `^`, `:`, `?`, `*`, `[`), and segmenting keeps the mapping injective
+ * — `feat/a-b` and `feat-a-b` are two directories, where one escaped name would be one.
+ */
+export function branchWorktreePath(dataDir: string, repoKey: string, branch: string): string {
+  return join(dataDir, "worktrees", repoKey, ...branch.split("/"));
+}
+
+/**
+ * The worktree of this repository that ALREADY has `branch` checked out, or `undefined`.
+ *
+ * This is what makes "the reviewer's own checkout when it is on the reviewed branch" a fact
+ * rather than an assumption, and it covers the reviewer's own second worktree too: git
+ * refuses `worktree add` for a branch checked out somewhere else, so binding blind would
+ * fail on exactly the tree we should have bound to. Unreadable git ⇒ `undefined`, and the
+ * caller creates.
+ */
+export async function worktreeForBranch(
+  git: GitExec,
+  cloneRoot: string,
+  branch: string,
+): Promise<string | undefined> {
+  const listed = await git(cloneRoot, ["worktree", "list", "--porcelain", "-z"], {
+    reject: false,
+  }).catch(() => "");
+  return parseWorktrees(listed).find((entry) => entry.branch === branch)?.path;
+}
+
+/**
+ * Ensure a worktree of `cloneRoot` with `branch` CHECKED OUT (not detached) exists at
+ * `worktreePath` — the session's workspace for a branch review of a branch the reviewer's
+ * own checkout is not on. Checked out rather than detached because a round commits on the
+ * session's branch here, which a detached head cannot do.
+ *
+ * Idempotent: an existing worktree already on the branch is returned untouched; one that
+ * has drifted onto another ref is switched in place, so a session keeps its workspace path
+ * for its whole life. A path with a stale admin entry (a directory removed by hand) is
+ * pruned before the add, which is the only thing that makes `worktree add` accept it again.
+ */
+export async function ensureBranchWorktree(
+  git: GitExec,
+  cloneRoot: string,
+  worktreePath: string,
+  branch: string,
+): Promise<{ path: string; created: boolean }> {
+  if (existsSync(join(worktreePath, ".git"))) {
+    const current = (
+      await git(worktreePath, ["rev-parse", "--abbrev-ref", "HEAD"], { reject: false })
+    ).trim();
+    if (current === branch) return { path: worktreePath, created: false };
+    await git(worktreePath, ["checkout", branch]);
+    return { path: worktreePath, created: false };
+  }
+  await mkdir(join(worktreePath, ".."), { recursive: true });
+  await git(cloneRoot, ["worktree", "prune"], { reject: false });
+  await git(cloneRoot, ["worktree", "add", worktreePath, branch]);
+  return { path: worktreePath, created: true };
 }
 
 export type SetupStatus =

@@ -53,7 +53,7 @@ import type { CommandHandler, DispatchRuntime } from "./runtime";
  * the repo folder name. `targetState` (needs-you/merged/reviewed) is left absent — it is not a
  * plain fact of the review and is never invented here.
  */
-export function sessionTrailForReview(review: Review): SessionTrail {
+export function sessionTrailForReview(review: Review, workspace?: string): SessionTrail {
   const activePatchset = review.patchsets.find((p) => p.id === review.activePatchsetId);
   const branch = activePatchset?.repository.headRef;
   const target: SessionTrail["target"] = review.postTarget
@@ -63,7 +63,15 @@ export function sessionTrailForReview(review: Review): SessionTrail {
     : "your-branch";
   const title = branch ?? (review.postTarget ? `PR #${review.postTarget.number}` : "New review");
   const projectName = basename(review.repositoryRoot) || undefined;
-  return { title, target, ...(projectName ? { projectName } : {}) };
+  // The workspace every turn of this session runs in (session-bound-workspace): shown beside
+  // the branch so the reviewer can see WHICH checkout a seat read. Absent when nothing has
+  // bound one, rather than guessing the repository root.
+  return {
+    title,
+    target,
+    ...(projectName ? { projectName } : {}),
+    ...(workspace === undefined ? {} : { workspace }),
+  };
 }
 
 /**
@@ -153,7 +161,11 @@ export function sessionHandlers(rt: DispatchRuntime) {
       // construction: no store wired, or a session
       // with no captured turns yet, returns `[]` — capability present, never fabricated content.
       const rows = rt.deps.transcriptRowsForReview?.(input.reviewId) ?? [];
-      return parseCommandOutput(name, { trail: sessionTrailForReview(review), rows: [...rows] });
+      const workspace = rt.deps.boundWorkspaceForReview?.(input.reviewId)?.root;
+      return parseCommandOutput(name, {
+        trail: sessionTrailForReview(review, workspace),
+        rows: [...rows],
+      });
     },
     "session.rounds": async (rawInput) => {
       const name = "session.rounds" as const;

@@ -385,6 +385,8 @@ export {
 } from "./omp-turn-transport";
 export { readOpenSpecChange, selectedOpenSpecChangeName } from "./openspec-change-reader";
 export {
+  branchWorktreePath,
+  ensureBranchWorktree,
   ensurePrWorktree,
   prWorktreePath,
   readSetupLogTail,
@@ -392,6 +394,7 @@ export {
   reviewWorktreePath,
   runPrWorktreeSetup,
   type SetupStatus,
+  worktreeForBranch,
 } from "./pr-worktree";
 export {
   type ProjectContextBackendPart,

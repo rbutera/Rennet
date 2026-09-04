@@ -20,9 +20,16 @@ export interface TrailProps {
   readonly projectName?: string;
   readonly target?: SessionTarget;
   readonly targetState?: SessionTargetState;
+  /**
+   * The workspace the session is bound to (session-bound-workspace): the checkout every one
+   * of its turns runs in, which for an off-branch or pull-request review is a worktree rather
+   * than the reviewer's own tree. Shown beside the branch because "which tree did the seat
+   * read" is otherwise invisible. Omitted ⇒ nothing has bound one, and the line says nothing.
+   */
+  readonly workspace?: string;
 }
 
-export function Trail({ title, projectName, target, targetState }: TrailProps) {
+export function Trail({ title, projectName, target, targetState, workspace }: TrailProps) {
   const needsYou = targetState === "needs-you";
   return (
     <div data-slot="trail" className="flex min-w-0 flex-col justify-center gap-0.5">
@@ -36,6 +43,14 @@ export function Trail({ title, projectName, target, targetState }: TrailProps) {
             {TARGET_LABEL[target]}
             {needsYou ? " · needs you" : ""}
           </span>
+          {workspace ? (
+            <>
+              <Icon icon={ChevronRight} className="size-2.5 shrink-0 text-muted-foreground/50" />
+              <span data-slot="trail-workspace" className="truncate" title={workspace}>
+                {workspace}
+              </span>
+            </>
+          ) : null}
         </span>
       ) : null}
     </div>

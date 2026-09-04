@@ -387,8 +387,8 @@ describe("#685 owner loop through a real server", () => {
     // `writeSessionContext` line in `create-server.ts` and this reddens.
     const sessionStore = new SessionStore(join(dataDir, "sessions"));
     const roundOneSession = sessionStore.load(sessionId);
-    expect(roundOneSession?.contextRoot).toBeDefined();
-    const contextDir = join(roundOneSession?.contextRoot ?? "", ".rennet", "context", sessionId);
+    expect(roundOneSession?.boundRoot).toBeDefined();
+    const contextDir = join(roundOneSession?.boundRoot ?? "", ".rennet", "context", sessionId);
     expect(existsSync(join(contextDir, "evidence.json"))).toBe(true);
     expect(existsSync(join(contextDir, "round.json"))).toBe(true);
     const operationStore = new RoundOperationStore(join(dataDir, "round-operations"));

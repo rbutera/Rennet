@@ -13,7 +13,7 @@
 // Persisted as one JSON file under the sidecar's private base dir, so the binding
 // survives a daemon restart and stays beside the state it points into.
 
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { z } from "zod";
 import type { ModelSelection, T3Client } from "./client";
@@ -226,13 +226,25 @@ export function seatThreadTitle(branch: string, seat: SeatKind): string {
 export interface BindThreadInput {
   readonly dataDir: string;
   readonly client: T3Client;
-  /** The checkout the binding names; the thread's cwd. */
+  /**
+   * The REPOSITORY the binding names. Half the binding key, and the T3 project the thread
+   * hangs off — one project per repository, however many worktrees of it a reviewer has.
+   */
   readonly repositoryRoot: string;
   readonly key: ThreadBindingKey;
   readonly title: string;
   readonly modelSelection: ModelSelection;
   /** The owning session, recorded on a seat row so archiving can find it. */
   readonly sessionId?: string;
+  /**
+   * The session's bound WORKSPACE (session-bound-workspace): the thread's cwd, which is the
+   * repository root itself for a branch review on the reviewer's own checkout and a worktree
+   * of it otherwise. Omitted ⇒ the project root, which is what every thread got before the
+   * binding existed.
+   */
+  readonly worktreePath?: string;
+  /** The branch that workspace has checked out; absent for a detached PR snapshot. */
+  readonly branch?: string;
 }
 
 /** One creation per (data dir, repository root, key) in flight at a time. */
@@ -267,6 +279,15 @@ export function bindThread(input: BindThreadInput): Promise<ThreadBinding> {
 async function findOrCreateBinding(input: BindThreadInput): Promise<ThreadBinding> {
   const existing = findBinding(input.dataDir, input.repositoryRoot, input.key);
   if (existing) return existing;
+  // A bound workspace that is no longer on disk is named, not worked around
+  // (session-bound-workspace, t3code-sidecar spec). Creating the thread anyway would put
+  // every turn of it in the project root — a different tree — and the seat would draft
+  // confidently from the wrong checkout.
+  if (input.worktreePath !== undefined && !existsSync(input.worktreePath)) {
+    throw new Error(
+      `The workspace this session is bound to no longer exists: ${input.worktreePath}`,
+    );
+  }
   const projectId = await input.client.ensureProject(
     input.repositoryRoot,
     basename(input.repositoryRoot),
@@ -275,6 +296,8 @@ async function findOrCreateBinding(input: BindThreadInput): Promise<ThreadBindin
     projectId,
     title: input.title,
     modelSelection: input.modelSelection,
+    ...(input.worktreePath === undefined ? {} : { worktreePath: input.worktreePath }),
+    ...(input.branch === undefined ? {} : { branch: input.branch }),
   });
   const binding: ThreadBinding = {
     repositoryRoot: input.repositoryRoot,

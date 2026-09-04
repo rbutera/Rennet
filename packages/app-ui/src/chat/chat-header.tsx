@@ -37,6 +37,7 @@ export function ChatHeader({
         projectName={trail.projectName}
         target={trail.target}
         targetState={trail.targetState}
+        workspace={trail.workspace}
       />
     </header>
   );
