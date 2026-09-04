@@ -4,6 +4,7 @@ import {
   emptyAskProjection,
   handoffDispositionsFromProjection,
   mechanicalComposition,
+  sessionContextRelativeDir,
 } from "@rennet/core";
 import {
   type AskEvent,
@@ -99,14 +100,18 @@ export function activeRoundDraft(
   events: readonly AskEvent[],
   reviewId: string,
   patchset: Patchset,
+  /** The session's context directory — the ONE key the writer, the prompt and the purge
+   *  share. Passed in rather than derived from `reviewId`, which is not that key. */
+  contextDir: string,
 ): ActiveRoundDraft | undefined {
   const state = activeAskState(events);
   const bundle = buildHandoffBundle({
     reviewId,
+    contextDir,
     patchset,
     dispositions: handoffDispositionsFromProjection(state.projection, patchset),
   });
-  const floor = mechanicalComposition(bundle);
+  const floor = mechanicalComposition(bundle, contextDir);
   if (floor.tasks.length === 0) return undefined;
   const askOccurrences = occurrencesFor(floor, state.revisions);
   return {
@@ -222,6 +227,11 @@ export function roundHandlers(rt: DispatchRuntime) {
       const name = "round.dispatch" as const;
       const input = parseCommandInput(name, rawInput);
       const review = requireReviewById(input.reviewId);
+      // The ONE key this review's context files live under — the session id the archive
+      // purge uses, never the review id (review finding 1).
+      const contextDir = sessionContextRelativeDir(
+        deps.reviewContextSessionId?.(review) ?? review.id,
+      );
       // OWN-BRANCH-ONLY routing (P1 finding 8). A retrospective review has no exits; a
       // teammate-PR review (a postTarget the viewer did NOT author) posts a review, never a
       // coding round. In both the round lane is ABSENT - answer an honest empty order rather
@@ -231,6 +241,7 @@ export function roundHandlers(rt: DispatchRuntime) {
         const activePatchset = activePatchsetOf(review);
         const bundle = buildHandoffBundle({
           reviewId: review.id,
+          contextDir,
           patchset: activePatchset,
           dispositions: handoffDispositionsFromProjection(
             deps.askLog.readProjection(review.id),
@@ -238,7 +249,7 @@ export function roundHandlers(rt: DispatchRuntime) {
           ),
         });
         return parseCommandOutput(name, {
-          workOrder: mechanicalComposition(bundle),
+          workOrder: mechanicalComposition(bundle, contextDir),
           dispatched: false,
         });
       }
@@ -274,6 +285,7 @@ export function roundHandlers(rt: DispatchRuntime) {
           : projectionForRecordedOccurrences(askEvents, askState, resumable.askOccurrences);
       const bundle = buildHandoffBundle({
         reviewId: review.id,
+        contextDir,
         patchset: sourcePatchset,
         dispositions: handoffDispositionsFromProjection(projection, sourcePatchset),
       });
@@ -281,14 +293,14 @@ export function roundHandlers(rt: DispatchRuntime) {
       // before any compose. An honest empty order, no kick, no round.
       if (bundle.tasks.length === 0) {
         return parseCommandOutput(name, {
-          workOrder: mechanicalComposition(bundle),
+          workOrder: mechanicalComposition(bundle, contextDir),
           dispatched: false,
         });
       }
       const sourcePatchsetId = resumable?.sourcePatchsetId ?? bundle.patchsetId;
       const askOccurrences = resumable?.askOccurrences
         ? [...resumable.askOccurrences]
-        : occurrencesFor(mechanicalComposition(bundle), askState.revisions);
+        : occurrencesFor(mechanicalComposition(bundle, contextDir), askState.revisions);
       const key =
         resumable?.dispatchId ?? dispatchIdentity(review.id, sourcePatchsetId, askOccurrences);
       // The durable whole-round owner gets first refusal BEFORE the optional model composer.
@@ -297,7 +309,7 @@ export function roundHandlers(rt: DispatchRuntime) {
       const queuedOperation = await deps.queueRoundIfActive?.({ review, dispatchId: key });
       if (queuedOperation !== undefined) {
         return parseCommandOutput(name, {
-          workOrder: mechanicalComposition(bundle),
+          workOrder: mechanicalComposition(bundle, contextDir),
           dispatched: true,
           acceptedOperation: queuedOperation,
         });
@@ -309,10 +321,10 @@ export function roundHandlers(rt: DispatchRuntime) {
           // when wired, else the mechanical floor - never a throw, always answerable.
           const workOrder =
             resumable !== undefined
-              ? mechanicalComposition(bundle)
+              ? mechanicalComposition(bundle, contextDir)
               : deps.composeBundle
-                ? await deps.composeBundle({ bundle, repoRoot: review.repositoryRoot })
-                : mechanicalComposition(bundle);
+                ? await deps.composeBundle({ bundle, review, contextDir })
+                : mechanicalComposition(bundle, contextDir);
           // The command returns the order while the round runs behind it. The durable
           // completed placeholder/real record is the cross-restart guard. Only after the
           // full dispatch (including regeneration) succeeds are its still-current asks

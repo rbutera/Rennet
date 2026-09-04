@@ -23,7 +23,6 @@ import {
   AskLogStore,
   applyVisibilitySwitch,
   BoardMetaStore,
-  branchWorktreePath,
   CLAUDE_TESTED_RANGE,
   type ClaudeHarnessResult,
   type CodexAvailability,
@@ -57,7 +56,6 @@ import {
   discoverCodex,
   discoverProject,
   discoverWorktreeIdentities,
-  ensureBranchWorktree,
   ensureManagedClone,
   ensureProjectSnapshotPin,
   ensurePrWorktree,
@@ -132,7 +130,6 @@ import {
   TranscriptStore,
   validateGitHubToken,
   withRepoPref,
-  worktreeForBranch,
   wslDiscoveryDeps,
   wslForgeDetectionDeps,
 } from "@rennet/adapters";
@@ -165,6 +162,7 @@ import {
   mechanicalComposition,
   mintSession,
   planQuoteThreadReanchors,
+  prPaperContextFile,
   ReviewService,
   recordSeatSend,
   renderWorkOrder,
@@ -2962,6 +2960,44 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     writeSessionContext(turnRootFor(review), sessionId, files);
     return sessionContextRelativeDir(sessionId);
   };
+  /**
+   * Hold this review's context files for the life of ONE turn (review finding 2).
+   *
+   * `session.archive` awaits the session's preparation and nothing else, so every other
+   * context-consuming turn — the opener, the PR-body draft, compose, the handoff run,
+   * verification, refine, CI classification, noise, the scout, related-context retrieval —
+   * could be reading a directory the archive deleted underneath it. Wrapping the turn
+   * defers the purge to the last release, so the archive still happens, just not mid-read.
+   *
+   * The `finally` is the whole contract: a turn that throws must release, or the session's
+   * files outlive the archive that asked for them to go.
+   */
+  const holdingReviewContext = async <T>(review: Review, run: () => Promise<T>): Promise<T> => {
+    const release = contextPurger.turnInFlight(sessionIdForReview(review));
+    try {
+      return await run();
+    } finally {
+      release();
+    }
+  };
+  /**
+   * The same lease as a producer decorator: every review-scoped turn wired below is the
+   * shape `(input: { review }) => Promise<...>`, so one wrap covers all of them and a new
+   * producer that forgets the lease is visible at the wiring, not buried in the port.
+   */
+  const holdingContextFor =
+    <I extends { readonly review: Review }, O>(run: (input: I) => Promise<O>) =>
+    (input: I): Promise<O> =>
+      holdingReviewContext(input.review, () => run(input));
+  /**
+   * The reviewed pull request's own paper, into the session's context directory through
+   * the one writer (review finding 6). `prPaperContextFile` owns what goes in it and when
+   * there is nothing to write; this is only the write.
+   */
+  const writePrPaper = (review: Review): void => {
+    const file = prPaperContextFile(review);
+    if (file !== undefined) writeReviewContext(review, [file]);
+  };
   const roundsRuntime = createRoundsRuntime({
     // One generation's archive (#731 9.3/9.4), taken from the phase records the reveal
     // block already persisted — the spine stays authoritative and unconditional.
@@ -2979,9 +3015,8 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     readPrompt,
     // session-context-files: the ONE writer, bound by the rounds runtime to the root the
     // seats are DISPATCHED with (`draftingRoot ?? repoRoot`) rather than the session's
-    // repository root. That root is stamped on the session as `contextRoot`, which is the
-    // first thing `boundRootForSession` reads, so the archive purge removes the directory
-    // from where it actually is — for a range review, the review worktree.
+    // repository root — which is the session's BOUND workspace, since that is what
+    // `draftingRootFor` now answers.
     writeSessionContext: (root, sessionId, files) => {
       const dir = writeSessionContext(root, sessionId, files);
       // The lazy half of the binding (session-bound-workspace, D migration step 4): a session
@@ -3144,7 +3179,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       // In flight for the duration, so an archive landing mid-round DEFERS its context
       // purge to this settle instead of deleting the directory the next turn reads
       // (review finding 4). Cleared before the sweep, which is what then performs it.
-      const settle = contextPurger.roundInFlight(session.id);
+      const settle = contextPurger.turnInFlight(session.id);
       try {
         return await roundsRuntime.runRound({
           ...input,
@@ -3168,6 +3203,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   const composeRoundBundle = createLiveComposeBundle({
     claudePort: claudeAdapterForRepo,
     codexExecutor: codexExecutorForRepo,
+    writeContext: writeReviewContext,
   });
 
   // Bound after the round coordinator because its ports dispatch report regeneration.
@@ -3207,12 +3243,21 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       askLogStore.read(operation.reviewId),
       operation.askOccurrences,
     );
+    // The ONE context key, resolved from the review the operation belongs to. A recovered
+    // operation whose review is gone can only name the review id, and the prompt it
+    // renders is then compared against nothing — the round is already unreplayable.
+    const review = service.reviewById(operation.reviewId);
+    const contextDir = sessionContextRelativeDir(
+      review === null ? operation.reviewId : sessionIdForReview(review),
+    );
     return mechanicalComposition(
       buildHandoffBundle({
         reviewId: operation.reviewId,
+        contextDir,
         patchset,
         dispositions: handoffDispositionsFromProjection(projection, patchset),
       }),
+      contextDir,
     );
   };
 
@@ -3800,12 +3845,16 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
           askLogStore.read(review.id),
           review.id,
           activePatchsetFor(review),
+          sessionContextRelativeDir(sessionIdForReview(review)),
         );
         if (draft === undefined) return { kind: "clear-queued" };
-        const workOrder = await composeRoundBundle({
-          bundle: draft.bundle,
-          repoRoot: review.repositoryRoot,
-        });
+        const workOrder = await holdingReviewContext(review, () =>
+          composeRoundBundle({
+            bundle: draft.bundle,
+            review,
+            contextDir: sessionContextRelativeDir(sessionIdForReview(review)),
+          }),
+        );
         const replacement = createRoundOperation({
           session: sessionForOperation(operation),
           review,
@@ -3917,6 +3966,14 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
    *  persisted the version; drafting is single-flight and never turns capture/regenerate into a
    *  failed command. A later compose can join or retry the same recovery path. */
   const kickBoardDrafting = (review: Review): void => {
+    // BEFORE the first seat turn (session-context-files: "context written before the seats
+    // start"): the reviewed PR's own title and body, which the Design seat is told to treat
+    // as its strongest clue and cannot otherwise reach from a detached worktree.
+    try {
+      writePrPaper(review);
+    } catch {
+      // A repo we cannot write into still gets its boards; the seat just has one fewer clue.
+    }
     void ensureBoardDrafting(review).catch(() => undefined);
   };
 
@@ -4235,6 +4292,13 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // threads; the host resolves the bound root the wire never carries.
     purgeSessionContext: purgeContextForSession,
     boundWorkspaceForReview,
+    // The ONE key a review's context files live under — the same id `purgeSessionContext`
+    // is called with, so the handoff work order the dispatch writes is the one the archive
+    // purges and the orphan sweep spares (review finding 1).
+    reviewContextSessionId: sessionIdForReview,
+    // ...and the lease that keeps a mid-flight turn's files alive through an archive
+    // (review finding 2). The last release performs a purge the archive deferred.
+    holdSessionContext: (sessionId) => contextPurger.turnInFlight(sessionId),
     service,
     allowedRoots,
     askLog: askLogStore,
@@ -4261,28 +4325,35 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         // a concurrent open of the same target cannot overwrite the file the first seat is
         // reading; discarded below, because it exists only for the turn that reads it.
         const written: { discard(): void }[] = [];
-        void runRelatedContextRetrieval(review, {
-          store: snapshotStore,
-          resolveClaudePort: claudeAdapterForRepo,
-          resolveCodexExecutor: codexExecutorForRepo,
-          trackerConfig: resolveTrackerConfig(
-            snapshotStore,
-            repoKeyOf(review),
-            daemonSettingsStore.readState().config,
-          ),
-          writeCandidates: (items) => {
-            const file = writeRunScopedContext(
-              review.repositoryRoot,
-              sessionIdForReview(review),
-              `related-context-candidates-${randomUUID()}.json`,
-              `${serializeDossier(items)}\n`,
-            );
-            written.push(file);
-            return file.path;
-          },
-        }).finally(() => {
-          for (const file of written) file.discard();
-        });
+        // The retrieval seat reads the dossier file this writes, so the lease is held for
+        // the whole kick — an archive landing mid-retrieval defers its purge (finding 2).
+        void holdingReviewContext(review, () =>
+          runRelatedContextRetrieval(review, {
+            store: snapshotStore,
+            resolveClaudePort: claudeAdapterForRepo,
+            resolveCodexExecutor: codexExecutorForRepo,
+            trackerConfig: resolveTrackerConfig(
+              snapshotStore,
+              repoKeyOf(review),
+              daemonSettingsStore.readState().config,
+            ),
+            writeCandidates: (items) => {
+              const file = writeRunScopedContext(
+                review.repositoryRoot,
+                sessionIdForReview(review),
+                `related-context-candidates-${randomUUID()}.json`,
+                `${serializeDossier(items)}\n`,
+              );
+              // `file.path` is RELATIVE to the bound root: the enrichment prompt names it
+              // verbatim and the seat's cwd IS that root, so an absolute daemon-locus path
+              // would be unopenable from a WSL distro seat (review finding 4).
+              written.push(file);
+              return file.path;
+            },
+          }).finally(() => {
+            for (const file of written) file.discard();
+          }),
+        );
       } catch {
         // Retrieval is garnish on the open — a failed kick never surfaces here.
       }
@@ -4761,14 +4832,17 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // diff. Dual-review aggregation (#41) + per-finding verification (#179) run by
     // DEFAULT now (Rai's mandate, 2026-08-11); an explicit opt-down gives single-Claude
     // quick. The boundary is unchanged.
-    flaggedReview: runFlaggedReview,
+    // Wrapped in the context lease: the DEEP path writes verification pointers and CI
+    // pointers into the session directory and reads them from a seat (review finding 2).
+    flaggedReview: (review, deepReview, session) =>
+      holdingReviewContext(review, () => runFlaggedReview(review, deepReview, session)),
     // The Noise lens (issue #34): the low-signal churn grouped away, each group tagged
     // rule vs noise job. This is the LIVE noise-classification runner — a real model
     // turn over the review's diff, replacing the fixture, behind the unchanged
     // `noiseReview` boundary. The deterministic mechanical-rules engine (a separate
     // admission authority for the `rule` groups) is a DEFERRED follow-up; the empty-
     // vs-failed distinction and the totality-floor ejection are honoured today.
-    noiseReview: runNoiseReview,
+    noiseReview: (review) => holdingReviewContext(review, () => runNoiseReview(review)),
     // The Spec angle's live source (wireframes #9): parse-on-open of the change the
     // reviewed patchset selected, read from the review's checked-out root. Deterministic
     // and model-free — no gate, no spend. `null` when the review touches no
@@ -4820,11 +4894,13 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // executor and pipeline seat use (bead workspace-6qp15) — else the Claude
     // adapter (a light read-only session with the inline schema, the same
     // structured-output mechanism every pipeline lens seat uses; no docType).
-    refineComment: createLiveRefinePort({
-      claudePort: claudeAdapterForRepo,
-      codexExecutor: codexExecutorForRepo,
-      writeContext: writeReviewContext,
-    }),
+    refineComment: holdingContextFor(
+      createLiveRefinePort({
+        claudePort: claudeAdapterForRepo,
+        codexExecutor: codexExecutorForRepo,
+        writeContext: writeReviewContext,
+      }),
+    ),
     // review.draftPrBody (issue #74, M26): the LIVE PR-body drafting producer. The
     // own-branch destination's paper opens with an HONEST ACCOUNT of the change,
     // drafted by a real, council-routed model turn. Runs on WHICHEVER seat the
@@ -4832,22 +4908,27 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // Claude adapter) — the SAME seat probes the refine producer uses (bead
     // workspace-6qp15). Degrades to an honest `unavailable` (the deterministic
     // composed body still previews) when neither seat is installed. Posts NOTHING.
-    draftPrBody: createLiveDraftPrBodyPort({
-      claudePort: claudeAdapterForRepo,
-      codexExecutor: codexExecutorForRepo,
-    }),
+    draftPrBody: holdingContextFor(
+      createLiveDraftPrBodyPort({
+        claudePort: claudeAdapterForRepo,
+        codexExecutor: codexExecutorForRepo,
+        writeContext: writeReviewContext,
+      }),
+    ),
     // publish.compose(mode:"review") (#621): the authored opening paragraph is drafted from
     // active persisted boards plus the durable ask projection. The content-addressed store keeps
     // unchanged evidence byte-stable across remounts and restarts, preserving the post marker's
     // outcome-unknown retry identity. A changed verdict, ask, or board legitimately redrafts.
-    draftReviewOpener:
+    draftReviewOpener: holdingContextFor(
       options.draftReviewOpener ??
-      createLiveReviewOpenerPort({
-        claudePort: claudeAdapterForRepo,
-        codexExecutor: codexExecutorForRepo,
-        readPrompt,
-        store: publishCompositionStore,
-      }),
+        createLiveReviewOpenerPort({
+          claudePort: claudeAdapterForRepo,
+          codexExecutor: codexExecutorForRepo,
+          readPrompt,
+          store: publishCompositionStore,
+          writeContext: writeReviewContext,
+        }),
+    ),
     // review.deltaDigest (issue #73 / M25): the LIVE delta re-review digest producer.
     // Rephrases the successor review's DETERMINISTIC successor account into a one-glance
     // TL;DR shown ON TOP of the facts, on WHICHEVER seat the council resolves for
@@ -4855,15 +4936,18 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // `unavailable` (the facts still render, no headline) when neither seat is installed.
     // Fed ONLY the structured account, it can add no fact the facts don't carry. Posts
     // NOTHING and gates nothing.
-    draftDeltaDigest: createLiveDeltaDigestPort({
-      claudePort: claudeAdapterForRepo,
-      codexExecutor: codexExecutorForRepo,
-    }),
+    draftDeltaDigest: holdingContextFor(
+      createLiveDeltaDigestPort({
+        claudePort: claudeAdapterForRepo,
+        codexExecutor: codexExecutorForRepo,
+        writeContext: writeReviewContext,
+      }),
+    ),
     // The handoff-bundle composer (issue #72, M24): the light-tier authoring step over
     // the mechanical bundle. Council-routed over the SAME probes the refiner uses
     // (claude adapter + codex executor); one batched turn, exec-free (read-only). No
     // seat installed ⇒ the core router returns the mechanical floor.
-    composeBundle: composeRoundBundle,
+    composeBundle: holdingContextFor(composeRoundBundle),
     // The settings surface (wireframe #15): the config ladder over the REAL stores.
     // `get` resolves the global appearance layer (`~/.rennet/config.json`) plus every
     // project's repo-scope visibility/promotion (its `~/.rennet/projects/<key>/

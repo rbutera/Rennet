@@ -8,7 +8,7 @@ import type {
   RspTokenUsage,
 } from "@rennet/protocol";
 import { sha256Hex } from "@rennet/protocol";
-import { type SessionContextFile, sessionContextRelativeDir } from "./session-context";
+import type { SessionContextFile } from "./session-context";
 
 /**
  * The one rule both handoff prompts share verbatim: the coding agent edits, the
@@ -130,8 +130,8 @@ export function composeAsksContextFile(asks: readonly ComposableAsk[]): SessionC
  *
  * The notes are NOT in this prompt: they are `compose/asks.json`, named by relative path.
  */
-export function buildComposePrompt(sessionId: string): string {
-  const dir = sessionContextRelativeDir(sessionId);
+export function buildComposePrompt(contextDir: string): string {
+  const dir = contextDir;
   return [
     "You are composing a code reviewer's separate review notes into ONE coherent work order",
     "for a coding agent. You decide ONLY how to ORDER and GROUP them and write a short title",
@@ -238,7 +238,7 @@ export const WORK_ORDER_FILE = "work-order.md";
  * model-authored prose enters it: the title stays preview-only.
  *
  * This is the FILE, not the prompt (session-context-files). It is written to
- * `.rennet/context/<sessionId>/work-order.md` before the run and the turn's prompt names
+ * `<contextDir>/work-order.md` before the run and the turn's prompt names
  * that path — so the asks and their diff fences reach the agent by being read, not by
  * being billed on every retry.
  */
@@ -293,17 +293,17 @@ export function workOrderContextFile(tasks: readonly ComposedTask[]): SessionCon
  * The prompt the coding turn actually receives: the rules, the shape of the job, and the
  * PATH of the work order. The asks and their diff fences are in the file, not here.
  *
- * Deterministic in `tasks` and the session id, so `verifyComposedBundle` can recompute it
- * and prove the run is executing the order that was composed.
+ * Deterministic in `tasks` and the context directory, so `verifyComposedBundle` can
+ * recompute it and prove the run is executing the order that was composed.
  */
-export function renderComposedPrompt(tasks: readonly ComposedTask[], sessionId: string): string {
+export function renderComposedPrompt(tasks: readonly ComposedTask[], contextDir: string): string {
   const askCount = tasks.reduce((total, task) => total + task.asks.length, 0);
   return [
     "# Review handoff",
     "",
     "You are a coding agent addressing a reviewer's requested changes on the current branch.",
     "",
-    `Your work order is \`${sessionContextRelativeDir(sessionId)}/${WORK_ORDER_FILE}\`, in your`,
+    `Your work order is \`${contextDir}/${WORK_ORDER_FILE}\`, in your`,
     `working directory. It holds ${tasks.length} task${tasks.length === 1 ? "" : "s"} carrying`,
     `${askCount} review note${askCount === 1 ? "" : "s"}, in execution order, each with the`,
     "reviewer's note verbatim and the anchored diff context. Read it in full, then work",
@@ -341,6 +341,7 @@ function composedDigest(tasks: readonly ComposedTask[]): string {
 function assemble(
   reviewId: string,
   patchsetId: string,
+  contextDir: string,
   tasks: readonly ComposedTask[],
   composed: boolean,
 ): ComposedHandoffBundle {
@@ -354,9 +355,10 @@ function assemble(
     // Strip the array-level readonly: the mutable z.infer bundle field wants ComposedTask[].
     tasks: [...tasks],
     // The turn's prompt, which NAMES the work order; the work order itself is the file
-    // `workOrderContextFile` writes. `reviewId` is the session the context directory is
-    // keyed on — the same key `t3/handoff.ts` binds the review's thread under.
-    prompt: renderComposedPrompt(tasks, reviewId),
+    // `workOrderContextFile` writes. `contextDir` is the ONE key the daemon's writer
+    // returned — never a review id re-derived here, or the prompt names a directory the
+    // archive purge and the orphan sweep have never heard of (review finding 1).
+    prompt: renderComposedPrompt(tasks, contextDir),
     digest: composedDigest(tasks),
     composed,
     traceMap,
@@ -370,6 +372,7 @@ function assemble(
  */
 export function mechanicalComposition(
   bundle: HandoffBundle,
+  contextDir: string,
   asks: readonly ComposableAsk[] = asksFromBundle(bundle),
 ): ComposedHandoffBundle {
   const tasks: ComposedTask[] = asks.map((ask) => ({
@@ -377,7 +380,7 @@ export function mechanicalComposition(
     sourceDispositions: [ask.id],
     asks: [ask],
   }));
-  return assemble(bundle.reviewId, bundle.patchsetId, tasks, false);
+  return assemble(bundle.reviewId, bundle.patchsetId, contextDir, tasks, false);
 }
 
 /**
@@ -391,26 +394,24 @@ export function mechanicalComposition(
 export async function composeHandoffBundle(
   bundle: HandoffBundle,
   port: ComposePort,
+  contextDir: string,
 ): Promise<ComposedHandoffBundle> {
   const asks = asksFromBundle(bundle);
-  if (asks.length === 0) return mechanicalComposition(bundle, asks);
+  if (asks.length === 0) return mechanicalComposition(bundle, contextDir, asks);
 
-  // F3: a compose port that REJECTS (throws) rather than resolving to a `failed`
-  // result must not escape as a rejected IPC command — the floor is the fail-closed
-  // contract. Catch the rejection at the composition boundary and return the floor.
   // F3: a compose port that REJECTS (throws) rather than resolving to a `failed`
   // result must not escape as a rejected IPC command — the floor is the fail-closed
   // contract. Catch the rejection at the composition boundary and return the floor.
   let turn: ComposePortResult;
   try {
-    turn = await port(buildComposePrompt(bundle.reviewId));
+    turn = await port(buildComposePrompt(contextDir));
   } catch {
-    return mechanicalComposition(bundle, asks);
+    return mechanicalComposition(bundle, contextDir, asks);
   }
-  if (turn.status !== "emitted") return mechanicalComposition(bundle, asks);
+  if (turn.status !== "emitted") return mechanicalComposition(bundle, contextDir, asks);
 
   const validation = validateComposition(asks, turn.proposal);
-  if (!validation.ok) return mechanicalComposition(bundle, asks);
+  if (!validation.ok) return mechanicalComposition(bundle, contextDir, asks);
 
   const byId = new Map(asks.map((ask) => [ask.id, ask] as const));
   const tasks: ComposedTask[] = turn.proposal.groups.map((group) => ({
@@ -424,7 +425,7 @@ export async function composeHandoffBundle(
     }),
   }));
 
-  const composed = assemble(bundle.reviewId, bundle.patchsetId, tasks, true);
+  const composed = assemble(bundle.reviewId, bundle.patchsetId, contextDir, tasks, true);
   // Content-preservation guard: every original instruction body must be present in
   // the rendered work order VERBATIM. Reconstruction guarantees it, but assert it
   // rather than trust it — a mismatch means fall closed to the mechanical floor. The
@@ -434,7 +435,7 @@ export async function composeHandoffBundle(
   for (const ask of asks) {
     if (ask.instruction.trim() === "") continue;
     if (!workOrder.includes(ask.instruction)) {
-      return mechanicalComposition(bundle, asks);
+      return mechanicalComposition(bundle, contextDir, asks);
     }
   }
   return composed;
@@ -451,9 +452,9 @@ export async function composeHandoffBundle(
  * gate: the mechanical floor (`composed:false`) passes exactly like a `composed:true`
  * bundle, because both are reconstructed the same deterministic way.
  */
-export function verifyComposedBundle(bundle: ComposedHandoffBundle): boolean {
+export function verifyComposedBundle(bundle: ComposedHandoffBundle, contextDir: string): boolean {
   return (
     composedDigest(bundle.tasks) === bundle.digest &&
-    renderComposedPrompt(bundle.tasks, bundle.reviewId) === bundle.prompt
+    renderComposedPrompt(bundle.tasks, contextDir) === bundle.prompt
   );
 }

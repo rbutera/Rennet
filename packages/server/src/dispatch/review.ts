@@ -4,6 +4,7 @@ import {
   disclosureFor,
   isRepoRelativePath,
   mechanicalComposition,
+  sessionContextRelativeDir,
   verifyComposedBundle,
   workOrderContextFile,
 } from "@rennet/core";
@@ -12,6 +13,7 @@ import {
   type HandoffRunResult,
   parseCommandInput,
   parseCommandOutput,
+  type Review,
 } from "@rennet/protocol";
 import { writeSessionContext } from "../context-files";
 import type { CommandHandler, DispatchRuntime } from "./runtime";
@@ -30,6 +32,16 @@ export function reviewHandlers(rt: DispatchRuntime) {
     raiseHandoffCompleted,
     raisePublishReady,
   } = rt;
+  /**
+   * The ONE key a review's context files live under (review finding 1): the session id the
+   * archive purge is called with, resolved by the composition root. The handoff prompt
+   * NAMES this directory and the work-order write below FILLS it, so both ends and the
+   * purge agree by construction. Absent dep ⇒ the review id keys all three consistently.
+   */
+  const contextSessionIdFor = (review: Review): string =>
+    deps.reviewContextSessionId?.(review) ?? review.id;
+  const contextDirFor = (review: Review): string =>
+    sessionContextRelativeDir(contextSessionIdFor(review));
   return {
     "review.capture": async (rawInput) => {
       const name = "review.capture" as const;
@@ -187,6 +199,7 @@ export function reviewHandlers(rt: DispatchRuntime) {
       const review = requireReviewById(input.reviewId);
       const bundle = buildHandoffBundle({
         reviewId: review.id,
+        contextDir: contextDirFor(review),
         patchset: activePatchsetOf(review),
         dispositions: input.dispositions,
       });
@@ -214,10 +227,11 @@ export function reviewHandlers(rt: DispatchRuntime) {
       // review's currently-active patchset, or it is stale (re-compose, never run-anyway).
       // Integrity, not a gate — the mechanical floor (`composed:false`) verifies and runs
       // exactly like a `composed:true` bundle; this refuses only an order nobody composed.
+      const contextSessionId = contextSessionIdFor(review);
       if (
         bundle.reviewId !== review.id ||
         bundle.patchsetId !== priorActive.id ||
-        !verifyComposedBundle(bundle)
+        !verifyComposedBundle(bundle, sessionContextRelativeDir(contextSessionId))
       ) {
         return parseCommandOutput(name, {
           status: "refused",
@@ -232,23 +246,33 @@ export function reviewHandlers(rt: DispatchRuntime) {
         });
       }
       // The work order goes to disk BEFORE the turn (session-context-files): the verified
-      // bundle's prompt names `.rennet/context/<reviewId>/work-order.md` relative to the
-      // turn's cwd, and this is what puts the ordered, grouped, verbatim asks and their
-      // diff fences there. Written after verification, from the SAME `tasks` the digest
-      // binds, so the file cannot carry an order nobody composed.
+      // bundle's prompt names `<contextDir>/work-order.md` relative to the turn's cwd, and
+      // this is what puts the ordered, grouped, verbatim asks and their diff fences there.
+      // Written after verification, from the SAME `tasks` the digest binds, so the file
+      // cannot carry an order nobody composed — and under the SAME session id the prompt
+      // was verified against, which is the id the archive purges (review finding 1).
+      //
       // Under the session's BOUND workspace (session-bound-workspace), because that is the
-      // turn's cwd and the prompt's path is relative to it. Writing it under the repository
-      // while the turn runs in a worktree points the agent at a file that is not there.
+      // turn's cwd and the prompt's path is relative to it. Written under the repository
+      // while the turn runs in a worktree, it names a file that is not there.
+      //
+      // The purge is held for the whole turn, not just the write: an archive landing while
+      // the agent is reading the work order would otherwise delete it mid-turn (review
+      // finding 2). The lease is released when the turn settles, and the last release
+      // performs a purge the archive deferred.
       writeSessionContext(
         deps.boundWorkspaceForReview?.(review.id)?.root ?? review.repositoryRoot,
-        review.id,
+        contextSessionId,
         [workOrderContextFile(bundle.tasks)],
       );
-      const turn = await deps.runHandoffTurn({
-        repoRoot: review.repositoryRoot,
-        prompt: bundle.prompt,
-        reviewId: review.id,
-      });
+      const releaseContext = deps.holdSessionContext?.(contextSessionId);
+      const turn = await deps
+        .runHandoffTurn({
+          repoRoot: review.repositoryRoot,
+          prompt: bundle.prompt,
+          reviewId: review.id,
+        })
+        .finally(() => releaseContext?.());
       if (turn.status === "failed") {
         // Surface the files the agent changed before erroring (Codex F4) — the working
         // tree was modified even though the turn failed; hiding it defeats totality.
@@ -400,14 +424,16 @@ export function reviewHandlers(rt: DispatchRuntime) {
       // complete bundle — never a throw and never a lossy authoring.
       const input = parseCommandInput(name, rawInput);
       const review = requireReviewById(input.reviewId);
+      const contextDir = contextDirFor(review);
       const mechanical = buildHandoffBundle({
         reviewId: review.id,
+        contextDir,
         patchset: activePatchsetOf(review),
         dispositions: input.dispositions,
       });
       const bundle = deps.composeBundle
-        ? await deps.composeBundle({ bundle: mechanical, repoRoot: review.repositoryRoot })
-        : mechanicalComposition(mechanical);
+        ? await deps.composeBundle({ bundle: mechanical, review, contextDir })
+        : mechanicalComposition(mechanical, contextDir);
       return parseCommandOutput(name, { bundle });
     },
     "review.symbolLookup": async (rawInput) => {

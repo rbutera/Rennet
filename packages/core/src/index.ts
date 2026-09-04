@@ -56,6 +56,7 @@ export * from "./novelty-lifecycle";
 export * from "./offered-manifest";
 export * from "./patchset-intent";
 export * from "./pipeline";
+export * from "./pr-paper";
 export * from "./project-context";
 export * from "./project-snapshot";
 export * from "./publish-review";
