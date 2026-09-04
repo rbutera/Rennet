@@ -147,8 +147,19 @@ describe("LensBoardView — board document, switchers, drill-down", () => {
   });
 
   it("uses h3 card titles and h4 in-card detail headings", async () => {
-    const { container } = await renderView("gen1", GENERATIONS, "flagged");
-    expect(container.querySelector('[data-kind="finding"] h3 > button')).toBeTruthy();
+    const { container, user } = await renderView("gen1", GENERATIONS, "flagged");
+    // Both folds are closed on arrival now, and a closed `Collapse` mounts no children, so
+    // the headings are asserted along the reader's actual path: open the section, then open
+    // the finding. Skip either click and the query finds nothing, which is the whole point.
+    const section = container.querySelector<HTMLButtonElement>(
+      "[data-kind=board-section] button[aria-expanded]",
+    );
+    if (!section) throw new Error("no section toggle");
+    await user.click(section);
+    const title = container.querySelector<HTMLButtonElement>('[data-kind="finding"] h3 > button');
+    expect(title).toBeTruthy();
+    if (!title) throw new Error("no finding title button");
+    await user.click(title);
     expect(container.querySelector('[data-kind="finding"] h4')?.textContent).toContain("Fix");
   });
 
@@ -237,15 +248,22 @@ describe("LensBoardView — board document, switchers, drill-down", () => {
     expect(failed?.textContent?.includes(promise)).toBe(saysAnotherAttempt);
   });
 
-  it("opens Flagged expanded when selected (R44) and folds every section on another lens", async () => {
+  it("folds every section on every lens, Flagged included, and opens one on click", async () => {
     const { container, user } = await renderView("gen1");
-    // R44: Flagged sections arrive expanded when that URL-owned lens is selected.
+    // Rai, 2026-09-04, retiring R44: the reader arrives at summaries on EVERY lens and
+    // opens what they want. Flagged used to be the exception and is no longer one.
     expect(lensOf(container)).toBe("flagged");
-    const flaggedOpen = [...container.querySelectorAll("[data-kind=board-section]")];
-    expect(flaggedOpen.length).toBeGreaterThan(0);
-    expect(flaggedOpen.every((s) => s.getAttribute("data-open") === "true")).toBe(true);
+    const flagged = [...container.querySelectorAll("[data-kind=board-section]")];
+    expect(flagged.length).toBeGreaterThan(0);
+    expect(flagged.every((s) => s.getAttribute("data-open") === "false")).toBe(true);
 
-    // Switching to Design swaps the board; Design carries no deltas, so foldAll folds all.
+    // …and folded is a DEFAULT, not a lock: the first section opens on its own toggle.
+    // Without this the assertion above is satisfied by a section that can never open.
+    const toggle = flagged[0]?.querySelector<HTMLButtonElement>("button[aria-expanded]");
+    if (!toggle) throw new Error("no section toggle");
+    await user.click(toggle);
+    expect(flagged[0]?.getAttribute("data-open")).toBe("true");
+
     const designTab = container.querySelector<HTMLButtonElement>("[data-lens=design]");
     if (!designTab) throw new Error("no design tab");
     await user.click(designTab);

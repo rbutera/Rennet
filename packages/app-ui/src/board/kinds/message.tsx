@@ -1,6 +1,6 @@
 import { cn } from "@rennet/ui";
-import { AnchorReveal } from "../../review";
 import type { ElementOf } from "../registry";
+import { BoardAnchorReveal } from "./board-anchor-reveal";
 import { useCodeRefOf } from "./element-context";
 
 // `message` (C05 3.5) — the conversational / ask kind. Surfaces the `role`, the ask
@@ -41,7 +41,7 @@ export function MessageElement({ element }: { readonly element: ElementOf<"messa
         detached ? "border-dashed border-border opacity-70" : "border-border",
       )}
     >
-      {ref && <AnchorReveal citations={[ref]} />}
+      {ref && <BoardAnchorReveal citations={[ref]} />}
       {quote &&
         // Still a `blockquote`: the words are literally quoted from the board, and the
         // bubble is the human side of the exchange, not a new utterance.

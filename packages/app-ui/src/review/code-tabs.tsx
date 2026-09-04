@@ -125,9 +125,26 @@ export function CodeTabs({ citations }: { citations: readonly CodeRef[] }) {
   );
 }
 
-/** Click-to-reveal citations: chips that fetch the cited span on click and fold on re-click. */
-export function AnchorReveal({ citations }: { citations: readonly CodeRef[] }) {
-  const [activeKey, setActiveKey] = useState<string | null>(null);
+/**
+ * Click-to-reveal citations: chips that fetch the cited span on click and fold on re-click.
+ *
+ * `defaultOpen` reveals the FIRST citation on mount instead. The board passes it on every
+ * lens whose stops are meant to be read with their code in view (Rai, 2026-09-04: "code
+ * blocks should be expanded by default, not require a click") — the reveal-on-click
+ * default survives where a chip is one of many and opening them all would bury the prose,
+ * which is Noise and Design, and everywhere outside a lens board.
+ */
+export function AnchorReveal({
+  citations,
+  defaultOpen = false,
+}: {
+  readonly citations: readonly CodeRef[];
+  readonly defaultOpen?: boolean;
+}) {
+  const first = citations[0];
+  const [activeKey, setActiveKey] = useState<string | null>(
+    defaultOpen && first !== undefined ? refKey(first) : null,
+  );
   const activeCitation = citations.find((c) => refKey(c) === activeKey);
   return (
     <div className="flex flex-col gap-1.5">

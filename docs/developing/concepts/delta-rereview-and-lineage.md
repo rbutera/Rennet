@@ -197,10 +197,11 @@ citation was minted under. A section that cites nothing falls back to its title;
 one that cites code does not, because two generations both writing a "Findings"
 section about different code is ordinary, and matching on the shared word made a
 new section read as a rework while hiding the old one's removal. The marks read as
-unread state rather than as a changelog: a touched section opens expanded while
-a carried section folds to its gist, so the board's own shape states what moved.
-A small transient accent dot per touched section rolls up to the lens segment,
-clears on interaction, and is replaced wholesale by the next round's stamps.
+unread state rather than as a changelog. Every section folds to its gist on
+arrival, touched or carried alike (Rai, 2026-09-04) — the reader takes the
+summaries first and opens what they want. A small transient accent dot per
+touched section is what marks it as new; it rolls up to the lens segment, clears
+on interaction, and is replaced wholesale by the next round's stamps.
 
 ## Code map
 

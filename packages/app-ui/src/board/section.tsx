@@ -11,7 +11,7 @@ import { Icon } from "../components/icon";
 import { useRennetStore } from "../store";
 import { SourceChips, SpecDeltaBadge } from "./design-meta";
 import { DesignSectionBody } from "./design-structure";
-import { useBoardId, useElement } from "./kinds/element-context";
+import { useBoardId, useDesignMetaVisible, useElement } from "./kinds/element-context";
 import { BoardChildren } from "./kinds/renderers";
 import { InlineQuoteHighlight } from "./quote-highlight";
 import { selectDeltaViewed } from "./viewed-delta";
@@ -105,8 +105,13 @@ function FoldLine({
 /**
  * Render one top-level board section. `entry` is the projection's fold-line; the
  * section element (`entry.ref`) is resolved through the board pool for its title and
- * children. `defaultOpen` lets board-view drive `foldAll` (R44); a delta section
- * defaults to open regardless.
+ * children.
+ *
+ * EVERY section arrives folded, on every lens, including a delta section (Rai, 2026-09-04:
+ * "each foldable should be folded by default.. so you only read the summaries to begin
+ * with and you can expand to read the full detail"). A delta section keeps its dot, which
+ * is what marks it as new — the fold is the reading grammar, not the marker. `defaultOpen`
+ * is the escape hatch for a caller that genuinely needs one open; nothing passes it today.
  *
  * `memo`'d: on a big board the sections are the render units, and their props (`entry`
  * comes straight out of the resolved board) are stable for as long as the board is, so a
@@ -122,10 +127,11 @@ export const Section = memo(function Section({
   readonly defaultOpen?: boolean;
 }) {
   const boardId = useBoardId();
+  const designMeta = useDesignMetaVisible();
   const el = useElement(entry.ref);
   const viewed = useRennetStore(selectDeltaViewed(boardId, entry.ref));
   const markViewed = useRennetStore((s) => s.viewedDeltaActions.markDeltaViewed);
-  const [open, setOpen] = useState(defaultOpen ?? entry.delta !== undefined);
+  const [open, setOpen] = useState(defaultOpen ?? false);
 
   // A dangling / non-section ref renders nothing (mirrors the pool's other resolvers).
   if (el?.kind !== "section") return null;
@@ -186,7 +192,7 @@ export const Section = memo(function Section({
           />
           {specDelta ? <SpecDeltaBadge delta={specDelta} /> : null}
         </h2>
-        <SourceChips sources={sources ?? []} />
+        <SourceChips sources={designMeta ? (sources ?? []) : []} />
       </div>
       <Collapse open={!open}>
         <button

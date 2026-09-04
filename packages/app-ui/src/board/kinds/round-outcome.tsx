@@ -2,8 +2,8 @@ import type { HostElement } from "@rennet/protocol";
 import { cn } from "@rennet/ui";
 import { Check, CircleDashed, Minus, Sparkles } from "lucide-react";
 import { Icon } from "../../components/icon";
-import { AnchorReveal } from "../../review";
 import { QuoteHighlightLayer } from "../quote-highlight";
+import { BoardAnchorReveal } from "./board-anchor-reveal";
 import { useBoardPatchsetId, useCodeRefOf } from "./element-context";
 
 // `round_outcome` (C09 2.1) — one item of a round report (#486 R57/R58): how a
@@ -83,7 +83,7 @@ export function RoundOutcomeElement({ element }: { readonly element: RoundOutcom
         patchsetId={patchsetId}
         paragraphClassName="text-foreground/90 text-sm leading-relaxed"
       />
-      {ref && <AnchorReveal citations={[ref]} />}
+      {ref && <BoardAnchorReveal citations={[ref]} />}
     </div>
   );
 }

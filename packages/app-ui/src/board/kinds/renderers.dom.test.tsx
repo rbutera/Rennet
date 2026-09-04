@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import type { LensBoard } from "@rennet/protocol";
+import type { HostElement, LensBoard } from "@rennet/protocol";
 import { beforeEach, describe, expect, it } from "vitest";
 import { BridgeProvider } from "../../data";
 import { selectExitPipCount } from "../../handoff/selectors";
@@ -72,6 +72,31 @@ function renderBoard(board: LensBoard, anchoredAsk: AnchoredAsk | null = null) {
   );
 }
 
+/**
+ * Open a finding's disclosure and return the card.
+ *
+ * Every finding now arrives FOLDED (Rai, 2026-09-04: "each foldable should be folded by
+ * default"), and its actions live in the disclosure body — so a test that drives Dismiss,
+ * Discuss or Request This Change opens the card first. The click is CONDITIONAL on the
+ * disclosure reading closed, so this helper cannot quietly re-fold a card the test opened
+ * for itself, and it asserts the open state afterwards rather than assuming the click took.
+ */
+async function openFinding(
+  container: HTMLElement,
+  elementId: string,
+  user: { click(element: Element): Promise<void> },
+): Promise<HTMLElement> {
+  const finding = container.querySelector<HTMLElement>(
+    `[data-kind="finding"][data-element-id="${elementId}"]`,
+  );
+  if (!finding) throw new Error(`missing ${elementId} finding`);
+  const disclosure = finding.querySelector<HTMLButtonElement>("button[aria-expanded]");
+  if (!disclosure) throw new Error("missing finding disclosure");
+  if (disclosure.getAttribute("aria-expanded") === "false") await user.click(disclosure);
+  expect(disclosure.getAttribute("aria-expanded")).toBe("true");
+  return finding;
+}
+
 describe("board kind renderers over the fixture set", () => {
   it("renders every registered board kind's distinctive DOM across the fixtures", () => {
     const present = new Set<string>();
@@ -99,10 +124,7 @@ describe("board kind renderers over the fixture set", () => {
   it("a finding stages and unstages one board-attempt-scoped request, hiding Dismiss while staged", async () => {
     const { container, user } = renderBoard(flaggedBoard);
     // f1 cites cr-f1 → github-auth.ts:244; its `**Fix:**` mints the actionable callout.
-    const finding = container.querySelector<HTMLElement>(
-      '[data-kind="finding"][data-element-id="f1"]',
-    );
-    if (!finding) throw new Error("missing f1 finding");
+    const finding = await openFinding(container, "f1", user);
     const findAction = (label: string) =>
       [...finding.querySelectorAll<HTMLButtonElement>("button")].find(
         (button) => button.textContent === label,
@@ -146,10 +168,8 @@ describe("board kind renderers over the fixture set", () => {
       ),
     };
     const { container, user } = renderBoard(board);
-    const finding = container.querySelector<HTMLElement>(
-      '[data-kind="finding"][data-element-id="f1"]',
-    );
-    const request = [...(finding?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find(
+    const finding = await openFinding(container, "f1", user);
+    const request = [...finding.querySelectorAll<HTMLButtonElement>("button")].find(
       (button) => button.textContent === "Request This Change",
     );
     if (!request) throw new Error("missing request action");
@@ -185,10 +205,7 @@ describe("board kind renderers over the fixture set", () => {
       ),
     };
     const { container, user } = renderBoard(board);
-    const finding = container.querySelector<HTMLElement>(
-      '[data-kind="finding"][data-element-id="f1"]',
-    );
-    if (!finding) throw new Error("missing f1 finding");
+    const finding = await openFinding(container, "f1", user);
     const action = (label: string) =>
       [...finding.querySelectorAll<HTMLButtonElement>("button")].find(
         (button) => button.textContent === label,
@@ -220,13 +237,7 @@ describe("board kind renderers over the fixture set", () => {
     });
 
     const { container, user } = renderBoard(flaggedBoard);
-    const finding = container.querySelector<HTMLElement>(
-      '[data-kind="finding"][data-element-id="f1"]',
-    );
-    if (!finding) throw new Error("missing f1 finding");
-    const disclosure = finding.querySelector<HTMLButtonElement>("button[aria-expanded]");
-    if (!disclosure) throw new Error("missing finding disclosure");
-    await user.click(disclosure);
+    const finding = await openFinding(container, "f1", user);
     const action = (label: string) =>
       [...finding.querySelectorAll<HTMLButtonElement>("button")].find(
         (button) => button.textContent === label,
@@ -250,11 +261,8 @@ describe("board kind renderers over the fixture set", () => {
 
   it("overlays a reversible dismissal, dims and folds it, and leaves it peekable", async () => {
     const { container, getAllByText, user } = renderBoard(flaggedBoard);
-    const finding = container.querySelector<HTMLElement>(
-      '[data-kind="finding"][data-element-id="f1"]',
-    );
-    const disclosure = finding?.querySelector<HTMLButtonElement>("button[aria-expanded]");
-    expect(disclosure?.getAttribute("aria-expanded")).toBe("true");
+    const finding = await openFinding(container, "f1", user);
+    const disclosure = finding.querySelector<HTMLButtonElement>("button[aria-expanded]");
 
     const [dismiss] = getAllByText("Dismiss");
     if (!dismiss) throw new Error("missing Dismiss action");
@@ -301,9 +309,10 @@ describe("board kind renderers over the fixture set", () => {
   it("Discuss cites the fix, focuses the persistent chat, and dispatches one anchored turn", async () => {
     const sent: Parameters<AnchoredAsk>[0][] = [];
     const startingFocusRevision = useRennetStore.getState().ui.chatComposerFocusRevision;
-    const { getAllByRole, user } = renderBoard(flaggedBoard, async (input) => {
+    const { container, getAllByRole, user } = renderBoard(flaggedBoard, async (input) => {
       sent.push(input);
     });
+    await openFinding(container, "f1", user);
     const [discuss] = getAllByRole("button", { name: "Discuss" });
     if (!discuss) throw new Error("missing Discuss action");
     await user.click(discuss);
@@ -356,6 +365,140 @@ describe("board kind renderers over the fixture set", () => {
     if (firstNotNoise) await user.click(firstNotNoise);
     const asks = Object.values(useRennetStore.getState().review.stagedAsks);
     expect(asks.some((a) => a.type === "comment")).toBe(true);
+  });
+
+  // ── Dogfood repairs, 2026-09-04 ────────────────────────────────────────────────
+
+  it("prints the roads not taken, not the element ids a seat wrote in their place", () => {
+    // The shape a real Decisions board arrived in: `AUTHORED_BOARD_SCHEMA` declares
+    // `alternatives` as an `element` list and names its input `alternative_ids`, so the
+    // seat minted one `prose` per alternative and cited it. The card printed
+    // "Not taken: alt-1 · alt-2" and the prose sat orphaned in the pool.
+    const author = { kind: "lens-agent", id: "decisions" } as const;
+    const board: LensBoard = {
+      ...decisionsBoard,
+      elements: [
+        {
+          id: "alt-singleton",
+          kind: "prose",
+          data: {
+            author,
+            markdown:
+              "**Alternative not taken:** a module-level singleton, which two tests cannot isolate from each other.",
+          },
+        },
+        { id: "alt-emitter", kind: "prose", data: { author, markdown: "an event emitter" } },
+        {
+          id: "d-ids",
+          kind: "decision",
+          data: {
+            author,
+            statement: "The logger is injected.",
+            why: "Injection is what lets a test swap the sink.",
+            evidence: [],
+            alternatives: ["alt-singleton", "alt-emitter"],
+          },
+        },
+      ],
+    };
+    const { container, unmount } = renderBoard(board);
+    const line = container.querySelector('[data-kind="decision-alternatives"]');
+    // Each id resolves to its element's TEXT, and the standalone prose label is dropped
+    // because the line already says "Not taken".
+    expect(line?.textContent).toBe(
+      "Not taken: a module-level singleton, which two tests cannot isolate from each other. · an event emitter",
+    );
+    expect(line?.textContent).not.toContain("alt-singleton");
+    expect(line?.textContent).not.toContain("Alternative not taken:");
+    unmount();
+
+    // The plain-text form is untouched: an entry that names no element prints itself. This
+    // is the case the fixtures carry, so without it the resolution above could be a rewrite
+    // of every entry rather than a lookup.
+    const plain = renderBoard(decisionsBoard);
+    const first = plain.container.querySelector('[data-kind="decision-alternatives"]');
+    expect(first?.textContent).toContain(
+      "A bare console.error inside the adapter (couples the adapter to a sink)",
+    );
+  });
+
+  it("keeps a section's spec-artifact chips off every lens but Design", async () => {
+    // A Flagged seat filled `section.sources` with `{path, label: "reviewed", line}`, and
+    // the header grew three unexplained chips that opened the reader's editor at an
+    // arbitrary line. `sources` is a specification artifact's provenance; a defect has none.
+    const author = { kind: "lens-agent", id: "flagged-seat" } as const;
+    const section: HostElement = {
+      id: "correctness",
+      kind: "section",
+      data: {
+        author,
+        title: "Correctness",
+        children: [],
+        sources: [{ path: "packages/server/src/bound-workspace.ts", label: "reviewed", line: 44 }],
+      },
+    };
+    const chipsOn = (lens: string) => {
+      const view = mount(
+        <BridgeProvider bridge={new MemoryBridge({ "patchset.readSpan": refusesSpanRead })}>
+          <BoardElementsProvider elements={[section]} reviewId="rev-1" lens={lens}>
+            <BoardElement element={section} />
+          </BoardElementsProvider>
+        </BridgeProvider>,
+      );
+      const count = view.container.querySelectorAll('[data-kind="source-chip"]').length;
+      view.unmount();
+      return count;
+    };
+    expect(chipsOn("flagged")).toBe(0);
+    expect(chipsOn("noise")).toBe(0);
+    // Positive control: the SAME section on Design still renders its chip, so the zeroes
+    // above are the lens gate and not a section that lost the ability to draw one.
+    expect(chipsOn("design")).toBe(1);
+  });
+
+  it("reveals a cited span on arrival everywhere except Noise and Design", async () => {
+    const author = { kind: "lens-agent", id: "sequence" } as const;
+    const codeRef: HostElement = {
+      id: "cr-1",
+      kind: "code_ref",
+      data: {
+        author,
+        patchset_id: "ps-1",
+        path: "packages/server/src/bound-workspace.ts",
+        side: "head",
+        start_line: 44,
+        end_line: 60,
+      },
+    };
+    // The seam refuses, and its refusal is what renders — which is exactly what makes this
+    // readable as "the span was requested". A folded chip requests nothing.
+    const revealedOn = async (lens: string) => {
+      const view = mount(
+        <BridgeProvider bridge={new MemoryBridge({ "patchset.readSpan": refusesSpanRead })}>
+          <BoardElementsProvider elements={[codeRef]} reviewId="rev-1" lens={lens}>
+            <BoardElement element={codeRef} />
+          </BoardElementsProvider>
+        </BridgeProvider>,
+      );
+      await waitFor(() =>
+        expect(view.container.querySelector('[data-kind="code_ref"]')).toBeTruthy(),
+      );
+      // The seam was consulted iff the refusal rendered. Poll rather than assert, because
+      // the answer under test is BOTH truth values.
+      const asked = () =>
+        view.container.querySelector('[data-kind="citation-unreadable"]')?.textContent ?? "";
+      for (let tick = 0; tick < 20 && !asked().includes(SPAN_OUTSIDE_CAPTURE); tick += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+      const revealed = asked().includes(SPAN_OUTSIDE_CAPTURE);
+      view.unmount();
+      return revealed;
+    };
+    expect(await revealedOn("sequence")).toBe(true);
+    expect(await revealedOn("decisions")).toBe(true);
+    expect(await revealedOn("flagged")).toBe(true);
+    expect(await revealedOn("noise")).toBe(false);
+    expect(await revealedOn("design")).toBe(false);
   });
 
   // ── W3 structural restorations (prototype `lens-board.tsx`) ────────────────────

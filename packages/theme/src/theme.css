@@ -9,10 +9,12 @@
  * Plain-CSS surfaces (marketing, docs) import palette.css directly instead.
  */
 
+/* Two faces, because there are two voices: Geist for every chrome surface and Geist Mono
+ * for code (Rai, 2026-09-04 — see DESIGN.md §Typography). Fraunces and Newsreader are no
+ * longer loaded; nothing resolves to them, so shipping their bytes bought a download and
+ * nothing on screen. */
 @import "@fontsource-variable/geist";
 @import "@fontsource-variable/geist-mono";
-@import "@fontsource-variable/fraunces";
-@import "@fontsource-variable/newsreader";
 @import "./palette.css";
 
 /* User-selectable theme packs + code themes (issue #481, C10 §6.2). Each is a
@@ -97,12 +99,12 @@
   --color-del: var(--rn-del);
   --color-del-ink: var(--rn-del-ink);
 
-  /* type — three voices plus code, and the prose alias (root DESIGN.md §Typography) */
+  /* type — one interface voice plus code, and the prose alias (root DESIGN.md §Typography) */
   --font-sans: var(--rn-font-sans);
   --font-serif: var(--rn-font-serif);
   --font-display: var(--rn-font-display);
   --font-mono: var(--rn-font-mono);
-  /* chat + prose runs sans; flip back to --rn-font-serif to try serif body */
+  /* one interface voice: --font-serif and --font-display are aliases of the sans stack */
   --font-prose: var(--rn-font-sans);
 
   /* the desktop ramp (packages/app-ui/DESIGN.md): 10/11/12/12.5/13/14/15/16/18/

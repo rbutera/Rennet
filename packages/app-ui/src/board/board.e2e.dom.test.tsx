@@ -216,14 +216,19 @@ describe("board E2E — the full fixture set through the real LensBoardView", ()
     if (wrongGen.status === "invalid") expect(wrongGen.reason).toBe("identity");
   });
 
-  it("folds: a non-delta lens folds every section to its gist + counts; Flagged opens expanded", async () => {
+  it("folds: EVERY lens folds every section to its gist + counts, Flagged included", async () => {
     const { container, user } = await renderView("gen1");
-    expect(lensOf(container)).toBe("flagged"); // selected Flagged follows R44's open rule
+    // Rai, 2026-09-04, retiring R44's Flagged exception: every lens opens on summaries.
+    expect(lensOf(container)).toBe("flagged");
     expect(
       [...container.querySelectorAll("[data-kind=board-section]")].every(
-        (s) => s.getAttribute("data-open") === "true",
+        (s) => s.getAttribute("data-open") === "false",
       ),
     ).toBe(true);
+    // Folded means GONE on Flagged too — no finding body is mounted until one is opened.
+    expect(kindsIn(container).has("finding")).toBe(false);
+    await unfoldAll(container, user);
+    expect(kindsIn(container).has("finding")).toBe(true);
 
     const design = container.querySelector<HTMLButtonElement>("[data-lens=design]");
     if (!design) throw new Error("no design tab");
@@ -240,12 +245,15 @@ describe("board E2E — the full fixture set through the real LensBoardView", ()
     expect(kindsIn(container).has("requirement")).toBe(true);
   });
 
-  it("delta marks: gen2 Flagged opens its delta sections expanded with a gold dot that clears on interaction", async () => {
+  it("delta marks: gen2 Flagged folds its delta sections under a gold dot that clears on interaction", async () => {
     const { container, getByText, user } = await renderView("gen2");
     expect(lensOf(container)).toBe("flagged");
     const deltaSections = container.querySelectorAll("[data-kind=board-section][data-delta]");
     expect(deltaSections.length).toBeGreaterThan(0);
-    expect([...deltaSections].every((s) => s.getAttribute("data-open") === "true")).toBe(true);
+    // A delta section used to be the one thing that opened itself. It no longer is (Rai,
+    // 2026-09-04) — the DOT is what marks it new, and the dot is the part that had to
+    // survive the change, so it is asserted on the folded card.
+    expect([...deltaSections].every((s) => s.getAttribute("data-open") === "false")).toBe(true);
     expect(container.querySelectorAll('[data-testid="delta-dot"]').length).toBe(
       deltaSections.length,
     );
