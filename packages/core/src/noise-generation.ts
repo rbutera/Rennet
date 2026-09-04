@@ -153,11 +153,11 @@ export interface RunNoiseAngleInput {
    */
   readonly writeContext: (files: readonly NoiseContextFile[]) => string;
   /**
-   * Where Rennet's assembled project context for this base already sits on disk
-   * (`~/.rennet/projects/<key>/context-manifests/<baseOid>.context.txt`). Named in the
-   * prompt, never read into it: the text used to ride every attempt as a context layer.
+   * Rennet's assembled project context for this base. Copied ONCE into the session's
+   * context directory and named there; it never rides a prompt, and it is never named at
+   * the daemon's own store path, which a seat in another locus (WSL) cannot open.
    */
-  readonly assembledContextPath?: string;
+  readonly assembledContext?: string;
   /** The `git diff` that shows the seat the whole change from its cwd (`reviewedDiffCommand`). */
   readonly diffCommand?: string;
   /** Retries after the first attempt. Default 2 (three attempts total). */
@@ -484,9 +484,20 @@ export function renderNoiseOfferLayer(input: {
   ].join("\n");
 }
 
-/** The context layer: the persisted assembled-context text, named at its path. */
-export function renderNoiseAssembledContextLayer(assembledContextPath: string): string {
-  return `Rennet's assembled project context for this base is at \`${assembledContextPath}\`; read it when a group's reason turns on a repository convention.`;
+/** Rennet's assembled project context, copied into the session's context directory. */
+export const NOISE_PROJECT_CONTEXT_FILE = "project-context.md";
+
+/**
+ * The context layer: the assembled project context, named RELATIVE to the seat's cwd.
+ *
+ * It used to name the daemon's own absolute store path
+ * (`~/.rennet/projects/<key>/context-manifests/<base>.context.txt`). A seat does not run
+ * in the daemon's locus — a WSL seat is launched with `wsl.exe --cd <distro root>` — so
+ * that path named a file it could not open. The text is copied into the session context
+ * directory instead, beside every other file the turn is told about.
+ */
+export function renderNoiseAssembledContextLayer(contextDir: string): string {
+  return `Rennet's assembled project context for this base is at \`${contextDir.replace(/\/$/, "")}/${NOISE_PROJECT_CONTEXT_FILE}\`; read it when a group's reason turns on a repository convention.`;
 }
 
 /** Format a validation report into the machine-readable text fed back on retry. */
@@ -535,15 +546,23 @@ export async function runNoiseAngle(input: RunNoiseAngleInput): Promise<RunNoise
         "The offered hunks you may anchor to: each one's id, path and line ranges, no line bodies.",
       readWhen: "first, before you read the change; anchor only to ids listed here.",
     },
+    ...(input.assembledContext === undefined
+      ? []
+      : [
+          {
+            name: NOISE_PROJECT_CONTEXT_FILE,
+            body: input.assembledContext,
+            holds: "Rennet's assembled project context for this base.",
+            readWhen: "when a group's reason turns on a repository convention.",
+          },
+        ]),
   ]);
   const offerLayer = renderNoiseOfferLayer({
     contextDir,
     ...(input.diffCommand === undefined ? {} : { diffCommand: input.diffCommand }),
   });
   const contextLayer =
-    input.assembledContextPath === undefined
-      ? undefined
-      : renderNoiseAssembledContextLayer(input.assembledContextPath);
+    input.assembledContext === undefined ? undefined : renderNoiseAssembledContextLayer(contextDir);
   const hypothesisLayer =
     input.hypothesis === undefined ? undefined : renderHypothesisLayer(input.hypothesis);
   // The per-project convention checklist (#180). An absent catalogue, or one with

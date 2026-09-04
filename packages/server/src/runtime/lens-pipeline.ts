@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { join, relative } from "node:path";
+import { join } from "node:path";
 import { performance } from "node:perf_hooks";
 import type {
   MetricsCollector,
@@ -928,16 +928,12 @@ export interface ContextSink {
   readonly add: (files: readonly SessionContextFile[]) => string | undefined;
 }
 
-export function createContextSink(
-  repoRoot: string,
-  write: LensPipelineDeps["writeContext"],
-): ContextSink {
+export function createContextSink(write: LensPipelineDeps["writeContext"]): ContextSink {
   const byName = new Map<string, SessionContextFile>();
   return {
     add(files) {
       for (const file of files) byName.set(file.name, file);
-      if (write === undefined) return undefined;
-      return relative(repoRoot, write([...byName.values()])) || ".";
+      return write?.([...byName.values()]);
     },
   };
 }
@@ -1340,9 +1336,12 @@ export interface LensPipelineDeps {
   /**
    * The daemon's ONE session-context writer, bound to {@link repoRoot} and the session id
    * (session-context-files D3). Every file a seat is told about goes through it, and it
-   * returns the ABSOLUTE directory it wrote; the pipeline names that directory relative to
-   * {@link repoRoot}, which is the seat's cwd. The pipeline re-writes the whole set on each
-   * addition, so the `README.md` index always lists every file of the generation.
+   * returns the directory RELATIVE to the seat's cwd with `/` separators — the form a
+   * prompt names. Relative and `/`-separated is load-bearing twice over: the seat's tools
+   * resolve against its own cwd (which on WSL is a distro path the daemon's absolute path
+   * does not name), and `path.relative` would emit backslashes on Windows that a prompt
+   * cannot carry. The pipeline re-writes the whole set on each addition, so the
+   * `README.md` index always lists every file of the generation.
    *
    * Absent ⇒ the direct-call shape (a test with a fake root): nothing is written and no
    * prompt names a directory. The rounds runtime always binds one in production.
@@ -2074,7 +2073,7 @@ export async function runLensPipeline(deps: LensPipelineDeps): Promise<LensPipel
 
   // The generation's context files (session-context-files): ONE sink, so each write
   // through the daemon's writer lists every file written so far in the index.
-  const context = createContextSink(deps.repoRoot, deps.writeContext);
+  const context = createContextSink(deps.writeContext);
 
   // Whether a report drafts at all is `draftsRoundReport` (R58/D3, defined with the
   // predicate). It drafts FIRST and announces its own arrival, ahead of every lens.

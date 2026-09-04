@@ -260,14 +260,18 @@ export function checkImmutability(before: DraftBoard, after: DraftBoard): Violat
 // ── The loop ─────────────────────────────────────────────────────────────────
 
 /**
- * Stamp the board's own patchset id onto every `code_ref`.
+ * Stamp the board's own patchset id onto every `code_ref`, ONCE, immediately before the
+ * board is returned for persistence.
  *
- * The seat cannot know it and is never told: since session-context-files the drafting
+ * The seat cannot know the id and is never told: since session-context-files the drafting
  * prompt carries no packet, and a captured patchset's id is Rennet's identity for the
- * capture, not something readable from the checkout. A seat asked for a field it has no
- * source for invents one, so the HOST supplies it and lint's cross-patchset check then
- * measures what it was written for — a board composed against the wrong capture — rather
- * than a hallucination every seat produces.
+ * capture, not something readable from the checkout. So the HOST supplies it — but only
+ * at the very end, never on each parse. Stamping every pass would rebind a stale seat
+ * result or an editor mutation silently, and the cross-patchset check and the
+ * immutability gate would then compare two boards this function had already made agree.
+ * Everything before this point sees exactly what the seat and the editor emitted; what a
+ * citation actually POINTS AT is checked by lint against `ctx.regions`, which is the
+ * check that can fail.
  */
 function stampPatchsetId(board: DraftBoard, patchsetId: string | undefined): DraftBoard {
   if (patchsetId === undefined) return board;
@@ -284,13 +288,12 @@ function stampPatchsetId(board: DraftBoard, patchsetId: string | undefined): Dra
 /** Coerce a raw seat return into a `DraftBoard`, or the parse issues that rejected it. */
 function coerceBoard(
   raw: unknown,
-  patchsetId?: string,
 ):
   | { ok: true; board: DraftBoard }
   | { ok: false; issues: readonly { path: readonly (string | number)[]; message: string }[] } {
   const parsed = parseDraft(raw);
   return parsed.ok
-    ? { ok: true, board: stampPatchsetId(parsed.value, patchsetId) }
+    ? { ok: true, board: parsed.value }
     : {
         ok: false,
         issues: parsed.issues.map((i) => ({
@@ -339,7 +342,7 @@ export async function validateDraft(
   seams: ValidateSeams,
 ): Promise<ValidateResult> {
   // Gate 1 — the lint loop. `input` is the drafter's first structured return.
-  const first = coerceBoard(input, ctx.patchsetId);
+  const first = coerceBoard(input);
   let current: DraftBoard = first.ok ? first.board : { elements: [] };
   // A parse failure on the very first return still seeds the channel: the seat
   // is re-asked with the schema issues as pointers (attempt 1 below).
@@ -517,7 +520,7 @@ export async function validateDraft(
       pointers,
       attempt: attempts,
     });
-    const coerced = coerceBoard(raw, ctx.patchsetId);
+    const coerced = coerceBoard(raw);
     if (coerced.ok) {
       everParsed = true;
       pendingParseIssues = [];
@@ -531,7 +534,7 @@ export async function validateDraft(
   // Gate 2 — post-process editor pass, reference safety, then typed-data immutability.
   const beforeEditor = current;
   const editedRaw = seams.postProcess ? await seams.postProcess(current) : current;
-  const edited = coerceBoard(editedRaw, ctx.patchsetId);
+  const edited = coerceBoard(editedRaw);
   const afterEditor = edited.ok ? edited.board : current;
   const editorReferenceViolations = lint(afterEditor, ctx).filter(
     ({ ruleId }) => ruleId === "element-reference-resolves",
@@ -553,5 +556,13 @@ export async function validateDraft(
     blemishes = [...blemishes, ...wire];
   }
 
-  return { board: current, omissions, blemishes, immutability, attempts, everParsed };
+  // The ONE stamp, after every gate has compared what was actually emitted.
+  return {
+    board: stampPatchsetId(current, ctx.patchsetId),
+    omissions,
+    blemishes,
+    immutability,
+    attempts,
+    everParsed,
+  };
 }

@@ -1,21 +1,13 @@
 import type { ContextManifest, ContextSendRecord } from "@rennet/protocol";
 
 export interface ReviewContextFeedDeps {
-  ensure(): Promise<
-    | { readonly manifest: ContextManifest; readonly text: string; readonly textPath?: string }
-    | undefined
-  >;
+  ensure(): Promise<{ readonly manifest: ContextManifest; readonly text: string } | undefined>;
   append(records: readonly ContextSendRecord[]): void;
   readonly onError?: (error: unknown) => void;
 }
 
 export interface ReviewContextFeed {
   readonly assembledContext?: string;
-  /**
-   * Where the assembled context text is persisted, when it is. A seat converted to
-   * session-context-files is pointed at this path instead of receiving the text.
-   */
-  readonly assembledContextPath?: string;
   readonly onSend: (record: ContextSendRecord) => void;
   complete(): ContextManifest | undefined;
 }
@@ -50,7 +42,6 @@ export async function createReviewContextFeed(
 
   return {
     ...(ensured ? { assembledContext: ensured.text } : {}),
-    ...(ensured?.textPath === undefined ? {} : { assembledContextPath: ensured.textPath }),
     onSend(record) {
       sends.push(record);
     },

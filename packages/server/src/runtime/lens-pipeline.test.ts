@@ -2973,7 +2973,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       boardIdFor: (lens) => `board:${lens}`,
       writeContext: (files) => {
         for (const file of files) contextFiles.set(file.name, file);
-        return "/pr-worktree/.rennet/context/s1";
+        return ".rennet/context/s1";
       },
       onBoardArrival: (event) => {
         arrivals.push(event);
@@ -5315,7 +5315,7 @@ describe("runLensPipeline writes the session context through the ONE writer, bef
     const writeContext = (files: readonly SessionContextFile[]): string => {
       writes.push(files.map((file) => file.name));
       for (const file of files) written.set(file.name, file);
-      return "/pr-worktree/.rennet/context/s1";
+      return ".rennet/context/s1";
     };
     let composePrompt = "";
     const result = await runLensPipeline({

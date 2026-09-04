@@ -50,6 +50,7 @@ import type {
   LintTarget,
   RegisterLintContext,
 } from "@rennet/core";
+import { sessionContextRelativeDir } from "@rennet/core";
 import type { GenerationUsage } from "@rennet/protocol";
 import {
   type AskOccurrence,
@@ -699,7 +700,8 @@ export interface RoundsRuntimeDeps {
    * it to the root the seats are DISPATCHED with (`draftingRoot ?? repoRoot`) and the
    * session id, so every file the pipeline writes sits in the seat's own cwd. Absent ⇒ the
    * direct-call shape (a test with a fake root): nothing is written and no prompt names a
-   * directory.
+   * directory. Its return value is ignored here — the pipeline is handed the relative
+   * directory, which this runtime derives from the session id it already holds.
    */
   readonly writeSessionContext?: (
     root: string,
@@ -1377,8 +1379,12 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
       ...(writeSessionContext === undefined
         ? {}
         : {
-            writeContext: (files: readonly SessionContextFile[]) =>
-              writeSessionContext(input.draftingRoot ?? input.repoRoot, input.session.id, files),
+            writeContext: (files: readonly SessionContextFile[]) => {
+              writeSessionContext(input.draftingRoot ?? input.repoRoot, input.session.id, files);
+              // The RELATIVE, `/`-separated form is what a prompt names: the seat's tools
+              // resolve it against its own cwd, which is that same root.
+              return sessionContextRelativeDir(input.session.id);
+            },
           }),
       deltaPacket: input.deltaPacket,
       currentGeneration: attemptGeneration.id,

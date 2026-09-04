@@ -2420,14 +2420,15 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       // degrades to a turn-failure rather than crashing the command.
       runTurn: recordedDesktopSeatTurn(runNoiseTurn, "noise", contextFeed),
       budget,
-      // session-context-files: the offer is written under the seat's cwd and NAMED, and
-      // the assembled project context is named at the path it is already persisted to.
-      // Nothing about the change rides inline; the seat reads the diff from its cwd.
+      // session-context-files: the offer AND the assembled project context are written
+      // under the seat's cwd and NAMED there. Nothing about the change rides inline, and
+      // no prompt names the daemon's own store path, which a seat in another locus
+      // (a WSL distro) cannot open.
       writeContext: (files) => writeReviewContext(review, files),
       diffCommand: reviewedDiffCommand(patchset.repository),
-      ...(contextFeed.assembledContextPath === undefined
+      ...(contextFeed.assembledContext === undefined
         ? {}
-        : { assembledContextPath: contextFeed.assembledContextPath }),
+        : { assembledContext: contextFeed.assembledContext }),
     });
     if (result.status === "ok") {
       return { status: "ok", groups: result.groups };

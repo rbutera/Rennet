@@ -1,6 +1,13 @@
 import { createHash, randomUUID } from "node:crypto";
-import { appendFileSync, existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { isAbsolute, relative, resolve } from "node:path";
+import {
+  appendFileSync,
+  type Dirent,
+  existsSync,
+  readdirSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import {
   buildCapabilities,
   type CodexExecutor,
@@ -177,18 +184,21 @@ function sessionContextFiles(prompt: string, cwd: string): readonly string[] {
   const dir = /`(\.rennet\/context\/[^`/]+)\//.exec(prompt)?.[1];
   if (dir === undefined || cwd === "") return [];
   const root = resolve(cwd, dir);
-  let names: readonly string[];
+  let entries: readonly Dirent[];
   try {
-    names = readdirSync(root);
+    // RECURSIVE: the writer nests (`boards/<lens>.json`, `compose/asks.json`,
+    // `opener/`, `pr-body/`), and a flat read would make a step blind to exactly the
+    // files the prompts that nest were rewritten to name.
+    entries = readdirSync(root, { recursive: true, withFileTypes: true });
   } catch {
     return [];
   }
-  return names.flatMap((name) => {
-    if (name === "README.md") return [];
+  return entries.flatMap((entry) => {
+    if (!entry.isFile() || entry.name === "README.md") return [];
     try {
-      return [readFileSync(resolve(root, name), "utf8")];
+      return [readFileSync(join(entry.parentPath, entry.name), "utf8")];
     } catch {
-      return []; // a subdirectory (`boards/`), or a file this turn cannot read
+      return []; // unreadable for this turn; never fatal to step selection
     }
   });
 }

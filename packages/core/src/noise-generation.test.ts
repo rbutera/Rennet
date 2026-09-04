@@ -5,6 +5,7 @@ import { inlineContextViolation } from "./harness-run-turn";
 import { createInvocationBudget } from "./invocation-budget";
 import {
   NOISE_OFFER_FILE,
+  NOISE_PROJECT_CONTEXT_FILE,
   type NoiseContextFile,
   type NoiseProvenanceSeed,
   type NoiseTurnResult,
@@ -129,10 +130,11 @@ function noiseJobGroup(overrides: Record<string, unknown> = {}): Record<string, 
 }
 
 describe("runNoiseAngle — the live noise runner (issue #34)", () => {
-  // session-context-files 3.5: the offer is a FILE the prompt names; the assembled context
-  // text is named at its persisted path; nothing about the change rides inline.
+  // session-context-files 3.5: the offer is a FILE the prompt names, and so is the
+  // assembled project context — copied into the session directory, never named at the
+  // daemon's own store path, which a seat in another locus cannot open. Nothing rides inline.
   const captureSent = async (over: {
-    readonly assembledContextPath?: string;
+    readonly assembledContext?: string;
     readonly diffCommand?: string;
     readonly runTurn?: (prompt: string, attempt: number) => Promise<NoiseTurnResult>;
   }): Promise<string[]> => {
@@ -143,9 +145,7 @@ describe("runNoiseAngle — the live noise runner (issue #34)", () => {
       provenance: SEED,
       writeContext,
       noiseJobModel: "Claude",
-      ...(over.assembledContextPath === undefined
-        ? {}
-        : { assembledContextPath: over.assembledContextPath }),
+      ...(over.assembledContext === undefined ? {} : { assembledContext: over.assembledContext }),
       ...(over.diffCommand === undefined ? {} : { diffCommand: over.diffCommand }),
       runTurn: (prompt, attempt) => {
         sent.push(prompt);
@@ -158,12 +158,12 @@ describe("runNoiseAngle — the live noise runner (issue #34)", () => {
     return sent;
   };
 
-  it("names the offer file, the diff command and the persisted context path — and carries no payload", async () => {
-    const textPath = "/home/rai/.rennet/projects/repo/context-manifests/0000.context.txt";
+  it("names the offer file, the diff command and the copied project context — and carries no payload", async () => {
+    const assembled = "PROJECT_CONTEXT_BODY: the repo prefers tabs.";
     const prompt =
       (
         await captureSent({
-          assembledContextPath: textPath,
+          assembledContext: assembled,
           diffCommand: `git diff ${"0".repeat(40)}...${"1".repeat(40)}`,
         })
       )[0] ?? "";
@@ -172,7 +172,10 @@ describe("runNoiseAngle — the live noise runner (issue #34)", () => {
       `<<<rennet:layer payload>>>\nYour working directory is a checkout of the reviewed repository.\nThe offered hunks are listed in \`${CONTEXT_DIR}/${NOISE_OFFER_FILE}\``,
     );
     expect(prompt).toContain(`<<<rennet:layer context>>>\nRennet's assembled project context`);
-    expect(prompt).toContain(`\`${textPath}\``);
+    // NAMED relative to the seat's cwd, and the TEXT is in the file, not the prompt.
+    expect(prompt).toContain(`\`${CONTEXT_DIR}/${NOISE_PROJECT_CONTEXT_FILE}\``);
+    expect(prompt).not.toContain(assembled);
+    expect(writtenFiles.find((f) => f.name === NOISE_PROJECT_CONTEXT_FILE)?.body).toBe(assembled);
     expect(prompt).toContain(`git diff ${"0".repeat(40)}...${"1".repeat(40)}`);
     // No hunk id, no line body, no JSON over the inline bound.
     expect(prompt).not.toContain(OFFERED_A);
