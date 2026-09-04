@@ -14,7 +14,6 @@ import { Router } from "wouter";
 import { BridgeProvider } from "../data";
 import type { RoundsSource } from "../rounds/rounds-data";
 import { RoundsSourceProvider } from "../rounds/rounds-data";
-import { gateDuration } from "../rounds/rounds-ledger";
 import { memoryHistory } from "../routes/history";
 import { useRennetStore } from "../store";
 import { act, mount, waitFor } from "../test/dom";
@@ -184,7 +183,6 @@ describe("the rounds ledger (C09 cluster 6)", () => {
       run: {
         startedAt: Date.UTC(2026, 7, 28, 8, 0),
         sourceTarget: { kind: "detached", head: "0123456789abcdef" },
-        gate: { outcome: "skipped", reason: "not-configured" },
       },
     };
     const completedRun = completedRoundRecord.run;
@@ -368,12 +366,10 @@ describe("the retrospective line + the frozen gen-1 drill-down (C15 4.3, 4.4)", 
     expect(triggers[1]?.textContent).toContain("ask-never-reported");
   });
 
-  // The run RECEIPT is the optional half (legacy rows omit it), and the GATE line is the
-  // only thing that depends on it. `workerCommitRange` is record-level and always present,
-  // so the commit range must survive a missing receipt — it used to be nested inside the
-  // gate's guard, which hid a legacy round's real commits because nobody had written down
-  // which gate command ran.
-  it("shows the gate line only with a receipt, and the commit range either way", async () => {
+  // The commit range is record-level and always present — a legacy row without a run
+  // receipt still states the commits it landed. Rennet runs no check of its own any more
+  // (round-worker-thread), so there is no gate line here to hide it behind.
+  it("states the commit range with or without a run receipt", async () => {
     const withoutReceipt = renderWorkspace(
       "/s/s-1?view=rounds",
       sourceFor(regeneratedRound(["ask-observability"], 1)),
@@ -384,8 +380,6 @@ describe("the retrospective line + the frozen gen-1 drill-down (C15 4.3, 4.4)", 
     if (!closed) throw new Error("missing retrospective disclosure");
     await withoutReceipt.r.user.click(closed);
     expect(withoutReceipt.r.queryByTestId("round-gate")).toBeNull();
-    // …and the commits the round DID land are still stated. Re-nest the commit line under
-    // `gate !== undefined` and this reddens.
     expect(withoutReceipt.r.getByTestId("round-commits").textContent).toContain(
       "Committed commit-…commit-",
     );
@@ -398,7 +392,6 @@ describe("the retrospective line + the frozen gen-1 drill-down (C15 4.3, 4.4)", 
         run: {
           startedAt: Date.UTC(2026, 7, 29, 9, 30),
           sourceTarget: { kind: "branch", branch: "fix/token-refresh-observability" },
-          gate: { outcome: "passed", command: "pnpm check", durationMs: 12_400 },
         },
       }),
     );
@@ -407,32 +400,9 @@ describe("the retrospective line + the frozen gen-1 drill-down (C15 4.3, 4.4)", 
       .querySelector<HTMLButtonElement>("button[aria-expanded]");
     if (!open) throw new Error("missing retrospective disclosure");
     await withReceipt.r.user.click(open);
-    expect(withReceipt.r.getByTestId("round-gate").textContent).toContain(
-      "Gate passed · pnpm check · 12s",
-    );
+    expect(withReceipt.r.queryByTestId("round-gate")).toBeNull();
     // `commit-from` → `commit-to` is a real move, so the commit line states the range.
     expect(withReceipt.r.getByTestId("round-commits").textContent).toContain("Committed commit-");
-  });
-
-  // The gate duration used to round the SECONDS remainder after splitting off the minutes,
-  // so the remainder could round up into a value its own unit cannot hold: 59_999ms read
-  // "60s" (not "1m 0s") and 359_999ms read "5m 60s" (not "6m 0s"). Rounding to total
-  // seconds first removes the carry entirely. The boundaries are the whole claim, so they
-  // are what is asserted — the interior values were already right.
-  it.each([
-    [0, "<1s"],
-    [499, "<1s"],
-    [999, "<1s"],
-    [1000, "1s"],
-    [12_400, "12s"],
-    [59_499, "59s"],
-    [59_500, "1m 0s"],
-    [59_999, "1m 0s"],
-    [359_499, "5m 59s"],
-    [359_500, "6m 0s"],
-    [359_999, "6m 0s"],
-  ])("renders %ims as %s", (ms, expected) => {
-    expect(gateDuration(ms)).toBe(expected);
   });
 
   it("states the board's generation and round in one quiet intro line", () => {

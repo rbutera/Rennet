@@ -9,7 +9,7 @@ import { basename } from "node:path";
 import { settledTurnUsage } from "@rennet/adapters";
 import type { HandoffTurnOutcome } from "@rennet/core";
 import type { RoundCheckpoint, RspTokenUsage } from "@rennet/protocol";
-import type { OrchestrationThread, T3Client, TurnOutcome } from "./client";
+import type { OrchestrationThread, T3Client, TurnDiff, TurnOutcome } from "./client";
 import type { ThreadBinding, ThreadBindingKey } from "./threads";
 
 /**
@@ -50,6 +50,58 @@ export interface T3HandoffInput {
   readonly worktreePath?: string;
   /** The branch that workspace has checked out; absent for a detached PR snapshot. */
   readonly branch?: string;
+  /** Test seam for the checkpoint wait; production takes the defaults. */
+  readonly checkpointWait?: {
+    readonly waitMs?: number;
+    readonly sleep?: (ms: number) => Promise<void>;
+  };
+}
+
+/**
+ * A coding ROUND's turn: the same one turn, on a thread of the round's OWN
+ * (round-worker-thread). `operationId` is the durable round the thread belongs to, and
+ * `title` is what the reviewer reads in the thread list.
+ */
+export interface T3RoundTurnInput extends T3HandoffInput {
+  readonly sessionId: string;
+  readonly operationId: string;
+  readonly title: string;
+}
+
+/**
+ * The turn's checkpoint, waited for.
+ *
+ * T3 writes a turn's checkpoint on the CheckpointReactor's own fiber, AFTER the turn's
+ * lifecycle has settled — two writes, and the wait returns on the first. Issue #811: a
+ * round that had genuinely committed came back with `diff: ""`, `changedPaths: []` and no
+ * checkpoint at all, while the sidecar's projection held `checkpoint_status ready` for
+ * that exact turn. `readTurnDiff` throws when the thread it reads has no checkpoint for
+ * the turn yet, and the `.catch(() => undefined)` around it swallowed the diff AND the
+ * receipt handle `thread.checkpoint.revert` needs. So the read is retried inside a bound
+ * rather than taken once against a projection that has not caught up.
+ *
+ * `undefined` means the turn left no checkpoint inside the bound — a fact about the turn,
+ * never a fabricated receipt.
+ */
+const CHECKPOINT_WAIT_MS = 10_000;
+const CHECKPOINT_POLL_MS = 250;
+
+async function readTurnDiffWhenCheckpointed(
+  client: T3Client,
+  threadId: string,
+  turnId: string,
+  options: { readonly waitMs?: number; readonly sleep?: (ms: number) => Promise<void> } = {},
+): Promise<TurnDiff | undefined> {
+  const waitMs = options.waitMs ?? CHECKPOINT_WAIT_MS;
+  const sleep =
+    options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  const deadline = Date.now() + waitMs;
+  for (;;) {
+    const diff = await client.readTurnDiff(threadId, turnId).catch(() => undefined);
+    if (diff !== undefined) return diff;
+    if (Date.now() >= deadline) return undefined;
+    await sleep(CHECKPOINT_POLL_MS);
+  }
 }
 
 export interface T3HandoffDeps {
@@ -90,28 +142,28 @@ export function lastAssistantText(thread: OrchestrationThread): string {
   return "";
 }
 
-export async function runHandoffTurn(
+async function runTurnOnBoundThread(
+  binding: ThreadBinding,
   input: T3HandoffInput,
   deps: T3HandoffDeps,
 ): Promise<T3HandoffTurnOutcome> {
-  const binding = await deps.threadFor({
-    repositoryRoot: input.repoRoot,
-    key: { kind: "session", sessionId: input.reviewId },
-    title: basename(input.repoRoot) || "review",
-    ...(input.worktreePath === undefined ? {} : { worktreePath: input.worktreePath }),
-    ...(input.branch === undefined ? {} : { branch: input.branch }),
-  });
   const client = await deps.client();
   const start = await client.startTurn({ threadId: binding.threadId, text: input.prompt });
-  // Scoped to this start: the review's thread keeps its earlier handoffs, so an unscoped
-  // wait would answer a second handoff with the first one's settlement.
+  // Scoped to this start: a thread keeps its earlier turns, so an unscoped wait would
+  // answer a second turn with the first one's settlement.
   const outcome = await client.waitForTurnSettled(binding.threadId, {
     after: start,
     ...(input.signal ? { signal: input.signal } : {}),
   });
-  // The diff is T3's checkpoint for that turn. A turn that produced no checkpoint (nothing
-  // changed, or it failed before one) reads as an empty diff, never a thrown handoff.
-  const diff = await client.readTurnDiff(binding.threadId, outcome.turnId).catch(() => undefined);
+  // The diff is T3's checkpoint for that turn, waited for — the checkpoint lands on the
+  // reactor's own fiber after the lifecycle settles (#811). A turn that produced no
+  // checkpoint inside the bound reads as an empty diff, never a thrown handoff.
+  const diff = await readTurnDiffWhenCheckpointed(
+    client,
+    binding.threadId,
+    outcome.turnId,
+    input.checkpointWait ?? {},
+  );
   const filesTouched = (diff?.files ?? []).map((file) => file.path);
   const turnDiff = diff?.diff ?? "";
   // The checkpoint ref the round records. Absent when the turn wrote none — that is a
@@ -143,54 +195,81 @@ export async function runHandoffTurn(
   return { status: "failed", reason, turnDiff, filesTouched, ...checkpoint };
 }
 
+export async function runHandoffTurn(
+  input: T3HandoffInput,
+  deps: T3HandoffDeps,
+): Promise<T3HandoffTurnOutcome> {
+  const binding = await deps.threadFor({
+    repositoryRoot: input.repoRoot,
+    key: { kind: "session", sessionId: input.reviewId },
+    title: basename(input.repoRoot) || "review",
+    ...(input.worktreePath === undefined ? {} : { worktreePath: input.worktreePath }),
+    ...(input.branch === undefined ? {} : { branch: input.branch }),
+  });
+  return runTurnOnBoundThread(binding, input, deps);
+}
+
 /**
- * The checkpoint a turn started at or after `since` left on the review's bound thread.
+ * A coding ROUND's turn, on the round's OWN thread (round-worker-thread).
  *
- * Restart recovery's only evidence (session-bound-workspace D2): the daemon can die
- * mid-turn and T3 cannot be asked whether an execution id finished, but every settled turn
- * leaves a checkpoint.
+ * The session's chat thread is the reviewer's conversation with Rennet; a coding agent's
+ * tool calls do not belong in it, and until this change they shared one scroll. The round
+ * binds `(session, operation)` instead, in the session's bound workspace, and the thread
+ * is deleted with the session's others when the session is archived.
+ */
+export async function runRoundTurn(
+  input: T3RoundTurnInput,
+  deps: T3HandoffDeps,
+): Promise<T3HandoffTurnOutcome> {
+  const binding = await deps.threadFor({
+    repositoryRoot: input.repoRoot,
+    key: { kind: "round", sessionId: input.sessionId, operationId: input.operationId },
+    title: input.title,
+    ...(input.worktreePath === undefined ? {} : { worktreePath: input.worktreePath }),
+    ...(input.branch === undefined ? {} : { branch: input.branch }),
+  });
+  return runTurnOnBoundThread(binding, input, deps);
+}
+
+/**
+ * The checkpoint this round's turn left on the ROUND's own thread, at or after `since`.
  *
- * The turn is identified by its own PROMPT, not by when it finished. This thread is shared:
- * `review.handoff.run` sends interactive turns on it too, and a handoff completing after
- * the round started would be adopted as the round's receipt by any time-based pick. The
- * round's prompt is deterministic and persisted on its durable operation, T3 records the
- * user message the moment a turn starts, and every message carries its `turnId` — so the
- * message whose text IS this round's prompt names exactly the turn to read. `since` stays
- * as a second, independent guard against an identical re-dispatch's earlier attempt.
+ * Restart recovery's only evidence: the daemon can die mid-turn and T3 cannot be asked
+ * whether an execution id finished, but every settled turn leaves a checkpoint.
  *
- * The one window the pair does not close: attempt 1's sidecar turn outlives the daemon's
- * wait AND the daemon dies during attempt 2, so both attempts' turns carry the same prompt
- * and both checkpoints fall after attempt 2's `since`. The later one is taken, which is the
- * newer work — but it is a pick, not a proof.
+ * This is a plain read of the last checkpoint, with no prompt-text matching. That matching
+ * existed because the round shared the session's thread with the interactive handoff, and
+ * a handoff completing after the round started would otherwise have been adopted as the
+ * round's receipt. The thread is the round's now, so the only turns on it are this round's
+ * own attempts — and `since` still separates a retry from the attempt before it.
  *
  * `undefined` means no such turn left a checkpoint, which is a failed round, not a guessed
  * one. The checkpoint's `status` rides back and is the caller's to honour: a FAILED turn
  * checkpoints too, so "found a checkpoint" is not "the turn worked".
  */
-export async function readHandoffTurnCheckpoint(
+export async function readRoundTurnCheckpoint(
   input: {
     readonly repoRoot: string;
-    readonly reviewId: string;
-    /** The exact turn text the round sent, which is what identifies its turn. */
-    readonly prompt: string;
+    readonly sessionId: string;
+    readonly operationId: string;
+    readonly title: string;
     readonly since: number;
+    readonly worktreePath?: string;
+    readonly branch?: string;
   },
   deps: T3HandoffDeps,
 ): Promise<T3TurnCheckpointRead | undefined> {
   const binding = await deps.threadFor({
     repositoryRoot: input.repoRoot,
-    key: { kind: "session", sessionId: input.reviewId },
-    title: basename(input.repoRoot) || "review",
+    key: { kind: "round", sessionId: input.sessionId, operationId: input.operationId },
+    title: input.title,
+    ...(input.worktreePath === undefined ? {} : { worktreePath: input.worktreePath }),
+    ...(input.branch === undefined ? {} : { branch: input.branch }),
   });
   const client = await deps.client();
   const thread = await client.readThread(binding.threadId);
-  const ownTurns = new Set(
-    thread.messages
-      .filter((message) => message.role === "user" && message.text === input.prompt)
-      .flatMap((message) => (message.turnId === null ? [] : [message.turnId])),
-  );
   const summary = thread.checkpoints
-    .filter((entry) => ownTurns.has(entry.turnId) && Date.parse(entry.completedAt) >= input.since)
+    .filter((entry) => Date.parse(entry.completedAt) >= input.since)
     .at(-1);
   if (summary === undefined) return undefined;
   const diff = await client.readTurnDiff(binding.threadId, summary.turnId).catch(() => undefined);

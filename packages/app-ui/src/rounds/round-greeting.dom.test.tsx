@@ -75,7 +75,6 @@ describe("RoundGreeting — where the round ran", () => {
                 kind: "branch",
                 branch: "main",
               },
-              gate: { outcome: "skipped", reason: "not-configured" },
             },
           },
           roundNumber: 1,

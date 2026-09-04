@@ -31,7 +31,6 @@ const OPERATION_BASE = {
   roundNumber: 2,
   sourceTarget: { kind: "branch", branch: "feat/truthful-round" },
   askCount: 3,
-  gatePlan: { kind: "configured", command: "pnpm check" },
 } satisfies Omit<RoundOperationProgressSnapshot, "state">;
 
 const WORKSPACE = { status: "done" } as const;
@@ -86,7 +85,6 @@ describe("round-machine — the pure run state machine", () => {
       "dispatching",
       "preparing",
       "working",
-      "gating",
       "committing",
       "reporting",
       "composing",
@@ -167,7 +165,6 @@ describe("round-machine — the pure run state machine", () => {
       { type: "dispatched" },
       { type: "prep", rows: [] },
       { type: "worker", rows: [] },
-      { type: "gate" },
       { type: "committed" },
     ];
     const committing = upToCommit.reduce(advance, initialRoundState);
@@ -193,12 +190,7 @@ describe("round-machine — the pure run state machine", () => {
   it("uses the newest durable snapshot across daemon seq restarts", () => {
     const stale = operationEvent(
       4,
-      {
-        phase: "gate-running",
-        workspace: WORKSPACE,
-        worker: WORKER,
-        gate: { status: "running" },
-      },
+      { phase: "worker-settled", workspace: WORKSPACE, worker: WORKER },
       { seq: 0 },
     );
     const latest = operationEvent(
@@ -207,7 +199,6 @@ describe("round-machine — the pure run state machine", () => {
         phase: "report-verifying",
         workspace: WORKSPACE,
         worker: WORKER,
-        gate: GATE,
         commits: { status: "done", count: 2 },
         report: {
           status: "verifying",
@@ -232,7 +223,6 @@ describe("round-machine — the pure run state machine", () => {
         phase: "report-drafting",
         workspace: WORKSPACE,
         worker: WORKER,
-        gate: GATE,
         commits: { status: "done", count: 2 },
         report: { status: "drafting" },
       },
@@ -279,7 +269,6 @@ describe("round-machine — the pure run state machine", () => {
         phase: "report-drafting",
         workspace: WORKSPACE,
         worker: WORKER,
-        gate: GATE,
         commits: { status: "done", count: 2 },
         report: { status: "drafting" },
       },
@@ -306,7 +295,6 @@ describe("round-machine — the pure run state machine", () => {
         phase: "report-verifying",
         workspace: WORKSPACE,
         worker: WORKER,
-        gate: GATE,
         commits: { status: "done", count: 2 },
         report: {
           status: "verifying",
@@ -349,7 +337,6 @@ describe("round-machine — the pure run state machine", () => {
       phase: "report-drafting",
       workspace: WORKSPACE,
       worker: WORKER,
-      gate: GATE,
       commits: { status: "done", count: 2 },
       report: { status: "drafting" },
     });
@@ -394,7 +381,6 @@ describe("round-machine — the pure run state machine", () => {
       phase: "report-drafting",
       workspace: WORKSPACE,
       worker: WORKER,
-      gate: GATE,
       commits: { status: "done", count: 2 },
       report: { status: "handed-off", reportBoardId: "report-9", generation: "gen-9" },
     });
@@ -421,7 +407,6 @@ describe("round-machine — the pure run state machine", () => {
         phase: "report-drafting",
         workspace: WORKSPACE,
         worker: WORKER,
-        gate: GATE,
         commits: { status: "done", count: 2 },
         report: { status: "drafting" },
       },
@@ -443,7 +428,6 @@ describe("round-machine — the pure run state machine", () => {
           at: "report-drafting",
           workspace: WORKSPACE,
           worker: WORKER,
-          gate: GATE,
           commits: { status: "done", count: 2 },
           report: {
             status: "failed",
@@ -476,7 +460,6 @@ describe("round-machine — the pure run state machine", () => {
         phase: "report-drafting",
         workspace: WORKSPACE,
         worker: WORKER,
-        gate: GATE,
         commits: { status: "done", count: 2 },
         report: { status: "drafting" },
       },
@@ -496,7 +479,6 @@ describe("round-machine — the pure run state machine", () => {
         phase: "report-drafting",
         workspace: WORKSPACE,
         worker: WORKER,
-        gate: GATE,
         commits: { status: "done", count: 2 },
         report: { status: "drafting" },
       },
@@ -510,7 +492,6 @@ describe("round-machine — the pure run state machine", () => {
           at: "report-drafting",
           workspace: WORKSPACE,
           worker: WORKER,
-          gate: GATE,
           commits: { status: "done", count: 2 },
           report: {
             status: "failed",
@@ -554,7 +535,6 @@ describe("round-machine — the pure run state machine", () => {
         phase: "report-drafting",
         workspace: WORKSPACE,
         worker: WORKER,
-        gate: GATE,
         commits: { status: "done", count: 2 },
         report: { status: "drafting" },
       },
@@ -581,7 +561,6 @@ describe("round-machine — the pure run state machine", () => {
         phase: "report-drafting",
         workspace: WORKSPACE,
         worker: WORKER,
-        gate: GATE,
         commits: { status: "done", count: 2 },
         report: { status: "drafting" },
       },
@@ -606,7 +585,6 @@ describe("round-machine — the pure run state machine", () => {
         phase: "report-drafting",
         workspace: WORKSPACE,
         worker: WORKER,
-        gate: GATE,
         commits: { status: "done", count: 2 },
         report: { status: "drafting" },
       },
@@ -626,7 +604,6 @@ describe("round-machine — the pure run state machine", () => {
         phase: "report-drafting",
         workspace: WORKSPACE,
         worker: WORKER,
-        gate: GATE,
         commits: { status: "done", count: 2 },
         report: { status: "drafting" },
       },
@@ -640,7 +617,6 @@ describe("round-machine — the pure run state machine", () => {
           at: "report-drafting",
           workspace: WORKSPACE,
           worker: WORKER,
-          gate: GATE,
           commits: { status: "done", count: 2 },
           report: {
             status: "failed",
@@ -668,7 +644,6 @@ describe("round-machine — the pure run state machine", () => {
         phase: "report-verifying",
         workspace: WORKSPACE,
         worker: WORKER,
-        gate: GATE,
         commits: { status: "done", count: 2 },
         report: {
           status: "verifying",
@@ -726,7 +701,6 @@ describe("round-machine — the pure run state machine", () => {
         phase: "report-drafting",
         workspace: WORKSPACE,
         worker: WORKER,
-        gate: GATE,
         commits: { status: "done", count: 2 },
         report: { status: "drafting" },
       },
@@ -770,7 +744,6 @@ describe("round-machine — the pure run state machine", () => {
         phase: "report-drafting",
         workspace: WORKSPACE,
         worker: WORKER,
-        gate: GATE,
         commits: { status: "done", count: 2 },
         report: { status: "drafting" },
       },
@@ -804,7 +777,6 @@ describe("round-machine — the pure run state machine", () => {
         phase: "completed",
         workspace: WORKSPACE,
         worker: WORKER,
-        gate: GATE,
         commits: { status: "done", count: 1 },
         result: {
           kind: "changed",
@@ -832,79 +804,6 @@ describe("round-machine — the pure run state machine", () => {
     ).toBe("dispatching");
   });
 
-  it("renders the configured gate's real result, duration, and project count", () => {
-    const state = advance(
-      initialRoundState,
-      operationEvent(5, {
-        phase: "gate-settled",
-        workspace: WORKSPACE,
-        worker: WORKER,
-        gate: GATE,
-      }),
-    );
-
-    expect(state.phase).toBe("gating");
-    expect("tail" in state ? state.tail : []).toEqual([
-      {
-        id: "gate",
-        label: "Ran the gate",
-        status: "done",
-        detail: "pnpm check · 14 projects green · 1.2 s",
-      },
-    ]);
-  });
-
-  it.each([
-    [0, "0 commits"],
-    [1, "1 commit"],
-    [3, "3 commits"],
-  ])("renders an exact %i-commit receipt", (count, detail) => {
-    const state = advance(
-      initialRoundState,
-      operationEvent(7, {
-        phase: "commits-settled",
-        workspace: WORKSPACE,
-        worker: WORKER,
-        gate: GATE,
-        commits: { status: "done", count },
-      }),
-    );
-
-    expect("tail" in state ? state.tail.at(-1) : undefined).toMatchObject({
-      status: "done",
-      detail,
-    });
-  });
-
-  it("keeps a failed gate on the run with the real failed receipt", () => {
-    const state = advance(
-      initialRoundState,
-      operationEvent(5, {
-        phase: "failed",
-        failure: {
-          at: "gate",
-          workspace: WORKSPACE,
-          worker: WORKER,
-          gate: {
-            status: "failed",
-            reason: "exited 1",
-            durationMs: 2_500,
-            projectCount: 8,
-          },
-        },
-      }),
-    );
-
-    expect(state.phase).toBe("failed");
-    expect(runNavigation(state, SLUG)).toBeNull();
-    expect("tail" in state ? state.tail.at(-1) : undefined).toEqual({
-      id: "gate",
-      label: "Ran the gate",
-      status: "failed",
-      reason: "pnpm check · 8 projects · exited 1 · 2.5 s",
-    });
-  });
-
   it("keeps reveal terminal-only while a readable report is being verified", () => {
     const drafting = advance(
       initialRoundState,
@@ -912,7 +811,6 @@ describe("round-machine — the pure run state machine", () => {
         phase: "report-drafting",
         workspace: WORKSPACE,
         worker: WORKER,
-        gate: GATE,
         commits: { status: "done", count: 2 },
         report: { status: "drafting" },
       }),
@@ -923,7 +821,6 @@ describe("round-machine — the pure run state machine", () => {
         phase: "report-verifying",
         workspace: WORKSPACE,
         worker: WORKER,
-        gate: GATE,
         commits: { status: "done", count: 2 },
         report: {
           status: "verifying",
@@ -939,7 +836,6 @@ describe("round-machine — the pure run state machine", () => {
         phase: "completed",
         workspace: WORKSPACE,
         worker: WORKER,
-        gate: GATE,
         commits: { status: "done", count: 2 },
         result: {
           kind: "changed",
@@ -964,7 +860,6 @@ describe("round-machine — the pure run state machine", () => {
       phase: "completed",
       workspace: WORKSPACE,
       worker: WORKER,
-      gate: GATE,
       commits: { status: "done", count: 2 },
       result: {
         kind: "changed",
@@ -999,7 +894,6 @@ describe("round-machine — the pure run state machine", () => {
           phase: "completed",
           workspace: WORKSPACE,
           worker: WORKER,
-          gate: GATE,
           commits: { status: "done", count: 2 },
           result: {
             kind: "changed",
@@ -1046,16 +940,6 @@ function roundLifecycle(ordinal: number): readonly Extract<RoundEvent, { type: "
     operationEvent(
       2,
       { phase: "worker-running", workspace: WORKSPACE, worker: { status: "running" } },
-      identity,
-    ),
-    operationEvent(
-      3,
-      {
-        phase: "gate-running",
-        workspace: WORKSPACE,
-        worker: WORKER,
-        gate: { status: "running" },
-      },
       identity,
     ),
     operationEvent(
@@ -1107,7 +991,6 @@ const EXPECTED_ROUND_PHASES: readonly RoundPhase[] = [
   "dispatching",
   "preparing",
   "working",
-  "gating",
   "committing",
   "drafting-report",
   // `report-verifying` carrying a report identity is the run view's `verifying`, not the
@@ -1198,7 +1081,6 @@ describe("generation usage rides the lens frame (#737)", () => {
         phase: "report-drafting",
         workspace: WORKSPACE,
         worker: WORKER,
-        gate: GATE,
         commits: { status: "done", count: 2 },
         report: { status: "handed-off", reportBoardId: "report-9", generation: "gen-9" },
       }),

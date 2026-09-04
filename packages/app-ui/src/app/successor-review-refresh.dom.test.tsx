@@ -99,7 +99,6 @@ function operationEvent(
       roundNumber,
       sourceTarget: { kind: "branch", branch: "feature/owner-loop" },
       askCount: 1,
-      gatePlan: { kind: "configured", command: "pnpm check" },
       state,
     },
   });
@@ -114,7 +113,6 @@ function changed(roundNumber: number, generation: string): RoundEvent {
     phase: "completed",
     workspace: { status: "done" },
     worker: { status: "done", fileCount: 1 },
-    gate: { status: "passed", durationMs: 12, projectCount: 1 },
     commits: { status: "done", count: 1 },
     result: {
       kind: "changed",

@@ -105,7 +105,6 @@ import {
   repositoryIdentity,
   resolveGitHubAuth,
   resolveTrackerConfig,
-  runConfiguredRoundGate,
   detectForges as runForgeDetection,
   runGitHubDeviceFlow,
   runPrWorktreeSetup,
@@ -155,13 +154,13 @@ import {
   planQuoteThreadReanchors,
   prPaperContextFile,
   ReviewService,
-  ROUND_COMMIT_RULE,
   recordSeatSend,
   renderComposedPrompt,
   renderWorkOrder,
   resolveAssignment,
   resolveLocus,
   reviewedDiffCommand,
+  roundCommitRule,
   runNoiseAngle,
   toDistroPath,
   toWindowsView,
@@ -314,14 +313,15 @@ import { findHealthyDaemon } from "./supervise";
 import { createLiveSymbolLookup, reviewPinnedToHead } from "./symbol-lookup-live";
 import { modelSelection } from "./t3/client";
 import {
-  readHandoffTurnCheckpoint,
+  readRoundTurnCheckpoint,
   runHandoffTurn as runHandoffTurnOnThread,
+  runRoundTurn as runRoundTurnOnThread,
   type T3HandoffTurnOutcome,
   type T3TurnCheckpointRead,
 } from "./t3/handoff";
 import { type SeatThreadWatch, watchSeatThread } from "./t3/seat-progress";
 import { createT3SidecarSupervisor } from "./t3/supervisor";
-import { type SeatKind, seatThreadTitle, sweepIfArchived } from "./t3/threads";
+import { roundThreadTitle, type SeatKind, seatThreadTitle, sweepIfArchived } from "./t3/threads";
 import { startWsListener, type WsListener } from "./ws-listener";
 import { createWslRunner } from "./wsl-daemon";
 import { ensureWslDaemon, probeWslDaemon } from "./wsl-supervisor";
@@ -403,9 +403,22 @@ export interface HandoffTurnInput {
   readonly reviewId: string;
 }
 
-/** The ROUND WORKER's turn is the handoff turn: one turn on the review's bound T3 thread,
- *  in the session's bound root (session-bound-workspace D2). It carries the sidecar
- *  checkpoint back, because that checkpoint is the round's receipt. */
+/**
+ * The ROUND WORKER's turn: one turn on the round's OWN T3 thread, in the session's bound
+ * root (round-worker-thread). It carries the sidecar checkpoint back, because that
+ * checkpoint is the round's receipt.
+ *
+ * `sessionId` + `operationId` are the thread's KEY and `title` is what a reviewer reads in
+ * the thread list. `worktreePath`/`branch` are the session's binding, so the thread's cwd
+ * is the bound root — a thread's cwd is fixed at creation and there is no second chance.
+ */
+export interface RoundTurnInput extends HandoffTurnInput {
+  readonly sessionId: string;
+  readonly operationId: string;
+  readonly title: string;
+  readonly worktreePath?: string;
+  readonly branch?: string;
+}
 export type RoundWorkerTurnOutcome = T3HandoffTurnOutcome;
 export type RoundWorkerTurnCheckpoint = T3TurnCheckpointRead;
 
@@ -726,22 +739,78 @@ export function createRoundWorkspacePlanner(input: {
 }
 
 /**
- * The round worker: ONE turn on the session's bound handoff thread, in the bound root.
- * The turn's sidecar checkpoint — thread, turn, turn count — is the round's receipt, and
- * `thread.checkpoint.revert` against it is what makes the round revertible.
+ * The worker receipt, reconciled against what the branch actually did (issue #811).
+ *
+ * A T3 checkpoint diffs the WORKING TREE, and a worker that obeyed the work order and
+ * committed leaves that tree clean — so the checkpoint reports `diff: ""` and no files
+ * while `sourceHead..HEAD` carries the round's commits. On the drive of 2026-09-04 the
+ * round card read "Ran the round worker · 0 files changed" over a branch that had moved by
+ * two files and thirty lines, which is the "lie in the UI" family.
+ *
+ * So: when the receipt's diff is blank and the range is non-empty, the receipt's diff and
+ * changed paths come from the range. Only then. A turn that EDITED WITHOUT COMMITTING has
+ * a non-blank checkpoint diff and an empty range, keeps its own evidence untouched, and
+ * still fails at the coordinator's agreement check with the reason it already had.
+ */
+export async function reconcileRoundReceiptWithCommits<
+  T extends { readonly diff: string; readonly changedPaths: readonly string[] },
+>(
+  receipt: T,
+  range: {
+    readonly sourceHead: string;
+    readonly committedDiff: () => Promise<
+      | {
+          readonly diff: string;
+          readonly changedPaths: readonly string[];
+        }
+      | undefined
+    >;
+  },
+): Promise<T> {
+  if (receipt.diff.trim().length > 0 || receipt.changedPaths.length > 0) return receipt;
+  const committed = await range.committedDiff();
+  if (committed === undefined) return receipt;
+  if (committed.diff.trim().length === 0 || committed.changedPaths.length === 0) return receipt;
+  return { ...receipt, diff: committed.diff, changedPaths: [...committed.changedPaths] };
+}
+
+/** The thread identity one round's turn runs on: its own, never the session's. */
+export function roundTurnIdentity(operation: RoundOperation): {
+  readonly sessionId: string;
+  readonly operationId: string;
+  readonly title: string;
+  readonly branch?: string;
+} {
+  const branch =
+    operation.sourceTarget.kind === "branch" ? operation.sourceTarget.branch : undefined;
+  return {
+    sessionId: operation.sessionId,
+    operationId: operation.operationId,
+    title: roundThreadTitle(branch ?? "", operation.roundNumber),
+    ...(branch === undefined ? {} : { branch }),
+  };
+}
+
+/**
+ * The round worker: ONE turn on the ROUND's own thread, in the session's bound root
+ * (round-worker-thread; Rai, 2026-09-04). The turn's sidecar checkpoint — thread, turn,
+ * turn count — is the round's receipt, and `thread.checkpoint.revert` against it is what
+ * makes the round revertible.
  */
 export function createRoundWorkerPort(input: {
-  readonly runHandoffTurn: (turn: HandoffTurnInput) => Promise<RoundWorkerTurnOutcome>;
+  readonly runRoundTurn: (turn: RoundTurnInput) => Promise<RoundWorkerTurnOutcome>;
   readonly now?: () => number;
 }): RoundExecutionPorts["runWorker"] {
   return async ({ operation, attempt }) => {
     if (operation.state.phase !== "worker-running") {
       throw new Error("Round worker started outside its durable running phase.");
     }
-    const outcome = await input.runHandoffTurn({
+    const outcome = await input.runRoundTurn({
       repoRoot: operation.state.workspace.root,
       prompt: operation.workOrderPrompt,
       reviewId: operation.reviewId,
+      worktreePath: operation.state.workspace.root,
+      ...roundTurnIdentity(operation),
     });
     const evidence = {
       ...attempt,
@@ -769,15 +838,18 @@ export function createRoundWorkerPort(input: {
  * worker attempt started is that turn's, and the round settles from it. Nothing at or
  * after it means the turn left no checkpoint, and the round fails NAMING THE BOUND ROOT,
  * because that is where any partial edits are — in the reviewer's own checkout, where
- * they can see them. Never a stale checkpoint from an earlier round on the same thread:
+ * they can see them. Never a stale checkpoint from an earlier attempt on the same thread:
  * the `startedAt` comparison is a positive contradiction, not a "take the last one".
  */
 export function createRoundWorkerRecoveryPort(input: {
   readonly readCheckpoint: (turn: {
     readonly repoRoot: string;
-    readonly reviewId: string;
-    readonly prompt: string;
+    readonly sessionId: string;
+    readonly operationId: string;
+    readonly title: string;
     readonly since: number;
+    readonly worktreePath?: string;
+    readonly branch?: string;
   }) => Promise<RoundWorkerTurnCheckpoint | undefined>;
   readonly now?: () => number;
 }): NonNullable<RoundExecutionPorts["observeWorker"]> {
@@ -795,11 +867,9 @@ export function createRoundWorkerRecoveryPort(input: {
     try {
       found = await input.readCheckpoint({
         repoRoot: root,
-        reviewId: operation.reviewId,
-        // The thread is shared with the interactive handoff, so the round's own prompt is
-        // what identifies its turn — never "whatever finished most recently".
-        prompt: operation.workOrderPrompt,
+        worktreePath: root,
         since: attempt.startedAt,
+        ...roundTurnIdentity(operation),
       });
     } catch (error) {
       unreadable = error instanceof Error ? error.message : String(error);
@@ -1080,10 +1150,11 @@ export interface RennetServerOptions {
    */
   readonly testT3Seats?: RoundsRuntimeDeps["resolveT3Seats"];
   /** Hermetic production-mapping seam for the ROUND WORKER's coding turn. Tests use it to
-   * prove the composition root carries checkpoint evidence even when HEAD does not move.
-   * The REVIEW handoff has no such seam any more: it always runs on the review's T3 thread
-   * (t3-lens-threads 4.3), and a test drives that through the sidecar. */
-  readonly runHandoffTurn?: (input: HandoffTurnInput) => Promise<RoundWorkerTurnOutcome>;
+   * prove the composition root carries checkpoint evidence even when HEAD does not move,
+   * and that the turn is sent to the ROUND's thread rather than the session's — the input
+   * carries that thread's whole identity. The REVIEW handoff has no such seam any more: it
+   * always runs on the review's T3 thread (t3-lens-threads 4.3), through the sidecar. */
+  readonly runRoundTurn?: (input: RoundTurnInput) => Promise<RoundWorkerTurnOutcome>;
   /** Hermetic opener-drafting seam for compose/post transport proofs. Production uses the
    * live council-routed drafter; tests can supply authored bytes without launching a harness. */
   readonly draftReviewOpener?: DispatchDeps["draftReviewOpener"];
@@ -3325,10 +3396,16 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         `Review ${input.review.id} lost dispatch patchset ${input.sourcePatchsetId}.`,
       );
     }
-    const gateCommand = scoutSettingsOffers(
+    // The scout's discovered check, which the WORKER runs — Rennet does not
+    // (round-worker-thread; Rai, 2026-09-04). Same read that used to build the durable
+    // gate plan; its only consumer now is the sentence in the work order.
+    const discoveredCheck = scoutSettingsOffers(
       snapshotStore,
       repoKeyForRoot(input.review.repositoryRoot),
     ).gateCommand?.trim();
+    const checkCommand =
+      discoveredCheck === undefined || discoveredCheck.length === 0 ? undefined : discoveredCheck;
+    const roundRule = roundCommitRule(checkCommand);
     const createdAt = Date.now();
     const records = roundRecordStore.read(input.session.id);
     // The round's work order is a FILE, not a prompt payload (session-context-files, and
@@ -3345,12 +3422,8 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // handoff's prompt edits files, leaves nothing committed, and fails at the commit
     // observation — which is what shipped until this was caught in review.
     const roundContextDir = sessionContextRelativeDir(sessionIdForReview(input.review));
-    const workOrderDocument = renderWorkOrder(input.workOrder.tasks, ROUND_COMMIT_RULE);
-    const workOrderPrompt = renderComposedPrompt(
-      input.workOrder.tasks,
-      roundContextDir,
-      ROUND_COMMIT_RULE,
-    );
+    const workOrderDocument = renderWorkOrder(input.workOrder.tasks, roundRule);
+    const workOrderPrompt = renderComposedPrompt(input.workOrder.tasks, roundContextDir, roundRule);
     return {
       operationId: randomUUID(),
       sessionId: input.session.id,
@@ -3367,10 +3440,6 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       workOrderPrompt,
       workOrderDocument,
       workOrderDigest: sha256Hex(workOrderPrompt),
-      gatePlan:
-        gateCommand === undefined || gateCommand.length === 0
-          ? { kind: "absent" }
-          : { kind: "configured", command: gateCommand },
       revision: 0,
       rerunRequested: false,
       createdAt,
@@ -3464,14 +3533,32 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       }
     },
   });
+  // The round's turn runs on the ROUND's own thread, in the session's bound root: the
+  // input carries the binding, so this is a straight pass to the sidecar seam.
+  const roundTurnOnOwnThread = async (input: RoundTurnInput): Promise<RoundWorkerTurnOutcome> =>
+    runRoundTurnOnThread(input, t3Sidecar);
   const roundWorkerTurn = createRoundWorkerPort({
-    runHandoffTurn: options.runHandoffTurn ?? runHandoffTurn,
+    runRoundTurn: options.runRoundTurn ?? roundTurnOnOwnThread,
   });
   // The work order is written into the root the turn will run in, at the moment the turn
   // starts — the prompt names that exact path (session-context-files). Writing it at
   // dispatch would put it in whichever root the session had recorded then, which is not
   // necessarily the one `planWorkspace` resolved; and writing it here is also what makes a
   // resumed round find the order it was dispatched with rather than nothing at all.
+  /**
+   * `sourceHead..HEAD` in the bound root, as a diff and a file list — the round's real
+   * result when the checkpoint's working-tree diff is clean because the worker committed
+   * (#811). `undefined` when the range is empty or git cannot answer, which leaves the
+   * receipt exactly as the turn reported it.
+   */
+  const committedRoundDiff = (root: string, sourceHead: string) => async () => {
+    const range = `${sourceHead}..HEAD`;
+    const names = await readGit(root, ["diff", "--name-only", range]);
+    if (names === undefined) return undefined;
+    const diff = await readGit(root, ["diff", range]);
+    if (diff === undefined) return undefined;
+    return { diff, changedPaths: names.split("\n").filter((line) => line.trim() !== "") };
+  };
   const runRoundWorker: RoundExecutionPorts["runWorker"] = async (input) => {
     const state = input.operation.state;
     // The LEASE, taken before the write and held until the turn settles: `session.archive`
@@ -3486,34 +3573,29 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
           workOrderContextFileFrom(input.operation.workOrderDocument),
         ]);
       }
-      return await roundWorkerTurn(input);
+      const receipt = await roundWorkerTurn(input);
+      if (state.phase !== "worker-running") return receipt;
+      return await reconcileRoundReceiptWithCommits(receipt, {
+        sourceHead: state.workspace.sourceHead,
+        committedDiff: committedRoundDiff(state.workspace.root, state.workspace.sourceHead),
+      });
     } finally {
       release();
     }
   };
-  const recoverRoundWorker = createRoundWorkerRecoveryPort({
-    readCheckpoint: (turn) => readHandoffTurnCheckpoint(turn, t3Sidecar),
+  const recoverRoundWorkerTurn = createRoundWorkerRecoveryPort({
+    readCheckpoint: (turn) => readRoundTurnCheckpoint(turn, t3Sidecar),
   });
-  const runRoundGate: RoundExecutionPorts["runGate"] = async ({ operation, attempt }) => {
-    if (operation.state.phase !== "gate-running" || operation.gatePlan.kind !== "configured") {
-      throw new Error("Configured round gate started without a durable gate plan.");
-    }
-    const result = await runConfiguredRoundGate({
-      locus: locusForRepo(operation.state.workspace.root),
-      cwd: operation.state.workspace.root,
-      command: operation.gatePlan.command,
-      executionId: attempt.executionId,
-      startedAt: attempt.startedAt,
+  // The same reconciliation as the live path: a turn that committed and then outlived the
+  // daemon has the same clean working tree, so its recovered receipt has the same hole.
+  const recoverRoundWorker: NonNullable<RoundExecutionPorts["observeWorker"]> = async (input) => {
+    const receipt = await recoverRoundWorkerTurn(input);
+    const state = input.operation.state;
+    if (state.phase !== "worker-running") return receipt;
+    return reconcileRoundReceiptWithCommits(receipt, {
+      sourceHead: state.workspace.sourceHead,
+      committedDiff: committedRoundDiff(state.workspace.root, state.workspace.sourceHead),
     });
-    const common = {
-      executionId: result.executionId,
-      startedAt: result.startedAt,
-      completedAt: result.completedAt,
-      ...(result.projectCount === undefined ? {} : { projectCount: result.projectCount }),
-    };
-    return result.outcome === "passed"
-      ? { ...common, outcome: "passed" as const, exitCode: 0 as const }
-      : { ...common, outcome: "failed" as const, termination: result.termination };
   };
   const storedRoundReportVerification = {
     reviewById: (reviewId: string) => service.reviewById(reviewId),
@@ -3535,12 +3617,9 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       planWorker: () => ({ executionId: randomUUID(), startedAt: Date.now() }),
       runWorker: runRoundWorker,
       observeWorker: recoverRoundWorker,
-      planGate: () => ({ executionId: randomUUID(), startedAt: Date.now() }),
-      runGate: runRoundGate,
-      observeGate: runRoundGate,
       planCommit: (operation) => {
-        if (operation.state.phase !== "gate-settled") {
-          throw new Error("Round commit planned before its gate settled.");
+        if (operation.state.phase !== "worker-settled") {
+          throw new Error("Round commit planned before its worker settled.");
         }
         return {
           executionId: randomUUID(),
@@ -3579,24 +3658,6 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         const workOrder = exactWorkOrderFor(operation);
         const worker = operation.state.worker;
         const commits = operation.state.commits;
-        const gate: RoundRunReceipt["gate"] =
-          operation.state.gate.outcome === "skipped"
-            ? { outcome: "skipped", reason: "not-configured" }
-            : operation.gatePlan.kind === "configured"
-              ? {
-                  outcome: "passed",
-                  command: operation.gatePlan.command,
-                  durationMs: Math.max(
-                    0,
-                    operation.state.gate.completedAt - operation.state.gate.startedAt,
-                  ),
-                  ...(operation.state.gate.projectCount === undefined
-                    ? {}
-                    : { projectCount: operation.state.gate.projectCount }),
-                }
-              : (() => {
-                  throw new Error("A passed round gate has no configured command.");
-                })();
         await roundsRuntime.dispatchRound({
           session: sessionForOperation(operation),
           workOrder,
@@ -3615,7 +3676,6 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
             ...(operation.state.workspace.branchRewritten === true
               ? { branchRewritten: true as const }
               : {}),
-            gate,
           },
           runWorkers: async (): Promise<DispatchRoundResult> => ({
             outcome: "completed",

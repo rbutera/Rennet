@@ -36,7 +36,6 @@ const REVIEW_ID = "review-1";
 const RUN_RECEIPT: RoundRunReceipt = {
   startedAt: 1,
   sourceTarget: { kind: "branch", branch: "feat/test" },
-  gate: { outcome: "skipped", reason: "not-configured" },
 };
 
 /** A minimal review whose active patchset carries no files (the work-order needs the asks, not
@@ -127,7 +126,6 @@ const QUEUED_OPERATION = {
   roundNumber: 1,
   sourceTarget: { kind: "branch", branch: "feat/test" },
   askCount: 1,
-  gatePlan: { kind: "absent" },
   state: { phase: "claimed" },
 } satisfies RoundOperationProgressSnapshot;
 

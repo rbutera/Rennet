@@ -7,8 +7,6 @@ import {
   isRoundOperationTerminal,
   type RoundCommitAttempt,
   type RoundCommitReceipt,
-  type RoundGateAttempt,
-  type RoundGateReceipt,
   type RoundOperation,
   type RoundOperationFailure,
   RoundOperationSchema,
@@ -70,13 +68,6 @@ export interface RoundExecutionPorts {
   ) => Promise<RoundWorkerReceipt>;
   /** The workspace's current head, for naming what a failed attempt already committed. */
   readonly observeCommits?: (workspace: RoundWorkspaceReceipt) => Promise<string>;
-  readonly planGate: (operation: RoundOperation) => RoundGateAttempt;
-  readonly runGate: (
-    input: RoundExecutionEffectInput<RoundGateAttempt>,
-  ) => Promise<RoundGateReceipt>;
-  readonly observeGate?: (
-    input: RoundExecutionEffectInput<RoundGateAttempt>,
-  ) => Promise<RoundGateReceipt>;
   readonly planCommit: (operation: RoundOperation) => RoundCommitAttempt;
   readonly settleCommits: (
     input: RoundExecutionEffectInput<RoundCommitAttempt>,
@@ -173,18 +164,6 @@ function workerFailureReason(receipt: Extract<RoundWorkerReceipt, { outcome: "fa
   }
 }
 
-function gateFailureReason(receipt: Extract<RoundGateReceipt, { outcome: "failed" }>): string {
-  const termination = receipt.termination;
-  switch (termination.kind) {
-    case "exit":
-      return `gate exited with code ${termination.exitCode}`;
-    case "signal":
-      return `gate stopped by signal ${termination.signal}`;
-    case "error":
-      return termination.reason;
-  }
-}
-
 export type RoundRetryMode = "round" | "regeneration";
 
 export function roundRetryMode(failure: RoundOperationFailure): RoundRetryMode {
@@ -195,7 +174,6 @@ export function roundRetryMode(failure: RoundOperationFailure): RoundRetryMode {
       return "regeneration";
     case "preparing":
     case "worker":
-    case "gate":
     case "committing":
       return "round";
   }
@@ -207,18 +185,11 @@ function retryState(failure: RoundOperationFailure): RoundOperationState {
       return { phase: "claimed" };
     case "worker":
       return { phase: "prepared", workspace: failure.workspace };
-    case "gate":
-      return {
-        phase: "worker-settled",
-        workspace: failure.workspace,
-        worker: failure.worker,
-      };
     case "committing":
       return {
         phase: "committing",
         workspace: failure.workspace,
         worker: failure.worker,
-        gate: failure.gate,
         commit: failure.commit,
       };
     case "round-recording":
@@ -226,7 +197,6 @@ function retryState(failure: RoundOperationFailure): RoundOperationState {
         phase: "round-recording",
         workspace: failure.workspace,
         worker: failure.worker,
-        gate: failure.gate,
         commits: failure.commits,
         recording: failure.recording,
       };
@@ -235,7 +205,6 @@ function retryState(failure: RoundOperationFailure): RoundOperationState {
         phase: "report-drafting",
         workspace: failure.workspace,
         worker: failure.worker,
-        gate: failure.gate,
         commits: failure.commits,
         recording: failure.recording,
         report: failure.report,
@@ -245,7 +214,6 @@ function retryState(failure: RoundOperationFailure): RoundOperationState {
         phase: "report-verifying",
         workspace: failure.workspace,
         worker: failure.worker,
-        gate: failure.gate,
         commits: failure.commits,
         recording: failure.recording,
         report: failure.report,
@@ -611,50 +579,6 @@ class DurableRoundExecutionCoordinator implements RoundExecutionCoordinator {
     ).operation;
   }
 
-  private async runGate(
-    operation: RoundOperation,
-    attempt: RoundGateAttempt,
-    effect: RoundExecutionPorts["runGate"] | NonNullable<RoundExecutionPorts["observeGate"]>,
-  ): Promise<RoundOperation> {
-    if (operation.state.phase !== "gate-running") return operation;
-    let receipt: RoundGateReceipt;
-    try {
-      receipt = await effect({ operation, attempt });
-    } catch (error) {
-      return this.fail(operation, {
-        at: "gate",
-        reason: errorReason(error),
-        failedAt: Math.max(this.now(), operation.updatedAt),
-        workspace: operation.state.workspace,
-        worker: operation.state.worker,
-        gate: attempt,
-      });
-    }
-    if (receipt.outcome === "failed") {
-      return this.fail(operation, {
-        at: "gate",
-        reason: gateFailureReason(receipt),
-        failedAt: Math.max(this.now(), receipt.completedAt),
-        workspace: operation.state.workspace,
-        worker: operation.state.worker,
-        gate: receipt,
-      });
-    }
-    if (receipt.outcome === "skipped") {
-      throw new Error("a configured gate returned a not-configured receipt");
-    }
-    return this.persist(
-      operation,
-      {
-        phase: "gate-settled",
-        workspace: operation.state.workspace,
-        worker: operation.state.worker,
-        gate: receipt,
-      },
-      receipt.completedAt,
-    ).operation;
-  }
-
   private async drain(operation: RoundOperation): Promise<RoundOperation | undefined> {
     let terminal = operation;
     for (;;) {
@@ -769,54 +693,6 @@ class DurableRoundExecutionCoordinator implements RoundExecutionCoordinator {
           break;
         }
         case "worker-settled": {
-          if (operation.gatePlan.kind === "absent") {
-            const settledAt = Math.max(this.now(), operation.updatedAt);
-            operation = this.persist(
-              operation,
-              {
-                phase: "gate-settled",
-                workspace: state.workspace,
-                worker: state.worker,
-                gate: { outcome: "skipped", reason: "not-configured", settledAt },
-              },
-              settledAt,
-            ).operation;
-            break;
-          }
-          const attempt = this.options.ports.planGate(operation);
-          const running = this.persist(
-            operation,
-            {
-              phase: "gate-running",
-              workspace: state.workspace,
-              worker: state.worker,
-              gate: attempt,
-            },
-            attempt.startedAt,
-          );
-          operation = running.operation;
-          if (running.wrote) {
-            operation = await this.runGate(operation, attempt, this.options.ports.runGate);
-          }
-          break;
-        }
-        case "gate-running": {
-          const observe = this.options.ports.observeGate;
-          if (observe === undefined) {
-            operation = this.fail(operation, {
-              at: "gate",
-              reason: `gate execution ${state.gate.executionId} was interrupted and cannot be observed`,
-              failedAt: Math.max(this.now(), operation.updatedAt),
-              workspace: state.workspace,
-              worker: state.worker,
-              gate: state.gate,
-            });
-          } else {
-            operation = await this.runGate(operation, state.gate, observe);
-          }
-          break;
-        }
-        case "gate-settled": {
           const attempt = this.options.ports.planCommit(operation);
           operation = this.persist(
             operation,
@@ -824,7 +700,6 @@ class DurableRoundExecutionCoordinator implements RoundExecutionCoordinator {
               phase: "committing",
               workspace: state.workspace,
               worker: state.worker,
-              gate: state.gate,
               commit: attempt,
             },
             attempt.startedAt,
@@ -845,7 +720,6 @@ class DurableRoundExecutionCoordinator implements RoundExecutionCoordinator {
               failedAt: Math.max(this.now(), operation.updatedAt),
               workspace: state.workspace,
               worker: state.worker,
-              gate: state.gate,
               commit: state.commit,
             });
             break;
@@ -867,7 +741,6 @@ class DurableRoundExecutionCoordinator implements RoundExecutionCoordinator {
               failedAt: Math.max(this.now(), receipt.committedAt),
               workspace: state.workspace,
               worker: state.worker,
-              gate: state.gate,
               commit: state.commit,
             });
             break;
@@ -878,7 +751,6 @@ class DurableRoundExecutionCoordinator implements RoundExecutionCoordinator {
               phase: "commits-settled",
               workspace: state.workspace,
               worker: state.worker,
-              gate: state.gate,
               commits: receipt,
             },
             receipt.committedAt,
@@ -893,7 +765,6 @@ class DurableRoundExecutionCoordinator implements RoundExecutionCoordinator {
               phase: "round-recording",
               workspace: state.workspace,
               worker: state.worker,
-              gate: state.gate,
               commits: state.commits,
               recording: attempt,
             },
@@ -913,7 +784,6 @@ class DurableRoundExecutionCoordinator implements RoundExecutionCoordinator {
                 phase: "round-recorded",
                 workspace: state.workspace,
                 worker: state.worker,
-                gate: state.gate,
                 commits: state.commits,
                 recording: receipt,
               },
@@ -926,7 +796,6 @@ class DurableRoundExecutionCoordinator implements RoundExecutionCoordinator {
               failedAt: Math.max(this.now(), operation.updatedAt),
               workspace: state.workspace,
               worker: state.worker,
-              gate: state.gate,
               commits: state.commits,
               recording: state.recording,
             });
@@ -942,7 +811,6 @@ class DurableRoundExecutionCoordinator implements RoundExecutionCoordinator {
                 phase: "completed",
                 workspace: state.workspace,
                 worker: state.worker,
-                gate: state.gate,
                 commits: state.commits,
                 recording: state.recording,
                 result: { kind: "unchanged" },
@@ -959,7 +827,6 @@ class DurableRoundExecutionCoordinator implements RoundExecutionCoordinator {
               phase: "report-drafting",
               workspace: state.workspace,
               worker: state.worker,
-              gate: state.gate,
               commits: state.commits,
               recording: state.recording,
               report: attempt,
@@ -993,7 +860,6 @@ class DurableRoundExecutionCoordinator implements RoundExecutionCoordinator {
                 phase: "report-verifying",
                 workspace: draftingOperation.state.workspace,
                 worker: draftingOperation.state.worker,
-                gate: draftingOperation.state.gate,
                 commits: draftingOperation.state.commits,
                 recording: draftingOperation.state.recording,
                 report,
@@ -1009,7 +875,6 @@ class DurableRoundExecutionCoordinator implements RoundExecutionCoordinator {
               failedAt: Math.max(this.now(), draftingOperation.updatedAt),
               workspace: draftingOperation.state.workspace,
               worker: draftingOperation.state.worker,
-              gate: draftingOperation.state.gate,
               commits: draftingOperation.state.commits,
               recording: draftingOperation.state.recording,
               report: draftingOperation.state.report,
@@ -1031,7 +896,6 @@ class DurableRoundExecutionCoordinator implements RoundExecutionCoordinator {
                 phase: "completed",
                 workspace: state.workspace,
                 worker: state.worker,
-                gate: state.gate,
                 commits: state.commits,
                 recording: state.recording,
                 result: { kind: "changed", report },
@@ -1046,7 +910,6 @@ class DurableRoundExecutionCoordinator implements RoundExecutionCoordinator {
               failedAt: Math.max(this.now(), operation.updatedAt),
               workspace: state.workspace,
               worker: state.worker,
-              gate: state.gate,
               commits: state.commits,
               recording: state.recording,
               report: state.report,

@@ -241,7 +241,6 @@ const PREV_GEN: Generation = {
 const RUN_RECEIPT: RoundRunReceipt = {
   startedAt: 1,
   sourceTarget: { kind: "branch", branch: "feat/test" },
-  gate: { outcome: "skipped", reason: "not-configured" },
 };
 
 /**

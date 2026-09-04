@@ -164,7 +164,6 @@ describe("the round report as greeting + progressive reveal (C09 cluster 5)", ()
             run: {
               startedAt: 1,
               sourceTarget: { kind: "detached", head: "0123456789abcdef" },
-              gate: { outcome: "skipped", reason: "not-configured" },
             },
           },
         }}

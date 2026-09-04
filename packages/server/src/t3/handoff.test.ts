@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import type { OrchestrationThread, T3Client, TurnOutcome } from "./client";
-import { lastAssistantText, readHandoffTurnCheckpoint, runHandoffTurn } from "./handoff";
+import {
+  lastAssistantText,
+  readRoundTurnCheckpoint,
+  runHandoffTurn,
+  runRoundTurn,
+} from "./handoff";
 import type { ThreadBinding, ThreadBindingKey } from "./threads";
 
 // The T3 exit maps a settled T3 turn onto the handoff outcome the review loop already
@@ -138,20 +143,53 @@ describe("runHandoffTurn", () => {
     ).not.toHaveProperty("usage");
   });
 
-  it("treats a missing checkpoint as an empty diff rather than a thrown handoff", async () => {
+  // T3 writes a turn's checkpoint on the CheckpointReactor's own fiber, AFTER the turn's
+  // lifecycle settles. Issue #811: the read raced that write, threw, and the `.catch` took
+  // the throw as "the turn changed nothing" — losing the diff AND the checkpoint handle a
+  // revert needs, over a round that had genuinely committed. So the read WAITS.
+  it("waits for a checkpoint that lands after the turn settles, and keeps its diff", async () => {
     const { client, threadFor } = stubs({
       turnId: "turn-1",
       state: "completed",
       thread: thread("completed"),
     });
     (client.readTurnDiff as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
-      new Error("no checkpoint"),
+      new Error("T3 thread t1 has no checkpoint for turn turn-1"),
     );
+    const sleep = vi.fn(async () => {});
     const outcome = await runHandoffTurn(
-      { repoRoot: "/repos/a", prompt: "x", reviewId: "rv-1" },
+      { repoRoot: "/repos/a", prompt: "x", reviewId: "rv-1", checkpointWait: { sleep } },
+      { client: async () => client, threadFor },
+    );
+    expect(sleep).toHaveBeenCalledTimes(1);
+    // Delete the wait and this reddens to `turnDiff: ""` with no checkpoint — which is
+    // exactly what shipped.
+    expect(outcome).toMatchObject({
+      status: "completed",
+      turnDiff: "--- a\n+++ b\n",
+      filesTouched: ["src/x.ts"],
+      checkpoint: { threadId: "t1", turnId: "turn-1", turnCount: 1 },
+    });
+  });
+
+  it("treats a checkpoint that never arrives as an empty diff rather than a thrown handoff", async () => {
+    const { client, threadFor } = stubs({
+      turnId: "turn-1",
+      state: "completed",
+      thread: thread("completed"),
+    });
+    (client.readTurnDiff as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("no checkpoint"));
+    const outcome = await runHandoffTurn(
+      {
+        repoRoot: "/repos/a",
+        prompt: "x",
+        reviewId: "rv-1",
+        checkpointWait: { waitMs: 0, sleep: async () => {} },
+      },
       { client: async () => client, threadFor },
     );
     expect(outcome).toMatchObject({ status: "completed", turnDiff: "", filesTouched: [] });
+    expect(outcome).not.toHaveProperty("checkpoint");
   });
 
   it("lastAssistantText takes the LAST assistant message, not the first", () => {
@@ -165,15 +203,50 @@ describe("runHandoffTurn", () => {
   });
 });
 
-// Restart recovery's ONLY evidence, and the thread it reads is SHARED: the interactive
-// `review.handoff.run` sends turns on it too. So "which checkpoint" cannot be answered by
-// time — a handoff finishing after the round started would be adopted as the round's
-// receipt. It is answered by the round's own prompt, which T3 records as the turn's user
-// message the moment the turn starts. Until this suite existed, deleting the filter
-// outright left 76/76 green.
-describe("readHandoffTurnCheckpoint", () => {
-  const ROUND_PROMPT = "# Review handoff\n\nYour work order is `.rennet/context/s1/work-order.md`";
-  const OTHER_PROMPT = "please also rename the helper";
+// A ROUND runs on its OWN thread (round-worker-thread; Rai, 2026-09-04: "we should hand
+// off the round to a subagent not to the main orchestrator"). The session's chat thread is
+// the reviewer's conversation with Rennet; a coding agent's tool calls do not belong in it,
+// and until this change they shared one scroll.
+describe("runRoundTurn", () => {
+  it("binds the ROUND's own thread in the bound workspace, and never the session's", async () => {
+    const { client, startTurn, threadFor } = stubs({
+      turnId: "turn-1",
+      state: "completed",
+      thread: thread("completed"),
+    });
+    await runRoundTurn(
+      {
+        repoRoot: "/repos/a",
+        prompt: "WORK ORDER",
+        reviewId: "rv-1",
+        sessionId: "s-1",
+        operationId: "op-1",
+        title: "feat/x — round 2",
+        worktreePath: "/worktrees/feat-x",
+        branch: "feat/x",
+      },
+      { client: async () => client, threadFor },
+    );
+    expect(threadFor).toHaveBeenCalledWith({
+      repositoryRoot: "/repos/a",
+      key: { kind: "round", sessionId: "s-1", operationId: "op-1" },
+      title: "feat/x — round 2",
+      worktreePath: "/worktrees/feat-x",
+      branch: "feat/x",
+    });
+    // The load-bearing negative: NO turn is ever asked for on the session's key. Give the
+    // round the session key back and this reddens while every other assertion still passes.
+    const keys = threadFor.mock.calls.map(([call]) => call.key.kind);
+    expect(keys).toEqual(["round"]);
+    expect(startTurn).toHaveBeenCalledWith({ threadId: "t1", text: "WORK ORDER" });
+  });
+});
+
+// Restart recovery's ONLY evidence. The thread is the ROUND's own now, so the only turns on
+// it are this round's own attempts and the read is a plain "last checkpoint at or after this
+// attempt started" — the prompt-text matching that guarded a SHARED thread is gone with the
+// sharing. `since` is what still separates a retry from the attempt before it.
+describe("readRoundTurnCheckpoint", () => {
   const SINCE = Date.parse("2026-09-04T10:00:00.000Z");
 
   const summary = (turnId: string, completedAt: string, status: "ready" | "error" | "missing") => ({
@@ -185,14 +258,13 @@ describe("readHandoffTurnCheckpoint", () => {
     assistantMessageId: null,
     completedAt,
   });
-  const message = (turnId: string, text: string) => ({ role: "user", text, turnId });
 
-  function checkpointStubs(
-    checkpoints: ReturnType<typeof summary>[],
-    messages: ReturnType<typeof message>[],
-  ) {
+  function checkpointStubs(checkpoints: ReturnType<typeof summary>[]) {
+    const seen: ThreadBindingKey[] = [];
     const client = {
-      readThread: vi.fn(async () => ({ checkpoints, messages }) as unknown as OrchestrationThread),
+      readThread: vi.fn(
+        async () => ({ checkpoints, messages: [] }) as unknown as OrchestrationThread,
+      ),
       readTurnDiff: vi.fn(async (_threadId: string, turnId: string) => ({
         turnId,
         turnCount: Number(turnId.split("-")[1]),
@@ -200,69 +272,48 @@ describe("readHandoffTurnCheckpoint", () => {
         files: [{ path: `${turnId}.ts` }],
       })),
     } as unknown as T3Client;
-    const threadFor = vi.fn(
-      async () => ({ threadId: "t1", repositoryRoot: "/repos/a" }) as ThreadBinding,
-    );
-    return { client, threadFor };
+    const threadFor = vi.fn(async (input: { key: ThreadBindingKey }) => {
+      seen.push(input.key);
+      return { threadId: "t1", repositoryRoot: "/repos/a" } as ThreadBinding;
+    });
+    return { client, threadFor, seen };
   }
 
-  const read = (stubs: ReturnType<typeof checkpointStubs>, prompt = ROUND_PROMPT, since = SINCE) =>
-    readHandoffTurnCheckpoint(
-      { repoRoot: "/repos/a", reviewId: "rv-1", prompt, since },
+  const read = (stubs: ReturnType<typeof checkpointStubs>, since = SINCE) =>
+    readRoundTurnCheckpoint(
+      {
+        repoRoot: "/repos/a",
+        sessionId: "s-1",
+        operationId: "op-1",
+        title: "feat/x — round 2",
+        since,
+      },
       { client: async () => stubs.client, threadFor: stubs.threadFor },
     );
 
-  it("reads the turn whose prompt was the round's, not whichever finished last", async () => {
-    // turn-4 is an INTERACTIVE handoff on the same thread. It is the newest checkpoint and
-    // it is after `since`, so every time-based pick takes it — and the round then settles
-    // on somebody else's work. Only the prompt tells them apart.
-    const stubs = checkpointStubs(
-      [
-        summary("turn-2", "2026-09-04T10:00:05.000Z", "ready"),
-        summary("turn-4", "2026-09-04T10:00:09.000Z", "ready"),
-      ],
-      [message("turn-2", ROUND_PROMPT), message("turn-4", OTHER_PROMPT)],
-    );
-    const found = await read(stubs);
-    expect(found?.checkpoint).toEqual({ threadId: "t1", turnId: "turn-2", turnCount: 2 });
-    expect(found?.diff).toBe("diff for turn-2");
+  it("reads the ROUND's thread, not the session's", async () => {
+    const stubs = checkpointStubs([summary("turn-2", "2026-09-04T10:00:05.000Z", "ready")]);
+    await read(stubs);
+    expect(stubs.seen).toEqual([{ kind: "round", sessionId: "s-1", operationId: "op-1" }]);
   });
 
-  it("still refuses an earlier attempt's turn with the identical prompt", async () => {
-    // An identical re-dispatch sends the same text, so the prompt alone is not enough on
-    // its own; `since` is the second, independent guard. The old turn is deliberately LAST
-    // in array order, so position and time disagree.
-    const stubs = checkpointStubs(
-      [
-        summary("turn-3", "2026-09-04T10:00:09.000Z", "ready"),
-        summary("turn-1", "2026-09-04T09:59:59.000Z", "ready"),
-      ],
-      [message("turn-1", ROUND_PROMPT), message("turn-3", ROUND_PROMPT)],
-    );
+  it("refuses an earlier attempt's turn on the same thread", async () => {
+    // An identical re-dispatch reuses this thread, so `since` is the guard. The old turn is
+    // deliberately LAST in array order, so position and time disagree.
+    const stubs = checkpointStubs([
+      summary("turn-3", "2026-09-04T10:00:09.000Z", "ready"),
+      summary("turn-1", "2026-09-04T09:59:59.000Z", "ready"),
+    ]);
     expect((await read(stubs))?.checkpoint.turnId).toBe("turn-3");
   });
 
   it("carries T3's status through, so a failed turn cannot read as a completed one", async () => {
-    const stubs = checkpointStubs(
-      [summary("turn-2", "2026-09-04T10:00:05.000Z", "error")],
-      [message("turn-2", ROUND_PROMPT)],
-    );
+    const stubs = checkpointStubs([summary("turn-2", "2026-09-04T10:00:05.000Z", "error")]);
     expect(await read(stubs)).toMatchObject({ status: "error", diff: "diff for turn-2" });
   });
 
-  it("is absent when the round's turn left no checkpoint at all", async () => {
-    const stubs = checkpointStubs(
-      [summary("turn-4", "2026-09-04T10:00:09.000Z", "ready")],
-      [message("turn-4", OTHER_PROMPT)],
-    );
-    expect(await read(stubs)).toBeUndefined();
-  });
-
-  it("is absent when every matching checkpoint predates the attempt", async () => {
-    const stubs = checkpointStubs(
-      [summary("turn-1", "2026-09-04T09:59:59.000Z", "ready")],
-      [message("turn-1", ROUND_PROMPT)],
-    );
+  it("is absent when every checkpoint predates the attempt", async () => {
+    const stubs = checkpointStubs([summary("turn-1", "2026-09-04T09:59:59.000Z", "ready")]);
     expect(await read(stubs)).toBeUndefined();
   });
 });

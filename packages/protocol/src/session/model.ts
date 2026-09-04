@@ -441,54 +441,6 @@ export const RoundWorkerReceiptSchema = z.discriminatedUnion("outcome", [
 ]);
 export type RoundWorkerReceipt = z.infer<typeof RoundWorkerReceiptSchema>;
 
-export const RoundGateAttemptSchema = z.object({
-  executionId: id,
-  startedAt: z.number().int().nonnegative(),
-});
-export type RoundGateAttempt = z.infer<typeof RoundGateAttemptSchema>;
-
-const completedGateBase = {
-  ...RoundGateAttemptSchema.shape,
-  completedAt: z.number().int().nonnegative(),
-  /** Number of project tasks the configured gate reported, when the gate can count them. */
-  projectCount: z.number().int().nonnegative().optional(),
-};
-
-export const RoundGatePassedReceiptSchema = z.object({
-  ...completedGateBase,
-  outcome: z.literal("passed"),
-  exitCode: z.literal(0),
-});
-export type RoundGatePassedReceipt = z.infer<typeof RoundGatePassedReceiptSchema>;
-
-export const RoundGateFailedReceiptSchema = z.object({
-  ...completedGateBase,
-  outcome: z.literal("failed"),
-  termination: RoundTerminationSchema,
-});
-export type RoundGateFailedReceipt = z.infer<typeof RoundGateFailedReceiptSchema>;
-
-export const RoundGateSkippedReceiptSchema = z.object({
-  outcome: z.literal("skipped"),
-  reason: z.literal("not-configured"),
-  settledAt: z.number().int().nonnegative(),
-});
-export type RoundGateSkippedReceipt = z.infer<typeof RoundGateSkippedReceiptSchema>;
-
-/** The configured repository gate's process result, not a UI inference. */
-export const RoundGateReceiptSchema = z.discriminatedUnion("outcome", [
-  RoundGatePassedReceiptSchema,
-  RoundGateFailedReceiptSchema,
-  RoundGateSkippedReceiptSchema,
-]);
-export type RoundGateReceipt = z.infer<typeof RoundGateReceiptSchema>;
-
-export const RoundGateSettledReceiptSchema = z.discriminatedUnion("outcome", [
-  RoundGatePassedReceiptSchema,
-  RoundGateSkippedReceiptSchema,
-]);
-export type RoundGateSettledReceipt = z.infer<typeof RoundGateSettledReceiptSchema>;
-
 export const RoundCommitAttemptSchema = z.object({
   executionId: id,
   baseHead: id,
@@ -496,7 +448,7 @@ export const RoundCommitAttemptSchema = z.object({
 });
 export type RoundCommitAttempt = z.infer<typeof RoundCommitAttemptSchema>;
 
-/** The commits observed after the worker and gate settle. Equal endpoints with count zero
+/** The commits observed after the worker's turn settles. Equal endpoints with count zero
  * are an honest no-commit result; a nonzero count is derived from Git. */
 export const RoundCommitReceiptSchema = z.object({
   ...RoundCommitAttemptSchema.shape,
@@ -620,18 +572,10 @@ export const RoundOperationFailureSchema = z.discriminatedUnion("at", [
     worker: z.union([RoundWorkerFailedReceiptSchema, RoundWorkerAttemptSchema]),
   }),
   z.object({
-    at: z.literal("gate"),
-    ...failureBase,
-    workspace: RoundWorkspaceReceiptSchema,
-    worker: RoundWorkerCompletedReceiptSchema,
-    gate: z.union([RoundGateFailedReceiptSchema, RoundGateAttemptSchema]),
-  }),
-  z.object({
     at: z.literal("committing"),
     ...failureBase,
     workspace: RoundWorkspaceReceiptSchema,
     worker: RoundWorkerCompletedReceiptSchema,
-    gate: RoundGateSettledReceiptSchema,
     commit: RoundCommitAttemptSchema,
   }),
   z.object({
@@ -639,7 +583,6 @@ export const RoundOperationFailureSchema = z.discriminatedUnion("at", [
     ...failureBase,
     workspace: RoundWorkspaceReceiptSchema,
     worker: RoundWorkerCompletedReceiptSchema,
-    gate: RoundGateSettledReceiptSchema,
     commits: RoundCommitReceiptSchema,
     recording: RoundRecordingAttemptSchema,
   }),
@@ -648,7 +591,6 @@ export const RoundOperationFailureSchema = z.discriminatedUnion("at", [
     ...failureBase,
     workspace: RoundWorkspaceReceiptSchema,
     worker: RoundWorkerCompletedReceiptSchema,
-    gate: RoundGateSettledReceiptSchema,
     commits: RoundCommitReceiptSchema,
     recording: RoundRecordingReceiptSchema,
     report: RoundReportDraftAttemptSchema,
@@ -658,7 +600,6 @@ export const RoundOperationFailureSchema = z.discriminatedUnion("at", [
     ...failureBase,
     workspace: RoundWorkspaceReceiptSchema,
     worker: RoundWorkerCompletedReceiptSchema,
-    gate: RoundGateSettledReceiptSchema,
     commits: RoundCommitReceiptSchema,
     recording: RoundRecordingReceiptSchema,
     report: RoundReportDraftReceiptSchema,
@@ -683,36 +624,21 @@ export const RoundOperationStateSchema = z.discriminatedUnion("phase", [
     worker: RoundWorkerCompletedReceiptSchema,
   }),
   z.object({
-    phase: z.literal("gate-running"),
-    workspace: RoundWorkspaceReceiptSchema,
-    worker: RoundWorkerCompletedReceiptSchema,
-    gate: RoundGateAttemptSchema,
-  }),
-  z.object({
-    phase: z.literal("gate-settled"),
-    workspace: RoundWorkspaceReceiptSchema,
-    worker: RoundWorkerCompletedReceiptSchema,
-    gate: RoundGateSettledReceiptSchema,
-  }),
-  z.object({
     phase: z.literal("committing"),
     workspace: RoundWorkspaceReceiptSchema,
     worker: RoundWorkerCompletedReceiptSchema,
-    gate: RoundGateSettledReceiptSchema,
     commit: RoundCommitAttemptSchema,
   }),
   z.object({
     phase: z.literal("commits-settled"),
     workspace: RoundWorkspaceReceiptSchema,
     worker: RoundWorkerCompletedReceiptSchema,
-    gate: RoundGateSettledReceiptSchema,
     commits: RoundCommitReceiptSchema,
   }),
   z.object({
     phase: z.literal("round-recording"),
     workspace: RoundWorkspaceReceiptSchema,
     worker: RoundWorkerCompletedReceiptSchema,
-    gate: RoundGateSettledReceiptSchema,
     commits: RoundCommitReceiptSchema,
     recording: RoundRecordingAttemptSchema,
   }),
@@ -720,7 +646,6 @@ export const RoundOperationStateSchema = z.discriminatedUnion("phase", [
     phase: z.literal("round-recorded"),
     workspace: RoundWorkspaceReceiptSchema,
     worker: RoundWorkerCompletedReceiptSchema,
-    gate: RoundGateSettledReceiptSchema,
     commits: RoundCommitReceiptSchema,
     recording: RoundRecordingReceiptSchema,
   }),
@@ -728,7 +653,6 @@ export const RoundOperationStateSchema = z.discriminatedUnion("phase", [
     phase: z.literal("report-drafting"),
     workspace: RoundWorkspaceReceiptSchema,
     worker: RoundWorkerCompletedReceiptSchema,
-    gate: RoundGateSettledReceiptSchema,
     commits: RoundCommitReceiptSchema,
     recording: RoundRecordingReceiptSchema,
     report: RoundReportDraftAttemptSchema,
@@ -737,7 +661,6 @@ export const RoundOperationStateSchema = z.discriminatedUnion("phase", [
     phase: z.literal("report-verifying"),
     workspace: RoundWorkspaceReceiptSchema,
     worker: RoundWorkerCompletedReceiptSchema,
-    gate: RoundGateSettledReceiptSchema,
     commits: RoundCommitReceiptSchema,
     recording: RoundRecordingReceiptSchema,
     report: RoundReportDraftReceiptSchema,
@@ -747,7 +670,6 @@ export const RoundOperationStateSchema = z.discriminatedUnion("phase", [
     phase: z.literal("completed"),
     workspace: RoundWorkspaceReceiptSchema,
     worker: RoundWorkerCompletedReceiptSchema,
-    gate: RoundGateSettledReceiptSchema,
     commits: RoundCommitReceiptSchema,
     recording: RoundRecordingReceiptSchema,
     result: z.discriminatedUnion("kind", [
@@ -789,18 +711,6 @@ export const RoundSourceTargetSchema = z.discriminatedUnion("kind", [
 ]);
 export type RoundSourceTarget = z.infer<typeof RoundSourceTargetSchema>;
 
-/** The configured project gate facts retained with a completed ledger row. */
-export const RoundRunGateReceiptSchema = z.discriminatedUnion("outcome", [
-  z.object({
-    outcome: z.literal("passed"),
-    command: z.string().min(1),
-    durationMs: z.number().int().nonnegative(),
-    projectCount: z.number().int().nonnegative().optional(),
-  }),
-  z.object({ outcome: z.literal("skipped"), reason: z.literal("not-configured") }),
-]);
-export type RoundRunGateReceipt = z.infer<typeof RoundRunGateReceiptSchema>;
-
 /** Immutable host facts about where and when one durable round ran. */
 export const RoundRunReceiptSchema = z.object({
   startedAt: z.number().int().nonnegative(),
@@ -816,15 +726,8 @@ export const RoundRunReceiptSchema = z.object({
   checkpoint: RoundCheckpointSchema.optional(),
   /** The branch had been rewritten past the reviewed head when this round started. */
   branchRewritten: z.literal(true).optional(),
-  gate: RoundRunGateReceiptSchema,
 });
 export type RoundRunReceipt = z.infer<typeof RoundRunReceiptSchema>;
-
-export const RoundGatePlanSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("configured"), command: z.string().min(1) }),
-  z.object({ kind: z.literal("absent") }),
-]);
-export type RoundGatePlan = z.infer<typeof RoundGatePlanSchema>;
 
 function hasChangedRoundEvidence(
   worker: { diff: string; changedPaths: string[] },
@@ -862,7 +765,6 @@ export const RoundOperationSchema = z
      */
     workOrderDocument: z.string().min(1).optional(),
     workOrderDigest: z.string().regex(/^[a-f0-9]{64}$/),
-    gatePlan: RoundGatePlanSchema,
     revision: z.number().int().nonnegative(),
     rerunRequested: z.boolean(),
     createdAt: z.number().int().nonnegative(),
@@ -906,36 +808,6 @@ export const RoundOperationSchema = z
       });
     }
     const failure = state.phase === "failed" ? state.failure : undefined;
-    const gate =
-      state.phase !== "failed" && "gate" in state
-        ? state.gate
-        : failure !== undefined && "gate" in failure
-          ? failure.gate
-          : undefined;
-    if (
-      operation.gatePlan.kind === "absent" &&
-      (state.phase === "gate-running" ||
-        failure?.at === "gate" ||
-        (gate !== undefined && ("outcome" in gate ? gate.outcome !== "skipped" : true)))
-    ) {
-      context.addIssue({
-        code: "custom",
-        path: ["state", "gate"],
-        message: "gate evidence contradicts the absent gate plan",
-      });
-    }
-    if (
-      operation.gatePlan.kind === "configured" &&
-      gate !== undefined &&
-      "outcome" in gate &&
-      gate.outcome === "skipped"
-    ) {
-      context.addIssue({
-        code: "custom",
-        path: ["state", "gate"],
-        message: "configured gate cannot be skipped as not configured",
-      });
-    }
     const commits =
       state.phase !== "failed" && "commits" in state
         ? state.commits
@@ -1044,24 +916,6 @@ const failedWorker = z.object({
   fileCount: z.number().int().nonnegative().optional(),
 });
 
-const runningGate = z.object({ status: z.literal("running") });
-const passedGate = z.object({
-  status: z.literal("passed"),
-  durationMs: z.number().int().nonnegative(),
-  projectCount: z.number().int().nonnegative().optional(),
-});
-const skippedGate = z.object({
-  status: z.literal("skipped"),
-  reason: z.literal("not-configured"),
-});
-const failedGate = z.object({
-  status: z.literal("failed"),
-  reason: z.string().min(1),
-  durationMs: z.number().int().nonnegative(),
-  projectCount: z.number().int().nonnegative().optional(),
-});
-const settledGate = z.discriminatedUnion("status", [passedGate, skippedGate]);
-
 const runningCommits = z.object({ status: z.literal("running") });
 const settledCommits = z.object({
   status: z.literal("done"),
@@ -1116,23 +970,15 @@ const RoundOperationProgressFailureSchema = z.discriminatedUnion("at", [
     worker: failedWorker,
   }),
   z.object({
-    at: z.literal("gate"),
-    workspace: settledWorkspace,
-    worker: settledWorker,
-    gate: failedGate,
-  }),
-  z.object({
     at: z.literal("committing"),
     workspace: settledWorkspace,
     worker: settledWorker,
-    gate: settledGate,
     commits: failedCommits,
   }),
   z.object({
     at: z.literal("report-drafting"),
     workspace: settledWorkspace,
     worker: settledWorker,
-    gate: settledGate,
     commits: settledCommits,
     report: failedReport,
   }),
@@ -1140,7 +986,6 @@ const RoundOperationProgressFailureSchema = z.discriminatedUnion("at", [
     at: z.literal("report-verifying"),
     workspace: settledWorkspace,
     worker: settledWorker,
-    gate: settledGate,
     commits: settledCommits,
     report: failedReport,
   }),
@@ -1161,36 +1006,21 @@ export const RoundOperationProgressStateSchema = z.discriminatedUnion("phase", [
     worker: settledWorker,
   }),
   z.object({
-    phase: z.literal("gate-running"),
-    workspace: settledWorkspace,
-    worker: settledWorker,
-    gate: runningGate,
-  }),
-  z.object({
-    phase: z.literal("gate-settled"),
-    workspace: settledWorkspace,
-    worker: settledWorker,
-    gate: settledGate,
-  }),
-  z.object({
     phase: z.literal("committing"),
     workspace: settledWorkspace,
     worker: settledWorker,
-    gate: settledGate,
     commits: runningCommits,
   }),
   z.object({
     phase: z.literal("commits-settled"),
     workspace: settledWorkspace,
     worker: settledWorker,
-    gate: settledGate,
     commits: settledCommits,
   }),
   z.object({
     phase: z.literal("report-drafting"),
     workspace: settledWorkspace,
     worker: settledWorker,
-    gate: settledGate,
     commits: settledCommits,
     report: z.union([draftingReport, handedOffReport]),
   }),
@@ -1198,7 +1028,6 @@ export const RoundOperationProgressStateSchema = z.discriminatedUnion("phase", [
     phase: z.literal("report-verifying"),
     workspace: settledWorkspace,
     worker: settledWorker,
-    gate: settledGate,
     commits: settledCommits,
     report: verifyingReport,
   }),
@@ -1206,7 +1035,6 @@ export const RoundOperationProgressStateSchema = z.discriminatedUnion("phase", [
     phase: z.literal("completed"),
     workspace: settledWorkspace,
     worker: settledWorker,
-    gate: settledGate,
     commits: settledCommits,
     result: z.discriminatedUnion("kind", [
       z.object({
@@ -1235,7 +1063,6 @@ export const RoundOperationProgressSnapshotSchema = z.object({
   roundNumber: z.number().int().positive(),
   sourceTarget: RoundSourceTargetSchema,
   askCount: z.number().int().positive(),
-  gatePlan: RoundGatePlanSchema,
   state: RoundOperationProgressStateSchema,
 });
 export type RoundOperationProgressSnapshot = z.infer<typeof RoundOperationProgressSnapshotSchema>;
@@ -1247,25 +1074,6 @@ function doneWorkerProgress(worker: RoundWorkerCompletedReceipt): {
   readonly fileCount: number;
 } {
   return { status: "done", fileCount: worker.changedPaths.length };
-}
-
-function gateDurationMs(gate: RoundGatePassedReceipt | RoundGateFailedReceipt): number {
-  return Math.max(0, gate.completedAt - gate.startedAt);
-}
-
-function settledGateProgress(gate: RoundGateSettledReceipt):
-  | {
-      readonly status: "passed";
-      readonly durationMs: number;
-      readonly projectCount?: number;
-    }
-  | { readonly status: "skipped"; readonly reason: "not-configured" } {
-  if (gate.outcome === "skipped") return { status: "skipped", reason: gate.reason };
-  return {
-    status: "passed",
-    durationMs: gateDurationMs(gate),
-    ...(gate.projectCount === undefined ? {} : { projectCount: gate.projectCount }),
-  };
 }
 
 function doneCommitProgress(commits: RoundCommitReceipt): {
@@ -1294,29 +1102,11 @@ function progressFailure(
           ...("outcome" in failure.worker ? { fileCount: failure.worker.changedPaths.length } : {}),
         },
       };
-    case "gate":
-      return {
-        at: failure.at,
-        workspace: doneWorkspaceProgress,
-        worker: doneWorkerProgress(failure.worker),
-        gate: {
-          status: "failed",
-          reason: failure.reason,
-          durationMs:
-            "outcome" in failure.gate
-              ? gateDurationMs(failure.gate)
-              : Math.max(0, failure.failedAt - failure.gate.startedAt),
-          ...("outcome" in failure.gate && failure.gate.projectCount !== undefined
-            ? { projectCount: failure.gate.projectCount }
-            : {}),
-        },
-      };
     case "committing":
       return {
         at: failure.at,
         workspace: doneWorkspaceProgress,
         worker: doneWorkerProgress(failure.worker),
-        gate: settledGateProgress(failure.gate),
         commits: { status: "failed", reason: failure.reason },
       };
     case "round-recording":
@@ -1324,7 +1114,6 @@ function progressFailure(
         at: "committing",
         workspace: doneWorkspaceProgress,
         worker: doneWorkerProgress(failure.worker),
-        gate: settledGateProgress(failure.gate),
         commits: { status: "failed", reason: failure.reason },
       };
     case "report-drafting":
@@ -1333,7 +1122,6 @@ function progressFailure(
         at: failure.at,
         workspace: doneWorkspaceProgress,
         worker: doneWorkerProgress(failure.worker),
-        gate: settledGateProgress(failure.gate),
         commits: doneCommitProgress(failure.commits),
         report: {
           status: "failed",
@@ -1362,26 +1150,11 @@ function progressState(state: RoundOperationState): RoundOperationProgressState 
         workspace: doneWorkspaceProgress,
         worker: doneWorkerProgress(state.worker),
       };
-    case "gate-running":
-      return {
-        phase: state.phase,
-        workspace: doneWorkspaceProgress,
-        worker: doneWorkerProgress(state.worker),
-        gate: { status: "running" },
-      };
-    case "gate-settled":
-      return {
-        phase: state.phase,
-        workspace: doneWorkspaceProgress,
-        worker: doneWorkerProgress(state.worker),
-        gate: settledGateProgress(state.gate),
-      };
     case "committing":
       return {
         phase: state.phase,
         workspace: doneWorkspaceProgress,
         worker: doneWorkerProgress(state.worker),
-        gate: settledGateProgress(state.gate),
         commits: { status: "running" },
       };
     case "commits-settled":
@@ -1390,7 +1163,6 @@ function progressState(state: RoundOperationState): RoundOperationProgressState 
         phase: "committing",
         workspace: doneWorkspaceProgress,
         worker: doneWorkerProgress(state.worker),
-        gate: settledGateProgress(state.gate),
         commits: { status: "running" },
       };
     case "round-recorded":
@@ -1398,7 +1170,6 @@ function progressState(state: RoundOperationState): RoundOperationProgressState 
         phase: "commits-settled",
         workspace: doneWorkspaceProgress,
         worker: doneWorkerProgress(state.worker),
-        gate: settledGateProgress(state.gate),
         commits: doneCommitProgress(state.commits),
       };
     case "report-drafting":
@@ -1406,7 +1177,6 @@ function progressState(state: RoundOperationState): RoundOperationProgressState 
         phase: state.phase,
         workspace: doneWorkspaceProgress,
         worker: doneWorkerProgress(state.worker),
-        gate: settledGateProgress(state.gate),
         commits: doneCommitProgress(state.commits),
         // The durable handoff is the report's own finish line (#728). Once it exists the
         // seats that are actually running are the lens drafters, and the surface says so.
@@ -1424,7 +1194,6 @@ function progressState(state: RoundOperationState): RoundOperationProgressState 
         phase: state.phase,
         workspace: doneWorkspaceProgress,
         worker: doneWorkerProgress(state.worker),
-        gate: settledGateProgress(state.gate),
         commits: doneCommitProgress(state.commits),
         report: {
           status: "verifying",
@@ -1437,7 +1206,6 @@ function progressState(state: RoundOperationState): RoundOperationProgressState 
         phase: state.phase,
         workspace: doneWorkspaceProgress,
         worker: doneWorkerProgress(state.worker),
-        gate: settledGateProgress(state.gate),
         commits: doneCommitProgress(state.commits),
         result:
           state.result.kind === "unchanged"
@@ -1469,7 +1237,6 @@ export function roundOperationProgressSnapshot(
     roundNumber: operation.roundNumber,
     sourceTarget: operation.sourceTarget,
     askCount: operation.askOccurrences.length,
-    gatePlan: operation.gatePlan,
     state: progressState(operation.state),
   };
 }
@@ -1853,7 +1620,6 @@ const BasicRoundEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("dispatched"), seq }),
   z.object({ type: z.literal("prep"), rows: z.array(LaneRowSchema), seq }),
   z.object({ type: z.literal("worker"), rows: z.array(LaneRowSchema), seq }),
-  z.object({ type: z.literal("gate"), seq }),
   z.object({ type: z.literal("committed"), seq }),
   z.object({ type: z.literal("composed"), generation: id, seq }),
   /** The worker completed but its checkpoint was empty, so no generation was regenerated. */

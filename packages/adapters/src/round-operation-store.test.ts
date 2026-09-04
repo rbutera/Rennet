@@ -106,7 +106,6 @@ const verificationAttempt = { executionId: "report-verify-1", startedAt: 15 } as
 const changedRoundEvidence = {
   workspace,
   worker: changedWorker,
-  gate: changedGate,
   commits: changedCommits,
   recording: recordingReceipt,
 } as const;
@@ -177,7 +176,6 @@ function insertStoredEnvelope(
 
 function operation(
   options: {
-    gatePlan?: RoundOperation["gatePlan"];
     operationId?: string;
     sessionId?: string;
     revision?: number;
@@ -200,7 +198,6 @@ function operation(
     repoRoot: "/repo",
     workOrderPrompt,
     workOrderDigest: sha256Hex(workOrderPrompt),
-    gatePlan: options.gatePlan ?? { kind: "configured", command: "pnpm check" },
     revision: options.revision ?? 0,
     rerunRequested: options.rerunRequested ?? false,
     createdAt: 1,
@@ -477,10 +474,8 @@ if (RACE_ROLE !== undefined) {
         state: { phase: "prepared", workspace },
         updatedAt: 2,
         workOrderPrompt: "replace the frozen work order",
-        gatePlan: { kind: "absent" },
       } satisfies RoundOperationTransition & {
         workOrderPrompt: string;
-        gatePlan: { kind: "absent" };
       };
       const advanced = store.compareAndSwap(expectation(claimed), attemptedMutation);
 
@@ -492,7 +487,6 @@ if (RACE_ROLE !== undefined) {
       ).toThrow(RoundOperationConflictError);
       expect(advanced.revision).toBe(1);
       expect(advanced.workOrderPrompt).toBe(claimed.workOrderPrompt);
-      expect(advanced.gatePlan).toEqual(claimed.gatePlan);
       expect(store.read(claimed.sessionId)).toEqual(advanced);
     });
 
@@ -755,50 +749,6 @@ if (RACE_ROLE !== undefined) {
       ).toThrow(RoundOperationConflictError);
     });
 
-    it("skips only an absent gate and requires a configured gate to run", () => {
-      const absentStore = new RoundOperationStore(tempStoreDir());
-      const absentWorker = advanceToWorkerSettled(
-        absentStore,
-        absentStore.claimIfIdle(
-          operation({ operationId: "absent-gate", gatePlan: { kind: "absent" } }),
-        ),
-      );
-      if (absentWorker.state.phase !== "worker-settled") {
-        throw new Error("worker fixture did not settle");
-      }
-      const skipped = absentStore.compareAndSwap(expectation(absentWorker), {
-        state: {
-          phase: "gate-settled",
-          workspace,
-          worker: absentWorker.state.worker,
-          gate: { outcome: "skipped", reason: "not-configured", settledAt: 5 },
-        },
-        updatedAt: 5,
-      });
-      expect(skipped.state.phase).toBe("gate-settled");
-
-      const configuredStore = new RoundOperationStore(tempStoreDir());
-      const configuredWorker = advanceToWorkerSettled(
-        configuredStore,
-        configuredStore.claimIfIdle(operation({ operationId: "configured-gate" })),
-      );
-      if (configuredWorker.state.phase !== "worker-settled") {
-        throw new Error("worker fixture did not settle");
-      }
-      const configuredWorkerReceipt = configuredWorker.state.worker;
-      expect(() =>
-        configuredStore.compareAndSwap(expectation(configuredWorker), {
-          state: {
-            phase: "gate-settled",
-            workspace,
-            worker: configuredWorkerReceipt,
-            gate: { outcome: "skipped", reason: "not-configured", settledAt: 5 },
-          },
-          updatedAt: 5,
-        }),
-      ).toThrow(RoundOperationConflictError);
-    });
-
     it("carries unchanged evidence through recording with exact attempt identity", () => {
       const store = new RoundOperationStore(tempStoreDir());
       const workerSettled = advanceToWorkerSettled(
@@ -808,41 +758,11 @@ if (RACE_ROLE !== undefined) {
       if (workerSettled.state.phase !== "worker-settled") {
         throw new Error("worker fixture did not settle");
       }
-      const gateRunning = store.compareAndSwap(expectation(workerSettled), {
-        state: {
-          phase: "gate-running",
-          workspace,
-          worker: workerSettled.state.worker,
-          gate: { executionId: "gate-1", startedAt: 5 },
-        },
-        updatedAt: 5,
-      });
-      if (gateRunning.state.phase !== "gate-running") {
-        throw new Error("gate fixture did not start");
-      }
-      const gateSettled = store.compareAndSwap(expectation(gateRunning), {
-        state: {
-          phase: "gate-settled",
-          workspace,
-          worker: gateRunning.state.worker,
-          gate: {
-            ...gateRunning.state.gate,
-            completedAt: 6,
-            outcome: "passed",
-            exitCode: 0,
-          },
-        },
-        updatedAt: 6,
-      });
-      if (gateSettled.state.phase !== "gate-settled") {
-        throw new Error("gate fixture did not settle");
-      }
-      const committing = store.compareAndSwap(expectation(gateSettled), {
+      const committing = store.compareAndSwap(expectation(workerSettled), {
         state: {
           phase: "committing",
           workspace,
-          worker: gateSettled.state.worker,
-          gate: gateSettled.state.gate,
+          worker: workerSettled.state.worker,
           commit: { executionId: "commit-1", baseHead: "abc123", startedAt: 7 },
         },
         updatedAt: 7,
@@ -855,7 +775,6 @@ if (RACE_ROLE !== undefined) {
           phase: "commits-settled",
           workspace,
           worker: committing.state.worker,
-          gate: committing.state.gate,
           commits: {
             ...committing.state.commit,
             from: "abc123",
@@ -870,7 +789,6 @@ if (RACE_ROLE !== undefined) {
         throw new Error("commit fixture did not settle");
       }
       const settledWorker = commitsSettled.state.worker;
-      const settledGate = commitsSettled.state.gate;
       const settledCommits = commitsSettled.state.commits;
       const recordingAttempt = {
         effect: "round-recording",
@@ -882,7 +800,6 @@ if (RACE_ROLE !== undefined) {
           phase: "round-recording",
           workspace,
           worker: settledWorker,
-          gate: settledGate,
           commits: settledCommits,
           recording: recordingAttempt,
         },
@@ -897,7 +814,6 @@ if (RACE_ROLE !== undefined) {
             phase: "round-recorded",
             workspace,
             worker: settledWorker,
-            gate: settledGate,
             commits: settledCommits,
             recording: {
               ...recordingAttempt,
@@ -913,7 +829,6 @@ if (RACE_ROLE !== undefined) {
           phase: "round-recorded",
           workspace,
           worker: settledWorker,
-          gate: settledGate,
           commits: settledCommits,
           recording: { ...recordingAttempt, recordedAt: 12 },
         },
@@ -930,7 +845,6 @@ if (RACE_ROLE !== undefined) {
             phase: "report-drafting",
             workspace,
             worker: settledWorker,
-            gate: settledGate,
             commits: settledCommits,
             recording: settledRecording,
             report: {
@@ -957,7 +871,6 @@ if (RACE_ROLE !== undefined) {
             phase: "completed",
             workspace,
             worker: settledWorker,
-            gate: settledGate,
             commits: settledCommits,
             recording: settledRecording,
             result: { kind: "unchanged" },
@@ -1254,6 +1167,71 @@ describe("rows written before the workspace binding", () => {
     const listed = store.listActive();
     expect(listed.operations).toEqual([]);
     expect(listed.errors).toEqual([]);
+    store.close();
+  });
+
+  // The SECOND bump, and the one this change makes (round-worker-thread): a version-2 row
+  // carries `gatePlan` and can sit in `gate-settled`, a phase that no longer exists. It is
+  // old, not damaged, and it drops the same way — which is what keeps `recover()` from
+  // throwing before it has driven any other session.
+  it("drops a row carrying a gate receipt, as legacy rather than corrupt", () => {
+    const dir = tempStoreDir();
+    new RoundOperationStore(dir).close();
+    insertStoredEnvelope(dir, {
+      sessionId: "session-gated",
+      operationId: "operation-gated",
+      revision: 0,
+      envelopeJson: JSON.stringify({
+        version: 2,
+        operation: {
+          operationId: "operation-gated",
+          sessionId: "session-gated",
+          reviewId: "review-1",
+          dispatchId: "dispatch-gated",
+          sourcePatchsetId: "patchset-1",
+          askOccurrences: [{ id: "ask-gated", revision: 0 }],
+          roundNumber: 1,
+          sourceTarget: { kind: "branch", branch: "feat/test" },
+          repoRoot: "/repo",
+          workOrderPrompt: "Implement the requested change.",
+          workOrderDigest: sha256Hex("Implement the requested change."),
+          gatePlan: { kind: "configured", command: "pnpm check" },
+          revision: 0,
+          rerunRequested: false,
+          createdAt: 1,
+          updatedAt: 1,
+          state: {
+            phase: "gate-settled",
+            workspace: { kind: "bound-root", root: "/repo", sourceHead: "head-1", preparedAt: 2 },
+            worker: {
+              executionId: "worker-1",
+              startedAt: 3,
+              completedAt: 4,
+              outcome: "completed",
+              diff: "diff",
+              changedPaths: ["a.ts"],
+            },
+            gate: {
+              executionId: "gate-1",
+              startedAt: 5,
+              completedAt: 6,
+              outcome: "passed",
+              exitCode: 0,
+            },
+          },
+        },
+      }),
+    });
+    const warnings: string[] = [];
+    const store = new RoundOperationStore(dir, (m) => warnings.push(m));
+    expect(store.read("session-gated")).toBeUndefined();
+    expect(warnings.join("\n")).toContain("store version 2");
+    expect(store.listActive().errors).toEqual([]);
+    // Gone, so the session dispatches fresh rather than colliding with a dead row.
+    expect(
+      store.claimIfIdle(operation({ sessionId: "session-gated", operationId: "fresh" }))
+        .operationId,
+    ).toBe("fresh");
     store.close();
   });
 

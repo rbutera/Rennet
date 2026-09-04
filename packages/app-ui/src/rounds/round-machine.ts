@@ -55,11 +55,6 @@ type LegacyRoundState =
       readonly worker: readonly LaneRow[];
     }
   | {
-      readonly phase: "gating";
-      readonly prep: readonly LaneRow[];
-      readonly worker: readonly LaneRow[];
-    }
-  | {
       readonly phase: "committing";
       readonly prep: readonly LaneRow[];
       readonly worker: readonly LaneRow[];
@@ -120,7 +115,6 @@ type DurableRoundState =
         | "dispatching"
         | "preparing"
         | "working"
-        | "gating"
         | "committing"
         | "drafting-report"
         | "verifying-report";
@@ -187,7 +181,6 @@ function operationIdentity(snapshot: RoundOperationProgressSnapshot): RoundRunId
     roundNumber: snapshot.roundNumber,
     sourceTarget: snapshot.sourceTarget,
     askCount: snapshot.askCount,
-    gatePlan: snapshot.gatePlan,
   };
 }
 
@@ -233,12 +226,6 @@ function settledWorkerRow(fileCount: number): LaneRow {
   };
 }
 
-function gateCommand(operation: RoundRunIdentity): string {
-  return operation.gatePlan.kind === "configured"
-    ? operation.gatePlan.command
-    : "no configured gate";
-}
-
 type ProgressState = RoundOperationProgressSnapshot["state"];
 type PropertyValues<T, Key extends PropertyKey> = T extends unknown
   ? Key extends keyof T
@@ -246,48 +233,6 @@ type PropertyValues<T, Key extends PropertyKey> = T extends unknown
     : never
   : never;
 type ProgressFailure = PropertyValues<ProgressState, "failure">;
-type GateProgress = PropertyValues<ProgressState, "gate"> | PropertyValues<ProgressFailure, "gate">;
-type SettledGateProgress = Exclude<GateProgress, { status: "running" | "failed" }>;
-
-function gateRow(operation: RoundRunIdentity, gate: GateProgress): LaneRow {
-  const command = gateCommand(operation);
-  switch (gate.status) {
-    case "running":
-      return { id: "gate", label: `Running the gate · ${command}`, status: "running" };
-    case "passed": {
-      const projectResult =
-        gate.projectCount === undefined
-          ? "passed"
-          : `${countLabel(gate.projectCount, "project")} green`;
-      return {
-        id: "gate",
-        label: "Ran the gate",
-        status: "done",
-        detail: `${command} · ${projectResult} · ${durationLabel(gate.durationMs)}`,
-      };
-    }
-    case "skipped":
-      return {
-        id: "gate",
-        label: "Skipped the gate",
-        status: "done",
-        detail: "not configured",
-      };
-    case "failed":
-      return {
-        id: "gate",
-        label: "Ran the gate",
-        status: "failed",
-        reason: `${command}${
-          gate.projectCount === undefined ? "" : ` · ${countLabel(gate.projectCount, "project")}`
-        } · ${gate.reason} · ${durationLabel(gate.durationMs)}`,
-      };
-  }
-}
-
-function settledGateRow(operation: RoundRunIdentity, gate: SettledGateProgress): LaneRow {
-  return gateRow(operation, gate);
-}
 
 function commitRow(
   commit:
@@ -393,29 +338,13 @@ function durableState(snapshot: RoundOperationProgressSnapshot): DurableRoundSta
         worker: [settledWorkerRow(state.worker.fileCount)],
         tail: [],
       };
-    case "gate-running":
-      return {
-        phase: "gating",
-        operation,
-        prep: donePrep,
-        worker: [settledWorkerRow(state.worker.fileCount)],
-        tail: [gateRow(operation, state.gate)],
-      };
-    case "gate-settled":
-      return {
-        phase: "gating",
-        operation,
-        prep: donePrep,
-        worker: [settledWorkerRow(state.worker.fileCount)],
-        tail: [settledGateRow(operation, state.gate)],
-      };
     case "committing":
       return {
         phase: "committing",
         operation,
         prep: donePrep,
         worker: [settledWorkerRow(state.worker.fileCount)],
-        tail: [settledGateRow(operation, state.gate), commitRow(state.commits)],
+        tail: [commitRow(state.commits)],
       };
     case "commits-settled":
       return {
@@ -423,14 +352,10 @@ function durableState(snapshot: RoundOperationProgressSnapshot): DurableRoundSta
         operation,
         prep: donePrep,
         worker: [settledWorkerRow(state.worker.fileCount)],
-        tail: [settledGateRow(operation, state.gate), commitRow(state.commits)],
+        tail: [commitRow(state.commits)],
       };
     case "report-drafting": {
-      const tail = [
-        settledGateRow(operation, state.gate),
-        commitRow(state.commits),
-        reportRow(state.report),
-      ];
+      const tail = [commitRow(state.commits), reportRow(state.report)];
       // #725 7.4 — the durable operation has no phase of its own for the lens fan-out, so
       // it stays in `report-drafting` throughout it. The handoff is what distinguishes
       // them: before it, the report seat is running; after it, the lens drafters are, and
@@ -462,11 +387,7 @@ function durableState(snapshot: RoundOperationProgressSnapshot): DurableRoundSta
           operation,
           prep: donePrep,
           worker: [settledWorkerRow(state.worker.fileCount)],
-          tail: [
-            settledGateRow(operation, state.gate),
-            commitRow(state.commits),
-            reportRow(state.report),
-          ],
+          tail: [commitRow(state.commits), reportRow(state.report)],
         };
       }
       return {
@@ -474,11 +395,7 @@ function durableState(snapshot: RoundOperationProgressSnapshot): DurableRoundSta
         operation,
         prep: donePrep,
         worker: [settledWorkerRow(state.worker.fileCount)],
-        tail: [
-          settledGateRow(operation, state.gate),
-          commitRow(state.commits),
-          reportRow(state.report),
-        ],
+        tail: [commitRow(state.commits), reportRow(state.report)],
         reportBoardId: state.report.reportBoardId,
         newGeneration: state.report.generation,
       };
@@ -490,7 +407,7 @@ function durableState(snapshot: RoundOperationProgressSnapshot): DurableRoundSta
         operation,
         prep: donePrep,
         worker: [settledWorkerRow(state.worker.fileCount)],
-        tail: [settledGateRow(operation, state.gate), commitRow(state.commits)],
+        tail: [commitRow(state.commits)],
       };
       if (snapshot.draining === true) {
         if (state.result.kind === "unchanged") return { phase: "committing", ...rows };
@@ -546,15 +463,6 @@ function durableState(snapshot: RoundOperationProgressSnapshot): DurableRoundSta
             ],
             tail: [],
           };
-        case "gate":
-          return {
-            phase: "failed",
-            operation,
-            reason: failure.gate.reason,
-            prep: donePrep,
-            worker: [settledWorkerRow(failure.worker.fileCount)],
-            tail: [gateRow(operation, failure.gate)],
-          };
         case "committing":
           return {
             phase: "failed",
@@ -562,7 +470,7 @@ function durableState(snapshot: RoundOperationProgressSnapshot): DurableRoundSta
             reason: failure.commits.reason,
             prep: donePrep,
             worker: [settledWorkerRow(failure.worker.fileCount)],
-            tail: [settledGateRow(operation, failure.gate), commitRow(failure.commits)],
+            tail: [commitRow(failure.commits)],
           };
         case "report-drafting":
         case "report-verifying":
@@ -572,11 +480,7 @@ function durableState(snapshot: RoundOperationProgressSnapshot): DurableRoundSta
             reason: failure.report.reason,
             prep: donePrep,
             worker: [settledWorkerRow(failure.worker.fileCount)],
-            tail: [
-              settledGateRow(operation, failure.gate),
-              commitRow(failure.commits),
-              reportRow(failure.report),
-            ],
+            tail: [commitRow(failure.commits), reportRow(failure.report)],
           };
       }
     }
@@ -801,12 +705,9 @@ export function advance(state: RoundState, event: RoundEvent): RoundState {
     case "working":
       if (event.type === "worker")
         return { phase: "working", prep: state.prep, worker: event.rows };
-      if (event.type === "gate") return { phase: "gating", prep: state.prep, worker: state.worker };
+      if (event.type === "committed")
+        return { phase: "committing", prep: state.prep, worker: state.worker };
       return state;
-    case "gating":
-      return event.type === "committed"
-        ? { phase: "committing", prep: state.prep, worker: state.worker }
-        : state;
     case "committing":
       return event.type === "report"
         ? {
@@ -1062,7 +963,6 @@ const PHASE_ORDER: readonly RoundPhase[] = [
   "dispatching",
   "preparing",
   "working",
-  "gating",
   "committing",
   "drafting-report",
   "reporting",

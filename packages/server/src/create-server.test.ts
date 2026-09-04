@@ -669,7 +669,6 @@ describe("the round runs in the session's bound root", () => {
     repoRoot: "/repo",
     workOrderPrompt: "apply the round",
     workOrderDigest: sha256Hex("apply the round"),
-    gatePlan: { kind: "absent" },
     revision: 0,
     rerunRequested: false,
     createdAt: 1,
@@ -785,7 +784,7 @@ describe("the round runs in the session's bound root", () => {
       preparedAt: 3,
     };
     const workerAttempt = { executionId: "worker-1", startedAt: 3 };
-    const runHandoffTurn = vi.fn(async () => ({
+    const runRoundTurn = vi.fn(async () => ({
       status: "completed" as const,
       finalText: "done",
       turnDiff: "diff --git a/x b/x\n",
@@ -793,7 +792,7 @@ describe("the round runs in the session's bound root", () => {
       checkpoint: { threadId: "thread-1", turnId: "turn-7", turnCount: 4 },
     }));
 
-    const receipt = await createRoundWorkerPort({ runHandoffTurn, now: () => 4 })({
+    const receipt = await createRoundWorkerPort({ runRoundTurn, now: () => 4 })({
       operation: {
         ...operation(),
         state: { phase: "worker-running", workspace, worker: workerAttempt },
@@ -801,10 +800,19 @@ describe("the round runs in the session's bound root", () => {
       attempt: workerAttempt,
     });
 
-    expect(runHandoffTurn).toHaveBeenCalledWith({
+    // The turn is sent to the ROUND's OWN thread, in the bound root: session id plus
+    // operation id, titled for the branch and the ordinal. `reviewId` still rides along
+    // (the T3 project is the review's repository), but it is not the thread's key any
+    // more — the session's chat thread is the reviewer's conversation, not this.
+    expect(runRoundTurn).toHaveBeenCalledWith({
       repoRoot: "/bound",
       prompt: "apply the round",
       reviewId: "review-1",
+      worktreePath: "/bound",
+      sessionId: "session-1",
+      operationId: "operation-1",
+      title: "feat/test — round 1",
+      branch: "feat/test",
     });
     expect(receipt.outcome).toBe("completed");
     expect(receipt.checkpoint).toEqual({ threadId: "thread-1", turnId: "turn-7", turnCount: 4 });
@@ -833,14 +841,18 @@ describe("the round runs in the session's bound root", () => {
       operation: running,
       attempt: workerAttempt,
     });
-    // The search is scoped by the round's OWN PROMPT and by this attempt's start, because
-    // the thread is shared with the interactive handoff: neither an earlier round's turn
-    // nor somebody else's handoff may be read as this round's work.
+    // The read is scoped to the ROUND's own thread and to this attempt's start. The
+    // prompt-text matching that used to be needed is gone with the thread sharing: the
+    // only turns on this thread are this round's own attempts, and `since` separates a
+    // retry from the attempt before it.
     expect(readCheckpoint).toHaveBeenCalledWith({
       repoRoot: "/bound",
-      reviewId: "review-1",
-      prompt: "apply the round",
+      worktreePath: "/bound",
       since: 900,
+      sessionId: "session-1",
+      operationId: "operation-1",
+      title: "feat/test — round 1",
+      branch: "feat/test",
     });
     expect(settled.outcome).toBe("completed");
     expect(settled.changedPaths).toEqual(["x"]);
@@ -1663,7 +1675,6 @@ describe("durable round execution recovery", () => {
       repoRoot: includedRepo,
       workOrderPrompt: "recover the persisted report draft",
       workOrderDigest: sha256Hex("recover the persisted report draft"),
-      gatePlan: { kind: "absent" },
       revision: 0,
       rerunRequested: false,
       createdAt: 1,
@@ -1697,11 +1708,6 @@ describe("durable round execution recovery", () => {
       changedPaths: ["a.ts"],
     };
     transition({ phase: "worker-settled", workspace: workspaceReceipt, worker: workerReceipt }, 5);
-    const gate = { outcome: "skipped" as const, reason: "not-configured" as const, settledAt: 6 };
-    transition(
-      { phase: "gate-settled", workspace: workspaceReceipt, worker: workerReceipt, gate },
-      6,
-    );
     const commitAttempt = {
       executionId: "commit-root-recovery",
       baseHead: sourceHead,
@@ -1712,7 +1718,6 @@ describe("durable round execution recovery", () => {
         phase: "committing",
         workspace: workspaceReceipt,
         worker: workerReceipt,
-        gate,
         commit: commitAttempt,
       },
       7,
@@ -1729,7 +1734,6 @@ describe("durable round execution recovery", () => {
         phase: "commits-settled",
         workspace: workspaceReceipt,
         worker: workerReceipt,
-        gate,
         commits,
       },
       8,
@@ -1744,7 +1748,6 @@ describe("durable round execution recovery", () => {
         phase: "round-recording",
         workspace: workspaceReceipt,
         worker: workerReceipt,
-        gate,
         commits,
         recording: recordingAttempt,
       },
@@ -1756,7 +1759,6 @@ describe("durable round execution recovery", () => {
         phase: "round-recorded",
         workspace: workspaceReceipt,
         worker: workerReceipt,
-        gate,
         commits,
         recording,
       },
@@ -1767,7 +1769,6 @@ describe("durable round execution recovery", () => {
         phase: "report-drafting",
         workspace: workspaceReceipt,
         worker: workerReceipt,
-        gate,
         commits,
         recording,
         report: {
@@ -1843,7 +1844,6 @@ describe("durable round execution recovery", () => {
       repoRoot: repo,
       workOrderPrompt: prompt,
       workOrderDigest: sha256Hex(prompt),
-      gatePlan: { kind: "absent" },
       revision: 0,
       rerunRequested: false,
       createdAt: 1,
@@ -1889,7 +1889,7 @@ describe("durable round execution recovery", () => {
     const server = await createRennetServer({
       dataDir,
       env: { RENNET_DISABLE_HARNESS: "1" },
-      runHandoffTurn,
+      runRoundTurn: runHandoffTurn,
     });
     shutdowns.push(server.shutdown);
 
@@ -2071,7 +2071,7 @@ describe("round.dispatch mints onto the session the reads answer (the call site,
       // It OBEYS the prompt about git rather than committing regardless: a fake that
       // always commits is what hid the shipped blocker, where the round carried the review
       // handoff's "do NOT commit" rule and every real round would have failed.
-      runHandoffTurn: async ({ repoRoot, prompt }) => {
+      runRoundTurn: async ({ repoRoot, prompt }: { repoRoot: string; prompt: string }) => {
         workerCalls += 1;
         workerRepoRoot = repoRoot;
         workerPrompt = prompt;
@@ -2122,7 +2122,6 @@ describe("round.dispatch mints onto the session the reads answer (the call site,
           harness: { id: "codex", version: "0.146.0" },
           workspaceRoot: repo,
           checkpoint: { threadId: "thread-round", turnId: "turn-round", turnCount: 1 },
-          gate: { outcome: "skipped", reason: "not-configured" },
         });
         // This hook runs before create-server enters PR-draft ripening. If placeholder
         // persistence moves behind that await, the record is absent and this control reds.
@@ -2271,7 +2270,7 @@ describe("round.dispatch mints onto the session the reads answer (the call site,
     const server = await createRennetServer({
       dataDir,
       env: { RENNET_DISABLE_HARNESS: "1" },
-      runHandoffTurn: async ({ repoRoot, prompt }) => {
+      runRoundTurn: async ({ repoRoot, prompt }: { repoRoot: string; prompt: string }) => {
         workerRepoRoot = repoRoot;
         writeFileSync(join(repoRoot, "a.txt"), "base\nreviewed\nworker change\n");
         if (!/do NOT commit/i.test(prompt)) {
@@ -2428,7 +2427,7 @@ describe("round.dispatch mints onto the session the reads answer (the call site,
     const first = await createRennetServer({
       dataDir,
       env: { RENNET_DISABLE_HARNESS: "1" },
-      runHandoffTurn: async () => {
+      runRoundTurn: async () => {
         workerCalls += 1;
         markFirstWorkerStarted();
         await firstWorkerGate;
@@ -2547,7 +2546,7 @@ describe("round.dispatch mints onto the session the reads answer (the call site,
     const restarted = await createRennetServer({
       dataDir,
       env: { RENNET_DISABLE_HARNESS: "1" },
-      runHandoffTurn: async () => {
+      runRoundTurn: async () => {
         workerCalls += 1;
         return { status: "completed", finalText: "duplicate", turnDiff: "", filesTouched: [] };
       },

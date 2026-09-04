@@ -73,7 +73,6 @@ const OPERATION_IDENTITY = {
   roundNumber: 1,
   sourceTarget: { kind: "branch", branch: "fix/token-refresh-observability" },
   askCount: 2,
-  gatePlan: { kind: "configured", command: "pnpm check" },
 } as const;
 const WORKSPACE = { status: "done" } as const;
 const WORKER = { status: "done", fileCount: 3 } as const;
@@ -142,7 +141,6 @@ const SERVER_ROUND: readonly RoundEvent[] = [
     phase: "gate-running",
     workspace: WORKSPACE,
     worker: WORKER,
-    gate: { status: "running" },
   }),
   progressEvent(5, {
     phase: "committing",
@@ -206,7 +204,6 @@ const DURABLE_RECORD: RoundLedgerRecord = RoundLedgerRecordSchema.parse({
   run: {
     startedAt: Date.UTC(2026, 7, 29, 9, 30),
     sourceTarget: { kind: "branch", branch: "fix/token-refresh-observability" },
-    gate: { outcome: "passed", command: "pnpm check", durationMs: 12_400, projectCount: 7 },
   },
   report: reportBoardFixture,
   // The report's own verified tally (C15 finding 10) — two of this round's outcomes were

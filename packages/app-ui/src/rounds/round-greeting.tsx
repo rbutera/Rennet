@@ -47,22 +47,6 @@ function durationLabel(durationMs: number): string {
   return `${seconds < 10 ? seconds.toFixed(1) : Math.round(seconds)} s`;
 }
 
-function gateSummary(gate: RoundRunReceipt["gate"]) {
-  switch (gate.outcome) {
-    case "passed":
-      return (
-        <>
-          Passed <code>{gate.command}</code> in {durationLabel(gate.durationMs)}
-          {gate.projectCount === undefined
-            ? "."
-            : ` across ${gate.projectCount} ${gate.projectCount === 1 ? "project" : "projects"}.`}
-        </>
-      );
-    case "skipped":
-      return <>No project gate was configured.</>;
-  }
-}
-
 function harnessSummary(harness: RoundRunReceipt["harness"]): string {
   if (harness === undefined) return "";
   const name = harness.id === "claude-code" ? "Claude Code" : "Codex";
@@ -70,10 +54,13 @@ function harnessSummary(harness: RoundRunReceipt["harness"]): string {
 }
 
 /**
- * Where the round ran and what captured it (round-harness-dispatch). A round is a turn in
- * the session's BOUND workspace, so the provenance line names that root and the sidecar
- * checkpoint whose ref a revert takes — never a detached worktree path, because there is
- * no longer one. A legacy row that carries neither says nothing rather than guessing.
+ * Where the round ran and what captured it (round-harness-dispatch). A round is a turn on
+ * its OWN thread in the session's BOUND workspace, so the provenance line names that root,
+ * the thread the round's transcript is on, and the checkpoint whose ref a revert takes —
+ * never a detached worktree path, because there is no longer one. The THREAD is what a
+ * reviewer opens; the 2026-09-04 drive found this line rendering the root, the turn id and
+ * the turn count and never the thread, which is the one handle that leads anywhere. A
+ * legacy row that carries neither root nor checkpoint says nothing rather than guessing.
  */
 function WorkspaceProvenance({ run }: { readonly run: RoundRunReceipt }) {
   if (run.workspaceRoot === undefined && run.checkpoint === undefined) return null;
@@ -88,7 +75,8 @@ function WorkspaceProvenance({ run }: { readonly run: RoundRunReceipt }) {
         "."
       ) : (
         <>
-          {run.workspaceRoot === undefined ? "Checkpoint " : ", checkpoint "}
+          {run.workspaceRoot === undefined ? "Thread " : ", thread "}
+          <code data-testid="round-run-thread">{run.checkpoint.threadId}</code>, checkpoint{" "}
           <code>{run.checkpoint.turnId}</code> (turn {run.checkpoint.turnCount}).
         </>
       )}
@@ -119,7 +107,6 @@ function RunReceiptSummary({
         {harnessSummary(record.run.harness)}.
       </p>
       <WorkspaceProvenance run={record.run} />
-      <p>{gateSummary(record.run.gate)}</p>
     </div>
   );
 }
