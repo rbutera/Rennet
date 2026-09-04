@@ -9,7 +9,6 @@ import { randomUUID } from "node:crypto";
 import {
   existsSync,
   constants as fsConstants,
-  mkdirSync,
   readdirSync,
   readFileSync,
   realpathSync,
@@ -28,7 +27,6 @@ import {
   type ClaudeHarnessResult,
   type CodexAvailability,
   captureRangePatchset,
-  claudeHandoffRunPort,
   cleanupWorktree,
   createClaudeCiRefinementTurn,
   createClaudeHarness,
@@ -67,7 +65,6 @@ import {
   GenerationStore,
   GITHUB_REQUEST_TIMEOUT_MS,
   GitCaptureAdapter,
-  GitCheckpointStore,
   type GitExec,
   GitHubChangesetSource,
   type GitHubCliTokenResult,
@@ -79,8 +76,6 @@ import {
   type GitLabPrSubmissionCommandRunner,
   gitForRepoFactory,
   isGitHubNetworkError,
-  landRoundBranch,
-  landRoundChanges,
   listDir,
   loadConventionCatalogue,
   loadProjectDetail,
@@ -88,14 +83,13 @@ import {
   matchWorktree,
   migrateLegacyGlobalConfig,
   NoveltyLifecycleRegistry,
+  observeRoundCommits,
   ProjectContextReader,
   type ProjectPrSource,
   ProjectSnapshotGenerator,
   PublishCompositionStore,
   PublishReceiptStore,
   parseGitHubPrRef,
-  planRoundBranchLanding,
-  prepareRoundWorkspace,
   prWorktreePath,
   RepoWatcher,
   RoundOperationConflictError,
@@ -107,9 +101,6 @@ import {
   readTreeLineCounts,
   recordedVisibility,
   refreshGitHubCredential,
-  releaseRoundSourceCommit,
-  removeRoundWorktree,
-  repoHasSubmodules,
   repoKeyOf,
   repositoryIdentity,
   resolveGitHubAuth,
@@ -126,7 +117,6 @@ import {
   SqliteReviewStore,
   saveConventionCatalogue,
   scoutSettingsOffers,
-  settleRoundCommits,
   snapshotStoreFor,
   TranscriptStore,
   validateGitHubToken,
@@ -169,11 +159,11 @@ import {
   resolveAssignment,
   resolveLocus,
   reviewedDiffCommand,
-  runHandoffTurn as runHandoffTurnCore,
   runNoiseAngle,
   toDistroPath,
   toWindowsView,
   verifyFlaggedReview,
+  workOrderContextFileFrom,
 } from "@rennet/core";
 import type { PromptContextFile } from "@rennet/prompts";
 import type {
@@ -279,12 +269,6 @@ import { type ReviewContextFeed, runWithReviewContextFeed } from "./review-conte
 import type { ReviewIntelligenceSession } from "./review-intelligence-session";
 import { createLiveReviewOpenerPort } from "./review-opener-live";
 import {
-  createNativeRoundSourceLandingInjection,
-  type NativeRoundSourceLandingInjection,
-  type RoundSourceLandingInjection,
-  supportsNativeRoundSourceLanding,
-} from "./round-source-landing-native";
-import {
   projectLensBoard,
   projectRoundReportBoard,
   readRoundReportBoardForRecord,
@@ -319,25 +303,22 @@ import {
   resolveRoundSessionId,
   SessionEntry,
 } from "./session/session-entry";
-import {
-  createContextRebuiltEmit,
-  createTranscriptCapture,
-  turnLoopRunPort,
-} from "./session/turn-capture";
-import { SessionTurnLoop } from "./session/turn-loop";
 import { createSettingsComposition } from "./settings";
 import { findHealthyDaemon } from "./supervise";
 import { createLiveSymbolLookup, reviewPinnedToHead } from "./symbol-lookup-live";
 import { modelSelection } from "./t3/client";
-import { runHandoffTurn as runHandoffTurnOnThread } from "./t3/handoff";
+import {
+  readHandoffTurnCheckpoint,
+  runHandoffTurn as runHandoffTurnOnThread,
+  type T3HandoffTurnOutcome,
+  type T3TurnCheckpointRead,
+} from "./t3/handoff";
 import { type SeatThreadWatch, watchSeatThread } from "./t3/seat-progress";
 import { createT3SidecarSupervisor } from "./t3/supervisor";
 import { type SeatKind, seatThreadTitle, sweepIfArchived } from "./t3/threads";
 import { startWsListener, type WsListener } from "./ws-listener";
 import { createWslRunner } from "./wsl-daemon";
 import { ensureWslDaemon, probeWslDaemon } from "./wsl-supervisor";
-
-export type { RoundSourceLandingInjection } from "./round-source-landing-native";
 
 /**
  * Ask ONE host's daemon whether it is running and on which version — the read behind the
@@ -407,10 +388,6 @@ async function reconnectDaemonForHost(
   return answer;
 }
 
-export type HandoffTurnExecution =
-  | { readonly kind: "host" }
-  | { readonly kind: "wsl"; readonly distro: string; readonly cwd: string };
-
 /** The review handoff's turn: one turn on the review's bound T3 thread. `reviewId` is
  *  REQUIRED — the thread is keyed on (repoRoot, reviewId), and there is no other engine
  *  to fall back to (t3-lens-threads 4.3). */
@@ -420,19 +397,11 @@ export interface HandoffTurnInput {
   readonly reviewId: string;
 }
 
-/** The ROUND WORKER's turn: a coding turn in a detached worktree under a session id. It
- *  names no review, so it has no bound thread; it runs through `SessionTurnLoop` with a
- *  checkpoint bracket. The one surviving user of that loop. */
-export interface RoundWorkerTurnInput {
-  readonly repoRoot: string;
-  readonly prompt: string;
-  /**
-   * The persisted session this turn belongs to, when it has one. Present means the turn runs
-   * through the session turn loop. An absent or unknown session uses the plain one-shot port.
-   */
-  readonly sessionId?: string;
-  readonly execution?: HandoffTurnExecution;
-}
+/** The ROUND WORKER's turn is the handoff turn: one turn on the review's bound T3 thread,
+ *  in the session's bound root (session-bound-workspace D2). It carries the sidecar
+ *  checkpoint back, because that checkpoint is the round's receipt. */
+export type RoundWorkerTurnOutcome = T3HandoffTurnOutcome;
+export type RoundWorkerTurnCheckpoint = T3TurnCheckpointRead;
 
 export type CodingHarnessResolution =
   | {
@@ -676,86 +645,79 @@ export function createGitLabPrSubmissionResolver(
   };
 }
 
-function handoffTurnExecution(locus: Locus, repoRoot: string): HandoffTurnExecution {
-  if (locus.kind === "host") return { kind: "host" };
-  const cwd = toDistroPath(repoRoot, locus.distro);
-  if (cwd === null) throw new LocusPathUntranslatableError(repoRoot, locus.distro);
-  return { kind: "wsl", distro: locus.distro, cwd };
-}
-
-export function roundWorkerTurnInput(input: {
-  readonly sourceRepoRoot: string;
-  readonly worktreePath: string;
-  readonly prompt: string;
-  readonly sessionId: string;
-}): RoundWorkerTurnInput {
-  return {
-    repoRoot: input.worktreePath,
-    prompt: input.prompt,
-    sessionId: input.sessionId,
-    execution: handoffTurnExecution(detectedLocusForRepo(input.sourceRepoRoot), input.worktreePath),
-  };
-}
-
+/**
+ * The round's WORKSPACE: the root the session bound, and the head that root is on before
+ * the turn (session-bound-workspace D1/D2). No worktree is created and none is reserved —
+ * a round is a turn in the reviewer's own bound root, so this is reads only.
+ *
+ * It must be a root the round's SOURCE is actually checked out in, and that is checked
+ * rather than assumed. A session's recorded root can still be a drafting checkout detached
+ * at the reviewed head (a range review's evidence worktree, until the session binding
+ * records one root for everything); a round that committed there would move nothing the
+ * reviewer can see, advance the review anyway, and leave the branch exactly where it was.
+ * That is the "many roots, one label" failure, and it is silent. So the candidates are
+ * tried in order and the first one ON the round's branch — or at its detached head — wins;
+ * when none is, the round fails naming what it looked for and where.
+ */
 export function createRoundWorkspacePlanner(input: {
-  readonly dataDir: string;
-  readonly sourceRepositoryFor: (operation: RoundOperation) => {
-    readonly reviewedTreeOid?: string;
-    readonly headOid: string;
-    readonly commonDir: string;
-  };
+  readonly candidateRoots: (operation: RoundOperation) => readonly string[];
+  readonly headOf: (root: string) => Promise<string | undefined>;
+  readonly branchOf: (root: string) => Promise<string | undefined>;
   readonly now?: () => number;
 }): RoundExecutionPorts["planWorkspace"] {
-  return (operation) => {
-    const repository = input.sourceRepositoryFor(operation);
-    const key = sha256Hex(operation.operationId).slice(0, 32);
-    const sourceLocus = detectedLocusForRepo(operation.repoRoot);
-    let worktreePath: string;
-    if (sourceLocus.kind === "host") {
-      worktreePath = join(realpathSync(input.dataDir), "round-worktrees", key);
-    } else {
-      const commonDir = toDistroPath(repository.commonDir, sourceLocus.distro);
-      if (commonDir === null) {
-        throw new LocusPathUntranslatableError(repository.commonDir, sourceLocus.distro);
-      }
-      const separator = commonDir.endsWith("/") ? "" : "/";
-      worktreePath = toWindowsView(
-        `${commonDir}${separator}rennet-round-worktrees/${key}`,
-        sourceLocus.distro,
-      );
+  return async (operation) => {
+    const target = operation.sourceTarget;
+    const tried: string[] = [];
+    for (const root of input.candidateRoots(operation)) {
+      if (tried.includes(root)) continue;
+      tried.push(root);
+      const head = await input.headOf(root);
+      if (head === undefined) continue;
+      const onSource =
+        target.kind === "branch"
+          ? (await input.branchOf(root)) === target.branch
+          : head === target.head;
+      if (!onSource) continue;
+      return {
+        kind: "bound-root",
+        root,
+        sourceHead: head,
+        preparedAt: (input.now ?? Date.now)(),
+      };
     }
-    return {
-      kind: "detached-worktree",
-      worktreePath,
-      sourceTreeOid: repository.reviewedTreeOid ?? `${repository.headOid}^{tree}`,
-      sourceParentHead: repository.headOid,
-      startedAt: (input.now ?? Date.now)(),
-    };
+    const wanted =
+      target.kind === "branch" ? `the branch ${target.branch}` : `the commit ${target.head}`;
+    throw new Error(
+      `This round works on ${wanted}, and none of this session's workspaces is on it: ${tried.join(", ") || "none"}. Check it out there and dispatch again.`,
+    );
   };
 }
 
+/**
+ * The round worker: ONE turn on the session's bound handoff thread, in the bound root.
+ * The turn's sidecar checkpoint — thread, turn, turn count — is the round's receipt, and
+ * `thread.checkpoint.revert` against it is what makes the round revertible.
+ */
 export function createRoundWorkerPort(input: {
-  readonly runHandoffTurn: (turn: RoundWorkerTurnInput) => Promise<HandoffTurnOutcome>;
+  readonly runHandoffTurn: (turn: HandoffTurnInput) => Promise<RoundWorkerTurnOutcome>;
   readonly now?: () => number;
 }): RoundExecutionPorts["runWorker"] {
   return async ({ operation, attempt }) => {
     if (operation.state.phase !== "worker-running") {
       throw new Error("Round worker started outside its durable running phase.");
     }
-    const outcome = await input.runHandoffTurn(
-      roundWorkerTurnInput({
-        sourceRepoRoot: operation.repoRoot,
-        worktreePath: operation.state.workspace.worktreePath,
-        prompt: operation.workOrderPrompt,
-        sessionId: operation.sessionId,
-      }),
-    );
+    const outcome = await input.runHandoffTurn({
+      repoRoot: operation.state.workspace.root,
+      prompt: operation.workOrderPrompt,
+      reviewId: operation.reviewId,
+    });
     const evidence = {
       ...attempt,
       completedAt: (input.now ?? Date.now)(),
       diff: outcome.turnDiff,
       changedPaths: [...outcome.filesTouched],
       ...(outcome.harness === undefined ? {} : { harness: outcome.harness }),
+      ...(outcome.checkpoint === undefined ? {} : { checkpoint: outcome.checkpoint }),
     };
     return outcome.status === "failed"
       ? {
@@ -767,60 +729,71 @@ export function createRoundWorkerPort(input: {
   };
 }
 
-function createRoundWorkerRecoveryPort(): NonNullable<RoundExecutionPorts["observeWorker"]> {
+/**
+ * Restart recovery, now that the round is a turn on a thread the SIDECAR owns.
+ *
+ * The daemon can die mid-turn; T3 cannot be asked "did execution <id> finish", so the
+ * checkpoint is the only durable evidence. A checkpoint completed at or after this
+ * worker attempt started is that turn's, and the round settles from it. Nothing at or
+ * after it means the turn left no checkpoint, and the round fails NAMING THE BOUND ROOT,
+ * because that is where any partial edits are — in the reviewer's own checkout, where
+ * they can see them. Never a stale checkpoint from an earlier round on the same thread:
+ * the `startedAt` comparison is a positive contradiction, not a "take the last one".
+ */
+export function createRoundWorkerRecoveryPort(input: {
+  readonly readCheckpoint: (turn: {
+    readonly repoRoot: string;
+    readonly reviewId: string;
+    readonly since: number;
+  }) => Promise<RoundWorkerTurnCheckpoint | undefined>;
+  readonly now?: () => number;
+}): NonNullable<RoundExecutionPorts["observeWorker"]> {
   return async ({ operation, attempt }) => {
     if (operation.state.phase !== "worker-running") {
       throw new Error("Round worker recovery started outside its durable running phase.");
     }
-    const checkpoint = new GitCheckpointStore(
-      operation.state.workspace.worktreePath,
-      detectedLocusForRepo(operation.repoRoot),
-    );
-    const current = await checkpoint.capture();
-    const source = {
-      ref: operation.state.workspace.sourceHead,
-      commit: operation.state.workspace.sourceHead,
-    };
+    const root = operation.state.workspace.root;
+    // A read that FAILS and a turn that left NOTHING are different facts, and the reason
+    // says which — but both end the same way, because neither can settle a round. The
+    // read error is never swallowed into "no checkpoint": that would report a sidecar we
+    // could not reach as a turn that did nothing.
+    let found: RoundWorkerTurnCheckpoint | undefined;
+    let unreadable: string | undefined;
     try {
-      const [diff, changedPaths] = await Promise.all([
-        checkpoint.diff(source, current),
-        checkpoint.changedPaths(source, current),
-      ]);
+      found = await input.readCheckpoint({
+        repoRoot: root,
+        reviewId: operation.reviewId,
+        since: attempt.startedAt,
+      });
+    } catch (error) {
+      unreadable = error instanceof Error ? error.message : String(error);
+    }
+    const completedAt = (input.now ?? Date.now)();
+    if (found === undefined) {
+      const what =
+        unreadable === undefined
+          ? "the turn left no checkpoint"
+          : `its checkpoint could not be read (${unreadable})`;
       return {
         ...attempt,
-        completedAt: Date.now(),
+        completedAt,
         outcome: "failed",
         termination: {
           kind: "error",
-          reason: `Rennet restarted while this worker was running. Its partial edits remain in ${operation.state.workspace.worktreePath}; inspect them there before retrying the asks.`,
+          reason: `Rennet restarted while this round's turn was running and ${what}. Any partial edits are in ${root}, on your own branch; look there before retrying the asks.`,
         },
-        diff,
-        changedPaths: [...changedPaths],
+        diff: "",
+        changedPaths: [],
       };
-    } finally {
-      await checkpoint.discard(current).catch(() => undefined);
     }
-  };
-}
-
-export function createRoundSourceLandingPorts(input: {
-  readonly planLegacy: RoundExecutionPorts["planSourceLanding"];
-  readonly landLegacy: RoundExecutionPorts["landSourceChanges"];
-  readonly injection?: RoundSourceLandingInjection;
-}): Pick<
-  RoundExecutionPorts,
-  "planSourceLanding" | "landSourceChanges" | "landSourceUnit" | "cleanupSourceLanding"
-> {
-  const legacyPorts = {
-    planSourceLanding: input.planLegacy,
-    landSourceChanges: input.landLegacy,
-  };
-  if (input.injection === undefined) return legacyPorts;
-  return {
-    ...legacyPorts,
-    planSourceLanding: input.injection.plan,
-    landSourceUnit: input.injection.landUnit,
-    cleanupSourceLanding: input.injection.cleanup,
+    return {
+      ...attempt,
+      completedAt,
+      outcome: "completed",
+      diff: found.diff,
+      changedPaths: [...found.filesTouched],
+      checkpoint: found.checkpoint,
+    };
   };
 }
 
@@ -1049,12 +1022,11 @@ export interface RennetServerOptions {
    * prove the composition root carries checkpoint evidence even when HEAD does not move.
    * The REVIEW handoff has no such seam any more: it always runs on the review's T3 thread
    * (t3-lens-threads 4.3), and a test drives that through the sidecar. */
-  readonly runHandoffTurn?: (input: RoundWorkerTurnInput) => Promise<HandoffTurnOutcome>;
+  readonly runHandoffTurn?: (input: HandoffTurnInput) => Promise<RoundWorkerTurnOutcome>;
   /** Hermetic opener-drafting seam for compose/post transport proofs. Production uses the
    * live council-routed drafter; tests can supply authored bytes without launching a harness. */
   readonly draftReviewOpener?: DispatchDeps["draftReviewOpener"];
   /** Test override for round landing. Production composes rooted native landing on POSIX daemons. */
-  readonly roundSourceLanding?: RoundSourceLandingInjection;
   /** Test observation at the crash commit point, before any PR-draft ripening await. */
   readonly onRoundPlaceholderCommitted?: (input: {
     readonly sessionId: string;
@@ -1171,11 +1143,6 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   }
 
   const gitForRepo = gitForRepoFactory(locusForRepo);
-  const nativeRoundSourceLanding: NativeRoundSourceLandingInjection | undefined =
-    options.roundSourceLanding === undefined && supportsNativeRoundSourceLanding()
-      ? createNativeRoundSourceLandingInjection({ gitForRepo })
-      : undefined;
-  const roundSourceLanding = options.roundSourceLanding ?? nativeRoundSourceLanding;
 
   /** The ProjectSnapshot store key for a repo root: `escapePath(realpath(top-level))` (design §1.1). */
   function repoKeyForRoot(repoRoot: string): string {
@@ -1431,24 +1398,6 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     const { locus, distroCwd } = locusContextForRepo(repoRoot);
     const { makeExecutor } = await getCodexResolution(locus);
     return makeExecutor === null ? null : makeExecutor(distroCwd ?? repoRoot);
-  }
-
-  async function codexAdapterForRepo(repoRoot: string): Promise<HarnessPort | null> {
-    // The scripted-harness seam routes BY DESCRIPTOR (#681 proof): a test port that
-    // declares itself Codex is the Codex adapter, and one that declares Claude leaves
-    // Codex genuinely absent. Without this a hermetic run could never present a
-    // Codex-resolved host, so the Codex leg of round dispatch had no launched proof.
-    if (options.testHarnessPort !== undefined) {
-      return options.testHarnessPort.descriptor.id === "codex" ? options.testHarnessPort : null;
-    }
-    const { locus } = locusContextForRepo(repoRoot);
-    return (await getCodexResolution(locus)).adapter;
-  }
-
-  /** The viewer's per-host ruled-out agents (Settings → Environments) for one execution host. */
-  function disabledHarnessesFor(execution: HandoffTurnExecution): readonly string[] {
-    const source: ProjectSource = execution.kind === "host" ? "local" : `wsl:${execution.distro}`;
-    return daemonSettingsStore.read().hosts?.[source]?.disabledHarnesses ?? [];
   }
 
   // The in-flight shares behind every detection read below (C17 review finding 2).
@@ -2711,76 +2660,10 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   // fact to drift. The harness is part of the key because two sessions over one repository may
   // have pinned different providers; returning a cached Claude loop for a Codex session would
   // silently execute the wrong provider.
-  const sessionTurnLoops = new Map<string, SessionTurnLoop>();
-  function turnLoopForRepo(repoRoot: string, port: HarnessPort): SessionTurnLoop {
-    const key = `${repoRoot}\0${port.descriptor.id}`;
-    const existing = sessionTurnLoops.get(key);
-    if (existing) return existing;
-    const loop = new SessionTurnLoop({
-      port,
-      store: sessionStore,
-      // Rebuilt fresh every turn, from the loop's own key. The loop merges the resume pointer
-      // itself from the just-loaded cursor.
-      buildSpec: () => ({ cwd: repoRoot }),
-      // The WRITE side of `session.transcript`: project → append, raw (failure-isolated;
-      // a display read-model never fails the coding turn that produced it).
-      recordTranscript: createTranscriptCapture(transcriptStore, (error) =>
-        console.error("Session transcript capture failed", error),
-      ),
-      // The resume-vanished marker. Without it the transcript reads CONTINUOUS across a context
-      // loss — a surface claiming something it cannot know.
-      emit: createContextRebuiltEmit(transcriptStore, (error) =>
-        console.error("Session transcript capture failed", error),
-      ),
-    });
-    sessionTurnLoops.set(key, loop);
-    return loop;
-  }
-  // The ROUND WORKER's coding turn (issue #18): brackets the selected live harness turn with
-  // git checkpoints and returns the turn diff. This is the last consumer of `SessionTurnLoop`
-  // (t3-lens-threads 4.3 removed the OTHER one, the review handoff): a round worker runs in a
-  // detached worktree under a session id and names no review, so it has no bound T3 thread to
-  // run on. Moving it to a thread is its own change; until then the loop stays for this path.
-  const runRoundWorkerTurn = async ({
-    repoRoot,
-    prompt,
-    sessionId,
-    execution: requestedExecution,
-  }: RoundWorkerTurnInput): Promise<HandoffTurnOutcome> => {
-    const execution = requestedExecution ?? handoffTurnExecution(locusForRepo(repoRoot), repoRoot);
-    const locus: Locus =
-      execution.kind === "host" ? HOST_LOCUS : { kind: "wsl", distro: execution.distro };
-    if (await repoHasSubmodules(repoRoot, locus)) {
-      return {
-        status: "failed",
-        reason:
-          "Handoff does not support repositories with submodules yet: a coding agent's edits inside a submodule leave the gitlink unchanged, so the review would not see them. Refusing rather than losing them.",
-        turnDiff: "",
-        filesTouched: [],
-      };
-    }
-    return runResolvedCodingHarnessTurn({
-      ...(sessionId === undefined ? {} : { sessionId }),
-      sessionStore,
-      disabledHarnesses: disabledHarnessesFor(execution),
-      resolveClaude: () => claudeAdapterForRepo(repoRoot),
-      resolveCodex: () => codexAdapterForRepo(repoRoot),
-      run: (port, persistedSessionId) =>
-        runHandoffTurnCore({
-          repoRoot,
-          prompt,
-          runPort:
-            persistedSessionId === undefined
-              ? claudeHandoffRunPort(port)
-              : turnLoopRunPort(turnLoopForRepo(repoRoot, port), persistedSessionId),
-          checkpoint: new GitCheckpointStore(repoRoot, locus),
-        }),
-    });
-  };
   // The handoff exit (t3-lens-threads 4.3): a composed work order runs as ONE turn on the
   // review's bound T3 thread. One engine, no switch — the review is what names the thread,
   // and the thread is keyed on the review's REPOSITORY ROOT, never a project id.
-  const runHandoffTurn = (input: HandoffTurnInput): Promise<HandoffTurnOutcome> =>
+  const runHandoffTurn = (input: HandoffTurnInput): Promise<RoundWorkerTurnOutcome> =>
     runHandoffTurnOnThread(input, t3Sidecar);
   // B4 broadcast wiring (reconciliation 7, recorded): board events ride the EXISTING
   // WS push path — the runtime's store-append hook feeds `wsListener.broadcastBoardEvent`
@@ -3076,8 +2959,6 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   });
 
   const roundOperationStore = new RoundOperationStore(join(dataDir, "round-operations"));
-  const roundWorktreeRoot = join(dataDir, "round-worktrees");
-  mkdirSync(roundWorktreeRoot, { recursive: true });
   const composeRoundBundle = createLiveComposeBundle({
     claudePort: claudeAdapterForRepo,
     codexExecutor: codexExecutorForRepo,
@@ -3151,15 +3032,14 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     ).gateCommand?.trim();
     const createdAt = Date.now();
     const records = roundRecordStore.read(input.session.id);
-    // The ROUND worker keeps the work order INLINE, deliberately (session-context-files
-    // 3.7). `bundle.prompt` is now the short turn prompt that names
-    // `.rennet/context/<reviewId>/work-order.md`, and that path resolves against the
-    // turn's cwd — which for a round is today's DETACHED worktree, not the reviewer's
-    // checkout. Writing the file into that worktree would put `.rennet/.gitignore` in
-    // front of `git add -A`, and the round source landing refuses a changed path inside
-    // Rennet's own namespace. So the round persists the work-order DOCUMENT, byte for
-    // byte as composed, and the worker is sent it directly. Wave 5 (D1/D2) binds the
-    // round to the session's root, and the pointer works there like everywhere else.
+    // The round's work order is a FILE, not a prompt payload (session-context-files, and
+    // now that the round is a turn in the session's BOUND root the pointer resolves —
+    // which is exactly what the inline exception here was waiting on). Same file name and
+    // same context key as `review.handoff.run`: `bundle.prompt` already IS the short turn
+    // prompt naming `.rennet/context/<reviewId>/work-order.md`. The DOCUMENT rides the
+    // durable operation rather than being written here, because the root it belongs in is
+    // the one `planWorkspace` resolves a moment later — and writing it at the turn is also
+    // what lets a restart put it back.
     const workOrderDocument = renderWorkOrder(input.workOrder.tasks);
     return {
       operationId: randomUUID(),
@@ -3174,8 +3054,9 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
           ? { kind: "detached", head: patchset.repository.headOid }
           : { kind: "branch", branch: patchset.repository.headRef },
       repoRoot: input.review.repositoryRoot,
-      workOrderPrompt: workOrderDocument,
-      workOrderDigest: sha256Hex(workOrderDocument),
+      workOrderPrompt: input.workOrder.prompt,
+      workOrderDocument,
+      workOrderDigest: sha256Hex(input.workOrder.prompt),
       gatePlan:
         gateCommand === undefined || gateCommand.length === 0
           ? { kind: "absent" }
@@ -3234,21 +3115,54 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     }
   };
 
+  // The round runs where the SESSION is bound, never in a per-round worktree
+  // (session-bound-workspace D1/D2). A session minted before the binding falls back to the
+  // review's own repository root, which is what it would have bound to.
+  const readGit = async (root: string, args: readonly string[]): Promise<string | undefined> => {
+    try {
+      const out = (await gitForRepo(root)(root, [...args], { reject: false })).trim();
+      return out.length === 0 ? undefined : out;
+    } catch {
+      return undefined;
+    }
+  };
   const planRoundWorkspace = createRoundWorkspacePlanner({
-    dataDir,
-    sourceRepositoryFor: (operation) => sourcePatchsetFor(operation).repository,
+    candidateRoots: (operation) => [
+      ...(boundRootForSession(operation.sessionId) === undefined
+        ? []
+        : [boundRootForSession(operation.sessionId) as string]),
+      operation.repoRoot,
+    ],
+    headOf: (root) => readGit(root, ["rev-parse", "HEAD"]),
+    branchOf: (root) => readGit(root, ["symbolic-ref", "--quiet", "--short", "HEAD"]),
   });
-  const runRoundWorker = createRoundWorkerPort({
-    runHandoffTurn: options.runHandoffTurn ?? runRoundWorkerTurn,
+  const roundWorkerTurn = createRoundWorkerPort({
+    runHandoffTurn: options.runHandoffTurn ?? runHandoffTurn,
   });
-  const recoverRoundWorker = createRoundWorkerRecoveryPort();
+  // The work order is written into the root the turn will run in, at the moment the turn
+  // starts — the prompt names that exact path (session-context-files). Writing it at
+  // dispatch would put it in whichever root the session had recorded then, which is not
+  // necessarily the one `planWorkspace` resolved; and writing it here is also what makes a
+  // resumed round find the order it was dispatched with rather than nothing at all.
+  const runRoundWorker: RoundExecutionPorts["runWorker"] = async (input) => {
+    const state = input.operation.state;
+    if (state.phase === "worker-running" && input.operation.workOrderDocument !== undefined) {
+      writeSessionContext(state.workspace.root, input.operation.reviewId, [
+        workOrderContextFileFrom(input.operation.workOrderDocument),
+      ]);
+    }
+    return roundWorkerTurn(input);
+  };
+  const recoverRoundWorker = createRoundWorkerRecoveryPort({
+    readCheckpoint: (turn) => readHandoffTurnCheckpoint(turn, t3Sidecar),
+  });
   const runRoundGate: RoundExecutionPorts["runGate"] = async ({ operation, attempt }) => {
     if (operation.state.phase !== "gate-running" || operation.gatePlan.kind !== "configured") {
       throw new Error("Configured round gate started without a durable gate plan.");
     }
     const result = await runConfiguredRoundGate({
-      locus: locusForRepo(operation.repoRoot),
-      cwd: operation.state.workspace.worktreePath,
+      locus: locusForRepo(operation.state.workspace.root),
+      cwd: operation.state.workspace.root,
       command: operation.gatePlan.command,
       executionId: attempt.executionId,
       startedAt: attempt.startedAt,
@@ -3263,75 +3177,6 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       ? { ...common, outcome: "passed" as const, exitCode: 0 as const }
       : { ...common, outcome: "failed" as const, termination: result.termination };
   };
-  const checkoutSourceLandingPorts = createRoundSourceLandingPorts({
-    planLegacy: (operation) => {
-      if (operation.state.phase !== "commits-settled") {
-        throw new Error("Round source landing planned before commits settled.");
-      }
-      return {
-        effect: "source-landing",
-        executionId: randomUUID(),
-        baselineCommit: operation.state.commits.from,
-        workerHead: operation.state.commits.to,
-        startedAt: Date.now(),
-      };
-    },
-    landLegacy: async ({ operation, attempt }) => {
-      if (operation.state.phase !== "source-landing") {
-        throw new Error("Round source landing started outside its durable landing phase.");
-      }
-      const result = await landRoundChanges({
-        git: gitForRepo(operation.repoRoot),
-        locus: locusForRepo(operation.repoRoot),
-        sourceRoot: operation.repoRoot,
-        worktreePath: operation.state.workspace.worktreePath,
-        baselineCommit: attempt.baselineCommit,
-        workerHead: attempt.workerHead,
-      });
-      if (
-        result.baselineCommit !== attempt.baselineCommit ||
-        result.workerHead !== attempt.workerHead
-      ) {
-        throw new Error("Round source landing returned a different commit range.");
-      }
-      return { ...attempt, outcome: result.outcome, landedAt: Date.now() };
-    },
-    ...(roundSourceLanding === undefined ? {} : { injection: roundSourceLanding }),
-  });
-  const roundSourceLandingPorts: ReturnType<typeof createRoundSourceLandingPorts> = {
-    ...checkoutSourceLandingPorts,
-    planSourceLanding: (operation) => {
-      if (
-        options.roundSourceLanding !== undefined ||
-        operation.sourceTarget.kind !== "branch" ||
-        sourcePatchsetFor(operation).source !== "local-branch"
-      ) {
-        return checkoutSourceLandingPorts.planSourceLanding(operation);
-      }
-      if (operation.state.phase !== "commits-settled") {
-        throw new Error("Selected-branch landing planned before commits settled.");
-      }
-      return planRoundBranchLanding({
-        git: gitForRepo(operation.repoRoot),
-        repoRoot: operation.repoRoot,
-        executionId: randomUUID(),
-        branch: operation.sourceTarget.branch,
-        expectedHead: operation.state.workspace.sourceParentHead,
-        baselineCommit: operation.state.commits.from,
-        workerHead: operation.state.commits.to,
-        startedAt: Date.now(),
-      });
-    },
-    landSourceChanges: ({ operation, attempt }) =>
-      attempt.strategy === "branch-ref-v1"
-        ? landRoundBranch({
-            git: gitForRepo(operation.repoRoot),
-            repoRoot: operation.repoRoot,
-            attempt,
-          })
-        : checkoutSourceLandingPorts.landSourceChanges({ operation, attempt }),
-  };
-
   const storedRoundReportVerification = {
     reviewById: (reviewId: string) => service.reviewById(reviewId),
     loadGeneration: (generation: string) => generationStore.load(generation),
@@ -3347,14 +3192,6 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     store: roundOperationStore,
     ports: {
       planWorkspace: planRoundWorkspace,
-      prepareWorkspace: ({ operation, attempt }) =>
-        prepareRoundWorkspace({
-          git: gitForRepo(operation.repoRoot),
-          locus: locusForRepo(operation.repoRoot),
-          repoRoot: operation.repoRoot,
-          operationId: operation.operationId,
-          attempt,
-        }),
       planWorker: () => ({ executionId: randomUUID(), startedAt: Date.now() }),
       runWorker: runRoundWorker,
       observeWorker: recoverRoundWorker,
@@ -3375,18 +3212,19 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         if (operation.state.phase !== "committing") {
           throw new Error("Round commit effect started outside its durable commit phase.");
         }
-        return settleRoundCommits({
-          git: gitForRepo(operation.repoRoot),
-          worktreePath: operation.state.workspace.worktreePath,
+        // OBSERVE, never stage: the worker committed on the reviewer's own branch in the
+        // bound root, and Rennet does not run `git add -A` on their behalf.
+        return observeRoundCommits({
+          git: gitForRepo(operation.state.workspace.root),
+          root: operation.state.workspace.root,
           executionId: attempt.executionId,
           baseHead: attempt.baseHead,
           startedAt: attempt.startedAt,
         });
       },
-      ...roundSourceLandingPorts,
       planRoundRecording: (operation) => {
-        if (operation.state.phase !== "source-landed") {
-          throw new Error("Round recording planned before source landing settled.");
+        if (operation.state.phase !== "commits-settled") {
+          throw new Error("Round recording planned before its commits settled.");
         }
         return {
           effect: "round-recording",
@@ -3429,6 +3267,11 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
             startedAt: operation.createdAt,
             sourceTarget: operation.sourceTarget,
             ...(worker.harness === undefined ? {} : { harness: worker.harness }),
+            // The provenance a round now has (round-harness-dispatch): the root the turn
+            // ran in and the sidecar checkpoint that captured its commits — never a
+            // detached worktree path, because there is no longer one.
+            workspaceRoot: operation.state.workspace.root,
+            ...(worker.checkpoint === undefined ? {} : { checkpoint: worker.checkpoint }),
             gate,
           },
           runWorkers: async (): Promise<DispatchRoundResult> => ({
@@ -3476,14 +3319,17 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
           if (base === undefined) {
             throw new Error("Selected-branch round lost its base branch.");
           }
-          const git = gitForRepo(operation.repoRoot);
+          // From the BOUND ROOT: that is where the round's turn committed, so that is
+          // the tree the successor patchset describes (session-bound-workspace D2).
+          const boundRoot = operation.state.workspace.root;
+          const git = gitForRepo(boundRoot);
           const patchset = await captureLandedBranchPatchset({
             git,
-            locus: locusForRepo(operation.repoRoot),
-            repoPath: operation.repoRoot,
+            locus: locusForRepo(boundRoot),
+            repoPath: boundRoot,
             headRef: operation.sourceTarget.branch,
             baseRef: base,
-            headOid: operation.state.landing.workerHead,
+            headOid: operation.state.commits.to,
             baseOid: sourcePatchset.repository.baseOid,
             resolveProjectSnapshotId: (root, baseOid) =>
               ensureProjectSnapshotPin(liveSnapshotStore, root, baseOid, git),
@@ -3686,19 +3532,6 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
                 : { type: "unchanged" },
             );
           }
-          await removeRoundWorktree({
-            git: gitForRepo(operation.repoRoot),
-            locus: locusForRepo(operation.repoRoot),
-            repoRoot: operation.repoRoot,
-            worktreePath: operation.state.workspace.worktreePath,
-            sourceHead: operation.state.workspace.sourceHead,
-          });
-          await releaseRoundSourceCommit({
-            git: gitForRepo(operation.repoRoot),
-            repoRoot: operation.repoRoot,
-            operationId: operation.operationId,
-            commit: operation.state.workspace.sourceHead,
-          });
         }
         if (!operation.rerunRequested) {
           if (operation.state.phase !== "completed") return { kind: "retain" };
@@ -4960,9 +4793,6 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     }
     sessionPreparations.clear();
     sessionPreparationRuns.clear();
-    void nativeRoundSourceLanding?.close().catch((error) => {
-      console.error("Could not close native round source landing hosts", error);
-    });
     void watcher.close();
     rehydration?.closeAll();
     store?.close();

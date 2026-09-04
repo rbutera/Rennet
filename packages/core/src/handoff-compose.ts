@@ -278,15 +278,24 @@ export function renderWorkOrder(tasks: readonly ComposedTask[]): string {
   return out.join("\n");
 }
 
-/** The work order as the file the run writes and the turn is pointed at. */
-export function workOrderContextFile(tasks: readonly ComposedTask[]): SessionContextFile {
+/**
+ * The work order as the file the run writes and the turn is pointed at, from the rendered
+ * DOCUMENT. A round persists that document on its durable operation and writes it at the
+ * turn, so it cannot recompose a different order after a restart.
+ */
+export function workOrderContextFileFrom(document: string): SessionContextFile {
   return {
     name: WORK_ORDER_FILE,
-    body: renderWorkOrder(tasks),
+    body: document,
     holds:
       "The reviewer's requested changes as one ordered work order: each task's file, anchor, the note verbatim, and the anchored diff context.",
     readWhen: "first, and in full — it is the work you were started to do.",
   };
+}
+
+/** The work order as the file the run writes and the turn is pointed at. */
+export function workOrderContextFile(tasks: readonly ComposedTask[]): SessionContextFile {
+  return workOrderContextFileFrom(renderWorkOrder(tasks));
 }
 
 /**

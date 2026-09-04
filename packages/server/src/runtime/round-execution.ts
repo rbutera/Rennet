@@ -21,16 +21,9 @@ import {
   type RoundReportHandoff,
   type RoundReportReceipt,
   type RoundReportVerificationAttempt,
-  type RoundSourceLandingAttempt,
-  type RoundSourceLandingReceipt,
-  type RoundSourceLandingUnit,
-  type RoundSourceLandingUnitReceipt,
   type RoundWorkerAttempt,
   type RoundWorkerReceipt,
-  type RoundWorkspaceAttempt,
   type RoundWorkspaceReceipt,
-  type TransactionalRoundSourceLandingAttempt,
-  type TransactionalRoundSourceLandingReceipt,
 } from "@rennet/protocol";
 
 export interface RoundExecutionEffectInput<TAttempt> {
@@ -52,18 +45,6 @@ export interface RoundReportDraftInput extends RoundExecutionEffectInput<RoundRe
   }) => RoundReportHandoff;
 }
 
-export interface RoundSourceLandingUnitInput
-  extends RoundExecutionEffectInput<TransactionalRoundSourceLandingAttempt> {
-  readonly unit: RoundSourceLandingUnit;
-  /** True exactly once at the start of each coordinator drive or recovery. */
-  readonly fullPreflight: boolean;
-}
-
-export interface RoundSourceLandingCleanupInput {
-  readonly operation: RoundOperation;
-  readonly receipt: TransactionalRoundSourceLandingReceipt;
-}
-
 export type RoundTerminalDrainDecision =
   | { readonly kind: "retain" }
   | { readonly kind: "return"; readonly returnedAt: number }
@@ -74,10 +55,12 @@ export type RoundTerminalDrainDecision =
 /** Effect ports are deliberately receipt-shaped. The coordinator persists each attempt before
  * invoking its effect; implementations make the effect idempotent by the persisted execution id. */
 export interface RoundExecutionPorts {
-  readonly planWorkspace: (operation: RoundOperation) => RoundWorkspaceAttempt;
-  readonly prepareWorkspace: (
-    input: RoundExecutionEffectInput<RoundWorkspaceAttempt>,
-  ) => Promise<RoundWorkspaceReceipt>;
+  /**
+   * Resolve the session's BOUND workspace and the head the round starts from. No worktree
+   * is created — the root already exists and the session bound it — so this is one
+   * side-effect-free read, and there is no attempt/receipt split to survive a crash in.
+   */
+  readonly planWorkspace: (operation: RoundOperation) => Promise<RoundWorkspaceReceipt>;
   readonly planWorker: (operation: RoundOperation) => RoundWorkerAttempt;
   readonly runWorker: (
     input: RoundExecutionEffectInput<RoundWorkerAttempt>,
@@ -96,16 +79,6 @@ export interface RoundExecutionPorts {
   readonly settleCommits: (
     input: RoundExecutionEffectInput<RoundCommitAttempt>,
   ) => Promise<RoundCommitReceipt>;
-  readonly planSourceLanding: (
-    operation: RoundOperation,
-  ) => RoundSourceLandingAttempt | Promise<RoundSourceLandingAttempt>;
-  readonly landSourceChanges: (
-    input: RoundExecutionEffectInput<RoundSourceLandingAttempt>,
-  ) => Promise<RoundSourceLandingReceipt>;
-  readonly landSourceUnit?: (
-    input: RoundSourceLandingUnitInput,
-  ) => Promise<RoundSourceLandingUnitReceipt>;
-  readonly cleanupSourceLanding?: (input: RoundSourceLandingCleanupInput) => Promise<void>;
   readonly planRoundRecording: (operation: RoundOperation) => RoundRecordingAttempt;
   readonly recordRound: (
     input: RoundExecutionEffectInput<RoundRecordingAttempt>,
@@ -222,8 +195,6 @@ export function roundRetryMode(failure: RoundOperationFailure): RoundRetryMode {
     case "worker":
     case "gate":
     case "committing":
-    case "source-landing-planning":
-    case "source-landing":
       return "round";
   }
 }
@@ -231,7 +202,7 @@ export function roundRetryMode(failure: RoundOperationFailure): RoundRetryMode {
 function retryState(failure: RoundOperationFailure): RoundOperationState {
   switch (failure.at) {
     case "preparing":
-      return { phase: "workspace-preparing", workspace: failure.workspace };
+      return { phase: "claimed" };
     case "worker":
       return { phase: "prepared", workspace: failure.workspace };
     case "gate":
@@ -248,23 +219,6 @@ function retryState(failure: RoundOperationFailure): RoundOperationState {
         gate: failure.gate,
         commit: failure.commit,
       };
-    case "source-landing-planning":
-      return {
-        phase: "commits-settled",
-        workspace: failure.workspace,
-        worker: failure.worker,
-        gate: failure.gate,
-        commits: failure.commits,
-      };
-    case "source-landing":
-      return {
-        phase: "source-landing",
-        workspace: failure.workspace,
-        worker: failure.worker,
-        gate: failure.gate,
-        commits: failure.commits,
-        landing: failure.landing,
-      };
     case "round-recording":
       return {
         phase: "round-recording",
@@ -272,7 +226,6 @@ function retryState(failure: RoundOperationFailure): RoundOperationState {
         worker: failure.worker,
         gate: failure.gate,
         commits: failure.commits,
-        landing: failure.landing,
         recording: failure.recording,
       };
     case "report-drafting":
@@ -282,7 +235,6 @@ function retryState(failure: RoundOperationFailure): RoundOperationState {
         worker: failure.worker,
         gate: failure.gate,
         commits: failure.commits,
-        landing: failure.landing,
         recording: failure.recording,
         report: failure.report,
       };
@@ -293,7 +245,6 @@ function retryState(failure: RoundOperationFailure): RoundOperationState {
         worker: failure.worker,
         gate: failure.gate,
         commits: failure.commits,
-        landing: failure.landing,
         recording: failure.recording,
         report: failure.report,
         verification: failure.verification,
@@ -317,19 +268,6 @@ function hasPartialWorkerEvidence(
 
 function hasPartialCommitEvidence(commits: RoundCommitReceipt): boolean {
   return commits.count > 0 !== (commits.from !== commits.to);
-}
-
-function transactionalLandingReceipt(
-  attempt: TransactionalRoundSourceLandingAttempt,
-  landedAt: number,
-): TransactionalRoundSourceLandingReceipt {
-  const outcome =
-    attempt.units.length === 0
-      ? "unchanged"
-      : attempt.unitReceipts.some((receipt) => receipt.outcome === "applied")
-        ? "applied"
-        : "already-applied";
-  return { ...attempt, outcome, landedAt };
 }
 
 class DurableRoundExecutionCoordinator implements RoundExecutionCoordinator {
@@ -750,31 +688,18 @@ class DurableRoundExecutionCoordinator implements RoundExecutionCoordinator {
       const state = operation.state;
       switch (state.phase) {
         case "claimed": {
-          const attempt = this.options.ports.planWorkspace(operation);
-          operation = this.persist(
-            operation,
-            { phase: "workspace-preparing", workspace: attempt },
-            attempt.startedAt,
-          ).operation;
-          break;
-        }
-        case "workspace-preparing": {
           try {
-            const receipt = await this.options.ports.prepareWorkspace({
-              operation,
-              attempt: state.workspace,
-            });
+            const workspace = await this.options.ports.planWorkspace(operation);
             operation = this.persist(
               operation,
-              { phase: "prepared", workspace: receipt },
-              receipt.preparedAt,
+              { phase: "prepared", workspace },
+              workspace.preparedAt,
             ).operation;
           } catch (error) {
             operation = this.fail(operation, {
               at: "preparing",
               reason: errorReason(error),
               failedAt: Math.max(this.now(), operation.updatedAt),
-              workspace: state.workspace,
             });
           }
           break;
@@ -921,152 +846,6 @@ class DurableRoundExecutionCoordinator implements RoundExecutionCoordinator {
           break;
         }
         case "commits-settled": {
-          let attempt: RoundSourceLandingAttempt;
-          try {
-            attempt = await this.options.ports.planSourceLanding(operation);
-          } catch (error) {
-            operation = this.fail(operation, {
-              at: "source-landing-planning",
-              reason: errorReason(error),
-              failedAt: Math.max(this.now(), operation.updatedAt),
-              workspace: state.workspace,
-              worker: state.worker,
-              gate: state.gate,
-              commits: state.commits,
-            });
-            break;
-          }
-          operation = this.persist(
-            operation,
-            {
-              phase: "source-landing",
-              workspace: state.workspace,
-              worker: state.worker,
-              gate: state.gate,
-              commits: state.commits,
-              landing: attempt,
-            },
-            attempt.startedAt,
-          ).operation;
-          break;
-        }
-        case "source-landing": {
-          if (state.landing.strategy === "exclusive-move-v1") {
-            const landSourceUnit = this.options.ports.landSourceUnit;
-            if (landSourceUnit === undefined) {
-              operation = this.fail(operation, {
-                at: "source-landing",
-                reason: "transactional source landing has no per-unit effect port",
-                failedAt: Math.max(this.now(), operation.updatedAt),
-                workspace: state.workspace,
-                worker: state.worker,
-                gate: state.gate,
-                commits: state.commits,
-                landing: state.landing,
-              });
-              break;
-            }
-            let fullPreflight = true;
-            while (operation.state.phase === "source-landing") {
-              const landing = operation.state.landing;
-              if (landing.strategy !== "exclusive-move-v1") {
-                throw new Error("transactional source landing changed strategy while running");
-              }
-              const unit = landing.units[landing.unitReceipts.length];
-              if (unit === undefined) break;
-              const unitReceipt: RoundSourceLandingUnitReceipt = await landSourceUnit({
-                operation,
-                attempt: landing,
-                unit,
-                fullPreflight,
-              });
-              fullPreflight = false;
-              operation = this.persist(
-                operation,
-                {
-                  phase: "source-landing",
-                  workspace: operation.state.workspace,
-                  worker: operation.state.worker,
-                  gate: operation.state.gate,
-                  commits: operation.state.commits,
-                  landing: {
-                    ...landing,
-                    unitReceipts: [...landing.unitReceipts, unitReceipt],
-                  },
-                },
-                unitReceipt.landedAt,
-              ).operation;
-            }
-            if (operation.state.phase !== "source-landing") break;
-            if (operation.state.landing.strategy !== "exclusive-move-v1") {
-              throw new Error("transactional source landing settled with a legacy attempt");
-            }
-            const receipt = transactionalLandingReceipt(
-              operation.state.landing,
-              Math.max(this.now(), operation.updatedAt),
-            );
-            operation = this.persist(
-              operation,
-              {
-                phase: "source-landed",
-                workspace: operation.state.workspace,
-                worker: operation.state.worker,
-                gate: operation.state.gate,
-                commits: operation.state.commits,
-                landing: receipt,
-              },
-              receipt.landedAt,
-            ).operation;
-            break;
-          }
-          let receipt: RoundSourceLandingReceipt;
-          try {
-            receipt =
-              hasWorkerChanges(state.worker) && hasCommitChanges(state.commits)
-                ? await this.options.ports.landSourceChanges({
-                    operation,
-                    attempt: state.landing,
-                  })
-                : {
-                    ...state.landing,
-                    outcome: "unchanged",
-                    landedAt: Math.max(this.now(), operation.updatedAt),
-                  };
-          } catch (error) {
-            operation = this.fail(operation, {
-              at: "source-landing",
-              reason: errorReason(error),
-              failedAt: Math.max(this.now(), operation.updatedAt),
-              workspace: state.workspace,
-              worker: state.worker,
-              gate: state.gate,
-              commits: state.commits,
-              landing: state.landing,
-            });
-            break;
-          }
-          operation = this.persist(
-            operation,
-            {
-              phase: "source-landed",
-              workspace: state.workspace,
-              worker: state.worker,
-              gate: state.gate,
-              commits: state.commits,
-              landing: receipt,
-            },
-            receipt.landedAt,
-          ).operation;
-          break;
-        }
-        case "source-landed": {
-          if (state.landing.strategy === "exclusive-move-v1") {
-            const cleanupSourceLanding = this.options.ports.cleanupSourceLanding;
-            if (cleanupSourceLanding === undefined) {
-              throw new Error("transactional source landing has no cleanup effect port");
-            }
-            await cleanupSourceLanding({ operation, receipt: state.landing });
-          }
           const attempt = this.options.ports.planRoundRecording(operation);
           operation = this.persist(
             operation,
@@ -1076,7 +855,6 @@ class DurableRoundExecutionCoordinator implements RoundExecutionCoordinator {
               worker: state.worker,
               gate: state.gate,
               commits: state.commits,
-              landing: state.landing,
               recording: attempt,
             },
             attempt.startedAt,
@@ -1097,7 +875,6 @@ class DurableRoundExecutionCoordinator implements RoundExecutionCoordinator {
                 worker: state.worker,
                 gate: state.gate,
                 commits: state.commits,
-                landing: state.landing,
                 recording: receipt,
               },
               receipt.recordedAt,
@@ -1111,7 +888,6 @@ class DurableRoundExecutionCoordinator implements RoundExecutionCoordinator {
               worker: state.worker,
               gate: state.gate,
               commits: state.commits,
-              landing: state.landing,
               recording: state.recording,
             });
           }
@@ -1128,7 +904,6 @@ class DurableRoundExecutionCoordinator implements RoundExecutionCoordinator {
                 worker: state.worker,
                 gate: state.gate,
                 commits: state.commits,
-                landing: state.landing,
                 recording: state.recording,
                 result: { kind: "unchanged" },
                 completedAt,
@@ -1146,7 +921,6 @@ class DurableRoundExecutionCoordinator implements RoundExecutionCoordinator {
               worker: state.worker,
               gate: state.gate,
               commits: state.commits,
-              landing: state.landing,
               recording: state.recording,
               report: attempt,
             },
@@ -1181,7 +955,6 @@ class DurableRoundExecutionCoordinator implements RoundExecutionCoordinator {
                 worker: draftingOperation.state.worker,
                 gate: draftingOperation.state.gate,
                 commits: draftingOperation.state.commits,
-                landing: draftingOperation.state.landing,
                 recording: draftingOperation.state.recording,
                 report,
                 verification,
@@ -1198,7 +971,6 @@ class DurableRoundExecutionCoordinator implements RoundExecutionCoordinator {
               worker: draftingOperation.state.worker,
               gate: draftingOperation.state.gate,
               commits: draftingOperation.state.commits,
-              landing: draftingOperation.state.landing,
               recording: draftingOperation.state.recording,
               report: draftingOperation.state.report,
             });
@@ -1221,7 +993,6 @@ class DurableRoundExecutionCoordinator implements RoundExecutionCoordinator {
                 worker: state.worker,
                 gate: state.gate,
                 commits: state.commits,
-                landing: state.landing,
                 recording: state.recording,
                 result: { kind: "changed", report },
                 completedAt,
@@ -1237,7 +1008,6 @@ class DurableRoundExecutionCoordinator implements RoundExecutionCoordinator {
               worker: state.worker,
               gate: state.gate,
               commits: state.commits,
-              landing: state.landing,
               recording: state.recording,
               report: state.report,
               verification: state.verification,

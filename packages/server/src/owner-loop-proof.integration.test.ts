@@ -90,7 +90,6 @@ function seedTargetRepo(root: string): void {
   writeRepoFile(root, OWNER_LOOP_SOURCE, "export const ownerValue = 'reviewed';\n");
   git(root, "add", OWNER_LOOP_SOURCE);
   git(root, "commit", "-qm", "reviewed owner value");
-  git(root, "checkout", "-q", "main");
 }
 
 function seedDecoyRepo(root: string): void {
@@ -108,6 +107,37 @@ function seedDecoyRepo(root: string): void {
   git(root, "add", OWNER_LOOP_SOURCE);
   git(root, "commit", "-qm", "decoy reviewed value");
   git(root, "checkout", "-q", "main");
+}
+
+/**
+ * The round worker, as the ONE turn on the session's bound T3 thread it now is
+ * (session-bound-workspace D2). No sidecar runs in a test, so this stands in for it — and
+ * it stands in HONESTLY: it is handed a prompt and a cwd and nothing else, so it has to
+ * READ the work order at the path the prompt names, exactly as the real turn does. A
+ * prompt that named a file nobody wrote would leave it with nothing to do.
+ */
+function fakeT3RoundWorker(turns: Array<{ readonly repoRoot: string; readonly order: string }>) {
+  let turnCount = 0;
+  return async ({ repoRoot, prompt }: { readonly repoRoot: string; readonly prompt: string }) => {
+    const named = /(\.rennet\/context\/[\w-]+\/work-order\.md)/.exec(prompt)?.[1];
+    if (named === undefined) {
+      throw new Error(`round prompt named no work order: ${prompt}`);
+    }
+    const order = readFileSync(join(repoRoot, named), "utf8");
+    turns.push({ repoRoot, order });
+    const value = order.includes(OWNER_LOOP_ROUND_TWO_BODY) ? "round-two" : "round-one";
+    writeFileSync(join(repoRoot, OWNER_LOOP_SOURCE), `export const ownerValue = '${value}';\n`);
+    git(repoRoot, "add", OWNER_LOOP_SOURCE);
+    git(repoRoot, "commit", "-qm", `round: ${value}`);
+    turnCount += 1;
+    return {
+      status: "completed" as const,
+      finalText: `Set ownerValue to ${value}.`,
+      turnDiff: git(repoRoot, "show", "--format=", "HEAD"),
+      filesTouched: [OWNER_LOOP_SOURCE],
+      checkpoint: { threadId: "t3-owner-loop", turnId: `turn-${value}`, turnCount },
+    };
+  };
 }
 
 function invocationRecords(path: string): Array<Record<string, unknown>> {
@@ -218,10 +248,10 @@ async function waitForRoundReturn(
       expect(operation?.state.phase).toBe("completed");
       if (operation?.state.phase === "completed") {
         expect(operation.state.returnedAt).toBeDefined();
-        expect(operation.state.landing.strategy).toBe("branch-ref-v1");
-        if (operation.state.landing.strategy === "branch-ref-v1") {
-          expect(operation.state.landing.branch).toBe("feature/shared");
-        }
+        // The round ran in the session's bound root and its commits are already on the
+        // branch; there is no landing step left to assert.
+        expect(operation.state.workspace.kind).toBe("bound-root");
+        expect(operation.sourceTarget).toEqual({ kind: "branch", branch: "feature/shared" });
       }
       records = rounds.records;
     },
@@ -262,10 +292,12 @@ describe("#685 owner loop through a real server", () => {
       RENNET_DISABLE_HARNESS: "1",
     };
 
+    const roundTurns: Array<{ readonly repoRoot: string; readonly order: string }> = [];
     const first = await createRennetServer({
       dataDir,
       env,
       testHarnessPort: loadScriptedHarnessPlan(planPath),
+      runHandoffTurn: fakeT3RoundWorker(roundTurns),
     });
     shutdowns.push(first.shutdown);
     const added = parseCommandOutput(
@@ -448,15 +480,13 @@ describe("#685 owner loop through a real server", () => {
 
     first.shutdown();
     shutdowns.pop();
-    const editRecordsBeforeRestart = invocationRecords(invocationLog).filter(
-      (record) => record.kind === "edit",
-    );
-    expect(editRecordsBeforeRestart.map((record) => record.stepId)).toEqual(["round-one-edit"]);
+    expect(roundTurns).toHaveLength(1);
 
     const restarted = await createRennetServer({
       dataDir,
       env,
       testHarnessPort: loadScriptedHarnessPlan(planPath),
+      runHandoffTurn: fakeT3RoundWorker(roundTurns),
     });
     shutdowns.push(restarted.shutdown);
     parseCommandOutput("projects.list", await restarted.dispatch("projects.list", {}));
@@ -481,9 +511,9 @@ describe("#685 owner loop through a real server", () => {
       operationRevision: reportHandoff.operationRevision,
       report: reportHandoff.report,
     });
-    expect(
-      invocationRecords(invocationLog).filter((record) => record.kind === "edit"),
-    ).toHaveLength(1);
+    // The restart replayed no coding turn: round one is durably settled, and its work is
+    // a commit on the branch, not something to redo.
+    expect(roundTurns).toHaveLength(1);
 
     await restarted.dispatch("ask.stage", {
       sessionId: reviewId,
@@ -547,9 +577,13 @@ describe("#685 owner loop through a real server", () => {
       await restarted.dispatch("review.load", { commandId: randomUUID(), reviewId }),
     ).review;
     expect(finalReview.activePatchsetId).toBe(generations.load(roundTwoGeneration)?.patchsetId);
-    expect(git(target, "branch", "--show-current")).toBe("main");
+    // A round moves the reviewer's OWN branch in their OWN checkout now — that is the
+    // asked-for behaviour (session-bound-workspace D2), and the checkpoint the round
+    // account names is what makes it revertible. `main` is untouched, and so is the decoy
+    // repository that happens to carry the same branch name.
+    expect(git(target, "branch", "--show-current")).toBe("feature/shared");
     expect(readFileSync(join(target, OWNER_LOOP_SOURCE), "utf8")).toBe(
-      "export const ownerValue = 'base';\n",
+      "export const ownerValue = 'round-two';\n",
     );
     expect(git(target, "show", `main:${OWNER_LOOP_SOURCE}`)).toBe(
       "export const ownerValue = 'base';",
@@ -567,20 +601,20 @@ describe("#685 owner loop through a real server", () => {
     );
     expect(git(decoy, "status", "--porcelain")).toBe("");
 
-    const editRecords = invocationRecords(invocationLog).filter((record) => record.kind === "edit");
-    expect(editRecords.map((record) => record.stepId)).toEqual([
-      "round-one-edit",
-      "round-two-edit",
-    ]);
-    expect(editRecords.every((record) => record.cwd !== target)).toBe(true);
+    // Both rounds ran as turns in the session's BOUND ROOT — the reviewer's checkout —
+    // and each one READ its work order from the context directory rather than being sent
+    // it. No round worktree was ever created under the data directory, and the repository
+    // still has exactly the checkouts it started with plus the review's evidence one.
+    expect(roundTurns.map((turn) => turn.repoRoot)).toEqual([target, target]);
+    expect(roundTurns[0]?.order).toContain(OWNER_LOOP_ROUND_ONE_BODY);
+    expect(roundTurns[1]?.order).toContain(OWNER_LOOP_ROUND_TWO_BODY);
+    expect(existsSync(join(dataDir, "round-worktrees"))).toBe(false);
     expect(
-      editRecords.every(
-        (record) =>
-          typeof record.cwd === "string" &&
-          record.cwd.startsWith(realpathSync(join(dataDir, "round-worktrees"))),
-      ),
-    ).toBe(true);
-    expect(editRecords[1]?.resumed).toBe(true);
+      git(target, "worktree", "list")
+        .split(/\r?\n/)
+        .filter((line) => line.includes("round-worktrees")),
+    ).toEqual([]);
+    expect(invocationRecords(invocationLog).filter((record) => record.kind === "edit")).toEqual([]);
     const records = invocationRecords(invocationLog);
     const targetBoardSteps = new Set([
       "design",

@@ -355,21 +355,29 @@ export const AskOccurrenceSchema = z.object({
 });
 export type AskOccurrence = z.infer<typeof AskOccurrenceSchema>;
 
-/** The detached execution locus and exact reviewed tree reserved before creation starts.
- * Persisting both source objects first lets restart recovery recreate the same synthetic
- * source commit even when the source checkout had uncommitted reviewed changes. */
-export const RoundWorkspaceAttemptSchema = z.object({
-  kind: z.literal("detached-worktree"),
-  worktreePath: id,
-  sourceTreeOid: id,
-  sourceParentHead: id,
-  startedAt: z.number().int().nonnegative(),
+/**
+ * The sidecar turn checkpoint that captured one round's work (session-bound-workspace D2).
+ * A round is a turn on the session's bound thread, so this — not a worktree path — is the
+ * receipt, and `thread.checkpoint.revert` against it is what makes a round revertible.
+ */
+export const RoundCheckpointSchema = z.object({
+  threadId: id,
+  turnId: id,
+  turnCount: z.number().int().nonnegative(),
 });
-export type RoundWorkspaceAttempt = z.infer<typeof RoundWorkspaceAttemptSchema>;
+export type RoundCheckpoint = z.infer<typeof RoundCheckpointSchema>;
 
-/** The detached execution locus prepared for one round. Its source commit is the exact
- * reviewed tree/checkpoint the work order was composed against, never ambient checkout HEAD. */
-export const RoundWorkspaceReceiptSchema = RoundWorkspaceAttemptSchema.extend({
+/**
+ * The session's BOUND workspace a round runs in, and the head it started from.
+ *
+ * There is no detached worktree per round any more (session-bound-workspace D1/D2): the
+ * round is a turn in the root the session bound at creation, its commits land on the
+ * session's branch, and `sourceHead` is that root's head before the turn — the baseline the
+ * observed commit range is measured against.
+ */
+export const RoundWorkspaceReceiptSchema = z.object({
+  kind: z.literal("bound-root"),
+  root: id,
   sourceHead: id,
   preparedAt: z.number().int().nonnegative(),
 });
@@ -388,6 +396,8 @@ const completedWorkerBase = {
   changedPaths: z.array(z.string()),
   /** Exact harness/version that executed this worker. Optional only for legacy operations. */
   harness: CodingHarnessSelectionSchema.optional(),
+  /** The sidecar checkpoint for this round's turn. Absent when the turn wrote none. */
+  checkpoint: RoundCheckpointSchema.optional(),
 };
 
 export const RoundTerminationSchema = z.discriminatedUnion("kind", [
@@ -488,261 +498,6 @@ export const RoundCommitReceiptSchema = z.object({
   committedAt: z.number().int().nonnegative(),
 });
 export type RoundCommitReceipt = z.infer<typeof RoundCommitReceiptSchema>;
-
-const roundSourceLandingBase = {
-  effect: z.literal("source-landing"),
-  executionId: id,
-  baselineCommit: id,
-  workerHead: id,
-  startedAt: z.number().int().nonnegative(),
-};
-
-const repoRelativePath = id.refine(
-  (path) =>
-    !path.startsWith("/") &&
-    !path.includes("\0") &&
-    !path.includes("\\") &&
-    path.split("/").every((part) => part.length > 0 && part !== "." && part !== ".."),
-  "must be a normalized repository-relative path",
-);
-const landingArtifactPath = repoRelativePath.refine(
-  (path) => path.startsWith(".rennet/round-landings/"),
-  "must be inside .rennet/round-landings",
-);
-const gitObjectId = z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/);
-const rawSha256 = z.string().regex(/^[0-9a-f]{64}$/);
-const landingUnitId = rawSha256;
-const landingUnitPath = repoRelativePath.refine(
-  (path) => path.split("/", 1)[0]?.toLowerCase() !== ".rennet",
-  "must not overlap Rennet's local transaction namespace",
-);
-const ROUND_SOURCE_LANDING_ARTIFACT_ROOT = ".rennet/round-landings";
-
-export function roundSourceLandingArtifactPaths(
-  executionId: string,
-  unitId: string,
-): { readonly stagePath: string; readonly backupPath: string } {
-  const root = `${roundSourceLandingTransactionPath(executionId)}/${unitId}`;
-  return { stagePath: `${root}/stage`, backupPath: `${root}/backup` };
-}
-
-export function roundSourceLandingTransactionPath(executionId: string): string {
-  const transactionKey = sha256Hex(executionId).slice(0, 24);
-  return `${ROUND_SOURCE_LANDING_ARTIFACT_ROOT}/${transactionKey}`;
-}
-
-export function roundSourceLandingPreparationPath(
-  executionId: string,
-  unitId: string,
-  preparationId: string,
-): string {
-  const root = `${roundSourceLandingTransactionPath(executionId)}/${unitId}`;
-  return `${root}/prepare/${sha256Hex(preparationId).slice(0, 24)}`;
-}
-
-export const RoundSourceLandingPathDescriptorSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("absent") }),
-  // Exact Git entry identity: executable/symlink mode plus raw file bytes or symlink payload.
-  // Non-Git host permission metadata (for example 0644 versus 0600) is intentionally out of scope.
-  z.object({
-    kind: z.literal("git"),
-    mode: z.enum(["100644", "100755", "120000"]),
-    oid: gitObjectId,
-    rawSha256,
-  }),
-]);
-export type RoundSourceLandingPathDescriptor = z.infer<
-  typeof RoundSourceLandingPathDescriptorSchema
->;
-
-export const RoundSourceLandingUnitSchema = z
-  .object({
-    id: landingUnitId,
-    path: landingUnitPath,
-    baseline: RoundSourceLandingPathDescriptorSchema,
-    target: RoundSourceLandingPathDescriptorSchema,
-    stagePath: landingArtifactPath,
-    backupPath: landingArtifactPath,
-  })
-  .refine((unit) => unit.baseline.kind !== "absent" || unit.target.kind !== "absent", {
-    message: "landing unit cannot be absent at both endpoints",
-  })
-  .refine((unit) => JSON.stringify(unit.baseline) !== JSON.stringify(unit.target), {
-    message: "landing unit endpoints must differ",
-  });
-export type RoundSourceLandingUnit = z.infer<typeof RoundSourceLandingUnitSchema>;
-
-export const RoundSourceLandingUnitReceiptSchema = z.object({
-  unitId: landingUnitId,
-  outcome: z.enum(["applied", "already-applied"]),
-  landedAt: z.number().int().nonnegative(),
-});
-export type RoundSourceLandingUnitReceipt = z.infer<typeof RoundSourceLandingUnitReceiptSchema>;
-
-const legacySourceLandingAttemptShape = {
-  ...roundSourceLandingBase,
-  strategy: z.never().optional(),
-};
-
-export const LegacyRoundSourceLandingAttemptSchema = z.object(legacySourceLandingAttemptShape);
-export type LegacyRoundSourceLandingAttempt = z.infer<typeof LegacyRoundSourceLandingAttemptSchema>;
-
-const branchRefSourceLandingAttemptShape = {
-  ...roundSourceLandingBase,
-  strategy: z.literal("branch-ref-v1"),
-  branch: id,
-  expectedHead: gitObjectId,
-};
-
-export const BranchRefRoundSourceLandingAttemptSchema = z
-  .object(branchRefSourceLandingAttemptShape)
-  .refine((landing) => landing.baselineCommit === landing.expectedHead, {
-    message: "branch-ref landing baseline must be the selected branch head",
-    path: ["baselineCommit"],
-  });
-export type BranchRefRoundSourceLandingAttempt = z.infer<
-  typeof BranchRefRoundSourceLandingAttemptSchema
->;
-
-const transactionalSourceLandingAttemptShape = {
-  ...roundSourceLandingBase,
-  strategy: z.literal("exclusive-move-v1"),
-  units: z.array(RoundSourceLandingUnitSchema),
-  unitReceipts: z.array(RoundSourceLandingUnitReceiptSchema),
-};
-
-function validateLandingUnitPrefix(
-  landing: {
-    readonly executionId: string;
-    readonly units: readonly RoundSourceLandingUnit[];
-    readonly unitReceipts: readonly RoundSourceLandingUnitReceipt[];
-  },
-  context: z.RefinementCtx,
-  requireComplete: boolean,
-): void {
-  if (landing.unitReceipts.length > landing.units.length) {
-    context.addIssue({
-      code: "custom",
-      path: ["unitReceipts"],
-      message: "contains more receipts than manifest units",
-    });
-    return;
-  }
-  if (requireComplete && landing.unitReceipts.length !== landing.units.length) {
-    context.addIssue({
-      code: "custom",
-      path: ["unitReceipts"],
-      message: "must contain the complete manifest receipt prefix",
-    });
-  }
-  for (const [index, receipt] of landing.unitReceipts.entries()) {
-    if (receipt.unitId !== landing.units[index]?.id) {
-      context.addIssue({
-        code: "custom",
-        path: ["unitReceipts", index, "unitId"],
-        message: "does not match the manifest unit at this prefix position",
-      });
-    }
-  }
-  const unitIds = landing.units.map((unit) => unit.id);
-  const unitPaths = landing.units.map((unit) => unit.path);
-  const artifactPaths = landing.units.flatMap((unit) => [unit.stagePath, unit.backupPath]);
-  if (new Set(unitIds).size !== unitIds.length) {
-    context.addIssue({ code: "custom", path: ["units"], message: "unit ids must be unique" });
-  }
-  if (new Set(unitPaths).size !== unitPaths.length) {
-    context.addIssue({ code: "custom", path: ["units"], message: "unit paths must be unique" });
-  }
-  if (new Set(artifactPaths).size !== artifactPaths.length) {
-    context.addIssue({
-      code: "custom",
-      path: ["units"],
-      message: "transaction artifact paths must be unique",
-    });
-  }
-  for (const [index, unit] of landing.units.entries()) {
-    const expected = roundSourceLandingArtifactPaths(landing.executionId, unit.id);
-    if (unit.stagePath !== expected.stagePath || unit.backupPath !== expected.backupPath) {
-      context.addIssue({
-        code: "custom",
-        path: ["units", index],
-        message: "transaction artifact paths do not match execution and unit identity",
-      });
-    }
-  }
-}
-
-export const TransactionalRoundSourceLandingAttemptSchema = z
-  .object(transactionalSourceLandingAttemptShape)
-  .superRefine((landing, context) => validateLandingUnitPrefix(landing, context, false));
-export type TransactionalRoundSourceLandingAttempt = z.infer<
-  typeof TransactionalRoundSourceLandingAttemptSchema
->;
-
-export const RoundSourceLandingAttemptSchema = z.union([
-  TransactionalRoundSourceLandingAttemptSchema,
-  BranchRefRoundSourceLandingAttemptSchema,
-  LegacyRoundSourceLandingAttemptSchema,
-]);
-export type RoundSourceLandingAttempt = z.infer<typeof RoundSourceLandingAttemptSchema>;
-
-const roundSourceLandingReceiptBase = {
-  ...legacySourceLandingAttemptShape,
-  landedAt: z.number().int().nonnegative(),
-};
-
-const LegacyRoundSourceLandingReceiptSchema = z.discriminatedUnion("outcome", [
-  z.object({ ...roundSourceLandingReceiptBase, outcome: z.literal("unchanged") }),
-  z.object({ ...roundSourceLandingReceiptBase, outcome: z.literal("applied") }),
-  z.object({ ...roundSourceLandingReceiptBase, outcome: z.literal("already-applied") }),
-]);
-
-export const BranchRefRoundSourceLandingReceiptSchema = z
-  .object({
-    ...branchRefSourceLandingAttemptShape,
-    outcome: z.enum(["unchanged", "applied", "already-applied"]),
-    landedAt: z.number().int().nonnegative(),
-  })
-  .refine((landing) => landing.baselineCommit === landing.expectedHead, {
-    message: "branch-ref landing baseline must be the selected branch head",
-    path: ["baselineCommit"],
-  });
-export type BranchRefRoundSourceLandingReceipt = z.infer<
-  typeof BranchRefRoundSourceLandingReceiptSchema
->;
-
-export const TransactionalRoundSourceLandingReceiptSchema = z
-  .object({
-    ...transactionalSourceLandingAttemptShape,
-    outcome: z.enum(["unchanged", "applied", "already-applied"]),
-    landedAt: z.number().int().nonnegative(),
-  })
-  .superRefine((landing, context) => {
-    validateLandingUnitPrefix(landing, context, true);
-    const expectedOutcome =
-      landing.units.length === 0
-        ? "unchanged"
-        : landing.unitReceipts.some((receipt) => receipt.outcome === "applied")
-          ? "applied"
-          : "already-applied";
-    if (landing.outcome !== expectedOutcome) {
-      context.addIssue({
-        code: "custom",
-        path: ["outcome"],
-        message: `must be ${expectedOutcome} for these unit receipts`,
-      });
-    }
-  });
-export type TransactionalRoundSourceLandingReceipt = z.infer<
-  typeof TransactionalRoundSourceLandingReceiptSchema
->;
-
-export const RoundSourceLandingReceiptSchema = z.union([
-  TransactionalRoundSourceLandingReceiptSchema,
-  BranchRefRoundSourceLandingReceiptSchema,
-  LegacyRoundSourceLandingReceiptSchema,
-]);
-export type RoundSourceLandingReceipt = z.infer<typeof RoundSourceLandingReceiptSchema>;
 
 export const RoundRecordingAttemptSchema = z.object({
   effect: z.literal("round-recording"),
@@ -849,11 +604,7 @@ const failureBase = {
 };
 
 export const RoundOperationFailureSchema = z.discriminatedUnion("at", [
-  z.object({
-    at: z.literal("preparing"),
-    ...failureBase,
-    workspace: RoundWorkspaceAttemptSchema,
-  }),
+  z.object({ at: z.literal("preparing"), ...failureBase }),
   z.object({
     at: z.literal("worker"),
     ...failureBase,
@@ -876,30 +627,12 @@ export const RoundOperationFailureSchema = z.discriminatedUnion("at", [
     commit: RoundCommitAttemptSchema,
   }),
   z.object({
-    at: z.literal("source-landing-planning"),
-    ...failureBase,
-    workspace: RoundWorkspaceReceiptSchema,
-    worker: RoundWorkerCompletedReceiptSchema,
-    gate: RoundGateSettledReceiptSchema,
-    commits: RoundCommitReceiptSchema,
-  }),
-  z.object({
-    at: z.literal("source-landing"),
-    ...failureBase,
-    workspace: RoundWorkspaceReceiptSchema,
-    worker: RoundWorkerCompletedReceiptSchema,
-    gate: RoundGateSettledReceiptSchema,
-    commits: RoundCommitReceiptSchema,
-    landing: RoundSourceLandingAttemptSchema,
-  }),
-  z.object({
     at: z.literal("round-recording"),
     ...failureBase,
     workspace: RoundWorkspaceReceiptSchema,
     worker: RoundWorkerCompletedReceiptSchema,
     gate: RoundGateSettledReceiptSchema,
     commits: RoundCommitReceiptSchema,
-    landing: RoundSourceLandingReceiptSchema,
     recording: RoundRecordingAttemptSchema,
   }),
   z.object({
@@ -909,7 +642,6 @@ export const RoundOperationFailureSchema = z.discriminatedUnion("at", [
     worker: RoundWorkerCompletedReceiptSchema,
     gate: RoundGateSettledReceiptSchema,
     commits: RoundCommitReceiptSchema,
-    landing: RoundSourceLandingReceiptSchema,
     recording: RoundRecordingReceiptSchema,
     report: RoundReportDraftAttemptSchema,
   }),
@@ -920,7 +652,6 @@ export const RoundOperationFailureSchema = z.discriminatedUnion("at", [
     worker: RoundWorkerCompletedReceiptSchema,
     gate: RoundGateSettledReceiptSchema,
     commits: RoundCommitReceiptSchema,
-    landing: RoundSourceLandingReceiptSchema,
     recording: RoundRecordingReceiptSchema,
     report: RoundReportDraftReceiptSchema,
     verification: RoundReportVerificationAttemptSchema,
@@ -932,7 +663,6 @@ export type RoundOperationFailure = z.infer<typeof RoundOperationFailureSchema>;
  * that boundary, so a restart cannot mistake missing evidence for completed work. */
 export const RoundOperationStateSchema = z.discriminatedUnion("phase", [
   z.object({ phase: z.literal("claimed") }),
-  z.object({ phase: z.literal("workspace-preparing"), workspace: RoundWorkspaceAttemptSchema }),
   z.object({ phase: z.literal("prepared"), workspace: RoundWorkspaceReceiptSchema }),
   z.object({
     phase: z.literal("worker-running"),
@@ -971,28 +701,11 @@ export const RoundOperationStateSchema = z.discriminatedUnion("phase", [
     commits: RoundCommitReceiptSchema,
   }),
   z.object({
-    phase: z.literal("source-landing"),
-    workspace: RoundWorkspaceReceiptSchema,
-    worker: RoundWorkerCompletedReceiptSchema,
-    gate: RoundGateSettledReceiptSchema,
-    commits: RoundCommitReceiptSchema,
-    landing: RoundSourceLandingAttemptSchema,
-  }),
-  z.object({
-    phase: z.literal("source-landed"),
-    workspace: RoundWorkspaceReceiptSchema,
-    worker: RoundWorkerCompletedReceiptSchema,
-    gate: RoundGateSettledReceiptSchema,
-    commits: RoundCommitReceiptSchema,
-    landing: RoundSourceLandingReceiptSchema,
-  }),
-  z.object({
     phase: z.literal("round-recording"),
     workspace: RoundWorkspaceReceiptSchema,
     worker: RoundWorkerCompletedReceiptSchema,
     gate: RoundGateSettledReceiptSchema,
     commits: RoundCommitReceiptSchema,
-    landing: RoundSourceLandingReceiptSchema,
     recording: RoundRecordingAttemptSchema,
   }),
   z.object({
@@ -1001,7 +714,6 @@ export const RoundOperationStateSchema = z.discriminatedUnion("phase", [
     worker: RoundWorkerCompletedReceiptSchema,
     gate: RoundGateSettledReceiptSchema,
     commits: RoundCommitReceiptSchema,
-    landing: RoundSourceLandingReceiptSchema,
     recording: RoundRecordingReceiptSchema,
   }),
   z.object({
@@ -1010,7 +722,6 @@ export const RoundOperationStateSchema = z.discriminatedUnion("phase", [
     worker: RoundWorkerCompletedReceiptSchema,
     gate: RoundGateSettledReceiptSchema,
     commits: RoundCommitReceiptSchema,
-    landing: RoundSourceLandingReceiptSchema,
     recording: RoundRecordingReceiptSchema,
     report: RoundReportDraftAttemptSchema,
   }),
@@ -1020,7 +731,6 @@ export const RoundOperationStateSchema = z.discriminatedUnion("phase", [
     worker: RoundWorkerCompletedReceiptSchema,
     gate: RoundGateSettledReceiptSchema,
     commits: RoundCommitReceiptSchema,
-    landing: RoundSourceLandingReceiptSchema,
     recording: RoundRecordingReceiptSchema,
     report: RoundReportDraftReceiptSchema,
     verification: RoundReportVerificationAttemptSchema,
@@ -1031,7 +741,6 @@ export const RoundOperationStateSchema = z.discriminatedUnion("phase", [
     worker: RoundWorkerCompletedReceiptSchema,
     gate: RoundGateSettledReceiptSchema,
     commits: RoundCommitReceiptSchema,
-    landing: RoundSourceLandingReceiptSchema,
     recording: RoundRecordingReceiptSchema,
     result: z.discriminatedUnion("kind", [
       z.object({ kind: z.literal("changed"), report: RoundReportReceiptSchema }),
@@ -1090,6 +799,13 @@ export const RoundRunReceiptSchema = z.object({
   sourceTarget: RoundSourceTargetSchema,
   /** Exact coding harness selected before the worker started. Absent only on legacy rows. */
   harness: CodingHarnessSelectionSchema.optional(),
+  /**
+   * The session's bound workspace root the round ran in (round-harness-dispatch). Absent
+   * only on rows written before the binding, never a detached per-round worktree path.
+   */
+  workspaceRoot: id.optional(),
+  /** The sidecar checkpoint that captured the round's commits. Absent on legacy rows. */
+  checkpoint: RoundCheckpointSchema.optional(),
   gate: RoundRunGateReceiptSchema,
 });
 export type RoundRunReceipt = z.infer<typeof RoundRunReceiptSchema>;
@@ -1127,6 +843,14 @@ export const RoundOperationSchema = z
     sourceTarget: RoundSourceTargetSchema,
     repoRoot: id,
     workOrderPrompt: z.string().min(1),
+    /**
+     * The composed work-order DOCUMENT the turn reads (session-context-files). The prompt
+     * above only NAMES it; the daemon writes this into the bound root's context directory
+     * before the turn, and rewrites it after a restart, so a resumed round still finds the
+     * exact order it was dispatched with rather than a recomposed one. Optional for
+     * operations persisted while the order travelled inline as the prompt.
+     */
+    workOrderDocument: z.string().min(1).optional(),
     workOrderDigest: z.string().regex(/^[a-f0-9]{64}$/),
     gatePlan: RoundGatePlanSchema,
     revision: z.number().int().nonnegative(),
@@ -1202,46 +926,17 @@ export const RoundOperationSchema = z
         message: "configured gate cannot be skipped as not configured",
       });
     }
-    const workspace =
-      state.phase !== "failed" && "workspace" in state
-        ? state.workspace
-        : failure !== undefined && "workspace" in failure
-          ? failure.workspace
-          : undefined;
-    if (
-      operation.sourceTarget.kind === "detached" &&
-      workspace !== undefined &&
-      workspace.sourceParentHead !== operation.sourceTarget.head
-    ) {
-      context.addIssue({
-        code: "custom",
-        path: ["state", "workspace", "sourceParentHead"],
-        message: "does not match the detached source parent head",
-      });
-    }
     const commits =
       state.phase !== "failed" && "commits" in state
         ? state.commits
         : failure !== undefined && "commits" in failure
           ? failure.commits
           : undefined;
-    const landing =
-      state.phase !== "failed" && "landing" in state
-        ? state.landing
-        : failure !== undefined && "landing" in failure
-          ? failure.landing
-          : undefined;
-    const settledWorker =
-      state.phase !== "failed" &&
-      "worker" in state &&
-      "outcome" in state.worker &&
-      state.worker.outcome === "completed"
-        ? state.worker
-        : failure !== undefined &&
-            "worker" in failure &&
-            "outcome" in failure.worker &&
-            failure.worker.outcome === "completed"
-          ? failure.worker
+    const workspace =
+      state.phase !== "failed" && "workspace" in state
+        ? state.workspace
+        : failure !== undefined && "workspace" in failure
+          ? failure.workspace
           : undefined;
     const changedEvidenceIsValid =
       state.phase === "report-drafting" || state.phase === "report-verifying"
@@ -1291,41 +986,29 @@ export const RoundOperationSchema = z
         message: "does not match the observed commit range start",
       });
     }
+    // The chain that keeps a round's evidence bound to the round's own source. `baseHead`
+    // is already pinned to `from`, so tying the workspace's head to `baseHead` closes it:
+    // a receipt cannot describe a commit range measured from some other checkout's head.
     if (
+      workspace !== undefined &&
       commits !== undefined &&
-      landing !== undefined &&
-      (landing.baselineCommit !== commits.from || landing.workerHead !== commits.to)
+      workspace.sourceHead !== commits.baseHead
     ) {
       context.addIssue({
         code: "custom",
-        path: ["state", "landing"],
-        message: "does not match the settled commit range",
+        path: ["state", "commits", "baseHead"],
+        message: "does not match the workspace head the round started from",
       });
     }
     if (
-      landing?.strategy === "branch-ref-v1" &&
-      (operation.sourceTarget.kind !== "branch" ||
-        operation.sourceTarget.branch !== landing.branch ||
-        workspace?.sourceParentHead !== landing.expectedHead)
+      operation.sourceTarget.kind === "detached" &&
+      workspace !== undefined &&
+      workspace.sourceHead !== operation.sourceTarget.head
     ) {
       context.addIssue({
         code: "custom",
-        path: ["state", "landing"],
-        message: "does not match the selected branch source",
-      });
-    }
-    if (
-      commits !== undefined &&
-      landing !== undefined &&
-      "outcome" in landing &&
-      settledWorker !== undefined &&
-      ((hasChangedRoundEvidence(settledWorker, commits) && landing.outcome === "unchanged") ||
-        (!hasChangedRoundEvidence(settledWorker, commits) && landing.outcome !== "unchanged"))
-    ) {
-      context.addIssue({
-        code: "custom",
-        path: ["state", "landing", "outcome"],
-        message: "contradicts the settled worker and commit evidence",
+        path: ["state", "workspace", "sourceHead"],
+        message: "does not match the detached source head",
       });
     }
   });
@@ -1334,7 +1017,6 @@ export type RoundOperation = z.infer<typeof RoundOperationSchema>;
 // The run screen receives a redacted projection of the durable operation. These stage
 // receipts contain only facts the UI renders. Local paths, prompts, diffs, changed paths,
 // commit hashes, execution ids, and repository/session identities stay server-side.
-const runningWorkspace = z.object({ status: z.literal("running") });
 const settledWorkspace = z.object({ status: z.literal("done") });
 const failedWorkspace = z.object({
   status: z.literal("failed"),
@@ -1457,10 +1139,6 @@ const RoundOperationProgressFailureSchema = z.discriminatedUnion("at", [
 /** Redacted durable operation state. Every arm carries all settled receipts before it. */
 export const RoundOperationProgressStateSchema = z.discriminatedUnion("phase", [
   z.object({ phase: z.literal("claimed") }),
-  z.object({
-    phase: z.literal("workspace-preparing"),
-    workspace: runningWorkspace,
-  }),
   z.object({ phase: z.literal("prepared"), workspace: settledWorkspace }),
   z.object({
     phase: z.literal("worker-running"),
@@ -1631,8 +1309,6 @@ function progressFailure(
         gate: settledGateProgress(failure.gate),
         commits: { status: "failed", reason: failure.reason },
       };
-    case "source-landing-planning":
-    case "source-landing":
     case "round-recording":
       return {
         at: "committing",
@@ -1662,8 +1338,6 @@ function progressState(state: RoundOperationState): RoundOperationProgressState 
   switch (state.phase) {
     case "claimed":
       return { phase: state.phase };
-    case "workspace-preparing":
-      return { phase: state.phase, workspace: { status: "running" } };
     case "prepared":
       return { phase: state.phase, workspace: doneWorkspaceProgress };
     case "worker-running":
@@ -1701,8 +1375,6 @@ function progressState(state: RoundOperationState): RoundOperationProgressState 
         commits: { status: "running" },
       };
     case "commits-settled":
-    case "source-landing":
-    case "source-landed":
     case "round-recording":
       return {
         phase: "committing",

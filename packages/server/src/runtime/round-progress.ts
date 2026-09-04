@@ -103,7 +103,6 @@ export function roundEventsForDurableOperation(input: {
       worker: failure.worker,
       gate: failure.gate,
       commits: failure.commits,
-      landing: failure.landing,
       recording: failure.recording,
       report: failure.report,
     },

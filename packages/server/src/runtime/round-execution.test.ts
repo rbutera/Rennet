@@ -10,19 +10,13 @@ import {
   type RoundOperationState,
   type RoundReportBoard,
   type RoundReportReceipt,
-  type RoundSourceLandingAttempt,
-  type RoundSourceLandingReceipt,
-  type RoundSourceLandingUnitReceipt,
   type RoundWorkerReceipt,
-  type RoundWorkspaceAttempt,
-  roundSourceLandingArtifactPaths,
+  type RoundWorkspaceReceipt,
   sha256Hex,
 } from "@rennet/protocol";
 import { describe, expect, it, vi } from "vitest";
 import { createRoundExecutionCoordinator, type RoundExecutionPorts } from "./round-execution";
 
-const TRANSACTIONAL_UNIT_A_ID = "a".repeat(64);
-const TRANSACTIONAL_UNIT_B_ID = "b".repeat(64);
 const reportBoard = {
   lens: "report",
   generation: "generation-1",
@@ -35,49 +29,6 @@ const reportBoard = {
   sections: [],
   elements: [],
 } satisfies RoundReportBoard;
-
-function transactionalLandingAttempt(): RoundSourceLandingAttempt {
-  return {
-    effect: "source-landing",
-    strategy: "exclusive-move-v1",
-    executionId: "landing-transaction-1",
-    baselineCommit: "head-before",
-    workerHead: "head-after-1",
-    startedAt: 20,
-    units: [
-      {
-        id: TRANSACTIONAL_UNIT_A_ID,
-        path: "a.txt",
-        baseline: {
-          kind: "git",
-          mode: "100644",
-          oid: "a".repeat(40),
-          rawSha256: "1".repeat(64),
-        },
-        target: {
-          kind: "git",
-          mode: "100644",
-          oid: "b".repeat(40),
-          rawSha256: "2".repeat(64),
-        },
-        ...roundSourceLandingArtifactPaths("landing-transaction-1", TRANSACTIONAL_UNIT_A_ID),
-      },
-      {
-        id: TRANSACTIONAL_UNIT_B_ID,
-        path: "b.txt",
-        baseline: { kind: "absent" },
-        target: {
-          kind: "git",
-          mode: "100644",
-          oid: "c".repeat(40),
-          rawSha256: "3".repeat(64),
-        },
-        ...roundSourceLandingArtifactPaths("landing-transaction-1", TRANSACTIONAL_UNIT_B_ID),
-      },
-    ],
-    unitReceipts: [],
-  };
-}
 
 function operation(
   options: {
@@ -151,28 +102,16 @@ function advance(
 function seedWorkerRunning(
   store: RoundOperationStore,
   initial: RoundOperation,
-  options: { sourceHead?: string; sourceParentHead?: string } = {},
+  options: { sourceHead?: string } = {},
 ): RoundOperation {
   const claimed = store.claimIfIdle(initial);
-  const workspaceAttempt: RoundWorkspaceAttempt = {
-    kind: "detached-worktree",
-    worktreePath: "/rounds/operation-1",
-    sourceTreeOid: "tree-before",
-    sourceParentHead: options.sourceParentHead ?? "parent-before",
-    startedAt: 2,
-  };
-  const preparing = advance(
-    store,
-    claimed,
-    { phase: "workspace-preparing", workspace: workspaceAttempt },
-    2,
-  );
-  const workspace = {
-    ...workspaceAttempt,
+  const workspace: RoundWorkspaceReceipt = {
+    kind: "bound-root",
+    root: "/repo",
     sourceHead: options.sourceHead ?? "head-before",
     preparedAt: 3,
   };
-  const prepared = advance(store, preparing, { phase: "prepared", workspace }, 3);
+  const prepared = advance(store, claimed, { phase: "prepared", workspace }, 3);
   return advance(
     store,
     prepared,
@@ -217,7 +156,7 @@ function seedGateRunning(store: RoundOperationStore, initial: RoundOperation): R
 function seedCommitting(
   store: RoundOperationStore,
   initial: RoundOperation,
-  options: { sourceHead?: string; sourceParentHead?: string } = {},
+  options: { sourceHead?: string } = {},
 ): RoundOperation {
   const running = seedWorkerRunning(store, initial, options);
   if (running.state.phase !== "worker-running") throw new Error("expected seeded worker attempt");
@@ -263,23 +202,13 @@ function seedCommitting(
   );
 }
 
-function seedSourceLanding(
-  store: RoundOperationStore,
-  initial: RoundOperation,
-  options: { branchRef?: boolean } = {},
-): RoundOperation {
-  const selectedHead = options.branchRef ? "a".repeat(40) : "head-before";
-  const workerHead = options.branchRef ? "b".repeat(40) : "head-after";
-  const committing = seedCommitting(
-    store,
-    initial,
-    options.branchRef ? { sourceHead: selectedHead, sourceParentHead: selectedHead } : {},
-  );
+function seedRoundRecording(store: RoundOperationStore, initial: RoundOperation): RoundOperation {
+  const committing = seedCommitting(store, initial);
   if (committing.state.phase !== "committing") throw new Error("expected seeded commit attempt");
   const commits = {
     ...committing.state.commit,
-    from: selectedHead,
-    to: workerHead,
+    from: "head-before",
+    to: "head-after",
     count: 1,
     committedAt: 8,
   } satisfies RoundCommitReceipt;
@@ -299,61 +228,11 @@ function seedSourceLanding(
     store,
     settled,
     {
-      phase: "source-landing",
+      phase: "round-recording",
       workspace: committing.state.workspace,
       worker: committing.state.worker,
       gate: committing.state.gate,
       commits,
-      landing: options.branchRef
-        ? {
-            effect: "source-landing",
-            strategy: "branch-ref-v1",
-            executionId: "landing-recovery",
-            branch: "feat/test",
-            expectedHead: commits.from,
-            baselineCommit: commits.from,
-            workerHead: commits.to,
-            startedAt: 9,
-          }
-        : {
-            effect: "source-landing",
-            executionId: "landing-recovery",
-            baselineCommit: commits.from,
-            workerHead: commits.to,
-            startedAt: 9,
-          },
-    },
-    9,
-  );
-}
-
-function seedRoundRecording(store: RoundOperationStore, initial: RoundOperation): RoundOperation {
-  const landing = seedSourceLanding(store, initial);
-  if (landing.state.phase !== "source-landing") throw new Error("expected seeded landing attempt");
-  const landed = advance(
-    store,
-    landing,
-    {
-      phase: "source-landed",
-      workspace: landing.state.workspace,
-      worker: landing.state.worker,
-      gate: landing.state.gate,
-      commits: landing.state.commits,
-      landing: { ...landing.state.landing, outcome: "already-applied", landedAt: 10 },
-    },
-    10,
-  );
-  if (landed.state.phase !== "source-landed") throw new Error("expected seeded landing receipt");
-  return advance(
-    store,
-    landed,
-    {
-      phase: "round-recording",
-      workspace: landed.state.workspace,
-      worker: landed.state.worker,
-      gate: landed.state.gate,
-      commits: landed.state.commits,
-      landing: landed.state.landing,
       recording: {
         effect: "round-recording",
         executionId: "recording-recovery",
@@ -405,20 +284,16 @@ function scenario(
   const count = options.commitCount ?? 1;
 
   const ports: RoundExecutionPorts = {
-    planWorkspace(current) {
+    async planWorkspace(current) {
       calls.push("plan-workspace");
+      // The bound root is READ, never reserved: nothing is persisted before this resolves.
+      expect(store.read(current.sessionId)?.state.phase).toBe("claimed");
       return {
-        kind: "detached-worktree",
-        worktreePath: `/rounds/${current.operationId}`,
-        sourceTreeOid: "tree-before",
-        sourceParentHead: "parent-before",
-        startedAt: now(),
+        kind: "bound-root",
+        root: current.repoRoot,
+        sourceHead: "head-before",
+        preparedAt: now(),
       };
-    },
-    async prepareWorkspace({ operation: current, attempt }) {
-      calls.push("prepare-workspace");
-      expect(store.read(current.sessionId)?.state.phase).toBe("workspace-preparing");
-      return { ...attempt, sourceHead: "head-before", preparedAt: now() };
     },
     planWorker() {
       calls.push("plan-worker");
@@ -431,6 +306,12 @@ function scenario(
     },
     planGate() {
       calls.push("plan-gate");
+      // An injected receipt IS the settlement of this attempt, so the attempt takes its
+      // identity — the store refuses a receipt that does not extend its persisted attempt.
+      // (Same shape as `planWorker` above, which derives from the injected worker receipt.)
+      if (options.gate !== undefined && options.gate.outcome !== "skipped") {
+        return { executionId: options.gate.executionId, startedAt: options.gate.startedAt };
+      }
       return { executionId: "gate-1", startedAt: now() };
     },
     async runGate({ operation: current, attempt }) {
@@ -459,28 +340,6 @@ function scenario(
         count,
         committedAt: now(),
       } satisfies RoundCommitReceipt;
-    },
-    planSourceLanding(current) {
-      calls.push("plan-source-landing");
-      if (current.state.phase !== "commits-settled") {
-        throw new Error("source landing planned before commits settled");
-      }
-      return {
-        effect: "source-landing",
-        executionId: "landing-1",
-        baselineCommit: current.state.commits.from,
-        workerHead: current.state.commits.to,
-        startedAt: now(),
-      };
-    },
-    async landSourceChanges({ operation: current, attempt }) {
-      calls.push("land-source");
-      expect(store.read(current.sessionId)?.state.phase).toBe("source-landing");
-      return {
-        ...attempt,
-        outcome: "applied",
-        landedAt: now(),
-      } satisfies RoundSourceLandingReceipt;
     },
     planRoundRecording() {
       calls.push("plan-round-recording");
@@ -558,15 +417,12 @@ describe("createRoundExecutionCoordinator", () => {
     expect(completed.state.result.kind).toBe("changed");
     expect(test.calls).toEqual([
       "plan-workspace",
-      "prepare-workspace",
       "plan-worker",
       "worker",
       "plan-gate",
       "gate",
       "plan-commit",
       "commits",
-      "plan-source-landing",
-      "land-source",
       "plan-round-recording",
       "record-round",
       "prepare-report",
@@ -577,7 +433,6 @@ describe("createRoundExecutionCoordinator", () => {
     ]);
     expect(test.published.map((entry) => entry.state.phase)).toEqual([
       "claimed",
-      "workspace-preparing",
       "prepared",
       "worker-running",
       "worker-settled",
@@ -585,8 +440,6 @@ describe("createRoundExecutionCoordinator", () => {
       "gate-settled",
       "committing",
       "commits-settled",
-      "source-landing",
-      "source-landed",
       "round-recording",
       "round-recorded",
       "report-drafting",
@@ -851,22 +704,20 @@ describe("createRoundExecutionCoordinator", () => {
     expect(test.store.read("session-1")?.state.phase).toBe("round-recorded");
 
     const replayed = {
-      workspace: vi.fn(test.ports.prepareWorkspace),
+      workspace: vi.fn(test.ports.planWorkspace),
       worker: vi.fn(test.ports.runWorker),
       gate: vi.fn(test.ports.runGate),
       commits: vi.fn(test.ports.settleCommits),
-      landing: vi.fn(test.ports.landSourceChanges),
       recording: vi.fn(test.ports.recordRound),
     };
     const recovered = await createRoundExecutionCoordinator({
       store: test.store,
       ports: {
         ...test.ports,
-        prepareWorkspace: replayed.workspace,
+        planWorkspace: replayed.workspace,
         runWorker: replayed.worker,
         runGate: replayed.gate,
         settleCommits: replayed.commits,
-        landSourceChanges: replayed.landing,
         recordRound: replayed.recording,
       },
     }).recover();
@@ -877,298 +728,13 @@ describe("createRoundExecutionCoordinator", () => {
     expect(replayed.worker).not.toHaveBeenCalled();
     expect(replayed.gate).not.toHaveBeenCalled();
     expect(replayed.commits).not.toHaveBeenCalled();
-    expect(replayed.landing).not.toHaveBeenCalled();
     expect(replayed.recording).not.toHaveBeenCalled();
   });
 
-  it("cold-recovers the exact source landing attempt without replaying earlier effects", async () => {
-    const test = scenario();
-    seedSourceLanding(test.store, operation({ gatePlan: { kind: "absent" } }));
-    const prepareWorkspace = vi.fn(test.ports.prepareWorkspace);
-    const runWorker = vi.fn(test.ports.runWorker);
-    const runGate = vi.fn(test.ports.runGate);
-    const settleCommits = vi.fn(test.ports.settleCommits);
-    const landSourceChanges = vi.fn(test.ports.landSourceChanges);
-    const recovered = await createRoundExecutionCoordinator({
-      store: new RoundOperationStore(test.dir),
-      ports: {
-        ...test.ports,
-        prepareWorkspace,
-        runWorker,
-        runGate,
-        settleCommits,
-        landSourceChanges,
-      },
-    }).recover();
-
-    expect(recovered[0]?.state.phase).toBe("completed");
-    expect(prepareWorkspace).not.toHaveBeenCalled();
-    expect(runWorker).not.toHaveBeenCalled();
-    expect(runGate).not.toHaveBeenCalled();
-    expect(settleCommits).not.toHaveBeenCalled();
-    expect(landSourceChanges).toHaveBeenCalledTimes(1);
-    expect(landSourceChanges.mock.calls[0]?.[0].attempt.executionId).toBe("landing-recovery");
-  });
-
-  it("cold-recovers and settles the exact selected-branch landing attempt", async () => {
-    const test = scenario();
-    seedSourceLanding(test.store, operation({ gatePlan: { kind: "absent" } }), {
-      branchRef: true,
-    });
-    const planSourceLanding = vi.fn(test.ports.planSourceLanding);
-    const landSourceChanges = vi.fn<RoundExecutionPorts["landSourceChanges"]>(
-      async ({ attempt }) => ({
-        ...attempt,
-        outcome: "already-applied",
-        landedAt: 10,
-      }),
-    );
-    const recovered = await createRoundExecutionCoordinator({
-      store: new RoundOperationStore(test.dir),
-      ports: { ...test.ports, planSourceLanding, landSourceChanges },
-    }).recover();
-
-    expect(recovered[0]?.state.phase).toBe("completed");
-    expect(planSourceLanding).not.toHaveBeenCalled();
-    expect(landSourceChanges).toHaveBeenCalledTimes(1);
-    expect(landSourceChanges.mock.calls[0]?.[0].attempt).toMatchObject({
-      strategy: "branch-ref-v1",
-      executionId: "landing-recovery",
-      branch: "feat/test",
-      expectedHead: "a".repeat(40),
-      workerHead: "b".repeat(40),
-    });
-  });
-
-  it("persists each transactional landing unit as an exact prefix and resumes after a crash", async () => {
-    const test = scenario();
-    const attempt = transactionalLandingAttempt();
-    const firstRunUnits: string[] = [];
-    const firstRunFullPreflights: boolean[] = [];
-    let crashed = false;
-    const firstPorts: RoundExecutionPorts = {
-      ...test.ports,
-      planSourceLanding: () => attempt,
-      landSourceChanges: vi.fn(test.ports.landSourceChanges),
-      async landSourceUnit(input) {
-        const { unit } = input;
-        firstRunUnits.push(unit.id);
-        firstRunFullPreflights.push(input.fullPreflight);
-        return {
-          unitId: unit.id,
-          outcome: "applied",
-          landedAt: 30,
-        } satisfies RoundSourceLandingUnitReceipt;
-      },
-      async cleanupSourceLanding() {
-        throw new Error("cleanup ran before the complete receipt was durable");
-      },
-      publish(current) {
-        if (
-          !crashed &&
-          current.state.phase === "source-landing" &&
-          current.state.landing.strategy === "exclusive-move-v1" &&
-          current.state.landing.unitReceipts.length === 1
-        ) {
-          crashed = true;
-          throw new Error("simulated process death after the first durable unit");
-        }
-      },
-    };
-
-    await expect(
-      createRoundExecutionCoordinator({ store: test.store, ports: firstPorts }).submit(operation()),
-    ).rejects.toThrow("simulated process death");
-    const interrupted = test.store.read("session-1");
-    expect(interrupted?.state.phase).toBe("source-landing");
-    if (
-      interrupted?.state.phase !== "source-landing" ||
-      interrupted.state.landing.strategy !== "exclusive-move-v1"
-    ) {
-      throw new Error("transactional landing prefix was not retained");
-    }
-    expect(interrupted.state.landing.unitReceipts.map(({ unitId }) => unitId)).toEqual([
-      TRANSACTIONAL_UNIT_A_ID,
-    ]);
-    expect(firstRunUnits).toEqual([TRANSACTIONAL_UNIT_A_ID]);
-    expect(firstRunFullPreflights).toEqual([true]);
-
-    const resumedUnits: string[] = [];
-    const resumedFullPreflights: boolean[] = [];
-    const cleanup = vi.fn(
-      async (input: Parameters<NonNullable<RoundExecutionPorts["cleanupSourceLanding"]>>[0]) => {
-        expect(test.store.read(input.operation.sessionId)?.state.phase).toBe("source-landed");
-      },
-    );
-    const recovered = await createRoundExecutionCoordinator({
-      store: new RoundOperationStore(test.dir),
-      ports: {
-        ...test.ports,
-        planSourceLanding: () => attempt,
-        landSourceChanges: vi.fn(test.ports.landSourceChanges),
-        async landSourceUnit(input) {
-          const { unit } = input;
-          resumedUnits.push(unit.id);
-          resumedFullPreflights.push(input.fullPreflight);
-          return {
-            unitId: unit.id,
-            outcome: "already-applied",
-            landedAt: 31,
-          } satisfies RoundSourceLandingUnitReceipt;
-        },
-        cleanupSourceLanding: cleanup,
-      },
-    }).recover();
-
-    expect(recovered[0]?.state.phase).toBe("completed");
-    expect(resumedUnits).toEqual([TRANSACTIONAL_UNIT_B_ID]);
-    expect(resumedFullPreflights).toEqual([true]);
-    expect(cleanup).toHaveBeenCalledTimes(1);
-  });
-
-  it("keeps a failed transactional unit resumable until a fresh drive lands the same attempt", async () => {
-    const test = scenario();
-    const attempt = transactionalLandingAttempt();
-    let sourcePathState: "baseline-live" | "backup-only" | "target-live" = "baseline-live";
-    const firstLandSourceUnit = vi.fn(
-      async (
-        input: Parameters<NonNullable<RoundExecutionPorts["landSourceUnit"]>>[0],
-      ): Promise<RoundSourceLandingUnitReceipt> => {
-        expect(input.attempt).toEqual(attempt);
-        expect(input.unit.id).toBe(TRANSACTIONAL_UNIT_A_ID);
-        expect(input.fullPreflight).toBe(true);
-        sourcePathState = "backup-only";
-        throw new Error("controlled publish failure after baseline move");
-      },
-    );
-    const cleanupBeforeRecovery = vi.fn();
-
-    await expect(
-      createRoundExecutionCoordinator({
-        store: test.store,
-        ports: {
-          ...test.ports,
-          planSourceLanding: () => attempt,
-          landSourceUnit: firstLandSourceUnit,
-          cleanupSourceLanding: cleanupBeforeRecovery,
-          async drainTerminal() {
-            return { kind: "retain" };
-          },
-        },
-      }).submit(operation()),
-    ).rejects.toThrow("controlled publish failure after baseline move");
-
-    expect(sourcePathState).toBe("backup-only");
-    expect(firstLandSourceUnit).toHaveBeenCalledOnce();
-    expect(cleanupBeforeRecovery).not.toHaveBeenCalled();
-    const interrupted = test.store.read("session-1");
-    expect(interrupted?.state.phase).toBe("source-landing");
-    if (
-      interrupted?.state.phase !== "source-landing" ||
-      interrupted.state.landing.strategy !== "exclusive-move-v1"
-    ) {
-      throw new Error("failed transactional unit did not retain its durable attempt");
-    }
-    expect(interrupted.state.landing.executionId).toBe(attempt.executionId);
-    expect(interrupted.state.landing.unitReceipts).toEqual([]);
-
-    const replayedPlan = vi.fn(() => attempt);
-    const resumedUnits: string[] = [];
-    const resumedFullPreflights: boolean[] = [];
-    const cleanup = vi.fn();
-    const recovered = await createRoundExecutionCoordinator({
-      store: new RoundOperationStore(test.dir),
-      ports: {
-        ...test.ports,
-        planSourceLanding: replayedPlan,
-        async landSourceUnit(input) {
-          resumedUnits.push(input.unit.id);
-          resumedFullPreflights.push(input.fullPreflight);
-          if (input.unit.id === TRANSACTIONAL_UNIT_A_ID) {
-            expect(input.attempt).toEqual(attempt);
-            expect(sourcePathState).toBe("backup-only");
-            sourcePathState = "target-live";
-          }
-          return {
-            unitId: input.unit.id,
-            outcome: "applied",
-            landedAt: 31 + resumedUnits.length,
-          } satisfies RoundSourceLandingUnitReceipt;
-        },
-        cleanupSourceLanding: cleanup,
-      },
-    }).recover();
-
-    expect(recovered).toHaveLength(1);
-    expect(recovered[0]?.state.phase).toBe("completed");
-    expect(replayedPlan).not.toHaveBeenCalled();
-    expect(resumedUnits).toEqual([TRANSACTIONAL_UNIT_A_ID, TRANSACTIONAL_UNIT_B_ID]);
-    expect(resumedFullPreflights).toEqual([true, false]);
-    expect(sourcePathState).toBe("target-live");
-    expect(cleanup).toHaveBeenCalledOnce();
-  });
-
-  it("runs one full transactional preflight per coordinator drive", async () => {
-    const test = scenario();
-    const fullPreflights: boolean[] = [];
-    const ports: RoundExecutionPorts = {
-      ...test.ports,
-      planSourceLanding: transactionalLandingAttempt,
-      async landSourceUnit(input) {
-        fullPreflights.push(input.fullPreflight);
-        return {
-          unitId: input.unit.id,
-          outcome: "applied",
-          landedAt: 30,
-        } satisfies RoundSourceLandingUnitReceipt;
-      },
-      cleanupSourceLanding: vi.fn(),
-    };
-
-    const completed = await createRoundExecutionCoordinator({ store: test.store, ports }).submit(
-      operation(),
-    );
-
-    expect(completed.state.phase).toBe("completed");
-    expect(fullPreflights).toEqual([true, false]);
-  });
-
-  it("terminalizes transactional landing planning failures instead of replanning on recovery", async () => {
-    const test = scenario();
-    const planSourceLanding = vi.fn(async (): Promise<RoundSourceLandingAttempt> => {
-      throw new Error("Git returned unsupported mode 160000");
-    });
-    const ports: RoundExecutionPorts = {
-      ...test.ports,
-      planSourceLanding,
-      async drainTerminal() {
-        return { kind: "retain" };
-      },
-    };
-
-    const failed = await createRoundExecutionCoordinator({ store: test.store, ports }).submit(
-      operation(),
-    );
-    expect(failed.state.phase).toBe("failed");
-    if (failed.state.phase !== "failed") throw new Error("planning failure was not terminal");
-    expect(failed.state.failure).toMatchObject({
-      at: "source-landing-planning",
-      reason: "Git returned unsupported mode 160000",
-    });
-
-    const recovered = await createRoundExecutionCoordinator({
-      store: new RoundOperationStore(test.dir),
-      ports,
-    }).recover();
-    expect(recovered[0]?.state.phase).toBe("failed");
-    expect(planSourceLanding).toHaveBeenCalledTimes(1);
-  });
-
-  it("cold-recovers the exact round recording attempt without relanding", async () => {
+  it("cold-recovers the exact round recording attempt without re-settling commits", async () => {
     const test = scenario();
     seedRoundRecording(test.store, operation({ gatePlan: { kind: "absent" } }));
     const settleCommits = vi.fn(test.ports.settleCommits);
-    const landSourceChanges = vi.fn(test.ports.landSourceChanges);
     const recordRound = vi.fn(async (input: Parameters<RoundExecutionPorts["recordRound"]>[0]) => {
       expect(input.operation.dispatchId).toBe("dispatch-operation-1");
       return test.ports.recordRound(input);
@@ -1178,14 +744,12 @@ describe("createRoundExecutionCoordinator", () => {
       ports: {
         ...test.ports,
         settleCommits,
-        landSourceChanges,
         recordRound,
       },
     }).recover();
 
     expect(recovered[0]?.state.phase).toBe("completed");
     expect(settleCommits).not.toHaveBeenCalled();
-    expect(landSourceChanges).not.toHaveBeenCalled();
     expect(recordRound).toHaveBeenCalledTimes(1);
     expect(recordRound.mock.calls[0]?.[0].attempt.executionId).toBe("recording-recovery");
   });
@@ -1193,7 +757,7 @@ describe("createRoundExecutionCoordinator", () => {
   it("resumes an idempotent commit settlement from its persisted attempt", async () => {
     const test = scenario();
     seedCommitting(test.store, operation({ gatePlan: { kind: "absent" } }));
-    const prepareWorkspace = vi.fn(test.ports.prepareWorkspace);
+    const planWorkspace = vi.fn(test.ports.planWorkspace);
     const runWorker = vi.fn(test.ports.runWorker);
     const runGate = vi.fn(test.ports.runGate);
     const settleCommits = vi.fn(test.ports.settleCommits);
@@ -1201,7 +765,7 @@ describe("createRoundExecutionCoordinator", () => {
       store: test.store,
       ports: {
         ...test.ports,
-        prepareWorkspace,
+        planWorkspace,
         runWorker,
         runGate,
         settleCommits,
@@ -1209,7 +773,7 @@ describe("createRoundExecutionCoordinator", () => {
     }).recover();
 
     expect(recovered[0]?.state.phase).toBe("completed");
-    expect(prepareWorkspace).not.toHaveBeenCalled();
+    expect(planWorkspace).not.toHaveBeenCalled();
     expect(runWorker).not.toHaveBeenCalled();
     expect(runGate).not.toHaveBeenCalled();
     expect(settleCommits).toHaveBeenCalledTimes(1);
@@ -1338,32 +902,18 @@ describe("createRoundExecutionCoordinator", () => {
     expect(failed.state.failure.reason).toContain("interrupted");
   });
 
-  it.each([
-    {
-      name: "source landing",
-      expectedAt: "source-landing" satisfies RoundOperationFailure["at"],
-      ports: (test: Scenario): RoundExecutionPorts => ({
-        ...test.ports,
-        async landSourceChanges() {
-          throw new Error("source landing failed");
-        },
-      }),
-    },
-    {
-      name: "round recording",
-      expectedAt: "round-recording" satisfies RoundOperationFailure["at"],
-      ports: (test: Scenario): RoundExecutionPorts => ({
-        ...test.ports,
-        async recordRound() {
-          throw new Error("round recording failed");
-        },
-      }),
-    },
-  ])("persists $name failures at their exact effect boundary", async ({ expectedAt, ports }) => {
+  it("persists round recording failures at their exact effect boundary", async () => {
+    const expectedAt = "round-recording" satisfies RoundOperationFailure["at"];
     const test = scenario();
+    const ports: RoundExecutionPorts = {
+      ...test.ports,
+      async recordRound() {
+        throw new Error("round recording failed");
+      },
+    };
     const failed = await createRoundExecutionCoordinator({
       store: test.store,
-      ports: ports(test),
+      ports,
     }).submit(operation());
 
     expect(failed.state.phase).toBe("failed");
@@ -1451,11 +1001,10 @@ describe("createRoundExecutionCoordinator", () => {
     const test = scenario({ commitCount: 0, worker });
     const planGate = vi.fn(test.ports.planGate);
     const runGate = vi.fn(test.ports.runGate);
-    const landSourceChanges = vi.fn(test.ports.landSourceChanges);
     const recordRound = vi.fn(test.ports.recordRound);
     const completed = await createRoundExecutionCoordinator({
       store: test.store,
-      ports: { ...test.ports, planGate, runGate, landSourceChanges, recordRound },
+      ports: { ...test.ports, planGate, runGate, recordRound },
     }).submit(operation({ gatePlan: { kind: "absent" } }));
 
     expect(completed.state.phase).toBe("completed");
@@ -1463,7 +1012,6 @@ describe("createRoundExecutionCoordinator", () => {
     expect(completed.state.gate.outcome).toBe("skipped");
     expect(planGate).not.toHaveBeenCalled();
     expect(runGate).not.toHaveBeenCalled();
-    expect(landSourceChanges).not.toHaveBeenCalled();
     expect(recordRound).toHaveBeenCalledTimes(1);
   });
 
@@ -1498,23 +1046,30 @@ describe("createRoundExecutionCoordinator", () => {
 
   it("adopts a concurrently persisted receipt without replaying the effect or publishing stale state", async () => {
     const test = scenario();
-    const prepareWorkspace: RoundExecutionPorts["prepareWorkspace"] = vi.fn(async (input) => {
-      const receipt = { ...input.attempt, sourceHead: "head-before", preparedAt: 12 };
-      const current = test.store.read(input.operation.sessionId);
-      if (current === undefined) throw new Error("workspace attempt was not persisted");
-      advance(test.store, current, { phase: "prepared", workspace: receipt }, 12);
+    const planWorkspace: RoundExecutionPorts["planWorkspace"] = vi.fn(async (current) => {
+      const receipt: RoundWorkspaceReceipt = {
+        kind: "bound-root",
+        root: current.repoRoot,
+        sourceHead: "head-before",
+        preparedAt: 12,
+      };
+      const claimed = test.store.read(current.sessionId);
+      if (claimed === undefined) throw new Error("the claim was not persisted");
+      advance(test.store, claimed, { phase: "prepared", workspace: receipt }, 12);
       return receipt;
     });
     const completed = await createRoundExecutionCoordinator({
       store: test.store,
-      ports: { ...test.ports, prepareWorkspace },
+      ports: { ...test.ports, planWorkspace },
     }).submit(operation());
 
     expect(completed.state.phase).toBe("completed");
-    expect(prepareWorkspace).toHaveBeenCalledTimes(1);
+    expect(planWorkspace).toHaveBeenCalledTimes(1);
     const revisions = test.published.map(({ revision }) => revision);
     expect(new Set(revisions).size).toBe(revisions.length);
-    expect(revisions).not.toContain(2);
+    // Revision 1 is the racer's `prepared` write. The coordinator ADOPTS it — it neither
+    // republishes it as its own nor overwrites it — so it never reaches the publish sink.
+    expect(revisions).not.toContain(1);
     expect(revisions).toEqual([...revisions].sort((left, right) => left - right));
   });
 
@@ -1557,7 +1112,75 @@ describe("createRoundExecutionCoordinator", () => {
     expect(test.store.read(initial.sessionId)?.state.phase).toBe("completed");
   });
 
-  it("retries a failed worker in the same operation and worktree", async () => {
+  it("fails at preparing when the bound workspace cannot be resolved, and retry re-claims", async () => {
+    const test = scenario();
+    // What the DURABLE row said each time the coordinator asked for the bound root. The
+    // second entry is the whole point of the retry half: it is `claimed`, not `failed`.
+    const phaseAtPlan: (string | undefined)[] = [];
+    let attempts = 0;
+    const planWorkspace: RoundExecutionPorts["planWorkspace"] = vi.fn(async (current) => {
+      attempts += 1;
+      phaseAtPlan.push(test.store.read(current.sessionId)?.state.phase);
+      if (attempts === 1) throw new Error("the session's bound workspace root is gone");
+      return test.ports.planWorkspace(current);
+    });
+    const coordinator = createRoundExecutionCoordinator({
+      store: test.store,
+      ports: {
+        ...test.ports,
+        planWorkspace,
+        async drainTerminal() {
+          return { kind: "retain" };
+        },
+      },
+    });
+
+    const failed = await coordinator.submit(operation());
+
+    expect(failed.state.phase).toBe("failed");
+    if (failed.state.phase !== "failed") throw new Error("expected a failed round");
+    // The exact arm, and NOTHING beside it: `preparing` carries no workspace receipt,
+    // because nothing was reserved before the read that threw.
+    expect(failed.state.failure).toEqual({
+      at: "preparing",
+      reason: "the session's bound workspace root is gone",
+      failedAt: expect.any(Number),
+    });
+    // Nothing downstream of the workspace read ran. The throwing plan is this test's own
+    // stub and records nothing, so an empty ledger is exactly "no effect was dispatched".
+    expect(test.calls).toEqual([]);
+
+    const completed = await coordinator.retry("session-1");
+
+    expect(completed?.state.phase).toBe("completed");
+    expect(completed?.operationId).toBe(failed.operationId);
+    // The retry drives the WHOLE round from the top, in order, exactly once.
+    expect(test.calls).toEqual([
+      "plan-workspace",
+      "plan-worker",
+      "worker",
+      "plan-gate",
+      "gate",
+      "plan-commit",
+      "commits",
+      "plan-round-recording",
+      "record-round",
+      "prepare-report",
+      "draft-report",
+      "plan-report-verification",
+      "verify-report",
+    ]);
+    expect(phaseAtPlan).toEqual(["claimed", "claimed"]);
+    // …and the re-claim is DURABLE, not just the in-memory retry path: the first state
+    // published after the failure revision is `claimed` again.
+    expect(
+      test.published
+        .filter((entry) => entry.revision > failed.revision)
+        .map((entry) => entry.state.phase)[0],
+    ).toBe("claimed");
+  });
+
+  it("retries a failed worker in the same operation and bound workspace", async () => {
     const test = scenario();
     let workerAttempt = 0;
     const planWorker: RoundExecutionPorts["planWorker"] = () => {
@@ -1598,15 +1221,20 @@ describe("createRoundExecutionCoordinator", () => {
 
     const failed = await coordinator.submit(operation());
     expect(failed.state.phase).toBe("failed");
+    if (failed.state.phase !== "failed" || failed.state.failure.at !== "worker") {
+      throw new Error("expected a worker failure carrying its bound workspace");
+    }
+    const boundWorkspace = failed.state.failure.workspace;
     const completed = await coordinator.retry("session-1");
 
     expect(completed?.state.phase).toBe("completed");
     expect(runWorker).toHaveBeenCalledTimes(2);
-    expect(test.calls.filter((call) => call === "prepare-workspace")).toHaveLength(1);
+    expect(test.calls.filter((call) => call === "plan-workspace")).toHaveLength(1);
     expect(completed?.operationId).toBe(failed.operationId);
     expect(completed?.askOccurrences).toEqual(failed.askOccurrences);
     if (completed?.state.phase !== "completed") throw new Error("retry did not complete");
-    expect(completed.state.workspace.worktreePath).toBe("/rounds/operation-1");
+    expect(completed.state.workspace).toEqual(boundWorkspace);
+    expect(completed.state.workspace.root).toBe("/repo");
   });
 
   it("retries a failed gate without repeating worker edits", async () => {
@@ -1645,37 +1273,49 @@ describe("createRoundExecutionCoordinator", () => {
     expect(test.calls.filter((call) => call === "commits")).toHaveLength(1);
   });
 
-  it("retries source landing from its persisted attempt without duplicating commits", async () => {
+  // The committing arm is a "round" retry (`roundRetryMode`), and observing commits is
+  // exactly the step that can fail transiently now that nothing stages on the reviewer's
+  // behalf. A retry must re-drive the observation from its persisted attempt and repeat
+  // neither the worker's turn nor the gate.
+  it("retries commit settlement from its persisted attempt without repeating the turn", async () => {
     const test = scenario();
-    let landingAttempt = 0;
+    let commitAttempts = 0;
     const runWorker = vi.fn(test.ports.runWorker);
-    const settleCommits = vi.fn(test.ports.settleCommits);
-    const landSourceChanges: RoundExecutionPorts["landSourceChanges"] = vi.fn(async (input) => {
-      test.calls.push("land-source");
-      landingAttempt += 1;
-      if (landingAttempt === 1) throw new Error("source landing failed");
-      return { ...input.attempt, outcome: "already-applied", landedAt: 32 };
+    const runGate = vi.fn(test.ports.runGate);
+    const planCommit = vi.fn(test.ports.planCommit);
+    const settleCommits: RoundExecutionPorts["settleCommits"] = vi.fn(async (input) => {
+      commitAttempts += 1;
+      if (commitAttempts === 1) throw new Error("git rev-list was interrupted");
+      return test.ports.settleCommits(input);
     });
     const coordinator = createRoundExecutionCoordinator({
       store: test.store,
       ports: {
         ...test.ports,
         runWorker,
+        runGate,
+        planCommit,
         settleCommits,
-        landSourceChanges,
         async drainTerminal() {
           return { kind: "retain" };
         },
       },
     });
 
-    expect((await coordinator.submit(operation())).state.phase).toBe("failed");
-    expect((await coordinator.retry("session-1"))?.state.phase).toBe("completed");
+    const failed = await coordinator.submit(operation());
+    expect(failed.state.phase).toBe("failed");
+    if (failed.state.phase !== "failed") throw new Error("expected a failed round");
+    expect(failed.state.failure.at).toBe("committing");
+    expect(failed.state.failure.reason).toBe("git rev-list was interrupted");
 
+    expect((await coordinator.retry("session-1"))?.state.phase).toBe("completed");
+    expect(settleCommits).toHaveBeenCalledTimes(2);
+    // The SAME persisted attempt, not a freshly planned one: a second `planCommit` would
+    // measure the range from whatever HEAD is now rather than the head the round started
+    // from, which is the range the review's successor patchset is built on.
+    expect(planCommit).toHaveBeenCalledTimes(1);
     expect(runWorker).toHaveBeenCalledTimes(1);
-    expect(settleCommits).toHaveBeenCalledTimes(1);
-    expect(landSourceChanges).toHaveBeenCalledTimes(2);
-    expect(test.calls.filter((call) => call === "plan-source-landing")).toHaveLength(1);
+    expect(runGate).toHaveBeenCalledTimes(1);
   });
 
   it("retries board regeneration with the original reserved board identities", async () => {
@@ -1815,11 +1455,10 @@ describe("createRoundExecutionCoordinator", () => {
     const priorHandoff = failed.state.failure.report.handoff;
     if (priorHandoff === undefined) throw new Error("expected a durable report handoff");
 
-    const prepareWorkspace = vi.fn(test.ports.prepareWorkspace);
+    const planWorkspace = vi.fn(test.ports.planWorkspace);
     const runWorker = vi.fn(test.ports.runWorker);
     const runGate = vi.fn(test.ports.runGate);
     const settleCommits = vi.fn(test.ports.settleCommits);
-    const landSourceChanges = vi.fn(test.ports.landSourceChanges);
     const recordRound = vi.fn(test.ports.recordRound);
     const draftReport = vi.fn<RoundExecutionPorts["draftReport"]>(
       async ({ operation: recovered, attempt, recordReportHandoff }) => {
@@ -1837,11 +1476,10 @@ describe("createRoundExecutionCoordinator", () => {
       store: new RoundOperationStore(test.dir),
       ports: {
         ...test.ports,
-        prepareWorkspace,
+        planWorkspace,
         runWorker,
         runGate,
         settleCommits,
-        landSourceChanges,
         recordRound,
         draftReport,
         async drainTerminal() {
@@ -1854,11 +1492,10 @@ describe("createRoundExecutionCoordinator", () => {
 
     expect(recovered?.state.phase).toBe("completed");
     expect(draftReport).toHaveBeenCalledTimes(1);
-    expect(prepareWorkspace).not.toHaveBeenCalled();
+    expect(planWorkspace).not.toHaveBeenCalled();
     expect(runWorker).not.toHaveBeenCalled();
     expect(runGate).not.toHaveBeenCalled();
     expect(settleCommits).not.toHaveBeenCalled();
-    expect(landSourceChanges).not.toHaveBeenCalled();
     expect(recordRound).not.toHaveBeenCalled();
   });
 

@@ -71,6 +71,9 @@ describe("runHandoffTurn", () => {
     expect(client.waitForTurnSettled).toHaveBeenCalledWith("t1", { after: START });
     expect(outcome).toEqual({
       status: "completed",
+      // The round's receipt: a turn on this thread is checkpointed, and the checkpoint ref
+      // is what the round account carries and what a revert takes.
+      checkpoint: { threadId: "t1", turnId: "turn-1", turnCount: 1 },
       finalText: "Done: renamed x.",
       turnDiff: "--- a\n+++ b\n",
       filesTouched: ["src/x.ts"],
@@ -88,6 +91,7 @@ describe("runHandoffTurn", () => {
     );
     expect(outcome).toEqual({
       status: "failed",
+      checkpoint: { threadId: "t1", turnId: "turn-1", turnCount: 1 },
       reason: "provider crashed",
       turnDiff: "partial",
       filesTouched: ["a"],
