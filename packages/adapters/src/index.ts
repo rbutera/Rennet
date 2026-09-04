@@ -288,6 +288,7 @@ export {
   type GitLabPrSubmissionCommandRunner,
   type GitLabPrSubmissionConfig,
 } from "./gitlab-pr-submission";
+export { readGrillSpec, selectedGrillDocPaths } from "./grill-spec-reader";
 export { claudeHandoffRunPort } from "./handoff-run-live";
 export {
   compareVersions,
