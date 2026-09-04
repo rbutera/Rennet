@@ -3,15 +3,16 @@ import { describe, expect, it, vi } from "vitest";
 import {
   asksFromBundle,
   buildComposePrompt,
+  CHECK_COMMAND_MAX_BYTES,
   type ComposePort,
   type ComposePortResult,
   type ComposeProposal,
   composeAsksContextFile,
   composeHandoffBundle,
   mechanicalComposition,
-  ROUND_COMMIT_RULE,
   renderComposedPrompt,
   renderWorkOrder,
+  roundCommitRule,
   validateComposition,
   workOrderContextFile,
 } from "./handoff-compose";
@@ -443,12 +444,76 @@ describe("rule 2 differs by exit, and neither can be the other's", () => {
   });
 
   it("a round asks for the commit, in both, and never forbids it", () => {
-    const prompt = renderComposedPrompt(tasks, CONTEXT_DIR, ROUND_COMMIT_RULE);
-    const document = renderWorkOrder(tasks, ROUND_COMMIT_RULE);
+    const prompt = renderComposedPrompt(tasks, CONTEXT_DIR, roundCommitRule());
+    const document = renderWorkOrder(tasks, roundCommitRule());
     for (const text of [prompt, document]) {
       expect(text).toContain("COMMIT your work on the current branch");
       expect(text).toContain("do NOT push");
       expect(text).not.toContain("Do NOT commit");
     }
+  });
+});
+
+// Rennet stopped running the repository's check (round-worker-thread; Rai, 2026-09-04) —
+// the WORKER runs it, so the command has to reach the worker as an instruction. What is
+// asserted here is the whole of that contract: the command appears when there is one, no
+// placeholder appears when there is not, and a command longer than the declared bound is
+// truncated rather than sent whole.
+describe("the round's work order carries the repository's check command", () => {
+  const tasks = mechanicalComposition(bundleOf(THREE_ASKS), CONTEXT_DIR).tasks;
+
+  it("names the discovered command in both the prompt and the document", () => {
+    const rule = roundCommitRule("pnpm check");
+    for (const text of [
+      renderComposedPrompt(tasks, CONTEXT_DIR, rule),
+      renderWorkOrder(tasks, rule),
+    ]) {
+      expect(text).toContain("Run `pnpm check` before you commit");
+      expect(text).toContain("say why in your final message");
+    }
+  });
+
+  it("says nothing about a check when the scout found no command", () => {
+    for (const text of [
+      renderComposedPrompt(tasks, CONTEXT_DIR, roundCommitRule()),
+      renderWorkOrder(tasks, roundCommitRule()),
+    ]) {
+      expect(text).not.toContain("before you commit;");
+      // The empty-command placeholder this refuses to render: "Run `` before you commit".
+      expect(text).not.toContain("Run `");
+    }
+    // …and the round's own commit rule is still there, so the absence is of the check
+    // sentence alone rather than of the whole block.
+    expect(renderWorkOrder(tasks, roundCommitRule())).toContain(
+      "COMMIT your work on the current branch",
+    );
+  });
+
+  it("truncates a command past its declared bound, and says so", () => {
+    const long = `pnpm ${"x".repeat(CHECK_COMMAND_MAX_BYTES)}`;
+    const rendered = roundCommitRule(long).join("\n");
+    expect(rendered).toContain("…`");
+    expect(rendered).not.toContain(long);
+    // The bound is on the COMPLETE quoted command, marker included — the marker's own bytes
+    // are budgeted INSIDE the cap, so the whole string never exceeds it (Codex #817-2).
+    const quoted = /Run `([^`]*)`/.exec(rendered)?.[1] ?? "";
+    expect(quoted.endsWith("…")).toBe(true);
+    expect(Buffer.byteLength(quoted, "utf8")).toBeLessThanOrEqual(CHECK_COMMAND_MAX_BYTES);
+  });
+
+  it("truncates on a UTF-8 code-point boundary, never mid-character", () => {
+    // 199 ASCII bytes + a 4-byte emoji = 203 bytes. A naive `subarray(0, 200)` cuts inside
+    // the emoji; decoding the partial bytes yields U+FFFD, which re-encodes to 3 bytes and
+    // pushes the command PAST its bound while corrupting the last character (Codex #817-6).
+    const long = `${"x".repeat(CHECK_COMMAND_MAX_BYTES - 1)}😀`;
+    expect(Buffer.byteLength(long, "utf8")).toBe(CHECK_COMMAND_MAX_BYTES + 3);
+    const rendered = roundCommitRule(long).join("\n");
+    const quoted = /Run `([^`]*)`/.exec(rendered)?.[1] ?? "";
+    // No mojibake: the incomplete emoji was dropped whole, not decoded to a replacement char.
+    expect(quoted).not.toContain("�");
+    // The COMPLETE quoted command — marker included — stays within the byte bound. Measuring
+    // the marker too is what catches the +3 overflow the marker-stripping version masked.
+    expect(quoted.endsWith("…")).toBe(true);
+    expect(Buffer.byteLength(quoted, "utf8")).toBeLessThanOrEqual(CHECK_COMMAND_MAX_BYTES);
   });
 });

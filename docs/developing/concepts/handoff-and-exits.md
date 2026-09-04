@@ -10,11 +10,12 @@ Everything the reviewer concludes along the way gathers as asks, and Rennet keep
 every outbound document drafted as it goes.
 
 
-There is nothing to choose between. The composed work order runs as **one turn on
-the review's thread** in the [T3 Code sidecar](./t3code-sidecar.md)
-(`packages/server/src/t3/handoff.ts`), full access, with the checkout as its working
-directory; the turn's diff is T3's own checkpoint, and the delta re-review that
-follows is unchanged.
+There is nothing to choose between. The composed work order runs as **one turn** in
+the [T3 Code sidecar](./t3code-sidecar.md) (`packages/server/src/t3/handoff.ts`),
+full access, with the checkout as its working directory; the turn's diff is T3's own
+checkpoint, and the delta re-review that follows is unchanged. The **review handoff**
+runs on the review's own thread; a coding **round** runs on a thread of its own, one
+per round.
 
 The work order itself is **a file, not a prompt**. Before the run,
 `review.handoff.run` writes the ordered, grouped, verbatim tasks — each with its
@@ -27,6 +28,17 @@ still refuses an order nobody composed. A coding **round** uses the same file an
 same pointer prompt: the composed document rides its durable operation and is written
 into the bound workspace at the moment the turn starts, so a resumed round finds the
 exact order it was dispatched with.
+
+The two exits carry opposite git rules, and a round's carries one more line.
+The handoff forbids git entirely — the review harness recaptures the dirty tree.
+A round's commits **are** the round, so its rule asks for them; and when the project
+scout has discovered a check command for the repository, the round's work order tells
+the worker to run that command before committing, to commit only when it passes, and to
+say why in its final message when it does not. **Rennet does not run the check itself**
+(Rai, 2026-09-04). It used to, in the bound worktree, after the turn: six and a half
+minutes whose only durable trace was an exit code, with no stdout anywhere a reader
+could look. When the scout found no command, the work order says nothing about one
+rather than rendering an empty instruction.
 
 ## The session is the durable root
 
@@ -389,10 +401,12 @@ The exits themselves:
   never through a per-round worktree whose result is replayed. A bound workspace
   that is not on that branch refuses the round and names both. A restart settles the
   round from the turn's sidecar checkpoint, and a no-op round does not invent a
-  commit. That receipt is not yet reliable: on the drive of 2026-09-04 a worker that
-  committed returned no diff and no checkpoint, so the round reported no change and has
-  no handle to revert — [#811](https://github.com/rbutera/Rennet/issues/811) is open on
-  it. Board **regeneration** is the tail of the same dispatch. Once the worker
+  commit. When the worker committed rather than left a dirty tree, the receipt waits
+  for the checkpoint to materialize and then reconciles: a clean checkpoint whose
+  `sourceHead..HEAD` range is non-empty takes its diff and changed paths from that
+  range, so a committed round reports its real change and a revert handle instead of
+  "no change" ([#811](https://github.com/rbutera/Rennet/issues/811), closed by this
+  path). Board **regeneration** is the tail of the same dispatch. Once the worker
   result is written to the durable dispatch record, the successor is captured from
   the bound workspace, over the persisted source base OID through the head the
   round's commits reached. The selected base and
@@ -403,12 +417,11 @@ The exits themselves:
   to regenerate over, or a regeneration that throws — closes the round's
   progress channel with a terminal failure and leaves the checkpoint evidence
   intact for a regeneration-only retry. Recovery also owns the earlier execution phases. If
-  the daemon restarts while the coding worker is running, it reconstructs the
-  worker's partial diff and changed-path evidence from the preserved detached
-  worktree, records an actionable failed receipt, and never invokes that worker
-  again. If the restart interrupts the configured gate, it runs the same gate
-  command over that preserved worktree under the durable gate execution identity
-  and continues only from the resulting receipt.
+  the daemon restarts while the coding worker is running, it reads the round
+  thread's checkpoint for that turn, records an actionable failed receipt when
+  there is none, and never invokes that worker again. Rennet runs no process of
+  its own between the turn and the commit observation, so there is nothing else
+  to resume.
 - **The pull or merge request** — `publish.compose(mode:"pr")` resolves the effective
   push URL before drafting and shows its provider-qualified repository on the
   preview. That target joins the canonical submission in a **stable derived
@@ -447,14 +460,19 @@ that host's repair.
 ## Rounds: the own-branch loop
 
 1. Gather asks into *Changes*.
-2. Dispatch — one round at a time, one worker running as a turn in the session's
-   bound workspace; asks gathered mid-run queue for the next round.
+2. Dispatch — one round at a time, one worker running as a turn on the round's
+   **own** sidecar thread in the session's bound workspace; asks gathered mid-run
+   queue for the next round. The thread is created per round, titled
+   `<branch> — round <n>`, and deleted with the session's other threads when the
+   session is archived. The session's chat thread never receives a round turn:
+   the reviewer's conversation and the coding agent's tool calls are two
+   transcripts, not one scroll.
 3. Watch the run live. Until the daemon answers, what the view shows is the
    *intent*: you asked for a round, and nothing has come back. The daemon's
    receipt is what promotes it, and a refused dispatch reads as the refusal it
    was, carrying the daemon's reason — a round that never started never reads as
    one under way. Dispatch takes over a dedicated run view (`/s/:slug/run`)
-   that reads the durable operation receipt as the prep, worker, gate, commit,
+   that reads the durable operation receipt as the prep, worker, commit,
    report-drafting, and report-verification phases settle. The visible commit
    step coarsens the commit observation and round-recording receipts; each remains
    its own restart boundary. The view is
@@ -483,7 +501,7 @@ that host's repair.
    receipt and offers both **Return to Review** and **Retry**. Retry resumes the same
    operation from the exact failed checkpoint, preserving its workspace, asks, logs,
    and completed effect receipts. A failure after the commits settle retries only the
-   recording or board-regeneration tail; it does not repeat worker edits, gates,
+   recording or board-regeneration tail; it does not repeat worker edits,
    commits, or board identities. Once a round has returned, the session row carries the durable
    ledger ordinal as *Round N is back*. The display transcript keeps every
    pre-round row and appends two stable lifecycle turns: the reviewer's
@@ -587,8 +605,7 @@ that host's repair.
    cannot stand behind. That line is a disclosure: opening it shows the round's
    **trigger queue** (the asks it dispatched, named by the words the report's
    outcomes recorded, and by their thread id when the report never accounted for
-   one) and its **run** (the gate the round ran and the commit range the worker
-   landed). Nothing there narrates what the drafters did: the per-lens carry and
+   one) and its **run** (the commit range the worker landed). Nothing there narrates what the drafters did: the per-lens carry and
    rework verdicts exist only while a round is live and are never persisted onto
    the record, so a settled round cannot recover them and does not pretend to.
 7. Every completed round stays readable in the **rounds ledger** (`?view=rounds`)
@@ -597,8 +614,9 @@ that host's repair.
    report, and each round pins its asks, observed worker HEAD range, checkpoint
    diff, frozen board generation, and the patchset generation it minted. Modern
    rows also pin one immutable run receipt: when the durable operation started,
-   its exact branch or detached HEAD target, and the configured gate's command,
-   duration, and project count (or the fact that no gate was configured). The
+   its exact branch or detached HEAD target, the bound workspace root the round
+   ran in, and the checkpoint that captured its commits — which names the round's
+   own thread, so the reviewer can open its transcript. The
    first dispatch placeholder owns that receipt, including the exact coding harness
    and version that ran the worker; retry and regeneration
    reconciliation cannot rewrite it. Because

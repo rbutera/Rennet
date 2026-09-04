@@ -89,8 +89,10 @@ detected and how many it guessed. The structural map is built when the scout
 returns. The header status reads *scouting*, then *indexing*, then *indexed*.
 
 While the map builds, a prefilled questionnaire offers the project's setup for
-a look: issue tracker, default branch, gate command, and the project's mark.
-Every answer carries a chip reading **detected** or **guessed** —
+a look: issue tracker, default branch, check command, and the project's mark. The
+check command is what a coding round's work order asks its agent to run before
+committing; Rennet never runs it itself. Every answer carries a chip reading
+**detected** or **guessed** —
 the value, provenance, and evidence line come from the scout record Rennet just
 saved, rather than from canned UI defaults. A detected logo path remains cosmetic:
 it is evidence for choosing one of the fixed sidebar glyphs in **Settings →
@@ -443,15 +445,25 @@ flowchart LR
 ```
 
 An accepted dispatch moves you to the live run: your workspace being opened, the
-round's asks being applied, the worker's activity as a table of steps, your
-project's gate command running and resolving, the commits, and the round report
-being drafted and checked. The round works in the workspace this session is bound
-to and commits on your branch there — Rennet makes no separate checkout for it, and
-it never stages anything on your behalf: the round's commits are the ones its agent
-made. The round report names the workspace it ran in and the checkpoint the turn
-left, so you can see where the work happened and which turn produced it. Closing and reopening the run, or
-following its direct link on another launch, resumes from the latest saved step
-without dispatching the work again.
+round's asks being applied, the worker's activity as a table of steps, the commits,
+and the round report being drafted and checked. The round works in the workspace this
+session is bound to and commits on your branch there — Rennet makes no separate
+checkout for it, and it never stages anything on your behalf: the round's commits are
+the ones its agent made.
+
+**Rennet does not run your project's check.** The round's agent does. If the scout
+found a check command for this project, the work order tells the agent to run it
+before committing, to commit only when it passes, and to say why in its closing
+message when it does not — so a failing check reads as the agent's own account of
+what went wrong, in its transcript, rather than as an exit code with nothing behind
+it. If no check command was found, the work order says nothing about one.
+
+Each round runs on its **own** transcript, separate from the chat you have with
+Rennet about the review. The round report names the workspace it ran in and the
+thread and checkpoint the turn left, so you can see where the work happened, which
+turn produced it, and the thread id its transcript is saved under. Closing and reopening
+the run, or following its direct link on another launch, resumes from the latest
+saved step without dispatching the work again.
 
 As soon as Rennet has saved and checked the report, it takes you back to the
 review and shows that report. It does not wait for every board to finish. If you
@@ -461,7 +473,7 @@ failure screen and keeps the incomplete boards hidden. The session row reads
 *Round N is back* only after the round finishes, using its saved ledger number.
 
 The **round report** is what greets you while the boards regenerate. It states what
-the round did, where it ran, and how the gate came back, then lists one item per
+the round did and where it ran, then lists one item per
 ask: **Addressed**, **Partial**, **Untouched**, or **Beyond the Asks** for work
 the round did that you never requested. Every outcome is verified against the
 round's diff rather than taken from the worker's word, and each item names the

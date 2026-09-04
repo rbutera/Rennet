@@ -359,9 +359,9 @@ are the product while a review is live, so nothing expires on a timer; `session.
 the act that ends them. Archiving first ABORTS AND AWAITS the session's own preparation —
 anything still able to bind a thread has to be finished before the sweep, or a seat mid-flight
 binds a fresh thread behind it and the archive leaves exactly the orphan it exists to prevent.
-Then, once the archive has persisted, one serialized sweep deletes the session's own thread
-and every seat thread its generations left behind (`thread.delete` over RPC) and drops those
-bindings. Un-archiving restores nothing — the next use creates fresh threads.
+Then, once the archive has persisted, one serialized sweep deletes the session's own thread,
+every seat thread its generations left behind, and every round thread its dispatches created
+(`thread.delete` over RPC), and drops those bindings. Un-archiving restores nothing — the next use creates fresh threads.
 
 A round in flight is covered too, from the other side. A round is driven by the durable
 round coordinator, takes no abort signal and is not waited on, so a returned generation
@@ -495,16 +495,17 @@ on every read, because it is a detached checkout and a landed round advances the
 The session's children run there because the thread's `worktreePath` and the turn's `cwd` are
 both that root: the six lens seats, the chat thread, the handoff thread and every cold utility
 turn (scout, repo map, delta digest, opener, pull-request body, refine, CI classification,
-finding verification). The coding round runs there too: it is a turn on the session's bound
-thread, and its worker commits on the session's branch in that root.
+finding verification). The coding round runs in that root too, and its worker commits on the
+session's branch there — but on a thread of its own (see [Rounds as threads](#rounds-as-threads)
+below), not the one the chat and handoff share.
 
 On WSL the bound root reaches the child as `wsl.exe --cd <distro path>`: the adapter bakes that
 argument at construction and `transportCwd` wins over a session's `cwd`, so a harness is
 resolved from the **turn root**, never from the repository root, or the cwd is silently ignored.
 
 A thread's cwd is fixed when the thread is created, so a binding row records the workspace it
-was created with, and the workspace is half the binding KEY — which is what puts the chat, the
-handoff and the round's turn on ONE thread. A row keyed on the repository while a workspace is
+was created with, and the workspace is half the binding KEY — which is what puts the chat and
+the handoff on ONE thread (the round gets its own, keyed on its operation, below). A row keyed on the repository while a workspace is
 being asked for is superseded: it carries no workspace (written before this wave) or the clone
 root (written by a read that preceded any bind), and either way its thread is rooted in the
 wrong tree. It is moved to the sidecar's pending deletions, so the existing sweep DELETES that
@@ -529,6 +530,33 @@ reads T3's checkpoint diff for that turn, and returns a final text, a unified di
 the files touched — or a failure reason from T3's session. `review.handoff.run` then
 recaptures the checkout and offers the delta re-review exactly as before. There is no
 second engine to fall back to.
+
+## Rounds as threads
+
+A coding **round** does not run on that thread. It gets one of its own, bound to
+`(repository root, session id, operation id)` — a third binding kind beside `session` and
+`seat` — created with the session's bound workspace as its worktree and titled
+`<branch> — round <n>`. The session's chat thread is the reviewer's conversation with
+Rennet; a coding agent's tool calls do not belong in the same scroll (Rai, 2026-09-04:
+"we should hand off the round to a subagent not to the main orchestrator"). The key is
+the **operation**, not the dispatch: a dispatch attempted while a round is live is
+coalesced, and when the live round settles it is replaced by a fresh operation that keeps
+the same dispatch id but takes a new operation id — so a dispatch key would put two
+operations' turns on one thread. The row carries the session id in the same field a seat row does, so
+archiving the session deletes the round threads with the rest, and the round account's
+checkpoint names the thread so the greeting can point a reviewer at the transcript.
+
+Reading that checkpoint **waits**. T3 writes a turn's checkpoint on the CheckpointReactor's
+own fiber, after the turn's lifecycle has settled — two writes, and the settle wait returns
+on the first. Issue #811: a round that had genuinely committed came back with an empty diff,
+no changed paths and no checkpoint at all, while the sidecar's projection held
+`checkpoint_status ready` for that exact turn. The read is now retried inside a bound, so a
+projection that has not caught up is not read as a turn that did nothing.
+
+A checkpoint also diffs the **working tree**, which a worker that committed leaves clean. So
+when the checkpoint's diff is empty and the bound root's `sourceHead..HEAD` carries commits,
+the round's receipt takes its diff and its changed paths from that commit range. A turn that
+edited without committing keeps the checkpoint's diff and still fails.
 
 ## What a thread costs and where it is kept
 

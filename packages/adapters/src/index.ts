@@ -541,7 +541,7 @@ export { RepoCompositionStore } from "./repo-composition-store";
 export { RepoWatcher } from "./repo-watcher";
 // Only what the daemon actually calls. The rest of this module's surface existed for the
 // round's detached-worktree landing and has no consumer since it went.
-export { observeRoundCommits, runConfiguredRoundGate } from "./round-execution-effects";
+export { observeRoundCommits } from "./round-execution-effects";
 export {
   defaultRoundOperationStoreDir,
   ROUND_OPERATION_STORE_FILE_NAME,

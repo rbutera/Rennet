@@ -138,7 +138,6 @@ async function recordARound(session: SessionModel): Promise<void> {
     run: {
       startedAt: 1,
       sourceTarget: { kind: "branch", branch: "feat/test" },
-      gate: { outcome: "skipped", reason: "not-configured" },
     },
     runWorkers: async () => ({
       outcome: "completed" as const,

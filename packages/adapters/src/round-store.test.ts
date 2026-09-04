@@ -55,7 +55,6 @@ const commitRange = { from: "H0", to: "H1" };
 const RUN_RECEIPT: RoundRunReceipt = {
   startedAt: 1_777_777_777_000,
   sourceTarget: { kind: "branch", branch: "feat/receipts" },
-  gate: { outcome: "passed", command: "pnpm check", durationMs: 12_500, projectCount: 7 },
 };
 
 /** A dispatch-path placeholder: ran a work-order, regenerated nothing (yet). */
@@ -144,7 +143,6 @@ describe("RoundRecordStore", () => {
       run: {
         startedAt: RUN_RECEIPT.startedAt + 1,
         sourceTarget: { kind: "detached", head: "wrong-head" },
-        gate: { outcome: "skipped", reason: "not-configured" },
       },
     });
     store.record("s-receipt", {
@@ -152,7 +150,6 @@ describe("RoundRecordStore", () => {
       run: {
         startedAt: RUN_RECEIPT.startedAt + 2,
         sourceTarget: { kind: "branch", branch: "wrong-branch" },
-        gate: { outcome: "skipped", reason: "not-configured" },
       },
     });
 

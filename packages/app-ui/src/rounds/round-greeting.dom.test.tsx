@@ -9,11 +9,14 @@ import { initialRoundState } from "./round-machine";
 // (round-harness-dispatch: "the client SHALL display that provenance"). A round is a turn
 // in the session's bound workspace now, so the two facts that say where the work happened
 // and how to undo it are the bound root and the sidecar checkpoint — never a detached
-// worktree path, because there is no longer one to name.
+// worktree path, because there is no longer one to name. The THREAD is the third: a round
+// has its own now (round-worker-thread), and its id is the handle a reviewer opens the
+// transcript with. The 2026-09-04 drive found this line rendering root, turn id and turn
+// count and never the thread, which is the only one of the three that leads anywhere.
 describe("RoundGreeting — where the round ran", () => {
   const receipt = { record: completedRoundRecord, roundNumber: 1 } as const;
 
-  it("names the bound workspace root and the checkpoint reference", () => {
+  it("names the bound workspace root, the round's thread, and the checkpoint reference", () => {
     const { container } = mount(
       <RoundGreeting
         board={reportBoardFixture}
@@ -24,6 +27,11 @@ describe("RoundGreeting — where the round ran", () => {
     );
     const provenance = container.querySelector('[data-testid="round-run-workspace"]');
     expect(provenance?.textContent).toContain("/Users/rai/code/rennet");
+    // The thread the round ran on, by its own test id so a `toContain` cannot be satisfied
+    // by the turn id sitting next to it.
+    expect(container.querySelector('[data-testid="round-run-thread"]')?.textContent).toBe(
+      "thread-7",
+    );
     expect(provenance?.textContent).toContain("turn-12");
     // Not "3" — any digit anywhere satisfies that, including the turn id.
     expect(provenance?.textContent).toContain("(turn 3)");
@@ -75,7 +83,6 @@ describe("RoundGreeting — where the round ran", () => {
                 kind: "branch",
                 branch: "main",
               },
-              gate: { outcome: "skipped", reason: "not-configured" },
             },
           },
           roundNumber: 1,

@@ -1,6 +1,6 @@
 import { ROUND_NO_REGEN, type RoundLedgerRecord, type RoundRecord } from "@rennet/protocol";
 import { cn } from "@rennet/ui";
-import { Check, ChevronRight, GitCommitHorizontal, Minus } from "lucide-react";
+import { Check, ChevronRight, GitCommitHorizontal } from "lucide-react";
 import { useState } from "react";
 import { useLocation, useSearch } from "wouter";
 import { LensBoardView } from "../board";
@@ -61,20 +61,6 @@ export function generationLine(records: readonly RoundRecord[]): readonly string
 }
 
 /**
- * Duration, in the shape the run receipt's millisecond count deserves at a glance.
- *
- * Rounds to whole seconds FIRST, then splits. Rounding after the split let the remainder
- * carry into a unit that cannot hold it: 59_999ms printed "60s" and 359_999ms printed
- * "5m 60s". A gate that finished inside a second reads "<1s" rather than the "0s" a round
- * gives it — the run happened, and "0s" says it took no time at all.
- */
-export function gateDuration(ms: number): string {
-  if (ms < 1000) return "<1s";
-  const seconds = Math.round(ms / 1000);
-  return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
-}
-
-/**
  * The retrospective panel a settled round wears (prototype `round-report.tsx:118-158`):
  * the one-line account is the DISCLOSURE, and opening it shows what the round was
  * dispatched to do and how its run went.
@@ -83,7 +69,7 @@ export function gateDuration(ms: number): string {
  * field the prototype's `round.triggers` stood in for — read back through the report's
  * `round_outcome` items so a dispatched ask shows its text rather than its thread id
  * (the report is the only place the ask's words survive on the record). **Run** is the
- * immutable run receipt: the gate the round ran and the commits it landed.
+ * immutable run receipt: where the round ran and the commits it landed.
  *
  * What is NOT here, deliberately: the prototype's "Turn Anatomy" — three sentences
  * narrating what the orchestrator read, which lenses carried forward, and what the
@@ -105,7 +91,6 @@ function ActivityFeed({
   readonly askText: (ref: string) => string;
 }) {
   const [open, setOpen] = useState(false);
-  const gate = record.run?.gate;
   const commits = record.workerCommitRange;
   return (
     <div
@@ -152,28 +137,13 @@ function ActivityFeed({
               ))}
             </div>
           )}
-          {/* The GATE is the optional half — it rides the run receipt, which legacy rows
-              omit. The commit range is record-level and always present, so it renders
-              either way: a legacy row that landed commits used to hide them purely
-              because nobody had written down which gate command ran. */}
+          {/* The commit range is record-level and always present. Rennet runs no check of
+              its own any more (round-worker-thread) — the worker runs the repository's,
+              and its verdict is in the worker's final message, not in a row here. */}
           <div className="flex flex-col gap-1">
             <span className="font-medium text-10 text-muted-foreground uppercase tracking-wide">
               Run
             </span>
-            {gate !== undefined && (
-              <span
-                data-testid="round-gate"
-                className="flex items-center gap-1.5 text-12-5 text-muted-foreground"
-              >
-                <Icon
-                  icon={gate.outcome === "passed" ? Check : Minus}
-                  className="size-3 shrink-0"
-                />
-                {gate.outcome === "passed"
-                  ? `Gate passed · ${gate.command} · ${gateDuration(gate.durationMs)}`
-                  : "No gate configured — the round ran without one"}
-              </span>
-            )}
             <span
               data-testid="round-commits"
               className="flex items-center gap-1.5 text-12-5 text-muted-foreground"

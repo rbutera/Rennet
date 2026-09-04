@@ -124,7 +124,6 @@ export const completedRoundRecord: RoundLedgerRecord = {
     harness: { id: "codex", version: "0.146.0" },
     workspaceRoot: "/Users/rai/code/rennet",
     checkpoint: { threadId: "thread-7", turnId: "turn-12", turnCount: 3 },
-    gate: { outcome: "passed", command: "pnpm check", durationMs: 12_400, projectCount: 7 },
   },
   report: reportBoardFixture,
 };

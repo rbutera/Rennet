@@ -64,7 +64,7 @@ const ANSWER_HINT: Record<ProjectScoutAnswer["key"], string> = {
   // a turn in that workspace (#812). This fact is the repo's OWN convention, read off
   // `git worktree list`.
   worktreeBaseDir: "where this repository's own worktrees live",
-  gateCommand: "coding rounds run this before handoff",
+  gateCommand: "a coding round asks its worker to run this before committing",
   logoPath:
     "cosmetic repository evidence only; choose the sidebar mark in Settings → Projects → Identity",
 };

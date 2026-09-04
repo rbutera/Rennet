@@ -136,7 +136,6 @@ function failedOperationWithReportHandoff(): RoundOperation {
     repoRoot: "/repo",
     workOrderPrompt: prompt,
     workOrderDigest: sha256Hex(prompt),
-    gatePlan: { kind: "absent" },
     revision: 10,
     rerunRequested: true,
     createdAt: 1,
@@ -149,7 +148,6 @@ function failedOperationWithReportHandoff(): RoundOperation {
         failedAt: 10,
         workspace,
         worker,
-        gate: { outcome: "skipped", reason: "not-configured", settledAt: 5 },
         commits,
         recording: {
           effect: "round-recording",
@@ -184,7 +182,6 @@ function draftingOperationWithReportHandoff(
       phase: "report-drafting",
       workspace: failure.workspace,
       worker: failure.worker,
-      gate: failure.gate,
       commits: failure.commits,
       recording: failure.recording,
       report: failure.report,
@@ -362,8 +359,8 @@ describe("RoundProgressHub — the append-only round log (C15 3.1)", () => {
   it("records events in order and answers a cold read", () => {
     const hub = new RoundProgressHub();
     hub.emit("rev-1", { type: "dispatched" });
-    hub.emit("rev-1", { type: "gate" });
-    expect(hub.read("rev-1").map((e) => e.type)).toEqual(["dispatched", "gate"]);
+    hub.emit("rev-1", { type: "committed" });
+    expect(hub.read("rev-1").map((e) => e.type)).toEqual(["dispatched", "committed"]);
     // A review with no round is honestly empty, never a fabricated phase.
     expect(hub.read("rev-2")).toEqual([]);
   });

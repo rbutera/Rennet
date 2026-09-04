@@ -86,6 +86,45 @@ describe("thread bindings", () => {
     return { a, b };
   }
 
+  // A ROUND has its own thread (round-worker-thread), keyed on (session, operation) — and
+  // it has to be swept with the session, or every archived session leaves one orphan
+  // transcript per round behind it.
+  it("gives each round its own thread and sweeps them with the session", async () => {
+    const round = (operationId: string): ThreadBindingKey => ({
+      kind: "round",
+      sessionId: "session-a",
+      operationId,
+    });
+    const chat = await bind(REPO_A, { kind: "session", sessionId: "review-a" });
+    const one = await bind(REPO_A, round("op-1"));
+    const two = await bind(REPO_A, round("op-2"));
+    // Two rounds, two threads — and neither is the session's chat thread. Key the round on
+    // the session instead of the operation and the second round reuses the first's thread.
+    expect(new Set([chat.threadId, one.threadId, two.threadId]).size).toBe(3);
+    // Idempotent per key, so a resumed round rebinds to its OWN thread, not a third one.
+    expect((await bind(REPO_A, round("op-1"))).threadId).toBe(one.threadId);
+
+    const owned = findBindingsForSessions(dataDir, ["session-a", "review-a"]);
+    expect(owned.map((row) => row.threadId).sort()).toEqual(
+      [chat.threadId, one.threadId, two.threadId].sort(),
+    );
+    expect(owned.filter((row) => row.kind === "round")).toHaveLength(2);
+
+    // Finding rows is not sweeping them: run the SAME sweep `session.archive` runs and prove
+    // the round threads are actually deleted at the RPC and their bindings dropped from disk.
+    const deleted: string[] = [];
+    await sweepThreads({
+      dataDir,
+      ids: ["session-a", "review-a"],
+      deleteThread: async (threadId) => {
+        deleted.push(threadId);
+      },
+      warn: () => undefined,
+    });
+    expect(deleted.sort()).toEqual([chat.threadId, one.threadId, two.threadId].sort());
+    expect(readBindings(dataDir)).toHaveLength(0);
+  });
+
   it("finds every binding a session owns, across both kinds and both checkouts", async () => {
     const { a, b } = await twoReviews();
     const found = findBindingsForSessions(dataDir, [a.session, a.review]);

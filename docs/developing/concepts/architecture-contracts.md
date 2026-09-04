@@ -184,6 +184,9 @@ a pull-request binding is re-pinned in place when the reviewed head moves. Workt
 versions created per review are removed by a startup sweep that leaves any directory a live
 session is bound to, and nothing creates that layout again. The coding round runs in the
 bound workspace like every other child of the session; no per-round worktree is created.
+A round runs on a sidecar thread of its **own**, keyed on the session and the round's durable
+operation, created with that bound workspace — never on the session's chat thread, which is
+the reviewer's conversation.
 
 Coding-agent handoff is an acting path. The agent receives a digest-bound bundle,
 works in the repository, and may write, test, commit, and push. Rennet then
@@ -205,8 +208,39 @@ branch and contain the reviewed commit; a branch name alone is not a repository
 identity, and a workspace failing either test is a refused round naming what it
 looked for, never a commit somewhere the reviewer cannot see. The sidecar's per-turn
 checkpoint is the round's receipt: the round account names the workspace root and
-that checkpoint, and restart recovery settles from it — honouring the checkpoint's
-own status, since a failed turn checkpoints too.
+that checkpoint — which identifies the round's own thread — and restart recovery settles
+from it, honouring the checkpoint's own status, since a failed turn checkpoints too. That
+checkpoint diffs the working tree, so a worker that committed leaves it clean: when the
+checkpoint's diff is empty and the bound root's commit range for the round is not, the
+receipt's diff and changed paths come from that range, and a round that moved the branch is
+never reported as having changed nothing. That range is `sourceHead..HEAD` whole: every
+commit landing on the branch during the turn is attributed to the round's worker, because
+the checkpoint is a working-tree snapshot and T3 exposes no per-commit worker identity to
+tell a concurrent human commit apart from the worker's. This is the same range the commit
+count already reports, so nothing new enters scope — but the receipt cannot filter a commit
+another hand landed in the window, and does not claim to. The two reads that build that
+receipt — the changed-path list and the diff — are pinned to one resolved HEAD OID, so they
+always describe the same range even if a commit lands between them.
+
+Restart recovery attributes a checkpoint to an attempt by a completion-time window, because
+T3 exposes no per-turn identity a recovering attempt could match against. A round's retry
+attempts share one thread (`{kind: "round", sessionId, operationId}`), and recovery reads the
+last checkpoint completed at or after the attempt started. A running or uncheckpointed turn
+carries no turn count on the thread — only a settled checkpoint does — so a later attempt
+cannot record a high-water that excludes an earlier attempt's turn still in flight. A narrow
+double-daemon-death interleave can therefore misattribute a sibling attempt's late checkpoint:
+attempt one outlives a daemon and checkpoints after attempt two has started, and if the daemon
+dies again before attempt two checkpoints, attempt two's recovery adopts attempt one's
+checkpoint. Closing this needs a per-turn identity (the turn's `turnId`) captured durably at
+turn-start into the attempt record — a tracked change, not a heuristic.
+
+**Rennet does not run the repository's check.** A round has no gate step: after the turn
+settles, the next thing Rennet does is observe the commits. When the project scout has
+discovered a check command, the round's work order tells the worker to run it before
+committing, to commit only when it passes, and to say why in its final message when it does
+not; when the scout found no command, the work order says nothing about one. Running the
+check in the bound worktree after the turn cost six and a half minutes and left an exit code
+as its only durable trace (Rai, 2026-09-04).
 
 The first work-order round resolves one enabled installed Claude Code or Codex
 harness in the repository's execution locus and pins that provider to the durable

@@ -128,15 +128,32 @@ function seedDecoyRepo(root: string): void {
  *     so every real round would have edited, committed nothing, and failed at the commit
  *     observation — while this suite stayed green because the fake committed anyway.
  */
-function fakeT3RoundWorker(turns: Array<{ readonly repoRoot: string; readonly order: string }>) {
+function fakeT3RoundWorker(turns: Array<RoundTurnRecord>) {
   let turnCount = 0;
-  return async ({ repoRoot, prompt }: { readonly repoRoot: string; readonly prompt: string }) => {
+  return async ({
+    repoRoot,
+    prompt,
+    sessionId,
+    operationId,
+    title,
+    worktreePath,
+  }: {
+    readonly repoRoot: string;
+    readonly prompt: string;
+    readonly sessionId: string;
+    readonly operationId: string;
+    readonly title: string;
+    readonly worktreePath?: string;
+  }) => {
     const named = /(\.rennet\/context\/[\w-]+\/work-order\.md)/.exec(prompt)?.[1];
     if (named === undefined) {
       throw new Error(`round prompt named no work order: ${prompt}`);
     }
     const order = readFileSync(join(repoRoot, named), "utf8");
-    turns.push({ repoRoot, order });
+    // The round's OWN thread: one per operation, in the bound root. The session's chat
+    // thread is a different key entirely and must never be handed a round turn.
+    const threadId = `round-thread-${operationId}`;
+    turns.push({ repoRoot, order, sessionId, operationId, title, worktreePath, threadId });
     const value = order.includes(OWNER_LOOP_ROUND_TWO_BODY) ? "round-two" : "round-one";
     writeFileSync(join(repoRoot, OWNER_LOOP_SOURCE), `export const ownerValue = '${value}';\n`);
     // Read the instruction, then follow it. Both the prompt and the work order have to
@@ -151,13 +168,27 @@ function fakeT3RoundWorker(turns: Array<{ readonly repoRoot: string; readonly or
     return {
       status: "completed" as const,
       finalText: `Set ownerValue to ${value}.`,
-      turnDiff: committed
-        ? git(repoRoot, "show", "--format=", "HEAD")
-        : git(repoRoot, "diff", "--", OWNER_LOOP_SOURCE),
-      filesTouched: [OWNER_LOOP_SOURCE],
-      checkpoint: { threadId: "t3-owner-loop", turnId: `turn-${value}`, turnCount },
+      // A real T3 checkpoint diffs the WORKING TREE. A worker that obeyed the work order and
+      // committed leaves that tree clean, so its checkpoint reports a BLANK diff and NO files
+      // (#811) — the honest shape, and the one that forces the round receipt onto the
+      // sourceHead..HEAD fallback in `reconcileRoundReceiptWithCommits`. A worker that edited
+      // WITHOUT committing keeps its own working-tree diff and file list.
+      turnDiff: committed ? "" : git(repoRoot, "diff", "--", OWNER_LOOP_SOURCE),
+      filesTouched: committed ? [] : [OWNER_LOOP_SOURCE],
+      checkpoint: { threadId, turnId: `turn-${value}`, turnCount },
     };
   };
+}
+
+/** What the fake round worker was handed: its thread identity, its cwd, its work order. */
+interface RoundTurnRecord {
+  readonly repoRoot: string;
+  readonly order: string;
+  readonly sessionId: string;
+  readonly operationId: string;
+  readonly title: string;
+  readonly worktreePath?: string;
+  readonly threadId: string;
 }
 
 function invocationRecords(path: string): Array<Record<string, unknown>> {
@@ -317,16 +348,17 @@ describe("#685 owner loop through a real server", () => {
       RENNET_DISABLE_HARNESS: "1",
     };
 
-    const roundTurns: Array<{ readonly repoRoot: string; readonly order: string }> = [];
+    const roundTurns: RoundTurnRecord[] = [];
     const first = await createRennetServer({
       dataDir,
       env,
       testHarnessPort: loadScriptedHarnessPlan(planPath),
       // Two seams, two different turns. `testT3Seats` serves the BOARD seats as sidecar
-      // threads (5.7); `runHandoffTurn` serves the ROUND's coding turn on the session's
-      // bound workspace (5.6). Neither stands in for the other.
+      // threads (5.7); `runRoundTurn` serves the ROUND's coding turn, on the round's OWN
+      // thread in the session's bound workspace. Neither stands in for the other, and
+      // neither is the session's chat thread.
       testT3Seats: scriptedSeats.resolve,
-      runHandoffTurn: fakeT3RoundWorker(roundTurns),
+      runRoundTurn: fakeT3RoundWorker(roundTurns),
     });
     shutdowns.push(first.shutdown);
     const added = parseCommandOutput(
@@ -458,10 +490,42 @@ describe("#685 owner loop through a real server", () => {
       invocationLog,
     );
     const roundOneGeneration = afterRoundOne[0]?.boardGeneration ?? "";
-    expect(afterRoundOne[0]?.run?.gate).toMatchObject({
-      outcome: "passed",
-      command: "npm run check",
+    // The round ran on ITS OWN thread, keyed on the operation, in the bound root — and
+    // the ledger's checkpoint names that thread, which is what the greeting shows and what
+    // a reviewer opens. Rennet ran no check of its own: the work order asked the worker to.
+    expect(roundTurns).toHaveLength(1);
+    expect(roundTurns[0]).toMatchObject({
+      sessionId,
+      title: "feature/shared — round 1",
+      worktreePath: roundTurns[0]?.repoRoot,
     });
+    // The operation id is what keys the thread, so the round must carry ITS OWN — not the
+    // session's and not the review's, which is what the shared thread was keyed on.
+    expect(roundTurns[0]?.operationId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(roundTurns[0]?.operationId).not.toBe(sessionId);
+    expect(roundTurns[0]?.operationId).not.toBe(reviewId);
+    expect(afterRoundOne[0]?.run?.checkpoint?.threadId).toBe(roundTurns[0]?.threadId);
+    // What this CANNOT catch: no sidecar runs here, so nothing proves the binding resolves
+    // to a different thread than the session's — the fake mints its own id. That claim is
+    // about `bindThread`'s key and is executed in `t3/handoff.test.ts`
+    // ("binds the ROUND's own thread … and never the session's"), which asserts the only
+    // key `threadFor` is ever asked for is `round`. What this DOES catch is the wiring: the
+    // round reaches the round-turn seam at all, with its operation, its title and the bound
+    // root as its cwd. Restore the session-keyed handoff turn and `roundTurns` stays empty.
+    // The receipt is honest after a commit (#811): the worker committed, so its checkpoint's
+    // working tree is CLEAN — it returned a blank turnDiff and no files. The only source left
+    // for the round's diff and changed paths is the sourceHead..HEAD range, which is exactly
+    // what `reconcileRoundReceiptWithCommits` fills from. So these three assertions ride on
+    // that fallback: the range is non-empty, and the receipt's diff and paths came FROM it.
+    // Control (2026-09-04): deleting the fallback branch (create-server.ts, the
+    // `return { ...receipt, diff, changedPaths }` line) reddens this test — so hard the round
+    // never even completes, because a committed round's blank receipt fails the coordinator's
+    // change check, which is the "0 files changed over a moved branch" lie made fatal.
+    expect(afterRoundOne[0]?.workerCommitRange.from).not.toBe(
+      afterRoundOne[0]?.workerCommitRange.to,
+    );
+    expect(afterRoundOne[0]?.changedPaths).toContain(OWNER_LOOP_SOURCE);
+    expect(afterRoundOne[0]?.diff).toContain("round-one");
     expect(roundOneGeneration).not.toBe(initialGeneration);
     expect(afterRoundOne[0]?.frozenPredecessor).toBe(initialGeneration);
 
@@ -542,10 +606,11 @@ describe("#685 owner loop through a real server", () => {
       env,
       testHarnessPort: loadScriptedHarnessPlan(planPath),
       // Two seams, two different turns. `testT3Seats` serves the BOARD seats as sidecar
-      // threads (5.7); `runHandoffTurn` serves the ROUND's coding turn on the session's
-      // bound workspace (5.6). Neither stands in for the other.
+      // threads (5.7); `runRoundTurn` serves the ROUND's coding turn, on the round's OWN
+      // thread in the session's bound workspace. Neither stands in for the other, and
+      // neither is the session's chat thread.
       testT3Seats: scriptedSeats.resolve,
-      runHandoffTurn: fakeT3RoundWorker(roundTurns),
+      runRoundTurn: fakeT3RoundWorker(roundTurns),
     });
     shutdowns.push(restarted.shutdown);
     parseCommandOutput("projects.list", await restarted.dispatch("projects.list", {}));
@@ -598,10 +663,13 @@ describe("#685 owner loop through a real server", () => {
       invocationLog,
     );
     const roundTwoGeneration = afterRoundTwo[1]?.boardGeneration ?? "";
-    expect(afterRoundTwo[1]?.run?.gate).toMatchObject({
-      outcome: "passed",
-      command: "npm run check",
-    });
+    // Round two gets its OWN thread: keyed on the operation, so two rounds on one session
+    // are two transcripts, not one shared scroll.
+    expect(roundTurns).toHaveLength(2);
+    expect(roundTurns[1]?.operationId).not.toBe(roundTurns[0]?.operationId);
+    expect(roundTurns[1]?.threadId).not.toBe(roundTurns[0]?.threadId);
+    expect(roundTurns[1]?.title).toBe("feature/shared — round 2");
+    expect(afterRoundTwo[1]?.run?.checkpoint?.threadId).toBe(roundTurns[1]?.threadId);
     expect(roundTwoGeneration).not.toBe(roundOneGeneration);
     expect(afterRoundTwo[1]?.frozenPredecessor).toBe(roundOneGeneration);
     await waitForFiveBoards(

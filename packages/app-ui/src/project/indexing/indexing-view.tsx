@@ -401,7 +401,7 @@ const ANSWER_LABEL: Record<ProjectScoutAnswer["key"], string> = {
   trackerKind: "Issue tracker",
   defaultBranch: "Default branch",
   worktreeBaseDir: "Worktree location",
-  gateCommand: "Gate command",
+  gateCommand: "Check command",
   logoPath: "Logo / mark",
 };
 

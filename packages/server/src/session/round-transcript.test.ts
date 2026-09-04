@@ -17,7 +17,6 @@ const baseOperation: Omit<RoundOperation, "state"> = {
   repoRoot: "/repo",
   workOrderPrompt: "Do the work",
   workOrderDigest: "0".repeat(64),
-  gatePlan: { kind: "configured", command: "pnpm check" },
   revision: 10,
   rerunRequested: false,
   createdAt: 1_800_000_000_000,
@@ -42,14 +41,6 @@ function completed(result: "changed" | "unchanged" = "changed"): RoundOperation 
         completedAt: 3,
         diff: "diff --git a/a b/a",
         changedPaths: ["a"],
-      },
-      gate: {
-        outcome: "passed",
-        executionId: "gate-1",
-        startedAt: 3,
-        completedAt: 1_203,
-        projectCount: 14,
-        exitCode: 0,
       },
       commits: {
         executionId: "commit-1",
@@ -113,7 +104,7 @@ describe("round transcript rows", () => {
       speaker: "orchestrator",
       lead: "Round 3 is back",
       paragraphs: [
-        "Round 3 is back — branch `feat/auth`, 2 asks, `pnpm check` passed across 14 projects in 1200 ms, 2 commits. The report was verified as generation `generation-2`.",
+        "Round 3 is back — branch `feat/auth`, 2 asks, 2 commits. The report was verified as generation `generation-2`.",
       ],
     });
   });

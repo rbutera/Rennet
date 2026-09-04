@@ -156,6 +156,23 @@ export interface TurnDiff {
   readonly files: OrchestrationCheckpointSummary["files"];
 }
 
+/**
+ * The thread has no checkpoint for this turn YET. Distinct from every other read failure:
+ * T3 writes a turn's checkpoint on the CheckpointReactor's own fiber after the lifecycle
+ * settles (#811), so a checkpoint that is merely late is worth RETRYING — while an RPC that
+ * failed or a sidecar that disconnected is a read failure the caller must not retry into a
+ * fabricated "the turn changed nothing" (Codex #817-2). Only this type means "not ready".
+ */
+export class CheckpointNotReadyError extends Error {
+  override readonly name = "CheckpointNotReadyError";
+  constructor(
+    readonly threadId: string,
+    readonly turnId: string,
+  ) {
+    super(`T3 thread ${threadId} has no checkpoint for turn ${turnId}`);
+  }
+}
+
 export interface T3Client {
   /** `server.probe`: the sidecar answers an authenticated RPC. */
   readonly probe: () => Promise<void>;
@@ -399,8 +416,7 @@ export async function connectT3(options: T3ClientOptions): Promise<T3Client> {
     readTurnDiff: async (threadId, turnId) => {
       const thread = await readThread(threadId);
       const checkpoint = thread.checkpoints.find((c) => c.turnId === turnId);
-      if (!checkpoint)
-        throw new Error(`T3 thread ${threadId} has no checkpoint for turn ${turnId}`);
+      if (!checkpoint) throw new CheckpointNotReadyError(threadId, turnId);
       const toTurnCount = checkpoint.checkpointTurnCount;
       const result = await run(
         client["orchestration.getTurnDiff"]({

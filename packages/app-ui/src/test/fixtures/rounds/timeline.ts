@@ -104,7 +104,6 @@ export const FIXTURE_ROUND_TIMELINE: readonly RoundEvent[] = [
       row("w-tests", "Tightened the tests", "done", "github-auth.test.ts"),
     ],
   },
-  { type: "gate" },
   { type: "committed" },
   { type: "report", reportBoardId: "report-round-1" },
   { type: "lens", lanes: lensLanes("running") },
