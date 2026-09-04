@@ -4796,6 +4796,37 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     }
   });
 
+  it("refuses a board seat whose harness the host has not got, before opening a thread", async () => {
+    // The ephemeral legs used to catch this on the way past ("resolved to codex, which is
+    // unavailable"). With them gone the council's own installed list is the only thing that
+    // can, and the refusal has to land BEFORE the seam — a thread opened on an absent
+    // provider spends a turn discovering what the host already said.
+    const turns: SeatCapture[] = [];
+    const applied: Applied[] = [];
+    const result = await runLensPipeline({
+      ...boardSeats(turns, () => cleanBody("sequence"), []),
+      repoRoot: "/pr-worktree",
+      deltaPacket: PACKET,
+      lintContextFor,
+      readPrompt,
+      whiteboard: fakeWhiteboard(applied),
+      boardIdFor: (lens) => `board:${lens}`,
+    });
+    // No turn was dispatched at all — not one thread, not one prompt.
+    expect(turns).toEqual([]);
+    expect(applied).toEqual([]);
+    for (const outcome of result.boards) {
+      expect(outcome.board, outcome.lens).toBeUndefined();
+      // The Flagged lane checks the same list one level up, per seat, and names both
+      // absences; every other lane gets the seat resolution's own words.
+      expect(outcome.failure, outcome.lens).toContain(
+        outcome.lens === "flagged"
+          ? "no claude harness; no codex harness"
+          : "which is not installed",
+      );
+    }
+  });
+
   it("names the daemon's OWN reason when the sidecar was composed and would not start", async () => {
     const applied: Applied[] = [];
     const result = await runLensPipeline({

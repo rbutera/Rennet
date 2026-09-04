@@ -376,6 +376,16 @@ export function councilSeatTurn(
   // repair, and says nothing about having lost them. A daemon that HAS a sidecar and could
   // not start it names the real reason; a caller that composed none at all is told that.
   if (isBoardJob(jobId)) {
+    // The host's own answer about what it HAS, checked before anything is dispatched.
+    // `resolveAssignment` routes a job to a harness from the council's table; it does not
+    // refuse one the host lacks, and the ephemeral legs used to catch that on the way past
+    // (`resolved to codex, which is unavailable`). With them gone the seam would happily
+    // open a thread on a provider the host said is absent and spend a turn discovering it,
+    // so the check moves here. An honest early failure, not a gate: the lane says which
+    // harness it wanted and that this machine has not got it.
+    if (!council.availability.installed.includes(resolution.harness)) {
+      return { failure: `${jobId} resolved to ${resolution.harness}, which is not installed` };
+    }
     if (deps.t3 === undefined) {
       return {
         failure:

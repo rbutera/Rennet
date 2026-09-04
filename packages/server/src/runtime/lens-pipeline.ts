@@ -2764,11 +2764,10 @@ async function runFlaggedDual(
     // Both reasons, not just the shape: a sidecar that would not start is why BOTH seats
     // are unrunnable, and a lane that only says "no runnable seat" sends the reviewer
     // looking for a missing harness that is sitting right there.
-    return {
-      failure:
-        `lens-draft-flagged resolved to no runnable seat ` +
-        `(${claudeSeat.failure}; ${codexSeat.failure})`,
-    };
+    // Deduplicated: when one cause takes both seats out — a sidecar that would not start
+    // is the usual one — saying it twice reads as two different problems.
+    const reasons = [...new Set([claudeSeat.failure, codexSeat.failure])].join("; ");
+    return { failure: `lens-draft-flagged resolved to no runnable seat (${reasons})` };
   }
 
   // Single-seat degrade — honest single-model concurrence, and an honestly ATTRIBUTED

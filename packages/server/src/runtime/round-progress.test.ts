@@ -838,21 +838,24 @@ describe("runRound emits the real regeneration progress (C15 3.1/3.3)", () => {
   it("no seat resolves: terminal failed, and no report is recorded that was never written", async () => {
     const events: RoundEvent[] = [];
     const persisted: Generation[] = [];
-    // NOT wrapped in `withFakeT3Seats`: no sidecar was ever composed, which since
-    // session-bound-workspace 5.7 is exactly what "no seat resolves" means for a board job
-    // — there is no ephemeral leg left for it to fall to.
-    const noSeats = createRoundsRuntime({
-      resolveClaudePort: async () => null,
-      resolveCodexExecutor: async () => null as CodexExecutor | null,
-      boardsRuntimeFor: () => ({
-        service: boards.service,
-        createRennetBoard: boards.createRennetBoard,
+    // A sidecar IS composed here, deliberately: the refusal under test is the HOST's, not
+    // the sidecar's. Neither harness is installed, so the council's own installed list
+    // refuses the report seat before a thread is opened on a provider this machine has not
+    // got (session-bound-workspace 5.7 review).
+    const noSeats = createRoundsRuntime(
+      withFakeT3Seats({
+        resolveClaudePort: async () => null,
+        resolveCodexExecutor: async () => null as CodexExecutor | null,
+        boardsRuntimeFor: () => ({
+          service: boards.service,
+          createRennetBoard: boards.createRennetBoard,
+        }),
+        readPrompt,
+        persistGeneration: (generation) => {
+          persisted.push(generation);
+        },
       }),
-      readPrompt,
-      persistGeneration: (generation) => {
-        persisted.push(generation);
-      },
-    });
+    );
     await expect(
       noSeats.runRound({
         session: { ...session, id: "no-seat-session" } as SessionModel,
@@ -866,7 +869,7 @@ describe("runRound emits the real regeneration progress (C15 3.1/3.3)", () => {
         onProgress: (event) => events.push(event),
         ...collationFor(),
       }),
-    ).rejects.toThrow("runs only on a T3 sidecar seat");
+    ).rejects.toThrow("round-report resolved to claude-code, which is not installed");
 
     // No real-generation record is filed for pre-minted empty boards or a report-only result.
     // The reserved ids remain as the durable identity of this failed attempt; reservation is
@@ -1412,11 +1415,11 @@ describe("a board seat has one backend (review finding 1)", () => {
     }
   });
 
-  it("positive control: the same run with no sidecar composed at all still drafts", async () => {
-    // No `resolveT3Seats` dep is the direct-call shape every pipeline test uses — nobody
-    // composed a sidecar, so nothing was lost and the ephemeral legs still run. If the
-    // assertions above passed for some other reason (a broken fixture, a run that drafts
-    // nothing at all), this run would open no session and settle no lane either.
+  it("positive control: with a sidecar that comes up, every seat runs and drafts", async () => {
+    // `withFakeT3Seats` composes a fake sidecar over the same counting port, so `opened`
+    // counts one createSession per seat TURN — dispatched through the seam, not around it.
+    // If the assertions above passed for some other reason (a broken fixture, a run that
+    // drafts nothing at all), this run would open no session and settle no lane either.
     const opened: string[] = [];
     const { events, error } = await runWith(opened);
     expect(error).toBeUndefined();
