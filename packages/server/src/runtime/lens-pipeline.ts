@@ -1807,6 +1807,20 @@ function bodyOr(result: HarnessTurnResult, fallback: unknown): unknown {
   return result.status === "emitted" ? result.body : fallback;
 }
 
+/**
+ * Raised INSTEAD of a repair turn on a leg that has no thread to repair on.
+ *
+ * A repair carries pointers and frozen ids and nothing else (session-bound-workspace
+ * 3.2). On the sidecar seat thread that is exactly right — the conversation already holds
+ * the base prompt and the draft. On an ephemeral leg it is not: every turn opens a fresh
+ * `ephemeral: true` session (`persistSession: false`, #585), so the repair would reach a
+ * session that has never seen the board it is told to fix. The lane then settled on the
+ * UNREPAIRED draft and read as though a ladder had run. A board presented as having
+ * passed a repair nothing performed is a lie in the UI, so the lane settles as a typed
+ * failure instead — and no turn is spent saying so.
+ */
+class NoThreadToRepairSignal extends Error {}
+
 class DesignNoSpecSignal extends Error {
   constructor() {
     super("The Design seat found no specification for this branch.");
@@ -1871,12 +1885,20 @@ function requiredBoardFailure(lens: LensKind): string {
  * RETRY degrades to keeping the current draft — the loop re-lints and escalates,
  * exactly the resolution-failure path — so one crashed retry never aborts a lens
  * that already has passing elements.
+ *
+ * `canRepair` says whether this leg HAS a thread to repair on. The sidecar seat thread
+ * does; an ephemeral leg does not, and a repair sent there would reach a session that has
+ * never seen the draft — so on that leg a lint failure settles the lane as a typed failure
+ * rather than shipping the unrepaired board (Rai's ruling, 2026-09-04: the ephemeral
+ * board-drafting legs are a leftover the T3 seat leg superseded, and group 5.7 deletes
+ * them; until then they must fail honestly rather than pretend).
  */
 function draftOneLens(
   basePrompt: string,
   seatTurn: (prompt: string, attempt: number) => Promise<HarnessTurnResult>,
   ctx: LintContext,
   retryCap: number,
+  canRepair: boolean,
   transformOutput?: (output: unknown) => unknown,
 ): Promise<DraftedLens | LensDraftFailure>;
 function draftOneLens(
@@ -1884,6 +1906,7 @@ function draftOneLens(
   seatTurn: (prompt: string, attempt: number) => Promise<HarnessTurnResult>,
   ctx: LintContext,
   retryCap: number,
+  canRepair: boolean,
   transformOutput: ((output: unknown) => unknown) | undefined,
   initialAbsence: (output: unknown) => { readonly absence: "no-spec" } | undefined,
 ): Promise<DraftedLens | LensDraftFailure | { readonly absence: "no-spec" }>;
@@ -1892,6 +1915,7 @@ async function draftOneLens(
   seatTurn: (prompt: string, attempt: number) => Promise<HarnessTurnResult>,
   ctx: LintContext,
   retryCap: number,
+  canRepair: boolean,
   transformOutput: ((output: unknown) => unknown) | undefined = (output) => output,
   initialAbsence?: (output: unknown) => { readonly absence: "no-spec" } | undefined,
 ): Promise<DraftedLens | LensDraftFailure | { readonly absence: "no-spec" }> {
@@ -1928,12 +1952,18 @@ async function draftOneLens(
         // draws a reduced ladder, so the seat is never handed a refreshed full one.
         retryCap,
         runTurn: async (req) => {
+          // No thread ⇒ no REPAIR. Narrow on purpose: this seam serves two asks. A draft
+          // that failed lint needs the thread, because the pointers only mean anything
+          // beside the board they point INTO — that is the one refused here. A turn that
+          // emitted NOTHING is the #549 re-ask, whose draft is empty and whose ask is for
+          // the whole board; it carries no reference to a draft the session must remember,
+          // so it is left exactly as it was.
+          if (!canRepair && req.draft.elements.length > 0) throw new NoThreadToRepairSignal();
           try {
             const retry = await seatTurn(
-              // A repair is pointer-only on EVERY leg (session-bound-workspace 3.2): the
-              // pointers, the frozen ids and the instruction travel; the base prompt and
-              // the draft never do, on the sidecar thread (which holds them) or on the
-              // ephemeral legs (which do not get them back).
+              // A repair is pointer-only (session-bound-workspace 3.2): the pointers, the
+              // frozen ids and the instruction travel; the base prompt and the draft never
+              // do, because the seat's own thread already holds them.
               renderRepairPrompt(req.draft, req.pointers, req.frozenIds),
               req.attempt,
             );
@@ -1949,6 +1979,7 @@ async function draftOneLens(
             return transformOutput(bodyOr(retry, req.draft));
           } catch (error) {
             if (error instanceof DesignNoSpecSignal) throw error;
+            if (error instanceof NoThreadToRepairSignal) throw error;
             // A THROWN retry (a live-harness crash mid-loop) degrades the same way —
             // keep the draft, let the loop escalate; one crashed retry is not fatal.
             return req.draft;
@@ -1958,6 +1989,15 @@ async function draftOneLens(
     } catch (error) {
       if (error instanceof DesignNoSpecSignal && retryAbsence !== undefined) {
         return retryAbsence;
+      }
+      if (error instanceof NoThreadToRepairSignal) {
+        // RETRYABLE, not terminal: the draft failed lint and no repair was possible on
+        // this leg. Nothing about the lane is spent — a generation with a sidecar behind
+        // it can draft this lens again and repair it properly.
+        return {
+          failure: `${who}: the draft did not pass lint and there is no thread to repair on — this leg opens a fresh session per turn, so a pointer-only repair would reach a session that has never seen the board. Settled as a failure rather than shipping the unrepaired draft.`,
+          failureAccount: { attempt: 0, classification: "retryable" },
+        };
       }
       throw error;
     }
@@ -2593,6 +2633,7 @@ async function runLegacyRoundReport(
     seat,
     ctx,
     lensRetryBudget("report", deps.boardAttempt ?? 0),
+    deps.t3 !== undefined,
   );
   if ("failure" in validated) {
     return {
@@ -2769,6 +2810,7 @@ async function runFlaggedDual(
       wrapSeat(resolved.runTurn, { harness: resolved.harness, model: resolved.model }),
       ctx,
       retryCap,
+      deps.t3 !== undefined,
     );
     // Carry the account, not just the words: the sole seat's classification IS the lens's.
     if ("failure" in single) return single;
@@ -2784,12 +2826,14 @@ async function runFlaggedDual(
       wrapSeat(claude.runTurn, { harness: claude.harness, model: claude.model }),
       ctx,
       retryCap,
+      deps.t3 !== undefined,
     ),
     draftOneLens(
       basePrompt,
       wrapSeat(codex.runTurn, { harness: codex.harness, model: codex.model }),
       ctx,
       retryCap,
+      deps.t3 !== undefined,
     ),
   ]);
   const aOk = !("failure" in a);
@@ -2952,8 +2996,16 @@ async function draftLensBoard(
     // it against — so it settles the lane on the first turn or on any repair turn.
     const drafted =
       lens === "design"
-        ? await draftOneLens(basePrompt, seat, ctx, retryCap, undefined, designNoSpecAbsence)
-        : await draftOneLens(basePrompt, seat, ctx, retryCap);
+        ? await draftOneLens(
+            basePrompt,
+            seat,
+            ctx,
+            retryCap,
+            deps.t3 !== undefined,
+            undefined,
+            designNoSpecAbsence,
+          )
+        : await draftOneLens(basePrompt, seat, ctx, retryCap, deps.t3 !== undefined);
     if ("failure" in drafted) {
       return failedLensOutcome(lens, drafted);
     }

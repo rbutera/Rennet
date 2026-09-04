@@ -1261,7 +1261,23 @@ export const noiseJudgedBySchema = z.union([
   z.object({ kind: z.literal("noise-job"), model: z.string().min(1) }),
 ]);
 export const noiseItemSchema = z.object({
+  /**
+   * The hunk the churn sits in, MINTED HOST-SIDE (path-line-citations): the model names a
+   * path, a side and a 1-based line range, and the runner resolves that against the
+   * offered regions to get the id. No hunk id ever reaches a model; the persisted document
+   * keeps one because the delta anchor is what the whole document family resolves on.
+   */
   anchor: z.string().min(1),
+  /**
+   * The coordinates the model actually gave, kept beside the anchor so the stored document
+   * still satisfies the model-facing body shape when the atomic validator re-checks it
+   * (V108). Optional here, and only here: reviews stored before path-line citations carry
+   * the anchor alone and must still load.
+   */
+  path: z.string().min(1).optional(),
+  side: z.enum(["base", "head"]).optional(),
+  startLine: z.number().int().positive().optional(),
+  endLine: z.number().int().positive().optional(),
   detail: z.string(),
   deviates: z.boolean().optional(),
 });

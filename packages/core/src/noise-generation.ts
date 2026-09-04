@@ -76,7 +76,8 @@ import type {
   RspTokenUsage,
   ValidationReport,
 } from "@rennet/protocol";
-import { computeInputDigest, parseAnchor, resolveAnchor, validateDocument } from "@rennet/protocol";
+import { computeInputDigest, validateDocument } from "@rennet/protocol";
+import { type ChangedRegion, resolveCitation } from "./board/lint";
 import { absentBudgetGrant } from "./invocation-budget";
 
 /**
@@ -249,11 +250,71 @@ const NOISE_CATEGORIES = new Set<NoiseCategory>([
   "other",
 ]);
 
-/** True iff a `rennet:` anchor parses AND resolves to an offered occurrence. */
-function isGroundedAnchor(anchor: string, manifest: OfferedManifest): boolean {
-  const parsed = parseAnchor(anchor);
-  if (!parsed.ok) return false;
-  return resolveAnchor(parsed.anchor, manifest).outcome === "resolved";
+/**
+ * The offered hunks as CHANGED REGIONS, plus which hunk each region came from.
+ *
+ * This is the whole of path-line-citations on this leg: the offer the model reads is a
+ * list of regions with no ids in it, the model cites a region, and the runner reads the
+ * hunk id back off this map. A hunk contributes a region per side it actually changed —
+ * a pure addition has no base-side lines to cite, so it offers none.
+ */
+interface OfferedRegions {
+  readonly regions: readonly ChangedRegion[];
+  readonly hunkOf: ReadonlyMap<ChangedRegion, string>;
+}
+
+export function offeredRegions(manifest: OfferedManifest): OfferedRegions {
+  const regions: ChangedRegion[] = [];
+  const hunkOf = new Map<ChangedRegion, string>();
+  for (const occurrence of manifest.occurrences) {
+    if (occurrence.kind !== "hunk") continue;
+    const { path, spans } = occurrence;
+    if (path === undefined || spans === undefined) continue;
+    for (const [side, span] of [
+      ["base", spans.old],
+      ["head", spans.new],
+    ] as const) {
+      if (span.lines < 1) continue;
+      const region: ChangedRegion = {
+        path,
+        side,
+        start: span.start,
+        end: span.start + span.lines - 1,
+      };
+      regions.push(region);
+      hunkOf.set(region, occurrence.id);
+    }
+  }
+  return { regions, hunkOf };
+}
+
+/**
+ * The hunk a cited region belongs to, or `undefined` when the citation grounds in none.
+ *
+ * `resolveCitation` is the shared readability predicate (the board's
+ * `unresolvable-citation` rule and the daemon's reader use the same one), so a citation
+ * that names lines outside the change is refused here on exactly the terms it is refused
+ * everywhere else. Containment is then required on top of it: a span that runs across two
+ * offered hunks resolves to the first, and anchoring it to that one would silently claim
+ * churn the item never cited.
+ */
+function hunkForCitation(span: ChangedRegion, offered: OfferedRegions): string | undefined {
+  const region = resolveCitation(span, offered.regions);
+  if (region === undefined) return undefined;
+  if (span.start < region.start || span.end > region.end) return undefined;
+  return offered.hunkOf.get(region);
+}
+
+/** Read an emitted item's citation, or `undefined` if it is not a well-formed one. */
+function readItemCitation(candidate: Record<string, unknown>): ChangedRegion | undefined {
+  const { path, side, startLine, endLine } = candidate;
+  if (typeof path !== "string" || path.length === 0) return undefined;
+  if (side !== "base" && side !== "head") return undefined;
+  if (!Number.isInteger(startLine) || !Number.isInteger(endLine)) return undefined;
+  const start = startLine as number;
+  const end = endLine as number;
+  if (start < 1 || end < start) return undefined;
+  return { path, side, start, end };
 }
 
 /** True iff any string anywhere in `node` starts with the `rennet:` anchor prefix. */
@@ -267,30 +328,47 @@ function hasAnyAnchorString(node: unknown): boolean {
 }
 
 /**
- * Keep the group's well-formed, GROUNDED churn items. An item survives iff its
- * `anchor` resolves to an offered hunk, its `detail` is a string carrying no stray
- * `rennet:` anchor (which the generic walk would ground and reject), and its
- * `deviates` flag (when present) is a boolean. A `deviates: true` item is KEPT with
- * its flag — the derivation ejects it into normal review; the runner never
- * suppresses it. Anything else is dropped.
+ * Keep the group's well-formed, GROUNDED churn items, MINTING each one's anchor.
+ *
+ * An item survives iff its `path`/`side`/`startLine`/`endLine` citation resolves inside
+ * one offered hunk, its `detail` is a string carrying no stray `rennet:` anchor (which the
+ * generic walk would ground and reject), and its `deviates` flag (when present) is a
+ * boolean. A `deviates: true` item is KEPT with its flag — the derivation ejects it into
+ * normal review; the runner never suppresses it. Anything else is dropped.
+ *
+ * The surviving item carries BOTH the coordinates the model gave and the
+ * `rennet:hunk/<id>` anchor the runner minted from them. The anchor is what the delta
+ * validator's generic walk grounds and what the lens resolves; the coordinates are what
+ * keeps the stored document satisfying the model-facing body shape on the V108 re-check.
+ * No id reached the model in either direction.
  */
-function cullItems(raw: unknown, manifest: OfferedManifest): NoiseItem[] {
+function cullItems(raw: unknown, offered: OfferedRegions): NoiseItem[] {
   if (!Array.isArray(raw)) return [];
   const items: NoiseItem[] = [];
   for (const entry of raw) {
     if (typeof entry !== "object" || entry === null) continue;
     const candidate = entry as Record<string, unknown>;
-    const { anchor, detail, deviates } = candidate;
+    const { detail, deviates } = candidate;
     if (
-      typeof anchor !== "string" ||
       typeof detail !== "string" ||
       hasAnyAnchorString(detail) ||
-      (deviates !== undefined && typeof deviates !== "boolean") ||
-      !isGroundedAnchor(anchor, manifest)
+      (deviates !== undefined && typeof deviates !== "boolean")
     ) {
       continue;
     }
-    items.push({ anchor, detail, ...(deviates === true ? { deviates: true } : {}) });
+    const citation = readItemCitation(candidate);
+    if (citation === undefined) continue;
+    const hunkId = hunkForCitation(citation, offered);
+    if (hunkId === undefined) continue;
+    items.push({
+      anchor: `rennet:hunk/${hunkId}`,
+      path: citation.path,
+      side: citation.side,
+      startLine: citation.start,
+      endLine: citation.end,
+      detail,
+      ...(deviates === true ? { deviates: true } : {}),
+    });
   }
   return items;
 }
@@ -344,7 +422,7 @@ type CullResult =
  */
 function cullGroups(
   body: unknown,
-  manifest: OfferedManifest,
+  offered: OfferedRegions,
   noiseJobModel: string,
   mintDocId: () => string,
 ): CullResult {
@@ -381,7 +459,7 @@ function cullGroups(
       culled += 1;
       continue;
     }
-    const items = cullItems(candidate.items, manifest);
+    const items = cullItems(candidate.items, offered);
     if (items.length === 0) {
       // A group with no grounded churn to collapse is not a group.
       culled += 1;
@@ -445,23 +523,24 @@ function buildEnvelope(
 export const NOISE_OFFER_FILE = "noise-offer.json";
 
 /**
- * The offer as written to `noise-offer.json`: every offered hunk's immutable id, its
- * path, and its 1-based line ranges on both sides — and NO line bodies. The seat's cwd is
- * the reviewed checkout, so it reads the lines it is grouping from `git diff` like every
- * other seat, and nothing about the change's size reaches the prompt. This replaces the
- * 256 KiB inline payload that rode every attempt (#737) and had to count what it dropped;
- * a file has nothing to drop. Compact JSON: an indent is a surcharge no reader sees.
+ * The offer as written to `noise-offer.json`: every changed region of the patchset as a
+ * `path`, a `side` and a 1-based line range — NO line bodies, and NO ids (path-line-
+ * citations: a hunk id is an internal key and never reaches a model, in either
+ * direction). The seat's cwd is the reviewed checkout, so it reads the lines it is
+ * grouping from `git diff` like every other seat, and nothing about the change's size
+ * reaches the prompt. This replaces the 256 KiB inline payload that rode every attempt
+ * (#737) and had to count what it dropped; a file has nothing to drop. Compact JSON: an
+ * indent is a surcharge no reader sees.
  */
 export function renderNoiseOffer(manifest: OfferedManifest, patchsetId: string): string {
   return JSON.stringify({
     patchsetId,
-    hunks: manifest.occurrences
-      .filter((occurrence) => occurrence.kind === "hunk")
-      .map((occurrence) => ({
-        id: occurrence.id,
-        ...(occurrence.path === undefined ? {} : { path: occurrence.path }),
-        ...(occurrence.spans === undefined ? {} : { spans: occurrence.spans }),
-      })),
+    regions: offeredRegions(manifest).regions.map((region) => ({
+      path: region.path,
+      side: region.side,
+      startLine: region.start,
+      endLine: region.end,
+    })),
   });
 }
 
@@ -477,10 +556,10 @@ export function renderNoiseOfferLayer(input: {
   const offerPath = `${input.contextDir.replace(/\/$/, "")}/${NOISE_OFFER_FILE}`;
   return [
     "Your working directory is a checkout of the reviewed repository.",
-    `The offered hunks are listed in \`${offerPath}\`: each entry is a hunk's immutable \`id\`, its \`path\`, and its 1-based line ranges on the old and new side (\`spans\`). Read that file first.`,
+    `The changed regions you may cite are listed in \`${offerPath}\`: each entry is a \`path\`, a \`side\` (\`base\` or \`head\`) and a 1-based \`startLine\`/\`endLine\`. Read that file first.`,
     `Read the lines themselves from the checkout — ${
       input.diffCommand === undefined ? "`git diff`" : `\`${input.diffCommand}\``
-    } shows the whole change — and group only hunks whose lines you actually read.`,
+    } shows the whole change — and group only churn whose lines you actually read.`,
   ].join("\n");
 }
 
@@ -534,6 +613,9 @@ export async function runNoiseAngle(input: RunNoiseAngleInput): Promise<RunNoise
 
   const patchsetRef = { id: patchsetId };
   const inputDigest = computeInputDigest(patchsetRef, manifest);
+  // Built once: the regions the offer file shows the model, and the hunk each one maps
+  // back to when an emitted citation is turned into an anchor.
+  const offered = offeredRegions(manifest);
   const base = renderBaseInstruction(contract);
   // The offer is written ONCE, before any turn, and named on every attempt. There is no
   // payload layer any more, so a retry re-sends nothing of the change: the base, the
@@ -543,8 +625,8 @@ export async function runNoiseAngle(input: RunNoiseAngleInput): Promise<RunNoise
       name: NOISE_OFFER_FILE,
       body: renderNoiseOffer(manifest, patchsetId),
       holds:
-        "The offered hunks you may anchor to: each one's id, path and line ranges, no line bodies.",
-      readWhen: "first, before you read the change; anchor only to ids listed here.",
+        "The changed regions you may cite: each one's path, side and 1-based line range, no line bodies.",
+      readWhen: "first, before you read the change; cite only lines inside a region listed here.",
     },
     ...(input.assembledContext === undefined
       ? []
@@ -613,7 +695,7 @@ export async function runNoiseAngle(input: RunNoiseAngleInput): Promise<RunNoise
       continue;
     }
 
-    const cullResult = cullGroups(turn.body, manifest, noiseJobModel, mintDocId);
+    const cullResult = cullGroups(turn.body, offered, noiseJobModel, mintDocId);
     if (cullResult.malformed) {
       // A body that is not a noise document is NOT a clean review: the model did
       // not review the churn, it returned an unparseable shape. Route it to the

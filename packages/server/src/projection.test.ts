@@ -723,6 +723,11 @@ const PATH_FIELD_CLASSIFICATIONS: Readonly<Record<string, PathClassification>> =
     // The span-read row (B3, #489): a CodeRef citation's path is repo-relative
     // within the captured patchset.
     "patchset.readSpan.input.path",
+    // A noise item's citation (path-line-citations): the model names the changed region
+    // by path, side and line range, and that path is repo-relative within the reviewed
+    // patchset — the same shape as every other citation. Nothing host-absolute reaches it,
+    // because the offer it is chosen from is built from the patchset's own file paths.
+    "noise.review.output.groups.items.path",
     "review.setDisposition.input.path",
     "publish.review.input.artifact.comments.path",
     "publish.review.input.post.threads.path",
