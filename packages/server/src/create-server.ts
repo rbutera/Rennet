@@ -210,6 +210,7 @@ import {
   generationBoards,
   startBoardMcpServer,
 } from "./board/board-mcp-server";
+import { seatBoardServer } from "./board/seat-address";
 import { type BoardsRuntime, createBoardsRuntime } from "./boards/boards-runtime";
 import { comparablePath, decideBoundWorkspace, repinBoundWorkspace } from "./bound-workspace";
 import { attachCiSignal } from "./ci-signal";
@@ -327,14 +328,7 @@ import {
 } from "./t3/handoff";
 import { type SeatThreadWatch, watchSeatThread } from "./t3/seat-progress";
 import { createT3SidecarSupervisor } from "./t3/supervisor";
-import {
-  roundThreadTitle,
-  SEAT_BOARD_TARGET,
-  SEAT_BOARD_VOICE,
-  type SeatKind,
-  seatThreadTitle,
-  sweepIfArchived,
-} from "./t3/threads";
+import { roundThreadTitle, type SeatKind, seatThreadTitle, sweepIfArchived } from "./t3/threads";
 import { startWsListener, type WsListener } from "./ws-listener";
 import { createWslRunner } from "./wsl-daemon";
 import { ensureWslDaemon, probeWslDaemon } from "./wsl-supervisor";
@@ -1438,12 +1432,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
           // The seat's own address onto its lane's board, minted on the seat's first turn
           // and refreshed on every later one. Flagged's two seats resolve to the ONE
           // flagged lane and are given two addresses onto it (D9).
-          const seatKind = seat as SeatKind;
-          const voice = SEAT_BOARD_VOICE[seatKind];
-          const boardServer =
-            voice === undefined
-              ? undefined
-              : boards.lane(SEAT_BOARD_TARGET[seatKind])?.address({ seat, ...voice });
+          const boardServer = seatBoardServer(boards, seat);
           return {
             threadId: binding.threadId,
             projectId: binding.projectId,
