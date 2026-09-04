@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { ModelSelection, T3Client } from "./client";
+import type { CreateThreadInput, ModelSelection, T3Client } from "./client";
 import {
   bindThread,
   findBinding,
@@ -253,5 +253,92 @@ describe("thread bindings", () => {
       expect(swept).toBe(0);
       expect(called).toBe(0);
     });
+  });
+});
+
+// ── The session's bound workspace on the thread (session-bound-workspace 5.2) ────────────
+//
+// T3 resolves a turn's cwd as `worktreePath ?? project.workspaceRoot`, so a thread created
+// with a null worktree runs every one of its turns in the project root. These assert the
+// exact `createThread` input the binding produces, because that input IS the cwd.
+describe("bindThread carries the session's bound workspace", () => {
+  let dataDir: string;
+  let inputs: CreateThreadInput[];
+  let client: T3Client;
+
+  beforeEach(() => {
+    dataDir = mkdtempSync(join(tmpdir(), "rennet-bound-"));
+    inputs = [];
+    client = {
+      ensureProject: async (workspaceRoot: string) => `project:${workspaceRoot}`,
+      createThread: async (input: CreateThreadInput) => {
+        inputs.push(input);
+        return `thread-${inputs.length}`;
+      },
+    } as unknown as T3Client;
+  });
+
+  afterEach(() => {
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  it("dispatches thread.create with the bound worktree, and the PROJECT at the repository", async () => {
+    // A real directory, because an absent bound workspace is refused (see below).
+    const workspace = mkdtempSync(join(tmpdir(), "rennet-bound-wt-"));
+    const repositoryRoot = mkdtempSync(join(tmpdir(), "rennet-bound-repo-"));
+    try {
+      await bindThread({
+        dataDir,
+        client,
+        repositoryRoot,
+        worktreePath: workspace,
+        branch: "feat/x",
+        key: { kind: "seat", generationId: "gen-1", seat: "design" },
+        title: "feat/x — Design",
+        modelSelection: SELECTION,
+        sessionId: "session-1",
+      });
+      expect(inputs).toHaveLength(1);
+      // One T3 project per REPOSITORY, however many worktrees of it exist; the WORKTREE is
+      // what varies per session. Both halves matter: swap them and the seat's cwd is the
+      // repository root while the sidecar grows a project per review worktree.
+      expect(inputs[0]?.projectId).toBe(`project:${repositoryRoot}`);
+      expect(inputs[0]?.worktreePath).toBe(workspace);
+      expect(inputs[0]?.branch).toBe("feat/x");
+    } finally {
+      rmSync(workspace, { recursive: true, force: true });
+      rmSync(repositoryRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses to create a thread whose bound workspace is gone, and names the path", async () => {
+    const missing = join(tmpdir(), "rennet-bound-missing-does-not-exist");
+    await expect(
+      bindThread({
+        dataDir,
+        client,
+        repositoryRoot: REPO_A,
+        worktreePath: missing,
+        key: { kind: "session", sessionId: "s-gone" },
+        title: "t",
+        modelSelection: SELECTION,
+      }),
+    ).rejects.toThrow(missing);
+    // Nothing was created and nothing was bound: a thread on a vanished workspace would run
+    // every turn in the project root, which is a DIFFERENT tree, and draft from it happily.
+    expect(inputs).toHaveLength(0);
+    expect(findBinding(dataDir, REPO_A, { kind: "session", sessionId: "s-gone" })).toBeUndefined();
+  });
+
+  it("leaves the worktree null when no workspace is bound", async () => {
+    await bindThread({
+      dataDir,
+      client,
+      repositoryRoot: REPO_A,
+      key: { kind: "session", sessionId: "s-unbound" },
+      title: "t",
+      modelSelection: SELECTION,
+    });
+    expect(inputs[0]?.worktreePath).toBeUndefined();
   });
 });

@@ -236,7 +236,14 @@ export function reviewHandlers(rt: DispatchRuntime) {
       // turn's cwd, and this is what puts the ordered, grouped, verbatim asks and their
       // diff fences there. Written after verification, from the SAME `tasks` the digest
       // binds, so the file cannot carry an order nobody composed.
-      writeSessionContext(review.repositoryRoot, review.id, [workOrderContextFile(bundle.tasks)]);
+      // Under the session's BOUND workspace (session-bound-workspace), because that is the
+      // turn's cwd and the prompt's path is relative to it. Writing it under the repository
+      // while the turn runs in a worktree points the agent at a file that is not there.
+      writeSessionContext(
+        deps.boundWorkspaceForReview?.(review.id)?.root ?? review.repositoryRoot,
+        review.id,
+        [workOrderContextFile(bundle.tasks)],
+      );
       const turn = await deps.runHandoffTurn({
         repoRoot: review.repositoryRoot,
         prompt: bundle.prompt,

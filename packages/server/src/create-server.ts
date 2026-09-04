@@ -217,6 +217,7 @@ import {
 } from "@rennet/protocol";
 import { createBenchmarkRecording } from "./benchmark-store";
 import { type BoardsRuntime, createBoardsRuntime } from "./boards/boards-runtime";
+import { decideBoundWorkspace } from "./bound-workspace";
 import { attachCiSignal } from "./ci-signal";
 import {
   configureSessionContext,
@@ -1976,50 +1977,21 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   async function bindWorkspaceFor(review: Review): Promise<string> {
     const sessionId = sessionIdForReview(review);
     const recorded = sessionStore.load(sessionId)?.boundRoot;
-    const root = recorded ?? (await decideWorkspaceFor(review));
+    const root =
+      recorded ??
+      (await decideBoundWorkspace(review, {
+        gitFor: gitForRepo,
+        repoKeyForRoot,
+        dataDir,
+        prWorktreeFor: (reviewId) => readPrWorktreeIndex()[reviewId]?.path,
+        recordPrWorktree,
+        reviewWorktreePath: (reviewId) => reviewWorktreePath(dataDir, reviewId),
+        // Fire and forget, exactly as the pull-request front door runs it: a slow install
+        // must never delay the capture, and a failed one is honest status rather than a wall.
+        onWorktreeCreated: (worktree) => void runPrWorktreeSetup(worktree).catch(() => undefined),
+      }));
     sessionStore.setBoundRoot(sessionId, root);
     return root;
-  }
-
-  async function decideWorkspaceFor(review: Review): Promise<string> {
-    const patchset = review.patchsets.find((entry) => entry.id === review.activePatchsetId);
-    if (patchset === undefined) return review.repositoryRoot;
-    const git = gitForRepo(review.repositoryRoot);
-    // A PR snapshot binds to the detached worktree at the reviewed head — the same one the
-    // PR front door already ensures and indexes, now the session's binding rather than a
-    // side path. Both halves of "opened from a pull request" are tested POSITIVELY:
-    // `postTarget` is present exactly on a postable PR review, and `retrospective` marks the
-    // read-only PR review that deliberately has none. A branch review is neither, and a
-    // PR's head branch may not even exist locally (a fork), so there is nothing to check out.
-    if (review.postTarget !== undefined || review.retrospective === true) {
-      const entry = readPrWorktreeIndex()[review.id];
-      const worktree = entry?.path ?? reviewWorktreePath(dataDir, review.id);
-      try {
-        const { created } = await ensurePrWorktree(
-          git,
-          review.repositoryRoot,
-          worktree,
-          patchset.repository.headOid,
-        );
-        if (!entry) recordPrWorktree(review.id, worktree);
-        if (created) void runPrWorktreeSetup(worktree).catch(() => undefined);
-        return worktree;
-      } catch {
-        return review.repositoryRoot;
-      }
-    }
-    const branch = patchset.repository.headRef;
-    if (branch === undefined || branch.length === 0) return review.repositoryRoot;
-    const existing = await worktreeForBranch(git, review.repositoryRoot, branch);
-    if (existing !== undefined) return existing;
-    const worktree = branchWorktreePath(dataDir, repoKeyForRoot(review.repositoryRoot), branch);
-    try {
-      const { created } = await ensureBranchWorktree(git, review.repositoryRoot, worktree, branch);
-      if (created) void runPrWorktreeSetup(worktree).catch(() => undefined);
-      return worktree;
-    } catch {
-      return review.repositoryRoot;
-    }
   }
 
   /**
@@ -2288,7 +2260,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
             })
           : ciAssignment.harness === "claude-code" && adapter
             ? createClaudeCiRefinementTurn(adapter, {
-                cwd: review.repositoryRoot,
+                cwd: turnRootFor(review),
                 model: ciAssignment.model,
               })
             : undefined;
@@ -2317,7 +2289,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         hunks: decomposition.hunks,
         git: gitForRepo(patchset.repository.root),
       });
-      const runTurn = createVerificationTurn(adapter, { cwd: review.repositoryRoot });
+      const runTurn = createVerificationTurn(adapter, { cwd: turnRootFor(review) });
       // BUDGET-GATE (Rule 75, vital money circuit): `maxVerifications` caps how many
       // findings are verified — the over-cap remainder surfaces an honest "not verified"
       // caveat chip (CAP_CAVEAT), NEVER a silent skip that would read as an all-clear —
@@ -2461,7 +2433,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // to an app-owned cache and point `cwd` there. Do NOT read this as satisfied.
     const runNoiseTurn = createHarnessRunTurn(adapter, {
       docType: "noise",
-      cwd: review.repositoryRoot,
+      cwd: turnRootFor(review),
     });
     // A noise run is its own live-budget-gated user action, distinct from
     // review.canvases; the ceiling stops spend, never the review (R10, fail-closed).
@@ -2948,12 +2920,21 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
    * worktree if it disappears; naming a branch a detached workspace does not have would make
    * it rebuild the wrong tree.
    */
+  /**
+   * The root a review's turns run in and its context files live under: the session's binding
+   * (session-bound-workspace), falling back to the repository root for a session that has not
+   * bound one yet. This is the cwd every cold utility turn takes — a seat and a scout that
+   * disagree about which tree they are in read different bytes for the same review.
+   */
+  const turnRootFor = (review: Review): string =>
+    boundRootForSession(sessionIdForReview(review)) ?? review.repositoryRoot;
+
   function boundWorkspaceForReview(
     reviewId: string,
   ): { readonly root: string; readonly branch?: string } | undefined {
     const review = service.reviewById(reviewId);
     if (!review) return undefined;
-    const root = boundRootForSession(sessionIdForReview(review)) ?? review.repositoryRoot;
+    const root = turnRootFor(review);
     const branch =
       review.postTarget === undefined && review.retrospective !== true
         ? review.patchsets.find((entry) => entry.id === review.activePatchsetId)?.repository.headRef
@@ -2974,7 +2955,11 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
    */
   const writeReviewContext = (review: Review, files: readonly PromptContextFile[]): string => {
     const sessionId = sessionIdForReview(review);
-    writeSessionContext(review.repositoryRoot, sessionId, files);
+    // The session's BOUND workspace, not the repository root: the returned path is RELATIVE,
+    // and a relative path only resolves in the cwd it was written under. Write these under
+    // the repository while the turn runs in a worktree and every pointer in every prompt
+    // names a file that is not there.
+    writeSessionContext(turnRootFor(review), sessionId, files);
     return sessionContextRelativeDir(sessionId);
   };
   const roundsRuntime = createRoundsRuntime({

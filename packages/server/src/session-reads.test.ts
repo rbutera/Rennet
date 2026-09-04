@@ -63,6 +63,26 @@ describe("session.transcript — the chat dock read (C07, display read-model)", 
     expect(() => parseCommandOutput("session.transcript", out)).not.toThrow();
   });
 
+  it("names the bound workspace beside the branch, and says nothing when none is bound", async () => {
+    // session-bound-workspace 5.1: the reviewer must be able to see WHICH checkout the
+    // session's turns ran in — for an off-branch or PR review it is a worktree, not their
+    // own tree, and nothing else on the surface says so.
+    const bound = (await harness({
+      boundWorkspaceForReview: () => ({ root: "/home/dev/.rennet/worktrees/acme/feat-seam" }),
+    } as unknown as Partial<DispatchDeps>)["session.transcript"]({ reviewId: REVIEW_ID })) as {
+      trail: { title: string; workspace?: string };
+    };
+    expect(bound.trail.title).toBe("feat/seam");
+    expect(bound.trail.workspace).toBe("/home/dev/.rennet/worktrees/acme/feat-seam");
+    expect(() => parseCommandOutput("session.transcript", bound)).not.toThrow();
+
+    const unbound = (await harness()["session.transcript"]({ reviewId: REVIEW_ID })) as {
+      trail: { workspace?: string };
+    };
+    // Absent, never the repository root guessed on the trail's behalf.
+    expect(unbound.trail.workspace).toBeUndefined();
+  });
+
   it("honest-PRESENT: serves the captured coding turns when the transcript store has rows", async () => {
     const rows = [
       {
