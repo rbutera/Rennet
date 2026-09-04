@@ -24,6 +24,7 @@ import {
   type ProviderDriverKind,
   type ProviderRuntimeEvent,
   type ProviderSession,
+  type TurnMcpServers,
 } from "@t3tools/contracts";
 import { expandAssistantCitationsForProvider } from "@t3tools/shared/assistantCitations";
 import { causeErrorTag } from "@t3tools/shared/observability";
@@ -419,6 +420,13 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
      * the thread is stuck one dead session behind its own contract.
      */
     readonly outputSchema?: unknown;
+    /**
+     * The MCP servers of the turn this recovery is running for, for the same
+     * reason: both providers fix their MCP configuration when the session
+     * process is created, so a session recovered without them serves the turn
+     * with the wrong tools or refuses it.
+     */
+    readonly mcpServers?: TurnMcpServers;
   }) {
     const bindingInstanceId = yield* requireBindingInstanceId(input.operation, input.binding);
     yield* Effect.annotateCurrentSpan({
@@ -472,6 +480,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           ...(hasResumeCursor ? { resumeCursor: input.binding.resumeCursor } : {}),
           runtimeMode: input.binding.runtimeMode ?? "full-access",
           ...(input.outputSchema !== undefined ? { outputSchema: input.outputSchema } : {}),
+          ...(input.mcpServers !== undefined ? { mcpServers: input.mcpServers } : {}),
         })
         .pipe(Effect.onError(() => clearMcpSession(input.binding.threadId)));
       if (resumed.provider !== adapter.provider) {
@@ -508,6 +517,8 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     readonly allowRecovery: boolean;
     /** Carried into a recovered session; see `recoverSessionForThread`. */
     readonly outputSchema?: unknown;
+    /** Carried into a recovered session; see `recoverSessionForThread`. */
+    readonly mcpServers?: TurnMcpServers;
   }) {
     const bindingOption = yield* directory.getBinding(input.threadId);
     const binding = Option.getOrUndefined(bindingOption);
@@ -545,6 +556,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       binding,
       operation: input.operation,
       ...(input.outputSchema !== undefined ? { outputSchema: input.outputSchema } : {}),
+      ...(input.mcpServers !== undefined ? { mcpServers: input.mcpServers } : {}),
     });
     return {
       adapter: recovered.adapter,
@@ -810,8 +822,10 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           operation: "ProviderService.sendTurn",
           allowRecovery: true,
           // The session this recovery starts is the one that has to serve this
-          // turn, so it starts on this turn's structured-output contract.
+          // turn, so it starts on this turn's structured-output contract and on
+          // the MCP servers the turn expects.
           ...(input.outputSchema !== undefined ? { outputSchema: input.outputSchema } : {}),
+          ...(input.mcpServers !== undefined ? { mcpServers: input.mcpServers } : {}),
         });
       }
       metricProvider = routed.adapter.provider;

@@ -6,6 +6,7 @@ import * as NodePath from "node:path";
 import {
   ApprovalRequestId,
   CodexSettings,
+  EnvironmentId,
   EventId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -21,6 +22,7 @@ import {
 import { createModelSelection } from "@t3tools/shared/model";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it, vi } from "@effect/vitest";
+import { describe } from "vite-plus/test";
 
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -36,6 +38,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as CodexErrors from "effect-codex-app-server/errors";
 
 import { ServerConfig } from "../../config.ts";
+import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderAdapterValidationError } from "../Errors.ts";
 import type { CodexAdapterShape } from "../Services/CodexAdapter.ts";
@@ -46,7 +49,7 @@ import {
   type CodexSessionRuntimeShape,
   type CodexThreadSnapshot,
 } from "./CodexSessionRuntime.ts";
-import { makeCodexAdapter } from "./CodexAdapter.ts";
+import { codexConfiguredMcpServerNames, makeCodexAdapter } from "./CodexAdapter.ts";
 const decodeCodexSettings = Schema.decodeSync(CodexSettings);
 
 // Test-local service tag so the rest of the file can keep using `yield* CodexAdapter`.
@@ -294,6 +297,9 @@ validationLayer("CodexAdapterLive validation", (it) => {
         serviceTier: "priority",
         threadId: asThreadId("thread-1"),
         runtimeMode: "full-access",
+        // Always stated, never inferred: a session with no sidecar MCP server
+        // says so, rather than leaving the runtime to guess from an absence.
+        sidecarMcpServerConfigured: false,
       });
     }),
   );
@@ -466,6 +472,324 @@ sessionErrorLayer("CodexAdapterLive session errors", (it) => {
       NodeAssert.ok(runtime);
       NodeAssert.equal(runtime.options.launchArgs, "--strict-config --enable env-feature");
     }).pipe(Effect.provide(layer));
+  });
+
+  const mcpLayerWith = (
+    runtimeFactory: ReturnType<typeof makeRuntimeFactory>,
+    codexHome?: string,
+  ) =>
+    Layer.effect(
+      CodexAdapter,
+      Effect.gen(function* () {
+        const codexConfig = decodeCodexSettings(codexHome ? { homePath: codexHome } : {});
+        return yield* makeCodexAdapter(codexConfig, {
+          makeRuntime: runtimeFactory.factory,
+          // An explicit environment, so the probe never reads the developer's
+          // own `~/.codex` and the test says which config it is asserting about.
+          environment: { ...(codexHome ? { CODEX_HOME: codexHome } : {}), HOME: "/nonexistent" },
+        });
+      }),
+    ).pipe(
+      Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+      Layer.provideMerge(ServerSettingsService.layerTest()),
+      Layer.provideMerge(providerSessionDirectoryTestLayer),
+      Layer.provideMerge(NodeServices.layer),
+    );
+
+  it.effect("names the caller's credential variable and never carries a credential", () => {
+    const runtimeFactory = makeRuntimeFactory();
+    return Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("sess-caller-mcp"),
+        runtimeMode: "full-access",
+        mcpServers: {
+          board: {
+            url: "http://127.0.0.1:7391/board/flagged",
+            bearerTokenEnvVar: "RENNET_BOARD_TOKEN",
+          },
+        },
+      });
+
+      const runtime = runtimeFactory.lastRuntime;
+      NodeAssert.ok(runtime);
+      NodeAssert.deepStrictEqual(runtime.options.appServerArgs, [
+        "-c",
+        "mcp_servers.board.url=http://127.0.0.1:7391/board/flagged",
+        "-c",
+        'mcp_servers.board.bearer_token_env_var="RENNET_BOARD_TOKEN"',
+      ]);
+      // Nothing about the caller's server reaches the child environment: the
+      // daemon owns that variable, and this adapter only names it.
+      NodeAssert.equal(runtime.options.environment?.RENNET_BOARD_TOKEN, undefined);
+    }).pipe(Effect.provide(mcpLayerWith(runtimeFactory)));
+  });
+
+  it.effect("writes no credential key at all for a caller server that declared none", () => {
+    const runtimeFactory = makeRuntimeFactory();
+    return Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("sess-caller-mcp-no-credential"),
+        runtimeMode: "full-access",
+        mcpServers: { board: { url: "http://127.0.0.1:7391/board/flagged" } },
+      });
+
+      const runtime = runtimeFactory.lastRuntime;
+      NodeAssert.ok(runtime);
+      const args = runtime.options.appServerArgs ?? [];
+      // The load-bearing sentence: the key is ABSENT, not empty. Writing it
+      // empty makes codex expect a bearer it can never resolve, and against a
+      // real MCP server that is zero requests where omitting it handshakes.
+      NodeAssert.equal(
+        args.some((argument) => argument.includes("bearer_token_env_var")),
+        false,
+      );
+      NodeAssert.deepStrictEqual(args, [
+        "-c",
+        "mcp_servers.board.url=http://127.0.0.1:7391/board/flagged",
+      ]);
+    }).pipe(Effect.provide(mcpLayerWith(runtimeFactory)));
+  });
+
+  it.effect("refuses a caller server under the name T3's own server holds", () => {
+    const runtimeFactory = makeRuntimeFactory();
+    const threadId = asThreadId("sess-caller-mcp-collision");
+    McpProviderSession.setMcpProviderSession({
+      environmentId: EnvironmentId.make("env-codex-mcp-collision"),
+      threadId,
+      providerSessionId: "provider-session-codex-mcp-collision",
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      endpoint: "http://127.0.0.1:9111/mcp",
+      authorizationHeader: "Bearer t3-own-secret",
+    });
+    return Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      const error = yield* adapter
+        .startSession({
+          provider: ProviderDriverKind.make("codex"),
+          threadId,
+          runtimeMode: "full-access",
+          mcpServers: {
+            "t3-code": { url: "http://127.0.0.1:7391/board/design" },
+          },
+        })
+        .pipe(Effect.flip);
+
+      NodeAssert.match(error.message, /names Codex already holds/);
+      NodeAssert.match(error.message, /\(t3-code\)/);
+      // Nothing was spawned.
+      NodeAssert.equal(runtimeFactory.lastRuntime, undefined);
+    }).pipe(
+      Effect.provide(mcpLayerWith(runtimeFactory)),
+      Effect.ensuring(Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId))),
+    );
+  });
+
+  it.effect("refuses a caller server under a name the user's own Codex config holds", () => {
+    const runtimeFactory = makeRuntimeFactory();
+    const codexHome = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "codex-home-"));
+    NodeFS.writeFileSync(
+      NodePath.join(codexHome, "config.toml"),
+      [
+        "[mcp_servers.board]",
+        'url = "https://ambient.example.com/mcp"',
+        'bearer_token_env_var = "AMBIENT_TOKEN"',
+        "",
+        "[mcp_servers.board.http_headers]",
+        'X-Ambient-Secret = "ambient-header-value"',
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    return Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      // Codex deep-merges `-c` into this config with no way to remove a key, so
+      // a caller `board` would carry the user's headers to the caller's
+      // endpoint. Refusing is the only thing that actually closes that.
+      const error = yield* adapter
+        .startSession({
+          provider: ProviderDriverKind.make("codex"),
+          threadId: asThreadId("sess-user-config-collision"),
+          runtimeMode: "full-access",
+          mcpServers: {
+            board: {
+              url: "http://127.0.0.1:7391/board/flagged",
+              bearerTokenEnvVar: "RENNET_BOARD_TOKEN",
+            },
+          },
+        })
+        .pipe(Effect.flip);
+
+      NodeAssert.match(error.message, /names Codex already holds/);
+      NodeAssert.match(error.message, /\(board\)/);
+      NodeAssert.equal(runtimeFactory.lastRuntime, undefined);
+    }).pipe(
+      Effect.provide(mcpLayerWith(runtimeFactory, codexHome)),
+      Effect.ensuring(
+        Effect.sync(() => NodeFS.rmSync(codexHome, { recursive: true, force: true })),
+      ),
+    );
+  });
+
+  it.effect("starts a caller server whose name the user's config does not hold", () => {
+    const runtimeFactory = makeRuntimeFactory();
+    const codexHome = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "codex-home-"));
+    NodeFS.writeFileSync(
+      NodePath.join(codexHome, "config.toml"),
+      ["[mcp_servers.something-else]", 'url = "https://ambient.example.com/mcp"', ""].join("\n"),
+      "utf8",
+    );
+
+    return Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("sess-user-config-no-collision"),
+        runtimeMode: "full-access",
+        mcpServers: { board: { url: "http://127.0.0.1:7391/board/flagged" } },
+      });
+      // The refusal is a collision check, not a ban on user configs existing.
+      NodeAssert.ok(runtimeFactory.lastRuntime);
+    }).pipe(
+      Effect.provide(mcpLayerWith(runtimeFactory, codexHome)),
+      Effect.ensuring(
+        Effect.sync(() => NodeFS.rmSync(codexHome, { recursive: true, force: true })),
+      ),
+    );
+  });
+
+  it.effect("accepts the very turn that opened the session, alongside T3's own server", () => {
+    const runtimeFactory = makeRuntimeFactory();
+    const threadId = asThreadId("sess-codex-first-turn");
+    McpProviderSession.setMcpProviderSession({
+      environmentId: EnvironmentId.make("env-codex-first-turn"),
+      threadId,
+      providerSessionId: "provider-session-codex-first-turn",
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      endpoint: "http://127.0.0.1:9111/mcp",
+      authorizationHeader: "Bearer t3-own-secret",
+    });
+    const mcpServers = {
+      board: {
+        url: "http://127.0.0.1:7391/board/flagged",
+        bearerTokenEnvVar: "RENNET_BOARD_TOKEN",
+      },
+    };
+    return Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      // Start and send with the SAME set, which is what the reactor does. A
+      // session that stored a filtered set and compared an unfiltered one
+      // rejected this very turn.
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("codex"),
+        threadId,
+        runtimeMode: "full-access",
+        mcpServers,
+      });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "the turn this session was opened for",
+        mcpServers,
+      });
+
+      const runtime = runtimeFactory.lastRuntime;
+      NodeAssert.ok(runtime);
+      NodeAssert.equal(runtime.sendTurnImpl.mock.calls.length, 1);
+      NodeAssert.equal(runtime.options.environment?.T3_MCP_BEARER_TOKEN, "t3-own-secret");
+    }).pipe(
+      Effect.provide(mcpLayerWith(runtimeFactory)),
+      Effect.ensuring(Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId))),
+    );
+  });
+
+  it.effect("does not let a caller-named t3-code claim the sidecar's browser tools", () => {
+    const runtimeFactory = makeRuntimeFactory();
+    return Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      // No sidecar MCP session for this thread, so the name is not taken and the
+      // caller keeps it. Anything inferring provenance from the name would
+      // conclude the browser toolkit is attached; it is not.
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("sess-caller-named-t3-code"),
+        runtimeMode: "full-access",
+        mcpServers: { "t3-code": { url: "http://127.0.0.1:7391/board/design" } },
+      });
+
+      const runtime = runtimeFactory.lastRuntime;
+      NodeAssert.ok(runtime);
+      NodeAssert.equal(runtime.options.sidecarMcpServerConfigured, false);
+      NodeAssert.ok(
+        (runtime.options.appServerArgs ?? []).includes(
+          "mcp_servers.t3-code.url=http://127.0.0.1:7391/board/design",
+        ),
+      );
+    }).pipe(Effect.provide(mcpLayerWith(runtimeFactory)));
+  });
+
+  it.effect("states sidecar provenance when the sidecar's own server is attached", () => {
+    const runtimeFactory = makeRuntimeFactory();
+    const threadId = asThreadId("sess-sidecar-provenance");
+    McpProviderSession.setMcpProviderSession({
+      environmentId: EnvironmentId.make("env-codex-provenance"),
+      threadId,
+      providerSessionId: "provider-session-codex-provenance",
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      endpoint: "http://127.0.0.1:9111/mcp",
+      authorizationHeader: "Bearer t3-own-secret",
+    });
+    return Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("codex"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      const runtime = runtimeFactory.lastRuntime;
+      NodeAssert.ok(runtime);
+      NodeAssert.equal(runtime.options.sidecarMcpServerConfigured, true);
+    }).pipe(
+      Effect.provide(mcpLayerWith(runtimeFactory)),
+      Effect.ensuring(Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId))),
+    );
+  });
+
+  it.effect("refuses a Codex turn whose MCP servers differ from its session's", () => {
+    const runtimeFactory = makeRuntimeFactory();
+    const threadId = asThreadId("sess-caller-mcp-mismatch");
+    return Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("codex"),
+        threadId,
+        runtimeMode: "full-access",
+        mcpServers: { board: { url: "http://127.0.0.1:7391/board/flagged" } },
+      });
+
+      // The same set is fine: a repair turn re-states the seat's own server.
+      yield* adapter.sendTurn({
+        threadId,
+        input: "same servers",
+        mcpServers: { board: { url: "http://127.0.0.1:7391/board/flagged" } },
+      });
+
+      const error = yield* adapter
+        .sendTurn({
+          threadId,
+          input: "different servers",
+          mcpServers: { board: { url: "http://127.0.0.1:7391/board/noise" } },
+        })
+        .pipe(Effect.flip);
+      NodeAssert.match(error.message, /MCP servers its Codex session was not started with/);
+      // The session WAS started with a `board`; only its url differs.
+      NodeAssert.match(error.message, /or with different settings for/);
+      NodeAssert.match(error.message, /\(board\)/);
+    }).pipe(Effect.provide(mcpLayerWith(runtimeFactory)));
   });
 
   it.effect("maps codex model options for the adapter's bound custom instance id", () => {
@@ -1682,3 +2006,53 @@ it.effect("flushes managed native logs when the adapter layer shuts down", () =>
     }
   }),
 );
+
+describe("codexConfiguredMcpServerNames", () => {
+  it("sees a server declared in each of the four forms a config uses", () => {
+    const names = codexConfiguredMcpServerNames(
+      [
+        "model = \"gpt-5.3-codex\"",
+        "[mcp_servers.table-header]",
+        'url = "https://example.com/mcp"',
+        "[mcp_servers.sub-table.http_headers]",
+        'X-Thing = "value"',
+        'mcp_servers.dotted-root.url = "https://example.com/mcp"',
+        "[mcp_servers]",
+        'inline-entry = { url = "https://example.com/mcp" }',
+        'dotted-in-table.url = "https://example.com/mcp"',
+      ].join("\n"),
+    );
+    NodeAssert.deepStrictEqual([...names].sort(), [
+      "dotted-in-table",
+      "dotted-root",
+      "inline-entry",
+      "sub-table",
+      "table-header",
+    ]);
+  });
+
+  it("sees nothing in a config that declares no MCP server", () => {
+    NodeAssert.deepStrictEqual(
+      codexConfiguredMcpServerNames(['model = "gpt-5.3-codex"', "[tui]", "theme = \"dark\""].join("\n")),
+      [],
+    );
+  });
+
+  it("does not read a name out of a comment", () => {
+    // A commented table header never matched anyway. The form that needs the
+    // comment stripping is a commented entry INSIDE `[mcp_servers]`, where the
+    // key scanner would otherwise take `# commented-out` for a server name and
+    // refuse a caller name that only looks like it.
+    NodeAssert.deepStrictEqual(
+      codexConfiguredMcpServerNames(
+        [
+          "# [mcp_servers.commented-header]",
+          "[mcp_servers]",
+          '# commented-out = { url = "https://example.com/mcp" }',
+          'real = { url = "https://example.com/mcp" }',
+        ].join("\n"),
+      ),
+      ["real"],
+    );
+  });
+});

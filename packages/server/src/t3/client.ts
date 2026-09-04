@@ -86,6 +86,31 @@ export interface StartTurnInput {
    * different one is refused by name rather than answered in the wrong shape.
    */
   readonly outputSchema?: unknown;
+  /**
+   * MCP servers this turn's session should expose, by name, merged at the provider
+   * adapter with the sidecar's own server and with whatever the user configured.
+   *
+   * A server names the ENVIRONMENT VARIABLE holding its credential; it never carries
+   * the credential. The command is persisted to T3's event log and replayed from it,
+   * and Claude's SDK puts its whole MCP option on the child's argument list as
+   * `--mcp-config <json>`, so a token placed here would be both a database row and a
+   * command line. The daemon puts the secret in the sidecar's environment, which the
+   * harness child inherits, and names it here: Codex reads it as
+   * `bearer_token_env_var`, Claude expands `${VAR}` inside the MCP header. The guarantee
+   * covers this field only: `url` is any string, so a token in a query parameter is a
+   * token in the event store.
+   *
+   * Names must be TOML bare keys (`[A-Za-z0-9_-]+`), because Codex writes them into a
+   * dotted config path, and must not collide with the sidecar's own server or with one
+   * the user's Codex config declares — a collision fails the session start naming the
+   * server, because Codex merges same-named servers with no way to separate them. Both
+   * providers fix their MCP configuration when the session process is created, so a
+   * thread's FIRST turn decides the set and a later turn asking for a different one is
+   * refused by the names it disagrees on.
+   */
+  readonly mcpServers?: Readonly<
+    Record<string, { readonly url: string; readonly bearerTokenEnvVar?: string }>
+  >;
 }
 
 /** What the settled turn reported about itself, read off its `turn.settled` activity. */
@@ -386,6 +411,7 @@ export async function connectT3(options: T3ClientOptions): Promise<T3Client> {
             },
             ...(input.modelSelection ? { modelSelection: input.modelSelection } : {}),
             ...(input.outputSchema === undefined ? {} : { outputSchema: input.outputSchema }),
+            ...(input.mcpServers === undefined ? {} : { mcpServers: input.mcpServers }),
             runtimeMode: input.runtimeMode ?? FULL_ACCESS,
             interactionMode: "default",
           }),
