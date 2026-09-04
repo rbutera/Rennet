@@ -38,6 +38,16 @@ import { MemoryBridge } from "../test/memory-bridge";
 //        → 1 failed: the account test below, on its FIRST assertion (the wrong-generation
 //          read has no `[data-bench-board]` section at all). Restored.
 //
+//   7. (2026-09-04, #819) four more, each run alone and reverted:
+//      • `preparationReviewId` put back to the preparation record alone (no
+//        `?? session.reviewId`) → 1 failed: the session's-review test.
+//      • the reader's `setChatOpen(true)` deleted → 3 failed: both control tests and the
+//        session's-review one. That is the point of asserting `chatOpen` next to
+//        `lensThread`: a slot pointed at a transcript nobody can see opened nothing.
+//      • the boards-landing line's `&& active` dropped → 1 failed: the cancelled-stack test.
+//      • the boards-landing line removed outright → 1 failed: the reveal test, on its
+//        position assertion.
+//
 // What a control does NOT prove is that the poll is what moved the line — 1 reddens
 // the live-line test on its FIRST assertion too. The second half of that test is the
 // one asking the poll question, and it is written so it cannot be satisfied by the
@@ -60,7 +70,13 @@ const lane = (over: Partial<LensLane> & Pick<LensLane, "id" | "label" | "status"
  * streaming lane actually has. `set` replaces the row the daemon would return next; the
  * app's own 400ms poll is what brings it to the screen.
  */
-function benchBridge(initial: SidebarSession["preparation"], claim?: { branch: string }) {
+function benchBridge(
+  initial: SidebarSession["preparation"],
+  claim?: { branch: string },
+  /** The session's OWN attached review (#587) — absent on most of these rows, because the
+   *  preparation record is where the bench normally reads the review from. */
+  sessionReviewId?: string,
+) {
   let preparation = initial;
   const row = (): SidebarSession => ({
     id: "sess-bench",
@@ -69,6 +85,7 @@ function benchBridge(initial: SidebarSession["preparation"], claim?: { branch: s
     target: "your-branch",
     createdAt: 0,
     ...(claim ? { claim } : {}),
+    ...(sessionReviewId === undefined ? {} : { reviewId: sessionReviewId }),
     ...(preparation === undefined ? {} : { preparation }),
   });
   const bridge = new MemoryBridge({
@@ -249,6 +266,34 @@ describe("the bench — five readers at work on the change", () => {
     expect(useRennetStore.getState().ui.lensThread).toBeNull();
   });
 
+  it("opens a lane's transcript off the SESSION's review when the preparation record names none", async () => {
+    // #819. `reviewId` is REQUIRED only on the `drafting` arm; `failed` and `cancelled`
+    // make it optional and both keep their lanes, threads and all. So a preparation that
+    // stopped after its seats bound their threads could draw five readers holding real
+    // transcripts that no click would open. The session's own attached review answers the
+    // same question — it is the durable attach for the very review that was drafting.
+    const thread = { environmentId: "env-1", threadId: "thread-sequence" };
+    const { bridge } = benchBridge(
+      {
+        status: "cancelled",
+        stage: "boards",
+        lanes: [
+          lane({ id: "sequence", label: "Sequence", status: "drafted", thread }),
+        ] as LensLane[],
+      },
+      undefined,
+      "rev-attached",
+    );
+    const { user } = open(bridge);
+
+    await waitFor(() => expect(speechOf("sequence")).toBe("drafted"));
+    const reader = document.querySelector('[data-row="sequence"] button') as HTMLButtonElement;
+    expect(reader.disabled).toBe(false);
+    await user.click(reader);
+    expect(useRennetStore.getState().ui.lensThread).toEqual({ reviewId: "rev-attached", thread });
+    expect(useRennetStore.getState().ui.chatOpen).toBe(true);
+  });
+
   it("a two-seat lane speaks with both voices, and each opens its own transcript", async () => {
     const claude = { environmentId: "env-1", threadId: "thread-flagged-claude" };
     const codex = { environmentId: "env-1", threadId: "thread-flagged-codex" };
@@ -299,6 +344,9 @@ describe("the bench — five readers at work on the change", () => {
     // Each voice is its own control, pointing the slot at ITS thread.
     await user.click(voice("flagged-codex"));
     expect(useRennetStore.getState().ui.lensThread).toEqual({ reviewId: "rev-1", thread: codex });
+    // ...and the dock it points at is OPEN. A slot pointed at a transcript nobody can see
+    // reports "opened" for nothing on screen, which is the shape #819 was reported as.
+    expect(useRennetStore.getState().ui.chatOpen).toBe(true);
     await user.click(voice("flagged-claude"));
     expect(useRennetStore.getState().ui.lensThread).toEqual({ reviewId: "rev-1", thread: claude });
   });
@@ -366,6 +414,60 @@ describe("the bench — five readers at work on the change", () => {
     // The bench is still the bench: the readers stay as the way to each transcript.
     expect(document.querySelector('[data-row="design"] button')).toBeTruthy();
     expect(document.querySelector('[data-screen="session-preparation"]')).toBeTruthy();
+    // ...and the stack SAYS it is still being built (#819). Position is the assertion, not
+    // membership: the line has to stand above the boards it is describing, or it reads as a
+    // footnote on the last one. Three lanes are still running here, so it is true.
+    const landing = document.querySelector('[data-testid="bench-boards-landing"]');
+    if (!landing) throw new Error("the bench never said its boards were still landing");
+    expect(landing.textContent).toContain("Boards land here as each lens finishes");
+    const firstBoard = document.querySelector("[data-bench-board]");
+    if (!firstBoard) throw new Error("no board on the bench");
+    expect(landing.compareDocumentPosition(firstBoard) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+  });
+
+  it("stops promising more boards once nothing is still drafting", async () => {
+    // The counterpart the test above cannot make: the same stack, after a cancel. Saying
+    // "boards land here as each lens finishes" over a stopped preparation is a promise
+    // nothing is keeping, and it is the sentence a reviewer would wait on.
+    const LIVE = "gen:ps-1";
+    const review = {
+      id: "rev-1",
+      activePatchsetId: "ps-1",
+      patchsets: [{ id: "ps-1", files: [] }],
+    } as unknown as Review;
+    const design = FIXTURE_BOARDS.gen1?.design;
+    const row: SidebarSession = {
+      id: "sess-bench",
+      projectId: "proj-1",
+      title: "feat/bench",
+      target: "your-branch",
+      createdAt: 0,
+      reviewId: "rev-1",
+      preparation: {
+        status: "cancelled",
+        stage: "boards",
+        reviewId: "rev-1",
+        lanes: [
+          lane({ id: "design", label: "Design", status: "done", verdict: "reworked" }),
+        ] as LensLane[],
+      },
+    };
+    const bridge = new MemoryBridge({
+      ...frontDoorHandlers(),
+      "session.list": () => ({ sessions: [row] }),
+      "review.load": () => ({ review, repositoryPresent: true }),
+      "board.read": ({ generation }: { generation: string }) => ({
+        board: generation === LIVE ? { ...design, generation: LIVE } : null,
+      }),
+    } as never);
+    open(bridge);
+
+    // The board IS on the bench — so the absence below is about the line, not about an
+    // empty stack that would make any such assertion pass for the wrong reason.
+    await waitFor(() => expect(document.querySelector("[data-bench-board]")).toBeTruthy());
+    expect(document.querySelector('[data-testid="bench-boards-landing"]')).toBeNull();
   });
 
   it("a settled lane whose board read went wrong shows the account, not an empty space", async () => {

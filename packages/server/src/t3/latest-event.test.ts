@@ -221,10 +221,67 @@ describe("projectLatestEvent", () => {
     });
   });
 
-  it("shows the raw fragment while a tool call is still streaming its input", () => {
-    expect(toolLine(tool(0, 'Read: {"file_path":"/repo/src/fo'), "/repo")).toBe(
-      'reading {"file_path":"/repo/src/fo',
+  it("says only the verb while a tool call is still streaming its input", () => {
+    // It used to say `reading {"file_path":"/repo/src/fo` — the raw fragment, on the
+    // grounds that it beat guessing what the input would become. It does not: a half-sent
+    // payload is still a payload where the seat's speech goes (#819), and this line is
+    // read on the bench next to four others. "reading" is true for the whole of the call
+    // and becomes "reading src/foo.ts" the moment the input closes.
+    expect(toolLine(tool(0, 'Read: {"file_path":"/repo/src/fo'), "/repo")).toBe("reading");
+    expect(toolLine(tool(0, 'Read: {"file_path":"/repo/src/foo.ts"}'), "/repo")).toBe(
+      "reading src/foo.ts",
     );
+  });
+
+  // ── #819: a payload is not speech ──────────────────────────────────────────
+  // The 0.7.0 drive's bench had Noise saying `{"document":null,"elements":[]}` and
+  // Decisions saying `StructuredOutput: {"elements":[{"id":"sec-dead-…`. Both are the
+  // structured-output call's INPUT — the board the seat is handing back — rendered where
+  // its sentence goes. Each case below is the shape one of those lines actually had.
+
+  it("projects a structured-output call as a receipt, never as the board it carries", () => {
+    const board = JSON.stringify({
+      document: null,
+      elements: [{ id: "sec-dead-code", kind: "finding", title: "Dead code" }],
+    });
+    expect(toolLine(tool(0, `StructuredOutput: ${board}`))).toBe("returning the board");
+    // The projector's own answer, not just the helper's — this is what reaches the lane.
+    expect(
+      projectLatestEvent(
+        thread({ activities: [tool(1_000, `StructuredOutput: ${board}`)] }),
+        1_000,
+      ),
+    ).toEqual({ kind: "tool", text: "returning the board", at: 1_000 });
+  });
+
+  it("says the tool's NAME, not its input, for a tool it has no verb for", () => {
+    expect(toolLine(tool(0, 'SomeOtherTool: {"elements":[]}'))).toBe("SomeOtherTool");
+  });
+
+  it("falls back to T3's summary when the detail is nothing but a payload", () => {
+    // Noise's line: T3 wrote the detail with no tool name in front of it, so there is not
+    // even a name to fall back on. The activity's own summary is the last honest thing
+    // this projector holds, and it is what the lane shows instead of the board.
+    const payload = '{"document":null,"elements":[]}';
+    expect(toolLine(tool(0, payload))).toBe("Tool");
+  });
+
+  it("yields to the seat's own words when the summary is a payload too", () => {
+    // Nothing left to say about the call, so it says nothing and the assistant's last
+    // sentence — the actual speech — is what the lane shows. Returning "" is the
+    // projector's existing way of declining a line; `consider` drops an empty one.
+    const payload = '{"document":null,"elements":[]}';
+    const mute = { ...tool(2_000, payload), summary: payload };
+    expect(toolLine(mute)).toBe("");
+    expect(
+      projectLatestEvent(
+        thread({
+          activities: [mute],
+          messages: [said(1_000, "Nothing here is safely skippable.")],
+        }),
+        2_000,
+      ),
+    ).toEqual({ kind: "text", text: "Nothing here is safely skippable.", at: 1_000 });
   });
 });
 
