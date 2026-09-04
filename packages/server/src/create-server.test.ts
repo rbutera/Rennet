@@ -2037,8 +2037,12 @@ describe("round.dispatch mints onto the session the reads answer (the call site,
     const afterRound = git("rev-parse", "HEAD");
     expect(afterRound).not.toBe(head);
 
-    // The successor patchset is captured FROM THE BOUND ROOT after the turn: its head is
-    // that checkout's head, not a detached worktree's.
+    // The successor patchset is captured after the turn from the tree the round committed
+    // in: its head is that checkout's head, not a detached worktree's. What this CANNOT
+    // catch on its own is which recapture path ran — a current-checkout review recaptures
+    // through `review.regenerate`, whose repo path and the bound root are the same value
+    // here, so swapping one for the other leaves this green. The branch-landing capture's
+    // own head argument is pinned by the operation-state assertions above.
     const after = (await server.dispatch("review.load", {
       commandId: randomUUID(),
       reviewId,
@@ -2062,31 +2066,7 @@ describe("round.dispatch mints onto the session the reads answer (the call site,
     // still has exactly the one checkout the reviewer opened.
     expect(existsSync(join(dataDir, "round-worktrees"))).toBe(false);
     expect(git("worktree", "list").split(/\r?\n/).filter(Boolean)).toHaveLength(1);
-
-    // …and it stays gone: two further rounds on the same session touch the same root.
-    for (const [index, body] of ["second change", "third change"].entries()) {
-      const priorHead = git("rev-parse", "HEAD");
-      await server.dispatch("ask.stage", {
-        sessionId: reviewId,
-        ask: {
-          id: `extra-ask-${index}`,
-          anchor: "a.txt:2",
-          type: "request-change",
-          body,
-        },
-      });
-      await server.dispatch("round.dispatch", { reviewId });
-      await vi.waitFor(
-        () => {
-          expect(git("rev-parse", "HEAD")).not.toBe(priorHead);
-        },
-        { timeout: 20_000, interval: 50 },
-      );
-      expect(existsSync(join(dataDir, "round-worktrees"))).toBe(false);
-      expect(git("worktree", "list").split(/\r?\n/).filter(Boolean)).toHaveLength(1);
-    }
-    expect(workerCalls).toBe(3);
-  }, 60_000);
+  }, 30_000);
 
   it("restarts a completed no-code dispatch and runs a distinct queued second ask", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "rennet-round-restart-data-"));

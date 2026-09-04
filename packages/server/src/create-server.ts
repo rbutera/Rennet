@@ -3055,6 +3055,19 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     return patchset;
   };
 
+  /**
+   * The ONE context key a round's files are written and named under, resolved from the
+   * review the operation belongs to. A recovered operation whose review is gone can only
+   * name the review id, and the prompt it renders is then compared against nothing — the
+   * round is already unreplayable. Both the work-order WRITE and the prompt that NAMES it
+   * go through here, because a prompt pointing at a directory nobody wrote is a turn that
+   * reads nothing.
+   */
+  const roundContextKey = (operation: RoundOperation): string => {
+    const review = service.reviewById(operation.reviewId);
+    return review === null ? operation.reviewId : sessionIdForReview(review);
+  };
+
   const sessionForOperation = (operation: RoundOperation): SessionModel => {
     const session = sessionStore.load(operation.sessionId);
     if (session === undefined) {
@@ -3069,13 +3082,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       askLogStore.read(operation.reviewId),
       operation.askOccurrences,
     );
-    // The ONE context key, resolved from the review the operation belongs to. A recovered
-    // operation whose review is gone can only name the review id, and the prompt it
-    // renders is then compared against nothing — the round is already unreplayable.
-    const review = service.reviewById(operation.reviewId);
-    const contextDir = sessionContextRelativeDir(
-      review === null ? operation.reviewId : sessionIdForReview(review),
-    );
+    const contextDir = sessionContextRelativeDir(roundContextKey(operation));
     return mechanicalComposition(
       buildHandoffBundle({
         reviewId: operation.reviewId,
@@ -3224,7 +3231,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   const runRoundWorker: RoundExecutionPorts["runWorker"] = async (input) => {
     const state = input.operation.state;
     if (state.phase === "worker-running" && input.operation.workOrderDocument !== undefined) {
-      writeSessionContext(state.workspace.root, input.operation.reviewId, [
+      writeSessionContext(state.workspace.root, roundContextKey(input.operation), [
         workOrderContextFileFrom(input.operation.workOrderDocument),
       ]);
     }
@@ -3391,14 +3398,14 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
           throw new Error("Round report started outside its durable drafting phase.");
         }
         const sourcePatchset = sourcePatchsetFor(operation);
+        // From the BOUND ROOT: that is where the round's turn committed, so that is the
+        // tree the successor patchset describes (session-bound-workspace D2).
+        const boundRoot = operation.state.workspace.root;
         if (operation.sourceTarget.kind === "branch" && sourcePatchset.source === "local-branch") {
           const base = sourcePatchset.repository.baseRef;
           if (base === undefined) {
             throw new Error("Selected-branch round lost its base branch.");
           }
-          // From the BOUND ROOT: that is where the round's turn committed, so that is
-          // the tree the successor patchset describes (session-bound-workspace D2).
-          const boundRoot = operation.state.workspace.root;
           const git = gitForRepo(boundRoot);
           const patchset = await captureLandedBranchPatchset({
             git,
@@ -3413,10 +3420,12 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
           });
           await service.activatePatchset(attempt.executionId, operation.reviewId, patchset);
         } else {
+          // From the bound root too: the round's commits are in that tree, so a recapture
+          // pointed anywhere else describes a tree the round did not write.
           await dispatch("review.regenerate", {
             commandId: attempt.executionId,
             reviewId: operation.reviewId,
-            repoPath: operation.repoRoot,
+            repoPath: boundRoot,
           });
         }
         const review = service.reviewById(operation.reviewId);

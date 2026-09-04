@@ -42,14 +42,16 @@ describe("locus threading in MAIN", () => {
     // the one exception; C17's review finding 2 deleted it, because reusing this cache
     // (which holds a live adapter bound to a binary path) for the DISCLOSURE line is what
     // pinned the codex row until the daemon restarted. Detection now probes directly.
-    // The review-ask site resolves through `codexExecutorForRepo`; coding rounds resolve
-    // through `codexAdapterForRepo`. Both thread the locus and root the seat at the
-    // checkout. There is NO zero-arg form — the default parameter was removed, so
+    // The surviving sites resolve through `codexExecutorForRepo`, threading the locus and
+    // rooting the seat at the checkout. The third was `codexAdapterForRepo`, which existed
+    // only for the ephemeral round worker and went with it (session-bound-workspace D2 — a
+    // round is a turn on the session's bound T3 thread and resolves no harness here).
+    // There is NO zero-arg form — the default parameter was removed, so
     // `getCodexResolution()` no longer typechecks. Exact, not `>=`: a new host-default site
     // added later must fail this, not slip under a floor.
-    expect(calls).toHaveLength(3);
+    expect(calls).toHaveLength(2);
     expect(calls.filter((arg) => arg === "HOST_LOCUS")).toHaveLength(0);
-    expect(calls.filter((arg) => arg.startsWith("locus"))).toHaveLength(3);
+    expect(calls.filter((arg) => arg.startsWith("locus"))).toHaveLength(2);
   });
 
   // The CONSUMER half, restored (#681 residue / C14 D3). Folding the three read-pipeline

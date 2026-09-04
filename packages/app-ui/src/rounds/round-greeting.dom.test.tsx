@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { mount } from "../test/dom";
 import { completedRoundRecord, reportBoardFixture } from "../test/fixtures/rounds/report-board";
 import { RoundGreeting } from "./round-greeting";
+import { initialRoundState } from "./round-machine";
 
 // The round's PROVENANCE, on the surface the reviewer actually reads
 // (round-harness-dispatch: "the client SHALL display that provenance"). A round is a turn
@@ -16,7 +17,7 @@ describe("RoundGreeting — where the round ran", () => {
     const { container } = mount(
       <RoundGreeting
         board={reportBoardFixture}
-        state={{ phase: "idle" }}
+        state={initialRoundState}
         onReveal={() => undefined}
         receipt={receipt}
       />,
@@ -33,7 +34,7 @@ describe("RoundGreeting — where the round ran", () => {
     const { container } = mount(
       <RoundGreeting
         board={reportBoardFixture}
-        state={{ phase: "idle" }}
+        state={initialRoundState}
         onReveal={() => undefined}
         receipt={{
           record: {
