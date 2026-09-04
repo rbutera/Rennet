@@ -582,6 +582,7 @@ export {
   SnapshotOverlayStore,
 } from "./snapshot-overlay-store";
 export { SqliteReviewStore } from "./sqlite-review-store";
+export { readSuperpowersSpec, selectedSuperpowersArtifacts } from "./superpowers-spec-reader";
 export {
   createT3SeatTurn,
   parseFinalMessageJson,
