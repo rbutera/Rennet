@@ -943,6 +943,30 @@ export type TurnMcpServer = typeof TurnMcpServer.Type;
 export const TurnMcpServers = Schema.Record(TurnMcpServerName, TurnMcpServer);
 export type TurnMcpServers = typeof TurnMcpServers.Type;
 
+/** The name the server owns for its own MCP endpoint. A caller cannot bind it.
+ * Exported so every adapter refuses the same name, and so a test cannot drift
+ * from the production check by spelling it again. */
+export const SIDECAR_OWNED_MCP_SERVER_NAME = "t3-code";
+
+/** Caller-supplied names that some other configuration already holds.
+ *
+ * A collision is REFUSED rather than resolved, and that is the cheap correct
+ * answer rather than a restriction: on Codex there is no way to detach a
+ * same-named server from the user's own (`-c` deep-merges at every depth, so
+ * their headers and helpers ride to whichever endpoint wins), and silently
+ * merging somebody's server into ours is not something anyone asked for. The
+ * caller mints its own names, so a collision is a visible config quirk with a
+ * one-word fix, not a capability anyone is denied. */
+export function collidingTurnMcpServerNames(
+  servers: TurnMcpServers | undefined,
+  takenNames: Iterable<string>,
+): ReadonlyArray<string> {
+  const taken = new Set(takenNames);
+  return Object.keys(servers ?? {})
+    .filter((name) => taken.has(name))
+    .sort();
+}
+
 /** An empty record is the same fact as no record, and saying so once here keeps
  * every hop from having to decide. */
 export function normalizeTurnMcpServers(

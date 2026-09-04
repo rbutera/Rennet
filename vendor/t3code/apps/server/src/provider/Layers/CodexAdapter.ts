@@ -26,6 +26,8 @@ import {
   ThreadId,
   ProviderSendTurnInput,
   type TurnMcpServers,
+  SIDECAR_OWNED_MCP_SERVER_NAME,
+  collidingTurnMcpServerNames,
   differingTurnMcpServerNames,
   normalizeTurnMcpServers,
 } from "@t3tools/contracts";
@@ -44,6 +46,7 @@ import * as EffectCodexSchema from "effect-codex-app-server/schema";
 
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { getCodexServiceTierOptionValue } from "../../codexModelOptions.ts";
+import { expandHomePath } from "../../pathExpansion.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 
 import {
@@ -97,32 +100,77 @@ interface CodexAdapterSessionContext {
   readonly runtime: CodexSessionRuntimeShape;
   readonly eventFiber: Fiber.Fiber<void, never>;
   /** The caller-supplied MCP servers this session's app-server was spawned
-   * with, if any, minus any name the sidecar owns. Codex reads
-   * `-c mcp_servers.*` at spawn, so the set is fixed for the session's whole
-   * life, exactly as Claude's is. */
+   * with, if any, exactly as the caller gave them — nothing is filtered, so a
+   * later turn is compared against the same set the session was opened on.
+   * Codex reads `-c mcp_servers.*` at spawn, so the set is fixed for the
+   * session's whole life, exactly as Claude's is. */
   readonly mcpServers: TurnMcpServers | undefined;
   stopped: boolean;
 }
 
-/** The `-c` arguments for one session's caller-supplied MCP servers.
+/** The MCP server names the user's own Codex config declares.
  *
- * Codex applies every `-c` as a DEEP MERGE into the config it already loaded,
- * at every depth. Verified against codex-cli 0.148.0: neither a leaf override,
- * nor an inline table (`-c 'mcp_servers.x={...}'`), nor replacing the whole
- * `mcp_servers` table detaches a same-named server from the user's own — a
- * user's `startup_timeout_sec` and `http_headers` survive all three. There is
- * no way to remove an inherited key.
+ * Needed because `-c` is a DEEP MERGE into that config at every depth and
+ * nothing detaches a same-named server from theirs. Verified against
+ * codex-cli 0.148.0: a leaf override, an inline table and replacing the whole
+ * `mcp_servers` table all leave the user's `http_headers`, `env_http_headers`
+ * and helper attached, so a caller server sharing a name would carry the user's
+ * headers to the caller's endpoint. There is no override that removes a key, so
+ * the collision is refused instead, and that needs the names.
  *
- * So `bearer_token_env_var` is written for EVERY caller server, including one
- * that declared no credential, where it is written empty. Leaving it out would
- * let a same-named server in the user's own config point THEIR credential at
- * the caller's endpoint, which is the one inherited leaf that must not survive.
- * The rest of a same-named user server's keys do survive; that is Codex's
- * merge, it cannot be undone from here, and it is why a caller should not name
- * a server the user already has.
+ * A line scanner rather than a TOML parse: this is a name list, the four forms
+ * below are how a server is declared, and a name it fails to see leaves today's
+ * behaviour rather than inventing one. Rennet mints its own names, so this is a
+ * safety net for a config quirk, not a hot path.
+ */
+export function codexConfiguredMcpServerNames(configToml: string): ReadonlyArray<string> {
+  const names = new Set<string>();
+  const unquote = (name: string) => name.replace(/^["']|["']$/gu, "");
+  let inMcpServersTable = false;
+  for (const rawLine of configToml.split("\n")) {
+    const line = rawLine.replace(/(^|\s)#.*$/u, "").trim();
+    if (line.length === 0) {
+      continue;
+    }
+    const tableHeader = /^\[\s*([^\]]+?)\s*\]$/u.exec(line);
+    if (tableHeader) {
+      const parts = tableHeader[1]?.split(".") ?? [];
+      // `[mcp_servers.board]` and `[mcp_servers.board.http_headers]`.
+      if (parts[0] === "mcp_servers" && parts[1] !== undefined) {
+        names.add(unquote(parts[1]));
+      }
+      inMcpServersTable = tableHeader[1] === "mcp_servers";
+      continue;
+    }
+    const assignment = /^([^=]+?)\s*=/u.exec(line);
+    if (!assignment) {
+      continue;
+    }
+    const keyParts = assignment[1]?.trim().split(".") ?? [];
+    // `mcp_servers.board.url = …` at the root.
+    if (keyParts[0] === "mcp_servers" && keyParts[1] !== undefined) {
+      names.add(unquote(keyParts[1]));
+      continue;
+    }
+    // `board = { … }` or `board.url = …` under `[mcp_servers]`.
+    if (inMcpServersTable && keyParts[0] !== undefined) {
+      names.add(unquote(keyParts[0]));
+    }
+  }
+  return [...names];
+}
+
+/** The `-c` arguments for one session's MCP servers.
  *
- * T3's own server keeps upstream's two leaf writes unchanged, and is appended
- * LAST so it wins the name.
+ * `bearer_token_env_var` is written only when the caller declared a credential.
+ * An empty override was tried and is worse than nothing: against a real local
+ * MCP server it produced ZERO requests where omitting the key produced a
+ * working unauthenticated handshake, so it broke the credential-less case it
+ * was meant to protect. The inheritance it was aiming at is answered by
+ * refusing the name collision instead, which is the only thing that actually
+ * closes it — see `codexConfiguredMcpServerNames`.
+ *
+ * T3's own server keeps upstream's two leaf writes, and is appended LAST.
  */
 function buildCodexMcpConfiguration(input: {
   readonly callerMcpServers: TurnMcpServers | undefined;
@@ -136,12 +184,13 @@ function buildCodexMcpConfiguration(input: {
   const appServerArgs: Array<string> = [];
   const bearerTokenEnvironment: Record<string, string> = {};
   for (const [name, server] of Object.entries(input.callerMcpServers ?? {})) {
-    appServerArgs.push(
-      "-c",
-      `mcp_servers.${name}.url=${server.url}`,
-      "-c",
-      `mcp_servers.${name}.bearer_token_env_var="${server.bearerTokenEnvVar ?? ""}"`,
-    );
+    appServerArgs.push("-c", `mcp_servers.${name}.url=${server.url}`);
+    if (server.bearerTokenEnvVar !== undefined) {
+      appServerArgs.push(
+        "-c",
+        `mcp_servers.${name}.bearer_token_env_var="${server.bearerTokenEnvVar}"`,
+      );
+    }
   }
   if (input.mcpSession) {
     bearerTokenEnvironment.T3_MCP_BEARER_TOKEN = input.mcpSession.authorizationHeader.replace(
@@ -150,9 +199,9 @@ function buildCodexMcpConfiguration(input: {
     );
     appServerArgs.push(
       "-c",
-      `mcp_servers.t3-code.url=${input.mcpSession.endpoint}`,
+      `mcp_servers.${SIDECAR_OWNED_MCP_SERVER_NAME}.url=${input.mcpSession.endpoint}`,
       "-c",
-      'mcp_servers.t3-code.bearer_token_env_var="T3_MCP_BEARER_TOKEN"',
+      `mcp_servers.${SIDECAR_OWNED_MCP_SERVER_NAME}.bearer_token_env_var="T3_MCP_BEARER_TOKEN"`,
     );
   }
   return { appServerArgs, bearerTokenEnvironment };
@@ -1725,6 +1774,23 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
   const runtimeEventQueue = yield* Queue.unbounded<ProviderRuntimeEvent>();
   const sessions = new Map<ThreadId, CodexAdapterSessionContext>();
 
+  /** The user's own Codex config, read at session start. A missing or
+   * unreadable file is no names: this decides a refusal, and refusing because a
+   * file could not be read would deny a capability over an absence. */
+  const readCodexConfiguredMcpServerNames = Effect.fn("readCodexConfiguredMcpServerNames")(
+    function* (homePath: string | undefined) {
+      const home =
+        (homePath ? expandHomePath(homePath) : undefined) ??
+        (options?.environment ?? process.env).CODEX_HOME ??
+        `${(options?.environment ?? process.env).HOME ?? ""}/.codex`;
+      const configPath = `${home}/config.toml`;
+      const contents = yield* fileSystem
+        .readFileString(configPath)
+        .pipe(Effect.catchCause(() => Effect.succeed(undefined)));
+      return contents === undefined ? [] : codexConfiguredMcpServerNames(contents);
+    },
+  );
+
   const startSession: CodexAdapterShape["startSession"] = (input) =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -1746,20 +1812,29 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
             ? getCodexServiceTierOptionValue(input.modelSelection)
             : undefined;
         const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
-        // A name the sidecar owns is not the caller's to bind: dropping it here
-        // is what stops a caller-supplied `t3-code` from ever being mistaken for
-        // the sidecar's own server further down.
-        const sidecarOwnedNames = new Set(mcpSession ? ["t3-code"] : []);
-        const requestedMcpServers = normalizeTurnMcpServers(input.mcpServers);
-        const callerMcpServers = normalizeTurnMcpServers(
-          requestedMcpServers === undefined
-            ? undefined
-            : Object.fromEntries(
-                Object.entries(requestedMcpServers).filter(
-                  ([name]) => !sidecarOwnedNames.has(name),
-                ),
-              ),
+        const callerMcpServers = normalizeTurnMcpServers(input.mcpServers);
+        // Refused, not resolved. A name the sidecar owns, or one the user's own
+        // Codex config already declares, cannot be given to a caller's server:
+        // Codex deep-merges `-c` into that config with no way to remove a key,
+        // so the two servers would trade headers. The caller mints its own
+        // names, so this is a visible quirk with a one-word fix.
+        const takenMcpServerNames = [
+          ...(mcpSession ? [SIDECAR_OWNED_MCP_SERVER_NAME] : []),
+          ...(callerMcpServers === undefined
+            ? []
+            : yield* readCodexConfiguredMcpServerNames(codexConfig.homePath)),
+        ];
+        const collidingNames = collidingTurnMcpServerNames(
+          callerMcpServers,
+          takenMcpServerNames,
         );
+        if (collidingNames.length > 0) {
+          return yield* new ProviderAdapterRequestError({
+            provider: PROVIDER,
+            method: "turn/start",
+            detail: `This turn supplies MCP servers under names Codex already holds (${collidingNames.join(", ")}). Codex merges a same-named server with the one already configured and offers no way to separate them, so the servers would share settings; give them different names.`,
+          });
+        }
         const mcpConfiguration = buildCodexMcpConfiguration({
           callerMcpServers,
           mcpSession,

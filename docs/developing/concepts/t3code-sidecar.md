@@ -270,15 +270,31 @@ Three things follow from the thread being persistent.
   bare keys, because Codex writes them into a dotted config path where a dot silently
   becomes a nested table.
 
+  The guarantee is about that field and no other: `url` is any trimmed string, so a caller
+  that puts a token in a query parameter has put it in the event store and on the argument
+  list. The dedicated credential field is the one that cannot carry a secret.
+
   The adapters MERGE these with whatever the sidecar configured for that thread and with
-  whatever the user configured for the provider — nothing is substituted,
-  `strictMcpConfig` stays unset, and a name the sidecar owns stays the sidecar's. Both
-  providers fix their MCP configuration when the session process is created, exactly as
-  Claude fixes `outputFormat` at `query()` construction, so the thread's FIRST turn
+  whatever the user configured for the provider — nothing is substituted, and
+  `strictMcpConfig` stays unset. A NAME COLLISION IS REFUSED rather than resolved: a
+  caller server under a name the sidecar owns, or under a name the user's own Codex config
+  already declares, fails the session start naming the server. That is the cheap correct
+  answer rather than a restriction. Codex's `-c` is a deep merge into the user's config at
+  every depth and nothing detaches a same-named server from theirs — not a leaf override,
+  not an inline table, not replacing the whole `mcp_servers` table (verified against
+  codex-cli 0.148.0) — so two servers sharing a name trade credentials and headers, and
+  a caller endpoint receives the user's `X-Ambient-Secret` along with its own bearer.
+  Nobody asked for their own server to be merged into ours, the caller mints its own
+  names, and a collision is a visible config quirk with a one-word fix.
+
+  Both providers fix their MCP configuration when the session process is created, exactly
+  as Claude fixes `outputFormat` at `query()` construction, so the thread's FIRST turn
   decides the set and a later turn asking for a different one is refused with the names it
   disagrees on rather than run against the wrong tools. A same-name server pointed at a
   new endpoint, or reading a new credential variable, counts as a different server: the
-  session was opened against the old one and cannot serve the new one.
+  session was opened against the old one and cannot serve the new one. Nothing is filtered
+  out of the caller's set on the way in, because a session that stored one set and
+  compared another rejected the very turn it had just been opened for.
 
   Whether the sidecar's own browser server is attached now travels as an explicit fact
   (`sidecarMcpServerConfigured`) rather than being read back off the argument list.
@@ -287,14 +303,10 @@ Three things follow from the thread being persistent.
   `t3-code` and a name is not provenance — and a Codex prompt describing browser tools the
   session does not have is a lie in the prompt.
 
-  One thing does NOT hold, and it is Codex's, not Rennet's: `-c` is a deep merge into the
-  user's own config at every depth, and there is no way to remove an inherited key.
-  Verified against codex-cli 0.148.0 — neither a leaf override, nor an inline table, nor
-  replacing the whole `mcp_servers` table detaches a same-named server from the user's.
-  The credential leaf is therefore always written, empty when the caller declared none, so
-  a user's token can never end up pointed at a caller's endpoint; the other keys of a
-  same-named user server (headers, timeouts) do survive. Name a server the user already
-  has and you inherit the rest of it.
+  A caller server that declares no credential gets no credential key written at all. An
+  empty `bearer_token_env_var` was tried and is worse than nothing: Codex then expects a
+  bearer it can never resolve, and against a real local MCP server that is zero requests
+  where omitting the key handshakes normally.
 
   Nothing supplies a server yet — the field is carried, and the daemon's own board server
   is the next change.
@@ -424,7 +436,7 @@ all upstreamable.
 The per-turn `mcpServers` seam widens that surface by little, because it sits mostly on the
 same files: the two contract modules, the decider, the provider command reactor, the
 provider service, and the two adapters, plus the Codex session runtime for the provenance
-option, four test files and the scripted app-server fixture. `McpProviderSession` is
+option, six test files and the scripted app-server fixture. `McpProviderSession` is
 untouched — the caller's servers ride alongside it and merge at the adapter, so a session
 re-prepare (runtime mode, cwd, model) cannot clobber them and turning off agent browser
 access cannot clear them.

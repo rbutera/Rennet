@@ -96,12 +96,17 @@ export interface StartTurnInput {
    * `--mcp-config <json>`, so a token placed here would be both a database row and a
    * command line. The daemon puts the secret in the sidecar's environment, which the
    * harness child inherits, and names it here: Codex reads it as
-   * `bearer_token_env_var`, Claude expands `${VAR}` inside the MCP header.
+   * `bearer_token_env_var`, Claude expands `${VAR}` inside the MCP header. The guarantee
+   * covers this field only: `url` is any string, so a token in a query parameter is a
+   * token in the event store.
    *
    * Names must be TOML bare keys (`[A-Za-z0-9_-]+`), because Codex writes them into a
-   * dotted config path. Both providers fix their MCP configuration when the session
-   * process is created, so a thread's FIRST turn decides the set and a later turn
-   * asking for a different one is refused by the names it disagrees on.
+   * dotted config path, and must not collide with the sidecar's own server or with one
+   * the user's Codex config declares — a collision fails the session start naming the
+   * server, because Codex merges same-named servers with no way to separate them. Both
+   * providers fix their MCP configuration when the session process is created, so a
+   * thread's FIRST turn decides the set and a later turn asking for a different one is
+   * refused by the names it disagrees on.
    */
   readonly mcpServers?: Readonly<
     Record<string, { readonly url: string; readonly bearerTokenEnvVar?: string }>

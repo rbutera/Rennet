@@ -506,10 +506,22 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
-  it.effect("keeps the credential off the child's argument list, through the real SDK", () => {
+  it.effect("keeps every credential off the child's argument list, through the real SDK", () => {
     const harness = makeHarness();
-    // What a resolved credential would look like if the header carried one.
+    // What a resolved credential would look like if a header carried one.
     const sentinel = "rennet-sentinel-board-credential";
+    const sidecarSentinel = "rennet-sentinel-sidecar-credential";
+    // The session carries T3's OWN server too. Testing the caller's credential
+    // alone is how the sidecar's was missed: the neighbour on the same option,
+    // serialised by the same `--mcp-config`, went unasserted.
+    McpProviderSession.setMcpProviderSession({
+      environmentId: EnvironmentId.make("env-mcp-argv"),
+      threadId: THREAD_ID,
+      providerSessionId: "provider-session-mcp-argv",
+      providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+      endpoint: "http://127.0.0.1:9111/mcp",
+      authorizationHeader: `Bearer ${sidecarSentinel}`,
+    });
 
     // The SDK serialises its whole `mcpServers` option into ONE
     // `--mcp-config <json>` argument, so reading the adapter alone cannot see
@@ -529,7 +541,10 @@ describe("ClaudeAdapterLive", () => {
             })() as AsyncIterable<SDKUserMessage>,
             options: {
               ...options,
-              env: { ...process.env, RENNET_BOARD_TOKEN: sentinel },
+              env: {
+                ...(options.env ?? process.env),
+                RENNET_BOARD_TOKEN: sentinel,
+              },
               spawnClaudeCodeProcess: (spawnOptions) => {
                 args = spawnOptions.args;
                 throw new Error("rennet test: args captured");
@@ -560,14 +575,24 @@ describe("ClaudeAdapterLive", () => {
       assert.isDefined(options);
       if (!options) return;
 
+      // The session's own environment is what `claude` expands from, and it is
+      // where T3's bearer now lives.
+      assert.equal(
+        (options.env as Record<string, string> | undefined)?.T3_MCP_BEARER_TOKEN,
+        sidecarSentinel,
+      );
+
       const referenceArgs = yield* captureArgs(options);
       assert.isAbove(referenceArgs.length, 0);
       const mcpConfigIndex = referenceArgs.indexOf("--mcp-config");
       assert.isAbove(mcpConfigIndex, -1);
-      // The reference is on argv, and the value it names is not.
-      assert.include(referenceArgs[mcpConfigIndex + 1] ?? "", "${RENNET_BOARD_TOKEN}");
+      const mcpConfigArgument = referenceArgs[mcpConfigIndex + 1] ?? "";
+      // Both references are on argv, and neither value they name is.
+      assert.include(mcpConfigArgument, "${RENNET_BOARD_TOKEN}");
+      assert.include(mcpConfigArgument, "${T3_MCP_BEARER_TOKEN}");
       for (const argument of referenceArgs) {
         assert.notInclude(argument, sentinel);
+        assert.notInclude(argument, sidecarSentinel);
       }
 
       // The same path, given a header that carries the credential instead of
@@ -588,10 +613,11 @@ describe("ClaudeAdapterLive", () => {
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
+      Effect.ensuring(Effect.sync(() => McpProviderSession.clearMcpProviderSession(THREAD_ID))),
     );
   });
 
-  it.effect("gives T3's own server the t3-code name when a caller claims it", () => {
+  it.effect("refuses a caller server under the name T3's own server holds", () => {
     const harness = makeHarness();
     McpProviderSession.setMcpProviderSession({
       environmentId: EnvironmentId.make("env-mcp-collision"),
@@ -603,30 +629,81 @@ describe("ClaudeAdapterLive", () => {
     });
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
+      const error = yield* adapter
+        .startSession({
+          threadId: THREAD_ID,
+          provider: ProviderDriverKind.make("claudeAgent"),
+          runtimeMode: "full-access",
+          mcpServers: {
+            "t3-code": {
+              url: "http://127.0.0.1:7391/board/design",
+              bearerTokenEnvVar: "RENNET_BOARD_TOKEN",
+            },
+            board: { url: "http://127.0.0.1:7391/board/flagged" },
+          },
+        })
+        .pipe(Effect.flip);
+
+      // Refused and named, rather than dropped. Dropping it made the session
+      // store one set and compare another, so the turn that opened the session
+      // was then rejected as a mismatch against itself.
+      assert.match(error.message, /names this session already holds/u);
+      assert.match(error.message, /\(t3-code\)/u);
+      assert.notMatch(error.message, /board\b(?!-)/u);
+      // Nothing was started: no query was ever constructed.
+      assert.equal(harness.getLastCreateQueryInput(), undefined);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+      Effect.ensuring(Effect.sync(() => McpProviderSession.clearMcpProviderSession(THREAD_ID))),
+    );
+  });
+
+  it.effect("accepts the very turn that opened the session, alongside T3's own server", () => {
+    const harness = makeHarness();
+    McpProviderSession.setMcpProviderSession({
+      environmentId: EnvironmentId.make("env-mcp-first-turn"),
+      threadId: THREAD_ID,
+      providerSessionId: "provider-session-mcp-first-turn",
+      providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+      endpoint: "http://127.0.0.1:9111/mcp",
+      authorizationHeader: "Bearer t3-own-secret",
+    });
+    const mcpServers = {
+      board: {
+        url: "http://127.0.0.1:7391/board/design",
+        bearerTokenEnvVar: "RENNET_BOARD_TOKEN",
+      },
+    };
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      // The reactor starts the session and sends the turn with the SAME set, so
+      // whatever the session stores has to equal what the turn is compared
+      // against. Storing a filtered set and comparing an unfiltered one made
+      // this exact sequence fail.
       yield* adapter.startSession({
         threadId: THREAD_ID,
         provider: ProviderDriverKind.make("claudeAgent"),
         runtimeMode: "full-access",
-        mcpServers: {
-          "t3-code": {
-            url: "http://127.0.0.1:7391/board/design",
-            bearerTokenEnvVar: "RENNET_BOARD_TOKEN",
-          },
-          board: { url: "http://127.0.0.1:7391/board/flagged" },
-        },
+        mcpServers,
+      });
+      yield* adapter.sendTurn({
+        threadId: THREAD_ID,
+        input: "the turn this session was opened for",
+        mcpServers,
       });
 
       const servers = harness.getLastCreateQueryInput()?.options.mcpServers;
-      // Both are present, and the name T3 owns still resolves to T3's endpoint.
       assert.deepEqual(servers, {
+        board: {
+          type: "http",
+          url: "http://127.0.0.1:7391/board/design",
+          headers: { Authorization: "Bearer ${RENNET_BOARD_TOKEN}" },
+        },
         "t3-code": {
           type: "http",
           url: "http://127.0.0.1:9111/mcp",
-          headers: { Authorization: "Bearer t3-own-secret" },
-        },
-        board: {
-          type: "http",
-          url: "http://127.0.0.1:7391/board/flagged",
+          headers: { Authorization: "Bearer ${T3_MCP_BEARER_TOKEN}" },
         },
       });
     }).pipe(
@@ -679,6 +756,9 @@ describe("ClaudeAdapterLive", () => {
         })
         .pipe(Effect.flip);
       assert.match(error.message, /MCP servers its Claude session was not started with/u);
+      // The session WAS started with a `board`; only its settings differ, and
+      // the message has to say so rather than deny the server was ever there.
+      assert.match(error.message, /or with different settings for/u);
       assert.match(error.message, /\(board\)/u);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
