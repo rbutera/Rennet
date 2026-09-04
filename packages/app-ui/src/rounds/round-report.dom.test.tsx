@@ -4,7 +4,11 @@ import { describe, expect, it } from "vitest";
 import { RENDERERS } from "../board/kinds/renderers";
 import { mount } from "../test/dom";
 import { prose } from "../test/fixtures/boards/helpers";
-import { reportBoardFixture, roundOutcome } from "../test/fixtures/rounds/report-board";
+import {
+  productionShapedOutcome,
+  reportBoardFixture,
+  roundOutcome,
+} from "../test/fixtures/rounds/report-board";
 import type { ReportRegistry } from "./report-registry";
 import { RoundReportBoard } from "./round-report";
 
@@ -125,6 +129,43 @@ describe("RoundReportBoard — the round report as a board", () => {
     const outcomesSection = container.querySelector('[data-section-id="outcomes"]');
     expect(outcomesSection?.textContent).toContain("A paragraph that opens the outcomes section.");
     expect(cards[0]?.textContent).not.toContain("A paragraph that opens the outcomes section.");
+  });
+
+  // POSITIVE CONTROL — the shape that broke the packaged v0.7.1 card. `ask.ref` is a long
+  // UNBROKEN serialized ask key and `ask.text` is the finding's WHOLE multi-section
+  // instruction. The card renderer built on the short fixtures above never saw this, and on it
+  // the header dumped the blob (raw `###`, `#### Inputs`) while the `shrink-0` ref span
+  // overflowed the row and starved the title to one word per line. This reddens if either
+  // regression returns: restore `shrink-0` on the ref, or render `ask.text` verbatim.
+  it("stays readable on production-shaped data: concise title, no raw markdown, bounded ref", () => {
+    const board: RoundReportBoardModel = {
+      ...reportBoardFixture,
+      elements: reportBoardFixture.elements.map((el) =>
+        el.id === "ro-observability" ? productionShapedOutcome : el,
+      ),
+    };
+    const { container } = mount(<RoundReportBoard board={board} />);
+    const row = container.querySelector('[data-element-id="ro-production"]');
+    if (!row) throw new Error("missing production outcome row");
+
+    // The header is the instruction's FIRST line with the leading `###` stripped — a concise
+    // title, not the whole finding.
+    const title = row.querySelector("[data-outcome-title]");
+    expect(title?.textContent).toBe("Ambient commits leak into the ask inventory");
+
+    // No raw markdown leaks anywhere in the rendered row: not the `###` heading, not the
+    // `#### Inputs` / `#### Fix` section markers — i.e. the blob is not dumped as the title.
+    expect(row.textContent).not.toContain("###");
+    expect(row.textContent).not.toContain("#### Inputs");
+
+    // The title can shrink (`min-w-0`) so a long ref can never starve it into per-word wrapping.
+    expect(title?.className).toContain("min-w-0");
+
+    // The opaque ref is bounded and shrinkable — never `shrink-0` unbounded, the collapse cause.
+    const ref = row.querySelector("[data-ask-ref]");
+    expect(ref?.className).not.toContain("shrink-0");
+    expect(ref?.className).toContain("truncate");
+    expect(ref?.className).toContain("min-w-0");
   });
 
   it("reveals a code_ref only for the one outcome that carries one", () => {
