@@ -275,6 +275,66 @@ describe("state 3 — the floating chip layer (C20 §5)", () => {
     });
   }
 
+  it("gives the preparation bench a real primary scroller, so its boards are reachable", async () => {
+    // #819: the bench was `mx-auto flex min-h-full … justify-center-safe` and NOTHING else
+    // — no scroller at all. The outlet is a flex column and the shell root is `fixed
+    // inset-0 overflow-hidden`, so every board that landed below the fold was clipped where
+    // no scroll could reach it. This file covered the session branches and the run route;
+    // the bench, which is the FIRST surface a new review lands on, had no guard.
+    const row = {
+      id: "sess-bench",
+      projectId: "proj-1",
+      title: "feat/bench",
+      target: "your-branch",
+      createdAt: 0,
+      preparation: {
+        status: "drafting",
+        reviewId: "rev-1",
+        lanes: [
+          { id: "design", label: "Design", status: "running" },
+          { id: "sequence", label: "Sequence", status: "running" },
+        ],
+      },
+    };
+    const bridge = new MemoryBridge({
+      "settings.get": () => ({
+        scheme: "system",
+        schemeProvenance: { layer: "builtin", contributions: [] },
+        appearanceMalformed: false,
+        projects: [],
+        welcome: { completedAt: "2026-08-28T00:00:00.000Z" },
+      }),
+      "projects.list": () => ({ projects: [] }),
+      "session.list": () => ({ sessions: [row] }),
+      "review.load": () => {
+        throw new Error("Review not found");
+      },
+    } as never);
+    const { container, findByTestId } = mount(
+      <RennetRouterApp bridge={bridge} history={memoryHistory("/s/sess-bench")} />,
+    );
+    await findByTestId("bench-readers");
+    const region = container.ownerDocument.querySelector("[data-floating-chrome]");
+    if (!region) throw new Error("no outlet content region");
+    // Exactly one claim, as everywhere else in this file: none means the clearance lands
+    // nowhere, several mean two nested surfaces each clearing the chips.
+    const scrollers = region.querySelectorAll(".chrome-scroll-clearance");
+    expect(scrollers.length).toBe(1);
+    const scroller = scrollers[0];
+    if (!scroller) throw new Error("the bench has no marked primary scroller");
+    // The trio, and then the two facts that make it real: `flex-1` is inert unless the
+    // scroller is a direct flex child of the flex-column region, which is exactly how the
+    // board branch's dead scroller passed a class-only assertion once before.
+    expect(scroller.className).toContain("overflow-y-auto");
+    expect(scroller.className).toContain("min-h-0");
+    expect(scroller.className).toContain("flex-1");
+    expect(scroller.parentElement).toBe(region);
+    expect(region.className).toContain("flex-col");
+    // ...and it is the element carrying the bench, not some unrelated bounded list.
+    expect(scroller.getAttribute("data-screen")).toBe("session-preparation");
+    expect(scroller.querySelector('[data-testid="bench-readers"]')).toBeTruthy();
+  });
+
   it("gives a TAKEOVER surface plain clearance, never the scroll treatment", () => {
     // Settings has its own in-flow header; scrolling its content through it would be
     // wrong. It clears the corner-slot pill and stops there.

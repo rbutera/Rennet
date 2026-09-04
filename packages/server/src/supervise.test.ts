@@ -3,10 +3,10 @@ import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MIN_COMPATIBLE_PROTOCOL_VERSION, PROTOCOL_VERSION } from "@rennet/protocol";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createRennetServer, type RennetServer } from "./create-server";
-import { writeDaemonFile } from "./daemon-file";
-import { findHealthyDaemon, probeHealth } from "./supervise";
+import { daemonFilePath, writeDaemonFile } from "./daemon-file";
+import { findHealthyDaemon, probeHealth, requestDaemonShutdown } from "./supervise";
 
 /** Start a throwaway HTTP server that answers `/healthz` with the given identity JSON. */
 function fakeHealthz(
@@ -59,6 +59,44 @@ describe("healthz + probe-then-spawn supervision (#379)", () => {
       minCompatibleProtocolVersion: MIN_COMPATIBLE_PROTOCOL_VERSION,
     });
     expect(identity?.pid).toBe(process.pid);
+  });
+
+  it("POST /shutdown acks with this daemon's identity and then runs the shutdown (#820)", async () => {
+    const dir = dataDir();
+    const onShutdownRequest = vi.fn();
+    const server = await createRennetServer({
+      dataDir: dir,
+      env: {},
+      serverVersion: "9.9.9",
+      onShutdownRequest,
+    });
+    servers.push(server);
+
+    const ack = await requestDaemonShutdown(server.wsPort);
+
+    // The ack is what a launcher acts on: it names the pid that heard the command (so it can
+    // check that against its claim) and the claim file to watch.
+    expect(ack).toEqual({
+      pid: process.pid,
+      wsPort: server.wsPort,
+      version: "9.9.9",
+      protocolVersion: PROTOCOL_VERSION,
+      claimPath: daemonFilePath(dir),
+      shuttingDown: true,
+    });
+    await vi.waitFor(() => expect(onShutdownRequest).toHaveBeenCalledTimes(1));
+  });
+
+  it("a daemon composed without a shutdown does not pretend to have one", async () => {
+    // No `onShutdownRequest` ⇒ the route 404s, `requestDaemonShutdown` reads that as no ack,
+    // and the caller falls back to a signal — the same path a daemon older than this route takes.
+    const server = await createRennetServer({
+      dataDir: dataDir(),
+      env: {},
+      serverVersion: "9.9.9",
+    });
+    servers.push(server);
+    expect(await requestDaemonShutdown(server.wsPort)).toBeNull();
   });
 
   it("no claim → absent", async () => {

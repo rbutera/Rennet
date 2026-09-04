@@ -4,7 +4,8 @@
 //   serve   run the daemon in the FOREGROUND (dev / power tool; the packaged app spawns
 //           its own detached daemon and never depends on this).
 //   status  read the daemon.json claim and probe /healthz; print pid/port/versions.
-//   stop    SIGTERM the claimed pid and wait (bounded) for the claim to disappear.
+//   stop    ask the claimed daemon to shut down over its own wire (SIGTERM if it cannot
+//           answer) and wait (bounded) for the claim to disappear.
 //   pair    mint a device pairing code on the running daemon.
 //   devices list or revoke paired devices on the running daemon.
 //   map     build & store the Repo Map for a repository — daemonless, the same
@@ -35,7 +36,7 @@ import { createStageTimer, isMapBenchmarkStage } from "./benchmark-recorder";
 import { createBenchmarkRecording } from "./benchmark-store";
 import { defaultDataDir, runDaemon } from "./daemon";
 import { readDaemonFile, removeDaemonFile } from "./daemon-file";
-import { findHealthyDaemon } from "./supervise";
+import { findHealthyDaemon, requestDaemonShutdown } from "./supervise";
 import { type StopSidecarOutcome, stopSidecar } from "./t3/sidecar";
 
 export interface CliIo {
@@ -51,6 +52,8 @@ const defaultIo: CliIo = {
 export interface CliDeps {
   readonly probe: typeof findHealthyDaemon;
   readonly kill: (pid: number, signal: "SIGTERM") => void;
+  /** Ask the daemon to shut itself down over its own wire (#820). Defaults to the real POST. */
+  readonly requestShutdown?: typeof requestDaemonShutdown;
   /** Stop the owned T3 Code sidecar after the daemon (t3code-sidecar-chat). Defaults to the real one. */
   readonly stopSidecar?: (dataDir: string) => Promise<StopSidecarOutcome>;
 }
@@ -60,6 +63,7 @@ const defaultDeps: CliDeps = {
   kill: (pid, signal) => {
     process.kill(pid, signal);
   },
+  requestShutdown: requestDaemonShutdown,
   stopSidecar,
 };
 
@@ -358,17 +362,24 @@ async function stopDaemon(dataDir: string, io: CliIo, deps: CliDeps): Promise<nu
     return 0;
   }
   const claim = verdict.claim;
-  try {
-    deps.kill(claim.pid, "SIGTERM");
-  } catch (error) {
-    // ESRCH: the pid is already gone — the claim is stale. Clear it and report success.
-    if ((error as NodeJS.ErrnoException).code === "ESRCH") {
-      removeDaemonFile(dataDir, claim.pid);
-      io.out(`removed stale pidfile (pid ${claim.pid} was already gone)`);
-      return 0;
+  // Ask over the daemon's own wire first (#820). The ack says which pid heard the command,
+  // so a stop is no longer a signal sent into the dark; SIGTERM stays for a daemon that
+  // cannot answer (one older than the route, or one too wedged to reply).
+  const ack = await (deps.requestShutdown ?? requestDaemonShutdown)(claim.wsPort);
+  const acknowledged = ack?.pid === claim.pid;
+  if (!acknowledged) {
+    try {
+      deps.kill(claim.pid, "SIGTERM");
+    } catch (error) {
+      // ESRCH: the pid is already gone — the claim is stale. Clear it and report success.
+      if ((error as NodeJS.ErrnoException).code === "ESRCH") {
+        removeDaemonFile(dataDir, claim.pid);
+        io.out(`removed stale pidfile (pid ${claim.pid} was already gone)`);
+        return 0;
+      }
+      io.err(`failed to signal pid ${claim.pid}: ${(error as Error).message}`);
+      return 1;
     }
-    io.err(`failed to signal pid ${claim.pid}: ${(error as Error).message}`);
-    return 1;
   }
   // The daemon removes daemon.json on clean shutdown; poll for that as the done signal.
   const deadline = Date.now() + 5_000;
@@ -379,7 +390,11 @@ async function stopDaemon(dataDir: string, io: CliIo, deps: CliDeps): Promise<nu
     }
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
-  io.err(`sent SIGTERM to pid ${claim.pid} but daemon.json is still present after 5s`);
+  io.err(
+    acknowledged
+      ? `pid ${claim.pid} acknowledged the shutdown but daemon.json still names it after 5s`
+      : `sent SIGTERM to pid ${claim.pid} but daemon.json is still present after 5s`,
+  );
   return 1;
 }
 

@@ -71,6 +71,29 @@ export function CodeDestinationProvider({ children }: { readonly children: React
   );
 }
 
+/**
+ * Open a path in the Diff view when the review actually captured it, and SAY whether it
+ * did. `useCodeDestination` needs its path at render time, which suits a code block and
+ * not a callback handed to another surface — the chat slot learns a path only when the
+ * reader clicks one.
+ *
+ * The boolean is the honest half. An uncaptured path is not a Diff destination (the
+ * provider's own rule), so a caller that ignored the answer would swallow the click and
+ * leave the reader looking at an unchanged screen. Returning `false` lets the caller fall
+ * back to whatever it would have done.
+ */
+export function useOpenCapturedPath(): (path: string) => boolean {
+  const source = useContext(CodeDestinationContext);
+  return useCallback(
+    (path: string) => {
+      if (source === null || !source.capturedPaths.has(path)) return false;
+      source.openPath(path);
+      return true;
+    },
+    [source],
+  );
+}
+
 /** Resolve one CodeBlock's route defaults. Outside the provider it stays inert. */
 export function useCodeDestination(path: string): CodeDestination {
   const source = useContext(CodeDestinationContext);

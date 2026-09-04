@@ -279,19 +279,29 @@ inherited value. Map promotion and "Runs on" are read-only in Settings;
 promotion is a separate project action, and "Runs on" is a detected fact.
 
 The Projects page also carries project **identity** (display name with the
-`org/repo` default, and a glyph), **worktree** location and naming pattern, and
-the issue tracker's fields — GitHub rides the host's `gh` CLI and exposes no
-further fields; JIRA and Linear expose a project key, a base URL, and the *name*
-of the environment variable holding the token (never the token itself). All of
-these are wired to live commands. The display name writes through
-`project.rename`, which the sidebar's own rename also calls, and an emptied name
-restores the `org/repo` identity host-side. The glyph, worktree pair, and
+`org/repo` default, and a glyph) and the issue tracker's fields — GitHub rides
+the host's `gh` CLI and exposes no further fields; JIRA and Linear expose a
+project key, a base URL, and the *name* of the environment variable holding the
+token (never the token itself). These are wired to live commands. The display
+name writes through `project.rename`, which the sidebar's own rename also calls,
+and an emptied name restores the `org/repo` identity host-side. The glyph and
 issue-tracker fields write through `settings.setProjectValue`, which stores them
 on the **repository rung** — the project's own `config.json`, the same layer map
 visibility uses — so a per-project answer beats the host's global one, and an
 emptied field drops the entry and falls back down the ladder. Guidance rules
 write through `settings.setGuidance` into the repository's own
 `.rennet/conventions.json`, the file the review runners read.
+
+The page's **Worktrees** card is a statement, not a setting. It offered a
+worktree location and a `{project}-{branch}` naming pattern, both of which
+persisted on the repository rung and neither of which reached the code that
+places a worktree, so the card's live preview named a folder Rennet never
+creates. It now says where a review actually binds: the checkout that already
+has the reviewed branch out when one exists, otherwise a worktree Rennet makes
+under its data directory in `worktrees/`, filed by repository and then by
+branch; a pull request gets a detached checkout in the same place, filed by
+owner and repository as `pr-<number>`. A coding round is a turn in that
+workspace and creates nothing of its own.
 
 Project-scoped routes resolve a `?project=` token by exact stable id first, then
 by an exact display name only when that name identifies one project. A duplicate
@@ -332,11 +342,10 @@ builtin < detected < global < repo
 
 Appearance uses `builtin < global`. Map visibility uses `builtin < repo`. The
 per-project preferences resolve through the layers that actually have a producer
-today: the glyph and the worktree naming pattern are `builtin < repo`, the
-worktree location is `builtin < detected < repo` (the project scout offers a
-detected location), and the issue-tracker keys are `builtin < detected < global <
-repo` — the tracker is the one section with a host-wide global rung, in
-`daemon-settings.json`.
+today: the glyph is `builtin < repo`, and the issue-tracker keys are `builtin <
+detected < global < repo` — the tracker is the one section with a host-wide
+global rung, in `daemon-settings.json`. The worktree location and naming pattern
+are not listed: they steer nothing, so they are not settings the page offers.
 
 The tracker section resolves as a **unit**, not key by key. The layer that
 supplies the effective *kind* is the floor for that tracker's project key, base
@@ -439,7 +448,10 @@ rennet stop
 rennet map [path] [--base <ref>] [--json <file>] [--projects-dir <dir>]
 ```
 
-`serve`, `status`, and `stop` operate on the daemon. `map` runs without the
+`serve`, `status`, and `stop` operate on the daemon. `stop` asks the verified
+daemon to shut itself down over its own HTTP port (`POST /shutdown`, beside
+`/healthz`) and falls back to SIGTERM only when it gets no acknowledgement, then
+waits for the claim to clear. `map` runs without the
 daemon, builds the same deterministic Repo Map used by project processing, and
 stores it under the path-keyed local project directory. `--json` exports the map.
 It calls no model and needs no harness.

@@ -51,6 +51,7 @@ import {
 } from "./create-server";
 import { createGitHubTokenStore } from "./github-token-store";
 import type { ProjectProcessJournalRecord } from "./project-process-journal";
+import { GenerationSupersededError } from "./runtime/rounds";
 
 type TestServer = Awaited<ReturnType<typeof createRennetServer>>;
 type PreparationSession = {
@@ -460,6 +461,28 @@ describe("publish board-drafting coordination", () => {
     await expect(first).resolves.toBeUndefined();
     await expect(refreshed).resolves.toBeUndefined();
     expect(seen).toEqual(["context-a", "context-b"]);
+  });
+
+  it("carries a superseded draft through as its typed error, not a generic non-settle (#816 re-review P1)", async () => {
+    // The passive counterpart of round-execution.test.ts:1444. `draftBoardsForReview` runs
+    // `runBoardRegeneration`, which rethrows `GenerationSupersededError` when a LATER attempt —
+    // another session sharing this patchset's GLOBAL generation id — owns the generation. It no
+    // longer swallows that to `false`, because a `false` becomes this coordinator's generic
+    // "did not settle" throw, which `runSessionPreparation` paints as a FAILED preparation. The
+    // typed error must reach `runSessionPreparation` intact so its `instanceof` clean-exit
+    // fires. This drives the real coordinator's error routing — the seam the fix depends on;
+    // the `draftBoardsForReview` catch removal and the `runSessionPreparation` clean exit are
+    // visible in the diff and only ever reached BY this typed error surviving the coordinator.
+    const superseded = createBoardDraftCoordinator(async () => {
+      throw new GenerationSupersededError("gen:patch-1");
+    });
+    await expect(superseded(review)).rejects.toBeInstanceOf(GenerationSupersededError);
+
+    // The discrimination control: a genuine non-settle (drafting really did not finish) still
+    // rejects "did not settle" — the generic failure that SHOULD paint the preparation failed.
+    // Supersession and real failure take different exits; that difference is the whole fix.
+    const unsettled = createBoardDraftCoordinator(async () => false);
+    await expect(unsettled(review)).rejects.toThrow("did not settle");
   });
 
   it("returns retryable drafting after failure, then exposes the exact settled named boards", async () => {

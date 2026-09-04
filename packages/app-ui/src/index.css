@@ -200,7 +200,31 @@
    * `motion-reduce:animate-none` at the call site is safe: the settled state is the dot
    * at rest at the foot of the line, which is where `translateY(0)` already puts it. */
   --animate-bench-glance: rn-bench-glance 1.9s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+  /* The bench's lamp: a band of that lens's own colour travelling DOWN a core sample
+   * while the seat is under way. The plug is `h-11` (2.75rem) and the band is `h-2`
+   * (0.5rem), so it enters from above the sample and leaves past its foot — the two
+   * numbers are the reader's, and a change to either belongs here too.
+   *
+   * The call site pairs this with `motion-reduce:hidden`, NOT `animate-none`: with
+   * the animation off the band parks at the top of the plug and reads as a mark of
+   * its own, and "under way" is already carried by the dashed strata underneath it.
+   * Removing it is the honest reduced-motion state; freezing it is not. */
+  --animate-bench-core-scan: rn-bench-core-scan 2.2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
 
+  @keyframes rn-bench-core-scan {
+    0% {
+      opacity: 0;
+      transform: translateY(-0.5rem);
+    }
+    18%,
+    82% {
+      opacity: 1;
+    }
+    100% {
+      opacity: 0;
+      transform: translateY(2.75rem);
+    }
+  }
   @keyframes rn-bench-glance {
     0% {
       opacity: 0;

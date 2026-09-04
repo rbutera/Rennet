@@ -89,9 +89,10 @@ detected and how many it guessed. The structural map is built when the scout
 returns. The header status reads *scouting*, then *indexing*, then *indexed*.
 
 While the map builds, a prefilled questionnaire offers the project's setup for
-a look: issue tracker, default branch, worktree location, check command, and the
-project's mark. The check command is what a coding round's work order asks its agent
-to run before committing; Rennet never runs it itself. Every answer carries a chip reading **detected** or **guessed** —
+a look: issue tracker, default branch, check command, and the project's mark. The
+check command is what a coding round's work order asks its agent to run before
+committing; Rennet never runs it itself. Every answer carries a chip reading
+**detected** or **guessed** —
 the value, provenance, and evidence line come from the scout record Rennet just
 saved, rather than from canned UI defaults. A detected logo path remains cosmetic:
 it is evidence for choosing one of the fixed sidebar glyphs in **Settings →
@@ -151,15 +152,30 @@ captured. Capture is the bench's first beat rather than a page in front of it:
 two named steps, *resolving the repository* then *capturing the change*, with
 cancel beside them.
 
-Five readers stand under it, one per lens. Each has its own mark, a lantern that
-is lit only while that seat is actually working, and a line of what it is doing
-right now, read straight off that seat's own thread — the file it is reading,
-the command it is running, or the last thing it said. A seat that has gone quiet
-says so instead of freezing on its last line. A settled reader turns green and
-its board opens on the bench right beneath the readers, readable at once while
-the other seats keep working — you do not wait for the slowest lens to read the
-fastest one's board. A failed reader turns red and speaks the reason it failed,
-rather than spinning forever.
+Five readers stand under it, one per lens, in one row. Each holds the core
+sample it drew out of the change: a small plug on a shaft rising into the slab
+above it, in that lens's own colour — Flagged red, Decisions yellow, Design
+blue, Sequence green, Noise neutral. The colour tells you *which* reader, and it
+is the same colour that lens carries on the rail once the boards arrive, so the
+two surfaces agree.
+
+How the reader is doing is the way its sample is cut, not what colour it is. An
+empty tube is queued. Dashed layers, with a lamp travelling down the plug, mean
+the seat is reading right now. Solid layers mean it is cut clean and finished; a
+doubled seam across the middle means that lens came back with something changed.
+A snapped plug — in its own colour, never red — means the seat failed. A dashed
+outline means the lens had nothing to say.
+
+Under each sample is a line of what that seat is doing right now, read straight
+off its own thread: the file it is reading, the command it is running, or the
+last thing it said. A seat that has gone quiet says so instead of freezing on
+its last line. A settled reader's board opens on the bench right beneath the
+readers, readable at once while the other seats keep working — you do not wait
+for the slowest lens to read the fastest one's board. The bench scrolls, so a
+board that lands below the fold is still reachable, and a line above the stack
+says the stack is still being built: what is on the bench is the lenses that
+finished early, not the finished review. A failed reader speaks the reason it
+failed, rather than spinning forever.
 
 Every reader's line is also a control: activating it opens that seat's full
 transcript in the chat slot, read-only, and it keeps streaming while the seat
@@ -231,7 +247,11 @@ identity rather than its display name.
 ## Read the boards
 
 Each lens is its own board. The session top bar centres the lens rail and keeps
-the boards in the order shown below. The session URL owns the selection:
+the boards in the order shown below. Every tab carries a coloured stop along its
+foot — the same colour that lens had on the bench, at full strength on the tab
+you are reading and dimmed on the rest. The stop says which lens; which one is
+selected is still said by the raised fill and the ink, so the rail reads the
+same with colour ignored. The session URL owns the selection:
 Flagged is the address-free default and another lens uses `?lens=`. A completed
 frozen generation without Flagged falls back to its first available board and
 replaces the URL with that honest address. A live generation keeps the requested
@@ -324,6 +344,11 @@ is still there after a reload. Asking about a highlighted span sends your questi
 with the cited lines into the same thread and opens the chat on the answer.
 Nothing the thread says stages anything: you stage an ask yourself, from the board,
 a line, or a highlighted span.
+
+Clicking a file the thread mentions opens it in **Diff**, Rennet's own viewer, at
+that file — not in a second file pane inside the chat. A file the review never
+captured is not a Diff destination, so those still open the chat's own viewer
+rather than moving you nowhere.
 
 ## Stage asks
 
@@ -551,12 +576,17 @@ pages:
   history of recorded runs, each broken down by stage and grouped by the harness
   mode its stages actually name. The list is paged and states how many runs it is
   showing out of how many were recorded. Nothing here leaves your machine.
-- **Projects** — scoped to one project: its name and mark, worktree location
-  and naming pattern, review context, issue tracker, and the guidance rules the
-  review agents read. The name is live — renaming here renames the sidebar row,
-  and emptying it restores the project's `org/repo` identity. The mark, worktree,
-  issue-tracker and guidance editors have no store behind them yet; they render
-  disabled and say so, rather than accepting edits that would vanish.
+- **Projects** — scoped to one project: its name and mark, review context, issue
+  tracker, and the guidance rules the review agents read. The name is live —
+  renaming here renames the sidebar row, and emptying it restores the project's
+  `org/repo` identity. **Worktrees** is a statement, not a setting: it names where a
+  review binds — your own checkout when it already has the reviewed branch out;
+  otherwise a worktree Rennet makes under its data directory, in `worktrees/`, filed
+  by repository and then by branch; and for a pull request a detached checkout in the
+  same place, filed by owner and repository as `pr-<number>`. It also says that a
+  coding round is a turn in that workspace rather than a worktree of its own. Editors
+  the daemon has no store for render disabled and say so, rather than accepting edits
+  that would vanish.
 
 Every layered value shows a chip naming where it resolved from — builtin,
 detected, global, or repo — and every section states the file behind it.
@@ -585,7 +615,8 @@ replace that bundle and relaunch Rennet. The new app starts its matching daemon
 and reconnects to the durable review state. On macOS, Rennet also arms a small
 out-of-bundle relaunch helper before ShipIt replaces the app, so a successful
 install still reopens when the native updater omits its own relaunch. If the owned daemon cannot stop,
-Rennet stays open and reports the failure instead of closing without installing.
+Rennet stays open, starts its daemon again, and reports the failure instead of
+closing without installing — so the app you are left with still works.
 If macOS or Windows rejects the native install handoff after closing the window,
 Rennet restarts its daemon, restores the window, and shows the updater error so
 you can retry from the same review state.

@@ -50,7 +50,7 @@ describe("createProjectScoutRuntime", () => {
     expect(stored?.facts.trackerKind?.value).toBe("github");
   });
 
-  it("streams named typed scout steps and exposes the persisted five-answer questionnaire", async () => {
+  it("streams named typed scout steps and exposes the persisted four-answer questionnaire", async () => {
     const store = new ProjectSnapshotStore(tempDir());
     const events: ProjectProcessEvent[] = [];
     const runtime = createProjectScoutRuntime({
@@ -89,7 +89,7 @@ describe("createProjectScoutRuntime", () => {
       kind: "scout-ready",
       questionnaire: {
         detected: 2,
-        guessed: 3,
+        guessed: 2,
         answers: expect.arrayContaining([
           expect.objectContaining({
             key: "logoPath",
@@ -99,6 +99,15 @@ describe("createProjectScoutRuntime", () => {
         ]),
       },
     });
+    // The worktree convention is scouted and stored, but it is NOT asked about (#812): it
+    // steers nothing, and with no sibling worktree to read it was a blank field promising
+    // a setting that does not exist. `arrayContaining` cannot see an absence, so the keys
+    // are asserted exactly.
+    const asked = events.at(-1);
+    expect(
+      asked?.kind === "scout-ready" ? asked.questionnaire.answers.map(({ key }) => key) : [],
+    ).toEqual(["trackerKind", "defaultBranch", "gateCommand", "logoPath"]);
+    expect(loadScoutFacts(store, "repo")?.facts.worktreeBaseDir).toBeDefined();
     expect(loadScoutFacts(store, "repo")?.facts.defaultBranch?.value).toBe("trunk");
   });
 

@@ -11,12 +11,10 @@ import {
   type SidebarSession,
 } from "@rennet/protocol";
 import { Button, cn } from "@rennet/ui";
-import { Check, Minus, X } from "lucide-react";
-import type { SVGProps } from "react";
 import { useEffect } from "react";
 import { BoardAccount, LensBoardDocument } from "../board";
 import { useLensBoardResolutions } from "../board/board-data";
-import { Icon } from "../components/icon";
+import { lensSlot, lensTint } from "../board/lens-colour";
 import { useMutation, useRefreshCommand } from "../data";
 import { useRennetStore } from "../store";
 
@@ -32,19 +30,22 @@ import { useRennetStore } from "../store";
 //     from, and once capture settles, how much of it was captured. Capture is the first
 //     BEAT of this same scene (two named steps on the slab's rail), never a separate
 //     page. The workspace is already open while it runs.
-//   • FIVE READERS stand under the slab, each with an illustrated mark, a lantern that
-//     is lit only while that seat is actually working, a gaze line rising to the slab
-//     that carries a travelling glance while a tool call is in flight, and a live line
-//     of speech in the review serif: what the seat is doing right now.
+//   • FIVE READERS stand under the slab, each holding the CORE SAMPLE it drew out of
+//     the change: a plug on a shaft rising into a socket in the slab's underside, in
+//     that lens's own colour, with a live line of speech under it — what the seat is
+//     doing right now.
 //   • EVERY READER IS A CONTROL. Activating one points the chat slot at that seat's T3
 //     thread (`uiActions.openLensThread`) and opens the dock. A lane with no thread yet
 //     is disabled rather than pretending it has a transcript.
 //
-// The three registers a reviewer must tell apart at a glance — working, settled, failed
-// — are carried by colour AND by mark AND by motion, never by colour alone (root
-// DESIGN.md): gold + a moving glance for working, green + a check for settled, danger +
-// a cross for failed. Waiting and absent are quiet, and they are quiet in different
-// words: "queued" is a promise, an absent lens's `reason` is a result.
+// COLOUR IS IDENTITY HERE, NOT STATE. Each lane binds its lens's hue from the theme's
+// portable register (board/lens-colour.ts) — Flagged red, Decisions yellow, Design
+// blue, Sequence green, Noise neutral — so the colour answers "which reader is this",
+// the same question the lens rail's stops answer above. Which means state cannot ALSO
+// be colour: the registers a reviewer must tell apart are carried by the way the
+// sample is CUT and by the words under it, and a failed lane is a snapped plug in its
+// own lens colour, never a red one. Waiting and absent are quiet, and they are quiet
+// in different words: "queued" is a promise, an absent lens's `reason` is a result.
 //
 // It never invents state. A running lane with no `latest` yet says so ("under way"); an
 // `idle` projection is rendered in the quiet voice with the daemon's own words ("quiet
@@ -123,152 +124,201 @@ function speechOf(
   }
 }
 
-// ── The marks ────────────────────────────────────────────────────────────────
-// Five hand-drawn marks at the product's 1.6px currentColor stroke, one per lens, so
-// the readers are told apart by SHAPE before colour. They are not lucide glyphs on
-// purpose: a lens is a character on this bench, not a toolbar action.
+// ── The core sample ──────────────────────────────────────────────────────────
+// Each reader draws ONE core out of the change and lays it on the bench: a 12×44
+// plug, cut from the slab it hangs under, in that lens's own colour. It replaces the
+// gold circle-with-icon, and the swap is the point — five gold discs said "five
+// things are happening"; five cores in five colours say WHICH five, and each one
+// says what state it is in through its own structure.
+//
+// THE STATE IS THE CUT, NOT THE AMOUNT. `LensLane` carries no progress — status,
+// verdict, and a latest line, nothing that could honestly fill a bar — so nothing
+// here grows, fills, or completes. Each register is a different way the sample is
+// cut, which is why a reader can tell them apart with the colour turned off:
+//
+//   queued     an empty tube: wall only, no strata. Nothing has been drawn yet.
+//   under way  dashed strata — the cut is still open — and a lamp travelling down
+//              the sample. The one moving thing on the bench, and it means reading.
+//   settled    solid strata: the sample is cut clean, and it stops moving.
+//   reworked   the same, plus a SEAM across the middle where the core was re-cut.
+//              A lane that carried forward has no seam; the speech says which.
+//   failed     the sample SNAPPED: two pieces, offset, with the lower one blank.
+//   absent     a dashed outline — the socket was never filled.
+//
+// Failure is a break, never a colour: Flagged owns red now, so a red plug means
+// "this is the Flagged lane", and a red Design lane would be a lie. The reason text
+// under it says what went wrong; the snap says that something did.
+//
+// The plug is lens-AGNOSTIC on purpose — it paints in `lens`/`lens-soft`/`lens-line`,
+// which resolve against whatever `--rn-lens` the lane bound above it (see
+// board/lens-colour.ts). Adding a lens does not touch this component.
 
-type MarkProps = SVGProps<SVGSVGElement>;
+const CORE_W = 12;
+const CORE_H = 44;
+/** Where the three strata sit. The stadium wall is straight between y=6 and y=38, so
+ *  every stratum runs the full inner width and none clips into a rounded cap. */
+const STRATA_Y = [14, 22, 30] as const;
+/** A snapped sample, as two pieces with jagged facing edges and nothing between them.
+ *  The break is a SHAPE: it has to survive the colour being ignored, because the
+ *  colour now says which lens this is, not whether it went wrong. */
+const SNAP_TOP = "M1 6 A5 5 0 0 1 11 6 L11 19 L7.5 21 L4 18 L1 20 Z";
+const SNAP_BOTTOM = "M1 25 L4.5 27 L8 24 L11 26 L11 38 A5 5 0 0 1 1 38 Z";
 
-function mark(paths: React.ReactNode) {
-  return function Mark(props: MarkProps) {
-    return (
-      <svg
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth={1.6}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        aria-hidden="true"
-        {...props}
-      >
-        {paths}
-      </svg>
-    );
-  };
+function CoreSample({
+  register,
+  reworked,
+}: {
+  readonly register: Register;
+  readonly reworked: boolean;
+}) {
+  const cut = register === "settled";
+  const open = register === "working";
+  const quiet = register === "absent" || register === "waiting";
+  return (
+    <svg
+      viewBox={`0 0 ${CORE_W} ${CORE_H}`}
+      width={CORE_W}
+      height={CORE_H}
+      fill="none"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      className="text-lens"
+    >
+      {register === "failed" ? (
+        <>
+          <path d={SNAP_TOP} stroke="currentColor" strokeWidth={1.5} />
+          <line x1={2.5} y1={12} x2={9.5} y2={12} stroke="currentColor" strokeWidth={1} />
+          {/* The lower piece is blank and dimmed: whatever this seat was cutting, it
+              never got that far. */}
+          <path
+            d={SNAP_BOTTOM}
+            stroke="currentColor"
+            strokeWidth={1.5}
+            className="text-lens-line"
+          />
+        </>
+      ) : (
+        <>
+          {/* The wall. Dashed when the socket was never filled — an absent lens is a
+              result, so its sample is drawn empty rather than left out. */}
+          <rect
+            x={1}
+            y={1}
+            width={CORE_W - 2}
+            height={CORE_H - 2}
+            rx={(CORE_W - 2) / 2}
+            stroke="currentColor"
+            strokeWidth={register === "absent" ? 1 : 1.5}
+            {...(register === "absent" ? { strokeDasharray: "2 3" } : {})}
+            {...(quiet ? { className: "text-lens-line" } : {})}
+          />
+          {(cut || open) &&
+            STRATA_Y.map((y) => (
+              <line
+                key={y}
+                x1={2}
+                y1={y}
+                x2={CORE_W - 2}
+                y2={y}
+                stroke="currentColor"
+                strokeWidth={1}
+                // An open cut versus a clean one — a difference of PATTERN, so neither
+                // can be read as "further along" than the other.
+                {...(open ? { strokeDasharray: "1.5 2" } : {})}
+              />
+            ))}
+          {cut && reworked && (
+            // The seam: a doubled rule where the core was taken a second time.
+            <>
+              <line
+                x1={1.5}
+                y1={21}
+                x2={CORE_W - 1.5}
+                y2={21}
+                stroke="currentColor"
+                strokeWidth={1.5}
+              />
+              <line
+                x1={1.5}
+                y1={23.5}
+                x2={CORE_W - 1.5}
+                y2={23.5}
+                stroke="currentColor"
+                strokeWidth={1.5}
+              />
+            </>
+          )}
+        </>
+      )}
+    </svg>
+  );
 }
-
-/** Design — an arch on its footings with a plumb line down the middle: structure, held. */
-const DesignMark = mark(
-  <>
-    <path d="M5 19V12a7 7 0 0 1 14 0v7" />
-    <path d="M12 5v14" />
-    <path d="M3 19h18" />
-  </>,
-);
-
-/** Sequence — three beats stepping down a path, in order, connected. */
-const SequenceMark = mark(
-  <>
-    <path d="M4 7h4l4 5 4 5h4" />
-    <circle cx="4" cy="7" r="1.6" />
-    <circle cx="12" cy="12" r="1.6" />
-    <circle cx="20" cy="17" r="1.6" />
-  </>,
-);
-
-/** Decisions — a balance beam with two pans: two ways it could have gone. */
-const DecisionsMark = mark(
-  <>
-    <path d="M12 4v16" />
-    <path d="M5 8h14" />
-    <path d="M2.5 14a2.5 2.5 0 0 0 5 0L5 8Z" />
-    <path d="M16.5 14a2.5 2.5 0 0 0 5 0L19 8Z" />
-  </>,
-);
-
-/** Flagged — a pennant with a spark off its point: something to stop and look at. */
-const FlaggedMark = mark(
-  <>
-    <path d="M6 21V4" />
-    <path d="M6 5h9l-2.5 4L15 13H6" />
-    <path d="M18.5 17.5v3M17 19h3" />
-  </>,
-);
-
-/** Noise — three waves flattening away, with the strike that quiets them. */
-const NoiseMark = mark(
-  <>
-    <path d="M3 12c2-5 4-5 6 0s4 5 6 0" />
-    <path d="M18 12h3" />
-    <path d="M17 7l4 10" />
-  </>,
-);
-
-/** A lens the client has never heard of still gets a presence, not a blank. */
-const UnknownMark = mark(<circle cx="12" cy="12" r="7" />);
-
-const MARKS: Readonly<Record<string, (props: MarkProps) => React.ReactElement>> = {
-  design: DesignMark,
-  sequence: SequenceMark,
-  decisions: DecisionsMark,
-  flagged: FlaggedMark,
-  noise: NoiseMark,
-};
 
 // ── The reader ───────────────────────────────────────────────────────────────
 
-const LANTERN_BY_REGISTER: Readonly<Record<Register, string>> = {
-  waiting: "border-line bg-canvas text-ink-faint",
-  working: "border-accent-line bg-accent-soft text-accent",
-  settled: "border-green-line bg-green-soft text-green",
-  absent: "border-line bg-raised text-ink-faint",
-  failed: "border-danger bg-danger-soft text-danger",
-};
-
-const GAZE_BY_REGISTER: Readonly<Record<Register, string>> = {
-  waiting: "bg-line",
-  working: "bg-accent-line",
-  settled: "bg-green-line",
-  absent: "bg-line",
-  failed: "bg-danger",
-};
-
 /**
- * One reader: the lane's lantern and mark once, then one line of speech PER SEAT, each
- * its own control. A lane with one seat (every lens but Flagged) reads exactly as before;
- * Flagged shows two lines, each naming its speaker, because a Claude seat and a Codex
- * seat are two voices with two transcripts, not one voice that keeps changing its mind.
+ * One reader: the lane's socket, shaft and core sample once, then one line of speech
+ * PER SEAT, each its own control. A lane with one seat (every lens but Flagged) reads
+ * exactly as before; Flagged shows two lines, each naming its speaker, because a
+ * Claude seat and a Codex seat are two voices with two transcripts, not one voice
+ * that keeps changing its mind.
  */
 function Reader({ lane, reviewId }: { readonly lane: LensLane; readonly reviewId?: string }) {
   const register = registerOf(lane);
-  const Mark = MARKS[lane.id] ?? UnknownMark;
   const voices = voicesOf(lane);
   const reading = lane.status === "running" && voices.some((v) => v.latest?.kind === "tool");
+  const reworked = lane.status === "done" && lane.verdict !== "carrying-forward";
 
   return (
     <div
       data-row={lane.id}
       data-status={lane.status}
       data-register={register}
-      className="flex min-w-36 flex-1 basis-36 flex-col items-center gap-2 px-2 pb-3 pt-0 text-center"
+      data-lens-slot={lensSlot(lane.id)}
+      // The lane BINDS its hue here; everything below paints in `lens`. Bound on the
+      // column rather than on the mark so a future lane-level accent inherits it too.
+      className={cn(
+        "flex min-w-0 flex-col items-center gap-2 px-1 pb-3 pt-0 text-center",
+        lensTint(lane.id),
+      )}
     >
-      {/* The gaze line: this reader's attention, rising to the slab above. It carries a
-          travelling glance ONLY while a tool call is actually in flight — motion that
-          means "this seat is reading the change right now" and nothing else. */}
-      <span className="relative flex h-8 w-1 justify-center" aria-hidden="true">
-        <span className={cn("h-full w-px", GAZE_BY_REGISTER[register])} />
+      {/* The socket in the slab's underside, and the shaft this core came out on. The
+          shaft carries a travelling glance ONLY while a tool call is actually in
+          flight — motion that means "this seat is reading the change right now". */}
+      <span className="relative flex h-8 w-2 flex-col items-center" aria-hidden="true">
+        <span className="h-0.5 w-2 rounded-full bg-lens-line" />
+        <span className="w-px flex-1 bg-lens-line" />
         {reading && (
-          <span className="absolute bottom-0 size-1 rounded-full bg-accent animate-bench-glance motion-reduce:animate-none" />
+          <span className="absolute bottom-0 size-1 rounded-full bg-lens animate-bench-glance motion-reduce:animate-none" />
         )}
       </span>
 
       <span
-        className={cn(
-          "relative grid size-11 place-items-center rounded-full border transition-colors",
-          LANTERN_BY_REGISTER[register],
-        )}
+        data-mark="core"
+        data-cut={
+          register === "failed"
+            ? "snapped"
+            : register === "absent"
+              ? "empty"
+              : register === "waiting"
+                ? "unstarted"
+                : register === "working"
+                  ? "open"
+                  : reworked
+                    ? "seamed"
+                    : "clean"
+        }
+        className="relative flex h-11 w-3 items-start justify-center overflow-hidden rounded-full transition-colors"
       >
-        <Mark
-          className={cn(
-            "size-6",
-            register === "working" && "animate-processing-pulse motion-reduce:animate-none",
-          )}
-        />
-        {register === "settled" && <ReaderBadge tone="settled" glyph={Check} />}
-        {register === "failed" && <ReaderBadge tone="failed" glyph={X} />}
-        {register === "absent" && <ReaderBadge tone="absent" glyph={Minus} />}
+        <CoreSample register={register} reworked={reworked} />
+        {register === "working" && (
+          // The affineur's lamp passing down the sample. `motion-reduce:hidden`, not
+          // `animate-none`: parked at the top it would be a static band that reads as
+          // a mark of its own, and the dashed strata already say "under way" without
+          // it — the state survives the motion being switched off.
+          <span className="pointer-events-none absolute inset-x-0 top-0 h-2 rounded-full bg-lens-soft animate-bench-core-scan motion-reduce:hidden" />
+        )}
       </span>
 
       <span className="text-sm font-medium text-ink">{lane.label}</span>
@@ -352,29 +402,6 @@ function Speech({
         {speech.text}
       </span>
     </button>
-  );
-}
-
-/** The settled/absent/failed badge on a lantern's rim — the second, non-colour statement
- *  of the register (root DESIGN.md: never colour alone). */
-function ReaderBadge({
-  tone,
-  glyph,
-}: {
-  readonly tone: "settled" | "absent" | "failed";
-  readonly glyph: typeof Check;
-}) {
-  return (
-    <span
-      className={cn(
-        "absolute -bottom-0.5 -right-0.5 grid size-4 place-items-center rounded-full border border-canvas",
-        tone === "settled" && "bg-green text-canvas",
-        tone === "failed" && "bg-danger text-canvas",
-        tone === "absent" && "bg-line text-ink-soft",
-      )}
-    >
-      <Icon icon={glyph} className="size-2.5" />
-    </span>
   );
 }
 
@@ -474,6 +501,15 @@ export function PreparationBench({ session, preparation, review }: PreparationBe
     const read = boards[lane.id as LensKind];
     return read !== undefined && (read.status === "missing" || read.status === "pending");
   });
+  // The lanes with something to SHOW — a board, or the account of a read that went wrong.
+  // Resolved once, up here, because the line above the stack has to know whether the stack
+  // exists before either is rendered.
+  const landed = settled.flatMap((lane) => {
+    const read = boards[lane.id as LensKind];
+    return read === undefined || read.status === "missing" || read.status === "pending"
+      ? []
+      : [{ lane, read }];
+  });
 
   useEffect(() => {
     if (!active) return;
@@ -489,7 +525,16 @@ export function PreparationBench({ session, preparation, review }: PreparationBe
   // WHICH review these lanes belong to — off the preparation record, which is where the
   // daemon stamped it, not off a second route lookup. A lens transcript is opened against
   // it so the dock can tell this review's thread from the last one's (review finding 4).
-  const preparationReviewId = "reviewId" in preparation ? preparation.reviewId : undefined;
+  //
+  // The SESSION's own `reviewId` is the fallback, and it is not decoration (#819): only the
+  // `drafting` arm REQUIRES `reviewId`, while `failed` and `cancelled` make it optional and
+  // both of them keep their lanes — threads and all. A preparation that failed after its
+  // seats bound their threads therefore drew five readers holding real transcripts that no
+  // click could open. `SidebarSession.reviewId` is the durable attach for the same review,
+  // written by `attachReview` before drafting starts, so it answers the same question
+  // rather than guessing at one.
+  const preparationReviewId =
+    ("reviewId" in preparation ? preparation.reviewId : undefined) ?? session.reviewId;
   const branch = session.claim?.branch;
   const files = review?.patchsets.find((set) => set.id === review.activePatchsetId)?.files.length;
   const stage =
@@ -509,65 +554,92 @@ export function PreparationBench({ session, preparation, review }: PreparationBe
       data-screen="session-preparation"
       data-status={preparation.status}
       role={failed ? "alert" : "status"}
-      // `min-h-full` with SAFE centring, not `h-full` + `justify-center`: once the revealed
-      // boards make the bench taller than its pane, plain centring pushes the overflow out
-      // of BOTH ends and the top half (the slab and the first readers) is clipped where no
-      // scroll can reach it (drive 1.6, third run: four of five readers off-screen).
-      className="mx-auto flex min-h-full w-full max-w-4xl flex-col justify-center-safe gap-8 p-8"
+      // THE BENCH IS ITS OWN PRIMARY SCROLLER (#819). The outlet is a flex column and the
+      // shell root is `fixed inset-0 overflow-hidden`, so a surface that does not declare
+      // `min-h-0 flex-1 overflow-y-auto` is simply CLIPPED at the fold — which is what put
+      // every landed board out of reach on the 0.7.0 drive. Same three classes the review
+      // workspace's scroller carries; `chrome-scroll-clearance` is how a session surface
+      // passes under the floating chip layer instead of starting beneath it.
+      className="chrome-scroll-clearance min-h-0 flex-1 overflow-y-auto"
     >
-      {/* THE SLAB — the change under review, the centrepiece the readers look at. */}
-      <div className="flex flex-col gap-3 rounded-window border border-line bg-surface p-6">
-        <span className="flex flex-wrap items-center gap-2 text-2xs font-medium uppercase tracking-wide text-ink-faint">
-          <span>{prNumber === undefined ? "Your branch" : `Pull request #${prNumber}`}</span>
-          <span aria-hidden="true">·</span>
-          {/* The stage keeps its OWN element so it is one findable string. Folded into the
+      {/* `min-h-full` with SAFE centring, not `h-full` + `justify-center`: once the revealed
+          boards make the bench taller than its pane, plain centring pushes the overflow out
+          of BOTH ends and the top half (the slab and the first readers) is clipped where no
+          scroll can reach it (drive 1.6, third run: four of five readers off-screen). It is
+          INSIDE the scroller, so the short bench still centres and the tall one scrolls. */}
+      <div className="mx-auto flex min-h-full w-full max-w-4xl flex-col justify-center-safe gap-8 p-8">
+        {/* THE SLAB — the change under review, the centrepiece the readers look at. */}
+        <div className="flex flex-col gap-3 rounded-window border border-line bg-surface p-6">
+          <span className="flex flex-wrap items-center gap-2 text-2xs font-medium uppercase tracking-wide text-ink-faint">
+            <span>{prNumber === undefined ? "Your branch" : `Pull request #${prNumber}`}</span>
+            <span aria-hidden="true">·</span>
+            {/* The stage keeps its OWN element so it is one findable string. Folded into the
               eyebrow's prose it became a fragment of a longer node, which is exactly the
               shape a text query cannot see. */}
-          <span data-testid="preparation-stage" className={failed ? "text-danger" : undefined}>
-            {failed ? `${stage} failed` : cancelled ? `${stage} cancelled` : stage}
+            <span data-testid="preparation-stage" className={failed ? "text-danger" : undefined}>
+              {failed ? `${stage} failed` : cancelled ? `${stage} cancelled` : stage}
+            </span>
           </span>
-        </span>
-        <h1 className="font-display text-2xl font-medium leading-tight text-ink">
-          {session.title}
-        </h1>
-        <p className={cn("font-serif text-15", failed ? "text-danger" : "text-ink-soft")}>
-          {failed
-            ? preparation.reason
-            : cancelled
-              ? "The review is still here. Retry when you’re ready."
-              : slabLine(preparation, branch, files)}
-        </p>
-        {preparation.status === "capturing" && <CaptureRail step={preparation.step} />}
-      </div>
+          <h1 className="font-display text-2xl font-medium leading-tight text-ink">
+            {session.title}
+          </h1>
+          <p className={cn("font-serif text-15", failed ? "text-danger" : "text-ink-soft")}>
+            {failed
+              ? preparation.reason
+              : cancelled
+                ? "The review is still here. Retry when you’re ready."
+                : slabLine(preparation, branch, files)}
+          </p>
+          {preparation.status === "capturing" && <CaptureRail step={preparation.step} />}
+        </div>
 
-      {/* THE READERS — five presences at work on the slab above. While capture runs the
+        {/* THE READERS — five presences at work on the slab above. While capture runs the
           daemon has not opened a lane yet, so they are not drawn: an empty bench is
           honest, five invented "queued" readers would not be. */}
-      {lanes !== undefined && lanes.length > 0 && (
-        <div className="flex flex-wrap items-start justify-center gap-x-2 gap-y-6">
-          {lanes.map((lane) => (
-            <Reader
-              key={lane.id}
-              lane={lane}
-              {...(preparationReviewId === undefined ? {} : { reviewId: preparationReviewId })}
-            />
-          ))}
-        </div>
-      )}
+        {lanes !== undefined && lanes.length > 0 && (
+          // ONE ROW, always. The old `flex-wrap basis-36` orphaned the fifth reader onto
+          // a line of its own below ~750px — visible in the app, and it broke the scene:
+          // five readers under one slab became four under the slab and one adrift. An
+          // explicit template of exactly as many equal columns as the daemon opened
+          // lanes cannot wrap, and it stays honest when there are fewer than five.
+          <div
+            data-testid="bench-readers"
+            className="grid items-start gap-x-2 gap-y-6"
+            style={{ gridTemplateColumns: `repeat(${lanes.length}, minmax(0, 1fr))` }}
+          >
+            {lanes.map((lane) => (
+              <Reader
+                key={lane.id}
+                lane={lane}
+                {...(preparationReviewId === undefined ? {} : { reviewId: preparationReviewId })}
+              />
+            ))}
+          </div>
+        )}
 
-      {/* THE BOARDS THAT HAVE LANDED — each settled lens's board, readable now, in lane
+        {/* THE BOARDS THAT HAVE LANDED — each settled lens's board, readable now, in lane
           order. The reader above stays as the way back to that lens's transcript.
           A read that answered with something OTHER than a board — malformed, wrong
           generation, unreadable, failed — shows its account in the board's place, in the
           workspace's own words (`BoardAccount`). Rendering null there left the reader
           saying "drafted" over an empty bench with no reason (Codex review, 2026-09-03).
           `missing` and `pending` are the only silent ones: the draft is on disk a beat
-          before `board.read` is re-asked, and the poll above is already chasing them. */}
-      {settled.map((lane) => {
-        const read = boards[lane.id as LensKind];
-        if (read === undefined || read.status === "missing" || read.status === "pending")
-          return null;
-        return (
+          before `board.read` is re-asked, and the poll above is already chasing them.
+
+          The line above the stack says the stack is still being built — once, and only while
+          lenses are still working, because after they stop it would be a promise nothing is
+          keeping. A board here is a board that landed early, not the finished review, and a
+          reviewer who is not told that reads a half-built stack as the whole of it (#819). */}
+        {landed.length > 0 && active && (
+          <p
+            data-testid="bench-boards-landing"
+            className="text-center font-serif text-13 text-ink-faint"
+          >
+            Boards land here as each lens finishes. The review opens in full once every lens has
+            settled.
+          </p>
+        )}
+        {landed.map(({ lane, read }) => (
           <section
             key={lane.id}
             data-bench-board={lane.id}
@@ -583,27 +655,29 @@ export function PreparationBench({ session, preparation, review }: PreparationBe
               <BoardAccount resolution={read} />
             )}
           </section>
-        );
-      })}
+        ))}
 
-      <div className="flex justify-center gap-2">
-        {active ? (
-          <Button
-            variant="outline"
-            disabled={cancel.pending}
-            onClick={() => void cancel.mutate({ sessionId: session.id })}
-          >
-            Cancel
-          </Button>
-        ) : (
-          <Button
-            variant="accent"
-            disabled={retry.pending}
-            onClick={() => void retry.mutate({ sessionId: session.id, commandId: newCommandId() })}
-          >
-            Retry
-          </Button>
-        )}
+        <div className="flex justify-center gap-2">
+          {active ? (
+            <Button
+              variant="outline"
+              disabled={cancel.pending}
+              onClick={() => void cancel.mutate({ sessionId: session.id })}
+            >
+              Cancel
+            </Button>
+          ) : (
+            <Button
+              variant="accent"
+              disabled={retry.pending}
+              onClick={() =>
+                void retry.mutate({ sessionId: session.id, commandId: newCommandId() })
+              }
+            >
+              Retry
+            </Button>
+          )}
+        </div>
       </div>
     </section>
   );

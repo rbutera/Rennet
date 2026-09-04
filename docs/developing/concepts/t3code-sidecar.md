@@ -111,6 +111,22 @@ never remote-exposed. Clients do not read the credential file.
 There is no engine choice and no second rung: the review workspace's chat slot always
 renders T3's thread view for the review's bound thread, mounted natively by the host. T3's own thread top bar (project breadcrumb, new-thread, editor and GitHub openers, layout toggles) is hidden in both mounts by a rule in `packages/t3-chat/src/t3.css` keyed on the bar's `data-chat-header` hook: Rennet's frame already names the review, the branch and the diff, so the bar is workspace chrome the review does not need, and hiding it from the mount's stylesheet keeps the vendored `ChatView` unedited.
 
+### Fitting the chat to Rennet
+
+T3's chat is a whole workspace's UI docked inside another application, so three things about it are re-cut in `t3.css`, all of them scoped to the two mounts and none of them a vendored edit. Each leans on a `data-slot` or a CSS variable upstream already writes.
+
+- **Corners.** T3's composer is a 22px stack (20px on its inner surface). Rennet's largest surface step is 12px and a chat box is a surface, so `composer-host`, both composer surfaces and `composer-shell`'s glass `::before` move to `--radius-surface`, with the inner surface one step down at `--radius-control`.
+- **Type.** T3's rem steps sit one notch above Rennet's desktop ramp throughout, which is most of why the chat reads as a different application. Each moves down to its neighbouring Rennet size — base 16→14, sm 14→13, xs 12→11, lg 18→16, xl 20→18 — and the composer's prompt takes 13px through `--font-size-prompt`, the variable `ComposerPromptEditor` already reads. T3's own fixed px steps of 11px and below are left alone; they are already at or under Rennet's 10px floor. These are scoped *overrides* of utilities, never redefinitions: a `.text-sm` redefined in this build would win for the whole document, Rennet's own screens included.
+- **The composer's context strip** — the environment, project and branch pickers on the bar under the chat box — is hidden with the thread header above it, for the same reason: the review is bound to one workspace the reader cannot switch from here. Hiding it alone is not enough, because upstream carves the composer's outline and its glass `::before` to leave a seam for the strip's corners, keyed on `data-with-context`; both clip-paths are cleared in the same rule, or the strip's absence leaves a notch bitten out of the composer for a control that is not there.
+
+Styling a vendored app from outside it has exactly one failure mode, and it is silent: a fold renames a hook, the selector stops matching, and the composer quietly returns to 22px corners with the branch strip back under it. `packages/t3-chat/src/t3-css-hooks.test.ts` is the tripwire — it reads the real stylesheet and the real vendored source and fails when a hook the stylesheet leans on is gone. It cannot see a hook that survived on an element that *moved*; presence is checkable from a string and position is not.
+
+### A file reference opens Rennet's Diff view
+
+Clicking a file in the chat opens the file in **Rennet's** Diff view rather than T3's right panel, so there is one file viewer in the window instead of two. Upstream routes every such click through one action — `useRightPanelStore.openFile(ref, path, line?)` — which is the narrowest seam available and needs no vendored edit: the store is zustand, its actions live in its state, and `packages/t3-chat`'s `RouteFileOpens` swaps one with `setState` and restores it on unmount.
+
+Rennet takes the click only when it owns the answer. The mount's `onOpenFile` prop comes from `useOpenCapturedPath` in `packages/app-ui/src/review/code-destination.tsx`, which navigates to `?view=diff&file=…` for a path in the active patchset and returns `false` for anything else — and on `false` the original T3 action runs, so a reference to a file outside the review still opens T3's own viewer rather than doing nothing. It is wired in `T3ChatDock`, which is already inside `CodeDestinationProvider` and already knows which review the route names, so both desktop entries inherit it by mounting the dock.
+
 `@rennet/t3-chat` mounts T3's `ChatView` natively:
   the vendored web app is imported by module (both desktop Vite configs — the Electron
   renderer and the served browser tab — alias `~/` into `vendor/t3code/apps/web/src`,
@@ -148,6 +164,19 @@ with something other than a board — malformed, for another generation, unreada
 lens that failed to draft — shows that account in the board's place, in the same words the
 workspace uses, rather than an empty space under a reader that says "drafted". A lane with no
 `thread` yet is disabled rather than offered as a transcript that does not exist.
+
+The bench is its own primary scroller (`chrome-scroll-clearance min-h-0 flex-1
+overflow-y-auto`, the repo-wide idiom), because the outlet is a flex column inside a
+`fixed inset-0 overflow-hidden` shell and a surface that does not declare it is simply
+clipped at the fold — which put every landed board out of reach. The safe-centring that
+keeps a short bench in the middle lives on the inner column, inside the scroller. While
+lenses are still working, one line above the stack says the boards are still landing; it
+is dropped once nothing is drafting, where it would be a promise nothing is keeping.
+The review a reader opens its transcript against is the preparation record's `reviewId`,
+falling back to the session's own attached `reviewId`: only the `drafting` arm requires
+the field, while `failed` and `cancelled` make it optional and both keep their lanes —
+threads and all — so without the fallback a stopped preparation drew readers holding real
+transcripts that no click could open.
 
 The mount's environment registration persists in each host's IndexedDB under T3's
 catalog (the same store T3's hosted app uses for paired machines), keyed by one stable
@@ -381,9 +410,17 @@ publishes what the seat is doing through the lane. `packages/server/src/t3/lates
 is the projector: a pure function from a thread projection to the protocol's `LaneLatest`.
 A tool call in flight becomes plain words naming what it is acting on — `reading
 src/foo.ts`, `running git diff --stat`, `editing a.ts`, `searching createSession` — a tool
-with no plain word for it keeps T3's own summary rather than being given an invented verb,
+with no plain word for it keeps T3's own detail rather than being given an invented verb,
 and assistant prose becomes its last sentence. Every line is capped at 120 characters with
 an honest `…`.
+
+A line is the seat's SPEECH, so the call's JSON input never becomes one. A structured-output
+call — the seat handing its board back — reads `returning the board`; an unrecognised tool
+whose detail is its own JSON input reads as the tool's name; a detail that is nothing but a
+payload falls back to T3's summary, and contributes no line at all when the summary is a
+payload too, leaving the seat's own prose to speak. A known verb whose subject is a JSON blob
+keeps the verb alone (`reading`), which is also what a call still streaming its
+`input_json_delta` reads as until the input closes.
 
 A tool call is only "in flight" until it finishes. T3 emits started, updated and completed
 tool activities with the same `tool` tone, so the projector reads the lifecycle — the
@@ -680,7 +717,10 @@ lens is not proven by this drive**, in either direction.
 
 While the seat was dead the bench went on reading *"Design — quiet for 320 s"*, and the durable
 lane stayed `running`, for the five minutes after its last attempt failed at 33 s
-([#813](https://github.com/rbutera/Rennet/issues/813)).
+([#813](https://github.com/rbutera/Rennet/issues/813), fixed in
+[#816](https://github.com/rbutera/Rennet/pull/816): a lens failure is published on the same
+settlement tail as an arrival, so the lane leaves `running` when the seat does, not when the
+slowest sibling finishes).
 
 ### The round: right workspace, empty receipt
 
@@ -724,11 +764,14 @@ the gate, the round prompt tells the worker to run the project's check command b
 commits, and the round runs on its own sidecar thread — a subagent of the session, bound to the
 same worktree — instead of sharing the session's chat thread as it did here.
 
-The app's own copy has not caught up with the binding either: the Dispatch coach mark still
-says a round runs "in a detached worktree", the scout records `worktreeBaseDir` with the hint
-"coding rounds create worktrees here", and Settings → Projects → Worktrees previews
+On the drive the app's own copy had not caught up with the binding either: the Dispatch coach
+mark said a round runs "in a detached worktree", the scout recorded `worktreeBaseDir` with the
+hint "coding rounds create worktrees here", and Settings → Projects → Worktrees previewed
 `~/.rennet/worktrees/{project}-{branch}`, which is not the path anything bound to
-([#812](https://github.com/rbutera/Rennet/issues/812)).
+([#812](https://github.com/rbutera/Rennet/issues/812), fixed in
+[#816](https://github.com/rbutera/Rennet/pull/816): the mark names the session's workspace,
+the scout's hint names the repository's own convention and the answer left the questionnaire,
+and the Worktrees card states the binding instead of previewing a path).
 
 ### What the drive found that the tests could not
 
@@ -743,10 +786,12 @@ The empty round receipt is the reverse: a fake seam hands the round a diff, so e
 a receipt. Only a real agent, really committing in a real worktree against the real sidecar,
 produces the case where the checkpoint read comes back with nothing to record.
 
-The stale copy is a third kind again. Nothing asserts the three shipped strings — the Dispatch
-coach mark, the scout's `worktreeBaseDir` hint, the Settings worktree preview — against the
-binding contract they describe, so they stayed true-sounding and wrong through the change that
-falsified them. A string only a person reads is only caught by a person reading it.
+The stale copy was a third kind again. Nothing asserted the three shipped strings — the
+Dispatch coach mark, the scout's `worktreeBaseDir` hint, the Settings worktree preview —
+against the binding contract they describe, so they stayed true-sounding and wrong through the
+change that falsified them. A string only a person reads is only caught by a person reading
+it. Each of the three now has a dom test over the rendered surface, which closes these three
+and not the class: a fourth string nobody thought to assert would go the same way.
 
 The bench's "quiet for 320 s" and the round's "0 files changed" are both true sentences about
 the wrong quantity, which no assertion about the same quantity would catch. You find them by
@@ -763,7 +808,10 @@ The daemon's own shutdown sends SIGTERM to the sidecar it spawned and clears the
 `rennet stop` and the tray's Quit then run a sidecar step after the daemon step: verify
 the claim, SIGTERM only a pid T3's runtime record vouches for, wait a bounded five
 seconds, clear the claim. A sidecar that will not exit is logged and left for the next
-start to reap; the app still exits.
+start to reap; the app still exits. The sidecar still takes a signal rather than the
+daemon's `POST /shutdown` command, because the vendored T3 server exposes no shutdown
+route of its own — but the liveness test is the daemon's: an exited, unreaped sidecar
+counts as stopped instead of timing out the wait.
 
 T3 has no SIGTERM handler of its own. A turn that was streaming when the sidecar stops is
 reconciled on the sidecar's next start as an errored session ("Provider session did not

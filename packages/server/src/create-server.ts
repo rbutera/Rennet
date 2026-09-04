@@ -216,6 +216,7 @@ import {
   writeRunScopedContext,
   writeSessionContext,
 } from "./context-files";
+import { daemonFilePath } from "./daemon-file";
 import { createLiveDeltaDigestPort } from "./delta-digest-live";
 import { createDispatch, type DispatchDeps, type FlaggedReviewRun } from "./dispatch";
 import {
@@ -293,6 +294,7 @@ import { RoundProgressHub, roundEventsForDurableOperation } from "./runtime/roun
 import {
   createRoundsRuntime,
   type DispatchRoundResult,
+  GenerationSupersededError,
   type PersistedBoardMeta,
   type RoundsRuntimeDeps,
   type T3SeatRuntime,
@@ -1123,6 +1125,13 @@ export interface RennetServerOptions {
    * the daemon runs headless. Passed straight to the WS listener's static handler.
    */
   readonly uiDist?: string;
+  /**
+   * Shut this daemon's PROCESS down (#820). Present ⇒ the listener serves `POST /shutdown`,
+   * which acks with this daemon's identity and then calls this. `runDaemon` supplies the same
+   * stop SIGTERM runs; a server composed without a process to stop (every test that builds one
+   * in-process) leaves it absent and the route 404s.
+   */
+  readonly onShutdownRequest?: () => void;
   /**
    * This daemon's own server bundle on the host filesystem — the artifact a WSL daemon UPDATE
    * delivers into the distro (C17 cluster 6, #534). `spawnDaemon` passes the entry it launched,
@@ -4038,6 +4047,12 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       )
     ).session;
     const head = patchset.repository.headOid;
+    // Supersession is NOT caught here (#816 re-review P1). A `false` return means "did not
+    // settle", and the coordinator turns that into a `did not settle` throw that
+    // `runSessionPreparation` paints as a FAILED preparation. But a superseded attempt did not
+    // fail — a later attempt owns this generation. Let `GenerationSupersededError` propagate
+    // through the coordinator so preparation exits without painting failure. A genuine drafting
+    // failure still throws its own error and still paints failed, as it should.
     const settled = await runBoardRegeneration(
       boardDraftingDeps(
         review,
@@ -4291,6 +4306,15 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       setCurrentPreparation(sessionId, controller, undefined);
     } catch (error) {
       if (!preparationIsCurrent(sessionId, controller)) return;
+      // A superseded drafting attempt did NOT fail (#816 re-review P1): a later attempt owns
+      // this review's generation and will compose it. Painting `failed` here would show the
+      // reviewer a failure for a draft that was merely overtaken — the passive counterpart of
+      // the active path's abandon in round-execution.ts. Clear the in-flight status, the same
+      // exit the success path takes, and let the owning attempt file the boards.
+      if (error instanceof GenerationSupersededError) {
+        setCurrentPreparation(sessionId, controller, undefined);
+        return;
+      }
       const reason = error instanceof Error ? error.message : String(error);
       setCurrentPreparation(sessionId, controller, {
         status: "failed",
@@ -5255,6 +5279,10 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     listen: daemonSettingsStore.read().daemon?.listen,
     // The served browser UI (#381); absent ⇒ headless.
     uiDist: options.uiDist,
+    // The shutdown command (#820); absent ⇒ this server has no process to stop and 404s it.
+    shutdown: options.onShutdownRequest
+      ? { claimPath: daemonFilePath(dataDir), run: options.onShutdownRequest }
+      : undefined,
   });
 
   void (async () => {
