@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Option 5 — tabbed transcript strip under the board</title>
+<style>
+/* impeccable-disable design-system-color -- low-fidelity wireframe: monochrome greys by
+   instruction (boxes and labels, no styling). Not product UI, so the DESIGN.md palette
+   does not apply. Standalone document, so the waiver travels with the file. */
+*{box-sizing:border-box}
+body{margin:0;padding:28px;background:#fff;color:#1a1a1a;font:13px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif}
+h1{font-size:17px;margin:0 0 2px}
+.sub{color:#666;margin:0 0 18px}
+h2{font-size:11px;letter-spacing:.09em;text-transform:uppercase;color:#666;margin:24px 0 6px}
+p{max-width:84ch;margin:0 0 9px}
+code{font:11.5px ui-monospace,SFMono-Regular,Menlo,monospace;background:#f0f0f0;padding:0 3px}
+a{color:#1a1a1a}
+.wire{width:1160px;border:1px solid #1a1a1a;background:#fff;font-size:11px}
+.hdr{display:flex;align-items:center;gap:8px;padding:6px 8px;background:#ededed;border-bottom:1px solid #1a1a1a}
+.slot{border:1px dashed #aaa;padding:2px 6px;color:#555}
+.cols{display:flex;align-items:stretch}
+.col{border-right:1px solid #999}
+.col:last-child{border-right:0}
+.cap{font-size:9.5px;letter-spacing:.09em;text-transform:uppercase;color:#666;background:#e6e6e6;border-bottom:1px solid #ccc;padding:3px 6px}
+.pad{padding:8px}
+.el{border:1px solid #bbb;background:#f7f7f7;padding:6px;margin-bottom:8px}
+.el.new{border:2px solid #1a1a1a;background:#eaeaea}
+.ghost{border:1px dashed #aaa;color:#777;padding:6px;text-align:center}
+.tie{display:inline-block;border:1px solid #1a1a1a;padding:0 3px;font:10px ui-monospace,monospace;background:#fff}
+.rcpt{border-left:4px solid #1a1a1a;background:#f0f0f0;padding:4px 6px;margin-bottom:6px;font:10.5px ui-monospace,monospace}
+.tool{border-left:4px solid #bbb;background:#f7f7f7;padding:4px 6px;margin-bottom:6px;font:10.5px ui-monospace,monospace;color:#555}
+.prose{margin:0 0 8px;color:#333}
+.cite{font:10px ui-monospace,monospace;color:#555}
+.lint{border:1px solid #1a1a1a;background:#e0e0e0;padding:4px 6px;font-size:10.5px;margin-top:6px}
+.note{color:#666;font-size:10.5px}
+.strip{border-top:2px solid #1a1a1a;background:#fafafa}
+.striptabs{display:flex;border-bottom:1px solid #999;background:#ededed}
+.striptabs > div{border-right:1px solid #ccc;padding:5px 10px}
+.striptabs > div.on{background:#1a1a1a;color:#fff;font-weight:600}
+.striptabs .st{display:block;font-size:10px;color:#666}
+.striptabs .on .st{color:#ddd}
+.bhdr{display:flex;align-items:center;gap:8px;border-bottom:1px solid #999;padding-bottom:5px;margin-bottom:10px}
+.chip{border:1px solid #1a1a1a;background:#e0e0e0;padding:1px 6px;font-size:10px;letter-spacing:.05em;text-transform:uppercase}
+</style>
+</head>
+<body>
+
+<p><a href="index.html">&larr; all options</a></p>
+<h1>Option 5 — the five seats as a tabbed strip under the board</h1>
+<p class="sub">The board owns the main region. The bench becomes a strip along the bottom: one tab per seat, carrying its state, with the selected seat's transcript filling the strip.</p>
+<p class="sub"><b>Against option 1:</b> the same “board first” instinct, but it spends permanent vertical space on the strip and turns the bench into chrome, where option 1 folds the bench into the tabs it already has.</p>
+
+<div class="wire">
+  <div class="hdr">
+    <span class="slot">sidebar toggle</span>
+    <span class="slot">chat toggle</span>
+    <span class="note" style="margin-left:4px">LEFT: back &middot; chat toggle &middot; trail</span>
+    <span class="slot" style="margin:0 auto">CENTER: lens switcher (selects the board only — the strip selects the seat)</span>
+    <span class="slot">RIGHT: History &middot; Map &middot; Diff</span>
+  </div>
+
+  <div class="cols">
+    <div class="col" style="width:130px;background:#f4f4f4">
+      <div class="cap">sidebar</div>
+      <div class="pad note">projects<br>sessions</div>
+    </div>
+
+    <div class="col" style="width:190px">
+      <div class="cap">chat dock — unchanged</div>
+      <div class="pad note">the review's own thread</div>
+    </div>
+
+    <div class="col" style="flex:1">
+      <div class="cap">main region — board above, seat strip below</div>
+
+      <div class="pad">
+        <div class="bhdr">
+          <b style="font-size:13px">Observe the GitHub token refresh, drop the unsafe retry</b>
+          <span class="chip">in progress</span>
+          <span class="note">Sequence &middot; generation 2</span>
+        </div>
+        <div class="el"><span class="tie">a</span> <b>1. The shape of an observation</b><br>prose block<br>
+          <span class="cite">cited: packages/adapters/src/github-auth.ts:53-64</span></div>
+        <div class="el"><span class="tie">b</span> <b>2. The one non-secret detail</b><br>prose block<br>
+          <span class="cite">cited: packages/adapters/src/github-auth.ts:67-95</span></div>
+        <div class="el new"><span class="tie">c</span> <b>3. Emit at every outcome</b> <span class="note">&larr; just landed</span><br>prose block</div>
+        <div class="el"><span class="tie">d</span> <b>4. Refuse to retry the network case</b><br>prose block
+          <div class="lint"><b>finish returned</b> — “step 4 makes a claim about removed code and cites nothing. A deletion is evidenced by the diff, not by the file.”</div>
+        </div>
+        <div class="ghost">step 5 lands here</div>
+      </div>
+
+      <div class="strip">
+        <div class="striptabs">
+          <div><b>Design</b><span class="st">&#10003; drafted</span></div>
+          <div class="on"><b>Sequence</b><span class="st">&#9696; 00:41</span></div>
+          <div><b>Decisions</b><span class="st">&#9696; queued</span></div>
+          <div><b>Flagged &middot; Claude</b><span class="st">&#9696; 01:12</span></div>
+          <div><b>Flagged &middot; Codex</b><span class="st">&#10007; failed</span></div>
+          <div><b>Noise</b><span class="st">&mdash; absent</span></div>
+          <div style="margin-left:auto;border-right:0"><span class="note">&or; collapse strip</span></div>
+        </div>
+        <div class="pad" style="max-height:190px;overflow:hidden">
+          <p class="prose">“The record type comes first — everything here either produces one or consumes one.”</p>
+          <div class="tool">&#9656; Read github-auth.ts:40-110 <span class="note">(6 lines, collapsed)</span></div>
+          <div class="rcpt"><span class="tie">a</span> add_step &middot; added step 1</div>
+          <div class="rcpt"><span class="tie">a</span> cite &middot; github-auth.ts:53-64</div>
+          <div class="tool">&#9656; Bash git diff main...HEAD <span class="note">(214 lines, collapsed)</span></div>
+          <div class="rcpt"><span class="tie">b</span> add_step &middot; added step 2</div>
+          <div class="rcpt" style="border-left-width:8px"><span class="tie">c</span> add_step &middot; added step 3 <span class="note">&larr; just landed</span></div>
+          <div class="rcpt"><span class="tie">d</span> finish &middot; returned, 1 lint pointer &rarr; step 4</div>
+          <div class="ghost">appending live &mdash; the strip scrolls on its own</div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<h2>What is where</h2>
+<p>The board fills the main region and is marked provisional by the <span class="chip">in progress</span> chip and the ghost row at its end. Along the bottom sits the strip: <b>six</b> tabs for five lenses, because Flagged's two voices are two threads and therefore two tabs. Each tab carries its seat's state and elapsed time; the strip body below the tabs is that seat's live transcript. The strip is the bench — there is no separate bench screen.</p>
+<p>Letters <span class="tie">a</span>–<span class="tie">d</span> tie a receipt to the element it wrote; in a built version that is a shared highlight across the board/strip boundary, and an element pulses once as its receipt lands. Because board and strip are stacked rather than side by side, the tie has to work vertically — an element at the top of the board and its receipt at the bottom of the strip can be a long way apart.</p>
+
+<h2>On click</h2>
+<p>Clicking a tab selects that seat: the strip body swaps to its transcript and the board above swaps to that seat's lens. The two Flagged tabs both show the Flagged board — the board does not change between them, only the transcript, which is the one case where the strip and the board are not one-to-one. The top bar's lens switcher still selects a board; picking a lens there moves the strip to that lens's first seat. “Collapse strip” hides the transcript and gives the board the full height; the tabs stay as a one-line status bar, so the five lanes never leave the screen.</p>
+
+<h2>Cost against the current shell</h2>
+<p>Highest of the five. The strip is a new region in the app layout — today the main region is one column under <code>packages/app-ui/src/shell/top-bar.tsx</code>, and a persistent bottom pane is new structure. <code>packages/app-ui/src/app/preparation-bench.tsx</code> is demoted to a tab row: the five-reader scene, the marks, the lanterns and the gaze lines all lose their stage, which is most of that file. The transcript again has to mount outside <code>packages/app-ui/src/chat/t3-chat-dock.tsx</code>, the single mount of the T3 slot.</p>
+<p>What it buys: seat selection is one control and it is always visible, the board keeps its full width, and Flagged's two voices are first-class rather than a sub-choice inside a lane. What it costs beyond the code: permanent vertical space in a window that already spends 56px on the top bar, and a receipt-to-element tie that has to reach across a horizontal split.</p>
+
+</body>
+</html>

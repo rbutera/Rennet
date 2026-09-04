@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Option 2 — transcript in the chat dock (current architecture)</title>
+<style>
+/* impeccable-disable design-system-color -- low-fidelity wireframe: monochrome greys by
+   instruction (boxes and labels, no styling). Not product UI, so the DESIGN.md palette
+   does not apply. Standalone document, so the waiver travels with the file. */
+*{box-sizing:border-box}
+body{margin:0;padding:28px;background:#fff;color:#1a1a1a;font:13px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif}
+h1{font-size:17px;margin:0 0 2px}
+.sub{color:#666;margin:0 0 18px}
+h2{font-size:11px;letter-spacing:.09em;text-transform:uppercase;color:#666;margin:24px 0 6px}
+p{max-width:84ch;margin:0 0 9px}
+code{font:11.5px ui-monospace,SFMono-Regular,Menlo,monospace;background:#f0f0f0;padding:0 3px}
+a{color:#1a1a1a}
+.wire{width:1160px;border:1px solid #1a1a1a;background:#fff;font-size:11px}
+.hdr{display:flex;align-items:center;gap:8px;padding:6px 8px;background:#ededed;border-bottom:1px solid #1a1a1a}
+.slot{border:1px dashed #aaa;padding:2px 6px;color:#555}
+.cols{display:flex;align-items:stretch}
+.col{border-right:1px solid #999}
+.col:last-child{border-right:0}
+.cap{font-size:9.5px;letter-spacing:.09em;text-transform:uppercase;color:#666;background:#e6e6e6;border-bottom:1px solid #ccc;padding:3px 6px}
+.pad{padding:8px}
+.lane{display:flex;align-items:center;gap:8px;border-bottom:1px solid #ddd;padding:5px 8px}
+.lane.sel{background:#e0e0e0;font-weight:600}
+.lane .st{margin-left:auto;color:#666;font-weight:400}
+.voice{display:flex;align-items:center;gap:8px;border-bottom:1px solid #ddd;padding:4px 8px 4px 24px;color:#444}
+.voice .st{margin-left:auto;color:#666}
+.el{border:1px solid #bbb;background:#f7f7f7;padding:6px;margin-bottom:8px}
+.el.new{border:2px solid #1a1a1a;background:#eaeaea}
+.ghost{border:1px dashed #aaa;color:#777;padding:6px;text-align:center}
+.tie{display:inline-block;border:1px solid #1a1a1a;padding:0 3px;font:10px ui-monospace,monospace;background:#fff}
+.rcpt{border-left:4px solid #1a1a1a;background:#f0f0f0;padding:4px 6px;margin-bottom:6px;font:10.5px ui-monospace,monospace}
+.tool{border-left:4px solid #bbb;background:#f7f7f7;padding:4px 6px;margin-bottom:6px;font:10.5px ui-monospace,monospace;color:#555}
+.prose{margin:0 0 8px;color:#333}
+.cite{font:10px ui-monospace,monospace;color:#555}
+.lint{border:1px solid #1a1a1a;background:#e0e0e0;padding:4px 6px;font-size:10.5px;margin-top:6px}
+.note{color:#666;font-size:10.5px}
+</style>
+</head>
+<body>
+
+<p><a href="index.html">&larr; all options</a></p>
+<h1>Option 2 — transcript in the chat dock</h1>
+<p class="sub">The current architecture. The bench shrinks to a rail; the selected lane's board fills the main region; the seat's transcript takes over the existing chat dock.</p>
+<p class="sub"><b>Against option 1:</b> same wiring, but it keeps the bench as a stage above the board rather than folding it into the lens tabs, so the reviewer still has two places that claim to say which lens they are on.</p>
+
+<div class="wire">
+  <div class="hdr">
+    <span class="slot">sidebar toggle</span>
+    <span class="slot">chat toggle</span>
+    <span style="margin-left:8px">LEFT slot: back &middot; chat toggle &middot; trail (hidden — dock is open)</span>
+    <span class="slot" style="margin:0 auto">CENTER slot: lens switcher &nbsp;Design | <b>Sequence</b> | Decisions | Flagged | Noise</span>
+    <span class="slot">RIGHT: History &middot; Map &middot; Diff</span>
+  </div>
+
+  <div class="cols">
+
+    <!-- sidebar -->
+    <div class="col" style="width:150px;background:#f4f4f4">
+      <div class="cap">sidebar</div>
+      <div class="pad note">projects<br>sessions</div>
+    </div>
+
+    <!-- chat dock: the seat transcript -->
+    <div class="col" style="width:360px">
+      <div class="cap">chat dock (existing slot) — now showing the Sequence seat's thread</div>
+      <div class="pad" style="border-bottom:1px solid #ccc;background:#f0f0f0">
+        trail: rennet / fix/token-refresh-observability<br>
+        <span class="note">&larr; Back to the session &nbsp;|&nbsp; Sequence seat &middot; generation 2 &middot; read-only</span>
+      </div>
+      <div class="pad">
+        <p class="prose">“The record type comes first — everything in this change either produces one or consumes one.”</p>
+        <div class="tool">&#9656; Read github-auth.ts:40-110 &nbsp;<span class="note">(6 lines, collapsed)</span></div>
+        <div class="rcpt"><span class="tie">a</span> add_step &middot; added step 1 &middot; The shape of an observation</div>
+        <div class="rcpt"><span class="tie">a</span> cite &middot; github-auth.ts:53-64</div>
+        <div class="tool">&#9656; Bash git diff main...HEAD -- github-auth.ts &nbsp;<span class="note">(214 lines, collapsed)</span></div>
+        <div class="rcpt"><span class="tie">b</span> add_step &middot; added step 2 &middot; The one non-secret detail</div>
+        <div class="rcpt"><span class="tie">b</span> cite &middot; github-auth.ts:67-95</div>
+        <p class="prose">“Retry ownership is the interesting stop — the transport already retries the connect phase.”</p>
+        <div class="rcpt" style="border-left-width:8px"><span class="tie">c</span> add_step &middot; added step 3 &middot; Emit at every outcome &nbsp;<span class="note">&larr; just landed</span></div>
+        <div class="rcpt"><span class="tie">d</span> add_step &middot; added step 4 &middot; Refuse to retry the network case</div>
+        <div class="rcpt"><span class="tie">d</span> finish &middot; returned, 1 lint pointer &rarr; step 4</div>
+        <div class="ghost">next entry appends here</div>
+      </div>
+    </div>
+
+    <!-- main region: bench rail + board -->
+    <div class="col" style="flex:1">
+      <div class="cap">main region — bench rail, then the selected lane's board</div>
+
+      <div style="border-bottom:1px solid #999">
+        <div class="lane"><span>Design</span><span class="st">reworked &middot; 9 requirements</span></div>
+        <div class="lane sel"><span>Sequence</span><span class="st">under way &middot; 4 steps &middot; 3 cited</span></div>
+        <div class="lane"><span>Decisions</span><span class="st">queued</span></div>
+        <div class="lane"><span>Flagged</span><span class="st">2 voices</span></div>
+        <div class="voice"><span>&mdash; Claude</span><span class="st">under way &middot; 3 findings</span></div>
+        <div class="voice"><span>&mdash; Codex</span><span class="st">failed &middot; 2 repairs, still unlinted</span></div>
+        <div class="lane"><span style="color:#888">Noise</span><span class="st">absent &middot; nothing grouped as noise</span></div>
+      </div>
+
+      <div class="pad">
+        <div class="note" style="margin-bottom:8px">Sequence board &middot; generation 2 &middot; “Observe the GitHub token refresh, drop the unsafe retry”</div>
+
+        <div class="el"><span class="tie">a</span> <b>1. The shape of an observation, secret-free by construction</b><br>
+          prose block<br><span class="cite">cited: packages/adapters/src/github-auth.ts:53-64</span></div>
+
+        <div class="el"><span class="tie">b</span> <b>2. The one non-secret detail, kept safe by a closed allowlist</b><br>
+          prose block<br><span class="cite">cited: packages/adapters/src/github-auth.ts:67-95</span></div>
+
+        <div class="el new"><span class="tie">c</span> <b>3. Emit at every outcome</b> &nbsp;<span class="note">&larr; just landed, no citation yet</span><br>
+          prose block</div>
+
+        <div class="el"><span class="tie">d</span> <b>4. Refuse to retry the network case</b><br>
+          prose block
+          <div class="lint"><b>finish returned</b> — “step 4 makes a claim about removed code and cites nothing. A deletion is evidenced by the diff, not by the file.”</div>
+        </div>
+
+        <div class="ghost">step 5 lands here</div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<h2>What is where</h2>
+<p>Three panes, all existing. The sidebar is unchanged. The <b>chat dock</b> (the app's one chat slot) is pointed at the selected seat's T3 thread instead of the review's own thread — its header keeps the trail and gains a back link. The <b>main region</b> carries the bench compressed to a five-row rail across its top, with the selected lane's board filling everything below it. Flagged shows its two voices as indented rows under the lane, because a lane with two seats has two threads.</p>
+<p>Board elements and transcript receipts are tied by the letters <span class="tie">a</span>–<span class="tie">d</span>. In a built version that tie is a shared highlight: hovering a receipt lights its element and vice versa, and an element pulses once as its receipt lands. Element <span class="tie">c</span> is drawn heavier on both sides to stand for “this one just arrived”; the dashed boxes are where the next element and the next transcript entry will appear.</p>
+
+<h2>On click</h2>
+<p>Clicking a lane row on the rail selects that lens: the board below the rail swaps to that lens's board, and the dock swaps to that lane's seat thread. Clicking one of Flagged's two voice rows selects the Flagged board and that voice's thread — the board is shared, the transcript is not. The top bar's lens switcher does the same thing from the centre slot, so there are two equivalent controls; the rail is the one you can reach while reading. Clicking “Back to the session” in the dock returns the dock to the review's own conversation and leaves the board where it is. Closing the chat with the top bar's toggle hides the transcript entirely and gives the board the full width.</p>
+
+<h2>Cost against the current shell</h2>
+<p>Lowest of the four — most of this already exists. <code>packages/app-ui/src/app/preparation-bench.tsx</code> already models five lanes with per-seat voices (<code>voicesOf</code> names them Claude/Codex when a lane has more than one seat) and already makes every reader a control that calls <code>uiActions.openLensThread({ reviewId, thread })</code> and opens the dock. <code>packages/app-ui/src/chat/t3-chat-dock.tsx</code> already renders <code>slot.thread … readOnly</code> with a “&larr; Back to the session” button when <code>ui.lensThread</code> is set. <code>packages/app-ui/src/shell/top-bar.tsx</code> needs no change at all: the trail already hands off to the dock header when the dock is open.</p>
+<p>The new work is the main region: the bench has to compress from its full-height five-reader scene into a rail and mount the selected board underneath, in the same outlet. The known limits are that <code>ui.lensThread</code> holds <b>one</b> ref, so opening a seat evicts the session thread until you come back, and the dock is narrow — a transcript with prose, tool output and receipts in ~360px will wrap hard.</p>
+
+</body>
+</html>

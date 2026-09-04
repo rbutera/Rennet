@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Option 4 — per-lane drawer on the bench</title>
+<style>
+/* impeccable-disable design-system-color -- low-fidelity wireframe: monochrome greys by
+   instruction (boxes and labels, no styling). Not product UI, so the DESIGN.md palette
+   does not apply. Standalone document, so the waiver travels with the file. */
+*{box-sizing:border-box}
+body{margin:0;padding:28px;background:#fff;color:#1a1a1a;font:13px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif}
+h1{font-size:17px;margin:0 0 2px}
+.sub{color:#666;margin:0 0 18px}
+h2{font-size:11px;letter-spacing:.09em;text-transform:uppercase;color:#666;margin:24px 0 6px}
+p{max-width:84ch;margin:0 0 9px}
+code{font:11.5px ui-monospace,SFMono-Regular,Menlo,monospace;background:#f0f0f0;padding:0 3px}
+a{color:#1a1a1a}
+.wire{width:1160px;border:1px solid #1a1a1a;background:#fff;font-size:11px}
+.hdr{display:flex;align-items:center;gap:8px;padding:6px 8px;background:#ededed;border-bottom:1px solid #1a1a1a}
+.slot{border:1px dashed #aaa;padding:2px 6px;color:#555}
+.cols{display:flex;align-items:stretch}
+.col{border-right:1px solid #999}
+.col:last-child{border-right:0}
+.cap{font-size:9.5px;letter-spacing:.09em;text-transform:uppercase;color:#666;background:#e6e6e6;border-bottom:1px solid #ccc;padding:3px 6px}
+.pad{padding:8px}
+.lane{display:flex;align-items:center;gap:8px;border-bottom:1px solid #999;padding:6px 10px}
+.lane.sel{background:#e0e0e0;font-weight:600;border-bottom:1px solid #1a1a1a}
+.lane .st{margin-left:auto;color:#666;font-weight:400}
+.voice{display:flex;align-items:center;gap:8px;border-bottom:1px solid #ddd;padding:4px 10px 4px 28px;color:#444}
+.voice .st{margin-left:auto;color:#666}
+.drawer{border-bottom:1px solid #999;background:#fafafa;display:flex;align-items:stretch}
+.el{border:1px solid #bbb;background:#f7f7f7;padding:6px;margin-bottom:8px}
+.el.new{border:2px solid #1a1a1a;background:#eaeaea}
+.ghost{border:1px dashed #aaa;color:#777;padding:6px;text-align:center}
+.tie{display:inline-block;border:1px solid #1a1a1a;padding:0 3px;font:10px ui-monospace,monospace;background:#fff}
+.rcpt{border-left:4px solid #1a1a1a;background:#f0f0f0;padding:4px 6px;margin-bottom:6px;font:10.5px ui-monospace,monospace}
+.tool{border-left:4px solid #bbb;background:#f7f7f7;padding:4px 6px;margin-bottom:6px;font:10.5px ui-monospace,monospace;color:#555}
+.prose{margin:0 0 8px;color:#333}
+.cite{font:10px ui-monospace,monospace;color:#555}
+.lint{border:1px solid #1a1a1a;background:#e0e0e0;padding:4px 6px;font-size:10.5px;margin-top:6px}
+.note{color:#666;font-size:10.5px}
+.vtabs{display:flex;gap:4px;margin-bottom:8px}
+.vtabs span{border:1px solid #999;padding:1px 6px;background:#fff}
+.vtabs span.on{background:#1a1a1a;color:#fff}
+</style>
+</head>
+<body>
+
+<p><a href="index.html">&larr; all options</a></p>
+<h1>Option 4 — a drawer that expands beneath its lane</h1>
+<p class="sub">The bench keeps the whole main region. The selected lane opens in place; its board and its transcript are both inside the drawer, so they cannot disagree.</p>
+<p class="sub"><b>Against option 1:</b> keeps the bench as the home surface and puts board and transcript inside it, which reads well while all five are running and badly once you only want to read one finished board.</p>
+
+<div class="wire">
+  <div class="hdr">
+    <span class="slot">sidebar toggle</span>
+    <span class="slot">chat toggle</span>
+    <span class="note" style="margin-left:4px">LEFT: back &middot; chat toggle &middot; trail</span>
+    <span class="slot" style="margin:0 auto">CENTER: lens switcher (redundant while a drawer is open)</span>
+    <span class="slot">RIGHT: History &middot; Map &middot; Diff</span>
+  </div>
+
+  <div class="cols">
+    <div class="col" style="width:130px;background:#f4f4f4">
+      <div class="cap">sidebar</div>
+      <div class="pad note">projects<br>sessions</div>
+    </div>
+
+    <div class="col" style="width:200px">
+      <div class="cap">chat dock — unchanged, the review's own thread</div>
+      <div class="pad note">trail<br><br>user turn<br>orchestrator turn<br>composer</div>
+    </div>
+
+    <div class="col" style="flex:1">
+      <div class="cap">main region — the bench, one drawer open</div>
+
+      <div class="lane"><span>Design</span><span class="st">reworked &middot; 9 requirements &middot; 6 covered</span><span>&rsaquo;</span></div>
+
+      <div class="lane sel"><span>Sequence</span><span class="st">under way &middot; 4 steps &middot; 3 cited &middot; 1 lint pointer</span><span>&or;</span></div>
+      <div class="drawer">
+        <div style="flex:1.15;border-right:1px solid #999;padding:8px">
+          <div class="note" style="margin-bottom:8px">board &middot; “Observe the GitHub token refresh, drop the unsafe retry”</div>
+          <div class="el"><span class="tie">a</span> <b>1. The shape of an observation</b><br>prose block<br>
+            <span class="cite">cited: github-auth.ts:53-64</span></div>
+          <div class="el"><span class="tie">b</span> <b>2. The one non-secret detail</b><br>prose block<br>
+            <span class="cite">cited: github-auth.ts:67-95</span></div>
+          <div class="el new"><span class="tie">c</span> <b>3. Emit at every outcome</b> <span class="note">&larr; just landed</span><br>prose block</div>
+          <div class="el"><span class="tie">d</span> <b>4. Refuse to retry the network case</b><br>prose block
+            <div class="lint"><b>finish returned</b> — “step 4 makes a claim about removed code and cites nothing. A deletion is evidenced by the diff, not by the file.”</div>
+          </div>
+          <div class="ghost">step 5 lands here</div>
+        </div>
+        <div style="flex:1;padding:8px">
+          <div class="note" style="margin-bottom:8px">transcript &middot; Sequence seat thread (read-only, live)</div>
+          <p class="prose">“The record type comes first — everything here either produces one or consumes one.”</p>
+          <div class="tool">&#9656; Read github-auth.ts:40-110 <span class="note">(6 lines, collapsed)</span></div>
+          <div class="rcpt"><span class="tie">a</span> add_step &middot; added step 1</div>
+          <div class="rcpt"><span class="tie">a</span> cite &middot; github-auth.ts:53-64</div>
+          <div class="tool">&#9656; Bash git diff main...HEAD <span class="note">(214 lines, collapsed)</span></div>
+          <div class="rcpt"><span class="tie">b</span> add_step &middot; added step 2</div>
+          <div class="rcpt"><span class="tie">b</span> cite &middot; github-auth.ts:67-95</div>
+          <p class="prose">“Retry ownership is the interesting stop.”</p>
+          <div class="rcpt" style="border-left-width:8px"><span class="tie">c</span> add_step &middot; added step 3 <span class="note">&larr; just landed</span></div>
+          <div class="rcpt"><span class="tie">d</span> add_step &middot; added step 4</div>
+          <div class="rcpt"><span class="tie">d</span> finish &middot; returned, 1 lint pointer &rarr; step 4</div>
+          <div class="ghost">appending live</div>
+        </div>
+      </div>
+
+      <div class="lane"><span>Decisions</span><span class="st">queued</span><span>&rsaquo;</span></div>
+      <div class="lane"><span>Flagged</span><span class="st">2 voices &middot; one board</span><span>&rsaquo;</span></div>
+      <div class="voice"><span>&mdash; Claude</span><span class="st">under way &middot; 3 findings</span></div>
+      <div class="voice"><span>&mdash; Codex</span><span class="st">failed &middot; 2 repairs, still unlinted</span></div>
+      <div class="lane"><span style="color:#888">Noise</span><span class="st">absent &middot; nothing grouped as noise</span></div>
+
+      <div class="pad" style="background:#f0f0f0">
+        <div class="note">Flagged's drawer, when opened, looks the same but its transcript pane has two tabs:</div>
+        <div class="vtabs"><span class="on">Claude</span><span>Codex</span><span class="note" style="border:0;background:none">&larr; one board on the left, two threads on the right</span></div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<h2>What is where</h2>
+<p>The main region is the bench and nothing else: five lane rows, top to bottom, with Flagged's two voices as indented rows under it. The selected lane's row expands into a drawer that sits between it and the next lane. Inside the drawer, the board is on the left and that same lane's transcript is on the right; the drawer is the only place either appears, so there is no way to be looking at one lens's board beside another lens's transcript.</p>
+<p>Letters <span class="tie">a</span>–<span class="tie">d</span> tie a receipt to the element it wrote — a shared highlight in a built version, plus a pulse as the element lands. Heavier borders mark what just arrived; dashed boxes mark where the next thing goes. The lane rows above and below the drawer keep their live status lines, so the other four lenses stay legible while you read one.</p>
+
+<h2>On click</h2>
+<p>Clicking a lane row opens its drawer and closes whichever was open — one drawer at a time, so the page has one focus. Clicking the open lane's row again collapses it back to a rail of five rows. Flagged's drawer holds one board and a two-tab transcript pane (Claude / Codex); switching voice changes only the right-hand pane. The top bar's lens switcher still selects a lens, which while a drawer is open means two controls for one thing — the honest fix is to have the switcher open the matching drawer.</p>
+
+<h2>Cost against the current shell</h2>
+<p>Low to medium. Nothing in <code>packages/app-ui/src/shell/top-bar.tsx</code> changes, and <code>packages/app-ui/src/app/preparation-bench.tsx</code> keeps the whole outlet — its five-reader scene survives as the rail, and its per-seat voice model (<code>voicesOf</code>) is exactly what the two Flagged rows and the two transcript tabs need. The bench already renders boards through <code>LensBoardDocument</code>, so putting one inside a drawer is a move, not a new capability.</p>
+<p>Two real costs. The transcript has to render outside the chat dock, and <code>packages/app-ui/src/chat/t3-chat-dock.tsx</code> is currently the single mount of the T3 slot. And the drawer is a narrow, nested reading surface: a board written for a full-width document column has to survive being shown at roughly half the main region's width inside a row, which is the shape most likely to feel cramped once a board is long.</p>
+
+</body>
+</html>

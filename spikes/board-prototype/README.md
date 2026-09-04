@@ -37,6 +37,10 @@ deep-links. Read it before adding demo content; the scenario registry lives in
   in `packages/app-ui`, which the redesign replaces.
 - Screenshots worth keeping go to `wireframes/` at the repo root
   (`prototype-shell-*.png`, `lens-*.png`, `reference-v0-shell.png`).
+- Low-fidelity layout wireframes live in this app's own `wireframes/` folder as
+  plain HTML — open the file, no build. `wireframes/live-lenses/index.html` is
+  the current set: five layouts for watching the five lens seats draft their
+  boards live, ranked, each costed against the shipped shell.
 
 ## Run it
 

@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Live lenses — low-fidelity wireframes</title>
+<style>
+/* impeccable-disable design-system-color -- low-fidelity wireframe: monochrome greys by
+   instruction (boxes and labels, no styling). Not product UI, so the DESIGN.md palette
+   does not apply. Standalone document, so the waiver travels with the file. */
+*{box-sizing:border-box}
+body{margin:0;padding:32px;background:#fff;color:#1a1a1a;font:13px/1.6 system-ui,-apple-system,"Segoe UI",sans-serif}
+h1{font-size:19px;margin:0 0 4px}
+h2{font-size:11px;letter-spacing:.09em;text-transform:uppercase;color:#666;margin:26px 0 8px}
+p{max-width:86ch;margin:0 0 10px}
+ul{max-width:86ch;padding-left:18px;margin:0 0 10px}
+li{margin-bottom:5px}
+code{font:11.5px ui-monospace,SFMono-Regular,Menlo,monospace;background:#f0f0f0;padding:0 3px}
+a{color:#1a1a1a}
+.opt{border:1px solid #1a1a1a;padding:12px 14px;margin-bottom:12px;max-width:86ch}
+.opt h3{margin:0 0 4px;font-size:14px}
+.opt .rank{font:10px ui-monospace,monospace;border:1px solid #1a1a1a;padding:1px 5px;margin-right:6px}
+.opt p{margin:0 0 6px}
+.note{color:#666;font-size:11.5px}
+</style>
+</head>
+<body>
+
+<h1>Live lenses — low-fidelity wireframes</h1>
+<p class="note">Boxes and labels, monochrome, no styling and no motion. Each file is self-contained: open it in a browser, no build, no server.</p>
+
+<h2>The model these draw</h2>
+<p>A round runs <b>five lens seats</b> — Design, Sequence, Decisions, Flagged, Noise — and each is its own coding-agent thread with its own transcript. <b>Flagged has two voices</b>, a Claude seat and a Codex seat, which means two threads writing findings onto one Flagged board. There is no single transcript for a round; there are six.</p>
+<p>The direction being drawn: a board exists before its seat starts, and the seat writes elements into it as it works (<code>add_step</code>, <code>cite</code>, <code>add_finding</code>, <code>finish</code>) instead of returning one JSON blob at the end. So a board fills in element by element while the reviewer watches, a <code>finish</code> can come back with a lint pointer the seat then answers, and every board element has a matching receipt in its seat's transcript.</p>
+<p>Each option shows all of that at once: the five lanes with Flagged's two voices, one lane selected, that lane's Sequence board mid-draft (steps arriving, a citation attaching, a <code>finish</code> that returned one lint pointer), and that same lane's transcript beside it. Board elements and transcript receipts are tied by the letters <code>a</code>–<code>d</code>; in a built version that is a shared highlight on hover plus a one-shot pulse as an element lands.</p>
+
+<h2>What 0.7.0 does today</h2>
+<p>During generation the preparation bench shows five readers and renders each settled board <em>below</em> them, stacked in lane order in one column (<code>packages/app-ui/src/app/preparation-bench.tsx</code>). Two problems: the column outgrows its pane, and nothing on a landed board says it is provisional or which seat is still working. Every option below is measured against fixing both.</p>
+
+<h2>Options, in preference order</h2>
+
+<div class="opt">
+  <h3><span class="rank">1</span><a href="option-1-boards-first.html">Boards first, agent widget above the board</a></h3>
+  <p>No bench as a separate stage. The review opens on the board view; the lens tabs carry working indicators; the selected board draws itself while you watch, with a prominent widget above it naming the seat doing the work — provider, model, elapsed, what it is doing right now — that opens the live transcript on click and collapses to a receipt line when the lens settles. Draws both transcript variants: the chat dock, and a drawer under the widget.</p>
+</div>
+
+<div class="opt">
+  <h3><span class="rank">2</span><a href="option-2-dock.html">Transcript in the chat dock (current architecture)</a></h3>
+  <p>Bench compressed to a rail with the board under it; the seat's transcript takes over the existing chat dock. Cheapest to build — the bench already routes a voice to the dock — but it keeps the bench as a stage above the board, so two surfaces claim to say which lens you are on.</p>
+</div>
+
+<div class="opt">
+  <h3><span class="rank">3</span><a href="option-3-split.html">Bench rail, board left, transcript right</a></h3>
+  <p>The main region splits under a five-column bench rail; the chat dock keeps the review's own conversation, so the orchestrator stays visible. The transcript is always on screen rather than a click away, which costs the board half its width and needs a live thread view mounted outside the chat dock.</p>
+</div>
+
+<div class="opt">
+  <h3><span class="rank">4</span><a href="option-4-drawer.html">Per-lane drawer on the bench</a></h3>
+  <p>The bench keeps the whole main region and the selected lane expands in place, board and transcript together inside the drawer. Reads well while all five are running and badly once you only want to read one finished board, and it makes the board a narrow nested surface.</p>
+</div>
+
+<div class="opt">
+  <h3><span class="rank">5</span><a href="option-5-strip.html">Tabbed transcript strip under the board</a></h3>
+  <p>The board owns the main region; the bench becomes a bottom strip of six tabs (Flagged is two), the selected one filling the strip with its live transcript. Same boards-first instinct as option 1, but it spends permanent vertical space and turns the bench into chrome instead of folding it into the tabs the shell already has.</p>
+</div>
+
+<h2>Where the costs come from</h2>
+<p>Each option's last section costs itself against three real places in the shell:</p>
+<ul>
+  <li><code>packages/app-ui/src/app/preparation-bench.tsx</code> — the five-lane bench. It already models per-seat voices (<code>voicesOf</code> names them Claude/Codex when a lane has more than one seat), already makes every reader a control that calls <code>uiActions.openLensThread</code>, and already renders settled boards through <code>LensBoardDocument</code>.</li>
+  <li><code>packages/app-ui/src/chat/t3-chat-dock.tsx</code> — the chat slot. It is the single mount of the T3 thread view and already renders a lens seat's thread read-only when <code>ui.lensThread</code> is set. Any option that puts a live transcript somewhere else needs a second mount, which does not exist today.</li>
+  <li><code>packages/app-ui/src/shell/top-bar.tsx</code> and <code>packages/app-ui/src/board/lens-switcher.tsx</code> — three slots (back/chat-toggle/trail, the centred lens switcher, the History · Map · Diff pills). The switcher currently lists only lenses with a <em>terminal</em> result, so any option that wants a running lens to be selectable changes what the switcher is for.</li>
+</ul>
+
+</body>
+</html>

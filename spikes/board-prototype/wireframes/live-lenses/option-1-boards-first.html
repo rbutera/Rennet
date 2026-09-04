@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Option 1 — boards first, agent widget above the board</title>
+<style>
+/* impeccable-disable design-system-color -- low-fidelity wireframe: monochrome greys by
+   instruction (boxes and labels, no styling). Not product UI, so the DESIGN.md palette
+   does not apply. Standalone document, so the waiver travels with the file. */
+*{box-sizing:border-box}
+body{margin:0;padding:28px;background:#fff;color:#1a1a1a;font:13px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif}
+h1{font-size:17px;margin:0 0 2px}
+.sub{color:#666;margin:0 0 18px}
+h2{font-size:11px;letter-spacing:.09em;text-transform:uppercase;color:#666;margin:24px 0 6px}
+h3{font-size:12px;margin:18px 0 6px}
+p{max-width:84ch;margin:0 0 9px}
+code{font:11.5px ui-monospace,SFMono-Regular,Menlo,monospace;background:#f0f0f0;padding:0 3px}
+a{color:#1a1a1a}
+.wire{width:1160px;border:1px solid #1a1a1a;background:#fff;font-size:11px}
+.hdr{display:flex;align-items:center;gap:8px;padding:6px 8px;background:#ededed;border-bottom:1px solid #1a1a1a}
+.slot{border:1px dashed #aaa;padding:2px 6px;color:#555}
+.tabs{display:flex;gap:4px;margin:0 auto;border:1px solid #999;background:#fff;padding:2px}
+.tab{padding:3px 8px;border:1px solid transparent}
+.tab.sel{background:#1a1a1a;color:#fff;font-weight:600}
+.tab .ind{font:10px ui-monospace,monospace;color:#555}
+.tab.sel .ind{color:#ddd}
+.cols{display:flex;align-items:stretch}
+.col{border-right:1px solid #999}
+.col:last-child{border-right:0}
+.cap{font-size:9.5px;letter-spacing:.09em;text-transform:uppercase;color:#666;background:#e6e6e6;border-bottom:1px solid #ccc;padding:3px 6px}
+.pad{padding:10px}
+.widget{border:2px solid #1a1a1a;background:#f0f0f0;padding:8px;margin-bottom:12px}
+.wrow{display:flex;align-items:center;gap:10px}
+.wrow .grow{flex:1}
+.btn{border:1px solid #1a1a1a;background:#fff;padding:2px 8px}
+.bhdr{display:flex;align-items:center;gap:8px;border-bottom:1px solid #999;padding-bottom:5px;margin-bottom:10px}
+.chip{border:1px solid #1a1a1a;background:#e0e0e0;padding:1px 6px;font-size:10px;letter-spacing:.05em;text-transform:uppercase}
+.el{border:1px solid #bbb;background:#f7f7f7;padding:6px;margin-bottom:8px}
+.el.new{border:2px solid #1a1a1a;background:#eaeaea}
+.ghost{border:1px dashed #aaa;color:#777;padding:6px;text-align:center}
+.tie{display:inline-block;border:1px solid #1a1a1a;padding:0 3px;font:10px ui-monospace,monospace;background:#fff}
+.rcpt{border-left:4px solid #1a1a1a;background:#f0f0f0;padding:4px 6px;margin-bottom:6px;font:10.5px ui-monospace,monospace}
+.tool{border-left:4px solid #bbb;background:#f7f7f7;padding:4px 6px;margin-bottom:6px;font:10.5px ui-monospace,monospace;color:#555}
+.prose{margin:0 0 8px;color:#333}
+.cite{font:10px ui-monospace,monospace;color:#555}
+.lint{border:1px solid #1a1a1a;background:#e0e0e0;padding:4px 6px;font-size:10.5px;margin-top:6px}
+.note{color:#666;font-size:10.5px}
+.mini{width:1160px;border:1px solid #1a1a1a;font-size:11px;margin-bottom:6px}
+.voice2{display:flex;gap:8px}
+.voice2 > div{flex:1;border:1px solid #999;background:#fff;padding:6px}
+</style>
+</head>
+<body>
+
+<p><a href="index.html">&larr; all options</a></p>
+<h1>Option 1 — boards first, with the agent widget above the board</h1>
+<p class="sub">No bench as a separate stage. The review opens on the board view; the lens tabs carry working indicators; the selected board draws itself while you watch, with the seat doing the work named prominently above it.</p>
+
+<div class="wire">
+  <div class="hdr">
+    <span class="slot">sidebar toggle</span>
+    <span class="slot">chat toggle</span>
+    <span style="margin-left:4px" class="note">LEFT: back &middot; chat toggle &middot; trail</span>
+    <div class="tabs">
+      <div class="tab"><b>Design</b> <span class="ind">&#10003;</span></div>
+      <div class="tab sel"><b>Sequence</b> <span class="ind">&#9696; working</span></div>
+      <div class="tab"><b>Decisions</b> <span class="ind">&#9696;</span></div>
+      <div class="tab"><b>Flagged</b> <span class="ind">&#9696;&#9696; 2 voices</span></div>
+      <div class="tab"><b>Noise</b> <span class="ind">&mdash; absent</span></div>
+    </div>
+    <span class="slot">RIGHT: History &middot; Map &middot; Diff</span>
+  </div>
+
+  <div class="cols">
+    <div class="col" style="width:140px;background:#f4f4f4">
+      <div class="cap">sidebar</div>
+      <div class="pad note">projects<br>sessions</div>
+    </div>
+
+    <div class="col" style="width:300px">
+      <div class="cap">chat dock — variant (i): the transcript opens here</div>
+      <div class="pad" style="border-bottom:1px solid #ccc;background:#f0f0f0">
+        <span class="note">&larr; Back to the session &nbsp;|&nbsp; Sequence seat &middot; live &middot; read-only</span>
+      </div>
+      <div class="pad">
+        <p class="prose">“The record type comes first — everything here either produces one or consumes one.”</p>
+        <div class="tool">&#9656; Read github-auth.ts:40-110 <span class="note">(6 lines, collapsed)</span></div>
+        <div class="rcpt"><span class="tie">a</span> add_step &middot; added step 1</div>
+        <div class="rcpt"><span class="tie">a</span> cite &middot; github-auth.ts:53-64</div>
+        <div class="tool">&#9656; Bash git diff main...HEAD <span class="note">(214 lines, collapsed)</span></div>
+        <div class="rcpt"><span class="tie">b</span> add_step &middot; added step 2</div>
+        <div class="rcpt"><span class="tie">b</span> cite &middot; github-auth.ts:67-95</div>
+        <p class="prose">“Retry ownership is the interesting stop.”</p>
+        <div class="rcpt" style="border-left-width:8px"><span class="tie">c</span> add_step &middot; added step 3 <span class="note">&larr; just landed</span></div>
+        <div class="rcpt"><span class="tie">d</span> add_step &middot; added step 4</div>
+        <div class="rcpt"><span class="tie">d</span> finish &middot; returned, 1 lint pointer &rarr; step 4</div>
+        <div class="ghost">appending live</div>
+      </div>
+    </div>
+
+    <div class="col" style="flex:1">
+      <div class="cap">main region — the board view, from the first second</div>
+      <div class="pad">
+
+        <div class="widget">
+          <div class="wrow">
+            <span class="chip">drafting</span>
+            <b>Sequence seat</b>
+            <span class="note">Claude &middot; opus-4.6</span>
+            <span class="note">00:41 elapsed</span>
+            <span class="grow"></span>
+            <span class="btn">Open transcript &rsaquo;</span>
+          </div>
+          <div class="wrow" style="margin-top:6px">
+            <span class="note">now:</span>
+            <span>&#9696; reading <code>packages/adapters/src/github-auth.ts:40-110</code></span>
+          </div>
+          <div class="note" style="margin-top:6px">4 elements written &middot; 3 cited &middot; 1 lint pointer open</div>
+        </div>
+
+        <div class="bhdr">
+          <b style="font-size:13px">Observe the GitHub token refresh, drop the unsafe retry</b>
+          <span class="chip">in progress</span>
+          <span class="note">Sequence &middot; generation 2 &middot; this board is still being written</span>
+        </div>
+
+        <div class="el"><span class="tie">a</span> <b>1. The shape of an observation</b><br>prose block<br>
+          <span class="cite">cited: packages/adapters/src/github-auth.ts:53-64</span></div>
+        <div class="el"><span class="tie">b</span> <b>2. The one non-secret detail</b><br>prose block<br>
+          <span class="cite">cited: packages/adapters/src/github-auth.ts:67-95</span></div>
+        <div class="el new"><span class="tie">c</span> <b>3. Emit at every outcome</b> <span class="note">&larr; just landed</span><br>prose block</div>
+        <div class="el"><span class="tie">d</span> <b>4. Refuse to retry the network case</b><br>prose block
+          <div class="lint"><b>finish returned</b> — “step 4 makes a claim about removed code and cites nothing. A deletion is evidenced by the diff, not by the file.”</div>
+        </div>
+        <div class="ghost">&#9696; the seat is still writing — step 5 lands here</div>
+
+      </div>
+    </div>
+  </div>
+</div>
+
+<h3>Variant (ii) — the transcript as a drawer under the widget, chat dock left alone</h3>
+<div class="mini">
+  <div class="pad">
+    <div class="widget" style="margin-bottom:0">
+      <div class="wrow">
+        <span class="chip">drafting</span><b>Sequence seat</b>
+        <span class="note">Claude &middot; opus-4.6 &middot; 00:41</span>
+        <span class="grow"></span><span class="btn">Close transcript &or;</span>
+      </div>
+    </div>
+    <div style="border:1px solid #1a1a1a;border-top:0;background:#fafafa;padding:8px;max-height:150px;overflow:hidden">
+      <div class="cap" style="margin:-8px -8px 8px">transcript drawer — pushes the board down, scrolls on its own</div>
+      <div class="tool">&#9656; Read github-auth.ts:40-110 <span class="note">(collapsed)</span></div>
+      <div class="rcpt"><span class="tie">c</span> add_step &middot; added step 3</div>
+      <div class="rcpt"><span class="tie">d</span> finish &middot; returned, 1 lint pointer</div>
+      <div class="ghost">appending live</div>
+    </div>
+    <div class="bhdr" style="margin-top:10px"><b>board continues below</b><span class="chip">in progress</span></div>
+  </div>
+</div>
+
+<h3>Flagged — one board, two voices in the widget</h3>
+<div class="mini">
+  <div class="pad">
+    <div class="widget">
+      <div class="wrow" style="margin-bottom:6px"><span class="chip">drafting</span><b>Flagged</b><span class="note">two seats on one board</span></div>
+      <div class="voice2">
+        <div><b>Claude</b> <span class="note">opus-4.6 &middot; 01:12</span><br>&#9696; now: grepping <code>withConnectResilience</code><br><span class="note">3 findings written</span><br><span class="btn">Open transcript &rsaquo;</span></div>
+        <div><b>Codex</b> <span class="note">gpt-5.2 &middot; failed at 00:58</span><br>&#10007; 2 repairs, still unlinted<br><span class="note">last draft kept</span><br><span class="btn">Open transcript &rsaquo;</span></div>
+      </div>
+    </div>
+    <div class="bhdr"><b>Flagged board</b><span class="chip">in progress</span><span class="note">findings from both voices land on this one board, each marked with the voice that raised it</span></div>
+  </div>
+</div>
+
+<h3>What the widget becomes when the lens settles</h3>
+<div class="mini">
+  <div class="pad">
+    <div style="border:1px solid #999;background:#f7f7f7;padding:6px" class="wrow">
+      <span>&#10003;</span><b>Sequence</b>
+      <span class="note">drafted in 1m 12s &middot; Claude opus-4.6 &middot; 6 steps, 6 cited &middot; 1 repair</span>
+      <span class="grow"></span><span class="btn">Transcript</span>
+    </div>
+    <div class="bhdr" style="margin-top:10px"><b>Observe the GitHub token refresh, drop the unsafe retry</b><span class="note">Sequence &middot; generation 2</span></div>
+    <div class="note">No “in progress” chip, no ghost row. The board is now the finished view — same route, same tabs, nothing navigates.</div>
+  </div>
+</div>
+
+<h2>What is where</h2>
+<p>There is no separate bench screen. The review opens on the board view it will end on: the existing lens tab bar at the top, the board below. Each tab carries the state of its seat — a spinner while it runs, a check when it settles, a cross when it fails, a dash when the lens is absent, and Flagged carries two indicators because it has two voices. The tab bar <b>is</b> the bench; the five lanes are the five tabs.</p>
+<p>Directly above the board sits the agent widget for the seat drafting <em>this</em> lens: provider and model, elapsed time, a live line of what it is doing right now, and a count of what it has written so far. The board underneath is marked provisional in three independent ways, so the state is unmistakable: the tab spins, the board header carries an <span class="chip">in progress</span> chip and says the board is still being written, and the last row is a ghost saying the next element lands there. Elements and receipts are tied by the letters <span class="tie">a</span>–<span class="tie">d</span>; in a built version that is a shared highlight, plus a one-shot pulse as an element lands.</p>
+
+<h2>On click</h2>
+<p>Clicking the widget opens that seat's full transcript, updating live. Two variants are drawn: <b>(i)</b> it fills the existing chat dock, which is what the shell already supports, or <b>(ii)</b> it opens as a drawer under the widget and pushes the board down, leaving the chat dock on the review's own conversation. Clicking a lens tab switches board, widget and transcript together — one control, three panes, no way for them to disagree. On Flagged, the widget shows both voices side by side and each has its own “Open transcript”; the board is shared. When a lens settles, its tab stops spinning and its widget collapses to a one-line receipt (who drafted it, how long, what it produced, a link to the transcript), which stays as the way back into the thread. The board header's in-progress chip and the ghost row both clear. Nothing navigates: the drafting view and the finished view are the same view.</p>
+
+<h2>Cost against the current shell</h2>
+<p>Medium, and different in kind from the other four: it <b>deletes</b> a screen rather than adding one. <code>packages/app-ui/src/app/preparation-bench.tsx</code> stops being the first frame; its five-reader scene, its slab and its capture rail either move into the tab indicators and the board header or go away. That is a large deletion in a file that is mostly presentation, and its lane model (<code>voicesOf</code>, per-seat <code>thread</code> refs, the <code>Register</code> states) is exactly what the tab indicators and the widget need, so the data layer survives intact.</p>
+<p><code>packages/app-ui/src/board/lens-switcher.tsx</code> gains a per-segment state indicator. It currently renders one segment per lens that produced a <em>terminal</em> result (<code>useLensBoards</code>; a lens with no terminal result is simply absent, never disabled), so this option needs the switcher to list every lane the daemon has opened, including running ones — a real change to what the switcher is for. <code>packages/app-ui/src/shell/top-bar.tsx</code> keeps its three slots as they are.</p>
+<p>The board document has to render a partial board and say so. Variant (i) is nearly free — <code>uiActions.openLensThread</code> and the dock's <code>slot.thread … readOnly</code> path already exist. Variant (ii) needs a live thread view mounted outside <code>t3-chat-dock.tsx</code>, which is today the single mount of the T3 slot.</p>
+
+<h2>What 0.7.0 does today, and what this fixes</h2>
+<p>Today the bench draws the five readers and then renders every settled board <em>below</em> them, stacked in lane order inside <code>max-w-4xl</code> (<code>preparation-bench.tsx</code>, “THE BOARDS THAT HAVE LANDED”). Two things go wrong. The column grows past its pane, and the bench's own comment records an earlier version of this bug — plain centring pushed the slab and the first readers where no scroll could reach them. And nothing on a landed board says it is provisional or which seat is still working, so a board that is one repair away from being redrawn reads exactly like a finished one. This option answers both: one board on screen at a time, chosen by a tab; the working state said three times on the surface you are actually reading; and the finished view is the same view with the chips gone.</p>
+
+</body>
+</html>
