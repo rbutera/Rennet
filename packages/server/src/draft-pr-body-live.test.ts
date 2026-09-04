@@ -9,9 +9,11 @@ import type {
   HarnessPort,
   SessionSpec,
 } from "@rennet/core";
+import { sessionContextRelativeDir } from "@rennet/core";
+import type { PromptContextFile } from "@rennet/prompts";
 import type { Patchset, Review } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
-import { sessionContextDir } from "./context-files";
+import { sessionContextDir, writeSessionContext } from "./context-files";
 import { createLiveDraftPrBodyPort, type LiveDraftPrBodyInput } from "./draft-pr-body-live";
 
 // A REAL repository root: the live ports write the turn's context under it before the
@@ -19,9 +21,19 @@ import { createLiveDraftPrBodyPort, type LiveDraftPrBodyInput } from "./draft-pr
 // it. A fixture root that does not exist cannot exercise the turn at all.
 const REPO_ROOT = mkdtempSync(join(tmpdir(), "rennet-prbody-repo-"));
 
+// The daemon's ONE context writer as this port sees it, keyed on the SESSION id — which
+// is DELIBERATELY NOT the review id (`review-1`). A port that re-derived its directory
+// from `review.id` would write, and point the seat, somewhere no assertion below looks
+// (review finding 1).
+const SESSION_ID = "sess-prbody-7";
+const recordContext = (review: Review, files: readonly PromptContextFile[]): string => {
+  writeSessionContext(review.repositoryRoot, SESSION_ID, files);
+  return sessionContextRelativeDir(SESSION_ID);
+};
+
 /** Read one of the files the port wrote for this review. */
 function contextFile(name: string): string {
-  return readFileSync(join(sessionContextDir(REPO_ROOT, "review-1"), name), "utf8");
+  return readFileSync(join(sessionContextDir(REPO_ROOT, SESSION_ID), name), "utf8");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -149,6 +161,7 @@ describe("createLiveDraftPrBodyPort — Codex seat (council resolves Luna)", () 
     let seenPrompt = "";
     let seenCwd: string | undefined;
     const port = createLiveDraftPrBodyPort({
+      writeContext: recordContext,
       claudePort: async () => null,
       codexExecutor: async () =>
         fakeExecutor(
@@ -175,8 +188,9 @@ describe("createLiveDraftPrBodyPort — Codex seat (council resolves Luna)", () 
     // The citing contract on the LIVE path, through the files (3.7): the prompt names
     // them and runs in the checkout, and the material is on the other end of the paths.
     expect(seenPrompt).toContain("feat/rate-limit-fallback");
-    expect(seenPrompt).toContain(".rennet/context/review-1/pr-body/narration.json");
-    expect(seenPrompt).toContain(".rennet/context/review-1/pr-body/requirements.json");
+    expect(seenPrompt).toContain(".rennet/context/sess-prbody-7/pr-body/narration.json");
+    expect(seenPrompt).not.toContain(".rennet/context/review-1/");
+    expect(seenPrompt).toContain(".rennet/context/sess-prbody-7/pr-body/requirements.json");
     expect(seenPrompt).not.toContain("process-local fallback bucket");
     expect(seenPrompt).not.toContain("The limiter MUST bound the fail-open path");
     expect(seenCwd).toBe(REPO_ROOT);
@@ -190,6 +204,7 @@ describe("createLiveDraftPrBodyPort — Codex seat (council resolves Luna)", () 
 
   it("falls back to the requested model when the session log named none (best remaining truth)", async () => {
     const port = createLiveDraftPrBodyPort({
+      writeContext: recordContext,
       claudePort: async () => null,
       // No observed model from the executor (an uncorrelated / model-less session log).
       codexExecutor: async () => fakeExecutor({ title: "A clean title", body: "A clean body." }),
@@ -206,6 +221,7 @@ describe("createLiveDraftPrBodyPort — Codex seat (council resolves Luna)", () 
 
   it("returns an honest `failed` when the Codex turn throws — never a fabricated draft", async () => {
     const port = createLiveDraftPrBodyPort({
+      writeContext: recordContext,
       claudePort: async () => null,
       codexExecutor: async () => async () => {
         throw new Error("codex exited 1");
@@ -218,6 +234,7 @@ describe("createLiveDraftPrBodyPort — Codex seat (council resolves Luna)", () 
 
   it("maps an empty title/body from the model to `failed` (the honesty floor holds live)", async () => {
     const port = createLiveDraftPrBodyPort({
+      writeContext: recordContext,
       claudePort: async () => null,
       codexExecutor: async () => fakeExecutor({ title: "A title", body: "" }),
     });
@@ -230,6 +247,7 @@ describe("createLiveDraftPrBodyPort — Claude seat (Claude-only machine resolve
   it("drafts on the Claude adapter and reports the ACTUAL runtime model, not the planned one", async () => {
     let seenSpec: SessionSpec | undefined;
     const port = createLiveDraftPrBodyPort({
+      writeContext: recordContext,
       claudePort: async () =>
         fakeClaudePort(
           () => [
@@ -259,6 +277,7 @@ describe("createLiveDraftPrBodyPort — Claude seat (Claude-only machine resolve
 
   it("falls back to the resolved model when the session reports no started frame", async () => {
     const port = createLiveDraftPrBodyPort({
+      writeContext: recordContext,
       claudePort: async () =>
         fakeClaudePort(() => [completedEvent({ title: "A title", body: "A body." })]),
       codexExecutor: async () => null,
@@ -274,6 +293,7 @@ describe("createLiveDraftPrBodyPort — Claude seat (Claude-only machine resolve
 
   it("fails honestly when the Claude turn completes without structured output", async () => {
     const port = createLiveDraftPrBodyPort({
+      writeContext: recordContext,
       claudePort: async () => fakeClaudePort(() => [completedEvent(undefined)]),
       codexExecutor: async () => null,
     });
@@ -285,6 +305,7 @@ describe("createLiveDraftPrBodyPort — Claude seat (Claude-only machine resolve
 describe("createLiveDraftPrBodyPort — no seat installed", () => {
   it("is UNAVAILABLE when NEITHER Codex nor Claude is installed", async () => {
     const port = createLiveDraftPrBodyPort({
+      writeContext: recordContext,
       claudePort: async () => null,
       codexExecutor: async () => null,
     });

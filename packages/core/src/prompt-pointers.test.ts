@@ -2,13 +2,11 @@ import {
   CI_CLASSIFICATION_CONTRACT,
   CONVENTIONS_PATH,
   FINDING_VERIFICATION_CONTRACT,
-  hypothesisContextFile,
   renderCiClassificationPrompt,
   renderConventionLayer,
   renderFindingVerificationPrompt,
-  renderHypothesisLayer,
 } from "@rennet/prompts";
-import type { ConventionCatalogue, ReviewHypothesis } from "@rennet/protocol";
+import type { ConventionCatalogue } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { inlineContextViolation } from "./harness-run-turn";
 import { buildRefinePrompt } from "./refine-comment";
@@ -27,43 +25,6 @@ import { buildRefinePrompt } from "./refine-comment";
 
 const DIR = ".rennet/context/sess_01JQ8F2K9V";
 
-const HYPOTHESIS: ReviewHypothesis = {
-  domain: "Session-bound workspace binding and the round worker's commit path.",
-  scope: {
-    inScope: ["round dispatch", "worktree binding", "patchset capture"],
-    outOfScope: ["the app-ui coverage mosaic", "vendored T3 server code"],
-  },
-  designExpectation:
-    "One workspace root per session, recorded on the session record, reused as the cwd of every child turn and as the worktreePath of every thread.",
-  risks: [
-    {
-      riskId: "r1",
-      severity: "high",
-      statement: "A round commits into the wrong repository in a multi-repo workspace.",
-      disconfirmer: "The dispatch carries owner/name from the row rather than project.openPath.",
-    },
-    {
-      riskId: "r2",
-      severity: "high",
-      statement: "Context files are staged by the round's own commit.",
-      disconfirmer: "The managed ignore block carries context/ before the first write.",
-    },
-    {
-      riskId: "r3",
-      severity: "medium",
-      statement: "A purge removes a live session's files mid-turn.",
-      disconfirmer: "Purge runs only on archive and the orphan sweep matches absent ids.",
-    },
-    {
-      riskId: "r4",
-      severity: "low",
-      statement: "The WSL path translation is dropped without a replacement.",
-      disconfirmer: "The locus helper translates the bound root once at thread creation.",
-    },
-  ],
-  repoContextPresent: true,
-};
-
 const CATALOGUE: ConventionCatalogue = {
   source: "/repo/.rennet/conventions.json",
   rules: Array.from({ length: 8 }, (_, i) => ({
@@ -77,43 +38,14 @@ const CATALOGUE: ConventionCatalogue = {
 
 const bytes = (text: string) => new TextEncoder().encode(text).length;
 
-describe("the hypothesis layer points at a file (task 3.6)", () => {
-  const layer = renderHypothesisLayer(HYPOTHESIS, `${DIR}/hypothesis.json`);
-
-  it("names the written hypothesis and carries no risk statement", () => {
-    expect(layer).toContain(`${DIR}/hypothesis.json`);
-    expect(inlineContextViolation(layer)).toBeUndefined();
-    // The prior's content is the thing that must NOT travel: no domain, no scope, no
-    // risk statement, no disconfirmer.
-    expect(layer).not.toContain(HYPOTHESIS.domain);
-    expect(layer).not.toContain("round dispatch");
-    expect(layer).not.toContain(HYPOTHESIS.risks[0]?.statement ?? "");
-    expect(layer).not.toContain(HYPOTHESIS.risks[0]?.disconfirmer ?? "");
-    expect(bytes(layer)).toBeLessThan(1_000);
-  });
-
-  it("keeps the standing disconfirm instruction, which IS the layer's job", () => {
-    expect(layer).toContain("EXPECTATIONS to disconfirm");
-    expect(layer).toContain("surface a finding where it does");
-  });
-
-  it("defaults to the bare file name, which resolves inside the context directory", () => {
-    expect(renderHypothesisLayer(HYPOTHESIS)).toContain("`hypothesis.json`");
-  });
-
-  it("writes the whole prior as the file body, compact — the WRITER call", () => {
-    const file = hypothesisContextFile(HYPOTHESIS);
-    expect(file.name).toBe("hypothesis.json");
-    // Byte-for-byte the prior, and NOT pretty-printed (the indent is a ~30% surcharge).
-    expect(file.body).toBe(JSON.stringify(HYPOTHESIS));
-    expect(file.body).not.toContain("\n");
-    expect(JSON.parse(file.body)).toEqual(HYPOTHESIS);
-    // The index needs both lines; an entry with either missing reads as a file nobody
-    // knows when to open.
-    expect(file.holds.length).toBeGreaterThan(0);
-    expect(file.readWhen.length).toBeGreaterThan(0);
-  });
-});
+// The hypothesis layer's tests are GONE with the layer (review finding 5). One of them
+// read "defaults to the bare file name, which resolves inside the context directory" and
+// asserted only that the string `hypothesis.json` appeared — a bare name resolves against
+// the TURN'S CWD, the repository root, not the context directory, so the title asserted a
+// property the body never checked and the code never had. The layer had no production
+// feeder either: nothing in the daemon or the adapters ever built a `ReviewHypothesis`.
+// A hypothesis pass that returns writes its file through `writeSessionContext` and names
+// the directory that write returned, and gets tests that read that directory back.
 
 describe("the convention layer points at the repo's own file (task 3.6)", () => {
   const layer = renderConventionLayer(CATALOGUE);

@@ -16,7 +16,7 @@
  * SHA-256), so nothing here needs a hash or the filesystem.
  */
 
-import type { ConventionCatalogue, ReviewHypothesis, RspDocType } from "@rennet/protocol";
+import type { ConventionCatalogue, RspDocType } from "@rennet/protocol";
 
 /** The contract template version. Bumped when the SLOT SET changes, not the content. */
 export const PROMPT_CONTRACT_VERSION = 1;
@@ -137,9 +137,6 @@ export interface PromptContextFile {
   readonly readWhen: string;
 }
 
-/** The name the hypothesis takes inside a session's context directory. */
-export const HYPOTHESIS_CONTEXT_FILE = "hypothesis.json";
-
 /**
  * The per-project convention catalogue, relative to the repository root — which IS the
  * cwd of every seat. Mirrors `CONVENTIONS_FILE` in the adapter that reads and writes it;
@@ -147,52 +144,14 @@ export const HYPOTHESIS_CONTEXT_FILE = "hypothesis.json";
  */
 export const CONVENTIONS_PATH = ".rennet/conventions.json";
 
-/**
- * The committed hypothesis (#178) as a session context file, for the caller to write
- * through `writeSessionContext` before it renders the layer below. Compact JSON — the
- * indent is a ~30% surcharge no reader sees.
- */
-export function hypothesisContextFile(hypothesis: ReviewHypothesis): PromptContextFile {
-  return {
-    name: HYPOTHESIS_CONTEXT_FILE,
-    body: JSON.stringify(hypothesis),
-    holds:
-      "The review hypothesis committed before the diff was read: domain, in/out scope, the design we would have chosen, and the risks with their disconfirmers.",
-    readWhen: "before you judge the change, and again for each risk you are checking.",
-  };
-}
-
-/**
- * Render the disconfirmation layer a lens runner assembles after its base instruction
- * and before its payload (#178).
- *
- * It carries the standing instruction that turns a passive reader into an active
- * checker — for each risk, check whether the change diverges from the expectation and
- * surface a finding when it does — and a POINTER to the hypothesis, never the
- * hypothesis itself (session-context-files, D4: never inline context). The caller
- * writes {@link hypothesisContextFile} into the session's context directory and passes
- * the path it lands on; `path` defaults to the bare file name, which resolves inside
- * the context directory the prompt's context layer names.
- *
- * Pure and deterministic — the same path renders byte-for-byte identically, so a
- * runner's assembled prompt stays a stable function of its inputs.
- */
-export function renderHypothesisLayer(
-  hypothesis: ReviewHypothesis,
-  path: string = HYPOTHESIS_CONTEXT_FILE,
-): string {
-  return [
-    "# Committed review hypothesis (formed before the diff was read)",
-    "",
-    `A review hypothesis was committed before this diff was read: the domain, what is in and out of scope, the design we would have chosen, and ${hypothesis.risks.length} risk(s) with their disconfirmers. It is in \`${path}\` — read it.`,
-    "",
-    "Treat what it states as EXPECTATIONS to disconfirm, not as facts about the code. For each risk it lists, check whether this change diverges from the expectation, and surface a finding where it does. A change that meets every expectation is a clean result; a divergence is exactly what a reviewer's attention should go to.",
-    hypothesis.repoContextPresent
-      ? ""
-      : "\n(Repo context was unavailable when this prior was formed.)",
-    "",
-  ].join("\n");
-}
+// The committed-hypothesis layer and its context file (#178) are GONE (review finding 5).
+// The layer's pointer named a bare `hypothesis.json`, which resolves against the turn's
+// cwd — the repository root — and NOT the session context directory the file would have
+// landed in; the file helper had no caller at all. Nothing in the daemon or the adapters
+// ever fed a `ReviewHypothesis` to a runner, so the layer was unreachable and its one
+// reachable property was a wrong path. If the hypothesis pass returns, it writes its file
+// through `writeSessionContext` and names the directory THAT write returned, the way every
+// other pointer in this file does.
 
 /**
  * Render the checklist layer a lens runner assembles after its base instruction (and

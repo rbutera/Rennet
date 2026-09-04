@@ -55,7 +55,6 @@ import {
   type PromptContract,
   renderBaseInstruction,
   renderConventionLayer,
-  renderHypothesisLayer,
 } from "@rennet/prompts";
 import type {
   BudgetGrant,
@@ -68,7 +67,6 @@ import type {
   NoiseJudgedBy,
   OfferedManifest,
   ResolutionTrace,
-  ReviewHypothesis,
   RspCapabilitySnapshot,
   RspEnvelope,
   RspModelReportedBy,
@@ -104,15 +102,9 @@ export interface RunNoiseAngleInput {
   /** The offered occurrence manifest: the hunk ids + lines the model may cite. */
   readonly manifest: OfferedManifest;
   /**
-   * The committed hypothesis (#178). When present, it is rendered as a labelled
-   * disconfirmation layer after the base instruction and before the payload.
-   * Absent, the runner assembles exactly as it does today.
-   */
-  readonly hypothesis?: ReviewHypothesis;
-  /**
    * The per-project convention / anti-pattern catalogue (#180). When present with
-   * at least one rule, it is rendered as a labelled checklist layer after the
-   * hypothesis and before the general guidance. It is fed here for parity across
+   * at least one rule, it is rendered as a labelled checklist layer after the base
+   * instruction and before the general guidance. It is fed here for parity across
    * all three lenses (a repo convention can bear on what counts as noise, e.g. a
    * project that treats a generated file as reviewable). Absent or empty, the
    * runner assembles exactly as it does today.
@@ -516,8 +508,6 @@ export async function runNoiseAngle(input: RunNoiseAngleInput): Promise<RunNoise
   const inputDigest = computeInputDigest(patchsetRef, manifest);
   const base = renderBaseInstruction(contract);
   const payload = renderPayload(manifest, patchsetId);
-  const hypothesisLayer =
-    input.hypothesis === undefined ? undefined : renderHypothesisLayer(input.hypothesis);
   // The per-project convention checklist (#180). An absent catalogue, or one with
   // no rules, yields no layer — the assembled prompt is byte-identical to today.
   const conventionLayer =
@@ -548,7 +538,6 @@ export async function runNoiseAngle(input: RunNoiseAngleInput): Promise<RunNoise
     const assembled = assemblePrompt(
       {
         base,
-        ...(hypothesisLayer === undefined ? {} : { hypothesis: hypothesisLayer }),
         ...(conventionLayer === undefined ? {} : { conventions: conventionLayer }),
         ...(guidance?.general === undefined ? {} : { general: guidance.general }),
         ...(guidance?.files === undefined ? {} : { files: guidance.files }),

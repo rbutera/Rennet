@@ -31,6 +31,11 @@ beforeEach(() => {
   configureSessionContext({ owner: THIS_DAEMON, visibilityOf: () => "local" });
 });
 
+/** Overwrite a directory's `.owner` stamp, to stand in for another daemon's write. */
+function stampOwner(root: string, sessionId: string, stamp: string): void {
+  writeFileSync(join(sessionContextDir(root, sessionId), ".owner"), `${stamp}\n`);
+}
+
 function scratchDir(prefix: string): string {
   const dir = mkdtempSync(join(tmpdir(), prefix));
   scratch.push(dir);
@@ -255,7 +260,50 @@ describe("sweepOrphanedSessionContext (session-context-files 2.2)", () => {
     // Control: identical shape, identical absence from the store — only the owner differs,
     // and this one goes. Without the stamp both would have been deleted.
     expect(existsSync(sessionContextDir(root, "mine-gone"))).toBe(false);
-    expect(logged.some((line) => line.includes("written by another daemon"))).toBe(true);
+    expect(logged.some((line) => line.includes("does not own"))).toBe(true);
+  });
+
+  it("LEAVES a directory a LIVE daemon sharing this data dir wrote (review finding 3)", () => {
+    const root = scratchDir("rennet-ctx-sweepincarnation-");
+    // The case the data-dir stamp could not see: a second daemon over the same repo AND
+    // the same data dir — a dev run pointed at the packaged app's `~/.rennet`. Its stamp
+    // matched ours exactly, so each read the other's live directories as its own crash
+    // orphans and deleted them mid-turn.
+    //
+    // `process.pid` is the one pid this test can prove is alive: it is this process.
+    // `startedAt` differs from ours, so this is a DIFFERENT incarnation of the same data
+    // dir that is nonetheless running.
+    writeSessionContext(root, "live-sibling", files);
+    stampOwner(root, "live-sibling", `${THIS_DAEMON}\t${process.pid}\t1`);
+    // ...and a dead one of the same data dir, which IS ours to reclaim. Pid 1 is init and
+    // always alive, so the dead pid has to be one nothing can be running under: a pid
+    // above the platform maximum never resolves.
+    writeSessionContext(root, "dead-sibling", files);
+    stampOwner(root, "dead-sibling", `${THIS_DAEMON}\t4194305\t1`);
+    const logged: string[] = [];
+
+    // Neither id is in this daemon's store — the "orphan" contradiction fires for both,
+    // so ONLY the liveness check separates them.
+    const removed = sweepOrphanedSessionContext([root], store([]), (m) => logged.push(m));
+
+    expect(removed).toBe(1);
+    // The load-bearing assertion: a live sibling's directory survives the sweep.
+    expect(existsSync(sessionContextDir(root, "live-sibling"))).toBe(true);
+    // Control: identical data dir, identical absence from the store — only the pid's
+    // liveness differs, and this one goes. Before the incarnation stamp BOTH went.
+    expect(existsSync(sessionContextDir(root, "dead-sibling"))).toBe(false);
+    expect(logged.some((line) => line.includes("live sibling"))).toBe(true);
+  });
+
+  it("LEAVES a directory whose stamp predates the incarnation format", () => {
+    const root = scratchDir("rennet-ctx-sweeplegacy-");
+    writeSessionContext(root, "legacy", files);
+    stampOwner(root, "legacy", THIS_DAEMON); // the old bare-data-dir stamp
+
+    // An unreadable stamp cannot say whose the directory is, and "I cannot tell" is not a
+    // positive contradiction. The next write by whoever owns it re-stamps and reclaims it.
+    expect(sweepOrphanedSessionContext([root], store([]), () => undefined)).toBe(0);
+    expect(existsSync(sessionContextDir(root, "legacy"))).toBe(true);
   });
 
   it("LEAVES a directory whose store record is MALFORMED — raw ids, not the parsed list", () => {
@@ -320,7 +368,7 @@ describe("sweepOrphanedSessionContext (session-context-files 2.2)", () => {
   });
 });
 
-// ── The purge and a round still writing (review finding 4) ────────────────────
+// ── The purge and ANY turn still reading (review findings 2 and 4) ───────────
 
 describe("createSessionContextPurger", () => {
   it("DEFERS the archive purge while a round is in flight, and the round's settle performs it", () => {
@@ -331,41 +379,59 @@ describe("createSessionContextPurger", () => {
     // Order A — archive lands DURING a round. `session.archive` awaits the session's
     // preparation, but nothing tracks a round, so purging now deletes the directory the
     // round's very next turn reads.
-    const settle = purger.roundInFlight("sess-1");
+    const settle = purger.turnInFlight("sess-1");
     expect(purger.purge("sess-1")).toBe(false);
     expect(existsSync(sessionContextDir(root, "sess-1"))).toBe(true);
 
-    // The round settles; its `sweepIfArchived` leg then purges, on the same terms.
+    // The RELEASE performs the deferred purge — not a later `purge` call. The utility
+    // turns have no `sweepIfArchived` leg to run one, so a lease that merely refused and
+    // forgot would leave an archived session's files in the reviewer's checkout until a
+    // daemon restart (review finding 2).
     settle();
-    expect(purger.purge("sess-1")).toBe(true);
     expect(existsSync(sessionContextDir(root, "sess-1"))).toBe(false);
   });
 
-  it("purges IMMEDIATELY when no round is in flight (order B: round finished, then archive)", () => {
+  it("purges IMMEDIATELY when no turn is in flight (order B: turn finished, then archive)", () => {
     const root = scratchDir("rennet-ctx-inflight2-");
     writeSessionContext(root, "sess-1", files);
     const purger = createSessionContextPurger(() => root);
 
-    purger.roundInFlight("sess-1")();
+    purger.turnInFlight("sess-1")();
 
     expect(purger.purge("sess-1")).toBe(true);
     expect(existsSync(sessionContextDir(root, "sess-1"))).toBe(false);
   });
 
-  it("counts overlapping rounds: the first to settle does not free the second's files", () => {
+  it("counts overlapping turns: the first to settle does not free the second's files", () => {
     const root = scratchDir("rennet-ctx-inflight3-");
     writeSessionContext(root, "sess-1", files);
     const purger = createSessionContextPurger(() => root);
 
-    const first = purger.roundInFlight("sess-1");
-    const second = purger.roundInFlight("sess-1");
+    // A round and a refine on one session, or two verification legs — the shape the
+    // counter exists for.
+    const first = purger.turnInFlight("sess-1");
+    const second = purger.turnInFlight("sess-1");
     first();
-    first(); // idempotent: a settle called twice must not free the round still running
+    first(); // idempotent: a release called twice must not free the turn still running
     expect(purger.purge("sess-1")).toBe(false);
     expect(existsSync(sessionContextDir(root, "sess-1"))).toBe(true);
 
+    // Still held by `second`, so nothing has been deleted yet...
     second();
-    expect(purger.purge("sess-1")).toBe(true);
+    // ...and the LAST release is what performs it.
+    expect(existsSync(sessionContextDir(root, "sess-1"))).toBe(false);
+  });
+
+  it("releases a lease with no archive behind it WITHOUT purging — a live session keeps its files", () => {
+    const root = scratchDir("rennet-ctx-inflight4-");
+    writeSessionContext(root, "sess-1", files);
+    const purger = createSessionContextPurger(() => root);
+
+    // The control for the test above: the release only purges when an archive ASKED. A
+    // release that purged unconditionally would delete a live session's context between
+    // two of its own turns.
+    purger.turnInFlight("sess-1")();
+    expect(existsSync(sessionContextDir(root, "sess-1"))).toBe(true);
   });
 });
 
@@ -379,9 +445,14 @@ describe("writeRunScopedContext", () => {
     const written = writeRunScopedContext(root, "sess-1", "candidates-abc.json", "[]\n");
 
     // Under the SESSION's directory, so the archive purge covers it even if the turn that
-    // reads it never returns.
-    expect(written.path).toBe(join(sessionContextDir(root, "sess-1"), "candidates-abc.json"));
-    expect(readFileSync(written.path, "utf8")).toBe("[]\n");
+    // reads it never returns — and named RELATIVE to the bound root with `/` separators,
+    // because that string goes into a prompt verbatim and the seat's cwd IS that root. An
+    // absolute path is the daemon's own locus, unopenable from a WSL distro seat
+    // (review finding 4).
+    expect(written.path).toBe(".rennet/context/sess-1/candidates-abc.json");
+    expect(written.path.startsWith(root)).toBe(false);
+    expect(written.path).not.toContain("\\");
+    expect(readFileSync(join(root, written.path), "utf8")).toBe("[]\n");
     // Not in the index: the index tells a turn what it will find, and this file is gone
     // the moment the turn it was written for returns.
     expect(
@@ -389,7 +460,7 @@ describe("writeRunScopedContext", () => {
     ).not.toContain("candidates-abc.json");
 
     written.discard();
-    expect(existsSync(written.path)).toBe(false);
+    expect(existsSync(join(root, written.path))).toBe(false);
     expect(() => written.discard()).not.toThrow(); // idempotent
     // The session's own files are untouched — discard removes one file, not the directory.
     expect(existsSync(join(sessionContextDir(root, "sess-1"), "round.json"))).toBe(true);
@@ -400,7 +471,7 @@ describe("writeRunScopedContext", () => {
     const written = writeRunScopedContext(root, "sess-1", "candidates-abc.json", "[]\n");
 
     expect(purgeSessionContext(root, "sess-1")).toBe(true);
-    expect(existsSync(written.path)).toBe(false);
+    expect(existsSync(join(root, written.path))).toBe(false);
   });
 });
 
