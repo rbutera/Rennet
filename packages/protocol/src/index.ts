@@ -7,6 +7,7 @@ export * from "./benchmarks";
 export * from "./board";
 export * from "./commands";
 export * from "./delta";
+export * from "./design/bmad-model";
 // Parked residue (B3 reconciliation 7): these surfaces have no contract folder
 // yet and migrate with the changes that rework them (B4–B11) — domain.ts
 // (project/settings/handoff/locus families), wire.ts (the pre-registry command

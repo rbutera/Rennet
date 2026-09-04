@@ -14,6 +14,7 @@ export {
   type Timers,
   type WatchFn,
 } from "./baseline-advance-watcher";
+export { readBmadSpec, resolveBmadPaths, selectedBmadSpec } from "./bmad-spec-reader";
 export {
   type BoardMetaInput,
   type BoardMetaRecord,

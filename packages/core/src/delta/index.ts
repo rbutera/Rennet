@@ -2,6 +2,7 @@
 // folder's only import surface; siblings are implementation.
 
 export * from "./blast-radius";
+export * from "./bmad-spec";
 export * from "./counterpart-hints";
 export * from "./delta-packet";
 export * from "./element-diffs";
