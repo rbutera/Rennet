@@ -26,6 +26,14 @@
  *     gold FILLS use --rn-accent-fill with near-black ink.
  *   - Evidence green, copper warn, verdigris model, and danger red are the only
  *     other functional hues.
+ *   - THE LENS REGISTER (--rn-lens-*) is the one identity axis: five portable
+ *     hue slots — red, yellow, blue, green, neutral — that every theme binds
+ *     from its OWN palette. They tell five parallel readers apart on the bench
+ *     and on the lens rail; they are never type and never a fill, so the
+ *     contract they meet is WCAG's 3:1 non-text bar on canvas, surface and
+ *     raised (theme.test.ts computes it per pack per scheme). `packages/theme`
+ *     knows nothing about lenses: which lens takes which slot is the app's
+ *     mapping (packages/app-ui/src/board/lens-colour.ts).
  */
 
 :root {
@@ -66,6 +74,15 @@
   --rn-danger: #b23b2b;
   --rn-danger-soft: rgb(178 59 43 / 0.1);
   --rn-on-danger: #ffffff;
+  /* lens register — five portable identity slots. The bench's default draws four
+     of them from hues the palette already carries (danger, gold, evidence green,
+     ink-soft) so the Affineur's Bench gains exactly ONE hue it did not have: the
+     slate blue. Marks only, never type. */
+  --rn-lens-red: #b23b2b;
+  --rn-lens-yellow: #8a5d0b;
+  --rn-lens-blue: #2f5d8f;
+  --rn-lens-green: #41745b;
+  --rn-lens-neutral: #57534a;
   /* paper — what leaves the machine (cream in the bright room) */
   --rn-sheet: #f7f5ef;
   --rn-sheet-ink: #23211c;
@@ -135,6 +152,11 @@
   --rn-danger: #db7a6a;
   --rn-danger-soft: rgb(219 122 106 / 0.14);
   --rn-on-danger: #ffffff;
+  --rn-lens-red: #db7a6a;
+  --rn-lens-yellow: #e8b13c;
+  --rn-lens-blue: #8fb3dd;
+  --rn-lens-green: #88bc9b;
+  --rn-lens-neutral: #a9a196;
   --rn-sheet: #1c1712;
   --rn-sheet-ink: #efe7db;
   --rn-sheet-soft: #b6ab99;
@@ -189,6 +211,11 @@
     --rn-danger: #db7a6a;
     --rn-danger-soft: rgb(219 122 106 / 0.14);
     --rn-on-danger: #ffffff;
+    --rn-lens-red: #db7a6a;
+    --rn-lens-yellow: #e8b13c;
+    --rn-lens-blue: #8fb3dd;
+    --rn-lens-green: #88bc9b;
+    --rn-lens-neutral: #a9a196;
     --rn-sheet: #1c1712;
     --rn-sheet-ink: #efe7db;
     --rn-sheet-soft: #b6ab99;

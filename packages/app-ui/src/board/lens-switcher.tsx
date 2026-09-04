@@ -12,6 +12,7 @@ import { useCoachAnchor } from "../coach/registry";
 import { Icon } from "../components/icon";
 import { useRennetStore } from "../store";
 import type { LensBoardEntry } from "./board-data";
+import { lensSlot, lensTint } from "./lens-colour";
 import { deltaKey } from "./viewed-delta";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -102,18 +103,36 @@ export function LensSwitcher({
             aria-label={`${LENS_LABEL[lens]}${accessibleStatus}`}
             title={LENS_LABEL[lens]}
             data-lens={lens}
+            data-lens-slot={lensSlot(lens)}
             data-failed={failure === undefined ? undefined : "true"}
             data-absent={absence === undefined ? undefined : absence}
             onClick={() => onSelect(lens)}
             className={cn(
-              "relative flex items-center gap-2 whitespace-nowrap rounded-md px-3.5 py-2 font-medium text-13 transition-colors",
+              // The tab binds its lens's hue for its own subtree; the stop and the
+              // active glyph below paint in it without naming a lens.
+              "relative flex items-center gap-2 whitespace-nowrap rounded-md px-3.5 pt-2 pb-2.5 font-medium text-13 transition-colors",
+              lensTint(lens),
               active
                 ? "bg-secondary text-foreground"
                 : "text-muted-foreground hover:text-foreground",
             )}
           >
+            {/* THE STOP — the same device the bench's core samples hang on, at rail
+                scale: a 2px rule in this lens's colour along the foot of its tab, full
+                strength when selected and dimmed when not. It is identity, not state:
+                selection is still carried by `aria-selected`, by the raised fill, and
+                by the ink stepping up — so the rail reads correctly with colour
+                ignored entirely. */}
+            <span
+              data-testid="lens-stop"
+              aria-hidden="true"
+              className={cn(
+                "absolute inset-x-2 bottom-1 h-0.5 rounded-full transition-colors",
+                active ? "bg-lens" : "bg-lens-line",
+              )}
+            />
             <span className="relative flex shrink-0">
-              <Icon icon={LENS_ICON[lens]} className="size-4" />
+              <Icon icon={LENS_ICON[lens]} className={cn("size-4", active && "text-lens")} />
               {openCount > 0 ? (
                 <span
                   data-testid="lens-open-count"

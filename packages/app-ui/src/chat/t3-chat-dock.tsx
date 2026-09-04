@@ -1,5 +1,6 @@
 import { type ReactNode, Suspense, useEffect } from "react";
 import { useCommand } from "../data/query";
+import { useOpenCapturedPath } from "../review/code-destination";
 import { useRennetStore } from "../store";
 import { useChatTrail, useRouteReviewId } from "./chat-data";
 import { ChatHeader } from "./chat-header";
@@ -42,6 +43,12 @@ export function T3ChatDock({ corner }: { readonly corner?: ReactNode }) {
   // so the dock has to render it or the open dock names no session at all. It rides the
   // dock's own header, above whatever fills the slot, and the header owns the corner too.
   const trail = useChatTrail(reviewId);
+  // A file reference clicked in the chat opens Rennet's OWN Diff view when the review
+  // captured that path. Wired HERE rather than in the two desktop entries: the dock is
+  // already inside `CodeDestinationProvider` and already knows which review the route
+  // names, so both entries inherit the behaviour by mounting the dock, instead of each
+  // rebuilding the same navigation against the same store.
+  const openFileInDiff = useOpenCapturedPath();
 
   return (
     <div
@@ -75,10 +82,15 @@ export function T3ChatDock({ corner }: { readonly corner?: ReactNode }) {
               >
                 ← Back to the session
               </button>
-              <slot.thread session={data} thread={lensThread} readOnly />
+              <slot.thread
+                session={data}
+                thread={lensThread}
+                readOnly
+                onOpenFile={openFileInDiff}
+              />
             </>
           ) : (
-            <slot.session session={data} />
+            <slot.session session={data} onOpenFile={openFileInDiff} />
           )}
         </Suspense>
       ) : (

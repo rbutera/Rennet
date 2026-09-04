@@ -35,6 +35,7 @@ import {
   useComposerDraftStore,
 } from "~/composerDraftStore";
 import { environmentCatalog } from "~/connection/catalog";
+import { useRightPanelStore } from "~/rightPanelStore";
 import { AppAtomRegistryProvider } from "~/rpc/atomRegistry";
 import {
   setActiveEnvironmentId,
@@ -56,8 +57,12 @@ import {
 import { resolveThreadSyncPhase } from "~/threadSync";
 import { type SidecarSession, sidecarRegistration, sidecarThreadPath } from "./session";
 
+/** See `RouteFileOpens`. `false` = Rennet did not take the click. */
+export type OpenFileInDiff = (path: string, line?: number) => boolean;
+
 export interface T3NativeChatProps {
   readonly session: SidecarSession;
+  readonly onOpenFile?: OpenFileInDiff;
 }
 
 /** A thread anywhere in the sidecar environment — a lens seat's, not the session's. */
@@ -71,6 +76,7 @@ export interface T3ThreadViewProps {
   readonly thread: ThreadRef;
   /** Read-only is what this mount IS; the literal keeps the call site saying so. */
   readonly readOnly: true;
+  readonly onOpenFile?: OpenFileInDiff;
 }
 
 // ─── Routes ──────────────────────────────────────────────────────────────────
@@ -270,6 +276,37 @@ function SidecarEnvironment({ session }: T3NativeChatProps) {
   return null;
 }
 
+/**
+ * Sends a file reference clicked in the transcript to Rennet's Diff view.
+ *
+ * Upstream routes every one of them through ONE action — `useRightPanelStore.openFile(ref,
+ * relativePath, line?)`, which `ChatView` hands to the timeline as `onOpenFile` — so that
+ * action is the narrowest seam there is, and replacing it needs no vendored edit: the
+ * store is zustand, its actions live in its state, and `setState` swaps one.
+ *
+ * Rennet takes the click only when it OWNS the answer. `onOpenFile` returns false for a
+ * path the review never captured, and the original action runs instead, so a reference to
+ * a file outside the patchset still opens T3's own viewer rather than doing nothing. The
+ * original is restored on unmount, because the store is a module singleton shared with
+ * every other mount in the document.
+ */
+function RouteFileOpens({ onOpenFile }: { readonly onOpenFile?: OpenFileInDiff }) {
+  useEffect(() => {
+    if (onOpenFile === undefined) return;
+    const original = useRightPanelStore.getState().openFile;
+    useRightPanelStore.setState({
+      openFile: (ref, relativePath, line) => {
+        if (onOpenFile(relativePath, line)) return;
+        original(ref, relativePath, line);
+      },
+    });
+    return () => {
+      useRightPanelStore.setState({ openFile: original });
+    };
+  }, [onOpenFile]);
+  return null;
+}
+
 /** Keeps a mounted memory router on `path` as the review — or the opened lens — changes. */
 function FollowPath({
   router,
@@ -286,7 +323,7 @@ function FollowPath({
   return null;
 }
 
-export default function T3NativeChat({ session }: T3NativeChatProps) {
+export default function T3NativeChat({ session, onOpenFile }: T3NativeChatProps) {
   const [router] = useState(() => createChatRouter(sidecarThreadPath(session)));
   return (
     <div
@@ -295,6 +332,7 @@ export default function T3NativeChat({ session }: T3NativeChatProps) {
     >
       <AppAtomRegistryProvider>
         <SidecarEnvironment session={session} />
+        <RouteFileOpens {...(onOpenFile === undefined ? {} : { onOpenFile })} />
         <FollowPath router={router} path={sidecarThreadPath(session)} />
         <RouterProvider router={router} />
       </AppAtomRegistryProvider>
@@ -310,7 +348,7 @@ export default function T3NativeChat({ session }: T3NativeChatProps) {
  * needed. Streaming is upstream's thread subscription: a seat still running keeps writing
  * into this view, and the transcript stays readable once it settles.
  */
-export function T3ThreadView({ session, thread }: T3ThreadViewProps) {
+export function T3ThreadView({ session, thread, onOpenFile }: T3ThreadViewProps) {
   const [router] = useState(() => createChatRouter(sidecarThreadPath(thread)));
   return (
     <div
@@ -319,6 +357,7 @@ export function T3ThreadView({ session, thread }: T3ThreadViewProps) {
     >
       <AppAtomRegistryProvider>
         <SidecarEnvironment session={session} />
+        <RouteFileOpens {...(onOpenFile === undefined ? {} : { onOpenFile })} />
         <FollowPath router={router} path={sidecarThreadPath(thread)} />
         <RouterProvider router={router} />
       </AppAtomRegistryProvider>

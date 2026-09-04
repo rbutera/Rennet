@@ -35,6 +35,7 @@ import { createServer } from "node:net";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
+import { isRunning } from "../process-state";
 
 /** The sidecar's claim: where the daemon says its sidecar listens, and which daemon spawned it. */
 export const sidecarClaimSchema = z.object({
@@ -189,13 +190,13 @@ export async function findHealthySidecar(dataDir: string): Promise<SidecarVerdic
   return { kind: "healthy", claim, environment };
 }
 
+/**
+ * Is that sidecar pid still doing work? Signal-0 alone said yes to a zombie — an exited,
+ * unreaped child that serves nothing — so the stop below waited out its whole budget and
+ * reported a timeout for a process that was already gone (#820).
+ */
 export function isProcessAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === "EPERM";
-  }
+  return isRunning(pid);
 }
 
 /** Bind port 0 on loopback, read the number back, release it. T3 validates `--port` as 1..65535. */

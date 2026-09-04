@@ -135,21 +135,32 @@ rules are worth writing down, because it is the only one that renders a live ext
 process and the failure mode is a surface that quietly lies about it.
 
 - **Not a table.** The change is a slab; the lenses are five readers standing under it,
-  each with its own hand-drawn mark, a lantern, a gaze line and a line of speech per
-  seat. A reader with one seat speaks one line; Flagged has two seats (Claude and Codex)
-  and speaks two, each under its speaker's name, and each line is the control that opens
-  that seat's transcript. Rows, columns and dividers are the shape this surface exists to
-  replace. The reader's speech is the review serif (`font-serif`); its name and the chrome
-  around it are sans.
-- **Never colour alone** (root `DESIGN.md`). Each of the five registers — waiting,
-  working, settled, absent, failed — is stated twice: by the lantern's tone *and* by a
-  rim badge or by motion. Gold plus a moving glance is working; green plus a check is
-  settled; danger plus a cross is failed.
-- **Motion only where it carries a fact.** The travelling glance (`animate-bench-glance`)
-  runs only while that seat has a tool call actually in flight; the lantern's pulse
-  (`animate-processing-pulse`) runs only while the seat is running. Both carry
-  `motion-reduce:animate-none`, which is safe because each animation's settled state is
-  its own rest state.
+  each holding the core sample it drew out of the change — a plug on a shaft rising into
+  a socket in the slab's underside — with a line of speech per seat beneath it. A reader
+  with one seat speaks one line; Flagged has two seats (Claude and Codex) and speaks two,
+  each under its speaker's name, and each line is the control that opens that seat's
+  transcript. Rows, columns and dividers are the shape this surface exists to replace.
+  The reader's speech is the review serif (`font-serif`); its name and the chrome around
+  it are sans.
+- **One row, always.** The readers sit in an explicit grid of exactly as many equal
+  columns as the daemon opened lanes. A wrapping flex row orphaned the fifth reader onto
+  a line of its own at narrow widths, which broke the scene the surface exists to draw.
+- **Colour is which lens, so state is the cut.** Each lane binds its lens's hue from the
+  theme's portable register (`src/board/lens-colour.ts`), so colour answers *which
+  reader*, not *how it is doing* — and the five registers are told apart by the way the
+  sample is cut instead: an empty tube (queued), dashed strata (under way), solid strata
+  (settled), a doubled seam (reworked), a snapped plug (failed), a dashed outline
+  (absent). A failed lane snaps in its **own** lens colour; painting it red would say
+  "Flagged". The speech under it is the second statement in every case.
+- **Never an amount.** `LensLane` carries no progress, so nothing on the bench fills,
+  grows, or completes. Registers differ by pattern and structure; a bar that lengthened
+  would be claiming a number the daemon never sent.
+- **Motion only where it carries a fact.** The travelling glance
+  (`animate-bench-glance`) and the sample's lamp (`animate-bench-core-scan`) run only
+  while that seat has a tool call actually in flight, or is running. The glance carries
+  `motion-reduce:animate-none` because its settled state is its rest state; the lamp
+  carries `motion-reduce:hidden`, because parked it would read as a mark of its own and
+  the dashed strata already say "under way" without it.
 - **A settled reader's board opens beneath it, now.** A `drafted`/`done` lane renders its
   board on the bench (`LensBoardDocument`, the workspace's own document) the moment
   `board.read` answers, without waiting for the other lanes; the reader stays above it as
@@ -192,6 +203,13 @@ interaction state the palette does not carry, derived from a palette value:
   `color-mix`ed with 5% ink. It is not a rename because the palette has no hover
   step for raised, and a secondary button that hovers to its own rest fill has no
   hover at all. Derive from a palette value; never invent a colour here.
+- **The lens register:** `bg-lens` / `bg-lens-line` / `bg-lens-soft` (and `text-lens`
+  where a mark needs `currentColor`) resolve against `--rn-lens`, which a lens's own
+  subtree binds from one of the palette's five portable slots. `soft` and `line` are
+  `color-mix`ed from it under the same exception above. Because the utilities are
+  declared `@theme inline`, the nearest binding wins — a mark composes once and paints
+  in whichever lens it is standing in. The mapping from lens to slot lives in
+  `src/board/lens-colour.ts` and nowhere else; the hue is a mark and never type.
 - **Radius:** `rounded-sm`→micro (4px), `rounded-md`→chip (6px),
   `rounded-lg`→control (8px), `rounded-xl`→surface (12px),
   `rounded-2xl`→window (16px).

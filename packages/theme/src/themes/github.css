@@ -49,6 +49,12 @@
   --rn-danger: #cf222e;
   --rn-danger-soft: rgb(207 34 46 / 0.1);
   --rn-on-danger: #ffffff;
+  /* lens register — Primer light */
+  --rn-lens-red: #cf222e;
+  --rn-lens-yellow: #9a6700;
+  --rn-lens-blue: #0969da;
+  --rn-lens-green: #1a7f37;
+  --rn-lens-neutral: #4b535b;
   /* paper */
   --rn-sheet: #ffffff;
   --rn-sheet-ink: #1f2328;
@@ -111,6 +117,12 @@
   --rn-danger: #f85149;
   --rn-danger-soft: rgb(248 81 73 / 0.15);
   --rn-on-danger: #ffffff;
+  /* lens register — Primer dark */
+  --rn-lens-red: #f85149;
+  --rn-lens-yellow: #d29922;
+  --rn-lens-blue: #58a6ff;
+  --rn-lens-green: #3fb950;
+  --rn-lens-neutral: #adbac7;
   /* paper */
   --rn-sheet: #161b22;
   --rn-sheet-ink: #e6edf3;

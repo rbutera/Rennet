@@ -2,7 +2,12 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { sanitizeSchemaForCodex, type T3SeatSeam, WhiteboardClient } from "@rennet/adapters";
+import {
+  normalizeOutputSchema,
+  sanitizeSchemaForCodex,
+  type T3SeatSeam,
+  WhiteboardClient,
+} from "@rennet/adapters";
 import {
   type DeltaPacket,
   inlineContextViolation,
@@ -1083,6 +1088,36 @@ describe("boardOutputSchema", () => {
     expect(encoded).toContain('"structured"');
     // Memoized — the same object every call.
     expect(boardOutputSchema()).toBe(schema);
+  });
+});
+
+describe("designDraftOutputSchema — what the Claude leg actually receives (#810)", () => {
+  // The bug was invisible to every hermetic test because none of them ran the schema
+  // through the adapter's normalizer, which is the last thing that touches it before the
+  // SDK hands it to the API as a custom tool's `input_schema`. Both of the API's refusals
+  // are pinned here; both were reproduced live before being pinned.
+  it("carries a top-level object type and NO top-level union", () => {
+    const wire = normalizeOutputSchema(designDraftOutputSchema());
+    expect(wire.type, `no top-level type on the wire: ${JSON.stringify(wire)}`).toBe("object");
+    expect(wire.$schema).toBeUndefined();
+    // The second refusal: `input_schema does not support oneOf, allOf, or anyOf at the top
+    // level` — so a `type` alone is not enough, the root must not be a union at all.
+    for (const key of ["anyOf", "oneOf", "allOf"]) {
+      expect(wire[key], `top-level ${key} is refused by the API`).toBeUndefined();
+    }
+  });
+
+  it("admits both Design returns, because the wire CANNOT tell them apart", () => {
+    // The provider takes one root object, so `{ absence, document }` validates here. That
+    // is not a licence to settle it as an absence — `designNoSpecAbsence` refuses it at
+    // the host, and "refuses a PARTIAL board wearing an absence key" is the test that
+    // holds that line. What THIS test cannot catch is whether the provider accepts the
+    // envelope at all; only the live turn in `rounds-smoke.test.ts` shows that.
+    const schema = designDraftOutputSchema() as Record<string, unknown>;
+    const properties = schema.properties as Record<string, unknown>;
+    expect(Object.keys(properties).sort()).toEqual(["absence", "document", "elements"]);
+    expect(properties.absence).toMatchObject({ const: "no-spec" });
+    expect(schema.required ?? []).toEqual([]);
   });
 });
 
@@ -2296,6 +2331,39 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     expect(design?.absence).toBeUndefined();
     expect(design?.board).toBeDefined();
     expect(applied.map(({ boardId }) => boardId)).toContain("board:design");
+  });
+
+  it("refuses a PARTIAL board wearing an absence key — that is a malformed draft, not an absence", async () => {
+    // The dishonest-absence hole. `{ absence, document }` fails board parsing (no
+    // `elements`), so the board-wins branch above does not catch it; a permissive absence
+    // parser would then strip `document` and settle the lane "no spec found for this
+    // branch" while holding half a board. The seat re-asks and the ladder runs instead.
+    const applied: Applied[] = [];
+    let designTurns = 0;
+    const result = await runLensPipeline({
+      ...boardSeats([], (prompt, label) => {
+        const lens = lensFromPrompt(prompt, label);
+        if (lens !== "design") return cleanBody(lens);
+        designTurns += 1;
+        return designTurns === 1
+          ? {
+              absence: "no-spec",
+              document: { title: "Design", introMarkdown: "", measure: "reading" },
+            }
+          : cleanBody("design");
+      }),
+      repoRoot: "/pr-worktree",
+      deltaPacket: PACKET,
+      lintContextFor,
+      readPrompt,
+      whiteboard: fakeWhiteboard(applied),
+      boardIdFor: (lens) => `board:${lens}`,
+    });
+
+    const design = result.boards.find(({ lens }) => lens === "design");
+    expect(design?.absence, "a half-board settled the lane absent").toBeUndefined();
+    expect(designTurns, "the ladder never re-asked the seat").toBeGreaterThan(1);
+    expect(design?.board).toBeDefined();
   });
 
   it("keeps a requirement's trace and the code_ref it cites on the written board", async () => {

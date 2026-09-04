@@ -470,6 +470,30 @@
         "value": "rgb(0 0 0 / 65%)",
         "createdAt": "2026-09-03T03:11:29.053Z",
         "reason": "verbatim copy of vendored T3 Code index.css (dialog-glass) in packages/t3-chat/src/t3.css; upstream MIT stylesheet, not a Rennet palette choice"
+      },
+      {
+        "rule": "design-system-radius",
+        "value": "0.5rem)",
+        "createdAt": "2026-09-04T18:33:01.137Z",
+        "reason": "false positive: the hook is reading the FALLBACK inside var(--radius-control, 0.5rem). 0.5rem = 8px = the 'control' step on DESIGN.md's 4/6/8/12/16 desktop radius scale."
+      },
+      {
+        "rule": "design-system-font-size",
+        "value": "0.8125rem",
+        "createdAt": "2026-09-04T18:33:05.025Z",
+        "reason": "false positive: 0.8125rem = 13px = text-13, the 'dense' step on DESIGN.md's desktop ramp (10/11/12/12.5/13/14/15/16/18/20/24). Sidecar is stale vs DESIGN.md."
+      },
+      {
+        "rule": "design-system-font-size",
+        "value": "0.6875rem",
+        "createdAt": "2026-09-04T18:33:07.843Z",
+        "reason": "false positive: 0.6875rem = 11px = text-2xs, the 'micro' step on DESIGN.md's desktop ramp. Sidecar is stale vs DESIGN.md."
+      },
+      {
+        "rule": "design-system-font-size",
+        "value": "1.125rem",
+        "createdAt": "2026-09-04T18:33:10.983Z",
+        "reason": "false positive: 1.125rem = 18px = text-lg, the 'body' step on DESIGN.md's desktop ramp. Sidecar is stale vs DESIGN.md."
       }
     ]
   }

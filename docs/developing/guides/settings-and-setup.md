@@ -448,7 +448,10 @@ rennet stop
 rennet map [path] [--base <ref>] [--json <file>] [--projects-dir <dir>]
 ```
 
-`serve`, `status`, and `stop` operate on the daemon. `map` runs without the
+`serve`, `status`, and `stop` operate on the daemon. `stop` asks the verified
+daemon to shut itself down over its own HTTP port (`POST /shutdown`, beside
+`/healthz`) and falls back to SIGTERM only when it gets no acknowledgement, then
+waits for the claim to clear. `map` runs without the
 daemon, builds the same deterministic Repo Map used by project processing, and
 stores it under the path-keyed local project directory. `--json` exports the map.
 It calls no model and needs no harness.

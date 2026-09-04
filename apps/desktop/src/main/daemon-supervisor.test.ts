@@ -1,3 +1,4 @@
+import { EventEmitter } from "node:events";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -21,6 +22,7 @@ vi.mock("electron", () => ({
 
 import {
   createWslRunner,
+  type DaemonChild,
   ensureDaemon,
   ensureDaemonForProject,
   isOwnedDaemonRunning,
@@ -68,6 +70,39 @@ function incompatibleVerdict(info: DaemonInfo): DaemonVerdict {
 
 const immediateSleep = () => Promise.resolve();
 
+/** A daemon that does not answer `POST /shutdown` — the ladder falls through to the signals. */
+const noAck = async () => null;
+
+/** A daemon that acks the shutdown as the pid the claim names (#820). */
+function acksAs(info: DaemonInfo) {
+  return async () => ({
+    pid: info.pid,
+    wsPort: info.wsPort,
+    version: info.version,
+    protocolVersion: info.protocolVersion,
+    claimPath: "/data/daemon.json",
+    shuttingDown: true as const,
+  });
+}
+
+/** A fake `ChildProcess` handle: the two fields and two methods the supervisor uses. */
+function fakeChild(pid: number) {
+  const emitter = new EventEmitter();
+  const child = {
+    pid,
+    exitCode: null as number | null,
+    signalCode: null as NodeJS.Signals | null,
+    once: (event: "exit", listener: () => void) => emitter.once(event, listener),
+    off: (event: "exit", listener: () => void) => emitter.off(event, listener),
+    /** What the OS does when the process really goes: set the code, then emit. */
+    exit(code = 0) {
+      child.exitCode = code;
+      emitter.emit("exit");
+    },
+  };
+  return child;
+}
+
 // A readClaim that returns `claim` for the first `liveReads` calls, then null (claim cleared).
 function clearingReader(liveReads: number) {
   let n = 0;
@@ -98,7 +133,7 @@ describe("stopOwnedDaemon (tray Quit completely — health-verified)", () => {
     const removeClaim = vi.fn();
     const outcome = await stopOwnedDaemon("/data", {
       probe: async () => ({ kind: "stale", claim: { ...claim } }),
-      isAlive: () => false,
+      processState: () => "gone",
       removeClaim,
       kill,
       warn,
@@ -116,7 +151,7 @@ describe("stopOwnedDaemon (tray Quit completely — health-verified)", () => {
     const removeClaim = vi.fn();
     const outcome = await stopOwnedDaemon("/data", {
       probe: async () => ({ kind: "stale", claim: { ...claim } }),
-      isAlive: () => true,
+      processState: () => "running",
       removeClaim,
       kill,
       warn,
@@ -131,14 +166,65 @@ describe("stopOwnedDaemon (tray Quit completely — health-verified)", () => {
     });
   });
 
-  it("SIGTERMs the verified owned pid and returns cleanly once the claim clears", async () => {
+  it("asks the daemon to shut down, waits on the child it spawned, and never signals it", async () => {
+    // The healthy path (#820): the ack says THIS pid heard the command, and the child's own
+    // `exit` — not a pid probe — is what says it is gone. Sequence, not membership: the wait
+    // must start after the ack, and the outcome must land after the exit.
+    const order: string[] = [];
+    const child = fakeChild(claim.pid);
+    const kill = vi.fn();
+    const stopping = stopOwnedDaemon("/data", {
+      probe: async () => healthyVerdict(claim),
+      removeClaim: vi.fn(),
+      readClaim: () => ({ ...claim }), // still there: only the child's exit ends this stop
+      processState: () => "running", // and the pid still probes alive, as a zombie would
+      requestShutdown: async () => {
+        order.push("shutdown-request");
+        return acksAs(claim)();
+      },
+      childFor: () => child,
+      kill,
+      warn: vi.fn(),
+      sleep: immediateSleep,
+    });
+    await vi.waitFor(() => expect(order).toEqual(["shutdown-request"]));
+    order.push("child-exit");
+    child.exit(0);
+    expect(await stopping).toEqual({ kind: "stopped" });
+    expect(order).toEqual(["shutdown-request", "child-exit"]);
+    expect(kill).not.toHaveBeenCalled();
+  });
+
+  it("stops when the claim is gone and the pid is only a ZOMBIE (the #820 fixture)", async () => {
+    // The shape that stranded the 0.6.5 → 0.7.0 update, with no child handle to wait on (the
+    // daemon was inherited from an earlier app instance): the daemon exited cleanly and removed
+    // its claim, but `kill(pid, 0)` still answers because nobody reaped it. A zombie holds no
+    // port and no bundle, so this is a STOP, not a timeout.
+    const warn = vi.fn();
+    const outcome = await stopOwnedDaemon("/data", {
+      probe: async () => healthyVerdict(claim),
+      removeClaim: vi.fn(),
+      readClaim: () => null,
+      processState: () => "zombie",
+      requestShutdown: acksAs(claim),
+      childFor: () => undefined,
+      kill: vi.fn(),
+      warn,
+      sleep: immediateSleep,
+    });
+    expect(outcome).toEqual({ kind: "stopped" });
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("SIGTERMs the verified owned pid when it does not acknowledge, and returns once the claim clears", async () => {
     const kill = vi.fn();
     const warn = vi.fn();
     const outcome = await stopOwnedDaemon("/data", {
       probe: async () => healthyVerdict(claim),
       removeClaim: vi.fn(),
       readClaim: clearingReader(1), // present on the pre-kill read, gone on the first poll
-      isAlive: () => false,
+      processState: () => "gone",
+      requestShutdown: noAck,
       kill,
       warn,
       sleep: immediateSleep,
@@ -155,7 +241,8 @@ describe("stopOwnedDaemon (tray Quit completely — health-verified)", () => {
       probe: async () => incompatibleVerdict(claim),
       removeClaim: vi.fn(),
       readClaim: clearingReader(1),
-      isAlive: () => false,
+      processState: () => "gone",
+      requestShutdown: noAck,
       kill,
       warn: vi.fn(),
       sleep: immediateSleep,
@@ -164,29 +251,55 @@ describe("stopOwnedDaemon (tray Quit completely — health-verified)", () => {
     expect(outcome).toEqual({ kind: "stopped" });
   });
 
-  it("warns truthfully and returns when the claim never clears within the bounded wait", async () => {
-    const kill = vi.fn();
+  it("escalates request → SIGTERM → SIGKILL, in that order, and only then fails", async () => {
+    const order: string[] = [];
     const warn = vi.fn();
     let clock = 0;
     const outcome = await stopOwnedDaemon("/data", {
       probe: async () => healthyVerdict(claim),
       removeClaim: vi.fn(),
       readClaim: () => ({ ...claim }), // claim persists forever
-      isAlive: () => true,
-      kill,
+      processState: () => "running", // and so does the process
+      requestShutdown: async () => {
+        order.push("request");
+        return null;
+      },
+      kill: (_pid, signal) => {
+        order.push(signal);
+      },
       warn,
       sleep: immediateSleep,
-      now: () => (clock += 1000), // advance 1s per read; deadline is 5s
+      now: () => (clock += 1000), // advance 1s per read; each stage's deadline is 5s
       timeoutMs: 5_000,
     });
-    expect(kill).toHaveBeenCalledOnce();
+    expect(order).toEqual(["request", "SIGTERM", "SIGKILL"]);
     expect(warn).toHaveBeenCalledTimes(1);
-    expect(warn.mock.calls[0]?.[0]).toContain("still present");
     expect(warn.mock.calls[0]?.[0]).toContain(String(claim.pid));
-    expect(outcome).toEqual({
-      kind: "failed",
-      message: expect.stringContaining("still present"),
+    expect(outcome).toEqual({ kind: "failed", message: expect.stringContaining("SIGKILL") });
+  });
+
+  it("names the state it actually found instead of a process-or-daemon.json disjunction", async () => {
+    // The 0.6.5 → 0.7.0 message said "its process or daemon.json is still present" while
+    // daemon.json was absent and the process was a zombie, and sent the first look at the
+    // wrong half. Each half now gets said, or not said, on its own.
+    let clock = 0;
+    const failure = await stopOwnedDaemon("/data", {
+      probe: async () => healthyVerdict(claim),
+      removeClaim: vi.fn(),
+      readClaim: () => null, // daemon.json is GONE
+      processState: () => "running", // …but a live process holds the port and the bundle
+      requestShutdown: noAck,
+      childFor: () => undefined,
+      kill: vi.fn(),
+      warn: vi.fn(),
+      sleep: immediateSleep,
+      now: () => (clock += 1000),
+      timeoutMs: 5_000,
     });
+    if (failure.kind !== "failed") throw new Error("expected the stop to fail");
+    expect(failure.message).toContain("it is still running");
+    expect(failure.message).not.toContain("daemon.json still names it");
+    expect(failure.message).not.toContain(" or ");
   });
 
   it("waits for the verified daemon pid to exit after its claim clears", async () => {
@@ -198,7 +311,8 @@ describe("stopOwnedDaemon (tray Quit completely — health-verified)", () => {
       probe: async () => healthyVerdict(claim),
       removeClaim: vi.fn(),
       readClaim: () => null,
-      isAlive: () => alive,
+      processState: () => (alive ? "running" : "gone"),
+      requestShutdown: noAck,
       kill: vi.fn(),
       warn: vi.fn(),
       sleep,
@@ -213,6 +327,7 @@ describe("stopOwnedDaemon (tray Quit completely — health-verified)", () => {
     const outcome = await stopOwnedDaemon("/data", {
       probe: async () => healthyVerdict(claim),
       removeClaim,
+      requestShutdown: noAck,
       kill: () => {
         const err = new Error("no such process") as NodeJS.ErrnoException;
         err.code = "ESRCH";
@@ -231,6 +346,7 @@ describe("stopOwnedDaemon (tray Quit completely — health-verified)", () => {
     const outcome = await stopOwnedDaemon("/data", {
       probe: async () => healthyVerdict(claim),
       removeClaim: vi.fn(),
+      requestShutdown: noAck,
       kill: () => {
         const err = new Error("operation not permitted") as NodeJS.ErrnoException;
         err.code = "EPERM";
@@ -398,6 +514,7 @@ describe("desktop daemon supervision (ensureDaemon)", () => {
       probe: async () => incompatibleVerdict(old),
       spawn,
       waitForHealthy: async () => healthyVerdict(spawned),
+      requestShutdown: noAck,
       kill,
       readClaim: readDaemonFile,
       entryPath: "/bundle/server.cjs",
@@ -412,6 +529,99 @@ describe("desktop daemon supervision (ensureDaemon)", () => {
     expect(spawn).toHaveBeenCalledOnce();
     expect(removeDaemonFile(dataDir, old.pid)).toBe(false);
     expect(readDaemonFile(dataDir)).toEqual(spawned);
+  });
+
+  it("restarts a skewed daemon by ASKING it first, and signals nothing when it acknowledges", async () => {
+    // Same command everywhere (#820, D): the skew restart is a shutdown too, and the daemon
+    // that answers gets to drain its turns instead of taking a signal.
+    const dataDir = makeDir();
+    const old = info(334, 42_100, PROTOCOL_VERSION + 500);
+    const spawned = info(445, 43_100);
+    writeDaemonFile(dataDir, old);
+    const order: string[] = [];
+    const kill = vi.fn(() => order.push("kill"));
+    const spawn = vi.fn(() => {
+      order.push("spawn");
+      writeDaemonFile(dataDir, spawned);
+    });
+
+    const port = await ensureDaemon(dataDir, {
+      probe: async () => incompatibleVerdict(old),
+      spawn,
+      waitForHealthy: async () => healthyVerdict(spawned),
+      requestShutdown: async (wsPort) => {
+        order.push(`shutdown:${wsPort}`);
+        removeDaemonFile(dataDir, old.pid); // the daemon drops its claim on the way out
+        return acksAs(old)();
+      },
+      kill,
+      readClaim: readDaemonFile,
+      entryPath: "/bundle/server.cjs",
+      execPath: "/electron",
+      serverVersion: "1.2.3",
+      env: {},
+      warn: vi.fn(),
+    });
+
+    expect(port).toBe(spawned.wsPort);
+    expect(order).toEqual([`shutdown:${old.wsPort}`, "spawn"]);
+    expect(kill).not.toHaveBeenCalled();
+  });
+
+  it("KEEPS the spawned child handle, and a later stop waits on it (#820)", async () => {
+    // The discarded return value of `spawn` is the whole defect: Node reaps a child through
+    // its process handle, so dropping it left the exited daemon a zombie that answered
+    // `kill(pid, 0)` forever. This pins the pair — the ensure stores the handle, and the stop
+    // for that data dir finds it and ends on its `exit` rather than on any probe.
+    const dataDir = makeDir();
+    const spawned = info(1234, 49_500);
+    const children = new Map<string, DaemonChild>();
+    const child = fakeChild(spawned.pid);
+
+    await ensureDaemon(dataDir, {
+      children,
+      probe: async () => ({ kind: "absent" }),
+      spawn: () => {
+        writeDaemonFile(dataDir, spawned);
+        return child;
+      },
+      waitForHealthy: async () => healthyVerdict(spawned),
+      requestShutdown: noAck,
+      kill: vi.fn(),
+      readClaim: readDaemonFile,
+      entryPath: "/bundle/server.cjs",
+      execPath: "/electron",
+      serverVersion: "1.2.3",
+      env: {},
+      warn: vi.fn(),
+    });
+
+    expect(children.get(dataDir)).toBe(child);
+
+    const kill = vi.fn();
+    const asked: string[] = [];
+    const stopping = stopOwnedDaemon(dataDir, {
+      probe: async () => healthyVerdict(spawned),
+      removeClaim: vi.fn(),
+      readClaim: readDaemonFile, // the claim is STILL on disk: only the exit ends this stop
+      processState: () => "running",
+      requestShutdown: async () => {
+        asked.push("request");
+        return acksAs(spawned)();
+      },
+      childFor: (dir) => children.get(dir),
+      kill,
+      warn: vi.fn(),
+      sleep: immediateSleep,
+    });
+    // Exit only once the stop has taken the handle out of the map and asked the daemon to go.
+    await vi.waitFor(() => expect(asked).toEqual(["request"]));
+    child.exit(0);
+
+    expect(await stopping).toEqual({ kind: "stopped" });
+    expect(kill).not.toHaveBeenCalled();
+    // The handle is released with the process, so a later stop does not wait on a dead one.
+    expect(children.has(dataDir)).toBe(false);
   });
 
   it("attaches to a healthy daemon whose server version matches the app", async () => {
@@ -457,6 +667,7 @@ describe("desktop daemon supervision (ensureDaemon)", () => {
       probe: async () => healthyVerdict(old),
       spawn,
       waitForHealthy: async () => healthyVerdict(spawned),
+      requestShutdown: noAck,
       kill,
       readClaim: readDaemonFile,
       entryPath: "/bundle/server.cjs",
@@ -499,6 +710,7 @@ describe("desktop daemon supervision (ensureDaemon)", () => {
       probe: async () => healthyVerdict(foreign),
       spawn,
       waitForHealthy,
+      requestShutdown: noAck,
       kill,
       readClaim: () => null,
       entryPath: "/bundle/server.cjs",
@@ -578,6 +790,7 @@ describe("desktop daemon supervision (ensureDaemon)", () => {
       probe: async () => healthyVerdict(foreign),
       spawn,
       waitForHealthy: async () => healthyVerdict(foreign),
+      requestShutdown: noAck,
       kill,
       readClaim: () => null,
       entryPath: "/bundle/server.cjs",
@@ -845,11 +1058,12 @@ describe("start/stop serialization per dataDir (installer handoff safety)", () =
         order.push("stop-probe");
         return healthyVerdict(dying);
       },
+      requestShutdown: noAck,
       kill: () => {
         order.push("stop-kill");
       },
       readClaim: () => (claimCleared ? null : dying),
-      isAlive: () => !claimCleared,
+      processState: () => (claimCleared ? "gone" : "running"),
       // The claim only clears when the TEST releases it, so the stop parks inside its poll.
       sleep: async () => {
         order.push("stop-poll");
@@ -1105,6 +1319,7 @@ describe("start/stop serialization per dataDir (installer handoff safety)", () =
         order.push("spawn");
       },
       waitForHealthy: async () => healthyVerdict(fresh),
+      requestShutdown: noAck,
       kill: () => {
         order.push("kill");
       },
@@ -1148,7 +1363,8 @@ describe("stopOwnedDaemon stops the owned T3 sidecar AFTER the daemon (t3code-si
     const outcome = await stopOwnedDaemon("/data", {
       probe: async () => ({ kind: "healthy", claim: { ...claim }, identity: {} as never }),
       readClaim: () => (claimPresent ? { ...claim } : null),
-      isAlive: () => alive,
+      processState: () => (alive ? "running" : "gone"),
+      requestShutdown: noAck,
       kill: () => {
         order.push("daemon:SIGTERM");
         claimPresent = false;

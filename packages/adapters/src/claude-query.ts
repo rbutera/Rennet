@@ -147,6 +147,12 @@ export function normalizeOutputSchema(schema: unknown): Record<string, unknown> 
   const rest = { ...(schema as Record<string, unknown>) };
   delete rest.$schema;
   delete rest.$id;
+  // NOT a place to rescue a top-level union. Stamping `type: "object"` on an all-object
+  // `anyOf` envelope was tried and measured live on 2026-09-04 (#810): it only trades
+  // `400 ...input_schema.type: Field required` for `400 ...input_schema: input_schema does
+  // not support oneOf, allOf, or anyOf at the top level`. The API takes one object at the
+  // root, so a caller's schema must BE one (see `DesignDraftOutputSchema`); merging the
+  // branches here would silently widen every caller's contract instead.
   return rest;
 }
 

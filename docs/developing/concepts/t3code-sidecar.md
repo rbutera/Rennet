@@ -111,6 +111,22 @@ never remote-exposed. Clients do not read the credential file.
 There is no engine choice and no second rung: the review workspace's chat slot always
 renders T3's thread view for the review's bound thread, mounted natively by the host. T3's own thread top bar (project breadcrumb, new-thread, editor and GitHub openers, layout toggles) is hidden in both mounts by a rule in `packages/t3-chat/src/t3.css` keyed on the bar's `data-chat-header` hook: Rennet's frame already names the review, the branch and the diff, so the bar is workspace chrome the review does not need, and hiding it from the mount's stylesheet keeps the vendored `ChatView` unedited.
 
+### Fitting the chat to Rennet
+
+T3's chat is a whole workspace's UI docked inside another application, so three things about it are re-cut in `t3.css`, all of them scoped to the two mounts and none of them a vendored edit. Each leans on a `data-slot` or a CSS variable upstream already writes.
+
+- **Corners.** T3's composer is a 22px stack (20px on its inner surface). Rennet's largest surface step is 12px and a chat box is a surface, so `composer-host`, both composer surfaces and `composer-shell`'s glass `::before` move to `--radius-surface`, with the inner surface one step down at `--radius-control`.
+- **Type.** T3's rem steps sit one notch above Rennet's desktop ramp throughout, which is most of why the chat reads as a different application. Each moves down to its neighbouring Rennet size — base 16→14, sm 14→13, xs 12→11, lg 18→16, xl 20→18 — and the composer's prompt takes 13px through `--font-size-prompt`, the variable `ComposerPromptEditor` already reads. T3's own fixed px steps of 11px and below are left alone; they are already at or under Rennet's 10px floor. These are scoped *overrides* of utilities, never redefinitions: a `.text-sm` redefined in this build would win for the whole document, Rennet's own screens included.
+- **The composer's context strip** — the environment, project and branch pickers on the bar under the chat box — is hidden with the thread header above it, for the same reason: the review is bound to one workspace the reader cannot switch from here. Hiding it alone is not enough, because upstream carves the composer's outline and its glass `::before` to leave a seam for the strip's corners, keyed on `data-with-context`; both clip-paths are cleared in the same rule, or the strip's absence leaves a notch bitten out of the composer for a control that is not there.
+
+Styling a vendored app from outside it has exactly one failure mode, and it is silent: a fold renames a hook, the selector stops matching, and the composer quietly returns to 22px corners with the branch strip back under it. `packages/t3-chat/src/t3-css-hooks.test.ts` is the tripwire — it reads the real stylesheet and the real vendored source and fails when a hook the stylesheet leans on is gone. It cannot see a hook that survived on an element that *moved*; presence is checkable from a string and position is not.
+
+### A file reference opens Rennet's Diff view
+
+Clicking a file in the chat opens the file in **Rennet's** Diff view rather than T3's right panel, so there is one file viewer in the window instead of two. Upstream routes every such click through one action — `useRightPanelStore.openFile(ref, path, line?)` — which is the narrowest seam available and needs no vendored edit: the store is zustand, its actions live in its state, and `packages/t3-chat`'s `RouteFileOpens` swaps one with `setState` and restores it on unmount.
+
+Rennet takes the click only when it owns the answer. The mount's `onOpenFile` prop comes from `useOpenCapturedPath` in `packages/app-ui/src/review/code-destination.tsx`, which navigates to `?view=diff&file=…` for a path in the active patchset and returns `false` for anything else — and on `false` the original T3 action runs, so a reference to a file outside the review still opens T3's own viewer rather than doing nothing. It is wired in `T3ChatDock`, which is already inside `CodeDestinationProvider` and already knows which review the route names, so both desktop entries inherit it by mounting the dock.
+
 `@rennet/t3-chat` mounts T3's `ChatView` natively:
   the vendored web app is imported by module (both desktop Vite configs — the Electron
   renderer and the served browser tab — alias `~/` into `vendor/t3code/apps/web/src`,
@@ -743,7 +759,10 @@ The daemon's own shutdown sends SIGTERM to the sidecar it spawned and clears the
 `rennet stop` and the tray's Quit then run a sidecar step after the daemon step: verify
 the claim, SIGTERM only a pid T3's runtime record vouches for, wait a bounded five
 seconds, clear the claim. A sidecar that will not exit is logged and left for the next
-start to reap; the app still exits.
+start to reap; the app still exits. The sidecar still takes a signal rather than the
+daemon's `POST /shutdown` command, because the vendored T3 server exposes no shutdown
+route of its own — but the liveness test is the daemon's: an exited, unreaped sidecar
+counts as stopped instead of timing out the wait.
 
 T3 has no SIGTERM handler of its own. A turn that was streaming when the sidecar stops is
 reconciled on the sidecar's next start as an errored session ("Provider session did not

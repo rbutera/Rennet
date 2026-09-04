@@ -204,6 +204,19 @@ describe("toSdkOptions", () => {
     expect(normalizeOutputSchema(bare)).toEqual(bare);
   });
 
+  it("normalizeOutputSchema does NOT rescue a top-level union (#810)", () => {
+    // Measured live: an `anyOf` root is refused by the API whether or not it carries a
+    // `type`, so inventing one here would only hide which 400 the caller is about to get.
+    const union = {
+      $schema: "https://json-schema.org/draft/2020-12/schema",
+      anyOf: [{ type: "object" }, { type: "object" }],
+    };
+    const out = normalizeOutputSchema(union);
+    expect(out.type).toBeUndefined();
+    expect(out.anyOf).toEqual(union.anyOf);
+    expect(out.$schema).toBeUndefined();
+  });
+
   it("maps the council's versioned model aliases to the binary's full ids, else passes through", () => {
     // The council pins a version per role; the installed claude rejects the short versioned
     // alias but accepts the canonical full id for the SAME version (confirmed live).

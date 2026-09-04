@@ -177,14 +177,41 @@ let cachedRoundReportClassificationSchema: unknown;
  * holds none it returns this instead of a board. There is nothing to account for — the
  * host offers no candidate bundle any more — so the shape is the reason alone.
  */
-const DesignNoSpecSchema = z.object({ absence: z.literal("no-spec") });
-const DesignDraftOutputSchema = z.union([DraftBoardSchema, DesignNoSpecSchema]);
+// STRICT on purpose. This is the host boundary: an absence is the reason ALONE, so a
+// return that carries anything besides `absence` is not an absence claim and must go down
+// the validate/repair ladder like any other malformed board. A permissive `z.object` here
+// would strip the extra keys and settle a lane absent on `{ absence, document }` — a
+// half-written board reported to the reader as "no spec found for this branch".
+const DesignNoSpecSchema = z.strictObject({ absence: z.literal("no-spec") });
+/**
+ * The schema Design's draft turn carries as its output format. It is ONE object because
+ * the provider allows nothing else — both refusals were measured live against the API on
+ * 2026-09-04, and each one killed every Design turn on every branch (#810):
+ *
+ *   - `z.union([DraftBoardSchema, DesignNoSpecSchema])` renders as `{ anyOf: [...] }` with
+ *     no top-level `type` → `400 tools.N.custom.input_schema.type: Field required`.
+ *   - The same union WITH `type: "object"` stamped on the envelope →
+ *     `400 tools.N.custom.input_schema: input_schema does not support oneOf, allOf, or
+ *     anyOf at the top level`.
+ *
+ * So a top-level union is not available here at any price, and the two returns cannot be
+ * held disjoint ON THE WIRE. They are held disjoint at the HOST instead, by
+ * `designNoSpecAbsence` below: the board must parse strictly, and the absence must be the
+ * reason alone. Do not "restore the union" — the second 400 is what that costs.
+ *
+ * Still derived from the frozen `DraftBoardSchema` (never hand-authored): `.partial()`
+ * makes `elements` optional so the absence-only return validates, and `absence` is added.
+ */
+const DesignDraftOutputSchema = DraftBoardSchema.partial().extend({
+  absence: z.literal("no-spec").optional(),
+});
 let cachedDesignDraftSchema: unknown;
 
 /**
  * The Design seat's `no-spec` return, or `undefined` for anything else. A parseable board
  * always wins: a return that is BOTH is a board, so a seat cannot draft and claim absence
- * in the same breath.
+ * in the same breath. And a return that is NEITHER — a partial board wearing an `absence`
+ * key — is not an absence either; it falls through to the ladder.
  */
 function designNoSpecAbsence(output: unknown): { readonly absence: "no-spec" } | undefined {
   if (DraftBoardSchema.safeParse(output).success) return undefined;
