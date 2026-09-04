@@ -107,6 +107,7 @@ export function codexDeltaDigestPort(
         prompt,
         cwd,
         outputSchema: DELTA_DIGEST_OUTPUT_SCHEMA,
+        label: "delta-digest",
       });
       const mapped = mapDigestOutput(result.output);
       return mapped.status === "emitted" && result.model !== undefined

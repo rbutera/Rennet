@@ -486,6 +486,42 @@ describe("inlineContextViolation (session-context-files 2.3)", () => {
     );
   });
 
+  it("sees a PRETTY-PRINTED payload, which spans lines and used to sum to zero", () => {
+    // `JSON.stringify(value, null, 2)` is the exact shape the harness rules forbid (the
+    // indent is a ~30% surcharge no reader sees) and the exact shape the per-line scan could
+    // not see: every line of it is an unbalanced fragment, so the whole payload measured 0.
+    const pretty = JSON.stringify(
+      { hunks: Array.from({ length: 100 }, (_, index) => ({ path: `src/m-${index}.ts`, index })) },
+      null,
+      2,
+    );
+    expect(pretty).toContain("\n");
+    expect(utf8(pretty)).toBeGreaterThan(5_000);
+    expect(inlineContextViolation(`Read this:\n${pretty}\nThen draft.`)?.bytes).toBe(utf8(pretty));
+    // The one-line form of the SAME data is measured as before — the fix widened what the
+    // scan can see, it did not change what it counts.
+    const compact = JSON.stringify(JSON.parse(pretty));
+    expect(inlineContextViolation(`Read this:\n${compact}\nThen draft.`)?.bytes).toBe(
+      utf8(compact),
+    );
+  });
+
+  it("recovers from a prose `{` that never closes, on its own line and mid-line", () => {
+    // The newline reset used to do this job; scanning across lines took it away, so the
+    // recovery is explicit. A candidate that never balances is abandoned at its opener and
+    // the scan resumes one character later — it must not swallow the payload after it.
+    const literal = JSON.stringify({
+      hunks: Array.from({ length: 100 }, (_, index) => ({ path: `src/m-${index}.ts`, n: index })),
+    });
+    expect(utf8(literal)).toBeGreaterThan(INLINE_CONTEXT_MAX_BYTES);
+    // Same line as the literal — the case the old scanner explicitly could not do (its
+    // ponytail note said so: the literal was nested under the stray and never top-level).
+    expect(inlineContextViolation(`Use { freely: ${literal}`)?.bytes).toBe(utf8(literal));
+    // And a stray that opens a plausible-looking object, so the cheap prefilter cannot be
+    // what saves it: `{"` starts a candidate that runs to the end of the prompt unbalanced.
+    expect(inlineContextViolation(`A stray {"key": open\n${literal}`)?.bytes).toBe(utf8(literal));
+  });
+
   it("records the violation on the send tap's record, and omits it once converted", () => {
     const meta = {
       seat: "sequence",
