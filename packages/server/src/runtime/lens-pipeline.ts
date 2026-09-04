@@ -9,7 +9,6 @@ import type {
 } from "@rennet/adapters";
 import { councilSeatTurn } from "@rennet/adapters";
 import {
-  type CodexExecutor,
   carriedElementIds,
   composeFindingRound,
   DEFAULT_SEAT_LABELS,
@@ -17,7 +16,6 @@ import {
   type ElementReference,
   elementReferences,
   type FindingResolution,
-  type HarnessPort,
   type HarnessTurnResult,
   HOST_COMPOSER_AUTHOR_ID,
   HOST_ROUND_HISTORY_PREFIX,
