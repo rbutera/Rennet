@@ -42,10 +42,15 @@ export {
 // CodeBlock) can only be proven there. Production still composes it through
 // `createRennetServer`; nothing else should call this directly.
 export { createDispatch, type DispatchDeps } from "./dispatch";
+// Is that pid a process that can still do work (#820)? A zombie answers `kill(pid, 0)` and
+// holds nothing, so every launcher-side liveness question goes through here.
+export { isRunning, type ProcessState, processState } from "./process-state";
 export {
   type DaemonVerdict,
   findHealthyDaemon,
   probeHealth,
+  requestDaemonShutdown,
+  SHUTDOWN_ACK_TIMEOUT_MS,
   type SpawnDaemonOptions,
   spawnDaemon,
   waitForHealthy,
@@ -68,7 +73,9 @@ export { createT3SidecarSupervisor, type T3SidecarSupervisor } from "./t3/superv
 // may also import the real @rennet/client bridge).
 export {
   type DaemonIdentity,
+  type DaemonShutdownAck,
   daemonIdentitySchema,
+  daemonShutdownAckSchema,
   startWsListener,
   type WsListener,
   type WsListenerDeps,

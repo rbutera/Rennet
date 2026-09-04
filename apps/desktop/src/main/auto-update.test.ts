@@ -49,6 +49,7 @@ import {
   UPDATE_APPLY_CHANNEL,
   UPDATE_READY_CHANNEL,
 } from "./auto-update";
+import { prepareOwnedDaemonForUpdate, stopOwnedDaemon } from "./daemon-supervisor";
 
 const quietLogger = { error: vi.fn() } as unknown as Console;
 const trusted = { senderFrame: { url: "app://rennet/" } };
@@ -213,6 +214,111 @@ describe("startAutoUpdate wiring", () => {
     await handle.applyUpdate();
     expect(autoUpdaterMock.quitAndInstall).not.toHaveBeenCalled();
     expect(reportApplyFailure).toHaveBeenCalledWith("daemon still owns the app bundle");
+  });
+
+  it("puts the daemon back BEFORE telling the user Rennet stayed open (#820)", async () => {
+    // Preparation stops the daemon and then fails, so "the app stayed open" was half the story:
+    // the app stayed and the daemon did not, and nothing restarted it — the renderer reconnected
+    // forever. `recoverAfterApplyFailure` is index.ts's `ensureDaemon` + window recreate, the
+    // same hook the applying-phase failure already ran, and it runs first so the dialog is true
+    // by the time it appears. Sequence, not membership.
+    const order: string[] = [];
+    const recoverAfterApplyFailure = vi.fn(async () => {
+      order.push("recover");
+    });
+    const reportApplyFailure = vi.fn(() => {
+      order.push("report");
+    });
+    const handle = startAutoUpdate(isTrusted, quietLogger, {
+      prepareToApply: async () => {
+        order.push("prepare-failed");
+        throw new Error("daemon still owns the app bundle");
+      },
+      recoverAfterApplyFailure,
+      reportApplyFailure,
+    });
+
+    await handle.applyUpdate();
+
+    expect(order).toEqual(["prepare-failed", "recover", "report"]);
+    expect(autoUpdaterMock.quitAndInstall).not.toHaveBeenCalled();
+    expect(reportApplyFailure).toHaveBeenCalledWith("daemon still owns the app bundle");
+  });
+
+  it("says so when the daemon could not be restored after a failed preparation", async () => {
+    const reportApplyFailure = vi.fn();
+    const handle = startAutoUpdate(isTrusted, quietLogger, {
+      prepareToApply: async () => {
+        throw new Error("daemon still owns the app bundle");
+      },
+      recoverAfterApplyFailure: async () => {
+        throw new Error("spawn ENOENT");
+      },
+      reportApplyFailure,
+    });
+
+    await handle.applyUpdate();
+
+    expect(reportApplyFailure).toHaveBeenCalledTimes(1);
+    const message = reportApplyFailure.mock.calls[0]?.[0] as string;
+    expect(message).toContain("daemon still owns the app bundle");
+    expect(message).toContain("could not restore its local daemon: spawn ENOENT");
+  });
+
+  it("applies over a daemon that exited as a zombie, through the real stop ladder (#820)", async () => {
+    // The 0.6.5 → 0.7.0 failure, wired end to end at this seam: the daemon acked, exited and
+    // removed its claim, and its pid still answered `kill(pid, 0)` because the app never reaped
+    // it. The old predicate called that "still present" and the apply reported a failure while
+    // ShipIt sat waiting with the bundle staged. This drives the REAL `stopOwnedDaemon` — only
+    // its effects are injected — so a regression in the ladder fails here, not just in its own file.
+    const order: string[] = [];
+    const zombie = {
+      pid: 68_056,
+      wsPort: 51_042,
+      protocolVersion: 1,
+      version: "0.6.5",
+      startedAt: "2026-09-04T18:42:31.000Z",
+    };
+    autoUpdaterMock.quitAndInstall.mockImplementation(() => {
+      order.push("quitAndInstall");
+    });
+    const prepareToApply = () =>
+      prepareOwnedDaemonForUpdate("/data", (dataDir) =>
+        stopOwnedDaemon(dataDir, {
+          ops: new Map(),
+          probe: async () => ({
+            kind: "healthy",
+            claim: zombie,
+            identity: { ...zombie, minCompatibleProtocolVersion: 1 },
+          }),
+          requestShutdown: async () => ({
+            ...zombie,
+            claimPath: "/data/daemon.json",
+            shuttingDown: true,
+          }),
+          childFor: () => undefined, // inherited daemon: no handle, so the claim + state decide
+          readClaim: () => null, // it removed daemon.json on the way out
+          processState: () => "zombie", // …and kill(pid, 0) still answers
+          removeClaim: () => true,
+          stopSidecar: async () => ({ kind: "absent" }),
+          kill: () => {
+            order.push("kill");
+          },
+          warn: () => undefined,
+          sleep: async () => undefined,
+        }),
+      ).then(() => {
+        order.push("prepare-resolved");
+      });
+    const reportApplyFailure = vi.fn(() => {
+      order.push("reportApplyFailure");
+    });
+
+    const handle = startAutoUpdate(isTrusted, quietLogger, { prepareToApply, reportApplyFailure });
+    await handle.applyUpdate();
+
+    expect(order).toEqual(["prepare-resolved", "quitAndInstall"]);
+    expect(reportApplyFailure).not.toHaveBeenCalled();
   });
 
   it("deduplicates simultaneous apply choices from the tray and renderer", async () => {

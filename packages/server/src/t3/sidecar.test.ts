@@ -9,10 +9,11 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   adoptSidecar,
   findHealthySidecar,
+  isProcessAlive,
   type RunningSidecar,
   readSidecarClaim,
   readSidecarCredentials,
@@ -244,7 +245,11 @@ describe("t3 sidecar: adoption, stale claims, stop", () => {
     const pid = running.claim.pid;
     expect(await stopSidecar(f.dataDir)).toEqual({ kind: "stopped" });
     expect(readSidecarClaim(f.dataDir)).toBeNull();
-    expect(() => process.kill(pid, 0)).toThrow();
+    // The stop ends when the process is no longer RUNNING, which includes the instant after
+    // it exits and before its parent reaps it (#820) — a zombie serves nothing.
+    expect(isProcessAlive(pid)).toBe(false);
+    // …and the pid really does leave the table once this process reaps its child.
+    await vi.waitFor(() => expect(() => process.kill(pid, 0)).toThrow());
     expect(await stopSidecar(f.dataDir)).toEqual({ kind: "absent" });
   }, 20_000);
 

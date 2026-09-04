@@ -345,6 +345,19 @@ export function startAutoUpdate(
         } else {
           const message = error instanceof Error ? error.message : String(error);
           logger.error("[auto-update] failed to prepare update:", message);
+          // Preparation STOPS the daemon before it fails, so "Rennet stayed open" was a half
+          // truth: the app stayed, the thing that makes it work did not, and nothing put it
+          // back (#820). Recover exactly as a failed install handoff does, then report.
+          try {
+            await recoverAfterApplyFailure();
+          } catch (recoveryError) {
+            const recoveryMessage =
+              recoveryError instanceof Error ? recoveryError.message : String(recoveryError);
+            reportApplyFailure(
+              `${message}\n\nRennet also could not restore its local daemon: ${recoveryMessage}`,
+            );
+            return;
+          }
           reportApplyFailure(message);
         }
       }

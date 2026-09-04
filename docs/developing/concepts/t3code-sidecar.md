@@ -751,7 +751,10 @@ The daemon's own shutdown sends SIGTERM to the sidecar it spawned and clears the
 `rennet stop` and the tray's Quit then run a sidecar step after the daemon step: verify
 the claim, SIGTERM only a pid T3's runtime record vouches for, wait a bounded five
 seconds, clear the claim. A sidecar that will not exit is logged and left for the next
-start to reap; the app still exits.
+start to reap; the app still exits. The sidecar still takes a signal rather than the
+daemon's `POST /shutdown` command, because the vendored T3 server exposes no shutdown
+route of its own — but the liveness test is the daemon's: an exited, unreaped sidecar
+counts as stopped instead of timing out the wait.
 
 T3 has no SIGTERM handler of its own. A turn that was streaming when the sidecar stops is
 reconciled on the sidecar's next start as an errored session ("Provider session did not

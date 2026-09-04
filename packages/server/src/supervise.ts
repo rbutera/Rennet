@@ -15,10 +15,22 @@ import {
   PROTOCOL_VERSION,
 } from "@rennet/protocol";
 import { type DaemonInfo, readDaemonFile } from "./daemon-file";
-import { type DaemonIdentity, daemonIdentitySchema } from "./ws-listener";
+import {
+  type DaemonIdentity,
+  type DaemonShutdownAck,
+  daemonIdentitySchema,
+  daemonShutdownAckSchema,
+} from "./ws-listener";
 
 /** How long to wait for a `/healthz` answer before treating the daemon as dead. */
 const PROBE_TIMEOUT_MS = 500;
+
+/**
+ * How long to wait for the `POST /shutdown` ack before falling back to a signal (#820). Short:
+ * the daemon writes the ack before it does any shutdown work, so a daemon that has not answered
+ * in two seconds is one that cannot answer.
+ */
+export const SHUTDOWN_ACK_TIMEOUT_MS = 2_000;
 
 /** The verdict a launcher acts on. `absent`/`stale` → spawn; `incompatible` → restart (shell) or report (CLI). */
 export type DaemonVerdict =
@@ -46,6 +58,30 @@ export async function probeHealth(
     return parsed.success ? parsed.data : null;
   } catch {
     return null; // connection refused, timeout, or torn body — the claim is not live.
+  }
+}
+
+/**
+ * Ask the daemon on `wsPort` to shut itself down (#820), and return what it acked — `null`
+ * when nothing answered in time, when it answered something else, or when the route is not
+ * there (a daemon older than this route 404s, which reads exactly like no ack: the caller
+ * falls back to SIGTERM). The ack names the pid that heard the command, so a caller can
+ * check it against the pid its claim named before waiting on that process.
+ */
+export async function requestDaemonShutdown(
+  wsPort: number,
+  timeoutMs: number = SHUTDOWN_ACK_TIMEOUT_MS,
+): Promise<DaemonShutdownAck | null> {
+  try {
+    const res = await fetch(`http://127.0.0.1:${wsPort}/shutdown`, {
+      method: "POST",
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    if (!res.ok) return null;
+    const parsed = daemonShutdownAckSchema.safeParse(await res.json());
+    return parsed.success ? parsed.data : null;
+  } catch {
+    return null; // refused, timed out, or a torn body — treat it as unacknowledged.
   }
 }
 
