@@ -169,8 +169,11 @@ off its own thread: the file it is reading, the command it is running, or the
 last thing it said. A seat that has gone quiet says so instead of freezing on
 its last line. A settled reader's board opens on the bench right beneath the
 readers, readable at once while the other seats keep working — you do not wait
-for the slowest lens to read the fastest one's board. A failed reader speaks the
-reason it failed, rather than spinning forever.
+for the slowest lens to read the fastest one's board. The bench scrolls, so a
+board that lands below the fold is still reachable, and a line above the stack
+says the stack is still being built: what is on the bench is the lenses that
+finished early, not the finished review. A failed reader speaks the reason it
+failed, rather than spinning forever.
 
 Every reader's line is also a control: activating it opens that seat's full
 transcript in the chat slot, read-only, and it keeps streaming while the seat

@@ -165,6 +165,19 @@ lens that failed to draft — shows that account in the board's place, in the sa
 workspace uses, rather than an empty space under a reader that says "drafted". A lane with no
 `thread` yet is disabled rather than offered as a transcript that does not exist.
 
+The bench is its own primary scroller (`chrome-scroll-clearance min-h-0 flex-1
+overflow-y-auto`, the repo-wide idiom), because the outlet is a flex column inside a
+`fixed inset-0 overflow-hidden` shell and a surface that does not declare it is simply
+clipped at the fold — which put every landed board out of reach. The safe-centring that
+keeps a short bench in the middle lives on the inner column, inside the scroller. While
+lenses are still working, one line above the stack says the boards are still landing; it
+is dropped once nothing is drafting, where it would be a promise nothing is keeping.
+The review a reader opens its transcript against is the preparation record's `reviewId`,
+falling back to the session's own attached `reviewId`: only the `drafting` arm requires
+the field, while `failed` and `cancelled` make it optional and both keep their lanes —
+threads and all — so without the fallback a stopped preparation drew readers holding real
+transcripts that no click could open.
+
 The mount's environment registration persists in each host's IndexedDB under T3's
 catalog (the same store T3's hosted app uses for paired machines), keyed by one stable
 connection id, so a refreshed bearer replaces the entry rather than adding one.
@@ -397,9 +410,17 @@ publishes what the seat is doing through the lane. `packages/server/src/t3/lates
 is the projector: a pure function from a thread projection to the protocol's `LaneLatest`.
 A tool call in flight becomes plain words naming what it is acting on — `reading
 src/foo.ts`, `running git diff --stat`, `editing a.ts`, `searching createSession` — a tool
-with no plain word for it keeps T3's own summary rather than being given an invented verb,
+with no plain word for it keeps T3's own detail rather than being given an invented verb,
 and assistant prose becomes its last sentence. Every line is capped at 120 characters with
 an honest `…`.
+
+A line is the seat's SPEECH, so the call's JSON input never becomes one. A structured-output
+call — the seat handing its board back — reads `returning the board`; an unrecognised tool
+whose detail is its own JSON input reads as the tool's name; a detail that is nothing but a
+payload falls back to T3's summary, and contributes no line at all when the summary is a
+payload too, leaving the seat's own prose to speak. A known verb whose subject is a JSON blob
+keeps the verb alone (`reading`), which is also what a call still streaming its
+`input_json_delta` reads as until the input closes.
 
 A tool call is only "in flight" until it finishes. T3 emits started, updated and completed
 tool activities with the same `tool` tone, so the projector reads the lifecycle — the
