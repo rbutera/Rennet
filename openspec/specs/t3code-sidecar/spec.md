@@ -63,3 +63,39 @@ The daemon SHALL spawn the server bundle built from the vendored snapshot, never
 - **WHEN** a fold removes a method the daemon calls and the sidecar starts
 - **THEN** the chat engine reports degraded with the method named and the Rennet orchestrator remains selectable
 
+### Requirement: Every thread is created in the session's bound workspace
+
+Every sidecar thread Rennet creates for a session — the session's chat thread, each lens seat thread, and the handoff thread — SHALL be created with the session's bound workspace as its worktree, never the project root alone. The sidecar's per-turn checkpoints on those threads SHALL be the receipts Rennet reads for a round's commits. A thread created for a session whose bound workspace no longer exists SHALL fail with a message naming the missing path.
+
+#### Scenario: Seat threads share the bound worktree
+- **WHEN** a generation starts for a session bound to a worktree
+- **THEN** each seat thread's worktree is that path and every seat's tools run there
+
+#### Scenario: Round receipt is a checkpoint
+- **WHEN** a round turn on the session's thread completes with commits
+- **THEN** the thread's checkpoint for that turn names the commit the round account records
+
+### Requirement: A coding round runs on its own thread, never the session's
+
+Rennet SHALL create a distinct sidecar thread for each coding round, bound to that round's identity — the session and the round's operation — never to the session's key. The thread SHALL be created with the session's bound workspace as its worktree and the same model selection the review handoff uses, and titled so a reviewer can tell which branch and which round it holds. The round's work order SHALL run as one turn on that thread, and the round's receipt SHALL be that thread's checkpoint for that turn. The session's chat and handoff thread SHALL receive no round turn. Archiving the session SHALL delete its round threads with its other threads.
+
+#### Scenario: A round binds its own thread
+
+- **WHEN** a round is dispatched for a session
+- **THEN** a thread bound to that round's identity is created in the session's bound workspace and the work order is sent to it
+
+#### Scenario: The chat thread stays a conversation
+
+- **WHEN** a round runs on a session whose chat thread carries the reviewer's conversation
+- **THEN** no turn from that round appears on the chat thread
+
+#### Scenario: The receipt is read from the round's thread
+
+- **WHEN** the daemon restarts while a round's turn is running and then reads the round's receipt
+- **THEN** it reads the checkpoint from the round's own thread, and a checkpoint left by any other turn of the session cannot be adopted as this round's
+
+#### Scenario: Archive removes the round threads
+
+- **WHEN** a session with two landed rounds is archived
+- **THEN** both round threads are deleted along with the session's chat and seat threads
+
