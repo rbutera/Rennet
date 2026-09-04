@@ -218,7 +218,21 @@ commit landing on the branch during the turn is attributed to the round's worker
 the checkpoint is a working-tree snapshot and T3 exposes no per-commit worker identity to
 tell a concurrent human commit apart from the worker's. This is the same range the commit
 count already reports, so nothing new enters scope — but the receipt cannot filter a commit
-another hand landed in the window, and does not claim to.
+another hand landed in the window, and does not claim to. The two reads that build that
+receipt — the changed-path list and the diff — are pinned to one resolved HEAD OID, so they
+always describe the same range even if a commit lands between them.
+
+Restart recovery attributes a checkpoint to an attempt by a completion-time window, because
+T3 exposes no per-turn identity a recovering attempt could match against. A round's retry
+attempts share one thread (`{kind: "round", sessionId, operationId}`), and recovery reads the
+last checkpoint completed at or after the attempt started. A running or uncheckpointed turn
+carries no turn count on the thread — only a settled checkpoint does — so a later attempt
+cannot record a high-water that excludes an earlier attempt's turn still in flight. A narrow
+double-daemon-death interleave can therefore misattribute a sibling attempt's late checkpoint:
+attempt one outlives a daemon and checkpoints after attempt two has started, and if the daemon
+dies again before attempt two checkpoints, attempt two's recovery adopts attempt one's
+checkpoint. Closing this needs a per-turn identity (the turn's `turnId`) captured durably at
+turn-start into the attempt record — a tracked change, not a heuristic.
 
 **Rennet does not run the repository's check.** A round has no gate step: after the turn
 settles, the next thing Rennet does is observe the commits. When the project scout has

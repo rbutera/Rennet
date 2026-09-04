@@ -775,6 +775,28 @@ export async function reconcileRoundReceiptWithCommits<
   return { ...receipt, diff: committed.diff, changedPaths: [...committed.changedPaths] };
 }
 
+/**
+ * `sourceHead..HEAD` in `root`, as a file list and a diff that describe the SAME range. HEAD
+ * is resolved to one OID first and both reads use that OID, so a commit landing in `root`
+ * between the two `git diff` reads — a human committing into the bound worktree — cannot
+ * split the receipt's changed paths from its diff (Codex #817 P2). `undefined` when the range
+ * is empty or git cannot answer, which leaves the receipt exactly as the turn reported it.
+ */
+export async function committedRangeDiff(
+  readGit: (root: string, args: readonly string[]) => Promise<string | undefined>,
+  root: string,
+  sourceHead: string,
+): Promise<{ readonly diff: string; readonly changedPaths: readonly string[] } | undefined> {
+  const head = await readGit(root, ["rev-parse", "HEAD"]);
+  if (head === undefined) return undefined;
+  const range = `${sourceHead}..${head}`;
+  const names = await readGit(root, ["diff", "--name-only", range]);
+  if (names === undefined) return undefined;
+  const diff = await readGit(root, ["diff", range]);
+  if (diff === undefined) return undefined;
+  return { diff, changedPaths: names.split("\n").filter((line) => line.trim() !== "") };
+}
+
 /** The thread identity one round's turn runs on: its own, never the session's. */
 export function roundTurnIdentity(operation: RoundOperation): {
   readonly sessionId: string;
@@ -3556,17 +3578,12 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   /**
    * `sourceHead..HEAD` in the bound root, as a diff and a file list — the round's real
    * result when the checkpoint's working-tree diff is clean because the worker committed
-   * (#811). `undefined` when the range is empty or git cannot answer, which leaves the
-   * receipt exactly as the turn reported it.
+   * (#811). The range end is pinned to one HEAD OID so the paths and the diff agree
+   * (`committedRangeDiff`). `undefined` when the range is empty or git cannot answer, which
+   * leaves the receipt exactly as the turn reported it.
    */
-  const committedRoundDiff = (root: string, sourceHead: string) => async () => {
-    const range = `${sourceHead}..HEAD`;
-    const names = await readGit(root, ["diff", "--name-only", range]);
-    if (names === undefined) return undefined;
-    const diff = await readGit(root, ["diff", range]);
-    if (diff === undefined) return undefined;
-    return { diff, changedPaths: names.split("\n").filter((line) => line.trim() !== "") };
-  };
+  const committedRoundDiff = (root: string, sourceHead: string) => () =>
+    committedRangeDiff(readGit, root, sourceHead);
   // The round WORKER binds its own `{ kind: "round" }` thread, and the coordinator drives it
   // on a durable fiber that outlives `boardDraftingDeps.runRound` — nothing awaits a round, so
   // that wrapper's `finally` sweep does not cover the thread the worker binds. Both the live
@@ -3657,6 +3674,12 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         }
         // OBSERVE, never stage: the worker committed on the reviewer's own branch in the
         // bound root, and Rennet does not run `git add -A` on their behalf.
+        // Residual (Codex #817 P2): `observeRoundCommits` resolves its own HEAD here, so the
+        // commit receipt's range end can differ from the diff receipt's pinned HEAD
+        // (`committedRoundDiff`) if a commit lands between them. Narrow — the bound worktree,
+        // same-session rounds are serialized, and the worker has already settled — so the pin
+        // is not threaded through the durable commit phase; a human committing in that
+        // sub-second gap is the only opener, and it is already the acknowledged range residual.
         return observeRoundCommits({
           git: gitForRepo(operation.state.workspace.root),
           root: operation.state.workspace.root,

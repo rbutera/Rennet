@@ -36,6 +36,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   captureBranchPatchset,
   captureLandedBranchPatchset,
+  committedRangeDiff,
   createBoardDraftCoordinator,
   createCompositionBoardsForReview,
   createGitLabPrSubmissionResolver,
@@ -879,6 +880,56 @@ describe("the round runs in the session's bound root", () => {
           { sourceHead: "h", committedDiff: async () => undefined },
         ),
       ).toEqual({ diff: "", changedPaths: [] });
+    });
+
+    // Codex #817 P2: the receipt's changed paths and its diff came from two separate
+    // `git diff` reads over `sourceHead..HEAD`, and HEAD can move between them — a human
+    // committing into the bound worktree — so the paths described one range and the diff
+    // another. `committedRangeDiff` resolves HEAD to one OID first and uses it for both.
+    //
+    // This control drives the real exported production function with a `readGit` fake whose
+    // HEAD moves right after the name-list read. It PROVES the pinned OID (not the literal
+    // "HEAD") reaches both reads and that the injected move does not split names from diff.
+    // It does NOT prove real git's resolution (the reader is a fake), nor does it cover the
+    // separate commit-settlement HEAD (`observeRoundCommits`), which is the documented residual.
+    it("pins the range end so a mid-read HEAD move cannot split the paths from the diff", async () => {
+      let head = "H1";
+      const seenRanges: string[] = [];
+      // A range end of "HEAD" resolves against the current HEAD at CALL time, exactly as git
+      // would; a pinned OID resolves to itself. This is what makes the old literal-HEAD range
+      // redden here and the pinned range pass.
+      const resolveEnd = (range: string) => {
+        const end = range.split("..")[1];
+        return end === "HEAD" ? head : end;
+      };
+      const readGit = async (_root: string, args: readonly string[]) => {
+        if (args[0] === "rev-parse" && args[1] === "HEAD") return head;
+        if (args[0] === "diff" && args[1] === "--name-only") {
+          const end = resolveEnd(args[2] as string);
+          seenRanges.push(args[2] as string);
+          head = "H2"; // a human commit lands the instant the name list is read
+          return `${end}.ts`;
+        }
+        if (args[0] === "diff") {
+          const end = resolveEnd(args[1] as string);
+          seenRanges.push(args[1] as string);
+          return `diff for ${end}`;
+        }
+        return undefined;
+      };
+      const result = await committedRangeDiff(readGit, "/root", "BASE");
+      // Both reads describe H1 — the OID present when the range was pinned, not the moved H2.
+      expect(result).toEqual({ diff: "diff for H1", changedPaths: ["H1.ts"] });
+      // The identical, pinned range string reached both reads (reddens on `BASE..HEAD`).
+      expect(seenRanges).toEqual(["BASE..H1", "BASE..H1"]);
+    });
+
+    it("leaves the receipt untouched when the range is empty or git cannot answer", async () => {
+      // An empty range: name-only prints nothing, so `readGit` returns undefined and the
+      // reconcile keeps the turn's own evidence rather than fabricating a diff.
+      const readGit = async (_root: string, args: readonly string[]) =>
+        args[0] === "rev-parse" ? "H1" : undefined;
+      expect(await committedRangeDiff(readGit, "/root", "BASE")).toBeUndefined();
     });
   });
 
