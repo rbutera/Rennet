@@ -96,7 +96,7 @@ A fold lands weekly as its own pull request, run by an agent:
 3. Apply what the manifest diff asks for: catalog versions and patch entries in
    `pnpm-workspace.yaml`, then `pnpm install`.
 4. Remove ledger rows for changes upstream has merged.
-5. `pnpm check` and `pnpm t3:test`. The PR description is the digest.
+5. `pnpm check`. The PR description is the digest.
 
 A fold that changes a vendored package's dependencies or toolchain versions says
 so in the PR, the same way any change that grows the install does.
@@ -122,8 +122,17 @@ fold into wall-to-wall conflicts.
 Each vendored package is an Nx project named `t3code-<package>` with `typecheck`
 (via `tsgo`), `test` (via `vp test run`), and, for the server and web app,
 `build` (`vp pack` and `vp build`). Typecheck and build run in `pnpm check`; the
-upstream test suites do not (the server suite alone is about three minutes cold).
-They run as `pnpm t3:test` in CI and on every fold. Their inputs include the `t3codeShared`
+upstream test suites do not.
+
+The upstream suites are not part of any gate — not `pnpm check`, not CI, not a
+fold. They are T3 Code's tests of T3 Code's code, and Rennet is not responsible
+for that verdict; running them cost about three minutes of every CI run for an
+answer upstream already has. `pnpm t3:test` stays in the root `package.json` as a
+manual tool for anyone who wants to run them by hand. What Rennet does gate is
+the seam it owns: typecheck and build across the vendored projects, the patch
+ledger, and Rennet's own tests of the code that imports them.
+
+The suites' inputs include the `t3codeShared`
 named input so a change to the vendored root config busts the cache. Two
 projects typecheck through a `tsconfig.rennet.json` that extends upstream's
 config with a narrower `include`: the server drops `../../scripts/lib` (its

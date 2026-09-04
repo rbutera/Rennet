@@ -34,6 +34,8 @@ Run the packaged-application smoke test with:
 pnpm nx run rennet-desktop:package-smoke
 ```
 
+That target packages first (`dependsOn: ["package"]`), which is what you want from a clean checkout. The release workflows already hold a packaged, signed, notarized `.app` by the time they smoke it, so they run the script against that app directly — `node scripts/smoke-packaged-app.mjs apps/desktop/out/Rennet-darwin-arm64/Rennet.app` — rather than paying for a second package-and-notarize pass through Nx.
+
 The smoke uses the installed payload, not `packages/adapters/dist`. It loads and constructs `Rennet.app/Contents/Resources/app.asar.unpacked/dist/server/native/darwin-arm64/rennet-rooted-landing.node`, inspects and reads a real file through the addon, closes the returned descriptor and host, then executes the sibling `rennet-exclusive-move` and verifies the move and bytes. A missing, unloadable, non-runnable, or behaviorally wrong artifact fails the smoke.
 
 ### Unsigned builds
@@ -89,13 +91,15 @@ For a manual release:
 
 `.github/workflows/auto-release.yml` remains the nightly and **ship now** path. It creates the version commit and tag, runs the same signed macOS build through the `release` environment, builds unsigned Windows artifacts, and publishes only after every build succeeds.
 
+Auto-release does not re-run the gate when CI has already passed on the exact release SHA. Every commit on `main` arrives through a push, CI gates that push, and the release commit is that same SHA, so its `decide` job asks GitHub for a completed successful CI run on `${{ github.sha }}` and skips the `check` job when it finds one. This is the same verdict about the same commit, not a weaker one: with no successful run for the SHA — or if the lookup fails — the gate runs, and a failing gate still blocks the release. The version job accepts a successful or skipped `check` and nothing else.
+
 Both workflows then assert the outcome. `scripts/check-release-assets.mjs` reads the published asset list and requires each platform's installers by shape — extension, platform token, and version — failing with the platform that shipped nothing. Shape rather than exact filename because the names are `@electron-forge` maker defaults that GitHub rewrites again on upload; pinning them would fail a good release the first time a default changed. Dropping a maker outright does fail the check, which is the intended alarm. Auto-release runs it as a final `verify` job that fires from the moment the tag exists, including when publishing was skipped — a tag with no release behind it is invisible to an install that auto-updates from release assets, and it is what happened to `v0.3.39`. The assertion is on assets present, never on an upstream exit code, because both release breaks on 2026-08-28 had green intermediate steps.
 
 Never replace an asset or reuse a version after publication. If signing, notarization, Gatekeeper verification, or update compatibility fails, fix it and create a higher patch version. Keep the last known-good installer published. A future move away from `update.electronjs.org` can use the existing Squirrel-compatible static-feed support without changing the app's update interaction.
 
 ## Build on Windows
 
-The Windows build host needs Python 3 and Visual Studio 2022 with **Desktop development with C++** and a Windows SDK. The focused native CI job and auto-release Windows build use `windows-2022` because the exact-SHA Electron `node-gyp` fork recognises Visual Studio only through 2022; the floating Windows image now carries Visual Studio 2026, which that ruled toolchain rejects. Desktop builds traverse to the adapter build and stage its complete native payload into the server bundle.
+The Windows build host needs Python 3 and Visual Studio 2022 with **Desktop development with C++** and a Windows SDK. The focused native CI job runs its three-OS matrix only when something it compiles or asserts changed — the C sources, their build, layout and determinism scripts, their tests, the adapters project, the lockfile, the Node pin, or `ci.yml` itself; auto-release always builds it. Both that job and the auto-release Windows build use `windows-2022` because the exact-SHA Electron `node-gyp` fork recognises Visual Studio only through 2022; the floating Windows image now carries Visual Studio 2026, which that ruled toolchain rejects. Desktop builds traverse to the adapter build and stage its complete native payload into the server bundle.
 
 Windows development uses the normal Nx target:
 
