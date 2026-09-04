@@ -574,7 +574,8 @@ replace that bundle and relaunch Rennet. The new app starts its matching daemon
 and reconnects to the durable review state. On macOS, Rennet also arms a small
 out-of-bundle relaunch helper before ShipIt replaces the app, so a successful
 install still reopens when the native updater omits its own relaunch. If the owned daemon cannot stop,
-Rennet stays open and reports the failure instead of closing without installing.
+Rennet stays open, starts its daemon again, and reports the failure instead of
+closing without installing — so the app you are left with still works.
 If macOS or Windows rejects the native install handoff after closing the window,
 Rennet restarts its daemon, restores the window, and shows the updater error so
 you can retry from the same review state.
