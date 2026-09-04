@@ -16,6 +16,7 @@ import {
 } from "@rennet/protocol";
 import { describe, expect, it, vi } from "vitest";
 import { createRoundExecutionCoordinator, type RoundExecutionPorts } from "./round-execution";
+import { GenerationSupersededError } from "./rounds";
 
 const reportBoard = {
   lens: "report",
@@ -1438,6 +1439,43 @@ describe("createRoundExecutionCoordinator", () => {
     }
     expect(completed.state.result.report.reportBoardId).toBe(reserved.reportBoardId);
     expect(completed.state.result.report.generation).toBe(reserved.generation);
+  });
+
+  it("abandons a superseded drafting attempt without painting a failed round (#816 re-review P1)", async () => {
+    // Production path: the report-drafting port runs `runBoardRegeneration`, which — when a
+    // LATER attempt owns the generation — rethrows `GenerationSupersededError` with its type
+    // intact rather than emitting a terminal `failed`. Here the port raises exactly that error
+    // to stand in for that rethrow. Before the fix the coordinator ran `this.fail(...)`, which
+    // persisted a failed state and published a failed snapshot over the live generation the
+    // winning attempt is still settling.
+    const test = scenario();
+    const coordinator = createRoundExecutionCoordinator({
+      store: test.store,
+      ports: {
+        ...test.ports,
+        async draftReport({ operation: current }) {
+          test.calls.push("draft-report");
+          throw new GenerationSupersededError(
+            current.state.phase === "report-drafting"
+              ? current.state.report.generation
+              : "generation-1",
+          );
+        },
+        async drainTerminal() {
+          return { kind: "retain" };
+        },
+      },
+    });
+
+    const abandoned = await coordinator.submit(operation());
+
+    // The attempt is left where the store held it — report-drafting — never failed.
+    expect(abandoned.state.phase).toBe("report-drafting");
+    expect(test.store.read("session-1")?.state.phase).toBe("report-drafting");
+    // And no failed snapshot ever reached the publish sink. This is the redden: restore
+    // `this.fail(...)` for the superseded branch and both a persisted "failed" and a published
+    // "failed" appear.
+    expect(test.published.map((entry) => entry.state.phase)).not.toContain("failed");
   });
 
   it("persists the verified report handoff when later lens regeneration fails", async () => {

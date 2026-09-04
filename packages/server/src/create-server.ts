@@ -295,6 +295,7 @@ import { RoundProgressHub, roundEventsForDurableOperation } from "./runtime/roun
 import {
   createRoundsRuntime,
   type DispatchRoundResult,
+  GenerationSupersededError,
   type PersistedBoardMeta,
   type RoundsRuntimeDeps,
   type T3SeatRuntime,
@@ -3963,41 +3964,51 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       )
     ).session;
     const head = patchset.repository.headOid;
-    const settled = await runBoardRegeneration(
-      boardDraftingDeps(
-        review,
-        session,
-        // No coding turn ran, so there is nothing to re-capture. `runBoardRegeneration`
-        // only calls this when checkpoint evidence says the tree changed, which it never does here.
-        async () => undefined,
-        // Initial drafting has its own durable session-preparation channel. It still consumes
-        // the exact RoundEvent snapshots emitted by the lens runtime; it never fabricates a
-        // reviewer-dispatched round to make them render.
-        emit,
-        // Passive drafting belongs to this exact captured version. A regenerate can advance the
-        // live review while this model work is running; letting `reviewNow` observe that successor
-        // turns the old no-work A→A draft into a phantom A→B round. Pin A here, then report
-        // failure below if B became current so the B coordinator owns the live composition.
-        () => review,
-      ),
-      {
-        session,
-        repoRoot: review.repositoryRoot,
-        firstBoardWaitOriginMs,
-        // The review's OWN patchset is the prior: nothing moved, so this drafts the first
-        // generation over it rather than minting a successor to something that never ran.
-        priorPatchsetId: review.activePatchsetId,
-        // A completed round can make a non-content-addressed generation current for this
-        // patchset. Context refresh must redraft the generation the board route actually reads.
-        priorGenerationId: currentGenerationId(
-          roundRecordStore.read(session.id),
-          review.activePatchsetId,
+    let settled: boolean;
+    try {
+      settled = await runBoardRegeneration(
+        boardDraftingDeps(
+          review,
+          session,
+          // No coding turn ran, so there is nothing to re-capture. `runBoardRegeneration`
+          // only calls this when checkpoint evidence says the tree changed, which it never does here.
+          async () => undefined,
+          // Initial drafting has its own durable session-preparation channel. It still consumes
+          // the exact RoundEvent snapshots emitted by the lens runtime; it never fabricates a
+          // reviewer-dispatched round to make them render.
+          emit,
+          // Passive drafting belongs to this exact captured version. A regenerate can advance the
+          // live review while this model work is running; letting `reviewNow` observe that successor
+          // turns the old no-work A→A draft into a phantom A→B round. Pin A here, then report
+          // failure below if B became current so the B coordinator owns the live composition.
+          () => review,
         ),
-        asksDispatched: [],
-        worked: { commitRange: { from: head, to: head }, diff: "", changedPaths: [] },
-        ...(signal === undefined ? {} : { signal }),
-      },
-    );
+        {
+          session,
+          repoRoot: review.repositoryRoot,
+          firstBoardWaitOriginMs,
+          // The review's OWN patchset is the prior: nothing moved, so this drafts the first
+          // generation over it rather than minting a successor to something that never ran.
+          priorPatchsetId: review.activePatchsetId,
+          // A completed round can make a non-content-addressed generation current for this
+          // patchset. Context refresh must redraft the generation the board route actually reads.
+          priorGenerationId: currentGenerationId(
+            roundRecordStore.read(session.id),
+            review.activePatchsetId,
+          ),
+          asksDispatched: [],
+          worked: { commitRange: { from: head, to: head }, diff: "", changedPaths: [] },
+          ...(signal === undefined ? {} : { signal }),
+        },
+      );
+    } catch (error) {
+      // Supersession is not a drafting failure here either (#816 re-review P1): a later
+      // attempt owns this generation, so this pass simply did not settle it. `false` is the
+      // honest neutral outcome — the same result the swallowed error used to yield, minus the
+      // repainted failure. A genuine failure still throws.
+      if (!(error instanceof GenerationSupersededError)) throw error;
+      settled = false;
+    }
     return settled && service.reviewById(review.id)?.activePatchsetId === review.activePatchsetId;
   }
 

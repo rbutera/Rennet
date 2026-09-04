@@ -25,6 +25,7 @@ import {
   type RoundWorkerReceipt,
   type RoundWorkspaceReceipt,
 } from "@rennet/protocol";
+import { GenerationSupersededError } from "./rounds";
 
 export interface RoundExecutionEffectInput<TAttempt> {
   readonly operation: RoundOperation;
@@ -1003,6 +1004,15 @@ class DurableRoundExecutionCoordinator implements RoundExecutionCoordinator {
             ).operation;
           } catch (error) {
             if (draftingOperation.state.phase !== "report-drafting") throw error;
+            // A LATER attempt owns this generation (#816 re-review P1). `runBoardRegeneration`
+            // rethrew the supersession as its own type precisely so the coordinator does NOT
+            // paint a failed round over the live generation the winning attempt is settling.
+            // Abandon this stale attempt WITHOUT `fail`: persist no terminal state and publish
+            // no failed snapshot. Return whatever the store now holds so `drive` exits cleanly;
+            // the attempt that owns the generation drives its own operation to terminal.
+            if (error instanceof GenerationSupersededError) {
+              return this.options.store.read(draftingOperation.sessionId) ?? draftingOperation;
+            }
             operation = this.fail(draftingOperation, {
               at: "report-drafting",
               reason: errorReason(error),

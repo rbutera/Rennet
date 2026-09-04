@@ -84,7 +84,8 @@ function migrateQuestionnaire(questionnaire: unknown): void {
 }
 
 /** Migrate every questionnaire a journal can carry: one per repo checkpoint, one per
- *  `scout-ready` event. Returns the same object for a direct hand-off to the parser. */
+ *  `scout-ready` event, and the one a `done` event's `run.scout` holds. Returns the same
+ *  object for a direct hand-off to the parser. */
 function migrateLegacyJournal(raw: unknown): unknown {
   if (raw === null || typeof raw !== "object") return raw;
   const journal = raw as { repos?: unknown; events?: unknown };
@@ -97,12 +98,19 @@ function migrateLegacyJournal(raw: unknown): unknown {
   }
   if (Array.isArray(journal.events)) {
     for (const event of journal.events) {
-      if (
-        event !== null &&
-        typeof event === "object" &&
-        (event as { kind?: unknown }).kind === "scout-ready"
-      ) {
+      if (event === null || typeof event !== "object") continue;
+      const kind = (event as { kind?: unknown }).kind;
+      if (kind === "scout-ready") {
         migrateQuestionnaire((event as { questionnaire?: unknown }).questionnaire);
+      } else if (kind === "done") {
+        // `done.run.scout` is the OTHER questionnaire carrier (wire.ts `done.run` ->
+        // `projectProcessRunSchema.scout`). A legacy `done` event whose durable run still
+        // holds a five-answer scout fails the current-schema parse exactly like a legacy
+        // repo/scout-ready questionnaire, nulling the whole journal and silently re-running.
+        const run = (event as { run?: unknown }).run;
+        if (run !== null && typeof run === "object") {
+          migrateQuestionnaire((run as { scout?: unknown }).scout);
+        }
       }
     }
   }

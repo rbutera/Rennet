@@ -1891,6 +1891,17 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
       }
       throw error;
     }
+    // Archived BEFORE the `persistOwned` re-read below, and that ordering is SAFE — not a
+    // race (#816 re-review P2, ruled unreachable). A "complete" benchmark could only lie if a
+    // competitor claimed this generation between here and `persistOwned`, but no competitor
+    // can exist: round drives are single-flight per session (the coordinator's `inFlight`
+    // map in round-execution.ts and this runtime's `enqueue` tail both admit ONE drive per
+    // session), a generation belongs to one session, and `deps.persistGeneration` is the only
+    // writer of a generation id — reached exclusively from inside a drive. The supersession
+    // re-check `persistOwned` performs guards the SEQUENTIAL cross-restart reconstruction
+    // handoff (old process dead, new one reconstructing), never a live concurrent claim, so
+    // there is no interleave between this archive and that check to protect against. Guarding
+    // it anyway would be robustness for a race the serialization already forecloses.
     archiveBenchmark?.("complete");
     // The frozen predecessor (C15 2.2, un-parks C09 F3): when the code moved AND a real
     // prior generation exists, it freezes and its id is the earlier generation the ledger's
@@ -1921,6 +1932,17 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
     // into nothing. There is no transaction across two stores; ordering is the guarantee.
     const liveSuccessor = withLensBoards(restoredOrDrafted.generation, pipeline);
     await persistOwned(liveSuccessor);
+    // The terminal tail below (frozen-predecessor write, generation transition, round record,
+    // `composed` broadcast) runs UNGUARDED after this one ownership check, and that is correct
+    // (#816 re-review P3, ruled unreachable). It would only misfire if a competitor claimed
+    // this generation after `persistOwned` resolved — but the same single-flight invariant
+    // holds (one drive per session via the coordinator `inFlight` map + this runtime's
+    // `enqueue`; a generation is per-session; `persistGeneration` is the sole writer, only
+    // from inside a drive), so no live competitor exists. And `persistOwned` just wrote the
+    // SETTLED generation — `withLensBoards` drops the drafting slots — so any later
+    // (sequential) attempt reads a generation that no longer matches its slots and supersedes
+    // ITSELF rather than clobbering this record. Conditioning the tail on a re-read would
+    // guard a claim the serialization cannot produce.
     const frozenPrevious = predecessor === undefined ? undefined : freezeGeneration(predecessor);
     if (frozenPrevious !== undefined) await deps.persistGeneration?.(frozenPrevious);
     if (frozenPrevious !== undefined && input.session.reviewId !== undefined) {
