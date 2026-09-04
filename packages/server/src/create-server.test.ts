@@ -2200,6 +2200,143 @@ describe("round.dispatch mints onto the session the reads answer (the call site,
     expect(git("worktree", "list").split(/\r?\n/).filter(Boolean)).toHaveLength(1);
   }, 30_000);
 
+  // The falsifying fixture for "captured from the bound root". In every other round test the
+  // session's bound root IS `review.repositoryRoot`, so swapping one for the other in the
+  // capture leaves them all green — the two names hold the same value. Here the clone stays on
+  // `main` and the review's branch is checked out only in the worktree the session binds to
+  // (#805), so the two roots have DIFFERENT heads and only one of them is right.
+  it("captures the successor from the bound worktree when the clone is on another branch", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "rennet-round-elsewhere-data-"));
+    const repo = realpathSync(mkdtempSync(join(tmpdir(), "rennet-round-elsewhere-repo-")));
+    dirs.push(dataDir, repo);
+    const git = (...args: string[]) => execFileSync("git", args, { cwd: repo }).toString().trim();
+    git("init", "-b", "main");
+    git("config", "user.email", "t@t");
+    git("config", "user.name", "t");
+    writeFileSync(join(repo, "a.txt"), "base\n");
+    git("add", "a.txt");
+    git("commit", "-m", "base");
+    git("checkout", "-b", "feature/elsewhere");
+    writeFileSync(join(repo, "a.txt"), "base\nreviewed\n");
+    git("add", "a.txt");
+    git("commit", "-m", "reviewed");
+    const branchHead = git("rev-parse", "HEAD");
+    // …and the clone goes back to `main`, where it stays. `review.repositoryRoot` is now a
+    // tree that does not have the reviewed commit at its head at all.
+    git("checkout", "main");
+    const cloneHead = git("rev-parse", "HEAD");
+    expect(cloneHead).not.toBe(branchHead);
+
+    let workerRepoRoot: string | undefined;
+    const server = await createRennetServer({
+      dataDir,
+      env: { RENNET_DISABLE_HARNESS: "1" },
+      runHandoffTurn: async ({ repoRoot, prompt }) => {
+        workerRepoRoot = repoRoot;
+        writeFileSync(join(repoRoot, "a.txt"), "base\nreviewed\nworker change\n");
+        if (!/do NOT commit/i.test(prompt)) {
+          execFileSync("git", ["add", "a.txt"], { cwd: repoRoot });
+          execFileSync("git", ["commit", "-m", "worker change"], { cwd: repoRoot });
+        }
+        return {
+          status: "completed",
+          finalText: "done",
+          turnDiff: "diff --git a/a.txt b/a.txt\n+worker change",
+          filesTouched: ["a.txt"],
+          harness: { id: "codex", version: "0.146.0" },
+          checkpoint: { threadId: "thread-round", turnId: "turn-round", turnCount: 1 },
+        };
+      },
+    });
+    shutdowns.push(server.shutdown);
+    const added = (await server.dispatch("projects.add", {
+      commandId: randomUUID(),
+      discovery: {
+        path: repo,
+        kind: "repo",
+        repos: [{ name: "repo", path: repo, branches: 2 }],
+        primaryBranch: "main",
+      },
+      includedRepos: ["repo"],
+      primaryBranch: "main",
+    })) as { project: { id: string } };
+    const minted = (await server.dispatch("session.mint", {
+      projectId: added.project.id,
+      commandId: randomUUID(),
+      branch: "feature/elsewhere",
+    })) as { session: { id: string } | null };
+    const sessionId = minted.session?.id ?? "";
+    const reviewId = (await waitForReviewSession(server, sessionId)).reviewId ?? "";
+
+    const store = new SessionStore(join(dataDir, "sessions"));
+    await vi.waitFor(() => expect(store.load(sessionId)?.boundRoot).toBeDefined(), {
+      timeout: 15_000,
+      interval: 20,
+    });
+    const bound = store.load(sessionId)?.boundRoot ?? "";
+    // The premise of the whole test: the two roots really are different directories.
+    expect(bound).not.toBe(repo);
+
+    const before = (await server.dispatch("review.load", {
+      commandId: randomUUID(),
+      reviewId,
+    })) as { review: Review };
+    const priorPatchsetId = before.review.activePatchsetId;
+    await server.dispatch("ask.stage", {
+      sessionId: reviewId,
+      ask: {
+        id: "elsewhere-ask",
+        anchor: "a.txt:2",
+        type: "request-change",
+        body: "make the worker change",
+      },
+    });
+    await server.dispatch("round.dispatch", { reviewId });
+
+    await vi.waitFor(
+      async () => {
+        const operationStore = new RoundOperationStore(join(dataDir, "round-operations"));
+        const current = operationStore.read(sessionId);
+        operationStore.close();
+        if (current?.state.phase === "failed") {
+          throw new Error(`round failed: ${current.state.failure.reason}`);
+        }
+        const loaded = (await server.dispatch("review.load", {
+          commandId: randomUUID(),
+          reviewId,
+        })) as { review: Review };
+        expect(loaded.review.activePatchsetId).not.toBe(priorPatchsetId);
+      },
+      { timeout: 20_000, interval: 50 },
+    );
+
+    // The turn ran in the BOUND worktree, and the branch moved THERE.
+    expect(workerRepoRoot).toBe(bound);
+    const boundHead = execFileSync("git", ["rev-parse", "HEAD"], { cwd: bound }).toString().trim();
+    expect(boundHead).not.toBe(branchHead);
+    // The clone never moved: it is still on `main`, at the commit it started on.
+    expect(git("rev-parse", "HEAD")).toBe(cloneHead);
+
+    const after = (await server.dispatch("review.load", {
+      commandId: randomUUID(),
+      reviewId,
+    })) as { review: Review };
+    const successor = after.review.patchsets.find(
+      (candidate) => candidate.id === after.review.activePatchsetId,
+    );
+    // THE ASSERTION: the successor is the bound worktree's head, and the clone's head is a
+    // DIFFERENT commit, so the two roots can be told apart here — which is the thing no other
+    // round fixture can do.
+    expect(successor?.repository.headOid).toBe(boundHead);
+    expect(successor?.repository.headOid).not.toBe(cloneHead);
+    // Control run, and what it actually showed: pointing `draftReport`'s capture at
+    // `operation.repoRoot` instead of `operation.state.workspace.root` reddens this — but by
+    // never activating a successor at all, so the round runs on to its report seat and the
+    // waitFor above reports THAT failure. It is a real reddening and not a tautology; it is
+    // not evidence about which head a wrong-rooted capture would have recorded, because the
+    // worktree shares this repository's objects and refs and only its working tree differs.
+  }, 40_000);
+
   it("restarts a completed no-code dispatch and runs a distinct queued second ask", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "rennet-round-restart-data-"));
     const repo = realpathSync(mkdtempSync(join(tmpdir(), "rennet-round-restart-repo-")));
