@@ -558,12 +558,27 @@ their repairs no longer re-send the base prompt.
 
 Group 6 of `session-bound-workspace`, driven on 2026-09-04 against the signed **v0.7.0**
 release build with an isolated data directory, two reviews in one sitting on a clone of
-Rennet itself. Both Claude seats ran on Opus 4.8 at high effort, both Codex seats on GPT-5.6.
+Rennet itself. All four Claude seats ran on Opus 4.8 at high effort, both Codex seats on
+GPT-5.6.
 
 - **`drive/group5`** — the whole group 5 wave against a `main` reset to `cff9b9f1c`.
   95 files, +6,320 −10,219. Its checkout holds `openspec/changes/session-bound-workspace/`
   and its commit messages name it, so the Design seat had a specification to find.
 - **`drive/no-spec`** — one unrelated documentation commit off the same `main`. 1 file.
+
+Where each number below was read, so a later reader can take the same measurement:
+
+| Figure | Read from |
+| --- | --- |
+| Prompt bytes | `projection_thread_messages` in the sidecar's projection database, `<dataDir>/t3/userdata/state.sqlite` — the user-role row of each seat thread, `length(cast(text as blob))` |
+| Draft and repair timings | `timings.phases` on the generation record, `<dataDir>/generations/<generationId>.json` |
+| Token usage | the `usage` block on that same generation record |
+| Wall clock | the `startedAtMs`/`durationMs` span of those phases, against the clock times of the branch pick and the reveal |
+| Bound roots and binding rows | `boundRoot` on the session records under `<dataDir>/sessions/`, and every row of `<dataDir>/t3/thread-bindings.json` |
+| Thread deletion on archive | `deleted_at` in `projection_threads`, same projection database |
+| Round workspace, worker receipt and gate | the durable envelope in `<dataDir>/round-operations/round-operations.sqlite` |
+| The round's commit | `git show --stat` in the bound worktree, and `git worktree list` in the clone |
+| The absent round worktrees | a shell watcher polling both paths every two seconds for the length of both drives |
 
 | Seat | Prompt (bytes) | Draft, 95 files | Repair, 95 files | Draft, 1 file | Repair, 1 file |
 | --- | --- | --- | --- | --- | --- |
@@ -576,8 +591,8 @@ Rennet itself. Both Claude seats ran on Opus 4.8 at high effort, both Codex seat
 
 **The prompt sizes are the result.** They are byte-identical across the two branches — the
 same 6,293 bytes reach the Decisions seat whether the change is one file or ninety-five —
-because no seat is handed the change any more. On 2026-09-03 the same six prompts were about
-110,000 characters each and Design was 241,848; the five bundle-less seats are now 6.3–7.0 KB
+because no seat is handed the change any more. On 2026-09-03 the five non-Design prompts were
+about 110,000 characters each and Design was 241,848; the five bundle-less seats are now 6.3–7.0 KB
 and Design is 12.4 KB, which is the range the constants of #800 predicted. A repair is
 smaller still: the Design repair turn carried **133 bytes** of lint pointers, against a
 12,441-byte drafting turn on the same thread.
@@ -600,9 +615,10 @@ each session bound to a Rennet-created worktree under the data directory:
 
 Both are `branchWorktreePath(dataDir, repoKey, branch)` with the branch laid down as path
 segments, both had their branch checked out, and `git worktree list` in the clone showed all
-three trees with `main` still at `cff9b9f1c`. Every one of the thirteen `thread-bindings.json`
-rows written across the two sessions — six seats and one session thread each — carried
-`worktreePath` equal to its session's bound root. The chat header's trail named it beside the
+three trees with `main` still at `cff9b9f1c`. All fourteen `thread-bindings.json` rows written
+across the two sessions — six seats and one session thread each — carried `worktreePath` equal
+to its session's bound root. The file holds seven at a time: archiving the first session removed
+its rows, which is the same sweep that deletes its threads. The chat header's trail named it beside the
 branch, and the chat composer's footer read `Rennet sidecar · Worktree · drive/group5`.
 
 `.rennet/context/<sessionId>/` appeared under the bound root with its `README.md` index and its
@@ -664,10 +680,10 @@ Two things then went wrong, and both are why group 6's second task is not ticked
 The worker's receipt came back **empty**: `diff: ""`, `changedPaths: []`, no `checkpoint`, and
 the round card told the reviewer *"Ran the round worker · 0 files changed"* while their branch
 had moved by two files and thirty lines. The checkpoint itself exists — the sidecar's
-`projection_turns` has turn 2 on the bound thread with `checkpoint_status: ready` — so
-`readTurnDiff` is what failed, and with it both the delta and the handle a revert would take
-([#811](https://github.com/rbutera/Rennet/issues/811)). A checkpoint diff taken after the agent
-has committed sees a clean working tree; the round needs the committed range.
+`projection_turns` has turn 2 on the bound thread with `checkpoint_status: ready` — so the
+checkpoint read is what came back with nothing usable, and the round lost both the delta and
+the handle a revert would take. The drive shows that much and no more; the diagnosis is
+[#811](https://github.com/rbutera/Rennet/issues/811).
 
 Then the gate ran `pnpm check` over 14 projects in the bound worktree for **391 s** and exited
 1 — the worktree has no installed dependencies, and nothing offered to install them. The round
@@ -675,11 +691,10 @@ failed at the gate, so it never advanced the review to a successor patchset. The
 carries `{"outcome": "failed", "termination": {"kind": "exit", "exitCode": 1}}` and nothing
 else: **the gate's stdout and stderr are persisted nowhere a reviewer can read them**, not in
 the operation, not in `daemon.log`. A reviewer is told a 6½-minute command failed and is given
-no way to learn why. Rai's ruling of 2026-09-04 is that Rennet stops running the gate itself —
-the round prompt tells the worker to run the project's check command before it commits — and
-that the round runs on its own sidecar thread, a subagent of the session bound to the same
-worktree, rather than sharing the session's chat thread as it did here. A follow-up change
-carries both.
+no way to learn why. `openspec/changes/round-worker-thread/` answers both: Rennet stops running
+the gate, the round prompt tells the worker to run the project's check command before it
+commits, and the round runs on its own sidecar thread — a subagent of the session, bound to the
+same worktree — instead of sharing the session's chat thread as it did here.
 
 The app's own copy has not caught up with the binding either: the Dispatch coach mark still
 says a round runs "in a detached worktree", the scout records `worktreeBaseDir` with the hint
@@ -696,10 +711,14 @@ pipeline tests exercise the `no-spec` absence by handing the pipeline a parsed v
 union that cannot cross the wire is never asked to. A green `no-spec` test and a lens that can
 never return `no-spec` coexisted happily until something ran it against the real API.
 
-The empty round receipt is the reverse: the code did what it says, called `readTurnDiff`, and
-swallowed the answer with `.catch(() => undefined)`. A fake seam returns a diff, so the test
-sees a receipt. Only a real agent that really commits produces the case where the working tree
-is clean and the interesting change is in the commit range.
+The empty round receipt is the reverse: a fake seam hands the round a diff, so every test sees
+a receipt. Only a real agent, really committing in a real worktree against the real sidecar,
+produces the case where the checkpoint read comes back with nothing to record.
+
+The stale copy is a third kind again. Nothing asserts the three shipped strings — the Dispatch
+coach mark, the scout's `worktreeBaseDir` hint, the Settings worktree preview — against the
+binding contract they describe, so they stayed true-sounding and wrong through the change that
+falsified them. A string only a person reads is only caught by a person reading it.
 
 The bench's "quiet for 320 s" and the round's "0 files changed" are both true sentences about
 the wrong quantity, which no assertion about the same quantity would catch. You find them by
