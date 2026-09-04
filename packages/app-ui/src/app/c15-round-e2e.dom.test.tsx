@@ -76,13 +76,11 @@ const OPERATION_IDENTITY = {
 } as const;
 const WORKSPACE = { status: "done" } as const;
 const WORKER = { status: "done", fileCount: 3 } as const;
-const GATE = { status: "passed", durationMs: 12_400, projectCount: 7 } as const;
 const COMMITS = { status: "done", count: 1 } as const;
 const COMPLETED_STATE = {
   phase: "completed",
   workspace: WORKSPACE,
   worker: WORKER,
-  gate: GATE,
   commits: COMMITS,
   result: {
     kind: "changed",
@@ -138,22 +136,15 @@ const SERVER_ROUND: readonly RoundEvent[] = [
   }),
   progressEvent(3, { phase: "worker-settled", workspace: WORKSPACE, worker: WORKER }),
   progressEvent(4, {
-    phase: "gate-running",
-    workspace: WORKSPACE,
-    worker: WORKER,
-  }),
-  progressEvent(5, {
     phase: "committing",
     workspace: WORKSPACE,
     worker: WORKER,
-    gate: GATE,
     commits: { status: "running" },
   }),
   progressEvent(6, {
     phase: "report-drafting",
     workspace: WORKSPACE,
     worker: WORKER,
-    gate: GATE,
     commits: COMMITS,
     report: { status: "drafting" },
   }),
@@ -180,7 +171,6 @@ const SERVER_ROUND: readonly RoundEvent[] = [
     phase: "report-verifying",
     workspace: WORKSPACE,
     worker: WORKER,
-    gate: GATE,
     commits: COMMITS,
     report: {
       status: "verifying",
@@ -349,19 +339,17 @@ describe("C15 packet E2E — the regeneration chain over the live seam", () => {
     expect(r.container.querySelector('[data-row="worker"]')?.textContent).toContain(
       "3 files changed",
     );
-    push(SERVER_ROUND[4] as RoundEvent); // gate
-    expect(run()?.getAttribute("data-phase")).toBe("gating");
-    push(SERVER_ROUND[5] as RoundEvent); // committed
+    push(SERVER_ROUND[4] as RoundEvent); // committing — nothing runs between the two
     expect(run()?.getAttribute("data-phase")).toBe("committing");
-    shown("2 · run route walked working → gating → committing on real events (no clock)");
+    shown("2 · run route walked working → committing on real events (no clock)");
 
     // ── 3 · THE VERIFIED REPORT RETURNS WHILE REGENERATION RUNS ───────────────
-    push(SERVER_ROUND[6] as RoundEvent);
+    push(SERVER_ROUND[5] as RoundEvent);
     expect(history.history.at(-1)).toBe(`/s/${REVIEW_ID}/run`);
     expect(run()?.getAttribute("data-phase")).toBe("drafting-report");
 
-    push(SERVER_ROUND[7] as RoundEvent); // durable read-back verified; report is now readable
-    push(SERVER_ROUND[8] as RoundEvent); // the five lens drafters begin
+    push(SERVER_ROUND[6] as RoundEvent); // durable read-back verified; report is now readable
+    push(SERVER_ROUND[7] as RoundEvent); // the five lens drafters begin
     await waitFor(() => expect(history.history.at(-1)).toBe(`/s/${REVIEW_ID}`));
     expect(r.container.querySelector('[data-screen="round-greeting"]')).not.toBeNull();
     expect(r.container.textContent).toContain("Token refresh exits are now observable");
@@ -372,14 +360,14 @@ describe("C15 packet E2E — the regeneration chain over the live seam", () => {
     shown("3 · verified report returned while five lens drafters continued; reveal absent");
 
     // ── 4 · SETTLED LANES STILL DO NOT DECLARE COMPLETION ─────────────────────
-    push(SERVER_ROUND[9] as RoundEvent);
+    push(SERVER_ROUND[8] as RoundEvent);
     expect(r.container.querySelector('[data-row="sequence"]')?.textContent).toContain("reworked");
     expect(r.queryByTestId("reveal-new-boards")).toBeNull();
-    push(SERVER_ROUND[10] as RoundEvent); // final durable report verification
+    push(SERVER_ROUND[9] as RoundEvent); // final durable report verification
     expect(history.history.at(-1)).toBe(`/s/${REVIEW_ID}`);
     expect(r.container.textContent).toContain("Token refresh exits are now observable");
     expect(r.queryByTestId("reveal-new-boards")).toBeNull();
-    push(SERVER_ROUND[11] as RoundEvent); // Return is still draining into durable stores
+    push(SERVER_ROUND[10] as RoundEvent); // Return is still draining into durable stores
     expect(r.queryByTestId("reveal-new-boards")).toBeNull();
     shown("4 · settled lenses and durable verification kept completion-only acts hidden");
 
@@ -392,7 +380,7 @@ describe("C15 packet E2E — the regeneration chain over the live seam", () => {
     // Persisting server truth does not invent a client refresh. Only the terminal receipt
     // below proves that the durable row is ready and changes the live ledger projection.
     expect(ledgerReads()).toBe(readsBeforeRecord);
-    push(SERVER_ROUND[12] as RoundEvent); // durable completed/changed operation, generation gen2
+    push(SERVER_ROUND[11] as RoundEvent); // durable completed/changed operation, generation gen2
     await waitFor(() => expect(ledgerReads()).toBeGreaterThan(readsBeforeRecord));
     await waitFor(() => expect(history.history.at(-1)).toBe(`/s/${REVIEW_ID}`));
     expect(r.container.querySelector('[data-screen="round-greeting"]')).not.toBeNull();
@@ -460,7 +448,7 @@ describe("C15 packet E2E — the regeneration chain over the live seam", () => {
     const bridge = new MemoryBridge({
       ...routeResolutionHandlers,
       "board.read": fixtureBoardRead,
-      "session.roundEvents": () => ({ events: SERVER_ROUND.slice(0, 5) }), // through `gate`
+      "session.roundEvents": () => ({ events: SERVER_ROUND.slice(0, 5) }), // through `committing`
       "session.rounds": () => ({ records: [] }),
       "round.dispatch": ({ reviewId }) => {
         dispatched.push(reviewId);
@@ -472,7 +460,7 @@ describe("C15 packet E2E — the regeneration chain over the live seam", () => {
     await waitFor(() =>
       expect(
         r.container.querySelector('[data-screen="session-run"]')?.getAttribute("data-phase"),
-      ).toBe("gating"),
+      ).toBe("committing"),
     );
     expect(dispatched).toEqual([]); // mounting never dispatches
   });

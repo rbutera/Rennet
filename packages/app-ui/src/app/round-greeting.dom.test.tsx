@@ -43,9 +43,9 @@ const review = {
 beforeEach(() => act(() => store().runActions.resetRun()));
 afterEach(() => act(() => store().runActions.resetRun()));
 
-// Timeline ticks (FIXTURE_ROUND_TIMELINE): 10 ⇒ reporting, 11/12 ⇒ composing (lens rows
+// Timeline ticks (FIXTURE_ROUND_TIMELINE): 9 ⇒ reporting, 10/11 ⇒ composing (lens rows
 // running/done), FIXTURE_ROUND_COMPLETE_TICK ⇒ composed (newGeneration gen2).
-const COMPOSING_TICK = 11;
+const COMPOSING_TICK = 10;
 
 /** Mount the workspace over one rounds source + the fixture board source, arming the
  *  greeting as the run route would before redirecting here. */
@@ -136,7 +136,7 @@ describe("the round report as greeting + progressive reveal (C09 cluster 5)", ()
     expect(r.queryByTestId("reveal-new-boards")).toBeNull();
   });
 
-  it("states the exact run target and passed gate from the host receipt", () => {
+  it("states the exact run target and harness from the host receipt", () => {
     const r = mount(
       <RoundGreeting
         board={reportBoardFixture}
@@ -149,10 +149,13 @@ describe("the round report as greeting + progressive reveal (C09 cluster 5)", ()
     expect(summary.textContent).toContain(
       "Round 1 ran 2 asks on fix/token-refresh-observability using Codex 0.146.0.",
     );
-    expect(summary.textContent).toContain("Passed pnpm check in 12 s across 7 projects.");
+    // Rennet runs no check of its own, so the receipt states where the round ran and
+    // on what — never a gate result it did not produce.
+    expect(summary.textContent).not.toContain("Passed");
+    expect(summary.textContent).not.toContain("gate");
   });
 
-  it("states an absent configured gate without inventing a command", () => {
+  it("states a legacy receipt without inventing a workspace or a command", () => {
     const r = mount(
       <RoundGreeting
         board={reportBoardFixture}
@@ -172,7 +175,6 @@ describe("the round report as greeting + progressive reveal (C09 cluster 5)", ()
     );
     const summary = r.getByTestId("round-run-receipt");
     expect(summary.textContent).toContain("Round 2 ran 2 asks on detached at 0123456789ab.");
-    expect(summary.textContent).toContain("No project gate was configured.");
     expect(summary.querySelector("code")).toBeNull();
   });
 

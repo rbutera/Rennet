@@ -104,7 +104,7 @@ describe("round transcript rows", () => {
       speaker: "orchestrator",
       lead: "Round 3 is back",
       paragraphs: [
-        "Round 3 is back — branch `feat/auth`, 2 asks, `pnpm check` passed across 14 projects in 1200 ms, 2 commits. The report was verified as generation `generation-2`.",
+        "Round 3 is back — branch `feat/auth`, 2 asks, 2 commits. The report was verified as generation `generation-2`.",
       ],
     });
   });

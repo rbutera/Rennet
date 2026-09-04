@@ -103,7 +103,7 @@ describe("round-machine — the pure run state machine", () => {
 
   it("hands off when the report is readable, before board regeneration finishes", () => {
     // Watching phases keep the reviewer on the run route (no effect-driven redirect).
-    for (const phase of ["dispatching", "preparing", "working", "gating", "committing"] as const) {
+    for (const phase of ["dispatching", "preparing", "working", "committing"] as const) {
       const at = FIXTURE_ROUND_TIMELINE.findIndex(
         (_e, i) => roundStateAtTick(i + 1).phase === phase,
       );

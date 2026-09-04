@@ -50,8 +50,8 @@ const review = {
 } as unknown as Review;
 
 // FIXTURE_ROUND_TIMELINE ticks: 5 ⇒ worker running/queued, 6 ⇒ read done + record running,
-// 11 ⇒ composing (lens rows re-drafting), FIXTURE_ROUND_COMPLETE_TICK ⇒ composed (gen2).
-const COMPOSING_TICK = 11;
+// 10 ⇒ composing (lens rows re-drafting), FIXTURE_ROUND_COMPLETE_TICK ⇒ composed (gen2).
+const COMPOSING_TICK = 10;
 
 afterEach(() =>
   act(() => {
@@ -187,7 +187,6 @@ describe("C09 packet E2E — the whole rounds chain over the real surfaces", () 
     const settled = {
       workspace: { status: "done" },
       worker: { status: "done", fileCount: 1 },
-      gate: { status: "skipped", reason: "not-configured" },
       commits: { status: "done", count: 1 },
     } as const;
     const operation = {
@@ -196,7 +195,6 @@ describe("C09 packet E2E — the whole rounds chain over the real surfaces", () 
       roundNumber: 1,
       sourceTarget: { kind: "branch", branch: "feat/report-handoff" },
       askCount: 1,
-      gatePlan: { kind: "absent" },
     } as const;
     const failedAfterReport: readonly RoundEvent[] = [
       {
