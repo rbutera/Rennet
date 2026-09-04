@@ -10,6 +10,7 @@ import { settledTurnUsage } from "@rennet/adapters";
 import type { HandoffTurnOutcome } from "@rennet/core";
 import type { RoundCheckpoint, RspTokenUsage } from "@rennet/protocol";
 import type { OrchestrationThread, T3Client, TurnDiff, TurnOutcome } from "./client";
+import { CheckpointNotReadyError } from "./client";
 import type { ThreadBinding, ThreadBindingKey } from "./threads";
 
 /**
@@ -75,32 +76,53 @@ export interface T3RoundTurnInput extends T3HandoffInput {
  * lifecycle has settled — two writes, and the wait returns on the first. Issue #811: a
  * round that had genuinely committed came back with `diff: ""`, `changedPaths: []` and no
  * checkpoint at all, while the sidecar's projection held `checkpoint_status ready` for
- * that exact turn. `readTurnDiff` throws when the thread it reads has no checkpoint for
- * the turn yet, and the `.catch(() => undefined)` around it swallowed the diff AND the
- * receipt handle `thread.checkpoint.revert` needs. So the read is retried inside a bound
- * rather than taken once against a projection that has not caught up.
+ * that exact turn. `readTurnDiff` throws a {@link CheckpointNotReadyError} while the
+ * projection has not caught up, so THAT — and only that — is retried inside a bound.
  *
- * `undefined` means the turn left no checkpoint inside the bound — a fact about the turn,
- * never a fabricated receipt.
+ * Every OTHER read failure (an RPC error, a disconnected sidecar) is NOT a late checkpoint
+ * and must not be retried into silence: the earlier `.catch(() => undefined)` turned a
+ * sidecar it could not reach into "the turn changed nothing", and a completed lifecycle plus
+ * that empty diff shipped as a `status: "completed"` receipt with no checkpoint — the "lie in
+ * the UI" family (Codex #817-2). So this returns a discriminated result: a `diff` when it read
+ * one, or `unobserved` with a reason when the deadline expired still-not-ready or any other
+ * read error occurred. Every settled turn eventually writes a checkpoint, so `unobserved` is
+ * always a failure to observe, never a turn that legitimately did nothing.
  */
 const CHECKPOINT_WAIT_MS = 10_000;
 const CHECKPOINT_POLL_MS = 250;
+
+type CheckpointObservation =
+  | { readonly kind: "diff"; readonly diff: TurnDiff }
+  | { readonly kind: "unobserved"; readonly reason: string };
 
 async function readTurnDiffWhenCheckpointed(
   client: T3Client,
   threadId: string,
   turnId: string,
   options: { readonly waitMs?: number; readonly sleep?: (ms: number) => Promise<void> } = {},
-): Promise<TurnDiff | undefined> {
+): Promise<CheckpointObservation> {
   const waitMs = options.waitMs ?? CHECKPOINT_WAIT_MS;
   const sleep =
     options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   const deadline = Date.now() + waitMs;
   for (;;) {
-    const diff = await client.readTurnDiff(threadId, turnId).catch(() => undefined);
-    if (diff !== undefined) return diff;
-    if (Date.now() >= deadline) return undefined;
-    await sleep(CHECKPOINT_POLL_MS);
+    try {
+      return { kind: "diff", diff: await client.readTurnDiff(threadId, turnId) };
+    } catch (error) {
+      if (!(error instanceof CheckpointNotReadyError)) {
+        return {
+          kind: "unobserved",
+          reason: error instanceof Error ? error.message : String(error),
+        };
+      }
+      if (Date.now() >= deadline) {
+        return {
+          kind: "unobserved",
+          reason: `no checkpoint for turn ${turnId} on thread ${threadId} within ${waitMs}ms`,
+        };
+      }
+      await sleep(CHECKPOINT_POLL_MS);
+    }
   }
 }
 
@@ -156,28 +178,38 @@ async function runTurnOnBoundThread(
     ...(input.signal ? { signal: input.signal } : {}),
   });
   // The diff is T3's checkpoint for that turn, waited for — the checkpoint lands on the
-  // reactor's own fiber after the lifecycle settles (#811). A turn that produced no
-  // checkpoint inside the bound reads as an empty diff, never a thrown handoff.
-  const diff = await readTurnDiffWhenCheckpointed(
+  // reactor's own fiber after the lifecycle settles (#811).
+  const observed = await readTurnDiffWhenCheckpointed(
     client,
     binding.threadId,
     outcome.turnId,
     input.checkpointWait ?? {},
   );
-  const filesTouched = (diff?.files ?? []).map((file) => file.path);
-  const turnDiff = diff?.diff ?? "";
-  // The checkpoint ref the round records. Absent when the turn wrote none — that is a
-  // fact about the turn, never a fabricated receipt.
-  const checkpoint =
-    diff === undefined
-      ? {}
-      : {
-          checkpoint: {
-            threadId: binding.threadId,
-            turnId: diff.turnId,
-            turnCount: diff.turnCount,
-          },
-        };
+  // The lifecycle settled but the checkpoint could not be observed — the deadline expired or
+  // the read failed. That is a failure to OBSERVE, never a completed round with an empty diff
+  // (Codex #817-2). A turn whose lifecycle already FAILED keeps its own provider reason; only a
+  // COMPLETED lifecycle is turned FAILED here, because a completed receipt with no checkpoint is
+  // the "lie in the UI" this closes. Either way: no fabricated diff and no checkpoint to revert.
+  if (observed.kind === "unobserved") {
+    const reason =
+      outcome.state === "completed"
+        ? `T3 turn ${outcome.turnId} on thread ${binding.threadId} settled, but its checkpoint could not be read: ${observed.reason}`
+        : (outcome.thread.session?.lastError ??
+          (outcome.state === "interrupted"
+            ? "The T3 turn was interrupted."
+            : "The T3 turn failed."));
+    return { status: "failed", reason, turnDiff: "", filesTouched: [] };
+  }
+  const diff = observed.diff;
+  const filesTouched = diff.files.map((file) => file.path);
+  const turnDiff = diff.diff;
+  const checkpoint = {
+    checkpoint: {
+      threadId: binding.threadId,
+      turnId: diff.turnId,
+      turnCount: diff.turnCount,
+    },
+  };
   if (outcome.state === "completed") {
     const usage = turnUsage(outcome);
     return {
@@ -241,7 +273,14 @@ export async function runRoundTurn(
  * existed because the round shared the session's thread with the interactive handoff, and
  * a handoff completing after the round started would otherwise have been adopted as the
  * round's receipt. The thread is the round's now, so the only turns on it are this round's
- * own attempts — and `since` still separates a retry from the attempt before it.
+ * own attempts, and `since` drops the attempt before this one from the window.
+ *
+ * The caveat the prompt-matching deletion must not bury (Fable #817-6): the pick is still
+ * `.at(-1)` over what survives that filter — by ARRAY ORDER, not proof. If a prior attempt's
+ * turn outlived the daemon and its checkpoint settles LATE, after this attempt's `since`, both
+ * rows pass the filter and the last-written wins; that is this attempt's row only when write
+ * order tracks attempt order. `since` narrows the window; it does not by itself prove the last
+ * row is this attempt's. The window is unchanged from before the sharing was removed.
  *
  * `undefined` means no such turn left a checkpoint, which is a failed round, not a guessed
  * one. The checkpoint's `status` rides back and is the caller's to honour: a FAILED turn
@@ -272,8 +311,11 @@ export async function readRoundTurnCheckpoint(
     .filter((entry) => Date.parse(entry.completedAt) >= input.since)
     .at(-1);
   if (summary === undefined) return undefined;
-  const diff = await client.readTurnDiff(binding.threadId, summary.turnId).catch(() => undefined);
-  if (diff === undefined) return undefined;
+  // The checkpoint IS listed on the thread; a read that throws HERE is a read FAILURE, not a
+  // late checkpoint and not "no checkpoint". Let it propagate — the recovery port records
+  // "its checkpoint could not be read" rather than swallowing a sidecar we could not reach into
+  // "the turn left no checkpoint" (Codex #817-4). `undefined` above stays "no checkpoint".
+  const diff = await client.readTurnDiff(binding.threadId, summary.turnId);
   return {
     checkpoint: { threadId: binding.threadId, turnId: diff.turnId, turnCount: diff.turnCount },
     status: summary.status,

@@ -3558,6 +3558,14 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     if (diff === undefined) return undefined;
     return { diff, changedPaths: names.split("\n").filter((line) => line.trim() !== "") };
   };
+  // The round WORKER binds its own `{ kind: "round" }` thread, and the coordinator drives it
+  // on a durable fiber that outlives `boardDraftingDeps.runRound` — nothing awaits a round, so
+  // that wrapper's `finally` sweep does not cover the thread the worker binds. Both the live
+  // and the recovered worker therefore re-run the identical archive sweep on their way out,
+  // whatever the outcome (a failed turn still bound and still leaks). Idempotent, and a no-op
+  // for a session still live.
+  const sweepRoundSessionIfArchived = (sessionId: string) =>
+    sweepIfArchived(sessionStore.load(sessionId), t3Sidecar.forgetSession, purgeContextForSession);
   const runRoundWorker: RoundExecutionPorts["runWorker"] = async (input) => {
     const state = input.operation.state;
     // The LEASE, taken before the write and held until the turn settles: `session.archive`
@@ -3579,7 +3587,9 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         committedDiff: committedRoundDiff(state.workspace.root, state.workspace.sourceHead),
       });
     } finally {
+      // Cleared before the sweep, so the purge is not deferred by this turn's own lease.
       release();
+      await sweepRoundSessionIfArchived(input.operation.sessionId);
     }
   };
   const recoverRoundWorkerTurn = createRoundWorkerRecoveryPort({
@@ -3588,13 +3598,19 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   // The same reconciliation as the live path: a turn that committed and then outlived the
   // daemon has the same clean working tree, so its recovered receipt has the same hole.
   const recoverRoundWorker: NonNullable<RoundExecutionPorts["observeWorker"]> = async (input) => {
-    const receipt = await recoverRoundWorkerTurn(input);
-    const state = input.operation.state;
-    if (state.phase !== "worker-running") return receipt;
-    return reconcileRoundReceiptWithCommits(receipt, {
-      sourceHead: state.workspace.sourceHead,
-      committedDiff: committedRoundDiff(state.workspace.root, state.workspace.sourceHead),
-    });
+    try {
+      const receipt = await recoverRoundWorkerTurn(input);
+      const state = input.operation.state;
+      if (state.phase !== "worker-running") return receipt;
+      return await reconcileRoundReceiptWithCommits(receipt, {
+        sourceHead: state.workspace.sourceHead,
+        committedDiff: committedRoundDiff(state.workspace.root, state.workspace.sourceHead),
+      });
+    } finally {
+      // Recovery rebinds the round thread to read its checkpoint, so a restart into an
+      // already-archived session leaks it exactly as the live path would.
+      await sweepRoundSessionIfArchived(input.operation.sessionId);
+    }
   };
   const storedRoundReportVerification = {
     reviewById: (reviewId: string) => service.reviewById(reviewId),

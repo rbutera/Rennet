@@ -458,16 +458,17 @@ on every read, because it is a detached checkout and a landed round advances the
 The session's children run there because the thread's `worktreePath` and the turn's `cwd` are
 both that root: the six lens seats, the chat thread, the handoff thread and every cold utility
 turn (scout, repo map, delta digest, opener, pull-request body, refine, CI classification,
-finding verification). The coding round runs there too: it is a turn on the session's bound
-thread, and its worker commits on the session's branch in that root.
+finding verification). The coding round runs in that root too, and its worker commits on the
+session's branch there — but on a thread of its own (see [Rounds as threads](#rounds-as-threads)
+below), not the one the chat and handoff share.
 
 On WSL the bound root reaches the child as `wsl.exe --cd <distro path>`: the adapter bakes that
 argument at construction and `transportCwd` wins over a session's `cwd`, so a harness is
 resolved from the **turn root**, never from the repository root, or the cwd is silently ignored.
 
 A thread's cwd is fixed when the thread is created, so a binding row records the workspace it
-was created with, and the workspace is half the binding KEY — which is what puts the chat, the
-handoff and the round's turn on ONE thread. A row keyed on the repository while a workspace is
+was created with, and the workspace is half the binding KEY — which is what puts the chat and
+the handoff on ONE thread (the round gets its own, keyed on its operation, below). A row keyed on the repository while a workspace is
 being asked for is superseded: it carries no workspace (written before this wave) or the clone
 root (written by a read that preceded any bind), and either way its thread is rooted in the
 wrong tree. It is moved to the sidecar's pending deletions, so the existing sweep DELETES that
@@ -502,8 +503,9 @@ A coding **round** does not run on that thread. It gets one of its own, bound to
 Rennet; a coding agent's tool calls do not belong in the same scroll (Rai, 2026-09-04:
 "we should hand off the round to a subagent not to the main orchestrator"). The key is
 the **operation**, not the dispatch: a dispatch attempted while a round is live is
-coalesced into a rerun of the same operation, so a dispatch key would name a thread
-nothing runs on. The row carries the session id in the same field a seat row does, so
+coalesced, and when the live round settles it is replaced by a fresh operation that keeps
+the same dispatch id but takes a new operation id — so a dispatch key would put two
+operations' turns on one thread. The row carries the session id in the same field a seat row does, so
 archiving the session deletes the round threads with the rest, and the round account's
 checkpoint names the thread so the greeting can point a reviewer at the transcript.
 

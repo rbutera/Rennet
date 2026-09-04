@@ -168,10 +168,13 @@ function fakeT3RoundWorker(turns: Array<RoundTurnRecord>) {
     return {
       status: "completed" as const,
       finalText: `Set ownerValue to ${value}.`,
-      turnDiff: committed
-        ? git(repoRoot, "show", "--format=", "HEAD")
-        : git(repoRoot, "diff", "--", OWNER_LOOP_SOURCE),
-      filesTouched: [OWNER_LOOP_SOURCE],
+      // A real T3 checkpoint diffs the WORKING TREE. A worker that obeyed the work order and
+      // committed leaves that tree clean, so its checkpoint reports a BLANK diff and NO files
+      // (#811) — the honest shape, and the one that forces the round receipt onto the
+      // sourceHead..HEAD fallback in `reconcileRoundReceiptWithCommits`. A worker that edited
+      // WITHOUT committing keeps its own working-tree diff and file list.
+      turnDiff: committed ? "" : git(repoRoot, "diff", "--", OWNER_LOOP_SOURCE),
+      filesTouched: committed ? [] : [OWNER_LOOP_SOURCE],
       checkpoint: { threadId, turnId: `turn-${value}`, turnCount },
     };
   };
@@ -509,11 +512,20 @@ describe("#685 owner loop through a real server", () => {
     // key `threadFor` is ever asked for is `round`. What this DOES catch is the wiring: the
     // round reaches the round-turn seam at all, with its operation, its title and the bound
     // root as its cwd. Restore the session-keyed handoff turn and `roundTurns` stays empty.
-    // The receipt is honest after a commit (#811): the worker committed, so the round's
-    // files come from the commit range even though the checkpoint's working tree is clean.
+    // The receipt is honest after a commit (#811): the worker committed, so its checkpoint's
+    // working tree is CLEAN — it returned a blank turnDiff and no files. The only source left
+    // for the round's diff and changed paths is the sourceHead..HEAD range, which is exactly
+    // what `reconcileRoundReceiptWithCommits` fills from. So these three assertions ride on
+    // that fallback: the range is non-empty, and the receipt's diff and paths came FROM it.
+    // Control (2026-09-04): deleting the fallback branch (create-server.ts, the
+    // `return { ...receipt, diff, changedPaths }` line) reddens this test — so hard the round
+    // never even completes, because a committed round's blank receipt fails the coordinator's
+    // change check, which is the "0 files changed over a moved branch" lie made fatal.
     expect(afterRoundOne[0]?.workerCommitRange.from).not.toBe(
       afterRoundOne[0]?.workerCommitRange.to,
     );
+    expect(afterRoundOne[0]?.changedPaths).toContain(OWNER_LOOP_SOURCE);
+    expect(afterRoundOne[0]?.diff).toContain("round-one");
     expect(roundOneGeneration).not.toBe(initialGeneration);
     expect(afterRoundOne[0]?.frozenPredecessor).toBe(initialGeneration);
 

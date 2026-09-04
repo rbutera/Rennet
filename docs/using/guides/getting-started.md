@@ -436,7 +436,7 @@ it. If no check command was found, the work order says nothing about one.
 Each round runs on its **own** transcript, separate from the chat you have with
 Rennet about the review. The round report names the workspace it ran in and the
 thread and checkpoint the turn left, so you can see where the work happened, which
-turn produced it, and open the agent's own transcript for it. Closing and reopening
+turn produced it, and the thread id its transcript is saved under. Closing and reopening
 the run, or following its direct link on another launch, resumes from the latest
 saved step without dispatching the work again.
 

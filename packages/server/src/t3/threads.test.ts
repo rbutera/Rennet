@@ -109,6 +109,20 @@ describe("thread bindings", () => {
       [chat.threadId, one.threadId, two.threadId].sort(),
     );
     expect(owned.filter((row) => row.kind === "round")).toHaveLength(2);
+
+    // Finding rows is not sweeping them: run the SAME sweep `session.archive` runs and prove
+    // the round threads are actually deleted at the RPC and their bindings dropped from disk.
+    const deleted: string[] = [];
+    await sweepThreads({
+      dataDir,
+      ids: ["session-a", "review-a"],
+      deleteThread: async (threadId) => {
+        deleted.push(threadId);
+      },
+      warn: () => undefined,
+    });
+    expect(deleted.sort()).toEqual([chat.threadId, one.threadId, two.threadId].sort());
+    expect(readBindings(dataDir)).toHaveLength(0);
   });
 
   it("finds every binding a session owns, across both kinds and both checkouts", async () => {

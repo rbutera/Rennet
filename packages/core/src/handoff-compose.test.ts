@@ -498,4 +498,19 @@ describe("the round's work order carries the repository's check command", () => 
     const quoted = /Run `([^`]*)`/.exec(rendered)?.[1] ?? "";
     expect(Buffer.byteLength(quoted.replace("…", ""), "utf8")).toBe(CHECK_COMMAND_MAX_BYTES);
   });
+
+  it("truncates on a UTF-8 code-point boundary, never mid-character", () => {
+    // 199 ASCII bytes + a 4-byte emoji = 203 bytes. A naive `subarray(0, 200)` cuts inside
+    // the emoji; decoding the partial bytes yields U+FFFD, which re-encodes to 3 bytes and
+    // pushes the command PAST its bound while corrupting the last character (Codex #817-6).
+    const long = `${"x".repeat(CHECK_COMMAND_MAX_BYTES - 1)}😀`;
+    expect(Buffer.byteLength(long, "utf8")).toBe(CHECK_COMMAND_MAX_BYTES + 3);
+    const rendered = roundCommitRule(long).join("\n");
+    const quoted = /Run `([^`]*)`/.exec(rendered)?.[1] ?? "";
+    const command = quoted.replace("…", "");
+    // No mojibake: the incomplete emoji was dropped whole, not decoded to a replacement char.
+    expect(command).not.toContain("�");
+    // And still within the byte bound — the boundary back-off can only shrink the prefix.
+    expect(Buffer.byteLength(command, "utf8")).toBeLessThanOrEqual(CHECK_COMMAND_MAX_BYTES);
+  });
 });

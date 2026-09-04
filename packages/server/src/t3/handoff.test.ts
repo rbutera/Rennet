@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import type { OrchestrationThread, T3Client, TurnOutcome } from "./client";
+import {
+  CheckpointNotReadyError,
+  type OrchestrationThread,
+  type T3Client,
+  type TurnOutcome,
+} from "./client";
 import {
   lastAssistantText,
   readRoundTurnCheckpoint,
@@ -154,7 +159,7 @@ describe("runHandoffTurn", () => {
       thread: thread("completed"),
     });
     (client.readTurnDiff as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
-      new Error("T3 thread t1 has no checkpoint for turn turn-1"),
+      new CheckpointNotReadyError("t1", "turn-1"),
     );
     const sleep = vi.fn(async () => undefined);
     const outcome = await runHandoffTurn(
@@ -172,13 +177,19 @@ describe("runHandoffTurn", () => {
     });
   });
 
-  it("treats a checkpoint that never arrives as an empty diff rather than a thrown handoff", async () => {
+  // A completed lifecycle whose checkpoint NEVER becomes readable is a failure to OBSERVE, not
+  // a round that changed nothing. Reporting `status: "completed"` with an empty diff and no
+  // checkpoint — as the code did before Codex #817-2 — is the "lie in the UI" family: spend and
+  // a moved branch the receipt cannot see. So the honest outcome is FAILED, naming thread+turn.
+  it("fails a completed turn whose checkpoint never arrives, naming the thread and turn", async () => {
     const { client, threadFor } = stubs({
       turnId: "turn-1",
       state: "completed",
       thread: thread("completed"),
     });
-    (client.readTurnDiff as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("no checkpoint"));
+    (client.readTurnDiff as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new CheckpointNotReadyError("t1", "turn-1"),
+    );
     const outcome = await runHandoffTurn(
       {
         repoRoot: "/repos/a",
@@ -188,7 +199,34 @@ describe("runHandoffTurn", () => {
       },
       { client: async () => client, threadFor },
     );
-    expect(outcome).toMatchObject({ status: "completed", turnDiff: "", filesTouched: [] });
+    expect(outcome.status).toBe("failed");
+    expect(outcome).toMatchObject({ turnDiff: "", filesTouched: [] });
+    expect(outcome).not.toHaveProperty("checkpoint");
+    expect((outcome as { reason: string }).reason).toContain("turn-1");
+    expect((outcome as { reason: string }).reason).toContain("t1");
+    expect((outcome as { reason: string }).reason).toContain("could not be read");
+  });
+
+  // A read FAILURE (an RPC error, a disconnected sidecar) is NOT a late checkpoint: it must not
+  // be retried into silence, and it fails at once rather than after the whole 10s wait.
+  it("fails immediately on a non-not-ready read error, without retrying the wait", async () => {
+    const { client, threadFor } = stubs({
+      turnId: "turn-1",
+      state: "completed",
+      thread: thread("completed"),
+    });
+    (client.readTurnDiff as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new Error("sidecar socket closed"),
+    );
+    const sleep = vi.fn(async () => undefined);
+    const outcome = await runHandoffTurn(
+      { repoRoot: "/repos/a", prompt: "x", reviewId: "rv-1", checkpointWait: { sleep } },
+      { client: async () => client, threadFor },
+    );
+    // No retry: a hard read error is not a not-yet-written checkpoint.
+    expect(sleep).not.toHaveBeenCalled();
+    expect(outcome.status).toBe("failed");
+    expect((outcome as { reason: string }).reason).toContain("sidecar socket closed");
     expect(outcome).not.toHaveProperty("checkpoint");
   });
 
@@ -315,5 +353,17 @@ describe("readRoundTurnCheckpoint", () => {
   it("is absent when every checkpoint predates the attempt", async () => {
     const stubs = checkpointStubs([summary("turn-1", "2026-09-04T09:59:59.000Z", "ready")]);
     expect(await read(stubs)).toBeUndefined();
+  });
+
+  // Finding 4: the checkpoint IS listed (a ready summary at or after `since`), but its diff
+  // read throws — a sidecar we could not reach. Swallowing that into `undefined` would report
+  // "the turn left no checkpoint", which the recovery port then narrates as a turn that did
+  // nothing. Instead the read failure PROPAGATES, so recovery records "could not be read".
+  it("propagates a read failure on a listed checkpoint rather than reporting it absent", async () => {
+    const stubs = checkpointStubs([summary("turn-2", "2026-09-04T10:00:05.000Z", "ready")]);
+    (stubs.client.readTurnDiff as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new Error("sidecar socket closed"),
+    );
+    await expect(read(stubs)).rejects.toThrow("sidecar socket closed");
   });
 });

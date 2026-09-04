@@ -1175,8 +1175,7 @@ describe("session/ durable shapes (#466/#457)", () => {
     ).toBe("detached");
   });
 
-  it("records an absent gate honestly and writes report identity before drafting", () => {
-    const skippedGate = { outcome: "skipped", reason: "not-configured", settledAt: 150 } as const;
+  it("refuses the retired gate phase and writes report identity before drafting", () => {
     const noCommits = {
       ...operationCommits,
       to: operationCommits.from,
@@ -1185,12 +1184,10 @@ describe("session/ durable shapes (#466/#457)", () => {
     expect(
       RoundOperationSchema.parse({
         ...operationBase,
-        gatePlan: { kind: "absent" },
         state: {
           phase: "completed",
           workspace: operationWorkspace,
           worker: { ...operationWorker, diff: "", changedPaths: [] },
-          gate: skippedGate,
           commits: noCommits,
           recording: operationRecording,
           result: { kind: "unchanged" },
@@ -1198,6 +1195,8 @@ describe("session/ durable shapes (#466/#457)", () => {
         },
       }).state.phase,
     ).toBe("completed");
+    // `gate-settled` was the gate's own phase; round-worker-thread removed the gate, so the
+    // phase is gone from the union and a row naming it is refused — whatever else it carries.
     expect(
       RoundOperationSchema.safeParse({
         ...operationBase,
@@ -1205,7 +1204,6 @@ describe("session/ durable shapes (#466/#457)", () => {
           phase: "gate-settled",
           workspace: operationWorkspace,
           worker: operationWorker,
-          gate: skippedGate,
         },
       }).success,
     ).toBe(false);

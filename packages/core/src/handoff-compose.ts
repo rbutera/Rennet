@@ -28,9 +28,15 @@ export const CHECK_COMMAND_MAX_BYTES = 200;
 
 function boundedCommand(command: string): string {
   const trimmed = command.trim();
-  return Buffer.byteLength(trimmed, "utf8") <= CHECK_COMMAND_MAX_BYTES
-    ? trimmed
-    : `${Buffer.from(trimmed, "utf8").subarray(0, CHECK_COMMAND_MAX_BYTES).toString("utf8")}…`;
+  const buf = Buffer.from(trimmed, "utf8");
+  if (buf.length <= CHECK_COMMAND_MAX_BYTES) return trimmed;
+  // Cut on a UTF-8 code-point boundary, not a raw byte: slicing mid-sequence and decoding
+  // yields a U+FFFD that re-encodes to 3 bytes, so a naive `subarray(0, 200)` can exceed the
+  // bound AND corrupt the last character. Back off any trailing continuation bytes
+  // (0b10xxxxxx) so the prefix ends before a complete code point — then the marker is honest.
+  let end = CHECK_COMMAND_MAX_BYTES;
+  while (end > 0 && ((buf[end] ?? 0) & 0xc0) === 0x80) end -= 1;
+  return `${buf.subarray(0, end).toString("utf8")}…`;
 }
 
 /**
