@@ -4702,29 +4702,37 @@ describe("LENS_RULES partitions into the boundary tier and the finish tier", () 
   // assertion that does not cover what runs is the hole 1.5 exists to close.
   const name = (rule: unknown) => (rule as { name?: string }).name ?? "(anonymous)";
 
-  it("the two tiers, as the writer gets them, reunite to exactly LENS_RULES", () => {
-    const running = [...rulesForTier("flagged", "boundary"), ...rulesForTier("flagged", "finish")];
-    const unassigned = LENS_RULES.filter((rule) => !running.includes(rule));
+  it("every registry rule is in exactly one AUTHORED tier, and a stray one fails by name", () => {
+    // Assert over the authored constants, NOT over `rulesForTier`. The derivation
+    // computes the finish tier as the boundary tier's complement over the registry, so
+    // a rule dropped from BOUNDARY_RULES silently REAPPEARS in finish and a reunion
+    // test built on it can never go red. This is the assertion that catches it, and it
+    // reports the rule's own name so the failure says which one.
+    const unassigned = LENS_RULES.filter(
+      (rule) => !BOUNDARY_RULES.includes(rule) && !FINISH_RULES.includes(rule),
+    );
     expect(unassigned.map(name)).toEqual([]);
-    const foreign = running.filter((rule) => !LENS_RULES.includes(rule));
+
+    const foreign = [...BOUNDARY_RULES, ...FINISH_RULES].filter(
+      (rule) => !LENS_RULES.includes(rule),
+    );
     expect(foreign.map(name)).toEqual([]);
-    // …and nothing is in both tiers, so the counts have to agree.
-    expect(running.length).toBe(LENS_RULES.length);
-    expect(new Set(running).size).toBe(LENS_RULES.length);
-  });
 
-  it("the authored constants agree with what runs, so neither can drift alone", () => {
-    const authored = [...BOUNDARY_RULES, ...FINISH_RULES];
-    const running = [...rulesForTier("flagged", "boundary"), ...rulesForTier("flagged", "finish")];
-    expect(new Set(authored).size).toBe(authored.length);
-    expect([...new Set(running)].every((rule) => authored.includes(rule))).toBe(true);
-    expect(authored.every((rule) => running.includes(rule))).toBe(true);
-  });
-
-  it("no rule is in both tiers", () => {
-    const boundary = new Set(BOUNDARY_RULES);
-    const both = FINISH_RULES.filter((rule) => boundary.has(rule));
+    const both = FINISH_RULES.filter((rule) => BOUNDARY_RULES.includes(rule));
     expect(both.map(name)).toEqual([]);
+
+    expect(BOUNDARY_RULES.length + FINISH_RULES.length).toBe(LENS_RULES.length);
+  });
+
+  it("what rulesForTier hands the writer is the authored partition, by name", () => {
+    // The other half: the constants above could be perfect and the derivation still
+    // hand out something else. Names, sorted, so a failure prints the rule.
+    const sorted = (rules: readonly unknown[]) => rules.map(name).sort();
+    const inRegistry = (rules: typeof BOUNDARY_RULES) =>
+      rules.filter((rule) => LENS_RULES.includes(rule));
+
+    expect(sorted(rulesForTier("flagged", "boundary"))).toEqual(sorted(inRegistry(BOUNDARY_RULES)));
+    expect(sorted(rulesForTier("flagged", "finish"))).toEqual(sorted(inRegistry(FINISH_RULES)));
   });
 
   it("the two settlement rules are registry members the finish tier runs", () => {
@@ -4766,8 +4774,7 @@ describe("LENS_RULES partitions into the boundary tier and the finish tier", () 
     const boundary = rulesForTier("report", "boundary");
     const finish = rulesForTier("report", "finish");
     const running = [...boundary, ...finish];
-    expect(new Set(running).size).toBe(REPORT_RULES.length);
-    expect(REPORT_RULES.every((rule) => running.includes(rule))).toBe(true);
+    expect(running.map(name).sort()).toEqual(REPORT_RULES.map(name).sort());
     // `report-coherent` is the report's one whole-board rule.
     expect(finish.some((rule) => name(rule) === "reportCoherent")).toBe(true);
     expect(boundary.some((rule) => name(rule) === "reportCoherent")).toBe(false);

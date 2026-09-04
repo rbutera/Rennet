@@ -701,6 +701,130 @@ describe("status stops claiming a settlement the board has moved past", () => {
   });
 });
 
+describe("set_document goes through the boundary, not just through lint", () => {
+  // The document used to escape every prose rule. The production fix is the boundary
+  // guard in `setDocument`, and these exercise THAT — the lint-level tests in
+  // `lint.test.ts` pass with the guard deleted, so on their own they controlled nothing.
+
+  it("a fenced code block in the intro is refused, naming the flat input field", () => {
+    const w = writer();
+    const refusal = refusalOf(
+      w.call("set_document", {
+        title: "Flagged",
+        intro_markdown: "Like so:\n```ts\nconst x = 1;\n```\n",
+      }),
+    );
+    expect(refusal).toContain("no-code-bytes");
+    // The seat sent `intro_markdown`; `/document/introMarkdown` is not a field it has.
+    expect(refusal).toContain("`intro_markdown`");
+    expect(refusal).not.toContain("/document");
+    // …and the board keeps no document at all.
+    expect(w.board().document).toBeUndefined();
+  });
+
+  it("machinery vocabulary in the title is refused at the title", () => {
+    const w = writer();
+    const refusal = refusalOf(
+      w.call("set_document", { title: "What the lens found", intro_markdown: "Two concerns." }),
+    );
+    expect(refusal).toContain("process-vocabulary");
+    expect(refusal).toContain("`title`");
+    expect(w.board().document).toBeUndefined();
+  });
+
+  it("an unresolvable citation in the intro is refused", () => {
+    const w = writer();
+    const refusal = refusalOf(
+      w.call("set_document", { title: "Flagged", intro_markdown: "See `src/auth.ts:900`." }),
+    );
+    expect(refusal).toContain("citation-resolves");
+    expect(refusal).toContain("`intro_markdown`");
+  });
+
+  it("positive control: a clean document is accepted and kept", () => {
+    // Without this, all three refusals are satisfied by a writer that refuses every
+    // document it is shown.
+    const w = writer();
+    ok(
+      w.call("set_document", {
+        title: "Flagged",
+        intro_markdown: "Two concerns sit on the refresh path; `src/auth.ts:11` is the first.",
+      }),
+    );
+    expect(w.board().document).toMatchObject({
+      title: "Flagged",
+      introMarkdown: "Two concerns sit on the refresh path; `src/auth.ts:11` is the first.",
+    });
+  });
+
+  it("a document already on the board is not replaced by a refused call", () => {
+    const w = writer();
+    ok(w.call("set_document", { title: "Flagged", intro_markdown: "Two concerns." }));
+    refusalOf(w.call("set_document", { title: "Flagged", intro_markdown: "```ts\nx\n```" }));
+    expect(w.board().document).toMatchObject({ introMarkdown: "Two concerns." });
+  });
+});
+
+describe("a refusal names the flat input even when the rule points into a nested field", () => {
+  // `sourceLineKnown` and `sourceCandidateKnown` report at `<id>/source/line` and
+  // `<id>/source/candidate`; the flat inputs are `source_line` and `source_candidate`.
+  // Treating the whole suffix as one data field matched nothing and handed the seat
+  // `source/line`, which is not a field it can change.
+  const designWriter = () =>
+    writer("design", {
+      lint: {
+        regions: REGIONS,
+        files: new Map([["src/auth.ts", 200]]),
+        artifacts: [{ path: "docs/spec.md", text: "One line only." }],
+        artifactCandidates: [{ id: "cand-1", paths: ["docs/spec.md"] }],
+      },
+    });
+
+  it("a source line past the end of the artifact names `source_line`", () => {
+    const w = designWriter();
+    const refusal = refusalOf(
+      w.call("add_requirement", {
+        shall: "The daemon SHALL resolve every citation against the captured patchset.",
+        source_path: "docs/spec.md",
+        source_candidate: "cand-1",
+        source_line: 9,
+      }),
+    );
+    expect(refusal).toContain("design-source-line-known");
+    expect(refusal).toContain("`source_line`");
+    expect(refusal).not.toContain("source/line");
+    expect(w.board().elements).toHaveLength(0);
+  });
+
+  it("an unknown source candidate names `source_candidate`", () => {
+    const w = designWriter();
+    const refusal = refusalOf(
+      w.call("add_requirement", {
+        shall: "The daemon SHALL resolve every citation against the captured patchset.",
+        source_path: "docs/spec.md",
+        source_candidate: "not-a-candidate",
+        source_line: 1,
+      }),
+    );
+    expect(refusal).toContain("design-source-candidate-known");
+    expect(refusal).toContain("`source_candidate`");
+    expect(refusal).not.toContain("source/candidate");
+  });
+
+  it("positive control: a source that resolves goes through", () => {
+    const w = designWriter();
+    const id = idOf(
+      w.call("add_requirement", {
+        shall: "The daemon SHALL resolve every citation against the captured patchset.",
+        source_path: "docs/spec.md",
+        source_candidate: "cand-1",
+        source_line: 1,
+      }),
+    );
+    expect(dataOf<{ source: { line: number } }>(w, id).source.line).toBe(1);
+  });
+});
+
 describe("the document is the seat's prose and the host's measure", () => {
   it("set_document keeps the title and prose and the host decides the measure", () => {
     const w = writer("design");

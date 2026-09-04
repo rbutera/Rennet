@@ -2759,17 +2759,16 @@ export const REPORT_RULES: readonly Rule[] = [
  *   `finish`, and comes back as a pointer list the seat answers with further calls
  *   in the same turn.
  *
- * This is a PARTITION of one registry, not a second rule set: `lint` is unchanged
- * and still runs every rule. {@link BOUNDARY_RULES} and {@link FINISH_RULES} are
- * authored separately and `lint.test.ts` asserts they reunite to exactly
- * {@link LENS_RULES} with nothing in both and nothing in neither — which is the
- * point of authoring them separately rather than deriving `LENS_RULES` from them,
- * since a derived union would make that assertion tautological and a new rule
- * could land unassigned without anything noticing.
+ * This is a PARTITION of one registry, not a second rule set. {@link BOUNDARY_RULES}
+ * and {@link FINISH_RULES} are authored separately, and `lint.test.ts` asserts they
+ * reunite to exactly {@link LENS_RULES} with nothing in both and nothing in neither,
+ * failing BY NAME — which is the point of authoring them separately rather than
+ * deriving `LENS_RULES` from them, since a derived union would make that assertion
+ * tautological and a new rule could land unassigned without anything noticing.
  *
- * Two rules of D5's finish tier are NOT in `LENS_RULES` because they are not part
- * of the draft lint today — they live in the drafting runtime, and they move here
- * as {@link FINISH_ONLY_RULES}.
+ * `lint` does NOT run the whole registry: it runs {@link DRAFT_LINT_RULES}, which is
+ * the registry minus {@link SETTLEMENT_RULES}. Read that constant before assuming
+ * otherwise — the two settlement rules are answerable only at `finish`.
  */
 export const BOUNDARY_RULES: readonly Rule[] = [
   // Impossible through the tool surface — the lens has no verb for a foreign kind.
@@ -2801,8 +2800,9 @@ export const BOUNDARY_RULES: readonly Rule[] = [
  *
  * The last two moved down from `lens-pipeline.ts`, where they were lane settlement
  * questions asked after the ladder — a seat could not answer a lane failure, and it
- * can answer a pointer. They are ordinary members of {@link LENS_RULES}, so `lint`
- * runs them and the partition assertion covers them.
+ * can answer a pointer. They are ordinary members of {@link LENS_RULES}, so the
+ * partition assertion covers them; they are the {@link SETTLEMENT_RULES}, so `lint`
+ * is the one caller that does not run them, for the reason recorded there.
  */
 export const FINISH_RULES: readonly Rule[] = [
   reportCoherent,
@@ -2873,12 +2873,16 @@ const BOUNDARY_SET: ReadonlySet<Rule> = new Set(BOUNDARY_RULES);
  * registry through the partition — so the report seat's narrower set splits the
  * same way a lens's does, with no second assignment to keep in step.
  *
- * Nothing is appended here. An earlier revision kept the two rules that moved down
- * from `lens-pipeline.ts` in a third list outside {@link LENS_RULES} and added it to
- * the finish tier at call time, which made the partition assertion true of the
- * authored constants and false of the set that actually ran — the exact hole 1.5
- * exists to close, since a new rule could land in that third list and be asserted by
- * nothing. They are in the registry now, and `lint` runs them like every other rule.
+ * Nothing is appended here. An earlier revision kept the two settlement rules in a
+ * third list outside {@link LENS_RULES} and added it to the finish tier at call time,
+ * which made the partition assertion true of the authored constants and false of the
+ * set that actually ran — the exact hole 1.5 exists to close, since a rule could land
+ * in that third list and be asserted by nothing. They are in the registry now.
+ *
+ * Note what this derivation CANNOT catch on its own: the finish tier is the boundary
+ * tier's complement over the registry, so a rule dropped from {@link BOUNDARY_RULES}
+ * silently reappears here rather than going missing. The assertion that a rule is in
+ * exactly one AUTHORED tier is what catches that, and it names the rule when it fails.
  */
 export function rulesForTier(target: LintTarget, tier: LintTier): readonly Rule[] {
   const registry = target === "report" ? REPORT_RULES : LENS_RULES;

@@ -551,18 +551,35 @@ function pointerLabel(
   violation: Violation,
 ): string {
   const { elementRef, ruleId } = violation;
-  const slash = elementRef.indexOf("/");
-  const id = slash === -1 ? elementRef : elementRef.slice(0, slash);
-  if (touchedId === undefined || id !== touchedId) return `\`${elementRef}\``;
+  if (touchedId === undefined) return `\`${elementRef}\``;
 
-  const dataField = slash === -1 ? undefined : elementRef.slice(slash + 1);
-  if (dataField !== undefined) {
-    const named = tool.fields.find((field) => field.source.dataField === dataField);
-    return `\`${named?.name ?? dataField}\``;
+  // The touched thing is an element id, or the board-level `/document`. Anything that
+  // is not a suffix of it belongs to another element and keeps its own ref.
+  let suffix: string | undefined;
+  if (elementRef === touchedId) suffix = undefined;
+  else if (elementRef.startsWith(`${touchedId}/`)) suffix = elementRef.slice(touchedId.length + 1);
+  else return `\`${elementRef}\``;
+
+  if (suffix === undefined) {
+    const own = new Set(tool.fields.map((field) => field.name));
+    const about = (RULE_INPUT_FIELDS[ruleId] ?? []).filter((name) => own.has(name));
+    return about.length > 0 ? about.map((name) => `\`${name}\``).join(", ") : `\`${tool.name}\``;
   }
-  const own = new Set(tool.fields.map((field) => field.name));
-  const about = (RULE_INPUT_FIELDS[ruleId] ?? []).filter((name) => own.has(name));
-  return about.length > 0 ? about.map((name) => `\`${name}\``).join(", ") : `\`${tool.name}\``;
+
+  // A pointer into a structured field is NESTED and may carry a list index:
+  // `source/line`, `sources/0/path`, `scenarios/2`. The flat input that owns it is
+  // named by the data field and, where the pointer goes deeper, by the part —
+  // `source/line` is `source_line`, `sources/0/path` is `source_paths`. Matching the
+  // whole suffix as one data field found nothing and echoed `source/line` back at the
+  // seat, which is not a field it can change.
+  const segments = suffix.split("/").filter((segment) => !/^\d+$/.test(segment));
+  const [dataField, part] = segments;
+  const named = tool.fields.find((field) => {
+    if (field.source.dataField !== dataField) return false;
+    if (part === undefined) return field.source.form !== "json-part";
+    return field.source.form === "json-part" && field.source.part === part;
+  });
+  return `\`${named?.name ?? suffix}\``;
 }
 
 /**
