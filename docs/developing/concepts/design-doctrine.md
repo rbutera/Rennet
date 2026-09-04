@@ -35,10 +35,24 @@ The main color roles are:
 | Green | Added code and verified evidence |
 | Danger | Destructive actions and errors |
 | Diff add and delete | Source changes only |
+| Lens register | Which of the five lenses a mark belongs to — identity, never state |
 
 Keep ordinary screens on the warm neutral ramp. Accent color points to something
 the reviewer can act on or inspect. Color never carries meaning without text,
 shape, or position.
+
+The lens register is the one hue family that is not a semantic role. Five lenses
+read one change in parallel, and a reviewer tracks them across two surfaces — the
+bench's readers and the lens rail — so each lens carries a colour: Flagged red,
+Decisions yellow, Design blue, Sequence green, Noise neutral. It is admitted as
+identity, at small mass, on marks only. A lens hue is never a fill, never type, and
+never says how a lane is doing; on the bench, state is the way the core sample is
+cut, so a failed lane snaps in its own colour rather than turning red. The slots are
+hue names (`--rn-lens-red`, `--rn-lens-blue`, …) rather than lens names, which is
+what makes them portable: `packages/theme` binds five hues and knows nothing about
+lenses, and `packages/app-ui/src/board/lens-colour.ts` owns the mapping. Because the
+hue is only ever a mark, the contract it meets is WCAG's 3:1 non-text bar rather
+than 4.5:1.
 
 ## Theme packs
 
@@ -51,12 +65,14 @@ default stamps no attribute — absence of `data-rn-theme` is the Affineur's Ben
 
 A pack changes colour only; it never touches type, spacing, or radius, and it owes
 the same contract as the default: every semantic role survives the mapping (accent,
-evidence green, danger, diff add and delete, sheet, and the ground ramp), and every
-ink and diff pair clears WCAG AA. `packages/theme/src/palette-sync.test.ts` fails on
-a pack that drops a token (no partial packs), and `packages/theme/src/theme.test.ts`
-runs the AA contract per pack per scheme. A pack translates an upstream palette's
-spirit into Rennet's roles; where an upstream muted grey or accent falls short of
-AA, the pack lifts it rather than copying the hex.
+evidence green, danger, diff add and delete, sheet, the ground ramp, and the five
+lens slots), and every ink and diff pair clears WCAG AA.
+`packages/theme/src/palette-sync.test.ts` fails on a pack that drops a token (no
+partial packs), and `packages/theme/src/theme.test.ts` runs the AA contract per pack
+per scheme, plus the lens register's own 3:1 bar and a check that no pack binds two
+lenses to the same colour. A pack translates an upstream palette's spirit into
+Rennet's roles; where an upstream muted grey, accent or lens hue falls short of its
+bar, the pack lifts it rather than copying the hex.
 
 Syntax colour is a **separate axis**. By default code follows the active pack's own
 `--rn-syn-*`; a viewer can instead pick a bundled **code theme**

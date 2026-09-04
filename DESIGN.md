@@ -108,6 +108,22 @@ Light and dark schemes are complete designs. Use `data-scheme="light|dark"` in R
 
 Do not add a decorative interface hue. Never use color as the only statement of state.
 
+The one exception is **the lens register**, and it is identity rather than decoration (Rai, 2026-09-04). Five review lenses run in parallel on one change, and a reviewer has to tell them apart across two surfaces at once — the bench's readers and the lens rail. Colour is what does that, so the register is admitted under three conditions: it appears at small mass only (a rule, a stop, a core sample — never a fill and never type), it never carries state, and every state it sits beside is stated by shape and by words. A lens hue answers *which lens*; anything else on that surface answers *how it is doing*.
+
+### The lens register
+
+| Lens | Slot | Default (light / dark) |
+|---|---|---|
+| Flagged | red | `#b23b2b` / `#db7a6a` |
+| Decisions | yellow | `#8a5d0b` / `#e8b13c` |
+| Design | blue | `#2f5d8f` / `#8fb3dd` |
+| Sequence | green | `#41745b` / `#88bc9b` |
+| Noise | neutral | `#57534a` / `#a9a196` |
+
+The slots are **portable**: `--rn-lens-red|yellow|blue|green|neutral` are hue names, not lens names, and every theme pack binds all five from its own palette, so a reader who picks Dracula gets Dracula's red for Flagged. `packages/theme` therefore knows nothing about lenses; the lens-to-slot mapping is the app's, in `packages/app-ui/src/board/lens-colour.ts`. In the default theme four slots are hues the Affineur's Bench already carried — Decisions lands on gold because gold *is* Rennet's decision register — so the direction gains exactly one colour it did not have: Design's slate blue.
+
+Because a lens hue is only ever a mark, it is held to WCAG's 3:1 non-text contrast on canvas, surface and raised rather than 4.5:1, computed per pack per scheme in `packages/theme/src/theme.test.ts`. That is the correct bar for a rule and the wrong one for a sentence, which is why no label, no prose and no status line is ever set in it.
+
 The canonical values live in [`packages/theme/src/palette.css`](packages/theme/src/palette.css). DOM applications consume the CSS variables. The mobile application consumes the generated React Native palette.
 
 ### Themeability

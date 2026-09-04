@@ -46,6 +46,13 @@
   --rn-danger: #e45649;
   --rn-danger-soft: rgb(228 86 73 / 0.1);
   --rn-on-danger: #ffffff;
+  /* lens register — One Light, with red and green at the darkened step this
+     pack already takes for its diff inks */
+  --rn-lens-red: #c1352b;
+  --rn-lens-yellow: #986801;
+  --rn-lens-blue: #2c5fd0;
+  --rn-lens-green: #1f6d23;
+  --rn-lens-neutral: #55585f;
   /* paper */
   --rn-sheet: #ffffff;
   --rn-sheet-ink: #383a42;
@@ -109,6 +116,12 @@
   --rn-danger: #e06c75;
   --rn-danger-soft: rgb(224 108 117 / 0.15);
   --rn-on-danger: #ffffff;
+  /* lens register — One Dark */
+  --rn-lens-red: #e06c75;
+  --rn-lens-yellow: #e5c07b;
+  --rn-lens-blue: #61afef;
+  --rn-lens-green: #98c379;
+  --rn-lens-neutral: #abb2bf;
   /* paper */
   --rn-sheet: #2f333d;
   --rn-sheet-ink: #c8cdd6;

@@ -216,20 +216,90 @@ describe("ratified anchors (root DESIGN.md reconciliation)", () => {
   });
 });
 
+const packBlock = (css: string, selector: string): string => {
+  const start = css.indexOf(selector);
+  expect(start, `selector present: ${selector}`).toBeGreaterThanOrEqual(0);
+  const open = css.indexOf("{", start);
+  return css.slice(open, css.indexOf("}", open));
+};
+
+const PACK_IDS = ["catppuccin-mocha", "dracula", "github", "one-dark-pro"] as const;
+const packCss = (id: string): string =>
+  readFileSync(fileURLToPath(new URL(`./themes/${id}.css`, import.meta.url)), "utf8");
+
+// ── The lens register ────────────────────────────────────────────────────────
+// Five portable hue slots that carry lens identity on the bench and the lens rail.
+// The bar here is WCAG 1.4.11 (3:1, non-text) rather than 4.5:1, and that is a
+// deliberate narrowing, not a relaxation: a lens hue is only ever a MARK — a rule,
+// a keel, a bar — never type, so 4.5:1 is not the applicable criterion. It would
+// also be unmeetable without repainting each pack away from its own palette, which
+// is the whole point of the slots. `packages/app-ui`'s lens-colour test is the other
+// half: it forbids the hue reaching a text utility, so this bar stays the right one.
+const LENS_SLOTS = ["red", "yellow", "blue", "green", "neutral"] as const;
+/** Every theme and scheme that must bind the register, as (label, declarations). */
+const LENS_SCOPES: readonly (readonly [string, string])[] = [
+  ["rennet light", LIGHT],
+  ["rennet dark", DARK],
+  ...PACK_IDS.flatMap(
+    (id) =>
+      [
+        [`${id} light`, packBlock(packCss(id), `[data-rn-theme="${id}"] {`)],
+        [`${id} dark`, packBlock(packCss(id), `[data-rn-theme="${id}"][data-scheme="dark"]`)],
+      ] as const,
+  ),
+];
+
+describe("the lens register is complete, legible, and telling-apart", () => {
+  it("covers every theme and both schemes (the sweep is not vacuous)", () => {
+    // 5 themes × 2 schemes. If a pack is added and this list is not, the count
+    // disagrees before any assertion below gets a chance to pass by not running.
+    expect(LENS_SCOPES.length).toBe(10);
+  });
+
+  for (const [label, scope] of LENS_SCOPES) {
+    it(`${label}: every lens slot clears 3:1 on canvas, surface and raised`, () => {
+      const grounds = [
+        ["canvas", hex(scope, "--rn-canvas")],
+        ["surface", hex(scope, "--rn-surface")],
+        ["raised", hex(scope, "--rn-raised")],
+      ] as const;
+      for (const slot of LENS_SLOTS) {
+        // `hex` throws when the slot is missing, so completeness is checked here too.
+        const value = hex(scope, `--rn-lens-${slot}`);
+        for (const [name, ground] of grounds) {
+          expect(
+            contrast(value, ground),
+            `${label} lens-${slot} on ${name}`,
+          ).toBeGreaterThanOrEqual(3);
+        }
+      }
+    });
+
+    it(`${label}: no two lens slots are the same colour`, () => {
+      // The register exists to tell five parallel readers apart. A pack that binds
+      // the same hue twice has silently merged two lenses, and every contrast
+      // assertion above would still pass.
+      const values = LENS_SLOTS.map((slot) => hex(scope, `--rn-lens-${slot}`));
+      expect(new Set(values).size, `${label}: ${values.join(" ")}`).toBe(LENS_SLOTS.length);
+    });
+  }
+
+  it("the 3:1 bar bites (positive control)", () => {
+    // A hue a hair off its own ground fails the SAME assertion the sweep runs, so a
+    // pack that binds an invisible lens colour cannot pass by luck.
+    const ground = hex(LIGHT, "--rn-canvas");
+    expect(contrast("#f7f5f2", ground)).toBeLessThan(3);
+    expect(contrast(hex(LIGHT, "--rn-lens-blue"), ground)).toBeGreaterThanOrEqual(3);
+  });
+});
+
 // A bundled theme pack (issue #481) meets the SAME contrast contract as the
 // default or it doesn't ship. Each themes/<id>.css scopes light + dark blocks;
 // we run the identical AA assertions the default does, per pack per scheme. A
 // pack that lifts a muted grey too far, or picks an accent that fails on its
 // grounds, reddens here.
 describe("theme packs meet the same AA contrast contract", () => {
-  const packBlock = (css: string, selector: string): string => {
-    const start = css.indexOf(selector);
-    expect(start, `selector present: ${selector}`).toBeGreaterThanOrEqual(0);
-    const open = css.indexOf("{", start);
-    return css.slice(open, css.indexOf("}", open));
-  };
-
-  for (const id of ["catppuccin-mocha", "dracula", "github", "one-dark-pro"]) {
+  for (const id of PACK_IDS) {
     const packCss = readFileSync(
       fileURLToPath(new URL(`./themes/${id}.css`, import.meta.url)),
       "utf8",

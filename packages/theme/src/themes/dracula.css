@@ -47,6 +47,12 @@
   --rn-danger: #cb3a2a;
   --rn-danger-soft: rgb(203 58 42 / 0.1);
   --rn-on-danger: #ffffff;
+  /* lens register — the pack's daylight cast */
+  --rn-lens-red: #cb3a2a;
+  --rn-lens-yellow: #846e15;
+  --rn-lens-blue: #036a96;
+  --rn-lens-green: #14710a;
+  --rn-lens-neutral: #565241;
   /* paper */
   --rn-sheet: #ffffff;
   --rn-sheet-ink: #1f1f1f;
@@ -109,6 +115,13 @@
   --rn-danger: #ff5555;
   --rn-danger-soft: rgb(255 85 85 / 0.15);
   --rn-on-danger: #ffffff;
+  /* lens register — Dracula's own. It has no true blue: cyan is its coolest
+     hue, so cyan takes the blue slot */
+  --rn-lens-red: #ff5555;
+  --rn-lens-yellow: #f1fa8c;
+  --rn-lens-blue: #8be9fd;
+  --rn-lens-green: #50fa7b;
+  --rn-lens-neutral: #cbcdd8;
   /* paper */
   --rn-sheet: #313342;
   --rn-sheet-ink: #f8f8f2;
