@@ -66,6 +66,8 @@ const TASKS_MD = `# Implementation Plan
 - [ ] 1.1 Add persistence
   - Encode validation rules
   - _Requirements: 1.3, 2.1_
+- [ ]* 1.2 Add optional telemetry
+  - _Requirements: 2.1_
 - [ ] 2. Build the restart path
   - _Requirements: 1.1, 1.2_
 `;
@@ -215,18 +217,27 @@ describe("parseKiroSpec — tasks", () => {
     const tasks = present(parseKiroSpec(SOURCE).tasks);
     expect(tasks.groups.map((g) => g.id)).toEqual(["task-group:1", "task-group:2"]);
     expect(tasks.groups[0]?.title).toBe("1. Build the session store");
-    expect(tasks.total).toBe(3);
+    expect(tasks.total).toBe(4);
     expect(tasks.done).toBe(1);
   });
 
   it("folds a sub-numbered item into its top-level group", () => {
     const tasks = present(parseKiroSpec(SOURCE).tasks);
     const group1 = tasks.groups[0];
-    expect(group1?.items.map((i) => i.number)).toEqual(["1", "1.1"]);
-    expect(group1?.total).toBe(2);
+    expect(group1?.items.map((i) => i.number)).toEqual(["1", "1.1", "1.2"]);
+    expect(group1?.total).toBe(3);
     expect(group1?.done).toBe(1);
     expect(group1?.items[0]?.status).toBe("done");
     expect(group1?.items[1]?.status).toBe("todo");
+  });
+
+  it("keeps a Kiro optional task (`- [ ]* N.M`), not silently dropping it", () => {
+    const tasks = present(parseKiroSpec(SOURCE).tasks);
+    const optional = tasks.groups[0]?.items[2];
+    expect(optional?.number).toBe("1.2");
+    expect(optional?.text).toBe("1.2 Add optional telemetry");
+    expect(optional?.status).toBe("todo");
+    expect(optional?.requirementRefs).toEqual(["2.1"]);
   });
 
   it("binds each task's `_Requirements:` refs in source order", () => {
@@ -267,8 +278,8 @@ describe("parseKiroSpec — positive control", () => {
     expect(criteriaCount).toBe(4);
     const tasks = present(spec.tasks);
     const itemCount = tasks.groups.reduce((sum, group) => sum + group.items.length, 0);
-    expect(itemCount).toBe(3);
-    expect(tasks.total).toBe(3);
+    expect(itemCount).toBe(4);
+    expect(tasks.total).toBe(4);
   });
 });
 

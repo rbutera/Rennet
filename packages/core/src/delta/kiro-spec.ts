@@ -456,7 +456,8 @@ function parseDesign(md: string): KiroDesign {
 
 // ── tasks.md ─────────────────────────────────────────────────────────────────
 
-const TASK_ITEM = /^(\s*)[-*+]\s+\[([ xX])\]\s+(.+?)\s*$/;
+// Kiro marks an optional task with a `*` right after the checkbox: `- [ ]* 1.3 …`.
+const TASK_ITEM = /^(\s*)[-*+]\s+\[([ xX])\]\*?\s+(.+?)\s*$/;
 const REQUIREMENTS_REF = /^\s*[-*+]\s+_Requirements?:\s*([^_]+)_\s*$/i;
 
 /**
@@ -526,10 +527,9 @@ function parseTasks(md: string): KiroTasks {
     if (checkbox.done) group.done += 1;
   }
 
-  const orderedGroups = order.map((id) => {
+  const orderedGroups = order.flatMap((id) => {
     const group = groups.get(id);
-    if (!group) throw new Error("unreachable: group id from insertion order");
-    return group;
+    return group ? [group] : [];
   });
   const total = orderedGroups.reduce((sum, group) => sum + group.total, 0);
   const done = orderedGroups.reduce((sum, group) => sum + group.done, 0);

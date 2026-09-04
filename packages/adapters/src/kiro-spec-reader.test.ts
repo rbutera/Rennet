@@ -147,6 +147,23 @@ describe("readKiroSpec — working-tree review (reads the captured tree)", () =>
     );
     expect(spec).toBeNull();
   });
+
+  it("returns null for a deletion-only patchset — feature named, no artifact survives", async () => {
+    const root = tempRoot();
+    // The changed paths name `session` (its files were removed), but every artifact read
+    // at the reviewed tree is absent. That is "no Kiro spec here", not an empty spec.
+    const spec = await readKiroSpec(
+      patchsetOf({
+        root,
+        headOid: "head000",
+        reviewedTreeOid: "reviewed-tree",
+        surface: "working-tree",
+        paths: [".kiro/specs/session/requirements.md", ".kiro/specs/session/tasks.md"],
+      }),
+      fakeGit({}), // every `git show` throws → every read undefined
+    );
+    expect(spec).toBeNull();
+  });
 });
 
 describe("readKiroSpec — PR review (reads git show at the head OID, not the checkout)", () => {

@@ -69,6 +69,16 @@ export async function readKiroSpec(patchset: Patchset, git: GitExec): Promise<Ki
     read(`${featureRel}/bugfix.md`),
   ]);
 
+  // A deletion-only patchset names the feature via its removed paths, but no artifact
+  // survives at the reviewed tree — that is "no Kiro spec here", not an empty spec.
+  if (
+    requirementsMd === undefined &&
+    designMd === undefined &&
+    tasksMd === undefined &&
+    bugfixMd === undefined
+  )
+    return null;
+
   return parseKiroSpec({
     feature,
     ...(requirementsMd !== undefined ? { requirementsMd } : {}),
