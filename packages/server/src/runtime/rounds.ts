@@ -681,9 +681,10 @@ export interface RoundsRuntimeDeps {
   /**
    * The T3 sidecar's seat runtime for one generation (t3-lens-threads). Every board seat
    * runs on it — T3 is their only backend — so a daemon that cannot bring the sidecar up
-   * answers `{ unavailable: <detail> }` and the lanes FAIL with that reason. The dep being
-   * absent altogether is the direct-call shape (no sidecar was ever composed), which keeps
-   * the ephemeral legs; there is no path from a sidecar failure to one.
+   * answers `{ unavailable: <detail> }` and the lanes FAIL with that reason. Absent ⇒ every
+   * board seat settles as a typed failure naming the missing sidecar; `create-server.ts`
+   * always fills it, so the absent case is a direct-call caller with no board pipeline
+   * behind it.
    */
   readonly resolveT3Seats?: (input: {
     readonly repoRoot: string;
@@ -1154,9 +1155,9 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
     ];
     // t3-lens-threads — the sidecar's seat runtime for THIS generation. A resolver that
     // rejects is the same answer as one that says `unavailable`: the daemon has a sidecar
-    // and could not bring it up, so the board seats FAIL with the reason rather than
-    // dropping to the ephemeral legs (review finding 1). Only a caller with no resolver at
-    // all — a direct-call test — leaves those legs in place.
+    // and could not bring it up, so the board seats FAIL with the reason. No resolver at
+    // all — a direct-call test — is the same outcome with a blunter reason: every board
+    // seat settles as a typed failure naming the missing sidecar.
     const t3Resolved = await deps
       .resolveT3Seats?.({
         repoRoot: input.draftingRoot ?? input.repoRoot,
