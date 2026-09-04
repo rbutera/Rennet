@@ -2,6 +2,25 @@ import { basename } from "node:path";
 import { parseCommandInput, parseCommandOutput } from "@rennet/protocol";
 import type { CommandHandler, DispatchRuntime } from "./runtime";
 
+/**
+ * The session's bound workspace as `threadFor` takes it (session-bound-workspace 5.2). The
+ * review's own thread — the one chat and the handoff share — runs in the workspace the session
+ * is bound to, not the repository root, so a PR snapshot's chat reads the reviewed head and a
+ * branch review's chat reads the branch. A host with no resolver wired answers nothing and the
+ * thread falls back to the project root, exactly as before the binding existed.
+ */
+async function boundWorkspaceInput(
+  rt: DispatchRuntime,
+  reviewId: string,
+): Promise<{ worktreePath?: string; branch?: string }> {
+  const bound = await rt.deps.boundWorkspaceForReview?.(reviewId);
+  if (bound === undefined) return {};
+  return {
+    worktreePath: bound.root,
+    ...(bound.branch === undefined ? {} : { branch: bound.branch }),
+  };
+}
+
 export function chatHandlers(rt: DispatchRuntime) {
   const { deps } = rt;
   return {
@@ -25,6 +44,7 @@ export function chatHandlers(rt: DispatchRuntime) {
         repositoryRoot: review.repositoryRoot,
         key: { kind: "session", sessionId: input.reviewId },
         title: basename(review.repositoryRoot) || "review",
+        ...(await boundWorkspaceInput(rt, input.reviewId)),
       });
       return parseCommandOutput(name, {
         ...session,
@@ -47,6 +67,7 @@ export function chatHandlers(rt: DispatchRuntime) {
         repositoryRoot: review.repositoryRoot,
         key: { kind: "session", sessionId: input.reviewId },
         title: basename(review.repositoryRoot) || "review",
+        ...(await boundWorkspaceInput(rt, input.reviewId)),
       });
       const client = await deps.t3Sidecar.client();
       await client.startTurn({ threadId: binding.threadId, text: input.text });

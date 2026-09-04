@@ -110,6 +110,19 @@ export interface DispatchDeps {
    */
   readonly purgeSessionContext?: (sessionId: string) => void;
   /**
+   * The workspace the session owning this review is bound to (session-bound-workspace D1) —
+   * the cwd of every turn the session spawns, and what the review's own T3 thread is created
+   * with. `branch` is present exactly when that workspace has one checked out; a PR snapshot
+   * binds to a detached worktree and carries none.
+   *
+   * The host resolves it, not this layer: a review names a repository, and which WORKSPACE of
+   * that repository a session took is a durable fact of the session record. Absent ⇒ no
+   * session store wired, and a thread falls back to the project root as it did before.
+   */
+  readonly boundWorkspaceForReview?: (
+    reviewId: string,
+  ) => Promise<{ readonly root: string; readonly branch?: string } | undefined>;
+  /**
    * The session id a REVIEW's context files are keyed on — the same key
    * `purgeSessionContext` above is called with, resolved by the composition root from the
    * session store (`sessionIdForReview`).

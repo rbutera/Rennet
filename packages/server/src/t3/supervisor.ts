@@ -44,6 +44,10 @@ export interface T3SidecarSupervisor {
     readonly modelSelection?: ModelSelection;
     /** The owning session, recorded on a seat binding so archiving can find it. */
     readonly sessionId?: string;
+    /** The session's bound workspace (session-bound-workspace) — the thread's cwd. */
+    readonly worktreePath?: string;
+    /** The branch that workspace has checked out; absent for a detached PR snapshot. */
+    readonly branch?: string;
   }) => Promise<ThreadBinding>;
   /**
    * Archiving a session is the pruning act: delete every thread bound to any of these
@@ -157,6 +161,8 @@ export function createT3SidecarSupervisor(
       title: input.title,
       modelSelection: input.modelSelection ?? DEFAULT_MODEL,
       ...(input.sessionId === undefined ? {} : { sessionId: input.sessionId }),
+      ...(input.worktreePath === undefined ? {} : { worktreePath: input.worktreePath }),
+      ...(input.branch === undefined ? {} : { branch: input.branch }),
     });
 
   // ONE sweep at a time (review finding 2). The bindings file is a read-modify-write over a

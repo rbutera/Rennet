@@ -36,13 +36,13 @@
 
 ## 5. One workspace per session (D1, D2)
 
-- [ ] 5.1 Record the bound root on the session at creation: current checkout when on the branch, a Rennet-created branch worktree otherwise, the PR-head worktree for a snapshot; surface it beside the branch name
-- [ ] 5.2 Create the session thread, seat threads and handoff thread with the bound `worktreePath`; fail with the missing path when the root is gone (includes the WSL leg: `ClaudeAdapter` runs the child with `wsl.exe --cd <distro root>` from `locusContextForRepo(repoRoot)`, so a seat's bound root must reach `wslCwd` too, or a PR-snapshot seat on WSL drafts in the wrong tree; found by PR #789)
+- [x] 5.1 Record the bound root on the session at creation: current checkout when on the branch, a Rennet-created branch worktree otherwise, the PR-head worktree for a snapshot; surface it beside the branch name
+- [x] 5.2 Create the session thread, seat threads and handoff thread with the bound `worktreePath`; fail with the missing path when the root is gone (includes the WSL leg: `ClaudeAdapter` runs the child with `wsl.exe --cd <distro root>` from `locusContextForRepo(repoRoot)`, so a seat's bound root must reach `wslCwd` too, or a PR-snapshot seat on WSL drafts in the wrong tree; found by PR #789)
 - [ ] 5.3 Run the round worker as a turn in the bound root; read the turn's checkpoint as the receipt; capture the successor patchset from the bound root; record root and checkpoint in the round account and show them
 - [ ] 5.4 Delete `planWorkspace`, `round-worktrees`, round-collation landing, `settleRoundCommits`, the round use of `cleanupWorktree`, the review evidence worktree, and the WSL round path translation; delete their tests
-- [ ] 5.5 Daemon-start sweep removes legacy round and review worktrees with a logged count; sessions from before the wave bind lazily on first use
+- [x] 5.5 Daemon-start sweep removes legacy round and review worktrees with a logged count; sessions from before the wave bind lazily on first use
 - [ ] 5.7 Board jobs run on T3 seats only: delete the ephemeral Claude and Codex board-drafting legs in `council-seat-turn.ts` and the direct-call/desktop fallback shapes that reach them (no seam is the existing typed "T3 sidecar unavailable" failure); drive `owner-loop-proof.integration.test.ts` and `lens-settlement-proof-fixture.ts` through a fake T3 seam instead of the scripted Claude plan, so a pointer-only repair is answerable in the e2e (found by PR #800: a scripted plan cannot answer a repair that carries no prompt text)
-- [ ] 5.6 Docs: `handoff-and-exits.md`, `t3code-sidecar.md`, `architecture-contracts.md` (a round advances the patchset from the bound root), the rounds pages under `docs/using`
+- [x] 5.6 Docs: `handoff-and-exits.md`, `t3code-sidecar.md`, `architecture-contracts.md` (a round advances the patchset from the bound root), the rounds pages under `docs/using`
 
 ## 6. Proof
 

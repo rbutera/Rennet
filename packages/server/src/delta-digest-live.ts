@@ -177,6 +177,14 @@ export function claudeDeltaDigestPort(port: HarnessPort, cwd: string): DeltaDige
 
 /** The deps the live producer is bound to (all injected so the module stays testable). */
 export interface LiveDeltaDigestDeps {
+  /**
+   * The session's BOUND workspace for this review (session-bound-workspace D1) — the cwd this
+   * turn runs in, and the root `writeContext` writes under. One value for both, because the
+   * context path the prompt names is RELATIVE: write under the repository while the turn runs
+   * in a worktree and the prompt points at a file that is not there. Absent ⇒ the repository
+   * root, which is the binding for a branch review on the reviewer's own checkout.
+   */
+  turnRoot?(review: Review): string;
   /** The Claude harness adapter, or null when no `claude` is installed. */
   claudePort(repoRoot: string): Promise<HarnessPort | null>;
   /** The Codex executor resolved to the absolute binary, or null. Receives the
@@ -202,9 +210,12 @@ export function createLiveDeltaDigestPort(
   deps: LiveDeltaDigestDeps,
 ): (input: { review: Review; account: SuccessorAccount }) => Promise<DeltaDigestResult> {
   return async (input) => {
+    // The session's bound workspace: this turn's cwd and the root its context files were
+    // written under, which have to be the same value (session-bound-workspace 5.2).
+    const turnRoot = deps.turnRoot?.(input.review) ?? input.review.repositoryRoot;
     const [claudePort, executor] = await Promise.all([
-      deps.claudePort(input.review.repositoryRoot),
-      deps.codexExecutor(input.review.repositoryRoot),
+      deps.claudePort(turnRoot),
+      deps.codexExecutor(turnRoot),
     ]);
     const installed: CouncilHarnessId[] = [];
     if (claudePort !== null) installed.push("claude-code");
@@ -218,14 +229,9 @@ export function createLiveDeltaDigestPort(
     const harness = providerHarness(resolution.model);
     let port: DeltaDigestPort | null = null;
     if (harness === "codex" && executor !== null) {
-      port = codexDeltaDigestPort(
-        executor,
-        resolution.model,
-        resolution.effort,
-        input.review.repositoryRoot,
-      );
+      port = codexDeltaDigestPort(executor, resolution.model, resolution.effort, turnRoot);
     } else if (harness === "claude-code" && claudePort !== null) {
-      port = claudeDeltaDigestPort(claudePort, input.review.repositoryRoot);
+      port = claudeDeltaDigestPort(claudePort, turnRoot);
     }
     if (port === null) {
       return { status: "unavailable", reason: "delta-digest has no model seat installed" };

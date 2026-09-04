@@ -136,4 +136,36 @@ describe("SessionStore (#466 res. 1–2, B09 cluster 1)", () => {
       } as unknown as SessionThread),
     ).toThrow();
   });
+
+  // ── The workspace binding (session-bound-workspace 5.1) ─────────────────────────────────
+  it("records a bound workspace on a session written before the field existed, once", () => {
+    const dir = tmpDir();
+    // A record from before the binding wave: no `boundRoot`, and no `contextRoot` either.
+    writeFileSync(
+      join(dir, "pre-wave.json"),
+      JSON.stringify({
+        id: "pre-wave",
+        projectId: "proj-1",
+        repositoryRoot: "/repos/alpha",
+        claim: { branch: "feat/x" },
+        threads: [],
+        createdAt: 900,
+      }),
+    );
+    const store = new SessionStore(dir);
+    // It still PARSES: a stricter schema would drop the record, and `list()` dropping a
+    // record is read by the context sweep as "that session is gone" — a live session's
+    // files deleted under it.
+    const loaded = store.load("pre-wave");
+    expect(loaded?.id).toBe("pre-wave");
+    expect(loaded?.boundRoot).toBeUndefined();
+
+    // First use binds it lazily and records it...
+    expect(store.setBoundRoot("pre-wave", "/repos/alpha")?.boundRoot).toBe("/repos/alpha");
+    expect(new SessionStore(dir).load("pre-wave")?.boundRoot).toBe("/repos/alpha");
+    // ...and the binding is decided ONCE: a later ask keeps the recorded root rather than
+    // moving a live session's workspace under its own running turns.
+    expect(store.setBoundRoot("pre-wave", "/repos/beta")?.boundRoot).toBe("/repos/alpha");
+    expect(store.setBoundRoot("no-such-session", "/repos/alpha")).toBeUndefined();
+  });
 });

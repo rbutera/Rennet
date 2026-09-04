@@ -1869,6 +1869,14 @@ export type RoundEvent = z.infer<typeof RoundEventSchema>;
 export const SessionTrailSchema = z.object({
   title: z.string(),
   projectName: z.string().optional(),
+  /**
+   * The workspace the session is bound to (session-bound-workspace): the path every one of
+   * its turns runs in, shown beside the branch so the reviewer can see WHICH checkout a seat
+   * read. A host path, scrubbed to a `<root>`/`~` reference for a projected connection by the
+   * same wire projection every other path crosses. Absent ⇒ nothing has bound a workspace
+   * yet, and the trail says nothing rather than naming a root it cannot prove.
+   */
+  workspace: z.string().optional(),
   target: z.enum(["your-branch", "your-pr", "teammate-pr"]).optional(),
   targetState: z.enum(["needs-you", "merged", "reviewed"]).optional(),
 });
@@ -2023,17 +2031,23 @@ export const SessionModelSchema = z
      */
     repositoryRoot: z.string().min(1).optional(),
     /**
-     * The root this session's context files were actually WRITTEN under
-     * (session-context-files). Usually the same as `repositoryRoot`, and different exactly
-     * when it has to be: until the workspace binding lands (task 5.1) a range review's
-     * seats draft in `~/.rennet/worktrees/review/<reviewId>`, so that — not the reviewer's
-     * checkout — is where their context directory is, and a purge aimed at
-     * `repositoryRoot` would leave it behind forever.
+     * The ONE workspace this session is bound to (session-bound-workspace D1): the reviewer's
+     * own checkout when it sits on the reviewed branch, a Rennet-created worktree for the
+     * branch when it does not, the PR worktree for a snapshot. Decided once, from the review
+     * target, and kept for the session's whole life — every child of the session runs here:
+     * each lens seat thread, the chat thread, the handoff thread, the round worker, and every
+     * cold utility turn. It is also where the session's `.rennet/context/<id>` directory
+     * lives, so the archive purge aims at the root the files are actually under.
      *
-     * Absent ⇒ nothing recorded a write root, and the purge falls back to `repositoryRoot`
-     * then the attached review's root, exactly as it did before this field existed.
+     * Distinct from `repositoryRoot`, which names the REPOSITORY the target lives in: for an
+     * off-branch or PR-snapshot review the bound root is a worktree of that repository, not
+     * the repository itself.
+     *
+     * Absent ⇒ minted before the binding wave, or nothing has needed the workspace yet; the
+     * first use binds lazily and records it (D migration step 4), and until then reads fall
+     * back to `repositoryRoot` then the attached review's root.
      */
-    contextRoot: z.string().min(1).optional(),
+    boundRoot: z.string().min(1).optional(),
     /**
      * The `owner/name` identity of the repo this session's target lives in (#580). NOT a path —
      * it is the same stable identity `LocalWork.repository`/`PullRequest.repository` carry (the

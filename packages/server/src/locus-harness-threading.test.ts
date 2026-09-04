@@ -62,34 +62,46 @@ describe("locus threading in MAIN", () => {
   // So enumerate the consumers as well. Every call must pass a repository root its own
   // caller was given: the review's `review.repositoryRoot`, or the `repoRoot` the turn
   // was addressed with. A project path, a workspace path, or a host default reddens this.
-  it("passes a caller-owned repository root into every claudeAdapterForRepo consumer", () => {
+  it("passes a caller-owned turn root into every claudeAdapterForRepo consumer", () => {
     const calls = callArgs("claudeAdapterForRepo");
     // Exact, not `>=`. TWO consumers: the flagged runner and the noise runner, both on
-    // `review.repositoryRoot`. The third was the round worker's own coding turn, gone
-    // with the ephemeral round leg (session-bound-workspace D2 — a round is a turn on the
-    // session's bound T3 thread now, and reaches no adapter here); the fourth was the
-    // coverage seat (#681), gone with the coverage turn; the fifth was the review-ask run
-    // port, gone with the orchestrator chat (t3-lens-threads 4.2). Bare references
+    // the `turnRoot` local. The third was the round worker's own coding turn, gone with the
+    // ephemeral round leg (session-bound-workspace D2 — a round is a turn on the session's
+    // bound T3 thread now, and reaches no adapter here); the fourth was the coverage seat
+    // (#681), gone with the coverage turn; the fifth was the review-ask run port, gone with
+    // the orchestrator chat (t3-lens-threads 4.2). Bare references
     // (`resolveClaudePort: claudeAdapterForRepo`) are not calls and do not match; they hand
     // the function on, and the site that CALLS it is counted here.
+    //
+    // `turnRoot`, not `review.repositoryRoot` (session-bound-workspace 5.2): a WSL adapter
+    // BAKES its `wsl.exe --cd` argument at construction and `transportCwd` beats the
+    // session's `cwd`, so the root this resolver is handed is the one every turn of that
+    // harness actually runs in. Resolving from the repository while the turn asks for the
+    // bound worktree silently drops the request. The two are the same value for a branch
+    // review on the reviewer's own checkout and differ exactly when it matters.
     expect(calls).toHaveLength(2);
-    expect(calls.filter((arg) => arg === "review.repositoryRoot")).toHaveLength(2);
+    expect(calls.filter((arg) => arg === "turnRoot")).toHaveLength(2);
     for (const arg of calls) {
       expect(
-        ["review.repositoryRoot", "repoRoot"],
-        `claudeAdapterForRepo(${arg}) must pass a caller-owned repository root`,
+        ["turnRoot", "repoRoot"],
+        `claudeAdapterForRepo(${arg}) must pass a caller-owned turn root`,
       ).toContain(arg);
     }
+    // ...and `turnRoot` is REVIEW-derived, never an ambient or project path. Without this
+    // the enumeration above would stay green if `turnRoot` were reassigned to a workspace
+    // path, which is the many-repos-one-project defect class this guard exists for.
+    expect(source).toContain("const turnRoot = turnRootFor(review);");
   });
 
-  it("derives the flagged runner's Codex locus from the review's own repository root", () => {
+  it("derives the flagged runner's Codex locus from the same turn root", () => {
     // NOT the Claude read-pipeline adoption pattern any more — the Claude sites went
     // through `claudeAdapterForRepo` (enumerated above), and the surviving
-    // `locusContextForRepo(review.repositoryRoot)` call is the flagged runner deriving
-    // the locus it hands `getCodexResolution`. What this CANNOT catch: it is a substring
-    // check, so it proves the call exists, not that the flagged runner is the only reader
-    // or that no second site resolves a locus from something else. The two enumerations
-    // above are the load-bearing guards; this pins the one remaining direct read.
-    expect(source).toContain("locusContextForRepo(review.repositoryRoot)");
+    // `locusContextForRepo(turnRoot)` call is the flagged runner deriving the locus it
+    // hands `getCodexResolution`. One value for both legs, so the Codex seat cannot end up
+    // rooted in a different tree from the Claude seat of the same review. What this CANNOT
+    // catch: it is a substring check, so it proves the call exists, not that the flagged
+    // runner is the only reader or that no second site resolves a locus from something
+    // else. The two enumerations above are the load-bearing guards.
+    expect(source).toContain("locusContextForRepo(turnRoot)");
   });
 });

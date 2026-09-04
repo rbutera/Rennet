@@ -19,7 +19,8 @@ follows is unchanged.
 The work order itself is **a file, not a prompt**. Before the run,
 `review.handoff.run` writes the ordered, grouped, verbatim tasks — each with its
 anchor and its diff fence — to `.rennet/context/<reviewId>/work-order.md` under the
-checkout, and the turn's prompt names that path. The agent reads it the way it reads
+session's **bound workspace**, and the turn's prompt names that path relative to it.
+That is the same root the turn runs in, so the agent reads the order the way it reads
 the rest of the checkout. The bundle's `prompt` is that short pointer text, and
 `verifyComposedBundle` still recomputes both it and the digest from `tasks`, so a run
 still refuses an order nobody composed. A coding **round** uses the same file and the
@@ -30,7 +31,8 @@ exact order it was dispatched with.
 ## The session is the durable root
 
 A review lives in a **session** — the first-class durable object that owns the
-harness cursor, the anchored threads, and the **claim** on the target. Entering
+harness cursor, the anchored threads, the **claim** on the target, and the one
+**workspace** every turn it spawns runs in. Entering
 a New-chat row that resolves to a branch or PR **mints a session and claims the
 target in one act**; the branch and its pull request are one claimed thing, and
 every other New-chat row resolving to that same target disappears while the
@@ -75,6 +77,35 @@ it is about to run in, so it joins the session the click created instead of
 starting a second one beside it. A detached HEAD has no branch to claim, so its
 session is keyed by the review instead — and it is persisted like every other,
 because a session the store does not hold is a session no surface can read back.
+
+### One workspace per session
+
+Beside the repository, a session records the one **workspace** it is bound to, and every
+turn it spawns runs there: the six lens seats, the chat thread, the handoff thread and every
+cold utility turn. The binding is decided once, from the review target — the reviewer's own
+checkout when some worktree of the repository already has the reviewed branch out, a
+Rennet-created worktree at `~/.rennet/worktrees/<repoKey>/<branch>` when nothing does, the
+detached worktree at the reviewed head for a pull-request snapshot — and recorded as
+`boundRoot`. A workspace that cannot be created fails the bind and records nothing rather
+than falling back to the clone, which sits on another branch. Nothing re-decides a binding
+afterwards, though a pull-request binding is re-pinned when a landed round advances the
+reviewed head. A session with no recorded binding — created before the binding existed, or
+one whose first bind threw — binds on its **next use**, whichever use that is: the read the
+chat and handoff threads are created from binds, and so does the lease every review-scoped
+turn takes. None of them answers the clone while the field is empty, because a thread's cwd
+is fixed when it is created.
+
+The coding round is the one child still outside this: it runs its own detached worktree per
+operation and lands the result onto the branch. Moving it onto the bound workspace is a
+separate change.
+
+The workspace is where the session's `.rennet/context/<sessionId>/` directory lives, which
+is what makes the relative paths in every prompt resolve: a turn's cwd and the root its
+context was written under are the same thing by construction. The handoff run captures its
+successor from that workspace too — it is where the agent wrote. The chat header's trail
+names the bound workspace beside the branch, so a session drafting in a worktree rather than
+the reviewer's own tree says so. Full detail:
+[T3 Code sidecar](t3code-sidecar.md#session-bound-workspace).
 
 Anchored threads keep their content in the session transcript; the boards and
 the diff hold only anchor→thread references, so a code-line comment, a

@@ -215,15 +215,17 @@ export class SessionStore {
   }
 
   /**
-   * Stamp the root a session's context directory was written under (session-context-files),
-   * so the archive purge removes it from the root the seats actually ran in. Idempotent: an
-   * unchanged root is not re-saved. `undefined` if the session is absent.
+   * Record the workspace this session is bound to (session-bound-workspace D1). Written once,
+   * by whatever first decides the binding — the capture that mints the review, or the first
+   * use of a session minted before the wave. Idempotent: an unchanged root is not re-saved,
+   * and a session that ALREADY carries a bound root keeps it, because the binding is decided
+   * once and kept for the session's life. `undefined` if the session is absent.
    */
-  setContextRoot(sessionId: string, contextRoot: string): SessionModel | undefined {
+  setBoundRoot(sessionId: string, boundRoot: string): SessionModel | undefined {
     const session = this.load(sessionId);
     if (!session) return undefined;
-    if (session.contextRoot === contextRoot) return session;
-    const next = { ...session, contextRoot };
+    if (session.boundRoot !== undefined) return session;
+    const next = { ...session, boundRoot };
     this.save(next);
     return next;
   }

@@ -214,6 +214,14 @@ export interface LiveDraftPrBodyInput {
 
 /** The deps the live port is bound to (all injected so the module stays testable). */
 export interface LiveDraftPrBodyDeps {
+  /**
+   * The session's BOUND workspace for this review (session-bound-workspace D1) — the cwd this
+   * turn runs in, and the root `writeContext` writes under. One value for both, because the
+   * context path the prompt names is RELATIVE: write under the repository while the turn runs
+   * in a worktree and the prompt points at a file that is not there. Absent ⇒ the repository
+   * root, which is the binding for a branch review on the reviewer's own checkout.
+   */
+  turnRoot?(review: Review): string;
   /** The Claude harness adapter, or null when no `claude` is installed. */
   claudePort(repoRoot: string): Promise<HarnessPort | null>;
   /** The Codex executor resolved to the absolute binary (bead workspace-6qp15), or null.
@@ -239,13 +247,16 @@ export function createLiveDraftPrBodyPort(
   deps: LiveDraftPrBodyDeps,
 ): (input: LiveDraftPrBodyInput) => Promise<PrBodyDraftResult> {
   return async (input) => {
+    // The session's bound workspace: this turn's cwd and the root its context files were
+    // written under, which have to be the same value (session-bound-workspace 5.2).
+    const turnRoot = deps.turnRoot?.(input.review) ?? input.review.repositoryRoot;
     // Probe both seats once; each probe is both an availability signal and the
     // executable. The council resolves pr-body-draft to Codex (Luna low) whenever
     // Codex is installed (Table 1 + 3), and to Claude (Haiku low) on a Claude-only
     // machine (Table 2); both are now live.
     const [claudePort, executor] = await Promise.all([
-      deps.claudePort(input.review.repositoryRoot),
-      deps.codexExecutor(input.review.repositoryRoot),
+      deps.claudePort(turnRoot),
+      deps.codexExecutor(turnRoot),
     ]);
     const installed: CouncilHarnessId[] = [];
     if (claudePort !== null) installed.push("claude-code");
@@ -259,16 +270,11 @@ export function createLiveDraftPrBodyPort(
     const harness = providerHarness(resolution.model);
     let port: PrBodyDraftPort | null = null;
     if (harness === "codex" && executor !== null) {
-      port = codexDraftPrBodyPort(
-        executor,
-        resolution.model,
-        resolution.effort,
-        input.review.repositoryRoot,
-      );
+      port = codexDraftPrBodyPort(executor, resolution.model, resolution.effort, turnRoot);
     } else if (harness === "claude-code" && claudePort !== null) {
       // Follow the pipeline's Claude-seat convention: the council model rides the
       // result as provenance, but the session runs on the adapter's own default model.
-      port = claudeDraftPrBodyPort(claudePort, input.review.repositoryRoot);
+      port = claudeDraftPrBodyPort(claudePort, turnRoot);
     }
     if (port === null) {
       return { status: "unavailable", reason: "PR-body drafting has no model seat installed" };

@@ -168,6 +168,23 @@ has no hosted backend. The review patchset, Repo Map, and local state remain
 local except for the context deliberately supplied to an installed harness or
 external service as part of a requested operation.
 
+A session binds to exactly **one workspace** when it is created and keeps that binding for
+its whole life: the reviewer's own checkout when some worktree of the repository already has
+the reviewed branch out, a Rennet-created worktree for that branch when nothing does, the
+detached worktree at the reviewed head for a pull-request snapshot. The bound root is
+recorded on the session and is the working directory of every turn the session spawns — each
+lens seat, the chat thread, the handoff thread, and every cold utility turn — and the root
+their context files are written under, so a relative path in a prompt resolves in the tree
+the turn is actually standing in. The handoff exit captures its successor from that same
+workspace, because that is where the agent wrote. The binding is decided from the review
+target, never from the project: a workspace project holds many repositories and that mapping
+is not invertible. A workspace that cannot be created fails the bind rather than silently
+binding the session to the clone, which sits on another branch. Nothing re-decides a binding;
+a pull-request binding is re-pinned in place when the reviewed head moves. Worktrees earlier
+versions created per review are removed by a startup sweep that leaves any directory a live
+session is bound to, and nothing creates that layout again. The coding round still runs its
+own detached worktree per operation; moving it onto the bound workspace is a separate change.
+
 Coding-agent handoff is an acting path. The agent receives a digest-bound bundle,
 works in the repository, and may write, test, commit, and push. Rennet then
 captures the resulting repository state as a successor and presents a
