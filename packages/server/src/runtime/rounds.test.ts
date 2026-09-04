@@ -55,8 +55,19 @@ const lintContextFor = (lens: LintTarget): LintContext => ({
   files: new Map(),
 });
 const readPrompt = (file: string): string => `PROMPT_FILE:${file}`;
-const lensFromPrompt = (prompt: string): string =>
-  /PROMPT_FILE:prompts\/([a-z-]+)\.md/.exec(prompt)?.[1] ?? "unknown";
+/**
+ * Which lens a turn belongs to. The prompt-file marker names it on a DRAFTING turn; a
+ * repair turn carries pointers and frozen ids and nothing else (session-bound-workspace
+ * 3.2), so it is named by the session's seat label — `board.lens-draft.design` — which is
+ * what the daemon's log and the token collector attribute a turn by too.
+ */
+const lensFromPrompt = (prompt: string, label?: string): string => {
+  const marker = /PROMPT_FILE:prompts\/([a-z-]+)\.md/.exec(prompt)?.[1];
+  if (marker !== undefined) return marker;
+  const seat = label?.split(".").at(-1);
+  if (seat === undefined) return "unknown";
+  return seat.startsWith("flagged") ? "flagged" : seat;
+};
 const cleanBody = (lens: string): DraftBoard => {
   const author = { kind: "lens-agent" as const, id: `${lens}-seat` };
   if (lens === "sequence") {
@@ -154,12 +165,13 @@ const cleanBody = (lens: string): DraftBoard => {
 /** A fake Claude port that answers a lens-appropriate clean board every turn, or whatever
  *  `bodyFor` decides when a test needs a specific seat to answer something particular. */
 function fakeClaudePort(
-  captures: { prompt?: string }[] = [],
-  bodyFor: (prompt: string) => unknown = (prompt) => cleanBody(lensFromPrompt(prompt)),
+  captures: { prompt?: string; label?: string }[] = [],
+  bodyFor: (prompt: string, label?: string) => unknown = (prompt, label) =>
+    cleanBody(lensFromPrompt(prompt, label)),
 ): HarnessPort {
   return {
-    createSession: async () => {
-      const capture: { prompt?: string } = {};
+    createSession: async (options: { label?: string }) => {
+      const capture: { prompt?: string; label?: string } = { label: options.label };
       captures.push(capture);
       return {
         send: async (input: { prompt: string }) => {
@@ -174,7 +186,7 @@ function fakeClaudePort(
             native: {},
             outcome: {
               status: "completed",
-              structuredOutput: bodyFor(capture.prompt ?? ""),
+              structuredOutput: bodyFor(capture.prompt ?? "", capture.label),
             },
           };
         })(),
@@ -471,6 +483,36 @@ describe("generation lifecycle (append-then-freeze)", () => {
 // ── The rounds runtime ──
 
 describe("createRoundsRuntime", () => {
+  it("binds the session-context writer to the DRAFTING root and the session id (session-context-files)", async () => {
+    // The seats' cwd is `draftingRoot` when one is set — a range review's evidence
+    // worktree — and a relative context path only resolves there, not under `repoRoot`.
+    //
+    // One runtime per case on purpose: a second `runRound` on the same runtime reuses the
+    // durable attempt of the first and never re-enters the pipeline, so the two roots
+    // would be compared against one run's writes.
+    const rootsWrittenFor = async (over: Partial<RoundInput>): Promise<readonly string[]> => {
+      const calls: { root: string; sessionId: string }[] = [];
+      const runtime = createRoundsRuntime(
+        baseDeps({
+          writeSessionContext: (root, sessionId) => {
+            calls.push({ root, sessionId });
+            return `${root}/.rennet/context/${sessionId}`;
+          },
+        }),
+      );
+      await runtime.runRound(roundInput(over));
+      expect(calls.length).toBeGreaterThan(0);
+      expect(calls.every(({ sessionId }) => sessionId === "s1")).toBe(true);
+      return calls.map(({ root }) => root);
+    };
+
+    expect([...new Set(await rootsWrittenFor({ draftingRoot: "/evidence-worktree" }))]).toEqual([
+      "/evidence-worktree",
+    ]);
+    // Without a drafting root the writer is bound to the review root itself.
+    expect([...new Set(await rootsWrittenFor({}))]).toEqual(["/pr-worktree"]);
+  });
+
   it("records a RoundRecord pinning asks, commit range, minted+board generation, and report board", async () => {
     const runtime = createRoundsRuntime(baseDeps());
     const { record, boardGeneration, frozenPrevious } = await runtime.runRound(roundInput());
@@ -541,12 +583,12 @@ describe("createRoundsRuntime", () => {
     const runtime = createRoundsRuntime(
       baseDeps({
         resolveClaudePort: async () =>
-          fakeClaudePort([], (prompt) =>
-            lensFromPrompt(prompt) === "flagged"
+          fakeClaudePort([], (prompt, label) =>
+            lensFromPrompt(prompt, label) === "flagged"
               ? ({
                   elements: [{ id: "invalid", kind: "not-a-kind", data: {} }],
                 } as unknown as DraftBoard)
-              : cleanBody(lensFromPrompt(prompt)),
+              : cleanBody(lensFromPrompt(prompt, label)),
           ),
         persistGeneration: (generation) => {
           order.push(`generation:${generation.id}`);
@@ -643,12 +685,12 @@ describe("createRoundsRuntime", () => {
         // would read as dropped. (The lens drafters receive the report as CONTEXT, so the
         // post-process branch is keyed on the file it is polishing, not on the context.)
         resolveClaudePort: async () =>
-          fakeClaudePort([], (prompt) => {
+          fakeClaudePort([], (prompt, label) => {
             const polishingReport =
               prompt.includes("prompts/post-process.md") && prompt.includes("round_outcome");
             return prompt.includes("prompts/report.md") || polishingReport
               ? reportBoard
-              : cleanBody(lensFromPrompt(prompt));
+              : cleanBody(lensFromPrompt(prompt, label));
           }),
       }),
     );
@@ -734,10 +776,10 @@ describe("createRoundsRuntime", () => {
       baseDeps({
         ...durableDeps,
         resolveClaudePort: async () =>
-          fakeClaudePort(firstCaptures, (prompt) =>
-            lensFromPrompt(prompt) === "report"
+          fakeClaudePort(firstCaptures, (prompt, label) =>
+            lensFromPrompt(prompt, label) === "report"
               ? classification
-              : cleanBody(lensFromPrompt(prompt)),
+              : cleanBody(lensFromPrompt(prompt, label)),
           ),
       }),
     );
@@ -769,11 +811,11 @@ describe("createRoundsRuntime", () => {
       baseDeps({
         ...durableDeps,
         resolveClaudePort: async () =>
-          fakeClaudePort(retryCaptures, (prompt) => {
-            if (lensFromPrompt(prompt) === "report") {
+          fakeClaudePort(retryCaptures, (prompt, label) => {
+            if (lensFromPrompt(prompt, label) === "report") {
               throw new Error("a persisted report must not open another provider turn");
             }
-            return cleanBody(lensFromPrompt(prompt));
+            return cleanBody(lensFromPrompt(prompt, label));
           }),
       }),
     ).runRound({
@@ -876,10 +918,10 @@ describe("createRoundsRuntime", () => {
       baseDeps({
         ...durableDeps,
         resolveClaudePort: async () =>
-          fakeClaudePort(captures, (prompt) =>
-            lensFromPrompt(prompt) === "report"
+          fakeClaudePort(captures, (prompt, label) =>
+            lensFromPrompt(prompt, label) === "report"
               ? classification
-              : cleanBody(lensFromPrompt(prompt)),
+              : cleanBody(lensFromPrompt(prompt, label)),
           ),
       });
 
@@ -1005,10 +1047,10 @@ describe("createRoundsRuntime", () => {
       baseDeps({
         ...durableDeps,
         resolveClaudePort: async () =>
-          fakeClaudePort(captures, (prompt) =>
-            lensFromPrompt(prompt) === "report"
+          fakeClaudePort(captures, (prompt, label) =>
+            lensFromPrompt(prompt, label) === "report"
               ? classification
-              : cleanBody(lensFromPrompt(prompt)),
+              : cleanBody(lensFromPrompt(prompt, label)),
           ),
       });
 
@@ -1171,8 +1213,8 @@ describe("createRoundsRuntime", () => {
     const first = await createRoundsRuntime(
       baseDeps({
         resolveClaudePort: async () =>
-          fakeClaudePort([], (prompt) => {
-            const lens = lensFromPrompt(prompt);
+          fakeClaudePort([], (prompt, label) => {
+            const lens = lensFromPrompt(prompt, label);
             if (lens === "design") return { absence: "no-spec" };
             if (
               lens === "decisions" ||
@@ -1230,8 +1272,8 @@ describe("createRoundsRuntime", () => {
     const first = await createRoundsRuntime(
       baseDeps({
         resolveClaudePort: async () =>
-          fakeClaudePort([], (prompt) => {
-            const lens = lensFromPrompt(prompt);
+          fakeClaudePort([], (prompt, label) => {
+            const lens = lensFromPrompt(prompt, label);
             // The Noise seat completes every turn WITHOUT emitting — the production
             // no-board shape, which spends the ladder and settles terminal.
             return lens === "noise" ? undefined : cleanBody(lens);
@@ -1287,8 +1329,8 @@ describe("createRoundsRuntime", () => {
       const first = await createRoundsRuntime(
         baseDeps({
           resolveClaudePort: async () =>
-            fakeClaudePort([], (prompt) => {
-              const lens = lensFromPrompt(prompt);
+            fakeClaudePort([], (prompt, label) => {
+              const lens = lensFromPrompt(prompt, label);
               // The production no-board shape: the seat completes without emitting.
               return lens === "noise" ? undefined : cleanBody(lens);
             }),
@@ -1316,8 +1358,8 @@ describe("createRoundsRuntime", () => {
       const recovered = await createRoundsRuntime(
         baseDeps({
           resolveClaudePort: async () =>
-            fakeClaudePort([], (prompt) => {
-              const lens = lensFromPrompt(prompt);
+            fakeClaudePort([], (prompt, label) => {
+              const lens = lensFromPrompt(prompt, label);
               if (lens === "noise") noiseTurns += 1;
               return cleanBody(lens);
             }),
@@ -1358,8 +1400,10 @@ describe("createRoundsRuntime", () => {
     const first = await createRoundsRuntime(
       baseDeps({
         resolveClaudePort: async () =>
-          fakeClaudePort([], (prompt) =>
-            lensFromPrompt(prompt) === "noise" ? undefined : cleanBody(lensFromPrompt(prompt)),
+          fakeClaudePort([], (prompt, label) =>
+            lensFromPrompt(prompt, label) === "noise"
+              ? undefined
+              : cleanBody(lensFromPrompt(prompt, label)),
           ),
         persistBoardMeta: (_repo, record) => meta.save(record),
         persistGeneration: (generation) => generations.save(generation),
@@ -1383,7 +1427,7 @@ describe("createRoundsRuntime", () => {
     await createRoundsRuntime(
       baseDeps({
         resolveClaudePort: async () =>
-          fakeClaudePort([], (prompt) => cleanBody(lensFromPrompt(prompt))),
+          fakeClaudePort([], (prompt, label) => cleanBody(lensFromPrompt(prompt, label))),
         persistBoardMeta: (_repo, record) => meta.save(record),
         loadDraftedBoards: (_repo, sessionId, generation) =>
           meta.listForGeneration(sessionId, generation),
@@ -1447,10 +1491,10 @@ describe("createRoundsRuntime", () => {
           baseDeps({
             ...durableDeps,
             resolveClaudePort: async () =>
-              fakeClaudePort([], (prompt) =>
-                lensFromPrompt(prompt) === failedCoreLens
+              fakeClaudePort([], (prompt, label) =>
+                lensFromPrompt(prompt, label) === failedCoreLens
                   ? invalid
-                  : cleanBody(lensFromPrompt(prompt)),
+                  : cleanBody(lensFromPrompt(prompt, label)),
               ),
           }),
         ).runRound(input),
@@ -1503,12 +1547,12 @@ describe("createRoundsRuntime", () => {
     const first = await createRoundsRuntime(
       baseDeps({
         resolveClaudePort: async () =>
-          fakeClaudePort([], (prompt) =>
-            lensFromPrompt(prompt) === "design"
+          fakeClaudePort([], (prompt, label) =>
+            lensFromPrompt(prompt, label) === "design"
               ? ({
                   elements: [{ id: "invalid", kind: "not-a-kind", data: {} }],
                 } as unknown as DraftBoard)
-              : cleanBody(lensFromPrompt(prompt)),
+              : cleanBody(lensFromPrompt(prompt, label)),
           ),
         persistBoardMeta: (_repo, record) => meta.save(record),
         persistGeneration: (generation) => generations.save(generation),
@@ -1835,14 +1879,14 @@ describe("createRoundsRuntime", () => {
       baseDeps({
         boardsRuntimeFor: boardsRuntime(attempt, crashFlagged),
         resolveClaudePort: async () =>
-          fakeClaudePort([], (prompt) => {
+          fakeClaudePort([], (prompt, label) => {
             if (
               prompt.includes("prompts/flagged.md") ||
               (prompt.includes("prompts/post-process.md") && /"kind"\s*:\s*"finding"/.test(prompt))
             ) {
               return currentFlagged;
             }
-            return cleanBody(lensFromPrompt(prompt));
+            return cleanBody(lensFromPrompt(prompt, label));
           }),
         persistBoardMeta: (_repo, record) => meta.save(record),
         loadDraftedBoards: (_repo, sessionId, generation) =>
@@ -2286,10 +2330,10 @@ describe("createRoundsRuntime", () => {
       const runtime = createRoundsRuntime(
         baseDeps({
           resolveClaudePort: async () =>
-            fakeClaudePort(captures, (prompt) =>
-              lensFromPrompt(prompt) === "report"
+            fakeClaudePort(captures, (prompt, label) =>
+              lensFromPrompt(prompt, label) === "report"
                 ? classification
-                : cleanBody(lensFromPrompt(prompt)),
+                : cleanBody(lensFromPrompt(prompt, label)),
             ),
           onBoardArrival: (event) => {
             arrivals.push(event);
@@ -2528,8 +2572,8 @@ describe("createRoundsRuntime", () => {
         // Sequence admits no absence, so an empty Sequence board is a MISSING required core
         // lens — one of the two paths that persists the generation and then throws.
         resolveClaudePort: async () =>
-          fakeClaudePort([], (prompt) => {
-            const lens = lensFromPrompt(prompt);
+          fakeClaudePort([], (prompt, label) => {
+            const lens = lensFromPrompt(prompt, label);
             return lens === "sequence" ? { elements: [] } : cleanBody(lens);
           }),
         persistGeneration: (generation) => {
@@ -2722,8 +2766,8 @@ describe("createRoundsRuntime", () => {
     const runtime = createRoundsRuntime(
       baseDeps({
         resolveClaudePort: async () =>
-          fakeClaudePort([], (prompt) => {
-            const lens = lensFromPrompt(prompt);
+          fakeClaudePort([], (prompt, label) => {
+            const lens = lensFromPrompt(prompt, label);
             if (lens === "design") return { absence: "no-spec" };
             if (lens === "flagged") {
               announceFlaggedDraft();
@@ -2926,8 +2970,10 @@ describe("what a round archives, and when (#731 N3)", () => {
     };
     const { deps, recorded } = archiving({
       resolveClaudePort: async () =>
-        fakeClaudePort([], (prompt) =>
-          lensFromPrompt(prompt) === "sequence" ? invalid : cleanBody(lensFromPrompt(prompt)),
+        fakeClaudePort([], (prompt, label) =>
+          lensFromPrompt(prompt, label) === "sequence"
+            ? invalid
+            : cleanBody(lensFromPrompt(prompt, label)),
         ),
     });
     await expect(createRoundsRuntime(deps).runRound(roundInput())).rejects.toThrow(

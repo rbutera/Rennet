@@ -74,8 +74,22 @@ import type {
   RspTokenUsage,
   ValidationReport,
 } from "@rennet/protocol";
-import { computeInputDigest, parseAnchor, resolveAnchor, validateDocument } from "@rennet/protocol";
+import { computeInputDigest, validateDocument } from "@rennet/protocol";
+import { type ChangedRegion, resolveCitation } from "./board/lint";
 import { absentBudgetGrant } from "./invocation-budget";
+
+/**
+ * One context file, structurally identical to the server's `SessionContextFile` — this
+ * package cannot import the server, and this is the whole contract.
+ */
+export interface NoiseContextFile {
+  readonly name: string;
+  readonly body: string;
+  /** One line: what this file holds. */
+  readonly holds: string;
+  /** One line: when a turn should read it. */
+  readonly readWhen: string;
+}
 
 /** The result of one noise turn: the emitted body, or a turn-level failure. */
 export type NoiseTurnResult =
@@ -123,7 +137,22 @@ export interface RunNoiseAngleInput {
   readonly runTurn: (prompt: string, attempt: number) => Promise<NoiseTurnResult>;
   /** Optional repo guidance layers, wrapped as untrusted material by the assembler. */
   readonly guidance?: { readonly general?: string; readonly files?: string };
+  /**
+   * The daemon's ONE session-context writer, bound to the seat's root and a session id
+   * (session-context-files D3). It writes `noise-offer.json` and returns the context
+   * directory AS THE SEAT SHOULD NAME IT (relative to its cwd, or absolute); the prompt
+   * names that path and never carries the offer. Structural, because this package cannot
+   * import the server that owns the writer.
+   */
+  readonly writeContext: (files: readonly NoiseContextFile[]) => string;
+  /**
+   * Rennet's assembled project context for this base. Copied ONCE into the session's
+   * context directory and named there; it never rides a prompt, and it is never named at
+   * the daemon's own store path, which a seat in another locus (WSL) cannot open.
+   */
   readonly assembledContext?: string;
+  /** The `git diff` that shows the seat the whole change from its cwd (`reviewedDiffCommand`). */
+  readonly diffCommand?: string;
   /** Retries after the first attempt. Default 2 (three attempts total). */
   readonly maxRetries?: number;
   /**
@@ -213,11 +242,71 @@ const NOISE_CATEGORIES = new Set<NoiseCategory>([
   "other",
 ]);
 
-/** True iff a `rennet:` anchor parses AND resolves to an offered occurrence. */
-function isGroundedAnchor(anchor: string, manifest: OfferedManifest): boolean {
-  const parsed = parseAnchor(anchor);
-  if (!parsed.ok) return false;
-  return resolveAnchor(parsed.anchor, manifest).outcome === "resolved";
+/**
+ * The offered hunks as CHANGED REGIONS, plus which hunk each region came from.
+ *
+ * This is the whole of path-line-citations on this leg: the offer the model reads is a
+ * list of regions with no ids in it, the model cites a region, and the runner reads the
+ * hunk id back off this map. A hunk contributes a region per side it actually changed —
+ * a pure addition has no base-side lines to cite, so it offers none.
+ */
+interface OfferedRegions {
+  readonly regions: readonly ChangedRegion[];
+  readonly hunkOf: ReadonlyMap<ChangedRegion, string>;
+}
+
+export function offeredRegions(manifest: OfferedManifest): OfferedRegions {
+  const regions: ChangedRegion[] = [];
+  const hunkOf = new Map<ChangedRegion, string>();
+  for (const occurrence of manifest.occurrences) {
+    if (occurrence.kind !== "hunk") continue;
+    const { path, spans } = occurrence;
+    if (path === undefined || spans === undefined) continue;
+    for (const [side, span] of [
+      ["base", spans.old],
+      ["head", spans.new],
+    ] as const) {
+      if (span.lines < 1) continue;
+      const region: ChangedRegion = {
+        path,
+        side,
+        start: span.start,
+        end: span.start + span.lines - 1,
+      };
+      regions.push(region);
+      hunkOf.set(region, occurrence.id);
+    }
+  }
+  return { regions, hunkOf };
+}
+
+/**
+ * The hunk a cited region belongs to, or `undefined` when the citation grounds in none.
+ *
+ * `resolveCitation` is the shared readability predicate (the board's
+ * `unresolvable-citation` rule and the daemon's reader use the same one), so a citation
+ * that names lines outside the change is refused here on exactly the terms it is refused
+ * everywhere else. Containment is then required on top of it: a span that runs across two
+ * offered hunks resolves to the first, and anchoring it to that one would silently claim
+ * churn the item never cited.
+ */
+function hunkForCitation(span: ChangedRegion, offered: OfferedRegions): string | undefined {
+  const region = resolveCitation(span, offered.regions);
+  if (region === undefined) return undefined;
+  if (span.start < region.start || span.end > region.end) return undefined;
+  return offered.hunkOf.get(region);
+}
+
+/** Read an emitted item's citation, or `undefined` if it is not a well-formed one. */
+function readItemCitation(candidate: Record<string, unknown>): ChangedRegion | undefined {
+  const { path, side, startLine, endLine } = candidate;
+  if (typeof path !== "string" || path.length === 0) return undefined;
+  if (side !== "base" && side !== "head") return undefined;
+  if (!Number.isInteger(startLine) || !Number.isInteger(endLine)) return undefined;
+  const start = startLine as number;
+  const end = endLine as number;
+  if (start < 1 || end < start) return undefined;
+  return { path, side, start, end };
 }
 
 /** True iff any string anywhere in `node` starts with the `rennet:` anchor prefix. */
@@ -231,30 +320,47 @@ function hasAnyAnchorString(node: unknown): boolean {
 }
 
 /**
- * Keep the group's well-formed, GROUNDED churn items. An item survives iff its
- * `anchor` resolves to an offered hunk, its `detail` is a string carrying no stray
- * `rennet:` anchor (which the generic walk would ground and reject), and its
- * `deviates` flag (when present) is a boolean. A `deviates: true` item is KEPT with
- * its flag — the derivation ejects it into normal review; the runner never
- * suppresses it. Anything else is dropped.
+ * Keep the group's well-formed, GROUNDED churn items, MINTING each one's anchor.
+ *
+ * An item survives iff its `path`/`side`/`startLine`/`endLine` citation resolves inside
+ * one offered hunk, its `detail` is a string carrying no stray `rennet:` anchor (which the
+ * generic walk would ground and reject), and its `deviates` flag (when present) is a
+ * boolean. A `deviates: true` item is KEPT with its flag — the derivation ejects it into
+ * normal review; the runner never suppresses it. Anything else is dropped.
+ *
+ * The surviving item carries BOTH the coordinates the model gave and the
+ * `rennet:hunk/<id>` anchor the runner minted from them. The anchor is what the delta
+ * validator's generic walk grounds and what the lens resolves; the coordinates are what
+ * keeps the stored document satisfying the model-facing body shape on the V108 re-check.
+ * No id reached the model in either direction.
  */
-function cullItems(raw: unknown, manifest: OfferedManifest): NoiseItem[] {
+function cullItems(raw: unknown, offered: OfferedRegions): NoiseItem[] {
   if (!Array.isArray(raw)) return [];
   const items: NoiseItem[] = [];
   for (const entry of raw) {
     if (typeof entry !== "object" || entry === null) continue;
     const candidate = entry as Record<string, unknown>;
-    const { anchor, detail, deviates } = candidate;
+    const { detail, deviates } = candidate;
     if (
-      typeof anchor !== "string" ||
       typeof detail !== "string" ||
       hasAnyAnchorString(detail) ||
-      (deviates !== undefined && typeof deviates !== "boolean") ||
-      !isGroundedAnchor(anchor, manifest)
+      (deviates !== undefined && typeof deviates !== "boolean")
     ) {
       continue;
     }
-    items.push({ anchor, detail, ...(deviates === true ? { deviates: true } : {}) });
+    const citation = readItemCitation(candidate);
+    if (citation === undefined) continue;
+    const hunkId = hunkForCitation(citation, offered);
+    if (hunkId === undefined) continue;
+    items.push({
+      anchor: `rennet:hunk/${hunkId}`,
+      path: citation.path,
+      side: citation.side,
+      startLine: citation.start,
+      endLine: citation.end,
+      detail,
+      ...(deviates === true ? { deviates: true } : {}),
+    });
   }
   return items;
 }
@@ -308,7 +414,7 @@ type CullResult =
  */
 function cullGroups(
   body: unknown,
-  manifest: OfferedManifest,
+  offered: OfferedRegions,
   noiseJobModel: string,
   mintDocId: () => string,
 ): CullResult {
@@ -345,7 +451,7 @@ function cullGroups(
       culled += 1;
       continue;
     }
-    const items = cullItems(candidate.items, manifest);
+    const items = cullItems(candidate.items, offered);
     if (items.length === 0) {
       // A group with no grounded churn to collapse is not a group.
       culled += 1;
@@ -405,71 +511,64 @@ function buildEnvelope(
   };
 }
 
+/** The offered manifest's file in the session's context directory. The prompt names it. */
+export const NOISE_OFFER_FILE = "noise-offer.json";
+
 /**
- * UTF-8 ceiling on the noise seat's WHOLE hunk payload text (#737). Whole hunks are
- * kept in offered order until the next one would cross it; the rest are COUNTED in
- * a marker (a hunk the seat was not shown cannot be grouped and falls through to
- * normal review). Same magnitude as the round-evidence manifest bound. The payload
- * is re-sent on every retry, so the bound is per attempt.
+ * The offer as written to `noise-offer.json`: every changed region of the patchset as a
+ * `path`, a `side` and a 1-based line range — NO line bodies, and NO ids (path-line-
+ * citations: a hunk id is an internal key and never reaches a model, in either
+ * direction). The seat's cwd is the reviewed checkout, so it reads the lines it is
+ * grouping from `git diff` like every other seat, and nothing about the change's size
+ * reaches the prompt. This replaces the 256 KiB inline payload that rode every attempt
+ * (#737) and had to count what it dropped; a file has nothing to drop. Compact JSON: an
+ * indent is a surcharge no reader sees.
  */
-export const NOISE_PAYLOAD_MAX_BYTES = 262_144;
-
-const PAYLOAD_ENCODER = new TextEncoder();
-
-function payloadBytes(value: unknown): number {
-  return PAYLOAD_ENCODER.encode(JSON.stringify(value)).length;
+export function renderNoiseOffer(manifest: OfferedManifest, patchsetId: string): string {
+  return JSON.stringify({
+    patchsetId,
+    regions: offeredRegions(manifest).regions.map((region) => ({
+      path: region.path,
+      side: region.side,
+      startLine: region.start,
+      endLine: region.end,
+    })),
+  });
 }
 
-const PAYLOAD_READ_WITH =
-  "This many offered hunks, in offered order after the last one shown, did not fit the payload bound. You cannot classify what you were not shown; they fall through to normal review. Group only the hunks above.";
+/**
+ * The payload layer: a path reference to the offer (angle-prompt-contract — the layer
+ * that used to BE the offer now names it) plus the diff command that shows the lines.
+ * Its size does not depend on the change.
+ */
+export function renderNoiseOfferLayer(input: {
+  readonly contextDir: string;
+  readonly diffCommand?: string;
+}): string {
+  const offerPath = `${input.contextDir.replace(/\/$/, "")}/${NOISE_OFFER_FILE}`;
+  return [
+    "Your working directory is a checkout of the reviewed repository.",
+    `The changed regions you may cite are listed in \`${offerPath}\`: each entry is a \`path\`, a \`side\` (\`base\` or \`head\`) and a 1-based \`startLine\`/\`endLine\`. Read that file first.`,
+    `Read the lines themselves from the checkout — ${
+      input.diffCommand === undefined ? "`git diff`" : `\`${input.diffCommand}\``
+    } shows the whole change — and group only churn whose lines you actually read.`,
+  ].join("\n");
+}
+
+/** Rennet's assembled project context, copied into the session's context directory. */
+export const NOISE_PROJECT_CONTEXT_FILE = "project-context.md";
 
 /**
- * A compact, model-facing serialisation of the offered hunks and their lines. The
- * WHOLE returned text is bounded by `maxBytes`: whole hunks are kept in offered order
- * until the next would cross the budget left after reserving the truncation marker,
- * which carries a COUNT of omitted hunks (never a list — a list is itself unbounded,
- * review of #739). One floor: a bound below the envelope-plus-marker size (~290 bytes)
- * still ships the marker, because a payload that cannot say what it dropped is worse
- * than a ~290-byte overrun; the production bound is nine hundred times that. Compact
- * JSON: an indent is a ~30% surcharge no reader sees.
+ * The context layer: the assembled project context, named RELATIVE to the seat's cwd.
+ *
+ * It used to name the daemon's own absolute store path
+ * (`~/.rennet/projects/<key>/context-manifests/<base>.context.txt`). A seat does not run
+ * in the daemon's locus — a WSL seat is launched with `wsl.exe --cd <distro root>` — so
+ * that path named a file it could not open. The text is copied into the session context
+ * directory instead, beside every other file the turn is told about.
  */
-export function renderPayload(
-  manifest: OfferedManifest,
-  patchsetId: string,
-  maxBytes: number = NOISE_PAYLOAD_MAX_BYTES,
-): string {
-  const offered = manifest.occurrences
-    .filter((occurrence) => occurrence.kind === "hunk")
-    .map((occurrence) => ({
-      id: occurrence.id,
-      additions: occurrence.sides?.additions ?? [],
-      deletions: occurrence.sides?.deletions ?? [],
-      context: occurrence.sides?.context ?? [],
-    }));
-  // The complete payload, when it fits, ships as is: no marker is reserved for an
-  // omission that will not happen (#740 review).
-  const complete = JSON.stringify({ patchsetId, hunks: offered });
-  if (PAYLOAD_ENCODER.encode(complete).length <= maxBytes) return complete;
-  const marker = (omittedHunks: number) => ({ omittedHunks, readWith: PAYLOAD_READ_WITH });
-  // Reserve the marker at its largest (every hunk omitted) so the kept set never has to
-  // shrink again once the marker turns out to be needed.
-  const envelopeBytes = payloadBytes({ patchsetId, hunks: [] });
-  const markerOverhead =
-    payloadBytes({ patchsetId, hunks: [], truncated: marker(offered.length) }) - envelopeBytes;
-  const kept: typeof offered = [];
-  let bytes = envelopeBytes;
-  for (const hunk of offered) {
-    const hunkBytes = payloadBytes(hunk) + (kept.length > 0 ? 1 : 0);
-    if (bytes + hunkBytes + markerOverhead > maxBytes) break;
-    kept.push(hunk);
-    bytes += hunkBytes;
-  }
-  const omitted = offered.length - kept.length;
-  return JSON.stringify(
-    omitted === 0
-      ? { patchsetId, hunks: kept }
-      : { patchsetId, hunks: kept, truncated: marker(omitted) },
-  );
+export function renderNoiseAssembledContextLayer(contextDir: string): string {
+  return `Rennet's assembled project context for this base is at \`${contextDir.replace(/\/$/, "")}/${NOISE_PROJECT_CONTEXT_FILE}\`; read it when a group's reason turns on a repository convention.`;
 }
 
 /** Format a validation report into the machine-readable text fed back on retry. */
@@ -506,8 +605,38 @@ export async function runNoiseAngle(input: RunNoiseAngleInput): Promise<RunNoise
 
   const patchsetRef = { id: patchsetId };
   const inputDigest = computeInputDigest(patchsetRef, manifest);
+  // Built once: the regions the offer file shows the model, and the hunk each one maps
+  // back to when an emitted citation is turned into an anchor.
+  const offered = offeredRegions(manifest);
   const base = renderBaseInstruction(contract);
-  const payload = renderPayload(manifest, patchsetId);
+  // The offer is written ONCE, before any turn, and named on every attempt. There is no
+  // payload layer any more, so a retry re-sends nothing of the change: the base, the
+  // path references, and the validator's pointers.
+  const contextDir = input.writeContext([
+    {
+      name: NOISE_OFFER_FILE,
+      body: renderNoiseOffer(manifest, patchsetId),
+      holds:
+        "The changed regions you may cite: each one's path, side and 1-based line range, no line bodies.",
+      readWhen: "first, before you read the change; cite only lines inside a region listed here.",
+    },
+    ...(input.assembledContext === undefined
+      ? []
+      : [
+          {
+            name: NOISE_PROJECT_CONTEXT_FILE,
+            body: input.assembledContext,
+            holds: "Rennet's assembled project context for this base.",
+            readWhen: "when a group's reason turns on a repository convention.",
+          },
+        ]),
+  ]);
+  const offerLayer = renderNoiseOfferLayer({
+    contextDir,
+    ...(input.diffCommand === undefined ? {} : { diffCommand: input.diffCommand }),
+  });
+  const contextLayer =
+    input.assembledContext === undefined ? undefined : renderNoiseAssembledContextLayer(contextDir);
   // The per-project convention checklist (#180). An absent catalogue, or one with
   // no rules, yields no layer — the assembled prompt is byte-identical to today.
   const conventionLayer =
@@ -542,8 +671,8 @@ export async function runNoiseAngle(input: RunNoiseAngleInput): Promise<RunNoise
         ...(guidance?.general === undefined ? {} : { general: guidance.general }),
         ...(guidance?.files === undefined ? {} : { files: guidance.files }),
         ...(lastReportText === undefined ? {} : { task: lastReportText }),
-        ...(input.assembledContext === undefined ? {} : { context: input.assembledContext }),
-        payload,
+        ...(contextLayer === undefined ? {} : { context: contextLayer }),
+        payload: offerLayer,
       },
       assembleOptions ?? {},
     );
@@ -555,7 +684,7 @@ export async function runNoiseAngle(input: RunNoiseAngleInput): Promise<RunNoise
       continue;
     }
 
-    const cullResult = cullGroups(turn.body, manifest, noiseJobModel, mintDocId);
+    const cullResult = cullGroups(turn.body, offered, noiseJobModel, mintDocId);
     if (cullResult.malformed) {
       // A body that is not a noise document is NOT a clean review: the model did
       // not review the churn, it returned an unparseable shape. Route it to the

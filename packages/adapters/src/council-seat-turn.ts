@@ -35,7 +35,7 @@ export interface SwarmTurnOptions {
   readonly signal?: AbortSignal;
   /** Optional cost-metrics tap (the same seam the cost harness reads). */
   readonly collector?: MetricsCollector;
-  /** The metrics label, e.g. "board.lens-draft". */
+  /** The metrics label, e.g. "board.lens-draft.design" — job AND seat. */
   readonly label?: string;
   /** The turn's raw response budget in UTF-8 bytes, enforced by the adapter at the
    *  transport boundary before structured-output decoding. Absent ⇒ no cap. */
@@ -131,6 +131,7 @@ export function createClaudeSwarmTurn(
     try {
       session = await port.createSession({
         cwd: options.cwd,
+        label,
         outputSchema,
         model,
         effort,
@@ -280,6 +281,7 @@ export function createCodexSwarmTurn(
         prompt,
         outputSchema,
         cwd: options.cwd,
+        label,
         ...(options.outputByteCap === undefined ? {} : { outputByteCap: options.outputByteCap }),
         ...(options.mcpServers === undefined ? {} : { mcpServers: options.mcpServers }),
         ...(options.signal === undefined ? {} : { signal: options.signal }),
@@ -307,7 +309,7 @@ export interface CouncilSeatDeps {
   readonly repoRoot: string;
   readonly collector?: MetricsCollector;
   readonly signal?: AbortSignal;
-  /** The metrics label for a Claude seat, e.g. "board.lens-draft". */
+  /** The metrics label for a Claude seat, e.g. "board.lens-draft.design". */
   readonly label?: string;
   /** The seat's raw response budget in UTF-8 bytes; both harness legs enforce it. */
   readonly outputByteCap?: number;

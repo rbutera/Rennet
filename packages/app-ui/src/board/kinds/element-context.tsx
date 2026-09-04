@@ -35,12 +35,20 @@ const BoardElementsContext = createContext<BoardElements>({
   boardId: "",
 });
 
-/** Map a `code_ref` element to the canonical {@link CodeRef} (snake_case wire → camel).
- *  The `code_ref` kind's attrs ARE the canonical CodeRef field-for-field (schema.ts). */
-export function toCodeRef(element: ElementOf<"code_ref">): CodeRef {
+/**
+ * Map a `code_ref` element to the canonical {@link CodeRef} (snake_case wire → camel).
+ * The `code_ref` kind's attrs ARE the canonical CodeRef field-for-field (schema.ts).
+ *
+ * `patchset_id` is host-stamped and therefore OPTIONAL on the wire — a seat is never told
+ * the id, so `validateDraft` writes it once before persistence. `boardPatchsetId` is the
+ * board's own, used when an element predates the stamp; an element that carries one keeps
+ * it, so a genuinely cross-patchset element still reads as itself rather than being
+ * relabelled by the board it is rendered on.
+ */
+export function toCodeRef(element: ElementOf<"code_ref">, boardPatchsetId: string): CodeRef {
   const d = element.data;
   return {
-    patchsetId: d.patchset_id,
+    patchsetId: d.patchset_id ?? boardPatchsetId,
     path: d.path,
     side: d.side,
     startLine: d.start_line,
@@ -73,7 +81,8 @@ export function BoardElementsProvider({
     return {
       index,
       reviewId,
-      patchsetId: firstCodeRef?.kind === "code_ref" ? firstCodeRef.data.patchset_id : "",
+      patchsetId:
+        (firstCodeRef?.kind === "code_ref" ? firstCodeRef.data.patchset_id : undefined) ?? "",
       generation,
       boardId,
     };
@@ -124,11 +133,13 @@ export function useElements(ids: readonly string[]): HostElement[] {
 /** Resolve one `code_ref` id to its {@link CodeRef} (skips a non-code_ref / dangling id). */
 export function useCodeRefOf(id: string | undefined): CodeRef | undefined {
   const el = useElement(id);
-  return el?.kind === "code_ref" ? toCodeRef(el) : undefined;
+  const patchsetId = useBoardPatchsetId();
+  return el?.kind === "code_ref" ? toCodeRef(el, patchsetId) : undefined;
 }
 
 /** Resolve a list of `code_ref` ids to their {@link CodeRef}s, in order. */
 export function useCodeRefs(ids: readonly string[]): CodeRef[] {
   const els = useElements(ids);
-  return els.flatMap((el) => (el.kind === "code_ref" ? [toCodeRef(el)] : []));
+  const patchsetId = useBoardPatchsetId();
+  return els.flatMap((el) => (el.kind === "code_ref" ? [toCodeRef(el, patchsetId)] : []));
 }

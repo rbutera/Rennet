@@ -73,12 +73,14 @@ and calls board regeneration through this runtime.
 
 0. **Round-report first** (on landed rounds only). When a coding round returns
    with its exact worker receipt, the `round-report` seat makes one structured
-   semantic-classification turn before any lens drafter starts. Its context is
-   only the successor patchset id, the durable dispatched asks, the worker's
-   changed paths and observed commit range, and the round's **evidence manifest**
-   (see the classifier evidence contract below). It does not receive the full
-   DeltaPacket or the verbatim diff, and its session is bound to the narrow
-   classification schema rather than the all-kind board schema. Each ask is
+   semantic-classification turn before any lens drafter starts. Its prompt names
+   one file, `evidence.json` in the session's context directory, holding only the
+   successor patchset id, the durable dispatched asks, the worker's changed paths
+   and observed commit range, and the round's **evidence manifest** (see the
+   classifier evidence contract below); the seat reads it with its own tools.
+   It does not receive the full DeltaPacket or the verbatim diff, nothing rides
+   inline, and its session is bound to the narrow classification schema rather
+   than the all-kind board schema. Each ask is
    reduced to its durable id, path, instruction, and optional source anchor, so
    stale prior-diff context cannot compete with the coding turn's measured
    evidence. The host sorts the outcomes and builds the document, section,
@@ -120,7 +122,7 @@ and calls board regeneration through this runtime.
    Codex side: the five board-pipeline jobs hand Codex an explicit empty
    MCP-server table (which also disables Codex plugins), because Codex starts
    configured MCP servers eagerly and these one-shot seats use only their
-   inlined board context and native repository tools.
+   session context directory and native repository tools.
    A clean generation makes one drafting turn for Design, Sequence, Decisions,
    and Noise, plus the two parallel Flagged seats. It does not run a separate
    board editor after those turns, and no lens spends a second turn accounting
@@ -146,14 +148,20 @@ and calls board regeneration through this runtime.
    sees it. It parses the frozen schema and runs the per-lens lint rules. A lint
    failure returns the draft to its seat as ZodError-shaped JSON pointers on one
    retry channel; the seat returns a patch, and passing elements **freeze** — a
-   frozen element is never re-linted or re-drafted. The repair turn is a fresh
-   ephemeral session (an ephemeral session is never persisted, so it cannot be
-   resumed), and it carries the lens prompt, the change inventory, the
-   pointers (each naming the element it is about), the board-level document, and
-   only the elements still open; the frozen ids travel as a list so references
-   stay valid, and the host merges the frozen bodies
-   back itself. After a turn that emitted nothing, the re-ask is for the whole
-   board. Validation spends at most
+   frozen element is never re-linted or re-drafted. The repair turn is
+   pointer-only on every leg: it carries the pointers (each naming the element it
+   is about), the frozen ids as a list so references stay valid, and the
+   instruction — never the lens prompt, the previous draft, or anything of the
+   change. That only means something to a session that already holds the draft,
+   which is the sidecar seat thread. **A leg with no thread cannot repair**: the
+   ephemeral Claude and Codex legs open a fresh session per turn, so a pointer-only
+   repair would reach a session that has never seen the board. On those legs the
+   repair is refused before a turn is spent and the lane settles as a retryable
+   failure naming the missing thread, rather than shipping the unrepaired draft as
+   though a ladder had run. The host merges the frozen bodies back itself. After a
+   turn that emitted nothing, the re-ask is for the whole board — that one carries
+   no reference to a draft the session must remember, so it runs on either leg.
+   Validation spends at most
    one model repair turn after the initial draft. An element that remains
    invalid takes an **honest-omission exit**: it is dropped and the drop is
    recorded as an omission naming the element and the reason. Unresolved
@@ -257,9 +265,12 @@ and calls board regeneration through this runtime.
    The **authored** part is the orchestrator's connective review prose, written
    write-through on the versioned reviewer-voice prompt
    (`src/prompts/review-draft-voice.md`) in the reviewer's first-person
-   register; curation feedback from the prior generation threads into that
-   authoring turn. The authored prose is screened by a narrower register lint
-   (citations plus the machinery screen) — visible, never blocking.
+   register. The authoring prompt carries path references only: the voice rules
+   are written to `review-draft-voice.md` in the session's context directory,
+   each frozen board to `boards/<lens>.json`, and any curation feedback from the
+   prior generation to `curation-feedback.md`; the seat reads them there. The
+   authored prose is screened by a narrower register lint (citations plus the
+   machinery screen) — visible, never blocking.
 
 Each successful board persists its metadata as soon as its lane settles, so live
 progress follows completion order. Both successful typed absences and
@@ -298,8 +309,10 @@ adds to the prior attempt's total rather than replacing it. The round shows it
 as one line under the lane rows, naming any turns that produced no usage record
 so a partial sum is never read as the whole. A price appears only when every
 turn was metered and priced; a subscription session shows tokens and no invented
-dollar figure. Retries count in full, because a retry is a new cold session
-re-sending its whole prompt.
+dollar figure. Retries are counted like any other turn. A repair is a further turn
+on the seat's own thread; on the ephemeral legs there is no thread to repair on,
+so the only retry they run is the whole-board re-ask after a turn that emitted
+nothing, as a new cold session.
 
 Two of those records are measured from a boundary the pipeline does not own.
 `first-core-board` starts from the moment the **reviewer's** wait began — the
@@ -496,11 +509,14 @@ reconstructs the same number without a stored counter.
 
 ## Related context in the delta
 
-The drafting scheduler seeds every seat with the inlined **DeltaPacket** — the
-lens drafters' entire input. When the related-context retrieval work has landed,
-that packet also carries the **related-context dossier** described below; until
-then the drafters run on the DeltaPacket alone and degrade gracefully. The
-pipeline consumes the dossier, it does not build the retrieval.
+The drafting scheduler seeds every seat with its lens prompt, the reviewed
+range and the exact diff command for this capture, and a path reference to the
+session's context directory. Nothing derived from the change rides in the
+prompt: the seat's working directory is the reviewed checkout, it runs the diff
+itself, and it opens the files the directory's `README.md` indexes. The
+**DeltaPacket** stays on the daemon, where lint, persistence and the delta
+renderer read it. The pipeline consumes the **related-context dossier**
+described below, it does not build the retrieval.
 
 The related-context dossier holds the change's referenced issue-tracker
 tickets, the PR description and comments, and one-hop links, retrieved per
@@ -508,13 +524,14 @@ patchset generation by a light-tier Model Council seat
 (`related-context-retrieval`) after a deterministic pass extracts issue refs
 from the branch name, commit messages, and PR body. GitHub is first-class via
 `gh`; JIRA and Linear work from per-project config (base URL plus a token
-environment variable). The bounded dossier is inlined verbatim into lens
-drafting prompts, and the round workers can receive it too.
+environment variable). The bounded dossier is persisted and referenced by
+path, and the round workers can reach it too.
 The landed-round report classifier intentionally receives only the successor
 patchset id, durable asks, the worker's identity, and the round's evidence
 manifest; full raw payloads stay behind a context tool. Items are structured (id, tracker, title, state, bounded body,
 acceptance criteria, URL, provenance, fetched-at) and cited by id, which is
-how ticket citations reach boards. Standing project background is not fetched
+how ticket citations reach boards. Like every other input, it reaches a seat as
+a file the prompt names, never as an interpolation. Standing project background is not fetched
 for the drafter: a drafter that wants it reads the repository it is standing in.
 Cosmetic project facts (the logo) never enter agent context. When no tracker is
 configured, the dossier carries what the forge itself supplies and the review
@@ -530,18 +547,26 @@ looks close enough.
 
 Every other interpolation into a seat prompt declares its bound at the call
 site too: the round-report evidence manifest is measured against its 256 KiB
-ceiling before any seat runs, and the RSP noise seat's hunk payload keeps whole
-hunks under the same 256 KiB on its whole text and counts the hunks it left out.
-Unbounded interpolation is a bug.
+ceiling before any seat runs and then written to `evidence.json` rather than
+sent. The RSP noise seat's hunk payload is gone: the offer is written to
+`noise-offer.json` — one entry per changed region, each a path, a side and a
+1-based line range, with no line bodies and no hunk ids — and the seat reads
+the lines from `git diff`, so a re-ask re-sends nothing of the change. The seat
+cites a region back the same way; the daemon resolves that citation against the
+offered regions and mints the `rennet:hunk/<id>` anchor the stored document
+carries, so no hunk id travels in either direction. Unbounded interpolation is
+a bug.
 
 A tripwire keeps the drafter prompt itself honest. The `lens-pipeline`
 prompt-budget test assembles every lens's drafter prompt against the real
-capture fixture and asserts its UTF-8 size under a per-lens budget: a fixed
-cost measured when the test was pinned plus ten percent, plus a packet share of
-about 550 bytes per file row and 275 per hunk row. A prompt that grows on
-purpose raises its budget in the same change and says so in the pull request;
-one that grows by accident reddens the test instead of waiting for the next
-audit.
+capture fixture and asserts its UTF-8 size under a per-lens budget: the size
+measured when the test was pinned, plus ten percent. There is no per-file or
+per-hunk term any more, and the test says so by rendering the same prompt
+against a synthetic 74-file, 292-hunk packet and asserting the bytes are
+IDENTICAL — an inventory creeping back into any layer reddens every lens at
+once. A prompt that grows on purpose raises its budget in the same change and
+says so in the pull request; one that grows by accident reddens the test
+instead of waiting for the next audit.
 
 ## Three layers carry every rule
 

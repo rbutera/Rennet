@@ -15,11 +15,11 @@
 
 ## 3. Convert or delete the inline sites, biggest first (D4)
 
-- [ ] 3.1 `renderDrafterPrompt`: the context layer becomes a path reference; write `round.json` for a regeneration; drop the inventory, blast radius and counterpart hints unless a prompt still needs them as files; before/after sizes for all five lenses in the PR
-- [ ] 3.2 `renderRetryPrompt`: delete; the ephemeral legs use `renderRepairTurn`; control: a retry on the Claude and Codex ephemeral legs carries only pointers
-- [ ] 3.3 `renderComposePrompt`: boards written to `boards/<lens>.json`, voice rules referenced by path from the prompts bundle
-- [ ] 3.4 Round-report classifier: evidence manifest written to `evidence.json`; `report.md` rewritten to read it
-- [ ] 3.5 Noise: offered manifest without line bodies written to `noise-offer.json`; the assembled context text referenced at its existing persisted path; `noise.md` and `NOISE_CONTRACT.input` rewritten
+- [x] 3.1 `renderDrafterPrompt`: the context layer becomes a path reference; write `round.json` for a regeneration; drop the inventory, blast radius and counterpart hints unless a prompt still needs them as files; before/after sizes for all five lenses in the PR
+- [x] 3.2 `renderRetryPrompt`: delete; the ephemeral legs use `renderRepairTurn`; control: a retry on the Claude and Codex ephemeral legs carries only pointers
+- [x] 3.3 `renderComposePrompt`: boards written to `boards/<lens>.json`, voice rules referenced by path from the prompts bundle
+- [x] 3.4 Round-report classifier: evidence manifest written to `evidence.json`; `report.md` rewritten to read it
+- [x] 3.5 Noise: offered manifest without line bodies written to `noise-offer.json`; the assembled context text referenced at its existing persisted path; `noise.md` and `NOISE_CONTRACT.input` rewritten
 - [x] 3.6 Hypothesis and convention layers: reference `.rennet/conventions.json` and a written `hypothesis.json`
 - [x] 3.7 Review opener, draft PR body, handoff compose and work order, delta digest: boards, asks and the work order written to the context directory; `renderComposedPrompt` and `renderHandoffPrompt` name `work-order.md` instead of embedding asks and diff fences
 - [x] 3.8 Project scout: reference the guidance files in the cwd instead of embedding them; related context: reference the persisted dossier
@@ -41,6 +41,7 @@
 - [ ] 5.3 Run the round worker as a turn in the bound root; read the turn's checkpoint as the receipt; capture the successor patchset from the bound root; record root and checkpoint in the round account and show them
 - [ ] 5.4 Delete `planWorkspace`, `round-worktrees`, round-collation landing, `settleRoundCommits`, the round use of `cleanupWorktree`, the review evidence worktree, and the WSL round path translation; delete their tests
 - [ ] 5.5 Daemon-start sweep removes legacy round and review worktrees with a logged count; sessions from before the wave bind lazily on first use
+- [ ] 5.7 Board jobs run on T3 seats only: delete the ephemeral Claude and Codex board-drafting legs in `council-seat-turn.ts` and the direct-call/desktop fallback shapes that reach them (no seam is the existing typed "T3 sidecar unavailable" failure); drive `owner-loop-proof.integration.test.ts` and `lens-settlement-proof-fixture.ts` through a fake T3 seam instead of the scripted Claude plan, so a pointer-only repair is answerable in the e2e (found by PR #800: a scripted plan cannot answer a repair that carries no prompt text)
 - [ ] 5.6 Docs: `handoff-and-exits.md`, `t3code-sidecar.md`, `architecture-contracts.md` (a round advances the patchset from the bound root), the rounds pages under `docs/using`
 
 ## 6. Proof

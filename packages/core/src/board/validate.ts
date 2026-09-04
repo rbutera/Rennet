@@ -259,6 +259,32 @@ export function checkImmutability(before: DraftBoard, after: DraftBoard): Violat
 
 // ── The loop ─────────────────────────────────────────────────────────────────
 
+/**
+ * Stamp the board's own patchset id onto every `code_ref`, ONCE, immediately before the
+ * board is returned for persistence.
+ *
+ * The seat cannot know the id and is never told: since session-context-files the drafting
+ * prompt carries no packet, and a captured patchset's id is Rennet's identity for the
+ * capture, not something readable from the checkout. So the HOST supplies it — but only
+ * at the very end, never on each parse. Stamping every pass would rebind a stale seat
+ * result or an editor mutation silently, and the cross-patchset check and the
+ * immutability gate would then compare two boards this function had already made agree.
+ * Everything before this point sees exactly what the seat and the editor emitted; what a
+ * citation actually POINTS AT is checked by lint against `ctx.regions`, which is the
+ * check that can fail.
+ */
+function stampPatchsetId(board: DraftBoard, patchsetId: string | undefined): DraftBoard {
+  if (patchsetId === undefined) return board;
+  return {
+    ...board,
+    elements: board.elements.map((el) =>
+      el.kind === "code_ref"
+        ? ({ ...el, data: { ...(el.data as object), patchset_id: patchsetId } } as DraftElement)
+        : el,
+    ),
+  };
+}
+
 /** Coerce a raw seat return into a `DraftBoard`, or the parse issues that rejected it. */
 function coerceBoard(
   raw: unknown,
@@ -530,5 +556,13 @@ export async function validateDraft(
     blemishes = [...blemishes, ...wire];
   }
 
-  return { board: current, omissions, blemishes, immutability, attempts, everParsed };
+  // The ONE stamp, after every gate has compared what was actually emitted.
+  return {
+    board: stampPatchsetId(current, ctx.patchsetId),
+    omissions,
+    blemishes,
+    immutability,
+    attempts,
+    everParsed,
+  };
 }

@@ -326,6 +326,13 @@ export function envelope(context: EnvelopeContext, native: unknown): HarnessEven
 
 export interface SessionSpec {
   readonly cwd: string;
+  /**
+   * Which seat opened this session (`board.lens-draft.design`), for logs, metrics and
+   * test attribution. Never sent to the model: a repair turn is pointer-only on every
+   * leg (session-bound-workspace 3.2), so a fake port that must answer for a specific
+   * seat reads this rather than the prompt.
+   */
+  readonly label?: string;
   readonly model?: string;
   readonly effort?: CouncilEffort;
   readonly systemPrompt?: { readonly mode: "replace" | "append"; readonly text: string };

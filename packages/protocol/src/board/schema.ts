@@ -261,7 +261,11 @@ const messageData = withAuthor({
 // B3 task 6.2) in snake_case wire casing — each field reuses the canonical
 // sub-schema, so the two surfaces cannot drift.
 const codeRefData = withAuthor({
-  patchset_id: codeRefSchema.shape.patchsetId,
+  // HOST-OWNED, and therefore OPTIONAL on the model-facing side: a seat is never told
+  // the captured patchset's id (its prompt carries no packet), so requiring it would
+  // demand a field the model can only invent. `validateDraft` stamps it once, on the
+  // board it returns for persistence, so an on-disk board always carries it.
+  patchset_id: codeRefSchema.shape.patchsetId.optional(),
   path: codeRefSchema.shape.path,
   side: codeRefSchema.shape.side,
   start_line: codeRefSchema.shape.startLine,
@@ -514,7 +518,11 @@ export const AUTHORED_BOARD_SCHEMA = defineSchema({
     lifecycle: a("string", false, "staged | dispatched | addressed | retired | detached."),
   }),
   code_ref: authored("A citation into the captured patchset; code is never copied.", {
-    patchset_id: a("string", true, "The captured patchset id."),
+    patchset_id: a(
+      "string",
+      false,
+      "The captured patchset id. HOST-OWNED: a seat is never told it, so it is absent on a draft and stamped once before persistence.",
+    ),
     path: a("string", true, "Repo-relative file path."),
     side: a("string", true, "base | head."),
     start_line: a("number", true, "First cited line."),

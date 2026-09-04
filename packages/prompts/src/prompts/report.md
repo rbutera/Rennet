@@ -7,14 +7,18 @@ the supplied output schema; the host builds and verifies the report board.
 
 ## What you receive
 
-The context contains exactly:
+Nothing is sent to you inline. The context layer names one file,
+`evidence.json` in this session's context directory; read it with your own
+tools before you classify anything. It is one JSON object with exactly:
 
 - `patchsetId`, the successor patchset the report will cite;
 - `dispatchedAsks`, the durable ask ids and reviewer-authored instructions;
 - `worker`, the completed coding turn's `changedPaths` and observed
   `commitRange`;
 - `evidence`, the round's evidence manifest: every unit of the exact turn diff,
-  in canonical order, each with a stable `id`.
+  in canonical order, each with a stable `id` of the form `ev-` plus sixteen
+  hex characters. These are the report's own evidence ids, not code
+  references.
 
 The manifest is the whole change and the only change. A `text-hunk` unit carries
 the verbatim hunk in `text`. A `rename`, `mode-change`, or `binary` unit carries
