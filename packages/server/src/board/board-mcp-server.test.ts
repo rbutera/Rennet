@@ -269,10 +269,15 @@ describe("an address names a board and a bearer authenticates the caller (2.5)",
 
   it("the right bearer at an address nobody minted reaches no board", async () => {
     const server = await serverWith();
-    await designLane(server);
+    // A LIVE address exists alongside it. Without one the registry is empty and any
+    // lookup answers 404 whatever it does, so this asserted nothing: a mutation that
+    // resolved an unknown token to whatever seat was to hand reddened nothing (control
+    // M2, 2026-09-05). The live seat is what makes the token itself load-bearing.
+    const live = designAddress(await designLane(server));
+    expect((await rpc(live.url, { jsonrpc: "2.0", id: 1, method: "ping" })).status).toBe(200);
     const answer = await rpc(`${server.origin}/board/never-minted`, {
       jsonrpc: "2.0",
-      id: 1,
+      id: 2,
       method: "ping",
     });
     expect(answer.status).toBe(404);
@@ -297,11 +302,20 @@ describe("an address names a board and a bearer authenticates the caller (2.5)",
     expect((await rpc(address.url, { jsonrpc: "2.0", id: 3, method: "ping" })).status).toBe(200);
   });
 
-  it("a settled lane's addresses stop working on the very next call", async () => {
+  it("a settled lane's addresses stop working on the very next call, and a sibling's do not", async () => {
     const server = await serverWith();
     const lane = await designLane(server);
     const url = designAddress(lane).url;
+    // A SIBLING lane runs on. Its live address is what keeps the settled one's 404 about
+    // this lane rather than about an empty registry (controls M2/M4, 2026-09-05).
+    const sibling = server.openLane({ generationId: "gen-1", target: "sequence", lint: lint() });
+    const siblingUrl = sibling.address({
+      seat: "sequence",
+      author: { kind: "lens-agent", id: "lens:sequence" },
+      idPrefix: "q",
+    }).url;
     await handshake(url);
+    await handshake(siblingUrl);
     const before = await rpc(url, {
       jsonrpc: "2.0",
       id: 2,
@@ -321,6 +335,15 @@ describe("an address names a board and a bearer authenticates the caller (2.5)",
     expect(after.status).toBe(404);
     // Nothing landed after the settlement; the board is what it was.
     expect(lane.board().elements).toHaveLength(1);
+    // The sibling lane never settled, so its seat is still writing.
+    const siblingCall = await rpc(siblingUrl, {
+      jsonrpc: "2.0",
+      id: 4,
+      method: "tools/call",
+      params: { name: "add_section", arguments: { title: "Still drafting" } },
+    });
+    expect(isError(siblingCall)).toBe(false);
+    expect(sibling.board().elements).toHaveLength(1);
   });
 
   it("settling a generation revokes every lane it holds", async () => {
