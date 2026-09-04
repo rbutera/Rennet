@@ -42,8 +42,14 @@ Each decision block carries:
   you reconstructed it, mark the decision inferred. Never present a
   reconstruction as the implementer's own words.
 - **Alternatives not taken** — the other way(s) a reasonable engineer might
-  have chosen. Real alternatives, not strawmen.
-- **Evidence** — the code anchors (path:line) where the decision is visible.
+  have chosen. Real alternatives, not strawmen. Each one is a plain sentence
+  written straight into `alternatives`. It is a text field: never an element
+  id, and never a separate element the array points at — an id there renders
+  to the reader as the literal id.
+- **Evidence** — the code anchors (path:line) where the decision is
+  IMPLEMENTED. A comment or a file header that describes the call is not
+  where the call is visible; cite the code that makes it, and reach for the
+  header only when no code carries the decision at all.
 
 Group decisions into sections by theme when there are more than a handful.
 Give each section a one-line folded gist with counts.

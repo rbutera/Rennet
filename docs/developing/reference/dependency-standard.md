@@ -50,8 +50,10 @@ Distributed dependencies may use the compatible licences allowlisted in
 packaged artifact and are collected in `THIRD-PARTY-LICENSES.md` (regenerate with
 `pnpm notices`).
 
-Self-hosted Geist, Geist Mono, Fraunces, and Newsreader assets use OFL-1.1. The
-font licence applies to the font files, not Rennet's FSL-1.1-MIT source.
+Self-hosted Geist and Geist Mono assets use OFL-1.1. The font licence applies to
+the font files, not Rennet's FSL-1.1-MIT source. (Fraunces and Newsreader were
+dropped from the app on 2026-09-04 when the serif voice was retired; the
+marketing and documentation sites carry their own fonts and their own notices.)
 
 The Anthropic Agent SDK and its platform packages are named exceptions because
 pnpm reports their commercial licence as `Unknown`. The gate does not allow the

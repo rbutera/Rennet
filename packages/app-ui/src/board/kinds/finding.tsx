@@ -4,11 +4,12 @@ import { ChevronDown } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Icon } from "../../components/icon";
 import { useFlightBatcher } from "../../handoff/exit-flight";
-import { AnchorReveal, useAnchoredAsk } from "../../review";
+import { useAnchoredAsk } from "../../review";
 import { useRennetStore } from "../../store";
 import { findingLifecycle } from "../finding-lifecycle";
 import { QuoteHighlightLayer } from "../quote-highlight";
 import type { ElementOf } from "../registry";
+import { BoardAnchorReveal } from "./board-anchor-reveal";
 import { useBoardGeneration, useBoardId, useBoardPatchsetId, useCodeRefs } from "./element-context";
 
 // `finding` (C05 3.3) — a raised review finding. Folds to its first line (findings
@@ -127,11 +128,15 @@ export function FindingElement({ element }: { readonly element: ElementOf<"findi
     findingDispositions,
   });
   const { askId, dismissedByReviewer, ref, requested: staged, status } = lifecycle;
-  const [open, setOpen] = useState(status === "open");
+  // Folded on arrival like every other foldable (Rai, 2026-09-04): the reader reads the
+  // claim lines first. Leaving `open` therefore COLLAPSES — dismissing or addressing a
+  // finding rolls it up — but returning to `open` never forces it back out, because that
+  // would reopen a card the reader had deliberately folded.
+  const [open, setOpen] = useState(false);
   const dimmed = status === "dismissed" || status === "addressed";
 
   useEffect(() => {
-    setOpen(status === "open");
+    if (status !== "open") setOpen(false);
   }, [status]);
 
   // The ask's source anchor is the finding's first cited position, mirroring C4's
@@ -278,7 +283,7 @@ export function FindingElement({ element }: { readonly element: ElementOf<"findi
               ) : null}
             </div>
           </div>
-          {citations.length > 0 && <AnchorReveal citations={citations} />}
+          {citations.length > 0 && <BoardAnchorReveal citations={citations} />}
         </div>
       </Collapse>
     </div>

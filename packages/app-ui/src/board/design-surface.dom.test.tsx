@@ -1246,7 +1246,12 @@ describe("Design section metadata", () => {
     };
     const view = mount(
       <BridgeProvider bridge={new MemoryBridge()}>
-        <BoardElementsProvider elements={[section]} reviewId="review-round" boardId="board-round">
+        <BoardElementsProvider
+          elements={[section]}
+          reviewId="review-round"
+          boardId="board-round"
+          lens="design"
+        >
           <Section
             entry={{
               ref: section.id,
