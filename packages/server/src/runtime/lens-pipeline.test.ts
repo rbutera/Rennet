@@ -4830,7 +4830,9 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
   it("names the daemon's OWN reason when the sidecar was composed and would not start", async () => {
     const applied: Applied[] = [];
     const result = await runLensPipeline({
-      council: { availability: { installed: ["claude-code"] } },
+      // BOTH installed, so the Flagged lane's two seats fail for the same reason — the
+      // sidecar — and nothing else can account for either.
+      council: { availability: { installed: ["claude-code", "codex"] } },
       t3Unavailable: "the vendored bundle is not staged",
       repoRoot: "/pr-worktree",
       deltaPacket: PACKET,
@@ -4841,6 +4843,12 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     });
     for (const outcome of result.boards) {
       expect(outcome.failure).toContain("the vendored bundle is not staged");
+      // Once, not twice. One cause taking both Flagged seats out and printed twice reads
+      // as two different problems the reviewer has to go and find.
+      expect(
+        outcome.failure?.match(/the vendored bundle is not staged/g),
+        outcome.lens,
+      ).toHaveLength(1);
     }
   });
 });
