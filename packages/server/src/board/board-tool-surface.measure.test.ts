@@ -249,3 +249,193 @@ describe("what a tool-writing seat pays per turn that a document return did not 
     ).toBeLessThan(1.5);
   });
 });
+
+// ── What a tool RESULT costs, on a board big enough to show it (#871) ────────
+
+/**
+ * A tool result is billed like a prompt and gets the same byte discipline.
+ *
+ * CLAUDE.md's harness section bounds every dynamic interpolation a PROMPT carries. Nobody
+ * had written the equivalent for what a tool RESULT carries, and the provider charges for
+ * both identically — worse, a result sits in the conversation prefix and is re-read on
+ * every remaining round trip of that turn, which for a board seat is 60-121 of them (#867).
+ *
+ * It only shows on a large host-derived board, which is why no fixture caught it: the
+ * boards in every other test hold a handful of elements. So this file builds the board #871
+ * was sighted on — 1,252 elements, the Noise complement of a 95-file branch — drives the
+ * REAL `BoardWriter` and the REAL `describeOutcome`, and measures every result that
+ * interpolates a COLLECTION.
+ *
+ * Measured 2026-09-05, before and after the bound:
+ *
+ *   boundary refusal (300 danglers)   44,295 B  ->  1,489 B
+ *   removal receipt (401 ids)          2,304 B  ->    116 B
+ *   unheld-id refusal (1,252 ids)        144 B  ->    144 B  (already capped by `heldIds`)
+ *
+ * The unheld-id refusal — the one #871 quotes — was ALREADY bounded at twenty ids by
+ * `heldIds()` when the issue was filed; the sighting predates that cap. What was not bounded
+ * is the boundary tier's own refusal, which joins every violation the call introduced, and
+ * the removal receipt, which names every id a subtree took with it.
+ *
+ * What this CANNOT catch, stated because no assertion here covers it: a result that is small
+ * per call and issued thousands of times, and the provider's own framing around each
+ * `tool_result` block. Neither is visible to a byte count taken here.
+ */
+const NOISE_REGIONS_LARGE = 626; // 1,252 elements — two per region (#871's board)
+const NOISE_REGIONS_SMALL = 3;
+const DANGLERS_LARGE = 300;
+const DANGLERS_SMALL = 3;
+
+/**
+ * The declared ceiling on ONE tool result, whatever the board (#871). The worst measured is
+ * the `finish` receipt at 3,220 B — twenty lint pointers, each a whole sentence, bounded by
+ * `POINTER_SAMPLE`. Everything else is under 1.5 kB.
+ */
+const TOOL_RESULT_CEILING = 4096;
+
+/**
+ * How much a result may grow between a small board and a large one. A bound is only a bound
+ * if the growth stops; this is the assertion that reddens when one comes off. The pre-fix
+ * boundary refusal grew ~98x across these same two fixtures and the removal receipt ~57x.
+ */
+const GROWTH_CEILING = 10;
+
+const idOf = (result: ReturnType<BoardWriter["call"]>): string => {
+  if (!result.ok || result.outcome.kind !== "element") {
+    throw new Error(
+      `expected an element, got: ${result.ok ? result.outcome.kind : result.refusal}`,
+    );
+  }
+  return result.outcome.id;
+};
+
+const resultText = (result: ReturnType<BoardWriter["call"]>): string =>
+  result.ok ? describeOutcome(result.outcome) : result.refusal;
+
+const regionsFor = (count: number) =>
+  Array.from({ length: count }, (_, index) => ({
+    path: `src/file-${index}.ts`,
+    side: "head" as const,
+    start: 1,
+    end: 40,
+  }));
+
+/**
+ * Every tool result a board hands back that interpolates a collection, at one scale.
+ *
+ * Each one is produced by DRIVING the writer into the state that yields it, never by
+ * calling a formatter with a synthetic list: a formatter that stopped being reached would
+ * otherwise still measure beautifully.
+ */
+function collectionResults(scale: { regions: number; danglers: number }): Record<string, string> {
+  const regions = regionsFor(scale.regions);
+  const noise = new BoardWriter({
+    target: "noise",
+    author: { kind: "lens-agent", id: "lens:noise:claudeAgent" },
+    lint: { regions, files: new Map(regions.map((r) => [r.path, 200])), patchsetId: "ps-1" },
+  });
+  const members = noise.placeMembers("noise_verdict", regions);
+  const overshoot = `e${noise.board().elements.length + 76}`;
+
+  // The Flagged board that produces a boundary refusal: N findings citing one citation, then
+  // the citation removed out from under them.
+  const flagged = new BoardWriter({
+    target: "flagged",
+    author: AUTHOR,
+    lint: {
+      regions: regionsFor(1),
+      files: new Map([["src/file-0.ts", 200]]),
+      patchsetId: "ps-1",
+    },
+  });
+  const section = idOf(flagged.call("add_section", { title: "Findings" }));
+  const citation = idOf(
+    flagged.call("cite", {
+      parent_id: section,
+      path: "src/file-0.ts",
+      side: "head",
+      start_line: 2,
+      end_line: 6,
+    }),
+  );
+  for (let index = 0; index < scale.danglers; index += 1) {
+    flagged.call("add_finding", {
+      parent_id: section,
+      severity: "medium",
+      concern: `The retry path number ${index} runs before the token is replaced.`,
+      code_ref_ids: [citation],
+    });
+  }
+
+  // A board whose whole content hangs off one section, so removing it succeeds and the
+  // receipt names the subtree.
+  const roomy = new BoardWriter({
+    target: "flagged",
+    author: AUTHOR,
+    lint: {
+      regions: regionsFor(1),
+      files: new Map([["src/file-0.ts", 200]]),
+      patchsetId: "ps-1",
+    },
+  });
+  const doomed = idOf(roomy.call("add_section", { title: "Everything" }));
+  for (let index = 0; index < scale.danglers; index += 1) {
+    roomy.call("add_prose", { parent_id: doomed, markdown: `Note number ${index}.` });
+  }
+
+  return {
+    // The #871 sighting itself: an id the board does not hold.
+    "unheld id": resultText(
+      noise.call("update_noise_verdict", { element_id: overshoot, reason: "x" }),
+    ),
+    // A parent the board does not hold — the same list, reached by a different verb.
+    "unheld parent": resultText(noise.call("add_section", { title: "T", parent_id: overshoot })),
+    // Removing a member the HOST derived: the refusal names what would go.
+    "derived removal": resultText(noise.call("remove_element", { element_id: members[0] ?? "e2" })),
+    // The unsettled `finish` receipt: every lint pointer the board still carries.
+    finish: resultText(noise.call("finish", {})),
+    // THE BOUNDARY REFUSAL: one violation per element that pointed at what the call removed.
+    "boundary refusal": resultText(flagged.call("remove_element", { element_id: citation })),
+    // The accepted removal's receipt: every id the subtree took with it.
+    "removal receipt": resultText(roomy.call("remove_element", { element_id: doomed })),
+  };
+}
+
+describe("what a board's tool RESULTS cost on a 1,252-element board (#871)", () => {
+  it("bounds every result that interpolates a collection, and stops it growing with the board", () => {
+    const small = collectionResults({ regions: NOISE_REGIONS_SMALL, danglers: DANGLERS_SMALL });
+    const large = collectionResults({ regions: NOISE_REGIONS_LARGE, danglers: DANGLERS_LARGE });
+
+    console.info(
+      ["result             small   large  growth"]
+        .concat(
+          Object.keys(large).map((key) => {
+            const from = textBytes(small[key] ?? "");
+            const to = textBytes(large[key] ?? "");
+            return `${key.padEnd(18)} ${String(from).padStart(5)}  ${String(to).padStart(6)}  ${(to / from).toFixed(1)}x`;
+          }),
+        )
+        .join("\n"),
+    );
+
+    for (const [key, text] of Object.entries(large)) {
+      expect(
+        textBytes(text),
+        `the ${key} result is ${textBytes(text)} B on a 1,252-element board`,
+      ).toBeLessThan(TOOL_RESULT_CEILING);
+      const from = textBytes(small[key] ?? "");
+      expect(
+        textBytes(text) / from,
+        `the ${key} result grew ${(textBytes(text) / from).toFixed(1)}x with the board`,
+      ).toBeLessThan(GROWTH_CEILING);
+    }
+
+    // The operand guard: the large fixture really is large, and the refusals really are
+    // refusals. Without this the two assertions above would pass over a fixture that built
+    // a three-element board twice, and over results that all said "ok".
+    expect(large["boundary refusal"]).toContain("element-reference-resolves");
+    expect(large["unheld id"]).toContain("This board holds no");
+    expect(large["removal receipt"]).toContain("removed");
+    expect(large.finish).toContain("to fix");
+  });
+});
