@@ -40,14 +40,26 @@ describe("lens prompt manifest", () => {
   });
 
   it("every lens prompt carries each shared marker exactly once, not the section body", () => {
+    const checked: string[] = [];
     for (const kind of LENS_KINDS) {
       const text = readFileSync(join(srcDir, LENS_PROMPT_FILES[kind]), "utf8");
       for (const marker of Object.keys(PROMPT_PARTIALS)) {
+        checked.push(`${kind}/${marker}`);
         expect(text.split(marker), `${kind} prompt / ${marker}`).toHaveLength(2);
       }
       expect(text).not.toContain("## Investigate before you draft");
       expect(text).not.toContain("## How you write this board");
     }
+    // ── The COUNT, as LITERALS ──────────────────────────────────────────────────────
+    // Without it a `LENS_KINDS` or a `PROMPT_PARTIALS` that came back empty would leave
+    // this sweep asserting nothing and still green, which is the defect this change has
+    // now shipped four times (an empty registry, a reconstructed tool surface, a raw
+    // schema, a one-target meta-key sweep). Deriving the expectation from the same two
+    // tables would inherit their emptiness, so these are the measured figures
+    // (2026-09-05): five lenses, two shared markers, ten pairs.
+    expect(LENS_KINDS, "lens prompts swept").toHaveLength(5);
+    expect(Object.keys(PROMPT_PARTIALS), "shared markers swept").toHaveLength(2);
+    expect(checked, "lens/marker pairs actually asserted").toHaveLength(10);
   });
 
   /**

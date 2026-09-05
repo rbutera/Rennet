@@ -125,9 +125,15 @@ describe("every board tool input is a flat shape a provider can carry (D3)", () 
  */
 describe("a seat cannot type a count (D10)", () => {
   it("no tool input on any target carries a tally field", () => {
+    const targetsSwept = new Set<string>();
+    const toolsSwept = new Set<string>();
+    const swept: string[] = [];
     for (const target of BOARD_TARGETS) {
+      targetsSwept.add(target);
       for (const tool of buildBoardTools(target)) {
+        toolsSwept.add(`${target}.${tool.name}`);
         for (const field of fieldNames(tool)) {
+          swept.push(`${target}.${tool.name}.${field}`);
           expect(
             /^(counts?|.*_counts?|total|totals|tally)$/.test(field),
             `${target}.${tool.name} exposes a tally field \`${field}\``,
@@ -135,6 +141,19 @@ describe("a seat cannot type a count (D10)", () => {
         }
       }
     }
+    // ── The COUNTS, and they are LITERALS ──────────────────────────────────────────
+    // A sweep that stops iterating passes silently and still reads as coverage, which is
+    // the recurring defect of this change rather than a general worry: an empty registry,
+    // a reconstructed tool surface, a raw schema and a one-target meta-key sweep have each
+    // already shipped green in it. Deriving the expected total from `buildBoardTools`
+    // again would inherit the same emptiness and assert nothing, so these are the measured
+    // figures (2026-09-05): 6 targets, 94 tools, 345 input fields between them. They are
+    // deliberately brittle — the tool list is what every seat is sent on every request, so
+    // a change to any of these three numbers is a change to that, and the pull request
+    // making it says so.
+    expect(targetsSwept.size, "targets swept").toBe(6);
+    expect(toolsSwept.size, "tools swept").toBe(94);
+    expect(swept, "target/tool/field triples swept").toHaveLength(345);
   });
 
   it("the section verb carries the authored one-line gist and nothing tallied", () => {
