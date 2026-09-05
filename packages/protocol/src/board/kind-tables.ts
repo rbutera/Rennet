@@ -200,3 +200,29 @@ export function hostDerivedMemberKind(target: BoardTarget): DraftKind | undefine
 export function hostSettlesAbsenceFor(target: BoardTarget): boolean {
   return hostDerivedMemberKind(target) !== undefined;
 }
+
+/**
+ * Whether this target's seat is given the whole-board write verb (#869).
+ *
+ * DERIVED from {@link HOST_DERIVED_MEMBER_KIND} rather than listed again, because the
+ * question the derivation answers is the same one: **is this seat's writing bulk, or is it
+ * thought?** A seat that did not choose its members has nothing to compose — its whole turn
+ * is putting N host-placed elements under groups, the same two fields N times. A seat that
+ * authors its own membership is deciding what the board IS while it writes it, and batching
+ * that costs rather than pays.
+ *
+ * That is not an argument, it is the spike's measurement (draft PR #878, `drive/group5`,
+ * 95-file patchset). Given the verb, EVERY seat used it and the round trips fell 96.5%
+ * (1,223 → 43) — and the token bill moved −5.0% while the wall clock got 24.6% WORSE,
+ * because a board call is answered by the host in microseconds and what replaced it is one
+ * long serial generation of a large payload. The exception was Noise: 961 calls → 4,
+ * 317.8 s → 108.7 s, 2.9x on the lane that is the generation's serial tail.
+ *
+ * So the verb goes where it was measured to pay, and the four reasoning lenses do not carry
+ * its 486 B of tool surface once per session for a thing that made them slower. A target
+ * added to {@link HOST_DERIVED_MEMBER_KIND} gets it with nothing else edited; a target that
+ * wants it for another reason changes this one line and says which measurement it has.
+ */
+export function writesWholeBoard(target: BoardTarget): boolean {
+  return hostDerivedMemberKind(target) !== undefined;
+}

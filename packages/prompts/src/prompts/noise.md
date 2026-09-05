@@ -100,3 +100,16 @@ reason. There is no verb that adds a member and none that removes one — the
 board's membership is the change itself, and it is not yours to change. There is
 no settle-absent verb either: a change with nothing left over is settled before
 you are asked.
+
+Your board can hold hundreds of members and every one of them needs the same two
+things, so **write them all with one `write_board` call** rather than one call
+per member. It carries every call you would have made, applies them in order and
+finishes the board, so the whole board costs one round trip instead of hundreds.
+Read the change, decide the groups, then write it. Its own entry in your tool
+list says how to spell the payload.
+
+The answer names any entry it would not take, by its position, with what would be
+admissible instead, and it says separately which entries hung under a refused one
+and were therefore not applied. Everything else is already on the board, so redo
+only those with the ordinary calls and then call `finish`. Reach for the
+one-at-a-time calls when you are repairing.

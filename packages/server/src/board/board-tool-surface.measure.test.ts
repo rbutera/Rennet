@@ -70,15 +70,23 @@ const retiredSchema = (row: SeatRow): unknown => outputSchemaFor(row.provider, b
 
 /**
  * The declared bounds (token discipline: "every dynamic interpolation declares a byte
- * bound at its call site"). Measured 2026-09-05 with both operands as-sent: the worst seat
- * is Design at 1.34x the schema it replaces, and a generation's seven seats together are
- * 0.94x (64,785 B of tools against 68,582 B of schema) — the tool surface is SMALLER in
- * aggregate than the output schema it replaces.
+ * bound at its call site"). RE-MEASURED 2026-09-05 with both operands as-sent, after #869
+ * gave the Noise seat `write_board`: the worst seat is Design at 1.33x the schema it
+ * replaces, and a generation's seven seats together are 0.949x (65,081 B of tools against
+ * 68,582 B of schema) — the tool surface is SMALLER in aggregate than the output schema it
+ * replaces. #869 moved the Noise seat 7,693 → 8,179 B and no other seat at all, so the
+ * generation moved 64,595 → 65,081, +486 B once per session.
+ *
+ * (The figure this note previously carried, 64,785, had drifted: it was measured before
+ * #864/#868 changed the Noise verb set. Re-run the test — it prints the table — rather than
+ * copying a number forward, which is this file's whole point.)
  *
  * The generation bound is therefore set at parity, which makes it a claim rather than
  * slack: a change that takes a generation's seats past what they replace has grown what
  * every seat sends on every request, and the PR that makes it has to say so. That is why
- * this is a test and not a script somebody once ran.
+ * this is a test and not a script somebody once ran. It is also why #869 is Noise-only:
+ * the spike that measured the verb put it on all seven and reached 67,997 B, 0.99x, with
+ * its first draft over the ceiling at 69,222 B.
  */
 const PER_SEAT_CEILING = 1.4;
 const GENERATION_CEILING = 1.0;
@@ -113,6 +121,28 @@ describe("the tool surface a seat receives, beside the output schema it replaces
       surface / schemas,
       `a generation's seven seats carry ${surface} B of tools against ${schemas} B of output schema`,
     ).toBeLessThan(GENERATION_CEILING);
+  });
+
+  it("prices `write_board` where it is served, and it is served to one seat (#869)", () => {
+    // The PR's cost sentence, made executable. It is taken from `servedToolCatalog` — what
+    // `tools/list` actually answers with — and not from a local rebuild of the tool set:
+    // the recurring defect of this change is an assertion pointed at a copy of the thing,
+    // and this file's own header names three times it happened.
+    const priced = SEATS.map((row) => {
+      const served = servedToolCatalog(row.target);
+      const without = served.filter((tool) => tool.name !== "write_board");
+      return { seat: row.seat, cost: bytes(served) - bytes(without) };
+    });
+    const carrying = priced.filter((row) => row.cost > 0);
+    console.info(
+      `write_board is served to ${carrying.map((row) => row.seat).join(", ") || "no seat"} at ${carrying[0]?.cost ?? 0} B`,
+    );
+    // ONE seat. The other six do not pay for a verb the spike measured them slower with.
+    expect(carrying.map((row) => row.seat)).toEqual(["noise"]);
+    // And what that one seat pays, once per session — the whole of #869's session cost.
+    // 486 and not 485: the verb's own JSON is 485 B and the catalog's separator is the
+    // other byte, which is what the seat is actually sent.
+    expect(carrying[0]?.cost).toBe(486);
   });
 
   it("measures the schema the seat leg SENDS, not the one the pipeline holds", () => {
@@ -287,9 +317,14 @@ const DANGLERS_LARGE = 300;
 const DANGLERS_SMALL = 3;
 
 /**
- * The declared ceiling on ONE tool result, whatever the board (#871). The worst measured is
- * the `finish` receipt at 3,220 B — twenty lint pointers, each a whole sentence, bounded by
- * `POINTER_SAMPLE`. Everything else is under 1.5 kB.
+ * The declared ceiling on ONE PER-CALL tool result, whatever the board (#871). The worst
+ * measured is the `finish` receipt at 3,220 B — twenty lint pointers, each a whole sentence,
+ * bounded by `POINTER_SAMPLE`. Everything else is under 1.5 kB.
+ *
+ * `write_board` is deliberately not in this table: it answers for a whole BATCH, so its
+ * envelope is `POINTER_SAMPLE` refusal sentences (each capped by `BATCH_SENTENCE_CAP`) plus
+ * `CASCADE_SAMPLE` positions, which is larger than this by construction and declared at
+ * those constants (#869).
  */
 const TOOL_RESULT_CEILING = 4096;
 
