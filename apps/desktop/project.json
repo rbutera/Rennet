@@ -9,7 +9,11 @@
       "{workspaceRoot}/scripts/native-artifact-staging.mjs",
       "{workspaceRoot}/scripts/native-artifact-staging.d.mts"
     ],
-    "packagedAppSmokeScript": ["{workspaceRoot}/scripts/smoke-packaged-app.mjs"]
+    "packagedAppSmokeScript": ["{workspaceRoot}/scripts/smoke-packaged-app.mjs"],
+    "releaseWorkflows": [
+      "{workspaceRoot}/.github/workflows/auto-release.yml",
+      "{workspaceRoot}/.github/workflows/release.yml"
+    ]
   },
   "targets": {
     "build": {
@@ -37,7 +41,12 @@
     "test": {
       "command": "pnpm exec vitest run --passWithNoTests -c apps/desktop/vitest.config.ts",
       "dependsOn": ["build"],
-      "inputs": ["default", "^production", { "input": "packagedAppSmokeScript" }]
+      "inputs": [
+        "default",
+        "^production",
+        { "input": "packagedAppSmokeScript" },
+        { "input": "releaseWorkflows" }
+      ]
     },
     "e2e": { "command": "pnpm exec playwright test -c apps/desktop/playwright.config.ts" },
     "package": {

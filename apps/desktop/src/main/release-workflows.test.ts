@@ -46,6 +46,21 @@ describe("release workflow boundaries", () => {
     expect(autoReleaseWorkflow).not.toMatch(/^permissions:\n {2}contents: write/m);
   });
 
+  it("continues packaging after reusing a skipped green gate", () => {
+    expect(autoReleaseWorkflow).toMatch(
+      / {2}build-linux-native:\n {4}needs: version\n {4}if: \$\{\{ always\(\) && needs\.version\.result == 'success' \}\}/,
+    );
+    expect(autoReleaseWorkflow).toMatch(
+      / {2}build-macos:\n {4}needs: version\n {4}if: \$\{\{ always\(\) && needs\.version\.result == 'success' \}\}/,
+    );
+    expect(autoReleaseWorkflow).toMatch(
+      / {2}build-windows:\n {4}needs: \[version, build-linux-native\]\n {4}if: \$\{\{ always\(\) && needs\.version\.result == 'success' && needs\.build-linux-native\.result == 'success' \}\}/,
+    );
+    expect(autoReleaseWorkflow).toMatch(
+      / {2}publish:\n {4}needs: \[version, build-macos, build-windows\]\n {4}if: \$\{\{ always\(\) && needs\.version\.result == 'success' && needs\.build-macos\.result == 'success' && needs\.build-windows\.result == 'success' \}\}/,
+    );
+  });
+
   it("publishes both manual and automatic releases draft-first, then undrafts", () => {
     // #599 made both workflows draft-first: create as a draft, upload with retry, undraft
     // last, so a run that dies mid-upload leaves an invisible draft rather than a published
