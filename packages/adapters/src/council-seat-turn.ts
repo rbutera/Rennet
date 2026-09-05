@@ -329,6 +329,12 @@ export interface CouncilSeatDeps {
   readonly t3?: {
     readonly seat: string;
     readonly seam: T3SeatSeam;
+    /**
+     * This seat's running board tool-call count, so every board turn's own figure reaches
+     * the collector beside its tokens and its duration (task 4.3). Absent ⇒ the seat has
+     * no board lane and the metric carries no count.
+     */
+    readonly toolCalls?: () => number | undefined;
   };
   /**
    * Why the daemon has no seam to give (t3-lens-threads, review finding 1). A daemon that
@@ -408,6 +414,7 @@ export function councilSeatTurn(
         outputSchema: schema,
         label: deps.label ?? "council.seat",
         ...(deps.collector === undefined ? {} : { collector: deps.collector }),
+        ...(deps.t3.toolCalls === undefined ? {} : { toolCalls: deps.t3.toolCalls }),
         ...(deps.signal === undefined ? {} : { signal: deps.signal }),
         ...(deps.onProviderSettled === undefined
           ? {}

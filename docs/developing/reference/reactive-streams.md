@@ -30,6 +30,7 @@ A client can reconstruct durable state by querying the daemon. Push frames carry
 | Command progress | `onProgress(commandId)` | The server assigns order and sends terminal state that agrees with the command result. |
 | Project-detail progress | `onProjectDetailProgress(commandId)` | Each completed forge repository advances the pull-request fetch count for one project-detail request. |
 | Review conversation | T3's own thread subscription | The conversation is a T3 Code thread; its client runtime owns the subscription, and Rennet carries no parallel channel for it. |
+| A board being written | `lensDraft` push frame, keyed by review | One frame per accepted board tool call, carrying the elements that call touched and the position each holds. Live only, never replayed: a reader that joins mid-draft reads `board.draft` for the board as it stands and folds from that snapshot's revision. |
 | Connection state | `ConnectionSupervisor.subscribe` | Each client receives reachability changes from one supervisor. |
 | Project-detail repository fetches | `mapLimit(..., 4, ...)` | At most four forge repositories fetch pull requests at once. A sibling semaphore (`MAX_CONCURRENT_LIST_FETCHES`) bounds pull-request list fetches the same way. |
 
@@ -52,6 +53,25 @@ each completed forge repository. This channel has no server replay buffer or
 live-run registry; the resolved `project.detail` response is authoritative. The
 client keeps the registration across bridge replacement so later frames still
 reach the same listener, but it does not invent missed counts.
+
+The board element stream is deliberately unthrottled, and the lane's live line
+deliberately is not. They are different shapes: a live line republishes the whole
+lane list on every tick, so five lanes once pushed five snapshots a second to
+change one digit, and it is capped at four publications a second for that reason.
+An element frame carries one call's worth of elements and stands alone, and its
+rate is bounded by the seat's accepted writes — tens per board, over a turn that
+runs for a minute. A refused call publishes nothing at all.
+
+Element frames also stay out of the round-progress log. That log is capped at 200
+events per review and replayed to a client that joins mid-round; a board's writes
+are of the same order on their own, so folding them in would evict the round's own
+phase events. The catch-up for a drafting board is the `board.draft` snapshot
+instead of a replay.
+
+Every element frame carries the generation it belongs to and a revision monotonic
+within `(generation, lens)`. A superseded drafting attempt owns a different
+generation, so a reader rendering the live one drops its frames rather than
+merging two attempts' boards.
 
 `ConnectionSupervisor` keeps `onProgress`, `onProjectDetailProgress`,
 `onAskProjection`, `onRoundProgress`, and attention registrations above the

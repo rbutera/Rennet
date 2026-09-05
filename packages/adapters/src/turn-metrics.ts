@@ -84,6 +84,17 @@ export interface TurnMetric {
    * is sent, on every leg, and carried beside the tokens it cost so both reach one sink.
    */
   readonly inlineContextBytes?: number;
+  /**
+   * How many board tool calls this turn made, refusals included (`lens-board-tools` D11,
+   * task 4.3). Beside the tokens and the duration, because it is the third figure a board
+   * seat's cost is made of: a seat that fought the boundary twenty times spent twenty
+   * tool results the diff cannot show, and a chatty seat is the named risk this whole
+   * change accepted on the promise of measuring it.
+   *
+   * Absent — never `0` — when this turn had no board to call: a utility turn, or a seat
+   * whose lane was not open. Zero is a real measurement of a seat that wrote nothing.
+   */
+  readonly toolCalls?: number;
   readonly error?: string;
 }
 

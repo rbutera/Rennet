@@ -285,6 +285,130 @@ describe("projectLatestEvent", () => {
   });
 });
 
+// ── The board arm (`lens-board-tools` D11, task 4.2) ─────────────────────────
+
+/** One board call's rows, shaped the way T3's `mcp_tool_call` projection shapes them. */
+const boardCall = (
+  at: number,
+  tool: string,
+  input: Record<string, unknown>,
+  over: { result?: string; callId?: string } = {},
+) => ({
+  tone: "tool",
+  kind: over.result === undefined ? "tool.started" : "tool.completed",
+  summary: "MCP tool call",
+  payload: {
+    itemType: "mcp_tool_call",
+    toolCallId: over.callId ?? `call-${tool}-${at}`,
+    status: over.result === undefined ? "inProgress" : "completed",
+    // T3 writes this verbatim, and it is what every path below the board arm renders.
+    detail: `mcp__rennet_board__${tool}: ${JSON.stringify(input)}`,
+    data: {
+      toolName: `mcp__rennet_board__${tool}`,
+      input,
+      ...(over.result === undefined ? {} : { result: { content: over.result } }),
+    },
+  },
+  turnId: "turn-1",
+  createdAt: ISO(at),
+});
+
+describe("a board call on the live line", () => {
+  it("reads as a receipt, never as the element it is writing", () => {
+    // THE CONTROL FOR 4.2: remove the board arm from `toolLine` and this reddens with
+    // `"text": "mcp__rennet_board__add_step"`, run 2026-09-05.
+    //
+    // Recorded precisely, because the shape of the failure is not the one the task's
+    // wording predicts. The unknown-tool fallback below already collapses a JSON input to
+    // the tool's own NAME (`isJsonPayload(rest)`), so what a board call fell back to was
+    // never `<toolName>: <raw JSON>` — it was the bare namespaced tool name, with no
+    // receipt in it at all. That is still a live line that tells the reviewer nothing and
+    // still leaks the wire's own vocabulary onto a surface meant for speech, which is what
+    // the last two assertions here pin. The arm is what makes it a sentence.
+    const line = projectLatestEvent(
+      thread({
+        activities: [
+          boardCall(1_000, "add_step", { title: "Read the entry point" }, { result: "e4" }),
+        ],
+      }),
+      1_100,
+    );
+    expect(line).toEqual({ kind: "tool", text: "added step 1", at: 1_000 });
+    expect(line?.text).not.toContain("{");
+    expect(line?.text).not.toContain("rennet_board");
+  });
+
+  it("counts a tool's calls within the turn, once per CALL and not once per row", () => {
+    // The started row and the completed row of ONE call share a `toolCallId`, so they
+    // share an ordinal. Counting rows would say "added step 2" for the first step.
+    const line = projectLatestEvent(
+      thread({
+        activities: [
+          boardCall(1_000, "add_step", { title: "one" }, { callId: "c1" }),
+          boardCall(1_100, "add_step", { title: "one" }, { callId: "c1", result: "e1" }),
+          boardCall(1_200, "add_step", { title: "two" }, { callId: "c2" }),
+          boardCall(1_300, "add_step", { title: "two" }, { callId: "c2", result: "e2" }),
+        ],
+      }),
+      1_400,
+    );
+    expect(line?.text).toBe("added step 2");
+  });
+
+  it("keeps speaking after it has finished, unlike every other tool", () => {
+    // A daemon answers a board call in microseconds, so its in-flight window is invisible.
+    // What the reviewer wants from the line is not what the seat is waiting on but what it
+    // just put on the board — so the receipt survives the call. A finished `Read` does not.
+    const finishedRead = projectLatestEvent(
+      thread({
+        activities: [
+          toolStarted(1_000, 'Read: {"file_path":"/repo/src/a.ts"}', "r1"),
+          toolFinished(1_100, 'Read: {"file_path":"/repo/src/a.ts"}', "r1"),
+        ],
+        messages: [said(900, "Looking at the entry point.")],
+      }),
+      1_200,
+    );
+    expect(finishedRead?.text, "a finished read yields to the seat's own words").toBe(
+      "Looking at the entry point.",
+    );
+
+    const finishedCite = projectLatestEvent(
+      thread({
+        activities: [
+          boardCall(
+            1_100,
+            "cite",
+            { path: "/repo/src/foo.ts", side: "head", start_line: 41, end_line: 58 },
+            { result: "e2" },
+          ),
+        ],
+        messages: [said(900, "Looking at the entry point.")],
+      }),
+      1_200,
+      { repoRoot: "/repo" },
+    );
+    expect(finishedCite?.text).toBe("cited `src/foo.ts:41-58`");
+  });
+
+  it("reads a finish verdict as its pointer count", () => {
+    const line = projectLatestEvent(
+      thread({
+        activities: [
+          boardCall(
+            1_000,
+            "finish",
+            {},
+            { result: "not settled — 2 to fix, then call finish again:" },
+          ),
+        ],
+      }),
+      1_100,
+    );
+    expect(line?.text).toBe("finish returned 2 pointers");
+  });
+});
+
 describe("capLine and lastSentence", () => {
   it("collapses whitespace and leaves a short line alone", () => {
     expect(capLine("  a\n  b  ")).toBe("a b");

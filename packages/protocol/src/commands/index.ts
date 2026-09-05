@@ -10,6 +10,7 @@ import {
   AskProjectionSchema,
   attentionFamilySchema,
   LensAbsenceReasonSchema,
+  LensDraftSnapshotSchema,
   LensFailureAccountSchema,
   QuoteThreadSchema,
   RoundEventSchema,
@@ -662,6 +663,25 @@ const definitions = {
       /** The typed account for `failure` (#549), when the attempt that failed recorded one. */
       failureAccount: LensFailureAccountSchema.optional(),
     }),
+  },
+  "board.draft": {
+    // The DRAFTING board read (`lens-board-tools` D11, task 4.1) — the catch-up half of
+    // the element stream. `board.read` above serves the board the pipeline PERSISTED at
+    // settle; this serves the one a seat is writing right now, so a surface that mounts
+    // after the first elements have landed starts from what is on the board instead of
+    // from a hole it can never fill. `revision` is the frame the snapshot is current
+    // with, so folding the live `lensDraft` frames resumes exactly there.
+    //
+    // `draft: null` is the honest MISSING answer: no lane of that generation is open for
+    // that lens, either because it has not started or because its board has settled and
+    // been evicted. A settled board is `board.read`'s to serve, and a fabricated drafting
+    // snapshot over one would be the same board twice with two different revisions.
+    input: z.object({
+      reviewId: z.string().min(1),
+      generation: z.string().min(1),
+      lens: LensKindSchema,
+    }),
+    output: z.object({ draft: LensDraftSnapshotSchema.nullable() }),
   },
   "projects.add": {
     // Confirm: persist the project from the discovery + the user's toggle choices.

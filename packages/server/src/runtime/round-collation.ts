@@ -418,6 +418,12 @@ export interface BoardRegenerationDeps {
   readonly runRound: (input: RoundInput) => Promise<unknown>;
   /** The live round-progress sink — the same channel the dispatch half emits on. */
   readonly emit: (event: RoundEvent) => void;
+  /**
+   * Where this review's boards are published as they are written (`lens-board-tools` D11,
+   * task 4.1). Bound to the REVIEW by the composition root, exactly as {@link emit} is;
+   * the generation is stamped by the rounds runtime, which is where it is known.
+   */
+  readonly lensDrafts?: RoundInput["lensDrafts"];
 }
 
 export interface BoardRegenerationInput {
@@ -547,6 +553,8 @@ export async function runBoardRegeneration(
         ...(input.firstBoardWaitOriginMs === undefined
           ? {}
           : { firstBoardWaitOriginMs: input.firstBoardWaitOriginMs }),
+        ...(deps.lensDrafts === undefined ? {} : { lensDrafts: deps.lensDrafts }),
+
         ...(snapshotSource.revision === undefined
           ? {}
           : { projectContextRevision: snapshotSource.revision }),

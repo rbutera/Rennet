@@ -2,7 +2,12 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { sanitizeSchemaForCodex, type T3SeatSeam, WhiteboardClient } from "@rennet/adapters";
+import {
+  createMetricsCollector,
+  sanitizeSchemaForCodex,
+  type T3SeatSeam,
+  WhiteboardClient,
+} from "@rennet/adapters";
 import {
   type BoardVoiceWriter,
   type DeltaPacket,
@@ -32,6 +37,7 @@ import {
 } from "@rennet/protocol";
 import { afterAll, describe, expect, it } from "vitest";
 import type { GenerationBoards } from "../board/board-mcp-server";
+import { seatBoardServer } from "../board/seat-address";
 import {
   applySeatTurn,
   closeFixtureBoardServer,
@@ -583,7 +589,16 @@ function fakeT3Seam(
     }) => {
       const threadId = `thread-${seat}`;
       opened.set(threadId, { threadId, seat, provider, model, effort });
-      return { threadId, projectId: "p1" };
+      // The seat's address onto its lane's board, exactly as `resolveT3SeatRuntime` mints
+      // it. Registering it is what lets the lane answer per-seat questions about this seat
+      // — its board tool-call count among them (task 4.3) — so a double that skipped it
+      // left that figure absent for a reason production does not have.
+      const boardServer = seatBoardServer(boards, seat);
+      return {
+        threadId,
+        projectId: "p1",
+        ...(boardServer === undefined ? {} : { boardServer }),
+      };
     },
   } as unknown as T3SeatSeam;
 }
@@ -1583,6 +1598,44 @@ describe("composeReviewDraft — the authored composition write-through (C2)", (
 });
 
 describe("runLensPipeline — the real drafting path (fake harness, no live model)", () => {
+  it("threads each seat's board tool-call count to the collector, from its REAL lane", async () => {
+    // `lens-board-tools` D11, task 4.3, driven end to end: the lane the pipeline opened
+    // counts the seat's calls, `resolveBoardSeatDetails` reads that lane, the adapter
+    // records the difference across the turn. `t3-seat-turn.test.ts` proves the adapter's
+    // arithmetic against an injected reader; this proves the reader is the real lane's.
+    //
+    // THE CONTROL FOR 4.3: drop the reader in `resolveBoardSeatDetails` and this reddens
+    // with `board.lens-draft.design carried no tool-call count: expected undefined to be
+    // defined`, run 2026-09-05.
+    const collector = createMetricsCollector();
+    const captures: SeatCapture[] = [];
+    const bodyFor = (prompt: string, label?: string): unknown =>
+      cleanBody(lensFromPrompt(prompt, label));
+    await runLensPipeline({
+      ...boardSeats(captures, bodyFor),
+      repoRoot: "/pr-worktree",
+      deltaPacket: PACKET,
+      lintContextFor,
+      readPrompt,
+      collector,
+      whiteboard: fakeWhiteboard([]),
+      boardIdFor: (lens) => `board:${lens}`,
+    });
+
+    const seatMetrics = collector.metrics.filter(({ label }) => label.startsWith("board.lens-"));
+    expect(seatMetrics.length, "every lens seat recorded a turn").toBeGreaterThan(0);
+    for (const metric of seatMetrics) {
+      expect(metric.toolCalls, `${metric.label} carried no tool-call count`).toBeDefined();
+    }
+    // …and at least one is a real count off a board that was actually written, not a zero
+    // standing in for "not measured". The whole point of the figure is that it moves.
+    expect(seatMetrics.some((metric) => (metric.toolCalls ?? 0) > 0)).toBe(true);
+    // The round-report seat has no lane, so it carries no count rather than a fabricated
+    // zero — the distinction the reader's `undefined` exists to keep.
+    const report = collector.metrics.find(({ label }) => label.startsWith("board.round-report"));
+    expect(report?.toolCalls).toBeUndefined();
+  });
+
   it("drafts all five lenses, writes each board via whiteboard, and announces each lane as it settles", async () => {
     const captures: SeatCapture[] = [];
     const applied: Applied[] = [];
