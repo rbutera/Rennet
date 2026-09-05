@@ -1347,3 +1347,340 @@ describe("BoardWriter publication", () => {
     expect(codex.callCount()).toBe(1);
   });
 });
+
+/**
+ * `write_board` — the whole board in one call (#869), on the ONE lens that has it.
+ *
+ * The property under test is NOT "a board can be built": every other block here proves
+ * that. It is that the same board costs the seat ONE call instead of N, because a call is
+ * a provider round trip and round trips are what the Noise lane's 317.8 s tail was made of.
+ * So every case below reads `callCount`, and the refusal cases prove the batch answers per
+ * entry rather than opaquely — an opaque refusal would send the seat round again and put
+ * the round trips straight back.
+ *
+ * The fixture is a Noise board with host-placed members, because that is the only board
+ * the verb is on. `writesWholeBoard` is why, and the first case here is the assertion that
+ * the other lenses genuinely do not carry it.
+ */
+describe("write_board writes the whole board in one call (#869)", () => {
+  const payload = (calls: readonly Record<string, unknown>[]) => ({
+    board_json: JSON.stringify({ calls }),
+  });
+
+  /** A Noise board with `count` host-placed members, and the ids of those members. */
+  const noiseBoard = (count = 2, over: Partial<BoardWriterOptions> = {}) => {
+    const w = writer("noise", over);
+    const regions = [
+      { path: "src/util.ts", side: "head" as const, start: 1, end: 3 },
+      { path: "src/auth.ts", side: "head" as const, start: 10, end: 14 },
+      { path: "src/legacy.ts", side: "base" as const, start: 40, end: 44 },
+    ].slice(0, count);
+    return { w, members: w.placeMembers("noise_verdict", regions) };
+  };
+
+  /** The board the Noise seat actually writes: an opening, one group, every member in it. */
+  const wholeBoard = (members: readonly string[]): Record<string, unknown>[] => [
+    {
+      tool: "set_document",
+      title: "What no other lane cited",
+      intro_markdown: "The remainder is formatter churn over two files.",
+    },
+    { tool: "add_section", local_id: "g1", title: "Formatter-Only Churn" },
+    {
+      tool: "add_prose",
+      parent_id: "g1",
+      markdown: "Reflowed when the import block above them moved.",
+    },
+    ...members.map((id) => ({
+      tool: "update_noise_verdict",
+      element_id: id,
+      parent_id: "g1",
+      reason: "Reflowed by the formatter when the import block above it moved.",
+    })),
+  ];
+
+  it("is on the Noise board and on no other, because only Noise's writing is bulk", () => {
+    // Attempted, not asserted about: the call a Design seat would actually make, refused by
+    // name. The four reasoning lenses were measured SLOWER with this verb, so they do not
+    // carry its tool surface — that is the whole reason `writesWholeBoard` exists.
+    expect(writer("noise").toolNames()).toContain("write_board");
+    for (const target of ["design", "sequence", "decisions", "flagged", "report"] as const) {
+      const w = writer(target);
+      expect(w.toolNames(), target).not.toContain("write_board");
+      expect(refusalOf(w.call("write_board", { board_json: '{"calls":[]}' })), target).toContain(
+        "There is no `write_board` on this board",
+      );
+    }
+  });
+
+  it("settles the board, and the seat paid one round trip for it", () => {
+    const { w, members } = noiseBoard();
+    const outcome = ok(w.call("write_board", payload(wholeBoard(members)))).outcome;
+    if (outcome.kind !== "wrote") throw new Error(`expected a write, got ${outcome.kind}`);
+    expect(outcome.accepted).toBe(5);
+    expect(outcome.refusals).toEqual([]);
+    expect(outcome.settled).toBe(true);
+    expect(w.status()).toBe("settled");
+    // The whole point. The same board written one verb at a time is six calls (five plus
+    // `finish`); this is one, and the count is the figure the daemon logs as `tools=`.
+    expect(w.callCount(undefined)).toBe(1);
+  });
+
+  it("resolves a payload's own names to the ids the host minted", () => {
+    // A payload cannot name an id that does not exist yet, so `local_id` is the only way a
+    // child can name its parent inside one call. Asserted on the BOARD rather than on the
+    // outcome: the members' parenting must point at a real host-minted id, which is what
+    // the boundary tier would otherwise have refused.
+    const { w, members } = noiseBoard();
+    ok(w.call("write_board", payload(wholeBoard(members))));
+    const group = w.board().elements.find((element) => element.kind === "section");
+    if (group === undefined) throw new Error("the board holds no section");
+    // The local name is gone: nothing on the board says `g1`.
+    expect(JSON.stringify(w.board().elements)).not.toContain('"g1"');
+    expect((group.data as { children?: string[] }).children).toEqual(
+      expect.arrayContaining([...members]),
+    );
+    // …and the members' own ids passed straight through, because the board already held
+    // them. That is how a Noise batch names 615 host-placed members without minting one.
+    for (const id of members) expect(w.board().elements.some((el) => el.id === id)).toBe(true);
+  });
+
+  it("names the entry it refused by position, and keeps everything else on the board", () => {
+    // The measurement depends on this. A batch that refused opaquely would make the seat
+    // resend all of it to find out which entry was wrong — the round trips this verb exists
+    // to remove, reintroduced at the worst possible moment.
+    const { w, members } = noiseBoard();
+    const memberId = members[0];
+    if (memberId === undefined) throw new Error("the host placed no member");
+    const outcome = ok(
+      w.call(
+        "write_board",
+        payload([
+          { tool: "add_section", local_id: "g1", title: "Formatter-Only Churn" },
+          // Outside every changed region: the boundary tier refuses this one entry.
+          {
+            tool: "cite",
+            local_id: "c1",
+            path: "src/auth.ts",
+            side: "head",
+            start_line: 900,
+            end_line: 901,
+          },
+          {
+            tool: "update_noise_verdict",
+            element_id: memberId,
+            parent_id: "g1",
+            reason: "Reflowed by the formatter.",
+          },
+        ]),
+      ),
+    ).outcome;
+    if (outcome.kind !== "wrote") throw new Error(`expected a write, got ${outcome.kind}`);
+    expect(outcome.accepted).toBe(2);
+    expect(outcome.refusals).toHaveLength(1);
+    expect(outcome.refusals[0]?.index).toBe(1);
+    expect(outcome.refusals[0]?.tool).toBe("cite");
+    expect(outcome.refusals[0]?.refusal).toContain("src/auth.ts");
+    // Nothing hung under the refused citation, so nothing was attributed to it.
+    expect(outcome.refusals[0]?.causedBy).toBeUndefined();
+    // The two that landed are on the board, so the seat redoes one entry and not three.
+    const group = w.board().elements.find((element) => element.kind === "section");
+    expect((group?.data as { children?: string[] })?.children).toEqual([memberId]);
+    // And no `finish` ran over a board known to be missing an element: pointers about the
+    // absent citation would have buried the refusal that caused them.
+    expect(outcome.settled).toBe(false);
+    expect(outcome.pointers).toBeUndefined();
+    expect(w.status()).toBe("drafting");
+  });
+
+  it("hands back finish pointers when every entry lands but the board does not settle", () => {
+    const { w, members } = noiseBoard(2);
+    // Only the first member is grouped; the second is left over, and the finish tier's own
+    // `derived-member-grouped` rule is what says so.
+    const outcome = ok(
+      w.call(
+        "write_board",
+        payload([
+          { tool: "add_section", local_id: "g1", title: "Formatter-Only Churn" },
+          { tool: "add_prose", parent_id: "g1", markdown: "Reflowed by the formatter." },
+          {
+            tool: "update_noise_verdict",
+            element_id: members[0],
+            parent_id: "g1",
+            reason: "Reflowed by the formatter.",
+          },
+        ]),
+      ),
+    ).outcome;
+    if (outcome.kind !== "wrote") throw new Error(`expected a write, got ${outcome.kind}`);
+    expect(outcome.refusals).toEqual([]);
+    expect(outcome.settled).toBe(false);
+    expect(outcome.pointers?.map((pointer) => pointer.ruleId)).toContain("derived-member-grouped");
+    expect(outcome.pointers?.some((pointer) => pointer.elementRef.includes(members[1] ?? ""))).toBe(
+      true,
+    );
+    expect(w.status()).toBe("drafting");
+    expect(w.callCount(undefined)).toBe(1);
+  });
+
+  it("refuses a payload that is not JSON, and writes nothing", () => {
+    const { w } = noiseBoard();
+    expect(refusalOf(w.call("write_board", { board_json: "{not json" }))).toContain("not JSON");
+    expect(w.board().elements.filter((el) => el.kind === "section")).toEqual([]);
+  });
+
+  it("refuses a payload with no `calls` array, and writes nothing", () => {
+    const { w } = noiseBoard();
+    const result = w.call("write_board", { board_json: JSON.stringify({ elements: [] }) });
+    expect(refusalOf(result)).toContain("no `calls` array");
+    expect(w.board().elements.filter((el) => el.kind === "section")).toEqual([]);
+  });
+
+  it("refuses an entry naming a verb this lens does not have, without stopping the batch", () => {
+    // The Noise seat has no `add_noise_verdict` — its membership is the host's derivation.
+    // The entry is refused by name and the entries around it still land, which is the same
+    // per-entry answer a bad field gets.
+    const { w } = noiseBoard();
+    const outcome = ok(
+      w.call(
+        "write_board",
+        payload([
+          { tool: "add_section", local_id: "g1", title: "Formatter-Only Churn" },
+          { tool: "add_noise_verdict", hunk_ref_id: "e1", reason: "lockfile" },
+        ]),
+      ),
+    ).outcome;
+    if (outcome.kind !== "wrote") throw new Error(`expected a write, got ${outcome.kind}`);
+    expect(outcome.refusals[0]?.index).toBe(1);
+    expect(outcome.refusals[0]?.refusal).toContain("There is no `add_noise_verdict` on this board");
+    expect(w.board().elements.filter((el) => el.kind === "section")).toHaveLength(1);
+  });
+
+  it("does not nest", () => {
+    const { w } = noiseBoard();
+    const outcome = ok(
+      w.call("write_board", payload([{ tool: "write_board", board_json: "{}" }])),
+    ).outcome;
+    if (outcome.kind !== "wrote") throw new Error(`expected a write, got ${outcome.kind}`);
+    expect(outcome.refusals[0]?.refusal).toContain("does not nest");
+  });
+
+  it("publishes each element as it lands, not one frame for the whole batch", () => {
+    // The reader watches the board fill (D11). A whole-board write must not turn that into
+    // one frame that appears complete out of nowhere.
+    const writes: BoardWrite[] = [];
+    const { w, members } = noiseBoard(2, { onWrite: (write) => writes.push(write) });
+    // `placeMembers` publishes too; the batch's own frames are what this counts.
+    writes.length = 0;
+    ok(w.call("write_board", payload(wholeBoard(members))));
+    expect(writes.length).toBeGreaterThanOrEqual(5);
+    expect(writes[0]?.document?.title).toBe("What no other lane cited");
+    expect(writes.at(-1)?.state).toBe("settled");
+  });
+});
+
+/**
+ * The cascade — the defect the #869 spike found and named rather than buried.
+ *
+ * On the spike's drive `calls[60] add_section` was refused for a vocabulary rule, and then
+ * `calls[61]`, `[64]`, `[65]`, `[68]`, `[71]`, `[72]` and `[73]` each came back "This board
+ * holds no `sec-cap-lbd`", because they hung under the section that was never minted. ONE
+ * genuine refusal, EIGHT refusal sentences, and a seat reading that list has to work out
+ * for itself that seven of them are the same thing said again.
+ *
+ * The fix is not atomicity — a partial board is kept deliberately. It is that an entry
+ * naming an id an earlier refused entry would have created is not applied at all, and its
+ * refusal carries the position of the entry that actually failed.
+ */
+describe("a refused entry's children are reported as ONE cause, not as N missing ids (#869)", () => {
+  const payload = (calls: readonly Record<string, unknown>[]) => ({
+    board_json: JSON.stringify({ calls }),
+  });
+
+  /** The spike's shape: a group refused, and everything hanging under it. */
+  const cascadingBatch = (): Record<string, unknown>[] => [
+    // Refused by the input parse: `add_section` requires a `title`, and this one has none.
+    { tool: "add_section", local_id: "g1" },
+    { tool: "add_prose", parent_id: "g1", markdown: "Reflowed by the formatter." },
+    { tool: "add_callout", parent_id: "g1", markdown: "And the lockfile with it." },
+    // Two levels down: this hangs under a section that hung under the refused section.
+    { tool: "add_section", local_id: "g2", parent_id: "g1", title: "Nested" },
+    { tool: "add_prose", parent_id: "g2", markdown: "Two levels below the refusal." },
+    // Independent of the whole chain, and it must still land.
+    { tool: "add_section", title: "Lockfile Regeneration" },
+  ];
+
+  it("attributes every cascaded entry to the ROOT refusal, at any depth", () => {
+    const w = writer("noise");
+    const outcome = ok(w.call("write_board", payload(cascadingBatch()))).outcome;
+    if (outcome.kind !== "wrote") throw new Error(`expected a write, got ${outcome.kind}`);
+
+    const roots = outcome.refusals.filter((one) => one.causedBy === undefined);
+    const cascaded = outcome.refusals.filter((one) => one.causedBy !== undefined);
+    // ONE thing went wrong. Before the fix this list held five sentences, four of them
+    // "This board holds no `g1`" / "`g2`" — the shape the spike measured.
+    expect(roots).toHaveLength(1);
+    expect(roots[0]?.index).toBe(0);
+    expect(roots[0]?.refusal).toContain("did not accept its arguments");
+    expect(cascaded.map((one) => one.index)).toEqual([1, 2, 3, 4]);
+    // Every one of them points at entry 0, including `calls[4]`, which names `g2` and not
+    // `g1` at all: the cause is the root of the chain, not the immediate parent.
+    expect(cascaded.map((one) => one.causedBy)).toEqual([0, 0, 0, 0]);
+    expect(cascaded[3]?.refusal).toContain("calls[0] was refused before creating");
+
+    // The independent entry landed: a cascade is not a rollback.
+    expect(outcome.accepted).toBe(1);
+    expect(w.board().elements.map((el) => (el.data as { title?: string }).title)).toEqual([
+      "Lockfile Regeneration",
+    ]);
+  });
+
+  it("does not apply a cascaded entry at all, so the board never sees an unresolved name", () => {
+    // The load-bearing half. Applying it would put the LOCAL name in front of the boundary
+    // tier, which answers "This board holds no `g1`" — true, and the exact sentence that
+    // made one refusal read as five.
+    const w = writer("noise");
+    const outcome = ok(w.call("write_board", payload(cascadingBatch()))).outcome;
+    if (outcome.kind !== "wrote") throw new Error(`expected a write, got ${outcome.kind}`);
+    for (const refusal of outcome.refusals) {
+      expect(refusal.refusal, `calls[${refusal.index}]`).not.toContain("This board holds no");
+    }
+  });
+
+  it("still answers a genuinely invented id honestly, because that is not a cascade", () => {
+    // The other side of the same rule, and the one a too-eager cascade check would break:
+    // a name NO entry declared is the seat's own mistake and gets the boundary tier's
+    // answer, not an attribution to somebody else's refusal.
+    const w = writer("noise");
+    const outcome = ok(
+      w.call("write_board", payload([{ tool: "add_prose", parent_id: "never", markdown: "x" }])),
+    ).outcome;
+    if (outcome.kind !== "wrote") throw new Error(`expected a write, got ${outcome.kind}`);
+    expect(outcome.refusals[0]?.causedBy).toBeUndefined();
+    expect(outcome.refusals[0]?.refusal).toContain("This board holds no `never`");
+  });
+
+  it("bounds the names it quotes back, because a tool result is billed like a prompt", () => {
+    // #871's rule, on this verb's own path: the two names a batch refusal interpolates are
+    // arbitrary seat-supplied strings, and this verb multiplies whatever one refusal costs
+    // by the entry count. 4 KB in, one clipped name out.
+    const huge = "g".repeat(4000);
+    const w = writer("noise");
+    const outcome = ok(
+      w.call(
+        "write_board",
+        payload([
+          { tool: huge, local_id: huge },
+          { tool: "add_prose", parent_id: huge, markdown: "hangs under the refused entry" },
+        ]),
+      ),
+    ).outcome;
+    if (outcome.kind !== "wrote") throw new Error(`expected a write, got ${outcome.kind}`);
+    for (const refusal of outcome.refusals) {
+      expect(refusal.tool.length, `calls[${refusal.index}] tool`).toBeLessThanOrEqual(61);
+      expect(refusal.refusal.length, `calls[${refusal.index}] refusal`).toBeLessThan(500);
+    }
+    // …and the cascade still works through the clipped name, so bounding did not break it.
+    expect(outcome.refusals[1]?.causedBy).toBe(0);
+  });
+});
