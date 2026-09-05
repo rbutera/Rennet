@@ -130,6 +130,7 @@ export {
   type RunTurn,
   type SwarmTurnOptions,
 } from "./council-seat-turn";
+export { describeSpawnFailure } from "./descriptor-exhaustion";
 export { type DossierKey, DossierStore } from "./dossier-store";
 export {
   createExclusiveNamespaceMover,
