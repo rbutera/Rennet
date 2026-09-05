@@ -13,6 +13,7 @@ import type {
   CommandInput,
   CommandName,
   CommandOutput,
+  LensDraftEvent,
   ProjectDetailProgressEvent,
   ProjectProcessEvent,
   ProjectProgressEvent,
@@ -287,6 +288,8 @@ export class WsRennetBridge implements RennetBridge {
   readonly #askProjectionListeners = new Map<string, Set<(projection: AskProjection) => void>>();
   /** Live round-progress listeners, keyed by review id (C15 3.1). */
   readonly #roundListeners = new Map<string, Set<(event: RoundEvent) => void>>();
+  /** Live lens-board element-stream listeners, keyed by review id (`lens-board-tools` 4.1). */
+  readonly #lensDraftListeners = new Map<string, Set<(event: LensDraftEvent) => void>>();
   readonly #loggedRoundDiagnostics = new Set<string>();
   readonly #loggedRoundDiagnosticOrder: string[] = [];
   /** Daemon-wide attention listeners (#383 batch) — not keyed by review; a raise/clear fans to all. */
@@ -380,6 +383,19 @@ export class WsRennetBridge implements RennetBridge {
    */
   onRoundProgress(reviewId: string, listener: (event: RoundEvent) => void): () => void {
     return subscribe(this.#roundListeners, reviewId, listener);
+  }
+
+  /**
+   * Subscribe to a review's lens boards being WRITTEN (`lens-board-tools` D11, task 4.1),
+   * keyed by review id like the round stream above.
+   *
+   * LIVE ONLY — nothing is replayed. A surface takes `board.draft` for the board as it
+   * stands and folds these from that snapshot's `revision`, dropping any frame stamped
+   * with a generation it is not rendering, which is what stops a superseded drafting
+   * attempt painting over the live one.
+   */
+  onLensDraft(reviewId: string, listener: (event: LensDraftEvent) => void): () => void {
+    return subscribe(this.#lensDraftListeners, reviewId, listener);
   }
 
   /**
@@ -689,6 +705,11 @@ export class WsRennetBridge implements RennetBridge {
           this.#writeRoundDiagnostic(frame.reviewId, frame.event);
         }
         const listeners = this.#roundListeners.get(frame.reviewId);
+        if (listeners) for (const listener of listeners) listener(frame.event);
+        return;
+      }
+      case "lensDraft": {
+        const listeners = this.#lensDraftListeners.get(frame.reviewId);
         if (listeners) for (const listener of listeners) listener(frame.event);
         return;
       }

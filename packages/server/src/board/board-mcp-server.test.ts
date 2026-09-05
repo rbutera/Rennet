@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ChangedRegion, LintContext } from "@rennet/core";
+import type { BoardWrite, ChangedRegion, LintContext } from "@rennet/core";
 import { BOARD_TARGETS } from "@rennet/protocol";
 import { afterEach, describe, expect, it } from "vitest";
 import {
@@ -804,5 +804,90 @@ describe("the listener discloses how many lanes it is serving (3.1)", () => {
     expect(server.openLaneCount()).toBe(1);
     server.settleGeneration("gen-2");
     expect(server.openLaneCount(), "nothing left to disclose").toBe(0);
+  });
+});
+
+/**
+ * Who hears a board being written (`lens-board-tools` D11, task 4.1).
+ *
+ * A lane outlives whoever opened it, in two ways this daemon really has: nothing deletes
+ * one — `settleLane` revokes its seats and keeps its writer, and `settleGeneration` has no
+ * production caller — and a generation id is `gen:<patchsetId>` over a CONTENT-ADDRESSED
+ * patchset, which `rounds.ts` already states is global across sessions and reviews. So one
+ * lane, one board and one writer are legitimately shared by two reviews of identical
+ * content, and both of their readers are looking at the same board.
+ *
+ * The fixture is therefore TWO OPENERS over ONE generation, per CLAUDE.md's own rule that a
+ * single-opener fixture cannot see this class at all. It could not: the first observer was
+ * bound at the writer's construction and no later open could reach it.
+ */
+describe("a lane's write observers (4.1)", () => {
+  const seat = { author: { kind: "lens-agent", id: "seat:sequence" } } as const;
+
+  it("tells EVERY opener about every write, not only the first", async () => {
+    const server = await serverWith();
+    const first: BoardWrite[] = [];
+    const second: BoardWrite[] = [];
+    server.openLane({
+      generationId: "gen:ps-1",
+      target: "sequence",
+      lint: lint(),
+      onWrite: (write) => first.push(write),
+    });
+    // The SAME generation, opened by a second review of identical content. Before this it
+    // took the first review's writer and the first review's observer: this reviewer watched
+    // a board that opened, never filled and closed, while the other reviewer's stream
+    // carried writes it had not asked for and could not attribute.
+    const lane = server.openLane({
+      generationId: "gen:ps-1",
+      target: "sequence",
+      lint: lint(),
+      onWrite: (write) => second.push(write),
+    });
+
+    const written = lane.writer().voice(seat).call("add_section", { title: "Reading Order" });
+    expect(written.ok, "the fixture's call was refused").toBe(true);
+
+    expect(first, "the first opener still hears it").toHaveLength(1);
+    expect(second, "and so does the second").toHaveLength(1);
+    expect(second[0]?.changed.map(({ element }) => element.kind)).toEqual(["section"]);
+  });
+
+  it("keeps one broken watcher from starving the rest of the fan-out", async () => {
+    const server = await serverWith();
+    const survivor: BoardWrite[] = [];
+    server.openLane({
+      generationId: "gen:ps-2",
+      target: "sequence",
+      lint: lint(),
+      onWrite: () => {
+        throw new Error("this watcher is broken");
+      },
+    });
+    const lane = server.openLane({
+      generationId: "gen:ps-2",
+      target: "sequence",
+      lint: lint(),
+      onWrite: (write) => survivor.push(write),
+    });
+    expect(lane.writer().voice(seat).call("add_section", { title: "Reading Order" }).ok).toBe(true);
+    expect(survivor).toHaveLength(1);
+    // …and the write itself went through, because a publication seam never changes the
+    // board it describes.
+    expect(lane.board().elements).toHaveLength(1);
+  });
+
+  it("hands a re-opened lane the board it already holds, so a reader can be seeded from it", async () => {
+    // The other half of the same fact: a re-opened lane's board is not empty, and the
+    // `opened` frame is built from `lane.board()` for exactly this reason.
+    const server = await serverWith();
+    const lane = server.openLane({ generationId: "gen:ps-3", target: "sequence", lint: lint() });
+    expect(lane.writer().voice(seat).call("add_section", { title: "Reading Order" }).ok).toBe(true);
+    const reopened = server.openLane({
+      generationId: "gen:ps-3",
+      target: "sequence",
+      lint: lint(),
+    });
+    expect(reopened.board().elements).toHaveLength(1);
   });
 });

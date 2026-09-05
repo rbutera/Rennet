@@ -20,6 +20,7 @@
 import type { T3SeatClient, T3SeatSeam, T3SettledTurn } from "@rennet/adapters";
 import type { CodexExecutor, HarnessPort } from "@rennet/core";
 import type { GenerationBoards } from "./board/board-mcp-server";
+import { seatBoardServer } from "./board/seat-address";
 import { applySeatTurn, fixtureGenerationBoards, seatVoiceOn } from "./board/seat-fixture";
 import type { RoundsRuntimeDeps, T3SeatRuntime } from "./runtime/rounds";
 import type { SeatKind } from "./t3/threads";
@@ -157,7 +158,17 @@ export function fakeT3SeatsOverPorts(
       threadFor: async ({ seat, provider }) => {
         const threadId = `${input.generationId}:${seat}`;
         providerOf.set(threadId, { seat, provider });
-        return { threadId, projectId: input.sessionId };
+        // The seat's address onto its lane's board, minted here exactly as
+        // `resolveT3SeatRuntime` mints it. It is not only the url: registering the address
+        // is what makes the lane able to answer per-seat questions about this seat, which
+        // is where its board tool-call count is read from (task 4.3). A double that skipped
+        // it left that figure absent for a reason production does not have.
+        const boardServer = seatBoardServer(lanes, seat);
+        return {
+          threadId,
+          projectId: input.sessionId,
+          ...(boardServer === undefined ? {} : { boardServer }),
+        };
       },
     };
     return {
