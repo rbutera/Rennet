@@ -1,9 +1,9 @@
-// The daemon-side owner of the T3 sidecar: one per data dir, started on first use,
-// adopted from a previous daemon when it still answers, stopped with the daemon. The
-// status it reports is what `daemon.status` carries to the connection bar: `off` until
-// something asks for it, `starting` while it boots, `ready`, or `degraded` with the
-// reason named. No Effect, no `@t3tools/*` here — see ./sidecar.ts for the process
-// contract and ./client.ts for the RPC surface.
+// The daemon-side owner of the T3 sidecar: one per data dir, started EAGERLY at daemon
+// launch (#849), adopted from a previous daemon when it still answers, stopped with the
+// daemon. The status it reports is what `daemon.status` carries to the connection bar:
+// `off` before anything has started it, `starting` while it boots, `ready`, or `degraded`
+// with the reason named. No Effect, no `@t3tools/*` here — see ./sidecar.ts for the
+// process contract and ./client.ts for the RPC surface.
 
 import type { T3Session, T3SidecarStatus } from "@rennet/protocol";
 import { connectT3, type ModelSelection, modelSelection, type T3Client } from "./client";
@@ -28,6 +28,23 @@ export interface T3SidecarSupervisorOptions {
 }
 
 export interface T3SidecarSupervisor {
+  /**
+   * Bring the sidecar up NOW, at daemon launch, instead of at the first `chat.t3Session`
+   * (#849). Time-to-first-message is what this buys: adopt-or-spawn plus the bootstrap
+   * exchange used to be paid at the moment a reviewer first looked at the chat dock.
+   *
+   * SYNCHRONOUS and void by design — the daemon's boot path must not await it and must
+   * not be able to fail on it. Nothing is thrown and nothing is returned to reject: a
+   * sidecar that cannot start leaves `status()` at `degraded` with the reason named,
+   * which `daemon.status` already carries to the connection bar and the chat dock already
+   * renders, and the next `ensure()` retries from scratch exactly as it did before.
+   *
+   * Idempotent, because `ensure` is single-flighted: a later caller joins this bring-up
+   * rather than starting a second one. With no bundle path there is nothing to start, so
+   * this returns without touching the status — `ensure()` still names the missing bundle
+   * on demand, which is the honest answer for a build that has no sidecar to run.
+   */
+  readonly start: () => void;
   /** Adopt or spawn; single-flighted. Rejects when the sidecar cannot be brought up. */
   readonly ensure: () => Promise<RunningSidecar>;
   /** Broker a session for a client: the origin, the WS URL, the bearer, the environment id. */
@@ -147,6 +164,17 @@ export function createT3SidecarSupervisor(
     return inFlight;
   };
 
+  const start = (): void => {
+    // No bundle ⇒ nothing to bring up. `ensure()` still answers with the missing-bundle
+    // reason when something asks, so this stays quiet rather than logging a failure at
+    // every launch of a build that was never going to have a sidecar.
+    if (!options.bundlePath) return;
+    // The `.catch` belongs HERE, where the promise is floated, not at some later use
+    // site: `ensure` already recorded the reason in `status` and warned, and nothing is
+    // waiting on this promise, so an unhandled rejection is the only thing left to stop.
+    void ensure().catch(() => undefined);
+  };
+
   const client = (): Promise<T3Client> => {
     if (rpc) return rpc;
     rpc = ensure()
@@ -243,6 +271,7 @@ export function createT3SidecarSupervisor(
   };
 
   return {
+    start,
     ensure,
     session,
     status: () => status,

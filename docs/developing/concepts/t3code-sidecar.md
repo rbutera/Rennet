@@ -21,9 +21,25 @@ flowchart LR
   harness --> provider[Harness provider]
 ```
 
-The daemon composes one supervisor per data directory. Nothing runs until a client asks:
-the first `chat.t3Session` adopts a sidecar a previous daemon left running, or spawns
-one. Quitting the daemon stops it.
+The daemon composes one supervisor per data directory and starts it at launch: composition
+calls `T3SidecarSupervisor.start()`, which adopts a sidecar a previous daemon left running
+or spawns one. Quitting the daemon stops it.
+
+`start()` is synchronous and returns nothing. The bring-up runs detached, so the daemon
+finishes composing, binds its listener and serves clients while the sidecar is still
+coming up — and a sidecar that cannot start never fails the daemon. The supervisor is left
+`degraded` with the reason (`daemon.status` carries it to the connection bar, and the chat
+dock renders it), and the next `chat.t3Session` retries from scratch. A build with no
+vendored bundle starts nothing at all and stays `off` until something asks, which is when
+`ensure()` names the missing bundle.
+
+The reason it is eager is time-to-first-message. Measured on an M-series laptop against
+the real vendored bundle: a cold bring-up costs about 830&nbsp;ms to spawn plus the host
+binary discovery it feeds the sidecar, and a review's first thread another ~46&nbsp;ms to
+create. Paid at the first `chat.t3Session`, that was about a second of the reviewer
+watching an empty dock; paid at launch, it overlaps everything else the daemon and the
+window do, and the dock's first ask resolves in about a millisecond. A second daemon
+finding the first one's sidecar alive adopts it in about 7&nbsp;ms.
 
 ## Private base directory
 
@@ -120,6 +136,15 @@ which is a different tree a seat would draft from happily. See
 [Session-bound workspace](#session-bound-workspace) below.
 The bearer is what the vendored client runtime needs. The command is loopback-only and
 never remote-exposed. Clients do not read the credential file.
+
+The review usually binds that thread before the dock ever asks. `review.capture`,
+`review.openPr` and `review.regenerate` each kick the same binding — the one assembly
+point, `bindReviewThread` in `dispatch/chat.ts`, so no caller can key a second thread for
+the same review — fire-and-forget, so a capture never waits on the sidecar and never fails
+on it. By the time a reviewer opens the dock, `chat.t3Session` reads the row that is
+already there. Until it does, the mount's home route says the thread is being opened and
+will appear, rather than reporting an absence: the thread is not missing, it has not been
+made yet.
 
 ## The chat slot
 

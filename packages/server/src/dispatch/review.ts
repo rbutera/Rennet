@@ -16,6 +16,7 @@ import {
   type Review,
 } from "@rennet/protocol";
 import { writeSessionContext } from "../context-files";
+import { bindReviewThread } from "./chat";
 import type { CommandHandler, DispatchRuntime } from "./runtime";
 
 export function reviewHandlers(rt: DispatchRuntime) {
@@ -42,6 +43,23 @@ export function reviewHandlers(rt: DispatchRuntime) {
     deps.reviewContextSessionId?.(review) ?? review.id;
   const contextDirFor = (review: Review): string =>
     sessionContextRelativeDir(contextSessionIdFor(review));
+  /**
+   * Bind the review's chat thread NOW, when the review is opened, rather than leaving it to
+   * the dock's first `chat.t3Session` (#849). The dock exists to hold this conversation, so
+   * a reviewer arriving at a freshly captured review used to watch the thread be created
+   * under them; the thread should already be there.
+   *
+   * Fire-and-forget, with the `.catch` at the float point: nothing here may slow a capture
+   * or fail one. A sidecar that cannot come up, or a bound workspace that has vanished,
+   * still leaves `chat.t3Session` to say so in the dock exactly as it did before — this
+   * only moves WHEN the work happens, never whether its failure is reported.
+   *
+   * Costs no tokens: creating a thread is an RPC to the sidecar, not a harness turn.
+   */
+  const warmReviewThread = (reviewId: string): void => {
+    if (!deps.t3Sidecar) return;
+    void bindReviewThread(rt, reviewId).catch(() => undefined);
+  };
   return {
     "review.capture": async (rawInput) => {
       const name = "review.capture" as const;
@@ -57,6 +75,7 @@ export function reviewHandlers(rt: DispatchRuntime) {
       deps.startWatching(review.repositoryRoot);
       raiseReviewFinished(review);
       deps.onReviewOpened?.(review);
+      warmReviewThread(review.id);
       return parseCommandOutput(name, { review });
     },
     "review.openPr": async (rawInput) => {
@@ -79,6 +98,7 @@ export function reviewHandlers(rt: DispatchRuntime) {
       allowedRoots.add(review.repositoryRoot);
       raiseReviewFinished(review);
       deps.onReviewOpened?.(review);
+      warmReviewThread(review.id);
       return parseCommandOutput(name, { review });
     },
     "review.load": async (rawInput) => {
@@ -150,6 +170,7 @@ export function reviewHandlers(rt: DispatchRuntime) {
       const review = await service.regenerate(input.commandId, input.reviewId, input.repoPath);
       raiseReviewFinished(review);
       deps.onReviewOpened?.(review);
+      warmReviewThread(review.id);
       return parseCommandOutput(name, { review });
     },
     "review.uiEvidence": async (rawInput) => {
