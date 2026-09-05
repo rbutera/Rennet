@@ -1177,6 +1177,146 @@ and a lens failure leaves `running` when the seat does. So of the four defects t
 named, the Design refusal, the empty round receipt, the stale copy and the stuck lane are all
 answered; the two caveats above are what this drive leaves for the next one.
 
+## Measured: v0.8.2 — the seats write their boards with tools
+
+Driven on 2026-09-05 against a development build of `447ec8eb` (v0.8.2 plus
+[#863](https://github.com/rbutera/Rennet/pull/863)) — a `nx run rennet-desktop:build` and a
+direct `Electron apps/desktop` launch, not a packaged app — on the same
+`rennet-g6` clone and the same two branches the v0.7.0 table above used: **`drive/group5`**
+(95 files, carrying `openspec/changes/session-bound-workspace/`) and **`drive/no-spec`**
+(1 file, +1 −1 in `docs/README.md`, no specification of any kind). Claude seats on Opus 4.8
+at high effort; the Flagged Codex seat on GPT-5.6-sol at high, the Noise seat on
+GPT-5.6-luna at low. Figures are read from the same sources as the two tables above, plus
+two new ones:
+
+| Figure | Read from |
+| --- | --- |
+| Tool-surface bytes | `servedToolCatalog(target)` through `packages/server/src/board/board-tool-surface.measure.test.ts` — the catalog `tools/list` actually answers with |
+| Tool calls per seat | the daemon's own per-seat line, `[seat] board.lens-draft.<lens> emitted attempt=N seat=<seat> in <ms> ms tools=<n>` (task 4.3's collector figure) |
+| Time to first element | the `first-element` phase on the generation record, beside `first-core-board` (task 4.4) |
+
+### What a seat is sent
+
+The tool surface is a per-session cost that replaced a per-turn one. Measured live on this
+build, per seat, against the output schema each seat no longer carries:
+
+| Seat | Tools | Tool surface (B) | Output schema it replaced (B) |
+| --- | --- | --- | --- |
+| Design | 18 | 12,892 | 9,618 |
+| Sequence | 15 | 8,005 | 9,618 |
+| Decisions | 16 | 9,842 | 9,618 |
+| Flagged / Claude | 16 | 8,737 | 9,618 |
+| Flagged / Codex | 16 | 8,737 | 10,874 |
+| Noise | 14 | 7,693 | 9,618 |
+| Round report | 15 | 8,879 | 9,618 |
+| **Seven seats** | | **64,785** | **68,582** |
+
+A generation's seven seats carry 0.94× the bytes of the schema they replace, and the
+surface travels once per session where the schema travelled once per turn.
+
+**The prompts grew, and this is where the growth went.** The seat prompt is 2.0–2.6 KB
+larger than the v0.7.0/v0.7.1 figure on every seat, because task 3.6 rewrote every lens
+instruction from "your output is a draft board of typed blocks in the schema supplied with
+your task" into the tool vocabulary — naming each verb by the job it does — and added the
+investigate-before-you-draft walk. Nothing about assembly changed; no payload came back.
+
+| Seat | Prompt, v0.7.0 | Prompt, v0.8.2 | Δ |
+| --- | --- | --- | --- |
+| Design | 12,441 | 14,512 | +2,071 |
+| Sequence | 6,577 | 8,792 | +2,215 |
+| Decisions | 6,293 | 8,583 | +2,290 |
+| Flagged / Claude | 6,962 | 9,515 | +2,553 |
+| Flagged / Codex | 6,962 | 9,515 | +2,553 |
+| Noise | 6,377 | 8,392 | +2,015 |
+
+Prompt bytes remain byte-identical across the 1-file and the 95-file branch, which is the
+property the payload removal bought and this change does not spend. Measured: the Design
+seat's thread carried 14,512 bytes on both branches, Sequence 8,792 on both, Decisions
+8,583 on both, each Flagged voice 9,515 on both.
+
+### What the seats did, and what the writing cost
+
+| Seat | Draft, 95 files | Tool calls | Draft, 1 file | Tool calls | v0.7.0 draft, 95 files |
+| --- | --- | --- | --- | --- | --- |
+| Design (Opus, high) | 933.5 s → board | 121 | 135.6 s → `no-spec` | 1 | 33.3 s, refused |
+| Sequence (Opus, high) | 524.4 s | 60 | 104.0 s | 8 | 314.9 s |
+| Decisions (Opus, high) | 670.8 s | 67 | 78.9 s → `no-decisions` | 1 | 315.6 s |
+| Flagged / Claude (Opus, high) | 675.6 s | 7 | 86.6 s → `no-findings` | 1 | 336.2 s |
+| Flagged / Codex (GPT-5.6-sol, high) | 1,632.9 s | 15 | 131.3 s | 2 | 294.9 s |
+| Noise (GPT-5.6-luna, low) | 255.6 s, cancelled unsettled | 258 writes | 75.4 s | 7 | 69.4 s |
+
+**The seats got slower and the generation got much more expensive, and the tool calls are
+why.** The 95-file generation billed **27,581,248 tokens** — 138,460 output, 26,977,425 of
+them cache reads, 464,819 cache creation — against the v0.7.0 baseline of **6,687,639**
+across 11 turns. That is 4.1x the tokens on fewer *turns*, and it is the question the
+hermetic byte counts above could not answer: a tool-writing seat pays one provider round
+trip per accepted call, and every round trip re-reads the whole conversation prefix. At 60,
+67 and 121 calls per seat the prefix re-reads dominate everything else. **Writing costs
+more than returning**, by about 4x on a 95-file change, and the tool surface being 0.94x the
+output schema does not touch that: the surface is what travels, the round trips are what
+bill. On the one-file branch, where the seats made 1–8 calls each, the same generation
+billed 1,428,952 tokens across 6 turns against 617,178 across 8 on v0.7.0 — 2.3x, on the
+same mechanism at a smaller multiple.
+
+Timings on the 95-file branch, from the drafting kickoff: **time to first element 339.8 s**,
+**time to first core board 555.7 s** (Sequence). Against the v0.7.0 figure of 360 s to first
+core board, the reader now sees the first *element* at about the moment they used to see the
+first whole board, and the first settled board 3.3 minutes later. Capture took 233.7 s of
+wall clock before drafting began. On the one-file branch: first element 144.1 s, first core
+board 172.2 s, reveal 211.2 s, capture 137.5 s.
+
+Two environment facts the timings above carry, stated so a later reader does not read them
+as product regressions. The fixture clone sits on an **SMB mount**, so capture is dominated
+by git over the network — the repo watcher logged `git could not report the ignore rules for
+<repo>`, and the project scout's own turn took 159.6 s. And the T3 sidecar **cannot run with
+its base directory on that mount at all**: `environment-id` persistence uses `link(2)`, the
+share answers `ENOTSUP: operation not supported on socket`, and the sidecar exits 1 before
+readiness with the daemon reporting "T3 sidecar unavailable". The data directory has to be
+on a local filesystem; the repository does not.
+
+### The Noise tail
+
+Noise runs last now, on its four siblings' settlements, so whatever it takes is added to the
+generation rather than hidden inside it. On the **one-file** branch the last sibling
+(Design) settled 341.4 s after the branch pick and the Noise board settled at 417.0 s: a
+**75.6 s tail**, matching the seat's own 75.4 s draft. Against the 2026-09-04 baseline, where
+Noise ran in parallel at 39.3 s and added nothing, **the one-file generation is 75.6 s longer
+for this reason alone.** Its prompt is 8,392 bytes (was 6,377).
+
+On the **95-file** branch the tail did not terminate, and that is the drive's most important
+number. The four core lanes revealed 1,633.1 s after the drafting kickoff (31 min 7 s from the
+branch pick, against 9 min 32 s on v0.7.0). The Noise lane then started, and the host had
+placed **1,259 `code_ref` + 1,259 `noise_verdict` elements** on its board before the seat's
+first turn — one per uncited changed region, roughly half of them the base-side twins of
+regions a sibling had already cited on the head side (see the side-matching defect below).
+The seat's first `finish` came back with **1,259 pointers**, because the finish-tier rule
+wants every member parented into a group and every group carrying a reason, and the only verb
+it has for a member is a one-at-a-time `update_noise_verdict`. It was still working through
+them, one call every two-ish seconds, **255.6 s in and 258 revisions deep**, when the drive
+cancelled it. A tail proportional to the *hunk count* of the change, paid one provider round
+trip per hunk, is not a tail; the one-file branch's 75.6 s is the shape of it only because
+that branch has one hunk.
+
+The side-matching defect that inflates that number: `offeredRegions` emits one changed region
+per SIDE of every hunk, and `regionOverlaps` requires the citation's side to equal the
+region's. A seat citing `head 3-6` therefore leaves `base 1-6` uncited, and the host files it
+as noise. Hand-checked on the one-file branch, whose entire change is `@@ -1,6 +1,6 @@` in
+`docs/README.md`: Sequence cited `head 3-6`, and the Noise board still opened with `base 1-6`
+as its single member and a Codex seat turn spent calling it noise. The empty complement — the
+`no-noise` settlement with no seat turn at all — is therefore unreachable for any change
+containing a modification.
+
+### Cancel, checked live
+
+A generation cancelled mid-draft leaves no board claiming to be written. Cancelled on the
+95-file branch while the Noise seat was writing: within **3 seconds** the workspace header
+read *"Board generation cancelled — The review is still here. Retry when you're ready."*, the
+in-progress mark and the placeholder row were both gone, the strings "still being written"
+and "The seat is still writing" were absent from the whole document, **no rail stop carried a
+working lamp**, and the seat widget collapsed to `failed` with its last receipt and a "Draft
+the boards again" control. Still true at 51 s. This is the first live check of the repair in
+[#863](https://github.com/rbutera/Rennet/pull/863); the defect it fixed was live in v0.8.2.
+
 ## Stopping
 
 The daemon's own shutdown sends SIGTERM to the sidecar it spawned and clears the claim.
