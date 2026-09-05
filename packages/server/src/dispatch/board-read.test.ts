@@ -176,7 +176,7 @@ describe("board.read — the lens-board read", () => {
 describe("board.draft — the DRAFTING board read", () => {
   const drafting = () => {
     const hub = new LensDraftHub();
-    hub.opened(REVIEW_ID, "gen-1", "design");
+    hub.opened(REVIEW_ID, "gen-1", "design", { elements: [] });
     hub.wrote(REVIEW_ID, "gen-1", "design", {
       changed: [{ index: 0, element: DESIGN.elements[0] as never }],
       removed: [],

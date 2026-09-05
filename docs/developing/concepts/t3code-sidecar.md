@@ -625,6 +625,17 @@ boards. A refused call publishes nothing — the seat reads the refusal and fixe
 the same turn — and a `finish` that came back with pointers publishes nothing either,
 because the board did not move.
 
+One lane can have more than one watcher, and it really does. Nothing deletes a lane —
+settling one revokes its seats and keeps its writer — and a generation id is
+`gen:<patchsetId>` over a content-addressed patchset, which is global across sessions and
+reviews. So a lane re-opened for a retry, or opened a second time by another review of
+identical content, hands back the board that is already there. The lane therefore keeps a
+SET of observers and every opener hears every write, and the `opened` frame carries the
+board the lane HOLDS rather than claiming an empty one. Binding a single observer at the
+writer's construction left the second reviewer watching a board that opened, never filled
+and closed; claiming an empty board left every later element's index — computed against the
+board's own list — pointing past the end of the reader's copy.
+
 The frames are live only. A reader that joins mid-draft takes `board.draft` for the board as
 it stands plus the revision it is current with, and folds from exactly there. The hub keeps
 a closed board rather than dropping it, because a lane that FAILED persisted no board at all

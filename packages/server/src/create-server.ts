@@ -3356,7 +3356,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // same binding `emit` has, and the same key `board.read` and the round-progress
     // channel use. The generation is stamped downstream by the rounds runtime.
     lensDrafts: {
-      opened: (generation, lens) => lensDrafts.opened(review.id, generation, lens),
+      opened: (generation, lens, board) => lensDrafts.opened(review.id, generation, lens, board),
       write: (generation, lens, write) => lensDrafts.wrote(review.id, generation, lens, write),
       closed: (generation, lens) => lensDrafts.closed(review.id, generation, lens),
     },
@@ -4918,6 +4918,13 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // store when a reader first asks.
     lensDraftForReview: (reviewId: string, generation: string, lens: LensKind) =>
       lensDrafts.read(reviewId, generation, lens),
+    // The live drafting board, straight off the hub the pipeline publishes into
+    // (`lens-board-tools` D11, task 4.1). No generation-store check ahead of it, unlike
+    // the two reads above: the hub is keyed on the generation ITSELF and holds only what
+    // this daemon opened a lane for, so it cannot answer with another patchset's board —
+    // and the generation whose boards are being written is exactly the one not yet in the
+    // store when a reader first asks.
+
     retryRound: async ({ review }) => {
       const sessionId = sessionIdForReview(review);
       const failed = roundOperationStore.read(sessionId);

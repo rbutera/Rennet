@@ -1449,9 +1449,9 @@ export type LensDraftElement = z.infer<typeof LensDraftElementSchema>;
 /**
  * One thing that happened to a drafting lens board.
  *
- * `opened` is the lane opening its empty board — the RESET marker as well as the first
- * frame, so a re-drafted generation starts the reader from nothing rather than appending
- * a second board onto the first. `elements` is one accepted tool call: the elements it
+ * `opened` is the lane opening its board, and the RESET marker as well as the first frame:
+ * a reader takes the elements it carries as the board entire, rather than appending a
+ * second board onto the first. It is not always an EMPTY board — see the field. `elements` is one accepted tool call: the elements it
  * added or changed (a parent whose `children` grew is one of them), the ids it removed,
  * and the document when it set one. No frame names the seat that made the call: Flagged
  * runs two voices into one board and every element already carries the `author` that voice
@@ -1462,7 +1462,22 @@ export type LensDraftElement = z.infer<typeof LensDraftElementSchema>;
  * and is why the lane's own status stays the authority on whether the LANE succeeded.
  */
 export const LensDraftUpdateSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("opened") }),
+  z.object({
+    kind: z.literal("opened"),
+    /**
+     * The board this lane is STARTING FROM, which is not always empty.
+     *
+     * Nothing deletes a board lane — settling one revokes its seats and keeps its writer —
+     * and a generation id is content-addressed, so a lane re-opened for a retry, or opened
+     * a second time by another review of identical content, hands back the board that is
+     * already there. An `opened` frame that claimed an empty board would leave the reader's
+     * copy shorter than the board, and every later element's `index` is computed against
+     * the board's own list: the fold would scramble from the first write. Empty on the
+     * ordinary first open, which is what it costs there.
+     */
+    elements: z.array(DraftElementSchema),
+    document: BoardDocumentSchema.optional(),
+  }),
   z.object({
     kind: z.literal("elements"),
     changed: z.array(LensDraftElementSchema),

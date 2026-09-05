@@ -367,7 +367,10 @@ and the position each holds. A lane's `opened` frame is the empty board, ahead o
 any seat thread; its `closed` frame says nothing more will land. Every frame
 carries its generation, so a superseded drafting attempt cannot paint over the
 live one, and a revision monotonic within `(generation, lens)`, so a reader can
-tell a duplicate from a gap. The stream and the durable board are two surfaces:
+tell a duplicate from a gap. A lane can carry more than one watcher — it is never
+deleted, and a content-addressed generation is shared by two reviews of identical
+content — so every opener hears every write and the `opened` frame carries the
+board the lane already holds. The stream and the durable board are two surfaces:
 the elements travel live without patchset stamps or round-delta marks, because
 both are stamped where the board is persisted at settle. See
 [the T3 Code sidecar](t3code-sidecar.md) for the wire and its catch-up read.

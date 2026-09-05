@@ -44,7 +44,7 @@ Closes the #810 class in production; partially answers #785 on the return side, 
 Closes the JSON-as-speech half of #819. The client group depends on this.
 
 - [x] 4.1 Publish the board's element stream and its drafting/settled state on the wire, keyed so a client can render an element as it lands and cannot render a superseded generation's
-- [x] 4.2 Give `projectLatestEvent` a board-tool arm ahead of the unknown-tool fallback, so a board call reads as a receipt ("added step 3", "cited `src/foo.ts:41-58`", "finish returned 1 pointer") and never as `<toolName>: <raw JSON>`. Control: remove the arm and watch the no-raw-input assertion redden
+- [x] 4.2 Give `projectLatestEvent` a board-tool arm ahead of the unknown-tool fallback, so a board call reads as a receipt ("added step 3", "cited `src/foo.ts:41-58`", "finish returned 1 pointer") and never as `<toolName>: <raw JSON>`. Control: remove the arm and watch the no-raw-input assertion redden — **the control was run and the premise was wrong**: the unknown-tool fallback already collapsed a JSON input to the tool NAME (`isJsonPayload(rest)`), so what a board call fell back to was `mcp__rennet_board__add_step` — a bare namespaced tool name that says nothing, not a raw payload. The arm is what makes it a sentence, and the assertion that reddens is the one pinning the receipt's words plus the no-server-name check
 - [x] 4.3 Thread the per-turn tool-call count to the collector beside tokens and duration; control that dropping it on one seat path fails the assertion
 - [x] 4.4 Record time-to-first-element as its own durable figure; time-to-first-core-board keeps its meaning as the first core lane that settled
 

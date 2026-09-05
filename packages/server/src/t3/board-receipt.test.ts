@@ -244,6 +244,13 @@ describe("boardReceipt", () => {
           }
           expect(line, `${target}/${name} spoke its \`${field}\``).not.toContain(poison(field));
         }
+        // VACUOUS AS WRITTEN, and kept for what they document rather than what they
+        // catch. `boardReceipt` reads the parsed call, never `payload.detail`, and no
+        // poison value here contains a brace or the server's name — so neither of these
+        // can fail against this fixture. The per-field assertion above is the real one.
+        // They stay because they name the two shapes the receipt must never become, and
+        // a future receipt built from the detail string would have to delete them rather
+        // than quietly slip past a sweep that no longer looked.
         expect(line, `${target}/${name} rendered JSON`).not.toMatch(/[{}[\]]/);
         expect(line, `${target}/${name} fell back to the detail line`).not.toContain(
           BOARD_MCP_SERVER_NAME,

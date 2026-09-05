@@ -339,7 +339,28 @@ export async function startBoardMcpServer(
 
   const lanes = new Map<
     string,
-    { readonly writer: BoardWriter; readonly input: OpenLaneInput; readonly seats: Set<string> }
+    {
+      readonly writer: BoardWriter;
+      readonly input: OpenLaneInput;
+      readonly seats: Set<string>;
+      /**
+       * Everyone watching this board being written (D11, task 4.1).
+       *
+       * A SET, and re-registered on every `openLane`, because a lane outlives the caller
+       * that opened it in two ways this daemon really has. Nothing deletes a lane —
+       * `settleLane` revokes the seats and keeps the writer, and `settleGeneration` has no
+       * production caller — so a lane lives for the daemon's life. And a generation id is
+       * `gen:<patchsetId>` over a CONTENT-ADDRESSED patchset, which `rounds.ts` already
+       * states is global across sessions and reviews: two reviews of identical content
+       * share this generation, this lane and this board by design.
+       *
+       * So they must share the STREAM too. Keeping only the first observer left the second
+       * reviewer watching a board that opened, never filled and closed, while the first
+       * reviewer's stream carried writes it had not asked for and could not attribute.
+       * Both are looking at the same board, so both hear the same writes.
+       */
+      readonly observers: Set<BoardWriteObserver>;
+    }
   >();
   /** SHA-256 of the seat token → the seat it addresses. The token itself is never stored. */
   const bySeatTokenDigest = new Map<string, SeatEntry>();
@@ -434,19 +455,37 @@ export async function startBoardMcpServer(
 
   const openLane = (input: OpenLaneInput): BoardLane => {
     const key = laneKey(input.generationId, input.target);
-    if (!lanes.has(key)) {
+    const held = lanes.get(key);
+    if (held === undefined) {
+      const observers = new Set<BoardWriteObserver>();
       lanes.set(key, {
+        // A stable TRAMPOLINE, so the set below can be joined after the writer exists.
+        // Binding one observer at construction is what made the first opener the only
+        // one that could ever hear this board (see `observers`).
         writer: new BoardWriter({
           target: input.target,
           lint: input.lint,
           author: input.author ?? { kind: "lens-agent", id: `lens:${input.target}` },
           ...(input.typedKinds === undefined ? {} : { typedKinds: input.typedKinds }),
-          ...(input.onWrite === undefined ? {} : { onWrite: input.onWrite }),
+          onWrite: (write) => {
+            for (const observer of observers) {
+              // Per observer, so one broken watcher cannot starve the rest of the fan-out.
+              // The writer's own guard is around this whole call, which would have stopped
+              // at the first thrower.
+              try {
+                observer(write);
+              } catch {
+                // A publication seam never changes the board it describes.
+              }
+            }
+          },
         }),
         input,
         seats: new Set<string>(),
+        observers,
       });
     }
+    if (input.onWrite !== undefined) lanes.get(key)?.observers.add(input.onWrite);
     return makeLane(key);
   };
 

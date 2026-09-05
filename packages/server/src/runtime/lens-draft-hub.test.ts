@@ -1,5 +1,5 @@
 import type { BoardWrite } from "@rennet/core";
-import type { DraftElement, LensDraftEvent } from "@rennet/protocol";
+import type { DraftBoard, DraftElement, LensDraftEvent } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { LensDraftHub } from "./lens-draft-hub";
 
@@ -17,6 +17,9 @@ const element = (id: string, markdown: string): DraftElement =>
     data: { author: { kind: "lens-agent", id: "seat" }, markdown },
   }) as DraftElement;
 
+/** The board an ordinary first open starts from. */
+const EMPTY: DraftBoard = { elements: [] };
+
 const write = (over: Partial<BoardWrite> = {}): BoardWrite => ({
   changed: [],
   removed: [],
@@ -33,11 +36,16 @@ const collected = () => {
 describe("LensDraftHub", () => {
   it("opens an empty board and publishes the open, so a reader starts from nothing", () => {
     const { hub, frames } = collected();
-    hub.opened("rev-1", "gen-1", "sequence");
+    hub.opened("rev-1", "gen-1", "sequence", EMPTY);
     expect(frames).toHaveLength(1);
     expect(frames[0]).toEqual({
       reviewId: "rev-1",
-      event: { generation: "gen-1", lens: "sequence", revision: 0, update: { kind: "opened" } },
+      event: {
+        generation: "gen-1",
+        lens: "sequence",
+        revision: 0,
+        update: { kind: "opened", elements: [] },
+      },
     });
     expect(hub.read("rev-1", "gen-1", "sequence")).toEqual({
       generation: "gen-1",
@@ -51,7 +59,7 @@ describe("LensDraftHub", () => {
 
   it("folds each write into the board it serves, and the frame carries only that write", () => {
     const { hub, frames } = collected();
-    hub.opened("rev-1", "gen-1", "sequence");
+    hub.opened("rev-1", "gen-1", "sequence", EMPTY);
     hub.wrote(
       "rev-1",
       "gen-1",
@@ -79,7 +87,7 @@ describe("LensDraftHub", () => {
 
   it("replaces an element in place when a later call changes it", () => {
     const { hub } = collected();
-    hub.opened("rev-1", "gen-1", "sequence");
+    hub.opened("rev-1", "gen-1", "sequence", EMPTY);
     hub.wrote(
       "rev-1",
       "gen-1",
@@ -99,7 +107,7 @@ describe("LensDraftHub", () => {
 
   it("drops a removed element from the board it serves", () => {
     const { hub } = collected();
-    hub.opened("rev-1", "gen-1", "sequence");
+    hub.opened("rev-1", "gen-1", "sequence", EMPTY);
     hub.wrote(
       "rev-1",
       "gen-1",
@@ -117,7 +125,7 @@ describe("LensDraftHub", () => {
 
   it("publishes the board's state only when it MOVED", () => {
     const { hub, frames } = collected();
-    hub.opened("rev-1", "gen-1", "sequence");
+    hub.opened("rev-1", "gen-1", "sequence", EMPTY);
     hub.wrote(
       "rev-1",
       "gen-1",
@@ -136,7 +144,7 @@ describe("LensDraftHub", () => {
 
   it("gives every frame of a board a strictly increasing revision", () => {
     const { hub, frames } = collected();
-    hub.opened("rev-1", "gen-1", "sequence");
+    hub.opened("rev-1", "gen-1", "sequence", EMPTY);
     hub.wrote(
       "rev-1",
       "gen-1",
@@ -158,8 +166,8 @@ describe("LensDraftHub", () => {
 
   it("keeps two lenses of one generation apart", () => {
     const { hub } = collected();
-    hub.opened("rev-1", "gen-1", "sequence");
-    hub.opened("rev-1", "gen-1", "flagged");
+    hub.opened("rev-1", "gen-1", "sequence", EMPTY);
+    hub.opened("rev-1", "gen-1", "flagged", EMPTY);
     hub.wrote(
       "rev-1",
       "gen-1",
@@ -174,32 +182,62 @@ describe("LensDraftHub", () => {
     // The generation key is what stops one attempt painting over another. Holding the old
     // attempt's board would keep memory for frames no reader may render anyway.
     const { hub } = collected();
-    hub.opened("rev-1", "gen-1", "sequence");
+    hub.opened("rev-1", "gen-1", "sequence", EMPTY);
     hub.wrote(
       "rev-1",
       "gen-1",
       "sequence",
       write({ changed: [{ index: 0, element: element("e1", "one") }] }),
     );
-    hub.opened("rev-1", "gen-2", "sequence");
+    hub.opened("rev-1", "gen-2", "sequence", EMPTY);
     expect(hub.read("rev-1", "gen-1", "sequence")).toBeUndefined();
     expect(hub.read("rev-1", "gen-2", "sequence")?.elements).toEqual([]);
   });
 
-  it("resets the board but not the revision when the SAME generation re-opens a lane", () => {
+  it("re-opens from the board the lane HOLDS, not from nothing", () => {
+    // The lane's writer survives a settle — nothing deletes a lane — so a re-opened lane
+    // hands back a board that already holds elements. Seeding the reader from `[]` there
+    // left every later `changed[].index`, which is computed against the BOARD's list,
+    // pointing past the end of the reader's copy: the fold scrambled from the first write.
+    //
+    // CONTROL, run 2026-09-05: seed the record with `[]` instead of the board and this
+    // reddens with `expected [] to deeply equal [ 'e1' ]`.
     const { hub, frames } = collected();
-    hub.opened("rev-1", "gen-1", "sequence");
+    hub.opened("rev-1", "gen-1", "sequence", EMPTY);
     hub.wrote(
       "rev-1",
       "gen-1",
       "sequence",
       write({ changed: [{ index: 0, element: element("e1", "one") }] }),
     );
-    hub.opened("rev-1", "gen-1", "sequence");
-    expect(hub.read("rev-1", "gen-1", "sequence")?.elements).toEqual([]);
+    const held: DraftBoard = { elements: [element("e1", "one")] };
+    hub.opened("rev-1", "gen-1", "sequence", held);
+    expect(hub.read("rev-1", "gen-1", "sequence")?.elements.map(({ id }) => id)).toEqual(["e1"]);
+    expect(frames.at(-1)?.event.update).toEqual({ kind: "opened", elements: held.elements });
     // A revision that reset would read as a duplicate of the first frame, and a reader
     // folding by revision would drop the re-open and keep the stale board.
     expect(frames.at(-1)?.event.revision).toBe(2);
+
+    // …and the NEXT write lands where the board says it does, which is the whole point.
+    hub.wrote(
+      "rev-1",
+      "gen-1",
+      "sequence",
+      write({ changed: [{ index: 1, element: element("e2", "two") }] }),
+    );
+    expect(hub.read("rev-1", "gen-1", "sequence")?.elements.map(({ id }) => id)).toEqual([
+      "e1",
+      "e2",
+    ]);
+  });
+
+  it("re-opens a DIFFERENT generation from nothing, whatever the last one held", () => {
+    // The reset half of `opened` is still load-bearing: a new generation's board is its
+    // own, and a reader must not append it onto the last one's.
+    const { hub } = collected();
+    hub.opened("rev-1", "gen-1", "sequence", { elements: [element("e1", "one")] });
+    hub.opened("rev-1", "gen-2", "sequence", EMPTY);
+    expect(hub.read("rev-1", "gen-2", "sequence")?.elements).toEqual([]);
   });
 
   it("drops a write for a board no lane opened here", () => {
@@ -217,7 +255,7 @@ describe("LensDraftHub", () => {
 
   it("closes with how the board finally STOOD, and takes nothing more", () => {
     const { hub, frames } = collected();
-    hub.opened("rev-1", "gen-1", "sequence");
+    hub.opened("rev-1", "gen-1", "sequence", EMPTY);
     hub.wrote(
       "rev-1",
       "gen-1",
@@ -244,7 +282,7 @@ describe("LensDraftHub", () => {
     // did write are kept here — the partial board 3.3 keeps, kept for the NEXT reader too
     // and not only for the one that happened to be watching.
     const { hub } = collected();
-    hub.opened("rev-1", "gen-1", "sequence");
+    hub.opened("rev-1", "gen-1", "sequence", EMPTY);
     hub.wrote(
       "rev-1",
       "gen-1",
@@ -260,8 +298,8 @@ describe("LensDraftHub", () => {
 
   it("keeps two reviews apart", () => {
     const { hub } = collected();
-    hub.opened("rev-1", "gen-1", "sequence");
-    hub.opened("rev-2", "gen-1", "sequence");
+    hub.opened("rev-1", "gen-1", "sequence", EMPTY);
+    hub.opened("rev-2", "gen-1", "sequence", EMPTY);
     hub.wrote(
       "rev-1",
       "gen-1",

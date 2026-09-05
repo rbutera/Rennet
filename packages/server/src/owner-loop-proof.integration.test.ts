@@ -254,6 +254,54 @@ async function waitForFiveBoards(
   return boardIds;
 }
 
+/**
+ * Every board this generation drafted was PUBLISHED as it was written, and the daemon can
+ * still serve what it published (`lens-board-tools` D11, task 4.1).
+ *
+ * The seam this covers is the composition root's, and it is covered NOWHERE ELSE: the hub,
+ * the pipeline observer, the rounds runtime and the `board.draft` handler are each tested
+ * on their own, and deleting `boardDraftingDeps`'s `lensDrafts` binding or the
+ * `lensDraftForReview` read left the whole feature dead in production with the entire
+ * server suite green. This drives the real `createRennetServer` and reads the real command,
+ * so both bindings are load-bearing.
+ *
+ * Read AFTER the lanes settled on purpose. The hub keeps a closed board rather than
+ * dropping it, so what a late reader gets is the board the stream carried — and asserting
+ * it AGREES with `board.read`'s durable copy is what makes "the reviewer watched this
+ * board being written" a claim about the board that actually shipped.
+ */
+async function expectEveryBoardWasPublishedAsItWasWritten(
+  server: RennetServer,
+  reviewId: string,
+  generation: string,
+): Promise<void> {
+  for (const lens of LENS_KINDS) {
+    const draft = parseCommandOutput(
+      "board.draft",
+      await server.dispatch("board.draft", { reviewId, generation, lens }),
+    ).draft;
+    if (draft === null) {
+      throw new Error(`${lens} was never published on its element stream`);
+    }
+    expect(draft.generation, `${lens} draft is stamped with another generation`).toBe(generation);
+    expect(draft.closed, `${lens} lane never closed its stream`).toBe(true);
+    expect(draft.state, `${lens} closed without its board settled`).toBe("settled");
+    // The stream carried a whole board, not an `opened` frame and nothing after it.
+    expect(draft.elements.length, `${lens} published no element`).toBeGreaterThan(0);
+    expect(draft.revision, `${lens} published only its open`).toBeGreaterThan(0);
+    // …and it is the SAME board `board.read` serves from the whiteboard. Element ids are
+    // host-minted, so this compares what the reviewer watched arrive against what the
+    // daemon durably filed, id for id.
+    const read = parseCommandOutput(
+      "board.read",
+      await server.dispatch("board.read", { reviewId, generation, lens }),
+    );
+    const published = draft.elements.map((element) => element.id).sort();
+    const durable = (read.board?.elements ?? []).map((element) => element.id).sort();
+    expect(published, `${lens} streamed a different board than it filed`).toEqual(durable);
+  }
+}
+
 async function expectFrozenBoardsRemainReadable(
   server: RennetServer,
   reviewId: string,
@@ -423,6 +471,7 @@ describe("#685 owner loop through a real server", () => {
       initialGeneration,
       initial.activePatchsetId,
     );
+    await expectEveryBoardWasPublishedAsItWasWritten(first, reviewId, initialGeneration);
     // Every board that just landed came off a SIDECAR SEAT THREAD, one per seat, opened in
     // the checkout the review is bound to — there is no ephemeral leg left for one to have
     // taken (session-bound-workspace 5.7). The seam recorded the whole `threadFor` input,

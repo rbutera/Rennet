@@ -28,7 +28,13 @@
 // — the defect the reveal path shipped once already, in a different surface.
 
 import type { BoardWrite } from "@rennet/core";
-import type { LensDraftEvent, LensDraftSnapshot, LensDraftState, LensKind } from "@rennet/protocol";
+import type {
+  DraftBoard,
+  LensDraftEvent,
+  LensDraftSnapshot,
+  LensDraftState,
+  LensKind,
+} from "@rennet/protocol";
 
 /** One board being written, as this hub holds it. */
 interface DraftRecord {
@@ -47,7 +53,7 @@ const key = (generation: string, lens: LensKind): string => `${generation} ${len
  * The live element streams of one daemon, keyed by review.
  *
  * Holds at most one record per `(review, generation, lens)`: opening a lane drops every
- * record of that review belonging to an older generation, so a review costs at most its
+ * record of that review stamped with any other generation, so a review costs at most its
  * five boards. Nothing purges a review that never drafts again — that is a bounded cost
  * per review over a daemon's life, named here rather than answered with a sweep method
  * no production path would call.
@@ -63,15 +69,17 @@ export class LensDraftHub {
   }
 
   /**
-   * The lane opened its empty board. Also the RESET: a re-drafting attempt over the same
-   * `(generation, lens)` clears what the last one wrote rather than appending to it, and
-   * the revision keeps climbing so a reader can tell the reset from a replay.
+   * The lane opened its board. Also the RESET: a re-drafting attempt over the same
+   * `(generation, lens)` starts the reader from the board as it stands rather than
+   * appending to what the last attempt left, and the revision keeps climbing so a reader
+   * can tell the reset from a replay.
    */
-  opened(reviewId: string, generation: string, lens: LensKind): void {
+  opened(reviewId: string, generation: string, lens: LensKind, board: DraftBoard): void {
     const records = this.#recordsFor(reviewId);
-    // A review keeps at most ONE generation's boards here. The older ones are the
-    // superseded attempt's, which no reader may render anyway (that is what the generation
-    // key is for), so holding them is memory spent on frames that are already dropped.
+    // A review keeps at most ONE generation's boards here: opening a lane drops every
+    // record of this review stamped with any OTHER generation, superseded or successor
+    // alike. No reader may render another generation's frames anyway — that is what the
+    // generation key is for — so holding them is memory spent on frames already dropped.
     for (const [held, record] of [...records]) {
       if (record.generation !== generation) records.delete(held);
     }
@@ -83,9 +91,24 @@ export class LensDraftHub {
       revision,
       state: "drafting",
       closed: false,
-      elements: [],
+      // SEEDED FROM THE BOARD, not emptied. A lane is not deleted when it settles, and a
+      // content-addressed generation id is shared across reviews, so an opened lane can
+      // already hold elements. Starting the fold at `[]` over a board that holds N left
+      // every later `changed[].index` — computed against the board's own list — pointing
+      // past the end of the reader's copy.
+      elements: board.elements.map((element) => ({ id: element.id, element })),
+      ...(board.document === undefined ? {} : { document: board.document }),
     });
-    this.#push(reviewId, { generation, lens, revision, update: { kind: "opened" } });
+    this.#push(reviewId, {
+      generation,
+      lens,
+      revision,
+      update: {
+        kind: "opened",
+        elements: [...board.elements],
+        ...(board.document === undefined ? {} : { document: board.document }),
+      },
+    });
   }
 
   /**

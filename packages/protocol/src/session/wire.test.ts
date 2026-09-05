@@ -323,7 +323,7 @@ describe("the lensDraft frame (`lens-board-tools` D11, task 4.1)", () => {
 
   it("parses the open, the state move and the close", () => {
     for (const update of [
-      { kind: "opened" },
+      { kind: "opened", elements: [] },
       { kind: "state", state: "settled" },
       { kind: "closed", state: "drafting" },
     ]) {
@@ -337,7 +337,7 @@ describe("the lensDraft frame (`lens-board-tools` D11, task 4.1)", () => {
     const bad = {
       type: "lensDraft",
       reviewId: "rev-1",
-      event: { lens: "sequence", revision: 0, update: { kind: "opened" } },
+      event: { lens: "sequence", revision: 0, update: { kind: "opened", elements: [] } },
     };
     expect(() => parseSessionFrame(bad)).toThrow();
   });
@@ -348,7 +348,12 @@ describe("the lensDraft frame (`lens-board-tools` D11, task 4.1)", () => {
       parseSessionFrame({
         type: "lensDraft",
         reviewId: "rev-1",
-        event: { generation: "gen-1", lens: "sequence", revision: -1, update: { kind: "opened" } },
+        event: {
+          generation: "gen-1",
+          lens: "sequence",
+          revision: -1,
+          update: { kind: "opened", elements: [] },
+        },
       }),
     ).toThrow();
   });

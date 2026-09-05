@@ -1364,7 +1364,8 @@ export interface LensPipelineDeps {
    * seen only at settle, which is the direct-call shape and the shape before this task.
    */
   readonly onBoardDraft?: {
-    readonly opened: (lens: LensKind) => void;
+    /** The board the lane is starting from — empty on a first open, not always empty. */
+    readonly opened: (lens: LensKind, board: DraftBoard) => void;
     readonly write: (lens: LensKind, write: BoardWrite) => void;
     readonly closed: (lens: LensKind) => void;
   };
@@ -2310,7 +2311,7 @@ export async function runLensPipeline(deps: LensPipelineDeps): Promise<LensPipel
         // The lane's own `target` IS the lens, so the context is handed over without it —
         // one source, no agreement to keep between two fields that must not disagree.
         const context = deps.lintContextFor(lens);
-        await boards.openLane({
+        const lane = await boards.openLane({
           target: lens,
           lint: omitLens(context),
           author: { kind: "lens-agent", id: `lens:${lens}` },
@@ -2322,9 +2323,11 @@ export async function runLensPipeline(deps: LensPipelineDeps): Promise<LensPipel
             ? {}
             : { onWrite: (write: BoardWrite) => draft.write(lens, write) }),
         });
-        // Published AFTER the lane exists, so the empty board a reader starts from is one
-        // the daemon is actually holding rather than one it is about to hold.
-        draft?.opened(lens);
+        // Published AFTER the lane exists, and carrying the board that lane actually
+        // HOLDS. Nothing deletes a lane, and a content-addressed generation is shared
+        // across reviews, so an opened lane's board is not always empty; a reader told it
+        // was would fold every later element's index against a list too short to hold it.
+        draft?.opened(lens, lane.board());
       }),
     );
   }

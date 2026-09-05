@@ -554,6 +554,7 @@ export async function runBoardRegeneration(
           ? {}
           : { firstBoardWaitOriginMs: input.firstBoardWaitOriginMs }),
         ...(deps.lensDrafts === undefined ? {} : { lensDrafts: deps.lensDrafts }),
+
         ...(snapshotSource.revision === undefined
           ? {}
           : { projectContextRevision: snapshotSource.revision }),

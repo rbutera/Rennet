@@ -665,7 +665,8 @@ export interface RoundInput {
 
 /** Where a generation's board writes are published, keyed by the review the caller bound. */
 export interface LensDraftSink {
-  readonly opened: (generation: string, lens: LensKind) => void;
+  /** The board the lane is starting from — empty on a first open, not always empty. */
+  readonly opened: (generation: string, lens: LensKind, board: DraftBoard) => void;
   readonly write: (generation: string, lens: LensKind, write: BoardWrite) => void;
   readonly closed: (generation: string, lens: LensKind) => void;
 }
@@ -1415,7 +1416,7 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
       draftSink === undefined
         ? undefined
         : {
-            opened: (lens) => draftSink.opened(attemptGeneration.id, lens),
+            opened: (lens, board) => draftSink.opened(attemptGeneration.id, lens, board),
             write: (lens, write) => {
               if (
                 write.changed.length > 0 &&
