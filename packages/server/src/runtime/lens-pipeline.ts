@@ -3486,7 +3486,12 @@ async function finishLensBoard(
   // capture's id, so a citation that carried one would be a value the seat invented.
   // Stamped AFTER every check that reads it, so nothing this writes can make a
   // cross-patchset check agree with itself.
-  const identified = stampPatchsetId(validated.board, deps.lintContextFor(lens).patchsetId);
+  //
+  // From the DELTA PACKET, not from the lint context, because the very next line hands the
+  // board to `admitBoardReferences` against `deps.deltaPacket.patchset.id` — a citation
+  // stamped with any other id is refused there as one this board cannot prove. Two sources
+  // for one fact is exactly the agreement that goes wrong silently; there is one now.
+  const identified = stampPatchsetId(validated.board, deps.deltaPacket.patchset.id);
 
   // R58 delta stamps against the prior generation's board (cluster 4).
   const stamped = stampDeltas(deps.previous?.get(lens), identified);

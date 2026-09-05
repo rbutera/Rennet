@@ -1254,13 +1254,11 @@ describe("createRoundsRuntime", () => {
             fakeClaudePort([], (prompt, label) => {
               const lens = lensFromPrompt(prompt, label);
               if (lens === "design") return { absence: "no-spec" };
-              if (
-                lens === "decisions" ||
-                lens === "flagged" ||
-                (lens === "post-process" && prompt.includes('"elements":[]'))
-              ) {
-                return { elements: [] } as unknown as DraftBoard;
-              }
+              // An absence is DECLARED now (`lens-board-tools` 3.2): the seat calls the one
+              // settle-absent verb its lens has. An empty board is no longer read as a
+              // claim, so a fixture that means "nothing here" has to say so.
+              if (lens === "decisions") return { absence: "no-decisions" };
+              if (lens === "flagged") return { absence: "no-findings" };
               return cleanBody(lens);
             }),
           persistBoardMeta: (_repo, record) => meta.save(record),
@@ -3246,7 +3244,7 @@ describe("createRoundsRuntime", () => {
               if (lens === "design") return { absence: "no-spec" };
               if (lens === "flagged") {
                 announceFlaggedDraft();
-                return { elements: [] } as unknown as DraftBoard;
+                return { absence: "no-findings" };
               }
               return cleanBody(lens);
             }),

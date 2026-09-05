@@ -253,12 +253,20 @@ const ensureFixtureBoardServer = (): Promise<BoardMcpServer> => {
   return sharedServer;
 };
 
-/** A generation's lanes, on a fresh generation id so two tests' lanes are never the same. */
-export function fixtureGenerationBoards(generationId?: string): GenerationBoards {
+/**
+ * A generation's lanes, on a FRESH generation id every call.
+ *
+ * Always fresh, never the caller's own generation id, and that is the load-bearing part:
+ * the lane registry is keyed on (generation, target) and lives for the process, so two
+ * tests — or two attempts inside one test — that named the same generation would share one
+ * `BoardWriter` and read each other's elements. A lane re-opened for a retry keeping its
+ * board is a real production property; it is `board-mcp-server.test.ts`'s to assert, and
+ * letting it leak across unrelated fixtures here would make a failed lane look settled
+ * because some earlier test had filled it.
+ */
+export function fixtureGenerationBoards(): GenerationBoards {
   generationCounter += 1;
-  return generationBoards(generationId ?? `fixture-gen-${generationCounter}`, () =>
-    ensureFixtureBoardServer(),
-  );
+  return generationBoards(`fixture-gen-${generationCounter}`, () => ensureFixtureBoardServer());
 }
 
 /** Close the shared listener. Every file that opened lanes calls this from `afterAll`. */

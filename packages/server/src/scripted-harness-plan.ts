@@ -750,7 +750,7 @@ export function loadScriptedT3Seats(path: string): {
       // names a board, because a plan is the readable way to say what a lens found; what
       // changed is that nobody reads it off the turn, so it is written into the lane
       // through the tool surface exactly as a real seat writes it.
-      const boards = fixtureGenerationBoards(`${plan.lane}:${input.generationId}`);
+      const boards = fixtureGenerationBoards();
       const seam: T3SeatSeam = {
         client: async () => ({
           startTurn: async ({ threadId, text, outputSchema }) => {

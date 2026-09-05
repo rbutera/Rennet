@@ -81,7 +81,7 @@ export function fakeT3SeatsOverPorts(
     const settled = new Map<string, T3SettledTurn>();
     // This generation's lanes, on the real loopback board server. The pipeline opens each
     // one before it dispatches a seat; nothing here opens them, exactly as in production.
-    const boards: GenerationBoards = fixtureGenerationBoards(input.generationId);
+    const boards: GenerationBoards = fixtureGenerationBoards();
     const client: T3SeatClient = {
       startTurn: async ({ threadId, text, outputSchema }) => {
         const thread = providerOf.get(threadId);
