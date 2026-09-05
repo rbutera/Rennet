@@ -82,7 +82,7 @@ describe("the board tool table", () => {
     // is built over is satisfied by an empty table on both sides — the failure this change
     // has already shipped once (`board-tool-surface.measure.test.ts`). Change this number
     // deliberately when a verb is added or removed.
-    expect(BOARD_TOOL_COUNT).toBe(25);
+    expect(BOARD_TOOL_COUNT).toBe(26);
     const swept = new Set<string>();
     for (const target of BOARD_TARGETS) {
       for (const name of boardToolsByName(target).keys()) {
@@ -260,8 +260,8 @@ describe("boardReceipt", () => {
       }
     }
     // A loop that stopped iterating passes as a sweep, so the sweep counts what it swept.
-    // 25 distinct tools spread over 6 targets, most of them shared: 94 (target, tool) pairs.
-    expect(asserted).toBe(94);
+    // 26 distinct tools spread over 6 targets, most of them shared: 100 (target, tool) pairs.
+    expect(asserted).toBe(100);
     // The exception list is exercised rather than merely declared.
     expect([...spokenSeen].sort()).toEqual(["element_id", "path"]);
   });

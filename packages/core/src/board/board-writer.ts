@@ -82,7 +82,31 @@ export type BoardToolOutcome =
   | { readonly kind: "document" }
   | { readonly kind: "absent"; readonly reason: LensAbsenceReason; readonly note: string }
   | { readonly kind: "settled" }
-  | { readonly kind: "pointers"; readonly pointers: readonly FinishPointer[] };
+  | { readonly kind: "pointers"; readonly pointers: readonly FinishPointer[] }
+  /**
+   * A `write_board` — how many entries the payload placed, which of them were refused and
+   * why, and (when none were) whether the board then settled or came back with pointers.
+   *
+   * The refusals are PER ENTRY on purpose. The boundary tier refuses one call at a time,
+   * and a batched verb that answered "something in your 121 entries was refused" would
+   * make the seat resend the batch to find out which — turning one round trip back into
+   * several and distorting the very figure this verb exists to move (#869).
+   */
+  | {
+      readonly kind: "wrote";
+      readonly accepted: number;
+      readonly refusals: readonly BoardBatchRefusal[];
+      readonly settled: boolean;
+      readonly pointers?: readonly FinishPointer[];
+    };
+
+/** One entry of a `write_board` payload the boundary tier would not take. */
+export interface BoardBatchRefusal {
+  /** The entry's 0-based position in `calls`, so the seat can find it without a search. */
+  readonly index: number;
+  readonly tool: string;
+  readonly refusal: string;
+}
 
 /**
  * The answer to one call. A refusal costs no attempt (D6) — the seat reads it and fixes
@@ -437,7 +461,24 @@ export class BoardWriter {
     // Counted BEFORE the tool is even resolved, and for every arm below including the
     // refusals: the seat made a call and the provider billed it, whether or not this
     // board would take it (task 4.3).
+    //
+    // ONE `write_board` is ONE count, however many entries its payload carries — which is
+    // the whole point of the verb and the figure #869 is trying to move. The entries reach
+    // {@link BoardWriter.applyCall} directly, below the count, because the seat did not
+    // make them and the provider did not bill them: they arrived inside this one call.
     this.countCall(voice);
+    return this.applyCall(name, rawInput, voice);
+  }
+
+  /**
+   * Apply one tool call WITHOUT counting it as a provider round trip.
+   *
+   * The body {@link BoardWriter.call} used to hold, split out so `write_board` can drive
+   * the same verbs the seat would have called one at a time — same tools, same parse, same
+   * boundary tier, same refusal sentences, same publication — with the count staying on the
+   * one call the seat actually made.
+   */
+  private applyCall(name: string, rawInput?: unknown, voice?: BoardVoice): BoardToolResult {
     const before = this.elements;
     const beforeDocument = this.document;
     const tool = this.tools.get(name);
@@ -469,6 +510,8 @@ export class BoardWriter {
           return this.settleAbsent(input);
         case "finish":
           return this.finish();
+        case "write_board":
+          return this.writeBoard(input, voice);
       }
     })();
     // A refusal changes nothing, including this: the seat has not settled and has not
@@ -558,6 +601,20 @@ export class BoardWriter {
         // A verdict that came back with work in it is not a settlement, and it does not
         // un-settle a voice that had already finished either — the board did not move.
         record.verdict = outcome.pointers;
+        break;
+      case "wrote":
+        // A whole-board write is an authoring call AND the `finish` that follows it, so it
+        // records both: the voice is drafting again, and then whatever its own finish said.
+        // Reading it as an ordinary authoring call would leave a settled board recorded as
+        // still drafting — the lane would wait for a turn that had already done its work.
+        record.state = "drafting";
+        delete record.absence;
+        if (outcome.settled) {
+          record.state = "settled";
+          record.verdict = [];
+        } else if (outcome.pointers !== undefined) {
+          record.verdict = outcome.pointers;
+        }
         break;
       default:
         // An authoring call. This voice is writing again, so whatever it said last about
@@ -773,6 +830,126 @@ export class BoardWriter {
     this.absence = { reason, note };
     this.state = "absent";
     return { ok: true, outcome: { kind: "absent", reason, note } };
+  }
+
+  /**
+   * `write_board` — one payload carrying every call the seat would otherwise have made
+   * one at a time (#869, spike).
+   *
+   * Each entry goes through {@link BoardWriter.applyCall}, so this adds no authoring path:
+   * the tools, the input parse, the boundary tier, the refusal sentences and the write
+   * publication are the ones a one-at-a-time seat already gets. What it adds is the local
+   * id map — a payload cannot name an id the host has not minted yet — and the per-entry
+   * refusal list.
+   *
+   * A refused entry does NOT roll the batch back. Rolling back would make one bad entry in
+   * a hundred cost the seat the whole payload again, which is the round-trip cost this verb
+   * exists to remove, reintroduced at the worst possible moment. What is accepted stays on
+   * the board and the seat is told exactly which entries to redo.
+   *
+   * `finish` runs only when every entry landed. A finish over a board that is knowingly
+   * missing entries would return pointers about the missing elements, burying the refusals
+   * that caused them under their own consequences.
+   */
+  private writeBoard(input: Record<string, unknown>, voice?: BoardVoice): BoardToolResult {
+    const raw = String(input.board_json);
+    let payload: unknown;
+    try {
+      payload = JSON.parse(raw);
+    } catch (error) {
+      return refuse(
+        `\`board_json\` is not JSON — ${(error as Error).message}. Send one object \`{"calls":[…]}\`; nothing was written.`,
+      );
+    }
+    const calls = (payload as { calls?: unknown } | null)?.calls;
+    if (!Array.isArray(calls)) {
+      return refuse(
+        '`board_json` parsed but carries no `calls` array. Send `{"calls":[{"tool":"…", …}, …]}`; nothing was written.',
+      );
+    }
+
+    // A payload's own name for an element it creates → the id the host minted for it.
+    const local = new Map<string, string>();
+    const resolve = (value: unknown): unknown =>
+      typeof value === "string" ? (local.get(value) ?? value) : value;
+
+    const refusals: BoardBatchRefusal[] = [];
+    let accepted = 0;
+    for (const [index, entry] of calls.entries()) {
+      if (entry === null || typeof entry !== "object" || Array.isArray(entry)) {
+        refusals.push({
+          index,
+          tool: "(none)",
+          refusal: 'entry is not an object. Each entry is one call: `{"tool":"…", …}`.',
+        });
+        continue;
+      }
+      const record = entry as Record<string, unknown>;
+      const name = typeof record.tool === "string" ? record.tool : "";
+      if (name.length === 0) {
+        refusals.push({ index, tool: "(none)", refusal: "entry names no `tool`." });
+        continue;
+      }
+      const tool = this.tools.get(name);
+      if (tool === undefined) {
+        refusals.push({
+          index,
+          tool: name,
+          refusal: `There is no \`${name}\` on this board. This lens writes with: ${this.toolNames().join(", ")}.`,
+        });
+        continue;
+      }
+      // `write_board` inside `write_board` is not a nesting the payload grammar admits, and
+      // allowing it would let one entry's refusal list hide inside another's.
+      if (tool.verb === "write_board") {
+        refusals.push({ index, tool: name, refusal: "`write_board` does not nest." });
+        continue;
+      }
+
+      const localId = typeof record.local_id === "string" ? record.local_id : undefined;
+      const call: Record<string, unknown> = {};
+      for (const [key, value] of Object.entries(record)) {
+        if (key === "tool" || key === "local_id") continue;
+        call[key] = value;
+      }
+      // Every id-bearing field, resolved through the local map: the two structural ones the
+      // writer reads off the raw input, and every element-reference field the tool declares.
+      for (const key of ["parent_id", "element_id"]) {
+        if (key in call) call[key] = resolve(call[key]);
+      }
+      for (const field of tool.fields) {
+        if (field.source.form !== "element-ref" || !(field.name in call)) continue;
+        const value = call[field.name];
+        call[field.name] = Array.isArray(value) ? value.map(resolve) : resolve(value);
+      }
+
+      const result = this.applyCall(name, call, voice);
+      if (!result.ok) {
+        refusals.push({ index, tool: name, refusal: result.refusal });
+        continue;
+      }
+      accepted += 1;
+      if (localId !== undefined && result.outcome.kind === "element") {
+        local.set(localId, result.outcome.id);
+      }
+    }
+
+    if (refusals.length > 0) {
+      return { ok: true, outcome: { kind: "wrote", accepted, refusals, settled: false } };
+    }
+    const finished = this.finish();
+    if (!finished.ok) return finished;
+    const settled = finished.outcome.kind === "settled";
+    return {
+      ok: true,
+      outcome: {
+        kind: "wrote",
+        accepted,
+        refusals,
+        settled,
+        ...(finished.outcome.kind === "pointers" ? { pointers: finished.outcome.pointers } : {}),
+      },
+    };
   }
 
   private finish(): BoardToolResult {

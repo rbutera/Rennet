@@ -71,7 +71,8 @@ export type BoardToolVerb =
   | "update"
   | "remove_element"
   | "settle_absent"
-  | "finish";
+  | "finish"
+  | "write_board";
 
 /**
  * The verb noun for each kind. A rename table, not a tool list: WHICH of these appear
@@ -470,6 +471,55 @@ function settleAbsentTool(reason: LensAbsenceReason): BoardTool {
   };
 }
 
+/**
+ * `write_board` — the whole board in ONE call (spike, #869).
+ *
+ * The incremental verbs above cost one provider round trip each, and a round trip
+ * re-reads the whole conversation prefix. #867 measured that: 121 calls on Design, 67 on
+ * Decisions, 60 on Sequence, and roughly 4x the tokens and 3x the wall clock of the
+ * document return this surface replaced. This verb is the other end of that axis — a seat
+ * that knows what its board is says it once.
+ *
+ * ## Why the payload is a STRING and not a shape
+ *
+ * A board is a tree, and D3 forbids a nested object or an array of objects on any tool
+ * input, because #810 proved the provider refuses a complex input schema twice over. So
+ * the payload travels as one flat `string` scalar: the API never sees the board's shape at
+ * all, which is what makes the #810 class unconstructible here rather than merely absent.
+ * The host parses it AFTER the call, and — this is the point of doing it as a tool rather
+ * than as a returned document — answers IN-TURN, with the same refusals and the same
+ * finish pointers the incremental verbs give. A rejected board costs a few hundred bytes
+ * of tool result, not a whole repair turn.
+ *
+ * ## Why the payload is a list of CALLS and not a board document
+ *
+ * Every entry is one of this board's own verbs with its own flat input, so a batched write
+ * is validated by exactly the machinery a one-at-a-time write is: the same boundary tier,
+ * the same refusal sentences, the same host-owned fields absent from every input, the same
+ * host-minted ids. Nothing here is a second authoring format for a seat to learn or for a
+ * rule to be re-implemented against, and a refusal names WHICH entry failed rather than
+ * rejecting the batch opaquely.
+ */
+function writeBoardTool(): BoardTool {
+  return {
+    name: "write_board",
+    verb: "write_board",
+    // Held deliberately short: this travels once per session on every seat, and the
+    // instructions already teach when to reach for it. What only the tool can say is the
+    // payload grammar, so that is all this says.
+    description: [
+      "Write the whole board in one call, then finish it. `board_json` is",
+      '`{"calls":[{"tool":"<verb>", …that verb\'s own input}, …]}`, applied in order.',
+      "Name an element with `local_id` and use that name wherever an id goes; the host",
+      "resolves it to the id it minted.",
+    ].join("\n"),
+    fields: [],
+    input: z.object({
+      board_json: z.string().min(1).describe("The payload. See this tool's description."),
+    }),
+  };
+}
+
 function finishTool(): BoardTool {
   return {
     name: "finish",
@@ -510,6 +560,7 @@ export function buildBoardTools(
     removeTool(),
     ...(absence === undefined ? [] : [settleAbsentTool(absence)]),
     finishTool(),
+    writeBoardTool(),
   ];
 }
 
