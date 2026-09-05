@@ -43,10 +43,13 @@ const BoardElementsContext = createContext<BoardElements>({
  * The `code_ref` kind's attrs ARE the canonical CodeRef field-for-field (schema.ts).
  *
  * `patchset_id` is host-stamped and therefore OPTIONAL on the wire — a seat is never told
- * the id, so `validateDraft` writes it once before persistence. `boardPatchsetId` is the
- * board's own, used when an element predates the stamp; an element that carries one keeps
- * it, so a genuinely cross-patchset element still reads as itself rather than being
- * relabelled by the board it is rendered on.
+ * the id, so the host writes it once: on the lens path in `finishLensBoard`, before round
+ * composition carries the previous generation's chapter in, and on the legacy report path
+ * inside `validateDraft`. `boardPatchsetId` is the board's own, used when an element
+ * predates the stamp; an element that carries one keeps it, so a genuinely cross-patchset
+ * element — a carried "Round N · Addressed" anchor, which is what makes this branch
+ * load-bearing rather than defensive — still reads as itself rather than being relabelled
+ * by the board it is rendered on.
  */
 export function toCodeRef(element: ElementOf<"code_ref">, boardPatchsetId: string): CodeRef {
   const d = element.data;

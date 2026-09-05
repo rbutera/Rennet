@@ -123,7 +123,19 @@ export interface T3SeatTurnOptions {
   readonly provider: "claudeAgent" | "codex";
   readonly model: string;
   readonly effort: CouncilEffort;
-  readonly outputSchema: unknown;
+  /**
+   * The turn's structured-output contract, when the turn HAS one.
+   *
+   * `undefined` is the board seat since `lens-board-tools` 3.2: a seat that writes its
+   * board through tools returns no document, so no schema is attached to its turn, none
+   * appears in its prompt, and its final assistant message is prose or nothing. A turn
+   * that settles without structured output is then an ordinary completed turn rather
+   * than the failure a document-returning seat's empty settlement is.
+   *
+   * Absent is not the same as `null` or `{}`: those would still travel as a contract the
+   * provider validates against. Nothing travels.
+   */
+  readonly outputSchema?: unknown;
   readonly label: string;
   readonly collector?: MetricsCollector;
   readonly signal?: AbortSignal;
@@ -382,7 +394,14 @@ export function createT3SeatTurn(
             text: prompt,
             // Once per turn, as the turn's structured-output contract, shaped for the
             // provider that will validate it. Never in the text.
-            outputSchema: outputSchemaFor(provider, options.outputSchema),
+            //
+            // OMITTED ENTIRELY when the turn has no contract (a board seat since 3.2) —
+            // not sent as `undefined`, because `startTurn`'s own optional-field handling
+            // is the thing under test and a key present with an undefined value is a
+            // different fact from a key that is not there.
+            ...(options.outputSchema === undefined
+              ? {}
+              : { outputSchema: outputSchemaFor(provider, options.outputSchema) }),
             // The seat's own board address, when its lane has one. The same set on every
             // turn of the thread: the provider fixed it when the child was created.
             ...(thread.boardServer === undefined
@@ -428,6 +447,13 @@ export function createT3SeatTurn(
           (settled.state === "interrupted" ? INTERRUPTED : "the seat turn failed");
         record("failed", settled, message);
         return { status: "failed", message };
+      }
+      // A turn with no structured-output contract has no body to read and no body to
+      // miss (`board-tool-authoring`: "a turn that ends without one SHALL NOT be treated
+      // as a failure on that ground alone"). It settled; what it DID is on its board.
+      if (options.outputSchema === undefined) {
+        record("emitted", settled);
+        return { status: "emitted", body: undefined, observed: { model, apiKeySource: null } };
       }
       // Codex's strict schema made every optional field required-but-nullable; strip the
       // nulls it emitted so the board parses against the original Zod shape (codex-exec

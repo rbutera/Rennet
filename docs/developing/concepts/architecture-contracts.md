@@ -183,6 +183,10 @@ durable halves. All element writes route through the adapters
 A restarted round reuses a reserved report only when the exact report metadata
 and board state reconstruct and pass the same changed-line verification again.
 Partial lens boards are replaced as one attempt, not resumed element by element.
+Within one attempt a partial board IS resumed: a seat writes its board call by call and a
+turn that ends without finishing it leaves what it wrote in place, so the follow-up turn
+carries the last whole-board verdict and continues into the same board. The two are not in
+tension — the durable replacement unit is the attempt; the live unit inside it is the call.
 Recovery removes a partial board's metadata before clearing its element log. A
 crash at either point therefore leaves the next retry able to repeat the cleanup;
 it cannot treat elements scheduled for replacement as a completed board.
@@ -204,6 +208,14 @@ a tool call is not egress. The board server a lens seat writes through is one of
 HTTP MCP listener on `127.0.0.1` that the daemon owns, addressed per seat, described in
 [T3 Code sidecar](./t3code-sidecar.md#the-board-server). Its credential reaches the harness
 child by environment variable and is on no argument list.
+
+**No output schema travels on a lens seat's turn.** A seat writes its board through that
+server and returns no document, so nothing binds its session, nothing is parsed back off
+it, and no structured payload appears as a message on its thread. A seat's final assistant
+message is prose or nothing, and a turn that ends without one is not a failure on that
+ground. The turn-level structured-output contract still exists and is still sent exactly
+once, as the provider's own output format rather than as prompt text — but the only board
+job that carries one now is the round-report seat, which still returns a document.
 
 A session binds to exactly **one workspace** when it is created and keeps that binding for
 its whole life: the reviewer's own checkout when some worktree of the repository already has

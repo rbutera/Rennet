@@ -28,6 +28,7 @@ import {
 } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import type { GenerationBoards } from "../board/board-mcp-server";
+import { fixtureGenerationBoards } from "../board/seat-fixture";
 import { type BoardsRuntime, createBoardsRuntime } from "../boards/boards-runtime";
 import { withFakeT3Seats } from "../t3-seat-fake";
 import type { BoardArrivalEvent, BoardMeta } from "./lens-pipeline";
@@ -535,15 +536,21 @@ describe("createRoundsRuntime", () => {
     // dropped again.
     const order: string[] = [];
     const opened: LintTarget[] = [];
+    // Records the opens and DELEGATES to real lanes, rather than answering `lane: () =>
+    // undefined`. A seat writes its board into its lane now (3.2), so a stub that opens a
+    // lane and then hands back nothing to write into fails every lens — and the ordering
+    // this test is about would be asserted over a run in which no lens turn happened at
+    // all. The observation is the wrapper; the lanes underneath are the real ones.
+    const real = fixtureGenerationBoards();
     const boards: GenerationBoards = {
-      openLane: async ({ target }) => {
-        opened.push(target);
-        order.push(`open:${target}`);
-        return { seats: [] } as unknown as Awaited<ReturnType<GenerationBoards["openLane"]>>;
+      openLane: async (input) => {
+        opened.push(input.target);
+        order.push(`open:${input.target}`);
+        return real.openLane(input);
       },
-      lane: () => undefined,
-      settleLane: () => undefined,
-      settleAll: () => undefined,
+      lane: (target) => real.lane(target),
+      settleLane: (target) => real.settleLane(target),
+      settleAll: () => real.settleAll(),
     };
     const runtime = createRoundsRuntime(
       withFakeT3Seats(
@@ -1316,13 +1323,11 @@ describe("createRoundsRuntime", () => {
             fakeClaudePort([], (prompt, label) => {
               const lens = lensFromPrompt(prompt, label);
               if (lens === "design") return { absence: "no-spec" };
-              if (
-                lens === "decisions" ||
-                lens === "flagged" ||
-                (lens === "post-process" && prompt.includes('"elements":[]'))
-              ) {
-                return { elements: [] } as unknown as DraftBoard;
-              }
+              // An absence is DECLARED now (`lens-board-tools` 3.2): the seat calls the one
+              // settle-absent verb its lens has. An empty board is no longer read as a
+              // claim, so a fixture that means "nothing here" has to say so.
+              if (lens === "decisions") return { absence: "no-decisions" };
+              if (lens === "flagged") return { absence: "no-findings" };
               return cleanBody(lens);
             }),
           persistBoardMeta: (_repo, record) => meta.save(record),
@@ -2054,17 +2059,23 @@ describe("createRoundsRuntime", () => {
         input(),
       ),
     ).rejects.toThrow("crash after Flagged migration");
-    const attemptAFinding = {
+    // The finding's ID is the HOST's now (`lens-board-tools` 3.2) — the seat writes through
+    // tools and mints nothing — so the event is read for what this test is about: one
+    // dismissal, on ATTEMPT A's board, under this generation. The id is taken from the
+    // event rather than asserted as a literal, and then used verbatim below, so a run that
+    // filed the migration against the wrong board still fails on `boardId`.
+    expect(migrationEvents).toHaveLength(1);
+    const dismissal = migrationEvents[0];
+    expect(dismissal?.kind).toBe("finding-dismiss");
+    const attemptAFinding = (
+      dismissal as {
+        readonly finding: { generation: string; boardId: string; findingId: string };
+      }
+    ).finding;
+    expect(attemptAFinding).toMatchObject({
       generation: "gen:ps-1",
       boardId: "attempt-a:flagged",
-      findingId: priorFinding.findingId,
-    };
-    expect(migrationEvents).toEqual([
-      {
-        kind: "finding-dismiss",
-        finding: attemptAFinding,
-      },
-    ]);
+    });
     expect(Object.keys(dispositions).sort()).toEqual(
       [findingRefKey(priorFinding), findingRefKey(attemptAFinding)].sort(),
     );
@@ -2076,19 +2087,28 @@ describe("createRoundsRuntime", () => {
     ).runRound(input());
     const retryBoardId = recovered.boardGeneration.lensBoards.flagged;
     const retryOutcome = recovered.pipeline.boards.find((outcome) => outcome.lens === "flagged");
-    const retrySection = retryOutcome?.board?.elements.find((element) => element.id === "findings");
+    // By TITLE, not by fixture id: the host mints every id, so `element.id === "findings"`
+    // names nothing on the board that came back.
+    const retrySection = retryOutcome?.board?.elements.find(
+      (element) =>
+        element.kind === "section" && (element.data as { title?: unknown }).title === "Findings",
+    );
 
     expect(retryBoardId).toBe("attempt-b:flagged");
-    expect(retrySection?.kind === "section" ? retrySection.data.children : []).toEqual([
-      priorFinding.findingId,
-    ]);
+    // ONE finding under the section, whatever the host called it: the retry board holds the
+    // concern the retry seat wrote and not attempt A's.
+    const retryChildren =
+      retrySection?.kind === "section" ? (retrySection.data.children ?? []) : [];
+    expect(retryChildren).toHaveLength(1);
+    // Attempt A's migration did not run again, and no disposition was filed against
+    // attempt B's board for the finding attempt A dismissed.
     expect(migrationEvents).toHaveLength(1);
     expect(
       dispositions[
         findingRefKey({
           generation: "gen:ps-1",
           boardId: "attempt-b:flagged",
-          findingId: priorFinding.findingId,
+          findingId: attemptAFinding.findingId,
         })
       ],
     ).toBeUndefined();
@@ -3316,7 +3336,7 @@ describe("createRoundsRuntime", () => {
               if (lens === "design") return { absence: "no-spec" };
               if (lens === "flagged") {
                 announceFlaggedDraft();
-                return { elements: [] } as unknown as DraftBoard;
+                return { absence: "no-findings" };
               }
               return cleanBody(lens);
             }),

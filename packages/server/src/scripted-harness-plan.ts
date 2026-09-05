@@ -20,8 +20,11 @@ import {
   type TurnId,
   type TurnInput,
 } from "@rennet/core";
+import { LENS_KINDS } from "@rennet/protocol";
 import { z } from "zod";
+import { applySeatTurn, fixtureGenerationBoards, seatVoiceOn } from "./board/seat-fixture";
 import type { T3SeatRuntime } from "./runtime/rounds";
+import type { SeatKind } from "./t3/threads";
 
 /** The version every scripted seat reports — the marker the bundle-boundary check greps. */
 const SCRIPTED_HARNESS_VERSION = "685-scripted-v1";
@@ -381,6 +384,18 @@ function applyEdits(step: Extract<ScriptedHarnessStep, { kind: "edit" }>, cwd: s
   return recovered;
 }
 
+/**
+ * Whether a step scripts a BOARD SEAT — one of the five lens seats, whose turn carries no
+ * output schema since `lens-board-tools` 3.2.
+ *
+ * Read off the step's own id against `LENS_KINDS`, because that is what a plan names a lens
+ * step by. The report seat is not a lens and still binds a schema on both of its legs, so
+ * it is not in that table and is not exempted.
+ */
+function isBoardSeatStep(step: ScriptedHarnessStep): boolean {
+  return LENS_KINDS.some((lens) => step.id.includes(lens));
+}
+
 function completedOutcome(
   step: ScriptedHarnessStep,
   spec: SessionSpec,
@@ -395,7 +410,12 @@ function completedOutcome(
       recovered: applyEdits(step, spec.cwd),
     };
   }
-  if (spec.outputSchema === undefined) {
+  // A step whose session carries NO output schema is a BOARD SEAT since
+  // `lens-board-tools` 3.2: it writes its board through tools and returns no document, so
+  // there is no contract to check. The guard survives for the utility legs that do still
+  // bind one — the classifier, the scout, the digest — where a session opened without a
+  // schema really is a plan that has drifted from the leg it scripts.
+  if (spec.outputSchema === undefined && !isBoardSeatStep(step)) {
     throw new Error(`scripted harness step ${step.id} expected a structured-output session`);
   }
   if (step.kind === "echo-board") {
@@ -726,6 +746,11 @@ export function loadScriptedT3Seats(path: string): {
       const workspace = input.worktreePath ?? input.repoRoot;
       const byThread = new Map<string, ScriptedSeatThread>();
       const settled = new Map<string, T3SettledTurn>();
+      // This generation's board lanes (`lens-board-tools` D8). A scripted seat's step still
+      // names a board, because a plan is the readable way to say what a lens found; what
+      // changed is that nobody reads it off the turn, so it is written into the lane
+      // through the tool surface exactly as a real seat writes it.
+      const boards = fixtureGenerationBoards();
       const seam: T3SeatSeam = {
         client: async () => ({
           startTurn: async ({ threadId, text, outputSchema }) => {
@@ -748,12 +773,21 @@ export function loadScriptedT3Seats(path: string): {
               recovered: completed.recovered,
               harness: thread.created.provider === "codex" ? "codex" : "claude-code",
             });
+            const voice = seatVoiceOn(boards, thread.seat as SeatKind);
+            const structuredOutput =
+              completed.outcome.status === "completed"
+                ? completed.outcome.structuredOutput
+                : undefined;
+            // A seat with a lane writes; a seat without one — the round-report seat —
+            // returns, which is what the classifier still reads.
+            if (voice !== undefined && structuredOutput !== undefined) {
+              await applySeatTurn(structuredOutput, thread.seat as SeatKind, voice);
+            }
             settled.set(threadId, {
               turnId: `${threadId}:${thread.prompts.length}`,
               state: completed.outcome.status === "completed" ? "completed" : "error",
-              ...(completed.outcome.status === "completed" &&
-              completed.outcome.structuredOutput !== undefined
-                ? { structuredOutput: completed.outcome.structuredOutput }
+              ...(voice === undefined && structuredOutput !== undefined
+                ? { structuredOutput }
                 : {}),
               thread: { messages: [], session: null },
             });
@@ -783,6 +817,7 @@ export function loadScriptedT3Seats(path: string): {
       };
       return {
         seam,
+        boards,
         environmentId: `scripted:${plan.lane}`,
         watch: () => ({ stop: () => undefined }),
       };
