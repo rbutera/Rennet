@@ -194,7 +194,11 @@ describe("assembleDesignBoard over openspec/changes/archive", () => {
     expect(notAssembled).toEqual([...NOT_ASSEMBLED]);
     expect(assembled).toBe(ASSEMBLED);
     expect(dirs.length).toBe(ASSEMBLED + NOT_ASSEMBLED.length);
-  });
+    // 118 changes' artifacts parsed and rendered against a whole-tree citation inventory:
+    // ~1.7 s on a warm laptop and 9.6 s on a cold CI runner, which is over vitest's 5 s
+    // default. The timeout is generous rather than tuned — a corpus sweep that reddens
+    // because the runner was busy is a test nobody trusts.
+  }, 60_000);
 
   it("renders the change a live drive bought an 882.9 s Design seat for, quoting it verbatim", () => {
     // `2026-09-05-session-bound-workspace` is the change from #877's report: the daemon log
