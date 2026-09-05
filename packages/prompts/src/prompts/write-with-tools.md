@@ -28,4 +28,20 @@ nothing, and neither does a `finish` that comes back with work in it; both are
 answered inside this turn. What you must not do is stop: a turn that ends without
 `finish` leaves the board unsettled.
 
+### Write the whole board in one call
+
+Read the change first, decide what the whole board is, and then **write it with a
+single `write_board` call**. That is how you should write this board. Every call
+above costs a round trip of its own; `write_board` carries all of them together and
+finishes the board for you, so the whole board costs one. Its own entry in your tool
+list says how to spell the payload.
+
+The answer names any entry it would not take, by its position, with what would be
+admissible instead — everything else is already on the board, so redo only those
+with the ordinary calls and then call `finish`. If the board does not settle you get
+the same short list of what to fix that `finish` gives.
+
+Reach for the one-at-a-time calls when you are still working out what the board is,
+or when you are repairing one; reach for `write_board` when you know.
+
 Never describe what you would have written. Write it.

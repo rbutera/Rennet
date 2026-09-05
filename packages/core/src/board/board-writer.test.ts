@@ -1347,3 +1347,188 @@ describe("BoardWriter publication", () => {
     expect(codex.callCount()).toBe(1);
   });
 });
+
+/**
+ * `write_board` — the whole board in one call (#869's spike).
+ *
+ * The property under test is NOT "a board can be built": every other block here proves
+ * that. It is that the same board costs the seat ONE call instead of N, because a call is
+ * a provider round trip and round trips are what #867 measured. So every case below reads
+ * `callCount`, and the refusal cases prove the batch answers per entry rather than
+ * opaquely — an opaque refusal would send the seat round again and put the round trips
+ * straight back.
+ */
+describe("write_board writes the whole board in one call", () => {
+  const payload = (calls: readonly Record<string, unknown>[]) => ({
+    board_json: JSON.stringify({ calls }),
+  });
+
+  const SEQUENCE_BOARD: Record<string, unknown>[] = [
+    {
+      tool: "cite",
+      local_id: "c1",
+      path: "src/auth.ts",
+      side: "head",
+      start_line: 11,
+      end_line: 12,
+    },
+    { tool: "add_section", local_id: "s1", title: "Start with refresh" },
+    { tool: "add_step", parent_id: "s1", title: "Read the refresh path", span_ref_id: "c1" },
+  ];
+
+  it("settles the board, and the seat paid one round trip for it", () => {
+    const w = writer("sequence");
+    const outcome = ok(w.call("write_board", payload(SEQUENCE_BOARD))).outcome;
+    if (outcome.kind !== "wrote") throw new Error(`expected a write, got ${outcome.kind}`);
+    expect(outcome.accepted).toBe(3);
+    expect(outcome.refusals).toEqual([]);
+    expect(outcome.settled).toBe(true);
+    expect(w.status()).toBe("settled");
+    // The whole point. The same board written one verb at a time is four calls (three plus
+    // `finish`); this is one, and the count is the figure the daemon logs as `tools=` and
+    // #867 measured per seat.
+    expect(w.callCount(undefined)).toBe(1);
+    expect(w.board().elements).toHaveLength(3);
+  });
+
+  it("resolves a payload's own names to the ids the host minted", () => {
+    // A payload cannot name an id that does not exist yet, so `local_id` is the only way a
+    // child can name its parent inside one call. Asserted on the BOARD rather than on the
+    // outcome: the step's parenting and its span reference must both point at real
+    // host-minted ids, which is what the boundary tier would otherwise have refused.
+    const w = writer("sequence");
+    ok(w.call("write_board", payload(SEQUENCE_BOARD)));
+    const elements = w.board().elements;
+    const find = (kind: string): DraftElement => {
+      const found = elements.find((element) => element.kind === kind);
+      if (found === undefined) throw new Error(`the board holds no \`${kind}\``);
+      return found;
+    };
+    const cite = find("code_ref");
+    const section = find("section");
+    const step = find("order_step");
+    // The local names are gone: nothing on the board says `c1` or `s1`.
+    expect(JSON.stringify(elements)).not.toContain('"c1"');
+    expect(JSON.stringify(elements)).not.toContain('"s1"');
+    expect((step.data as { span?: string }).span).toBe(cite.id);
+    expect((section.data as { children?: string[] }).children).toEqual([step.id]);
+  });
+
+  it("names the entry it refused by position, and keeps everything else on the board", () => {
+    // The measurement depends on this. A batch that refused opaquely would make the seat
+    // resend all of it to find out which entry was wrong — the round trips this verb exists
+    // to remove, reintroduced at the worst possible moment.
+    const w = writer("sequence");
+    const outcome = ok(
+      w.call(
+        "write_board",
+        payload([
+          { tool: "add_section", local_id: "s1", title: "Start with refresh" },
+          // Outside every changed region: the boundary tier refuses this one entry.
+          {
+            tool: "cite",
+            local_id: "c1",
+            path: "src/auth.ts",
+            side: "head",
+            start_line: 900,
+            end_line: 901,
+          },
+          { tool: "add_prose", parent_id: "s1", markdown: "The refresh path is read first." },
+        ]),
+      ),
+    ).outcome;
+    if (outcome.kind !== "wrote") throw new Error(`expected a write, got ${outcome.kind}`);
+    expect(outcome.accepted).toBe(2);
+    expect(outcome.refusals).toHaveLength(1);
+    expect(outcome.refusals[0]?.index).toBe(1);
+    expect(outcome.refusals[0]?.tool).toBe("cite");
+    expect(outcome.refusals[0]?.refusal).toContain("src/auth.ts");
+    // The two that landed are on the board, so the seat redoes one entry and not three.
+    expect(w.board().elements).toHaveLength(2);
+    // And no `finish` ran over a board known to be missing an element: pointers about the
+    // absent citation would have buried the refusal that caused them.
+    expect(outcome.settled).toBe(false);
+    expect(outcome.pointers).toBeUndefined();
+    expect(w.status()).toBe("drafting");
+  });
+
+  it("hands back finish pointers when every entry lands but the board does not settle", () => {
+    const w = writer("sequence");
+    const outcome = ok(
+      w.call(
+        "write_board",
+        payload([
+          {
+            tool: "cite",
+            local_id: "c1",
+            path: "src/auth.ts",
+            side: "head",
+            start_line: 11,
+            end_line: 12,
+          },
+          // A step with no section over it: taken by the boundary tier, refused by the
+          // finish tier's reachability rule.
+          { tool: "add_step", title: "Read the refresh path", span_ref_id: "c1" },
+        ]),
+      ),
+    ).outcome;
+    if (outcome.kind !== "wrote") throw new Error(`expected a write, got ${outcome.kind}`);
+    expect(outcome.refusals).toEqual([]);
+    expect(outcome.settled).toBe(false);
+    expect(outcome.pointers?.[0]?.ruleId).toBe("sequence-step-reachable");
+    expect(w.status()).toBe("drafting");
+    expect(w.callCount(undefined)).toBe(1);
+  });
+
+  it("refuses a payload that is not JSON, and writes nothing", () => {
+    const w = writer("sequence");
+    expect(refusalOf(w.call("write_board", { board_json: "{not json" }))).toContain("not JSON");
+    expect(w.board().elements).toEqual([]);
+  });
+
+  it("refuses a payload with no `calls` array, and writes nothing", () => {
+    const w = writer("sequence");
+    const result = w.call("write_board", { board_json: JSON.stringify({ elements: [] }) });
+    expect(refusalOf(result)).toContain("no `calls` array");
+    expect(w.board().elements).toEqual([]);
+  });
+
+  it("refuses an entry naming a verb this lens does not have, without stopping the batch", () => {
+    // A Sequence seat has no `add_finding`. The entry is refused by name and the entries
+    // around it still land — the same per-entry answer a bad field gets.
+    const w = writer("sequence");
+    const outcome = ok(
+      w.call(
+        "write_board",
+        payload([
+          { tool: "add_section", local_id: "s1", title: "Start with refresh" },
+          { tool: "add_finding", title: "Not this lens's verb", severity: "low" },
+        ]),
+      ),
+    ).outcome;
+    if (outcome.kind !== "wrote") throw new Error(`expected a write, got ${outcome.kind}`);
+    expect(outcome.refusals[0]?.index).toBe(1);
+    expect(outcome.refusals[0]?.refusal).toContain("There is no `add_finding` on this board");
+    expect(w.board().elements).toHaveLength(1);
+  });
+
+  it("does not nest", () => {
+    const w = writer("sequence");
+    const outcome = ok(
+      w.call("write_board", payload([{ tool: "write_board", board_json: "{}" }])),
+    ).outcome;
+    if (outcome.kind !== "wrote") throw new Error(`expected a write, got ${outcome.kind}`);
+    expect(outcome.refusals[0]?.refusal).toContain("does not nest");
+  });
+
+  it("publishes each element as it lands, not one frame for the whole batch", () => {
+    // The reader watches the board fill (D11). A whole-board write must not turn that into
+    // one frame that appears complete out of nowhere.
+    const writes: BoardWrite[] = [];
+    const w = writer("sequence", { onWrite: (write) => writes.push(write) });
+    ok(w.call("write_board", payload(SEQUENCE_BOARD)));
+    expect(writes.length).toBeGreaterThanOrEqual(4);
+    expect(writes[0]?.changed).toHaveLength(1);
+    expect(writes.at(-1)?.state).toBe("settled");
+  });
+});

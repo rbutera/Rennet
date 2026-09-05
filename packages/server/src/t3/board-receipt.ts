@@ -211,6 +211,16 @@ export function boardReceipt(
     // the board wrote to be read.
     return call.result === undefined ? `\`${call.tool}\` was refused` : `refused: ${call.result}`;
   }
+  if (call.tool === "write_board") {
+    // Read off Rennet's OWN result sentence, exactly as the `finish` arm below does — the
+    // payload is a whole board as JSON and is the one thing this line must never show
+    // (#819's `StructuredOutput: {"elements":[…` is precisely this defect).
+    const wrote = /^wrote (\d+)/.exec(call.result ?? "")?.[1];
+    const refused = /^wrote \d+, refused (\d+)/.exec(call.result ?? "")?.[1];
+    if (!answered || wrote === undefined) return "writing the whole board";
+    if (refused !== undefined) return `wrote ${wrote}, ${refused} refused`;
+    return `wrote the board — ${wrote} elements`;
+  }
   if (call.tool === "finish") {
     const pointers = pointerCount(call.result);
     if (pointers !== undefined) {

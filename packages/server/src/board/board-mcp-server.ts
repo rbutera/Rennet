@@ -227,6 +227,35 @@ export function describeOutcome(outcome: BoardToolOutcome): string {
         ...(more > 0 ? [`… and ${more} more`] : []),
       ].join("\n");
     }
+    case "wrote": {
+      // The whole-board write's answer, held to the same rule as every other result here:
+      // it says only what the seat cannot work out for itself. A clean settle is four
+      // words; the expensive shapes — a refused entry, an unsettled board — are the ones
+      // that spend bytes, and they spend them naming exactly what to redo.
+      if (outcome.refusals.length > 0) {
+        const shown = outcome.refusals
+          .slice(0, POINTER_SAMPLE)
+          .map((one) => `calls[${one.index}] ${one.tool}: ${one.refusal}`);
+        const more = outcome.refusals.length - shown.length;
+        return [
+          `wrote ${outcome.accepted}, refused ${outcome.refusals.length} — the rest are on the board; redo these:`,
+          ...shown,
+          ...(more > 0 ? [`… and ${more} more`] : []),
+          "Then call finish.",
+        ].join("\n");
+      }
+      if (outcome.settled) return `wrote ${outcome.accepted} — board settled`;
+      const pointers = outcome.pointers ?? [];
+      const shown = pointers
+        .slice(0, POINTER_SAMPLE)
+        .map((pointer) => `${pointer.elementRef} (${pointer.ruleId}): ${pointer.message}`);
+      const more = pointers.length - shown.length;
+      return [
+        `wrote ${outcome.accepted}, not settled — ${pointers.length} to fix, then call finish again:`,
+        ...shown,
+        ...(more > 0 ? [`… and ${more} more`] : []),
+      ].join("\n");
+    }
   }
 }
 
