@@ -736,8 +736,15 @@ describe("runRound emits the real regeneration progress (C15 3.1/3.3)", () => {
       expect(core.filter((lens) => unsettled.has(statusIn(frame, lens) ?? ""))).toEqual([]);
     }
 
-    // 3. …and it does not sit in `waiting` forever: the last frame has it settled, so
-    //    clause 2 is not satisfied by a lane that simply never runs.
+    // 3. It DOES run. `waiting` would be the same lie in the other direction if the lane
+    //    went straight from waiting to done: the Noise seat really works for as long as
+    //    it works, and the rail has to say so while it does. Without the per-lane start
+    //    signal the settlement alone carries the lane to `done` and this is the only
+    //    clause that notices.
+    expect(frames.some((frame) => statusIn(frame, "noise") === "running")).toBe(true);
+
+    // 4. …and it does not sit in `running` forever either: the last frame has it settled,
+    //    so clause 2 is not satisfied by a lane that never finishes.
     const last = frames.at(-1);
     expect(last === undefined ? undefined : statusIn(last, "noise")).toBe("done");
   });
