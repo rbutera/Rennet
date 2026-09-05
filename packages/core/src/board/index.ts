@@ -11,4 +11,5 @@ export * from "./design-assembler";
 export * from "./design-obligations";
 export * from "./finding-round";
 export * from "./lint";
+export * from "./noise-complement";
 export * from "./validate";

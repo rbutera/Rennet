@@ -162,10 +162,20 @@ const PACKET = {
   hunks: { hunks: [], byId: new Map() },
 } as unknown as DeltaPacket;
 
-/** The per-lens lint context: no regions and no files keep the shared fixtures citation-free. */
+/**
+ * The per-lens lint context: no files keep the shared fixtures citation-free.
+ *
+ * ONE changed region, on a path no fixture cites. It is load-bearing rather than
+ * decoration: the Noise board is the complement of the other four (D16), so a context with
+ * NO changed regions makes every complement trivially empty and settles every fixture's
+ * Noise lane `no-noise` before its seat is ever dispatched. A fixture that cannot hold a
+ * remainder cannot see the Noise lane run at all.
+ */
+const UNCITED_REGION = { path: "src/uncited.ts", side: "head" as const, start: 1, end: 4 };
+
 const lintContextFor = (lens: LintTarget): LintContext => ({
   lens,
-  regions: [],
+  regions: [UNCITED_REGION],
   files: new Map(),
 });
 
@@ -2131,11 +2141,20 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     const settled = new Map(result.boards.map((outcome) => [outcome.lens, outcome]));
     expect(settled.get("decisions")?.absence).toBe("no-decisions");
     expect(settled.get("flagged")?.absence).toBe("no-findings");
-    expect(settled.get("noise")?.absence).toBe("no-noise");
     expect(settled.get("sequence")?.absence).toBeUndefined();
     expect(settled.get("sequence")?.failure).toBeDefined();
     expect(settled.get("design")?.absence).toBeUndefined();
     expect(settled.get("design")?.failure).toBeDefined();
+    // Noise is no longer among the lenses an empty draw can settle (D16). Its membership
+    // is the complement of the other four, and TWO of them failed here — so what they
+    // would have cited is unknown, the complement cannot be taken, and the lane settles a
+    // typed failure naming them rather than a board over the leftovers. This is the trap
+    // D16d exists to close: a complement over a partial set of siblings would file
+    // un-reviewed regions as skippable.
+    expect(settled.get("noise")?.absence).toBeUndefined();
+    expect(settled.get("noise")?.failure).toContain("design");
+    expect(settled.get("noise")?.failure).toContain("sequence");
+    expect(settled.get("noise")?.failureAccount?.classification).toBe("retryable");
     // Every absence this pipeline settles is one the protocol table admits for that lens.
     for (const outcome of result.boards) {
       if (outcome.absence === undefined || outcome.lens === "report") continue;
@@ -2170,6 +2189,84 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     expect(noise?.failure).toBeUndefined();
     expect(noise?.absence).toBe("no-noise");
     expect(lensAdmitsAbsence("noise", "no-noise")).toBe(true);
+  });
+
+  it("settles no-noise with NO seat dispatched when the four lanes cite every region (3.11, D16e)", async () => {
+    // Task 3.11's own required control, which did not exist. Every other fixture in this
+    // file runs against `UNCITED_REGION` — a region no board cites — precisely so the Noise
+    // lane HAS a remainder and its seat runs; that fixture choice is what left the
+    // empty-complement arm bare, so this test supplies the opposite shape rather than
+    // changing the shared one.
+    //
+    // D16e: when the four lanes between them cite every changed region, the host knows the
+    // remainder is empty BEFORE any turn, so the lane settles `no-noise` with no seat at
+    // all — the cheapest turn in the change, and the whole point of deriving membership
+    // instead of asking a model for it. A Noise seat dispatched here would be a paid turn
+    // to be told there is nothing to group.
+    const seatTurns: SeatCapture[] = [];
+    const result = await runLensPipeline({
+      ...boardSeats(seatTurns, (prompt, label) => {
+        const lens = lensFromPrompt(prompt, label);
+        if (lens !== "sequence") return cleanBody(lens);
+        // The one board that cites the fixture's only changed region, which makes the
+        // complement empty by subtraction.
+        const body = meaningfulSequenceBody();
+        return {
+          elements: [
+            ...body.elements.map((element) =>
+              element.id === "sequence-root"
+                ? {
+                    ...element,
+                    data: { ...element.data, children: ["sequence-step", "uncited-ref"] },
+                  }
+                : element,
+            ),
+            {
+              id: "uncited-ref",
+              kind: "code_ref",
+              data: {
+                author: { kind: "lens-agent", id: "sequence-seat" },
+                patchset_id: "ps-1",
+                path: UNCITED_REGION.path,
+                side: UNCITED_REGION.side,
+                start_line: UNCITED_REGION.start,
+                end_line: UNCITED_REGION.end,
+              },
+            },
+          ],
+        } as unknown as DraftBoard;
+      }),
+      repoRoot: "/pr-worktree",
+      deltaPacket: PACKET,
+      // The file inventory the citation resolves against. Without it the `code_ref` is
+      // unresolvable, admissibility strips it, and the board cites nothing after all —
+      // which would make this test pass or fail for a reason that is not the one written
+      // above it.
+      lintContextFor: (lens) => ({
+        ...lintContextFor(lens),
+        files: new Map([[UNCITED_REGION.path, 100]]),
+      }),
+      readPrompt,
+      whiteboard: fakeWhiteboard([]),
+      boardIdFor: (lens) => `board:${lens}`,
+    });
+
+    const sequence = result.boards.find(({ lens }) => lens === "sequence");
+    expect(sequence?.failure, "the citing lane settled a board").toBeUndefined();
+    expect(sequence?.boardId).toBeDefined();
+    const noise = result.boards.find(({ lens }) => lens === "noise");
+    expect(noise?.absence).toBe("no-noise");
+    expect(noise?.failure).toBeUndefined();
+    expect(noise?.boardId, "no board was written for a lane that ran no seat").toBeUndefined();
+    // The load-bearing half: NO seat. A membership assertion alone passes over a pipeline
+    // that dispatches the seat and then discards its board.
+    const providerCalls = seatTurns.map(({ prompt }) => lensFromPrompt(prompt ?? ""));
+    expect(providerCalls, "at least the other four lanes ran").not.toHaveLength(0);
+    expect(providerCalls).not.toContain("noise");
+    expect(
+      seatTurns.filter(({ seat }) => seat === "noise"),
+      "no thread was opened for the Noise seat either",
+    ).toHaveLength(0);
   });
 
   it("classifies a lane that never parsed across its ladder as TERMINAL (#549)", async () => {
@@ -3778,8 +3875,12 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     },
   );
 
-  it("starts every independent lens turn after the report and reveals each lane as it settles", async () => {
-    const lenses: LensKind[] = ["design", "sequence", "decisions", "flagged", "noise"];
+  it("starts every core lens turn after the report, reveals each lane as it settles, and runs Noise on their settlements", async () => {
+    // D16c — the four CORE lanes still fan out together and nothing waits on any of them.
+    // Noise is not among them: its membership is their complement, which is not knowable
+    // until they have settled, so it starts on their settlements and is the tail. That is
+    // a sequencing fact, not a barrier — nothing waits on Noise.
+    const lenses: LensKind[] = ["design", "sequence", "decisions", "flagged"];
     const started: LensKind[] = [];
     const applied: Applied[] = [];
     const arrivals: LensKind[] = [];
@@ -3813,6 +3914,8 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     const codexSeat = async (prompt: string, seat: string): Promise<unknown> => {
       const lens = lensFromPrompt(prompt, seat);
       providerCalls.push(lens);
+      // Noise runs unbarriered: it cannot start until the four have settled, so a barrier
+      // on it would only measure the sequencing this test already asserts by ordering.
       if (lens !== "report" && lenses.includes(lens as LensKind)) {
         const lensKind = lens as LensKind;
         if (!started.includes(lensKind)) {
@@ -3889,7 +3992,9 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
           ]);
           // Let the lane's own settlement publication run before sampling the reveal.
           await new Promise<void>((resolve) => setImmediate(resolve));
-          revealAfterEachRelease.push([...arrivals]);
+          // Core lanes only. Noise arrives on the last core settlement (D16c), so
+          // including it would compare the tail against a core release order it is not in.
+          revealAfterEachRelease.push(arrivals.filter((arrived) => arrived !== "noise"));
         }
       } catch (error) {
         regressionFailure = error;
@@ -3906,17 +4011,23 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     if (regressionFailure !== undefined) throw regressionFailure;
     if (result === undefined) throw new Error("lens pipeline settled without a result");
 
-    expect(result.boards.map(({ lens }) => lens)).toEqual(lenses);
+    // The returned array keeps LENS_KINDS order, Noise included, whatever order they ran in.
+    expect(result.boards.map(({ lens }) => lens)).toEqual([...lenses, "noise"]);
     expect(
       applied.map(({ boardId }) => boardId).filter((boardId) => boardId !== "board:report"),
-    ).toEqual([...lenses].reverse().map((lens) => `board:${lens}`));
+    ).toEqual([...[...lenses].reverse(), "noise"].map((lens) => `board:${lens}`));
     // The reveal followed the RELEASE order, not the lens order — each lane published on
     // its own settlement.
     // The progressive assertion first: it is the one that NAMES a restored barrier, and a
     // plain order comparison would fail on the same run with a less useful message.
     assertProgressiveReveal(revealAfterEachRelease, [...lenses].reverse());
-    expect(arrivals).toEqual([...lenses].reverse());
-    expect(providerCalls).toEqual(["report", ...lenses]);
+    // Noise arrives LAST, after every core lane — the tail, in order.
+    expect(arrivals).toEqual([...[...lenses].reverse(), "noise"]);
+    // …and it was DISPATCHED last too, which is the sequencing rather than a race that
+    // happened to resolve in this order: its prompt could not be sent before the four
+    // settled, so it is the final entry and nothing follows it.
+    expect(providerCalls).toEqual(["report", ...lenses, "noise"]);
+    expect(providerCalls.at(-1)).toBe("noise");
     expect(pipelineSettled).toBe(true);
   });
 
@@ -4014,7 +4125,10 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     // lane that reveals nothing settles strictly last. Without that, a run where the
     // failing lane happened to finish early would pass under both the honest code and the
     // defect, and this test would prove nothing.
-    const lenses: LensKind[] = ["design", "sequence", "decisions", "flagged", "noise"];
+    //
+    // Noise is not gated here: it starts on the four settlements (D16c), so gating it
+    // would deadlock rather than order anything.
+    const lenses: LensKind[] = ["design", "sequence", "decisions", "flagged"];
     const timings: GenerationPhaseTiming[] = [];
     let ticks = 1_000;
     const releases = new Map<LensKind, () => void>();
@@ -4358,7 +4472,9 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     await Promise.resolve();
     let preReleaseFailure: unknown;
     try {
-      expect(started).toEqual(modelLenses);
+      // The CORE lanes start together; Noise starts on their settlements (D16c), so it is
+      // not among the turns that are open at this point.
+      expect(started).toEqual(modelLenses.filter((lens) => lens !== "noise"));
       expect(pipelineSettled).toBe(false);
     } catch (error) {
       preReleaseFailure = error;
@@ -4369,8 +4485,10 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     if (preReleaseFailure !== undefined) throw preReleaseFailure;
 
     expect(absences).toEqual(["design", "decisions"]);
+    // Noise is absent from this list, and that is D16c: the pipeline rethrows the failed
+    // absence callback once the four core lanes are in, so the tail lane never ran.
     expect(applied.map(({ boardId }) => boardId).sort()).toEqual(
-      ["board:sequence", "board:flagged", "board:noise"].sort(),
+      ["board:sequence", "board:flagged"].sort(),
     );
     expect(pipelineSettled).toBe(true);
   });
@@ -4436,7 +4554,11 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     expect(result.boards.find((board) => board.lens === "design")?.failure).toBe(
       failures[0]?.failure,
     );
-    expect(failures).toHaveLength(1);
+    // TWO failures, and the second is the first's consequence (D16d): Design stated nothing
+    // about what it cites, so the Noise complement cannot be taken and that lane says so by
+    // name rather than presenting Design's un-cited regions as skippable.
+    expect(failures.map((entry) => entry.lens)).toEqual(["design", "noise"]);
+    expect(failures[1]?.failure).toContain("design");
   });
 
   it("fails an empty round report after its first draft without starting lens work", async () => {
@@ -4786,12 +4908,17 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     const flagged = result.boards.find((outcome) => outcome.lens === "flagged");
     expect(flagged?.failure).toContain("ask log read unavailable");
     expect(flagged?.board).toBeUndefined();
+    // Noise writes NO board here, and that is D16d rather than a second defect: Flagged
+    // failed, so what it would have cited is unknown and the complement cannot be taken.
     expect(applied.map(({ boardId }) => boardId).sort()).toEqual(
-      ["board:design", "board:sequence", "board:decisions", "board:noise"].sort(),
+      ["board:design", "board:sequence", "board:decisions"].sort(),
     );
+    const noise = result.boards.find((outcome) => outcome.lens === "noise");
+    expect(noise?.failure).toContain("flagged");
+    expect(noise?.board).toBeUndefined();
     expect(
       result.boards
-        .filter((outcome) => outcome.lens !== "flagged")
+        .filter((outcome) => outcome.lens !== "flagged" && outcome.lens !== "noise")
         .every((outcome) => outcome.board !== undefined && outcome.failure === undefined),
     ).toBe(true);
     expect(persistenceCalls).toBe(0);
@@ -4980,10 +5107,18 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       boardIdFor: (lens) => `board:${lens}`,
     });
     expect(applied).toEqual([]);
-    for (const outcome of result.boards) {
+    // The four CORE lanes name the cause. Noise names its own (D16d): every sibling failed,
+    // so what they cite is unknown and it refuses to take a complement over their silence —
+    // repeating their reason would claim it got as far as a seat, which it did not.
+    const core = result.boards.filter((outcome) => outcome.lens !== "noise");
+    expect(core, "every core lane accounted for").toHaveLength(4);
+    const noiseLane = result.boards.find((outcome) => outcome.lens === "noise");
+    for (const outcome of core) {
       expect(outcome.board).toBeUndefined();
       expect(outcome.failure).toContain("T3 sidecar");
     }
+    expect(noiseLane?.board).toBeUndefined();
+    expect(noiseLane?.failure).toContain("the remainder cannot be taken");
   });
 
   it("refuses a board seat whose harness the host has not got, before opening a thread", async () => {
@@ -5005,16 +5140,24 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     // No turn was dispatched at all — not one thread, not one prompt.
     expect(turns).toEqual([]);
     expect(applied).toEqual([]);
-    for (const outcome of result.boards) {
+    // The four CORE lanes name the cause. Noise names its own (D16d): every sibling failed,
+    // so what they cite is unknown and it refuses to take a complement over their silence —
+    // repeating their reason would claim it got as far as a seat, which it did not.
+    const core = result.boards.filter((outcome) => outcome.lens !== "noise");
+    expect(core, "every core lane accounted for").toHaveLength(4);
+    const noiseLane = result.boards.find((outcome) => outcome.lens === "noise");
+    for (const outcome of core) {
       expect(outcome.board, outcome.lens).toBeUndefined();
       // The Flagged lane checks the same list one level up, per seat, and names both
-      // absences; every other lane gets the seat resolution's own words.
+      // absences; every other core lane gets the seat resolution's own words.
       expect(outcome.failure, outcome.lens).toContain(
         outcome.lens === "flagged"
           ? "no claude harness; no codex harness"
           : "which is not installed",
       );
     }
+    expect(noiseLane?.board).toBeUndefined();
+    expect(noiseLane?.failure).toContain("the remainder cannot be taken");
   });
 
   it("names the daemon's OWN reason when the sidecar was composed and would not start", async () => {
@@ -5031,7 +5174,14 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       whiteboard: fakeWhiteboard(applied),
       boardIdFor: (lens) => `board:${lens}`,
     });
-    for (const outcome of result.boards) {
+    // The four CORE lanes name the cause. Noise names its own (D16d): every sibling failed,
+    // so what they cite is unknown and it refuses to take a complement over their silence —
+    // repeating their reason would claim it got as far as a seat, which it did not.
+    const core = result.boards.filter((outcome) => outcome.lens !== "noise");
+    expect(core, "every core lane accounted for").toHaveLength(4);
+    const noiseLane = result.boards.find((outcome) => outcome.lens === "noise");
+    expect(noiseLane?.failure).toContain("the remainder cannot be taken");
+    for (const outcome of core) {
       expect(outcome.failure).toContain("the vendored bundle is not staged");
       // Once, not twice. One cause taking both Flagged seats out and printed twice reads
       // as two different problems the reviewer has to go and find.
@@ -5273,7 +5423,14 @@ describe("runLensPipeline — persistence honesty (findings 2/3/6)", () => {
       whiteboard: fakeWhiteboard([]),
       boardIdFor: (l) => `board:${l}`,
     });
-    for (const outcome of result.boards) {
+    // The four CORE lanes name the cause. Noise names its own (D16d): every sibling failed,
+    // so what they cite is unknown and it refuses to take a complement over their silence —
+    // repeating their reason would claim it got as far as a seat, which it did not.
+    const core = result.boards.filter((outcome) => outcome.lens !== "noise");
+    expect(core, "every core lane accounted for").toHaveLength(4);
+    const noiseLane = result.boards.find((outcome) => outcome.lens === "noise");
+    expect(noiseLane?.failure).toContain("the remainder cannot be taken");
+    for (const outcome of core) {
       // The harness's message survives into the lens failure verbatim…
       expect(outcome.failure).toContain("structured output exceeded the seat capability");
       // …and the TYPED account beside it is the ladder's verdict, which the old name

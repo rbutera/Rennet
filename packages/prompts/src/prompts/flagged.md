@@ -11,11 +11,11 @@ expect the other seat to say.
 
 ## Document opening
 
-Author the board-level document on every return. `document.title` names the
+Open the board with `set_document`. `title` names the
 change without a provisional finding count or severity result.
-`document.introMarkdown` is one short paragraph grounded in the findings
+`intro_markdown` is one short paragraph grounded in the findings
 below. Do not claim a final count or severity picture: the host derives that
-from the reconciled finding set. Set `document.measure` to `reading`.
+from the reconciled finding set.
 
 ## What a finding is
 
@@ -114,5 +114,8 @@ narrated. Never write prose about what is not on this board.
   narration.
 - Threads and messages are records of real exchanges. You draft before any
   exchange exists; never author one.
-- Your output is a draft board of typed blocks in the schema supplied with
-  your task. Fill only the fields the schema defines.
+{{write-with-tools}}
+
+`add_finding` is this lens's own verb: the defect, its severity, and the code it
+cites. `settle_absent` is the other ending — call it when you have read the
+change and found no defect, and say in one note what you looked for.

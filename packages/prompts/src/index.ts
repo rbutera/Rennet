@@ -39,23 +39,50 @@ export const LENS_PROMPT_FILES: Record<LensKind, string> = {
 export const ROUND_REPORT_FILE = "prompts/report.md";
 
 /**
- * The one shared lens-prompt partial: the "Investigate before you draft" section
- * every lens file carries at the {@link PROMPT_PARTIAL_MARKER} line. One file, so
+ * The "Investigate before you draft" partial every lens file carries. One file, so
  * the five lens prompts cannot drift apart on it (#737).
  */
 export const INVESTIGATE_PARTIAL_FILE = "prompts/investigate-before-you-draft.md";
 
-/** The marker line a lens prompt carries where the shared partial is spliced in. */
+/**
+ * The "How you write this board" partial (`lens-board-tools` 3.6): the tool vocabulary
+ * that replaced each lens prompt's "your output is a draft board of typed blocks in the
+ * schema supplied with your task".
+ *
+ * Shared for the reason the investigate partial is: it is byte-identical across five
+ * files and CLAUDE.md forbids duplicating an instruction block rather than sharing a
+ * partial. What each lens keeps for itself is the one line naming its OWN verb, which is
+ * the only part that differs.
+ */
+export const WRITE_WITH_TOOLS_PARTIAL_FILE = "prompts/write-with-tools.md";
+
+/** The marker line a lens prompt carries where the investigate partial is spliced in. */
 export const PROMPT_PARTIAL_MARKER = "{{investigate-before-you-draft}}";
 
+/** The marker line a lens prompt carries where the tool-vocabulary partial goes. */
+export const WRITE_WITH_TOOLS_MARKER = "{{write-with-tools}}";
+
+/** Marker → the partial file whose text replaces it. The manifest test reads this. */
+export const PROMPT_PARTIALS: Readonly<Record<string, string>> = {
+  [PROMPT_PARTIAL_MARKER]: INVESTIGATE_PARTIAL_FILE,
+  [WRITE_WITH_TOOLS_MARKER]: WRITE_WITH_TOOLS_PARTIAL_FILE,
+};
+
 /**
- * Splice the shared partial into a lens prompt at its marker line. A text without
- * the marker passes through unchanged: test doubles hand the pipeline stub prompts,
- * and the shipped files are guarded by the manifest test (every lens file carries
- * the marker exactly once) and the prompt-size tripwire, not by this seam.
+ * Splice the shared partials into a lens prompt at their marker lines, keyed by marker.
+ * A text without a marker passes through unchanged: test doubles hand the pipeline stub
+ * prompts, and the shipped files are guarded by the manifest test (every lens file carries
+ * every marker exactly once) and the prompt-size tripwire, not by this seam.
  */
-export function expandPromptPartials(text: string, partial: string): string {
-  return text.replace(PROMPT_PARTIAL_MARKER, partial.trimEnd());
+export function expandPromptPartials(
+  text: string,
+  partials: Readonly<Record<string, string>>,
+): string {
+  let out = text;
+  for (const [marker, partial] of Object.entries(partials)) {
+    out = out.replace(marker, partial.trimEnd());
+  }
+  return out;
 }
 
 /**

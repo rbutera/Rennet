@@ -1391,10 +1391,17 @@ describe("a board seat has one backend (review finding 1)", () => {
       "flagged",
       "noise",
     ]);
+    expect(lanes, "every lane accounted for").toHaveLength(5);
     for (const lane of lanes) {
       expect(lane.status).toBe("failed");
-      expect(lane.status === "failed" ? lane.reason : "").toContain(
-        "T3 sidecar unavailable: the vendored T3 Code server bundle is not built",
+      const reason = lane.status === "failed" ? lane.reason : "";
+      // The four CORE lanes name the sidecar. Noise names its own cause (D16d): its
+      // membership is their complement, they stated nothing, and it refuses to take a
+      // complement over silence rather than repeating a reason it never reached.
+      expect(reason, lane.id).toContain(
+        lane.id === "noise"
+          ? "the remainder cannot be taken"
+          : "T3 sidecar unavailable: the vendored T3 Code server bundle is not built",
       );
     }
   });

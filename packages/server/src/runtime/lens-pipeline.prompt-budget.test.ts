@@ -5,6 +5,9 @@ import {
   INVESTIGATE_PARTIAL_FILE,
   LENS_KINDS,
   LENS_PROMPT_FILES,
+  PROMPT_PARTIAL_MARKER,
+  WRITE_WITH_TOOLS_MARKER,
+  WRITE_WITH_TOOLS_PARTIAL_FILE,
 } from "@rennet/prompts";
 import { type Patchset, patchsetSchema } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
@@ -22,7 +25,10 @@ const packet = buildDeltaPacket(patchset, []);
 const bytes = (text: string): number => Buffer.byteLength(text, "utf8");
 const read = (file: string): string => readFileSync(new URL(file, promptsDir), "utf8");
 const lensPrompt = (lens: (typeof LENS_KINDS)[number]): string =>
-  expandPromptPartials(read(LENS_PROMPT_FILES[lens]), read(INVESTIGATE_PARTIAL_FILE));
+  expandPromptPartials(read(LENS_PROMPT_FILES[lens]), {
+    [PROMPT_PARTIAL_MARKER]: read(INVESTIGATE_PARTIAL_FILE),
+    [WRITE_WITH_TOOLS_MARKER]: read(WRITE_WITH_TOOLS_PARTIAL_FILE),
+  });
 
 /**
  * A 74-file / 292-hunk patchset — the shape a large agent-written branch has, and the
@@ -74,12 +80,47 @@ const bigPacket = buildDeltaPacket(synthetic(), []);
 // 6,636 still fits the old 6,750 budget, but only by 1.7% — the number below is restated
 // as measurement + 10% so this file's own convention stays true and the next harmless
 // edit reddens for a real reason rather than for the leftover headroom.
+//
+// RAISED 2026-09-05 for `lens-board-tools` 3.6, deliberately and with the figure stated.
+// Each lens prompt's emit slot — "your output is a draft board of typed blocks in the
+// schema supplied with your task" — became the tool vocabulary: the shared
+// `write-with-tools.md` partial (1,654 B) plus the one line naming that lens's own verb.
+//
+// Measured on this fixture against `origin/main`, before → after (delta):
+//
+//   design    12,169 → 14,223  (+2,054)
+//   sequence   6,627 →  8,503  (+1,876)
+//   decisions  6,432 →  8,294  (+1,862)
+//   flagged    7,379 →  9,226  (+1,847)
+//   noise      6,636 →  8,103  (+1,467)
+//
+// Four of the five sit just above the partial's own 1,814 B, which is what a slot swap
+// costs; Noise is the one below it, because `noise.md` also LOST its members bullet, its
+// document instruction and the line stamping `verdict`/`judge` — the host writes all four
+// now (D16f).
+//
+// Three of these figures were first recorded as 8,033 / 7,735 / 8,389, which were wrong.
+// They were inherited from an earlier lane rather than re-derived, and their impossibility
+// was legible without re-running anything: the shared partial alone was 1,654 B and only
+// about 180 B came out, so no lens could have grown by 1,010–1,406. Re-measure through
+// `renderDrafterPrompt(lensPrompt(lens), packet)` — this file's own helpers — rather than
+// copying a number forward. The budget-headroom test below is the mechanical half of that
+// rule: it fails on a budget that no longer matches what the prompt actually measures, in
+// either direction, so a stale figure cannot sit here green for a whole change again.
+//
+// It is a real growth in what a seat is SENT and it is not free, so it is named rather
+// than absorbed. What pays for it is on the other side of the same change: the seat turn
+// stops carrying an output schema (9,618 B as the Claude leg sends it, 10,874 B as the
+// Codex leg does), and it carried that on EVERY turn while this text rides the base
+// prompt once per thread — a repair turn now carries the `finish` verdict alone.
+//
+// Budgets are measurement + 10% headroom, as this file's convention has always been.
 const BUDGET: Record<(typeof LENS_KINDS)[number], number> = {
-  design: 13_400,
-  sequence: 6_950,
-  decisions: 6_650,
-  flagged: 7_400,
-  noise: 7_300,
+  design: 15_650,
+  sequence: 9_360,
+  decisions: 9_130,
+  flagged: 10_150,
+  noise: 8_920,
 };
 
 describe("drafter prompt byte budget (tripwire, #737)", () => {
@@ -96,6 +137,19 @@ describe("drafter prompt byte budget (tripwire, #737)", () => {
     expect(bytes(renderDrafterPrompt(lensPrompt(lens), bigPacket))).toBe(
       bytes(renderDrafterPrompt(lensPrompt(lens), packet)),
     );
+  });
+
+  it.each(LENS_KINDS)("%s budget is the stated headroom over the real measurement", (lens) => {
+    // The convention above — "measurement + 10%" — was prose, and prose does not redden.
+    // A budget carried forward from a superseded figure left Flagged with 167 bytes of
+    // headroom against a file that claims 10%, and nothing said so: the budget assertion
+    // passes at ANY headroom, which is exactly why a stale number can sit here for a whole
+    // change. This makes the convention executable in both directions — too little
+    // headroom means a stale budget, too much means one raised past what was measured.
+    const measured = bytes(renderDrafterPrompt(lensPrompt(lens), packet));
+    const headroom = BUDGET[lens] / measured;
+    expect(headroom, `${lens}: ${BUDGET[lens]} over a measured ${measured}`).toBeGreaterThan(1.09);
+    expect(headroom, `${lens}: ${BUDGET[lens]} over a measured ${measured}`).toBeLessThan(1.12);
   });
 
   it("reddens when a layer inflates (positive control)", () => {

@@ -350,7 +350,7 @@ test("Noise settles a board on skip-safe churn and no-noise on a signal-only cha
     await expect(tab).toHaveAttribute("data-absent", "no-noise");
     await tab.click();
     await expect(page.locator('[data-kind="board-absent"]')).toContainText(
-      "No safely skippable noise was found.",
+      "Every changed region is on another board.",
     );
     await expect(page.locator('[data-kind="board-failed"]')).toHaveCount(0);
     await expect(page.locator('[data-kind="board-empty"]')).toHaveCount(0);
