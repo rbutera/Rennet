@@ -116,15 +116,15 @@ These versions come from the current workspace manifests:
 
 | Capability | Package | Version |
 |---|---|---:|
-| Node host | Node.js | `24.18.0` |
-| Package manager | pnpm | `10.32.1` |
-| Task graph and official plugins | `nx`, `@nx/*` | `23.1.0` |
+| Node host | Node.js | `24.20.0` |
+| Package manager | pnpm | `10.34.5` |
+| Task graph and official plugins | `nx`, `@nx/*` | `23.1.2` |
 | Native compiler | `@typescript/native` | `typescript@7.0.2` |
 | Tool API compiler | `typescript` | `@typescript/typescript6@6.0.2` |
-| Formatter | `@biomejs/biome` | `2.5.6` |
-| Architecture lint | `eslint`, `typescript-eslint` | `10.8.0`, `8.65.0` |
-| Renderer build | `vite`, `@vitejs/plugin-react` | `8.1.5`, `6.0.4` |
-| Tests | `vitest`, `@playwright/test` | `4.1.10`, `1.62.1` |
+| Formatter | `@biomejs/biome` | `2.5.11` |
+| Architecture lint | `eslint`, `typescript-eslint` | `10.9.1`, `8.68.0` |
+| Renderer build | `vite`, `@vitejs/plugin-react` | `8.2.2`, `6.1.1` |
+| Tests | `vitest`, `@playwright/test` | `4.1.11`, `1.62.1` |
 | Desktop | `electron`, Electron Forge, `@electron/fuses` | `43.4.1`, `7.11.2`, `2.1.3` |
 | Native executable build | `@electron/node-gyp` | `10.2.0-electron.1` at `06b29aafb7708acef8b3669835c8a7857ebc92d2` |
 | Docs | `astro`, `@astrojs/starlight` | `7.1.6`, `0.41.7` |

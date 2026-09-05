@@ -43,6 +43,7 @@ const mergeRequestSchema = z.object({
   target_branch: z.string().min(1),
   source_branch: z.string().min(1),
   changes_count: z.string().nullable().optional(),
+  created_at: z.iso.datetime(),
   updated_at: z.iso.datetime(),
   author: userSchema,
   reviewers: z.array(userSchema).optional(),
@@ -299,6 +300,7 @@ export class GitLabForgeAdapter implements ForgePort, ProjectPrSource, ForgePubl
           ...(exactChangeCount(mergeRequest.changes_count) === undefined
             ? {}
             : { changedFiles: exactChangeCount(mergeRequest.changes_count) }),
+          createdAt: mergeRequest.created_at,
           lastActivityAt: mergeRequest.updated_at,
         })),
       truncated: false,

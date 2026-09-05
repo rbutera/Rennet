@@ -90,7 +90,7 @@ const PRS_QUERY = `query($owner:String!,$name:String!,$states:[PullRequestState!
       totalCount
       pageInfo{ hasNextPage endCursor }
       nodes{
-        id number title state updatedAt additions deletions changedFiles headRefName
+        id number title state createdAt updatedAt additions deletions changedFiles headRefName
         author{ login }
         reviewRequests(first:50){ nodes{ requestedReviewer{ __typename ... on User { login } } } }
         commits(last:1){ nodes{ commit{ statusCheckRollup{ state } } } }
@@ -104,6 +104,7 @@ interface GraphqlPrNode {
   number: number;
   title: string;
   state: "OPEN" | "CLOSED" | "MERGED";
+  createdAt: string;
   updatedAt: string;
   additions: number;
   deletions: number;
@@ -199,6 +200,7 @@ function mapNode(
     additions: node.additions,
     deletions: node.deletions,
     changedFiles: node.changedFiles,
+    createdAt: node.createdAt,
     lastActivityAt: node.updatedAt,
   };
 }

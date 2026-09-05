@@ -59,6 +59,7 @@ export interface SmartRow {
     additions?: number;
     deletions?: number;
     changedFiles?: number;
+    createdAt?: string;
   };
   /** Present on a local-work row. */
   local?: {
@@ -165,6 +166,7 @@ function prRow(pr: PullRequest, viewer: string, checkout: LocalWork | undefined)
       additions: pr.additions,
       deletions: pr.deletions,
       changedFiles: pr.changedFiles,
+      ...(pr.createdAt === undefined ? {} : { createdAt: pr.createdAt }),
     },
     ...(checkout
       ? {
@@ -206,7 +208,7 @@ function localRow(local: LocalWork, viewer: string): SmartRow {
   };
 }
 
-export type SmartSort = "hot" | "recent" | "author" | "status";
+export type SmartSort = "hot" | "recent" | "created" | "author" | "status";
 
 /** A status ranking for the "status" sort: attention first, then live, then done. */
 const STATUS_RANK: Record<SmartRowState, number> = {
@@ -229,6 +231,15 @@ export function sortSmartRows(rows: readonly SmartRow[], sort: SmartSort): Smart
       });
     case "recent":
       return copy.sort(byRecency);
+    case "created":
+      return copy.sort((a, b) => {
+        const aCreated = a.pr?.createdAt;
+        const bCreated = b.pr?.createdAt;
+        if (aCreated === undefined && bCreated === undefined) return byRecency(a, b);
+        if (aCreated === undefined) return 1;
+        if (bCreated === undefined) return -1;
+        return bCreated.localeCompare(aCreated) || byRecency(a, b);
+      });
     case "author":
       return copy.sort((a, b) => a.author.localeCompare(b.author) || byRecency(a, b));
     case "status":

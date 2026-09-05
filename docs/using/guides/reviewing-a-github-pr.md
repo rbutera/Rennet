@@ -23,9 +23,10 @@ was detected on each machine and which review roles run on which model.
 ## Open the pull request
 
 Start a **New Chat** in the project and pick the pull request from the list. A
-teammate PR whose review is requested of you carries its icon in the accent
-colour and the words "needs you". The session claims that pull request as its
-review target, and the claimed row leaves the list.
+teammate PR whose review is requested of you carries a gold left rule and a
+**Review requested** pill. Your own pull requests use a quiet outlined **Your
+PR** pill instead. The session claims that pull request as its review target,
+and the claimed row leaves the list.
 
 The session's gold button reads **Write Review** from the start — the target
 decides the exit, and a teammate PR has exactly one.
@@ -160,8 +161,10 @@ over the new patchset; the earlier generation stays readable.
 
 ## Merged and closed pull requests
 
-The pull-request list shows open pull requests; it can also show merged, closed,
-or every state, paged from GitHub newest first.
+The list shows open pull requests by default. Turn on **Show merged PRs** to mix
+merged work into the same list; merged rows are faded and carry a quiet merge
+decoration. Click **Created** or **Activity** in the header to sort the list by
+that timestamp.
 
 Opening a merged or closed pull request gives a **retrospective review**. It
 reads the frozen change exactly as any other review does, and it offers no

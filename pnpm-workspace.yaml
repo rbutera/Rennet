@@ -122,7 +122,7 @@ peerDependencyRules:
   allowedVersions:
     vite: "*"
     # vite-plus 0.2.2 carries vitest 4.1.9, which peers on the exact coverage
-    # package version; Rennet's own vitest/coverage pair is 4.1.10 and is the
+    # package version; Rennet's own vitest/coverage pair is 4.1.11 and is the
     # one that runs Rennet's tests. Exact-version peers on a sibling patch line.
     "vitest>@vitest/coverage-v8": "4"
     # vite-plus-core peers on typescript ^5||^6; Rennet's root also carries

@@ -137,7 +137,10 @@ teammate PR.
 project shows that project's branches and pull requests in one list. Local
 branch rows appear immediately; pull-request rows join as each repository
 finishes loading, and the progress names the repository being read rather than
-guessing a percentage. If GitHub is unreachable, local work stays available.
+guessing a percentage. If the project's forge is unreachable, local work stays
+available. The left rail filters by attention, ownership, local branches, or
+pull requests. **Created** and **Activity** are sortable column headers, and
+**Show merged PRs** adds faded historical rows to the same list.
 The back arrow or Escape leaves New Chat for the surface you came from. When the
 filter contains text, the first Escape clears it and the next leaves.
 
@@ -194,12 +197,11 @@ different lenses. Opening the Diff view closes the drawer; the two share one spa
 The board region scrolls, so a long board on a large change is readable end to end.
 You can leave without stopping the work, or cancel and retry it in place. A failed
 capture or board generation keeps the session and names the failed stage instead of
-dropping the review. Anything already typed in the composer travels with you as the
-opening ask, waiting in the chat box rather than being sent for you.
+dropping the review. The target picker has no composer; project-wide conversation
+remains in the orchestrator chat beside it.
 
 What gets captured depends on the row. A pull-request row opens that pull
-request's diff. The pinned **Current Checkout** row captures your working tree,
-uncommitted edits included. A local branch row captures that branch's own
+request's diff. A local branch row captures that branch's own
 commits — everything since it left the project's primary branch — **without
 checking it out**. Nothing on disk moves, and you can review a branch you are not
 standing on.
@@ -222,9 +224,7 @@ appears to do nothing.
 
 A claimed target leaves the list, so two sessions can never fight over one
 branch; clicking the same target again returns you to the session that owns it
-rather than starting a second. The pinned **Current Checkout** row is the
-exception: it starts a session about the project as a whole, claims nothing, and
-so never leaves the list. Sessions nest under their
+rather than starting a second. Sessions nest under their
 project in the sidebar, each leading with the target icon its claim proves — a
 branch glyph, or a pull-request glyph once the session claims a PR. Whether a
 teammate authored that PR, and whether its review is waiting on you, are not
