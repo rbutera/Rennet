@@ -125,14 +125,25 @@ function Voice({
 export interface SeatWidgetProps {
   readonly reviewId: string;
   readonly entry: LensBoardEntry;
+  /** The board actually on screen. While the lane is open that is the LIVE one folded from
+   *  the element stream, not the durable read on `entry` — "4 elements written" has to
+   *  count what the reviewer can see, or the widget and the board disagree. */
+  readonly board?: LensBoard;
   /** The generation-wide retry, offered against a failed lane. Absent ⇒ nothing to offer,
    *  and the widget says the failure without a dead button under it. */
   readonly onRetry?: () => void;
   readonly retrying?: boolean;
 }
 
-export function SeatWidget({ reviewId, entry, onRetry, retrying = false }: SeatWidgetProps) {
-  const { lens, seat, board } = entry;
+export function SeatWidget({
+  reviewId,
+  entry,
+  board: shownBoard,
+  onRetry,
+  retrying = false,
+}: SeatWidgetProps) {
+  const { lens, seat } = entry;
+  const board = shownBoard ?? entry.board;
   const openSeatTranscript = useRennetStore((s) => s.uiActions.openSeatTranscript);
   const openRef = useRennetStore((s) => s.ui.seatTranscript);
   const working = seat.register === "working";

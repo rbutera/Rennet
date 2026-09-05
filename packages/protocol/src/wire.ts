@@ -18,7 +18,7 @@ import type {
 } from "./domain";
 import { MAX_UI_SCREENSHOTS_PER_RUN } from "./domain";
 import { forgeRepoIdentitySchema, forgeRepositoryMatchesLegacy } from "./forge";
-import type { AskProjection, AttentionEventFrame, RoundEvent } from "./session";
+import type { AskProjection, AttentionEventFrame, LensDraftEvent, RoundEvent } from "./session";
 import { SessionPreparationSchema } from "./session/model";
 
 const repositoryProvenanceSchema = z.object({
@@ -2845,6 +2845,18 @@ export interface RennetBridge {
    * `session.roundEvents` read alone — the round still resolves, just not live.
    */
   onRoundProgress?(reviewId: string, listener: (event: RoundEvent) => void): () => void;
+  /**
+   * Subscribe to a review's lens boards being WRITTEN (`lens-board-tools` D11), keyed by
+   * `reviewId` like the round channel above. One frame per accepted board tool call.
+   *
+   * LIVE ONLY — nothing is replayed. A surface takes `board.draft` for the board as it
+   * stands and folds these from that snapshot's `revision`, dropping any frame stamped
+   * with a generation it is not rendering, which is what stops a superseded drafting
+   * attempt painting over the live one. Optional: a bridge without the channel omits it
+   * and a subscriber falls back to the durable `board.read`, so the board still arrives —
+   * at settle rather than element by element.
+   */
+  onLensDraft?(reviewId: string, listener: (event: LensDraftEvent) => void): () => void;
   /**
    * Subscribe to daemon attention events (#383): `raised` / `cleared` frames that keep a
    * client's needs-you set live. Daemon-wide (not keyed by review). Returns an unsubscribe.

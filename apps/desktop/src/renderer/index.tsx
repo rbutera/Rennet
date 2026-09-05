@@ -61,6 +61,10 @@ function composeBridge(supervisor: ConnectionSupervisor): RennetBridge & { close
     onProjectDetailProgress: supervisor.onProjectDetailProgress.bind(supervisor),
     onAskProjection: supervisor.onAskProjection.bind(supervisor),
     onRoundProgress: supervisor.onRoundProgress.bind(supervisor),
+    // The lens boards being written (`lens-board-tools` D11). Bound here, in BOTH
+    // entries, because a board that only streams in one host is a board the other
+    // host renders at settle without saying why.
+    onLensDraft: supervisor.onLensDraft.bind(supervisor),
     platform: preload.platform,
     version: preload.version,
     openFullDiskAccessSettings: preload.openFullDiskAccessSettings,

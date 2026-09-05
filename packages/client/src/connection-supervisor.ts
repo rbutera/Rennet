@@ -22,6 +22,7 @@ import type {
   CommandInput,
   CommandName,
   CommandOutput,
+  LensDraftEvent,
   ProjectDetailProgressEvent,
   ProjectProcessEvent,
   RennetBridge,
@@ -45,6 +46,8 @@ export interface SupervisedBridge {
   onAskProjection(reviewId: string, listener: (projection: AskProjection) => void): () => void;
   /** Subscribe to a review's live round progress (C15 3.1); returns an unsubscribe. */
   onRoundProgress(reviewId: string, listener: (event: RoundEvent) => void): () => void;
+  /** Subscribe to a review's lens boards being written (`lens-board-tools` D11). */
+  onLensDraft(reviewId: string, listener: (event: LensDraftEvent) => void): () => void;
   /** Subscribe to daemon attention events (#383 batch). Daemon-wide; returns an unsubscribe. */
   onAttention(listener: (event: AttentionEventFrame) => void): () => void;
   /** Send a presence frame (issue #383 M1). Best-effort; the supervisor gates the call on capability. */
@@ -123,6 +126,7 @@ type ProgressListener = (event: ProjectProcessEvent) => void;
 type DetailProgressListener = (event: ProjectDetailProgressEvent) => void;
 type AttentionListener = (event: AttentionEventFrame) => void;
 type RoundProgressListener = (event: RoundEvent) => void;
+type LensDraftListener = (event: LensDraftEvent) => void;
 /** Attention is daemon-wide, not keyed by review; one registry bucket under this constant key. */
 const ATTENTION_KEY = "*";
 
@@ -167,6 +171,8 @@ export class ConnectionSupervisor implements RennetBridge {
   #attentionBridgeUnsub = new Map<string, Map<AttentionListener, () => void>>();
   readonly #roundRegistry = new Map<string, Set<RoundProgressListener>>();
   #roundBridgeUnsub = new Map<string, Map<RoundProgressListener, () => void>>();
+  readonly #lensDraftRegistry = new Map<string, Set<LensDraftListener>>();
+  #lensDraftBridgeUnsub = new Map<string, Map<LensDraftListener, () => void>>();
   #queued: QueuedInvoke[] = [];
 
   constructor(options: ConnectionSupervisorOptions) {
@@ -310,6 +316,23 @@ export class ConnectionSupervisor implements RennetBridge {
     );
   }
 
+  /**
+   * Subscribe to a review's lens boards being WRITTEN (`lens-board-tools` D11). Registry-
+   * backed like the round channel: a generation outlives any single socket, so a reconnect
+   * mid-draft re-attaches the listener to the fresh bridge and the live feed resumes. The
+   * frames missed while the socket was down are not replayed — the reader takes them from
+   * the `board.draft` catch-up read, whose `revision` says exactly where to resume.
+   */
+  onLensDraft(reviewId: string, listener: LensDraftListener): () => void {
+    return this.#register(
+      this.#lensDraftRegistry,
+      this.#lensDraftBridgeUnsub,
+      reviewId,
+      listener,
+      (bridge) => bridge.onLensDraft(reviewId, listener),
+    );
+  }
+
   onProgress(commandId: string, listener: ProgressListener): () => void {
     return this.#register(
       this.#progressRegistry,
@@ -379,6 +402,7 @@ export class ConnectionSupervisor implements RennetBridge {
     this.#detailProgressBridgeUnsub = new Map();
     this.#attentionBridgeUnsub = new Map();
     this.#roundBridgeUnsub = new Map();
+    this.#lensDraftBridgeUnsub = new Map();
     for (const [reviewId, listeners] of this.#roundRegistry) {
       for (const listener of listeners) {
         mapSet(
@@ -386,6 +410,16 @@ export class ConnectionSupervisor implements RennetBridge {
           reviewId,
           listener,
           bridge.onRoundProgress(reviewId, listener),
+        );
+      }
+    }
+    for (const [reviewId, listeners] of this.#lensDraftRegistry) {
+      for (const listener of listeners) {
+        mapSet(
+          this.#lensDraftBridgeUnsub,
+          reviewId,
+          listener,
+          bridge.onLensDraft(reviewId, listener),
         );
       }
     }

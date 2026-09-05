@@ -24,6 +24,7 @@ import { SourceChips } from "./design-meta";
 import { DesignCapabilityGrid } from "./design-structure";
 import { GenerationSwitcher } from "./generation-switcher";
 import { BoardElementsProvider, useBoardPatchsetId } from "./kinds/element-context";
+import { liveBoards, useLensDrafts } from "./live-draft";
 import { SeatWidget } from "./seat-widget";
 import { Section } from "./section";
 import { useGenerationRetry } from "./workspace-header";
@@ -92,6 +93,11 @@ export function LensBoardView({
   const highlightRef = useCoachAnchor("highlight");
 
   const resolutions = useLensBoardResolutions(reviewId, selectedGeneration);
+  // The boards being WRITTEN, folded from the element stream (D11). A lens with an open
+  // draft renders from this; a lens whose lane has closed renders from the durable read,
+  // which is the copy that carries the patchset stamps and the delta marks.
+  const drafts = useLensDrafts(reviewId, selectedGeneration);
+  const liveByLens = liveBoards(drafts);
   const seats = useLensSeats(slug, resolutions);
   const lenses = lensBoardsFromResolutions(resolutions, seats);
   // The FALLBACK set is the lenses that have something to open, not the rail's list: the
@@ -123,13 +129,14 @@ export function LensBoardView({
   // board-arrival channel (the `roundProgress` push already proves the transport), at which
   // point this whole effect goes and neither throttle is needed.
   //
-  // DRAFTING IS THE FAST WINDOW (lens-board-tools 5.3). A board is now written element by
-  // element while the reviewer watches, so between two reads the board GAINS content, and a
-  // five-second read makes "renders each element as it lands" land in five-second batches.
-  // While any seat is actually working the poll runs at `DRAFTING_POLL_MS` and every tick
-  // reads, so the reveal tracks the writing. It reverts to the throttled cadence the moment
-  // the last seat stops, which is what keeps the never-settling case off the burn the audit
-  // measured — the budget answered SILENCE, and a working seat is the opposite of silence.
+  // DRAFTING IS THE FAST WINDOW, AND IT IS THE FALLBACK PATH (lens-board-tools 5.3). The
+  // element stream above is how a board fills in front of the reviewer; `onLensDraft` is
+  // OPTIONAL on the bridge, so a host that does not provide it has only this read, and a
+  // five-second cadence would make "renders each element as it lands" land in five-second
+  // batches. While any seat is working the poll runs at `DRAFTING_POLL_MS` and every tick
+  // reads; it reverts to the throttled cadence the moment the last seat stops, which is
+  // what keeps the never-settling case off the burn the audit measured — the budget
+  // answered SILENCE, and a working seat is the opposite of silence.
   const refreshBoards = useRefreshCommand("board.read");
   const awaitingLenses = !lensReadsSettled(resolutions);
   const anyWorking = Object.values(seats).some((state) => state.register === "working");
@@ -173,7 +180,11 @@ export function LensBoardView({
   const selected = resolutions[lens];
   const fallbackLens = available[0] ?? lens;
   const fallback = resolutions[fallbackLens];
-  const effectiveLens: LensKind = selected.status === "missing" ? fallbackLens : lens;
+  // A lens whose durable board has not arrived but whose seat is WRITING one holds the
+  // selection: the reviewer asked for that lens and there is a board of it on screen, so
+  // falling back to a settled sibling would move them off the thing they are watching.
+  const effectiveLens: LensKind =
+    selected.status === "missing" && liveByLens[lens] === undefined ? fallbackLens : lens;
 
   // Every lens folds every section, Flagged included (Rai, 2026-09-04). R44's
   // findings-open-on-arrival is retired: the reader takes the summaries first and opens
@@ -185,7 +196,14 @@ export function LensBoardView({
   // effective (valid) lens; with none present, probe the reviewer's pick or the R44
   // default so a malformed board there still surfaces instead of vanishing.
   const shown = effectiveLens === lens ? selected : fallback;
-  const board = shown.status === "valid" ? shown.board : undefined;
+  // THE LIVE BOARD WINS WHILE THE LANE IS OPEN (D11). `board.read` serves the copy the
+  // pipeline persisted; the element stream serves the one the seat is writing. Comparing
+  // them here is the only place the two sources meet: an open draft is the fresher of the
+  // two and is what the reviewer is watching, and the moment the lane closes the durable
+  // copy takes over — it is the one that carries the patchset stamps and the delta marks
+  // a drafting element has never had.
+  const drafted = liveByLens[effectiveLens];
+  const board = drafted ?? (shown.status === "valid" ? shown.board : undefined);
   const entry = lenses.find((candidate) => candidate.lens === effectiveLens);
   const seat = seats[effectiveLens];
   // The drafting signals belong to the LIVE generation. Drilling into a frozen predecessor
@@ -261,6 +279,7 @@ export function LensBoardView({
           reviewId={reviewId}
           entry={entry}
           retrying={retrying}
+          {...(board === undefined ? {} : { board })}
           {...(retry === undefined ? {} : { onRetry: retry })}
         />
       ) : null}
