@@ -2,6 +2,8 @@ import { realpathSync } from "node:fs";
 import {
   type CodexExecutor,
   type ContextAssembly,
+  type CouncilOverrideReader,
+  councilContextFor,
   escapePath,
   type HarnessPort,
   type ReviewPipelineResult,
@@ -278,6 +280,11 @@ export interface LiveBackendDeps {
 
 /** Everything the review-open related-context kick needs (#461, B7). */
 export interface RelatedContextKickDeps {
+  /**
+   * The reviewer's own role overrides, read per dispatch (#876). Absent means the council's
+   * own tables decide, which is what every site did before the overrides were wired.
+   */
+  readonly councilOverrides?: CouncilOverrideReader;
   readonly store: ProjectSnapshotStore;
   /** Locus-aware harness resolvers (the scout-runtime template): each failure is
    * isolated — a rejected discovery narrows availability, never skips retrieval. */
@@ -354,7 +361,7 @@ export async function runRelatedContextRetrieval(
               repoRoot: review.repositoryRoot,
               label: "related-context",
             },
-            { availability: { installed } },
+            councilContextFor(installed, deps.councilOverrides),
           );
     const intent = patchset.intent;
     const result = await retrieveRelatedContext(

@@ -1,6 +1,8 @@
 import type { PublishCompositionStore } from "@rennet/adapters";
 import {
   type CodexExecutor,
+  type CouncilOverrideReader,
+  councilContextFor,
   draftReviewOpener,
   type HarnessPort,
   providerHarness,
@@ -143,6 +145,11 @@ export interface LiveReviewOpenerInput {
 }
 
 export interface LiveReviewOpenerDeps {
+  /**
+   * The reviewer's own role overrides, read per dispatch (#876). Absent means the council's
+   * own tables decide, which is what every site did before the overrides were wired.
+   */
+  readonly councilOverrides?: CouncilOverrideReader;
   claudePort(repoRoot: string): Promise<HarnessPort | null>;
   codexExecutor(repoRoot: string): Promise<CodexExecutor | null>;
   readPrompt(file: string): string | Promise<string>;
@@ -216,9 +223,10 @@ export function createLiveReviewOpenerPort(
         const installed: CouncilHarnessId[] = [];
         if (claudePort !== null) installed.push("claude-code");
         if (executor !== null) installed.push("codex");
-        const resolution = resolveAssignment(REVIEW_OPENER_JOB_ID, {
-          availability: { installed },
-        });
+        const resolution = resolveAssignment(
+          REVIEW_OPENER_JOB_ID,
+          councilContextFor(installed, deps.councilOverrides),
+        );
         if (resolution.kind !== "model") {
           return {
             status: "unavailable",

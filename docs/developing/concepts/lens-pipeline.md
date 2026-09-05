@@ -558,6 +558,18 @@ reference and one sentence — or settles the board. Writing after a `finish` is
 refused; it takes the board back to drafting, because a settlement describes the
 board that finished and not the one that moved.
 
+**Every result is bounded, because the provider bills a tool result like a prompt.**
+A refusal that names what the board holds, a receipt that names what a removal took,
+and a `finish` verdict all interpolate a collection, and on a large host-derived
+board those collections are large: the Noise complement of a 95-file branch is 1,252
+elements. Worse than a prompt, a result then sits in the conversation prefix and is
+re-read on every remaining round trip of that turn. So each one declares a cap and
+carries an honest truncation marker — twenty held ids, twenty finish pointers, ten
+rule violations or schema issues, twenty removed ids — and
+`board-tool-surface.measure.test.ts` builds the 1,252-element board and fails when
+any result exceeds 4 kB or grows more than tenfold with the board. The counts are the
+load-bearing half of each message; the sample is there so a seat can see the shape.
+
 ## The classifier evidence contract
 
 The round-report classification turn is bounded on both sides, locally, with the

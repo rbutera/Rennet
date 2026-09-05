@@ -20,7 +20,10 @@ import type {
   CouncilAvailability,
   CouncilHarnessDefault,
   CouncilJobId,
+  CouncilOverridePick,
+  CouncilOverrides,
   CouncilPick,
+  CouncilScenario,
   CouncilScenarioOverrides,
   ResolutionSource,
   ReviewRoleCell,
@@ -28,7 +31,7 @@ import type {
   ReviewRoleScenario,
 } from "@rennet/protocol";
 import { DEFAULT_CODEX_SECOND_SEAT_EFFORT, DEFAULT_CODEX_SECOND_SEAT_MODEL } from "./dual-seat";
-import { JOB_CATALOGUE, resolveAssignment } from "./model-council";
+import { JOB_CATALOGUE, resolveAssignment, scenarioFor } from "./model-council";
 
 /** The six user-legible review roles (the copy the surface lists). */
 export type ReviewRoleId =
@@ -145,6 +148,52 @@ export type ReviewRoleOverrides = Readonly<Record<string, CouncilScenarioOverrid
 export interface ReviewRoleResolveContext {
   readonly overrides?: ReviewRoleOverrides;
   readonly harnessDefault?: CouncilHarnessDefault;
+}
+
+/**
+ * The settings column a live availability answers to. The persisted overrides are keyed by
+ * the SURFACE'S scenario names and the resolver speaks the council's, so this is the one
+ * place the two vocabularies meet.
+ */
+const SCENARIO_COLUMN: Readonly<Record<CouncilScenario, ReviewRoleScenario>> = {
+  both: "dual",
+  "claude-only": "claudeOnly",
+  "codex-only": "codexOnly",
+};
+
+/**
+ * The reviewer's persisted role overrides as `resolveAssignment` takes them, for the
+ * scenario THIS host's installed set selects (#876).
+ *
+ * The surface writes one cell per (job, column) and the resolver reads one pick per job, so
+ * a live dispatch reads the column its own availability answers to and nothing else — the
+ * sibling columns describe hosts this is not. A degraded host (neither council harness
+ * installed) answers to no column, so it carries no override: there is no table to override
+ * and the harness default is the only honest answer.
+ *
+ * Model and effort only. The harness always derives from the model's provider (#89), which
+ * is a property of `CouncilOverridePick` and needs no enforcement here.
+ */
+export function taskOverridesFor(
+  stored: ReviewRoleOverrides | undefined,
+  availability: CouncilAvailability,
+): CouncilOverrides | undefined {
+  if (stored === undefined) return undefined;
+  const scenario = scenarioFor(availability);
+  if (scenario === null) return undefined;
+  const column = SCENARIO_COLUMN[scenario];
+  const task: Partial<Record<CouncilJobId, CouncilOverridePick>> = {};
+  let any = false;
+  // The CATALOGUE, not the stored keys: an override can only ever route a job the surface
+  // shows, so a hand-edited `client-settings.json` cannot reach one it does not.
+  for (const jobId of REVIEW_ROLE_JOB_IDS) {
+    const cell = stored[jobId]?.[column];
+    if (cell === undefined) continue;
+    if (cell.model === undefined && cell.effort === undefined) continue;
+    task[jobId] = cell;
+    any = true;
+  }
+  return any ? { task } : undefined;
 }
 
 /** The synthetic availability that selects each scenario's assignment table. */

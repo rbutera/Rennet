@@ -1,7 +1,12 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { BoardMetaStore, GenerationStore, RoundRecordStore } from "@rennet/adapters";
+import {
+  BoardMetaStore,
+  createClientSettingsStore,
+  GenerationStore,
+  RoundRecordStore,
+} from "@rennet/adapters";
 import type {
   BoardWrite,
   CodexExecutor,
@@ -32,7 +37,10 @@ import { describe, expect, it } from "vitest";
 import type { GenerationBoards } from "../board/board-mcp-server";
 import { fixtureGenerationBoards } from "../board/seat-fixture";
 import { type BoardsRuntime, createBoardsRuntime } from "../boards/boards-runtime";
-import { withFakeT3Seats } from "../t3-seat-fake";
+import { createDispatchRuntime, type DispatchDeps } from "../dispatch";
+import { settingsHandlers } from "../dispatch/settings";
+import { createCouncilOverrideReader, createSettingsComposition } from "../settings";
+import { fakeT3SeatsOverPorts, withFakeT3Seats } from "../t3-seat-fake";
 import type { BoardArrivalEvent, BoardMeta } from "./lens-pipeline";
 import { buildRoundEvidenceManifest } from "./round-evidence-manifest";
 import {
@@ -3804,5 +3812,172 @@ describe("what a round archives, and when (#731 N3)", () => {
     // follows the ownership-checked write), and not `failed` (the catch skips supersession).
     const stolen = await run(true);
     expect(stolen).toEqual([]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// #876 — a model role override reaches a SEAT, not just the settings screen.
+//
+// The override was persisted, read back and rendered long before it changed any turn:
+// `settings.setRoleAssignment` wrote `routing.task[jobId][scenario]`, `reviewRoleMappings`
+// displayed it, and every production council context was built as
+// `{ availability: { installed } }` with no `overrides`, so every seat ran the council
+// table. A test that asserts the override is STORED proves nothing — that already worked,
+// and `c16-council-mappings-e2e.test.ts` already proves it.
+//
+// So this drives the whole path and observes the far end: the REAL `settings.*` dispatch
+// handler, the REAL on-disk `client-settings.json`, the REAL reader
+// (`createCouncilOverrideReader` — the same function `create-server.ts` composes),
+// `createRoundsRuntime` → `runLensPipeline` → `councilSeatTurn`, and the model the SEAM is
+// asked to open a thread on. Nothing here calls `resolveAssignment`.
+//
+// What it CANNOT catch, stated because no assertion here covers it: whether the daemon's
+// own composition passes `councilOverrides` to `createRoundsRuntime` at all. That is one
+// object property in `create-server.ts` and this file does not boot the daemon; the same
+// wiring for every other site is likewise unasserted here.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** One thread the pipeline asked the sidecar to open, as the council routed it. */
+interface SeatThread {
+  readonly seat: string;
+  readonly provider: string;
+  readonly model: string;
+  readonly effort: string;
+}
+
+/**
+ * A rounds runtime whose sidecar records what each seat was routed to. The seam is the real
+ * round-level double; only `threadFor` is wrapped, so the seats still run and still write
+ * their boards.
+ */
+function recordingSeats(
+  threads: SeatThread[],
+  over: Partial<RoundsRuntimeDeps> = {},
+): RoundsRuntimeDeps {
+  const deps = baseDeps(over);
+  const inner = fakeT3SeatsOverPorts(deps.resolveClaudePort, deps.resolveCodexExecutor);
+  return {
+    ...deps,
+    resolveT3Seats: async (input) => {
+      const runtime = await inner(input);
+      // The double never answers `unavailable`; the narrowing is the type's, not a case.
+      if ("unavailable" in runtime) return runtime;
+      const threadFor = runtime.seam.threadFor.bind(runtime.seam);
+      return {
+        ...runtime,
+        seam: {
+          ...runtime.seam,
+          threadFor: async (spec: Parameters<typeof threadFor>[0]) => {
+            threads.push({
+              seat: spec.seat,
+              provider: spec.provider,
+              model: spec.model,
+              effort: spec.effort,
+            });
+            return threadFor(spec);
+          },
+        },
+      };
+    },
+  };
+}
+
+/** The real settings write command over a real store in `dir`, and the real reader. */
+function settingsOver(dir: string) {
+  const store = createClientSettingsStore(join(dir, "client-settings.json"));
+  const settings = createSettingsComposition({
+    listProjects: () => [],
+    loadConfigState: () => ({ status: "absent", config: null }),
+    readGlobalState: () => store.readState(),
+    updateGlobal: (update) => store.update(update),
+    readDaemonSettings: () => ({ version: 1 }),
+    listPairedDevices: () => [],
+    updateDaemon: (update) => update({ version: 1 }),
+    gitTopLevel: async () => null,
+    discoverWorkspaceRepos: async () => [],
+    loadGuidance: () => ({ reason: "absent", dropped: 0 }),
+    applyVisibility: async () => ({ changed: false, gitignorePath: "" }),
+    clearRepoValue: () => undefined,
+    writeRepoValue: () => undefined,
+    saveGuidance: () => ({ reason: "absent", dropped: 0 }),
+  });
+  const handlers = settingsHandlers(createDispatchRuntime({ settings } as unknown as DispatchDeps));
+  return {
+    setRoleAssignment: (input: unknown) => handlers["settings.setRoleAssignment"](input),
+    // The SAME factory `create-server.ts` composes, over the SAME store.
+    councilOverrides: createCouncilOverrideReader(() => store.readState()),
+  };
+}
+
+const seatModel = (threads: readonly SeatThread[], seat: string): SeatThread => {
+  const thread = threads.find((entry) => entry.seat === seat);
+  if (thread === undefined) throw new Error(`no seat thread for ${seat}`);
+  return thread;
+};
+
+describe("a persisted model role override reaches the seat that runs (#876)", () => {
+  it("routes the lens drafters to the model the reviewer picked, through the real command", async () => {
+    // CONTROL, run first and in the same shape: no override written, so the same fixture
+    // must resolve to the council's own claude-only table pick. Without it every assertion
+    // below would pass over a resolver that ignored the override and happened to agree.
+    const untouched: SeatThread[] = [];
+    await createRoundsRuntime(
+      recordingSeats(untouched, {
+        councilOverrides: settingsOver(mkdtempSync(join(tmpdir(), "role-override-control-")))
+          .councilOverrides,
+      }),
+    ).runRound(roundInput());
+    expect(seatModel(untouched, "design")).toMatchObject({ model: "opus-4.8", effort: "high" });
+    expect(seatModel(untouched, "noise")).toMatchObject({ model: "haiku", effort: "low" });
+
+    // ── The reviewer's edit, over the real dispatch handler and the real store. ──
+    const dir = mkdtempSync(join(tmpdir(), "role-override-"));
+    const settings = settingsOver(dir);
+    // This host has only Claude installed (the fixture resolves no codex executor), so the
+    // live scenario is `claude-only` and the column that governs it is `claudeOnly`. The
+    // claude-only table routes `lens-draft` to opus-4.8/high.
+    await settings.setRoleAssignment({
+      roleId: "lens-workers",
+      scenario: "claudeOnly",
+      assignment: { model: "sonnet-5", effort: "low" },
+    });
+
+    const threads: SeatThread[] = [];
+    await createRoundsRuntime(
+      recordingSeats(threads, { councilOverrides: settings.councilOverrides }),
+    ).runRound(roundInput());
+
+    // THE HEADLINE: the three `lens-draft` seats opened their threads on the reviewer's
+    // model, not the table's. This is the assertion that was red before the wiring.
+    for (const seat of ["design", "sequence", "decisions"]) {
+      expect(seatModel(threads, seat), `${seat} ignored the override`).toMatchObject({
+        model: "sonnet-5",
+        effort: "low",
+      });
+    }
+    // …and the seats the reviewer did NOT touch are untouched: Noise runs `lens-draft-noise`
+    // and the report seat runs `round-report`, neither of which the edit named. An override
+    // that moved every seat would be a different bug wearing the same green bar.
+    expect(seatModel(threads, "noise")).toMatchObject(seatModel(untouched, "noise"));
+    expect(seatModel(threads, "round-report")).toMatchObject(seatModel(untouched, "round-report"));
+  });
+
+  it("reads the column its own availability answers to, and no other", async () => {
+    // The columns are per-scenario (Rai, 2026-08-28). A host running claude-only must not
+    // pick up the `dual` cell: that column describes a machine with both harnesses, which
+    // this is not. Written through the real command exactly as above.
+    const dir = mkdtempSync(join(tmpdir(), "role-override-column-"));
+    const settings = settingsOver(dir);
+    await settings.setRoleAssignment({
+      roleId: "lens-workers",
+      scenario: "dual",
+      assignment: { model: "sonnet-5", effort: "low" },
+    });
+
+    const threads: SeatThread[] = [];
+    await createRoundsRuntime(
+      recordingSeats(threads, { councilOverrides: settings.councilOverrides }),
+    ).runRound(roundInput());
+    expect(seatModel(threads, "design")).toMatchObject({ model: "opus-4.8", effort: "high" });
   });
 });

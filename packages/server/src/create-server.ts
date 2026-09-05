@@ -132,6 +132,7 @@ import {
   buildReviewCanvases,
   type CodexExecutor,
   classifyUiSurface,
+  councilContextFor,
   createHarnessRunTurn,
   createInvocationBudget,
   DEFAULT_MAX_HARNESS_INVOCATIONS,
@@ -322,7 +323,7 @@ import {
   resolveRoundSessionId,
   SessionEntry,
 } from "./session/session-entry";
-import { createSettingsComposition } from "./settings";
+import { createCouncilOverrideReader, createSettingsComposition } from "./settings";
 import { findHealthyDaemon } from "./supervise";
 import { createLiveSymbolLookup, reviewPinnedToHead } from "./symbol-lookup-live";
 import { modelSelection } from "./t3/client";
@@ -2493,9 +2494,10 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     if (adapter) installed.push("claude-code");
     if (codex.available) installed.push("codex");
 
-    const ciAssignment = resolveAssignment("ci-failure-classification", {
-      availability: { installed },
-    });
+    const ciAssignment = resolveAssignment(
+      "ci-failure-classification",
+      councilContextFor(installed, councilOverrides),
+    );
     // The Codex leg roots at the session's bound workspace, like the Claude leg right below
     // it — the same root its context files were written under.
     const codexUtilityExecutor = codexResolution.makeExecutor?.(distroCwd ?? turnRoot);
@@ -2760,9 +2762,14 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     options.broadcastProgress?.(commandId, event);
     wsListener?.broadcastProgress(commandId, event);
   };
+  // The reviewer's own model-role overrides, as every council dispatch reads them (#876).
+  // The client-settings store it reads is composed further down; only the READ is deferred
+  // into the closure, and a read happens during a dispatch, long after construction.
+  const councilOverrides = createCouncilOverrideReader(() => clientSettingsStore.readState());
   // The project-scout scheduler (#461 §4, B7 cluster 4): shares the processing
   // progress push; the deterministic pass runs even with no harness installed.
   const projectScoutRuntime = createProjectScoutRuntime({
+    councilOverrides,
     store: snapshotStore,
     gitForRepo,
     resolveClaudePort: claudeAdapterForRepo,
@@ -3233,6 +3240,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     (input: I): Promise<O> =>
       holdingReviewContext(input.review, () => run(input));
   const roundsRuntime = createRoundsRuntime({
+    councilOverrides,
     // One generation's archive (#731 9.3/9.4), taken from the phase records the reveal
     // block already persisted — the spine stays authoritative and unconditional.
     recordBenchmark,
@@ -3478,6 +3486,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
 
   const roundOperationStore = new RoundOperationStore(join(dataDir, "round-operations"));
   const composeRoundBundle = createLiveComposeBundle({
+    councilOverrides,
     claudePort: claudeAdapterForRepo,
     codexExecutor: codexExecutorForRepo,
     writeContext: writeReviewContext,
@@ -4646,6 +4655,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         // rather than the garnish the comment below promises.
         void holdingReviewContext(review, () =>
           runRelatedContextRetrieval(review, {
+            councilOverrides,
             store: snapshotStore,
             resolveClaudePort: claudeAdapterForRepo,
             resolveCodexExecutor: codexExecutorForRepo,
@@ -5023,6 +5033,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // dedicated revise prompt is the quality upgrade path, not a correctness gap.
     reworkSpan: async ({ review, type, span, instruction, path }) =>
       createLiveRefinePort({
+        councilOverrides,
         claudePort: claudeAdapterForRepo,
         codexExecutor: codexExecutorForRepo,
         writeContext: writeReviewContext,
@@ -5231,6 +5242,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // structured-output mechanism every pipeline lens seat uses; no docType).
     refineComment: holdingContextFor(
       createLiveRefinePort({
+        councilOverrides,
         claudePort: claudeAdapterForRepo,
         codexExecutor: codexExecutorForRepo,
         writeContext: writeReviewContext,
@@ -5248,6 +5260,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // composed body still previews) when neither seat is installed. Posts NOTHING.
     draftPrBody: holdingContextFor(
       createLiveDraftPrBodyPort({
+        councilOverrides,
         claudePort: claudeAdapterForRepo,
         codexExecutor: codexExecutorForRepo,
         writeContext: writeReviewContext,
@@ -5263,6 +5276,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     draftReviewOpener: holdingContextFor(
       options.draftReviewOpener ??
         createLiveReviewOpenerPort({
+          councilOverrides,
           claudePort: claudeAdapterForRepo,
           codexExecutor: codexExecutorForRepo,
           readPrompt,
@@ -5282,6 +5296,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // NOTHING and gates nothing.
     draftDeltaDigest: holdingContextFor(
       createLiveDeltaDigestPort({
+        councilOverrides,
         claudePort: claudeAdapterForRepo,
         codexExecutor: codexExecutorForRepo,
         writeContext: writeReviewContext,

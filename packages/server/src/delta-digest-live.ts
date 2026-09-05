@@ -1,5 +1,7 @@
 import {
   type CodexExecutor,
+  type CouncilOverrideReader,
+  councilContextFor,
   type DeltaDigestPort,
   type DeltaDigestPortResult,
   deltaDigestContextFile,
@@ -178,6 +180,11 @@ export function claudeDeltaDigestPort(port: HarnessPort, cwd: string): DeltaDige
 /** The deps the live producer is bound to (all injected so the module stays testable). */
 export interface LiveDeltaDigestDeps {
   /**
+   * The reviewer's own role overrides, read per dispatch (#876). Absent means the council's
+   * own tables decide, which is what every site did before the overrides were wired.
+   */
+  readonly councilOverrides?: CouncilOverrideReader;
+  /**
    * The session's BOUND workspace for this review (session-bound-workspace D1) — the cwd this
    * turn runs in, and the root `writeContext` writes under. One value for both, because the
    * context path the prompt names is RELATIVE: write under the repository while the turn runs
@@ -221,7 +228,10 @@ export function createLiveDeltaDigestPort(
     if (claudePort !== null) installed.push("claude-code");
     if (executor !== null) installed.push("codex");
 
-    const resolution = resolveAssignment(DELTA_DIGEST_JOB_ID, { availability: { installed } });
+    const resolution = resolveAssignment(
+      DELTA_DIGEST_JOB_ID,
+      councilContextFor(installed, deps.councilOverrides),
+    );
     if (resolution.kind !== "model") {
       return { status: "unavailable", reason: "delta-digest resolved to no model seat" };
     }

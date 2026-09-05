@@ -88,6 +88,16 @@ const MAX_BODY_BYTES = 1_000_000;
 const POINTER_SAMPLE = 20;
 
 /**
+ * How many removed ids a receipt names before it says how many more there are (#871).
+ *
+ * A removal takes the named element's whole subtree, so a seat that regroups a large board
+ * by removing one section gets back every id under it: 401 elements measured 2,304 B. The
+ * ids are the host's own and the seat asked for the removal, so the COUNT is the load-bearing
+ * half; the sample is there so a seat can see the shape of what went.
+ */
+const REMOVED_ID_SAMPLE = 20;
+
+/**
  * How many CASCADED positions a `write_board` result names before it says how many more.
  *
  * A tool result is billed like a prompt and gets the same byte discipline (#871, where a
@@ -221,8 +231,13 @@ export function describeOutcome(outcome: BoardToolOutcome): string {
   switch (outcome.kind) {
     case "element":
       return outcome.id;
-    case "removed":
-      return `removed ${outcome.ids.join(", ")}`;
+    case "removed": {
+      const shown = outcome.ids.slice(0, REMOVED_ID_SAMPLE);
+      const more = outcome.ids.length - shown.length;
+      return more > 0
+        ? `removed ${outcome.ids.length}: ${shown.join(", ")}, and ${more} more`
+        : `removed ${shown.join(", ")}`;
+    }
     case "document":
       return "document set";
     case "absent":

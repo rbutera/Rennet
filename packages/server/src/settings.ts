@@ -5,6 +5,7 @@ import {
   type RepoPrefField,
 } from "@rennet/adapters";
 import {
+  type CouncilOverrideReader,
   detectLocus,
   escapePath,
   REVIEW_ROLE_JOB_IDS,
@@ -19,6 +20,7 @@ import {
   reviewRoleMappings,
   SETTINGS_REGISTRY,
   type TrackerKind,
+  taskOverridesFor,
 } from "@rennet/core";
 import type {
   ClientSettings,
@@ -576,6 +578,53 @@ function noUpdateMechanism(): Promise<{ version: string | null } | null> {
   return Promise.reject(new Error("Rennet has no way to update this host's daemon."));
 }
 
+/**
+ * The persisted per-scenario `routing.task` slice (C16, #485). Only job ids the review-role
+ * catalogue actually names are admitted: a stale or unknown key in `client-settings.json`
+ * is IGNORED rather than fed to the resolver, so a hand-edited config can never route a job
+ * the surface does not show.
+ *
+ * Module-level, and exported, because it now has TWO readers: the settings VIEW
+ * (`reviewRoles`) and every live dispatch site through {@link createCouncilOverrideReader}.
+ * Having only the first is what #876 was.
+ */
+export function storedRoleOverrides(client: ClientSettings): ReviewRoleOverrides | undefined {
+  const stored = client.routing?.task;
+  if (!stored) return undefined;
+  const task: Record<string, CouncilScenarioOverrides> = {};
+  let any = false;
+  for (const jobId of REVIEW_ROLE_JOB_IDS) {
+    const entry = stored[jobId];
+    if (entry === undefined) continue;
+    task[jobId] = entry;
+    any = true;
+  }
+  return any ? task : undefined;
+}
+
+/**
+ * What every production dispatch site reads the reviewer's role overrides with (#876).
+ *
+ * Read on EVERY dispatch rather than captured once at boot: a reviewer who changes a seat's
+ * model expects the next round to run on it, not the next daemon restart. The read is a
+ * cached file read and a dispatch already costs a model turn, so freshness is free here.
+ *
+ * A malformed `client-settings.json` yields no override rather than a throw — the store
+ * answers `{ status: "malformed", config }` and the council falls back to its own tables,
+ * which is the same routing the host had before anyone opened the surface.
+ */
+export function createCouncilOverrideReader(
+  readGlobalState: () => { config: ClientSettings },
+): CouncilOverrideReader {
+  return (availability) => {
+    try {
+      return taskOverridesFor(storedRoleOverrides(readGlobalState().config), availability);
+    } catch {
+      return undefined;
+    }
+  };
+}
+
 export function createSettingsComposition(deps: SettingsCompositionDeps): SettingsComposition {
   // Resolve a working path to the SAME repo identity the snapshot generator uses:
   // the realpath-canonical git top level, escaped into the store key. `null` when
@@ -817,26 +866,8 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
     return { status, ...(error ? { error } : {}) };
   };
 
-  // The persisted per-scenario `routing.task` slice (C16, #485). Only job ids the
-  // review-role catalogue actually names are admitted: a stale or unknown key in
-  // `client-settings.json` is IGNORED rather than fed to the resolver, so a
-  // hand-edited config can never route a job the surface does not show.
-  const storedOverrides = (client: ClientSettings): ReviewRoleOverrides | undefined => {
-    const stored = client.routing?.task;
-    if (!stored) return undefined;
-    const task: Record<string, CouncilScenarioOverrides> = {};
-    let any = false;
-    for (const jobId of REVIEW_ROLE_JOB_IDS) {
-      const entry = stored[jobId];
-      if (entry === undefined) continue;
-      task[jobId] = entry;
-      any = true;
-    }
-    return any ? task : undefined;
-  };
-
   const resolveReviewRoleView = (): ReviewRoleMapping[] =>
-    reviewRoleMappings(storedOverrides(deps.readGlobalState().config));
+    reviewRoleMappings(storedRoleOverrides(deps.readGlobalState().config));
 
   return {
     get: async (): Promise<SettingsView> => {
@@ -1169,7 +1200,7 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
       });
       // Re-resolve from what was actually written — the surface adopts the
       // resolver's own answer, never a hand-recomputed one that could disagree.
-      return reviewRoleMappings(storedOverrides(written));
+      return reviewRoleMappings(storedRoleOverrides(written));
     },
 
     setTrackerValue: (input): NonNullable<DaemonSettings["tracker"]> => {

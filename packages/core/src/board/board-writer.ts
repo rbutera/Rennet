@@ -289,6 +289,32 @@ const HOST_DEFAULTS: Readonly<Partial<Record<DraftKind, Readonly<Record<string, 
 const HELD_ID_SAMPLE = 20;
 
 /**
+ * How many rule violations or schema issues a refusal spells out before it says how many
+ * more there are (#871).
+ *
+ * A tool result is billed exactly like a prompt, so it gets the same byte discipline: every
+ * dynamic interpolation declares a bound at its call site and carries an honest truncation
+ * marker. This one was the expensive miss. `describe` joined EVERY violation a call
+ * introduced, and one refused `remove_element` on a citation 300 findings pointed at
+ * measured 44,295 B of near-identical sentences — a payload that then sits in the
+ * conversation prefix for every remaining round trip of that turn.
+ *
+ * Ten, not twenty: these are whole sentences rather than ids, and a seat that has to fix
+ * three hundred references does not need three hundred readings of the same rule to know
+ * it. The count is what tells it the size of the job.
+ */
+const ISSUE_SAMPLE = 10;
+
+/** `things, and N more` — a bounded list with an honest tail, or the whole list. */
+function sampled(parts: readonly string[], cap: number, separator: string): string {
+  const shown = parts.slice(0, cap);
+  const more = parts.length - shown.length;
+  return more > 0
+    ? `${shown.join(separator)}${separator}and ${more} more (${parts.length} in all).`
+    : shown.join(separator);
+}
+
+/**
  * The byte bounds on ONE entry's refusal in a `write_board` answer (#869).
  *
  * A tool result is billed exactly like a prompt, and CLAUDE.md's rule — every dynamic
@@ -550,9 +576,13 @@ export class BoardWriter {
     }
     const parsed = tool.input.safeParse(rawInput ?? {});
     if (!parsed.success) {
-      const issues = parsed.error.issues
-        .map((issue) => `\`${issue.path.join(".") || "(input)"}\`: ${issue.message}`)
-        .join("; ");
+      const issues = sampled(
+        parsed.error.issues.map(
+          (issue) => `\`${issue.path.join(".") || "(input)"}\`: ${issue.message}`,
+        ),
+        ISSUE_SAMPLE,
+        "; ",
+      );
       return refuse(`\`${name}\` did not accept its arguments — ${issues}.`);
     }
     const input = parsed.data as Record<string, unknown>;
@@ -1186,9 +1216,11 @@ export class BoardWriter {
   private structuralRefusal(next: DraftBoard): string | undefined {
     const parsed = parseDraft(next);
     if (parsed.ok) return undefined;
-    return `The call would not produce a valid element — ${parsed.issues
-      .map((issue) => `\`${issue.path.join(".")}\`: ${issue.message}`)
-      .join("; ")}.`;
+    return `The call would not produce a valid element — ${sampled(
+      parsed.issues.map((issue) => `\`${issue.path.join(".")}\`: ${issue.message}`),
+      ISSUE_SAMPLE,
+      "; ",
+    )}.`;
   }
 
   /**
@@ -1299,15 +1331,19 @@ function pointerLabel(
  * the name of the input the seat actually sent.
  */
 function describe(violations: readonly Violation[], tool?: BoardTool, touchedId?: string): string {
-  return violations
-    .map((violation) => {
+  // BOUNDED (#871): one call can introduce a violation per element that pointed at what it
+  // removed, and this string is a tool result the provider bills like any prompt.
+  return sampled(
+    violations.map((violation) => {
       const label =
         tool === undefined
           ? `\`${violation.elementRef}\``
           : pointerLabel(tool, touchedId, violation);
       return `${label} (${violation.ruleId}): ${violation.message}`;
-    })
-    .join(" ");
+    }),
+    ISSUE_SAMPLE,
+    " ",
+  );
 }
 
 /** Append `childId` to `parentId`'s host-maintained `children`. */

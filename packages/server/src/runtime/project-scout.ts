@@ -10,7 +10,8 @@ import {
   type ScoutResult,
   saveScoutFacts,
 } from "@rennet/adapters";
-import type { CodexExecutor, HarnessPort } from "@rennet/core";
+import type { CodexExecutor, CouncilOverrideReader, HarnessPort } from "@rennet/core";
+import { councilContextFor } from "@rennet/core";
 import type {
   CouncilHarnessId,
   ProjectProcessEvent,
@@ -33,6 +34,11 @@ import { purgeSessionContext, writeSessionContext } from "../context-files";
  */
 
 export interface ProjectScoutRuntimeDeps {
+  /**
+   * The reviewer's own role overrides, read per dispatch (#876). Absent means the council's
+   * own tables decide, which is what every site did before the overrides were wired.
+   */
+  readonly councilOverrides?: CouncilOverrideReader;
   readonly store: ProjectSnapshotStore;
   /** The locus-aware git runner the composition root already owns. */
   readonly gitForRepo: (repoRoot: string) => GitExec;
@@ -134,7 +140,7 @@ export function createProjectScoutRuntime(deps: ProjectScoutRuntimeDeps): Projec
                   repoRoot: input.repoRoot,
                   label: "project.scout",
                 },
-                { availability: { installed } },
+                councilContextFor(installed, deps.councilOverrides),
               );
         // The scout runs for a PROJECT, before any session exists, so its context sits in
         // the repo it is scouting under an id of its OWN — one per run, and purged when

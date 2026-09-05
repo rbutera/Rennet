@@ -195,6 +195,41 @@ table change still reaches that cell. Clearing a job's last cell drops the job e
 last job drops the `routing` slice entirely: an install that reset everything is
 byte-identical to one that never overrode anything.
 
+### Where an override reaches
+
+An override is stored per **(job, scenario)** and read per **dispatch**. Every
+production dispatch site builds its council context through `councilContextFor()`,
+which pairs the harnesses it just probed with the reviewer's overrides for the
+scenario that installed set selects:
+
+- both harnesses installed → the `dual` column;
+- Claude only → `claudeOnly`;
+- Codex only → `codexOnly`;
+- neither → no column, so no override. There is no table to override, and the
+  harness default is the only honest answer.
+
+The read happens on every dispatch rather than once at daemon start, so a reviewer
+who changes a seat's model sees the next round run on it.
+
+The sites that read it are the round runner (which carries it into every lens seat
+through the lens pipeline), the project scout, and the utility ports — comment
+refinement, PR-body drafting, the delta digest, the handoff-bundle composer, the
+review opener, related-context retrieval, and CI-failure classification. Only the
+six roles the catalogue names can be overridden, so a site running a job outside the
+catalogue resolves from the tables as before.
+
+The Flagged lane is the one site that narrows what it is given. It runs one job on
+two provider-pinned seats, each resolved against a synthetic single-provider
+availability, so a **model** override reaches only the leg whose provider that model
+belongs to; an **effort** override reaches both, because effort is
+provider-independent. Passing a model override to the other leg would resolve it
+onto a harness its own synthetic availability does not hold, and the lane would lose
+that seat to a "not installed" failure naming a harness the host actually has.
+
+A board job that resolves to a harness this host has not got still fails, by design:
+`councilSeatTurn` re-checks the installed set before opening a thread, because
+`resolveAssignment` routes from a table and does not refuse an absent harness.
+
 What the surface deliberately does **not** do: add council job IDs, edit the
 versioned default tables, or persist provider availability. Availability is
 detected — which harnesses are installed and enabled on that host — not a stored
