@@ -39,8 +39,8 @@ setDefaultAutoSelectFamilyAttemptTimeout(300);
 // The served browser UI (issue #381, design D2): by convention the built `browser` bundle
 // is a sibling of this server bundle (`dist/server` + `dist/browser`). Resolve it from this
 // module's own location; absent ⇒ the daemon runs headless. `--ui-dist` (parsed in
-// resolveDaemonConfig) overrides. In the CLI's esbuild bundle import.meta.url is empty, so
-// this yields undefined there — that path relies on `--ui-dist` instead.
+// resolveDaemonConfig) overrides. The standalone `rennet` CLI has its own copy of this and
+// no browser sibling to find, so that path relies on `--ui-dist` instead.
 function defaultUiDist(): string | undefined {
   try {
     const url = import.meta.url;

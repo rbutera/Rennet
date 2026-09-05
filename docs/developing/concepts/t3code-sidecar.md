@@ -49,6 +49,35 @@ standalone T3 Code install on the same machine is neither read nor written, and 
 sidecar's harness sessions use the user's normal `claude` and `codex` logins because the
 provider home paths are left empty.
 
+## Which bundle, and which process entry
+
+Two processes run the daemon, and both must find the same bundle: `daemon-main.ts`, which
+the desktop shell spawns detached, and `rennet serve`, which runs it in the foreground.
+Each resolves `t3BundlePath` the same way, in this order:
+
+1. `--t3-bundle <file>` on the command line.
+2. `RENNET_T3_BUNDLE`. The packaged app sets it to `Resources/t3code/apps/server/dist/bin.mjs`
+   (staged by `scripts/stage-t3-sidecar.mjs`; see `apps/desktop/PACKAGING.md`).
+3. A walk up from the running bundle's own directory looking for
+   `vendor/t3code/apps/server/dist/bin.mjs`. From a built checkout this finds the vendored
+   build with no flag and no variable; an installed CLI is outside any checkout and finds
+   nothing.
+
+`rennet serve` had none of this until #875 — it built its `DaemonConfig` without
+`t3BundlePath` at all. The daemon came up, reported healthy and served the command surface,
+and then every board seat of every review it captured failed on the missing bundle, because
+[a seat's only backend is this sidecar](#seats-as-threads). The desktop app was unaffected,
+which is why it went unnoticed: the app worked and the CLI did not.
+
+**A `serve` that cannot find a bundle still starts, and says so.** It writes a warning to
+stderr naming the two ways to supply one and the build that produces it, and then serves.
+It does not refuse: `status`, `pair`, `devices`, the browser UI and every already-captured
+review need no sidecar, and taking all of them away to protect a reviewer from one
+subsystem would be a lockdown rather than a fix. What was actually wrong with #875 was
+never that the daemon ran — it was that nobody was told until five lanes had failed, twenty
+minutes into a generation. On the wire that daemon's `t3Sidecar` reads `off`, the same
+thing the desktop entry reports with no bundle.
+
 ## Spawn contract
 
 The daemon spawns the vendored bundle with its own Node executable:
@@ -1609,5 +1638,5 @@ enumeration, so a large delta costs the turn nothing and the file stays complete
 - `packages/t3-chat/src/native-chat.tsx`: the native mount (routes, providers, environment registration, the thread and draft route views mirrored from upstream's route files, and `T3ThreadView`); `session.ts`: the session-to-registration mapping and the route builder both views share; `t3.css`: the theme bridge and the read-only composer rule. `apps/desktop/vite.renderer.config.ts` and `vite.browser.config.ts` each carry the alias, dedupe and defines; `apps/desktop/src/renderer/index.tsx` and `src/browser/entry.tsx` each provide both components.
 - `packages/server/src/dispatch/chat.ts`: `chat.t3Session`; `dispatch/daemon.ts` adds `t3Sidecar` to `daemon.status`.
 - `packages/protocol/src/wire.ts`: `t3SidecarStatusSchema`, `t3SessionSchema`.
-- `packages/server/src/daemon-main.ts`: resolves the bundle (`RENNET_T3_BUNDLE` overrides); in the packaged app the main process sets that variable to `Resources/t3code/apps/server/dist/bin.mjs`, staged by `scripts/stage-t3-sidecar.mjs` at desktop build time (see `apps/desktop/PACKAGING.md`).
+- `packages/server/src/daemon-main.ts` and the `serve` subcommand in `packages/server/src/cli.ts`: the two process entries, each resolving the bundle through `--t3-bundle`, then `RENNET_T3_BUNDLE`, then `resolveSidecarBundle`'s walk (see [Which bundle, and which process entry](#which-bundle-and-which-process-entry)). In the packaged app the main process sets that variable to `Resources/t3code/apps/server/dist/bin.mjs`, staged by `scripts/stage-t3-sidecar.mjs` at desktop build time (see `apps/desktop/PACKAGING.md`).
 - `apps/desktop/src/main/daemon-supervisor.ts` and `packages/server/src/cli.ts`: the sidecar step in both stop paths.

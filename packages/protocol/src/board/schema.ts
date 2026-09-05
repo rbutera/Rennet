@@ -240,7 +240,22 @@ const sectionData = withAuthor({
   // The viewed set that decays the mark is UI-only.
   delta: SectionDeltaSchema.optional(),
 });
-const proseData = withAuthor({ markdown: z.string() });
+/**
+ * The two halves of a Trigger/Outcome scenario, declared so a Design seat can WRITE one
+ * (#856). The renderer has always read them off a `prose` element; the schema never
+ * declared them, so the derived tool surface had no input to carry them on and a seat
+ * could not author the refinement at all — the scenario fell back to the prose it was
+ * written as, and the two-column rendering silently stopped appearing.
+ */
+export const ScenarioClausesSchema = z.object({
+  condition: z.string().min(1),
+  response: z.string().min(1),
+});
+
+const proseData = withAuthor({
+  markdown: z.string(),
+  scenario_clauses: ScenarioClausesSchema.optional(),
+});
 const calloutData = withAuthor({ variant: z.string(), body: z.string() });
 const annotationData = withAuthor({ code_ref: z.string(), body: z.string() });
 const messageData = withAuthor({
@@ -505,6 +520,15 @@ export const AUTHORED_BOARD_SCHEMA = defineSchema({
   }),
   prose: authored("Freeform markdown — the agent's general expressive surface.", {
     markdown: a("string", true, "The prose, as markdown."),
+    // #856. A scenario is prose, and a scenario whose trigger and outcome are named
+    // renders as two columns instead of a sentence. The renderer has read these all
+    // along; only the seat could not write them, because this table is what the tool
+    // surface is derived from and this table did not say they existed.
+    scenario_clauses: a(
+      "json",
+      false,
+      "For a WHEN/THEN scenario: its trigger and its outcome { condition, response }. Give both or neither; the reader gets a two-column Trigger/Outcome row instead of the sentence.",
+    ),
   }),
   callout: authored("An emphasized aside.", {
     variant: a("string", true, "The callout variant."),

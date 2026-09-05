@@ -173,6 +173,15 @@ const JSON_FLATTENING: Readonly<Record<string, readonly JsonPart[]>> = {
     { part: "label", name: "stat_label", schema: z.string().min(1) },
     { part: "value", name: "stat_value", schema: z.string() },
   ],
+  // #856. SINGLE-valued: one scenario per `prose` element, so both parts stay — there is
+  // no index to align them by, and a trigger with no outcome is not a scenario. Neither
+  // part is required (`scenario_clauses` itself is optional), so a plain piece of prose
+  // sends neither; a seat that sends only one gets the host schema's refusal, exactly as
+  // a `source_line` with no `source_path` already does.
+  scenario_clauses: [
+    { part: "condition", name: "scenario_condition", schema: z.string().min(1) },
+    { part: "response", name: "scenario_response", schema: z.string().min(1) },
+  ],
 };
 
 /** Prose for each flattened part, so the rename carries its own documentation. */
@@ -185,6 +194,10 @@ const JSON_PART_TEXT: Readonly<Record<string, string>> = {
   "ask.text": "The ask's display text.",
   "stats.label": "Stat label shown in the board header.",
   "stats.value": "Stat value shown beside its label.",
+  "scenario_clauses.condition":
+    "The scenario's trigger, its WHEN half. Pair with scenario_response.",
+  "scenario_clauses.response":
+    "What must then happen, its THEN half. Pair with scenario_condition.",
 };
 
 // ── The field plan (what the writer reconstitutes an element from) ───────────

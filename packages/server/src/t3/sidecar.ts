@@ -593,9 +593,15 @@ export async function stopSidecar(
 }
 
 /**
- * Locate the vendored server bundle. `RENNET_T3_BUNDLE` overrides; otherwise resolve
- * from this module's location back to the workspace's `vendor/t3code/apps/server/dist`.
- * In the CLI's esbuild bundle `import.meta.url` is empty, so that path needs the env.
+ * Locate the vendored server bundle. `RENNET_T3_BUNDLE` overrides; otherwise walk up from
+ * this module's location looking for the workspace's `vendor/t3code/apps/server/dist`.
+ *
+ * The walk works in the `rennet` CLI bundle too: `build-server-cli.mjs` defines
+ * `import.meta.url` as the bundle's own `pathToFileURL(__filename)`, and
+ * `packages/server/dist` is four levels under a checkout's root — so a `rennet serve` run
+ * from a built checkout finds the vendored bundle with no flag and no env. An INSTALLED
+ * CLI is outside any checkout and finds nothing, which is what `--t3-bundle` and
+ * `RENNET_T3_BUNDLE` are for, and what the packaged app sets (#875).
  */
 export function resolveSidecarBundle(env: NodeJS.ProcessEnv = process.env): string | undefined {
   const explicit = env.RENNET_T3_BUNDLE;

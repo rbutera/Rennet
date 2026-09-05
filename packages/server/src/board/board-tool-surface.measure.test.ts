@@ -71,15 +71,27 @@ const retiredSchema = (row: SeatRow): unknown => outputSchemaFor(row.provider, b
 /**
  * The declared bounds (token discipline: "every dynamic interpolation declares a byte
  * bound at its call site"). RE-MEASURED 2026-09-05 with both operands as-sent, after #869
- * gave the Noise seat `write_board`: the worst seat is Design at 1.33x the schema it
- * replaces, and a generation's seven seats together are 0.949x (65,081 B of tools against
- * 68,582 B of schema) — the tool surface is SMALLER in aggregate than the output schema it
- * replaces. #869 moved the Noise seat 7,693 → 8,179 B and no other seat at all, so the
- * generation moved 64,595 → 65,081, +486 B once per session.
+ * gave the Noise seat `write_board` and #856 gave `prose` its scenario clauses: the worst
+ * seat is Design at 1.36x the schema it replaces, and a generation's seven seats together
+ * are 0.984x (68,903 B of tools against 70,057 B of schema) — the tool surface is still
+ * SMALLER in aggregate than the output schema it replaces.
  *
- * (The figure this note previously carried, 64,785, had drifted: it was measured before
+ * Two moves, one day apart, both worth telling apart:
+ *
+ * - #869 moved the Noise seat 7,693 → 8,179 B and no other seat at all, so the generation
+ *   moved 64,595 → 65,081, +486 B once per session.
+ * - #856 declared `scenario_clauses` on `prose`, which is a UNIVERSAL kind, so it lands on
+ *   `add_prose` and `update_prose` for all six targets: +546 B on EVERY seat, 65,081 →
+ *   68,903, +3,822 per generation. And because it is a field of the board schema, the
+ *   output schema this is measured against grew too — 68,582 → 70,057, +1,475. Both
+ *   operands moving is why the ratio only went 0.949 → 0.984, and the margin on the
+ *   generation bound is now 0.02 rather than 0.05.
+ *
+ * (The figure this note carried before #869, 64,785, had drifted: it was measured before
  * #864/#868 changed the Noise verb set. Re-run the test — it prints the table — rather than
- * copying a number forward, which is this file's whole point.)
+ * copying a number forward, which is this file's whole point. That is not a hypothetical:
+ * the first draft of the #856 measurement subtracted from the drifted 64,785 and reported
+ * a +3,632 delta that was 190 B per seat wrong.)
  *
  * The generation bound is therefore set at parity, which makes it a claim rather than
  * slack: a change that takes a generation's seats past what they replace has grown what

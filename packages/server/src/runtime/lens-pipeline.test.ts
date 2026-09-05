@@ -34,6 +34,7 @@ import {
   ROUND_EVIDENCE_MANIFEST_MAX_BYTES,
   ROUND_REPORT_MAX_BEYOND_ENTRIES,
   type RoundReportDiagnosticMilestone,
+  ScenarioClausesSchema,
 } from "@rennet/protocol";
 import { afterAll, describe, expect, it, vi } from "vitest";
 import type { GenerationBoards } from "../board/board-mcp-server";
@@ -2961,16 +2962,17 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     // The scenario's prose rides through verbatim: the host used to parse WHEN/THEN out of
     // a bundle's artifact text and stamp it, and nothing stamps or strips it now.
     //
-    // `scenario_clauses` does NOT ride with it any more, and the change is named here
-    // rather than left to be discovered. `prose` authors exactly one field in
-    // `AUTHORED_BOARD_SCHEMA` — `markdown` — so the tool surface derived from that table
-    // has no input to carry the clause pair on, and a seat cannot write one. The document
-    // path let it through because it parsed a whole returned board rather than a per-kind
-    // input. What the reader loses is the two-column Trigger/Outcome rendering; the
-    // scenario itself still renders, as the prose the seat wrote, because
-    // `RequirementElement` falls back to it when the clauses are absent. Restoring the
-    // refinement means a flattening row in the tool surface (`scenario_condition` /
-    // `scenario_response`), which is that surface's own change and not this one.
+    // And so do its CLAUSES (#856). This assertion used to be `not.toHaveProperty`, because
+    // `prose` declared exactly one field in `AUTHORED_BOARD_SCHEMA` — `markdown` — and the
+    // tool surface derived from that table therefore had no input to carry the pair on. The
+    // seat could not write it, and the reader silently lost the two-column Trigger/Outcome
+    // row. `scenario_clauses` is declared now and flattens to `scenario_condition` /
+    // `scenario_response`, so the pair travels as two flat strings and the writer puts it
+    // back together.
+    //
+    // This is the whole path, not a unit of it: the fixture is replayed through the REAL
+    // tool surface by `replayBoard`, which builds each call's input from the tool's own
+    // fields — a pair with no input to ride on simply would not appear here.
     const scenario = board?.elements.find(
       (element) =>
         element.kind === "prose" &&
@@ -2981,8 +2983,21 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     expect(scenario?.data).toMatchObject({
       markdown:
         "Scenario: Expired token\n\nWHEN a request uses an expired token\nTHEN the client refreshes it before retrying.",
+      scenario_clauses: {
+        condition: "a request uses an expired token",
+        response: "the client refreshes it before retrying.",
+      },
     });
-    expect(scenario?.data).not.toHaveProperty("scenario_clauses");
+    // The shape the RENDERER keys on, asserted against the schema that declares it rather
+    // than against a literal written twice. `RequirementElement` reads `condition` and
+    // `response` off this object and renders the two columns; `design-surface.dom.test.tsx`
+    // is where that rendering is executed, over a value this same schema accepts.
+    const writtenClauses = (scenario?.data as { scenario_clauses?: unknown } | undefined)
+      ?.scenario_clauses;
+    expect(
+      ScenarioClausesSchema.safeParse(writtenClauses).success,
+      "the clauses a seat wrote are not the shape the board schema declares",
+    ).toBe(true);
     const delivery = elementWhere(board, "section", "title", "Delivery");
     const copy = board?.elements.find(
       (element) =>
