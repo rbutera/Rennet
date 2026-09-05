@@ -1312,11 +1312,39 @@ calling it noise. The empty complement — the `no-noise` settlement with no sea
 was therefore unreachable for any change containing a modification.
 
 The complement now subtracts per HUNK and files an uncited hunk once, on its head side (see
-`lens-pipeline.md`). The one-file branch settles `no-noise` with no seat, and the member
-count on a modification-heavy change roughly halves. **The 1,259-member tail is reduced, not
-removed**: a change with hundreds of genuinely uncited hunks still gives the seat hundreds of
-members and one `update_noise_verdict` round trip each. A grouping verb that takes several
-members at once is the remaining half of that problem and is not in #864.
+`lens-pipeline.md`) — or on its base side when the change is a pure deletion with no head
+side to file.
+
+#### Re-measured after the fix, 2026-09-05
+
+Same two branches, same clone, a dev build of `dd0b0c28`.
+
+**The member count halved, and this figure is measured rather than inferred.** On the 95-file
+branch the host placed **626** `code_ref` + 626 `noise_verdict` elements, against 1,259 + 1,259
+the day before. Re-deriving the old per-side algorithm over *this drive's own* four settled
+boards gives 1,261, so the reduction on an identical citation set is **635 members, 50.4%** —
+and 1,261 landing within two of the 1,259 that was actually observed cross-checks both numbers.
+The board's own arithmetic is total: the patchset holds 649 hunks, the four settled boards cite
+23 of them, the Noise board carries the other 626, the two sets do not intersect, nothing is
+filed twice and nothing is left out. 620 members sit on the head side and 6 on the base side,
+the 6 being whole-file deletions.
+
+**The tail terminates now, and it costs 318.0 s on 95 files.** The four core lanes settled
+883.0 s after the drafting kickoff, the Noise seat ran **317.8 s over 961 tool calls**, and the
+generation revealed at 1,201.0 s — so running Noise last makes that generation **36% longer**,
+which is the honest price of the sequencing. What changed is the halved membership: the seat's
+`finish` came back with **6** pointers rather than 1,259, and it wrote 6 sections and 6 prose
+blocks over the 626 members instead of stalling.
+
+**On the one-file branch the tail is 0 s.** Its single hunk is cited by Sequence, so the lane
+settles `no-noise` with no board and no seat dispatched, and the `reveal` phase ends 29 ms
+after the last sibling's post-process. The 75.6 s measured on 2026-09-04 was the seat writing
+a board about a hunk a sibling had already read; it is gone with the defect.
+
+**The remaining half is unchanged.** The seat still spends one `update_noise_verdict` round
+trip per member, so the tail is still proportional to the uncited hunk count — 626 of them here.
+A grouping verb that takes several members at once is what would remove that, and it is not in
+#864.
 
 ### A lane that waits, and said it was working
 
@@ -1335,6 +1363,31 @@ could not tell "not started" from "in progress", and each time the fixture held 
 daemon does not publish. Fixed in
 [#865](https://github.com/rbutera/Rennet/issues/865) by giving the lane a `waiting` status;
 see `lens-pipeline.md`.
+
+Re-driven 2026-09-05 on `dd0b0c28`, after kickoff, on both branches. The daemon publishes
+`design=running sequence=running decisions=running flagged=running noise=waiting`; the rail
+carries `data-waiting-on="design,sequence,decisions,flagged"` and reads *"Noise, waiting on
+Design, Sequence, Decisions and Flagged"* with **no travelling lamp on that stop** while the
+other four have one; the widget reads *"WAITING · Noise seat · waiting on Design, Sequence,
+Decisions and Flagged · nothing written yet"* with no watch timer; and the board reads *"This
+board has not started."* with the string "still being written" absent from the document. When
+the siblings settle the three move together — the lane goes `running`, the lamp appears, and
+the in-progress line becomes true because a seat is now writing. The waiting list is also
+live: with Design failed and Decisions settled it read *"waiting on Sequence and Flagged"*.
+
+### A failed sibling stops the board rather than mis-filing it
+
+The `unknowable` arm, driven live for the first time on 2026-09-05. Killing the Design seat's
+provider process on an 8-file branch failed that lane over both attempts; the other three
+settled normally; and the Noise lane settled as a typed failure rather than a board:
+
+> noise lens: the design lane did not settle, so what it cites is unknown and the remainder
+> cannot be taken. A board built over it would file un-reviewed regions as skippable. Retry
+> the design lane and this board follows.
+
+No Noise board was minted and no Noise seat was dispatched, so the failed lane's hunks were
+never presented as noise. This is the harm D16 exists to prevent, and it is the arm that had
+only unit controls behind it until this drive.
 
 ### Cancel, checked live
 
