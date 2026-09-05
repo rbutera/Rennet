@@ -147,13 +147,16 @@ describe("a seat cannot type a count (D10)", () => {
     // a reconstructed tool surface, a raw schema and a one-target meta-key sweep have each
     // already shipped green in it. Deriving the expected total from `buildBoardTools`
     // again would inherit the same emptiness and assert nothing, so these are the measured
-    // figures (2026-09-05): 6 targets, 94 tools, 345 input fields between them. They are
+    // figures (2026-09-05): 6 targets, 94 tools, 369 input fields between them. They are
     // deliberately brittle — the tool list is what every seat is sent on every request, so
     // a change to any of these three numbers is a change to that, and the pull request
     // making it says so.
+    //
+    // 345 → 369 on 2026-09-05: `scenario_clauses` (#856) flattens to two inputs, and
+    // `prose` has an `add` and an `update` on all six targets — 2 × 2 × 6 = 24.
     expect(targetsSwept.size, "targets swept").toBe(6);
     expect(toolsSwept.size, "tools swept").toBe(94);
-    expect(swept, "target/tool/field triples swept").toHaveLength(345);
+    expect(swept, "target/tool/field triples swept").toHaveLength(369);
   });
 
   it("the section verb carries the authored one-line gist and nothing tallied", () => {
@@ -214,6 +217,52 @@ describe("the tool set is derived from the kind tables, not listed per lens (D2)
         expect(set, `${target} is missing ${shared}`).toContain(shared);
       }
     }
+  });
+
+  // #856. A scenario is a `prose` element, and one whose trigger and outcome are named
+  // renders as two columns rather than a sentence. `AUTHORED_BOARD_SCHEMA.prose` declared
+  // `markdown` alone, so the derived surface offered `markdown` alone and a Design seat had
+  // no way to write the pair — the capability was lost silently, because the scenario still
+  // rendered as prose. It is the derivation being right (the surface can only offer what
+  // the table declares), so the fix is in the table, and this is what says so.
+  it("a seat can author a scenario's trigger and outcome, on every target that writes prose", () => {
+    for (const target of BOARD_TARGETS) {
+      const add = boardToolsByName(target).get("add_prose") as BoardTool;
+      expect(fieldNames(add), `${target}.add_prose`).toEqual(
+        expect.arrayContaining(["markdown", "scenario_condition", "scenario_response"]),
+      );
+      // Both halves are optional: ordinary prose sends neither, and a scenario sends both.
+      // Neither may be required, or every `add_prose` on the board would have to carry a
+      // WHEN/THEN it does not have.
+      const shape = (add.input as z.ZodObject).shape;
+      for (const half of ["scenario_condition", "scenario_response"] as const) {
+        expect(shape[half] instanceof z.ZodOptional, `${target}.add_prose.${half}`).toBe(true);
+      }
+      // And an existing scenario can gain them, which is what a repair turn needs.
+      const update = boardToolsByName(target).get("update_prose") as BoardTool;
+      expect(fieldNames(update), `${target}.update_prose`).toEqual(
+        expect.arrayContaining(["scenario_condition", "scenario_response"]),
+      );
+    }
+  });
+
+  it("the two clause inputs land back on one `scenario_clauses` object, not two data fields", () => {
+    // The flattening is only correct if the writer can put it back: `dataFromInput` reads
+    // this plan and nothing else, so `dataField`/`part` here IS the reassembly. A row that
+    // named two different data fields would render two flat inputs the renderer never sees.
+    const fields = toolFieldsForKind("prose");
+    const clauses = fields.filter((field) => field.source.dataField === "scenario_clauses");
+    expect(clauses.map((field) => field.name)).toEqual(["scenario_condition", "scenario_response"]);
+    expect(
+      clauses.map((field) =>
+        field.source.form === "json-part" ? field.source.part : field.source,
+      ),
+    ).toEqual(["condition", "response"]);
+    // SINGLE-valued, not a list: one scenario per prose element, so there is no index to
+    // align by and `checkListAlignment` has nothing to do here.
+    expect(clauses.every((field) => field.source.form === "json-part" && !field.source.many)).toBe(
+      true,
+    );
   });
 
   it("every add verb has a matching update verb, and a derived kind has the update alone", () => {

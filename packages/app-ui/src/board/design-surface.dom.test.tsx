@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import type { HostElement, LensBoard } from "@rennet/protocol";
+import { type HostElement, type LensBoard, ScenarioClausesSchema } from "@rennet/protocol";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { BridgeProvider } from "../data";
 import { useRennetStore } from "../store";
@@ -1299,16 +1299,17 @@ describe("Design section metadata", () => {
 
 describe("Design requirements", () => {
   it("renders a proposal requirement without inventing a coverage chip", () => {
+    const clauses = {
+      condition: "refresh begins",
+      response: "the daemon records the attempt.",
+    };
     const scenario: HostElement = {
       id: "scenario-proposal",
       kind: "prose",
       data: {
         author,
         markdown: "WHEN refresh begins THEN the daemon records the attempt.",
-        scenario_clauses: {
-          condition: "refresh begins",
-          response: "the daemon records the attempt.",
-        },
+        scenario_clauses: clauses,
       },
     };
     const requirement: HostElement = {
@@ -1343,6 +1344,29 @@ describe("Design requirements", () => {
     expect(view.container.querySelectorAll('[data-element-id="scenario-proposal"]')).toHaveLength(
       1,
     );
+
+    // #856 — the join between what a seat can WRITE and what this component renders.
+    //
+    // The two columns above have always rendered from `scenario_clauses`; until #856 the
+    // board schema did not DECLARE the field, so the tool surface derived from it offered
+    // no input for the pair and no Design seat could produce the value being rendered here.
+    // The assertions above would have stayed green through all of that, because the fixture
+    // is hand-written. So the shape is checked against the schema the tool surface is
+    // derived from: if the two part again — a rename, a third clause, a seat writing
+    // something else — this reddens on the shape rather than waiting for a reader to notice
+    // the columns are gone.
+    //
+    // WHAT THIS CANNOT CATCH: it does not run a seat. That a seat's tool call actually
+    // lands as this object is proved server-side, in `lens-pipeline.test.ts`, over the real
+    // tool surface.
+    expect(
+      ScenarioClausesSchema.safeParse(clauses).success,
+      "the clauses this renders are not the shape the board schema declares",
+    ).toBe(true);
+    // NOT `HOST_KIND_SCHEMAS.prose.safeParse(scenario)`, which was the obvious thing to
+    // write and cannot fail: `withAuthor` builds a `looseObject`, so a prose element
+    // carrying any `scenario_clauses` at all — or a misspelt one — parses green. The clause
+    // schema on its own is the assertion that can redden.
   });
 
   it("renders exact scenario prose once when host clauses are unavailable", () => {

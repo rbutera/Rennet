@@ -491,7 +491,10 @@ Schema and reports any of those four shapes, naming the tool and the field.
 A structured value that is a LIST is flattened into parallel arrays the seat aligns
 by index, so it carries only the parts worth that cost: a section's sources are
 `source_paths` alone, while a requirement's single `source` keeps its candidate and
-line, where there is no index to align. Where both parts of a list are load-bearing
+line, where there is no index to align. A scenario's `scenario_clauses` is
+single-valued the same way and keeps both halves — `scenario_condition` and
+`scenario_response`, the WHEN and the THEN — because a trigger with no outcome is
+not a scenario. Where both parts of a list are load-bearing
 — a stat is a label and a value — the writer refuses a companion given without its
 spine and refuses arrays of different lengths, naming the field. Silently rebuilding
 the shorter list is how a partial update came to wipe a field the call never
@@ -957,9 +960,11 @@ a story requirement and `acceptance_criteria` on task prose; Superpowers `task_m
 file, interface, and verification arrays on a task-group section; `task_progress` on the
 top-level source section; `source_cells` on a matched tech-stack or architecture
 decision; grill `glossary_term` on the glossary-entry prose; and `scenario_clauses`
-split from a scenario's own WHEN/THEN words. Every array preserves source order, and the
-surface renders each projection once at its owner. A field whose shape does not match is
-not rendered, so a guess buys nothing. Stated decisions continue to use their canonical
+split from a scenario's own WHEN/THEN words, written as the two flat inputs
+`scenario_condition` and `scenario_response` and rendered as a Trigger/Outcome pair. A
+scenario that names neither still renders, as the prose the seat wrote. Every array
+preserves source order, and the surface renders each projection once at its owner. A
+field whose shape does not match is not rendered, so a guess buys nothing. Stated decisions continue to use their canonical
 statement, rationale, alternatives, and evidence fields.
 
 A requirement cites the code that implements it through `trace` — `code_ref` elements

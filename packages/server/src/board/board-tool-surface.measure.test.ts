@@ -70,10 +70,17 @@ const retiredSchema = (row: SeatRow): unknown => outputSchemaFor(row.provider, b
 
 /**
  * The declared bounds (token discipline: "every dynamic interpolation declares a byte
- * bound at its call site"). Measured 2026-09-05 with both operands as-sent: the worst seat
- * is Design at 1.34x the schema it replaces, and a generation's seven seats together are
- * 0.94x (64,785 B of tools against 68,582 B of schema) — the tool surface is SMALLER in
- * aggregate than the output schema it replaces.
+ * bound at its call site"). Re-measured 2026-09-05 with both operands as-sent: the worst
+ * seat is Design at 1.36x the schema it replaces, and a generation's seven seats together
+ * are 0.98x (68,417 B of tools against 70,057 B of schema) — the tool surface is still
+ * SMALLER in aggregate than the output schema it replaces.
+ *
+ * That moved from 0.94x (64,785 B / 68,582 B) when `scenario_clauses` was declared on
+ * `prose` (#856). BOTH operands grew, which is the thing to notice: the field flattens to
+ * two tool inputs on `add_prose` and `update_prose` for all six targets (+3,632 B of
+ * tools), and it is a field of the board schema, so the output schema the tools replaced
+ * grew with it (+1,475 B). The margin is thinner than it was — 0.02 rather than 0.06 —
+ * and the next field on a universal kind is the one that will have to argue for itself.
  *
  * The generation bound is therefore set at parity, which makes it a claim rather than
  * slack: a change that takes a generation's seats past what they replace has grown what
