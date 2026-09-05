@@ -435,12 +435,33 @@ export async function spawnSidecar(options: SpawnSidecarOptions): Promise<Runnin
   }
   const pipe = child.stdio[3];
   if (!pipe || !("write" in pipe)) throw new Error("sidecar bootstrap pipe was not opened");
-  pipe.end(bootstrapEnvelope(port, baseDir, bootstrapToken));
 
   let exited: { code: number | null; signal: NodeJS.Signals | null } | null = null;
+  let channelFailure: Error | null = null;
   child.once("exit", (code, signal) => {
     exited = { code, signal };
   });
+  // Both listeners are attached BEFORE the envelope is written, and both exist to stop an
+  // UNCAUGHT exception rather than to add a new failure mode.
+  //
+  // A sidecar that dies the instant it starts — a bundle that is not there, one Node cannot
+  // load, an immediate crash — closes the read end of this pipe under the write below. A
+  // `Writable` with no `error` listener re-throws EPIPE/ECONNRESET as an uncaught exception,
+  // which takes the whole process with it; the same is true of `spawn`'s own `error` event.
+  // That used to be a crash a reviewer had to open the chat dock to reach. Since #849 the
+  // daemon spawns the sidecar at launch, so it would be a crash on BOOT, in a path whose
+  // whole promise is that the daemon comes up either way. Seen on Linux as `read ECONNRESET`
+  // and not on macOS, where the small envelope usually lands in the pipe buffer before the
+  // child is gone — the platform decides whether it fires, so neither side may be relied on.
+  //
+  // Nothing is swallowed: the readiness loop below reports the exit it already knows how to
+  // describe (with the log tail), and a spawn that never produced a process reports this.
+  const captureChannelFailure = (error: Error): void => {
+    channelFailure ??= error;
+  };
+  child.once("error", captureChannelFailure);
+  pipe.once("error", captureChannelFailure);
+  pipe.end(bootstrapEnvelope(port, baseDir, bootstrapToken));
 
   const deadline = Date.now() + (options.readyTimeoutMs ?? READY_TIMEOUT_MS);
   let environment: SidecarEnvironment | null = null;
@@ -450,6 +471,13 @@ export async function spawnSidecar(options: SpawnSidecarOptions): Promise<Runnin
       throw new Error(
         `sidecar exited before it was ready (code ${code}, signal ${signal}); see ${join(baseDir, "sidecar.log")}${logTail(join(baseDir, "sidecar.log"))}`,
       );
+    }
+    // A process that never started at all: `exit` never fires, so without this the wait runs
+    // out and reports a timeout for something that failed in the first millisecond.
+    // The cast is the same one `exited` needs above: both are assigned only from a listener,
+    // which control-flow analysis cannot see, so each narrows to `never` inside this loop.
+    if (channelFailure && child.pid === undefined) {
+      throw new Error(`sidecar could not be started: ${(channelFailure as Error).message}`);
     }
     const runtime = readServerRuntime(baseDir);
     if (runtime && runtime.pid === child.pid && runtime.port === port) {

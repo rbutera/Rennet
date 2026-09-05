@@ -88,6 +88,16 @@ describe("t3 supervisor: eager start (#849)", () => {
     const f = fixture();
     // A bundle path that exists in the options but not on disk: node exits non-zero and the
     // readiness poll never sees a runtime file, which is the shape of a real failed spawn.
+    //
+    // This case also drives the bootstrap pipe's error channel, and that half is
+    // PLATFORM-DEPENDENT: the child closes the pipe's read end while `spawnSidecar` is
+    // writing the envelope, which surfaced on the Linux CI runner as an uncaught
+    // `read ECONNRESET` (run 33940712232) and does NOT surface on macOS, where the small
+    // envelope lands in the pipe buffer before the child is gone. So on darwin the
+    // assertions below pass whether or not `spawnSidecar` listens on that channel — this
+    // test cannot prove the listener locally, and the CI runner is what executes it. The
+    // enforcement is vitest's own: an unhandled error fails the run rather than being
+    // asserted here.
     const s = supervisor(f, { bundlePath: join(f.root, "not-built.mjs") });
 
     expect(() => s.start()).not.toThrow();
