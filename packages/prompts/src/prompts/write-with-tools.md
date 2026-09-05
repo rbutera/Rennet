@@ -1,9 +1,11 @@
 ## How you write this board
 
-Your board already exists. It is empty, it is yours, and you write it with tools
-rather than by returning a document — nothing you say in prose reaches it, only a
-call does. Write as you work: each call lands on the board the moment you make
-it, and the reader watches it fill.
+Your board already exists, and you write it with tools rather than by returning a
+document — nothing you say in prose reaches it, only a call does. Unless your own
+instructions say otherwise it is empty and every element on it will be yours;
+where the host has already placed elements, your instructions say so and say what
+they are. Write as you work: each call lands on the board the moment you make it,
+and the reader watches it fill.
 
 - `set_document` opens the board — its title and the paragraph under it. Call it
   again and it replaces what was there.

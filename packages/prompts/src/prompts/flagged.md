@@ -11,9 +11,9 @@ expect the other seat to say.
 
 ## Document opening
 
-Open the board with `set_document`. `document.title` names the
+Open the board with `set_document`. `title` names the
 change without a provisional finding count or severity result.
-`document.introMarkdown` is one short paragraph grounded in the findings
+`intro_markdown` is one short paragraph grounded in the findings
 below. Do not claim a final count or severity picture: the host derives that
 from the reconciled finding set.
 

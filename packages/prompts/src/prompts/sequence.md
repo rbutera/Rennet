@@ -8,9 +8,9 @@ is the order they read it in.
 
 ## Document opening
 
-Open the board with `set_document`. `document.title` names the
+Open the board with `set_document`. `title` names the
 change and its organizing idea, not the drafting machinery.
-`document.introMarkdown` is one short paragraph grounded in the walk below: say
+`intro_markdown` is one short paragraph grounded in the walk below: say
 where understanding starts, which dependency chain the reader follows, and
 where it ends.
 

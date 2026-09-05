@@ -1630,6 +1630,64 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     );
   });
 
+  it("falls the Design lane back to the seat when the assembler throws, never crashing the round", async () => {
+    // The round-crash regression: a throwing assembler used to reject the Design lane, which
+    // `Promise.allSettled` then rethrows, killing the whole generation and its four settled
+    // siblings. A `## Why` with an indented list or a machinery-word change name throws on
+    // VALID input, so the fast path must degrade to the seat, not take the round down.
+    const captures: SeatCapture[] = [];
+    const applied: Applied[] = [];
+    const bodyFor = (prompt: string, label?: string): unknown =>
+      cleanBody(lensFromPrompt(prompt, label));
+
+    const result = await runLensPipeline({
+      ...boardSeats(captures, bodyFor),
+      repoRoot: "/pr-worktree",
+      deltaPacket: PACKET,
+      lintContextFor,
+      readPrompt,
+      whiteboard: fakeWhiteboard(applied),
+      boardIdFor: (lens) => `board:${lens}`,
+      assembleDesignBoard: () => {
+        throw new Error("design-assembler: board did not settle — no-code-bytes @ document");
+      },
+    });
+
+    // All five lanes still settle, Design included, and none fails.
+    const lenses: LensKind[] = ["design", "sequence", "decisions", "flagged", "noise"];
+    expect(result.boards.map((b) => b.lens)).toEqual(lenses);
+    for (const outcome of result.boards) expect(outcome.failure).toBeUndefined();
+    // The Design SEAT ran — the throw fell through to the model exactly like `undefined` does.
+    expect(captures.some(({ prompt }) => lensFromPrompt(prompt ?? "") === "design")).toBe(true);
+  });
+
+  it("skips the Design seat entirely when the assembler settles a board (the fast path)", async () => {
+    // The other half of the wiring: a valid assembled board must REPLACE the model turn, or
+    // the fast path saves nothing. If the catch above ever swallowed a good board too, the
+    // seat would run here — this fails if it does.
+    const captures: SeatCapture[] = [];
+    const applied: Applied[] = [];
+    const bodyFor = (prompt: string, label?: string): unknown =>
+      cleanBody(lensFromPrompt(prompt, label));
+
+    const result = await runLensPipeline({
+      ...boardSeats(captures, bodyFor),
+      repoRoot: "/pr-worktree",
+      deltaPacket: PACKET,
+      lintContextFor,
+      readPrompt,
+      whiteboard: fakeWhiteboard(applied),
+      boardIdFor: (lens) => `board:${lens}`,
+      assembleDesignBoard: () => designBody(),
+    });
+
+    const design = result.boards.find((b) => b.lens === "design");
+    expect(design?.failure).toBeUndefined();
+    expect(design?.board?.document?.title).toBe("token-refresh");
+    // No Design turn was ever sent to the fake harness.
+    expect(captures.some(({ prompt }) => lensFromPrompt(prompt ?? "") === "design")).toBe(false);
+  });
+
   it("refuses a dangling Sequence or Decisions reference where it is made, and the board still lands", async () => {
     // WAS: "repairs dangling Sequence and Decisions references before the real board
     // service write". That test drove a seat that RETURNED a board naming an element it did
@@ -2170,7 +2228,12 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     expect(settled.get("noise")?.absence).toBeUndefined();
     expect(settled.get("noise")?.failure).toContain("design");
     expect(settled.get("noise")?.failure).toContain("sequence");
-    expect(settled.get("noise")?.failureAccount?.classification).toBe("retryable");
+    // TERMINAL, and it is the SIBLINGS' classification rather than an assumption about this
+    // lane: every core lane here spent its own ladder, so there is no per-lens retry left
+    // for the complement to become knowable through. `retryable` would be a claim about a
+    // future that cannot happen — and the restart path reads a retryable account as reason
+    // to re-draft all five lanes.
+    expect(settled.get("noise")?.failureAccount?.classification).toBe("terminal");
     // Every absence this pipeline settles is one the protocol table admits for that lens.
     for (const outcome of result.boards) {
       if (outcome.absence === undefined || outcome.lens === "report") continue;
@@ -2206,6 +2269,84 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     expect(decisions?.absence).toBe("no-decisions");
     expect(lensAdmitsAbsence("decisions", "no-decisions")).toBe(true);
     expect(decisionsTurns).toHaveLength(2);
+  });
+
+  it("settles no-noise with NO seat dispatched when the four lanes cite every region (3.11, D16e)", async () => {
+    // Task 3.11's own required control, which did not exist. Every other fixture in this
+    // file runs against `UNCITED_REGION` — a region no board cites — precisely so the Noise
+    // lane HAS a remainder and its seat runs; that fixture choice is what left the
+    // empty-complement arm bare, so this test supplies the opposite shape rather than
+    // changing the shared one.
+    //
+    // D16e: when the four lanes between them cite every changed region, the host knows the
+    // remainder is empty BEFORE any turn, so the lane settles `no-noise` with no seat at
+    // all — the cheapest turn in the change, and the whole point of deriving membership
+    // instead of asking a model for it. A Noise seat dispatched here would be a paid turn
+    // to be told there is nothing to group.
+    const seatTurns: SeatCapture[] = [];
+    const result = await runLensPipeline({
+      ...boardSeats(seatTurns, (prompt, label) => {
+        const lens = lensFromPrompt(prompt, label);
+        if (lens !== "sequence") return cleanBody(lens);
+        // The one board that cites the fixture's only changed region, which makes the
+        // complement empty by subtraction.
+        const body = meaningfulSequenceBody();
+        return {
+          elements: [
+            ...body.elements.map((element) =>
+              element.id === "sequence-root"
+                ? {
+                    ...element,
+                    data: { ...element.data, children: ["sequence-step", "uncited-ref"] },
+                  }
+                : element,
+            ),
+            {
+              id: "uncited-ref",
+              kind: "code_ref",
+              data: {
+                author: { kind: "lens-agent", id: "sequence-seat" },
+                patchset_id: "ps-1",
+                path: UNCITED_REGION.path,
+                side: UNCITED_REGION.side,
+                start_line: UNCITED_REGION.start,
+                end_line: UNCITED_REGION.end,
+              },
+            },
+          ],
+        } as unknown as DraftBoard;
+      }),
+      repoRoot: "/pr-worktree",
+      deltaPacket: PACKET,
+      // The file inventory the citation resolves against. Without it the `code_ref` is
+      // unresolvable, admissibility strips it, and the board cites nothing after all —
+      // which would make this test pass or fail for a reason that is not the one written
+      // above it.
+      lintContextFor: (lens) => ({
+        ...lintContextFor(lens),
+        files: new Map([[UNCITED_REGION.path, 100]]),
+      }),
+      readPrompt,
+      whiteboard: fakeWhiteboard([]),
+      boardIdFor: (lens) => `board:${lens}`,
+    });
+
+    const sequence = result.boards.find(({ lens }) => lens === "sequence");
+    expect(sequence?.failure, "the citing lane settled a board").toBeUndefined();
+    expect(sequence?.boardId).toBeDefined();
+    const noise = result.boards.find(({ lens }) => lens === "noise");
+    expect(noise?.absence).toBe("no-noise");
+    expect(noise?.failure).toBeUndefined();
+    expect(noise?.boardId, "no board was written for a lane that ran no seat").toBeUndefined();
+    // The load-bearing half: NO seat. A membership assertion alone passes over a pipeline
+    // that dispatches the seat and then discards its board.
+    const providerCalls = seatTurns.map(({ prompt }) => lensFromPrompt(prompt ?? ""));
+    expect(providerCalls, "at least the other four lanes ran").not.toHaveLength(0);
+    expect(providerCalls).not.toContain("noise");
+    expect(
+      seatTurns.filter(({ seat }) => seat === "noise"),
+      "no thread was opened for the Noise seat either",
+    ).toHaveLength(0);
   });
 
   it("classifies a lane that never settles across its ladder as TERMINAL", async () => {
@@ -6115,7 +6256,7 @@ describe("a repair is a second turn on the SAME seat thread, carrying the verdic
 
   const run = async (over: Partial<LensPipelineDeps> = {}) => {
     const turns: SeatCapture[] = [];
-    const stallers = new Map<string, (voice: BoardVoiceWriter) => void>();
+    const stallers = new Map<string, (voice: BoardVoiceWriter, target: BoardTarget) => void>();
     const result = await runLensPipeline({
       ...boardSeats(
         turns,

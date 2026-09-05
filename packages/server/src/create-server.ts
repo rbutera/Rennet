@@ -96,6 +96,7 @@ import {
   RoundOperationStore,
   RoundRecordStore,
   readOpenSpecChange,
+  readOpenSpecChangeSource,
   readSetupLogTail,
   readSetupStatus,
   readTreeLineCounts,
@@ -124,6 +125,7 @@ import {
   wslForgeDetectionDeps,
 } from "@rennet/adapters";
 import {
+  assembleDesignBoard,
   attachRiskCrossCheck,
   buildHandoffBundle,
   buildOfferedManifest,
@@ -146,11 +148,13 @@ import {
   type HarnessTurnResult,
   HOST_LOCUS,
   handoffDispositionsFromProjection,
+  type LintContext,
   type Locus,
   LocusDistroMismatchError,
   LocusPathUntranslatableError,
   mechanicalComposition,
   mintSession,
+  openSpecChangeSourceToDesignSources,
   planQuoteThreadReanchors,
   prPaperContextFile,
   ReviewService,
@@ -175,6 +179,7 @@ import type {
   CouncilHarnessId,
   DetectedForge,
   DetectedHarness,
+  DraftBoard,
   FlaggedReview,
   ForgeRepoIdentity,
   Generation,
@@ -3397,9 +3402,37 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         // the same context sink as the seats' own files, which is what puts it in the root
         // the seats actually run in rather than the repository root alone.
         const prPaper = prPaperContextFile(reviewNow());
+        // The deterministic Design fast path (phase 1: OpenSpec). When the round's
+        // patchset carries an OpenSpec change, read its artifacts ONCE here — where the
+        // full patchset + git are in scope — and hand the pipeline a pure host-side
+        // assembler. The Design seat still runs whenever this is absent or the change
+        // yields no board (a pure additive fast path; the seat is never removed). The
+        // `deltaPacket.openspec` gate skips the git read for a non-OpenSpec round.
+        const roundPatchset =
+          input.deltaPacket.openspec === undefined
+            ? undefined
+            : reviewNow().patchsets.find((p) => p.id === input.deltaPacket.patchset.id);
+        const designSource =
+          roundPatchset === undefined
+            ? null
+            : await readOpenSpecChangeSource(
+                roundPatchset,
+                gitForRepo(roundPatchset.repository.root),
+              );
+        const assembleDesignBoardFor =
+          designSource === null
+            ? undefined
+            : (ctx: LintContext): DraftBoard | undefined =>
+                assembleDesignBoard(openSpecChangeSourceToDesignSources(designSource), ctx, {
+                  kind: "lens-agent",
+                  id: "design-seat",
+                });
         return await roundsRuntime.runRound({
           ...input,
           ...(prPaper === undefined ? {} : { prPaper }),
+          ...(assembleDesignBoardFor === undefined
+            ? {}
+            : { assembleDesignBoard: assembleDesignBoardFor }),
           ...(awaitReport === undefined ? {} : { onReportProgress: awaitReport }),
         });
       } finally {

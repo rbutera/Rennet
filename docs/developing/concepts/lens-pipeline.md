@@ -556,12 +556,33 @@ not two:
   is an empty citation set and subtracts safely.
 - A lane that **failed** stated nothing, and nothing is not an empty set.
 
+The rule that makes "stated nothing" operational is that the complement **subtracts only
+what a restart could re-read**, because it has to be reconstructible from the same durable
+evidence the reveal is. A board clears that the moment the draft returns: its elements are
+on the whiteboard and its metadata is already persisted, so a lane that then throws on a
+later durable write has plainly said what it cites, and reading it as silent because no
+row survived the unwind would be matching on the absence of a record rather than on a
+positive contradiction. An absence is different, because nothing but its own durable write
+records it: if that write throws, no restart can re-read the declaration and the lane
+reads as one whose citations are unknown. A draft that threw before producing an outcome
+at all leaves nothing to subtract either way.
+
 When any core lane failed, the Noise lane does not settle a board at all. It settles as a
-typed failure naming the lanes whose citations are unknown, and becomes runnable again
-when one of them settles on a retry. A complement taken over a partial set of siblings
-would present un-reviewed regions as safely skippable, which is the failure the lens
-exists to avoid; a partial complement is worse than no Noise board, because the reviewer
-cannot see which part of it is guesswork.
+typed failure naming the lanes whose citations are unknown. **That failure's
+classification is the named lanes', not an assumption about Noise.** It is retryable while
+any named lane still has attempts left — the sibling's retry is what makes this lane
+runnable again — and terminal when every named lane has exhausted its own ladder, because
+a derived lane whose cause is settled has no retry of its own to reach. The distinction is
+load-bearing on the restart path: a retryable account is read as evidence the generation
+must re-draft, so calling a derived failure retryable when its cause is terminal makes
+every generation carrying a terminal core failure re-draft all five lanes on every
+restart, spending a model to rebuild boards already on disk and arrive back at the same
+failure. A lane that threw without an account at all stays retryable: an unknown ladder is
+not an exhausted one.
+
+A complement taken over a partial set of siblings would present un-reviewed regions as
+safely skippable, which is the failure the lens exists to avoid; a partial complement is
+worse than no Noise board, because the reviewer cannot see which part of it is guesswork.
 
 **The lane runs last, and nothing waits on it.** The complement of boards that have not
 settled is not knowable, so the four core lanes fan out together and Noise starts on their

@@ -7,6 +7,7 @@
  */
 export * from "./board-writer";
 export * from "./compose";
+export * from "./design-assembler";
 export * from "./design-obligations";
 export * from "./finding-round";
 export * from "./lint";

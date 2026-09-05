@@ -21,6 +21,7 @@
       { "env": "RENNET_LIVE_WSL_CODEX" },
       { "env": "RENNET_LIVE_WSL_DISTRO" },
       { "env": "RENNET_ROUND_STORE_RACE_ROLE" },
+      { "env": "RENNET_SNAPSHOT_PROFILE" },
       { "env": "RENNET_VERIFY_EXEC" }
     ]
   },
@@ -45,6 +46,10 @@
       "cache": false,
       "dependsOn": ["build"],
       "command": "pnpm exec vitest run packages/adapters/src/project-snapshot-generator.dogfood.test.ts"
+    },
+    "snapshot-profile": {
+      "cache": false,
+      "command": "RENNET_SNAPSHOT_PROFILE=1 pnpm exec vitest run packages/adapters/src/project-snapshot-generator.profile.test.ts"
     },
     "native-test": {
       "cache": false,

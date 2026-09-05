@@ -610,6 +610,9 @@ export interface RoundInput {
    *  (PR #802); a branch review has none and names none. */
   readonly prPaper?: SessionContextFile;
   readonly lintContextFor: (lens: LintTarget) => LintContext;
+  /** The deterministic Design fast path, when this review's branch carries an OpenSpec
+   *  change: a host-side board build with no model turn. Absent ⇒ the Design seat runs. */
+  readonly assembleDesignBoard?: (ctx: LintContext) => DraftBoard | undefined;
   /** The prior generation's boards, for the pipeline's R58 delta stamps (optional). */
   readonly previous?: ReadonlyMap<LintTarget, DraftBoard>;
   /**
@@ -1462,10 +1465,11 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
       council: { availability: { installed } },
       ...(input.prPaper === undefined ? {} : { prPaper: input.prPaper }),
       ...(t3Seam === undefined ? {} : { t3: t3Seam }),
-      // This generation's board lanes (`lens-board-tools` D8). The pipeline opens one per
-      // lens before it dispatches a seat, and a seat writes its board into the lane rather
-      // than returning one — so a runtime that composed lanes and did not hand them over
-      // would leave every seat with nothing to write into.
+      // This generation's lanes on the daemon's loopback board server. Without it the
+      // pipeline's lane-opening loop is unreachable in production — the guard reads
+      // `deps.boards !== undefined` and nothing else supplies it — so every board would be
+      // minted only when a seat first wrote to it, `openLaneCount()` would be 0 forever,
+      // and the `t3code-sidecar` disclosure clause would have nothing it could ever report.
       ...(t3Runtime?.boards === undefined ? {} : { boards: t3Runtime.boards }),
       ...(t3Unavailable === undefined ? {} : { t3Unavailable }),
       repoRoot: input.draftingRoot ?? input.repoRoot,
@@ -1499,6 +1503,9 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
         ? {}
         : { persistFindingResolutions: input.persistFindingResolutions }),
       lintContextFor: input.lintContextFor,
+      ...(input.assembleDesignBoard === undefined
+        ? {}
+        : { assembleDesignBoard: input.assembleDesignBoard }),
       readPrompt: deps.readPrompt,
       collector,
       whiteboard,

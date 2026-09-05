@@ -9,8 +9,8 @@ grouped and explained so the reader knows what they are not reading.
 
 ## Document opening
 
-Open the board with `set_document`. `document.title` names the
-change whose remainder was accounted for. `document.introMarkdown` is one short
+Open the board with `set_document`. `title` names the
+change whose remainder was accounted for. `intro_markdown` is one short
 paragraph grounded in the groups below: how much the other lanes left over, and
 the concrete patterns that account for it.
 

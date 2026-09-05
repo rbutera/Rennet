@@ -75,13 +75,18 @@ async function claudeTurn(
 export function fakeT3SeatsOverPorts(
   resolveClaudePort: (repoRoot: string) => Promise<HarnessPort | null>,
   resolveCodexExecutor: (repoRoot: string) => Promise<CodexExecutor | null>,
+  /** This generation's board lanes, when the test is about them. Omitted ⇒ this attempt
+   *  gets its own real ones, because a seat writes its board and needs somewhere to. */
+  callerBoards?: GenerationBoards,
 ): NonNullable<RoundsRuntimeDeps["resolveT3Seats"]> {
   return async (input): Promise<T3SeatRuntime> => {
     const providerOf = new Map<string, { seat: string; provider: "claudeAgent" | "codex" }>();
     const settled = new Map<string, T3SettledTurn>();
-    // This generation's lanes, on the real loopback board server. The pipeline opens each
-    // one before it dispatches a seat; nothing here opens them, exactly as in production.
-    const boards: GenerationBoards = fixtureGenerationBoards();
+    // The caller's lanes when it has any to give — that is how the round-level test of the
+    // open-before-dispatch ordering watches `openLane` — and this attempt's OWN fixture
+    // lanes otherwise. Always a real set either way: a seat writes its board now, so a
+    // runtime with no lanes leaves every lens with nothing to write into.
+    const lanes: GenerationBoards = callerBoards ?? fixtureGenerationBoards();
     const client: T3SeatClient = {
       startTurn: async ({ threadId, text, outputSchema }) => {
         const thread = providerOf.get(threadId);
@@ -131,7 +136,7 @@ export function fakeT3SeatsOverPorts(
         // The seat's answer goes where a seat's work goes: onto its lane's board, through
         // the tool surface. A seat with no lane — the round-report seat — keeps its
         // structured return, which is what the classifier still reads.
-        const voice = seatVoiceOn(boards, thread.seat as SeatKind);
+        const voice = seatVoiceOn(lanes, thread.seat as SeatKind);
         if (voice !== undefined && turn.state === "completed") {
           await applySeatTurn(turn.structuredOutput, thread.seat as SeatKind, voice);
           settled.set(threadId, { ...turn, structuredOutput: undefined });
@@ -157,7 +162,7 @@ export function fakeT3SeatsOverPorts(
     };
     return {
       seam,
-      boards,
+      boards: lanes,
       environmentId: "fake-environment",
       watch: () => ({ stop: () => undefined }),
     };
@@ -168,10 +173,13 @@ export function fakeT3SeatsOverPorts(
  * The rounds-runtime deps with a fake sidecar filled in from the harness fakes already in
  * them. One call at the composition site keeps every round test's own fixtures intact.
  */
-export function withFakeT3Seats<D extends RoundsRuntimeDeps>(deps: D): D {
+export function withFakeT3Seats<D extends RoundsRuntimeDeps>(
+  deps: D,
+  boards?: GenerationBoards,
+): D {
   if (deps.resolveT3Seats !== undefined) return deps;
   return {
     ...deps,
-    resolveT3Seats: fakeT3SeatsOverPorts(deps.resolveClaudePort, deps.resolveCodexExecutor),
+    resolveT3Seats: fakeT3SeatsOverPorts(deps.resolveClaudePort, deps.resolveCodexExecutor, boards),
   };
 }

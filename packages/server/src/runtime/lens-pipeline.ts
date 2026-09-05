@@ -1388,6 +1388,13 @@ export interface LensPipelineDeps {
   readonly round?: RoundDraftContext;
   /** Per-lens lint context the caller assembles (changed regions, files, patchsetId…). */
   readonly lintContextFor: (lens: LintTarget) => LintContext;
+  /**
+   * The deterministic Design fast path. When this review's branch carries an OpenSpec
+   * change, the Design board is a pure host-side transform from its artifacts — no model
+   * turn — so the caller wires this to build it. It is a PURE ADDITIVE path: `undefined`
+   * (no OpenSpec change, or nothing to render) falls straight through to the model seat.
+   */
+  readonly assembleDesignBoard?: (ctx: LintContext) => DraftBoard | undefined;
   /** Read a prompt file's text (node fs seam; hermetic in tests). */
   readonly readPrompt: PromptReader;
   /**
@@ -2252,9 +2259,13 @@ export async function runLensPipeline(deps: LensPipelineDeps): Promise<LensPipel
   // opening a lane is what lets its seats be given an address, so a seat dispatched before
   // its lane existed would carry no board server and have nothing to write with.
   //
-  // Awaited together and before the report gate's own dispatch, because the FIRST lane to
-  // open is what binds the listener — a seat resolved against a half-opened generation is
-  // exactly the race this ordering removes.
+  // Awaited together, and before the LENS seats are dispatched — which is the ordering
+  // `board-tool-authoring` asks for, and all of it. The round-report seat has already run
+  // above (`runRoundReport`); it has no lane, so nothing about it waits on this. The
+  // comment here used to claim these lanes opened "before the report gate's own dispatch",
+  // which was never true of a block that sits below the gate, and a control-flow claim a
+  // reader inherits as fact is worse than no comment. `opens every lens lane on the board
+  // server before any seat turn is dispatched` in `rounds.test.ts` executes the real order.
   if (deps.boards !== undefined) {
     const boards = deps.boards;
     await Promise.all(
@@ -2315,9 +2326,37 @@ export async function runLensPipeline(deps: LensPipelineDeps): Promise<LensPipel
     // The lane is done, whichever way it went: revoke its seats' addresses now rather than
     // on a liveness timeout (D8). A settled lane whose credentials still worked would let
     // a turn that outlived its lane keep writing into a board the reviewer is reading.
+    // Before the statement below and before the publishes, because both read a board that
+    // is finished and neither wants a seat still able to move it.
     deps.boards?.settleLane(lens);
+    // ── What the Noise complement is allowed to subtract ────────────────────────────
+    // D16d says a lane that FAILED stated nothing while a board or an admissible absence
+    // is a positive statement. The rule that makes that operational is: subtract only what
+    // a RESTART COULD RE-READ, because the complement has to be reconstructible from the
+    // same durable evidence the reveal is.
+    //
+    // A board clears that bar the moment `runLensBoard` returns: the elements are on the
+    // whiteboard and `persistBoardMeta` has already run inside it. So the statement is
+    // recorded HERE, before the publishes below — recording it after them (as it first
+    // was) let a durable-write throw downstream of a board that was already on disk erase
+    // a statement the lane had plainly made, and the Noise derivation then read that lane
+    // as silent. That is matching on the absence of a record rather than on a positive
+    // contradiction, which is the exact error D16d exists to forbid.
+    //
+    // An absence is different, and the difference is the whole reason this is a rule and
+    // not a line: nothing but `onLensAbsence` records it. If that write throws, no restart
+    // can re-read the declaration, so the row is withdrawn again below and the lane reads
+    // as one whose citations are unknown. A throw from `runLensBoard` itself leaves no row
+    // at all, because then there genuinely is no statement.
+    settledCore.set(lens, outcome);
     if (outcome.absence !== undefined) {
-      await publish(() => deps.onLensAbsence?.(lens, outcome.absence as LensAbsenceReason));
+      const absence = outcome.absence;
+      try {
+        await publish(() => deps.onLensAbsence?.(lens, absence));
+      } catch (error) {
+        settledCore.delete(lens);
+        throw error;
+      }
       lastRevealAt = clock();
     }
     // #725 D4 — the lane's settlement is published HERE, the moment this board is
@@ -2355,17 +2394,15 @@ export async function runLensPipeline(deps: LensPipelineDeps): Promise<LensPipel
   };
 
   const coreLenses: readonly LensKind[] = LENS_KINDS.filter((lens) => lens !== "noise");
-  const settledCoreOutcomes = await Promise.allSettled(
-    coreLenses.map(async (lens) => {
-      const outcome = await runLane(lens);
-      settledCore.set(lens, outcome);
-      return outcome;
-    }),
-  );
-  // Noise starts on the four settlements, and only on them. A core lane that REJECTED
-  // (an infrastructure throw, not a recorded failure) leaves this map without its row,
-  // which `runLensBoard` reads as a lane whose citations are unknown — the same answer a
-  // recorded failure gets, and the right one: neither said what it cites.
+  // `(lens) => runLane(lens)`, never `map(runLane)`: `Array.map` passes the INDEX as the
+  // second argument, which `runLane` now reads as the derived members a lane is handed.
+  const settledCoreOutcomes = await Promise.allSettled(coreLenses.map((lens) => runLane(lens)));
+  // Noise starts on the four settlements, and only on them. A core lane whose DRAFT threw
+  // — an infrastructure failure before any outcome existed, not a recorded failure —
+  // leaves `settledCore` without its row, which reads as a lane whose citations are
+  // unknown: the same answer a recorded failure gets, and the right one, because neither
+  // said what it cites. A lane that settled and then threw on the way to disk is not that
+  // case; see `runLane`.
   const noiseOutcome = await Promise.allSettled([
     (async (): Promise<LensBoardOutcome> => {
       const membership = deriveNoiseMembers({
@@ -2377,11 +2414,25 @@ export async function runLensPipeline(deps: LensPipelineDeps): Promise<LensPipel
         // that never arrived is not the complement of an empty one, and a Noise board
         // built over it would file un-reviewed regions as skippable.
         const failure = unknowableComplementFailure(membership.unknown);
+        // The classification is the SIBLINGS', not an assumption about this lane. D16d's
+        // own sentence — "it becomes runnable again when that sibling's per-lens retry
+        // settles" — is conditional on there being a retry left to settle, so a lane whose
+        // named siblings have every one of them exhausted their own ladders has exhausted
+        // its own by derivation. Claiming `retryable` there is a claim about a future that
+        // cannot happen, and #549 reads a retryable account as proof the RESTART path must
+        // re-draft: an unconditional `retryable` therefore made every generation carrying a
+        // terminal core failure re-draft all five lanes on every restart, spending a model
+        // to rebuild boards already on disk and arrive back at the same terminal failure.
+        // A sibling with no account at all — a draft that threw — stays `retryable`,
+        // because an unknown ladder is not an exhausted one.
+        const classification = membership.unknown.every(
+          (sibling) => settledCore.get(sibling)?.failureAccount?.classification === "terminal",
+        )
+          ? "terminal"
+          : "retryable";
         const outcome: LensBoardOutcome = failedLensOutcome("noise", {
           failure,
-          // RETRYABLE: the sibling's per-lens retry is exactly what makes this lane
-          // runnable again, so this is not a terminal state the reviewer must live with.
-          failureAccount: { attempt: deps.boardAttempt ?? 0, classification: "retryable" },
+          failureAccount: { attempt: deps.boardAttempt ?? 0, classification },
         });
         deps.boards?.settleLane("noise");
         await publish(() => deps.onLensFailure?.("noise", failure, outcome.failureAccount));
@@ -3267,7 +3318,32 @@ async function draftLensBoard(
   const retryCap = lensRetryBudget(lens, deps.boardAttempt ?? 0);
 
   let draft: LaneDraft;
-  if (lens === "flagged") {
+  // The deterministic Design fast path (pure additive): an OpenSpec branch's Design board
+  // is a host-side transform from the change artifacts, so it settles here with NO model
+  // turn. `undefined` — no OpenSpec change, or a change with nothing to render — falls
+  // straight through to the seat below, unchanged.
+  //
+  // The assembler THROWS when a change it accepted cannot settle: either the source prose
+  // trips a boundary rule the deterministic path can't rephrase (a code fence or an
+  // indented list in `## Why`, a machinery word in the change name), or a genuine mapping
+  // defect. Both fall back to the seat — the seat renders the same change — rather than
+  // rejecting the lane, which would rethrow and kill the whole round with its four settled
+  // siblings. A silent slow-down is the worst case; a crashed round is not on the table.
+  //
+  // It spends NO attempt and needs no lane, which is the honest reading of `runSeatTurns`'
+  // accounting rather than an exemption from it: an attempt is a turn that ended unsettled,
+  // and this path runs no turn at all.
+  let assembledDesign: DraftBoard | undefined;
+  if (lens === "design" && deps.assembleDesignBoard !== undefined) {
+    try {
+      assembledDesign = deps.assembleDesignBoard(deps.lintContextFor(lens));
+    } catch {
+      assembledDesign = undefined;
+    }
+  }
+  if (assembledDesign !== undefined) {
+    draft = { board: assembledDesign, attempts: 0 };
+  } else if (lens === "flagged") {
     // The flagged lens is the dual seat (Claude + Codex, cross-model concurrence).
     const dual = await runFlaggedDual(deps, council, lane, basePrompt, retryCap, spans.wrap);
     if ("failure" in dual) {
