@@ -72,7 +72,8 @@ const retiredSchema = (row: SeatRow): unknown => outputSchemaFor(row.provider, b
  * The declared bounds (token discipline: "every dynamic interpolation declares a byte
  * bound at its call site"). Measured 2026-09-05 with both operands as-sent: the worst seat
  * is Design at 1.34x the schema it replaces, and a generation's seven seats together are
- * 0.96x — the tool surface is SMALLER in aggregate than the output schema it replaces.
+ * 0.94x (64,785 B of tools against 68,582 B of schema) — the tool surface is SMALLER in
+ * aggregate than the output schema it replaces.
  *
  * The generation bound is therefore set at parity, which makes it a claim rather than
  * slack: a change that takes a generation's seats past what they replace has grown what
