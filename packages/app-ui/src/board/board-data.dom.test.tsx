@@ -158,7 +158,7 @@ describe("board-data seam — the single board resolution point", () => {
           { id: "sequence", label: "Sequence", status: "running" },
           { id: "decisions", label: "Decisions", status: "running" },
           { id: "flagged", label: "Flagged", status: "queued" },
-          { id: "noise", label: "Noise", status: "queued" },
+          { id: "noise", label: "Noise", status: "waiting" },
         ] as LensLane[],
       },
       reads,
@@ -174,6 +174,14 @@ describe("board-data seam — the single board resolution point", () => {
     expect(waitingOnLine(seats.noise.waitingOn)).toBe("waiting on Sequence, Decisions and Flagged");
     // Waiting is not working and is not failed — the two things D16c forbids it reading as.
     expect(seats.noise.voices.some((voice) => voice.speech.quiet)).toBe(true);
+    // …and NOTHING is being written on it. `drafting` is the gate on the board's
+    // in-progress mark, its "still being written" line and its placeholder row, so a
+    // waiting lane that reads as drafting is #865 on the third surface. It is exactly
+    // "a seat is working", not "a lane exists and has not settled" — the queued Flagged
+    // lane is the second case and is equally not drafting.
+    expect(seats.noise.drafting).toBe(false);
+    expect(seats.flagged.drafting).toBe(false);
+    expect(seats.sequence.drafting).toBe(true);
   });
 
   it("tells a live generation with no lanes yet from a settled one with no boards", () => {
