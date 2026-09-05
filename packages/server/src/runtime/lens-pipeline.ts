@@ -2209,9 +2209,13 @@ export async function runLensPipeline(deps: LensPipelineDeps): Promise<LensPipel
   // opening a lane is what lets its seats be given an address, so a seat dispatched before
   // its lane existed would carry no board server and have nothing to write with.
   //
-  // Awaited together and before the report gate's own dispatch, because the FIRST lane to
-  // open is what binds the listener — a seat resolved against a half-opened generation is
-  // exactly the race this ordering removes.
+  // Awaited together, and before the LENS seats are dispatched — which is the ordering
+  // `board-tool-authoring` asks for, and all of it. The round-report seat has already run
+  // above (`runRoundReport`); it has no lane, so nothing about it waits on this. The
+  // comment here used to claim these lanes opened "before the report gate's own dispatch",
+  // which was never true of a block that sits below the gate, and a control-flow claim a
+  // reader inherits as fact is worse than no comment. `opens every lens lane on the board
+  // server before any seat turn is dispatched` in `rounds.test.ts` executes the real order.
   if (deps.boards !== undefined) {
     const boards = deps.boards;
     await Promise.all(

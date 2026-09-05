@@ -13,6 +13,7 @@
 
 import type { T3SeatClient, T3SeatSeam, T3SettledTurn } from "@rennet/adapters";
 import type { CodexExecutor, HarnessPort } from "@rennet/core";
+import type { GenerationBoards } from "./board/board-mcp-server";
 import type { RoundsRuntimeDeps, T3SeatRuntime } from "./runtime/rounds";
 
 async function claudeTurn(
@@ -66,6 +67,9 @@ async function claudeTurn(
 export function fakeT3SeatsOverPorts(
   resolveClaudePort: (repoRoot: string) => Promise<HarnessPort | null>,
   resolveCodexExecutor: (repoRoot: string) => Promise<CodexExecutor | null>,
+  /** This generation's board lanes, when the test is about them. Omitted ⇒ the runtime
+   *  carries none, which is the direct-call shape every other round test wants. */
+  boards?: GenerationBoards,
 ): NonNullable<RoundsRuntimeDeps["resolveT3Seats"]> {
   return async (input): Promise<T3SeatRuntime> => {
     const providerOf = new Map<string, { seat: string; provider: "claudeAgent" | "codex" }>();
@@ -134,7 +138,12 @@ export function fakeT3SeatsOverPorts(
         return { threadId, projectId: input.sessionId };
       },
     };
-    return { seam, environmentId: "fake-environment", watch: () => ({ stop: () => undefined }) };
+    return {
+      seam,
+      environmentId: "fake-environment",
+      ...(boards === undefined ? {} : { boards }),
+      watch: () => ({ stop: () => undefined }),
+    };
   };
 }
 
@@ -142,10 +151,13 @@ export function fakeT3SeatsOverPorts(
  * The rounds-runtime deps with a fake sidecar filled in from the harness fakes already in
  * them. One call at the composition site keeps every round test's own fixtures intact.
  */
-export function withFakeT3Seats<D extends RoundsRuntimeDeps>(deps: D): D {
+export function withFakeT3Seats<D extends RoundsRuntimeDeps>(
+  deps: D,
+  boards?: GenerationBoards,
+): D {
   if (deps.resolveT3Seats !== undefined) return deps;
   return {
     ...deps,
-    resolveT3Seats: fakeT3SeatsOverPorts(deps.resolveClaudePort, deps.resolveCodexExecutor),
+    resolveT3Seats: fakeT3SeatsOverPorts(deps.resolveClaudePort, deps.resolveCodexExecutor, boards),
   };
 }

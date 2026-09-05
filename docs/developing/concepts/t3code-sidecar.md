@@ -83,6 +83,10 @@ many boards it is serving. A reader can therefore tell a loopback tool call from
 without inferring it. The field is absent rather than empty when nothing is serving, and
 that is deliberate: a status field naming a running loopback server while none runs is a
 lie in the UI, which is why the clause was left unmet until lanes were opened eagerly.
+What makes the count move is one hand-over — the round runtime passes the generation's
+`boards` to the drafting pipeline, which opens all five lens lanes before it dispatches a
+lens seat. Without it the pipeline's lane-opening loop is unreachable, every board is
+minted only when a seat first writes to it, and this field can never report anything.
 This is disclosure, not a consent step: no dialog is shown.
 
 One variable is also SET on that environment: `RENNET_BOARD_BEARER`, the daemon-minted
