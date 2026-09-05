@@ -8,7 +8,7 @@ configuration define the development environment.
 
 ## Install the toolchain
 
-Rennet pins Node `24.18.0` in `.nvmrc` and pnpm `10.32.1` in `package.json`.
+Rennet pins Node `24.20.0` in `.nvmrc` and pnpm `10.34.5` in `package.json`.
 Select the pinned Node version, then install the committed dependency graph:
 
 ```sh
