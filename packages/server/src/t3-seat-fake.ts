@@ -7,13 +7,22 @@
 // SEAT as the session label, which is the attribution the fakes already answer by.
 //
 // It is a test double for the TRANSPORT, not a model of the sidecar: it does not persist a
-// conversation, so a repair turn reaching it carries pointers into a fake that has never
-// seen the draft. Tests about what a repair may carry belong on the pipeline's own fake
+// conversation, so a repair turn reaching it carries a verdict into a fake that has never
+// seen the board. Tests about what a repair may carry belong on the pipeline's own fake
 // seam (`lens-pipeline.test.ts`), which does hold a thread.
+//
+// Since `lens-board-tools` 3.2 it also opens the generation's BOARD LANES and translates
+// each seat's answer into the calls a seat would make (`seat-fixture.ts`). The round-level
+// tests' harness fakes still hand back a `DraftBoard`, because that is the readable way to
+// say what a lens found; what changed is that nobody reads it off the turn any more, so the
+// double writes it where a real seat would.
 
 import type { T3SeatClient, T3SeatSeam, T3SettledTurn } from "@rennet/adapters";
 import type { CodexExecutor, HarnessPort } from "@rennet/core";
+import type { GenerationBoards } from "./board/board-mcp-server";
+import { applySeatTurn, fixtureGenerationBoards, seatVoiceOn } from "./board/seat-fixture";
 import type { RoundsRuntimeDeps, T3SeatRuntime } from "./runtime/rounds";
+import type { SeatKind } from "./t3/threads";
 
 async function claudeTurn(
   port: HarnessPort,
@@ -70,6 +79,9 @@ export function fakeT3SeatsOverPorts(
   return async (input): Promise<T3SeatRuntime> => {
     const providerOf = new Map<string, { seat: string; provider: "claudeAgent" | "codex" }>();
     const settled = new Map<string, T3SettledTurn>();
+    // This generation's lanes, on the real loopback board server. The pipeline opens each
+    // one before it dispatches a seat; nothing here opens them, exactly as in production.
+    const boards: GenerationBoards = fixtureGenerationBoards(input.generationId);
     const client: T3SeatClient = {
       startTurn: async ({ threadId, text, outputSchema }) => {
         const thread = providerOf.get(threadId);
@@ -116,7 +128,16 @@ export function fakeT3SeatsOverPorts(
             ...(outputSchema === undefined ? {} : { outputSchema }),
           });
         })();
-        settled.set(threadId, turn);
+        // The seat's answer goes where a seat's work goes: onto its lane's board, through
+        // the tool surface. A seat with no lane — the round-report seat — keeps its
+        // structured return, which is what the classifier still reads.
+        const voice = seatVoiceOn(boards, thread.seat as SeatKind);
+        if (voice !== undefined && turn.state === "completed") {
+          await applySeatTurn(turn.structuredOutput, thread.seat as SeatKind, voice);
+          settled.set(threadId, { ...turn, structuredOutput: undefined });
+        } else {
+          settled.set(threadId, turn);
+        }
         return { previousTurnId: null, requestedAt: new Date().toISOString() };
       },
       waitForTurnSettled: async (threadId) => {
@@ -134,7 +155,12 @@ export function fakeT3SeatsOverPorts(
         return { threadId, projectId: input.sessionId };
       },
     };
-    return { seam, environmentId: "fake-environment", watch: () => ({ stop: () => undefined }) };
+    return {
+      seam,
+      boards,
+      environmentId: "fake-environment",
+      watch: () => ({ stop: () => undefined }),
+    };
   };
 }
 

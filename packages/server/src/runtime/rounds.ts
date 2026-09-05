@@ -1462,6 +1462,11 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
       council: { availability: { installed } },
       ...(input.prPaper === undefined ? {} : { prPaper: input.prPaper }),
       ...(t3Seam === undefined ? {} : { t3: t3Seam }),
+      // This generation's board lanes (`lens-board-tools` D8). The pipeline opens one per
+      // lens before it dispatches a seat, and a seat writes its board into the lane rather
+      // than returning one — so a runtime that composed lanes and did not hand them over
+      // would leave every seat with nothing to write into.
+      ...(t3Runtime?.boards === undefined ? {} : { boards: t3Runtime.boards }),
       ...(t3Unavailable === undefined ? {} : { t3Unavailable }),
       repoRoot: input.draftingRoot ?? input.repoRoot,
       // Bound to the SAME root the seats run in, never `repoRoot` alone: a range review
