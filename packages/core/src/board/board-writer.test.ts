@@ -1100,3 +1100,129 @@ describe("the writer remembers what finish said", () => {
     expect(voice.lastVerdict()?.length).toBeGreaterThan(0);
   });
 });
+
+/**
+ * D9 — Flagged is two seats, two voices, ONE board. The lane needs each voice's own
+ * settlement, because one seat finishing is not the lane finishing.
+ */
+describe("two voices on one board keep their own settlements (D9)", () => {
+  const twoVoices = () => {
+    const w = writer("flagged");
+    const claude = w.voice({ author: { kind: "lens-agent", id: "flagged-claude" }, idPrefix: "a" });
+    const codex = w.voice({ author: { kind: "lens-agent", id: "flagged-codex" }, idPrefix: "b" });
+    return { w, claude, codex };
+  };
+
+  /** A finding, cited, under a section — the smallest board `finish` will settle. */
+  const writeFinding = (voice: ReturnType<BoardWriter["voice"]>, concern: string): string => {
+    const section = idOf(voice.call("add_section", { title: "Findings" }));
+    const cite = idOf(
+      voice.call("cite", { path: "src/auth.ts", side: "head", start_line: 10, end_line: 14 }),
+    );
+    return idOf(
+      voice.call("add_finding", {
+        parent_id: section,
+        severity: "high",
+        concern,
+        code_ref_ids: [cite],
+      }),
+    );
+  };
+
+  it("each element carries the voice that wrote it, and the ids cannot collide", () => {
+    const { w, claude, codex } = twoVoices();
+    const a = writeFinding(claude, "The retry cap is unbounded.");
+    const b = writeFinding(codex, "The retry cap is unbounded.");
+
+    expect(a).not.toBe(b);
+    expect(a.startsWith("a")).toBe(true);
+    expect(b.startsWith("b")).toBe(true);
+    // One board, two authors — the stamp is what the reconciliation partitions on.
+    expect(dataOf<{ author: Author }>(w, a).author.id).toBe("flagged-claude");
+    expect(dataOf<{ author: Author }>(w, b).author.id).toBe("flagged-codex");
+    expect(w.board().elements.filter((el) => el.kind === "finding")).toHaveLength(2);
+  });
+
+  it("one voice finishing does not settle the other, and does not settle the lane", () => {
+    const { claude, codex } = twoVoices();
+    writeFinding(claude, "The retry cap is unbounded.");
+    writeFinding(codex, "The retry cap is unbounded.");
+
+    expect(ok(claude.call("finish")).outcome.kind).toBe("settled");
+    expect(claude.voiceStatus()).toBe("settled");
+    // The other voice has said nothing about being finished, and the lane is not settled
+    // until it does. Reading the BOARD's state per seat is what would get this wrong.
+    expect(codex.voiceStatus()).toBe("drafting");
+
+    expect(ok(codex.call("finish")).outcome.kind).toBe("settled");
+    expect(codex.voiceStatus()).toBe("settled");
+    expect(claude.voiceStatus()).toBe("settled");
+  });
+
+  it("one voice writing again does not un-finish the other", () => {
+    const { claude, codex } = twoVoices();
+    writeFinding(claude, "The retry cap is unbounded.");
+    ok(claude.call("finish"));
+    expect(claude.voiceStatus()).toBe("settled");
+
+    writeFinding(codex, "The lockfile was hand-edited.");
+    // The board moved, so the BOARD is drafting again — but Claude's seat said what it
+    // had to say and its lane state must survive its partner's next element.
+    expect(claude.voiceStatus()).toBe("settled");
+    expect(codex.voiceStatus()).toBe("drafting");
+  });
+
+  it("a voice's own next element does un-finish that voice", () => {
+    const { claude } = twoVoices();
+    writeFinding(claude, "The retry cap is unbounded.");
+    ok(claude.call("finish"));
+    ok(claude.call("add_prose", { markdown: "One more thing about the cap." }));
+    expect(claude.voiceStatus()).toBe("drafting");
+  });
+});
+
+/**
+ * D6 — a refusal and a `finish` verdict are answered INSIDE the turn that caused them,
+ * so neither is a settlement and neither is an un-settlement. The lane's attempt
+ * accounting reads `voiceStatus()` once per turn, so what this proves is the fact that
+ * accounting rests on.
+ */
+describe("a refusal costs nothing and a verdict costs nothing (D6)", () => {
+  it("ten refusals and one verdict leave the seat exactly where it was: still drafting", () => {
+    const w = writer("sequence");
+    // The writer's OWN author: every call below is `w.call`, so the voice being read is
+    // the default one. Reading a different voice's record here would assert nothing.
+    const voiceStatus = () => w.voiceStatus(undefined);
+
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      // Outside the change on a path the patchset does not hold — refused at the boundary.
+      const refusal = w.call("cite", {
+        path: "src/never-changed.ts",
+        side: "head",
+        start_line: attempt + 1,
+        end_line: attempt + 2,
+      });
+      expect(refusal.ok).toBe(false);
+    }
+    // A verdict with work in it. Not a settlement — and, crucially, not a state the lane
+    // could mistake for one.
+    const span = idOf(
+      w.call("cite", { path: "src/auth.ts", side: "head", start_line: 10, end_line: 14 }),
+    );
+    const orphan = idOf(w.call("add_step", { title: "Read the entry point", span_ref_id: span }));
+    expect(pointersOf(w.call("finish")).length).toBeGreaterThan(0);
+    expect(voiceStatus()).toBe("drafting");
+
+    // The seat answers the verdict in the SAME turn and finishes. One turn, one attempt.
+    ok(w.call("remove_element", { element_id: orphan }));
+    const section = idOf(w.call("add_section", { title: "Reading Order" }));
+    const span2 = idOf(
+      w.call("cite", { path: "src/auth.ts", side: "head", start_line: 10, end_line: 14 }),
+    );
+    idOf(
+      w.call("add_step", { parent_id: section, title: "Read the entry point", span_ref_id: span2 }),
+    );
+    expect(ok(w.call("finish")).outcome.kind).toBe("settled");
+    expect(voiceStatus()).toBe("settled");
+  });
+});

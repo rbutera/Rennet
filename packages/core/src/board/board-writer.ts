@@ -153,6 +153,14 @@ export interface BoardVoiceWriter {
     | undefined;
   /** What the last `finish` said — the whole content of a repair turn (D6). */
   readonly lastVerdict: () => readonly FinishPointer[] | undefined;
+  /** How THIS voice left the board, which on a two-seat lane is not the board's state. */
+  readonly voiceStatus: () => BoardWriterState;
+  /** The absence THIS voice declared. */
+  readonly voiceAbsence: () =>
+    | { readonly reason: LensAbsenceReason; readonly note: string }
+    | undefined;
+  /** What THIS voice's last `finish` said. */
+  readonly voiceVerdict: () => readonly FinishPointer[] | undefined;
 }
 
 // ── Host-owned values (on no tool input; the host writes them) ───────────────
@@ -184,6 +192,13 @@ const HELD_ID_SAMPLE = 20;
  */
 const DERIVED_MEMBER_REASON = "No other lens board cited this changed region.";
 
+/** How one voice left the board: its own settlement, its own absence, its own verdict. */
+interface VoiceRecord {
+  state: BoardWriterState;
+  absence?: { reason: LensAbsenceReason; note: string };
+  verdict?: readonly FinishPointer[];
+}
+
 // ── The writer ───────────────────────────────────────────────────────────────
 
 export class BoardWriter {
@@ -202,6 +217,17 @@ export class BoardWriter {
   private readonly hostPlaced = new Set<string>();
   /** The pointers the last `finish` returned; `[]` when it settled, `undefined` before any. */
   private verdict: readonly FinishPointer[] | undefined;
+  /**
+   * How each VOICE left the board, keyed by the author id it writes under (D9).
+   *
+   * The board has one state and the Flagged lane has two seats, and the lane needs both
+   * facts: `status()` says whether the board as a whole is finished, and this says whether
+   * THIS seat settled — which is what decides whether that seat's turn spent an attempt
+   * and whether reconciliation may run yet. Reading the board's state per seat would make
+   * one voice's `finish` settle the other voice's lane, and one voice's next element
+   * un-settle a lane that really had finished.
+   */
+  private readonly byVoice = new Map<string, VoiceRecord>();
 
   private readonly lint: LintContext;
 
@@ -336,6 +362,9 @@ export class BoardWriter {
       status: () => this.status(),
       declaredAbsence: () => this.declaredAbsence(),
       lastVerdict: () => this.lastVerdict(),
+      voiceStatus: () => this.voiceStatus(voice),
+      voiceAbsence: () => this.voiceAbsence(voice),
+      voiceVerdict: () => this.voiceVerdict(voice),
     };
   }
 
@@ -358,20 +387,84 @@ export class BoardWriter {
     }
     const input = parsed.data as Record<string, unknown>;
 
-    switch (tool.verb) {
-      case "set_document":
-        return this.setDocument(tool, input);
-      case "add":
-        return this.add(tool, input, voice);
-      case "update":
-        return this.update(tool, input);
-      case "remove_element":
-        return this.remove(input);
-      case "settle_absent":
-        return this.settleAbsent(input);
-      case "finish":
-        return this.finish();
+    const result = ((): BoardToolResult => {
+      switch (tool.verb) {
+        case "set_document":
+          return this.setDocument(tool, input);
+        case "add":
+          return this.add(tool, input, voice);
+        case "update":
+          return this.update(tool, input);
+        case "remove_element":
+          return this.remove(input);
+        case "settle_absent":
+          return this.settleAbsent(input);
+        case "finish":
+          return this.finish();
+      }
+    })();
+    // A refusal changes nothing, including this: the seat has not settled and has not
+    // un-settled, so the voice's record is exactly where it was.
+    if (result.ok) this.recordVoice(voice, result.outcome);
+    return result;
+  }
+
+  /** The author id a voice writes under; the writer's own when a call names none. */
+  private voiceKey(voice: BoardVoice | undefined): string {
+    return (voice?.author ?? this.options.author).id;
+  }
+
+  /** How this voice left the board after the call it just made. */
+  private recordVoice(voice: BoardVoice | undefined, outcome: BoardToolOutcome): void {
+    const key = this.voiceKey(voice);
+    const record = this.byVoice.get(key) ?? { state: "drafting" as BoardWriterState };
+    switch (outcome.kind) {
+      case "settled":
+        record.state = "settled";
+        record.verdict = [];
+        delete record.absence;
+        break;
+      case "absent":
+        record.state = "absent";
+        record.absence = { reason: outcome.reason, note: outcome.note };
+        break;
+      case "pointers":
+        // A verdict that came back with work in it is not a settlement, and it does not
+        // un-settle a voice that had already finished either — the board did not move.
+        record.verdict = outcome.pointers;
+        break;
+      default:
+        // An authoring call. This voice is writing again, so whatever it said last about
+        // being finished no longer describes the board.
+        record.state = "drafting";
+        delete record.absence;
+        break;
     }
+    this.byVoice.set(key, record);
+  }
+
+  /**
+   * How ONE voice left the board (D9): settled by its own `finish`, absent by its own
+   * declaration, or still drafting.
+   *
+   * Distinct from {@link BoardWriter.status}, which is the board's. On a one-seat lane the
+   * two agree; on Flagged they must not be conflated, because one seat finishing is not
+   * the lane finishing and one seat writing again is not the other seat un-finishing.
+   */
+  voiceStatus(voice: BoardVoice | undefined): BoardWriterState {
+    return this.byVoice.get(this.voiceKey(voice))?.state ?? "drafting";
+  }
+
+  /** The absence THIS voice declared, if it declared one. */
+  voiceAbsence(
+    voice: BoardVoice | undefined,
+  ): { readonly reason: LensAbsenceReason; readonly note: string } | undefined {
+    return this.byVoice.get(this.voiceKey(voice))?.absence;
+  }
+
+  /** What THIS voice's last `finish` said — the whole content of its repair turn (D6). */
+  voiceVerdict(voice: BoardVoice | undefined): readonly FinishPointer[] | undefined {
+    return this.byVoice.get(this.voiceKey(voice))?.verdict;
   }
 
   // ── Verbs ──────────────────────────────────────────────────────────────────

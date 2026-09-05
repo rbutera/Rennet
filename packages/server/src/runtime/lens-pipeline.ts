@@ -36,10 +36,13 @@ import {
   expandPromptPartials,
   INVESTIGATE_PARTIAL_FILE,
   LENS_PROMPT_FILES,
+  PROMPT_PARTIAL_MARKER,
   REVIEW_DRAFT_VOICE_FILE,
   ROUND_REPORT_FILE,
   renderLayer,
   renderRepairTurn,
+  WRITE_WITH_TOOLS_MARKER,
+  WRITE_WITH_TOOLS_PARTIAL_FILE,
 } from "@rennet/prompts";
 import {
   type BoardDocument,
@@ -2981,10 +2984,12 @@ async function draftLensBoard(
   /** The frozen round report, the composition pass's input on a round; the seat reads it from `round.json`. */
   reportBoard?: DraftBoard,
 ): Promise<LensBoardOutcome> {
-  const promptText = expandPromptPartials(
-    await deps.readPrompt(LENS_PROMPT_FILES[lens]),
-    await deps.readPrompt(INVESTIGATE_PARTIAL_FILE),
-  );
+  // Both shared partials, keyed by their markers (3.6): the investigate section and the
+  // tool vocabulary that replaced each prompt's "return a board in the supplied schema".
+  const promptText = expandPromptPartials(await deps.readPrompt(LENS_PROMPT_FILES[lens]), {
+    [PROMPT_PARTIAL_MARKER]: await deps.readPrompt(INVESTIGATE_PARTIAL_FILE),
+    [WRITE_WITH_TOOLS_MARKER]: await deps.readPrompt(WRITE_WITH_TOOLS_PARTIAL_FILE),
+  });
   const basePrompt = renderDrafterPrompt(promptText, deps.deltaPacket, context);
   const ctx: LintContext = deps.lintContextFor(lens);
 

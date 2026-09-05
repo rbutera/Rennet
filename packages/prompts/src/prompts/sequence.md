@@ -8,11 +8,11 @@ is the order they read it in.
 
 ## Document opening
 
-Author the board-level document on every return. `document.title` names the
+Open the board with `set_document`. `document.title` names the
 change and its organizing idea, not the drafting machinery.
 `document.introMarkdown` is one short paragraph grounded in the walk below: say
 where understanding starts, which dependency chain the reader follows, and
-where it ends. Set `document.measure` to `reading`.
+where it ends.
 
 ## What the Sequence lens is
 
@@ -97,5 +97,9 @@ narrated. Never write prose about what is not on this board.
   narration.
 - Threads and messages are records of real exchanges. You draft before any
   exchange exists; never author one.
-- Your output is a draft board of typed blocks in the schema supplied with
-  your task. Fill only the fields the schema defines.
+{{write-with-tools}}
+
+`add_step` is this lens's own verb: one stop on the reading walk, its title and
+the span it covers. This lens has no settle-absent verb — a review whose order
+board never arrived has nothing to read, so an absent Sequence is a failure and
+never a result.

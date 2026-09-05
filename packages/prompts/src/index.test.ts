@@ -8,8 +8,11 @@ import {
   LENS_KINDS,
   LENS_PROMPT_FILES,
   PROMPT_PARTIAL_MARKER,
+  PROMPT_PARTIALS,
   REVIEW_DRAFT_VOICE_FILE,
   ROUND_REPORT_FILE,
+  WRITE_WITH_TOOLS_MARKER,
+  WRITE_WITH_TOOLS_PARTIAL_FILE,
 } from "./index.js";
 
 const srcDir = dirname(fileURLToPath(import.meta.url));
@@ -23,8 +26,11 @@ describe("lens prompt manifest", () => {
       expect(text).toContain("Ground rules");
       expect(text).toContain("`document.title`");
       expect(text).toContain("`document.introMarkdown`");
-      const measure = kind === "design" ? "structured" : "reading";
-      expect(text.replace(/\s+/g, " ")).toContain(`Set \`document.measure\` to \`${measure}\``);
+      // The board is OPENED with a call now, not authored into a returned document.
+      expect(text).toContain("`set_document`");
+      // `measure` is host-owned and on no tool input (D2), so an instruction to set it
+      // would name a field the seat cannot reach — a live prompt citing a dead field.
+      expect(text, `${kind} prompt`).not.toContain("document.measure");
       // Citations are a path and a line range, resolved on the daemon: no board carries
       // a skip list and no lens accounts for hunks it did not cite. This assertion is
       // the whole producer-side guard against the vocabulary creeping back in a prompt.
@@ -33,15 +39,52 @@ describe("lens prompt manifest", () => {
     }
   });
 
-  it("every lens prompt carries the investigate marker exactly once, not the section body", () => {
+  it("every lens prompt carries each shared marker exactly once, not the section body", () => {
     for (const kind of LENS_KINDS) {
       const text = readFileSync(join(srcDir, LENS_PROMPT_FILES[kind]), "utf8");
-      expect(text.split(PROMPT_PARTIAL_MARKER), `${kind} prompt`).toHaveLength(2);
+      for (const marker of Object.keys(PROMPT_PARTIALS)) {
+        expect(text.split(marker), `${kind} prompt / ${marker}`).toHaveLength(2);
+      }
       expect(text).not.toContain("## Investigate before you draft");
+      expect(text).not.toContain("## How you write this board");
     }
   });
 
-  it("expandPromptPartials splices the shared partial and passes a marker-free text through", () => {
+  /**
+   * `angle-prompt-contract` — the emit slot of a tool-writing seat names the verbs by the
+   * job each does and never restates their input schemas, because those travel separately
+   * as the turn's tool list. Two sources of truth for one shape drift.
+   */
+  it("the emit slot names the verbs and carries no field list or schema", () => {
+    const partial = readFileSync(join(srcDir, WRITE_WITH_TOOLS_PARTIAL_FILE), "utf8");
+    const normalized = partial.replace(/\s+/g, " ");
+    expect(partial).toMatch(/^## How you write this board\n/);
+    for (const verb of [
+      "`set_document`",
+      "`add_section`",
+      "`cite`",
+      "`add_prose`",
+      "`update_*`",
+      "`remove_element`",
+      "`finish`",
+    ]) {
+      expect(partial, `the emit slot never names ${verb}`).toContain(verb);
+    }
+    // D6, told to the seat: a refusal and a finish verdict are answered in THIS turn.
+    expect(normalized).toContain("A refusal costs you nothing");
+    // No schema, no type declaration, no field list — the tool list carries all three.
+    expect(partial).not.toContain("```json");
+    expect(partial).not.toMatch(/"type"\s*:/);
+    expect(partial).not.toMatch(/\bschema\b/i);
+    // …and no lens prompt still tells its seat to return a document against one.
+    for (const kind of LENS_KINDS) {
+      const text = readFileSync(join(srcDir, LENS_PROMPT_FILES[kind]), "utf8");
+      expect(text, `${kind} prompt`).not.toContain("in the schema supplied with");
+      expect(text, `${kind} prompt`).not.toContain("Your output is a draft board");
+    }
+  });
+
+  it("expandPromptPartials splices every shared partial and passes a marker-free text through", () => {
     const partial = readFileSync(join(srcDir, INVESTIGATE_PARTIAL_FILE), "utf8");
     expect(partial).toMatch(/^## Investigate before you draft\n/);
     expect(partial.replace(/\s+/g, " ")).toContain("only what you actually read earns a citation");
@@ -50,13 +93,20 @@ describe("lens prompt manifest", () => {
       "Cite by repository path and a 1-based inclusive line range",
     );
     expect(partial).not.toMatch(/inventory/i);
-    const out = expandPromptPartials(`# T\n\n${PROMPT_PARTIAL_MARKER}\n\n## Next`, partial);
+    const tools = readFileSync(join(srcDir, WRITE_WITH_TOOLS_PARTIAL_FILE), "utf8");
+    const partials = { [PROMPT_PARTIAL_MARKER]: partial, [WRITE_WITH_TOOLS_MARKER]: tools };
+    const out = expandPromptPartials(
+      `# T\n\n${PROMPT_PARTIAL_MARKER}\n\n${WRITE_WITH_TOOLS_MARKER}\n\n## Next`,
+      partials,
+    );
     expect(out).toContain("## Investigate before you draft");
-    expect(out).toContain("earns a\ncitation.\n\n## Next");
+    expect(out).toContain("earns a\ncitation.");
+    expect(out).toContain("## How you write this board");
     expect(out).not.toContain(PROMPT_PARTIAL_MARKER);
+    expect(out).not.toContain(WRITE_WITH_TOOLS_MARKER);
     // A stub prompt (test doubles) passes through untouched; the shipped files are
     // guarded by the marker test above, which is the control for this seam.
-    expect(expandPromptPartials("# T\n\n## Next", partial)).toBe("# T\n\n## Next");
+    expect(expandPromptPartials("# T\n\n## Next", partials)).toBe("# T\n\n## Next");
   });
 
   it("tells the Design seat to find the spec itself, prove the tie, or return no-spec", () => {
@@ -76,8 +126,11 @@ describe("lens prompt manifest", () => {
     expect(normalized).toContain(
       "The board must carry, as a cited source, the commit message, pull request text, or task line that connects this specification to this branch",
     );
-    // The absence is the seat's own return, and it is the ONLY absence it may claim.
-    expect(normalized).toContain('{ "absence": "no-spec" }');
+    // The absence is the seat's own CALL now, and it is the ONLY absence it may claim:
+    // `settle_absent` has no field to name another with, so the reason is fixed at the
+    // surface rather than asked for in prose.
+    expect(normalized).toContain("call `settle_absent`");
+    expect(normalized).not.toContain('{ "absence": "no-spec" }');
     expect(normalized).toContain("not an empty board, not a placeholder");
     // D6 — no host bundle exists any more, so no instruction may assume one.
     expect(normalized).not.toContain("designArtifacts");
@@ -165,34 +218,34 @@ describe("lens prompt manifest", () => {
     );
     expect(normalized).toContain("the grouping is the only thing here you decide");
     expect(normalized).toContain("Do not weigh whether a region is safe to skip");
-    expect(normalized).toContain(
-      "Every member's `verdict` is `noise` and its `judge` is `llm`. Neither is a choice",
-    );
+    // The verdict/judge sentence is GONE, not reworded (D16f): both are host-stamped
+    // constants on no tool input, so a prompt telling the seat what to set them to would
+    // describe a field it cannot reach. What replaced it says where the members came from.
+    expect(normalized).not.toContain("Every member's `verdict` is `noise`");
+    expect(normalized).not.toContain("its `judge` is `llm`");
+    expect(normalized).toContain("Your board already holds every member");
     expect(normalized).not.toContain("`signal`");
     expect(normalized).not.toContain("when in doubt");
     expect(normalized).not.toContain("safely take on trust");
   });
 
-  it("tells the Noise seat that an empty board IS the settlement for a fully-cited change", () => {
-    // The `no-noise` absence is only ever settled from the seat's OWN empty-board claim
-    // (`draftOneLens` reads the first emitted return), so this instruction is the whole
-    // producer half of that contract. Delete it, or reverse it into "always emit a board",
-    // and the reviewer never sees the honest absence. Under the 2026-09-04 ruling the
-    // absence also MEANS something different — the other four lanes cited the whole
-    // change, not "nothing here is skippable" — so the wording is asserted too.
+  it("never asks the Noise seat about an empty remainder, because it is settled before it runs", () => {
+    // D16e — `no-noise` stopped being the seat's declaration. The host knows the derived
+    // membership is empty BEFORE any turn and settles the lane with no seat at all, so a
+    // Noise seat that is running always has members. An instruction about the empty case
+    // would describe a turn that cannot happen, and the verb it named is gone from the
+    // surface. Both halves are asserted: no empty-board instruction, and no settle-absent.
     const normalized = readFileSync(join(srcDir, LENS_PROMPT_FILES.noise), "utf8").replace(
       /\s+/g,
       " ",
     );
-    expect(normalized).toContain("## When the remainder is empty");
-    expect(normalized).toContain("Say so by emitting a board with NO elements");
-    expect(normalized).toContain('honest "every changed region is on another board"');
+    expect(normalized).not.toContain("When the remainder is empty");
+    expect(normalized).not.toContain("emitting a board with NO elements");
     expect(normalized).not.toContain("nothing here is safely skippable");
-    // …and the other edge of the same rule: an empty board is not a way out of a change
-    // that does have a remainder.
-    expect(normalized).toContain(
-      "Emit an empty board only when NO region is left over; one leftover region means a real board naming it",
-    );
+    // The seat is told plainly why it has no settle-absent verb, rather than left to
+    // discover the verb missing.
+    expect(normalized).toContain("There is no settle-absent verb");
+    expect(normalized).toContain("settled before you are asked");
   });
 
   it("carries the review-draft voice rules", () => {
