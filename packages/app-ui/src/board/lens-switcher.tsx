@@ -169,6 +169,6 @@ function absenceAccessibleStatus(reason: NonNullable<LensBoardEntry["absence"]>)
     case "no-findings":
       return "no review findings found";
     case "no-noise":
-      return "no safely skippable noise found";
+      return "every region is on another board";
   }
 }

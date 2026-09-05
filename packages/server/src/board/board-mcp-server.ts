@@ -141,6 +141,14 @@ export interface BoardMcpServer {
   readonly lane: (generationId: string, target: LintTarget) => BoardLane | undefined;
   /** The seat's server descriptor, when its lane is open and it has an address. */
   readonly seatServer: (generationId: string, seat: string) => SeatBoardServer | undefined;
+  /**
+   * How many board lanes are open right now.
+   *
+   * The daemon's health report names this server as local only when this is non-zero
+   * (`t3code-sidecar`): the disclosure is about a server that is actually serving, and a
+   * status field claiming a running loopback listener while none runs is a lie in the UI.
+   */
+  readonly openLaneCount: () => number;
   /** Every lane of a generation, settled at once — what an abandoned generation gets. */
   readonly settleGeneration: (generationId: string) => void;
   readonly close: () => Promise<void>;
@@ -652,6 +660,10 @@ export async function startBoardMcpServer(
       return lanes.has(key) ? makeLane(key) : undefined;
     },
     seatServer: (generationId, seat) => entryFor(generationId, seat)?.server,
+    // What the daemon's health report discloses. `settleGeneration` DELETES its lanes and
+    // `settle()` only revokes a lane's seats, so this counts lanes rather than live seat
+    // addresses: a lane whose seats have settled is still a board this listener serves.
+    openLaneCount: () => lanes.size,
     settleGeneration: (generationId) => {
       for (const [key, held] of lanes) {
         if (held.input.generationId !== generationId) continue;

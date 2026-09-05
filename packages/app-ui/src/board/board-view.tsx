@@ -345,9 +345,13 @@ function absenceCopy(reason: LensAbsenceReason): {
         detail: "No concrete review findings remain for this generation.",
       };
     case "no-noise":
+      // D16e — the Noise board is the complement of the other four, so an empty one means
+      // they cited the whole change between them. It is settled by the host before any
+      // seat runs, which is why the copy says what the other boards did rather than what
+      // a Noise seat concluded.
       return {
-        title: "No safely skippable noise was found.",
-        detail: "Every changed hunk remains part of the substantive reading path.",
+        title: "Every changed region is on another board.",
+        detail: "Design, Sequence, Decisions and Flagged cited the whole change between them.",
       };
   }
 }

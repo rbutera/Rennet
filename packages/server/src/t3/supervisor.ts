@@ -5,7 +5,7 @@
 // reason named. No Effect, no `@t3tools/*` here — see ./sidecar.ts for the process
 // contract and ./client.ts for the RPC surface.
 
-import type { T3Session, T3SidecarStatus } from "@rennet/protocol";
+import type { LocalToolServer, T3Session, T3SidecarStatus } from "@rennet/protocol";
 import { connectT3, type ModelSelection, modelSelection, type T3Client } from "./client";
 import {
   adoptSidecar,
@@ -25,6 +25,14 @@ export interface T3SidecarSupervisorOptions {
   /** Absolute harness binaries from Rennet's own discovery, resolved at spawn time. */
   readonly resolveBinaries: () => Promise<ProviderBinaries>;
   readonly warn?: (message: string) => void;
+  /**
+   * The daemon's own loopback tool servers, asked for on every status read.
+   *
+   * A function and not a value: the board listener binds lazily on the first lane, so what
+   * is serving changes over the daemon's life, and the health report has to say what is
+   * true now. Absent ⇒ this daemon supplies none, and the report carries no such field.
+   */
+  readonly localToolServers?: () => readonly LocalToolServer[];
 }
 
 export interface T3SidecarSupervisor {
@@ -87,6 +95,15 @@ export function createT3SidecarSupervisor(
 ): T3SidecarSupervisor {
   const warn = options.warn ?? console.warn;
   const upstreamCommit = options.bundlePath ? readUpstreamCommit(options.bundlePath) : "unknown";
+  /**
+   * The daemon's own tool servers, read at report time rather than captured
+   * (`t3code-sidecar`, `lens-board-tools` 3.1). The supervisor does not own the board
+   * listener and must not pretend to: it asks, every time, and reports what is actually
+   * serving. A report built from a value captured at construction would name a loopback
+   * server for the daemon's whole life, including before any lane was ever open — which
+   * is the lie in the UI this clause was deferred from group 2 to avoid.
+   */
+  const localToolServers = options.localToolServers ?? (() => []);
   let running: RunningSidecar | null = null;
   let inFlight: Promise<RunningSidecar> | null = null;
   let rpc: Promise<T3Client> | null = null;
@@ -245,7 +262,10 @@ export function createT3SidecarSupervisor(
   return {
     ensure,
     session,
-    status: () => status,
+    status: () => {
+      const servers = localToolServers();
+      return servers.length === 0 ? status : { ...status, localToolServers: [...servers] };
+    },
     // Read off whatever sidecar is running RIGHT NOW. `running` is cleared when the child
     // exits, so between a crash and the next `ensure()` this is empty and no bearer
     // matches — which is honest: there is no sidecar for a call to have come from.

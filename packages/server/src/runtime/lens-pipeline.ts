@@ -13,6 +13,7 @@ import {
   composeFindingRound,
   DEFAULT_SEAT_LABELS,
   type DeltaPacket,
+  deriveNoiseMembers,
   type ElementReference,
   elementReferences,
   type FindingResolution,
@@ -29,7 +30,9 @@ import {
   type RegisterLintContext,
   reconcileFindingsWithProvenance,
   reviewedDiffCommand,
+  type SiblingCitations,
   stampDeltas,
+  unknowableComplementFailure,
   validateDraft,
 } from "@rennet/core";
 import {
@@ -76,6 +79,7 @@ import {
   type Violation,
 } from "@rennet/protocol";
 import { z } from "zod";
+import type { GenerationBoards } from "../board/board-mcp-server";
 import type { SessionContextFile } from "../context-files";
 import type { SeatKind as BoardSeatId } from "../t3/threads";
 import { projectRoundReportBoard } from "./lens-board-read";
@@ -1346,6 +1350,18 @@ export interface LensPipelineDeps {
    */
   readonly t3?: T3SeatSeam;
   /**
+   * This generation's board lanes on the daemon's loopback board server (D8).
+   *
+   * The pipeline OPENS every lens lane before it dispatches a seat, so a board exists —
+   * empty, `drafting`, addressable — from the moment the surface can ask for one, and a
+   * lane that writes nothing settles over a board that was already there rather than over
+   * a missing one (`board-tool-authoring`). Opening a lane is also what gives that board's
+   * seats an address, so a seat whose lane was never opened carries no board server.
+   *
+   * Absent ⇒ a caller with no board server behind it (a direct-call test).
+   */
+  readonly boards?: GenerationBoards;
+  /**
    * Why there is no seam (review finding 1). Set by the round runtime when the daemon
    * composed a sidecar and could not bring it up, so a board seat's failure names the real
    * reason rather than the generic "no sidecar seam".
@@ -1881,6 +1897,23 @@ const EMPTY_LENS_ABSENCE: Partial<Record<LensKind, LensAbsenceReason>> = Object.
   }),
 );
 
+/**
+ * What one core lane SAID about what it cites, for the Noise complement (D16d).
+ *
+ * The asymmetry is the whole rule and it is CLAUDE.md's own: match on a positive
+ * contradiction, never on silence. A lane that settled a board states its citations; a
+ * lane that declared an admissible absence states that it cites nothing, which subtracts
+ * safely. Anything else — a recorded failure, or a lane that is not in the map at all
+ * because its promise rejected — has stated NOTHING, and nothing is not an empty set.
+ */
+function siblingCitations(lens: LensKind, outcome: LensBoardOutcome | undefined): SiblingCitations {
+  if (outcome?.board !== undefined) {
+    return { lens, kind: "settled", elements: outcome.board.elements };
+  }
+  if (outcome?.absence !== undefined) return { lens, kind: "absent" };
+  return { lens, kind: "failed" };
+}
+
 /** A lens that settled with nothing but a failure — the drafter's words and its account. */
 function failedLensOutcome(lens: LintTarget, failure: LensDraftFailure): LensBoardOutcome {
   return { lens, omissions: [], blemishes: [], immutability: [], ...failure };
@@ -2156,6 +2189,29 @@ export async function runLensPipeline(deps: LensPipelineDeps): Promise<LensPipel
       ? seatContext
       : { dir: contextDir, files: [...seatFiles, deps.prPaper] };
 
+  // Every lens board exists BEFORE any seat thread does (`board-tool-authoring`): empty,
+  // `drafting`, addressable. Two things follow, and both are the point. A lane that writes
+  // nothing settles over a board that was already there rather than over a missing one; and
+  // opening a lane is what lets its seats be given an address, so a seat dispatched before
+  // its lane existed would carry no board server and have nothing to write with.
+  //
+  // Awaited together and before the report gate's own dispatch, because the FIRST lane to
+  // open is what binds the listener — a seat resolved against a half-opened generation is
+  // exactly the race this ordering removes.
+  if (deps.boards !== undefined) {
+    const boards = deps.boards;
+    await Promise.all(
+      LENS_KINDS.map(async (lens) => {
+        const { lens: _lens, ...lint } = deps.lintContextFor(lens);
+        await boards.openLane({
+          target: lens,
+          lint,
+          author: { kind: "lens-agent", id: `lens:${lens}` },
+        });
+      }),
+    );
+  }
+
   // A required report has arrived, or this generation does not need one. Only now may the
   // independent lens seats start; report failure exits above without launching hidden work.
   deps.onLensDraftingStart?.();
@@ -2181,53 +2237,114 @@ export async function runLensPipeline(deps: LensPipelineDeps): Promise<LensPipel
     );
     return published;
   };
-  const settledOutcomes = await Promise.allSettled(
-    LENS_KINDS.map(async (lens) => {
-      const outcome = await runLensBoard(
-        lens,
-        deps,
-        council,
-        lens === "design" ? designContext : seatContext,
-        reportBoard,
+  /**
+   * The lane order (D16c). The four CORE lanes still fan out together and nothing waits on
+   * any of them; Noise starts on their settlements, because the complement of boards that
+   * have not settled is not knowable. Nothing waits on Noise, so it is the generation's
+   * tail and not a barrier — the honest cost of the ruling, measured rather than argued.
+   */
+  const settledCore = new Map<LensKind, LensBoardOutcome>();
+  const runLane = async (lens: LensKind) => {
+    const outcome = await runLensBoard(
+      lens,
+      deps,
+      council,
+      lens === "design" ? designContext : seatContext,
+      reportBoard,
+    );
+    if (outcome.absence !== undefined) {
+      await publish(() => deps.onLensAbsence?.(lens, outcome.absence as LensAbsenceReason));
+      lastRevealAt = clock();
+    }
+    // #725 D4 — the lane's settlement is published HERE, the moment this board is
+    // written and its metadata is durable. Nothing waits for a sibling lane.
+    if (outcome.board !== undefined && outcome.boardId !== undefined) {
+      const board = outcome.board;
+      const boardId = outcome.boardId;
+      await publish(() =>
+        deps.onBoardArrival?.({
+          lens,
+          boardId,
+          elementCount: board.elements.length,
+          // C15 3.3: the carried signal rides the arrival so the live lane label is the
+          // SAME `stampDeltas` fact the section markers render — not a re-derivation.
+          carried: isCarriedForward(deps.previous?.get(lens), board),
+        }),
       );
-      if (outcome.absence !== undefined) {
-        await publish(() => deps.onLensAbsence?.(lens, outcome.absence as LensAbsenceReason));
-        lastRevealAt = clock();
-      }
-      // #725 D4 — the lane's settlement is published HERE, the moment this board is
-      // written and its metadata is durable. Nothing waits for a sibling lane.
-      if (outcome.board !== undefined && outcome.boardId !== undefined) {
-        const board = outcome.board;
-        const boardId = outcome.boardId;
-        await publish(() =>
-          deps.onBoardArrival?.({
-            lens,
-            boardId,
-            elementCount: board.elements.length,
-            // C15 3.3: the carried signal rides the arrival so the live lane label is the
-            // SAME `stampDeltas` fact the section markers render — not a re-derivation.
-            carried: isCarriedForward(deps.previous?.get(lens), board),
-          }),
-        );
-        lastRevealAt = clock();
-      }
-      // No board and no absence: this lane is DONE and it is done failed. Published here
-      // rather than left for the caller's post-pipeline sweep (#813) — that sweep runs
-      // after the slowest sibling, and until it did the lane read `running` with a live
-      // line off a thread that had already stopped. A failure reveals nothing, so it does
-      // not move `lastRevealAt`.
-      if (outcome.boardId === undefined && outcome.absence === undefined) {
-        await publish(() =>
-          deps.onLensFailure?.(
-            lens,
-            outcome.failure ?? "the drafter produced no board",
-            outcome.failureAccount,
-          ),
-        );
-      }
+      lastRevealAt = clock();
+    }
+    // No board and no absence: this lane is DONE and it is done failed. Published here
+    // rather than left for the caller's post-pipeline sweep (#813) — that sweep runs
+    // after the slowest sibling, and until it did the lane read `running` with a live
+    // line off a thread that had already stopped. A failure reveals nothing, so it does
+    // not move `lastRevealAt`.
+    if (outcome.boardId === undefined && outcome.absence === undefined) {
+      await publish(() =>
+        deps.onLensFailure?.(
+          lens,
+          outcome.failure ?? "the drafter produced no board",
+          outcome.failureAccount,
+        ),
+      );
+    }
+    return outcome;
+  };
+
+  const coreLenses: readonly LensKind[] = LENS_KINDS.filter((lens) => lens !== "noise");
+  const settledCoreOutcomes = await Promise.allSettled(
+    coreLenses.map(async (lens) => {
+      const outcome = await runLane(lens);
+      settledCore.set(lens, outcome);
       return outcome;
     }),
   );
+  // Noise starts on the four settlements, and only on them. A core lane that REJECTED
+  // (an infrastructure throw, not a recorded failure) leaves this map without its row,
+  // which `runLensBoard` reads as a lane whose citations are unknown — the same answer a
+  // recorded failure gets, and the right one: neither said what it cites.
+  const noiseOutcome = await Promise.allSettled([
+    (async (): Promise<LensBoardOutcome> => {
+      const membership = deriveNoiseMembers({
+        regions: deps.lintContextFor("noise").regions,
+        siblings: coreLenses.map((lens) => siblingCitations(lens, settledCore.get(lens))),
+      });
+      if (membership.kind === "unknowable") {
+        // D16d — a sibling that FAILED did not cite nothing. The complement of a board
+        // that never arrived is not the complement of an empty one, and a Noise board
+        // built over it would file un-reviewed regions as skippable.
+        const failure = unknowableComplementFailure(membership.unknown);
+        const outcome: LensBoardOutcome = failedLensOutcome("noise", {
+          failure,
+          // RETRYABLE: the sibling's per-lens retry is exactly what makes this lane
+          // runnable again, so this is not a terminal state the reviewer must live with.
+          failureAccount: { attempt: deps.boardAttempt ?? 0, classification: "retryable" },
+        });
+        await publish(() => deps.onLensFailure?.("noise", failure, outcome.failureAccount));
+        return outcome;
+      }
+      if (membership.members.length === 0) {
+        // D16e — the four lanes between them cited every changed region. The host knows
+        // this BEFORE any turn, so the lane settles with no seat at all, which is also
+        // the cheapest turn in the change.
+        await publish(() => deps.onLensAbsence?.("noise", "no-noise"));
+        lastRevealAt = clock();
+        return {
+          lens: "noise",
+          omissions: [],
+          blemishes: [],
+          immutability: [],
+          absence: "no-noise",
+        };
+      }
+      return runLane("noise");
+    })(),
+  ]);
+  const settledOutcomes = [
+    ...LENS_KINDS.map((lens) => {
+      const index = coreLenses.indexOf(lens);
+      return index === -1 ? noiseOutcome[0] : settledCoreOutcomes[index];
+    }),
+  ].filter((result): result is PromiseSettledResult<LensBoardOutcome> => result !== undefined);
   // The `reveal` phase is recorded BEFORE the rejection check below, and its clock stops at
   // the last lane that actually REVEALED something. Both halves are honesty fixes:
   //

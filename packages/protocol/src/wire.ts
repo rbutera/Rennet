@@ -2983,8 +2983,32 @@ export type PublicProjectionName = keyof typeof publicProjectionSchemas;
  * coding harness's own provider traffic; both are stated here so the UI can say so without
  * inventing it.
  */
+/**
+ * One tool server the DAEMON supplies to a sidecar thread, named as local so a reader can
+ * tell a loopback tool call from egress (`t3code-sidecar`). Today that is the board server
+ * (`lens-board-tools` D8), whose only client is a harness child on this machine.
+ */
+export const localToolServerSchema = z.object({
+  name: z.string(),
+  /** The loopback origin it is bound to — `http://127.0.0.1:<port>`. */
+  origin: z.string(),
+  /** How many boards it is currently serving. Zero servers are reported as none at all. */
+  openLanes: z.number().int().positive(),
+});
+export type LocalToolServer = z.infer<typeof localToolServerSchema>;
+
 export const t3SidecarStatusSchema = z.object({
   state: z.enum(["off", "starting", "ready", "degraded"]),
+  /**
+   * The daemon's own tool servers, named as LOCAL, present only once one is actually
+   * serving a lane.
+   *
+   * Absent is the honest default and the reason this is optional rather than an empty
+   * array with a permanent entry: a status field claiming a running loopback server while
+   * none runs is a lie in the UI, which is why group 2 deliberately left this clause
+   * unmet until a lane could actually be open.
+   */
+  localToolServers: z.array(localToolServerSchema).optional(),
   /** Why it is degraded: bundle missing, spawn failed, exited. */
   detail: z.string().optional(),
   /** The loopback port when ready. */

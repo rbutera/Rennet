@@ -84,7 +84,7 @@ const ABSENCE_TITLE: Readonly<Record<LensAbsenceReason, string>> = {
   "no-spec": "No spec found for this branch.",
   "no-decisions": "No material engineering decisions were found.",
   "no-findings": "No review findings were found.",
-  "no-noise": "No safely skippable noise was found.",
+  "no-noise": "Every changed region is on another board.",
 };
 
 const CORE_KIND_BY_LENS: Partial<

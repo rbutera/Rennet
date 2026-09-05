@@ -2927,7 +2927,18 @@ export const FINISH_RULES: readonly Rule[] = [
  * So: one registry, one partition over what the tool path runs, and one named subset
  * for the document path. Nothing sits outside the registry unasserted.
  */
-export const SETTLEMENT_RULES: readonly Rule[] = [sequenceStepsReachable, boardHasMaterial];
+export const SETTLEMENT_RULES: readonly Rule[] = [
+  sequenceStepsReachable,
+  boardHasMaterial,
+  // D16's grouping rule joins them for the same reason, and it is worth stating rather
+  // than leaving to the reader: on a DERIVED board the members are placed by the host
+  // before the seat's first turn and grouped by the seat during it, so a document-path
+  // draft has never had the chance to group anything. Asking it at draft time would bill
+  // a model repair turn to correct a board that was never asked the question — the exact
+  // per-session cost the exclusion beside it exists to avoid. It is answerable at
+  // `finish`, which is where the seat is actually claiming to be done.
+  derivedMembersGrouped,
+];
 
 const SETTLEMENT_SET: ReadonlySet<Rule> = new Set(SETTLEMENT_RULES);
 

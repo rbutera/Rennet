@@ -347,7 +347,10 @@ function lensAbsenceMessage(reason: LensAbsenceReason): string {
     case "no-findings":
       return "No review findings were found.";
     case "no-noise":
-      return "No safely skippable noise was found.";
+      // D16e — the meaning changed with the derivation. `no-noise` used to be the Noise
+      // seat's claim that nothing here was skip-safe; it is now the host's observation
+      // that the complement is empty, which is a different and much rarer statement.
+      return "Every changed region is on another board.";
   }
 }
 
