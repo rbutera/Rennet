@@ -104,7 +104,7 @@
     "architecture": "nx run rennet:architecture",
     "audit": "nx run rennet:audit",
     "build": "nx run-many -t build",
-    "check": "nx run-many -t format,architecture,licenses,vendor-ledger,lint,typecheck,build && nx run-many -t test --exclude 't3code-*'",
+    "check": "nx run-many -t format,architecture,licenses,vendor-ledger,lint,typecheck,build && nx run-many -t test,dogfood-test --exclude 't3code-*'",
     "check:affected": "nx affected -t lint,typecheck,test,build",
     "check:event-store": "nx run event-store-publish-failure:check",
     "dev": "nx run rennet-desktop:dev",

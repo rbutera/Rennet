@@ -102,8 +102,11 @@ Use Nx for builds, tests, lint, and type checks. The full local and CI gate is:
 pnpm check
 ```
 
-It runs `format`, `architecture`, `licenses`, `lint`, `typecheck`, `test`, and
-`build` across the workspace. Use the affected gate while iterating:
+It runs `format`, `architecture`, `licenses`, `vendor-ledger`, `lint`,
+`typecheck`, and `build` across the workspace, then `test` and `dogfood-test`
+together. `dogfood-test` is the uncacheable suite that reads the live rennet
+checkout; scheduling it in the same `run-many` keeps it off the critical path.
+Use the affected gate while iterating:
 
 ```sh
 pnpm nx affected -t lint,typecheck,test,build

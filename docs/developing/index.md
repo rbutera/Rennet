@@ -86,8 +86,9 @@ The full local check is:
 pnpm check
 ```
 
-It runs formatting, architecture, licence, lint, typecheck, test, and build
-targets. The adapter build includes Rennet's first-party native executable and
+It runs formatting, architecture, licence, vendor-ledger, lint, typecheck, and
+build targets, then the `test` and `dogfood-test` targets together. The adapter
+build includes Rennet's first-party native executable and
 therefore needs the host C toolchain described in the
 [dependency standard](./reference/dependency-standard.md). Before editing documentation, read the
 [docs style guide](./contributing/docs-style-guide.md) and the
