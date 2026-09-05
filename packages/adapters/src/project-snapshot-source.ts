@@ -217,6 +217,117 @@ export async function readBlobText(
   return git(root, ["cat-file", "blob", blobOid], { reject: true });
 }
 
+/**
+ * How many blob BYTES one `git cat-file --batch` call is allowed to return.
+ *
+ * The batch is chunked so peak memory stays bounded on a huge repo (a chunk is held
+ * as a latin1 string plus the per-blob UTF-8 strings sliced out of it) and so the
+ * runner's `maxBuffer` is never the thing that decides whether a snapshot builds. A
+ * single blob larger than the budget still gets its own chunk — the budget bounds
+ * batching, it never refuses a file.
+ */
+const BLOB_BATCH_BYTE_BUDGET = 16 * 1024 * 1024;
+
+/** How many OIDs one batch call may name, so stdin stays small and predictable. */
+const BLOB_BATCH_COUNT_BUDGET = 4096;
+
+/**
+ * Read MANY blobs' UTF-8 text in one `git cat-file --batch` process, as `oid → text`.
+ *
+ * This is the same content `readBlobText` returns per OID, and deliberately so: the
+ * snapshot's shards are byte-addressed by blob content, so any difference here would
+ * move a digest. It is the batched form purely because the per-blob form spawns a
+ * process per file — 4,470 of them for a clean full snapshot of rennet, which
+ * measured 29 s of a 33 s build, ~71 % of it the parent sitting idle waiting on
+ * `fork`/`exec`. One process reads the same blobs in well under a second.
+ *
+ * Framing: `--batch` emits `<oid> SP <type> SP <size> LF <contents> LF` per object,
+ * where `size` is in BYTES, so stdout is read through the byte-preserving `latin1`
+ * mode ({@link GitStdoutEncoding}) and each object's slice is re-decoded as UTF-8.
+ * An object git cannot resolve answers `<name> SP missing LF` with no contents; it is
+ * simply absent from the result map, which reads at the call site exactly like a blob
+ * that was never asked for.
+ *
+ * Order is irrelevant to the caller (the result is a map keyed by OID) and duplicates
+ * are collapsed before the call, so the snapshot's extraction order — and therefore
+ * its bytes — is decided by the caller's iteration, unchanged.
+ */
+export async function readBlobTexts(
+  root: string,
+  blobs: readonly { readonly blobOid: string; readonly size: number }[],
+  git: GitExec = execaGit,
+  /**
+   * The chunk bounds, overridable so a test can force the multi-chunk path without a
+   * 16 MB fixture. Rennet's own tree already crosses the default (a clean full build
+   * reads its blobs in five batches), so this is a convenience for coverage, not the
+   * only way the path runs.
+   */
+  bounds: { readonly byteBudget?: number; readonly countBudget?: number } = {},
+): Promise<Map<string, string>> {
+  const byteBudget = bounds.byteBudget ?? BLOB_BATCH_BYTE_BUDGET;
+  const countBudget = bounds.countBudget ?? BLOB_BATCH_COUNT_BUDGET;
+  const texts = new Map<string, string>();
+  const wanted = new Map<string, number>();
+  for (const blob of blobs) if (!wanted.has(blob.blobOid)) wanted.set(blob.blobOid, blob.size);
+
+  let chunk: string[] = [];
+  let chunkBytes = 0;
+  const flush = async (): Promise<void> => {
+    if (chunk.length === 0) return;
+    const output = await git(root, ["cat-file", "--batch"], {
+      reject: true,
+      encoding: "latin1",
+      input: Buffer.from(`${chunk.join("\n")}\n`, "utf8"),
+    });
+    chunk = [];
+    chunkBytes = 0;
+    parseCatFileBatch(output, texts);
+  };
+
+  for (const [oid, size] of wanted) {
+    // Flush BEFORE adding, so a single over-budget blob lands in a chunk of its own
+    // rather than being refused or dragging a full chunk over the budget with it.
+    if (chunk.length > 0 && (chunkBytes + size > byteBudget || chunk.length >= countBudget)) {
+      await flush();
+    }
+    chunk.push(oid);
+    chunkBytes += size;
+  }
+  await flush();
+  return texts;
+}
+
+/**
+ * A blob the batch was asked for and must have returned. Every OID reaching a batch
+ * read came out of `git ls-tree` at the pinned OID, so an absence means a corrupt
+ * object store or a defect in the batch, and both fail closed here.
+ */
+export function requireBlob(texts: ReadonlyMap<string, string>, oid: string, path: string): string {
+  const text = texts.get(oid);
+  if (text === undefined) {
+    throw new Error(`ProjectSnapshot: git cat-file --batch returned no blob for ${oid} (${path})`);
+  }
+  return text;
+}
+
+/** Parse one `git cat-file --batch` stdout (latin1-decoded) into `oid → UTF-8 text`. */
+function parseCatFileBatch(output: string, into: Map<string, string>): void {
+  let cursor = 0;
+  while (cursor < output.length) {
+    const newline = output.indexOf("\n", cursor);
+    if (newline === -1) break;
+    const header = output.slice(cursor, newline);
+    cursor = newline + 1;
+    const [name, type, sizeText] = header.split(" ");
+    // `missing`/`ambiguous` carry no contents, so the cursor is already past them.
+    if (!name || type !== "blob" || sizeText === undefined) continue;
+    const size = Number.parseInt(sizeText, 10);
+    if (!Number.isFinite(size) || size < 0) break;
+    into.set(name, Buffer.from(output.slice(cursor, cursor + size), "latin1").toString("utf8"));
+    cursor += size + 1; // the contents, then the record's trailing LF
+  }
+}
+
 // ── workspace tooling at the OID (scopes / edges / entry points) ─────────────
 
 interface Member {
@@ -339,15 +450,32 @@ export async function readWorkspaceStructure(
     : [];
   const roots = memberRoots(files, globs);
 
+  // Every member's `package.json` and `project.json` in ONE batch read rather than
+  // one `git cat-file` process each — the same two-spawns-per-member cost the symbol
+  // stage used to pay per file, on a smaller set (~300 ms over rennet's 50 members).
+  // `members` is still built in `roots` order, so scopes/edges/entry points keep the
+  // ordering the manifest is built from.
+  const manifestFiles = roots.flatMap((memberRoot) =>
+    [byPath.get(`${memberRoot}/package.json`), byPath.get(`${memberRoot}/project.json`)].filter(
+      (file) => file !== undefined,
+    ),
+  );
+  const manifestTexts = await readBlobTexts(root, manifestFiles, git);
+
   const members: Member[] = [];
   for (const memberRoot of roots) {
     const pkgFile = byPath.get(`${memberRoot}/package.json`);
     if (!pkgFile) continue;
-    const pkg = safeJson<PackageJson>(await readBlobText(root, pkgFile.blobOid, git));
+    // FAIL CLOSED on a blob the batch did not return, exactly as the per-file
+    // `git cat-file blob` it replaced did by exiting non-zero. Reading an absence as
+    // an empty manifest would silently drop a scope from the workspace map, and no
+    // fallback single read, so that a broken batch cannot repair itself out of sight.
+    const pkgText = requireBlob(manifestTexts, pkgFile.blobOid, pkgFile.path);
+    const pkg = safeJson<PackageJson>(pkgText);
     if (!pkg) continue;
     const projFile = byPath.get(`${memberRoot}/project.json`);
     const project = projFile
-      ? safeJson<ProjectJson>(await readBlobText(root, projFile.blobOid, git))
+      ? safeJson<ProjectJson>(requireBlob(manifestTexts, projFile.blobOid, projFile.path))
       : null;
     members.push({ root: memberRoot, pkg, project: project ?? undefined });
   }

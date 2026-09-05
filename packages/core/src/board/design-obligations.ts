@@ -1,3 +1,5 @@
+import type { OpenSpecChangeSource } from "../delta/openspec-change";
+
 export type DesignSourceFormat = "openspec" | "kiro" | "bmad" | "superpowers" | "grill-with-docs";
 
 export interface DesignSource {
@@ -1449,6 +1451,40 @@ export function parseSuperpowersProgressLedger(
 
 export interface CandidateDesignSource extends DesignSource {
   readonly candidate: string;
+}
+
+/**
+ * Map one raw OpenSpec change into the design sources the assembler and obligation
+ * parser consume — one {@link CandidateDesignSource} per artifact file, all sharing the
+ * change name as their candidate id. The order is reading order: proposal, design,
+ * tasks, then the spec-deltas in the order given. Absent artifacts are omitted.
+ */
+export function openSpecChangeSourceToDesignSources(
+  source: OpenSpecChangeSource,
+): CandidateDesignSource[] {
+  const candidate = source.name;
+  const dir = `openspec/changes/${candidate}`;
+  const make = (role: string, path: string, text: string): CandidateDesignSource => ({
+    format: "openspec",
+    role,
+    path,
+    text,
+    candidate,
+  });
+  const out: CandidateDesignSource[] = [];
+  if (source.proposalMd !== undefined) {
+    out.push(make("proposal", `${dir}/proposal.md`, source.proposalMd));
+  }
+  if (source.designMd !== undefined) {
+    out.push(make("design", `${dir}/design.md`, source.designMd));
+  }
+  if (source.tasksMd !== undefined) {
+    out.push(make("tasks", `${dir}/tasks.md`, source.tasksMd));
+  }
+  for (const delta of source.specDeltas ?? []) {
+    out.push(make("spec-delta", `${dir}/specs/${delta.capability}/spec.md`, delta.md));
+  }
+  return out;
 }
 
 type TaskObligation = Extract<DesignSourceObligation, { readonly kind: "task" }>;

@@ -1406,6 +1406,13 @@ export interface LensPipelineDeps {
   readonly round?: RoundDraftContext;
   /** Per-lens lint context the caller assembles (changed regions, files, patchsetId…). */
   readonly lintContextFor: (lens: LintTarget) => LintContext;
+  /**
+   * The deterministic Design fast path. When this review's branch carries an OpenSpec
+   * change, the Design board is a pure host-side transform from its artifacts — no model
+   * turn — so the caller wires this to build it. It is a PURE ADDITIVE path: `undefined`
+   * (no OpenSpec change, or nothing to render) falls straight through to the model seat.
+   */
+  readonly assembleDesignBoard?: (ctx: LintContext) => DraftBoard | undefined;
   /** Read a prompt file's text (node fs seam; hermetic in tests). */
   readonly readPrompt: PromptReader;
   /**
@@ -3159,7 +3166,34 @@ async function draftLensBoard(
   const retryCap = lensRetryBudget(lens, deps.boardAttempt ?? 0);
 
   let validated: DraftedLens;
-  if (lens === "flagged") {
+  // The deterministic Design fast path (pure additive): an OpenSpec branch's Design board
+  // is a host-side transform from the change artifacts, so it settles here with NO model
+  // turn. `undefined` — no OpenSpec change, or a change with nothing to render — falls
+  // straight through to the seat below, unchanged.
+  //
+  // The assembler THROWS when a change it accepted cannot settle: either the source prose
+  // trips a boundary rule the deterministic path can't rephrase (a code fence or an
+  // indented list in `## Why`, a machinery word in the change name), or a genuine mapping
+  // defect. Both fall back to the seat — the seat renders the same change — rather than
+  // rejecting the lane, which would rethrow and kill the whole round with its four settled
+  // siblings. A silent slow-down is the worst case; a crashed round is not on the table.
+  let assembledDesign: DraftBoard | undefined;
+  if (lens === "design" && deps.assembleDesignBoard !== undefined) {
+    try {
+      assembledDesign = deps.assembleDesignBoard(ctx);
+    } catch {
+      assembledDesign = undefined;
+    }
+  }
+  if (assembledDesign !== undefined) {
+    validated = {
+      board: assembledDesign,
+      omissions: [],
+      blemishes: [],
+      immutability: [],
+      initialOutputWasEmpty: false,
+    };
+  } else if (lens === "flagged") {
     // The flagged lens is the dual seat (Claude + Codex, cross-model concurrence).
     const dual = await runFlaggedDual(deps, council, basePrompt, ctx, retryCap, spans.wrap);
     if ("failure" in dual) {

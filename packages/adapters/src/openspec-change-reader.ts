@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { parseOpenSpecChange } from "@rennet/core";
+import { type OpenSpecChangeSource, parseOpenSpecChange } from "@rennet/core";
 import type { OpenSpecChange, Patchset } from "@rennet/protocol";
 import { createGitShowFileRead } from "./finding-verification-backend";
 import type { GitExec } from "./git-range-diff";
@@ -78,6 +78,21 @@ export async function readOpenSpecChange(
   patchset: Patchset,
   git: GitExec,
 ): Promise<OpenSpecChange | null> {
+  const source = await readOpenSpecChangeSource(patchset, git);
+  return source === null ? null : parseOpenSpecChange(source);
+}
+
+/**
+ * The raw artifact text for the change the reviewed patchset selected, read from the
+ * immutable reviewed tree — the same read {@link readOpenSpecChange} does, WITHOUT the
+ * parse step. The Design assembler consumes this raw source directly (a deterministic
+ * host-side board build, no model turn), while the Spec angle parses it.
+ * Returns `null` when the patchset touches no `openspec/changes/<name>/`.
+ */
+export async function readOpenSpecChangeSource(
+  patchset: Patchset,
+  git: GitExec,
+): Promise<OpenSpecChangeSource | null> {
   const name = selectedOpenSpecChangeName(patchset.files.map((file) => file.path));
   if (name === null) return null;
 
@@ -102,11 +117,11 @@ export async function readOpenSpecChange(
     if (md !== undefined) specDeltas.push({ capability, md });
   }
 
-  return parseOpenSpecChange({
+  return {
     name,
     ...(proposalMd !== undefined ? { proposalMd } : {}),
     ...(designMd !== undefined ? { designMd } : {}),
     ...(tasksMd !== undefined ? { tasksMd } : {}),
     specDeltas,
-  });
+  };
 }

@@ -1587,6 +1587,64 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     );
   });
 
+  it("falls the Design lane back to the seat when the assembler throws, never crashing the round", async () => {
+    // The round-crash regression: a throwing assembler used to reject the Design lane, which
+    // `Promise.allSettled` then rethrows, killing the whole generation and its four settled
+    // siblings. A `## Why` with an indented list or a machinery-word change name throws on
+    // VALID input, so the fast path must degrade to the seat, not take the round down.
+    const captures: SeatCapture[] = [];
+    const applied: Applied[] = [];
+    const bodyFor = (prompt: string, label?: string): unknown =>
+      cleanBody(lensFromPrompt(prompt, label));
+
+    const result = await runLensPipeline({
+      ...boardSeats(captures, bodyFor),
+      repoRoot: "/pr-worktree",
+      deltaPacket: PACKET,
+      lintContextFor,
+      readPrompt,
+      whiteboard: fakeWhiteboard(applied),
+      boardIdFor: (lens) => `board:${lens}`,
+      assembleDesignBoard: () => {
+        throw new Error("design-assembler: board did not settle — no-code-bytes @ document");
+      },
+    });
+
+    // All five lanes still settle, Design included, and none fails.
+    const lenses: LensKind[] = ["design", "sequence", "decisions", "flagged", "noise"];
+    expect(result.boards.map((b) => b.lens)).toEqual(lenses);
+    for (const outcome of result.boards) expect(outcome.failure).toBeUndefined();
+    // The Design SEAT ran — the throw fell through to the model exactly like `undefined` does.
+    expect(captures.some(({ prompt }) => lensFromPrompt(prompt ?? "") === "design")).toBe(true);
+  });
+
+  it("skips the Design seat entirely when the assembler settles a board (the fast path)", async () => {
+    // The other half of the wiring: a valid assembled board must REPLACE the model turn, or
+    // the fast path saves nothing. If the catch above ever swallowed a good board too, the
+    // seat would run here — this fails if it does.
+    const captures: SeatCapture[] = [];
+    const applied: Applied[] = [];
+    const bodyFor = (prompt: string, label?: string): unknown =>
+      cleanBody(lensFromPrompt(prompt, label));
+
+    const result = await runLensPipeline({
+      ...boardSeats(captures, bodyFor),
+      repoRoot: "/pr-worktree",
+      deltaPacket: PACKET,
+      lintContextFor,
+      readPrompt,
+      whiteboard: fakeWhiteboard(applied),
+      boardIdFor: (lens) => `board:${lens}`,
+      assembleDesignBoard: () => designBody(),
+    });
+
+    const design = result.boards.find((b) => b.lens === "design");
+    expect(design?.failure).toBeUndefined();
+    expect(design?.board?.document?.title).toBe("token-refresh");
+    // No Design turn was ever sent to the fake harness.
+    expect(captures.some(({ prompt }) => lensFromPrompt(prompt ?? "") === "design")).toBe(false);
+  });
+
   it("repairs dangling Sequence and Decisions references before the real board service write", async () => {
     const root = await mkdtemp(join(tmpdir(), "lens-reference-repair-"));
     try {
