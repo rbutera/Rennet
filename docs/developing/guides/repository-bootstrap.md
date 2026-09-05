@@ -116,6 +116,33 @@ Run the full gate before pushing. For a new regression test, prove that it fails
 when the protected behavior is broken, then restore the implementation and prove
 that it passes.
 
+### Measure the project-snapshot build
+
+The project snapshot is the slowest thing a user waits for when Rennet first
+opens a repository, and the slowest suite in the gate. Measure it before
+changing it:
+
+```sh
+pnpm nx run rennet-adapters:snapshot-profile
+```
+
+The harness builds a clean full snapshot of the current checkout three times and
+prints a per-stage median — `resolve`, `tree`, `workspace`, `conventions`,
+`symbols`, `build`, `verify`, `store` — alongside the count and wall time of
+every `git` invocation, broken down by subcommand. It reads the live checkout,
+so its target is uncacheable and its suite is skipped unless
+`RENNET_SNAPSHOT_PROFILE=1` is set.
+
+Set `RENNET_SNAPSHOT_CPUPROF=1` to also write a `.cpuprofile` for the last run,
+and `RENNET_SNAPSHOT_PROFILE_RUNS`, `RENNET_SNAPSHOT_PROFILE_REPO` and
+`RENNET_SNAPSHOT_PROFILE_OUT` to change the run count, the repository measured,
+and where the report is written.
+
+Blobs are read in batches through one `git cat-file --batch` process per chunk,
+not one `git cat-file blob` process per file. A change that reads blob content
+per file reintroduces a process spawn per file, which was 29 s of a 33 s
+snapshot of this repository; the harness is how you see that before it ships.
+
 ## Keep Nx cache results meaningful
 
 Cacheable targets declare the source, shared configuration, environment inputs,
