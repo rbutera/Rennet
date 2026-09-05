@@ -11,11 +11,11 @@ expect the other seat to say.
 
 ## Document opening
 
-Author the board-level document on every return. `document.title` names the
+Open the board with `set_document`. `title` names the
 change without a provisional finding count or severity result.
-`document.introMarkdown` is one short paragraph grounded in the findings
+`intro_markdown` is one short paragraph grounded in the findings
 below. Do not claim a final count or severity picture: the host derives that
-from the reconciled finding set. Set `document.measure` to `reading`.
+from the reconciled finding set.
 
 ## What a finding is
 
@@ -32,22 +32,31 @@ under a served root through `section.data.children`; a top-level or orphaned
 retries that malformed result once and then reports a retryable lens failure;
 it never turns a hidden finding into no-findings.
 
-Each finding block carries:
+A finding is ONE element: a severity, the code refs it cites, and a single
+`concern` markdown string. There is no separate title field, no body field and
+no fix field — `concern` carries all three, and its LAYOUT is what the surface
+reads. Write it in exactly this shape:
 
-- **Title** — the claim, compressed. Not a topic ("error handling"), a claim
-  ("a declined refresh is misclassified as a network failure").
+- **First line: the claim, ten words or fewer.** This line is the finding's
+  header — the surface folds every finding down to it, so a paragraph here is
+  a paragraph in the header. Not a topic ("error handling"), a claim
+  ("declined refresh misclassified as a network failure").
+- **Blank line, then the body.** The consequence in a few sentences, then the
+  failure scenario a reader can walk: the inputs or state, the path through
+  the code, the wrong outcome. Cite every step by repo-relative path and line.
+- **Last line: the remedy, opening with the literal `**Fix:**`.** One or two
+  sentences. That marker is what lifts the remedy into its own box on the
+  card; without it the fix is buried in the scenario prose and reads as more
+  of the same paragraph.
+
+Alongside `concern`:
+
 - **Severity** — high, medium, or low. High: wrong results, data loss,
   security, silent corruption. Medium: real defect with a workaround or a
   narrow trigger. Low: genuine but minor. Rank by consequence, not by how
   confident you feel.
-- **Body** — the claim and its consequence in a few sentences. Short: the
-  walkable detail lives in the details parts, not one wall of prose.
-- **Details** — one subheaded part per input class or member of the failure:
-  inputs, path through the code, wrong outcome. Cite every step with full
-  repo-relative paths (the reader clicks a citation to see the code).
-- **Fix** — the remedy, one or two sentences, as its own field, never folded
-  into the scenario prose.
-- **Anchor** — the exact location (path:line) where the defect lives.
+- **Code refs** — the exact locations (path:line) where the defect lives, in
+  the order a reader should open them.
 
 Sort by severity. If nothing rises to a finding, return an empty `elements`
 list. Do not emit a one-line clean result, empty section, or other placeholder. The host records the typed no-findings result without pretending
@@ -69,6 +78,9 @@ there is a board to read.
 - Do not paste code bytes into the board. To show code inline, emit a code
   ref (path + line span + highlighted lines); the surface hydrates the real
   lines, so numbering can never drift from the file it claims to show.
+- Do not set a section's `sources`. That field is a specification artifact's
+  provenance and a defect has none; filling it puts an unexplained chip on the
+  section header that opens the reader's editor at an arbitrary line.
 
 ## Lanes (all lenses)
 
@@ -80,7 +92,7 @@ narrated. Never write prose about what is not on this board.
 - Sequence: the reading walk — the order of understanding.
 - Decisions: the judgment calls and their rationale.
 - Flagged: defects, with severities and failure scenarios.
-- Noise: the skip-safe mechanical hunks, grouped and reversible.
+- Noise: everything the other four lanes do not cite, grouped and explained.
 
 ## Ground rules (all lenses)
 
@@ -102,5 +114,8 @@ narrated. Never write prose about what is not on this board.
   narration.
 - Threads and messages are records of real exchanges. You draft before any
   exchange exists; never author one.
-- Your output is a draft board of typed blocks in the schema supplied with
-  your task. Fill only the fields the schema defines.
+{{write-with-tools}}
+
+`add_finding` is this lens's own verb: the defect, its severity, and the code it
+cites. `settle_absent` is the other ending — call it when you have read the
+change and found no defect, and say in one note what you looked for.

@@ -601,7 +601,9 @@ export type ProjectProcessPhase = z.infer<typeof projectProcessPhaseSchema>;
 export const projectProcessStepStatusSchema = z.enum(["queued", "running", "done", "failed"]);
 export type ProjectProcessStepStatus = z.infer<typeof projectProcessStepStatusSchema>;
 
-/** The five persisted scout answers shown while the structural map is built. */
+/** The scout answer keys. `worktreeBaseDir` is still scouted and stored as a fact, but it
+ *  no longer rides the questionnaire (#812): it steers nothing, so the four keys below are
+ *  what the map surface shows while it builds. */
 export const projectScoutAnswerKeySchema = z.enum([
   "trackerKind",
   "defaultBranch",
@@ -626,7 +628,7 @@ export type ProjectScoutAnswer = z.infer<typeof projectScoutAnswerSchema>;
 
 export const projectScoutQuestionnaireSchema = z.object({
   repo: z.string().min(1),
-  answers: z.array(projectScoutAnswerSchema).length(5),
+  answers: z.array(projectScoutAnswerSchema).length(4),
   detected: z.number().int().nonnegative(),
   guessed: z.number().int().nonnegative(),
 });
@@ -920,6 +922,8 @@ export const pullRequestSchema = z
     additions: z.number().int().nonnegative().optional(),
     deletions: z.number().int().nonnegative().optional(),
     changedFiles: z.number().int().nonnegative().optional(),
+    /** Provider-reported creation time. Optional for legacy project-detail producers. */
+    createdAt: z.iso.datetime().optional(),
     lastActivityAt: z.iso.datetime(),
   })
   .refine(
@@ -2981,8 +2985,32 @@ export type PublicProjectionName = keyof typeof publicProjectionSchemas;
  * coding harness's own provider traffic; both are stated here so the UI can say so without
  * inventing it.
  */
+/**
+ * One tool server the DAEMON supplies to a sidecar thread, named as local so a reader can
+ * tell a loopback tool call from egress (`t3code-sidecar`). Today that is the board server
+ * (`lens-board-tools` D8), whose only client is a harness child on this machine.
+ */
+export const localToolServerSchema = z.object({
+  name: z.string(),
+  /** The loopback origin it is bound to — `http://127.0.0.1:<port>`. */
+  origin: z.string(),
+  /** How many boards it is currently serving. Zero servers are reported as none at all. */
+  openLanes: z.number().int().positive(),
+});
+export type LocalToolServer = z.infer<typeof localToolServerSchema>;
+
 export const t3SidecarStatusSchema = z.object({
   state: z.enum(["off", "starting", "ready", "degraded"]),
+  /**
+   * The daemon's own tool servers, named as LOCAL, present only once one is actually
+   * serving a lane.
+   *
+   * Absent is the honest default and the reason this is optional rather than an empty
+   * array with a permanent entry: a status field claiming a running loopback server while
+   * none runs is a lie in the UI, which is why group 2 deliberately left this clause
+   * unmet until a lane could actually be open.
+   */
+  localToolServers: z.array(localToolServerSchema).optional(),
   /** Why it is degraded: bundle missing, spawn failed, exited. */
   detail: z.string().optional(),
   /** The loopback port when ready. */

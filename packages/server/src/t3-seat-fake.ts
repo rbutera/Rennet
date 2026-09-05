@@ -7,13 +7,23 @@
 // SEAT as the session label, which is the attribution the fakes already answer by.
 //
 // It is a test double for the TRANSPORT, not a model of the sidecar: it does not persist a
-// conversation, so a repair turn reaching it carries pointers into a fake that has never
-// seen the draft. Tests about what a repair may carry belong on the pipeline's own fake
+// conversation, so a repair turn reaching it carries a verdict into a fake that has never
+// seen the board. Tests about what a repair may carry belong on the pipeline's own fake
 // seam (`lens-pipeline.test.ts`), which does hold a thread.
+//
+// Since `lens-board-tools` 3.2 it also opens the generation's BOARD LANES and translates
+// each seat's answer into the calls a seat would make (`seat-fixture.ts`). The round-level
+// tests' harness fakes still hand back a `DraftBoard`, because that is the readable way to
+// say what a lens found; what changed is that nobody reads it off the turn any more, so the
+// double writes it where a real seat would.
 
 import type { T3SeatClient, T3SeatSeam, T3SettledTurn } from "@rennet/adapters";
 import type { CodexExecutor, HarnessPort } from "@rennet/core";
+import type { GenerationBoards } from "./board/board-mcp-server";
+import { seatBoardServer } from "./board/seat-address";
+import { applySeatTurn, fixtureGenerationBoards, seatVoiceOn } from "./board/seat-fixture";
 import type { RoundsRuntimeDeps, T3SeatRuntime } from "./runtime/rounds";
+import type { SeatKind } from "./t3/threads";
 
 async function claudeTurn(
   port: HarnessPort,
@@ -66,10 +76,18 @@ async function claudeTurn(
 export function fakeT3SeatsOverPorts(
   resolveClaudePort: (repoRoot: string) => Promise<HarnessPort | null>,
   resolveCodexExecutor: (repoRoot: string) => Promise<CodexExecutor | null>,
+  /** This generation's board lanes, when the test is about them. Omitted ⇒ this attempt
+   *  gets its own real ones, because a seat writes its board and needs somewhere to. */
+  callerBoards?: GenerationBoards,
 ): NonNullable<RoundsRuntimeDeps["resolveT3Seats"]> {
   return async (input): Promise<T3SeatRuntime> => {
     const providerOf = new Map<string, { seat: string; provider: "claudeAgent" | "codex" }>();
     const settled = new Map<string, T3SettledTurn>();
+    // The caller's lanes when it has any to give — that is how the round-level test of the
+    // open-before-dispatch ordering watches `openLane` — and this attempt's OWN fixture
+    // lanes otherwise. Always a real set either way: a seat writes its board now, so a
+    // runtime with no lanes leaves every lens with nothing to write into.
+    const lanes: GenerationBoards = callerBoards ?? fixtureGenerationBoards();
     const client: T3SeatClient = {
       startTurn: async ({ threadId, text, outputSchema }) => {
         const thread = providerOf.get(threadId);
@@ -116,7 +134,16 @@ export function fakeT3SeatsOverPorts(
             ...(outputSchema === undefined ? {} : { outputSchema }),
           });
         })();
-        settled.set(threadId, turn);
+        // The seat's answer goes where a seat's work goes: onto its lane's board, through
+        // the tool surface. A seat with no lane — the round-report seat — keeps its
+        // structured return, which is what the classifier still reads.
+        const voice = seatVoiceOn(lanes, thread.seat as SeatKind);
+        if (voice !== undefined && turn.state === "completed") {
+          await applySeatTurn(turn.structuredOutput, thread.seat as SeatKind, voice);
+          settled.set(threadId, { ...turn, structuredOutput: undefined });
+        } else {
+          settled.set(threadId, turn);
+        }
         return { previousTurnId: null, requestedAt: new Date().toISOString() };
       },
       waitForTurnSettled: async (threadId) => {
@@ -131,10 +158,25 @@ export function fakeT3SeatsOverPorts(
       threadFor: async ({ seat, provider }) => {
         const threadId = `${input.generationId}:${seat}`;
         providerOf.set(threadId, { seat, provider });
-        return { threadId, projectId: input.sessionId };
+        // The seat's address onto its lane's board, minted here exactly as
+        // `resolveT3SeatRuntime` mints it. It is not only the url: registering the address
+        // is what makes the lane able to answer per-seat questions about this seat, which
+        // is where its board tool-call count is read from (task 4.3). A double that skipped
+        // it left that figure absent for a reason production does not have.
+        const boardServer = seatBoardServer(lanes, seat);
+        return {
+          threadId,
+          projectId: input.sessionId,
+          ...(boardServer === undefined ? {} : { boardServer }),
+        };
       },
     };
-    return { seam, environmentId: "fake-environment", watch: () => ({ stop: () => undefined }) };
+    return {
+      seam,
+      boards: lanes,
+      environmentId: "fake-environment",
+      watch: () => ({ stop: () => undefined }),
+    };
   };
 }
 
@@ -142,10 +184,13 @@ export function fakeT3SeatsOverPorts(
  * The rounds-runtime deps with a fake sidecar filled in from the harness fakes already in
  * them. One call at the composition site keeps every round test's own fixtures intact.
  */
-export function withFakeT3Seats<D extends RoundsRuntimeDeps>(deps: D): D {
+export function withFakeT3Seats<D extends RoundsRuntimeDeps>(
+  deps: D,
+  boards?: GenerationBoards,
+): D {
   if (deps.resolveT3Seats !== undefined) return deps;
   return {
     ...deps,
-    resolveT3Seats: fakeT3SeatsOverPorts(deps.resolveClaudePort, deps.resolveCodexExecutor),
+    resolveT3Seats: fakeT3SeatsOverPorts(deps.resolveClaudePort, deps.resolveCodexExecutor, boards),
   };
 }

@@ -20,7 +20,9 @@ Starting or opening a review SHALL land the reviewer on the board view. There SH
 
 ### Requirement: Every lens is listed and selectable from the first frame
 
-The lens rail SHALL list all five lenses for the generation from the moment the generation starts, whether or not a lens has a result. Each SHALL carry the state of its seat — working, settled, failed, or absent — and a lens whose seat is still running SHALL be selectable. A lens SHALL NOT be omitted from the rail because it has no terminal result, and SHALL NOT be shown as a disabled control.
+The lens rail SHALL list all five lenses for the generation from the moment the generation starts, whether or not a lens has a result. Each SHALL carry the state of its seat — waiting, working, settled, failed, or absent — and a lens whose seat is still running SHALL be selectable. A lens SHALL NOT be omitted from the rail because it has no terminal result, and SHALL NOT be shown as a disabled control.
+
+A lens whose input is another lane's settlement — Noise, whose board is the complement of the other four — SHALL read as WAITING until those lanes settle, naming what it is waiting for. It SHALL NOT read as working, because no seat is running and no elements are coming, and it SHALL NOT read as stalled or failed.
 
 The Flagged lens SHALL carry one indicator per voice, because it runs two seats.
 
@@ -28,6 +30,11 @@ The Flagged lens SHALL carry one indicator per voice, because it runs two seats.
 
 - **WHEN** two lenses have settled and three are still running
 - **THEN** all five are in the rail, the three running ones show they are working, and selecting one of them shows its board being written
+
+#### Scenario: Noise reads as waiting, not working
+
+- **WHEN** two lanes have settled and two are still running
+- **THEN** the Noise entry says it is waiting on the lanes that have not settled, shows no working indicator, and is not shown as failed
 
 #### Scenario: Flagged shows two voices
 

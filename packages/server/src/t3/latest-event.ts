@@ -12,6 +12,7 @@
 // Docs: docs/developing/concepts/t3code-sidecar.md
 
 import type { LaneLatest } from "@rennet/protocol";
+import { boardCallOf, boardReceipt } from "./board-receipt";
 
 /** The honest cap on every projected line, including the `…` marker. */
 export const LATEST_EVENT_MAX_CHARS = 120;
@@ -138,6 +139,33 @@ export function lastSentence(text: string): string {
   return parts.at(-1) ?? flat;
 }
 
+/**
+ * The tools a seat calls to HAND BACK its board rather than to act on the change. Their
+ * input is the board, so the detail line is a document, not a sentence.
+ */
+const STRUCTURED_OUTPUT_TOOLS: ReadonlySet<string> = new Set([
+  "structuredoutput",
+  "structured_output",
+  "structured-output",
+]);
+
+/**
+ * Is this text a JSON object — the call's own input — rather than something a reviewer can
+ * read? A payload still streaming its `input_json_delta` counts too: half an object on the
+ * bench is the same defect as a whole one (#819, where Noise's live line read
+ * `{"document":null,"elements":[]}` and Decisions' read `StructuredOutput: {"elements":[…`).
+ */
+function isJsonPayload(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return false;
+  try {
+    const parsed: unknown = JSON.parse(trimmed);
+    return parsed !== null && typeof parsed === "object";
+  } catch {
+    return true;
+  }
+}
+
 /** T3 writes a tool activity's detail as `<toolName>: <command or JSON input>`. */
 function splitToolDetail(detail: string): { readonly tool: string; readonly rest: string } {
   const at = detail.indexOf(": ");
@@ -182,16 +210,55 @@ function detailOf(activity: ThreadActivityLike): string | undefined {
   return typeof detail === "string" && detail.trim() !== "" ? detail : undefined;
 }
 
-/** A tool activity in plain words: "reading src/foo.ts", "running git diff --stat". */
-export function toolLine(activity: ThreadActivityLike, repoRoot?: string): string {
+/**
+ * A tool activity in plain words: "reading src/foo.ts", "running git diff --stat".
+ *
+ * NEVER the call's JSON input. A seat's line is its SPEECH, and a serialized board dropped
+ * into that slot is not speech — it is the payload the seat is handing over, rendered where
+ * the reviewer expects a sentence (#819). So a structured-output call reads as the receipt
+ * it is, an unknown tool whose input is JSON reads as its own name, and a payload with no
+ * tool name in front of it contributes NO line at all, leaving the seat's prose to speak.
+ */
+export function toolLine(
+  activity: ThreadActivityLike,
+  repoRoot?: string,
+  /** This tool's own count within the turn, for the receipt's "added step 3" (task 4.2). */
+  ordinal?: number,
+): string {
+  // The BOARD ARM, ahead of everything below it (D11, task 4.2). A board call's input is
+  // the element the seat is writing, so every path further down this function would render
+  // it as `<toolName>: <json>` — the payload in the slot the reviewer reads as speech,
+  // which is #819 arriving one call at a time. See `board-receipt.ts`.
+  const call = boardCallOf(activity);
+  if (call !== undefined) {
+    return capLine(
+      boardReceipt(call, {
+        ...(ordinal === undefined ? {} : { ordinal }),
+        ...(repoRoot === undefined ? {} : { repoRoot }),
+      }),
+    );
+  }
   const detail = detailOf(activity);
   if (detail === undefined) return capLine(activity.summary);
   const { tool, rest } = splitToolDetail(detail);
+  if (STRUCTURED_OUTPUT_TOOLS.has(tool.toLowerCase())) return "returning the board";
   const verb = TOOL_VERBS[tool.toLowerCase()];
   const subject = toolSubject(rest, repoRoot);
-  // No verb for this tool: show T3's own detail rather than invent one.
-  if (verb === undefined) return capLine(detail);
-  return capLine(subject === "" ? verb : `${verb} ${subject}`);
+  if (verb === undefined) {
+    // No verb for this tool: show T3's own detail rather than invent one — unless that
+    // detail is the input itself. Then the tool's NAME is the most this line can honestly
+    // say, and a detail that is nothing but the payload leaves T3's summary to say it (or,
+    // when the summary is a payload too, says nothing and yields to the seat's own words).
+    if (isJsonPayload(rest)) return capLine(tool);
+    if (isJsonPayload(detail)) {
+      const summary = capLine(activity.summary);
+      return isJsonPayload(summary) ? "" : summary;
+    }
+    return capLine(detail);
+  }
+  // A known verb with a JSON blob for a subject keeps the verb alone: "editing" says more
+  // than "editing {"old_string":…}" and says nothing false.
+  return capLine(subject === "" || isJsonPayload(subject) ? verb : `${verb} ${subject}`);
 }
 
 const timeOf = (iso: string): number => {
@@ -242,10 +309,38 @@ export function projectLatestEvent(
     if (newestAt === null || at > newestAt) newestAt = at;
   };
 
+  // A board call's ordinal within the turn — the "3" in "added step 3". Keyed on the
+  // runtime's own call id, so the started/updated/completed rows of ONE call share one
+  // number instead of counting to three. An activity with no call id gets no ordinal at
+  // all: the line then names the thing without a number, which is the honest degrade —
+  // a number derived from rows rather than calls would be wrong and would look right.
+  const boardOrdinal = new Map<string, number>();
+  const boardCalls = new Map<string, number>();
+
   for (const activity of thread.activities) {
     if (activity.tone !== "tool" || !inTurn(activity.turnId)) continue;
     const at = timeOf(activity.createdAt);
     witness(at);
+    // A BOARD call speaks whether or not it has finished (D11, task 4.2). The daemon
+    // answers one in microseconds, so its in-flight window is invisible to a reviewer, and
+    // what they want from the line is not what the seat is waiting on but what it just put
+    // on the board. Every other tool keeps the in-flight rule: a finished `Read` is no
+    // longer what the seat is doing, and saying it is would be a lie in the UI.
+    const call = boardCallOf(activity);
+    if (call !== undefined) {
+      const callId = toolPayloadField(activity, "toolCallId");
+      let ordinal: number | undefined;
+      if (callId !== undefined) {
+        ordinal = boardOrdinal.get(callId);
+        if (ordinal === undefined) {
+          ordinal = (boardCalls.get(call.tool) ?? 0) + 1;
+          boardCalls.set(call.tool, ordinal);
+          boardOrdinal.set(callId, ordinal);
+        }
+      }
+      consider(at, "tool", toolLine(activity, options.repoRoot, ordinal));
+      continue;
+    }
     // A completed or denied call falls back to whatever the seat is saying instead.
     if (!inFlight(activity)) continue;
     consider(at, "tool", toolLine(activity, options.repoRoot));

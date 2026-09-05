@@ -9,10 +9,14 @@ import type {
 } from "@rennet/adapters";
 import { councilSeatTurn } from "@rennet/adapters";
 import {
+  type BoardVoiceWriter,
+  type BoardWrite,
+  type ChangedRegion,
   carriedElementIds,
   composeFindingRound,
   DEFAULT_SEAT_LABELS,
   type DeltaPacket,
+  deriveNoiseMembers,
   type ElementReference,
   elementReferences,
   type FindingResolution,
@@ -29,17 +33,24 @@ import {
   type RegisterLintContext,
   reconcileFindingsWithProvenance,
   reviewedDiffCommand,
+  type SiblingCitations,
   stampDeltas,
+  stampPatchsetId,
+  unknowableComplementFailure,
   validateDraft,
 } from "@rennet/core";
 import {
   expandPromptPartials,
   INVESTIGATE_PARTIAL_FILE,
   LENS_PROMPT_FILES,
+  PROMPT_PARTIAL_MARKER,
   REVIEW_DRAFT_VOICE_FILE,
   ROUND_REPORT_FILE,
+  renderBoardRepairTurn,
   renderLayer,
   renderRepairTurn,
+  WRITE_WITH_TOOLS_MARKER,
+  WRITE_WITH_TOOLS_PARTIAL_FILE,
 } from "@rennet/prompts";
 import {
   type BoardDocument,
@@ -58,6 +69,7 @@ import {
   type FindingElement,
   type GenerationPhaseTiming,
   generationIdForPatchset,
+  hostDerivedMemberKind,
   LENS_ADMISSIBLE_ABSENCES,
   LENS_KINDS,
   type LensAbsenceReason,
@@ -73,8 +85,14 @@ import {
   type Violation,
 } from "@rennet/protocol";
 import { z } from "zod";
+import type { BoardLane, GenerationBoards } from "../board/board-mcp-server";
 import type { SessionContextFile } from "../context-files";
-import type { SeatKind as BoardSeatId } from "../t3/threads";
+import {
+  type SeatKind as BoardSeatId,
+  SEAT_BOARD_TARGET,
+  SEAT_BOARD_VOICE,
+  SEAT_KINDS,
+} from "../t3/threads";
 import { projectRoundReportBoard } from "./lens-board-read";
 import {
   buildRoundEvidenceManifest,
@@ -172,59 +190,21 @@ const RoundReportClassificationSchema = z
 type RoundReportClassification = z.infer<typeof RoundReportClassificationSchema>;
 let cachedRoundReportClassificationSchema: unknown;
 /**
- * Design's absence return (session-bound-workspace D6). The seat finds the specification
- * this branch was written against in the checkout it is standing in; when the repository
- * holds none it returns this instead of a board. There is nothing to account for — the
- * host offers no candidate bundle any more — so the shape is the reason alone.
- */
-// STRICT on purpose. This is the host boundary: an absence is the reason ALONE, so a
-// return that carries anything besides `absence` is not an absence claim and must go down
-// the validate/repair ladder like any other malformed board. A permissive `z.object` here
-// would strip the extra keys and settle a lane absent on `{ absence, document }` — a
-// half-written board reported to the reader as "no spec found for this branch".
-const DesignNoSpecSchema = z.strictObject({ absence: z.literal("no-spec") });
-/**
- * The schema Design's draft turn carries as its output format. It is ONE object because
- * the provider allows nothing else — both refusals were measured live against the API on
- * 2026-09-04, and each one killed every Design turn on every branch (#810):
- *
- *   - `z.union([DraftBoardSchema, DesignNoSpecSchema])` renders as `{ anyOf: [...] }` with
- *     no top-level `type` → `400 tools.N.custom.input_schema.type: Field required`.
- *   - The same union WITH `type: "object"` stamped on the envelope →
- *     `400 tools.N.custom.input_schema: input_schema does not support oneOf, allOf, or
- *     anyOf at the top level`.
- *
- * So a top-level union is not available here at any price, and the two returns cannot be
- * held disjoint ON THE WIRE. They are held disjoint at the HOST instead, by
- * `designNoSpecAbsence` below: the board must parse strictly, and the absence must be the
- * reason alone. Do not "restore the union" — the second 400 is what that costs.
- *
- * Still derived from the frozen `DraftBoardSchema` (never hand-authored): `.partial()`
- * makes `elements` optional so the absence-only return validates, and `absence` is added.
- */
-const DesignDraftOutputSchema = DraftBoardSchema.partial().extend({
-  absence: z.literal("no-spec").optional(),
-});
-let cachedDesignDraftSchema: unknown;
-
-/**
- * The Design seat's `no-spec` return, or `undefined` for anything else. A parseable board
- * always wins: a return that is BOTH is a board, so a seat cannot draft and claim absence
- * in the same breath. And a return that is NEITHER — a partial board wearing an `absence`
- * key — is not an absence either; it falls through to the ladder.
- */
-function designNoSpecAbsence(output: unknown): { readonly absence: "no-spec" } | undefined {
-  if (DraftBoardSchema.safeParse(output).success) return undefined;
-  return DesignNoSpecSchema.safeParse(output).success ? { absence: "no-spec" } : undefined;
-}
-
-/**
  * The JSON-schema view of the frozen `DraftBoardSchema`, derived once (never
- * hand-authored — reconciliation 2/F4). Passed to the harness session as the
- * output schema (the SDK `outputFormat`) and NEVER inlined into the prompt: the
- * schema travels once (#737; the double-send was ~9.8 KB per turn). A
- * derivation failure falls back to a permissive object schema so a runtime
- * quirk never blocks drafting (Rule Zero).
+ * hand-authored — reconciliation 2/F4).
+ *
+ * NOT a lens seat's contract any more (`lens-board-tools` 3.2). A lens seat writes its
+ * board through tools and returns no document, so nothing binds its turn: no
+ * `outputFormat`, no schema in its prompt, and no `StructuredOutput` on its thread. The
+ * 9,618 bytes this rendered on the Claude leg and the 10,874 the Codex leg's sanitised
+ * form rendered are no longer sent per turn.
+ *
+ * What still reads it is the LEGACY round-report leg ({@link runLegacyRoundReport}) —
+ * the caller that supplies no evidence manifest and is bound to the full board shape.
+ * That seat still returns a document, and until it is moved (the round-report row of
+ * D2's table, which no task in this change ticks) this is the only thing that binds it.
+ * A derivation failure falls back to a permissive object schema so a runtime quirk never
+ * blocks drafting (Rule Zero).
  */
 export function boardOutputSchema(): unknown {
   if (cachedBoardSchema !== undefined) return cachedBoardSchema;
@@ -255,16 +235,6 @@ function roundReportClassificationOutputSchema(): unknown {
     };
   }
   return cachedRoundReportClassificationSchema;
-}
-
-export function designDraftOutputSchema(): unknown {
-  if (cachedDesignDraftSchema !== undefined) return cachedDesignDraftSchema;
-  try {
-    cachedDesignDraftSchema = z.toJSONSchema(DesignDraftOutputSchema, { io: "output" });
-  } catch {
-    cachedDesignDraftSchema = boardOutputSchema();
-  }
-  return cachedDesignDraftSchema;
 }
 
 // ── Draft → board ops (the host writes ops on the drafter's behalf, D2) ──
@@ -667,6 +637,16 @@ const MATERIAL_KIND_BY_LENS: Partial<Record<LensKind, DraftElement["kind"]>> = {
   sequence: "order_step",
   decisions: "decision",
   flagged: "finding",
+  // Noise is here for a different reason from the other three, and it is worth stating
+  // rather than reading as symmetry. The other three name what a SEAT must produce. This
+  // names what the HOST already placed: a Noise lane only reaches a seat when the
+  // complement is non-empty (an empty one settles `no-noise` with no turn at all), so a
+  // settled Noise board with no reachable member is a board that lost the regions it
+  // exists to account for — the prose about the mechanical edits with none of the
+  // mechanical edits under it. Nothing else catches that: `derived-member-grouped` is
+  // vacuous when there is nothing to parent, and an element count is satisfied by the
+  // seat's own grouping section.
+  noise: "noise_verdict",
 };
 
 /** Whether a lens produced content the served board can actually render as its result. */
@@ -677,78 +657,48 @@ function hasLensMaterial(lens: LensKind, board: DraftBoard): boolean {
     : reachableElementsOfKind(board.elements, kind).length > 0;
 }
 
-/** Only a parsed, zero-element provider return can support a typed clean absence. */
-function isTrulyEmptyDraft(output: unknown): boolean {
-  const parsed = DraftBoardSchema.safeParse(output);
-  return parsed.success && parsed.data.elements.length === 0;
-}
-
 /**
- * Namespace every element id in a board (and every INTRA-board reference to it)
- * under `prefix`, so two independently-drafted seats can never share an id. The
- * two flagged seats mint ids independently, so both may author a `c1` for
- * DIFFERENT code — without this, seat B's finding would resolve its `code:["c1"]`
- * against seat A's `c1` after the merge (finding 7). Pure.
+ * Reconcile the Flagged lane's TWO VOICES over the ONE board they both wrote
+ * (`lens-board-tools` D9, task 3.4).
+ *
+ * Both seats write into the same board as they go, each element stamped with the voice
+ * that made the call, and the ids are host-minted from one counter so they cannot collide.
+ * So there is nothing to merge here and nothing to namespace: what is left is the fact the
+ * seats could not know while they were writing, which is whether the OTHER voice raised
+ * the same concern. `reconcileFindings` folds the two voices' findings by location — a
+ * matched pair collapses to the clearer one carrying both models' concurrence, a solo
+ * carries the raising model's — and this stamps `concurrence` and `accord` from that fold.
+ *
+ * It runs AT LANE SETTLE, never at write. A finding is drafted with `concurrence: []` and
+ * no `accord` ({@link HOST_DEFAULTS}), and stays that way for as long as either voice
+ * might still write: a mark stamped while one seat is mid-turn would claim an agreement
+ * that voice has not been asked about, and would then have to be un-claimed.
+ *
+ * Pure. `voices` names each seat's author id — the identity its own elements carry — and
+ * the label that identity reports as.
  */
-export function namespaceBoard(board: DraftBoard, prefix: string): DraftBoard {
-  const ids = new Set(board.elements.map((el) => el.id));
-  const rename = (v: string): string => (ids.has(v) ? prefix + v : v);
-  const elements = board.elements.map((el) => {
-    const data = el.data as Record<string, unknown>;
-    const next: Record<string, unknown> = {};
-    for (const [k, val] of Object.entries(data)) {
-      if (typeof val === "string") next[k] = rename(val);
-      else if (Array.isArray(val))
-        next[k] = val.map((x) => (typeof x === "string" ? rename(x) : x));
-      else next[k] = val;
-    }
-    return { ...el, id: prefix + el.id, data: next } as DraftElement;
-  });
-  return { ...(board as object), elements } as DraftBoard;
-}
-
-/**
- * Reconcile two flagged-seat boards into one: `reconcileFindings` folds their
- * findings by location (per-finding cross-model concurrence, J2), a matched pair
- * collapses to the clearer one with both models' concurrence, a solo carries the
- * raising model's concurrence. Seat B's ids are NAMESPACED first (finding 7), so
- * a seat can never cite the other seat's code; matching is by synthesized
- * location anchor, not id, so namespacing does not disturb it. Non-finding
- * elements then union by id (now collision-free). Pure.
- */
-export function reconcileFlaggedBoards(
-  boardArg: DraftBoard,
-  boardBArg: DraftBoard,
-  labels: { a: string; b: string },
+export function reconcileFlaggedVoices(
+  board: DraftBoard,
+  voices: {
+    readonly a: { readonly authorId: string; readonly label: string };
+    readonly b: { readonly authorId: string; readonly label: string };
+  },
 ): DraftBoard {
-  const boardA = boardArg;
-  const boardB = namespaceBoard(boardBArg, "b:");
-  const aFindings = boardFindings(boardA);
-  const bFindings = boardFindings(boardB);
+  const labels = { a: voices.a.label, b: voices.b.label };
+  const findings = boardFindings(board);
+  const byVoice = (authorId: string): DraftElement[] =>
+    findings.filter((el) => authorIdOf(el) === authorId);
   const reconciled = reconcileFindingsWithProvenance(
-    aFindings.map((el) => toFindingElement(el, boardA)),
-    bFindings.map((el) => toFindingElement(el, boardB)),
+    byVoice(voices.a.authorId).map((el) => toFindingElement(el, board)),
+    byVoice(voices.b.authorId).map((el) => toFindingElement(el, board)),
     labels,
   );
-  const byId = new Map<string, { agreement: FindingAgreement }>(
-    reconciled.map(({ finding }) => [finding.findingId, { agreement: finding.agreement }]),
+  const byId = new Map<string, FindingAgreement>(
+    reconciled.map(({ finding }) => [finding.findingId, finding.agreement]),
   );
 
-  const merged = (el: DraftElement): DraftElement => {
-    const r = byId.get(el.id);
-    if (r === undefined) return el;
-    return {
-      ...el,
-      data: {
-        ...(el.data as object),
-        concurrence: foldConcurrence(r.agreement, labels),
-        accord: accordOf(r.agreement),
-      },
-    } as DraftElement;
-  };
-
   // A collapsed finding leaves its citers (its seat's own section `children`) pointing at
-  // an id the merged board no longer contains — a `bad-ref` the board service rejects the
+  // an id the settled board no longer contains — a `bad-ref` the board service rejects the
   // whole write for (#548). The reconciler is the one place that KNOWS the intended
   // target, because it did the collapsing, so it hands back which ids each surviving row
   // consumed and they are repointed here. Re-deriving the pairing from anchors would be a
@@ -759,45 +709,83 @@ export function reconcileFlaggedBoards(
     for (const consumed of superseded) successorOf.set(consumed, finding.findingId);
   }
 
-  const placed = new Set<string>();
   const kept: DraftElement[] = [];
-  for (const el of boardA.elements) {
-    if (el.kind === "finding" && !byId.has(el.id)) continue; // collapsed into seat B's kept partner
-    kept.push(el.kind === "finding" ? merged(el) : el);
-    placed.add(el.id);
-  }
-  for (const el of boardB.elements) {
-    if (placed.has(el.id)) continue;
-    if (el.kind === "finding" && !byId.has(el.id)) continue; // collapsed into seat A's kept partner
-    kept.push(el.kind === "finding" ? merged(el) : el);
-    placed.add(el.id);
+  for (const el of board.elements) {
+    if (el.kind !== "finding") {
+      kept.push(el);
+      continue;
+    }
+    const agreement = byId.get(el.id);
+    // A finding NEITHER voice's fold kept was collapsed into its partner. A finding
+    // written by neither named voice — the host's own carried round history, on a round —
+    // was never in the fold at all and is kept untouched.
+    if (agreement === undefined) {
+      if (byId.size > 0 && isVoicedFinding(el, voices)) continue;
+      kept.push(el);
+      continue;
+    }
+    kept.push({
+      ...el,
+      data: {
+        ...(el.data as object),
+        concurrence: foldConcurrence(agreement, labels),
+        accord: accordOf(agreement),
+      },
+    } as DraftElement);
   }
   const elements =
     successorOf.size === 0
       ? kept
       : mapElementReferences(kept, ({ targetId }) => successorOf.get(targetId));
 
-  const document = finalizedFlaggedDocument(boardA.document ?? boardBArg.document, elements);
-
+  const document = finalizedFlaggedDocument(board.document, elements);
   return {
-    ...(boardA as object),
+    ...(board as object),
     ...(document === undefined ? {} : { document }),
     elements,
   } as DraftBoard;
 }
 
+/** The author id an element's data carries, or `""` for one that names none. */
+function authorIdOf(element: DraftElement): string {
+  const author = (element.data as { author?: { id?: unknown } }).author;
+  return typeof author?.id === "string" ? author.id : "";
+}
+
+/** Whether this finding belongs to one of the lane's two seats rather than to the host. */
+function isVoicedFinding(
+  element: DraftElement,
+  voices: { readonly a: { readonly authorId: string }; readonly b: { readonly authorId: string } },
+): boolean {
+  const id = authorIdOf(element);
+  return id === voices.a.authorId || id === voices.b.authorId;
+}
+
 /**
- * Stamp single-seat concurrence on every finding (the honest degrade — one harness only).
+ * Stamp each finding with the concurrence of THE VOICE THAT WROTE IT, and no `accord`.
  *
- * No `accord`: one seat has no agreement to report. Stamping `concur` here would claim a
- * second opinion that never ran, and `split` would name a disagreement with nobody.
+ * What a lane settles with when there was no second opinion to fold: only one harness is
+ * installed, or the lane's other seat never finished. Naming the author rather than one
+ * label for the whole board is what keeps it honest when a seat DID write findings and
+ * then died — those findings are that seat's, and reporting them under the survivor's
+ * model would credit a model that never saw them.
+ *
+ * No `accord` in either case: one voice has no agreement to report. Stamping `concur`
+ * would claim a second opinion that never ran, and `split` would name a disagreement
+ * with nobody.
  */
-export function stampSingleSeatConcurrence(board: DraftBoard, label: string): DraftBoard {
+export function stampVoiceConcurrence(
+  board: DraftBoard,
+  labelFor: (authorId: string) => string,
+): DraftBoard {
   const elements = board.elements.map((el) =>
     el.kind === "finding"
       ? ({
           ...el,
-          data: { ...(el.data as object), concurrence: [{ model: label, agree: 1, total: 1 }] },
+          data: {
+            ...(el.data as object),
+            concurrence: [{ model: labelFor(authorIdOf(el)), agree: 1, total: 1 }],
+          },
         } as DraftElement)
       : el,
   );
@@ -807,6 +795,18 @@ export function stampSingleSeatConcurrence(board: DraftBoard, label: string): Dr
     ...(document === undefined ? {} : { document }),
     elements,
   } as DraftBoard;
+}
+
+/**
+ * Stamp ONE model's concurrence on every finding — the honest degrade when the lane ran a
+ * single seat, so every finding on the board is that seat's by construction.
+ *
+ * {@link stampVoiceConcurrence} with a constant label, stated as its own verb because
+ * "one seat ran" and "two seats ran and one is being credited for the other's findings"
+ * are different claims and only the first one is true here.
+ */
+export function stampSingleSeatConcurrence(board: DraftBoard, label: string): DraftBoard {
+  return stampVoiceConcurrence(board, () => label);
 }
 
 // ── Composition authoring (C2, cluster 5.4) ──
@@ -1343,6 +1343,33 @@ export interface LensPipelineDeps {
    */
   readonly t3?: T3SeatSeam;
   /**
+   * This generation's board lanes on the daemon's loopback board server (D8).
+   *
+   * The pipeline OPENS every lens lane before it dispatches a seat, so a board exists —
+   * empty, `drafting`, addressable — from the moment the surface can ask for one, and a
+   * lane that writes nothing settles over a board that was already there rather than over
+   * a missing one (`board-tool-authoring`). Opening a lane is also what gives that board's
+   * seats an address, so a seat whose lane was never opened carries no board server.
+   *
+   * Absent ⇒ a caller with no board server behind it (a direct-call test).
+   */
+  readonly boards?: GenerationBoards;
+  /**
+   * The board's element stream (`lens-board-tools` D11, task 4.1) — how a lens board
+   * reaches the reviewer's screen as it is written rather than only when it settles.
+   *
+   * `opened` fires as each lane's empty board is created, before any seat thread exists;
+   * `write` on every accepted tool call, host-placed members included; `closed` when the
+   * lane settles, whichever way it went. Absent ⇒ nothing is published and every board is
+   * seen only at settle, which is the direct-call shape and the shape before this task.
+   */
+  readonly onBoardDraft?: {
+    /** The board the lane is starting from — empty on a first open, not always empty. */
+    readonly opened: (lens: LensKind, board: DraftBoard) => void;
+    readonly write: (lens: LensKind, write: BoardWrite) => void;
+    readonly closed: (lens: LensKind) => void;
+  };
+  /**
    * Why there is no seam (review finding 1). Set by the round runtime when the daemon
    * composed a sidecar and could not bring it up, so a board seat's failure names the real
    * reason rather than the generic "no sidecar seam".
@@ -1387,6 +1414,13 @@ export interface LensPipelineDeps {
   readonly round?: RoundDraftContext;
   /** Per-lens lint context the caller assembles (changed regions, files, patchsetId…). */
   readonly lintContextFor: (lens: LintTarget) => LintContext;
+  /**
+   * The deterministic Design fast path. When this review's branch carries an OpenSpec
+   * change, the Design board is a pure host-side transform from its artifacts — no model
+   * turn — so the caller wires this to build it. It is a PURE ADDITIVE path: `undefined`
+   * (no OpenSpec change, or nothing to render) falls straight through to the model seat.
+   */
+  readonly assembleDesignBoard?: (ctx: LintContext) => DraftBoard | undefined;
   /** Read a prompt file's text (node fs seam; hermetic in tests). */
   readonly readPrompt: PromptReader;
   /**
@@ -1420,6 +1454,20 @@ export interface LensPipelineDeps {
   readonly onReportDiagnostic?: (milestone: RoundReportDiagnosticMilestone) => void;
   /** A successful lens absence, emitted as soon as discovery settles it. */
   readonly onLensAbsence?: (lens: LensKind, reason: LensAbsenceReason) => void | Promise<void>;
+  /**
+   * This lens produced no board and no absence — emitted the moment its attempts are
+   * EXHAUSTED, on the same settlement tail as an arrival or an absence (#813).
+   *
+   * Without it a failure was only visible in the pipeline's returned `boards`, which the
+   * caller reads after the LAST lane finishes: a seat that died at 33 s left its lane
+   * `running` for the rest of the generation, still publishing "quiet for 320 s" from a
+   * thread that had already stopped. A reviewer cannot tell that from a slow seat.
+   */
+  readonly onLensFailure?: (
+    lens: LensKind,
+    failure: string,
+    account?: LensFailureAccount,
+  ) => void | Promise<void>;
   /**
    * The lens drafters are about to start. Fires exactly once per pipeline, immediately
    * before the first lens drafts. A required report must already have arrived; a report
@@ -1793,14 +1841,29 @@ function resolveBoardSeatDetails(
   seat: BoardSeatId,
   deps: LensPipelineDeps,
   council: CouncilResolveContext,
-  outputSchema: unknown,
+  /**
+   * The turn's structured-output contract, when the turn HAS one. Omitted on every LENS
+   * seat since 3.2 — a seat that writes its board through tools returns no document, so
+   * nothing binds its turn and nothing is parsed off it. The round-report seats still pass
+   * one: the classifier its own compact shape, the legacy leg the full board schema.
+   */
+  outputSchema?: unknown,
   onProviderSettled?: (milestone: ProviderTurnSettlement) => void,
 ) {
+  // This seat's board, looked up the ONE way a seat maps to a board (`seat-address.ts`'s
+  // rule): through `SEAT_BOARD_TARGET`, never by reading the seat name as a target — the
+  // Flagged lane runs two seats over one board, and both must count onto it. `undefined`
+  // for the round-report seat and for any caller with no board server behind it, and the
+  // metric then carries no tool-call figure rather than a zero it did not measure.
+  const seatLane = deps.boards?.lane(SEAT_BOARD_TARGET[seat]);
+  const toolCalls = seatLane === undefined ? undefined : () => seatLane.seatCalls(seat);
   return councilSeatTurn(
     jobId,
     outputSchema,
     {
-      ...(deps.t3 === undefined ? {} : { t3: { seat, seam: deps.t3 } }),
+      ...(deps.t3 === undefined
+        ? {}
+        : { t3: { seat, seam: deps.t3, ...(toolCalls === undefined ? {} : { toolCalls }) } }),
       ...(deps.t3Unavailable === undefined ? {} : { t3Unavailable: deps.t3Unavailable }),
       repoRoot: deps.repoRoot,
       // The SEAT, not just the job: `lens-draft` runs Design, Sequence and Decisions, and
@@ -1826,13 +1889,6 @@ function resolveBoardSeatDetails(
 /** The body of a turn, or an empty board on an honest turn failure. */
 function bodyOr(result: HarnessTurnResult, fallback: unknown): unknown {
   return result.status === "emitted" ? result.body : fallback;
-}
-
-class DesignNoSpecSignal extends Error {
-  constructor() {
-    super("The Design seat found no specification for this branch.");
-    this.name = "DesignNoSpecSignal";
-  }
 }
 
 /**
@@ -1864,6 +1920,30 @@ const EMPTY_LENS_ABSENCE: Partial<Record<LensKind, LensAbsenceReason>> = Object.
   }),
 );
 
+/** A lint context without its lens: what a board lane is opened with (the target is the lens). */
+function omitLens(context: LintContext): Omit<LintContext, "lens"> {
+  const rest: Record<string, unknown> = { ...context };
+  delete rest.lens;
+  return rest as Omit<LintContext, "lens">;
+}
+
+/**
+ * What one core lane SAID about what it cites, for the Noise complement (D16d).
+ *
+ * The asymmetry is the whole rule and it is CLAUDE.md's own: match on a positive
+ * contradiction, never on silence. A lane that settled a board states its citations; a
+ * lane that declared an admissible absence states that it cites nothing, which subtracts
+ * safely. Anything else — a recorded failure, or a lane that is not in the map at all
+ * because its promise rejected — has stated NOTHING, and nothing is not an empty set.
+ */
+function siblingCitations(lens: LensKind, outcome: LensBoardOutcome | undefined): SiblingCitations {
+  if (outcome?.board !== undefined) {
+    return { lens, kind: "settled", elements: outcome.board.elements };
+  }
+  if (outcome?.absence !== undefined) return { lens, kind: "absent" };
+  return { lens, kind: "failed" };
+}
+
 /** A lens that settled with nothing but a failure — the drafter's words and its account. */
 function failedLensOutcome(lens: LintTarget, failure: LensDraftFailure): LensBoardOutcome {
   return { lens, omissions: [], blemishes: [], immutability: [], ...failure };
@@ -1877,50 +1957,39 @@ function requiredBoardFailure(lens: LensKind): string {
       return "decisions lens: produced no reachable `decision` in the emitted board; retry the generation to distinguish decisions from malformed output.";
     case "flagged":
       return "flagged lens: produced no reachable `finding` in the emitted board; retry the generation to distinguish findings from malformed output.";
+    case "noise":
+      return "noise lens: the host placed the changed regions no other board cited on this board and none of them is reachable on the settled one; retry the generation rather than shipping the account without the regions it accounts for.";
     default:
       return `${lens} lens: produced zero elements in the emitted board; retry the generation to draft this required board.`;
   }
 }
 
 /**
- * Draft one lens: seed the seat, run the cluster-3 deterministic validation loop,
- * and return the validated board — or an honest `failure` (finding 6). A failure is recorded, never a
- * throw and never a silent empty-success board, when: the INITIAL turn does not
- * emit a board (an empty fallback would ship as a schema-valid empty board), the
- * loop NEVER produces a parseable board across its attempts (`everParsed`), or a
- * seat call THROWS (a live-harness crash on the first turn or a retry). A thrown
- * RETRY degrades to keeping the current draft — the loop re-lints and escalates,
- * exactly the resolution-failure path — so one crashed retry never aborts a lens
- * that already has passing elements.
+ * Draft the LEGACY round report: seed the seat, run the cluster-3 deterministic validation
+ * loop over its structured return, and hand back the validated board — or an honest
+ * `failure` (finding 6). A failure is recorded, never a throw and never a silent
+ * empty-success board, when: the INITIAL turn does not emit a board (an empty fallback
+ * would ship as a schema-valid empty board), the loop NEVER produces a parseable board
+ * across its attempts (`everParsed`), or a seat call THROWS. A thrown RETRY degrades to
+ * keeping the current draft — the loop re-lints and escalates, exactly the
+ * resolution-failure path — so one crashed retry never aborts a seat that already has
+ * passing elements.
  *
- * Every board seat is a persistent sidecar thread (session-bound-workspace 5.7), so a
- * repair is ALWAYS the next turn on the thread that already holds the base prompt and the
- * draft. There is no leg left that could be handed pointers it cannot resolve, which is
- * why nothing here asks whether a repair is possible.
+ * THE DOCUMENT PATH, AND THE ONLY CALLER LEFT ON IT (`lens-board-tools` 3.2). Every LENS
+ * seat writes its board through tools now and settles by calling `finish` or
+ * `settle_absent` ({@link runSeatTurns}); nothing binds its turn and nothing is parsed
+ * back. What still returns a document is {@link runLegacyRoundReport} — the caller with
+ * no evidence manifest, bound to the full board schema — and this is its loop.
+ *
+ * The seat is a persistent sidecar thread (session-bound-workspace 5.7), so a repair is
+ * the next turn on the thread that already holds the base prompt and the draft.
  */
-function draftOneLens(
-  basePrompt: string,
-  seatTurn: (prompt: string, attempt: number) => Promise<HarnessTurnResult>,
-  ctx: LintContext,
-  retryCap: number,
-  transformOutput?: (output: unknown) => unknown,
-): Promise<DraftedLens | LensDraftFailure>;
-function draftOneLens(
-  basePrompt: string,
-  seatTurn: (prompt: string, attempt: number) => Promise<HarnessTurnResult>,
-  ctx: LintContext,
-  retryCap: number,
-  transformOutput: ((output: unknown) => unknown) | undefined,
-  initialAbsence: (output: unknown) => { readonly absence: "no-spec" } | undefined,
-): Promise<DraftedLens | LensDraftFailure | { readonly absence: "no-spec" }>;
 async function draftOneLens(
   basePrompt: string,
   seatTurn: (prompt: string, attempt: number) => Promise<HarnessTurnResult>,
   ctx: LintContext,
   retryCap: number,
-  transformOutput: ((output: unknown) => unknown) | undefined = (output) => output,
-  initialAbsence?: (output: unknown) => { readonly absence: "no-spec" } | undefined,
-): Promise<DraftedLens | LensDraftFailure | { readonly absence: "no-spec" }> {
+): Promise<ValidatedLike | LensDraftFailure> {
   const who = ctx.lens === "report" ? "round-report seat" : `${ctx.lens} lens`;
   try {
     const first = await seatTurn(basePrompt, 0);
@@ -1932,60 +2001,36 @@ async function draftOneLens(
     // parses settles a failure, and that one is terminal because the retries are spent.
     const emitted = first.status === "emitted";
     const noEmission = emitted ? undefined : `${first.status}: ${first.message}`;
-    const absence = emitted ? initialAbsence?.(first.body) : undefined;
-    if (absence !== undefined) return absence;
-    const transformedFirst = emitted ? transformOutput(first.body) : undefined;
-    // The seat's OWN empty-board claim, which is what authorizes a clean absence. A turn
-    // that emitted nothing made no such claim, so the first EMITTED return decides it —
-    // whether that was turn 0 or the re-ask that followed a non-emission.
-    let firstEmittedWasEmpty: boolean | undefined = emitted
-      ? isTrulyEmptyDraft(transformedFirst)
-      : undefined;
     // Whether ANY turn emitted. A ladder in which none did still ends with a parseable
     // board — the retry channel keeps the current (empty) draft on a turn failure — so
     // `everParsed` alone would report "produced zero elements in the emitted board"
     // about a board no seat ever emitted.
     let anyEmitted = emitted;
-    let retryAbsence: { readonly absence: "no-spec" } | undefined;
-    let validated: Awaited<ReturnType<typeof validateDraft>>;
-    try {
-      validated = await validateDraft(transformedFirst, ctx, {
-        // The lane's budget for THIS whole-board attempt (#725 7.5). A repeat attempt
-        // draws a reduced ladder, so the seat is never handed a refreshed full one.
-        retryCap,
-        runTurn: async (req) => {
-          try {
-            const retry = await seatTurn(
-              // A repair is pointer-only (session-bound-workspace 3.2): the pointers, the
-              // frozen ids and the instruction travel; the base prompt and the draft never
-              // do, because the seat's own thread already holds them.
-              renderRepairPrompt(req.draft, req.pointers, req.frozenIds),
-              req.attempt,
-            );
-            if (retry.status === "emitted") {
-              retryAbsence = initialAbsence?.(retry.body);
-              if (retryAbsence !== undefined) throw new DesignNoSpecSignal();
-              anyEmitted = true;
-              firstEmittedWasEmpty ??= isTrulyEmptyDraft(transformOutput(retry.body));
-            }
-            // An honest turn failure keeps the current draft — the loop re-lints, the
-            // offending element escalates a rung, and an unfixable one becomes an
-            // honest omission. Never a wipe (returning an empty board would drop passers).
-            return transformOutput(bodyOr(retry, req.draft));
-          } catch (error) {
-            if (error instanceof DesignNoSpecSignal) throw error;
-            // A THROWN retry (a live-harness crash mid-loop) degrades the same way —
-            // keep the draft, let the loop escalate; one crashed retry is not fatal.
-            return req.draft;
-          }
-        },
-      });
-    } catch (error) {
-      if (error instanceof DesignNoSpecSignal && retryAbsence !== undefined) {
-        return retryAbsence;
-      }
-      throw error;
-    }
+    const validated = await validateDraft(emitted ? first.body : undefined, ctx, {
+      // The lane's budget for THIS whole-board attempt (#725 7.5). A repeat attempt
+      // draws a reduced ladder, so the seat is never handed a refreshed full one.
+      retryCap,
+      runTurn: async (req) => {
+        try {
+          const retry = await seatTurn(
+            // A repair is pointer-only (session-bound-workspace 3.2): the pointers, the
+            // frozen ids and the instruction travel; the base prompt and the draft never
+            // do, because the seat's own thread already holds them.
+            renderRepairPrompt(req.draft, req.pointers, req.frozenIds),
+            req.attempt,
+          );
+          if (retry.status === "emitted") anyEmitted = true;
+          // An honest turn failure keeps the current draft — the loop re-lints, the
+          // offending element escalates a rung, and an unfixable one becomes an
+          // honest omission. Never a wipe (returning an empty board would drop passers).
+          return bodyOr(retry, req.draft);
+        } catch {
+          // A THROWN retry (a live-harness crash mid-loop) degrades the same way —
+          // keep the draft, let the loop escalate; one crashed retry is not fatal.
+          return req.draft;
+        }
+      },
+    });
     if (!anyEmitted) {
       // TERMINAL: the seat never emitted, initial turn or re-ask, and the ladder is spent.
       return {
@@ -2003,13 +2048,119 @@ async function draftOneLens(
         failureAccount: { attempt: validated.attempts, classification: "terminal" },
       };
     }
-    return { ...validated, initialOutputWasEmpty: firstEmittedWasEmpty ?? false };
+    return validated;
   } catch (err) {
     // A throw on the FIRST turn (or anywhere outside the retry channel) degrades to
     // a recorded failure — never an uncaught throw that aborts the whole generation.
     return {
       failure: `${who}: the drafting seat threw — ${err instanceof Error ? err.message : String(err)}.`,
     };
+  }
+}
+
+// ── The tool-writing seat loop (`lens-board-tools` D6, tasks 3.2/3.3) ──
+
+/** How many verdict pointers a failure sentence names before it says how many more. */
+const VERDICT_SAMPLE = 3;
+
+/** How a seat's turn loop ended, asked of the BOARD rather than of a returned document. */
+type SeatSettlement =
+  /** The seat called `finish` and it settled the board. */
+  | { readonly kind: "settled"; readonly attempts: number }
+  /** The seat declared the one absence its lens admits. */
+  | {
+      readonly kind: "absent";
+      readonly reason: LensAbsenceReason;
+      readonly note: string;
+      readonly attempts: number;
+    }
+  /** Its attempts are spent and its board was never finished. */
+  | { readonly kind: "unsettled"; readonly attempts: number; readonly failure: LensDraftFailure };
+
+/**
+ * What the last `finish` said, in one sentence a reviewer can act on.
+ *
+ * Three verdict states and three different facts (D6): never asked, asked and settled
+ * before the board moved, asked and answered with work. Collapsing them would make a seat
+ * that died before finishing indistinguishable from one that finished and then broke its
+ * own settlement.
+ */
+function describeVerdict(verdict: readonly Violation[] | undefined): string {
+  if (verdict === undefined) return "`finish` was never called";
+  if (verdict.length === 0) return "`finish` settled the board and the board moved after it";
+  const named = verdict
+    .slice(0, VERDICT_SAMPLE)
+    .map(({ ruleId, elementRef }) => `${ruleId} at ${elementRef}`)
+    .join("; ");
+  const more = verdict.length - VERDICT_SAMPLE;
+  return `\`finish\` last returned ${verdict.length} pointer${verdict.length === 1 ? "" : "s"} (${named}${more > 0 ? `; +${more} more` : ""})`;
+}
+
+/**
+ * Run one seat's turns until it settles its board, declares its absence, or spends its
+ * attempts (`lens-board-tools` D6, tasks 3.2/3.3).
+ *
+ * NOTHING IS PARSED BACK. The turn carries no output schema, returns no document, and this
+ * loop never reads `result.body`; the settlement question is asked of the BOARD the seat
+ * has been writing into. So a refused call costs nothing (the seat read the refusal and
+ * fixed the thing inside the same turn), a `finish` that came back with pointers costs
+ * nothing (same turn, same fix), and an attempt is spent by exactly one event: a turn that
+ * ENDED with the board neither finished nor declared absent.
+ *
+ * A turn that FAILED at the harness — a dead sidecar, an interrupt, a throw — is such a
+ * turn, and is not a separate category here: from the board's point of view it is the same
+ * fact, the turn ended and the board is unfinished. Its message is carried into the failure
+ * sentence so the reviewer reads the harness reason and not just a count.
+ *
+ * The partial board is KEPT throughout. It lives on the lane, so a repair resumes writing
+ * into the very elements the last turn left, and {@link renderBoardRepairTurn} carries the
+ * last verdict and nothing else — no base prompt, no board, no draft, all three of which
+ * the seat is already holding.
+ */
+async function runSeatTurns(
+  who: string,
+  basePrompt: string,
+  seatTurn: (prompt: string, attempt: number) => Promise<HarnessTurnResult>,
+  voice: BoardVoiceWriter,
+  retryCap: number,
+): Promise<SeatSettlement> {
+  let attempts = 0;
+  let prompt = basePrompt;
+  for (let turn = 0; ; turn += 1) {
+    let turnFailure: string | undefined;
+    try {
+      const result = await seatTurn(prompt, turn);
+      turnFailure = result.status === "emitted" ? undefined : result.message;
+    } catch (error) {
+      // A thrown turn is still a turn that ended, and whatever the seat managed to write
+      // before it threw is on the board. Ask the board, not the exception.
+      turnFailure = error instanceof Error ? error.message : String(error);
+    }
+    // THIS voice's own state, never the board's. On the Flagged lane one seat finishing is
+    // not the lane finishing, and one seat writing again is not the other un-finishing.
+    const status = voice.voiceStatus();
+    if (status === "settled") return { kind: "settled", attempts };
+    const absence = status === "absent" ? voice.voiceAbsence() : undefined;
+    if (absence !== undefined) return { kind: "absent", ...absence, attempts };
+
+    // The turn ended unsettled. THAT is what spends an attempt, and it is the only thing
+    // that does.
+    attempts += 1;
+    if (turn >= retryCap) {
+      const written = voice.board().elements.length;
+      const harness = turnFailure === undefined ? "" : ` The last turn ended: ${turnFailure}.`;
+      return {
+        kind: "unsettled",
+        attempts,
+        failure: {
+          failure: `${who}: the seat did not finish its board — ${attempts} attempt${attempts === 1 ? "" : "s"} spent, ${describeVerdict(voice.voiceVerdict())}.${harness} The ${written} element${written === 1 ? "" : "s"} it wrote ${written === 1 ? "is" : "are"} still on the board.`,
+          // TERMINAL: the ladder for this whole-board attempt is spent. A retryable
+          // classification here would hand the lane a budget it has already used.
+          failureAccount: { attempt: attempts, classification: "terminal" },
+        },
+      };
+    }
+    prompt = renderBoardRepairTurn(voice.voiceVerdict());
   }
 }
 
@@ -2139,6 +2290,48 @@ export async function runLensPipeline(deps: LensPipelineDeps): Promise<LensPipel
       ? seatContext
       : { dir: contextDir, files: [...seatFiles, deps.prPaper] };
 
+  // Every lens board exists BEFORE any seat thread does (`board-tool-authoring`): empty,
+  // `drafting`, addressable. Two things follow, and both are the point. A lane that writes
+  // nothing settles over a board that was already there rather than over a missing one; and
+  // opening a lane is what lets its seats be given an address, so a seat dispatched before
+  // its lane existed would carry no board server and have nothing to write with.
+  //
+  // Awaited together, and before the LENS seats are dispatched — which is the ordering
+  // `board-tool-authoring` asks for, and all of it. The round-report seat has already run
+  // above (`runRoundReport`); it has no lane, so nothing about it waits on this. The
+  // comment here used to claim these lanes opened "before the report gate's own dispatch",
+  // which was never true of a block that sits below the gate, and a control-flow claim a
+  // reader inherits as fact is worse than no comment. `opens every lens lane on the board
+  // server before any seat turn is dispatched` in `rounds.test.ts` executes the real order.
+  if (deps.boards !== undefined) {
+    const boards = deps.boards;
+    const draft = deps.onBoardDraft;
+    await Promise.all(
+      LENS_KINDS.map(async (lens) => {
+        // The lane's own `target` IS the lens, so the context is handed over without it —
+        // one source, no agreement to keep between two fields that must not disagree.
+        const context = deps.lintContextFor(lens);
+        const lane = await boards.openLane({
+          target: lens,
+          lint: omitLens(context),
+          author: { kind: "lens-agent", id: `lens:${lens}` },
+          // The element stream's observer, bound at the ONE place a lane is opened
+          // (D11, task 4.1). Every write onto this board — a seat's call, and the members
+          // the host places on a derived board before its seat's first turn — goes
+          // through the writer this hands the observer to.
+          ...(draft === undefined
+            ? {}
+            : { onWrite: (write: BoardWrite) => draft.write(lens, write) }),
+        });
+        // Published AFTER the lane exists, and carrying the board that lane actually
+        // HOLDS. Nothing deletes a lane, and a content-addressed generation is shared
+        // across reviews, so an opened lane's board is not always empty; a reader told it
+        // was would fold every later element's index against a list too short to hold it.
+        draft?.opened(lens, lane.board());
+      }),
+    );
+  }
+
   // A required report has arrived, or this generation does not need one. Only now may the
   // independent lens seats start; report failure exits above without launching hidden work.
   deps.onLensDraftingStart?.();
@@ -2164,39 +2357,170 @@ export async function runLensPipeline(deps: LensPipelineDeps): Promise<LensPipel
     );
     return published;
   };
-  const settledOutcomes = await Promise.allSettled(
-    LENS_KINDS.map(async (lens) => {
-      const outcome = await runLensBoard(
-        lens,
-        deps,
-        council,
-        lens === "design" ? designContext : seatContext,
-        reportBoard,
+  /**
+   * The lane order (D16c). The four CORE lanes still fan out together and nothing waits on
+   * any of them; Noise starts on their settlements, because the complement of boards that
+   * have not settled is not knowable. Nothing waits on Noise, so it is the generation's
+   * tail and not a barrier — the honest cost of the ruling, measured rather than argued.
+   */
+  const settledCore = new Map<LensKind, LensBoardOutcome>();
+  const runLane = async (lens: LensKind, derivedMembers?: readonly ChangedRegion[]) => {
+    const outcome = await runLensBoard(
+      lens,
+      deps,
+      council,
+      lens === "design" ? designContext : seatContext,
+      reportBoard,
+      derivedMembers,
+    );
+    // The lane is done, whichever way it went: revoke its seats' addresses now rather than
+    // on a liveness timeout (D8). A settled lane whose credentials still worked would let
+    // a turn that outlived its lane keep writing into a board the reviewer is reading.
+    // Before the statement below and before the publishes, because both read a board that
+    // is finished and neither wants a seat still able to move it.
+    deps.boards?.settleLane(lens);
+    // Nothing more will land on this board, whichever way the lane went. Published here,
+    // beside the revocation, because they are one fact: the seats can no longer write and
+    // the stream can no longer carry anything (D11, task 4.1).
+    deps.onBoardDraft?.closed(lens);
+    // ── What the Noise complement is allowed to subtract ────────────────────────────
+    // D16d says a lane that FAILED stated nothing while a board or an admissible absence
+    // is a positive statement. The rule that makes that operational is: subtract only what
+    // a RESTART COULD RE-READ, because the complement has to be reconstructible from the
+    // same durable evidence the reveal is.
+    //
+    // A board clears that bar the moment `runLensBoard` returns: the elements are on the
+    // whiteboard and `persistBoardMeta` has already run inside it. So the statement is
+    // recorded HERE, before the publishes below — recording it after them (as it first
+    // was) let a durable-write throw downstream of a board that was already on disk erase
+    // a statement the lane had plainly made, and the Noise derivation then read that lane
+    // as silent. That is matching on the absence of a record rather than on a positive
+    // contradiction, which is the exact error D16d exists to forbid.
+    //
+    // An absence is different, and the difference is the whole reason this is a rule and
+    // not a line: nothing but `onLensAbsence` records it. If that write throws, no restart
+    // can re-read the declaration, so the row is withdrawn again below and the lane reads
+    // as one whose citations are unknown. A throw from `runLensBoard` itself leaves no row
+    // at all, because then there genuinely is no statement.
+    settledCore.set(lens, outcome);
+    if (outcome.absence !== undefined) {
+      const absence = outcome.absence;
+      try {
+        await publish(() => deps.onLensAbsence?.(lens, absence));
+      } catch (error) {
+        settledCore.delete(lens);
+        throw error;
+      }
+      lastRevealAt = clock();
+    }
+    // #725 D4 — the lane's settlement is published HERE, the moment this board is
+    // written and its metadata is durable. Nothing waits for a sibling lane.
+    if (outcome.board !== undefined && outcome.boardId !== undefined) {
+      const board = outcome.board;
+      const boardId = outcome.boardId;
+      await publish(() =>
+        deps.onBoardArrival?.({
+          lens,
+          boardId,
+          elementCount: board.elements.length,
+          // C15 3.3: the carried signal rides the arrival so the live lane label is the
+          // SAME `stampDeltas` fact the section markers render — not a re-derivation.
+          carried: isCarriedForward(deps.previous?.get(lens), board),
+        }),
       );
-      if (outcome.absence !== undefined) {
-        await publish(() => deps.onLensAbsence?.(lens, outcome.absence as LensAbsenceReason));
-        lastRevealAt = clock();
+      lastRevealAt = clock();
+    }
+    // No board and no absence: this lane is DONE and it is done failed. Published here
+    // rather than left for the caller's post-pipeline sweep (#813) — that sweep runs
+    // after the slowest sibling, and until it did the lane read `running` with a live
+    // line off a thread that had already stopped. A failure reveals nothing, so it does
+    // not move `lastRevealAt`.
+    if (outcome.boardId === undefined && outcome.absence === undefined) {
+      await publish(() =>
+        deps.onLensFailure?.(
+          lens,
+          outcome.failure ?? "the drafter produced no board",
+          outcome.failureAccount,
+        ),
+      );
+    }
+    return outcome;
+  };
+
+  const coreLenses: readonly LensKind[] = LENS_KINDS.filter((lens) => lens !== "noise");
+  // `(lens) => runLane(lens)`, never `map(runLane)`: `Array.map` passes the INDEX as the
+  // second argument, which `runLane` now reads as the derived members a lane is handed.
+  const settledCoreOutcomes = await Promise.allSettled(coreLenses.map((lens) => runLane(lens)));
+  // Noise starts on the four settlements, and only on them. A core lane whose DRAFT threw
+  // — an infrastructure failure before any outcome existed, not a recorded failure —
+  // leaves `settledCore` without its row, which reads as a lane whose citations are
+  // unknown: the same answer a recorded failure gets, and the right one, because neither
+  // said what it cites. A lane that settled and then threw on the way to disk is not that
+  // case; see `runLane`.
+  const noiseOutcome = await Promise.allSettled([
+    (async (): Promise<LensBoardOutcome> => {
+      const membership = deriveNoiseMembers({
+        regions: deps.lintContextFor("noise").regions,
+        siblings: coreLenses.map((lens) => siblingCitations(lens, settledCore.get(lens))),
+      });
+      if (membership.kind === "unknowable") {
+        // D16d — a sibling that FAILED did not cite nothing. The complement of a board
+        // that never arrived is not the complement of an empty one, and a Noise board
+        // built over it would file un-reviewed regions as skippable.
+        const failure = unknowableComplementFailure(membership.unknown);
+        // The classification is the SIBLINGS', not an assumption about this lane. D16d's
+        // own sentence — "it becomes runnable again when that sibling's per-lens retry
+        // settles" — is conditional on there being a retry left to settle, so a lane whose
+        // named siblings have every one of them exhausted their own ladders has exhausted
+        // its own by derivation. Claiming `retryable` there is a claim about a future that
+        // cannot happen, and #549 reads a retryable account as proof the RESTART path must
+        // re-draft: an unconditional `retryable` therefore made every generation carrying a
+        // terminal core failure re-draft all five lanes on every restart, spending a model
+        // to rebuild boards already on disk and arrive back at the same terminal failure.
+        // A sibling with no account at all — a draft that threw — stays `retryable`,
+        // because an unknown ladder is not an exhausted one.
+        const classification = membership.unknown.every(
+          (sibling) => settledCore.get(sibling)?.failureAccount?.classification === "terminal",
+        )
+          ? "terminal"
+          : "retryable";
+        const outcome: LensBoardOutcome = failedLensOutcome("noise", {
+          failure,
+          failureAccount: { attempt: deps.boardAttempt ?? 0, classification },
+        });
+        deps.boards?.settleLane("noise");
+        deps.onBoardDraft?.closed("noise");
+        await publish(() => deps.onLensFailure?.("noise", failure, outcome.failureAccount));
+        return outcome;
       }
-      // #725 D4 — the lane's settlement is published HERE, the moment this board is
-      // written and its metadata is durable. Nothing waits for a sibling lane.
-      if (outcome.board !== undefined && outcome.boardId !== undefined) {
-        const board = outcome.board;
-        const boardId = outcome.boardId;
-        await publish(() =>
-          deps.onBoardArrival?.({
-            lens,
-            boardId,
-            elementCount: board.elements.length,
-            // C15 3.3: the carried signal rides the arrival so the live lane label is the
-            // SAME `stampDeltas` fact the section markers render — not a re-derivation.
-            carried: isCarriedForward(deps.previous?.get(lens), board),
-          }),
-        );
+      if (membership.members.length === 0) {
+        // D16e — the four lanes between them cited every changed region. The host knows
+        // this BEFORE any turn, so the lane settles with no seat at all, which is also
+        // the cheapest turn in the change.
+        deps.boards?.settleLane("noise");
+        deps.onBoardDraft?.closed("noise");
+        await publish(() => deps.onLensAbsence?.("noise", "no-noise"));
         lastRevealAt = clock();
+        return {
+          lens: "noise",
+          omissions: [],
+          blemishes: [],
+          immutability: [],
+          absence: "no-noise",
+        };
       }
-      return outcome;
+      // The complement travels to the lane, which places it on the board before the seat's
+      // first turn (D16, task 3.8). The seat is handed its members and groups them; it has
+      // no verb that adds one and none that removes one.
+      return runLane("noise", membership.members);
+    })(),
+  ]);
+  const settledOutcomes = [
+    ...LENS_KINDS.map((lens) => {
+      const index = coreLenses.indexOf(lens);
+      return index === -1 ? noiseOutcome[0] : settledCoreOutcomes[index];
     }),
-  );
+  ].filter((result): result is PromiseSettledResult<LensBoardOutcome> => result !== undefined);
   // The `reveal` phase is recorded BEFORE the rejection check below, and its clock stops at
   // the last lane that actually REVEALED something. Both halves are honesty fixes:
   //
@@ -2713,9 +3037,48 @@ interface ValidatedLike {
   readonly attempts?: number;
 }
 
-/** A validated lens result plus the provider-return fact that authorizes clean absence. */
-interface DraftedLens extends ValidatedLike {
-  readonly initialOutputWasEmpty: boolean;
+/**
+ * What a lane's seats left on its board when they stopped (`lens-board-tools` D6).
+ *
+ * The board is the LANE's, not a return value: it existed before the seats did and it
+ * survives a turn that left it unsettled. This is the lane's reading of it once every seat
+ * has settled, declared an absence, or spent its attempts.
+ */
+interface LaneDraft {
+  readonly board: DraftBoard;
+  /** Turns that ended unsettled. A refusal and a `finish` verdict cost nothing (D6). */
+  readonly attempts: number;
+  /** The absence the lane's seat (or, on Flagged, both its seats) declared. */
+  readonly absence?: LensAbsenceReason;
+  /** What the HOST found after the seats settled; visible, never blocking (Rule Zero). */
+  readonly blemishes?: readonly Violation[];
+}
+
+/**
+ * Which seat writes one lens's board, DERIVED from the seat→board table rather than named
+ * again here — the derivation is what stops a renamed seat quietly addressing no lane.
+ * Flagged has two and is handled by {@link runFlaggedDual}, so this answers for the four
+ * one-seat lenses and throws rather than guessing for anything else.
+ */
+function seatForLens(lens: LensKind): BoardSeatId {
+  const seats = SEAT_KINDS.filter((seat) => SEAT_BOARD_TARGET[seat] === lens);
+  const only = seats.length === 1 ? seats[0] : undefined;
+  if (only === undefined) {
+    throw new Error(
+      `the ${lens} board is written by ${seats.length} seats (${seats.join(", ") || "none"}); only a one-seat lens resolves this way`,
+    );
+  }
+  return only;
+}
+
+/** No lane, so no board: the one sentence both seat branches settle that with. */
+function noLaneFailure(lens: LintTarget): string {
+  return `${lens} lens: no board lane is open for this generation, so its seat has nothing to write into.`;
+}
+
+/** One seat's handle on its lane's board: the same voice table its address is minted from. */
+function seatVoice(lane: BoardLane, seat: BoardSeatId): BoardVoiceWriter {
+  return lane.writer().voice(SEAT_BOARD_VOICE[seat]);
 }
 
 /**
@@ -2740,49 +3103,49 @@ export function aggregateFailureAccount(
 }
 
 /**
- * The Flagged dual seat (J1/J2, cluster 5.2): run `lens-draft-flagged` as TWO
- * independent seats — Claude and Codex, each forced to its own provider — and
- * reconcile their findings by location into per-finding cross-model concurrence.
+ * The Flagged dual seat (J1/J2, cluster 5.2; `lens-board-tools` D9, task 3.4): run
+ * `lens-draft-flagged` as TWO seats — Claude and Codex, each forced to its own provider —
+ * over ONE board.
+ *
+ * There are no longer two boards to merge. Both seats hold a voice on the lane's single
+ * writer, so every element lands on the Flagged board as it is written, stamped with the
+ * voice that made the call and carrying an id minted from one counter, which is what makes
+ * the two seats' ids unable to collide. What the seats cannot know while they write is
+ * whether the other raised the same concern, so `concurrence` and `accord` are stamped
+ * once, HERE, when both voices have settled — never at write.
+ *
  * Both are SIDECAR THREADS (`provider: "claudeAgent" | "codex"` through T3's model
- * selection), so the lane still holds two seats after 5.7 deleted the ephemeral legs;
- * what decides whether each one can run is the council's installed-harness answer plus
- * the seam, not a port this pipeline holds. Degrades to a SINGLE seat (honest single-seat
- * concurrence) when only one harness is installed. Returns a failure only when neither
- * seat can run.
+ * selection); what decides whether each one can run is the council's installed-harness
+ * answer plus the seam, not a port this pipeline holds. Degrades to a SINGLE seat (honest
+ * single-seat concurrence) when only one harness is installed, and to the survivor's own
+ * findings when one of two seats fails. Returns a failure only when neither seat can run
+ * or neither settled.
  */
 async function runFlaggedDual(
   deps: LensPipelineDeps,
   council: CouncilResolveContext,
+  lane: BoardLane | undefined,
   basePrompt: string,
-  ctx: LintContext,
   retryCap: number,
   wrapSeat: <T extends (prompt: string, attempt: number) => Promise<HarnessTurnResult>>(
     seat: T,
     provenance?: SeatProvenance,
   ) => T,
-): Promise<DraftedLens | LensDraftFailure> {
+): Promise<LaneDraft | LensDraftFailure> {
   // `resolveBoardSeatDetails`, not `resolveBoardSeat`: the DETAILS carry the harness and
   // model the Council actually routed to, and every timing record this lane emits names
   // the seat that produced it (#726 D8) — including the single-seat degrade, which ran
   // exactly one resolved seat and can say which.
   const installed = council.availability.installed;
   const claudeSeat = installed.includes("claude-code")
-    ? resolveBoardSeatDetails(
-        "lens-draft-flagged",
-        "flagged-claude",
-        deps,
-        { availability: { installed: ["claude-code"] } },
-        boardOutputSchema(),
-      )
+    ? resolveBoardSeatDetails("lens-draft-flagged", "flagged-claude", deps, {
+        availability: { installed: ["claude-code"] },
+      })
     : { failure: "no claude harness" };
   const codexSeat = installed.includes("codex")
-    ? resolveBoardSeatDetails(
-        "lens-draft-flagged",
-        "flagged-codex",
-        deps,
-        { availability: { installed: ["codex"] } },
-        boardOutputSchema(),
-      )
+    ? resolveBoardSeatDetails("lens-draft-flagged", "flagged-codex", deps, {
+        availability: { installed: ["codex"] },
+      })
     : { failure: "no codex harness" };
 
   const haveClaude = !("failure" in claudeSeat);
@@ -2796,67 +3159,99 @@ async function runFlaggedDual(
     const reasons = [...new Set([claudeSeat.failure, codexSeat.failure])].join("; ");
     return { failure: `lens-draft-flagged resolved to no runnable seat (${reasons})` };
   }
+  // Checked after resolution, for the same reason the one-seat branch checks it there: a
+  // host with no sidecar has no lanes either, and naming the lane would report the symptom
+  // over the cause.
+  if (lane === undefined) return { failure: noLaneFailure("flagged") };
+
+  /** The label a voice's findings report under, keyed by the author id they carry. */
+  const labelByAuthor = new Map<string, string>([
+    [SEAT_BOARD_VOICE["flagged-claude"].author.id, DEFAULT_SEAT_LABELS["claude-code"]],
+    [SEAT_BOARD_VOICE["flagged-codex"].author.id, DEFAULT_SEAT_LABELS.codex],
+  ]);
+  const labelFor = (authorId: string): string =>
+    labelByAuthor.get(authorId) ?? DEFAULT_SEAT_LABELS["claude-code"];
 
   // Single-seat degrade — honest single-model concurrence, and an honestly ATTRIBUTED
   // timing: one seat ran, so the record names it rather than leaving the stage anonymous.
   if (!haveClaude || !haveCodex) {
-    const resolved = haveClaude
-      ? (claudeSeat as Exclude<typeof claudeSeat, { failure: string }>)
-      : (codexSeat as Exclude<typeof codexSeat, { failure: string }>);
+    const seat: BoardSeatId = haveClaude ? "flagged-claude" : "flagged-codex";
+    const resolved = (haveClaude ? claudeSeat : codexSeat) as Exclude<
+      typeof claudeSeat,
+      { failure: string }
+    >;
     const label = haveClaude ? DEFAULT_SEAT_LABELS["claude-code"] : DEFAULT_SEAT_LABELS.codex;
-    const single = await draftOneLens(
+    const single = await runSeatTurns(
+      "flagged lens",
       basePrompt,
       wrapSeat(resolved.runTurn, { harness: resolved.harness, model: resolved.model }),
-      ctx,
+      seatVoice(lane, seat),
       retryCap,
     );
     // Carry the account, not just the words: the sole seat's classification IS the lens's.
-    if ("failure" in single) return single;
-    return { ...single, board: stampSingleSeatConcurrence(single.board, label) };
+    if (single.kind === "unsettled") return single.failure;
+    return {
+      board: stampSingleSeatConcurrence(lane.board(), label),
+      attempts: single.attempts,
+      ...(single.kind === "absent" ? { absence: single.reason } : {}),
+    };
   }
 
-  // Both seats run independently; reconcile their findings (Claude is seat A).
+  // Both seats run independently into the one board (Claude is voice A).
   const claude = claudeSeat as Exclude<typeof claudeSeat, { failure: string }>;
   const codex = codexSeat as Exclude<typeof codexSeat, { failure: string }>;
   const [a, b] = await Promise.all([
-    draftOneLens(
+    runSeatTurns(
+      "flagged lens (claude seat)",
       basePrompt,
       wrapSeat(claude.runTurn, { harness: claude.harness, model: claude.model }),
-      ctx,
+      seatVoice(lane, "flagged-claude"),
       retryCap,
     ),
-    draftOneLens(
+    runSeatTurns(
+      "flagged lens (codex seat)",
       basePrompt,
       wrapSeat(codex.runTurn, { harness: codex.harness, model: codex.model }),
-      ctx,
+      seatVoice(lane, "flagged-codex"),
       retryCap,
     ),
   ]);
-  const aOk = !("failure" in a);
-  const bOk = !("failure" in b);
-  // Neither seat produced a board ⇒ the flagged lens honestly failed.
-  if (!aOk && !bOk) {
-    const seats = [a as LensDraftFailure, b as LensDraftFailure];
+  const attempts = a.attempts + b.attempts;
+  // Neither seat settled ⇒ the flagged lens honestly failed.
+  if (a.kind === "unsettled" && b.kind === "unsettled") {
+    const seats = [a.failure, b.failure];
     const account = aggregateFailureAccount(seats);
     return {
       failure: `both flagged seats failed — ${seats[0]?.failure} | ${seats[1]?.failure}`,
       ...(account === undefined ? {} : { failureAccount: account }),
     };
   }
-  // One seat failed ⇒ degrade to the survivor with honest single-model concurrence.
-  if (!aOk || !bOk) {
-    const ok = (aOk ? a : b) as DraftedLens;
-    const label = aOk ? DEFAULT_SEAT_LABELS["claude-code"] : DEFAULT_SEAT_LABELS.codex;
-    return { ...ok, board: stampSingleSeatConcurrence(ok.board, label) };
+  // One seat did not settle ⇒ no agreement was reached, so no `accord` and no cross-model
+  // tally. Each finding still carries the concurrence of the voice that WROTE it — which
+  // on this board is not one label, because the seat that died may well have written some.
+  if (a.kind === "unsettled" || b.kind === "unsettled") {
+    const settled = a.kind === "unsettled" ? b : a;
+    return {
+      board: stampVoiceConcurrence(lane.board(), labelFor),
+      attempts,
+      ...(settled.kind === "absent" ? { absence: settled.reason } : {}),
+    };
   }
-  const seatA = a as DraftedLens;
-  const seatB = b as DraftedLens;
-  const labels = { a: DEFAULT_SEAT_LABELS["claude-code"], b: DEFAULT_SEAT_LABELS.codex };
-  const merged = reconcileFlaggedBoards(seatA.board, seatB.board, labels);
-  // Wire-validate the merged board (finding 7): a reconciliation that produced a
+  // BOTH voices settled: the one moment a cross-seat mark can be stamped honestly.
+  const board = reconcileFlaggedVoices(lane.board(), {
+    a: {
+      authorId: SEAT_BOARD_VOICE["flagged-claude"].author.id,
+      label: DEFAULT_SEAT_LABELS["claude-code"],
+    },
+    b: {
+      authorId: SEAT_BOARD_VOICE["flagged-codex"].author.id,
+      label: DEFAULT_SEAT_LABELS.codex,
+    },
+  });
+  // Wire-validate the reconciled board (finding 7): a reconciliation that produced a
   // structurally-invalid board surfaces as a labeled blemish, never ships silently.
-  const wire = parseDraft(merged);
-  const mergeBlemishes: Violation[] = wire.ok
+  const wire = parseDraft(board);
+  const blemishes: Violation[] = wire.ok
     ? []
     : wire.issues.map((i) => ({
         ruleId: "schema-invalid",
@@ -2864,11 +3259,12 @@ async function runFlaggedDual(
         message: i.message,
       }));
   return {
-    board: merged,
-    omissions: [...seatA.omissions, ...seatB.omissions],
-    blemishes: [...seatA.blemishes, ...seatB.blemishes, ...mergeBlemishes],
-    immutability: [...seatA.immutability, ...seatB.immutability],
-    initialOutputWasEmpty: seatA.initialOutputWasEmpty && seatB.initialOutputWasEmpty,
+    board,
+    attempts,
+    blemishes,
+    // Both voices declaring their lens's absence is the lane declaring it. One of two
+    // voices declaring it is not: the other wrote findings, and they are on this board.
+    ...(a.kind === "absent" && b.kind === "absent" ? { absence: a.reason } : {}),
   };
 }
 
@@ -2885,6 +3281,7 @@ async function runLensBoard(
   council: CouncilResolveContext,
   context: DrafterContextRef | undefined,
   reportBoard?: DraftBoard,
+  derivedMembers?: readonly ChangedRegion[],
 ): Promise<LensBoardOutcome> {
   const clock = deps.now ?? Date.now;
   const spans = createSeatSpans(clock);
@@ -2900,6 +3297,7 @@ async function runLensBoard(
       },
       context,
       reportBoard,
+      derivedMembers,
     );
   } finally {
     const emit = deps.onPhaseTiming;
@@ -2952,83 +3350,175 @@ async function draftLensBoard(
   context: DrafterContextRef | undefined,
   /** The frozen round report, the composition pass's input on a round; the seat reads it from `round.json`. */
   reportBoard?: DraftBoard,
+  /** The regions the host places on a DERIVED board before its seat's first turn (D16). */
+  derivedMembers?: readonly ChangedRegion[],
 ): Promise<LensBoardOutcome> {
-  const promptText = expandPromptPartials(
-    await deps.readPrompt(LENS_PROMPT_FILES[lens]),
-    await deps.readPrompt(INVESTIGATE_PARTIAL_FILE),
-  );
+  // The lane its seats write into, opened empty and `drafting` before any seat thread
+  // existed (task 3.1). There is no board without one: a seat writes through tools, so a
+  // lane that was never opened leaves it with nothing to write into and nothing to settle.
+  //
+  // Read here, checked AFTER seat resolution: a host with no sidecar has no lanes either,
+  // and "no board lane" would then be the SYMPTOM reported over the cause. The lane check
+  // is what is left once the seat is known to be runnable.
+  const lane = deps.boards?.lane(lens);
+
+  // Both shared partials, keyed by their markers (3.6): the investigate section and the
+  // tool vocabulary that replaced each prompt's "return a board in the supplied schema".
+  const promptText = expandPromptPartials(await deps.readPrompt(LENS_PROMPT_FILES[lens]), {
+    [PROMPT_PARTIAL_MARKER]: await deps.readPrompt(INVESTIGATE_PARTIAL_FILE),
+    [WRITE_WITH_TOOLS_MARKER]: await deps.readPrompt(WRITE_WITH_TOOLS_PARTIAL_FILE),
+  });
   const basePrompt = renderDrafterPrompt(promptText, deps.deltaPacket, context);
-  const ctx: LintContext = deps.lintContextFor(lens);
 
   // #725 D4 — this lane's repair budget for this whole-board attempt.
   const retryCap = lensRetryBudget(lens, deps.boardAttempt ?? 0);
 
-  let validated: DraftedLens;
-  if (lens === "flagged") {
+  let draft: LaneDraft;
+  // The deterministic Design fast path (pure additive): an OpenSpec branch's Design board
+  // is a host-side transform from the change artifacts, so it settles here with NO model
+  // turn. `undefined` — no OpenSpec change, or a change with nothing to render — falls
+  // straight through to the seat below, unchanged.
+  //
+  // The assembler THROWS when a change it accepted cannot settle: either the source prose
+  // trips a boundary rule the deterministic path can't rephrase (a code fence or an
+  // indented list in `## Why`, a machinery word in the change name), or a genuine mapping
+  // defect. Both fall back to the seat — the seat renders the same change — rather than
+  // rejecting the lane, which would rethrow and kill the whole round with its four settled
+  // siblings. A silent slow-down is the worst case; a crashed round is not on the table.
+  //
+  // It spends NO attempt and needs no lane, which is the honest reading of `runSeatTurns`'
+  // accounting rather than an exemption from it: an attempt is a turn that ended unsettled,
+  // and this path runs no turn at all.
+  let assembledDesign: DraftBoard | undefined;
+  if (lens === "design" && deps.assembleDesignBoard !== undefined) {
+    try {
+      assembledDesign = deps.assembleDesignBoard(deps.lintContextFor(lens));
+    } catch {
+      assembledDesign = undefined;
+    }
+  }
+  if (assembledDesign !== undefined) {
+    draft = { board: assembledDesign, attempts: 0 };
+  } else if (lens === "flagged") {
     // The flagged lens is the dual seat (Claude + Codex, cross-model concurrence).
-    const dual = await runFlaggedDual(deps, council, basePrompt, ctx, retryCap, spans.wrap);
+    const dual = await runFlaggedDual(deps, council, lane, basePrompt, retryCap, spans.wrap);
     if ("failure" in dual) {
       return failedLensOutcome(lens, dual);
     }
-    validated = dual;
+    draft = dual;
   } else {
     const jobId: CouncilJobId = lens === "noise" ? "lens-draft-noise" : "lens-draft";
-    const resolved = resolveBoardSeatDetails(
-      jobId,
-      lens,
-      deps,
-      council,
-      lens === "design" ? designDraftOutputSchema() : boardOutputSchema(),
-    );
+    // No output schema. A board seat's turn carries no structured-output contract at all
+    // (`board-tool-authoring`, task 3.2): the board is what the seat writes, not what it
+    // returns, and nothing is parsed back off the turn.
+    const resolved = resolveBoardSeatDetails(jobId, lens, deps, council);
     if ("failure" in resolved) {
       return failedLensOutcome(lens, resolved);
+    }
+    if (lane === undefined) return failedLensOutcome(lens, { failure: noLaneFailure(lens) });
+    // The host's own members, on the board BEFORE the seat's first turn (D16, task 3.8).
+    // Placed here rather than at `openLane` because the complement is only knowable once
+    // the four core lanes have settled, which is after every lane was opened.
+    // `placeMembers` is not reachable from any tool: the seat groups and explains what it
+    // is handed, and has no verb that adds a member or removes one.
+    const memberKind = hostDerivedMemberKind(lens);
+    if (memberKind !== undefined && derivedMembers !== undefined) {
+      lane.writer().placeMembers(memberKind, derivedMembers);
     }
     const seat = spans.wrap(resolved.runTurn, {
       harness: resolved.harness,
       model: resolved.model,
     });
-    // The Design seat finds the spec itself and may return `{ absence: "no-spec" }` instead
-    // of a board (D6). That return is the absence — there is no host bundle left to ground
-    // it against — so it settles the lane on the first turn or on any repair turn.
-    const drafted =
-      lens === "design"
-        ? await draftOneLens(basePrompt, seat, ctx, retryCap, undefined, designNoSpecAbsence)
-        : await draftOneLens(basePrompt, seat, ctx, retryCap);
-    if ("failure" in drafted) {
-      return failedLensOutcome(lens, drafted);
+    const settlement = await runSeatTurns(
+      `${lens} lens`,
+      basePrompt,
+      seat,
+      seatVoice(lane, seatForLens(lens)),
+      retryCap,
+    );
+    if (settlement.kind === "unsettled") {
+      return failedLensOutcome(lens, settlement.failure);
     }
-    if ("absence" in drafted) {
-      return { lens, omissions: [], blemishes: [], immutability: [], absence: drafted.absence };
-    }
-    validated = drafted;
+    draft = {
+      board: lane.board(),
+      attempts: settlement.attempts,
+      ...(settlement.kind === "absent" ? { absence: settlement.reason } : {}),
+    };
   }
   // Everything from here to the accepted write is the lane's deterministic post-process:
   // grounding, round composition, delta stamping, ref admission and the board write.
   markPostProcess();
 
-  if (!hasLensMaterial(lens, validated.board)) {
-    const absence = validated.initialOutputWasEmpty ? EMPTY_LENS_ABSENCE[lens] : undefined;
-    if (absence === undefined) {
-      return {
-        lens,
-        omissions: validated.omissions,
-        blemishes: validated.blemishes,
-        immutability: validated.immutability,
-        failure: requiredBoardFailure(lens),
-      };
-    }
+  const validated: ValidatedLike = {
+    // The capture's id on every `code_ref` the SEAT wrote, once, here — before round
+    // composition, which is exactly where `validateDraft` stamped it on the document path.
+    // It is host-owned and on no tool input (`HOST_OWNED_FIELDS`): a seat is never told the
+    // capture's id, so a citation that carried one would be a value the seat invented.
+    //
+    // BEFORE composition and not after, and the ordering is the whole point. A round's
+    // composition carries the previous generation's "Round N · Addressed" chapter onto this
+    // board verbatim, and its anchors cite the EARLIER generation's patchset by design —
+    // which is why `admitBoardReferences` exempts the host composer by name
+    // ({@link isHostComposedHistory}). A stamp that ran afterwards would map over those
+    // anchors too and relabel round 1's citations as round 2's: durably wrong on disk, and
+    // wrong on screen, because the client falls back to the board's patchset only for an
+    // element that carries none. It would also make two guards vacuous — that exemption,
+    // and lint's cross-patchset `citation-resolves` arm — by leaving nothing for either to
+    // find.
+    board: stampPatchsetId(draft.board, deps.deltaPacket.patchset.id),
+    // The ladder that produced these is gone from the seat path (3.2). A structural rule
+    // is refused where the call is made and a whole-board rule comes back from `finish`,
+    // both inside the seat's own turn, so a settled board has no dropped element to
+    // account for and no unfixed violation to label. `blemishes` carries only what the
+    // host found AFTER the seats settled — today, the Flagged reconciliation's own
+    // wire check.
+    omissions: [],
+    blemishes: draft.blemishes ?? [],
+    immutability: [],
+    attempts: draft.attempts,
+  };
+  return finishLensBoard(lens, deps, validated, draft.absence, reportBoard);
+}
+
+/**
+ * The lane's deterministic tail: round composition, the reviewer's own resolution state,
+ * delta stamps, reference admission and the accepted write.
+ *
+ * Split from the drafting half because it is where a DECLARED absence and a settled board
+ * rejoin: a Flagged lane that declared `no-findings` on a round still owns the disposition
+ * migration, so it must pass through the composer before it settles.
+ */
+async function finishLensBoard(
+  lens: LensKind,
+  deps: LensPipelineDeps,
+  validatedIn: ValidatedLike,
+  declaredAbsence: LensAbsenceReason | undefined,
+  reportBoard: DraftBoard | undefined,
+): Promise<LensBoardOutcome> {
+  let validated = validatedIn;
+  const settledWith = (extra: Partial<LensBoardOutcome>): LensBoardOutcome => ({
+    lens,
+    omissions: validated.omissions,
+    blemishes: validated.blemishes,
+    immutability: validated.immutability,
+    ...extra,
+  });
+
+  if (declaredAbsence !== undefined) {
     // A round's empty Flagged result still owns disposition migration. Let it pass
     // through composeFindingRound and persistFindingResolutions before the final
     // no-findings absence. Other clean absences have no round-owned state to migrate.
     if (lens !== "flagged" || deps.round === undefined) {
-      return {
-        lens,
-        omissions: validated.omissions,
-        blemishes: validated.blemishes,
-        immutability: validated.immutability,
-        absence,
-      };
+      return settledWith({ absence: declaredAbsence });
     }
+  } else if (!hasLensMaterial(lens, validated.board)) {
+    // `finish` already refused to settle a board with no material of this lens's kind
+    // (`board-has-material`, a finish-tier rule), and an absence is now DECLARED rather
+    // than inferred from an empty return. What is left for this check to catch is the gap
+    // that rule names in its own comment: Decisions and Flagged have no reachability rule,
+    // so `finish` accepts a `decision` or a `finding` no served root reaches, and the
+    // reader would be shown a board with nothing on it.
+    return settledWith({ failure: requiredBoardFailure(lens) });
   }
 
   let findingResolutions: readonly FindingResolution[] | undefined;

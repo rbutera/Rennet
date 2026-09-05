@@ -1,11 +1,12 @@
 // Thread bindings (t3code-sidecar-chat 3.2; seat bindings from t3-lens-threads 1.1).
 //
-// Two kinds share one durable file, and BOTH are keyed on the REPOSITORY ROOT first,
+// Three kinds share one durable file, and ALL are keyed on the REPOSITORY ROOT first,
 // never on `Project.id` or `openPath`: a workspace maps many repos to one project, and
 // two repos on the same branch must resolve to two threads rooted in two checkouts.
 //
 //   session  (repositoryRoot, sessionId)             — the review's own conversation
 //   seat     (repositoryRoot, generationId, seat)     — one board seat of one generation
+//   round    (repositoryRoot, sessionId, operationId) — one coding round's own transcript
 //
 // The T3 project a thread hangs off is the one whose `workspaceRoot` is that checkout,
 // created on first use.
@@ -15,6 +16,7 @@
 
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
+import type { Author, BoardTarget } from "@rennet/protocol";
 import { z } from "zod";
 import type { ModelSelection, T3Client } from "./client";
 import { sidecarBaseDir } from "./sidecar";
@@ -30,6 +32,45 @@ export const SEAT_KINDS = [
   "round-report",
 ] as const;
 export type SeatKind = (typeof SEAT_KINDS)[number];
+
+/**
+ * Which board a seat writes (`lens-board-tools` D8/D9). Flagged's two seats write ONE
+ * board, which is why this is a map and not the identity: the seat is the thread, the
+ * target is the board, and the two are not the same thing.
+ */
+export const SEAT_BOARD_TARGET: Readonly<Record<SeatKind, BoardTarget>> = {
+  design: "design",
+  sequence: "sequence",
+  decisions: "decisions",
+  "flagged-claude": "flagged",
+  "flagged-codex": "flagged",
+  noise: "noise",
+  "round-report": "report",
+};
+
+/**
+ * The voice each seat writes with: the author its elements carry, and the prefix on every
+ * id the host hands it.
+ *
+ * The prefix is per SEAT, not per board, so a Flagged element says on sight which of the
+ * lane's two seats was handed it. Ids could not collide without it either — the lane's two
+ * seats share one board and one mint counter — but a prefix is what makes the two voices
+ * legible in a list of ids.
+ */
+export const SEAT_BOARD_VOICE: Readonly<
+  Record<SeatKind, { readonly author: Author; readonly idPrefix: string }>
+> = {
+  design: { author: { kind: "lens-agent", id: "lens:design" }, idPrefix: "d" },
+  sequence: { author: { kind: "lens-agent", id: "lens:sequence" }, idPrefix: "q" },
+  decisions: { author: { kind: "lens-agent", id: "lens:decisions" }, idPrefix: "k" },
+  "flagged-claude": {
+    author: { kind: "lens-agent", id: "lens:flagged:claudeAgent" },
+    idPrefix: "f",
+  },
+  "flagged-codex": { author: { kind: "lens-agent", id: "lens:flagged:codex" }, idPrefix: "g" },
+  noise: { author: { kind: "lens-agent", id: "lens:noise" }, idPrefix: "n" },
+  "round-report": { author: { kind: "lens-agent", id: "lens:report" }, idPrefix: "r" },
+};
 
 /** How a seat names itself in a thread title. */
 const SEAT_LABELS: Readonly<Record<SeatKind, string>> = {
@@ -49,11 +90,18 @@ const SEAT_LABELS: Readonly<Record<SeatKind, string>> = {
  */
 export type ThreadBindingKey =
   | { readonly kind: "session"; readonly sessionId: string }
-  | { readonly kind: "seat"; readonly generationId: string; readonly seat: SeatKind };
+  | { readonly kind: "seat"; readonly generationId: string; readonly seat: SeatKind }
+  /**
+   * One coding round's own thread (round-worker-thread; Rai, 2026-09-04: "we should hand
+   * off the round to a subagent not to the main orchestrator"). Keyed on the OPERATION,
+   * not the dispatch: a dispatch attempted while a round is live is coalesced into a
+   * rerun of the same operation, so a dispatch key would name a thread nothing runs on.
+   */
+  | { readonly kind: "round"; readonly sessionId: string; readonly operationId: string };
 
 const bindingSchema = z.object({
   // Rows written before seat bindings existed carry no `kind`; they are session rows.
-  kind: z.enum(["session", "seat"]).default("session"),
+  kind: z.enum(["session", "seat", "round"]).default("session"),
   repositoryRoot: z.string(),
   /**
    * Which session owns this thread. For a `session` row it is half the KEY (and holds the
@@ -65,6 +113,8 @@ const bindingSchema = z.object({
   sessionId: z.string().optional(),
   generationId: z.string().optional(),
   seat: z.enum(SEAT_KINDS).optional(),
+  /** Only on a `round` row: the durable round operation this thread was created for. */
+  operationId: z.string().optional(),
   projectId: z.string(),
   threadId: z.string(),
   createdAt: z.string(),
@@ -136,9 +186,14 @@ function writeBindings(dataDir: string, bindings: ThreadBinding[]): void {
 /** Every field of the key, and the checkout, must match — a silent field never matches. */
 function matches(row: ThreadBinding, repositoryRoot: string, key: ThreadBindingKey): boolean {
   if (row.repositoryRoot !== repositoryRoot || row.kind !== key.kind) return false;
-  return key.kind === "session"
-    ? row.sessionId === key.sessionId
-    : row.generationId === key.generationId && row.seat === key.seat;
+  switch (key.kind) {
+    case "session":
+      return row.sessionId === key.sessionId;
+    case "seat":
+      return row.generationId === key.generationId && row.seat === key.seat;
+    case "round":
+      return row.sessionId === key.sessionId && row.operationId === key.operationId;
+  }
 }
 
 /**
@@ -248,6 +303,12 @@ export function seatThreadTitle(branch: string, seat: SeatKind): string {
   return `${named} — ${SEAT_LABELS[seat]}`;
 }
 
+/** The thread title a coding round gets: the branch it commits on, then its ordinal. */
+export function roundThreadTitle(branch: string, roundNumber: number): string {
+  const named = branch.trim() === "" ? "review" : branch.trim();
+  return `${named} — round ${roundNumber}`;
+}
+
 export interface BindThreadInput {
   readonly dataDir: string;
   readonly client: T3Client;
@@ -293,7 +354,11 @@ function flightKey(input: BindThreadInput): string {
     input.dataDir,
     keyRootOf(input),
     key.kind,
-    key.kind === "session" ? key.sessionId : [key.generationId, key.seat],
+    key.kind === "session"
+      ? key.sessionId
+      : key.kind === "round"
+        ? [key.sessionId, key.operationId]
+        : [key.generationId, key.seat],
   ]);
 }
 
@@ -355,12 +420,21 @@ async function findOrCreateBinding(input: BindThreadInput): Promise<ThreadBindin
     repositoryRoot: keyRoot,
     ...(input.key.kind === "session"
       ? { kind: "session" as const, sessionId: input.key.sessionId }
-      : {
-          kind: "seat" as const,
-          generationId: input.key.generationId,
-          seat: input.key.seat,
-          ...(input.sessionId === undefined ? {} : { sessionId: input.sessionId }),
-        }),
+      : input.key.kind === "round"
+        ? // The session id is on the KEY here, and it is what the archive sweep matches:
+          // `findBindingsForSessions` reads `sessionId` off every row whatever its kind,
+          // so a round thread is deleted with the session that dispatched it.
+          {
+            kind: "round" as const,
+            sessionId: input.key.sessionId,
+            operationId: input.key.operationId,
+          }
+        : {
+            kind: "seat" as const,
+            generationId: input.key.generationId,
+            seat: input.key.seat,
+            ...(input.sessionId === undefined ? {} : { sessionId: input.sessionId }),
+          }),
     projectId,
     threadId,
     createdAt: new Date().toISOString(),

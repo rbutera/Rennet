@@ -25,6 +25,8 @@ interface BoardElements {
   readonly generation: string;
   /** The board's id — the viewed-delta scope key (finding 3). */
   readonly boardId: string;
+  /** The lens this board belongs to, "" outside a lens board. Gates the design-only meta. */
+  readonly lens: string;
 }
 
 const BoardElementsContext = createContext<BoardElements>({
@@ -33,6 +35,7 @@ const BoardElementsContext = createContext<BoardElements>({
   patchsetId: "",
   generation: "",
   boardId: "",
+  lens: "",
 });
 
 /**
@@ -40,10 +43,13 @@ const BoardElementsContext = createContext<BoardElements>({
  * The `code_ref` kind's attrs ARE the canonical CodeRef field-for-field (schema.ts).
  *
  * `patchset_id` is host-stamped and therefore OPTIONAL on the wire — a seat is never told
- * the id, so `validateDraft` writes it once before persistence. `boardPatchsetId` is the
- * board's own, used when an element predates the stamp; an element that carries one keeps
- * it, so a genuinely cross-patchset element still reads as itself rather than being
- * relabelled by the board it is rendered on.
+ * the id, so the host writes it once: on the lens path in `finishLensBoard`, before round
+ * composition carries the previous generation's chapter in, and on the legacy report path
+ * inside `validateDraft`. `boardPatchsetId` is the board's own, used when an element
+ * predates the stamp; an element that carries one keeps it, so a genuinely cross-patchset
+ * element — a carried "Round N · Addressed" anchor, which is what makes this branch
+ * load-bearing rather than defensive — still reads as itself rather than being relabelled
+ * by the board it is rendered on.
  */
 export function toCodeRef(element: ElementOf<"code_ref">, boardPatchsetId: string): CodeRef {
   const d = element.data;
@@ -64,6 +70,7 @@ export function BoardElementsProvider({
   reviewId = "",
   generation = "",
   boardId = "",
+  lens = "",
   children,
 }: {
   readonly elements: readonly HostElement[];
@@ -73,6 +80,8 @@ export function BoardElementsProvider({
   readonly generation?: string;
   /** The board's id — the viewed-delta scope key (finding 3). */
   readonly boardId?: string;
+  /** The lens this board belongs to; gates the design-only section metadata. */
+  readonly lens?: string;
   readonly children: ReactNode;
 }) {
   const value = useMemo<BoardElements>(() => {
@@ -85,8 +94,9 @@ export function BoardElementsProvider({
         (firstCodeRef?.kind === "code_ref" ? firstCodeRef.data.patchset_id : undefined) ?? "",
       generation,
       boardId,
+      lens,
     };
-  }, [elements, reviewId, generation, boardId]);
+  }, [elements, reviewId, generation, boardId, lens]);
   return <BoardElementsContext.Provider value={value}>{children}</BoardElementsContext.Provider>;
 }
 
@@ -108,6 +118,44 @@ export function useBoardGeneration(): string {
 /** The board id — the viewed-delta scope key (finding 3). */
 export function useBoardId(): string {
   return useContext(BoardElementsContext).boardId;
+}
+
+/**
+ * The board's lens, or "" outside a lens board.
+ *
+ * A section's `sources` is a SPECIFICATION ARTIFACT's provenance — the file, and the line
+ * in it, that a Design section was read out of. It sits on the shared `section` kind, so
+ * every seat can see the field and seats on the other lenses filled it: Flagged put three
+ * chips reading "reviewed" on a Correctness header, Noise put "reviewed head". A defect or
+ * a churn group has no source artifact, so the chip named nothing the reader could place
+ * and, being a live editor link, opened their editor at an arbitrary line.
+ *
+ * The prompts now say to leave the field alone, but the boards already drafted carry it,
+ * so the render is what settles it: {@link useDesignMetaVisible} gates section-level
+ * source chips on the one lens where they mean something.
+ */
+export function useBoardLens(): string {
+  return useContext(BoardElementsContext).lens;
+}
+
+/** Is this board the one whose sections carry real spec-artifact provenance? */
+export function useDesignMetaVisible(): boolean {
+  return useBoardLens() === "design";
+}
+
+/**
+ * Lenses whose cited code stays folded until the reader asks for it.
+ *
+ * Noise is a long list of churn groups and Design is a long list of requirements: on both,
+ * every citation is one of dozens, and opening them on arrival buries the reading in code
+ * the reader came to skip. Everywhere else the code IS the stop, so it arrives open (Rai,
+ * 2026-09-04). Outside a lens board the lens reads "" and the click-to-reveal default holds.
+ */
+const FOLDED_CITATION_LENSES: ReadonlySet<string> = new Set(["", "noise", "design"]);
+
+/** Does a cited span on this board reveal itself on arrival, rather than on a click? */
+export function useCitationsOpenByDefault(): boolean {
+  return !FOLDED_CITATION_LENSES.has(useBoardLens());
 }
 
 /** Resolve an element id to its element, or `undefined` (a dangling ref renders nothing). */

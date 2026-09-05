@@ -14,6 +14,7 @@ export {
   type Timers,
   type WatchFn,
 } from "./baseline-advance-watcher";
+export { readBmadSpec, resolveBmadPaths, selectedBmadSpec } from "./bmad-spec-reader";
 export {
   type BoardMetaInput,
   type BoardMetaRecord,
@@ -129,6 +130,7 @@ export {
   type RunTurn,
   type SwarmTurnOptions,
 } from "./council-seat-turn";
+export { describeSpawnFailure } from "./descriptor-exhaustion";
 export { type DossierKey, DossierStore } from "./dossier-store";
 export {
   createExclusiveNamespaceMover,
@@ -206,6 +208,7 @@ export {
   execaGitFor,
   FILE_VISIBLE_BYTE_LIMIT,
   type GitExec,
+  type GitStdoutEncoding,
   gitForRepoFactory,
   parseChangedPaths,
   parseCounts,
@@ -288,6 +291,7 @@ export {
   type GitLabPrSubmissionCommandRunner,
   type GitLabPrSubmissionConfig,
 } from "./gitlab-pr-submission";
+export { readGrillSpec, selectedGrillDocPaths } from "./grill-spec-reader";
 export { claudeHandoffRunPort } from "./handoff-run-live";
 export {
   compareVersions,
@@ -305,6 +309,7 @@ export {
   type VersionRange,
   wslDiscoveryDeps,
 } from "./harness-discovery";
+export { readKiroSpec, selectedKiroFeatureName } from "./kiro-spec-reader";
 export {
   activePatchset,
   type BuildReviewContextManifestDeps,
@@ -384,7 +389,11 @@ export {
   type OmpTransportEffects,
   renderOmpMcpConfig,
 } from "./omp-turn-transport";
-export { readOpenSpecChange, selectedOpenSpecChangeName } from "./openspec-change-reader";
+export {
+  readOpenSpecChange,
+  readOpenSpecChangeSource,
+  selectedOpenSpecChangeName,
+} from "./openspec-change-reader";
 export {
   branchWorktreePath,
   ensureBranchWorktree,
@@ -472,11 +481,13 @@ export {
   parseWorkspaceGlobs,
   type ResolvedBase,
   readBlobText,
+  readBlobTexts,
   readConventions,
   readOwnership,
   readTests,
   readTreeLineCounts,
   readWorkspaceStructure,
+  requireBlob,
   resolveBaseRef,
   type WorkspaceStructure,
 } from "./project-snapshot-source";
@@ -541,7 +552,7 @@ export { RepoCompositionStore } from "./repo-composition-store";
 export { RepoWatcher } from "./repo-watcher";
 // Only what the daemon actually calls. The rest of this module's surface existed for the
 // round's detached-worktree landing and has no consumer since it went.
-export { observeRoundCommits, runConfiguredRoundGate } from "./round-execution-effects";
+export { observeRoundCommits } from "./round-execution-effects";
 export {
   defaultRoundOperationStoreDir,
   ROUND_OPERATION_STORE_FILE_NAME,
@@ -582,9 +593,12 @@ export {
   SnapshotOverlayStore,
 } from "./snapshot-overlay-store";
 export { SqliteReviewStore } from "./sqlite-review-store";
+export { readSuperpowersSpec, selectedSuperpowersArtifacts } from "./superpowers-spec-reader";
 export {
   createT3SeatTurn,
+  outputSchemaFor,
   parseFinalMessageJson,
+  type SeatBoardMcpServer,
   settledTurnUsage,
   type T3SeatClient,
   type T3SeatSeam,

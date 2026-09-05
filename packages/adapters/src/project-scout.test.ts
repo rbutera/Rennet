@@ -119,7 +119,10 @@ describe("runProjectScout", () => {
     });
     expect(result.facts).toMatchObject({
       trackerKind: { value: "none", provenance: "guessed" },
-      worktreeBaseDir: { value: "~/.rennet/worktrees", provenance: "guessed" },
+      // No sibling worktree ⇒ no convention to report. Empty, never Rennet's own
+      // `~/.rennet/worktrees`: that is where the DAEMON binds a workspace, not a fact
+      // about this repository (#812).
+      worktreeBaseDir: { value: "", provenance: "guessed" },
       gateCommand: { value: "", provenance: "guessed" },
       logoPath: { value: "", provenance: "guessed" },
     });

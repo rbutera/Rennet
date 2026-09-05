@@ -7,7 +7,11 @@
 import { z } from "zod";
 import {
   AskLifecycleSchema,
+  BoardDocumentSchema,
+  DraftElementSchema,
   generationIdForPatchset,
+  LensAbsenceReasonSchema,
+  LensKindSchema,
   QuoteAnchorSchema,
   RoundReportBoardSchema,
 } from "../board";
@@ -15,7 +19,7 @@ import {
 import { codeRefSchema, patchFileSchema } from "../delta/citations";
 import type { CouncilEffort, CouncilHarnessId, CouncilModel } from "../domain";
 import { forgeRepoIdentitySchema, forgeRepositoryMatchesLegacy } from "../forge";
-import { LENS_KINDS, type LensKind } from "../manifests";
+import { LENS_KINDS } from "../manifests";
 import { sha256Hex } from "../sha256";
 
 const id = z.string().min(1);
@@ -116,51 +120,23 @@ export const SessionThreadSchema = z.union([
 ]);
 export type SessionThread = z.infer<typeof SessionThreadSchema>;
 
+// Absence admissibility moved to `board/kind-tables.ts` in `lens-board-tools`: a seat's
+// board tool set is derived from it (whether the lens gets a settle-absent verb, and which
+// absence that verb declares) and `protocol/board` cannot import `protocol/session`.
+// Re-exported here so every existing importer keeps its path.
+export {
+  LENS_ADMISSIBLE_ABSENCES,
+  type LensAbsenceReason,
+  LensAbsenceReasonSchema,
+  lensAdmitsAbsence,
+} from "../board";
+
 /**
  * A generation (#457): one immutable visit to a review's boards over a patchset.
  * `patchsetId` identifies the content; `id` distinguishes later visits to the same
  * content. Live boards are append-only logs; when the code moves, the generation
  * freezes immutable and a successor is minted — the successor account compares N vs N+1.
  */
-export const LensAbsenceReasonSchema = z.enum([
-  "no-material",
-  "no-spec",
-  "no-decisions",
-  "no-findings",
-  "no-noise",
-]);
-export type LensAbsenceReason = z.infer<typeof LensAbsenceReasonSchema>;
-
-/**
- * Which absence each lens may honestly settle with (#549). This is the admissibility
- * half of the ONE canonical settlement domain — board / absence / failure, as
- * `lensBoards` / `absentLenses` / `failedLenses` already model it. Nothing may
- * introduce a second settlement model beside it.
- *
- * Sequence admits none: a review whose order board never arrived has nothing to read,
- * so an absent Sequence is a failure and never a clean result. Noise's `no-noise` is a
- * first-class SUCCESS — a change carrying no mechanical noise settled correctly, it did
- * not fail — and Design's `no-spec` is the same kind of success: the seat looked for the
- * specification this branch was written against and the repository holds none, so there is
- * nothing to render and no empty board is drafted.
- *
- * Design's `no-material` predates the spec respec (session-bound-workspace D6), when a host
- * bundle offered candidates and Design's absence was a grounded dismissal of them. It stays
- * admissible so generations persisted before the respec keep reading; nothing settles it now.
- */
-export const LENS_ADMISSIBLE_ABSENCES: Readonly<Record<LensKind, readonly LensAbsenceReason[]>> = {
-  design: ["no-material", "no-spec"],
-  sequence: [],
-  decisions: ["no-decisions"],
-  flagged: ["no-findings"],
-  noise: ["no-noise"],
-};
-
-/** True when `reason` is an absence `lens` may settle with as a success. */
-export function lensAdmitsAbsence(lens: LensKind, reason: LensAbsenceReason): boolean {
-  return LENS_ADMISSIBLE_ABSENCES[lens].includes(reason);
-}
-
 /**
  * Whether a further attempt at a failed lens could plausibly succeed (#549). A drafting
  * turn that emitted no board is `retryable` — the seat ran and produced nothing, which
@@ -194,6 +170,14 @@ export type LensFailureAccount = z.infer<typeof LensFailureAccountSchema>;
  * in which settled lanes became visible, and
  * `first-core-board` is measured from the round's own start to the first core lane's
  * arrival — the latency the reviewer actually waits.
+ *
+ * `first-element` is its DURABLE COMPANION, not its replacement (`lens-board-tools` D11,
+ * task 4.4): the same origin, stopped at the first element published on any board's
+ * element stream — the first thing a reviewer could actually see. Boards now draw
+ * themselves as they are written, so the two numbers answer two different questions and
+ * neither is redefined. A generation whose every lane settled absent or failed without
+ * writing an element records NO `first-element` at all, because nothing was ever on
+ * screen; an absent lane is a real settlement and a zero would be a lie about it.
  */
 export const GenerationPhaseSchema = z.enum([
   "report",
@@ -210,6 +194,7 @@ export const GenerationPhaseSchema = z.enum([
   "coverage",
   "reveal",
   "first-core-board",
+  "first-element",
 ]);
 export type GenerationPhase = z.infer<typeof GenerationPhaseSchema>;
 
@@ -225,6 +210,7 @@ export const LENS_SCOPED_PHASES = [
   "lens-repair",
   "lens-post-process",
   "first-core-board",
+  "first-element",
 ] as const satisfies readonly GenerationPhase[];
 
 /**
@@ -441,54 +427,6 @@ export const RoundWorkerReceiptSchema = z.discriminatedUnion("outcome", [
 ]);
 export type RoundWorkerReceipt = z.infer<typeof RoundWorkerReceiptSchema>;
 
-export const RoundGateAttemptSchema = z.object({
-  executionId: id,
-  startedAt: z.number().int().nonnegative(),
-});
-export type RoundGateAttempt = z.infer<typeof RoundGateAttemptSchema>;
-
-const completedGateBase = {
-  ...RoundGateAttemptSchema.shape,
-  completedAt: z.number().int().nonnegative(),
-  /** Number of project tasks the configured gate reported, when the gate can count them. */
-  projectCount: z.number().int().nonnegative().optional(),
-};
-
-export const RoundGatePassedReceiptSchema = z.object({
-  ...completedGateBase,
-  outcome: z.literal("passed"),
-  exitCode: z.literal(0),
-});
-export type RoundGatePassedReceipt = z.infer<typeof RoundGatePassedReceiptSchema>;
-
-export const RoundGateFailedReceiptSchema = z.object({
-  ...completedGateBase,
-  outcome: z.literal("failed"),
-  termination: RoundTerminationSchema,
-});
-export type RoundGateFailedReceipt = z.infer<typeof RoundGateFailedReceiptSchema>;
-
-export const RoundGateSkippedReceiptSchema = z.object({
-  outcome: z.literal("skipped"),
-  reason: z.literal("not-configured"),
-  settledAt: z.number().int().nonnegative(),
-});
-export type RoundGateSkippedReceipt = z.infer<typeof RoundGateSkippedReceiptSchema>;
-
-/** The configured repository gate's process result, not a UI inference. */
-export const RoundGateReceiptSchema = z.discriminatedUnion("outcome", [
-  RoundGatePassedReceiptSchema,
-  RoundGateFailedReceiptSchema,
-  RoundGateSkippedReceiptSchema,
-]);
-export type RoundGateReceipt = z.infer<typeof RoundGateReceiptSchema>;
-
-export const RoundGateSettledReceiptSchema = z.discriminatedUnion("outcome", [
-  RoundGatePassedReceiptSchema,
-  RoundGateSkippedReceiptSchema,
-]);
-export type RoundGateSettledReceipt = z.infer<typeof RoundGateSettledReceiptSchema>;
-
 export const RoundCommitAttemptSchema = z.object({
   executionId: id,
   baseHead: id,
@@ -496,7 +434,7 @@ export const RoundCommitAttemptSchema = z.object({
 });
 export type RoundCommitAttempt = z.infer<typeof RoundCommitAttemptSchema>;
 
-/** The commits observed after the worker and gate settle. Equal endpoints with count zero
+/** The commits observed after the worker's turn settles. Equal endpoints with count zero
  * are an honest no-commit result; a nonzero count is derived from Git. */
 export const RoundCommitReceiptSchema = z.object({
   ...RoundCommitAttemptSchema.shape,
@@ -620,18 +558,10 @@ export const RoundOperationFailureSchema = z.discriminatedUnion("at", [
     worker: z.union([RoundWorkerFailedReceiptSchema, RoundWorkerAttemptSchema]),
   }),
   z.object({
-    at: z.literal("gate"),
-    ...failureBase,
-    workspace: RoundWorkspaceReceiptSchema,
-    worker: RoundWorkerCompletedReceiptSchema,
-    gate: z.union([RoundGateFailedReceiptSchema, RoundGateAttemptSchema]),
-  }),
-  z.object({
     at: z.literal("committing"),
     ...failureBase,
     workspace: RoundWorkspaceReceiptSchema,
     worker: RoundWorkerCompletedReceiptSchema,
-    gate: RoundGateSettledReceiptSchema,
     commit: RoundCommitAttemptSchema,
   }),
   z.object({
@@ -639,7 +569,6 @@ export const RoundOperationFailureSchema = z.discriminatedUnion("at", [
     ...failureBase,
     workspace: RoundWorkspaceReceiptSchema,
     worker: RoundWorkerCompletedReceiptSchema,
-    gate: RoundGateSettledReceiptSchema,
     commits: RoundCommitReceiptSchema,
     recording: RoundRecordingAttemptSchema,
   }),
@@ -648,7 +577,6 @@ export const RoundOperationFailureSchema = z.discriminatedUnion("at", [
     ...failureBase,
     workspace: RoundWorkspaceReceiptSchema,
     worker: RoundWorkerCompletedReceiptSchema,
-    gate: RoundGateSettledReceiptSchema,
     commits: RoundCommitReceiptSchema,
     recording: RoundRecordingReceiptSchema,
     report: RoundReportDraftAttemptSchema,
@@ -658,7 +586,6 @@ export const RoundOperationFailureSchema = z.discriminatedUnion("at", [
     ...failureBase,
     workspace: RoundWorkspaceReceiptSchema,
     worker: RoundWorkerCompletedReceiptSchema,
-    gate: RoundGateSettledReceiptSchema,
     commits: RoundCommitReceiptSchema,
     recording: RoundRecordingReceiptSchema,
     report: RoundReportDraftReceiptSchema,
@@ -683,36 +610,21 @@ export const RoundOperationStateSchema = z.discriminatedUnion("phase", [
     worker: RoundWorkerCompletedReceiptSchema,
   }),
   z.object({
-    phase: z.literal("gate-running"),
-    workspace: RoundWorkspaceReceiptSchema,
-    worker: RoundWorkerCompletedReceiptSchema,
-    gate: RoundGateAttemptSchema,
-  }),
-  z.object({
-    phase: z.literal("gate-settled"),
-    workspace: RoundWorkspaceReceiptSchema,
-    worker: RoundWorkerCompletedReceiptSchema,
-    gate: RoundGateSettledReceiptSchema,
-  }),
-  z.object({
     phase: z.literal("committing"),
     workspace: RoundWorkspaceReceiptSchema,
     worker: RoundWorkerCompletedReceiptSchema,
-    gate: RoundGateSettledReceiptSchema,
     commit: RoundCommitAttemptSchema,
   }),
   z.object({
     phase: z.literal("commits-settled"),
     workspace: RoundWorkspaceReceiptSchema,
     worker: RoundWorkerCompletedReceiptSchema,
-    gate: RoundGateSettledReceiptSchema,
     commits: RoundCommitReceiptSchema,
   }),
   z.object({
     phase: z.literal("round-recording"),
     workspace: RoundWorkspaceReceiptSchema,
     worker: RoundWorkerCompletedReceiptSchema,
-    gate: RoundGateSettledReceiptSchema,
     commits: RoundCommitReceiptSchema,
     recording: RoundRecordingAttemptSchema,
   }),
@@ -720,7 +632,6 @@ export const RoundOperationStateSchema = z.discriminatedUnion("phase", [
     phase: z.literal("round-recorded"),
     workspace: RoundWorkspaceReceiptSchema,
     worker: RoundWorkerCompletedReceiptSchema,
-    gate: RoundGateSettledReceiptSchema,
     commits: RoundCommitReceiptSchema,
     recording: RoundRecordingReceiptSchema,
   }),
@@ -728,7 +639,6 @@ export const RoundOperationStateSchema = z.discriminatedUnion("phase", [
     phase: z.literal("report-drafting"),
     workspace: RoundWorkspaceReceiptSchema,
     worker: RoundWorkerCompletedReceiptSchema,
-    gate: RoundGateSettledReceiptSchema,
     commits: RoundCommitReceiptSchema,
     recording: RoundRecordingReceiptSchema,
     report: RoundReportDraftAttemptSchema,
@@ -737,7 +647,6 @@ export const RoundOperationStateSchema = z.discriminatedUnion("phase", [
     phase: z.literal("report-verifying"),
     workspace: RoundWorkspaceReceiptSchema,
     worker: RoundWorkerCompletedReceiptSchema,
-    gate: RoundGateSettledReceiptSchema,
     commits: RoundCommitReceiptSchema,
     recording: RoundRecordingReceiptSchema,
     report: RoundReportDraftReceiptSchema,
@@ -747,7 +656,6 @@ export const RoundOperationStateSchema = z.discriminatedUnion("phase", [
     phase: z.literal("completed"),
     workspace: RoundWorkspaceReceiptSchema,
     worker: RoundWorkerCompletedReceiptSchema,
-    gate: RoundGateSettledReceiptSchema,
     commits: RoundCommitReceiptSchema,
     recording: RoundRecordingReceiptSchema,
     result: z.discriminatedUnion("kind", [
@@ -789,18 +697,6 @@ export const RoundSourceTargetSchema = z.discriminatedUnion("kind", [
 ]);
 export type RoundSourceTarget = z.infer<typeof RoundSourceTargetSchema>;
 
-/** The configured project gate facts retained with a completed ledger row. */
-export const RoundRunGateReceiptSchema = z.discriminatedUnion("outcome", [
-  z.object({
-    outcome: z.literal("passed"),
-    command: z.string().min(1),
-    durationMs: z.number().int().nonnegative(),
-    projectCount: z.number().int().nonnegative().optional(),
-  }),
-  z.object({ outcome: z.literal("skipped"), reason: z.literal("not-configured") }),
-]);
-export type RoundRunGateReceipt = z.infer<typeof RoundRunGateReceiptSchema>;
-
 /** Immutable host facts about where and when one durable round ran. */
 export const RoundRunReceiptSchema = z.object({
   startedAt: z.number().int().nonnegative(),
@@ -816,15 +712,8 @@ export const RoundRunReceiptSchema = z.object({
   checkpoint: RoundCheckpointSchema.optional(),
   /** The branch had been rewritten past the reviewed head when this round started. */
   branchRewritten: z.literal(true).optional(),
-  gate: RoundRunGateReceiptSchema,
 });
 export type RoundRunReceipt = z.infer<typeof RoundRunReceiptSchema>;
-
-export const RoundGatePlanSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("configured"), command: z.string().min(1) }),
-  z.object({ kind: z.literal("absent") }),
-]);
-export type RoundGatePlan = z.infer<typeof RoundGatePlanSchema>;
 
 function hasChangedRoundEvidence(
   worker: { diff: string; changedPaths: string[] },
@@ -862,7 +751,6 @@ export const RoundOperationSchema = z
      */
     workOrderDocument: z.string().min(1).optional(),
     workOrderDigest: z.string().regex(/^[a-f0-9]{64}$/),
-    gatePlan: RoundGatePlanSchema,
     revision: z.number().int().nonnegative(),
     rerunRequested: z.boolean(),
     createdAt: z.number().int().nonnegative(),
@@ -906,36 +794,6 @@ export const RoundOperationSchema = z
       });
     }
     const failure = state.phase === "failed" ? state.failure : undefined;
-    const gate =
-      state.phase !== "failed" && "gate" in state
-        ? state.gate
-        : failure !== undefined && "gate" in failure
-          ? failure.gate
-          : undefined;
-    if (
-      operation.gatePlan.kind === "absent" &&
-      (state.phase === "gate-running" ||
-        failure?.at === "gate" ||
-        (gate !== undefined && ("outcome" in gate ? gate.outcome !== "skipped" : true)))
-    ) {
-      context.addIssue({
-        code: "custom",
-        path: ["state", "gate"],
-        message: "gate evidence contradicts the absent gate plan",
-      });
-    }
-    if (
-      operation.gatePlan.kind === "configured" &&
-      gate !== undefined &&
-      "outcome" in gate &&
-      gate.outcome === "skipped"
-    ) {
-      context.addIssue({
-        code: "custom",
-        path: ["state", "gate"],
-        message: "configured gate cannot be skipped as not configured",
-      });
-    }
     const commits =
       state.phase !== "failed" && "commits" in state
         ? state.commits
@@ -1044,24 +902,6 @@ const failedWorker = z.object({
   fileCount: z.number().int().nonnegative().optional(),
 });
 
-const runningGate = z.object({ status: z.literal("running") });
-const passedGate = z.object({
-  status: z.literal("passed"),
-  durationMs: z.number().int().nonnegative(),
-  projectCount: z.number().int().nonnegative().optional(),
-});
-const skippedGate = z.object({
-  status: z.literal("skipped"),
-  reason: z.literal("not-configured"),
-});
-const failedGate = z.object({
-  status: z.literal("failed"),
-  reason: z.string().min(1),
-  durationMs: z.number().int().nonnegative(),
-  projectCount: z.number().int().nonnegative().optional(),
-});
-const settledGate = z.discriminatedUnion("status", [passedGate, skippedGate]);
-
 const runningCommits = z.object({ status: z.literal("running") });
 const settledCommits = z.object({
   status: z.literal("done"),
@@ -1116,23 +956,15 @@ const RoundOperationProgressFailureSchema = z.discriminatedUnion("at", [
     worker: failedWorker,
   }),
   z.object({
-    at: z.literal("gate"),
-    workspace: settledWorkspace,
-    worker: settledWorker,
-    gate: failedGate,
-  }),
-  z.object({
     at: z.literal("committing"),
     workspace: settledWorkspace,
     worker: settledWorker,
-    gate: settledGate,
     commits: failedCommits,
   }),
   z.object({
     at: z.literal("report-drafting"),
     workspace: settledWorkspace,
     worker: settledWorker,
-    gate: settledGate,
     commits: settledCommits,
     report: failedReport,
   }),
@@ -1140,7 +972,6 @@ const RoundOperationProgressFailureSchema = z.discriminatedUnion("at", [
     at: z.literal("report-verifying"),
     workspace: settledWorkspace,
     worker: settledWorker,
-    gate: settledGate,
     commits: settledCommits,
     report: failedReport,
   }),
@@ -1161,36 +992,21 @@ export const RoundOperationProgressStateSchema = z.discriminatedUnion("phase", [
     worker: settledWorker,
   }),
   z.object({
-    phase: z.literal("gate-running"),
-    workspace: settledWorkspace,
-    worker: settledWorker,
-    gate: runningGate,
-  }),
-  z.object({
-    phase: z.literal("gate-settled"),
-    workspace: settledWorkspace,
-    worker: settledWorker,
-    gate: settledGate,
-  }),
-  z.object({
     phase: z.literal("committing"),
     workspace: settledWorkspace,
     worker: settledWorker,
-    gate: settledGate,
     commits: runningCommits,
   }),
   z.object({
     phase: z.literal("commits-settled"),
     workspace: settledWorkspace,
     worker: settledWorker,
-    gate: settledGate,
     commits: settledCommits,
   }),
   z.object({
     phase: z.literal("report-drafting"),
     workspace: settledWorkspace,
     worker: settledWorker,
-    gate: settledGate,
     commits: settledCommits,
     report: z.union([draftingReport, handedOffReport]),
   }),
@@ -1198,7 +1014,6 @@ export const RoundOperationProgressStateSchema = z.discriminatedUnion("phase", [
     phase: z.literal("report-verifying"),
     workspace: settledWorkspace,
     worker: settledWorker,
-    gate: settledGate,
     commits: settledCommits,
     report: verifyingReport,
   }),
@@ -1206,7 +1021,6 @@ export const RoundOperationProgressStateSchema = z.discriminatedUnion("phase", [
     phase: z.literal("completed"),
     workspace: settledWorkspace,
     worker: settledWorker,
-    gate: settledGate,
     commits: settledCommits,
     result: z.discriminatedUnion("kind", [
       z.object({
@@ -1235,7 +1049,6 @@ export const RoundOperationProgressSnapshotSchema = z.object({
   roundNumber: z.number().int().positive(),
   sourceTarget: RoundSourceTargetSchema,
   askCount: z.number().int().positive(),
-  gatePlan: RoundGatePlanSchema,
   state: RoundOperationProgressStateSchema,
 });
 export type RoundOperationProgressSnapshot = z.infer<typeof RoundOperationProgressSnapshotSchema>;
@@ -1247,25 +1060,6 @@ function doneWorkerProgress(worker: RoundWorkerCompletedReceipt): {
   readonly fileCount: number;
 } {
   return { status: "done", fileCount: worker.changedPaths.length };
-}
-
-function gateDurationMs(gate: RoundGatePassedReceipt | RoundGateFailedReceipt): number {
-  return Math.max(0, gate.completedAt - gate.startedAt);
-}
-
-function settledGateProgress(gate: RoundGateSettledReceipt):
-  | {
-      readonly status: "passed";
-      readonly durationMs: number;
-      readonly projectCount?: number;
-    }
-  | { readonly status: "skipped"; readonly reason: "not-configured" } {
-  if (gate.outcome === "skipped") return { status: "skipped", reason: gate.reason };
-  return {
-    status: "passed",
-    durationMs: gateDurationMs(gate),
-    ...(gate.projectCount === undefined ? {} : { projectCount: gate.projectCount }),
-  };
 }
 
 function doneCommitProgress(commits: RoundCommitReceipt): {
@@ -1294,29 +1088,11 @@ function progressFailure(
           ...("outcome" in failure.worker ? { fileCount: failure.worker.changedPaths.length } : {}),
         },
       };
-    case "gate":
-      return {
-        at: failure.at,
-        workspace: doneWorkspaceProgress,
-        worker: doneWorkerProgress(failure.worker),
-        gate: {
-          status: "failed",
-          reason: failure.reason,
-          durationMs:
-            "outcome" in failure.gate
-              ? gateDurationMs(failure.gate)
-              : Math.max(0, failure.failedAt - failure.gate.startedAt),
-          ...("outcome" in failure.gate && failure.gate.projectCount !== undefined
-            ? { projectCount: failure.gate.projectCount }
-            : {}),
-        },
-      };
     case "committing":
       return {
         at: failure.at,
         workspace: doneWorkspaceProgress,
         worker: doneWorkerProgress(failure.worker),
-        gate: settledGateProgress(failure.gate),
         commits: { status: "failed", reason: failure.reason },
       };
     case "round-recording":
@@ -1324,7 +1100,6 @@ function progressFailure(
         at: "committing",
         workspace: doneWorkspaceProgress,
         worker: doneWorkerProgress(failure.worker),
-        gate: settledGateProgress(failure.gate),
         commits: { status: "failed", reason: failure.reason },
       };
     case "report-drafting":
@@ -1333,7 +1108,6 @@ function progressFailure(
         at: failure.at,
         workspace: doneWorkspaceProgress,
         worker: doneWorkerProgress(failure.worker),
-        gate: settledGateProgress(failure.gate),
         commits: doneCommitProgress(failure.commits),
         report: {
           status: "failed",
@@ -1362,26 +1136,11 @@ function progressState(state: RoundOperationState): RoundOperationProgressState 
         workspace: doneWorkspaceProgress,
         worker: doneWorkerProgress(state.worker),
       };
-    case "gate-running":
-      return {
-        phase: state.phase,
-        workspace: doneWorkspaceProgress,
-        worker: doneWorkerProgress(state.worker),
-        gate: { status: "running" },
-      };
-    case "gate-settled":
-      return {
-        phase: state.phase,
-        workspace: doneWorkspaceProgress,
-        worker: doneWorkerProgress(state.worker),
-        gate: settledGateProgress(state.gate),
-      };
     case "committing":
       return {
         phase: state.phase,
         workspace: doneWorkspaceProgress,
         worker: doneWorkerProgress(state.worker),
-        gate: settledGateProgress(state.gate),
         commits: { status: "running" },
       };
     case "commits-settled":
@@ -1390,7 +1149,6 @@ function progressState(state: RoundOperationState): RoundOperationProgressState 
         phase: "committing",
         workspace: doneWorkspaceProgress,
         worker: doneWorkerProgress(state.worker),
-        gate: settledGateProgress(state.gate),
         commits: { status: "running" },
       };
     case "round-recorded":
@@ -1398,7 +1156,6 @@ function progressState(state: RoundOperationState): RoundOperationProgressState 
         phase: "commits-settled",
         workspace: doneWorkspaceProgress,
         worker: doneWorkerProgress(state.worker),
-        gate: settledGateProgress(state.gate),
         commits: doneCommitProgress(state.commits),
       };
     case "report-drafting":
@@ -1406,7 +1163,6 @@ function progressState(state: RoundOperationState): RoundOperationProgressState 
         phase: state.phase,
         workspace: doneWorkspaceProgress,
         worker: doneWorkerProgress(state.worker),
-        gate: settledGateProgress(state.gate),
         commits: doneCommitProgress(state.commits),
         // The durable handoff is the report's own finish line (#728). Once it exists the
         // seats that are actually running are the lens drafters, and the surface says so.
@@ -1424,7 +1180,6 @@ function progressState(state: RoundOperationState): RoundOperationProgressState 
         phase: state.phase,
         workspace: doneWorkspaceProgress,
         worker: doneWorkerProgress(state.worker),
-        gate: settledGateProgress(state.gate),
         commits: doneCommitProgress(state.commits),
         report: {
           status: "verifying",
@@ -1437,7 +1192,6 @@ function progressState(state: RoundOperationState): RoundOperationProgressState 
         phase: state.phase,
         workspace: doneWorkspaceProgress,
         worker: doneWorkerProgress(state.worker),
-        gate: settledGateProgress(state.gate),
         commits: doneCommitProgress(state.commits),
         result:
           state.result.kind === "unchanged"
@@ -1469,7 +1223,6 @@ export function roundOperationProgressSnapshot(
     roundNumber: operation.roundNumber,
     sourceTarget: operation.sourceTarget,
     askCount: operation.askOccurrences.length,
-    gatePlan: operation.gatePlan,
     state: progressState(operation.state),
   };
 }
@@ -1669,6 +1422,108 @@ export const LensLaneSchema = z.discriminatedUnion("status", [
 ]);
 export type LensLane = z.infer<typeof LensLaneSchema>;
 
+// ── The board's element stream (`lens-board-tools` D11, task 4.1) ────────────
+//
+// A lens board is written CALL BY CALL now, so the reviewer can watch it fill in. What
+// travels is the write, not the board: one frame per accepted tool call, carrying the
+// elements that call touched and where they sit. A whole-board snapshot per call would be
+// quadratic in the board's own size and is the shape the lane's live-line throttle exists
+// to bound; this one is bounded by the seat's accepted writes, which are tens per board.
+//
+// The board's durable copy is still written whole at settle: a drafting element carries no
+// patchset stamp and no round-delta mark (both are stamped where the board is persisted,
+// and D13 withholds the marks until the lane settles), so this stream is the LIVE view and
+// the whiteboard is the durable one. Two surfaces, neither pretending to be the other.
+
+/** How a lens board stands while it is being written. Mirrors `BoardWriterState`. */
+export const LensDraftStateSchema = z.enum(["drafting", "settled", "absent"]);
+export type LensDraftState = z.infer<typeof LensDraftStateSchema>;
+
+/** One element of a drafting board, at the position it occupies in the board's own list. */
+export const LensDraftElementSchema = z.object({
+  index: z.number().int().nonnegative(),
+  element: DraftElementSchema,
+});
+export type LensDraftElement = z.infer<typeof LensDraftElementSchema>;
+
+/**
+ * One thing that happened to a drafting lens board.
+ *
+ * `opened` is the lane opening its board, and the RESET marker as well as the first frame:
+ * a reader takes the elements it carries as the board entire, rather than appending a
+ * second board onto the first. It is not always an EMPTY board — see the field. `elements` is one accepted tool call: the elements it
+ * added or changed (a parent whose `children` grew is one of them), the ids it removed,
+ * and the document when it set one. No frame names the seat that made the call: Flagged
+ * runs two voices into one board and every element already carries the `author` that voice
+ * stamped on it (task 3.4), so a second attribution on the envelope would be one fact with
+ * two sources. `state` is the board's own settlement moving.
+ * `closed` is the lane settling: nothing more will land on this board, and `state` says
+ * how it finally stood — a failed lane closes still `drafting`, which is the honest shape
+ * and is why the lane's own status stays the authority on whether the LANE succeeded.
+ */
+export const LensDraftUpdateSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("opened"),
+    /**
+     * The board this lane is STARTING FROM, which is not always empty.
+     *
+     * Nothing deletes a board lane — settling one revokes its seats and keeps its writer —
+     * and a generation id is content-addressed, so a lane re-opened for a retry, or opened
+     * a second time by another review of identical content, hands back the board that is
+     * already there. An `opened` frame that claimed an empty board would leave the reader's
+     * copy shorter than the board, and every later element's `index` is computed against
+     * the board's own list: the fold would scramble from the first write. Empty on the
+     * ordinary first open, which is what it costs there.
+     */
+    elements: z.array(DraftElementSchema),
+    document: BoardDocumentSchema.optional(),
+  }),
+  z.object({
+    kind: z.literal("elements"),
+    changed: z.array(LensDraftElementSchema),
+    removed: z.array(z.string().min(1)),
+    document: BoardDocumentSchema.optional(),
+  }),
+  z.object({ kind: z.literal("state"), state: LensDraftStateSchema }),
+  z.object({ kind: z.literal("closed"), state: LensDraftStateSchema }),
+]);
+export type LensDraftUpdate = z.infer<typeof LensDraftUpdateSchema>;
+
+/**
+ * One published write, keyed so a reader can place it and so a SUPERSEDED attempt cannot
+ * paint over a live one.
+ *
+ * `generation` is the key that does that work: a re-drafting attempt owns a different
+ * generation, and a reader rendering generation B drops every frame stamped A rather than
+ * merging the two — the reveal path has had that bug once already. `revision` is monotonic
+ * per `(generation, lens)` and never resets, so a frame at or below what the reader has
+ * already folded is a duplicate and a gap says a frame was missed.
+ */
+export const LensDraftEventSchema = z.object({
+  generation: id,
+  lens: LensKindSchema,
+  revision: z.number().int().nonnegative(),
+  update: LensDraftUpdateSchema,
+});
+export type LensDraftEvent = z.infer<typeof LensDraftEventSchema>;
+
+/**
+ * The drafting board as it stands — what a reader that joined late reads once, before it
+ * starts folding frames. `revision` is the frame it is current with, so folding resumes
+ * from exactly there with no gap and no replay.
+ */
+export const LensDraftSnapshotSchema = z.object({
+  generation: id,
+  lens: LensKindSchema,
+  revision: z.number().int().nonnegative(),
+  state: LensDraftStateSchema,
+  /** True once the lane settled: nothing more will land on this board. */
+  closed: z.boolean(),
+  elements: z.array(DraftElementSchema),
+  document: BoardDocumentSchema.optional(),
+});
+export type LensDraftSnapshot = z.infer<typeof LensDraftSnapshotSchema>;
+
 /**
  * The durable preparation state for a session opened from New Chat. The session is minted
  * before capture starts so the client can navigate immediately; this record is the honest
@@ -1853,7 +1708,6 @@ const BasicRoundEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("dispatched"), seq }),
   z.object({ type: z.literal("prep"), rows: z.array(LaneRowSchema), seq }),
   z.object({ type: z.literal("worker"), rows: z.array(LaneRowSchema), seq }),
-  z.object({ type: z.literal("gate"), seq }),
   z.object({ type: z.literal("committed"), seq }),
   z.object({ type: z.literal("composed"), generation: id, seq }),
   /** The worker completed but its checkpoint was empty, so no generation was regenerated. */

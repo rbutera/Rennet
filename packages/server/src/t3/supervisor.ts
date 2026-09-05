@@ -1,11 +1,11 @@
-// The daemon-side owner of the T3 sidecar: one per data dir, started on first use,
-// adopted from a previous daemon when it still answers, stopped with the daemon. The
-// status it reports is what `daemon.status` carries to the connection bar: `off` until
-// something asks for it, `starting` while it boots, `ready`, or `degraded` with the
-// reason named. No Effect, no `@t3tools/*` here — see ./sidecar.ts for the process
-// contract and ./client.ts for the RPC surface.
+// The daemon-side owner of the T3 sidecar: one per data dir, started EAGERLY at daemon
+// launch (#849), adopted from a previous daemon when it still answers, stopped with the
+// daemon. The status it reports is what `daemon.status` carries to the connection bar:
+// `off` before anything has started it, `starting` while it boots, `ready`, or `degraded`
+// with the reason named. No Effect, no `@t3tools/*` here — see ./sidecar.ts for the
+// process contract and ./client.ts for the RPC surface.
 
-import type { T3Session, T3SidecarStatus } from "@rennet/protocol";
+import type { LocalToolServer, T3Session, T3SidecarStatus } from "@rennet/protocol";
 import { connectT3, type ModelSelection, modelSelection, type T3Client } from "./client";
 import {
   adoptSidecar,
@@ -25,14 +25,50 @@ export interface T3SidecarSupervisorOptions {
   /** Absolute harness binaries from Rennet's own discovery, resolved at spawn time. */
   readonly resolveBinaries: () => Promise<ProviderBinaries>;
   readonly warn?: (message: string) => void;
+  /**
+   * The daemon's own loopback tool servers, asked for on every status read.
+   *
+   * A function and not a value: the board listener binds lazily on the first lane, so what
+   * is serving changes over the daemon's life, and the health report has to say what is
+   * true now. Absent ⇒ this daemon supplies none, and the report carries no such field.
+   */
+  readonly localToolServers?: () => readonly LocalToolServer[];
 }
 
 export interface T3SidecarSupervisor {
+  /**
+   * Bring the sidecar up NOW, at daemon launch, instead of at the first `chat.t3Session`
+   * (#849). Time-to-first-message is what this buys: adopt-or-spawn plus the bootstrap
+   * exchange used to be paid at the moment a reviewer first looked at the chat dock.
+   *
+   * SYNCHRONOUS and void by design — the daemon's boot path must not await it and must
+   * not be able to fail on it. Nothing is thrown and nothing is returned to reject: a
+   * sidecar that cannot start leaves `status()` at `degraded` with the reason named,
+   * which `daemon.status` already carries to the connection bar and the chat dock already
+   * renders, and the next `ensure()` retries from scratch exactly as it did before.
+   *
+   * Idempotent, because `ensure` is single-flighted: a later caller joins this bring-up
+   * rather than starting a second one. With no bundle path there is nothing to start, so
+   * this returns without touching the status — `ensure()` still names the missing bundle
+   * on demand, which is the honest answer for a build that has no sidecar to run.
+   */
+  readonly start: () => void;
   /** Adopt or spawn; single-flighted. Rejects when the sidecar cannot be brought up. */
   readonly ensure: () => Promise<RunningSidecar>;
   /** Broker a session for a client: the origin, the WS URL, the bearer, the environment id. */
   readonly session: () => Promise<T3Session>;
   readonly status: () => T3SidecarStatus;
+  /**
+   * The board server's process bearer as it stands in the CURRENT sidecar's environment
+   * (`lens-board-tools` D8), or an empty string before one is running.
+   *
+   * A reader, not a value handed out once: a sidecar respawn within one daemon's life
+   * replaces the environment every harness child inherits, and a board listener holding
+   * the old bearer would refuse every seat of the new sidecar while they ran and billed.
+   * An empty string matches no presented bearer, which is the correct answer when there is
+   * no sidecar for a call to have come from.
+   */
+  readonly boardBearer: () => string;
   /** The daemon's own RPC client over the sidecar socket, connected on first use. */
   readonly client: () => Promise<T3Client>;
   /** The T3 thread bound to (repository root, key), created on first use. */
@@ -76,6 +112,15 @@ export function createT3SidecarSupervisor(
 ): T3SidecarSupervisor {
   const warn = options.warn ?? console.warn;
   const upstreamCommit = options.bundlePath ? readUpstreamCommit(options.bundlePath) : "unknown";
+  /**
+   * The daemon's own tool servers, read at report time rather than captured
+   * (`t3code-sidecar`, `lens-board-tools` 3.1). The supervisor does not own the board
+   * listener and must not pretend to: it asks, every time, and reports what is actually
+   * serving. A report built from a value captured at construction would name a loopback
+   * server for the daemon's whole life, including before any lane was ever open — which
+   * is the lie in the UI this clause was deferred from group 2 to avoid.
+   */
+  const localToolServers = options.localToolServers ?? (() => []);
   let running: RunningSidecar | null = null;
   let inFlight: Promise<RunningSidecar> | null = null;
   let rpc: Promise<T3Client> | null = null;
@@ -134,6 +179,17 @@ export function createT3SidecarSupervisor(
         inFlight = null;
       });
     return inFlight;
+  };
+
+  const start = (): void => {
+    // No bundle ⇒ nothing to bring up. `ensure()` still answers with the missing-bundle
+    // reason when something asks, so this stays quiet rather than logging a failure at
+    // every launch of a build that was never going to have a sidecar.
+    if (!options.bundlePath) return;
+    // The `.catch` belongs HERE, where the promise is floated, not at some later use
+    // site: `ensure` already recorded the reason in `status` and warned, and nothing is
+    // waiting on this promise, so an unhandled rejection is the only thing left to stop.
+    void ensure().catch(() => undefined);
   };
 
   const client = (): Promise<T3Client> => {
@@ -232,9 +288,17 @@ export function createT3SidecarSupervisor(
   };
 
   return {
+    start,
     ensure,
     session,
-    status: () => status,
+    status: () => {
+      const servers = localToolServers();
+      return servers.length === 0 ? status : { ...status, localToolServers: [...servers] };
+    },
+    // Read off whatever sidecar is running RIGHT NOW. `running` is cleared when the child
+    // exits, so between a crash and the next `ensure()` this is empty and no bearer
+    // matches — which is honest: there is no sidecar for a call to have come from.
+    boardBearer: () => running?.boardBearer ?? "",
     client,
     threadFor,
     forgetSession,

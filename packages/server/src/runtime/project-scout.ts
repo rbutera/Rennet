@@ -59,8 +59,12 @@ export interface ProjectScoutRuntime {
 const ANSWER_HINT: Record<ProjectScoutAnswer["key"], string> = {
   trackerKind: "referenced tickets feed review context",
   defaultBranch: "the structural map reads this branch",
-  worktreeBaseDir: "coding rounds create worktrees here",
-  gateCommand: "coding rounds run this before handoff",
+  // NOT where Rennet works: a session binds to the checkout that already has its branch
+  // out, or to a worktree Rennet makes under `~/.rennet/worktrees`, and a coding round is
+  // a turn in that workspace (#812). This fact is the repo's OWN convention, read off
+  // `git worktree list`.
+  worktreeBaseDir: "where this repository's own worktrees live",
+  gateCommand: "a coding round asks its worker to run this before committing",
   logoPath:
     "cosmetic repository evidence only; choose the sidebar mark in Settings → Projects → Identity",
 };
@@ -71,10 +75,14 @@ const ANSWER_OPTIONS: Partial<Record<ProjectScoutAnswer["key"], readonly string[
 
 /** Project the exact stored scout facts into the renderer-safe questionnaire. */
 export function scoutQuestionnaire(repo: string, result: ScoutResult): ProjectScoutQuestionnaire {
+  // `worktreeBaseDir` is DELIBERATELY absent (#812). It is still scouted and still stored —
+  // it is an honest fact about the repository — but it steers nothing: a session binds to
+  // the checkout that already has its branch out, or to a worktree under Rennet's own data
+  // directory, and no setting moves that. Asking the reviewer to confirm it put a field on
+  // screen that changes nothing, and with no sibling worktree to detect it was a blank one.
   const keys: readonly ProjectScoutAnswer["key"][] = [
     "trackerKind",
     "defaultBranch",
-    "worktreeBaseDir",
     "gateCommand",
     "logoPath",
   ];

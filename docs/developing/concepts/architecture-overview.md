@@ -64,8 +64,26 @@ boundary.
 ## The daemon lifecycle
 
 The desktop reads the daemon claim, verifies it through `/healthz`, and reuses a
-healthy daemon. Otherwise it starts the server as a detached child and records
-the new claim. The daemon removes its claim during graceful shutdown.
+healthy daemon. Otherwise it starts the server as a detached child, keeps that
+child handle, and records the new claim. The daemon removes its claim during
+graceful shutdown.
+
+Stopping is a command the daemon answers, not a signal sent into the dark.
+`POST /shutdown` sits beside `GET /healthz` on the same HTTP port and behind the
+same host guard; the daemon acks with its pid, port, versions and claim path, and
+only once that response has flushed does it run the same shutdown SIGTERM runs.
+The desktop, the version-skew restart, and `rennet stop` all send that command.
+
+The stopping side then escalates, in order: send the command; on an ack whose pid
+matches the claim, wait for that process to be gone; if it never acked, or acked
+and stayed, SIGTERM and wait again, then SIGKILL and wait again. "Gone" is the
+spawned child's own `exit` event when this app instance spawned the daemon — that
+wait is also what makes Node reap it — and otherwise the claim clearing together
+with the pid no longer being in a running state. The state test is deliberately
+not `kill(pid, 0)`: a process that has exited but has not been reaped answers
+that as alive while holding no port, no descriptor and no app bundle. A stop that
+runs the whole ladder without success names what it found — exited but unreaped,
+still running, or the claim still naming that pid.
 
 Startup does not wait for that. The desktop begins the daemon ensure and creates
 its window immediately, so the shell paints while the daemon probes, spawns, and
@@ -98,9 +116,11 @@ Update application is the other intentional daemon-stop boundary. The packaged
 daemon executes Electron's binary from inside the installed app bundle, so the
 desktop must await its verified graceful stop before Squirrel can replace that
 bundle. Both the renderer update action and the tray action share this one
-ordered handoff. A failed stop leaves the app open and surfaces the failure. If
-the native updater rejects after it has closed the windows, the same operation
-restarts the daemon and recreates the window before reporting the error. A
+ordered handoff. A failed stop leaves the app open, restarts the daemon it just
+stopped, and surfaces the failure: the app staying open is only true if the thing
+that makes it work is back. If the native updater rejects after it has closed the
+windows, the same operation restarts the daemon and recreates the window before
+reporting the error. A
 download failure is also reported rather than discarded as updater noise. On
 macOS, an out-of-bundle helper waits for ShipIt to replace the bundle and opens
 the installed version, covering native installs that exit without relaunching.
@@ -225,6 +245,13 @@ never writes an ignore rule into the user's repository to compensate. Only the
 app-owned `.rennet/boards/` prefix is excluded from capture, the repository
 watcher, and freshness; everything else there is the user's project content and
 captures normally.
+
+The repository watcher reads the repository's own ignore rules — it asks git —
+and stops at a hard descriptor bound whatever those rules say, because it holds
+one operating-system watch per file and the daemon needs descriptors to start
+anything at all. [What the repository watcher
+watches](./architecture-contracts.md#what-the-repository-watcher-watches) has the
+rule.
 
 The SQLite review store persists commands and events transactionally. Reading a
 review folds its event history into the current projection. Conversation files

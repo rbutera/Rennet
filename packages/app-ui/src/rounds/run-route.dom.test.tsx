@@ -97,7 +97,6 @@ function failedRoundState(input: {
       roundNumber: 1,
       sourceTarget: { kind: "branch", branch: "feat/recovery" },
       askCount: 2,
-      gatePlan: { kind: "configured", command: "pnpm check" },
     },
     prep: [
       { id: "worktree", label: "Created detached worktree", status: "done" },
@@ -169,12 +168,10 @@ describe("RunRoute — the live round takeover", () => {
         roundNumber: 2,
         sourceTarget: { kind: "branch", branch: "feat/truthful-round" },
         askCount: 3,
-        gatePlan: { kind: "configured", command: "pnpm check" },
         state: {
           phase: "report-verifying",
           workspace: { status: "done" },
           worker: { status: "done", fileCount: 4 },
-          gate: { status: "passed", durationMs: 2_500, projectCount: 14 },
           commits: { status: "done", count: 2 },
           report: {
             status: "verifying",
@@ -200,20 +197,11 @@ describe("RunRoute — the live round takeover", () => {
       }),
     },
     {
-      stage: "gate",
-      state: failedRoundState({
-        reason: "gate failed",
-        workerStatus: "done",
-        tail: [{ id: "gate", label: "Ran the gate", status: "failed", reason: "gate failed" }],
-      }),
-    },
-    {
       stage: "source landing",
       state: failedRoundState({
         reason: "source landing failed",
         workerStatus: "done",
         tail: [
-          { id: "gate", label: "Ran the gate", status: "done" },
           {
             id: "commit",
             label: "Recording round commits",
@@ -229,7 +217,6 @@ describe("RunRoute — the live round takeover", () => {
         reason: "board regeneration failed",
         workerStatus: "done",
         tail: [
-          { id: "gate", label: "Ran the gate", status: "done" },
           { id: "commit", label: "Recorded round commits", status: "done" },
           {
             id: "report",

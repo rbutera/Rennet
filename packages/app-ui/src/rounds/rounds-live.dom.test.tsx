@@ -44,7 +44,6 @@ const OPERATION_BASE = {
   roundNumber: 1,
   sourceTarget: { kind: "branch", branch: "feat/live" },
   askCount: 1,
-  gatePlan: { kind: "absent" },
 } satisfies Omit<RoundOperationProgressSnapshot, "revision" | "state">;
 
 function operationEvent(
@@ -58,7 +57,6 @@ function operationEvent(
 const SETTLED_OPERATION = {
   workspace: { status: "done" },
   worker: { status: "done", fileCount: 1 },
-  gate: { status: "skipped", reason: "not-configured" },
   commits: { status: "done", count: 1 },
 } as const;
 
@@ -123,7 +121,6 @@ const SERVER_SEQUENCE: readonly RoundEvent[] = [
     type: "worker",
     rows: [{ id: "turn", label: "Ran the work order", status: "done", detail: "3 files changed" }],
   },
-  { type: "gate" },
   { type: "committed" },
   { type: "report", reportBoardId: "board-report-2" },
   {
@@ -304,7 +301,6 @@ describe("the live rounds seam (C15 3.2)", () => {
       "dispatching",
       "preparing",
       "working",
-      "gating",
       "committing",
       "reporting",
       "composing",

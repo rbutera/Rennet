@@ -101,7 +101,6 @@ export function roundEventsForDurableOperation(input: {
       phase: "report-drafting",
       workspace: failure.workspace,
       worker: failure.worker,
-      gate: failure.gate,
       commits: failure.commits,
       recording: failure.recording,
       report: failure.report,

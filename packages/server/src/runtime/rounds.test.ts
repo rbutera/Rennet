@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BoardMetaStore, GenerationStore, RoundRecordStore } from "@rennet/adapters";
 import type {
+  BoardWrite,
   CodexExecutor,
   DeltaPacket,
   HarnessPort,
@@ -21,12 +22,15 @@ import {
   GenerationSchema,
   generationIdForDispatch,
   LENS_KINDS,
+  type LensKind,
   lensAdmitsAbsence,
   ROUND_NO_REGEN,
   type RoundEvent,
   type RoundRunReceipt,
 } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
+import type { GenerationBoards } from "../board/board-mcp-server";
+import { fixtureGenerationBoards } from "../board/seat-fixture";
 import { type BoardsRuntime, createBoardsRuntime } from "../boards/boards-runtime";
 import { withFakeT3Seats } from "../t3-seat-fake";
 import type { BoardArrivalEvent, BoardMeta } from "./lens-pipeline";
@@ -241,7 +245,6 @@ const PREV_GEN: Generation = {
 const RUN_RECEIPT: RoundRunReceipt = {
   startedAt: 1,
   sourceTarget: { kind: "branch", branch: "feat/test" },
-  gate: { outcome: "skipped", reason: "not-configured" },
 };
 
 /**
@@ -522,6 +525,205 @@ describe("createRoundsRuntime", () => {
     ]);
     // Without a drafting root the writer is bound to the review root itself.
     expect([...new Set(await rootsWrittenFor({}))]).toEqual(["/pr-worktree"]);
+  });
+
+  it("opens every lens lane on the board server before any seat turn is dispatched", async () => {
+    // 3.1's OTHER half, and the reason it is asserted at the round level rather than the
+    // pipeline's: the lane-opening loop is guarded on `deps.boards`, and the only thing
+    // that can supply it is the round runtime handing over the sidecar's
+    // `T3SeatRuntime.boards`. With the loop tested through `runLensPipeline` alone the
+    // guard was satisfied by the test's own argument and the production wire was missing —
+    // `openLaneCount()` was 0 forever and the `t3code-sidecar` disclosure clause could
+    // never report a thing. This drives `runRound`, so it fails if that hand-over is
+    // dropped again.
+    const order: string[] = [];
+    const opened: LintTarget[] = [];
+    // Records the opens and DELEGATES to real lanes, rather than answering `lane: () =>
+    // undefined`. A seat writes its board into its lane now (3.2), so a stub that opens a
+    // lane and then hands back nothing to write into fails every lens — and the ordering
+    // this test is about would be asserted over a run in which no lens turn happened at
+    // all. The observation is the wrapper; the lanes underneath are the real ones.
+    const real = fixtureGenerationBoards();
+    const boards: GenerationBoards = {
+      openLane: async (input) => {
+        opened.push(input.target);
+        order.push(`open:${input.target}`);
+        return real.openLane(input);
+      },
+      lane: (target) => real.lane(target),
+      settleLane: (target) => real.settleLane(target),
+      settleAll: () => real.settleAll(),
+    };
+    const runtime = createRoundsRuntime(
+      withFakeT3Seats(
+        baseDeps({
+          resolveClaudePort: async () =>
+            fakeClaudePort([], (prompt, label) => {
+              order.push(`turn:${lensFromPrompt(prompt, label) ?? label ?? "report"}`);
+              return cleanBody(lensFromPrompt(prompt, label));
+            }),
+        }),
+        boards,
+      ),
+    );
+    await runtime.runRound(roundInput());
+
+    // Every lens, and only lenses: the report seat has no lane.
+    expect([...opened].sort()).toEqual([...LENS_KINDS].sort());
+    expect(opened, "one lane per lens, no repeats").toHaveLength(LENS_KINDS.length);
+    // POSITION, not membership. A set of `toContain` checks is satisfied by a run that
+    // opens the lanes after the seats have already written, which is the failure the
+    // ordering exists to prevent: a seat dispatched before its lane exists carries no
+    // board address and has nothing to write with.
+    //
+    // The LENS turns, deliberately. The round-report seat runs before this loop and has no
+    // lane of its own, so including it would assert an ordering the code does not have and
+    // never claimed to — `board-tool-authoring` is about the boards a lens seat writes.
+    const lensTurns = new Set(LENS_KINDS.map((lens) => `turn:${lens}`));
+    const lastOpen = order.findLastIndex((entry) => entry.startsWith("open:"));
+    const firstLensTurn = order.findIndex((entry) => lensTurns.has(entry));
+    expect(firstLensTurn, "at least one lens seat turn ran").toBeGreaterThanOrEqual(0);
+    expect(lastOpen, "at least one lane was opened").toBeGreaterThanOrEqual(0);
+    expect(lastOpen).toBeLessThan(firstLensTurn);
+    // …and the report seat is what occupies index 0, ahead of every lane. Named rather
+    // than filtered silently, because the comment in `lens-pipeline.ts` used to claim the
+    // lanes opened "before the report gate's own dispatch" and they do not.
+    expect(order[0]?.startsWith("turn:"), `first entry was ${order[0]}`).toBe(true);
+    expect(order[0], "the first turn is not a lens").not.toSatisfy((entry: string) =>
+      lensTurns.has(entry),
+    );
+  });
+
+  it("publishes every lens board's element stream through a REAL round, and times the first element", async () => {
+    // `lens-board-tools` D11, tasks 4.1 and 4.4, asserted at the ROUND level for the
+    // reason the lane-opening test above states: the publication path is guarded on
+    // `deps.boards` AND on `input.lensDrafts`, and only the round runtime supplies the
+    // first while only the composition root supplies the second. Driven through
+    // `runLensPipeline` alone, both guards would be satisfied by the test's own arguments
+    // and the production wire could be missing — which is exactly how the board handle
+    // `rounds.ts` composed and dropped shipped ticked, twice in this change.
+    //
+    // THE CONTROL FOR 4.1: drop the `onWrite` observer from the pipeline's `openLane` and
+    // this reddens with `seats wrote through the stream: expected 0 to be greater than 0`,
+    // run 2026-09-05.
+    const frames: {
+      kind: "opened" | "write" | "closed";
+      generation: string;
+      lens: LensKind;
+      write?: BoardWrite;
+    }[] = [];
+    const clock = (() => {
+      let now = 1_000;
+      return () => {
+        now += 10;
+        return now;
+      };
+    })();
+    const runtime = createRoundsRuntime(
+      withFakeT3Seats(baseDeps({ now: clock }), fixtureGenerationBoards()),
+    );
+    const { boardGeneration } = await runtime.runRound(
+      roundInput({
+        firstBoardWaitOriginMs: 1_000,
+        lensDrafts: {
+          opened: (generation, lens) => frames.push({ kind: "opened", generation, lens }),
+          write: (generation, lens, write) =>
+            frames.push({ kind: "write", generation, lens, write }),
+          closed: (generation, lens) => frames.push({ kind: "closed", generation, lens }),
+        },
+      }),
+    );
+
+    // Every lane opened, every lane closed, and every frame stamped with THIS generation —
+    // the key that stops a superseded attempt painting over a live one.
+    const opened = frames.filter(({ kind }) => kind === "opened").map(({ lens }) => lens);
+    const closed = frames.filter(({ kind }) => kind === "closed").map(({ lens }) => lens);
+    expect([...opened].sort()).toEqual([...LENS_KINDS].sort());
+    expect([...closed].sort()).toEqual([...LENS_KINDS].sort());
+    expect(frames.every(({ generation }) => generation === boardGeneration.id)).toBe(true);
+
+    // The writes are real: elements landed on real boards through the real writer.
+    const writes = frames.filter(({ kind }) => kind === "write");
+    expect(writes.length, "seats wrote through the stream").toBeGreaterThan(0);
+    expect(
+      writes.some(({ write }) => (write?.changed.length ?? 0) > 0),
+      "at least one write carried an element",
+    ).toBe(true);
+
+    // POSITION, not membership. A lane's board must be opened before anything is written
+    // into it and closed after everything is — a set of frames is satisfied by a run that
+    // publishes them in any order, which is what a reader folding them would then get wrong.
+    for (const lens of LENS_KINDS) {
+      const forLens = frames.filter((frame) => frame.lens === lens);
+      expect(forLens[0]?.kind, `${lens} opened first`).toBe("opened");
+      expect(forLens.at(-1)?.kind, `${lens} closed last`).toBe("closed");
+    }
+
+    // 4.4 — time-to-first-element, beside time-to-first-core-board and never instead of it.
+    const timings = boardGeneration.timings?.phases ?? [];
+    const firstElement = timings.filter(({ phase }) => phase === "first-element");
+    expect(firstElement, "exactly one first-element record").toHaveLength(1);
+    expect(firstElement[0]?.startedAtMs, "measured from the reviewer's own origin").toBe(1_000);
+    expect(firstElement[0]?.lens, "the lane that put it on screen").toBeDefined();
+    const firstCore = timings.find(({ phase }) => phase === "first-core-board");
+    expect(firstCore, "first-core-board still recorded").toBeDefined();
+    expect(firstCore?.startedAtMs, "the two figures share an origin").toBe(1_000);
+    // The first element is on screen no later than the first settled board, which is the
+    // whole reason the second figure exists.
+    expect(firstElement[0]?.durationMs).toBeLessThanOrEqual(firstCore?.durationMs ?? 0);
+  });
+
+  it("never names a lane that settled absent as the first element on screen", async () => {
+    // What happens to `first-element` on a lane that writes nothing (4.4). A settle-absent
+    // turn declares its absence and writes no element, so it puts nothing on the reviewer's
+    // screen and cannot be what the figure names. Design, Decisions and Flagged declare
+    // theirs here; Sequence is the only lane that writes.
+    //
+    // The stronger claim — a generation with NO element at all records no figure — is not
+    // asserted from here because it is unreachable through `runRound`: a generation whose
+    // lenses all failed throws before any timing is read (`The regeneration drafted no lens
+    // boards`), and Sequence admits no absence. The rule is in the protocol's own note on
+    // the phase; what is executable is this half.
+    const wroteFor: string[] = [];
+    const runtime = createRoundsRuntime(
+      withFakeT3Seats(
+        baseDeps({
+          resolveClaudePort: async () =>
+            fakeClaudePort([], (prompt, label) => {
+              const lens = lensFromPrompt(prompt, label);
+              if (lens === "design") return { absence: "no-spec" };
+              if (lens === "decisions") return { absence: "no-decisions" };
+              if (lens === "flagged") return { absence: "no-findings" };
+              return cleanBody(lens);
+            }),
+        }),
+        fixtureGenerationBoards(),
+      ),
+    );
+    const { boardGeneration } = await runtime.runRound(
+      roundInput({
+        lensDrafts: {
+          opened: () => undefined,
+          write: (_generation, lens, write) => {
+            if (write.changed.length > 0) wroteFor.push(lens);
+          },
+          closed: () => undefined,
+        },
+      }),
+    );
+    // The three absences really were declared, so the assertion below is about lanes that
+    // settled rather than lanes that never ran.
+    expect(boardGeneration.absentLenses?.design).toBe("no-spec");
+    expect(boardGeneration.absentLenses?.decisions).toBe("no-decisions");
+    expect(boardGeneration.absentLenses?.flagged).toBe("no-findings");
+    expect(wroteFor).not.toContain("design");
+    expect(wroteFor).not.toContain("decisions");
+    expect(wroteFor).not.toContain("flagged");
+    const firstElement = (boardGeneration.timings?.phases ?? []).filter(
+      ({ phase }) => phase === "first-element",
+    );
+    expect(firstElement).toHaveLength(1);
+    expect(firstElement[0]?.lens).toBe("sequence");
   });
 
   it("records a RoundRecord pinning asks, commit range, minted+board generation, and report board", async () => {
@@ -1225,7 +1427,12 @@ describe("createRoundsRuntime", () => {
       ),
     ).runRound(input);
 
-    for (const boardId of Object.values(boardIds)) {
+    // The noise board is excluded, and that is D16d: Sequence failed on the first
+    // attempt, so the Noise lane refused to take a complement over its silence and wrote
+    // nothing there was anything to clear.
+    const swept = Object.entries(boardIds).filter(([lens]) => lens !== "noise");
+    expect(swept, "every non-derived board swept").toHaveLength(Object.keys(boardIds).length - 1);
+    for (const [, boardId] of swept) {
       expect(recoveryOrder.indexOf(`remove:${boardId}`)).toBeGreaterThanOrEqual(0);
       expect(recoveryOrder.indexOf(`clear:${boardId}`)).toBeGreaterThan(
         recoveryOrder.indexOf(`remove:${boardId}`),
@@ -1250,13 +1457,11 @@ describe("createRoundsRuntime", () => {
             fakeClaudePort([], (prompt, label) => {
               const lens = lensFromPrompt(prompt, label);
               if (lens === "design") return { absence: "no-spec" };
-              if (
-                lens === "decisions" ||
-                lens === "flagged" ||
-                (lens === "post-process" && prompt.includes('"elements":[]'))
-              ) {
-                return { elements: [] } as unknown as DraftBoard;
-              }
+              // An absence is DECLARED now (`lens-board-tools` 3.2): the seat calls the one
+              // settle-absent verb its lens has. An empty board is no longer read as a
+              // claim, so a fixture that means "nothing here" has to say so.
+              if (lens === "decisions") return { absence: "no-decisions" };
+              if (lens === "flagged") return { absence: "no-findings" };
               return cleanBody(lens);
             }),
           persistBoardMeta: (_repo, record) => meta.save(record),
@@ -1553,10 +1758,14 @@ describe("createRoundsRuntime", () => {
 
       const failedAttempt = generations.load("gen:ps-1");
       expect(failedAttempt?.lensBoards.design).toBe(boardIds.design);
-      expect(failedAttempt?.lensBoards.noise).toBe(boardIds.noise);
       expect(failedAttempt?.failedLenses?.[failedCoreLens]).toEqual(expect.any(String));
       expect(meta.load(boardIds.design)?.lens).toBe("design");
-      expect(meta.load(boardIds.noise)?.lens).toBe("noise");
+      // Noise settled NO board on this attempt, and that is D16d rather than a second
+      // defect: its membership is the four core lanes' complement, one of them stated
+      // nothing about what it cites, and a complement over that silence would file
+      // un-reviewed regions as skippable. It names the lane instead.
+      expect(meta.load(boardIds.noise)).toBeUndefined();
+      expect(failedAttempt?.failedLenses?.noise).toContain(failedCoreLens);
 
       const retryCaptures: { prompt?: string }[] = [];
       const recovered = await createRoundsRuntime(
@@ -1619,7 +1828,10 @@ describe("createRoundsRuntime", () => {
     const firstFailure = first.pipeline.boards.find(({ lens }) => lens === "design")?.failure;
     expect(firstFailure).toEqual(expect.any(String));
     expect(first.boardGeneration.failedLenses?.design).toBe(firstFailure);
-    expect(Object.keys(first.boardGeneration.lensBoards)).toHaveLength(4);
+    // THREE, not four: Design stated nothing about what it cites, so the Noise lane
+    // refused the complement (D16d) and settled a failure naming it instead of a board.
+    expect(Object.keys(first.boardGeneration.lensBoards)).toHaveLength(3);
+    expect(first.boardGeneration.failedLenses?.noise).toContain("design");
 
     const recovered = await createRoundsRuntime(
       withFakeT3Seats(
@@ -1886,7 +2098,15 @@ describe("createRoundsRuntime", () => {
           createRennetBoard: async () => `${attempt}:${targets[nextBoard++]}`,
           service: {
             apply: async (boardId: string) => {
-              if (crashFlagged && boardId === `${attempt}:noise`) {
+              // The SEQUENCE board, which this fixture used to crash on Noise. Noise is now
+              // the four core lanes' complement and runs on their settlements, so a Flagged
+              // lane that fails — which is exactly what the migration throw below makes it
+              // do — means the Noise seat never writes and a crash aimed there can never
+              // fire. Sequence is written concurrently with Flagged, so the `await` still
+              // orders this crash strictly after the migration rather than racing it, and
+              // attempt A still dies INSIDE the pipeline, before the terminal boundary that
+              // would fold its drafting identity into settled lens boards.
+              if (crashFlagged && boardId === `${attempt}:sequence`) {
                 await migrationReached;
                 throw new Error("crash after Flagged migration");
               }
@@ -1973,17 +2193,23 @@ describe("createRoundsRuntime", () => {
         input(),
       ),
     ).rejects.toThrow("crash after Flagged migration");
-    const attemptAFinding = {
+    // The finding's ID is the HOST's now (`lens-board-tools` 3.2) — the seat writes through
+    // tools and mints nothing — so the event is read for what this test is about: one
+    // dismissal, on ATTEMPT A's board, under this generation. The id is taken from the
+    // event rather than asserted as a literal, and then used verbatim below, so a run that
+    // filed the migration against the wrong board still fails on `boardId`.
+    expect(migrationEvents).toHaveLength(1);
+    const dismissal = migrationEvents[0];
+    expect(dismissal?.kind).toBe("finding-dismiss");
+    const attemptAFinding = (
+      dismissal as {
+        readonly finding: { generation: string; boardId: string; findingId: string };
+      }
+    ).finding;
+    expect(attemptAFinding).toMatchObject({
       generation: "gen:ps-1",
       boardId: "attempt-a:flagged",
-      findingId: priorFinding.findingId,
-    };
-    expect(migrationEvents).toEqual([
-      {
-        kind: "finding-dismiss",
-        finding: attemptAFinding,
-      },
-    ]);
+    });
     expect(Object.keys(dispositions).sort()).toEqual(
       [findingRefKey(priorFinding), findingRefKey(attemptAFinding)].sort(),
     );
@@ -1995,19 +2221,28 @@ describe("createRoundsRuntime", () => {
     ).runRound(input());
     const retryBoardId = recovered.boardGeneration.lensBoards.flagged;
     const retryOutcome = recovered.pipeline.boards.find((outcome) => outcome.lens === "flagged");
-    const retrySection = retryOutcome?.board?.elements.find((element) => element.id === "findings");
+    // By TITLE, not by fixture id: the host mints every id, so `element.id === "findings"`
+    // names nothing on the board that came back.
+    const retrySection = retryOutcome?.board?.elements.find(
+      (element) =>
+        element.kind === "section" && (element.data as { title?: unknown }).title === "Findings",
+    );
 
     expect(retryBoardId).toBe("attempt-b:flagged");
-    expect(retrySection?.kind === "section" ? retrySection.data.children : []).toEqual([
-      priorFinding.findingId,
-    ]);
+    // ONE finding under the section, whatever the host called it: the retry board holds the
+    // concern the retry seat wrote and not attempt A's.
+    const retryChildren =
+      retrySection?.kind === "section" ? (retrySection.data.children ?? []) : [];
+    expect(retryChildren).toHaveLength(1);
+    // Attempt A's migration did not run again, and no disposition was filed against
+    // attempt B's board for the finding attempt A dismissed.
     expect(migrationEvents).toHaveLength(1);
     expect(
       dispositions[
         findingRefKey({
           generation: "gen:ps-1",
           boardId: "attempt-b:flagged",
-          findingId: priorFinding.findingId,
+          findingId: attemptAFinding.findingId,
         })
       ],
     ).toBeUndefined();
@@ -2771,7 +3006,7 @@ describe("createRoundsRuntime", () => {
           }),
         ),
       );
-      await runtime.runRound(
+      const round = runtime.runRound(
         roundInput({
           onProgress: (event) => {
             if (event.type === "lens") {
@@ -2785,6 +3020,12 @@ describe("createRoundsRuntime", () => {
           },
         }),
       );
+      // A superseded attempt now refuses the WHOLE round (#816 review P1): it throws at the
+      // ownership boundary rather than filing a result a later attempt owns. The owned arm
+      // still resolves, which is what keeps the assertions below about supersession rather
+      // than about a round that fails for any reason.
+      if (supersede) await expect(round).rejects.toThrow(/superseded/);
+      else await round;
       return { arrivals, laneFrames };
     };
 
@@ -2798,6 +3039,349 @@ describe("createRoundsRuntime", () => {
     const dead = await run(true);
     expect(dead.arrivals).toEqual([]);
     expect(Math.max(...dead.laneFrames.map((frame) => frame.length), 0)).toBe(0);
+  });
+
+  // ── #813 through the PRODUCTION wiring (#816 review P1) ──
+  //
+  // The pipeline test injects `onLensFailure` and the bench test injects an already-failed
+  // lane; neither touches `createRoundsRuntime`, so reverting the callback wiring, deleting
+  // the double-settle skip, or restoring the unchecked backstop left both green. These two
+  // drive the real runtime.
+  //
+  /** A Claude port whose Design seat settles with NO structured output (the drive's own
+   *  failure) while every other lens seat waits on `gate`. The report seat answers at once,
+   *  because it is what releases the lens seats to start at all. */
+  const designFailsWhileSiblingsWait = (gate: Promise<void>): HarnessPort =>
+    ({
+      createSession: async (options: { label?: string }) => {
+        const capture: { prompt?: string; label?: string } = { label: options.label };
+        return {
+          send: async (input: { prompt: string }) => {
+            capture.prompt = input.prompt;
+          },
+          close: async () => undefined,
+          events: (async function* () {
+            const lens = lensFromPrompt(capture.prompt ?? "", capture.label);
+            if (lens !== "design" && lens !== "report") await gate;
+            yield {
+              kind: "session.ended",
+              native: {},
+              outcome: {
+                status: "completed",
+                // Design: absent structured output ⇒ the drafting ladder never parses a
+                // board and the lane settles failed. Design is not a required core lens,
+                // so the round still completes and the terminal writes still happen —
+                // which is what lets the second test see them suppressed.
+                ...(lens === "design" ? {} : { structuredOutput: cleanBody(lens) }),
+              },
+            };
+          })(),
+        } as unknown as Awaited<ReturnType<HarnessPort["createSession"]>>;
+      },
+    }) as unknown as HarnessPort;
+
+  const designLaneIn = (lanes: readonly { id: string; status: string }[]) =>
+    lanes.find(({ id }) => id === "design")?.status;
+
+  it("settles a failed lane on disk and on screen before its siblings finish, once", async () => {
+    let releaseSiblings = (): void => undefined;
+    const gate = new Promise<void>((resolve) => {
+      releaseSiblings = resolve;
+    });
+    let announceDesignFailed = (): void => undefined;
+    const designFailed = new Promise<void>((resolve) => {
+      announceDesignFailed = resolve;
+    });
+
+    const laneFrames: string[][] = [];
+    /** The SAME frames unprojected. The `id:status` view above drops the thread refs and
+     *  live lines, so two different frames collapse onto one string in it — which would
+     *  make the duplicate-frame check below fire on every thread binding. */
+    const wholeFrames: string[] = [];
+    const writes: Generation[] = [];
+    /** The frames and writes as they stood the instant Design's lane read `failed`. */
+    let atFailure: { frames: number; durable: boolean } | undefined;
+
+    const runtime = createRoundsRuntime(
+      withFakeT3Seats(
+        baseDeps({
+          resolveClaudePort: async () => designFailsWhileSiblingsWait(gate),
+          persistGeneration: (generation) => {
+            writes.push(JSON.parse(JSON.stringify(generation)) as Generation);
+          },
+        }),
+      ),
+    );
+    const round = runtime.runRound(
+      roundInput({
+        onProgress: (event) => {
+          if (event.type !== "lens") return;
+          laneFrames.push(event.lanes.map((lane) => `${lane.id}:${lane.status}`));
+          wholeFrames.push(JSON.stringify(event.lanes));
+          if (designLaneIn(event.lanes) !== "failed" || atFailure !== undefined) return;
+          atFailure = {
+            frames: laneFrames.length,
+            durable: writes.some(({ failedLenses }) => failedLenses?.design !== undefined),
+          };
+          announceDesignFailed();
+        },
+      }),
+    );
+
+    // THE TIMING IS THE CLAIM. If the settlement moved back behind the pipeline's own
+    // return, this await never resolves and the test dies by timeout rather than by a
+    // wrong value — the four sibling seats are still parked on `gate`.
+    await designFailed;
+    // Durable before the screen, by the same write: the lane a reviewer sees failed is a
+    // lane the daemon has already recorded as failed.
+    expect(atFailure?.durable).toBe(true);
+    // …and not one sibling had settled when it happened: `queued` and `running` are the
+    // two unsettled states, and every other lane was in one of them.
+    const atThatMoment = laneFrames[(atFailure?.frames ?? 1) - 1] ?? [];
+    expect(atThatMoment).toContain("design:failed");
+    expect(
+      atThatMoment.filter(
+        (entry) =>
+          !entry.startsWith("design:") && !entry.endsWith(":queued") && !entry.endsWith(":running"),
+      ),
+    ).toEqual([]);
+
+    releaseSiblings();
+    await round;
+
+    // EXACTLY ONE settlement. The backstop after the pipeline settles the same lens again,
+    // and a second settlement re-emits a byte-identical snapshot. Every other emitter on
+    // this path changes something in the frame it emits (`set` changes a status, `thread`
+    // returns early on an unchanged ref, `progress` changes a line) and `refresh()` is
+    // never called here, so a frame identical to the one before it IS the double settle.
+    const repeated = wholeFrames.filter(
+      (frame, index) => index > 0 && frame === wholeFrames[index - 1],
+    );
+    expect(repeated).toEqual([]);
+    // The lane reached `failed` exactly once, counted as transitions rather than as
+    // occurrences — a settled lane is repeated in every later snapshot by design.
+    const transitions = laneFrames.filter(
+      (frame, index) =>
+        frame.includes("design:failed") && !(laneFrames[index - 1] ?? []).includes("design:failed"),
+    );
+    expect(transitions).toHaveLength(1);
+    expect(laneFrames.at(-1)).toContain("design:failed");
+  });
+
+  it("announces no failed lane and files nothing when the attempt was superseded", async () => {
+    const run = async (supersede: boolean) => {
+      let releaseSiblings = (): void => undefined;
+      const gate = new Promise<void>((resolve) => {
+        releaseSiblings = resolve;
+      });
+      const laneFrames: string[][] = [];
+      const failedEvents: string[] = [];
+      const writes: Generation[] = [];
+      let attemptRecord: Generation | undefined;
+      const runtime = createRoundsRuntime(
+        withFakeT3Seats(
+          baseDeps({
+            resolveClaudePort: async () => designFailsWhileSiblingsWait(gate),
+            persistGeneration: (generation) => {
+              const snapshot = JSON.parse(JSON.stringify(generation)) as Generation;
+              writes.push(snapshot);
+              attemptRecord ??= snapshot;
+            },
+            loadGeneration: () => {
+              if (attemptRecord === undefined) return undefined;
+              return supersede
+                ? { ...attemptRecord, draftingReportBoardId: "board:a-later-attempt" }
+                : attemptRecord;
+            },
+          }),
+        ),
+      );
+      const round = runtime.runRound(
+        roundInput({
+          onProgress: (event) => {
+            if (event.type === "failed") {
+              failedEvents.push(event.reason);
+              return;
+            }
+            if (event.type !== "lens") return;
+            laneFrames.push(event.lanes.map((lane) => `${lane.id}:${lane.status}`));
+          },
+        }),
+      );
+      // Nothing gates the assertions here: the failure is what we are watching for, and it
+      // must not reach the screen at all, so there is no moment to synchronise on. The
+      // siblings are released immediately and the whole round is awaited.
+      releaseSiblings();
+      if (supersede) await expect(round).rejects.toThrow(/superseded/);
+      else await round;
+      return { laneFrames, failedEvents, writes };
+    };
+
+    // Control: the attempt owns its generation, so the failed lane DOES reach the screen
+    // and the terminal write DOES land. Without this the assertions below would pass over
+    // a round that simply never failed a lane.
+    const owned = await run(false);
+    expect(owned.laneFrames.some((frame) => frame.includes("design:failed"))).toBe(true);
+    expect(owned.writes.some(({ lensBoards }) => Object.keys(lensBoards).length > 0)).toBe(true);
+
+    const dead = await run(true);
+    // The backstop used to call `lanes.failed` directly, outside the ownership check — so a
+    // dead attempt whose reveal callbacks had all been refused still pushed five failed
+    // lanes onto every connected client, over a live attempt that may already have
+    // succeeded. Not one frame claims a settled lane now.
+    expect(dead.laneFrames.some((frame) => frame.includes("design:failed"))).toBe(false);
+    // …and nothing terminal was written under the generation id a later attempt holds.
+    expect(dead.writes.some(({ lensBoards }) => Object.keys(lensBoards).length > 0)).toBe(false);
+    expect(dead.writes.some(({ failedLenses }) => failedLenses !== undefined)).toBe(false);
+    // …and NO top-level `failed` event either (#816 re-review P1). The supersession throw
+    // used to reach `reported`'s catch, which painted the run machine a terminal `failed`
+    // over the LIVE generation a later attempt was settling — the same wrong-content
+    // publish, one layer up from the lanes. `GenerationSupersededError` is rethrown without
+    // emitting, so a superseded attempt announces nothing at all.
+    expect(dead.failedEvents).toEqual([]);
+  });
+
+  it("refuses the terminal write when a later attempt claims the generation mid-verify (#816 re-review P1)", async () => {
+    // The TOCTOU the first fix missed: the ownership boundary reads a `superseded` flag
+    // COPIED when `draft` returned, then awaits `verifyDraftedReport` and more work before
+    // the terminal generation write. A competitor that claims the id DURING that await lands
+    // after the copy was taken, so the copied flag cannot see it. Only a re-read at the
+    // write itself catches it — which is what `persistOwned` now does.
+    const settledWrite = (gen: Generation): boolean =>
+      // `withLensBoards` strips the attempt's drafting slots; `persistReveal`'s in-flight
+      // writes keep them. So a settled generation is one with lens boards and NO slots.
+      gen.draftingBoardIds === undefined && Object.keys(gen.lensBoards).length > 0;
+
+    const run = async (stealDuringVerify: boolean) => {
+      let stolen = false;
+      let attemptRecord: Generation | undefined;
+      const writes: Generation[] = [];
+      const transitions: string[] = [];
+      const records: string[] = [];
+      const failedEvents: string[] = [];
+      const runtime = createRoundsRuntime(
+        withFakeT3Seats(
+          baseDeps({
+            persistGeneration: (generation) => {
+              const snapshot = JSON.parse(JSON.stringify(generation)) as Generation;
+              writes.push(snapshot);
+              // The attempt's identity is the FIRST write that carries drafting slots.
+              if (attemptRecord === undefined && generation.draftingBoardIds !== undefined) {
+                attemptRecord = snapshot;
+              }
+            },
+            loadGeneration: () => {
+              if (attemptRecord === undefined) return undefined;
+              // A competitor owns the id: durable carries DIFFERENT slots than ours.
+              return stolen
+                ? { ...attemptRecord, draftingReportBoardId: "board:a-later-attempt" }
+                : attemptRecord;
+            },
+            onGenerationTransition: () => {
+              transitions.push("transition");
+            },
+            recordRound: () => {
+              records.push("record");
+            },
+          }),
+        ),
+      );
+      const round = runtime.runRound(
+        roundInput({
+          session: { id: "s1", projectId: "p1", reviewId: "review-1", threads: [], createdAt: 0 },
+          onProgress: (event) => {
+            if (event.type === "failed") failedEvents.push(event.reason);
+          },
+          verifyDraftedReport: () => {
+            // The claim lands here — after the copied `superseded` snapshot passed, before
+            // the terminal generation write. The pre-await snapshot cannot catch this.
+            if (stealDuringVerify) stolen = true;
+          },
+        }),
+      );
+      if (stealDuringVerify) await expect(round).rejects.toThrow(/superseded/);
+      else await round;
+      return { writes, transitions, records, failedEvents };
+    };
+
+    // Control: nobody steals, so the attempt files its successor, freezes the predecessor,
+    // broadcasts the transition and records the round. Without this the assertions below
+    // would pass over a round that never reached its terminal write at all.
+    const owned = await run(false);
+    expect(owned.writes.some(settledWrite)).toBe(true);
+    expect(owned.transitions).toEqual(["transition"]);
+    expect(owned.records).toEqual(["record"]);
+    expect(owned.failedEvents).toEqual([]);
+
+    // A competitor claims the id mid-verify. The snapshot check already passed; the re-read
+    // at the terminal write is the only thing that sees it. No settled generation is written
+    // under the stolen id, no predecessor frozen, no transition broadcast, no round recorded
+    // — and no `failed` painted over the live generation the winner is settling.
+    const stolen = await run(true);
+    expect(stolen.writes.some(settledWrite)).toBe(false);
+    expect(stolen.transitions).toEqual([]);
+    expect(stolen.records).toEqual([]);
+    expect(stolen.failedEvents).toEqual([]);
+  });
+
+  it("refuses to freeze a predecessor a later attempt now owns, and drops its pointer (#816 re-review P3)", async () => {
+    // gen:<patchset> is GLOBAL across sessions/reviews on one patchset. Another session can
+    // re-draft the PREDECESSOR patchset into a fresh live generation while this round drives;
+    // freezing our stale copy would overwrite that session's live boards under the shared id.
+    // The freeze, the transition and the record's `frozenPredecessor` pointer are all conditioned
+    // on the durable predecessor still matching the generation this round superseded.
+    const priorWithBoards: Generation = {
+      id: "gen:ps-0",
+      patchsetId: "ps-0",
+      lensBoards: { design: "board:gen1-design" },
+      status: "live",
+    };
+    const run = async (predecessorStolen: boolean) => {
+      const store = new Map<string, Generation>();
+      // The predecessor patchset's durable generation. In the control it is the same generation
+      // this round holds; in the steal it is a DIFFERENT session's live re-draft (new boards).
+      store.set(
+        priorWithBoards.id,
+        predecessorStolen
+          ? { ...priorWithBoards, lensBoards: { design: "board:b-owns-ps0" } }
+          : { ...priorWithBoards },
+      );
+      const transitions: string[] = [];
+      const deps = baseDeps({
+        persistGeneration: (generation) => {
+          store.set(generation.id, JSON.parse(JSON.stringify(generation)) as Generation);
+        },
+        loadGeneration: (id) => store.get(id),
+        onGenerationTransition: (transition) => {
+          transitions.push(transition.sourceGeneration);
+        },
+      });
+      const { record } = await createRoundsRuntime(withFakeT3Seats(deps)).runRound(
+        roundInput({
+          previousGeneration: priorWithBoards,
+          session: { id: "s1", projectId: "p1", reviewId: "review-1", threads: [], createdAt: 0 },
+        }),
+      );
+      return { predecessor: store.get(priorWithBoards.id), transitions, record };
+    };
+
+    // Control: the durable predecessor still matches, so the round freezes it, points the record
+    // at it and broadcasts the transition. Without this the steal assertions would pass over a
+    // round that never froze a predecessor at all.
+    const owned = await run(false);
+    expect(owned.predecessor?.status).toBe("frozen");
+    expect(owned.predecessor?.lensBoards.design).toBe("board:gen1-design");
+    expect(owned.record.frozenPredecessor).toBe(priorWithBoards.id);
+    expect(owned.transitions).toEqual([priorWithBoards.id]);
+
+    // A later session re-drafted the predecessor patchset. This round must not overwrite it:
+    // B's live boards survive untouched, no transition fires, and the record carries no pointer
+    // to a predecessor this round no longer owns — a drill-back must never land on B's boards.
+    const stolen = await run(true);
+    expect(stolen.predecessor?.status).toBe("live");
+    expect(stolen.predecessor?.lensBoards.design).toBe("board:b-owns-ps0");
+    expect(stolen.record.frozenPredecessor).toBeUndefined();
+    expect(stolen.transitions).toEqual([]);
   });
 
   it("rejects a reveal write from a superseded generation attempt", async () => {
@@ -2823,29 +3407,32 @@ describe("createRoundsRuntime", () => {
           }),
         ),
       );
-      await runtime.runRound(roundInput());
+      const round = runtime.runRound(roundInput());
+      if (supersedeAfterAttempt) await expect(round).rejects.toThrow(/superseded/);
+      else await round;
       return writes;
     };
 
-    // A REVEAL write is identified by the attempt identity it carries: the final settle
-    // runs through `withLensBoards`, which drops `draftingBoardIds`. Filtering on that is
-    // what keeps this test about supersession rather than about the settle, which is a
-    // different write on a different path.
-    const revealWrites = (writes: readonly Generation[]): readonly Generation[] =>
-      writes.filter(({ draftingBoardIds }) => draftingBoardIds !== undefined);
+    // NO FILTER (#816 review P1). This used to look only at writes carrying
+    // `draftingBoardIds`, which excluded the attempt's TERMINAL writes — and those were
+    // exactly the ones the gate did not cover: `withLensBoards`, the frozen predecessor
+    // and the round record all went to `deps.persistGeneration` directly, and
+    // `GenerationStore.save` overwrites by generation id. So the filter hid the hole it
+    // was meant to be watching. Every write this attempt makes is now in scope.
 
-    // Control first: with the durable record still naming THIS attempt, the reveal writes
-    // land — so the assertion below is about supersession, not about a missing seam.
-    const current = revealWrites(await runAndCollect(false));
+    // Control first: with the durable record still naming THIS attempt, the writes land —
+    // so the assertion below is about supersession, not about a missing seam.
+    const current = await runAndCollect(false);
     expect(current.some(({ timings }) => timings !== undefined)).toBe(true);
     expect(current.some(({ lensBoards }) => Object.keys(lensBoards).length > 0)).toBe(true);
 
-    const superseded = revealWrites(await runAndCollect(true));
-    // Every reveal write was dropped. What remains is the attempt write alone — the
-    // superseded attempt's settlements and timings were never folded into the
+    const superseded = await runAndCollect(true);
+    // Not one write carried a settlement or a timing. What remains is the attempt write
+    // alone — nothing this dead attempt produced was folded into, or laid over, the
     // generation a later attempt now owns.
     expect(superseded.some(({ timings }) => timings !== undefined)).toBe(false);
     expect(superseded.some(({ lensBoards }) => Object.keys(lensBoards).length > 0)).toBe(false);
+    expect(superseded.some(({ failedLenses }) => failedLenses !== undefined)).toBe(false);
   });
 
   it("serializes concurrent absence saves so a delayed partial snapshot cannot win", async () => {
@@ -2883,7 +3470,7 @@ describe("createRoundsRuntime", () => {
               if (lens === "design") return { absence: "no-spec" };
               if (lens === "flagged") {
                 announceFlaggedDraft();
-                return { elements: [] } as unknown as DraftBoard;
+                return { absence: "no-findings" };
               }
               return cleanBody(lens);
             }),
@@ -3168,5 +3755,50 @@ describe("what a round archives, and when (#731 N3)", () => {
       .catch(() => undefined);
     expect(reads).toBeGreaterThan(1);
     expect(recorded).toEqual([]);
+  });
+
+  it("archives NO complete benchmark for a round superseded at the terminal write (#816 re-review P2)", async () => {
+    // The archive used to be taken BEFORE `persistOwned` re-read ownership, so an attempt
+    // overtaken during the terminal write's await filed a `complete` benchmark for a round that
+    // never composed. The steal here lands mid-verify — after the copied `superseded` flag,
+    // before the terminal write — so only the write-time re-read catches it. Archiving it
+    // `complete` would count a superseded turn as a clean round in the export.
+    const run = async (steal: boolean): Promise<BenchmarkRun[]> => {
+      let stolen = false;
+      let attemptRecord: Generation | undefined;
+      const { deps, recorded } = archiving({
+        persistGeneration: (generation) => {
+          if (attemptRecord === undefined && generation.draftingBoardIds !== undefined) {
+            attemptRecord = JSON.parse(JSON.stringify(generation)) as Generation;
+          }
+        },
+        loadGeneration: () => {
+          if (attemptRecord === undefined) return undefined;
+          return stolen
+            ? { ...attemptRecord, draftingReportBoardId: "board:a-later-attempt" }
+            : attemptRecord;
+        },
+      });
+      const round = createRoundsRuntime(withFakeT3Seats(deps)).runRound(
+        roundInput({
+          verifyDraftedReport: () => {
+            if (steal) stolen = true;
+          },
+        }),
+      );
+      if (steal) await expect(round).rejects.toThrow(/superseded/);
+      else await round;
+      return recorded;
+    };
+
+    // Control: nobody steals, so the round files exactly one `complete` benchmark. Without this
+    // the assertion below would pass over a run that never reached its terminal archive at all.
+    const owned = await run(false);
+    expect(owned.map((r) => r.outcome)).toEqual(["complete"]);
+
+    // Superseded at the terminal write: nothing is archived — not `complete` (the archive now
+    // follows the ownership-checked write), and not `failed` (the catch skips supersession).
+    const stolen = await run(true);
+    expect(stolen).toEqual([]);
   });
 });

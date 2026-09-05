@@ -55,6 +55,7 @@ import {
   resolveThreadRouteRenderState,
 } from "~/threadRoutes";
 import { resolveThreadSyncPhase } from "~/threadSync";
+import { ConnectionsNotice, ThreadOpeningNotice, ThreadSyncingNotice } from "./placeholders";
 import { type SidecarSession, sidecarRegistration, sidecarThreadPath } from "./session";
 
 /** See `RouteFileOpens`. `false` = Rennet did not take the click. */
@@ -93,24 +94,18 @@ const rootRoute = createRootRoute({
   ),
 });
 
+// The words in these three routes live in ./placeholders, which imports no `~/` module and
+// so can be rendered and read back by this package's own test (#849).
 const homeRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/",
-  component: () => (
-    <p data-slot="t3-native-home" className="p-3 text-xs text-muted-foreground">
-      No thread is bound to this review yet.
-    </p>
-  ),
+  component: ThreadOpeningNotice,
 });
 
 const settingsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/settings/connections",
-  component: () => (
-    <p data-slot="t3-native-settings" className="p-3 text-xs text-muted-foreground">
-      Connections are managed by the Rennet daemon; there is nothing to configure here.
-    </p>
-  ),
+  component: ConnectionsNotice,
 });
 
 const threadRoute = createRoute({
@@ -184,11 +179,7 @@ function ThreadRouteView() {
 
   if (!threadRef) return null;
   if (renderState !== "ready" && !(renderState === "loading" && serverThreadShell !== null)) {
-    return (
-      <p data-slot="t3-native-syncing" className="p-3 text-xs text-muted-foreground">
-        Connecting to the T3 Code sidecar…
-      </p>
-    );
+    return <ThreadSyncingNotice />;
   }
   return (
     <ChatView

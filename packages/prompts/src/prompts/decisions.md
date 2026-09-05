@@ -8,11 +8,10 @@ is the record of judgment calls the implementer made inside the diff.
 
 ## Document opening
 
-Author the board-level document on every return. `document.title` names the
-change or the concrete decision set. `document.introMarkdown` is one short
+Open the board with `set_document`. `title` names the
+change or the concrete decision set. `intro_markdown` is one short
 paragraph grounded in the decisions below: state the scope of the calls and
-distinguish stated rationale from inference. Set `document.measure` to
-`reading`.
+distinguish stated rationale from inference.
 
 ## What a decision is
 
@@ -42,8 +41,14 @@ Each decision block carries:
   you reconstructed it, mark the decision inferred. Never present a
   reconstruction as the implementer's own words.
 - **Alternatives not taken** — the other way(s) a reasonable engineer might
-  have chosen. Real alternatives, not strawmen.
-- **Evidence** — the code anchors (path:line) where the decision is visible.
+  have chosen. Real alternatives, not strawmen. Each one is a plain sentence
+  written straight into `alternatives`. It is a text field: never an element
+  id, and never a separate element the array points at — an id there renders
+  to the reader as the literal id.
+- **Evidence** — the code anchors (path:line) where the decision is
+  IMPLEMENTED. A comment or a file header that describes the call is not
+  where the call is visible; cite the code that makes it, and reach for the
+  header only when no code carries the decision at all.
 
 Group decisions into sections by theme when there are more than a handful.
 Give each section a one-line folded gist with counts.
@@ -74,7 +79,7 @@ narrated. Never write prose about what is not on this board.
 - Sequence: the reading walk — the order of understanding.
 - Decisions: the judgment calls and their rationale.
 - Flagged: defects, with severities and failure scenarios.
-- Noise: the skip-safe mechanical hunks, grouped and reversible.
+- Noise: everything the other four lanes do not cite, grouped and explained.
 
 ## Ground rules (all lenses)
 
@@ -96,5 +101,8 @@ narrated. Never write prose about what is not on this board.
   narration.
 - Threads and messages are records of real exchanges. You draft before any
   exchange exists; never author one.
-- Your output is a draft board of typed blocks in the schema supplied with
-  your task. Fill only the fields the schema defines.
+{{write-with-tools}}
+
+`add_decision` is this lens's own verb: the call, what grounds it, and what was
+weighed against it. `settle_absent` is the other ending — call it when you have
+read the change and it decided nothing, and say in one note what you looked for.

@@ -555,53 +555,10 @@ describe("ProjectSnapshotGenerator — the generated-banner flag rides the singl
   }, 60000);
 });
 
-describe("ProjectSnapshotGenerator — dogfood over the REAL rennet repo", () => {
-  const repoRoot = join(import.meta.dirname, "../../..");
-  function realGit(...args: string[]): string {
-    return execFileSync("git", args, { cwd: repoRoot, encoding: "utf8" }).trim();
-  }
-
-  it("generates a clean, integral, fresh full snapshot at the resolved default branch (main)", async () => {
-    const mainOid = realGit("rev-parse", "main");
-    const { manifest, built } = await new ProjectSnapshotGenerator().generate(repoRoot, {
-      explicitBaseRef: "main",
-      previousSymbols: [],
-    });
-
-    expect(manifest.baseOid).toBe(mainOid);
-    expect(manifest.schemaVersion).toBe(PROJECT_SNAPSHOT_SCHEMA_VERSION);
-    // Self-consistent: every referenced shard is present and hashes back.
-    expect(verifySnapshotIntegrity(manifest, (d) => built.shards.get(d)).ok).toBe(true);
-    expect(isSnapshotFresh(manifest, mainOid)).toBe(true);
-    // It really mapped the real source tree: many eligible files ⇒ many shards.
-    expect(manifest.symbols.length).toBeGreaterThan(50);
-  }, 180000);
-
-  it("incremental rebuild === clean full build over a real recent commit range from rennet's own history", async () => {
-    const oid2 = realGit("rev-parse", "HEAD");
-    const oid1 = realGit("rev-parse", "HEAD~1");
-    const storeDir = mkdtempSync(join(tmpdir(), "rennet-dogfood-"));
-    scratch.push(storeDir);
-
-    const store = new ProjectSnapshotStore(storeDir);
-    const inc = new ProjectSnapshotGenerator({ store });
-    await inc.generate(repoRoot, { explicitBaseRef: oid1 });
-    const step2 = await inc.generate(repoRoot, { explicitBaseRef: oid2 });
-    const full = await new ProjectSnapshotGenerator().generate(repoRoot, {
-      explicitBaseRef: oid2,
-      previousSymbols: [],
-    });
-
-    // The load-bearing property, over the real repo.
-    expect(serializeManifest(step2.manifest)).toBe(serializeManifest(full.manifest));
-    expect(step2.manifest.fingerprint).toBe(full.manifest.fingerprint);
-    const fullShards = new Map(full.built.shards);
-    expect([...step2.built.shards.keys()].sort()).toEqual([...fullShards.keys()].sort());
-    for (const [d, b] of step2.built.shards) expect(b).toBe(fullShards.get(d));
-    // And it genuinely reused work: most blobs are unchanged across one commit.
-    expect(step2.reusedSymbolShards).toBeGreaterThan(0);
-  }, 180000);
-});
+// The dogfood suite that ran here — three full snapshot generations of the real
+// rennet checkout — now lives in `project-snapshot-generator.dogfood.test.ts`, under
+// its own uncacheable `dogfood-test` target. It read the live `.git`, which no Nx
+// input can hash, and that single dependency kept this whole file's target uncached.
 
 describe("ProjectSnapshotGenerator — live build progress", () => {
   it("emits the real stages in order with concrete details, and reports the file count", async () => {

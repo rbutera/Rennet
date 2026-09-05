@@ -9,10 +9,12 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { FAKE_SIDECAR } from "./fake-sidecar";
 import {
   adoptSidecar,
   findHealthySidecar,
+  isProcessAlive,
   type RunningSidecar,
   readSidecarClaim,
   readSidecarCredentials,
@@ -23,64 +25,6 @@ import {
   stopSidecar,
   writeSidecarClaim,
 } from "./sidecar";
-
-/**
- * A stand-in for the vendored T3 server that honours the same parent contract: reads
- * the bootstrap envelope from fd 3, listens on the envelope's port, writes
- * `userdata/server-runtime.json` once bound, answers the well-known probe, exchanges
- * the bootstrap token at `/oauth/token`, checks bearers on `/api/auth/websocket-ticket`,
- * and exits on SIGTERM. It also dumps its argv and env so a test can prove no credential
- * travelled that way. `FAKE_T3_IGNORE_SIGTERM=1` makes it refuse to die.
- */
-const FAKE_SIDECAR = `
-const fs = require("node:fs");
-const http = require("node:http");
-const path = require("node:path");
-// Read the pipe by descriptor number: /dev/fd/3 is not readable as a path on every Linux.
-const line = fs.readFileSync(3, "utf8").split("\\n")[0];
-const envelope = JSON.parse(line);
-const home = envelope.t3Home;
-fs.mkdirSync(path.join(home, "userdata"), { recursive: true });
-fs.writeFileSync(path.join(home, "fake-spawn.json"), JSON.stringify({ argv: process.argv, env: process.env, envelope }));
-const access = "access-" + Math.random().toString(36).slice(2);
-const server = http.createServer((req, res) => {
-  let body = "";
-  req.on("data", (c) => { body += c; });
-  req.on("end", () => {
-    if (req.url === "/.well-known/t3/environment") {
-      res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify({ environmentId: "env-1", label: "fake", platform: "darwin", serverVersion: "0.0.38", capabilities: [] }));
-      return;
-    }
-    if (req.url === "/oauth/token" && req.method === "POST") {
-      const form = new URLSearchParams(body);
-      if (form.get("subject_token") !== envelope.desktopBootstrapToken || form.get("subject_token_type") !== "urn:t3:params:oauth:token-type:environment-bootstrap") {
-        res.writeHead(401); res.end("{}"); return;
-      }
-      res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify({ access_token: access, issued_token_type: "urn:ietf:params:oauth:token-type:access_token", token_type: "Bearer", expires_in: 2592000, scope: "orchestration:read" }));
-      return;
-    }
-    if (req.url === "/api/auth/websocket-ticket" && req.method === "POST") {
-      const ok = req.headers.authorization === "Bearer " + access;
-      res.writeHead(ok ? 200 : 401, { "content-type": "application/json" });
-      res.end(JSON.stringify(ok ? { ticket: "t", expiresAt: "x" } : {}));
-      return;
-    }
-    res.writeHead(404); res.end();
-  });
-});
-server.listen(envelope.port, envelope.host, () => {
-  const runtime = path.join(home, "userdata", "server-runtime.json");
-  fs.writeFileSync(runtime, JSON.stringify({ version: 1, pid: process.pid, host: envelope.host, port: envelope.port, origin: "http://" + envelope.host + ":" + envelope.port, startedAt: new Date().toISOString() }) + "\\n");
-  process.on("SIGTERM", () => {
-    if (process.env.FAKE_T3_IGNORE_SIGTERM === "1") return;
-    try { fs.unlinkSync(runtime); } catch {}
-    server.close(() => process.exit(0));
-    setTimeout(() => process.exit(0), 200).unref();
-  });
-});
-`;
 
 const cleanups: Array<() => void | Promise<void>> = [];
 afterEach(async () => {
@@ -162,6 +106,33 @@ describe("t3 sidecar: spawn, claim, credentials", () => {
     expect(dump.env.T3CODE_CLERK_PUBLISHABLE_KEY).toBeUndefined();
   }, 20_000);
 
+  it("puts the board bearer in the sidecar's environment and on no argument list", async () => {
+    const f = fixture();
+    const running = await start(f);
+    const dump = JSON.parse(readFileSync(join(running.claim.baseDir, "fake-spawn.json"), "utf8"));
+    // It really was delivered — every harness child the sidecar starts inherits it — so
+    // its absence from argv below says something.
+    expect(dump.env.RENNET_BOARD_BEARER).toBe(running.boardBearer);
+    expect(running.boardBearer.length).toBeGreaterThan(20);
+    expect(JSON.stringify(dump.argv)).not.toContain(running.boardBearer);
+    // Recorded in the 0600 credentials file, because a later daemon that ADOPTS this
+    // sidecar cannot re-mint it: the value is fixed in an environment already handed out.
+    expect(readSidecarCredentials(running.claim.baseDir)?.boardBearer).toBe(running.boardBearer);
+  }, 20_000);
+
+  it("reuses the recorded board bearer when it respawns on the same base dir", async () => {
+    const f = fixture();
+    const first = await start(f);
+    await stopSidecar(f.dataDir);
+    const second = await start(f);
+    // A seat's address token is DERIVED from this value, so rotating it on a respawn would
+    // change every live seat's url — and both providers refuse a turn whose MCP servers
+    // differ from the ones its session was opened with.
+    expect(second.boardBearer).toBe(first.boardBearer);
+    const dump = JSON.parse(readFileSync(join(second.claim.baseDir, "fake-spawn.json"), "utf8"));
+    expect(dump.env.RENNET_BOARD_BEARER).toBe(first.boardBearer);
+  }, 30_000);
+
   it("seeds provider binaries into settings.json without clobbering the user's other keys", async () => {
     const f = fixture();
     const userdata = join(sidecarBaseDir(f.dataDir), "userdata");
@@ -207,6 +178,26 @@ describe("t3 sidecar: adoption, stale claims, stop", () => {
     expect(await adoptSidecar(f.dataDir, "def456")).toBeNull();
   }, 20_000);
 
+  it("an adopted sidecar carries the board bearer forward", async () => {
+    const f = fixture();
+    const first = await start(f);
+    const adopted = await adoptSidecar(f.dataDir, "abc123");
+    expect(adopted?.boardBearer).toBe(first.boardBearer);
+  }, 20_000);
+
+  it("refuses to adopt a sidecar that carries no board bearer", async () => {
+    const f = fixture();
+    const first = await start(f);
+    const file = join(first.claim.baseDir, "rennet-credentials.json");
+    const { boardBearer, ...withoutBearer } = JSON.parse(readFileSync(file, "utf8"));
+    expect(boardBearer).toBeDefined();
+    writeFileSync(file, JSON.stringify(withoutBearer));
+    // A sidecar spawned before the board server existed has no `RENNET_BOARD_BEARER` in
+    // the environment its harness children inherited, so its seats could never reach a
+    // board. Refused for the same reason a snapshot mismatch is.
+    expect(await adoptSidecar(f.dataDir, "abc123")).toBeNull();
+  }, 20_000);
+
   it("re-exchanges the bootstrap grant when the stored bearer no longer works", async () => {
     const f = fixture();
     const first = await start(f);
@@ -244,7 +235,11 @@ describe("t3 sidecar: adoption, stale claims, stop", () => {
     const pid = running.claim.pid;
     expect(await stopSidecar(f.dataDir)).toEqual({ kind: "stopped" });
     expect(readSidecarClaim(f.dataDir)).toBeNull();
-    expect(() => process.kill(pid, 0)).toThrow();
+    // The stop ends when the process is no longer RUNNING, which includes the instant after
+    // it exits and before its parent reaps it (#820) — a zombie serves nothing.
+    expect(isProcessAlive(pid)).toBe(false);
+    // …and the pid really does leave the table once this process reaps its child.
+    await vi.waitFor(() => expect(() => process.kill(pid, 0)).toThrow());
     expect(await stopSidecar(f.dataDir)).toEqual({ kind: "absent" });
   }, 20_000);
 
@@ -261,6 +256,21 @@ describe("t3 sidecar: environment", () => {
   it("drops every T3CODE_* key from the parent and forces telemetry off", () => {
     const env = sidecarEnvironment({ PATH: "/bin", T3CODE_HOME: "/x", T3CODE_PORT: "9" });
     expect(env).toEqual({ PATH: "/bin", T3CODE_TELEMETRY_ENABLED: "false" });
+  });
+
+  it("sets the board bearer the daemon minted, and never the one a parent shell carried", () => {
+    const parent = { PATH: "/bin", RENNET_BOARD_BEARER: "from-the-users-shell" };
+    expect(sidecarEnvironment(parent, "minted-by-this-daemon")).toEqual({
+      PATH: "/bin",
+      T3CODE_TELEMETRY_ENABLED: "false",
+      RENNET_BOARD_BEARER: "minted-by-this-daemon",
+    });
+    // No bearer to set ⇒ the name is absent rather than inherited, so a sidecar without a
+    // board server cannot be reached with a value its parent shell happened to hold.
+    expect(sidecarEnvironment(parent)).toEqual({
+      PATH: "/bin",
+      T3CODE_TELEMETRY_ENABLED: "false",
+    });
   });
 });
 

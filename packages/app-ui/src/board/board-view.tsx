@@ -34,10 +34,11 @@ import { Section } from "./section";
 // `(generation, lens)` selection and keeps only the generation drill-down beside the
 // document it changes. There is no second local selection authority here.
 //
-// Fold-all (R44): every section starts folded EXCEPT on the Flagged lens, where the
-// findings open on arrival. Delta sections are the exception to the exception — they
-// open expanded regardless (section.tsx's own default), so passing `defaultOpen` only
-// to force-open on Flagged and leaving it undefined elsewhere gives both behaviours.
+// Fold-all: EVERY section on EVERY lens starts folded, delta sections included. The
+// reader arrives at a page of summaries and opens the ones they want (Rai, 2026-09-04,
+// retiring R44's Flagged-opens-expanded). What a section shows once opened is the other
+// half of the same rule — see `useCitationsOpenByDefault`: outside Noise and Design the
+// cited code is already revealed, so opening a stop costs one click, not two.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** How often an unsettled board re-reads its lenses, how many consecutive
@@ -147,8 +148,10 @@ export function LensBoardView({
   const fallback = resolutions[fallbackLens];
   const effectiveLens: LensKind = selected.status === "missing" ? fallbackLens : lens;
 
-  // Flagged opens expanded (R44); every other lens folds all but its delta sections.
-  const forceOpen = effectiveLens === "flagged" ? true : undefined;
+  // Every lens folds every section, Flagged included (Rai, 2026-09-04). R44's
+  // findings-open-on-arrival is retired: the reader takes the summaries first and opens
+  // what they want to read. `undefined` leaves each section its own (folded) default.
+  const forceOpen = undefined;
 
   // Resolve the board to SHOW through the same seam, so an INVALID board renders as an
   // honest error rather than "no board yet" (finding 1). The display lens is the
@@ -289,6 +292,7 @@ export function LensBoardDocument({
         reviewId={reviewId}
         generation={board.generation}
         boardId={board.boardId}
+        lens={board.lens}
       >
         <ProseSelectionLayer>
           {/* Key the document subtree by boardId (finding 5): gen0/gen1 reuse section
@@ -345,9 +349,13 @@ function absenceCopy(reason: LensAbsenceReason): {
         detail: "No concrete review findings remain for this generation.",
       };
     case "no-noise":
+      // D16e — the Noise board is the complement of the other four, so an empty one means
+      // they cited the whole change between them. It is settled by the host before any
+      // seat runs, which is why the copy says what the other boards did rather than what
+      // a Noise seat concluded.
       return {
-        title: "No safely skippable noise was found.",
-        detail: "Every changed hunk remains part of the substantive reading path.",
+        title: "Every changed region is on another board.",
+        detail: "Design, Sequence, Decisions and Flagged cited the whole change between them.",
       };
   }
 }

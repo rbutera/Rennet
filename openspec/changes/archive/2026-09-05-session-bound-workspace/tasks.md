@@ -1,0 +1,54 @@
+## 1. Citations by path and line (D5)
+
+- [x] 1.1 Replace the board citation and skipped-hunk shapes in `packages/protocol/src/board` with `codeRef` citations only; remove `SkippedHunkSchema`, `skippedHunks`, and every `hunkIdSchema` reference outside `packages/protocol/src/delta`
+- [x] 1.2 Give lint a patchset-regions context (changed ranges per path and side) and an `unresolvable-citation` rule that carries path, side and range; delete the hunk-id resolution and the skip-reason rules; control: a citation outside the change reddens, one overlapping a changed range passes
+- [x] 1.3 Delete the composition cross-lens coverage gate and the coverage turn (`coverage-mapping.ts`, `coverage-turn-backend.ts`, their prompt contract); add a daemon projection of cited regions if `app-ui` keeps a coverage view, and rewire or remove that view
+- [x] 1.4 Key delta marks on `(path, side, start, end)`; recompute marks from citations on read and show no marks for a legacy id-keyed board, with the reason
+- [x] 1.5 Remove the hunk-id vocabulary and the inventory sentences from `investigate-before-you-draft.md`, `sequence.md`, `decisions.md`, `flagged.md`, `noise.md`, `design.md`, `report.md`; state prompt size before and after in the PR
+- [x] 1.6 Update `docs/developing/concepts` (lens pipeline, architecture contracts) for path-and-line citations and the absence of a coverage gate
+
+## 2. Session context files (D3)
+
+- [x] 2.1 Add `context/` to the managed ignore block in `map-visibility.ts` and ensure the block before any context write
+- [x] 2.2 Implement the single writer for `.rennet/context/<sessionId>/` with its `README.md` index, and the purge; call the purge from `session.archive` beside `forgetSession`, from the round-settle re-sweep, and from a daemon-start orphan sweep that logs its count; tests with controls for write, purge on archive, orphan sweep, and never-staged
+- [x] 2.3 Add a mechanical check on the send tap (`recordSeatSend`) that fails a test when a sent prompt contains a JSON object larger than two kilobytes, so the rule is asserted for every harness path
+
+## 3. Convert or delete the inline sites, biggest first (D4)
+
+- [x] 3.1 `renderDrafterPrompt`: the context layer becomes a path reference; write `round.json` for a regeneration; drop the inventory, blast radius and counterpart hints unless a prompt still needs them as files; before/after sizes for all five lenses in the PR
+- [x] 3.2 `renderRetryPrompt`: delete; the ephemeral legs use `renderRepairTurn`; control: a retry on the Claude and Codex ephemeral legs carries only pointers
+- [x] 3.3 `renderComposePrompt`: boards written to `boards/<lens>.json`, voice rules referenced by path from the prompts bundle
+- [x] 3.4 Round-report classifier: evidence manifest written to `evidence.json`; `report.md` rewritten to read it
+- [x] 3.5 Noise: offered manifest without line bodies written to `noise-offer.json`; the assembled context text referenced at its existing persisted path; `noise.md` and `NOISE_CONTRACT.input` rewritten
+- [x] 3.6 Hypothesis and convention layers: reference `.rennet/conventions.json` and a written `hypothesis.json`
+- [x] 3.7 Review opener, draft PR body, handoff compose and work order, delta digest: boards, asks and the work order written to the context directory; `renderComposedPrompt` and `renderHandoffPrompt` name `work-order.md` instead of embedding asks and diff fences
+- [x] 3.8 Project scout: reference the guidance files in the cwd instead of embedding them; related context: reference the persisted dossier
+- [x] 3.9 Finding verification, refine comment, CI classification: `pointers.json` naming file and lines; the prompt contracts' "you are shown a window" sentences rewritten
+- [x] 3.10 Codex utility port: the retry report stays pointer-only and bounded
+- [x] 3.11 Confirm every cold utility turn passes the bound root as `cwd`; add the missing ones
+
+## 4. Design lens respec (D6)
+
+- [x] 4.1 Rewrite `design.md`: find the spec for this branch (openspec changes, BMAD, Kiro, grill-me, ADRs, superpowers; commit messages and PR body as the clue), draft from it citing by path, or return the `no-spec` absence
+- [x] 4.2 Delete `design-artifact-discovery.ts`, `DESIGN_ARTIFACT_LIMITS`, `fitDesignArtifactsToPrompt`/`fitDesignArtifactsToBytes`, the `designArtifacts` schema, the no-material candidate accounting, and their tests
+- [x] 4.3 Add `no-spec` to the Design lane's admissible absences; bench reader shows "no spec found for this branch"; the lens switcher and board routes omit an absent Design tab; dom tests with controls for both surfaces
+- [x] 4.4 Docs: the Design lens page under `docs/using` and the lens pipeline concept
+
+## 5. One workspace per session (D1, D2)
+
+- [x] 5.1 Record the bound root on the session at creation: current checkout when on the branch, a Rennet-created branch worktree otherwise, the PR-head worktree for a snapshot; surface it beside the branch name
+- [x] 5.2 Create the session thread, seat threads and handoff thread with the bound `worktreePath`; fail with the missing path when the root is gone (includes the WSL leg: `ClaudeAdapter` runs the child with `wsl.exe --cd <distro root>` from `locusContextForRepo(repoRoot)`, so a seat's bound root must reach `wslCwd` too, or a PR-snapshot seat on WSL drafts in the wrong tree; found by PR #789)
+- [x] 5.3 Run the round worker as a turn in the bound root; read the turn's checkpoint as the receipt; capture the successor patchset from the bound root; record root and checkpoint in the round account and show them
+- [x] 5.4 Delete `planWorkspace`, `round-worktrees`, round-collation landing, `settleRoundCommits`, the round use of `cleanupWorktree`, the review evidence worktree, and the WSL round path translation; delete their tests
+- [x] 5.5 Daemon-start sweep removes legacy round and review worktrees with a logged count; sessions from before the wave bind lazily on first use
+- [x] 5.7 Board jobs run on T3 seats only: delete the ephemeral Claude and Codex board-drafting legs in `council-seat-turn.ts` and the direct-call/desktop fallback shapes that reach them (no seam is the existing typed "T3 sidecar unavailable" failure); drive `owner-loop-proof.integration.test.ts` and `lens-settlement-proof-fixture.ts` through a fake T3 seam instead of the scripted Claude plan, so a pointer-only repair is answerable in the e2e (found by PR #800: a scripted plan cannot answer a repair that carries no prompt text)
+- [x] 5.6 Docs: `handoff-and-exits.md`, `t3code-sidecar.md`, `architecture-contracts.md` (a round advances the patchset from the bound root), the rounds pages under `docs/using`
+
+## 6. Proof
+
+- [x] 6.1 One real drive of the packaged app on a large branch: record per-seat prompt sizes and timings in `t3code-sidecar.md` beside the 2026-09-03 numbers; Design settles absent on a branch with no spec and drafts on one with an OpenSpec change
+  - Driven on the signed v0.7.0 build, 2026-09-04, on `drive/group5` (95 files) and `drive/no-spec` (1 file); prompt sizes, timings, the binding and the worktree facts are recorded in `t3code-sidecar.md`. Was unticked because the Design half was unproven in BOTH directions: the seat's turns were refused by the API before the model saw them (`400 tools.9.custom.input_schema.type`, from the `z.union` output schema), so it neither drafted from the OpenSpec change nor returned the `no-spec` absence — issue #810.
+  - **Ticked 2026-09-04 on the signed v0.7.1 build** (#810 fixed by holding the lens's two returns apart at the host). Re-driven on a fresh clone against `withspec` (carries `openspec/changes/session-bound-workspace/`, session bound to the clone root because the branch is the checkout) and `nospec-big` (no spec, session bound to a data-dir worktree). Design **drafts** on `withspec` (441.0 s, five lens boards) and **settles the `no-spec` absence** on `nospec-big` (72.3 s, four boards, Design tab omitted, `absentLenses: { design: "no-spec" }`). Per-seat prompt sizes are byte-identical to v0.7.0 (Design 12,441) and the full v0.7.1 timing table, wall clocks and token usage are in `t3code-sidecar.md` under "Measured: v0.7.1".
+- [x] 6.2 One real round: commits land on the bound branch, the round account names the checkpoint, no per-round worktree appears under `round-worktrees/` or `worktrees/review/`, and archive removes the context directory
+  - Observed on the v0.7.0 drive: the worker committed on `drive/group5` in the bound worktree (`fe2520976`, on top of the recorded `sourceHead`), the clone's `main` did not move, `work-order.md` was present under `.rennet/context/<sessionId>/` for the run, no `round-worktrees/` or `worktrees/review/` directory ever appeared, and archive removed the context directory and deleted all seven threads. Was unticked because the round never reached a checkpointed account: the worker receipt came back `diff: ""`, `changedPaths: []`, no checkpoint (issue #811), and the run then failed at the gate (`pnpm check`, 391 s, exit 1), so no successor patchset was captured.
+  - **Ticked 2026-09-04 on the signed v0.7.1 build.** One round on the `nospec-big` session. All four literal claims hold: the worker committed on the bound branch (`59ed8f555`, 5 files +191 −34, parent = recorded `sourceHead` `1388fb9df`), the clone stayed on `withspec`; the durable account names the checkpoint (`worker.checkpoint { threadId, turnId, turnCount: 1 }`, `outcome: "completed"`) and the commit range pinned to the worker's attributed HEAD (`commits { from: 1388fb9df, to: 59ed8f555, count: 1 }`) — the #811 empty receipt is gone; no directory appeared under `round-worktrees/` or `worktrees/review/`; and archive purged `.rennet/context/<sessionId>/` (six files → empty). Two honest caveats, recorded in `t3code-sidecar.md` and neither touching the four claims: the receipt's `worker.diff` snapshot still absorbs 50/55 `.nx-isolated/cache/` paths from the worker running the gate (the commit itself is the clean five files; pinning the receipt's diff to the commit range is the remaining half), and the operation's terminal phase is `failed` at `report-drafting` because the post-commit re-review generation's Sequence lens drafted no reachable `order_step` — a follow-up lens flake downstream of the round mechanics, not a failure of them.

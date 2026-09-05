@@ -93,11 +93,32 @@ export async function repositoryIgnoresCase(run: GitExec, root: string): Promise
   return value.trim() === "true";
 }
 
+/**
+ * How a runner decodes git's stdout.
+ *
+ * `utf8` is the default and what every command that emits text wants. `latin1` is
+ * the BYTE-PRESERVING mode: Node's latin1 decoder maps each byte to exactly one
+ * code point in U+0000–U+00FF, so the returned string is a lossless, 1-char-per-byte
+ * view of the raw stdout and `Buffer.from(s, "latin1")` reconstructs it exactly.
+ *
+ * It exists for `git cat-file --batch`, whose stream interleaves headers with raw
+ * object bytes and frames each object by a BYTE length. UTF-8 decoding the stream
+ * would replace invalid sequences and desynchronise every subsequent record, because
+ * character offsets would no longer be byte offsets. Decode latin1, slice by the
+ * declared byte length, then re-decode each object's slice as UTF-8 — which yields
+ * byte-for-byte the same string a per-object `git cat-file blob` would have.
+ */
+export type GitStdoutEncoding = "utf8" | "latin1";
+
 /** A narrow git runner, injected so the range engine is testable against a real repo. */
 export type GitExec = (
   root: string,
   arguments_: string[],
-  options?: { readonly input?: Buffer | Readable; readonly reject?: boolean },
+  options?: {
+    readonly input?: Buffer | Readable;
+    readonly reject?: boolean;
+    readonly encoding?: GitStdoutEncoding;
+  },
 ) => Promise<string>;
 
 /**
@@ -116,6 +137,7 @@ export function execaGitFor(locus: Locus): GitExec {
       reject: options?.reject ?? true,
       shell: false,
       stripFinalNewline: false,
+      encoding: options?.encoding ?? "utf8",
     });
     return result.stdout;
   };

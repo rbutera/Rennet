@@ -81,7 +81,6 @@ const ACCEPTED_OPERATION = {
   roundNumber: 1,
   sourceTarget: { kind: "branch", branch: "feat/dispatch-wiring" },
   askCount: 1,
-  gatePlan: { kind: "absent" },
   state: { phase: "claimed" },
 } satisfies RoundOperationProgressSnapshot;
 

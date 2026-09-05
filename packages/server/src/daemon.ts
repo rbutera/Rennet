@@ -84,8 +84,8 @@ export interface RunningDaemon {
 
 /**
  * Start the server, publish the claim, and (unless `installSignalHandlers` is false) shut
- * down cleanly on SIGTERM/SIGINT. Resolves once the listener is up and `daemon.json` is
- * written. The daemon runs headless: no repository dialog (a windowed client forwards an
+ * down cleanly on SIGTERM/SIGINT or on `POST /shutdown` — one `stop`, three ways in (#820).
+ * Resolves once the listener is up and `daemon.json` is written. The daemon runs headless: no repository dialog (a windowed client forwards an
  * explicit `path` per #379) and no OS `openPath` fallback — the editor launch still works
  * through the resolved executables.
  */
@@ -94,6 +94,23 @@ export async function runDaemon(
   options: { installSignalHandlers?: boolean } = {},
 ): Promise<RunningDaemon> {
   const forgeDetectionDeps = defaultForgeDetectionDeps();
+  // `stop` closes the server, so it has to exist before the listener can serve `/shutdown` —
+  // and the listener starts inside `createRennetServer`. The shutdown is therefore late-bound
+  // through this holder, which is assigned in the same synchronous run as the claim write.
+  let shutdownServer: (() => void) | null = null;
+  let stopped = false;
+  const stop = (): void => {
+    if (stopped) return;
+    stopped = true;
+    shutdownServer?.();
+    removeDaemonFile(config.dataDir, process.pid);
+  };
+  // A shutdown REQUEST ends the process, exactly as SIGTERM does: the launcher is waiting on
+  // this pid to exit so the installer can replace the bundle it runs from. A daemon driven
+  // in-process by a test (`installSignalHandlers: false`) owns no process to end, so it
+  // quiesces and returns — the same asymmetry the signal handlers already have.
+  const exitOnShutdownRequest = options.installSignalHandlers !== false;
+
   const server = await createRennetServer({
     dataDir: config.dataDir,
     env: config.env,
@@ -106,7 +123,12 @@ export async function runDaemon(
     uiDist: config.uiDist,
     hostBundlePath: config.hostBundlePath,
     t3BundlePath: config.t3BundlePath,
+    onShutdownRequest: () => {
+      stop();
+      if (exitOnShutdownRequest) process.exit(0);
+    },
   });
+  shutdownServer = () => server.shutdown();
 
   const info: DaemonInfo = {
     pid: process.pid,
@@ -117,14 +139,6 @@ export async function runDaemon(
     startedAt: new Date().toISOString(),
   };
   writeDaemonFile(config.dataDir, info);
-
-  let stopped = false;
-  const stop = (): void => {
-    if (stopped) return;
-    stopped = true;
-    server.shutdown();
-    removeDaemonFile(config.dataDir, process.pid);
-  };
 
   if (options.installSignalHandlers !== false) {
     const onSignal = (): void => {

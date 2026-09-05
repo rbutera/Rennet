@@ -548,6 +548,25 @@ describe("hasConfiguredMcpServer", () => {
       true,
     );
   });
+
+  it("earns the tool-catalog reload for a caller-supplied server too", () => {
+    NodeAssert.equal(
+      hasConfiguredMcpServer(["-c", "mcp_servers.board.url=http://127.0.0.1:7391/board/design"]),
+      true,
+    );
+  });
+
+  it("answers the reload and nothing else, including for the sidecar's own name", () => {
+    // This predicate is deliberately name-blind. A caller can supply a server
+    // called `t3-code`, so no name test here could tell the sidecar's own
+    // browser server from somebody else's — that fact travels as
+    // `sidecarMcpServerConfigured`, and the integration test drives it.
+    const callerNamedLikeTheSidecar = [
+      "-c",
+      "mcp_servers.t3-code.url=http://127.0.0.1:7391/board/design",
+    ];
+    NodeAssert.equal(hasConfiguredMcpServer(callerNamedLikeTheSidecar), true);
+  });
 });
 
 function makeThreadStartedNotification(

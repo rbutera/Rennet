@@ -23,6 +23,7 @@ function node(overrides: Record<string, unknown> = {}): Record<string, unknown> 
     number: 12,
     title: "Add glass tokens",
     state: "OPEN",
+    createdAt: "2026-08-01T00:00:00.000Z",
     updatedAt: "2026-08-10T00:00:00.000Z",
     additions: 40,
     deletions: 3,
@@ -142,6 +143,7 @@ describe("createGitHubProjectPrSource — listPullRequests", () => {
       additions: 40,
       deletions: 3,
       changedFiles: 5,
+      createdAt: "2026-08-01T00:00:00.000Z",
       lastActivityAt: "2026-08-10T00:00:00.000Z",
     });
     expect(() => pullRequestSchema.parse(prs[0])).not.toThrow();

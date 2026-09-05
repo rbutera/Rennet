@@ -20,6 +20,33 @@ export const HANDOFF_NO_GIT_RULE = [
 ] as const;
 
 /**
+ * The most bytes of a discovered check command that reach a prompt. The command is scout
+ * output — repository data, not a constant — so it declares a bound at its call site like
+ * every other dynamic interpolation, and truncation is marked rather than silent.
+ */
+export const CHECK_COMMAND_MAX_BYTES = 200;
+
+// The ellipsis marker appended on truncation. Its own byte length lives INSIDE the cap so
+// the COMPLETE quoted command never exceeds CHECK_COMMAND_MAX_BYTES — otherwise a 200-byte
+// prefix plus a 3-byte marker is 203 bytes, over the bound the cap promises.
+const TRUNCATION_MARKER = "…";
+const TRUNCATION_MARKER_BYTES = Buffer.byteLength(TRUNCATION_MARKER, "utf8");
+
+function boundedCommand(command: string): string {
+  const trimmed = command.trim();
+  const buf = Buffer.from(trimmed, "utf8");
+  if (buf.length <= CHECK_COMMAND_MAX_BYTES) return trimmed;
+  // Cut on a UTF-8 code-point boundary, not a raw byte: slicing mid-sequence and decoding
+  // yields a U+FFFD that re-encodes to 3 bytes, so a naive `subarray` can corrupt the last
+  // character. Budget the marker's bytes first so prefix + marker stays within the cap, then
+  // back off any trailing continuation bytes (0b10xxxxxx) so the prefix ends before a
+  // complete code point — then the marker is honest AND the whole string is ≤ the cap.
+  let end = CHECK_COMMAND_MAX_BYTES - TRUNCATION_MARKER_BYTES;
+  while (end > 0 && ((buf[end] ?? 0) & 0xc0) === 0x80) end -= 1;
+  return `${buf.subarray(0, end).toString("utf8")}${TRUNCATION_MARKER}`;
+}
+
+/**
  * Rule 2 for a coding ROUND, which is the opposite instruction and has to be.
  *
  * A round is a turn in the session's bound workspace (session-bound-workspace D2): its
@@ -27,15 +54,30 @@ export const HANDOFF_NO_GIT_RULE = [
  * stage anything on the reviewer's behalf. A round sent the handoff's no-git rule edits
  * files, leaves zero commits, and fails — so the two rules are named separately rather
  * than shared, and each prompt takes the one its exit actually needs.
+ *
+ * `checkCommand` is the project scout's discovered check, and running it is the WORKER's
+ * job (round-worker-thread; Rai, 2026-09-04). Rennet used to run it itself, in the bound
+ * worktree, after the turn — six and a half minutes whose only durable trace was an exit
+ * code. When the scout found no command, the sentence is not rendered at all: an empty
+ * command in an instruction is worse than no instruction.
  */
-export const ROUND_COMMIT_RULE = [
-  "2. COMMIT your work on the current branch before you finish — only the files this work",
-  "   order asked you to change, and do NOT push. Those commits are the round: nothing",
-  "   stages them for you, and a turn that edits without committing leaves nothing behind.",
-] as const;
+export function roundCommitRule(checkCommand?: string): readonly string[] {
+  const command = checkCommand === undefined ? "" : boundedCommand(checkCommand);
+  return [
+    "2. COMMIT your work on the current branch before you finish — only the files this work",
+    "   order asked you to change, and do NOT push. Those commits are the round: nothing",
+    "   stages them for you, and a turn that edits without committing leaves nothing behind.",
+    ...(command === ""
+      ? []
+      : [
+          `   Run \`${command}\` before you commit; commit only when it passes, and if it fails,`,
+          "   fix it or say why in your final message.",
+        ]),
+  ];
+}
 
 /** The rule-2 block a prompt carries. Defaults to the handoff's; a round passes its own. */
-export type HandoffGitRule = typeof HANDOFF_NO_GIT_RULE | typeof ROUND_COMMIT_RULE;
+export type HandoffGitRule = readonly string[];
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Handoff-bundle composition (issue #72, Model Council job M24) — the light-tier

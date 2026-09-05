@@ -31,6 +31,7 @@ import type {
   HandoffBundle,
   LensAbsenceReason,
   LensBoard,
+  LensDraftSnapshot,
   LensFailureAccount,
   LensKind,
   NoiseReview,
@@ -674,6 +675,17 @@ export interface DispatchDeps {
     generation: string,
     lens: LensKind,
   ) => Promise<{ readonly message: string; readonly account?: LensFailureAccount } | undefined>;
+  /**
+   * The board a seat is writing RIGHT NOW, out of the daemon's live element-stream hub
+   * (`lens-board-tools` D11, task 4.1) — the catch-up a surface takes before it starts
+   * folding `lensDraft` frames. Synchronous: the hub is in memory and holds the board it
+   * has been folding. `undefined` when no lane of that generation opened that lens here.
+   */
+  readonly lensDraftForReview?: (
+    reviewId: string,
+    generation: string,
+    lens: LensKind,
+  ) => LensDraftSnapshot | undefined;
   /**
    * The living-draft span-rework producer (B11 cluster 5): a ONE-SHOT model turn that
    * reworks one staged ask's body per the reviewer's instruction — a FRESH turn, never

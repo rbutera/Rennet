@@ -41,10 +41,13 @@ the pipeline reads the prompt so five files cannot drift apart on it.
 The package exports a typed manifest. Noise has two instruction sets on
 purpose: `noise.md` drives the Noise lens board seat, and the `NOISE_CONTRACT`
 prompt contract drives the RSP noise-document runner behind the noise index;
-they emit different shapes to different validators. The board schema is never prompt text:
-each lens seat's session is bound to it once, as the harness's structured-output
-format, and the landed-round report seat is bound to a much smaller
-classification schema instead.
+they emit different shapes to different validators. The board schema is never prompt text,
+and since the board tool surface landed it is not the seat's contract either: **no output
+schema travels on a lens seat's turn at all.** A lens seat writes its board through tools
+and returns no document, so nothing binds its session, nothing is parsed back off it, and
+no structured payload appears as a message on its thread. The landed-round report seat is
+the one board job still bound to a schema — a narrow classification shape, not the
+all-kind board schema — because it still returns a document for the host to build from.
 
 ## The drafting flow
 
@@ -61,9 +64,10 @@ composition root that supplies the scheduler's open seams — `onBoardArrival` t
 the board-event broadcast, `persistBoardMeta` to the durable `BoardMeta` store,
 `composeTurn` to the orchestrator's authoring turn, `readPrompt` to the node
 prompt reader — and drives a generation visit: the round-report seat settles its
-sequencing boundary first, then the five independent lens lanes draft concurrently.
+sequencing boundary first, then the four core lens lanes draft concurrently and the
+Noise lane runs on their settlements.
 The per-board arrival events this scheduler emits drive the progressive reveal — each
-lane publishes its own settlement as it lands, so a slow Design or Noise lane never holds
+lane publishes its own settlement as it lands, so a slow Design lane never holds
 a finished core board back — and a
 `PipelineStartGuard` keyed on the session and
 exact generation visit makes a retry of that dispatch reattach rather than
@@ -94,18 +98,35 @@ and calls board regeneration through this runtime.
    supplies the older round context without an exact worker receipt. It retains
    the generic drafting path for compatibility. A live durable coding round
    always carries the receipt and never selects that path.
-1. **Draft.** One agent per lens receives the delta context and its lens
-   prompt and returns a structured board. The host board schema, derived once
-   from the frozen `DraftBoardSchema`, binds the seat's session as its
-   structured-output format and is not repeated in the prompt. Each drafting instruction
-   requires a document envelope with an authored title, a short Markdown
-   introduction, and a measure. The target owns the final measure: Design is
-   `structured`; Sequence, Decisions, Flagged, and Noise are `reading`. The host
-   constructs the landed-round report document with the `reading` measure.
+1. **Draft.** Every lens board of a generation is created — empty, `drafting`,
+   addressable — before its seat's thread exists. One agent per lens then receives the
+   delta context and its lens prompt and **writes into that board, call by call**, through
+   a tool set scoped to the kinds its lens authors. It returns nothing. The board is not
+   brought into existence by a seat's return, and a lane whose seat writes nothing settles
+   over the board that was already there rather than over a missing one.
+
+   A seat settles in one of two ways, each an explicit call: `finish`, which either settles
+   the board or comes back with a pointer list the seat answers with further calls in the
+   same turn; or the one settle-absent verb its lens admits, whose reason is fixed by the
+   lens and carries no field to name it with. Sequence has no such verb, because Sequence
+   admits no absence, and neither does Noise, because the host settles a Noise lane's
+   absence from the derivation before any seat runs.
+
+   Each drafting instruction requires a document envelope with an authored title, a short
+   Markdown introduction, and a measure. The target owns the final measure: Design is
+   `structured`; Sequence, Decisions, Flagged, and Noise are `reading`. The host constructs
+   the landed-round report document with the `reading` measure.
    The host, never the drafter, writes the board ops through
    `whiteboard-client` (the sole op writer); drafters never call whiteboard
-   tools. The Flagged lens runs two independent seats (Claude and Codex) on the
-   same instructions. A verified report arrives before any lens turn starts and
+   tools. The Flagged lens runs two seats (Claude and Codex) on the same instructions,
+   over **one** board: each element is stamped with the voice that wrote it as it lands,
+   and the ids come from one mint counter, so the two seats' ids cannot collide.
+
+   An OpenSpec branch's Design board takes a **deterministic fast path** and settles with
+   no model turn at all: the assembler transforms the change's own artifacts into the
+   board. A change it cannot settle falls back to the seat, which renders the same change.
+
+   A verified report arrives before any lens turn starts and
    opens that boundary, after which all five lens lanes run
    independently rather than waiting for the preceding display-order lens. A
    required report that fails or proves unavailable ends the round at report
@@ -144,37 +165,46 @@ and calls board regeneration through this runtime.
    With only one harness available the lens degrades to a single seat, stamped
    with honest single-model concurrence and no accord: one seat has no
    agreement to report.
-3. **Validate.** A deterministic loop guarantees every lens draft before a human
-   sees it. It parses the frozen schema and runs the per-lens lint rules. A lint
-   failure returns the draft to its seat as ZodError-shaped JSON pointers on one
-   retry channel; the seat returns a patch, and passing elements **freeze** — a
-   frozen element is never re-linted or re-drafted. The repair turn is
-   pointer-only on every leg: it carries the pointers (each naming the element it
-   is about), the frozen ids as a list so references stay valid, and the
-   instruction — never the lens prompt, the previous draft, or anything of the
-   change. That only means something to a session that already holds the draft —
-   and every board seat is one, because a board job runs on a sidecar seat thread
-   and nowhere else. A generation with no sidecar drafts no board at all: each
-   lane settles as a typed failure naming the missing sidecar, so there is no leg
-   left that could be handed pointers it cannot resolve. The host merges the
-   frozen bodies back itself. After a turn that emitted nothing, the re-ask is for
-   the whole board — that one carries no reference to a draft the session must
-   remember. Validation spends at most
-   one model repair turn after the initial draft. An element that remains
-   invalid takes an **honest-omission exit**: it is dropped and the drop is
-   recorded as an omission naming the element and the reason. Unresolved
-   board-level or schema violations ship as labelled `blemishes` —
-   **visible, never blocking**.
+3. **Validate.** Validation is **two-tier, and both tiers run inside the seat's own
+   turn.** A rule decidable from the element a call carries is enforced at the tool
+   boundary: the call is refused, the element is not created, and the refusal names the
+   field and says what would be admissible. A rule that can only be answered over the whole
+   board runs when the seat calls `finish`, which comes back as a pointer list — a rule id,
+   an element ref, one sentence each — that the seat fixes with further calls before
+   calling `finish` again. Neither costs anything: **a refusal and a `finish` verdict are
+   both results inside a live turn.**
 
-   After validation, the host checks the material the served board actually
-   needs. Sequence requires a reachable `order_step`. Decisions and Flagged
-   require a reachable `decision` or `finding`, unless the provider returned a
-   parsed zero-element board that supports typed `no-decisions` or `no-findings`
-   absence. Noise has the equivalent `no-noise` absence, and its prompt asks for exactly
-   that empty board when nothing in the change is skip-safe, rather than a board of
-   "this must be read" verdicts. Missing core material
-   becomes that honest absence or a precise failure; it never starts a second
-   full drafting session and never lands as an empty successful board.
+   An attempt is spent by exactly one event: **a turn that ENDS with the board neither
+   finished nor declared absent** — the context ran out, the harness died, the seat
+   stopped. The board it wrote is KEPT, marked unsettled with its reason, and the follow-up
+   turn carries the last `finish` verdict and nothing else: never the lens prompt, never
+   the board, never a draft. That only means something to a session that already holds the
+   conversation and a board that survived the turn — and every board seat is one, because a
+   board job runs on a sidecar seat thread and nowhere else. A generation with no sidecar
+   drafts no board at all: each lane settles as a typed failure naming the missing sidecar.
+   A lane whose attempts are spent while its board is unfinished settles as a **typed
+   terminal failure** naming the lens, the attempts spent and what the last verdict said —
+   not as an empty board and not as an absence — and the elements the seat did write stay
+   on the lane's board. Anything the host finds after the seats settle, such as the Flagged
+   reconciliation's own wire check, ships as a labelled `blemish`: **visible, never
+   blocking.**
+
+   Two things the document path had are simply gone from a seat's life, because the states
+   they accounted for cannot occur. There is no **honest-omission exit**: an element the
+   old ladder would have dropped is one the boundary tier refuses before it exists, so
+   there is nothing to drop and nothing to account for. And there is no *inferred* absence:
+   an empty board is never read as a claim, because a seat that means "there is nothing
+   here" has a verb for saying so.
+
+   After the seats settle, the host checks the material the served board actually needs.
+   `finish` has already refused to settle a board holding no `order_step`, `decision` or
+   `finding` for its lens, so what this catches is the gap that rule names in its own
+   comment: Decisions and Flagged have no reachability rule, so `finish` accepts material no
+   served root reaches. Noise is not among them: its membership is derived rather than
+   authored (see *The Noise board is the complement* below), so its `no-noise` absence is
+   settled by the host from an empty complement before any Noise seat runs.
+   Unreachable core material becomes a precise failure; it never starts a second full
+   drafting session and never lands as an empty successful board.
 
    The kind palette is enforced *structurally at parse time*: the frozen
    `DraftBoardSchema` has no `thread`, `message`, or `code` kind, so an
@@ -190,8 +220,8 @@ and calls board regeneration through this runtime.
      the changed regions of the captured patchset with the same predicate the
      citation reader uses: every cited line must sit inside a captured region on
      the named side, so a range one line past a hunk, or spanning the gap between
-     two, comes back to the seat as an unresolvable-citation pointer carrying the
-     path, the range and the nearest changed range (a rename's base side answers
+     two, is refused by the citing call itself — in the turn that made it, carrying the
+     path, the range and the nearest changed range, with no element created (a rename's base side answers
      to either name; a truncated capture's tail counts as changed rather than
      being claimed outside; a range past the end of the file is the
      citation-resolves overrun pointer alone; a citation naming a side that is
@@ -205,6 +235,43 @@ and calls board regeneration through this runtime.
    - **a process-vocabulary screen** flags structural-field prose that names
      lenses, boards, agents, seats, or drafts.
 
+   Which kinds a lens may author is one table, `LENS_TYPED_KINDS` in
+   `packages/protocol/src/board/kind-tables.ts`, beside the shared authoring kinds
+   every lens gets. The kind allowlist reads it, and so does the board tool surface
+   below, so a kind reassigned between lenses cannot mean one thing to the rules and
+   another to the verbs a seat is given.
+
+   Every rule above screens the board's **document** as well as its elements. The
+   document is not an element, so a fenced code block in the board's opening prose
+   used to pass a lint that rejects the same bytes one line below it; document
+   violations report at a board-level pointer (`/document/introMarkdown`).
+
+   The rule registry is **partitioned into two tiers** by what each rule reads.
+   A rule decidable from a single element plus the daemon's knowledge of the
+   patchset is a **boundary** rule: code bytes and dialogue in prose, malformed and
+   unresolvable citations, machinery vocabulary, an ungrounded decision, an unknown
+   source. A rule that can only be decided over the whole board is a **finish**
+   rule: report coherence, requirement order and verbatim quoting, and the Design
+   artifact-set checks. The partition is asserted over the rules the tool path
+   actually receives, not over the authored lists, so a rule cannot be in the
+   registry and in neither tier.
+
+   Two **settlement rules** sit in that registry and in the finish tier, moved down
+   from the drafting runtime where they were lane failures a seat could not answer:
+   every Sequence step must be reachable from a top-level section, and the board
+   must hold material at all. `lint` — the document path's entry point — does not
+   run them, and that exclusion is declared as its own named subset rather than
+   achieved by keeping a rule out of the registry. The reason is cost: the Noise
+   prompt asks for an empty board when nothing in the change is skip-safe, and the
+   runtime settles that as a typed `no-noise` absence, so asking "does this board
+   hold material?" during document validation would spend a model repair turn
+   arguing with a board that was right.
+
+   The two settlement rules ask one question each. Material presence counts what
+   exists; reachability answers for itself and names the step to re-parent. They
+   used to overlap, and a Sequence board holding one orphaned step got both — an
+   "the board is empty" pointer over a board with a step on it.
+
    The core validator retains its typed-data immutability result for
    callers that provide a deterministic transform; the production lens scheduler
    supplies no model-backed post-process transform. Immutability is its own
@@ -212,11 +279,17 @@ and calls board regeneration through this runtime.
    the frozen schema deliberately does not carry (they wait on a schema
    follow-up rather than being enforced against absent data). The reviewer-voice
    authored prose is screened by a separate, narrower register.
-   A drafting turn that emits **no board at all** is not a settlement. It seeds
-   the same retry ladder an unparseable first return does, so the seat is
-   re-asked rather than the lane failing at attempt zero. Only a ladder that ran
-   out without any turn emitting settles a failure, and that failure names both
-   facts: the original non-emission and the re-asks it spent.
+   A turn that writes **nothing at all** is not a settlement. It ended unsettled like any
+   other, so it spends the lane's one attempt and the seat is re-asked rather than the lane
+   failing at attempt zero — and the re-ask says exactly that, because there is no verdict
+   to carry when `finish` was never called. Only a ladder that runs out with the board
+   still unfinished settles a failure.
+
+   The document path — parse the return, lint it, hand ZodError-shaped pointers back on a
+   retry channel, freeze the passers — survives for exactly one caller: the **legacy**
+   round-report leg, which supplies no evidence manifest and is still bound to the full
+   board schema. `lint`, `validateDraft` and the pointer-only `renderRepairPrompt` are that
+   caller's loop and nothing else's.
 4. **Freeze.** The validated structured draft becomes the lens board without a
    second model rewrite. Host-owned Design projections, Flagged reconciliation,
    round composition, delta stamps, and metadata persistence remain deterministic.
@@ -273,15 +346,34 @@ and calls board regeneration through this runtime.
    machinery screen) — visible, never blocking.
 
 Each successful board persists its metadata as soon as its lane settles, so live
-progress follows completion order. Both successful typed absences and
-**per-board arrival events** are published in that same settlement order through
-one serialized callback, which keeps cumulative generation snapshots monotonic.
-A lane's arrival is emitted the moment its board is written — no global barrier
-over the five lanes. The returned
-outcomes still use the canonical Design, Sequence, Decisions, Flagged, Noise
+progress follows completion order. Successful typed absences, **per-board arrival
+events**, and **lens failures** are all published in that same settlement order
+through one serialized callback, which keeps cumulative generation snapshots
+monotonic. A lane's arrival is emitted the moment its board is written — no global
+barrier over the five lanes — and a lane whose attempts are exhausted is emitted the
+moment they are, for the same reason: a failure only visible in the returned outcomes
+is a failure the surface cannot show until the slowest sibling finishes, which is how
+a seat that died at 33 s went on reading "quiet for 320 s" until the reveal. The
+returned outcomes still use the canonical Design, Sequence, Decisions, Flagged, Noise
 order regardless of which drafter finished first, because that array is
 completion bookkeeping rather than the reveal. The rounds machinery consumes the
 arrival events to drive the reveal; the pipeline only emits them.
+
+**A board is published as it is written, not only when it arrives.** Every write
+the board writer accepts — a seat's call, and the members the host places on a
+derived board before its seat's first turn — reaches an observer the lane was
+opened with, and goes out as one frame carrying the elements that call touched
+and the position each holds. A lane's `opened` frame is the empty board, ahead of
+any seat thread; its `closed` frame says nothing more will land. Every frame
+carries its generation, so a superseded drafting attempt cannot paint over the
+live one, and a revision monotonic within `(generation, lens)`, so a reader can
+tell a duplicate from a gap. A lane can carry more than one watcher — it is never
+deleted, and a content-addressed generation is shared by two reviews of identical
+content — so every opener hears every write and the `opened` frame carries the
+board the lane already holds. The stream and the durable board are two surfaces:
+the elements travel live without patchset stamps or round-delta marks, because
+both are stamped where the board is persisted at settle. See
+[the T3 Code sidecar](t3code-sidecar.md) for the wire and its catch-up read.
 
 **Coverage is a projection, never a gate.** No step checks that every changed
 region was taught or accounted for: a board carries no skip list, composition
@@ -293,8 +385,8 @@ than an obligation on a seat.
 **Per-phase timings are durable and versioned.** One record per phase —
 `report` (the whole report gate) and `report-classification` (the provider turn
 inside it), each lane's `lens-draft` / `lens-repair` / `lens-post-process`, plus
-`reveal` and `first-core-board` — carries the wall-clock start and the measured
-duration. They live on the generation under a versioned `timings`
+`reveal`, `first-core-board` and `first-element` — carries the wall-clock start
+and the measured duration. They live on the generation under a versioned `timings`
 record, so no label can absorb another phase's time and the
 [benchmark archive](../reference/benchmarks.md) reads this one spine rather than
 measuring anything a second time. `lens` is discriminated on the record: the four
@@ -302,7 +394,12 @@ lane-scoped phases require it, the generation-wide ones forbid it.
 
 **Spend is durable beside the timings.** Every seat turn the pipeline runs
 (board, report, repair, on either harness) records one metric into the
-generation's collector: tokens and, when the provider gave one, its price. The orchestrator's compose turn is not yet
+generation's collector: tokens, its wall-clock duration, the number of board tool
+calls it made — refusals included, because the seat made them and the provider
+billed them — and, when the provider gave one, its price. A board turn that
+dropped any of the three would be spend the reviewer cannot see; a turn with no
+board to call carries no count rather than a zero, because zero is a real
+measurement of a seat that wrote nothing. The orchestrator's compose turn is not yet
 counted. The sum rides the lens progress frame while the generation drafts and
 lands on the generation as `usage` when it settles; a repeat drafting attempt
 adds to the prior attempt's total rather than replacing it. The round shows it
@@ -312,14 +409,18 @@ turn was metered and priced; a subscription session shows tokens and no invented
 dollar figure. Retries are counted like any other turn, and a repair is always a
 further turn on the seat's own thread.
 
-Two of those records are measured from a boundary the pipeline does not own.
+Three of those records are measured from a boundary the pipeline does not own.
 `first-core-board` starts from the moment the **reviewer's** wait began — the
 captured input becoming ready on an initial generation, the round landing and
 its report verifying on a returned one — which the caller supplies, because
 measuring from the drafting runtime's own entry would silently exclude board
-minting, partial-state cleanup and provider resolution. `reveal` ends at the
-last lane that actually revealed something; a lane that failed revealed nothing
-and does not extend the window.
+minting, partial-state cleanup and provider resolution. `first-element` shares
+that origin and stops at the first element any board published on its element
+stream, which is the first thing the reviewer could see; a lane that settles
+absent writes nothing and so is never what it names, and a generation on which
+no lens ever wrote an element records no such figure at all. `reveal` ends at
+the last lane that actually revealed something; a lane that failed revealed
+nothing and does not extend the window.
 
 **Every stage record names what ran it, one record per seat.** A single-seat
 lane emits one `lens-draft` record carrying that seat's harness and model. The
@@ -353,6 +454,61 @@ attempt: remove its metadata first, clear its board state second, then draft. Th
 order is repeatable after a crash and prevents stale metadata from presenting a
 partially cleared board as complete. A malformed or semantically invalid report
 is scrubbed the same way before one fresh classification turn.
+
+## Writing a board with verbs
+
+The pipeline above parses one returned document per seat. The pieces of a second
+way to write a board are built and not yet connected: `lens-board-tools` group 1
+landed the surface and the writer, and groups 2 and 3 wire them to the daemon and
+the seats.
+
+A seat's tool set is **derived**, never listed per lens. `buildBoardTools` in
+`packages/protocol/src/board/tool-schemas.ts` walks the shared authoring kinds plus
+that target's typed kinds over the authored board schema, the way the orchestrator's
+`app_*` tools walk the command registry: each kind yields an `add` verb and an
+`update` verb, plus `set_document`, `cite`, `remove_element`, `finish`, and — only
+where the lens admits an absence — a `settle_absent` whose reason is fixed in its
+description with no field to name another. Sequence admits no absence and gets no
+such verb.
+
+Every input is one flat object of scalars, string enums and arrays of scalars. No
+nested object, no array of objects, no union at any depth: a source reference is
+`source_path` / `source_candidate` / `source_line`, and a citation is an id `cite`
+returns rather than an object. This is the shape rule that closes #810, where a
+union rendered as a bare `anyOf` with no top-level `type` and the API refused the
+turn before the model saw it. `flatInputViolations` renders each input to JSON
+Schema and reports any of those four shapes, naming the tool and the field.
+
+A structured value that is a LIST is flattened into parallel arrays the seat aligns
+by index, so it carries only the parts worth that cost: a section's sources are
+`source_paths` alone, while a requirement's single `source` keeps its candidate and
+line, where there is no index to align. Where both parts of a list are load-bearing
+— a stat is a label and a value — the writer refuses a companion given without its
+spine and refuses arrays of different lengths, naming the field. Silently rebuilding
+the shorter list is how a partial update came to wipe a field the call never
+mentioned, which is the opposite of what `update_*` tells the model it does.
+
+The fields the host owns are on no input at all: an element's author, a `code_ref`'s
+patchset id, a noise verdict's judge, a finding's draft status and its cross-seat
+concurrence and accord, a section's round-delta stamp, and the document's reading
+measure.
+
+`BoardWriter` in `packages/core/src/board/board-writer.ts` applies one call at a
+time, purely. The **host mints every id** and returns it, and a child names its
+parent — the host keeps the parent's `children` in step. So the parent graph is a
+forest and every other reference names an element minted earlier, which is what
+makes a dangling reference and a reference cycle unconstructible rather than
+checked. A reference argument naming something the board does not hold is refused
+with what it does hold. The boundary does not constrain what *kind* a reference
+names, so any reference field can point at an ancestor and close a loop through the
+one edge that runs forward, parenting; every mutation therefore re-runs the boundary
+tier over the board the call would produce and refuses whatever that call
+introduced, which is what actually holds the two structural guarantees. A refusal
+names the field and says what would be admissible in the lint layer's own words.
+`finish` runs the finish tier and answers with pointers only — a rule id, an element
+reference and one sentence — or settles the board. Writing after a `finish` is not
+refused; it takes the board back to drafting, because a settlement describes the
+board that finished and not the one that moved.
 
 ## The classifier evidence contract
 
@@ -442,6 +598,79 @@ triple's board-meta record, projects the element state, and assembles one
 `LensBoard` with the persisted document, the element pool in creation order,
 and one fold line per top-level section.
 
+## The Noise board is the complement
+
+Rai's ruling, 2026-09-04: anything not covered by one of the other boards is noise.
+Noise is a POSITION, not a property of a hunk — a changed region that Design, Sequence,
+Decisions and Flagged all passed over — so its membership is set subtraction rather than
+a model's judgement about reading effort. Every changed region of a change is in exactly
+one of two sets, and the partition is total by construction rather than by diligence.
+
+`deriveNoiseMembers` in `packages/core/src/board/noise-complement.ts` takes the
+subtraction. It is handed what each of the four core lanes SAID, and the three cases are
+not two:
+
+- A lane that **settled a board** stated its citations, and they subtract.
+- A lane that **declared an admissible absence** stated that it cites nothing. An absence
+  is an empty citation set and subtracts safely.
+- A lane that **failed** stated nothing, and nothing is not an empty set.
+
+The rule that makes "stated nothing" operational is that the complement **subtracts only
+what a restart could re-read**, because it has to be reconstructible from the same durable
+evidence the reveal is. A board clears that the moment the draft returns: its elements are
+on the whiteboard and its metadata is already persisted, so a lane that then throws on a
+later durable write has plainly said what it cites, and reading it as silent because no
+row survived the unwind would be matching on the absence of a record rather than on a
+positive contradiction. An absence is different, because nothing but its own durable write
+records it: if that write throws, no restart can re-read the declaration and the lane
+reads as one whose citations are unknown. A draft that threw before producing an outcome
+at all leaves nothing to subtract either way.
+
+When any core lane failed, the Noise lane does not settle a board at all. It settles as a
+typed failure naming the lanes whose citations are unknown. **That failure's
+classification is the named lanes', not an assumption about Noise.** It is retryable while
+any named lane still has attempts left — the sibling's retry is what makes this lane
+runnable again — and terminal when every named lane has exhausted its own ladder, because
+a derived lane whose cause is settled has no retry of its own to reach. The distinction is
+load-bearing on the restart path: a retryable account is read as evidence the generation
+must re-draft, so calling a derived failure retryable when its cause is terminal makes
+every generation carrying a terminal core failure re-draft all five lanes on every
+restart, spending a model to rebuild boards already on disk and arrive back at the same
+failure. A lane that threw without an account at all stays retryable: an unknown ladder is
+not an exhausted one.
+
+A complement taken over a partial set of siblings would present un-reviewed regions as
+safely skippable, which is the failure the lens exists to avoid; a partial complement is
+worse than no Noise board, because the reviewer cannot see which part of it is guesswork.
+
+**The lane runs last, and nothing waits on it.** The complement of boards that have not
+settled is not knowable, so the four core lanes fan out together and Noise starts on their
+settlements. That is a sequencing fact rather than a barrier: every core board still
+reveals the moment it lands. The cost is a tail on the generation's wall clock, accepted
+by ruling and measured rather than argued.
+
+**An empty complement is settled without a seat.** When the four lanes between them cited
+every changed region, the host knows the remainder is empty before any turn, and the lane
+settles `no-noise` with no Noise seat dispatched — the cheapest turn in the change. The
+reader-facing wording changed with the meaning: `no-noise` used to say that nothing here
+was safely skippable, and now says that every changed region is on another board, which
+is a different and much rarer claim.
+
+**The seat makes no judgement of any kind.** A member's `verdict` and its `judge` mark are
+host-stamped constants — `noise` and `deterministic` — and appear on no tool input, because
+each has exactly one admissible value once membership is derived, and a one-valued field
+offered to a seat states a choice that does not exist. The Noise seat has no verb that
+creates a member, none that removes one, and no settle-absent verb. Its update verb is how
+it parents a member into a group and writes that group's reason, and **the grouping is the
+only thing it can get wrong**: `finish` refuses to settle while any member is unparented or
+any group carries no reason.
+
+The assurance that nothing worth reading is filed as skippable now rests on the other four
+lenses' citation coverage, not on a Noise seat's second opinion. A hunk that matters and
+that no lens cited is a defect in the lens that missed it, and is answered there. The
+failure mode did not disappear; it moved from an invisible one — a hunk quietly filed as
+noise — to a visible one a reviewer can see, name and route.
+
 Fold counts are reader-facing domain objects, not raw element-kind tallies. The
 projection emits findings, decisions, requirements, steps, outcomes, groups,
 files, and comments from each section's direct children. Repeated code refs for
@@ -449,8 +678,8 @@ one path count as one file, and structural prose does not inflate the count. A
 pair with no persisted board answers `null`. A successful empty result is typed
 instead of persisted as a zero-element board: Design uses `no-spec`,
 Decisions uses `no-decisions`, Flagged uses `no-findings`, and Noise uses
-`no-noise`. An empty Design board is never an absence — only the seat's own
-`no-spec` return is. For the three core review lenses, material follows the topology the
+`no-noise` — which the host settles, not the seat. An empty Design board is never an
+absence — only the seat's own `no-spec` declaration is. For the three core review lenses, material follows the topology the
 client serves, not the flat element pool. Sequence needs a reachable
 `order_step`, Decisions a reachable `decision`, and Flagged a reachable `finding`.
 Prose-only boards, empty sections, and detached typed elements do not satisfy
@@ -573,6 +802,12 @@ kind, severity, cited code, and concurrence are typed fields, so a claim in the
 wrong shape fails to parse, not merely reads badly); the lint makes the
 mechanical rules guarantees; the prompts carry what only judgment can check. A
 rule that lives in a prompt alone is a wish.
+
+The tool surface is the same argument taken one step further. A rule the schema
+cannot express and the lint has to catch after the fact — a lens authoring
+another lens's kind, a reference to an element that does not exist — becomes a
+verb that was never offered or an argument that cannot resolve. What is left for
+the lint is what a call genuinely cannot decide on its own.
 
 ## Honest states
 

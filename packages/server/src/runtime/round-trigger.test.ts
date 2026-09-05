@@ -426,6 +426,46 @@ describe("C15 1.5 — the regeneration drafts over the POST-worker patchset", ()
   // must leave the boards drafting on the diff-derived inventories, which is the
   // behaviour before W5 -- never sink a landed round over a lint input.
 
+  it("hands the review's element-stream sink through to the round it starts", async () => {
+    // `lens-board-tools` D11, task 4.1. `round-collation.ts` is the ONE link between the
+    // composition root's per-review sink and the rounds runtime that stamps the generation
+    // onto it, and deleting that link left the whole feature dead in production with every
+    // other part of it correct and the whole server suite green. This is the seam, driven
+    // through the real `runBoardRegeneration`.
+    const { deps, seen } = reviewHarness();
+    const lensDrafts = {
+      opened: () => undefined,
+      write: () => undefined,
+      closed: () => undefined,
+    };
+    await runBoardRegeneration(
+      { ...deps, lensDrafts },
+      {
+        session,
+        repoRoot: "/repo",
+        priorPatchsetId: "ps-pre",
+        asksDispatched: ["t-1"],
+        worked: WORKED,
+      },
+    );
+    expect(seen[0]?.lensDrafts, "the sink reached the round input").toBe(lensDrafts);
+  });
+
+  it("starts a round with NO sink when the caller composed none", async () => {
+    // Absent is a real shape — a direct-call caller with no publication behind it — and it
+    // must stay absent rather than becoming an object that publishes nowhere.
+    const { deps, seen } = reviewHarness();
+    await runBoardRegeneration(deps, {
+      session,
+      repoRoot: "/repo",
+      priorPatchsetId: "ps-pre",
+      asksDispatched: ["t-1"],
+      worked: WORKED,
+    });
+    expect(seen[0]).toBeDefined();
+    expect("lensDrafts" in (seen[0] ?? {})).toBe(false);
+  });
+
   it("uses the tree inventory for citation grounding when the reader answers", async () => {
     const { deps, seen } = reviewHarness();
     await runBoardRegeneration(

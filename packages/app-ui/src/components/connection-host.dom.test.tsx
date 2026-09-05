@@ -1,10 +1,14 @@
 // @vitest-environment happy-dom
 //
 // The connections surface (#381, design D3): one component both shells mount that owns
-// daemon attachment. These drive the surfaces that carry the contract — the default
-// target renders the app, a switch remounts against a new bridge (closing the old), the
-// add-daemon flow exchanges a pairing code through a temporary bridge and persists the
-// tokened daemon, and a throwing localStorage degrades to the default without crashing.
+// daemon attachment. These drive what it still OWNS after the corner switcher pill was
+// removed — the default target renders the app against its own bridge, a stored daemon
+// with a bad endpoint never becomes the active one, a throwing localStorage degrades to
+// the default without crashing, and the daemon-lost banner below.
+//
+// Switching daemons and pairing one are now driven only through the capabilities context
+// (`connectSource` / `pairAtAddress`); their tests live with the surfaces that call them,
+// in `project/add-remote-dialog.dom.test.tsx`, over this same real shell.
 import type { CommandName, RennetBridge } from "@rennet/protocol";
 import { StrictMode } from "react";
 import { describe, expect, it, type Mock, vi } from "vitest";
@@ -32,15 +36,18 @@ function stubBridge(
 }
 
 describe("ConnectionHost (#381)", () => {
-  it("renders the app against the default target and names it", () => {
+  it("renders the app against the default target, and no corner daemon switcher", () => {
     const bridge = stubBridge();
     const createBridge = vi.fn(() => bridge);
-    const { getByLabelText } = mount(
+    const { container, queryByLabelText } = mount(
       <ConnectionHost createBridge={createBridge} defaultTarget={LOCAL} />,
     );
 
     expect(createBridge).toHaveBeenCalledWith(LOCAL);
-    expect(getByLabelText(/Connected to This machine/)).toBeTruthy();
+    // The app really mounted, so the absence below is a removed pill and not a blank
+    // render silently satisfying every `query*` in this file.
+    expect(container.querySelector('[data-region="sidebar"]')).toBeTruthy();
+    expect(queryByLabelText(/Switch daemon/)).toBeNull();
   });
 
   it("hydrates the default target with a saved token for the same authority", async () => {
@@ -94,109 +101,6 @@ describe("ConnectionHost (#381)", () => {
     await waitFor(() => expect(live.invoke).toHaveBeenCalled());
   });
 
-  it("switches to a saved daemon by remounting against a new bridge and closing the old", async () => {
-    globalThis.localStorage.setItem(
-      "rennet.daemons",
-      JSON.stringify({
-        daemons: [
-          {
-            id: "daemon:remote-1",
-            label: "Laptop",
-            host: "100.1.2.3",
-            port: 7411,
-            deviceToken: "tok-1",
-          },
-        ],
-      }),
-    );
-    const local = stubBridge();
-    const remote = stubBridge();
-    const createBridge = vi.fn((target: ConnectionTarget) =>
-      target.id === "local" ? local : remote,
-    );
-
-    const { getByLabelText, getByRole, getByText, user } = mount(
-      <ConnectionHost createBridge={createBridge} defaultTarget={LOCAL} />,
-    );
-
-    await user.click(getByLabelText(/Switch daemon/));
-    // The switcher popup is a NAMED dialog (it holds a pairing form, not a menu).
-    await waitFor(() => expect(getByRole("dialog", { name: "Connection switcher" })).toBeTruthy());
-    await user.click(getByText(/Laptop/));
-
-    await waitFor(() =>
-      expect(createBridge).toHaveBeenCalledWith(expect.objectContaining({ id: "daemon:remote-1" })),
-    );
-    expect(local.close).toHaveBeenCalled();
-    expect(JSON.parse(globalThis.localStorage.getItem("rennet.daemons") ?? "{}").activeId).toBe(
-      "daemon:remote-1",
-    );
-  });
-
-  it("adds a daemon by exchanging the pairing code and persisting the tokened target", async () => {
-    const local = stubBridge();
-    const pairing = stubBridge({
-      "pairing.exchange": { deviceToken: "new-token", deviceId: "dev-9" },
-    });
-    const createBridge = vi.fn((target: ConnectionTarget) =>
-      target.id.startsWith("pairing:") ? pairing : local,
-    );
-
-    const { getByLabelText, getByText, getByPlaceholderText, user } = mount(
-      <ConnectionHost createBridge={createBridge} defaultTarget={LOCAL} />,
-    );
-
-    await user.click(getByLabelText(/Switch daemon/));
-    await user.click(getByText(/Add a daemon/));
-    await user.type(getByPlaceholderText(/or host:port/), "100.9.9.9:7411");
-    await user.type(getByPlaceholderText(/8 characters/), "ABCD2345");
-    await user.click(getByText(/Pair and add/));
-
-    await waitFor(() =>
-      expect(pairing.invoke).toHaveBeenCalledWith("pairing.exchange", {
-        code: "ABCD2345",
-        deviceName: "100.9.9.9",
-      }),
-    );
-    await waitFor(() => {
-      const stored = JSON.parse(globalThis.localStorage.getItem("rennet.daemons") ?? "{}");
-      expect(stored.daemons).toEqual([
-        {
-          id: "daemon:dev-9",
-          label: "100.9.9.9",
-          host: "100.9.9.9",
-          port: 7411,
-          deviceToken: "new-token",
-        },
-      ]);
-    });
-    expect(pairing.close).toHaveBeenCalled();
-  });
-
-  it("announces the connection state truthfully — offline, not 'Connected' (#383)", async () => {
-    let emit: ((status: ConnectionStatus) => void) | undefined;
-    const createConnection = (): Connection => ({
-      bridge: stubBridge(),
-      subscribe: (listener) => {
-        emit = listener;
-        listener({ state: "online" }); // starts connected
-        return () => undefined;
-      },
-      close: () => undefined,
-    });
-    const { getByLabelText, queryByLabelText } = mount(
-      <ConnectionHost createConnection={createConnection} defaultTarget={LOCAL} />,
-    );
-    // Online: the plain connected label (unchanged from the legacy path).
-    await waitFor(() => expect(getByLabelText(/Connected to This machine/)).toBeTruthy());
-    // Socket drops → the indicator says offline/reconnecting, never a false "Connected".
-    act(() => emit?.({ state: "offline" }));
-    await waitFor(() =>
-      expect(getByLabelText(/Offline from This machine, reconnecting/)).toBeTruthy(),
-    );
-    expect(queryByLabelText(/Connected to This machine/)).toBeNull();
-  });
-
   it("degrades to the default when localStorage throws", () => {
     const original = globalThis.localStorage.getItem;
     globalThis.localStorage.getItem = () => {
@@ -204,10 +108,9 @@ describe("ConnectionHost (#381)", () => {
     };
     try {
       const bridge = stubBridge();
-      const { getByLabelText } = mount(
-        <ConnectionHost createBridge={() => bridge} defaultTarget={LOCAL} />,
-      );
-      expect(getByLabelText(/Connected to This machine/)).toBeTruthy();
+      const createBridge = vi.fn(() => bridge);
+      mount(<ConnectionHost createBridge={createBridge} defaultTarget={LOCAL} />);
+      expect(createBridge).toHaveBeenCalledWith(LOCAL);
     } finally {
       globalThis.localStorage.getItem = original;
     }
@@ -231,51 +134,14 @@ describe("ConnectionHost (#381)", () => {
     );
     const bridge = stubBridge();
     const createBridge = vi.fn(() => bridge);
-    const { getByLabelText, queryByText, user } = mount(
-      <ConnectionHost createBridge={createBridge} defaultTarget={LOCAL} />,
-    );
+    mount(<ConnectionHost createBridge={createBridge} defaultTarget={LOCAL} />);
 
+    // It was the stored `activeId`; dropping it must fall back to the default target,
+    // and it must never be dialled — not merely be missing from some list.
     await waitFor(() => expect(createBridge).toHaveBeenCalledWith(LOCAL));
-    await user.click(getByLabelText(/Switch daemon/));
-    expect(queryByText("Corrupt daemon")).toBeNull();
-  });
-
-  it("rejects an out-of-range port without leaving the pairing form busy", async () => {
-    const bridge = stubBridge();
-    const createBridge = vi.fn(() => bridge);
-    const { getByLabelText, getByPlaceholderText, getByRole, getByText, user } = mount(
-      <ConnectionHost createBridge={createBridge} defaultTarget={LOCAL} />,
+    expect(createBridge).not.toHaveBeenCalledWith(
+      expect.objectContaining({ id: "daemon:corrupt" }),
     );
-
-    await user.click(getByLabelText(/Switch daemon/));
-    await user.click(getByText(/Add a daemon/));
-    await user.type(getByPlaceholderText(/or host:port/), "host:70000");
-    await user.type(getByPlaceholderText(/8 characters/), "ABCD2345");
-    await user.click(getByText(/Pair and add/));
-
-    expect(getByRole("alert").textContent).toContain("Enter a host");
-    expect((getByText("Pair and add") as HTMLButtonElement).disabled).toBe(false);
-    expect(createBridge).toHaveBeenCalledTimes(1);
-  });
-
-  it("clears the pairing busy state when temporary bridge construction throws", async () => {
-    const bridge = stubBridge();
-    const createBridge = vi.fn((target: ConnectionTarget) => {
-      if (target.id.startsWith("pairing:")) throw new Error("bridge construction failed");
-      return bridge;
-    });
-    const { getByLabelText, getByPlaceholderText, getByRole, getByText, user } = mount(
-      <ConnectionHost createBridge={createBridge} defaultTarget={LOCAL} />,
-    );
-
-    await user.click(getByLabelText(/Switch daemon/));
-    await user.click(getByText(/Add a daemon/));
-    await user.type(getByPlaceholderText(/or host:port/), "host:7411");
-    await user.type(getByPlaceholderText(/8 characters/), "ABCD2345");
-    await user.click(getByText(/Pair and add/));
-
-    expect(getByRole("alert").textContent).toContain("bridge construction failed");
-    expect((getByText("Pair and add") as HTMLButtonElement).disabled).toBe(false);
   });
 });
 
@@ -462,7 +328,10 @@ describe("ConnectionHost — daemon-lost banner (PR #405 follow-up)", () => {
     await user.click(getByText("Retry"));
     // The re-dial seam: exactly one close of the dead connection BEFORE the fresh dial.
     await waitFor(() => expect(events).toEqual(["create", "close", "create"]));
-    // The fresh connection reports online (its subscribe fires immediately): banner gone.
-    expect(getByRole("button", { name: /Connected to This machine/ })).toBeTruthy();
+    // The fresh connection reports online (its subscribe fires immediately), so the SAME
+    // banner swaps from the failure to the reconnected note. (The old assertion here read
+    // the corner indicator's "Connected to …" label, which was true alongside the banner,
+    // not instead of it — the banner is what this redial actually changes.)
+    expect(getByRole("status").textContent).toContain("Reconnected to the review daemon.");
   });
 });

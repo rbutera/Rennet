@@ -71,7 +71,7 @@ export function ProjectsPage() {
       </div>
 
       <IdentitySection project={project} />
-      <WorktreeSection project={project} />
+      <WorktreeSection />
       <RepositorySection project={project} host={host} />
       <TrackerSection project={project} host={host} />
       <GuidanceSection project={project} />

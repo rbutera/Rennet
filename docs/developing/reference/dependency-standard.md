@@ -50,8 +50,10 @@ Distributed dependencies may use the compatible licences allowlisted in
 packaged artifact and are collected in `THIRD-PARTY-LICENSES.md` (regenerate with
 `pnpm notices`).
 
-Self-hosted Geist, Geist Mono, Fraunces, and Newsreader assets use OFL-1.1. The
-font licence applies to the font files, not Rennet's FSL-1.1-MIT source.
+Self-hosted Geist and Geist Mono assets use OFL-1.1. The font licence applies to
+the font files, not Rennet's FSL-1.1-MIT source. (Fraunces and Newsreader were
+dropped from the app on 2026-09-04 when the serif voice was retired; the
+marketing and documentation sites carry their own fonts and their own notices.)
 
 The Anthropic Agent SDK and its platform packages are named exceptions because
 pnpm reports their commercial licence as `Unknown`. The gate does not allow the
@@ -147,9 +149,18 @@ Run repository work through `pnpm nx`. The full gate is:
 pnpm check
 ```
 
-It runs `format`, `architecture`, `licenses`, `lint`, `typecheck`, `test`, and
-`build`. Every cacheable target declares all files and environment values that
-can change its result, plus every generated output directory.
+It runs `format`, `architecture`, `licenses`, `vendor-ledger`, `lint`,
+`typecheck`, and `build`, then `test` and `dogfood-test` together. Every
+cacheable target declares all files and environment values that can change its
+result, plus every generated output directory.
+
+A `dogfood-test` target is for a suite that reads the live rennet checkout — its
+own `.git`, at whatever commit the working tree is on. That state is
+unhashable, so such a suite gets its own uncached target instead of making its
+package's whole `test` target uncacheable, and its files are named
+`*.dogfood.test.ts` so `test` can exclude them by glob. `pnpm check` schedules
+both targets in one `run-many`, so a slow dogfood suite runs beside the other
+packages' tests rather than in front of them.
 
 Do not include credentials, timestamps, absolute machine paths, harness state,
 user repositories, or undeclared ambient state in cache inputs or outputs.
@@ -198,10 +209,13 @@ constructor remains explicitly unsupported; WSL uses its staged Linux host.
 
 Native artifacts and their semantic verdicts depend on the operating system,
 architecture, compiler, linker, SDK, and generator environment. The adapter's
-`build`, `test`, and `native-test` targets therefore remain uncached until Nx
-models the complete toolchain identity. The determinism target proves two
-fresh builds are byte-identical on one build host; it does not make artifacts
-portable across hosts. Windows native CI is fixed to `windows-2022` because the
+`build` and `native-test` targets therefore remain uncached until Nx models the
+complete toolchain identity. The adapter's `test` target is cached: the only
+files in it that load a native artifact are the two the uncached `native-test`
+target names, and CI runs `native-test` on Ubuntu, macOS, and Windows on every
+run, so a toolchain change cannot reach a merge behind a `test` cache hit. The
+determinism target proves two fresh builds are byte-identical on one build
+host; it does not make artifacts portable across hosts. Windows native CI is fixed to `windows-2022` because the
 ruled Electron `node-gyp` revision recognises Visual Studio only through 2022;
 the auto-release Windows build uses the same host because desktop builds
 traverse to the adapter build.

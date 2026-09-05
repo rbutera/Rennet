@@ -98,7 +98,7 @@ export const MARKS: Mark[] = [
   {
     id: "dispatch",
     title: "Dispatch",
-    body: "Asks become a work order. Dispatch runs them in a detached worktree and returns a fresh board.",
+    body: "Asks become a work order. Dispatch runs it in this session's workspace, commits there, and returns a fresh board.",
     side: "inline-end",
     align: "center",
   },

@@ -273,7 +273,7 @@ export function checkImmutability(before: DraftBoard, after: DraftBoard): Violat
  * citation actually POINTS AT is checked by lint against `ctx.regions`, which is the
  * check that can fail.
  */
-function stampPatchsetId(board: DraftBoard, patchsetId: string | undefined): DraftBoard {
+export function stampPatchsetId(board: DraftBoard, patchsetId: string | undefined): DraftBoard {
   if (patchsetId === undefined) return board;
   return {
     ...board,

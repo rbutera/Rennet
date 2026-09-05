@@ -586,3 +586,63 @@ export function renderRepairTurn(
     `Your last board did not pass. Fix ONLY these issues:\n${issues}\n\nReturn a PATCH board: the elements you are fixing, corrected, plus any new element you need. These ids are already accepted and are kept verbatim by the host — do not resend them; references to them remain valid:\n${frozen}\n\nEach issue names the element it is about; pointer paths index the board you just sent.`,
   );
 }
+
+/**
+ * One pointer of a `finish` verdict: the board's own vocabulary, which is an element ref
+ * rather than a JSON path into a returned document.
+ */
+export interface BoardVerdictPointer {
+  readonly ruleId: string;
+  /** `<elementId>` or `<elementId>/<field>` — the board holds it and the seat can address it. */
+  readonly elementRef: string;
+  readonly message: string;
+}
+
+/**
+ * The repair turn for a seat that WRITES its board (`lens-board-tools` D6).
+ *
+ * The follow-up carries the last `finish` verdict and nothing else. It does not carry the
+ * base instructions, the board, or a draft — the seat's thread already holds the first,
+ * and the board itself holds the other two, because the seat is writing into a board that
+ * survives the turn that left it unsettled rather than returning a document each time.
+ *
+ * Three verdicts and three different sentences, because they are three different facts:
+ *
+ * - **No verdict.** The turn ended without ever calling `finish` — it ran out of context,
+ *   the harness died, the seat stopped. There is nothing to correct, so the instruction is
+ *   to carry on with the board as it stands.
+ * - **A verdict with pointers.** The correction, and the only thing the seat needs.
+ * - **An empty verdict.** `finish` settled and then the board moved. Nothing is wrong; the
+ *   claim just no longer describes the board, so it is asked again.
+ *
+ * Bounded like every other interpolation: each pointer line is capped first so one
+ * enormous message cannot starve the list, then the list is capped with an honest marker.
+ */
+export function renderBoardRepairTurn(verdict: readonly BoardVerdictPointer[] | undefined): string {
+  if (verdict === undefined) {
+    return renderLayer(
+      "task",
+      "Your last turn ended without calling `finish`. Everything you wrote is still on the board — keep writing into it, and call `finish` when it is done.",
+    );
+  }
+  if (verdict.length === 0) {
+    return renderLayer(
+      "task",
+      "`finish` settled your board and then it changed. Call `finish` again so the settlement describes the board as it now stands.",
+    );
+  }
+  const issues = boundedJoin(
+    verdict.map((pointer) =>
+      capBytes(
+        `- ${pointer.ruleId} at ${pointer.elementRef}: ${pointer.message}`,
+        REPAIR_POINTER_LINE_MAX_BYTES,
+      ),
+    ),
+    REPAIR_POINTERS_MAX_BYTES,
+    "pointers",
+  );
+  return renderLayer(
+    "task",
+    `\`finish\` did not settle your board. Fix these on the board you already have, then call \`finish\` again:\n${issues}`,
+  );
+}

@@ -44,6 +44,37 @@ the repository's current state. Regeneration performs a new capture and derives
 a successor review state. The product does not present a mutated old artifact as
 fresh.
 
+### What the repository watcher watches
+
+The watcher answers one question — has the tree moved since the review was
+pinned — and it answers it by watching files, one operating-system watch per
+file. That count is the daemon's supply of file descriptors, so what the watcher
+declines to watch is a correctness rule about the daemon staying alive, not a
+performance tuning knob.
+
+It declines on the repository's own terms. A single `git ls-files --others
+--ignored --exclude-standard --directory` per watched root asks git which entries
+its ignore rules exclude, so nested `.gitignore` files, negations, the global
+excludes file, and `.git/info/exclude` all decide the answer, and the watcher
+agrees with capture — which excludes ignored files too — rather than approximating
+it. `.git`, `.nx`, and `node_modules` are excluded underneath that, because git
+never reports its own directory and because the other two are worth pruning even
+where git cannot be asked. The app-owned `.rennet/boards/` prefix is excluded by
+the shared authority described below.
+
+Above the rules sits a hard bound: half the process's own descriptor limit, and
+never more than 32,768 entries. A root larger than that is watched in part, and
+the watcher says so once, naming the root and the count — and then refuses to
+vouch for the tree at all, so every freshness ask falls through to a real diff.
+A partial watcher's silence means nothing, exactly as an unfinished initial walk's
+silence means nothing, and neither is allowed to answer "unchanged".
+
+The bound exists because the failure it prevents is not a stale review. A watcher
+that takes every descriptor makes every subsequent `spawn` fail, which takes down
+the coding-harness sidecar, the lens lanes, and the chat dock — subsystems whose
+error messages then name themselves rather than the cause. When a spawn does fail
+for want of descriptors, the message a reader sees says so.
+
 ## Repo Map and project context
 
 The Repo Map is a deterministic project snapshot. It records what reading the
@@ -152,6 +183,10 @@ durable halves. All element writes route through the adapters
 A restarted round reuses a reserved report only when the exact report metadata
 and board state reconstruct and pass the same changed-line verification again.
 Partial lens boards are replaced as one attempt, not resumed element by element.
+Within one attempt a partial board IS resumed: a seat writes its board call by call and a
+turn that ends without finishing it leaves what it wrote in place, so the follow-up turn
+carries the last whole-board verdict and continues into the same board. The two are not in
+tension — the durable replacement unit is the attempt; the live unit inside it is the call.
 Recovery removes a partial board's metadata before clearing its element log. A
 crash at either point therefore leaves the next retry able to repeat the cleanup;
 it cannot treat elements scheduled for replacement as a completed board.
@@ -167,6 +202,20 @@ Model and harness traffic leaves the machine for the selected provider. Rennet
 has no hosted backend. The review patchset, Repo Map, and local state remain
 local except for the context deliberately supplied to an installed harness or
 external service as part of a requested operation.
+
+Tool servers the daemon supplies to a harness turn are **bound to the local interface**, so
+a tool call is not egress. The board server a lens seat writes through is one of these: an
+HTTP MCP listener on `127.0.0.1` that the daemon owns, addressed per seat, described in
+[T3 Code sidecar](./t3code-sidecar.md#the-board-server). Its credential reaches the harness
+child by environment variable and is on no argument list.
+
+**No output schema travels on a lens seat's turn.** A seat writes its board through that
+server and returns no document, so nothing binds its session, nothing is parsed back off
+it, and no structured payload appears as a message on its thread. A seat's final assistant
+message is prose or nothing, and a turn that ends without one is not a failure on that
+ground. The turn-level structured-output contract still exists and is still sent exactly
+once, as the provider's own output format rather than as prompt text — but the only board
+job that carries one now is the round-report seat, which still returns a document.
 
 A session binds to exactly **one workspace** when it is created and keeps that binding for
 its whole life: the reviewer's own checkout when some worktree of the repository already has
@@ -184,6 +233,9 @@ a pull-request binding is re-pinned in place when the reviewed head moves. Workt
 versions created per review are removed by a startup sweep that leaves any directory a live
 session is bound to, and nothing creates that layout again. The coding round runs in the
 bound workspace like every other child of the session; no per-round worktree is created.
+A round runs on a sidecar thread of its **own**, keyed on the session and the round's durable
+operation, created with that bound workspace — never on the session's chat thread, which is
+the reviewer's conversation.
 
 Coding-agent handoff is an acting path. The agent receives a digest-bound bundle,
 works in the repository, and may write, test, commit, and push. Rennet then
@@ -205,8 +257,39 @@ branch and contain the reviewed commit; a branch name alone is not a repository
 identity, and a workspace failing either test is a refused round naming what it
 looked for, never a commit somewhere the reviewer cannot see. The sidecar's per-turn
 checkpoint is the round's receipt: the round account names the workspace root and
-that checkpoint, and restart recovery settles from it — honouring the checkpoint's
-own status, since a failed turn checkpoints too.
+that checkpoint — which identifies the round's own thread — and restart recovery settles
+from it, honouring the checkpoint's own status, since a failed turn checkpoints too. That
+checkpoint diffs the working tree, so a worker that committed leaves it clean: when the
+checkpoint's diff is empty and the bound root's commit range for the round is not, the
+receipt's diff and changed paths come from that range, and a round that moved the branch is
+never reported as having changed nothing. That range is `sourceHead..HEAD` whole: every
+commit landing on the branch during the turn is attributed to the round's worker, because
+the checkpoint is a working-tree snapshot and T3 exposes no per-commit worker identity to
+tell a concurrent human commit apart from the worker's. This is the same range the commit
+count already reports, so nothing new enters scope — but the receipt cannot filter a commit
+another hand landed in the window, and does not claim to. The two reads that build that
+receipt — the changed-path list and the diff — are pinned to one resolved HEAD OID, so they
+always describe the same range even if a commit lands between them.
+
+Restart recovery attributes a checkpoint to an attempt by a completion-time window, because
+T3 exposes no per-turn identity a recovering attempt could match against. A round's retry
+attempts share one thread (`{kind: "round", sessionId, operationId}`), and recovery reads the
+last checkpoint completed at or after the attempt started. A running or uncheckpointed turn
+carries no turn count on the thread — only a settled checkpoint does — so a later attempt
+cannot record a high-water that excludes an earlier attempt's turn still in flight. A narrow
+double-daemon-death interleave can therefore misattribute a sibling attempt's late checkpoint:
+attempt one outlives a daemon and checkpoints after attempt two has started, and if the daemon
+dies again before attempt two checkpoints, attempt two's recovery adopts attempt one's
+checkpoint. Closing this needs a per-turn identity (the turn's `turnId`) captured durably at
+turn-start into the attempt record — a tracked change, not a heuristic.
+
+**Rennet does not run the repository's check.** A round has no gate step: after the turn
+settles, the next thing Rennet does is observe the commits. When the project scout has
+discovered a check command, the round's work order tells the worker to run it before
+committing, to commit only when it passes, and to say why in its final message when it does
+not; when the scout found no command, the work order says nothing about one. Running the
+check in the bound worktree after the turn cost six and a half minutes and left an exit code
+as its only durable trace (Rai, 2026-09-04).
 
 The first work-order round resolves one enabled installed Claude Code or Codex
 harness in the repository's execution locus and pins that provider to the durable

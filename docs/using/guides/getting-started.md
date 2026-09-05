@@ -89,8 +89,10 @@ detected and how many it guessed. The structural map is built when the scout
 returns. The header status reads *scouting*, then *indexing*, then *indexed*.
 
 While the map builds, a prefilled questionnaire offers the project's setup for
-a look: issue tracker, default branch, worktree location, gate command, and the
-project's mark. Every answer carries a chip reading **detected** or **guessed** —
+a look: issue tracker, default branch, check command, and the project's mark. The
+check command is what a coding round's work order asks its agent to run before
+committing; Rennet never runs it itself. Every answer carries a chip reading
+**detected** or **guessed** —
 the value, provenance, and evidence line come from the scout record Rennet just
 saved, rather than from canned UI defaults. A detected logo path remains cosmetic:
 it is evidence for choosing one of the fixed sidebar glyphs in **Settings →
@@ -135,7 +137,10 @@ teammate PR.
 project shows that project's branches and pull requests in one list. Local
 branch rows appear immediately; pull-request rows join as each repository
 finishes loading, and the progress names the repository being read rather than
-guessing a percentage. If GitHub is unreachable, local work stays available.
+guessing a percentage. If the project's forge is unreachable, local work stays
+available. The left rail filters by attention, ownership, local branches, or
+pull requests. **Created** and **Activity** are sortable column headers, and
+**Show merged PRs** adds faded historical rows to the same list.
 The back arrow or Escape leaves New Chat for the surface you came from. When the
 filter contains text, the first Escape clears it and the next leaves.
 
@@ -144,7 +149,8 @@ Rennet mints the session, claims that target, and takes you into it immediately.
 
 The workspace opens at once, on **the bench**: its first frame, inside the same
 shell as everything else, with the sidebar, the session top bar and the chat
-slot already around it. The change itself is the centrepiece — the branch or
+column already open around it. The chat's own thread is being made while the
+capture runs, so the column says so until it is ready rather than looking empty. The change itself is the centrepiece — the branch or
 pull request you started from, and once capture settles, how many files were
 captured. Capture is the bench's first beat rather than a page in front of it:
 two named steps, *resolving the repository* then *capturing the change*, with
@@ -169,8 +175,11 @@ off its own thread: the file it is reading, the command it is running, or the
 last thing it said. A seat that has gone quiet says so instead of freezing on
 its last line. A settled reader's board opens on the bench right beneath the
 readers, readable at once while the other seats keep working — you do not wait
-for the slowest lens to read the fastest one's board. A failed reader speaks the
-reason it failed, rather than spinning forever.
+for the slowest lens to read the fastest one's board. The bench scrolls, so a
+board that lands below the fold is still reachable, and a line above the stack
+says the stack is still being built: what is on the bench is the lenses that
+finished early, not the finished review. A failed reader speaks the reason it
+failed, rather than spinning forever.
 
 Every reader's line is also a control: activating it opens that seat's full
 transcript in the chat slot, read-only, and it keeps streaming while the seat
@@ -181,14 +190,12 @@ one.
 
 You can leave the bench without stopping the work, or cancel and retry it in
 place. A failed capture or board generation keeps the session and names the
-failed stage instead of dropping the review. Anything already typed in the
-composer travels with you as the opening ask, waiting in the chat box rather
-than being sent for you. When preparation settles, the bench gives way to the
-populated review workspace.
+failed stage instead of dropping the review. When preparation settles, the
+bench gives way to the populated review workspace. The target picker has no
+composer; project-wide conversation remains in the orchestrator chat beside it.
 
 What gets captured depends on the row. A pull-request row opens that pull
-request's diff. The pinned **Current Checkout** row captures your working tree,
-uncommitted edits included. A local branch row captures that branch's own
+request's diff. A local branch row captures that branch's own
 commits — everything since it left the project's primary branch — **without
 checking it out**. Nothing on disk moves, and you can review a branch you are not
 standing on.
@@ -211,9 +218,7 @@ appears to do nothing.
 
 A claimed target leaves the list, so two sessions can never fight over one
 branch; clicking the same target again returns you to the session that owns it
-rather than starting a second. The pinned **Current Checkout** row is the
-exception: it starts a session about the project as a whole, claims nothing, and
-so never leaves the list. Sessions nest under their
+rather than starting a second. Sessions nest under their
 project in the sidebar, each leading with the target icon its claim proves — a
 branch glyph, or a pull-request glyph once the session claims a PR. Whether a
 teammate authored that PR, and whether its review is waiting on you, are not
@@ -332,7 +337,10 @@ comments key to new-side line numbers, so a requested change carries a real
 diff position.
 
 **Say it in chat.** The chat column beside the surface is the review's T3 Code
-thread, and it travels with you across every board. Ask it about the change and it
+thread, and it travels with you across every board. It is **open when you arrive**
+— it holds the conversation about this review, not an optional extra panel — and
+`⌘J` closes it if you want the room. A close is yours: it stays shut, through every
+navigation, until you open it again. Ask it about the change and it
 runs a real turn on your own installed harness, working in this review's checkout,
 and streams the answer back as it arrives. The thread persists in the sidecar, so it
 is still there after a reload. Asking about a highlighted span sends your question
@@ -440,15 +448,25 @@ flowchart LR
 ```
 
 An accepted dispatch moves you to the live run: your workspace being opened, the
-round's asks being applied, the worker's activity as a table of steps, your
-project's gate command running and resolving, the commits, and the round report
-being drafted and checked. The round works in the workspace this session is bound
-to and commits on your branch there — Rennet makes no separate checkout for it, and
-it never stages anything on your behalf: the round's commits are the ones its agent
-made. The round report names the workspace it ran in and the checkpoint the turn
-left, so you can see where the work happened and which turn produced it. Closing and reopening the run, or
-following its direct link on another launch, resumes from the latest saved step
-without dispatching the work again.
+round's asks being applied, the worker's activity as a table of steps, the commits,
+and the round report being drafted and checked. The round works in the workspace this
+session is bound to and commits on your branch there — Rennet makes no separate
+checkout for it, and it never stages anything on your behalf: the round's commits are
+the ones its agent made.
+
+**Rennet does not run your project's check.** The round's agent does. If the scout
+found a check command for this project, the work order tells the agent to run it
+before committing, to commit only when it passes, and to say why in its closing
+message when it does not — so a failing check reads as the agent's own account of
+what went wrong, in its transcript, rather than as an exit code with nothing behind
+it. If no check command was found, the work order says nothing about one.
+
+Each round runs on its **own** transcript, separate from the chat you have with
+Rennet about the review. The round report names the workspace it ran in and the
+thread and checkpoint the turn left, so you can see where the work happened, which
+turn produced it, and the thread id its transcript is saved under. Closing and reopening
+the run, or following its direct link on another launch, resumes from the latest
+saved step without dispatching the work again.
 
 As soon as Rennet has saved and checked the report, it takes you back to the
 review and shows that report. It does not wait for every board to finish. If you
@@ -458,7 +476,7 @@ failure screen and keeps the incomplete boards hidden. The session row reads
 *Round N is back* only after the round finishes, using its saved ledger number.
 
 The **round report** is what greets you while the boards regenerate. It states what
-the round did, where it ran, and how the gate came back, then lists one item per
+the round did and where it ran, then lists one item per
 ask: **Addressed**, **Partial**, **Untouched**, or **Beyond the Asks** for work
 the round did that you never requested. Every outcome is verified against the
 round's diff rather than taken from the worker's word, and each item names the
@@ -561,12 +579,17 @@ pages:
   history of recorded runs, each broken down by stage and grouped by the harness
   mode its stages actually name. The list is paged and states how many runs it is
   showing out of how many were recorded. Nothing here leaves your machine.
-- **Projects** — scoped to one project: its name and mark, worktree location
-  and naming pattern, review context, issue tracker, and the guidance rules the
-  review agents read. The name is live — renaming here renames the sidebar row,
-  and emptying it restores the project's `org/repo` identity. The mark, worktree,
-  issue-tracker and guidance editors have no store behind them yet; they render
-  disabled and say so, rather than accepting edits that would vanish.
+- **Projects** — scoped to one project: its name and mark, review context, issue
+  tracker, and the guidance rules the review agents read. The name is live —
+  renaming here renames the sidebar row, and emptying it restores the project's
+  `org/repo` identity. **Worktrees** is a statement, not a setting: it names where a
+  review binds — your own checkout when it already has the reviewed branch out;
+  otherwise a worktree Rennet makes under its data directory, in `worktrees/`, filed
+  by repository and then by branch; and for a pull request a detached checkout in the
+  same place, filed by owner and repository as `pr-<number>`. It also says that a
+  coding round is a turn in that workspace rather than a worktree of its own. Editors
+  the daemon has no store for render disabled and say so, rather than accepting edits
+  that would vanish.
 
 Every layered value shows a chip naming where it resolved from — builtin,
 detected, global, or repo — and every section states the file behind it.
@@ -595,7 +618,8 @@ replace that bundle and relaunch Rennet. The new app starts its matching daemon
 and reconnects to the durable review state. On macOS, Rennet also arms a small
 out-of-bundle relaunch helper before ShipIt replaces the app, so a successful
 install still reopens when the native updater omits its own relaunch. If the owned daemon cannot stop,
-Rennet stays open and reports the failure instead of closing without installing.
+Rennet stays open, starts its daemon again, and reports the failure instead of
+closing without installing — so the app you are left with still works.
 If macOS or Windows rejects the native install handoff after closing the window,
 Rennet restarts its daemon, restores the window, and shows the updater error so
 you can retry from the same review state.

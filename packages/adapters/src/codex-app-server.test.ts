@@ -944,3 +944,174 @@ describe("defaultSpawnAppServer", () => {
     conn.kill();
   });
 });
+
+// ── #851: a spawn that fails must not be able to kill the daemon ───────────────
+//
+// The mechanism, read out of execa's source rather than guessed at. When
+// `child_process.spawn` throws SYNCHRONOUSLY, execa takes its `handleEarlyError` path
+// (`execa/lib/return/early-error.js`), which hands back a dummy subprocess whose stdio
+// are `new PassThrough()` streams that have been `end()`ed. Writing to one of those is
+// `ERR_STREAM_WRITE_AFTER_END`, delivered as an `'error'` EVENT on the stream rather than
+// thrown — so no `try` around `send` can see it, and an unhandled `'error'` event on an
+// EventEmitter is process termination. That is #851's stack exactly, down to "Emitted
+// 'error' event on PassThrough instance".
+//
+// And it is why #851 is downstream of #850: `spawn` throws synchronously when it cannot
+// get descriptors for the child's pipes, which is precisely the state the watcher left the
+// daemon in. Five daemon deaths in forty minutes, each taking every in-flight review.
+//
+// A `cwd` that is a file rather than a directory is the same synchronous throw, reachable
+// without exhausting a real machine's descriptors — verified to produce an ended
+// `PassThrough` stdin, the same object the crash landed on.
+//
+// These tests install an `uncaughtException` listener, which is what makes the assertion
+// readable: Node hands the error to a listener instead of terminating, so the test asserts
+// the list is EMPTY rather than asserting on a dead worker. What that cannot catch: the
+// daemon has no such listener, so in production this path is termination, not a recorded
+// object. The listener changes the consequence, not whether the error happens.
+describe("a spawn that fails under the handshake's feet (#851)", () => {
+  /** Run `body` with process-level uncaught errors captured rather than fatal. */
+  async function withUncaughtCaptured(body: () => Promise<void>): Promise<unknown[]> {
+    const caught: unknown[] = [];
+    const listener = (error: unknown): void => {
+      caught.push(error);
+    };
+    process.on("uncaughtException", listener);
+    try {
+      await body();
+      // The stream's `'error'` is emitted asynchronously, after the `write` returns.
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    } finally {
+      process.off("uncaughtException", listener);
+    }
+    return caught;
+  }
+
+  /** A plain file, usable as the invalid `cwd` that makes `spawn` throw. */
+  async function fileUsableAsCwd(): Promise<{ file: string; cleanup: () => Promise<void> }> {
+    const { writeFile } = await import("node:fs/promises");
+    const dir = await mkdtemp(join(tmpdir(), "rennet-851-"));
+    const file = join(dir, "not-a-directory");
+    await writeFile(file, "x");
+    return { file, cleanup: () => rm(dir, { recursive: true, force: true }) };
+  }
+
+  it("survives sending to the ended stdin execa hands back when spawn throws", async () => {
+    const { file, cleanup } = await fileUsableAsCwd();
+    let exit: AppServerExit | undefined;
+    try {
+      const caught = await withUncaughtCaptured(async () => {
+        const conn = defaultSpawnAppServer({
+          bin: process.execPath,
+          args: ["-e", "process.exit(0)"],
+          cwd: file,
+        });
+        // The write that killed the daemon: the same call `probeAppServerHandshake` makes
+        // in the tick after the spawn, onto a stream that is already ended.
+        conn.send({ id: 1, method: "initialize", params: {} });
+        exit = await conn.exit;
+        conn.kill();
+      });
+      // Non-vacuous: the spawn really did fail, so the write really was to a dead stream.
+      // A run where the child started would make the empty-`caught` assertion meaningless.
+      expect(exit?.spawnError).toBeDefined();
+      expect(caught).toEqual([]);
+    } finally {
+      await cleanup();
+    }
+  }, 20_000);
+
+  // The other way this path killed the daemon, found while reproducing the first one and
+  // strictly worse: `kill()` on execa's early-error subprocess reaches an UNSPAWNED libuv
+  // handle, so libuv signals pid 0 — `kill(0, SIGTERM)`, every process in the caller's
+  // group. `probeAppServerHandshake` kills in a `finally` on every probe, so a discovery
+  // pass run with descriptors exhausted SIGTERMed the daemon rather than reporting that it
+  // could not find codex.
+  //
+  // Controlled by deleting the pid check, and the result is worth writing down exactly,
+  // because it is NOT "this test goes red": the whole run is annihilated. vitest exits 144
+  // (128 + SIGTERM) having printed no test results at all. The handler installed below
+  // does not prevent that — it runs in the vitest WORKER, while the group signal also
+  // reaches the runner process, which has no handler and dies. So the handler is what
+  // makes the passing case assert something specific (no SIGTERM reached this process),
+  // and the annihilated run is what the failing case looks like.
+  it("does not signal its own process group when killing a subprocess that never spawned", async () => {
+    const { file, cleanup } = await fileUsableAsCwd();
+    const signals: string[] = [];
+    const onSignal = (): void => {
+      signals.push("SIGTERM");
+    };
+    process.on("SIGTERM", onSignal);
+    let pid: number | undefined;
+    try {
+      const conn = defaultSpawnAppServer({
+        bin: process.execPath,
+        args: ["-e", "process.exit(0)"],
+        cwd: file,
+      });
+      const exit = await conn.exit;
+      pid = exit.exitCode ?? undefined;
+      // Non-vacuous: the spawn failed, so this is the dummy subprocess and `kill` is the
+      // unguarded one. A spawn that succeeded would make the assertion prove nothing.
+      expect(exit.spawnError).toBeDefined();
+      conn.kill();
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      expect(signals).toEqual([]);
+    } finally {
+      process.off("SIGTERM", onSignal);
+      await cleanup();
+    }
+    expect(pid).toBeUndefined();
+  }, 20_000);
+
+  it("fails the handshake by name instead of crashing, when the spawn fails", async () => {
+    const { file, cleanup } = await fileUsableAsCwd();
+    let ok: boolean | undefined;
+    let elapsed = 0;
+    try {
+      const caught = await withUncaughtCaptured(async () => {
+        const started = Date.now();
+        // The REAL `defaultSpawnAppServer`, reached the way discovery reaches it. The only
+        // injection is the `cwd` that makes the spawn fail; every line downstream of the
+        // failure — the send, the message loop, the timeout race — is production code.
+        ok = await probeAppServerHandshake({
+          candidate: { path: file, runtimePath: process.execPath },
+          timeoutMs: 10_000,
+          spawn: (spec) => defaultSpawnAppServer({ ...spec, cwd: file }),
+        });
+        elapsed = Date.now() - started;
+      });
+      expect(caught).toEqual([]);
+      // Discovery's answer: this candidate has no app-server. Reached by the failure and
+      // not by the timeout — the elapsed time is the assertion that says which.
+      expect(ok).toBe(false);
+      expect(elapsed).toBeLessThan(5_000);
+    } finally {
+      await cleanup();
+    }
+  }, 30_000);
+
+  it("ends a turn over a child that exits early with a named exit failure, not a stream error", async () => {
+    const frames: (Record<string, unknown> | CodexTurnResultFrame)[] = [];
+    const caught = await withUncaughtCaptured(async () => {
+      const conn = defaultSpawnAppServer({
+        bin: process.execPath,
+        // Exits non-zero with something on stderr, the way a real binary refusing to run
+        // does. The runner sends `initialize` before it can know the child is gone.
+        args: ["-e", 'process.stderr.write("codex: cannot start\\n"); process.exit(9);'],
+        cwd: undefined,
+      });
+      for await (const frame of runCodexTurn(conn, { cwd: "/tmp", prompt: "hello" })) {
+        frames.push(frame);
+      }
+    });
+    expect(caught).toEqual([]);
+    const terminal = frames.at(-1) as CodexTurnResultFrame;
+    expect(terminal.rennet).toBe("turn-result");
+    expect(terminal.status).toBe("failed");
+    expect(terminal.error?.source).toBe("exit");
+    // Named: the reader is told the child exited and what it said, not "write after end".
+    expect(terminal.error?.message).toContain("exited before completing the turn (code 9)");
+    expect(terminal.error?.message).toContain("codex: cannot start");
+  }, 20_000);
+});

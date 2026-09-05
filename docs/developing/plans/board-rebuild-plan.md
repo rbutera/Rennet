@@ -234,8 +234,10 @@ Landed mid-build and worth knowing:
    not defects).
 
 Build-infra lessons discovered by this build (now law in `CLAUDE.md`): the Nx
-cache and task-history DB are **shared across worktrees** (isolate with
-`NX_CACHE_DIRECTORY` + `NX_DAEMON=false`, recipe control-proven); `git stash` is
+cache and task-history DB are **shared across worktrees**, and must stay shared
+together — redirecting the artifact store alone with `NX_CACHE_DIRECTORY` makes
+Nx report hits it cannot restore (#827), so the gate is `CI=true
+NX_DAEMON=false pnpm check`; `git stash` is
 **forbidden** with concurrent worktrees (`refs/stash` is one shared ref — a pop
 raced foreign content into an agent's tree on 2026-08-28); a focused
 `typecheck`-alone gate is insufficient (one cache divergence vs `build`

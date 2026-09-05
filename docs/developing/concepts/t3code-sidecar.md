@@ -21,9 +21,25 @@ flowchart LR
   harness --> provider[Harness provider]
 ```
 
-The daemon composes one supervisor per data directory. Nothing runs until a client asks:
-the first `chat.t3Session` adopts a sidecar a previous daemon left running, or spawns
-one. Quitting the daemon stops it.
+The daemon composes one supervisor per data directory and starts it at launch: composition
+calls `T3SidecarSupervisor.start()`, which adopts a sidecar a previous daemon left running
+or spawns one. Quitting the daemon stops it.
+
+`start()` is synchronous and returns nothing. The bring-up runs detached, so the daemon
+finishes composing, binds its listener and serves clients while the sidecar is still
+coming up — and a sidecar that cannot start never fails the daemon. The supervisor is left
+`degraded` with the reason (`daemon.status` carries it to the connection bar, and the chat
+dock renders it), and the next `chat.t3Session` retries from scratch. A build with no
+vendored bundle starts nothing at all and stays `off` until something asks, which is when
+`ensure()` names the missing bundle.
+
+The reason it is eager is time-to-first-message. Measured on an M-series laptop against
+the real vendored bundle: a cold bring-up costs about 830&nbsp;ms to spawn plus the host
+binary discovery it feeds the sidecar, and a review's first thread another ~46&nbsp;ms to
+create. Paid at the first `chat.t3Session`, that was about a second of the reviewer
+watching an empty dock; paid at launch, it overlaps everything else the daemon and the
+window do, and the dock's first ask resolves in about a millisecond. A second daemon
+finding the first one's sidecar alive adopts it in about 7&nbsp;ms.
 
 ## Private base directory
 
@@ -73,6 +89,28 @@ The environment handed to the sidecar drops every `T3CODE_*` key the parent shel
 carried and sets `T3CODE_TELEMETRY_ENABLED=false`. No relay URL and no Clerk keys are
 passed, so T3 Connect is unavailable in the sidecar and nothing leaves the machine
 except the harness's own provider traffic and any MCP servers the user configured.
+Rennet's own board server is reached over loopback and is not egress; it is described
+under [The board server](#the-board-server) below.
+
+**The health report says so, and only once it is true.** `daemon.status` carries the
+sidecar's state, its telemetry setting, and — once a board lane is actually open —
+`localToolServers`: the daemon's own tool servers, each with its loopback origin and how
+many boards it is serving. A reader can therefore tell a loopback tool call from egress
+without inferring it. The field is absent rather than empty when nothing is serving, and
+that is deliberate: a status field naming a running loopback server while none runs is a
+lie in the UI, which is why the clause was left unmet until lanes were opened eagerly.
+What makes the count move is one hand-over — the round runtime passes the generation's
+`boards` to the drafting pipeline, which opens all five lens lanes before it dispatches a
+lens seat. Without it the pipeline's lane-opening loop is unreachable, every board is
+minted only when a seat first writes to it, and this field can never report anything.
+This is disclosure, not a consent step: no dialog is shown.
+
+One variable is also SET on that environment: `RENNET_BOARD_BEARER`, the daemon-minted
+credential for that board server. It is set rather than inherited — a value the parent
+shell happened to carry under that name is dropped like a `T3CODE_*` key — and it is the
+one credential that travels by environment, because a caller-supplied MCP server names an
+environment variable and the harness child reads the value out of the environment it
+inherited from here. It is on no argument list.
 
 ## Claim and adoption
 
@@ -83,6 +121,12 @@ answers, T3's runtime record agrees on pid and port, the snapshot commit matches
 bundle this daemon would spawn, and the stored bearer still opens an authenticated
 route (re-exchanged from the bootstrap grant when it does not). Anything less is stale:
 the claim is removed and a fresh sidecar is spawned.
+
+The stored credentials also carry the board-server bearer, and adoption requires it. That
+value is fixed in an environment already handed to running children, so an adopting daemon
+cannot re-mint it — it reads it back. A sidecar spawned before the board server existed
+carries no such variable and its seats could never reach a board, so it is refused for the
+same reason a snapshot mismatch is, and respawned.
 
 ## Access for clients
 
@@ -105,6 +149,15 @@ which is a different tree a seat would draft from happily. See
 [Session-bound workspace](#session-bound-workspace) below.
 The bearer is what the vendored client runtime needs. The command is loopback-only and
 never remote-exposed. Clients do not read the credential file.
+
+The review usually binds that thread before the dock ever asks. `review.capture`,
+`review.openPr` and `review.regenerate` each kick the same binding — the one assembly
+point, `bindReviewThread` in `dispatch/chat.ts`, so no caller can key a second thread for
+the same review — fire-and-forget, so a capture never waits on the sidecar and never fails
+on it. By the time a reviewer opens the dock, `chat.t3Session` reads the row that is
+already there. Until it does, the mount's home route says the thread is being opened and
+will appear, rather than reporting an absence: the thread is not missing, it has not been
+made yet.
 
 ## The chat slot
 
@@ -164,6 +217,19 @@ with something other than a board — malformed, for another generation, unreada
 lens that failed to draft — shows that account in the board's place, in the same words the
 workspace uses, rather than an empty space under a reader that says "drafted". A lane with no
 `thread` yet is disabled rather than offered as a transcript that does not exist.
+
+The bench is its own primary scroller (`chrome-scroll-clearance min-h-0 flex-1
+overflow-y-auto`, the repo-wide idiom), because the outlet is a flex column inside a
+`fixed inset-0 overflow-hidden` shell and a surface that does not declare it is simply
+clipped at the fold — which put every landed board out of reach. The safe-centring that
+keeps a short bench in the middle lives on the inner column, inside the scroller. While
+lenses are still working, one line above the stack says the boards are still landing; it
+is dropped once nothing is drafting, where it would be a promise nothing is keeping.
+The review a reader opens its transcript against is the preparation record's `reviewId`,
+falling back to the session's own attached `reviewId`: only the `drafting` arm requires
+the field, while `failed` and `cancelled` make it optional and both keep their lanes —
+threads and all — so without the fallback a stopped preparation drew readers holding real
+transcripts that no click could open.
 
 The mount's environment registration persists in each host's IndexedDB under T3's
 catalog (the same store T3's hosted app uses for paired machines), keyed by one stable
@@ -254,6 +320,62 @@ Three things follow from the thread being persistent.
   `V2TurnStartParams.outputSchema`, but its runtime does not surface a settled turn's
   structured result, so the daemon parses the board out of the Codex seat's final message
   — for that provider only.
+- **A turn carries the MCP servers its caller gives it, and names their credentials
+  rather than carrying them.** `startTurn` also takes an `mcpServers` record of
+  `name → { url, bearerTokenEnvVar? }`, on the same seam and in the same shape as the
+  output schema: the two `thread.turn.start` command shapes, the
+  `thread.turn-start-requested` payload, and both provider inputs. **The field names an
+  environment variable; it never carries a token.** That is the only shape that can be
+  true here, because a command is written to the sidecar's event store and replayed from
+  it, and because Claude's SDK serialises its entire MCP option into one
+  `--mcp-config <json>` argument — a token placed here would be both a durable database
+  row and a string on a child process's command line. The daemon puts the secret in the
+  sidecar's environment, which the harness child inherits, and names it on the turn:
+  Codex reads the name as `bearer_token_env_var`, and `claude` expands `${VAR}` when it
+  resolves an MCP header, so only the name is ever serialised. Server names must be TOML
+  bare keys, because Codex writes them into a dotted config path where a dot silently
+  becomes a nested table.
+
+  The guarantee is about that field and no other: `url` is any trimmed string, so a caller
+  that puts a token in a query parameter has put it in the event store and on the argument
+  list. The dedicated credential field is the one that cannot carry a secret.
+
+  The adapters MERGE these with whatever the sidecar configured for that thread and with
+  whatever the user configured for the provider — nothing is substituted, and
+  `strictMcpConfig` stays unset. A NAME COLLISION IS REFUSED rather than resolved: a
+  caller server under a name the sidecar owns, or under a name the user's own Codex config
+  already declares, fails the session start naming the server. That is the cheap correct
+  answer rather than a restriction. Codex's `-c` is a deep merge into the user's config at
+  every depth and nothing detaches a same-named server from theirs — not a leaf override,
+  not an inline table, not replacing the whole `mcp_servers` table (verified against
+  codex-cli 0.148.0) — so two servers sharing a name trade credentials and headers, and
+  a caller endpoint receives the user's `X-Ambient-Secret` along with its own bearer.
+  Nobody asked for their own server to be merged into ours, the caller mints its own
+  names, and a collision is a visible config quirk with a one-word fix.
+
+  Both providers fix their MCP configuration when the session process is created, exactly
+  as Claude fixes `outputFormat` at `query()` construction, so the thread's FIRST turn
+  decides the set and a later turn asking for a different one is refused with the names it
+  disagrees on rather than run against the wrong tools. A same-name server pointed at a
+  new endpoint, or reading a new credential variable, counts as a different server: the
+  session was opened against the old one and cannot serve the new one. Nothing is filtered
+  out of the caller's set on the way in, because a session that stored one set and
+  compared another rejected the very turn it had just been opened for.
+
+  Whether the sidecar's own browser server is attached now travels as an explicit fact
+  (`sidecarMcpServerConfigured`) rather than being read back off the argument list.
+  `hasConfiguredMcpServer` still answers the tool-catalog reload for any inline server,
+  but it cannot answer the browser question, because a caller can name its own server
+  `t3-code` and a name is not provenance — and a Codex prompt describing browser tools the
+  session does not have is a lie in the prompt.
+
+  A caller server that declares no credential gets no credential key written at all. An
+  empty `bearer_token_env_var` was tried and is worse than nothing: Codex then expects a
+  bearer it can never resolve, and against a real local MCP server that is zero requests
+  where omitting the key handshakes normally.
+
+  Nothing supplies a server yet — the field is carried, and the daemon's own board server
+  is the next change.
 - **Spend is per turn, and it is a delta read off the thread.** Claude's SDK reports usage
   cumulatively over a streaming session's turns, so the seat leg records each turn's own
   usage as the difference against the previous settled turn's total — which
@@ -346,9 +468,9 @@ are the product while a review is live, so nothing expires on a timer; `session.
 the act that ends them. Archiving first ABORTS AND AWAITS the session's own preparation —
 anything still able to bind a thread has to be finished before the sweep, or a seat mid-flight
 binds a fresh thread behind it and the archive leaves exactly the orphan it exists to prevent.
-Then, once the archive has persisted, one serialized sweep deletes the session's own thread
-and every seat thread its generations left behind (`thread.delete` over RPC) and drops those
-bindings. Un-archiving restores nothing — the next use creates fresh threads.
+Then, once the archive has persisted, one serialized sweep deletes the session's own thread,
+every seat thread its generations left behind, and every round thread its dispatches created
+(`thread.delete` over RPC), and drops those bindings. Un-archiving restores nothing — the next use creates fresh threads.
 
 A round in flight is covered too, from the other side. A round is driven by the durable
 round coordinator, takes no abort signal and is not waited on, so a returned generation
@@ -377,6 +499,14 @@ carries the turn's schema into a session it recovers, and the runtime-ingestion 
 that projects the `turn.settled` activity. Each has its row in `vendor/t3code/PATCHES.md`,
 all upstreamable.
 
+The per-turn `mcpServers` seam widens that surface by little, because it sits mostly on the
+same files: the two contract modules, the decider, the provider command reactor, the
+provider service, and the two adapters, plus the Codex session runtime for the provenance
+option, six test files and the scripted app-server fixture. `McpProviderSession` is
+untouched — the caller's servers ride alongside it and merge at the adapter, so a session
+re-prepare (runtime mode, cwd, model) cannot clobber them and turning off agent browser
+access cannot clear them.
+
 **A dead `claude` must not take the sidecar with it.** The SDK's process transport writes
 the prompt to the child's stdin and never listens for that socket's `error` event, so a
 `claude` that dies before the first write — a bad install, an immediate auth failure —
@@ -390,6 +520,134 @@ left unsettled instead — about one run in ten against a stand-in that exits at
 sidecar now survives it, so the blast radius is one thread rather than every seat, but a
 turn that never settles is its own defect and is not fixed here.
 
+## The board server
+
+A lens seat writes its board by CALLING TOOLS, and the tools live on a second listener the
+daemon owns: an HTTP MCP server bound to `127.0.0.1`, with one address per seat
+(`lens-board-tools` D8). It is not mounted inside the sidecar's own `/mcp`, whose comment
+records that it sits outside T3's environment auth stack; this one is Rennet's, and its only
+client is a harness child on the same machine. The listener starts when a generation opens
+its first board lane, and a daemon that never drafts a board binds no port.
+
+```mermaid
+flowchart LR
+  daemon[Rennet daemon] -->|opens a lane per lens| boards[Board server\n127.0.0.1, one address per seat]
+  daemon -->|spawns, with RENNET_BOARD_BEARER in its env| sidecar[T3 Code sidecar]
+  sidecar -->|inherits the env| harness[claude, codex]
+  harness -->|POST /board/&lt;seat token&gt;, Bearer from the env| boards
+  boards -->|one BoardWriter per lane| board[(The lens board)]
+```
+
+**The address names the board, and that is all it does.** A seat writes its own board
+because that is what its endpoint is for, exactly as a file handle names a file. Nothing
+is being withheld from a seat and nothing here is a consent step. Flagged's two seats get
+TWO addresses onto ONE board: one lane, one writer, one element list, two voices, one mint
+counter — which is why the ids the two are handed cannot collide, and why either voice can
+cite an element the other created.
+
+**A seat's credential has two halves, and the seam decides that it must.** A caller-supplied
+MCP server carries the NAME of an environment variable and never a value, and the harness
+child reads that variable out of the environment it inherited from the sidecar — so a
+variable's value is fixed for the sidecar's life and cannot be per seat, while a value
+delivered any other way is on the child's argument list. Therefore:
+
+- The **seat token** is per seat: HMAC-SHA256 of the sidecar's own 32-byte secret over the
+  generation, the board and the seat, of which only the SHA-256 is held in the live
+  registry, revoked the moment its lane settles. It travels in the address path, which is
+  on the harness child's argument list, because a url is.
+- The **process bearer** is the sidecar's: placed in its environment as
+  `RENNET_BOARD_BEARER`, and on no argument list, because only the variable's name is ever
+  serialised. It is read from whatever sidecar is running at the moment of the call, never
+  captured once — the sidecar respawns within one daemon's life, and a listener holding a
+  dead sidecar's bearer would refuse every later seat while it ran and billed.
+
+Both are required on every call, so reading `ps` yields an address and not access, and a
+lane that settles stops its seats writing at once rather than at the end of a window.
+
+Two consequences worth stating rather than leaving implicit. The seat token rides the turn
+command the sidecar **persists**, so a per-seat secret does land in a durable event row;
+eager revocation is what answers that, because a token replayed after its lane settled
+reaches nothing. And the token is **derived rather than randomly minted** because a seat's
+address has to be reproducible: both providers fix a session's MCP configuration when the
+harness child is created, so a url that moved under a live session — after a daemon restart
+beneath a surviving sidecar, or when a settled lane is re-opened for a retry — is refused by
+the adapter as a mismatch. For the same reason the listener remembers the port it bound, in
+`board-server.json` beside the sidecar's own state, and the daemon reuses a recorded bearer
+when it respawns a sidecar on the same base dir rather than rotating it.
+
+**The protocol is MCP over Streamable HTTP, hand-rolled**: `initialize`,
+`notifications/initialized`, `tools/list`, `tools/call`, `ping`. Requests are answered as
+`application/json`, which the transport permits in place of an SSE stream, and no
+`Mcp-Session-Id` is issued, because session management is optional and the address already
+identifies the seat. `GET` — the server-to-client stream — is answered `405`, which the
+transport also permits. A tool REFUSAL comes back as a tool result marked `isError`, never
+as a JSON-RPC error: the seat reads it and fixes the call inside the same turn, and a
+protocol error would never reach it as words it can act on.
+
+Every served `inputSchema` has its top-level `$schema`/`$id` stamps dropped through the
+same `normalizeOutputSchema` choke point Rennet's own adapter routes provider-bound schemas
+through. It matters more here than there: an MCP `inputSchema` is carried by the harness
+child into the provider's tool definitions with nothing on that path to strip it, and a
+meta declaration a validator does not recognise is what #810 was — a schema refused before
+the turn ran. The schema body is untouched.
+
+The tools themselves are derived per lens from the kind tables
+(`packages/protocol/src/board/tool-schemas.ts`) and applied by the board writer
+(`packages/core/src/board/board-writer.ts`). Measured 2026-09-05, the served tool surface is
+8,005 B (Sequence) to 12,892 B (Design) per seat, against the output schema it is on course
+to replace in the next group — 9,618 B as a Claude seat receives it, 9,640 B for Design's
+board-or-absence shape, and 10,874 B for the Flagged Codex seat, whose schema is
+`sanitizeSchemaForCodex`'d on the way out. Both figures are taken from the modules that
+ship them, not rebuilt for the measurement. Across one generation's seven seats — Flagged
+counted twice — that is **65,633 B of tools against 68,604 B of schema, 4.3% less**; Design
+is the one seat that costs more than it saves, at 1.34x, because it authors two typed kinds
+no other lens does.
+
+### The board's element stream
+
+The board reaches the reviewer as it is written, not only when it settles. Every write the
+board writer ACCEPTS reaches an observer the lane was opened with, and that observer
+publishes one `lensDraft` frame per call, keyed by review. What travels is the write: the
+elements that call touched and the index each holds, the ids it removed, the document when
+it set one. A whole-board snapshot per call would be quadratic in the board's own size.
+
+Four kinds of frame. `opened` when the lane creates its empty board — before any seat thread
+exists, and also the reset marker, so a re-drafted board starts a reader from nothing.
+`elements` for a write. `state` when the board's own settlement moves (`drafting`,
+`settled`, `absent`). `closed` when the lane settles, carrying how the board finally stood —
+which on a failed lane is still `drafting`, because the lane's own status is what says
+whether the LANE succeeded and restating it here would be one fact with two sources.
+
+Every frame carries its generation and a revision monotonic within `(generation, lens)`. The
+generation is the load-bearing half: a superseded drafting attempt owns a different one, so
+a reader rendering the live generation drops its frames rather than merging two attempts'
+boards. A refused call publishes nothing — the seat reads the refusal and fixes it inside
+the same turn — and a `finish` that came back with pointers publishes nothing either,
+because the board did not move.
+
+One lane can have more than one watcher, and it really does. Nothing deletes a lane —
+settling one revokes its seats and keeps its writer — and a generation id is
+`gen:<patchsetId>` over a content-addressed patchset, which is global across sessions and
+reviews. So a lane re-opened for a retry, or opened a second time by another review of
+identical content, hands back the board that is already there. The lane therefore keeps a
+SET of observers and every opener hears every write, and the `opened` frame carries the
+board the lane HOLDS rather than claiming an empty one. Binding a single observer at the
+writer's construction left the second reviewer watching a board that opened, never filled
+and closed; claiming an empty board left every later element's index — computed against the
+board's own list — pointing past the end of the reader's copy.
+
+The frames are live only. A reader that joins mid-draft takes `board.draft` for the board as
+it stands plus the revision it is current with, and folds from exactly there. The hub keeps
+a closed board rather than dropping it, because a lane that FAILED persisted no board at all
+and the elements its seat did write would otherwise be readable only by whoever happened to
+be watching; the record leaves when the review's next generation opens a lane, which bounds
+the hub to five boards per review.
+
+The durable copy is still written whole, at settle, through the whiteboard. A drafting
+element carries no patchset stamp and no round-delta mark — both are stamped where the board
+is persisted, and the marks are withheld until the lane settles — so the stream is the live
+view and the whiteboard is the durable one, neither pretending to be the other.
+
 ## The live line on a lane
 
 While a seat's lane runs, the daemon holds one subscription to that seat's thread and
@@ -397,9 +655,37 @@ publishes what the seat is doing through the lane. `packages/server/src/t3/lates
 is the projector: a pure function from a thread projection to the protocol's `LaneLatest`.
 A tool call in flight becomes plain words naming what it is acting on — `reading
 src/foo.ts`, `running git diff --stat`, `editing a.ts`, `searching createSession` — a tool
-with no plain word for it keeps T3's own summary rather than being given an invented verb,
+with no plain word for it keeps T3's own detail rather than being given an invented verb,
 and assistant prose becomes its last sentence. Every line is capped at 120 characters with
 an honest `…`.
+
+A line is the seat's SPEECH, so the call's JSON input never becomes one. A structured-output
+call — the seat handing its board back — reads `returning the board`; an unrecognised tool
+whose detail is its own JSON input reads as the tool's name; a detail that is nothing but a
+payload falls back to T3's summary, and contributes no line at all when the summary is a
+payload too, leaving the seat's own prose to speak. A known verb whose subject is a JSON blob
+keeps the verb alone (`reading`), which is also what a call still streaming its
+`input_json_delta` reads as until the input closes.
+
+A call onto the seat's own board is read as a RECEIPT rather than as a status, and it is the
+one arm ahead of everything above. `add_step` reads `added step 3`, `cite` reads ``cited
+`src/foo.ts:41-58` ``, `finish` reads `finished the board` or `finish returned 1 pointer`,
+and a refusal reads the sentence the board wrote to be read. Nothing in a board call's input
+reaches the line except the two fields that are addresses rather than payload — a citation's
+path and the element id a revision or a removal names. `packages/server/src/t3/board-receipt.ts`
+owns it, and the tool table it recognises is derived from the same `boardToolsByName` the
+served catalog is built from, so a verb added to a lens appears here with nothing edited. A
+call is read as a board call only when the tool name carries this daemon's own server name:
+a seat inherits the user's own MCP servers, and a bare `finish` from somebody else's must
+not read as this board settling.
+
+A board call also keeps speaking after it has finished, which every other tool does not. The
+daemon answers one in microseconds, so its in-flight window is invisible to a reviewer; what
+they want from the line is not what the seat is waiting on but what it just put on the
+board. The ordinal in `added step 3` is the seat's own count of that verb within the turn,
+grouped by the runtime's call id so one call's three lifecycle rows share one number — and
+omitted entirely when the activity carries no call id, because a number derived from rows
+would be wrong and would look right.
 
 A tool call is only "in flight" until it finishes. T3 emits started, updated and completed
 tool activities with the same `tool` tone, so the projector reads the lifecycle — the
@@ -474,16 +760,17 @@ on every read, because it is a detached checkout and a landed round advances the
 The session's children run there because the thread's `worktreePath` and the turn's `cwd` are
 both that root: the six lens seats, the chat thread, the handoff thread and every cold utility
 turn (scout, repo map, delta digest, opener, pull-request body, refine, CI classification,
-finding verification). The coding round runs there too: it is a turn on the session's bound
-thread, and its worker commits on the session's branch in that root.
+finding verification). The coding round runs in that root too, and its worker commits on the
+session's branch there — but on a thread of its own (see [Rounds as threads](#rounds-as-threads)
+below), not the one the chat and handoff share.
 
 On WSL the bound root reaches the child as `wsl.exe --cd <distro path>`: the adapter bakes that
 argument at construction and `transportCwd` wins over a session's `cwd`, so a harness is
 resolved from the **turn root**, never from the repository root, or the cwd is silently ignored.
 
 A thread's cwd is fixed when the thread is created, so a binding row records the workspace it
-was created with, and the workspace is half the binding KEY — which is what puts the chat, the
-handoff and the round's turn on ONE thread. A row keyed on the repository while a workspace is
+was created with, and the workspace is half the binding KEY — which is what puts the chat and
+the handoff on ONE thread (the round gets its own, keyed on its operation, below). A row keyed on the repository while a workspace is
 being asked for is superseded: it carries no workspace (written before this wave) or the clone
 root (written by a read that preceded any bind), and either way its thread is rooted in the
 wrong tree. It is moved to the sidecar's pending deletions, so the existing sweep DELETES that
@@ -508,6 +795,33 @@ reads T3's checkpoint diff for that turn, and returns a final text, a unified di
 the files touched — or a failure reason from T3's session. `review.handoff.run` then
 recaptures the checkout and offers the delta re-review exactly as before. There is no
 second engine to fall back to.
+
+## Rounds as threads
+
+A coding **round** does not run on that thread. It gets one of its own, bound to
+`(repository root, session id, operation id)` — a third binding kind beside `session` and
+`seat` — created with the session's bound workspace as its worktree and titled
+`<branch> — round <n>`. The session's chat thread is the reviewer's conversation with
+Rennet; a coding agent's tool calls do not belong in the same scroll (Rai, 2026-09-04:
+"we should hand off the round to a subagent not to the main orchestrator"). The key is
+the **operation**, not the dispatch: a dispatch attempted while a round is live is
+coalesced, and when the live round settles it is replaced by a fresh operation that keeps
+the same dispatch id but takes a new operation id — so a dispatch key would put two
+operations' turns on one thread. The row carries the session id in the same field a seat row does, so
+archiving the session deletes the round threads with the rest, and the round account's
+checkpoint names the thread so the greeting can point a reviewer at the transcript.
+
+Reading that checkpoint **waits**. T3 writes a turn's checkpoint on the CheckpointReactor's
+own fiber, after the turn's lifecycle has settled — two writes, and the settle wait returns
+on the first. Issue #811: a round that had genuinely committed came back with an empty diff,
+no changed paths and no checkpoint at all, while the sidecar's projection held
+`checkpoint_status ready` for that exact turn. The read is now retried inside a bound, so a
+projection that has not caught up is not read as a turn that did nothing.
+
+A checkpoint also diffs the **working tree**, which a worker that committed leaves clean. So
+when the checkpoint's diff is empty and the bound root's `sourceHead..HEAD` carries commits,
+the round's receipt takes its diff and its changed paths from that commit range. A turn that
+edited without committing keeps the checkpoint's diff and still fails.
 
 ## What a thread costs and where it is kept
 
@@ -668,7 +982,10 @@ lens is not proven by this drive**, in either direction.
 
 While the seat was dead the bench went on reading *"Design — quiet for 320 s"*, and the durable
 lane stayed `running`, for the five minutes after its last attempt failed at 33 s
-([#813](https://github.com/rbutera/Rennet/issues/813)).
+([#813](https://github.com/rbutera/Rennet/issues/813), fixed in
+[#816](https://github.com/rbutera/Rennet/pull/816): a lens failure is published on the same
+settlement tail as an arrival, so the lane leaves `running` when the seat does, not when the
+slowest sibling finishes).
 
 ### The round: right workspace, empty receipt
 
@@ -712,11 +1029,14 @@ the gate, the round prompt tells the worker to run the project's check command b
 commits, and the round runs on its own sidecar thread — a subagent of the session, bound to the
 same worktree — instead of sharing the session's chat thread as it did here.
 
-The app's own copy has not caught up with the binding either: the Dispatch coach mark still
-says a round runs "in a detached worktree", the scout records `worktreeBaseDir` with the hint
-"coding rounds create worktrees here", and Settings → Projects → Worktrees previews
+On the drive the app's own copy had not caught up with the binding either: the Dispatch coach
+mark said a round runs "in a detached worktree", the scout recorded `worktreeBaseDir` with the
+hint "coding rounds create worktrees here", and Settings → Projects → Worktrees previewed
 `~/.rennet/worktrees/{project}-{branch}`, which is not the path anything bound to
-([#812](https://github.com/rbutera/Rennet/issues/812)).
+([#812](https://github.com/rbutera/Rennet/issues/812), fixed in
+[#816](https://github.com/rbutera/Rennet/pull/816): the mark names the session's workspace,
+the scout's hint names the repository's own convention and the answer left the questionnaire,
+and the Worktrees card states the binding instead of previewing a path).
 
 ### What the drive found that the tests could not
 
@@ -731,10 +1051,12 @@ The empty round receipt is the reverse: a fake seam hands the round a diff, so e
 a receipt. Only a real agent, really committing in a real worktree against the real sidecar,
 produces the case where the checkpoint read comes back with nothing to record.
 
-The stale copy is a third kind again. Nothing asserts the three shipped strings — the Dispatch
-coach mark, the scout's `worktreeBaseDir` hint, the Settings worktree preview — against the
-binding contract they describe, so they stayed true-sounding and wrong through the change that
-falsified them. A string only a person reads is only caught by a person reading it.
+The stale copy was a third kind again. Nothing asserted the three shipped strings — the
+Dispatch coach mark, the scout's `worktreeBaseDir` hint, the Settings worktree preview —
+against the binding contract they describe, so they stayed true-sounding and wrong through the
+change that falsified them. A string only a person reads is only caught by a person reading
+it. Each of the three now has a dom test over the rendered surface, which closes these three
+and not the class: a fourth string nobody thought to assert would go the same way.
 
 The bench's "quiet for 320 s" and the round's "0 files changed" are both true sentences about
 the wrong quantity, which no assertion about the same quantity would catch. You find them by
@@ -745,13 +1067,106 @@ reverse. No test asserts "the Decisions prompt does not grow with the change"; t
 against a 1-file branch and a 95-file branch, reading the bytes the sidecar actually received,
 do.
 
+## Measured: v0.7.1 — Design drafts, and the round settles a checkpointed account
+
+The same six seats, re-driven on 2026-09-04 against the signed **v0.7.1** release build with a
+fresh isolated data directory on a new clone (`rennet-g6-redrive`). Two branches, chosen to
+exercise both arms of the binding and both directions of the Design lens:
+
+- **`withspec`** — the clone's own checked-out branch, carrying
+  `openspec/changes/session-bound-workspace/` with its commit messages naming it, so the Design
+  seat has a specification to find. Because the branch *is* the checkout, the session binds to
+  the clone root itself, not to a Rennet-created worktree.
+- **`nospec-big`** — a large branch off the same clone with no specification of any kind. It is
+  not the checkout, so the session binds to a Rennet-created worktree under the data directory,
+  `<dataDir>/worktrees/-Volumes-ExternalNVMe-tmp-rennet-g6-redrive/nospec-big`.
+
+Every figure is read from the same sources as the v0.7.0 table above. Claude seats on Opus 4.8
+at high effort, Codex seats on GPT-5.6.
+
+| Seat | Prompt (bytes) | Draft, withspec | Repair, withspec | Draft, nospec-big | Repair, nospec-big |
+| --- | --- | --- | --- | --- | --- |
+| Design (Opus, high) | 12,441 | 441.0 s → board | 22.3 s | 72.3 s → `no-spec` | — |
+| Sequence (Opus, high) | 6,577 | 247.7 s | 110.4 s | 608.8 s | 68.2 s |
+| Decisions (Opus, high) | 6,293 | 246.4 s | 205.6 s | 208.5 s | 201.2 s |
+| Flagged / Claude (Opus, high) | 6,962 | 289.2 s | — | 201.2 s | — |
+| Flagged / Codex (high) | 6,962 | 214.5 s | 37.1 s | 265.5 s | 14.8 s |
+| Noise (Codex, low) | 6,377 | 104.4 s | 48.2 s | 153.5 s | 9.5 s |
+
+**Design crosses the wire now, both ways.** On `withspec` it drafted a board in 441.0 s and
+its repair turn on the same thread carried 2,776 bytes of lint pointers; the generation settled
+with all five lens boards present. On `nospec-big` the seat returned the `no-spec` absence in
+72.3 s, the generation recorded `absentLenses: { design: "no-spec" }`, four boards, and the
+switcher omitted the Design tab. This is the pair the v0.7.0 drive could not produce: the
+`400 tools.9.custom.input_schema.type` refusal of [#810](https://github.com/rbutera/Rennet/issues/810)
+is fixed by holding the lens's two returns apart at the host instead of on the wire, so the
+board draft and the `no-spec` absence each travel as an API-admissible schema. The prompt sizes
+are byte-identical to v0.7.0 — nothing about assembly changed — so the only difference in this
+table is that the Design row now holds timings instead of "refused".
+
+Wall clock from branch pick to the last board was **7 min 43 s** on `withspec` (first core
+board at 290.5 s, reveal at 463.4 s) and **11 min 17 s** on `nospec-big` (first core board at
+281.5 s, reveal at 677.0 s). The `withspec` generation billed 4,514,108 tokens across 11 turns,
+3,965,816 of them cache reads; `nospec-big` billed 3,995,145 across 10.
+
+One thing the drive surfaces for later work: on a branch that *has* a spec, the Design draft
+(441.0 s) is the single slowest lens, because the seat reproduces the OpenSpec change by hand
+before it drafts. Rennet already parses that change deterministically to check the board, so the
+draft is the strongest candidate for a deterministic assembly that skips the hand-reproduction;
+on `nospec-big`, where the hunt finds nothing, the same seat settles in 72.3 s.
+
+### The round: a checkpointed account on the bound branch
+
+One round ran on the `nospec-big` session. The reviewer staged one finding, and the work order
+reached the worker as a **path**, `.rennet/context/<sessionId>/work-order.md` under the bound
+root, never a payload. The worker committed on the session's branch, in the bound worktree:
+
+```
+59ed8f555 fix: pin round commit settlement to worker's attributed HEAD
+ 5 files changed, 191 insertions(+), 34 deletions(-)
+```
+
+on top of the recorded `sourceHead` `1388fb9df`, and the clone stayed on `withspec`. This time
+the durable account is not empty. The operation's worker record carries a real checkpoint —
+`{ threadId, turnId, turnCount: 1 }`, `outcome: "completed"` — and its commit record names the
+range the reviewer's branch actually moved through, `{ from: 1388fb9df, to: 59ed8f555, count:
+1 }`, pinned to the worker's attributed HEAD rather than a re-derived tip. Pinning that range to
+the worker's own HEAD is exactly what commit `59ed8f555` above does; the empty receipt of
+[#811](https://github.com/rbutera/Rennet/issues/811) — `diff: ""`, `changedPaths: []`, no
+checkpoint — is gone. No directory appeared under `round-worktrees/` or `worktrees/review/`, and
+on archive the session's whole `.rennet/context/<sessionId>/` directory went from six files to
+empty.
+
+Two things this drive does **not** settle, named because a green result is only honest with its
+frontier:
+
+- The receipt's `worker.diff` snapshot still carries 50 of its 55 paths from `.nx-isolated/cache/`.
+  The worker ran the project's gate, and the cache artifacts landed in the uncommitted working
+  tree that the receipt snapshots; the commit itself is the clean five files above. Pinning the
+  receipt's *diff* to the commit range, the way its commit record already is, is the remaining
+  half of the story.
+- The operation's terminal phase is `failed`, at `report-drafting`: the post-commit re-review
+  generation's Sequence lens drafted a board with no reachable `order_step`. That is a lens-draft
+  flake in the follow-up generation, downstream of and independent from the four round-mechanics
+  facts above — the round landed its commit and its checkpointed account first.
+
+The stale-copy strings of [#812](https://github.com/rbutera/Rennet/issues/812) and the
+still-`running` lane of [#813](https://github.com/rbutera/Rennet/issues/813) are both fixed in
+[#816](https://github.com/rbutera/Rennet/pull/816): the surfaces state the session's binding,
+and a lens failure leaves `running` when the seat does. So of the four defects the v0.7.0 drive
+named, the Design refusal, the empty round receipt, the stale copy and the stuck lane are all
+answered; the two caveats above are what this drive leaves for the next one.
+
 ## Stopping
 
 The daemon's own shutdown sends SIGTERM to the sidecar it spawned and clears the claim.
 `rennet stop` and the tray's Quit then run a sidecar step after the daemon step: verify
 the claim, SIGTERM only a pid T3's runtime record vouches for, wait a bounded five
 seconds, clear the claim. A sidecar that will not exit is logged and left for the next
-start to reap; the app still exits.
+start to reap; the app still exits. The sidecar still takes a signal rather than the
+daemon's `POST /shutdown` command, because the vendored T3 server exposes no shutdown
+route of its own — but the liveness test is the daemon's: an exited, unreaped sidecar
+counts as stopped instead of timing out the wait.
 
 T3 has no SIGTERM handler of its own. A turn that was streaming when the sidecar stops is
 reconciled on the sidecar's next start as an errored session ("Provider session did not
@@ -866,8 +1281,10 @@ enumeration, so a large delta costs the turn nothing and the file stays complete
 - `packages/server/src/t3/sidecar.ts`: claim, probe, free port, provider seeding, environment, spawn, adopt, stop.
 - `packages/server/src/t3/supervisor.ts`: one supervisor per data dir; `ensure`, `session`, `client`, `threadFor`, `forgetSession`, `status`, `stopSync`.
 - `packages/server/src/t3/client.ts`: the daemon-side RPC client, the one Rennet module importing `effect` and `@t3tools/contracts`.
-- `packages/server/src/t3/threads.ts`: the (repository root, session id) and (repository root, generation id, seat) → thread bindings, and `seatThreadTitle`.
-- `packages/server/src/t3/latest-event.ts`: the pure thread → `LaneLatest` projector; `t3/seat-progress.ts`: the throttled subscription that feeds a lane.
+- `packages/server/src/t3/threads.ts`: the (repository root, session id) and (repository root, generation id, seat) → thread bindings, `seatThreadTitle`, and the seat → board target and seat → voice tables.
+- `packages/server/src/board/board-mcp-server.ts`: the loopback MCP board server — lanes, per-seat addresses, liveness and revocation, and the MCP wire; `board/board-credentials.ts` is the leaf the sidecar spawn shares with it (the variable name, the server name, the seat-token derivation); `board/seat-address.ts` maps a seat thread onto its lane's board. `create-server.ts` starts the listener on the first lane and closes it on shutdown.
+- `packages/server/src/t3/latest-event.ts`: the pure thread → `LaneLatest` projector; `t3/board-receipt.ts`: its board arm, which reads a board call back as a receipt; `t3/seat-progress.ts`: the throttled subscription that feeds a lane.
+- `packages/server/src/runtime/lens-draft-hub.ts`: the board element stream's fold and its `board.draft` snapshot; `runtime/lens-pipeline.ts` opens each lane with the observer that feeds it, `runtime/rounds.ts` stamps the generation and records `first-element`, and `ws-listener.ts` fans the `lensDraft` frame out per connection class.
 - `packages/adapters/src/t3-seat-turn.ts`: the seat leg (`createT3SeatTurn`); `council-seat-turn.ts` routes board jobs to it when the seam is present, and `runtime/rounds.ts` builds the seam per generation.
 - `packages/server/src/t3/handoff.ts`: the handoff exit, which `create-server.ts` runs for every work order that names a review.
 - `packages/server/src/bound-workspace.ts`: the one binding decision (`decideBoundWorkspace`); `create-server.ts` records it on the session as `boundRoot` and reads it back through `boundRootForSession` / `boundWorkspaceForReview`.

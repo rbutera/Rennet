@@ -87,19 +87,24 @@ steps and one-pixel borders. Shadows belong to overlays such as menus, dialogs,
 and popovers.
 
 Code always sits on an opaque, high-contrast surface. The outbound preview has
-its own sheet tokens and serif text, which distinguishes the result destined for
-GitHub from the working view. Rennet's rework workers redraft the living document;
+its own sheet tokens, which distinguish the result destined for GitHub from the
+working view. Rennet's rework workers redraft the living document;
 the preview then renders the exact destination object.
 
 ## Typography has clear jobs
 
-Rennet uses four type roles:
+Rennet uses two type roles:
 
-- Fraunces for product titles and display moments.
-- Newsreader for review prose and model annotations.
-- Geist for navigation, controls, labels, inputs, and metadata.
-- Geist Mono for source code and exact technical values, over the platform
-  monospace stack as fallback.
+- Geist for everything on screen that is not code: product titles and display
+  moments, review prose, model annotations, navigation, controls, labels,
+  inputs, and metadata.
+- Geist Mono for source code, diffs, and exact technical values, over the
+  platform monospace stack as fallback.
+
+There is no serif voice. Fraunces and Newsreader were retired from the app on
+2026-09-04; `--rn-font-serif` and `--rn-font-display` remain bound to the sans
+stack so the `font-serif` and `font-display` utilities still resolve. The
+marketing and documentation sites keep their own type.
 
 The desktop component ramp is `10, 11, 12, 12.5, 13, 14, 15, 16, 18, 20, 24`
 pixels at a 16-pixel root, plus the front-door display size. Components express

@@ -52,12 +52,79 @@ export interface ProjectProcessJournal {
 
 const JOURNAL_FILE = "project-process.json";
 
+/**
+ * Drop the retired `worktreeBaseDir` answer from a persisted questionnaire and recompute its
+ * provenance counts (#812 / #816 re-review P2). A v1 journal written before the field left
+ * the questionnaire carries FIVE answers; the current schema requires exactly four, so
+ * without this a completed or resumable add-project run fails to load and silently restarts
+ * its scout and map — model spend the reviewer never sees. Operates on raw JSON before the
+ * current-schema parse. It is IDEMPOTENT: a four-answer journal has no `worktreeBaseDir`
+ * answer to drop, and `detected`/`guessed` recomputed off the surviving answers match what
+ * `scoutQuestionnaire` already stored (`detected = detected answers`, `guessed = the rest`).
+ */
+function migrateQuestionnaire(questionnaire: unknown): void {
+  if (questionnaire === null || typeof questionnaire !== "object") return;
+  const q = questionnaire as { answers?: unknown; detected?: unknown; guessed?: unknown };
+  if (!Array.isArray(q.answers)) return;
+  const answers = q.answers.filter(
+    (answer) =>
+      answer === null ||
+      typeof answer !== "object" ||
+      (answer as { key?: unknown }).key !== "worktreeBaseDir",
+  );
+  const detected = answers.filter(
+    (answer) =>
+      answer !== null &&
+      typeof answer === "object" &&
+      (answer as { provenance?: unknown }).provenance === "detected",
+  ).length;
+  q.answers = answers;
+  q.detected = detected;
+  q.guessed = answers.length - detected;
+}
+
+/** Migrate every questionnaire a journal can carry: one per repo checkpoint, one per
+ *  `scout-ready` event, and the one a `done` event's `run.scout` holds. Returns the same
+ *  object for a direct hand-off to the parser. */
+function migrateLegacyJournal(raw: unknown): unknown {
+  if (raw === null || typeof raw !== "object") return raw;
+  const journal = raw as { repos?: unknown; events?: unknown };
+  if (Array.isArray(journal.repos)) {
+    for (const repo of journal.repos) {
+      if (repo !== null && typeof repo === "object") {
+        migrateQuestionnaire((repo as { scout?: unknown }).scout);
+      }
+    }
+  }
+  if (Array.isArray(journal.events)) {
+    for (const event of journal.events) {
+      if (event === null || typeof event !== "object") continue;
+      const kind = (event as { kind?: unknown }).kind;
+      if (kind === "scout-ready") {
+        migrateQuestionnaire((event as { questionnaire?: unknown }).questionnaire);
+      } else if (kind === "done") {
+        // `done.run.scout` is the OTHER questionnaire carrier (wire.ts `done.run` ->
+        // `projectProcessRunSchema.scout`). A legacy `done` event whose durable run still
+        // holds a five-answer scout fails the current-schema parse exactly like a legacy
+        // repo/scout-ready questionnaire, nulling the whole journal and silently re-running.
+        const run = (event as { run?: unknown }).run;
+        if (run !== null && typeof run === "object") {
+          migrateQuestionnaire((run as { scout?: unknown }).scout);
+        }
+      }
+    }
+  }
+  return raw;
+}
+
 export function createProjectProcessJournal(store: ProjectSnapshotStore): ProjectProcessJournal {
   return {
     load(repoKey) {
       try {
         const parsed = projectProcessJournalSchema.safeParse(
-          JSON.parse(readFileSync(join(store.paths(repoKey).projectDir, JOURNAL_FILE), "utf8")),
+          migrateLegacyJournal(
+            JSON.parse(readFileSync(join(store.paths(repoKey).projectDir, JOURNAL_FILE), "utf8")),
+          ),
         );
         return parsed.success ? parsed.data : null;
       } catch {

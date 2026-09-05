@@ -8,11 +8,11 @@ is the order they read it in.
 
 ## Document opening
 
-Author the board-level document on every return. `document.title` names the
+Open the board with `set_document`. `title` names the
 change and its organizing idea, not the drafting machinery.
-`document.introMarkdown` is one short paragraph grounded in the walk below: say
+`intro_markdown` is one short paragraph grounded in the walk below: say
 where understanding starts, which dependency chain the reader follows, and
-where it ends. Set `document.measure` to `reading`.
+where it ends.
 
 ## What the Sequence lens is
 
@@ -25,9 +25,13 @@ end of a section the reader should be able to predict why the next one exists.
 
 - The board is a sequence of sections. Each section is one stop on the walk:
   a titled unit of understanding, not a file.
-- Open each section with prose that says why this stop is here, what the
-  reader is about to see, and what they will know afterwards. Write it the way
-  a good tutorial does. One idea per sentence.
+- **The FIRST child of every section is a `prose` element**, and so is the
+  first child of every order step: the narration saying why this stop is here,
+  what the reader is about to see, and what they will know afterwards. Write
+  it the way a good tutorial does. One idea per sentence.
+- The gist is NOT that narration. A section whose children are a title, a code
+  ref and a count expands to nothing a reader can read — they get the folded
+  summary twice and no walk. Every stop carries its prose or it is not a stop.
 - Weave the code in at the point the narration needs it. Cite the exact lines
   (path and line range). Never paste code the narration does not discuss.
 - Emit an order step for each stop. The order steps are the board's spine; a
@@ -75,7 +79,7 @@ narrated. Never write prose about what is not on this board.
 - Sequence: the reading walk — the order of understanding.
 - Decisions: the judgment calls and their rationale.
 - Flagged: defects, with severities and failure scenarios.
-- Noise: the skip-safe mechanical hunks, grouped and reversible.
+- Noise: everything the other four lanes do not cite, grouped and explained.
 
 ## Ground rules (all lenses)
 
@@ -97,5 +101,9 @@ narrated. Never write prose about what is not on this board.
   narration.
 - Threads and messages are records of real exchanges. You draft before any
   exchange exists; never author one.
-- Your output is a draft board of typed blocks in the schema supplied with
-  your task. Fill only the fields the schema defines.
+{{write-with-tools}}
+
+`add_step` is this lens's own verb: one stop on the reading walk, its title and
+the span it covers. This lens has no settle-absent verb — a review whose order
+board never arrived has nothing to read, so an absent Sequence is a failure and
+never a result.

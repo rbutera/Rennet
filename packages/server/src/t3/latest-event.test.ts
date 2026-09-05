@@ -221,10 +221,191 @@ describe("projectLatestEvent", () => {
     });
   });
 
-  it("shows the raw fragment while a tool call is still streaming its input", () => {
-    expect(toolLine(tool(0, 'Read: {"file_path":"/repo/src/fo'), "/repo")).toBe(
-      'reading {"file_path":"/repo/src/fo',
+  it("says only the verb while a tool call is still streaming its input", () => {
+    // It used to say `reading {"file_path":"/repo/src/fo` — the raw fragment, on the
+    // grounds that it beat guessing what the input would become. It does not: a half-sent
+    // payload is still a payload where the seat's speech goes (#819), and this line is
+    // read on the bench next to four others. "reading" is true for the whole of the call
+    // and becomes "reading src/foo.ts" the moment the input closes.
+    expect(toolLine(tool(0, 'Read: {"file_path":"/repo/src/fo'), "/repo")).toBe("reading");
+    expect(toolLine(tool(0, 'Read: {"file_path":"/repo/src/foo.ts"}'), "/repo")).toBe(
+      "reading src/foo.ts",
     );
+  });
+
+  // ── #819: a payload is not speech ──────────────────────────────────────────
+  // The 0.7.0 drive's bench had Noise saying `{"document":null,"elements":[]}` and
+  // Decisions saying `StructuredOutput: {"elements":[{"id":"sec-dead-…`. Both are the
+  // structured-output call's INPUT — the board the seat is handing back — rendered where
+  // its sentence goes. Each case below is the shape one of those lines actually had.
+
+  it("projects a structured-output call as a receipt, never as the board it carries", () => {
+    const board = JSON.stringify({
+      document: null,
+      elements: [{ id: "sec-dead-code", kind: "finding", title: "Dead code" }],
+    });
+    expect(toolLine(tool(0, `StructuredOutput: ${board}`))).toBe("returning the board");
+    // The projector's own answer, not just the helper's — this is what reaches the lane.
+    expect(
+      projectLatestEvent(
+        thread({ activities: [tool(1_000, `StructuredOutput: ${board}`)] }),
+        1_000,
+      ),
+    ).toEqual({ kind: "tool", text: "returning the board", at: 1_000 });
+  });
+
+  it("says the tool's NAME, not its input, for a tool it has no verb for", () => {
+    expect(toolLine(tool(0, 'SomeOtherTool: {"elements":[]}'))).toBe("SomeOtherTool");
+  });
+
+  it("falls back to T3's summary when the detail is nothing but a payload", () => {
+    // Noise's line: T3 wrote the detail with no tool name in front of it, so there is not
+    // even a name to fall back on. The activity's own summary is the last honest thing
+    // this projector holds, and it is what the lane shows instead of the board.
+    const payload = '{"document":null,"elements":[]}';
+    expect(toolLine(tool(0, payload))).toBe("Tool");
+  });
+
+  it("yields to the seat's own words when the summary is a payload too", () => {
+    // Nothing left to say about the call, so it says nothing and the assistant's last
+    // sentence — the actual speech — is what the lane shows. Returning "" is the
+    // projector's existing way of declining a line; `consider` drops an empty one.
+    const payload = '{"document":null,"elements":[]}';
+    const mute = { ...tool(2_000, payload), summary: payload };
+    expect(toolLine(mute)).toBe("");
+    expect(
+      projectLatestEvent(
+        thread({
+          activities: [mute],
+          messages: [said(1_000, "Nothing here is safely skippable.")],
+        }),
+        2_000,
+      ),
+    ).toEqual({ kind: "text", text: "Nothing here is safely skippable.", at: 1_000 });
+  });
+});
+
+// ── The board arm (`lens-board-tools` D11, task 4.2) ─────────────────────────
+
+/** One board call's rows, shaped the way T3's `mcp_tool_call` projection shapes them. */
+const boardCall = (
+  at: number,
+  tool: string,
+  input: Record<string, unknown>,
+  over: { result?: string; callId?: string } = {},
+) => ({
+  tone: "tool",
+  kind: over.result === undefined ? "tool.started" : "tool.completed",
+  summary: "MCP tool call",
+  payload: {
+    itemType: "mcp_tool_call",
+    toolCallId: over.callId ?? `call-${tool}-${at}`,
+    status: over.result === undefined ? "inProgress" : "completed",
+    // T3 writes this verbatim, and it is what every path below the board arm renders.
+    detail: `mcp__rennet_board__${tool}: ${JSON.stringify(input)}`,
+    data: {
+      toolName: `mcp__rennet_board__${tool}`,
+      input,
+      ...(over.result === undefined ? {} : { result: { content: over.result } }),
+    },
+  },
+  turnId: "turn-1",
+  createdAt: ISO(at),
+});
+
+describe("a board call on the live line", () => {
+  it("reads as a receipt, never as the element it is writing", () => {
+    // THE CONTROL FOR 4.2: remove the board arm from `toolLine` and this reddens with
+    // `"text": "mcp__rennet_board__add_step"`, run 2026-09-05.
+    //
+    // Recorded precisely, because the shape of the failure is not the one the task's
+    // wording predicts. The unknown-tool fallback below already collapses a JSON input to
+    // the tool's own NAME (`isJsonPayload(rest)`), so what a board call fell back to was
+    // never `<toolName>: <raw JSON>` — it was the bare namespaced tool name, with no
+    // receipt in it at all. That is still a live line that tells the reviewer nothing and
+    // still leaks the wire's own vocabulary onto a surface meant for speech, which is what
+    // the last two assertions here pin. The arm is what makes it a sentence.
+    const line = projectLatestEvent(
+      thread({
+        activities: [
+          boardCall(1_000, "add_step", { title: "Read the entry point" }, { result: "e4" }),
+        ],
+      }),
+      1_100,
+    );
+    expect(line).toEqual({ kind: "tool", text: "added step 1", at: 1_000 });
+    expect(line?.text).not.toContain("{");
+    expect(line?.text).not.toContain("rennet_board");
+  });
+
+  it("counts a tool's calls within the turn, once per CALL and not once per row", () => {
+    // The started row and the completed row of ONE call share a `toolCallId`, so they
+    // share an ordinal. Counting rows would say "added step 2" for the first step.
+    const line = projectLatestEvent(
+      thread({
+        activities: [
+          boardCall(1_000, "add_step", { title: "one" }, { callId: "c1" }),
+          boardCall(1_100, "add_step", { title: "one" }, { callId: "c1", result: "e1" }),
+          boardCall(1_200, "add_step", { title: "two" }, { callId: "c2" }),
+          boardCall(1_300, "add_step", { title: "two" }, { callId: "c2", result: "e2" }),
+        ],
+      }),
+      1_400,
+    );
+    expect(line?.text).toBe("added step 2");
+  });
+
+  it("keeps speaking after it has finished, unlike every other tool", () => {
+    // A daemon answers a board call in microseconds, so its in-flight window is invisible.
+    // What the reviewer wants from the line is not what the seat is waiting on but what it
+    // just put on the board — so the receipt survives the call. A finished `Read` does not.
+    const finishedRead = projectLatestEvent(
+      thread({
+        activities: [
+          toolStarted(1_000, 'Read: {"file_path":"/repo/src/a.ts"}', "r1"),
+          toolFinished(1_100, 'Read: {"file_path":"/repo/src/a.ts"}', "r1"),
+        ],
+        messages: [said(900, "Looking at the entry point.")],
+      }),
+      1_200,
+    );
+    expect(finishedRead?.text, "a finished read yields to the seat's own words").toBe(
+      "Looking at the entry point.",
+    );
+
+    const finishedCite = projectLatestEvent(
+      thread({
+        activities: [
+          boardCall(
+            1_100,
+            "cite",
+            { path: "/repo/src/foo.ts", side: "head", start_line: 41, end_line: 58 },
+            { result: "e2" },
+          ),
+        ],
+        messages: [said(900, "Looking at the entry point.")],
+      }),
+      1_200,
+      { repoRoot: "/repo" },
+    );
+    expect(finishedCite?.text).toBe("cited `src/foo.ts:41-58`");
+  });
+
+  it("reads a finish verdict as its pointer count", () => {
+    const line = projectLatestEvent(
+      thread({
+        activities: [
+          boardCall(
+            1_000,
+            "finish",
+            {},
+            { result: "not settled — 2 to fix, then call finish again:" },
+          ),
+        ],
+      }),
+      1_100,
+    );
+    expect(line?.text).toBe("finish returned 2 pointers");
   });
 });
 

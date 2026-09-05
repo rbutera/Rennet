@@ -31,17 +31,20 @@ continues to provide its command interface but does not serve the browser app.
 
 ## Switch between daemons
 
-The connection control in the top-left corner shows the active daemon.
+Daemons are environments. **Add Environment** in the sidebar, or the same button
+on **Settings → Environments**, pairs one: enter the machine's address and a
+current pairing code. Settings → Environments lists every paired machine and
+removes one you no longer want.
 
-- **This machine** selects the desktop daemon in the desktop shell. In a browser,
-  it selects the daemon that served the page.
-- **Saved daemons** lists paired remote daemons. Use **Add a daemon** and enter
-  the host plus a current pairing code.
+Rennet starts on the environment that serves the interface: the desktop daemon in
+the desktop shell, or the daemon that served the page in a browser. It attaches a
+different one when you pick that environment as the source in **Add Project** —
+including **Browse Its Projects** straight after pairing.
 
 The browser stores the exchanged device token in that browser. See
 [Remote access](./remote-access.md) for binding and pairing instructions.
 
-Switching daemons reloads the interface from the selected daemon's state.
+Attaching another environment reloads the interface from that daemon's state.
 Reviews and threads are not merged between daemons. Connecting the desktop app
 to a remote daemon does not stop its local daemon.
 

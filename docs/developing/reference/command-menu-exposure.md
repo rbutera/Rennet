@@ -136,6 +136,7 @@ still goes through the one seam; only the label is hand-written.
 | `fs.listDir` | Directory-browser read; its listing must be displayed. |
 | `patchset.readSpan` | Needs the citation, and its lines must be displayed. |
 | `board.read` | Read the board surface drives. |
+| `board.draft` | Read the board surface drives; it catches a mid-draft board up before folding its live frames. |
 | `benchmarks.list` | Read the Settings benchmarks panel drives; its runs must be displayed. |
 
 ### flagged, noise, openspec

@@ -50,9 +50,15 @@ const ROUND_PACKET = {
   successorAccount: { asks: [] },
 } as unknown as DeltaPacket;
 
+/**
+ * ONE changed region, cited by nothing. Load-bearing: the Noise board is the complement of
+ * the other four (D16), so a context with no changed regions leaves an empty complement and
+ * settles the Noise lane `no-noise` with no board — and this fixture's whole subject is
+ * that SIX canonical board ids survive a restart.
+ */
 const lintContextFor = (lens: LintTarget): LintContext => ({
   lens,
-  regions: [],
+  regions: [{ path: "src/uncited.ts", side: "head", start: 1, end: 4 }],
   files: new Map(),
 });
 const readPrompt = (file: string): string => `PROMPT_FILE:${file}`;

@@ -249,6 +249,101 @@ it.effect("decodes thread.turn.start defaults for provider and runtime mode", ()
   }),
 );
 
+const turnStartCommandWith = (mcpServers: unknown) => ({
+  type: "thread.turn.start",
+  commandId: "cmd-turn-mcp",
+  threadId: "thread-1",
+  message: {
+    messageId: "msg-mcp",
+    role: "user",
+    text: "hello",
+    attachments: [],
+  },
+  mcpServers,
+  createdAt: "2026-01-01T00:00:00.000Z",
+});
+
+it.effect("carries a turn's MCP servers as an endpoint and a credential variable NAME", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadTurnStartCommand(
+      turnStartCommandWith({
+        board: {
+          url: "http://127.0.0.1:7391/board/design",
+          bearerTokenEnvVar: "RENNET_BOARD_TOKEN",
+        },
+      }),
+    );
+    assert.deepStrictEqual(parsed.mcpServers, {
+      board: {
+        url: "http://127.0.0.1:7391/board/design",
+        bearerTokenEnvVar: "RENNET_BOARD_TOKEN",
+      },
+    });
+  }),
+);
+
+it.effect("gives a raw credential nowhere to live on a turn's MCP server", () =>
+  Effect.gen(function* () {
+    // This command is written to the event store and replayed from it, so a
+    // field able to hold a secret would make that secret a durable database
+    // row. The schema has no such field: a caller that sends one finds it gone
+    // by the time the command exists.
+    const parsed = yield* decodeThreadTurnStartCommand(
+      turnStartCommandWith({
+        board: {
+          url: "http://127.0.0.1:7391/board/design",
+          bearerToken: "rennet-sentinel-board-credential",
+        },
+      }),
+    );
+    assert.notInclude(JSON.stringify(parsed), "rennet-sentinel-board-credential");
+    assert.deepStrictEqual(parsed.mcpServers, {
+      board: { url: "http://127.0.0.1:7391/board/design" },
+    });
+  }),
+);
+
+it.effect("refuses a server name Codex could not write into its config path", () =>
+  Effect.gen(function* () {
+    // Codex takes inline MCP configuration as `-c mcp_servers.<name>.<key>`.
+    // A dot in the name makes a nested table and the server never exists —
+    // verified against codex-cli 0.148.0 — so the name is refused here rather
+    // than silently dropped three hops later.
+    const result = yield* Effect.exit(
+      decodeThreadTurnStartCommand(
+        turnStartCommandWith({ "board.design": { url: "http://127.0.0.1:7391/board/design" } }),
+      ),
+    );
+    assert.strictEqual(result._tag, "Failure");
+
+    const spaced = yield* Effect.exit(
+      decodeThreadTurnStartCommand(
+        turnStartCommandWith({ "board design": { url: "http://127.0.0.1:7391/board/design" } }),
+      ),
+    );
+    assert.strictEqual(spaced._tag, "Failure");
+
+    // The names a caller actually uses still decode.
+    const parsed = yield* decodeThreadTurnStartCommand(
+      turnStartCommandWith({ "rennet-board_design": { url: "http://127.0.0.1:7391/x" } }),
+    );
+    assert.isDefined(parsed.mcpServers?.["rennet-board_design"]);
+  }),
+);
+
+it.effect("refuses a credential variable that is not an environment variable name", () =>
+  Effect.gen(function* () {
+    const result = yield* Effect.exit(
+      decodeThreadTurnStartCommand(
+        turnStartCommandWith({
+          board: { url: "http://127.0.0.1:7391/x", bearerTokenEnvVar: "not a var name" },
+        }),
+      ),
+    );
+    assert.strictEqual(result._tag, "Failure");
+  }),
+);
+
 it.effect("accepts inline images, uploaded images, and uploaded files from clients", () =>
   Effect.gen(function* () {
     const command = yield* decodeClientOrchestrationCommand({

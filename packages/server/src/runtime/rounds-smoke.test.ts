@@ -30,7 +30,7 @@ import { describe, expect, it } from "vitest";
 import { createBoardsRuntime } from "../boards/boards-runtime";
 import { DELTA_DIGEST_OUTPUT_SCHEMA } from "../delta-digest-live";
 import { withFakeT3Seats } from "../t3-seat-fake";
-import { createNodePromptReader, designDraftOutputSchema } from "./lens-pipeline";
+import { createNodePromptReader } from "./lens-pipeline";
 import { createRoundsRuntime } from "./rounds";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -790,60 +790,12 @@ describe.skipIf(!SMOKE)("C15 1.1 — rounds pipeline smoke-run (LIVE ports, RENN
     expect(hasStructured, "delta-digest emitted no structured output").toBe(true);
   }, 300_000);
 
-  // #810: Design's output schema was a top-level `z.union`, which renders with no
-  // top-level `type`, and the API refused the request before the model saw it
-  // ("tools.9.custom.input_schema.type: Field required") — on every branch, for every
-  // Design turn, taking the `no-spec` absence down with it. No hermetic test could see
-  // this: the refusal happens at the provider. So this sends the REAL Design schema on a
-  // real turn. A regression re-reddens it as `status=error:API Error: 400 …`.
-  it("Design's output schema is accepted by the API on a real turn", async () => {
-    const { adapter } = await createClaudeHarness({ env: process.env });
-    expect(adapter, "no claude harness resolved").not.toBeNull();
-    // An EMPTY checkout, so the absence the seat is asked about is actually true. Pointed
-    // at the Rennet worktree the seat reads `openspec/changes/session-bound-workspace`,
-    // correctly refuses to claim there is no spec, and drafts a board instead — which
-    // proves the API accepts the schema but says nothing about the absence branch.
-    const emptyCheckout = mkdtempSync(join(tmpdir(), "rennet-design-nospec-"));
-    const session = await (adapter as NonNullable<typeof adapter>).createSession({
-      cwd: emptyCheckout,
-      model: "haiku",
-      ephemeral: true,
-      outputSchema: designDraftOutputSchema(),
-    } as never);
-    let status = "no-terminal-frame";
-    let structured: unknown;
-    try {
-      await session.send({
-        // Semantic, not a restated schema: the shape travels once, as the output format.
-        prompt:
-          "You are the Design seat, reviewing a branch in the checkout you are standing in. Look for the specification this branch was written against — an openspec change, a design document, an ADR, anything. If the checkout holds none, report that absence in the form your output format allows rather than inventing a board.",
-      });
-      for await (const event of session.events as AsyncIterable<never>) {
-        const e = event as {
-          kind: string;
-          error?: { message: string };
-          outcome?: { status: string; structuredOutput?: unknown };
-        };
-        if (e.kind === "error") {
-          status = `error:${e.error?.message}`;
-          break;
-        }
-        if (e.kind === "session.ended") {
-          status = e.outcome?.status ?? "unknown";
-          structured = e.outcome?.structuredOutput;
-          break;
-        }
-      }
-    } finally {
-      await session.close();
-      rmSync(emptyCheckout, { recursive: true, force: true });
-    }
-    console.log(
-      `[smoke] design schema via real API: status=${status} structured=${JSON.stringify(structured)}`,
-    );
-    expect(status, "the API refused the Design output schema").toBe("completed");
-    // Exactly the absence — not "some structured value". The union's absence branch is
-    // `additionalProperties: false`, so this also shows the provider enforcing it.
-    expect(structured).toEqual({ absence: "no-spec" });
-  }, 300_000);
+  // #810's live guard used to live here: it sent the real Design output schema on a real
+  // turn, because the API's refusal of a top-level union happened at the provider and no
+  // hermetic test could see it. It is deleted rather than repaired, because the thing it
+  // sent no longer exists — a Design seat carries no output schema at all since
+  // `lens-board-tools` 3.2, so there is no schema to be refused. What replaces it is the
+  // flat-input assertion over every board tool (`tool-schemas.test.ts`), which is a shape
+  // in which a union cannot be written rather than a check that one particular schema is
+  // accepted, plus the live board drive that is task 7.1 of that change.
 });

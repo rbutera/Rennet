@@ -20,7 +20,7 @@ Every lens board of a generation SHALL be created — empty, in a `drafting` sta
 
 ### Requirement: A seat writes its board through a tool set derived from the kinds its lens authors
 
-Each seat SHALL be given a tool set covering exactly the element kinds its lens already authors — the shared authoring kinds (`prose`, `section`, `callout`, `annotation`, `code_ref`) plus that lens's own typed kinds — and no others. The set SHALL be DERIVED from the tables that already assign kinds to lenses, not written per lens by hand, so a new kind or a reassigned lane cannot leave the tools behind. Every set SHALL carry an `add`, an `update` and a `remove` verb, a citation verb, a `finish`, and, for a lens that admits an absence, one settle-absent verb whose reason is fixed by the lens and carries no field naming it. A lens that admits no absence SHALL have no such tool.
+Each seat SHALL be given a tool set covering exactly the element kinds its lens already authors — the shared authoring kinds (`prose`, `section`, `callout`, `annotation`, `code_ref`) plus that lens's own typed kinds — and no others. The set SHALL be DERIVED from the tables that already assign kinds to lenses, not written per lens by hand, so a new kind or a reassigned lane cannot leave the tools behind. Every set SHALL carry an `add`, an `update` and a `remove` verb, a citation verb, a `finish`, and, for a lens whose absence a SEAT declares, one settle-absent verb whose reason is fixed by the lens and carries no field naming it. A lens that admits no absence, and a lens whose absence the host settles from a derived membership, SHALL have no such tool.
 
 Fields the host owns SHALL NOT appear on any tool input: the element's author, the patchset id, a noise verdict's judge, a finding's draft status, and a finding's cross-seat concurrence and accord.
 
@@ -31,8 +31,8 @@ Fields the host owns SHALL NOT appear on any tool input: the element's author, t
 
 #### Scenario: A lens with no admissible absence has no settle-absent tool
 
-- **WHEN** the Sequence seat's tool set is built and the Noise seat's tool set is built
-- **THEN** the Noise set carries a settle-absent verb whose reason is fixed as `no-noise`, and the Sequence set carries none
+- **WHEN** the Design seat's tool set is built and the Sequence seat's tool set is built
+- **THEN** the Design set carries a settle-absent verb whose reason is fixed as `no-spec`, and the Sequence set carries none
 
 #### Scenario: A new kind reaches the tools without an edit
 
@@ -133,24 +133,45 @@ When a turn does end unsettled, the board it wrote SHALL be kept, marked as unse
 
 ### Requirement: A seat reaches its board through a daemon-hosted loopback endpoint addressed per seat
 
-The daemon SHALL host the board tool surface as a loopback HTTP MCP server bound to the local interface, and SHALL give each seat its own address and its own credential, so a call names the board it writes without the seat having to carry a board identifier. The credential SHALL be minted per seat, stored only as a one-way digest, refreshed while the seat works, and revoked when its lane settles rather than left to expire. A seat's credential SHALL NOT appear on any process's argument list.
+The daemon SHALL host the board tool surface as a loopback HTTP MCP server bound to the local interface, and SHALL give each seat its own address, so a call names the board it writes without the seat having to carry a board identifier.
+
+A seat's credential SHALL be TWO parts, because no single value can satisfy both of the properties this requirement needs. The transport permits a caller to name only an environment VARIABLE for a server's credential, and the harness child reads that variable out of an environment fixed when the daemon spawned the sidecar — so a value delivered that way cannot be per seat, and a value delivered any other way is on the child's argument list. Therefore:
+
+- The **seat token** SHALL be per seat and scoped to the generation, the board and the seat, unguessable without the daemon's own secret, held only as a one-way digest, and revoked when its lane settles rather than left to expire. It travels in the seat's address.
+- The **process bearer** SHALL be the sidecar's own, placed in the environment the harness child inherits, and SHALL NOT appear on any process's argument list.
+
+Both SHALL be required on every call, so an argument list yields an address and not access.
+
+Because the seat token travels in the address, and the address travels on the turn command the sidecar persists, a per-seat secret DOES land in a durable event row. Eager revocation is what answers that: a token replayed after its lane settled reaches nothing.
+
+A seat's address SHALL be stable for as long as the provider session that was opened with it: both providers fix a session's MCP configuration when the harness child is created, and a later turn naming a different address is refused by the adapter rather than served. It SHALL therefore survive a daemon restart under a sidecar that outlived it, and a settled lane being re-opened for a retry.
 
 This addressing SHALL NOT be described or implemented as a restriction on what a seat may do: it names the board a call writes, exactly as a file handle names a file.
 
 #### Scenario: Two seats on one lane write one board
 
 - **WHEN** the Flagged lens runs a Claude seat and a Codex seat
-- **THEN** each has its own address and credential, both write to the one Flagged board, each element carries the voice that wrote it, and the ids they receive cannot collide
+- **THEN** each has its own address, both write to the one Flagged board, each element carries the voice that wrote it, and the ids they receive cannot collide
 
 #### Scenario: The credential is not on the process table
 
 - **WHEN** a seat's harness child is running
-- **THEN** its argument list contains no board credential
+- **THEN** its argument list contains no process bearer, and the address on it is not sufficient to write a board
 
 #### Scenario: A settled lane's credential stops working
 
 - **WHEN** a lane settles
-- **THEN** its seats' credentials are revoked at once rather than waiting for a liveness window
+- **THEN** its seats' addresses are revoked at once rather than waiting for a liveness window, and a token replayed from the sidecar's event store reaches nothing
+
+#### Scenario: The sidecar respawns under a running daemon
+
+- **WHEN** the sidecar exits and the daemon spawns a fresh one within its own life
+- **THEN** the board server accepts the new sidecar's children, rather than refusing every seat from then on against the bearer of the sidecar that died
+
+#### Scenario: A seat's address outlives the daemon that minted it
+
+- **WHEN** the daemon restarts while a seat's provider session is still open on a surviving sidecar
+- **THEN** the seat is handed the same address it had, so its next turn is not refused as an MCP-server mismatch
 
 ### Requirement: A board tool call reaches the reviewer as a receipt, never as a payload
 
@@ -165,3 +186,31 @@ The live line published for a running seat SHALL render a board tool call as a r
 
 - **WHEN** a control removes the board-tool arm from the live-line projection
 - **THEN** the assertion that no lane's live line contains a raw tool input fails
+
+### Requirement: A board whose membership the host derives is handed its members, not asked for them
+
+Where a board's membership is derived by the host rather than authored by a seat — the Noise board, whose members are the changed regions no other board cited — the host SHALL create those members before the seat's first turn, and the seat's tool set SHALL carry no verb that creates a member of that kind and no verb that removes one. The remove verb SHALL refuse a derived member while continuing to remove the elements the seat itself authored. The update verb for that kind SHALL be how the seat parents a member into a group and writes its reason, and SHALL carry no field for a member's verdict or its judge mark: each has one admissible value once membership is derived, and a one-valued field on a tool input offers a choice that does not exist.
+
+A lens whose absence is decided by the host from that derivation SHALL carry no settle-absent verb, because there is nothing left for the seat to declare that the host does not already know before the turn.
+
+`finish` SHALL refuse to settle such a board while any member is unparented or any group carries no reason, returning one pointer per unaccounted member. That check SHALL be an ordinary member of the finish tier of the one rule registry, covered by the partition assertion like every other rule — and on a derived board it is the ONLY whole-board question left to ask, because everything else the board asserts was written by the host.
+
+#### Scenario: The Noise set has no member verb
+
+- **WHEN** the Noise seat's tool set is built
+- **THEN** it carries no verb that creates a noise verdict and none that removes one, and its update verb carries a parent and a reason and no field for a verdict or a judge mark
+
+#### Scenario: The remove verb refuses a member and still removes a section
+
+- **WHEN** the Noise seat removes a group section it authored, and then attempts to remove a member the host placed
+- **THEN** the section is removed and the member's removal is refused, naming the derivation as the reason
+
+#### Scenario: Finish points at an unaccounted member
+
+- **WHEN** the Noise seat calls `finish` with two members parented into groups and one member parented into none
+- **THEN** `finish` returns one pointer naming the unaccounted member, the seat groups it in the same turn, and the next `finish` settles the board
+
+#### Scenario: The Noise set has no settle-absent verb
+
+- **WHEN** the Noise seat's tool set is built
+- **THEN** it carries no settle-absent verb, because a Noise lane with no members is settled by the host without a seat turn

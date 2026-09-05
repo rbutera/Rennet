@@ -4,7 +4,6 @@ import { join } from "node:path";
 import { RoundOperationStore } from "@rennet/adapters";
 import {
   type RoundCommitReceipt,
-  type RoundGateReceipt,
   type RoundOperation,
   type RoundOperationFailure,
   type RoundOperationState,
@@ -16,6 +15,7 @@ import {
 } from "@rennet/protocol";
 import { describe, expect, it, vi } from "vitest";
 import { createRoundExecutionCoordinator, type RoundExecutionPorts } from "./round-execution";
+import { GenerationSupersededError } from "./rounds";
 
 const reportBoard = {
   lens: "report",
@@ -31,12 +31,7 @@ const reportBoard = {
 } satisfies RoundReportBoard;
 
 function operation(
-  options: {
-    dispatchId?: string;
-    gatePlan?: RoundOperation["gatePlan"];
-    operationId?: string;
-    roundNumber?: number;
-  } = {},
+  options: { dispatchId?: string; operationId?: string; roundNumber?: number } = {},
 ): RoundOperation {
   const operationId = options.operationId ?? "operation-1";
   const prompt = `Work order for ${operationId}`;
@@ -52,7 +47,6 @@ function operation(
     repoRoot: "/repo",
     workOrderPrompt: prompt,
     workOrderDigest: sha256Hex(prompt),
-    gatePlan: options.gatePlan ?? { kind: "configured", command: "pnpm check" },
     revision: 0,
     rerunRequested: false,
     createdAt: 1,
@@ -124,35 +118,6 @@ function seedWorkerRunning(
   );
 }
 
-function seedGateRunning(store: RoundOperationStore, initial: RoundOperation): RoundOperation {
-  const running = seedWorkerRunning(store, initial);
-  if (running.state.phase !== "worker-running") throw new Error("expected seeded worker attempt");
-  const worker = {
-    ...running.state.worker,
-    completedAt: 5,
-    outcome: "completed",
-    diff: "",
-    changedPaths: [],
-  } satisfies RoundWorkerReceipt;
-  const settled = advance(
-    store,
-    running,
-    { phase: "worker-settled", workspace: running.state.workspace, worker },
-    5,
-  );
-  return advance(
-    store,
-    settled,
-    {
-      phase: "gate-running",
-      workspace: running.state.workspace,
-      worker,
-      gate: { executionId: "gate-recovery", startedAt: 6 },
-    },
-    6,
-  );
-}
-
 function seedCommitting(
   store: RoundOperationStore,
   initial: RoundOperation,
@@ -173,25 +138,13 @@ function seedCommitting(
     { phase: "worker-settled", workspace: running.state.workspace, worker },
     5,
   );
-  const gateSettled = advance(
-    store,
-    workerSettled,
-    {
-      phase: "gate-settled",
-      workspace: running.state.workspace,
-      worker,
-      gate: { outcome: "skipped", reason: "not-configured", settledAt: 6 },
-    },
-    6,
-  );
   return advance(
     store,
-    gateSettled,
+    workerSettled,
     {
       phase: "committing",
       workspace: running.state.workspace,
       worker,
-      gate: { outcome: "skipped", reason: "not-configured", settledAt: 6 },
       commit: {
         executionId: "commit-recovery",
         baseHead: running.state.workspace.sourceHead,
@@ -219,7 +172,6 @@ function seedRoundRecording(store: RoundOperationStore, initial: RoundOperation)
       phase: "commits-settled",
       workspace: committing.state.workspace,
       worker: committing.state.worker,
-      gate: committing.state.gate,
       commits,
     },
     8,
@@ -231,7 +183,6 @@ function seedRoundRecording(store: RoundOperationStore, initial: RoundOperation)
       phase: "round-recording",
       workspace: committing.state.workspace,
       worker: committing.state.worker,
-      gate: committing.state.gate,
       commits,
       recording: {
         effect: "round-recording",
@@ -259,9 +210,7 @@ type Scenario = {
   readonly published: RoundOperation[];
 };
 
-function scenario(
-  options: { commitCount?: number; gate?: RoundGateReceipt; worker?: RoundWorkerReceipt } = {},
-): Scenario {
+function scenario(options: { commitCount?: number; worker?: RoundWorkerReceipt } = {}): Scenario {
   const dir = mkdtempSync(join(tmpdir(), "round-execution-"));
   const store = new RoundOperationStore(dir);
   const calls: string[] = [];
@@ -303,28 +252,6 @@ function scenario(
       calls.push("worker");
       expect(store.read(current.sessionId)?.state.phase).toBe("worker-running");
       return worker;
-    },
-    planGate() {
-      calls.push("plan-gate");
-      // An injected receipt IS the settlement of this attempt, so the attempt takes its
-      // identity — the store refuses a receipt that does not extend its persisted attempt.
-      // (Same shape as `planWorker` above, which derives from the injected worker receipt.)
-      if (options.gate !== undefined && options.gate.outcome !== "skipped") {
-        return { executionId: options.gate.executionId, startedAt: options.gate.startedAt };
-      }
-      return { executionId: "gate-1", startedAt: now() };
-    },
-    async runGate({ operation: current, attempt }) {
-      calls.push("gate");
-      expect(store.read(current.sessionId)?.state.phase).toBe("gate-running");
-      return (
-        options.gate ?? {
-          ...attempt,
-          completedAt: now(),
-          outcome: "passed",
-          exitCode: 0,
-        }
-      );
     },
     planCommit() {
       calls.push("plan-commit");
@@ -419,8 +346,6 @@ describe("createRoundExecutionCoordinator", () => {
       "plan-workspace",
       "plan-worker",
       "worker",
-      "plan-gate",
-      "gate",
       "plan-commit",
       "commits",
       "plan-round-recording",
@@ -436,8 +361,6 @@ describe("createRoundExecutionCoordinator", () => {
       "prepared",
       "worker-running",
       "worker-settled",
-      "gate-running",
-      "gate-settled",
       "committing",
       "commits-settled",
       "round-recording",
@@ -706,7 +629,6 @@ describe("createRoundExecutionCoordinator", () => {
     const replayed = {
       workspace: vi.fn(test.ports.planWorkspace),
       worker: vi.fn(test.ports.runWorker),
-      gate: vi.fn(test.ports.runGate),
       commits: vi.fn(test.ports.settleCommits),
       recording: vi.fn(test.ports.recordRound),
     };
@@ -716,7 +638,6 @@ describe("createRoundExecutionCoordinator", () => {
         ...test.ports,
         planWorkspace: replayed.workspace,
         runWorker: replayed.worker,
-        runGate: replayed.gate,
         settleCommits: replayed.commits,
         recordRound: replayed.recording,
       },
@@ -726,14 +647,13 @@ describe("createRoundExecutionCoordinator", () => {
     expect(recovered[0]?.state.phase).toBe("completed");
     expect(replayed.workspace).not.toHaveBeenCalled();
     expect(replayed.worker).not.toHaveBeenCalled();
-    expect(replayed.gate).not.toHaveBeenCalled();
     expect(replayed.commits).not.toHaveBeenCalled();
     expect(replayed.recording).not.toHaveBeenCalled();
   });
 
   it("cold-recovers the exact round recording attempt without re-settling commits", async () => {
     const test = scenario();
-    seedRoundRecording(test.store, operation({ gatePlan: { kind: "absent" } }));
+    seedRoundRecording(test.store, operation());
     const settleCommits = vi.fn(test.ports.settleCommits);
     const recordRound = vi.fn(async (input: Parameters<RoundExecutionPorts["recordRound"]>[0]) => {
       expect(input.operation.dispatchId).toBe("dispatch-operation-1");
@@ -756,10 +676,9 @@ describe("createRoundExecutionCoordinator", () => {
 
   it("resumes an idempotent commit settlement from its persisted attempt", async () => {
     const test = scenario();
-    seedCommitting(test.store, operation({ gatePlan: { kind: "absent" } }));
+    seedCommitting(test.store, operation());
     const planWorkspace = vi.fn(test.ports.planWorkspace);
     const runWorker = vi.fn(test.ports.runWorker);
-    const runGate = vi.fn(test.ports.runGate);
     const settleCommits = vi.fn(test.ports.settleCommits);
     const recovered = await createRoundExecutionCoordinator({
       store: test.store,
@@ -767,7 +686,6 @@ describe("createRoundExecutionCoordinator", () => {
         ...test.ports,
         planWorkspace,
         runWorker,
-        runGate,
         settleCommits,
       },
     }).recover();
@@ -775,7 +693,6 @@ describe("createRoundExecutionCoordinator", () => {
     expect(recovered[0]?.state.phase).toBe("completed");
     expect(planWorkspace).not.toHaveBeenCalled();
     expect(runWorker).not.toHaveBeenCalled();
-    expect(runGate).not.toHaveBeenCalled();
     expect(settleCommits).toHaveBeenCalledTimes(1);
     expect(settleCommits.mock.calls[0]?.[0].attempt.executionId).toBe("commit-recovery");
   });
@@ -823,28 +740,6 @@ describe("createRoundExecutionCoordinator", () => {
     });
   });
 
-  it("re-runs an interrupted gate through its observer without re-running the worker", async () => {
-    const test = scenario({ commitCount: 0 });
-    seedGateRunning(test.store, operation({ gatePlan: { kind: "configured", command: "check" } }));
-    const runWorker = vi.fn(async () => {
-      throw new Error("duplicate worker execution");
-    });
-    const runGate = vi.fn(async () => {
-      throw new Error("new gate execution");
-    });
-    const observeGate = vi.fn(test.ports.runGate);
-    const recovered = await createRoundExecutionCoordinator({
-      store: test.store,
-      ports: { ...test.ports, runWorker, runGate, observeGate },
-    }).recover();
-
-    expect(recovered[0]?.state.phase).toBe("completed");
-    expect(runWorker).not.toHaveBeenCalled();
-    expect(runGate).not.toHaveBeenCalled();
-    expect(observeGate).toHaveBeenCalledTimes(1);
-    expect(observeGate.mock.calls[0]?.[0].attempt.executionId).toBe("gate-recovery");
-  });
-
   it("marks an unobservable recovered worker as interrupted without dispatching it again", async () => {
     const test = scenario();
     seedWorkerRunning(test.store, operation());
@@ -870,34 +765,6 @@ describe("createRoundExecutionCoordinator", () => {
     expect(failed.state.failure).toMatchObject({
       at: "worker",
       worker: { executionId: "worker-recovery" },
-    });
-    expect(failed.state.failure.reason).toContain("interrupted");
-  });
-
-  it("marks an unobservable recovered gate as interrupted without running it again", async () => {
-    const test = scenario();
-    seedGateRunning(test.store, operation());
-    const runGate = vi.fn(test.ports.runGate);
-    const coordinator = createRoundExecutionCoordinator({
-      store: test.store,
-      ports: {
-        ...test.ports,
-        runGate,
-        async drainTerminal() {
-          throw new Error("retain failed gate for inspection");
-        },
-      },
-      now: () => 20,
-    });
-
-    await expect(coordinator.recover()).rejects.toThrow("retain failed gate for inspection");
-    expect(runGate).not.toHaveBeenCalled();
-    const failed = test.store.read("session-1");
-    expect(failed?.state.phase).toBe("failed");
-    if (failed?.state.phase !== "failed") throw new Error("expected gate recovery to fail");
-    expect(failed.state.failure).toMatchObject({
-      at: "gate",
-      gate: { executionId: "gate-recovery" },
     });
     expect(failed.state.failure.reason).toContain("interrupted");
   });
@@ -1022,72 +889,27 @@ describe("createRoundExecutionCoordinator", () => {
     expect(clean.state.failure.reason).toBe("worker stopped by signal SIGTERM");
   });
 
-  it.each([
-    {
-      name: "passes a configured gate from its real zero exit receipt",
-      gatePlan: { kind: "configured", command: "pnpm check" } satisfies RoundOperation["gatePlan"],
-      gate: {
-        executionId: "gate-1",
-        startedAt: 13,
-        completedAt: 14,
-        outcome: "passed",
-        exitCode: 0,
-      } satisfies RoundGateReceipt,
-      expectedPhase: "completed",
-      expectedGate: "passed",
-    },
-    {
-      name: "fails a configured gate from its nonzero exit receipt",
-      gatePlan: { kind: "configured", command: "pnpm check" } satisfies RoundOperation["gatePlan"],
-      gate: {
-        executionId: "gate-1",
-        startedAt: 13,
-        completedAt: 14,
-        outcome: "failed",
-        termination: { kind: "exit", exitCode: 2 },
-      } satisfies RoundGateReceipt,
-      expectedPhase: "failed",
-      expectedGate: "failed",
-    },
-  ])("$name", async ({ gatePlan, gate, expectedPhase, expectedGate }) => {
-    const test = scenario({ gate });
-    const terminal = await createRoundExecutionCoordinator({
-      store: test.store,
-      ports: test.ports,
-    }).submit(operation({ gatePlan }));
-
-    expect(terminal.state.phase).toBe(expectedPhase);
-    if (terminal.state.phase === "completed") {
-      expect(terminal.state.gate.outcome).toBe(expectedGate);
-    } else if (terminal.state.phase === "failed") {
-      expect(terminal.state.failure.at).toBe("gate");
-    }
-  });
-
-  it("settles an absent gate without planning or running a command", async () => {
-    const worker = {
-      executionId: "worker-1",
-      startedAt: 13,
-      completedAt: 14,
-      outcome: "completed",
-      diff: "",
-      changedPaths: [],
-    } satisfies RoundWorkerReceipt;
-    const test = scenario({ commitCount: 0, worker });
-    const planGate = vi.fn(test.ports.planGate);
-    const runGate = vi.fn(test.ports.runGate);
-    const recordRound = vi.fn(test.ports.recordRound);
+  // Rennet runs no check of its own any more (round-worker-thread; Rai, 2026-09-04): the
+  // worker runs the repository's, and the round goes from the settled turn straight to
+  // observing the commits. Nothing between them is Rennet's to run.
+  it("goes from a settled worker to the commit observation with nothing in between", async () => {
+    const test = scenario();
     const completed = await createRoundExecutionCoordinator({
       store: test.store,
-      ports: { ...test.ports, planGate, runGate, recordRound },
-    }).submit(operation({ gatePlan: { kind: "absent" } }));
+      ports: test.ports,
+    }).submit(operation());
 
     expect(completed.state.phase).toBe("completed");
-    if (completed.state.phase !== "completed") throw new Error("expected an unchanged round");
-    expect(completed.state.gate.outcome).toBe("skipped");
-    expect(planGate).not.toHaveBeenCalled();
-    expect(runGate).not.toHaveBeenCalled();
-    expect(recordRound).toHaveBeenCalledTimes(1);
+    // Order, not membership: a set of `toContain` checks passes for a workflow that does
+    // the right steps in the wrong order, and the claim here is about sequence.
+    expect(test.calls.slice(0, 5)).toEqual([
+      "plan-workspace",
+      "plan-worker",
+      "worker",
+      "plan-commit",
+      "commits",
+    ]);
+    expect(test.calls.some((call) => call.includes("gate"))).toBe(false);
   });
 
   it.each([
@@ -1150,22 +972,23 @@ describe("createRoundExecutionCoordinator", () => {
 
   it("retains an ordinary terminal receipt and treats the same dispatch as a fresh retry", async () => {
     const test = scenario();
-    let failGate = true;
-    const runWorker = vi.fn(test.ports.runWorker);
+    let failWorker = true;
+    const runWorker = vi.fn(async (input: Parameters<RoundExecutionPorts["runWorker"]>[0]) => {
+      if (failWorker) {
+        return {
+          ...input.attempt,
+          completedAt: 30,
+          outcome: "failed" as const,
+          termination: { kind: "exit" as const, exitCode: 1 },
+          diff: "",
+          changedPaths: [],
+        };
+      }
+      return test.ports.runWorker(input);
+    });
     const ports: RoundExecutionPorts = {
       ...test.ports,
       runWorker,
-      async runGate(input) {
-        if (failGate) {
-          return {
-            ...input.attempt,
-            completedAt: 30,
-            outcome: "failed",
-            termination: { kind: "exit", exitCode: 1 },
-          };
-        }
-        return { ...input.attempt, completedAt: 31, outcome: "passed", exitCode: 0 };
-      },
       async drainTerminal() {
         return { kind: "retain" };
       },
@@ -1178,7 +1001,7 @@ describe("createRoundExecutionCoordinator", () => {
     expect(failed.state.phase).toBe("failed");
     expect(test.store.read(initial.sessionId)?.state.phase).toBe("failed");
 
-    failGate = false;
+    failWorker = false;
     const second = coordinator.submit(initial);
     expect(second).not.toBe(first);
     const completed = await second;
@@ -1234,8 +1057,6 @@ describe("createRoundExecutionCoordinator", () => {
       "plan-workspace",
       "plan-worker",
       "worker",
-      "plan-gate",
-      "gate",
       "plan-commit",
       "commits",
       "plan-round-recording",
@@ -1312,51 +1133,14 @@ describe("createRoundExecutionCoordinator", () => {
     expect(completed.state.workspace.root).toBe("/repo");
   });
 
-  it("retries a failed gate without repeating worker edits", async () => {
-    const test = scenario();
-    let gateAttempt = 0;
-    const runWorker = vi.fn(test.ports.runWorker);
-    const runGate: RoundExecutionPorts["runGate"] = vi.fn(async ({ attempt }) => {
-      test.calls.push("gate");
-      gateAttempt += 1;
-      return gateAttempt === 1
-        ? {
-            ...attempt,
-            completedAt: 30,
-            outcome: "failed",
-            termination: { kind: "exit", exitCode: 1 },
-          }
-        : { ...attempt, completedAt: 31, outcome: "passed", exitCode: 0 };
-    });
-    const coordinator = createRoundExecutionCoordinator({
-      store: test.store,
-      ports: {
-        ...test.ports,
-        runWorker,
-        runGate,
-        async drainTerminal() {
-          return { kind: "retain" };
-        },
-      },
-    });
-
-    expect((await coordinator.submit(operation())).state.phase).toBe("failed");
-    expect((await coordinator.retry("session-1"))?.state.phase).toBe("completed");
-
-    expect(runWorker).toHaveBeenCalledTimes(1);
-    expect(runGate).toHaveBeenCalledTimes(2);
-    expect(test.calls.filter((call) => call === "commits")).toHaveLength(1);
-  });
-
   // The committing arm is a "round" retry (`roundRetryMode`), and observing commits is
   // exactly the step that can fail transiently now that nothing stages on the reviewer's
-  // behalf. A retry must re-drive the observation from its persisted attempt and repeat
-  // neither the worker's turn nor the gate.
+  // behalf. A retry must re-drive the observation from its persisted attempt and must not
+  // repeat the worker's turn.
   it("retries commit settlement from its persisted attempt without repeating the turn", async () => {
     const test = scenario();
     let commitAttempts = 0;
     const runWorker = vi.fn(test.ports.runWorker);
-    const runGate = vi.fn(test.ports.runGate);
     const planCommit = vi.fn(test.ports.planCommit);
     const settleCommits: RoundExecutionPorts["settleCommits"] = vi.fn(async (input) => {
       commitAttempts += 1;
@@ -1368,7 +1152,6 @@ describe("createRoundExecutionCoordinator", () => {
       ports: {
         ...test.ports,
         runWorker,
-        runGate,
         planCommit,
         settleCommits,
         async drainTerminal() {
@@ -1390,7 +1173,6 @@ describe("createRoundExecutionCoordinator", () => {
     // from, which is the range the review's successor patchset is built on.
     expect(planCommit).toHaveBeenCalledTimes(1);
     expect(runWorker).toHaveBeenCalledTimes(1);
-    expect(runGate).toHaveBeenCalledTimes(1);
   });
 
   it("retries board regeneration with the original reserved board identities", async () => {
@@ -1438,6 +1220,43 @@ describe("createRoundExecutionCoordinator", () => {
     }
     expect(completed.state.result.report.reportBoardId).toBe(reserved.reportBoardId);
     expect(completed.state.result.report.generation).toBe(reserved.generation);
+  });
+
+  it("abandons a superseded drafting attempt without painting a failed round (#816 re-review P1)", async () => {
+    // Production path: the report-drafting port runs `runBoardRegeneration`, which — when a
+    // LATER attempt owns the generation — rethrows `GenerationSupersededError` with its type
+    // intact rather than emitting a terminal `failed`. Here the port raises exactly that error
+    // to stand in for that rethrow. Before the fix the coordinator ran `this.fail(...)`, which
+    // persisted a failed state and published a failed snapshot over the live generation the
+    // winning attempt is still settling.
+    const test = scenario();
+    const coordinator = createRoundExecutionCoordinator({
+      store: test.store,
+      ports: {
+        ...test.ports,
+        async draftReport({ operation: current }) {
+          test.calls.push("draft-report");
+          throw new GenerationSupersededError(
+            current.state.phase === "report-drafting"
+              ? current.state.report.generation
+              : "generation-1",
+          );
+        },
+        async drainTerminal() {
+          return { kind: "retain" };
+        },
+      },
+    });
+
+    const abandoned = await coordinator.submit(operation());
+
+    // The attempt is left where the store held it — report-drafting — never failed.
+    expect(abandoned.state.phase).toBe("report-drafting");
+    expect(test.store.read("session-1")?.state.phase).toBe("report-drafting");
+    // And no failed snapshot ever reached the publish sink. This is the redden: restore
+    // `this.fail(...)` for the superseded branch and both a persisted "failed" and a published
+    // "failed" appear.
+    expect(test.published.map((entry) => entry.state.phase)).not.toContain("failed");
   });
 
   it("persists the verified report handoff when later lens regeneration fails", async () => {
@@ -1532,7 +1351,6 @@ describe("createRoundExecutionCoordinator", () => {
 
     const planWorkspace = vi.fn(test.ports.planWorkspace);
     const runWorker = vi.fn(test.ports.runWorker);
-    const runGate = vi.fn(test.ports.runGate);
     const settleCommits = vi.fn(test.ports.settleCommits);
     const recordRound = vi.fn(test.ports.recordRound);
     const draftReport = vi.fn<RoundExecutionPorts["draftReport"]>(
@@ -1553,7 +1371,6 @@ describe("createRoundExecutionCoordinator", () => {
         ...test.ports,
         planWorkspace,
         runWorker,
-        runGate,
         settleCommits,
         recordRound,
         draftReport,
@@ -1569,7 +1386,6 @@ describe("createRoundExecutionCoordinator", () => {
     expect(draftReport).toHaveBeenCalledTimes(1);
     expect(planWorkspace).not.toHaveBeenCalled();
     expect(runWorker).not.toHaveBeenCalled();
-    expect(runGate).not.toHaveBeenCalled();
     expect(settleCommits).not.toHaveBeenCalled();
     expect(recordRound).not.toHaveBeenCalled();
   });

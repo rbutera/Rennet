@@ -71,7 +71,6 @@ const operationBase = {
   repoRoot: "/repo",
   workOrderPrompt: operationPrompt,
   workOrderDigest: sha256Hex(operationPrompt),
-  gatePlan: { kind: "configured", command: "pnpm check" },
   revision: 0,
   rerunRequested: false,
   createdAt: 100,
@@ -90,13 +89,6 @@ const operationWorker = {
   outcome: "completed",
   diff: "diff --git a/a b/a",
   changedPaths: ["a"],
-} as const;
-const operationGate = {
-  executionId: "gate-1",
-  startedAt: 140,
-  completedAt: 150,
-  outcome: "passed",
-  exitCode: 0,
 } as const;
 const operationCommits = {
   executionId: "commit-1",
@@ -228,12 +220,10 @@ describe("session/ durable shapes (#466/#457)", () => {
       roundNumber: 1,
       sourceTarget: { kind: "branch", branch: "feat/round" },
       askCount: 1,
-      gatePlan: { kind: "absent" },
       state: {
         phase: "report-drafting",
         workspace: { status: "done" },
         worker: { status: "done", fileCount: 1 },
-        gate: { status: "skipped", reason: "not-configured" },
         commits: { status: "done", count: 2 },
         report,
       },
@@ -410,12 +400,6 @@ describe("session/ durable shapes (#466/#457)", () => {
         startedAt: 1_777_777_777_000,
         sourceTarget: { kind: "branch", branch: "feat/receipts" },
         harness: { id: "codex", version: "0.146.0" },
-        gate: {
-          outcome: "passed",
-          command: "pnpm check",
-          durationMs: 12_500,
-          projectCount: 7,
-        },
       },
     };
     expect(RoundRecordSchema.parse(round).reportBoard).toBe("board-r");
@@ -439,7 +423,6 @@ describe("session/ durable shapes (#466/#457)", () => {
         startedAt: 10,
         sourceTarget: { kind: "detached", head: "abc123" },
         harness: { id: "claude-code", version: "2.1.220" },
-        gate: { outcome: "skipped", reason: "not-configured" },
       }).success,
     ).toBe(true);
     expect(
@@ -630,7 +613,6 @@ describe("session/ durable shapes (#466/#457)", () => {
           phase: "commits-settled",
           workspace: operationWorkspace,
           worker: operationWorker,
-          gate: operationGate,
           commits: { ...operationCommits, baseHead: "other99", from: "other99" },
         },
       }).success,
@@ -642,7 +624,6 @@ describe("session/ durable shapes (#466/#457)", () => {
           phase: "commits-settled",
           workspace: operationWorkspace,
           worker: operationWorker,
-          gate: operationGate,
           commits: operationCommits,
         },
       }).success,
@@ -688,7 +669,6 @@ describe("session/ durable shapes (#466/#457)", () => {
         phase: "completed",
         workspace: operationWorkspace,
         worker: operationWorker,
-        gate: operationGate,
         commits: operationCommits,
         recording: operationRecording,
         result: {
@@ -716,7 +696,6 @@ describe("session/ durable shapes (#466/#457)", () => {
           phase: "completed",
           workspace: operationWorkspace,
           worker: operationWorker,
-          gate: operationGate,
           commits: operationCommits,
           recording: operationRecording,
           result: { kind: "changed" },
@@ -731,7 +710,6 @@ describe("session/ durable shapes (#466/#457)", () => {
           phase: "completed",
           workspace: operationWorkspace,
           worker: { ...operationWorker, diff: "", changedPaths: [] },
-          gate: operationGate,
           commits: { ...operationCommits, count: 0, from: "abc123", to: "abc123" },
           recording: operationRecording,
           result: {
@@ -824,7 +802,6 @@ describe("session/ durable shapes (#466/#457)", () => {
           failedAt: 181,
           workspace: operationWorkspace,
           worker: operationWorker,
-          gate: operationGate,
           commits: operationCommits,
           recording: operationRecording,
           report,
@@ -883,7 +860,6 @@ describe("session/ durable shapes (#466/#457)", () => {
         phase: "completed",
         workspace: operationWorkspace,
         worker: operationWorker,
-        gate: { ...operationGate, projectCount: 14 },
         commits: { ...operationCommits, count: 2 },
         recording: operationRecording,
         result: {
@@ -916,11 +892,9 @@ describe("session/ durable shapes (#466/#457)", () => {
         roundNumber: 1,
         sourceTarget: { kind: "branch", branch: "feat/round" },
         askCount: 1,
-        gatePlan: { kind: "configured", command: "pnpm check" },
         state: {
           phase: "completed",
           worker: { status: "done", fileCount: 1 },
-          gate: { status: "passed", durationMs: 10, projectCount: 14 },
           commits: { status: "done", count: 2 },
           result: {
             kind: "changed",
@@ -939,7 +913,6 @@ describe("session/ durable shapes (#466/#457)", () => {
       operationPrompt,
       "diff --git a/a b/a",
       "worker-1",
-      "gate-1",
       "commit-1",
       "abc123",
       "def456",
@@ -957,7 +930,6 @@ describe("session/ durable shapes (#466/#457)", () => {
         phase: "completed",
         workspace: operationWorkspace,
         worker: operationWorker,
-        gate: operationGate,
         commits: operationCommits,
         recording: operationRecording,
         result: {
@@ -1015,7 +987,6 @@ describe("session/ durable shapes (#466/#457)", () => {
         phase: "report-verifying",
         workspace: operationWorkspace,
         worker: operationWorker,
-        gate: operationGate,
         commits: operationCommits,
         recording: operationRecording,
         report: {
@@ -1087,7 +1058,6 @@ describe("session/ durable shapes (#466/#457)", () => {
         phase: "round-recording",
         workspace: operationWorkspace,
         worker: operationWorker,
-        gate: operationGate,
         commits: operationCommits,
         recording: operationRecordingAttempt,
       },
@@ -1103,7 +1073,6 @@ describe("session/ durable shapes (#466/#457)", () => {
         phase: "round-recorded",
         workspace: operationWorkspace,
         worker: operationWorker,
-        gate: operationGate,
         commits: operationCommits,
         recording: operationRecording,
       },
@@ -1120,15 +1089,7 @@ describe("session/ durable shapes (#466/#457)", () => {
       outcome: "failed",
       termination: { kind: "error", reason: "worker stopped" },
     } as const;
-    const failedGate = {
-      ...operationGate,
-      outcome: "failed",
-      termination: { kind: "exit", exitCode: 1 },
-    } as const;
-    for (const [worker, gate] of [
-      [failedWorker, operationGate],
-      [operationWorker, failedGate],
-    ] as const) {
+    for (const worker of [failedWorker] as const) {
       expect(
         RoundOperationSchema.safeParse({
           ...operationBase,
@@ -1136,7 +1097,6 @@ describe("session/ durable shapes (#466/#457)", () => {
             phase: "completed",
             workspace: operationWorkspace,
             worker,
-            gate,
             commits: operationCommits,
             recording: operationRecording,
             result: {
@@ -1169,6 +1129,8 @@ describe("session/ durable shapes (#466/#457)", () => {
         ...operationBase,
         state: {
           phase: "failed",
+          // `gate` is not a failure site any more (round-worker-thread), so a row naming
+          // one is a shape this build cannot decode.
           failure: { at: "gate", reason: "gate stopped", failedAt: 150 },
         },
       }).success,
@@ -1180,7 +1142,6 @@ describe("session/ durable shapes (#466/#457)", () => {
           phase: "completed",
           workspace: operationWorkspace,
           worker: operationWorker,
-          gate: operationGate,
           commits: contradictoryCommits,
           recording: operationRecording,
           result: { kind: "unchanged" },
@@ -1214,8 +1175,7 @@ describe("session/ durable shapes (#466/#457)", () => {
     ).toBe("detached");
   });
 
-  it("records an absent gate honestly and writes report identity before drafting", () => {
-    const skippedGate = { outcome: "skipped", reason: "not-configured", settledAt: 150 } as const;
+  it("refuses the retired gate phase and writes report identity before drafting", () => {
     const noCommits = {
       ...operationCommits,
       to: operationCommits.from,
@@ -1224,12 +1184,10 @@ describe("session/ durable shapes (#466/#457)", () => {
     expect(
       RoundOperationSchema.parse({
         ...operationBase,
-        gatePlan: { kind: "absent" },
         state: {
           phase: "completed",
           workspace: operationWorkspace,
           worker: { ...operationWorker, diff: "", changedPaths: [] },
-          gate: skippedGate,
           commits: noCommits,
           recording: operationRecording,
           result: { kind: "unchanged" },
@@ -1237,6 +1195,8 @@ describe("session/ durable shapes (#466/#457)", () => {
         },
       }).state.phase,
     ).toBe("completed");
+    // `gate-settled` was the gate's own phase; round-worker-thread removed the gate, so the
+    // phase is gone from the union and a row naming it is refused — whatever else it carries.
     expect(
       RoundOperationSchema.safeParse({
         ...operationBase,
@@ -1244,7 +1204,6 @@ describe("session/ durable shapes (#466/#457)", () => {
           phase: "gate-settled",
           workspace: operationWorkspace,
           worker: operationWorker,
-          gate: skippedGate,
         },
       }).success,
     ).toBe(false);
@@ -1255,7 +1214,6 @@ describe("session/ durable shapes (#466/#457)", () => {
           phase: "report-drafting",
           workspace: operationWorkspace,
           worker: operationWorker,
-          gate: operationGate,
           commits: operationCommits,
           recording: operationRecording,
         },
@@ -1268,7 +1226,6 @@ describe("session/ durable shapes (#466/#457)", () => {
           phase: "report-drafting",
           workspace: operationWorkspace,
           worker: operationWorker,
-          gate: operationGate,
           commits: operationCommits,
           recording: operationRecording,
           report: {

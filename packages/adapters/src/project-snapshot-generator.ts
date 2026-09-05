@@ -33,11 +33,12 @@ import type {
 import { execaGit, type GitExec } from "./git-range-diff";
 import {
   listTree,
-  readBlobText,
+  readBlobTexts,
   readConventions,
   readOwnership,
   readTests,
   readWorkspaceStructure,
+  requireBlob,
   resolveBaseRef,
 } from "./project-snapshot-source";
 import type { ProjectSnapshotStore } from "./project-snapshot-store";
@@ -295,8 +296,18 @@ export class ProjectSnapshotGenerator {
     const extracted: SymbolShard[] = [];
     const extractedReferences: ReferenceShard[] = [];
     const extractedImports: ImportShard[] = [];
+    // ONE `git cat-file --batch` process for the whole read set, not one `git cat-file
+    // blob` per file. The per-file form was the build: 4,470 spawns and 29 s of a 33 s
+    // clean snapshot of rennet, ~71 % of it idle in the parent. The extraction loop
+    // below is untouched — same files, same order, same text — so the shards, the
+    // manifest and the fingerprint are byte-identical to what the per-file read built.
+    const texts = await readBlobTexts(root, [...toRead.values()], git);
     for (const file of toRead.values()) {
-      const text = await readBlobText(root, file.blobOid, git);
+      // FAILS CLOSED on a blob the batch did not return, exactly as the per-file
+      // `git cat-file blob` it replaced did by exiting non-zero — and with no
+      // fallback single read, because a fallback would repair a broken batch out of
+      // sight and leave the byte-identity assertions unable to see it.
+      const text = requireBlob(texts, file.blobOid, file.path);
       if (symbolToExtract.has(file.blobOid)) {
         extracted.push(extractSymbolShard(file, text, extractor, extractorId));
       }

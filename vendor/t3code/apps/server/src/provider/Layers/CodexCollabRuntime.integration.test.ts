@@ -148,6 +148,14 @@ function childSettings(threadId: string, model: string, effort: string) {
   };
 }
 
+function readAllRecordedRequests() {
+  return NodeFS.readFileSync(`${scriptPath}.allRequests`, "utf8")
+    .trim()
+    .split("\n")
+    .filter((line) => line.length > 0)
+    .map((line) => JSON.parse(line) as { method: string; params: Record<string, unknown> });
+}
+
 function readRecordedRequests() {
   return NodeFS.readFileSync(`${scriptPath}.requests`, "utf8")
     .trim()
@@ -759,4 +767,118 @@ describe("CodexSessionRuntime collab integration", () => {
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
   }
+
+  // The two behaviours the `hasConfiguredMcpServer` split exists for. Neither
+  // can be reached by calling the predicate: one is an RPC that must happen
+  // BEFORE the turn, the other is a string inside the turn's own parameters.
+  // Both are asserted here against the real runtime driving a real app-server
+  // process, so swapping the production consumers reddens them.
+  const driveOneTurn = (options: {
+    readonly threadId: string;
+    readonly appServerArgs?: ReadonlyArray<string>;
+    readonly sidecarMcpServerConfigured?: boolean;
+  }) =>
+    Effect.gen(function* () {
+      const script = { rootThreadId: ROOT, recordAllRequests: true, notifications: [] };
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      NodeFS.writeFileSync(scriptPath, JSON.stringify(script), "utf8");
+      NodeFS.rmSync(`${scriptPath}.allRequests`, { force: true });
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          NodeFS.rmSync(scriptPath, { force: true });
+          NodeFS.rmSync(`${scriptPath}.allRequests`, { force: true });
+        }),
+      );
+
+      const runtime = yield* makeCodexSessionRuntime({
+        threadId: ThreadId.make(options.threadId),
+        binaryPath: peerPath,
+        cwd: "/tmp",
+        runtimeMode: "full-access",
+        environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
+        ...(options.appServerArgs ? { appServerArgs: options.appServerArgs } : {}),
+        ...(options.sidecarMcpServerConfigured !== undefined
+          ? { sidecarMcpServerConfigured: options.sidecarMcpServerConfigured }
+          : {}),
+      });
+      yield* runtime.start();
+      // `interactionMode` is what carries a collaboration mode, and the
+      // collaboration mode is the only thing `browserToolsAvailable` reaches.
+      // Without it the developer instructions are never built and any
+      // assertion about them passes vacuously. Rennet's seat turns set it.
+      yield* runtime.sendTurn({ input: "one turn", interactionMode: "default" });
+      // Read BEFORE closing: `runtime.close` closes the scope these fixture
+      // files are cleaned up from, so a read after it finds nothing.
+      const requests = readAllRecordedRequests();
+      yield* runtime.close;
+      return requests;
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
+
+  const developerInstructionsOf = (
+    requests: ReadonlyArray<{ method: string; params: Record<string, unknown> }>,
+  ) => {
+    const turnStart = requests.find((request) => request.method === "turn/start");
+    assert.isDefined(turnStart);
+    const collaborationMode = turnStart?.params.collaborationMode as
+      | { settings?: { developer_instructions?: string } }
+      | undefined;
+    const instructions = collaborationMode?.settings?.developer_instructions;
+    assert.isString(instructions);
+    return instructions ?? "";
+  };
+
+  it.effect("reloads the Codex tool catalog before the turn that needs it", () =>
+    Effect.gen(function* () {
+      const requests = yield* driveOneTurn({
+        threadId: "thread-mcp-reload",
+        appServerArgs: ["-c", "mcp_servers.board.url=http://127.0.0.1:7391/board/design"],
+      });
+      const reloadIndex = requests.findIndex(
+        (request) => request.method === "config/mcpServer/reload",
+      );
+      const turnStartIndex = requests.findIndex((request) => request.method === "turn/start");
+      assert.isAbove(reloadIndex, -1);
+      assert.isAbove(turnStartIndex, -1);
+      // Position, not membership: a reload after the turn has started is the
+      // same set of requests and none of the benefit.
+      assert.isBelow(reloadIndex, turnStartIndex);
+    }),
+  );
+
+  it.effect("sends no reload when the session was spawned with no MCP server", () =>
+    Effect.gen(function* () {
+      const requests = yield* driveOneTurn({ threadId: "thread-mcp-no-reload" });
+      assert.isFalse(requests.some((request) => request.method === "config/mcpServer/reload"));
+    }),
+  );
+
+  it.effect("describes browser tools only when the sidecar's own server is attached", () =>
+    Effect.gen(function* () {
+      const withSidecar = yield* driveOneTurn({
+        threadId: "thread-mcp-browser-on",
+        appServerArgs: ["-c", "mcp_servers.t3-code.url=http://127.0.0.1:9111/mcp"],
+        sidecarMcpServerConfigured: true,
+      });
+      assert.include(developerInstructionsOf(withSidecar), "preview_open");
+    }),
+  );
+
+  it.effect("describes no browser tools for a caller server that took the t3-code name", () =>
+    Effect.gen(function* () {
+      // The exact collision the name-based predicate could not see: the
+      // argument list says `mcp_servers.t3-code.`, and the sidecar's server is
+      // not attached. The prompt must not claim tools this session lacks.
+      const callerOnly = yield* driveOneTurn({
+        threadId: "thread-mcp-browser-off",
+        appServerArgs: ["-c", "mcp_servers.t3-code.url=http://127.0.0.1:7391/board/design"],
+        sidecarMcpServerConfigured: false,
+      });
+      const instructions = developerInstructionsOf(callerOnly);
+      assert.notInclude(instructions, "preview_open");
+      assert.notInclude(instructions, "preview_status");
+      // The rest of the collaboration mode is still there, so this is not an
+      // empty string passing for an absence.
+      assert.include(instructions, "<collaboration_mode>");
+    }),
+  );
 });

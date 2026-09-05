@@ -35,6 +35,8 @@ import { createServer } from "node:net";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
+import { BOARD_BEARER_ENV_VAR } from "../board/board-credentials";
+import { isRunning } from "../process-state";
 
 /** The sidecar's claim: where the daemon says its sidecar listens, and which daemon spawned it. */
 export const sidecarClaimSchema = z.object({
@@ -69,6 +71,16 @@ const credentialsSchema = z.object({
   accessToken: z.string(),
   /** ISO; the bearer's expiry as T3 reported it. */
   expiresAt: z.string(),
+  /**
+   * The daemon's board-server bearer (`lens-board-tools` D8), minted at spawn and placed
+   * in the sidecar's environment under `RENNET_BOARD_BEARER` — which is where every
+   * harness child inherits it from, and why it is fixed for this sidecar's life.
+   *
+   * Optional because a sidecar spawned before the board server existed has none, and its
+   * children therefore carry no such variable; {@link adoptSidecar} refuses to adopt that
+   * sidecar rather than adopting one whose seats could never reach a board.
+   */
+  boardBearer: z.string().optional(),
 });
 export type SidecarCredentials = z.infer<typeof credentialsSchema>;
 
@@ -189,13 +201,13 @@ export async function findHealthySidecar(dataDir: string): Promise<SidecarVerdic
   return { kind: "healthy", claim, environment };
 }
 
+/**
+ * Is that sidecar pid still doing work? Signal-0 alone said yes to a zombie — an exited,
+ * unreaped child that serves nothing — so the stop below waited out its whole budget and
+ * reported a timeout for a process that was already gone (#820).
+ */
 export function isProcessAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === "EPERM";
-  }
+  return isRunning(pid);
 }
 
 /** Bind port 0 on loopback, read the number back, release it. T3 validates `--port` as 1..65535. */
@@ -259,14 +271,26 @@ function logTail(path: string, bytes = 2_000): string {
   }
 }
 
-/** Drop every T3 knob the parent shell may carry, then set exactly what the sidecar needs. */
-export function sidecarEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+/**
+ * Drop every T3 knob the parent shell may carry, then set exactly what the sidecar needs.
+ *
+ * `boardBearer` is the one credential that travels by environment, because it is the only
+ * way it can: a caller-supplied MCP server names an environment VARIABLE on the turn and
+ * the harness child reads its value out of the environment it inherited from here. It is
+ * therefore on no argument list, and a parent shell's own value for that name is dropped
+ * rather than trusted.
+ */
+export function sidecarEnvironment(
+  env: NodeJS.ProcessEnv,
+  boardBearer?: string,
+): NodeJS.ProcessEnv {
   const cleaned: NodeJS.ProcessEnv = {};
   for (const [key, value] of Object.entries(env)) {
-    if (key.startsWith("T3CODE_")) continue;
+    if (key.startsWith("T3CODE_") || key === BOARD_BEARER_ENV_VAR) continue;
     cleaned[key] = value;
   }
   cleaned.T3CODE_TELEMETRY_ENABLED = "false";
+  if (boardBearer !== undefined) cleaned[BOARD_BEARER_ENV_VAR] = boardBearer;
   return cleaned;
 }
 
@@ -363,6 +387,12 @@ export interface RunningSidecar {
   readonly origin: string;
   readonly environment: SidecarEnvironment;
   readonly credentials: SidecarCredentials;
+  /**
+   * The board server's process bearer, as it stands in this sidecar's environment. Every
+   * harness child the sidecar starts inherits it under `RENNET_BOARD_BEARER`, so it is
+   * what the daemon's board listener must accept.
+   */
+  readonly boardBearer: string;
   /** The child when this daemon spawned it; absent when adopted from a previous daemon. */
   readonly child?: ChildProcess;
 }
@@ -377,6 +407,17 @@ export async function spawnSidecar(options: SpawnSidecarOptions): Promise<Runnin
   seedProviderSettings(baseDir, options.binaries);
   const port = await pickFreePort();
   const bootstrapToken = randomBytes(24).toString("base64url");
+  // The board server's process bearer (D8). Minted here because the sidecar's environment
+  // is fixed at spawn and every harness child inherits it from there.
+  //
+  // REUSED across respawns of the same base dir when one was already recorded, because a
+  // seat's address token is derived from it: rotating it on every respawn would change
+  // every live seat's url, and both providers refuse a turn whose MCP servers differ from
+  // the ones its session was opened with. The value is one 32-byte secret in a 0600 file
+  // that only this machine's daemon and its own sidecar ever see; rotating it buys nothing
+  // that file's permissions do not already give.
+  const boardBearer =
+    readSidecarCredentials(baseDir)?.boardBearer ?? randomBytes(32).toString("base64url");
   const logFd = openSync(join(baseDir, "sidecar.log"), "a");
   let child: ChildProcess;
   try {
@@ -385,7 +426,7 @@ export async function spawnSidecar(options: SpawnSidecarOptions): Promise<Runnin
       sidecarArgs(options.bundlePath, port, baseDir),
       {
         cwd: baseDir,
-        env: sidecarEnvironment(options.env),
+        env: sidecarEnvironment(options.env, boardBearer),
         stdio: ["ignore", logFd, logFd, "pipe"],
       },
     );
@@ -394,12 +435,33 @@ export async function spawnSidecar(options: SpawnSidecarOptions): Promise<Runnin
   }
   const pipe = child.stdio[3];
   if (!pipe || !("write" in pipe)) throw new Error("sidecar bootstrap pipe was not opened");
-  pipe.end(bootstrapEnvelope(port, baseDir, bootstrapToken));
 
   let exited: { code: number | null; signal: NodeJS.Signals | null } | null = null;
+  let channelFailure: Error | null = null;
   child.once("exit", (code, signal) => {
     exited = { code, signal };
   });
+  // Both listeners are attached BEFORE the envelope is written, and both exist to stop an
+  // UNCAUGHT exception rather than to add a new failure mode.
+  //
+  // A sidecar that dies the instant it starts — a bundle that is not there, one Node cannot
+  // load, an immediate crash — closes the read end of this pipe under the write below. A
+  // `Writable` with no `error` listener re-throws EPIPE/ECONNRESET as an uncaught exception,
+  // which takes the whole process with it; the same is true of `spawn`'s own `error` event.
+  // That used to be a crash a reviewer had to open the chat dock to reach. Since #849 the
+  // daemon spawns the sidecar at launch, so it would be a crash on BOOT, in a path whose
+  // whole promise is that the daemon comes up either way. Seen on Linux as `read ECONNRESET`
+  // and not on macOS, where the small envelope usually lands in the pipe buffer before the
+  // child is gone — the platform decides whether it fires, so neither side may be relied on.
+  //
+  // Nothing is swallowed: the readiness loop below reports the exit it already knows how to
+  // describe (with the log tail), and a spawn that never produced a process reports this.
+  const captureChannelFailure = (error: Error): void => {
+    channelFailure ??= error;
+  };
+  child.once("error", captureChannelFailure);
+  pipe.once("error", captureChannelFailure);
+  pipe.end(bootstrapEnvelope(port, baseDir, bootstrapToken));
 
   const deadline = Date.now() + (options.readyTimeoutMs ?? READY_TIMEOUT_MS);
   let environment: SidecarEnvironment | null = null;
@@ -409,6 +471,13 @@ export async function spawnSidecar(options: SpawnSidecarOptions): Promise<Runnin
       throw new Error(
         `sidecar exited before it was ready (code ${code}, signal ${signal}); see ${join(baseDir, "sidecar.log")}${logTail(join(baseDir, "sidecar.log"))}`,
       );
+    }
+    // A process that never started at all: `exit` never fires, so without this the wait runs
+    // out and reports a timeout for something that failed in the first millisecond.
+    // The cast is the same one `exited` needs above: both are assigned only from a listener,
+    // which control-flow analysis cannot see, so each narrows to `never` inside this loop.
+    if (channelFailure && child.pid === undefined) {
+      throw new Error(`sidecar could not be started: ${(channelFailure as Error).message}`);
     }
     const runtime = readServerRuntime(baseDir);
     if (runtime && runtime.pid === child.pid && runtime.port === port) {
@@ -425,7 +494,7 @@ export async function spawnSidecar(options: SpawnSidecarOptions): Promise<Runnin
   }
   const origin = `http://127.0.0.1:${port}`;
   const exchanged = await exchangeBootstrapToken(origin, bootstrapToken);
-  const credentials: SidecarCredentials = { bootstrapToken, ...exchanged };
+  const credentials: SidecarCredentials = { bootstrapToken, boardBearer, ...exchanged };
   writeSidecarCredentials(baseDir, credentials);
   const claim: SidecarClaim = {
     pid: child.pid,
@@ -436,7 +505,7 @@ export async function spawnSidecar(options: SpawnSidecarOptions): Promise<Runnin
     startedAt: new Date().toISOString(),
   };
   writeSidecarClaim(options.dataDir, claim);
-  return { claim, origin, environment, credentials, child };
+  return { claim, origin, environment, credentials, boardBearer, child };
 }
 
 /**
@@ -454,6 +523,11 @@ export async function adoptSidecar(
   const origin = `http://127.0.0.1:${verdict.claim.port}`;
   const stored = readSidecarCredentials(verdict.claim.baseDir);
   if (!stored) return null;
+  // A sidecar spawned before the board server existed carries no `RENNET_BOARD_BEARER` in
+  // its environment, so its harness children could never reach a board however the daemon
+  // addressed them. Refused here for the same reason a snapshot mismatch is: this daemon
+  // cannot use it, and a respawn is the honest answer rather than a seat that 401s.
+  if (stored.boardBearer === undefined) return null;
   let credentials = stored;
   if (!(await verifyAccessToken(origin, stored.accessToken))) {
     try {
@@ -463,7 +537,13 @@ export async function adoptSidecar(
       return null;
     }
   }
-  return { claim: verdict.claim, origin, environment: verdict.environment, credentials };
+  return {
+    claim: verdict.claim,
+    origin,
+    environment: verdict.environment,
+    credentials,
+    boardBearer: credentials.boardBearer ?? stored.boardBearer,
+  };
 }
 
 export type StopSidecarOutcome =

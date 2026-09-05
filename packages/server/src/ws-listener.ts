@@ -30,6 +30,7 @@ import type {
   AttentionItem,
   BoardEventFrame,
   CommandName,
+  LensDraftEvent,
   ProjectProcessEvent,
   ProjectProgressEvent,
   RoundEvent,
@@ -109,6 +110,18 @@ export interface WsListenerDeps {
    * asset is served with a path-traversal guard; `/` maps to `index.html`.
    */
   readonly uiDist?: string;
+  /**
+   * The daemon's own shutdown command (#820). Present ⇒ `POST /shutdown` acks with this
+   * daemon's identity and then runs `run` — once the response has flushed, never before: a
+   * shutdown that drops the socket first is indistinguishable from a crash. Absent ⇒ the
+   * route 404s like any other unknown path (a listener composed without a process to stop).
+   */
+  readonly shutdown?: {
+    /** The `daemon.json` this daemon owns, echoed so a launcher watches the right file. */
+    readonly claimPath: string;
+    /** Shut this daemon down (the same `stop` SIGTERM runs). */
+    readonly run: () => void;
+  };
   /**
    * The attention system (issue #383 M1). Present ⇒ the daemon advertises the `attention`
    * feature, accepts client `presence` frames, and delivers attention events presence-aware
@@ -243,6 +256,24 @@ export const daemonIdentitySchema = z.object({
 
 export type DaemonIdentity = z.infer<typeof daemonIdentitySchema>;
 
+/**
+ * What `POST /shutdown` answers before the daemon shuts itself down (#820). The ack is the
+ * whole point of the route: a launcher learns that THIS pid heard the command and is going,
+ * so it can then wait on the process it spawned instead of guessing from a signal it sent
+ * into the dark. `claimPath` names the file whose disappearance a launcher without a child
+ * handle watches for.
+ */
+export const daemonShutdownAckSchema = z.object({
+  pid: z.number().int().positive(),
+  wsPort: z.number().int().positive(),
+  version: z.string(),
+  protocolVersion: z.number().int().nonnegative(),
+  claimPath: z.string(),
+  shuttingDown: z.literal(true),
+});
+
+export type DaemonShutdownAck = z.infer<typeof daemonShutdownAckSchema>;
+
 export interface WsListener {
   /** The port the listener bound; the desktop injects it into the renderer. */
   readonly port: number;
@@ -270,6 +301,14 @@ export interface WsListener {
    * rehydrates via `session.roundEvents`.
    */
   broadcastRoundProgress(reviewId: string, event: RoundEvent): void;
+  /**
+   * Fan one write onto a drafting lens board out, keyed by the review that owns it
+   * (`lens-board-tools` D11, task 4.1) — how a board reaches the screen as it is written.
+   * Same per-class fan-out and the same scrub as the round progress above. LIVE ONLY: a
+   * client that joins mid-draft catches up with `board.draft` and folds from there, so
+   * nothing here is replayed and nothing is logged.
+   */
+  broadcastLensDraft(reviewId: string, event: LensDraftEvent): void;
   /**
    * Ask ONE connection a question and resolve with its answer (issue #380, wire only).
    * Rejects if the connection is unknown or drops before answering. A `serverRequestResolved`
@@ -428,6 +467,32 @@ export async function startWsListener(deps: WsListenerDeps): Promise<WsListener>
       };
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify(identity));
+      return;
+    }
+    // The shutdown command (#820), behind the same host guard as /healthz. SIGTERM is still
+    // wired and still works; this is the version the daemon ANSWERS, so the launcher knows
+    // the command landed on the pid it meant and can stop guessing from a pid probe.
+    if (
+      deps.shutdown &&
+      req.method === "POST" &&
+      (req.url === "/shutdown" || req.url?.startsWith("/shutdown?"))
+    ) {
+      const { claimPath, run } = deps.shutdown;
+      const ack: DaemonShutdownAck = {
+        pid: process.pid,
+        wsPort: boundPort,
+        version: serverVersion,
+        protocolVersion: PROTOCOL_VERSION,
+        claimPath,
+        shuttingDown: true,
+      };
+      // `finish` fires once the body has been handed to the OS, so the caller gets a complete
+      // ack even when `run` ends the process on the next tick.
+      res.once("finish", () => {
+        run();
+      });
+      res.writeHead(200, { "content-type": "application/json", connection: "close" });
+      res.end(JSON.stringify(ack));
       return;
     }
     // The served browser UI (design D2), slotted before the 404. GET/HEAD only; a missing
@@ -867,6 +932,43 @@ export async function startWsListener(deps: WsListenerDeps): Promise<WsListener>
     }
   };
 
+  // The live element stream behind a drafting board (`lens-board-tools` D11, task 4.1):
+  // the same per-class fan-out the round progress above takes, for the same reason. An
+  // element's prose and its citations' paths are free text, so a projected connection gets
+  // the blanket root/home scrub; `pairing-only` is excluded.
+  const broadcastLensDraft = (reviewId: string, event: LensDraftEvent): void => {
+    const rawPayload = JSON.stringify({
+      type: "lensDraft",
+      reviewId,
+      event,
+    } satisfies SessionFrame);
+    let projectedPayload: string | null = null;
+    for (const connection of connections) {
+      if (connection.socket.readyState !== WebSocket.OPEN) continue;
+      if (!connection.helloReceived || connection.connectionClass === "pairing-only") continue;
+      if (connection.connectionClass === "projected") {
+        if (projectedPayload === null) {
+          projectedPayload = JSON.stringify({
+            type: "lensDraft",
+            reviewId,
+            event: scrubProjectedValue(event, contextOf()) as LensDraftEvent,
+          } satisfies SessionFrame);
+        }
+        try {
+          connection.socket.send(projectedPayload);
+        } catch {
+          // One bad socket must not starve the rest of the fan-out.
+        }
+      } else if (connection.connectionClass === "private") {
+        try {
+          connection.socket.send(rawPayload);
+        } catch {
+          // Same isolation for the raw path.
+        }
+      }
+    }
+  };
+
   /** Send an attention frame to every authorized (helloReceived, non-pairing-only) socket. */
   const broadcastAttention = (frame: SessionFrame): void => {
     const payload = JSON.stringify(frame);
@@ -1029,6 +1131,7 @@ export async function startWsListener(deps: WsListenerDeps): Promise<WsListener>
     broadcastBoardEvent,
     broadcastAskProjection,
     broadcastRoundProgress,
+    broadcastLensDraft,
     askConnection,
     raiseAttention,
     acknowledgeAttention,

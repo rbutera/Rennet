@@ -1,5 +1,6 @@
 import { basename } from "node:path";
 import { parseCommandInput, parseCommandOutput } from "@rennet/protocol";
+import type { ThreadBinding } from "../t3/threads";
 import type { CommandHandler, DispatchRuntime } from "./runtime";
 
 /**
@@ -21,31 +22,55 @@ async function boundWorkspaceInput(
   };
 }
 
+/**
+ * The review's own T3 thread — the ONE the chat dock, `chat.t3Send` and the handoff share.
+ *
+ * Every caller goes through here, and that is the point: the binding key root is the bound
+ * WORKSPACE when the session has one and the repository otherwise (`keyRootOf` in
+ * ../t3/threads), so a caller that assembled the input differently would key a SECOND
+ * thread for the same review and split the transcript between them. `review.capture` now
+ * binds this ahead of the dock (#849), which is exactly the situation that makes one
+ * assembly point load-bearing rather than tidy.
+ *
+ * Keyed on the review's REPOSITORY ROOT and the review id — never the project — so two
+ * repos on one branch get two threads (t3code-sidecar-chat 3.2).
+ */
+export async function bindReviewThread(
+  rt: DispatchRuntime,
+  reviewId: string,
+): Promise<ThreadBinding> {
+  const sidecar = rt.deps.t3Sidecar;
+  if (!sidecar) throw new Error("this daemon has no T3 Code sidecar composed");
+  const review = rt.requireReviewById(reviewId);
+  return sidecar.threadFor({
+    repositoryRoot: review.repositoryRoot,
+    key: { kind: "session", sessionId: reviewId },
+    title: basename(review.repositoryRoot) || "review",
+    ...(await boundWorkspaceInput(rt, reviewId)),
+  });
+}
+
 export function chatHandlers(rt: DispatchRuntime) {
   const { deps } = rt;
   return {
     "chat.t3Session": async (rawInput) => {
       const name = "chat.t3Session" as const;
       // Broker sidecar access to a client (t3code-sidecar-chat, 2.4): the daemon owns the
-      // credential, the client never reads the token file. Starting the sidecar on first
-      // ask is the whole point — no gate, no confirmation (Rule Zero). Absent supervisor ⇒
-      // this daemon was composed without a vendored bundle; say so.
+      // credential, the client never reads the token file. The sidecar is already coming up
+      // — the daemon started it at launch (#849) — so this usually joins a bring-up that is
+      // finished or nearly so rather than beginning one; it still starts one when it has to,
+      // with no gate and no confirmation (Rule Zero). Absent supervisor ⇒ this daemon was
+      // composed without a vendored bundle; say so.
       const input = parseCommandInput(name, rawInput);
       if (!deps.t3Sidecar) {
         throw new Error("chat.t3Session: this daemon has no T3 Code sidecar composed");
       }
       const session = await deps.t3Sidecar.session();
       if (input.reviewId === undefined) return parseCommandOutput(name, session);
-      // With a review: bind its thread, keyed on the review's REPOSITORY ROOT and the review
-      // id — never the project — so two repos on one branch get two threads (3.2). The
-      // review lookup throws for an unknown id, like every review read.
-      const review = rt.requireReviewById(input.reviewId);
-      const binding = await deps.t3Sidecar.threadFor({
-        repositoryRoot: review.repositoryRoot,
-        key: { kind: "session", sessionId: input.reviewId },
-        title: basename(review.repositoryRoot) || "review",
-        ...(await boundWorkspaceInput(rt, input.reviewId)),
-      });
+      // With a review: its own thread, through the one assembly point. `review.capture`
+      // has normally bound it already, so this reads the existing row. The review lookup
+      // throws for an unknown id, like every review read.
+      const binding = await bindReviewThread(rt, input.reviewId);
       return parseCommandOutput(name, {
         ...session,
         threadId: binding.threadId,
@@ -62,13 +87,7 @@ export function chatHandlers(rt: DispatchRuntime) {
       if (!deps.t3Sidecar) {
         throw new Error("chat.t3Send: this daemon has no T3 Code sidecar composed");
       }
-      const review = rt.requireReviewById(input.reviewId);
-      const binding = await deps.t3Sidecar.threadFor({
-        repositoryRoot: review.repositoryRoot,
-        key: { kind: "session", sessionId: input.reviewId },
-        title: basename(review.repositoryRoot) || "review",
-        ...(await boundWorkspaceInput(rt, input.reviewId)),
-      });
+      const binding = await bindReviewThread(rt, input.reviewId);
       const client = await deps.t3Sidecar.client();
       await client.startTurn({ threadId: binding.threadId, text: input.text });
       return parseCommandOutput(name, { threadId: binding.threadId });

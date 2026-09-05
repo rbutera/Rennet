@@ -3,10 +3,10 @@ name: Rennet Desktop
 description: The comfortable desktop product scale the review app renders at.
 typography:
   display:
-    fontFamily: "Fraunces Variable, Georgia, serif"
+    fontFamily: "Geist Variable, system-ui, sans-serif"
     fontSize: "clamp(34px, 5vw, 56px)"
   serif:
-    fontFamily: "Newsreader Variable, Georgia, serif"
+    fontFamily: "Geist Variable, system-ui, sans-serif"
     fontSize: "18px"
   body:
     fontFamily: "Geist Variable, system-ui, sans-serif"

@@ -43,6 +43,7 @@ import {
   WhiteboardClient,
 } from "@rennet/adapters";
 import type {
+  BoardWrite,
   CodexExecutor,
   DeltaPacket,
   HarnessPort,
@@ -79,6 +80,7 @@ import {
   type SessionModel,
 } from "@rennet/protocol";
 import { generationBenchmarkRun } from "../benchmark-recorder";
+import type { GenerationBoards } from "../board/board-mcp-server";
 import type { BoardsRuntime } from "../boards/boards-runtime";
 import type { SessionContextFile } from "../context-files";
 import { PipelineStartGuard } from "../session/pipeline-guard";
@@ -346,7 +348,27 @@ function lensAbsenceMessage(reason: LensAbsenceReason): string {
     case "no-findings":
       return "No review findings were found.";
     case "no-noise":
-      return "No safely skippable noise was found.";
+      // D16e — the meaning changed with the derivation. `no-noise` used to be the Noise
+      // seat's claim that nothing here was skip-safe; it is now the host's observation
+      // that the complement is empty, which is a different and much rarer statement.
+      return "Every changed region is on another board.";
+  }
+}
+
+/**
+ * A drafting attempt found a LATER attempt owning its generation and refused to file (#816
+ * review P1). It is thrown, not returned, at the ownership boundary and at every terminal
+ * write that rechecks ownership — a superseded attempt has no honest `RoundRecord` to give.
+ * Its own type is load-bearing: `reported` rethrows it WITHOUT emitting a terminal `failed`,
+ * because a superseded attempt did not fail — a newer one holds the generation, and the run
+ * machine must not paint the reviewer a failure for a turn that was simply overtaken.
+ */
+export class GenerationSupersededError extends Error {
+  constructor(generationId: string) {
+    super(
+      `The drafting attempt for generation ${generationId} was superseded by a later attempt; its result was not filed.`,
+    );
+    this.name = "GenerationSupersededError";
   }
 }
 
@@ -589,6 +611,9 @@ export interface RoundInput {
    *  (PR #802); a branch review has none and names none. */
   readonly prPaper?: SessionContextFile;
   readonly lintContextFor: (lens: LintTarget) => LintContext;
+  /** The deterministic Design fast path, when this review's branch carries an OpenSpec
+   *  change: a host-side board build with no model turn. Absent ⇒ the Design seat runs. */
+  readonly assembleDesignBoard?: (ctx: LintContext) => DraftBoard | undefined;
   /** The prior generation's boards, for the pipeline's R58 delta stamps (optional). */
   readonly previous?: ReadonlyMap<LintTarget, DraftBoard>;
   /**
@@ -625,7 +650,25 @@ export interface RoundInput {
    * bound rather than inventing an earlier origin.
    */
   readonly firstBoardWaitOriginMs?: number;
+  /**
+   * Where this generation's boards are published as they are written (`lens-board-tools`
+   * D11, task 4.1). Bound to the REVIEW by the caller, because a review is what a board
+   * reader subscribes by (`board.read` and the round-progress channel both key on it) and
+   * this runtime holds a session; the generation is stamped here, where it is known.
+   *
+   * Absent ⇒ nothing is published and a board is seen only when it settles, which is the
+   * direct-call shape and the behaviour before this task.
+   */
+  readonly lensDrafts?: LensDraftSink;
   readonly signal?: AbortSignal;
+}
+
+/** Where a generation's board writes are published, keyed by the review the caller bound. */
+export interface LensDraftSink {
+  /** The board the lane is starting from — empty on a first open, not always empty. */
+  readonly opened: (generation: string, lens: LensKind, board: DraftBoard) => void;
+  readonly write: (generation: string, lens: LensKind, write: BoardWrite) => void;
+  readonly closed: (generation: string, lens: LensKind) => void;
 }
 
 export interface RoundDraftPlan {
@@ -658,6 +701,13 @@ export interface T3SeatRuntime {
   readonly seam: T3SeatSeam;
   /** The sidecar environment a lane's `thread` ref is addressed in. */
   readonly environmentId: string;
+  /**
+   * This generation's board lanes on the daemon's loopback board server
+   * (`lens-board-tools` D8). Opening a lane is what gives that board's seats an address;
+   * settling one revokes them. Absent for a caller with no board server behind it — a
+   * direct-call test — in which case seats simply carry no board address.
+   */
+  readonly boards?: GenerationBoards;
   /** Hold the seat thread's subscription and publish its latest event, throttled. */
   readonly watch: (
     threadId: string,
@@ -1041,6 +1091,9 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
       outcome: "complete" | "failed" | "aborted",
       failure?: string,
     ) => void;
+    /** A LATER attempt owns this generation, so nothing this attempt produced may be
+     *  filed or announced. `runOnce` refuses the whole attempt on it. */
+    readonly superseded: boolean;
   }> {
     const boards = deps.boardsRuntimeFor(input.repoRoot);
     const whiteboard = new WhiteboardClient(boards.service);
@@ -1231,6 +1284,13 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
       failedLensAccounts: {} as Partial<Record<LensKind, LensFailureAccount>>,
       timings: [] as GenerationPhaseTiming[],
     };
+    /** A LATER attempt owns this generation. Set once, by `persistReveal`'s own check. */
+    let superseded = false;
+    /** Lenses `onLensFailure` has already been called for, so the backstop below can tell
+     *  "the pipeline published this" from "the pipeline returned it without publishing".
+     *  Membership, NOT the lane's status: a settlement the ownership check refused leaves
+     *  the lane untouched and must still count as attempted, or the backstop re-runs it. */
+    const settledFailures = new Set<LensKind>();
     /**
      * Write the reveal state durably, unless a LATER attempt (or the settle that dropped
      * this attempt's slots) already owns the generation. Rejecting here rather than at the
@@ -1248,7 +1308,17 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
       const persist = deps.persistGeneration;
       if (persist === undefined) return true;
       const durable = deps.loadGeneration?.(attemptGeneration.id);
-      if (durable !== undefined && !sameDraftingAttempt(durable, attemptGeneration)) return false;
+      if (durable !== undefined && !sameDraftingAttempt(durable, attemptGeneration)) {
+        // Latched at the ONE place the rejection is decided, and returned to `runOnce` —
+        // which is the door this gate did not cover. `persistReveal` only ever guarded
+        // reveal writes; the attempt's TERMINAL writes (`withLensBoards`, the frozen
+        // predecessor, the round record) went through `deps.persistGeneration` directly,
+        // and `GenerationStore.save` overwrites by generation id. So a slow dead attempt
+        // could still replace a newer attempt's finished result under the right label —
+        // refused the disk hunk by hunk and then handed the whole file at the end.
+        superseded = true;
+        return false;
+      }
       await persist({
         ...attemptGeneration,
         lensBoards: { ...reveal.lensBoards },
@@ -1325,6 +1395,44 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
     const onPhaseTiming = (timing: GenerationPhaseTiming): void => {
       reveal.timings.push(timing);
     };
+    /**
+     * The board's element stream, bound to this generation (`lens-board-tools` D11,
+     * task 4.1), and the origin of TIME-TO-FIRST-ELEMENT (task 4.4).
+     *
+     * The two figures are companions, not a replacement. `first-core-board` still stops
+     * at the first core lane that SETTLED — the wait for a finished board. This one stops
+     * at the first element any board published, which is the first thing the reviewer
+     * could see, because boards now draw themselves as they are written. Same origin, so
+     * the two are directly comparable and the gap between them is the drafting the
+     * reviewer now watches instead of waits through.
+     *
+     * A lane that settles ABSENT writes no element and so contributes nothing here; a
+     * generation whose every lane settled absent or failed records no `first-element` at
+     * all. That is the honest shape — nothing was ever on screen — and a zero would claim
+     * the opposite.
+     */
+    const draftSink = input.lensDrafts;
+    const lensDrafts: LensPipelineDeps["onBoardDraft"] =
+      draftSink === undefined
+        ? undefined
+        : {
+            opened: (lens, board) => draftSink.opened(attemptGeneration.id, lens, board),
+            write: (lens, write) => {
+              if (
+                write.changed.length > 0 &&
+                reveal.timings.every((timing) => timing.phase !== "first-element")
+              ) {
+                reveal.timings.push({
+                  phase: "first-element",
+                  lens,
+                  startedAtMs: generationStartedAt,
+                  durationMs: Math.max(0, clock() - generationStartedAt),
+                });
+              }
+              draftSink.write(attemptGeneration.id, lens, write);
+            },
+            closed: (lens) => draftSink.closed(attemptGeneration.id, lens),
+          };
     const onReportDiagnostic =
       onProgress === undefined
         ? undefined
@@ -1350,6 +1458,28 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
       if (!(await persistReveal())) return;
       if (inadmissible !== undefined) lanes?.failed(lens, inadmissible);
       else lanes?.absent(lens, lensAbsenceMessage(reason));
+    };
+    /**
+     * A lens whose attempts are EXHAUSTED, settled the moment it happens (#813).
+     *
+     * The post-pipeline sweep below already recorded these — but it runs after the last
+     * lane finishes, so a seat that died in the first half-minute left its lane `running`,
+     * publishing "quiet for N s" off a thread that had already stopped, right up to the
+     * reveal. "Quiet" is the word the bench uses for a seat that is thinking, so a
+     * reviewer had no way to tell a live lane from a dead one and waited out the whole
+     * generation for neither. Durable first, screen second, and both behind the same
+     * superseded-attempt gate every other settlement uses.
+     */
+    const onLensFailure = async (
+      lens: LensKind,
+      failure: string,
+      account?: LensFailureAccount,
+    ): Promise<void> => {
+      settledFailures.add(lens);
+      reveal.failedLenses[lens] = failure;
+      if (account !== undefined) reveal.failedLensAccounts[lens] = account;
+      if (!(await persistReveal())) return;
+      lanes?.failed(lens, failure);
     };
 
     // The seam the pipeline sees: the sidecar's own `client`/`threadFor`, plus the lane
@@ -1392,6 +1522,12 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
       council: { availability: { installed } },
       ...(input.prPaper === undefined ? {} : { prPaper: input.prPaper }),
       ...(t3Seam === undefined ? {} : { t3: t3Seam }),
+      // This generation's lanes on the daemon's loopback board server. Without it the
+      // pipeline's lane-opening loop is unreachable in production — the guard reads
+      // `deps.boards !== undefined` and nothing else supplies it — so every board would be
+      // minted only when a seat first wrote to it, `openLaneCount()` would be 0 forever,
+      // and the `t3code-sidecar` disclosure clause would have nothing it could ever report.
+      ...(t3Runtime?.boards === undefined ? {} : { boards: t3Runtime.boards }),
       ...(t3Unavailable === undefined ? {} : { t3Unavailable }),
       repoRoot: input.draftingRoot ?? input.repoRoot,
       // Bound to the SAME root the seats run in, never `repoRoot` alone: a range review
@@ -1424,6 +1560,9 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
         ? {}
         : { persistFindingResolutions: input.persistFindingResolutions }),
       lintContextFor: input.lintContextFor,
+      ...(input.assembleDesignBoard === undefined
+        ? {}
+        : { assembleDesignBoard: input.assembleDesignBoard }),
       readPrompt: deps.readPrompt,
       collector,
       whiteboard,
@@ -1436,6 +1575,7 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
           }),
       onBoardArrival,
       onPhaseTiming,
+      ...(lensDrafts === undefined ? {} : { onBoardDraft: lensDrafts }),
       // A `"partial"` start is a REPEATED whole-board attempt over this generation — the
       // redraft wave 3's restart recovery runs. It draws the reduced per-lane ladder
       // (#725 7.5), which is what bounds the cost of one restart to less than a full
@@ -1443,6 +1583,7 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
       boardAttempt: start === "partial" ? 1 : 0,
       ...(onReportDiagnostic === undefined ? {} : { onReportDiagnostic }),
       onLensAbsence,
+      onLensFailure,
       ...(lanes === undefined ? {} : { onLensDraftingStart: () => lanes.start() }),
       ...(persistBoardMeta === undefined && lanes === undefined
         ? {}
@@ -1498,13 +1639,15 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
     const benchmarkFrom = Math.floor(clock());
     const benchmarkAttempt = start === "partial" ? 1 : 0;
     let benchmarkArchived = false;
-    let benchmarkSuperseded = false;
     const archiveBenchmark = (
       outcome: "complete" | "failed" | "aborted",
       failure?: string,
     ): void => {
       const record = deps.recordBenchmark;
-      if (record === undefined || benchmarkArchived || benchmarkSuperseded) return;
+      // `superseded` rather than a second flag set at the last write only: any refused
+      // reveal write means this attempt lost the generation, and every write after it is
+      // as dead as the last one.
+      if (record === undefined || benchmarkArchived || superseded) return;
       benchmarkArchived = true;
       record(
         generationBenchmarkRun({
@@ -1541,18 +1684,32 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
       seatWatches.length = 0;
       seatWatchesByLens.clear();
     }
-    // A drafter that produced no board settles its lane as failed. Without this the lane
-    // sits at `queued`/`running` after the round is over — the surface reads "still
-    // working" forever, which is the same stall a silent crash leaves behind.
+    // The BACKSTOP for a drafter that produced no board. `onLensFailure` above already
+    // settled every lane the pipeline published a failure for, at the moment it failed
+    // (#813); this catches a lane the pipeline returned as failed without publishing —
+    // and it is what kept a lane out of a permanent `queued`/`running` before that
+    // callback existed.
+    //
+    // It goes through `onLensFailure` ITSELF, not `lanes.failed` directly. Called
+    // directly it was the one settlement outside the ownership check: a superseded
+    // attempt's reveal callbacks return without broadcasting, leaving its lanes locally
+    // `running`, and this loop then pushed every one of them onto the screen as `failed`
+    // — a dead attempt's lane snapshot landing over a live attempt that had already
+    // succeeded. Routing it here means one door, checked once.
     for (const outcome of pipeline.boards) {
       if (outcome.boardId !== undefined || outcome.lens === "report") continue;
       if (outcome.absence !== undefined) continue;
-      lanes?.failed(outcome.lens, outcome.failure ?? "the drafter produced no board");
+      if (settledFailures.has(outcome.lens)) continue;
+      await onLensFailure(
+        outcome.lens,
+        outcome.failure ?? "the drafter produced no board",
+        outcome.failureAccount,
+      );
     }
     // One last write so the timings recorded after the final settlement (reveal, the
     // lens post-process tails) reach durable state too. A REFUSED write means a later
-    // attempt owns this generation, and this attempt archives nothing.
-    if (!(await persistReveal())) benchmarkSuperseded = true;
+    // attempt owns this generation; `persistReveal` latches `superseded` for it.
+    await persistReveal();
     // …and the generation handed back carries them, because that record is what the final
     // settle and BOTH failure paths persist. `withLensBoards` spreads the generation it is
     // given and deletes only the attempt-scoped drafting fields, so the timings ride
@@ -1571,6 +1728,8 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
       },
       pipeline,
       archiveBenchmark,
+      // Carried out so `runOnce` can refuse to file this attempt at all (#816 review P1).
+      superseded,
     };
   }
 
@@ -1698,6 +1857,9 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
           // Reconstructed from durable metadata: no pipeline ran, so there is nothing to
           // time. An archive here would file a cache hit as a very fast generation.
           archiveBenchmark: undefined,
+          // Reconstruction READ the durable generation and found it complete, so it is
+          // this attempt's by definition — there is nothing a later attempt supersedes.
+          superseded: false,
         }
       : hasPartialDurableState
         ? await draft(draftingInput, boardGeneration, "partial")
@@ -1706,6 +1868,49 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
             `${boardGeneration.id}:${boardGeneration.projectContextRevision ?? "legacy"}`,
             () => draft(draftingInput, boardGeneration, "fresh"),
           );
+    // ── The attempt's OWNERSHIP boundary (#816 review P1) ──
+    // A LATER attempt owns this generation: `persistReveal` refused at least one of this
+    // attempt's writes. Everything below is a terminal write or a broadcast keyed on that
+    // generation id — `withLensBoards`, the frozen predecessor, the generation-transition
+    // announcement, the round record — and `GenerationStore.save` overwrites by id. So
+    // continuing would let this dead attempt replace the live one's finished result under
+    // the right label, which is precisely the wrong-content publish the reveal gate exists
+    // to stop, arriving through the one door the gate never covered.
+    //
+    // It THROWS rather than returning a hollow outcome: `RoundOutcome` requires a
+    // `RoundRecord`, and a superseded attempt has no honest one to give — the attempt that
+    // owns the generation writes it. The caller records nothing and announces nothing,
+    // which is the same exit the terminal checks below already take.
+    //
+    // This flag is a SNAPSHOT taken when `draft` returned. It is a fast path, not the
+    // guarantee: the guarantee is `persistOwned` below, which re-reads durable ownership at
+    // the instant of every terminal write. A competing attempt that claims this generation
+    // AFTER this check but BEFORE a terminal write — during the `verifyDraftedReport` await,
+    // say — is caught there, not here, because the copied flag cannot see a claim that lands
+    // after the copy was made.
+    if (restoredOrDrafted.superseded) {
+      throw new GenerationSupersededError(boardGeneration.id);
+    }
+    // Write a generation ONLY while this attempt still owns it, re-read at the write itself.
+    // `GenerationStore.save` overwrites by id, and the terminal writes below strip this
+    // attempt's drafting slots (`withLensBoards`) — so a stale attempt reaching this far,
+    // whose competitor claimed the id during an intervening await, would otherwise clobber
+    // the live result under the right label. Every write to THIS generation id routes here;
+    // a competitor is a durable record for our id that no longer describes our attempt (a
+    // positive contradiction, per the workspace rule — not mere silence). The frozen
+    // predecessor write is a DIFFERENT id and does not pass through here: it is reached only
+    // after `persistOwned` accepted the successor, and rechecking it against our id would
+    // false-positive on the slots our own successor write just dropped.
+    const persistOwned = async (gen: Generation): Promise<void> => {
+      const persist = deps.persistGeneration;
+      if (persist === undefined) return;
+      const durable = deps.loadGeneration?.(boardGeneration.id);
+      if (durable !== undefined && !sameDraftingAttempt(durable, restoredOrDrafted.generation)) {
+        throw new GenerationSupersededError(boardGeneration.id);
+      }
+      await persist(gen);
+    };
+
     // Durable BoardMeta is keyed only by generation, so evidence for an existing
     // generation may contain the report from the round that minted it. A no-code round
     // can reuse those lens boards, but that old report is not evidence about this turn.
@@ -1735,7 +1940,7 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
     try {
       const draftedLensBoards = pipeline.boards.filter((outcome) => outcome.boardId !== undefined);
       if (draftedLensBoards.length === 0) {
-        await deps.persistGeneration?.(withLensBoards(restoredOrDrafted.generation, pipeline));
+        await persistOwned(withLensBoards(restoredOrDrafted.generation, pipeline));
         throw new Error(`The regeneration drafted no lens boards: ${failureReasons(pipeline)}`);
       }
       if (input.verifyDraftedReport !== undefined) {
@@ -1750,24 +1955,41 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
       }
       const missingCoreLens = missingRequiredCoreLens(pipeline.boards);
       if (missingCoreLens !== undefined) {
-        await deps.persistGeneration?.(withLensBoards(restoredOrDrafted.generation, pipeline));
+        await persistOwned(withLensBoards(restoredOrDrafted.generation, pipeline));
         throw new Error(
           `The required core lens ${missingCoreLens} did not produce review evidence: ${failureReasons(pipeline)}`,
         );
       }
     } catch (error) {
-      archiveBenchmark?.(
-        input.signal?.aborted === true ? "aborted" : "failed",
-        error instanceof Error ? error.message : String(error),
-      );
+      // A supersession caught here is NOT a benchmark failure: nothing failed, a later
+      // attempt owns the generation. Archiving it would inflate the export's failure rate
+      // with turns that were merely overtaken. Rethrow it clean for `reported` to swallow.
+      if (!(error instanceof GenerationSupersededError)) {
+        archiveBenchmark?.(
+          input.signal?.aborted === true ? "aborted" : "failed",
+          error instanceof Error ? error.message : String(error),
+        );
+      }
       throw error;
     }
-    archiveBenchmark?.("complete");
-    // The frozen predecessor (C15 2.2, un-parks C09 F3): when the code moved AND a real
-    // prior generation exists, it freezes and its id is the earlier generation the ledger's
-    // switcher drills back to. Absent on a no-move round and on a first generation —
-    // honestly, there is no distinct predecessor to point at.
+    // The frozen predecessor (C15 2.2, un-parks C09 F3): when the code moved AND a real prior
+    // generation exists, its id is the earlier generation the ledger's switcher drills back to.
+    // gen:<patchset> is GLOBAL across sessions/reviews on one patchset (`generationIdForPatchset`),
+    // so another session may have re-drafted this patchset into a fresh LIVE generation after
+    // this round read its predecessor. Freezing our stale copy would overwrite that session's
+    // live boards (#816 re-review P3). So claim the predecessor ONLY while the durable copy is
+    // still the generation we superseded — same lens-board slots, since a redraft mints new
+    // ones. Otherwise leave it be and drop BOTH the frozen write below and the record's
+    // `frozenPredecessor` pointer: a drill-back must not land on boards another attempt owns.
     const predecessor = landed ? input.previousGeneration : undefined;
+    const durablePredecessor =
+      predecessor === undefined ? undefined : deps.loadGeneration?.(predecessor.id);
+    const predecessorStillOurs =
+      predecessor !== undefined &&
+      (durablePredecessor === undefined ||
+        LENS_KINDS.every(
+          (lens) => durablePredecessor.lensBoards[lens] === predecessor.lensBoards[lens],
+        ));
     // The REPORT-DERIVED rework count (C15 finding 10): what the round's own report says
     // it did, persisted here so the ledger reads a number instead of inferring one from
     // how many asks went out.
@@ -1783,16 +2005,31 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
       boardGeneration: boardGeneration.id,
       reportBoard,
       ...(reworkCount === undefined ? {} : { reworkCount }),
-      ...(predecessor === undefined ? {} : { frozenPredecessor: predecessor.id }),
+      ...(predecessorStillOurs && predecessor !== undefined
+        ? { frozenPredecessor: predecessor.id }
+        : {}),
     };
-    // WRITE ORDER, and it is load-bearing: the generations go down FIRST, the record that
-    // points at them LAST. The record is the ledger row the switcher drills through, so a
-    // crash between the two writes must leave a missing row (honest: the round is not in
-    // the ledger yet) rather than a row whose generation was never written — a drill-down
-    // into nothing. There is no transaction across two stores; ordering is the guarantee.
+    // WRITE ORDER, and it is load-bearing: the successor generation goes down FIRST, through
+    // `persistOwned` — the one ownership-checked writer of this id — then the ledger record
+    // that points at it (below). A crash between leaves a missing row (honest: not in the
+    // ledger yet) rather than a row drilling into a generation that was never written.
+    // `persistOwned` throws `GenerationSupersededError` if a later attempt claimed this id
+    // mid-await, and `reported` swallows that without painting a failure.
     const liveSuccessor = withLensBoards(restoredOrDrafted.generation, pipeline);
-    await deps.persistGeneration?.(liveSuccessor);
-    const frozenPrevious = predecessor === undefined ? undefined : freezeGeneration(predecessor);
+    await persistOwned(liveSuccessor);
+    // Timed `complete` ONLY after the ownership-protected write landed (#816 re-review P2).
+    // Archiving before `persistOwned` filed a `complete` benchmark for an attempt a later one
+    // may have superseded during the write's await — a turn that never composed, counted in the
+    // export as a clean round. The `catch` above already timed a real failure or an abort; a
+    // supersession is timed as neither.
+    archiveBenchmark?.("complete");
+    // Freeze the predecessor ONLY while this round still owns it (see the predecessor note
+    // above): a redraft by another session on this global patchset id makes the durable copy a
+    // different live generation, and overwriting it with our frozen copy would erase it. The
+    // successor record and `composed` below still fire regardless — we own `liveSuccessor`
+    // (just written, settled; a later attempt on it reads dropped slots and supersedes ITSELF).
+    const frozenPrevious =
+      predecessorStillOurs && predecessor !== undefined ? freezeGeneration(predecessor) : undefined;
     if (frozenPrevious !== undefined) await deps.persistGeneration?.(frozenPrevious);
     if (frozenPrevious !== undefined && input.session.reviewId !== undefined) {
       await deps.onGenerationTransition?.({
@@ -1851,6 +2088,12 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
     try {
       return await body();
     } catch (error) {
+      // Supersession is not a round failure — a LATER attempt owns the generation, and the
+      // attempt that owns it announces its own terminal state. Emitting `failed` here would
+      // paint the reviewer a failure over a turn that was merely overtaken, and (worse) do
+      // it over the LIVE generation the winning attempt is settling. Rethrow it silently;
+      // the error still propagates so the caller knows this attempt filed nothing.
+      if (error instanceof GenerationSupersededError) throw error;
       onProgress?.({
         type: "failed",
         reason: error instanceof Error ? error.message : String(error),
