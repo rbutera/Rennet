@@ -565,10 +565,13 @@ the turn ran. The schema body is untouched.
 The tools themselves are derived per lens from the kind tables
 (`packages/protocol/src/board/tool-schemas.ts`) and applied by the board writer
 (`packages/core/src/board/board-writer.ts`). Measured 2026-09-05, the served tool surface is
-8,005 B (Sequence) to 12,892 B (Design) per seat, against the 9,675–9,697 B output schema it
-is on course to replace in the next group. Across one generation's seven seats — Flagged
-counted twice — that is **65,633 B of tools against 67,747 B of schema, 3.1% less**; Design
-is the one seat that costs more than it saves, at 1.33x, because it authors two typed kinds
+8,005 B (Sequence) to 12,892 B (Design) per seat, against the output schema it is on course
+to replace in the next group — 9,618 B as a Claude seat receives it, 9,640 B for Design's
+board-or-absence shape, and 10,874 B for the Flagged Codex seat, whose schema is
+`sanitizeSchemaForCodex`'d on the way out. Both figures are taken from the modules that
+ship them, not rebuilt for the measurement. Across one generation's seven seats — Flagged
+counted twice — that is **65,633 B of tools against 68,604 B of schema, 4.3% less**; Design
+is the one seat that costs more than it saves, at 1.34x, because it authors two typed kinds
 no other lens does.
 
 ## The live line on a lane
@@ -969,6 +972,96 @@ And the prompt-size result — the one thing that went right — is the same sha
 reverse. No test asserts "the Decisions prompt does not grow with the change"; two drives
 against a 1-file branch and a 95-file branch, reading the bytes the sidecar actually received,
 do.
+
+## Measured: v0.7.1 — Design drafts, and the round settles a checkpointed account
+
+The same six seats, re-driven on 2026-09-04 against the signed **v0.7.1** release build with a
+fresh isolated data directory on a new clone (`rennet-g6-redrive`). Two branches, chosen to
+exercise both arms of the binding and both directions of the Design lens:
+
+- **`withspec`** — the clone's own checked-out branch, carrying
+  `openspec/changes/session-bound-workspace/` with its commit messages naming it, so the Design
+  seat has a specification to find. Because the branch *is* the checkout, the session binds to
+  the clone root itself, not to a Rennet-created worktree.
+- **`nospec-big`** — a large branch off the same clone with no specification of any kind. It is
+  not the checkout, so the session binds to a Rennet-created worktree under the data directory,
+  `<dataDir>/worktrees/-Volumes-ExternalNVMe-tmp-rennet-g6-redrive/nospec-big`.
+
+Every figure is read from the same sources as the v0.7.0 table above. Claude seats on Opus 4.8
+at high effort, Codex seats on GPT-5.6.
+
+| Seat | Prompt (bytes) | Draft, withspec | Repair, withspec | Draft, nospec-big | Repair, nospec-big |
+| --- | --- | --- | --- | --- | --- |
+| Design (Opus, high) | 12,441 | 441.0 s → board | 22.3 s | 72.3 s → `no-spec` | — |
+| Sequence (Opus, high) | 6,577 | 247.7 s | 110.4 s | 608.8 s | 68.2 s |
+| Decisions (Opus, high) | 6,293 | 246.4 s | 205.6 s | 208.5 s | 201.2 s |
+| Flagged / Claude (Opus, high) | 6,962 | 289.2 s | — | 201.2 s | — |
+| Flagged / Codex (high) | 6,962 | 214.5 s | 37.1 s | 265.5 s | 14.8 s |
+| Noise (Codex, low) | 6,377 | 104.4 s | 48.2 s | 153.5 s | 9.5 s |
+
+**Design crosses the wire now, both ways.** On `withspec` it drafted a board in 441.0 s and
+its repair turn on the same thread carried 2,776 bytes of lint pointers; the generation settled
+with all five lens boards present. On `nospec-big` the seat returned the `no-spec` absence in
+72.3 s, the generation recorded `absentLenses: { design: "no-spec" }`, four boards, and the
+switcher omitted the Design tab. This is the pair the v0.7.0 drive could not produce: the
+`400 tools.9.custom.input_schema.type` refusal of [#810](https://github.com/rbutera/Rennet/issues/810)
+is fixed by holding the lens's two returns apart at the host instead of on the wire, so the
+board draft and the `no-spec` absence each travel as an API-admissible schema. The prompt sizes
+are byte-identical to v0.7.0 — nothing about assembly changed — so the only difference in this
+table is that the Design row now holds timings instead of "refused".
+
+Wall clock from branch pick to the last board was **7 min 43 s** on `withspec` (first core
+board at 290.5 s, reveal at 463.4 s) and **11 min 17 s** on `nospec-big` (first core board at
+281.5 s, reveal at 677.0 s). The `withspec` generation billed 4,514,108 tokens across 11 turns,
+3,965,816 of them cache reads; `nospec-big` billed 3,995,145 across 10.
+
+One thing the drive surfaces for later work: on a branch that *has* a spec, the Design draft
+(441.0 s) is the single slowest lens, because the seat reproduces the OpenSpec change by hand
+before it drafts. Rennet already parses that change deterministically to check the board, so the
+draft is the strongest candidate for a deterministic assembly that skips the hand-reproduction;
+on `nospec-big`, where the hunt finds nothing, the same seat settles in 72.3 s.
+
+### The round: a checkpointed account on the bound branch
+
+One round ran on the `nospec-big` session. The reviewer staged one finding, and the work order
+reached the worker as a **path**, `.rennet/context/<sessionId>/work-order.md` under the bound
+root, never a payload. The worker committed on the session's branch, in the bound worktree:
+
+```
+59ed8f555 fix: pin round commit settlement to worker's attributed HEAD
+ 5 files changed, 191 insertions(+), 34 deletions(-)
+```
+
+on top of the recorded `sourceHead` `1388fb9df`, and the clone stayed on `withspec`. This time
+the durable account is not empty. The operation's worker record carries a real checkpoint —
+`{ threadId, turnId, turnCount: 1 }`, `outcome: "completed"` — and its commit record names the
+range the reviewer's branch actually moved through, `{ from: 1388fb9df, to: 59ed8f555, count:
+1 }`, pinned to the worker's attributed HEAD rather than a re-derived tip. Pinning that range to
+the worker's own HEAD is exactly what commit `59ed8f555` above does; the empty receipt of
+[#811](https://github.com/rbutera/Rennet/issues/811) — `diff: ""`, `changedPaths: []`, no
+checkpoint — is gone. No directory appeared under `round-worktrees/` or `worktrees/review/`, and
+on archive the session's whole `.rennet/context/<sessionId>/` directory went from six files to
+empty.
+
+Two things this drive does **not** settle, named because a green result is only honest with its
+frontier:
+
+- The receipt's `worker.diff` snapshot still carries 50 of its 55 paths from `.nx-isolated/cache/`.
+  The worker ran the project's gate, and the cache artifacts landed in the uncommitted working
+  tree that the receipt snapshots; the commit itself is the clean five files above. Pinning the
+  receipt's *diff* to the commit range, the way its commit record already is, is the remaining
+  half of the story.
+- The operation's terminal phase is `failed`, at `report-drafting`: the post-commit re-review
+  generation's Sequence lens drafted a board with no reachable `order_step`. That is a lens-draft
+  flake in the follow-up generation, downstream of and independent from the four round-mechanics
+  facts above — the round landed its commit and its checkpointed account first.
+
+The stale-copy strings of [#812](https://github.com/rbutera/Rennet/issues/812) and the
+still-`running` lane of [#813](https://github.com/rbutera/Rennet/issues/813) are both fixed in
+[#816](https://github.com/rbutera/Rennet/pull/816): the surfaces state the session's binding,
+and a lens failure leaves `running` when the seat does. So of the four defects the v0.7.0 drive
+named, the Design refusal, the empty round receipt, the stale copy and the stuck lane are all
+answered; the two caveats above are what this drive leaves for the next one.
 
 ## Stopping
 

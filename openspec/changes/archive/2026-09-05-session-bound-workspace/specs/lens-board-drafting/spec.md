@@ -28,6 +28,16 @@ Every lens seat (Sequence, Decisions, Flagged, Noise, Design) SHALL settle in ex
 - **WHEN** the Design seat reports that no specification exists for the branch
 - **THEN** the lane settles as a `no-spec` absence, not as a failure and not as an empty board
 
+#### Scenario: No turn in the ladder emits a board
+
+- **WHEN** no turn of a lens seat's ladder — the initial turn or any re-ask — emits a board
+- **THEN** the seat records a typed terminal failure naming the lens, the spent attempt count and the original non-emission — not a silent gap, and not a retryable classification for a ladder that has no attempts left — and the run surface reports that exact state with the thread still readable
+
+#### Scenario: Signal-only change reaches the Noise seat
+
+- **WHEN** the reviewed change contains no mechanical noise
+- **THEN** the Noise seat settles with its first-class admissible absence (`no-noise`), presented as a successful settlement, not a failure
+
 ### Requirement: Emitted board references are admitted by the target document without losing material
 
 A lens seat SHALL emit only references that the exact board document it writes admits, and every code reference SHALL be a path plus a line range on one side of the change. Reference validity SHALL be established at the producer/composition boundary before the write, by resolving each citation against the captured patchset. An inadmissible reference SHALL be repaired only when its unique intended target is provable; otherwise the lane SHALL retry or settle as a typed failure. Every board seat SHALL run as a turn on its own sidecar thread, so a repair SHALL be the next turn on that thread and SHALL carry only the violation pointers and the frozen element ids, never the base instructions or the failing draft. An element SHALL NOT be silently dropped to make a board acceptable — an accepted board that omits produced material without account is a defect. The board service remains authoritative and SHALL continue to reject invalid elements rather than admit them.
@@ -41,6 +51,16 @@ A lens seat SHALL emit only references that the exact board document it writes a
 
 - **WHEN** a draft fails lint on a sidecar seat
 - **THEN** the follow-up turn carries the pointers and frozen ids and nothing of the base prompt or the draft
+
+#### Scenario: Producer emits an unrepairable reference
+
+- **WHEN** an element's reference is inadmissible and no unique target is provable
+- **THEN** the lane retries or settles as a typed failure with a recorded account; no board is accepted with that element silently removed
+
+#### Scenario: Positive control restores the production bad-ref shape
+
+- **WHEN** the regression fixture's production `bad-ref` shape is reintroduced past the repair boundary
+- **THEN** the board service rejects the write, proving the service-side control still fails when repair is bypassed
 
 ## REMOVED Requirements
 

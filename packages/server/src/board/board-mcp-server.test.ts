@@ -1,9 +1,16 @@
+import { createHmac } from "node:crypto";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { createServer } from "node:http";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { ChangedRegion, LintContext } from "@rennet/core";
+import { BOARD_TARGETS } from "@rennet/protocol";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   BOARD_BEARER_ENV_VAR,
   BOARD_MCP_SERVER_NAME,
   type BoardMcpServer,
+  type SeatBoardServer,
   startBoardMcpServer,
 } from "./board-mcp-server";
 
@@ -21,7 +28,13 @@ import {
  * vendored adapters' tests (2.2) and by the drive in task 7.1, not by this file.
  */
 
-const BEARER = "process-bearer-under-test";
+/**
+ * Deliberately full of characters `encodeURIComponent` changes (space, `/`, `+`, `=`), so
+ * the percent-encoded assertion below is a DIFFERENT assertion from the plain one. With a
+ * bearer of `[A-Za-z-]` the two were byte-identical and the second could not fail — the
+ * `toContain("--draft")` pattern, and its comment called it the one that mattered.
+ */
+const BEARER = "process bearer/under+test=";
 
 /** The bearer the listener reads on every call, so a test can respawn the sidecar under it. */
 let currentBearer = BEARER;
@@ -41,12 +54,16 @@ const lint = (): Omit<LintContext, "lens"> => ({
 });
 
 let started: BoardMcpServer[] = [];
+/** Temp dirs a port-record test made; removed with the listeners that wrote them. */
+let scratch: string[] = [];
 
 afterEach(async () => {
   const running = started;
   started = [];
   currentBearer = BEARER;
   for (const server of running) await server.close();
+  for (const dir of scratch) rmSync(dir, { recursive: true, force: true });
+  scratch = [];
 });
 
 async function serverWith(
@@ -123,15 +140,23 @@ async function handshake(url: string): Promise<RpcAnswer> {
   return initialized;
 }
 
+/** Unwrap an address that must exist, so a lane that refuses to mint one fails loudly here. */
+function addressOf(server: SeatBoardServer | undefined): SeatBoardServer {
+  if (server === undefined) throw new Error("expected this seat to be given an address");
+  return server;
+}
+
 const designLane = async (server: BoardMcpServer) =>
   server.openLane({ generationId: "gen-1", target: "design", lint: lint() });
 
 const designAddress = (lane: Awaited<ReturnType<typeof designLane>>) =>
-  lane.address({
-    seat: "design",
-    author: { kind: "lens-agent", id: "lens:design" },
-    idPrefix: "d",
-  });
+  addressOf(
+    lane.address({
+      seat: "design",
+      author: { kind: "lens-agent", id: "lens:design" },
+      idPrefix: "d",
+    }),
+  );
 
 // ── 2.5 The protocol, over the wire ──────────────────────────────────────────
 
@@ -182,34 +207,50 @@ describe("a seat's MCP client discovers and calls the board tools (2.5)", () => 
     for (const tool of tools) expect(tool.inputSchema.type).toBe("object");
   });
 
-  it("serves no meta declaration on any tool's input schema", async () => {
+  it("serves no meta declaration on any tool of ANY target's input schema", async () => {
+    // EVERY target, over the wire. A one-target sample was the first version and it was a
+    // gap, not a shorthand: `servedToolCatalog` takes the target as a parameter, so
+    // stripping everywhere except `sequence` left the whole suite green (control M20).
     const server = await serverWith();
-    const url = designAddress(await designLane(server)).url;
-    await handshake(url);
-    const listed = await rpc(url, { jsonrpc: "2.0", id: 2, method: "tools/list" });
-    const tools = result(listed).tools as { name: string; inputSchema: Record<string, unknown> }[];
-    // Zod stamps a draft-2020-12 `$schema` on every rendered input, and this `inputSchema`
-    // is carried by the harness child into the provider's own tool definitions with
-    // nothing on that path to strip it. A meta declaration a validator does not recognise
-    // is what #810 was — a schema refused before the turn ran — and Rennet's own adapter
-    // already drops these keys for exactly that reason (`normalizeOutputSchema`).
-    expect(tools.length).toBeGreaterThan(0);
-    for (const tool of tools) {
-      expect(Object.keys(tool.inputSchema), tool.name).not.toContain("$schema");
-      expect(Object.keys(tool.inputSchema), tool.name).not.toContain("$id");
+    let seen = 0;
+    for (const target of BOARD_TARGETS) {
+      const lane = server.openLane({ generationId: "gen-meta", target, lint: lint() });
+      const url = addressOf(
+        lane.address({ seat: target, author: { kind: "lens-agent", id: `lens:${target}` } }),
+      ).url;
+      await handshake(url);
+      const listed = await rpc(url, { jsonrpc: "2.0", id: 2, method: "tools/list" });
+      const tools = result(listed).tools as {
+        name: string;
+        inputSchema: Record<string, unknown>;
+      }[];
+      expect(tools.length, target).toBeGreaterThan(0);
+      for (const tool of tools) {
+        // Zod stamps a draft-2020-12 `$schema` on every rendered input, and this
+        // `inputSchema` is carried by the harness child into the provider's own tool
+        // definitions with nothing on that path to strip it. A meta declaration a
+        // validator does not recognise is what #810 was — a schema refused before the turn
+        // ran — and Rennet's own adapter drops these keys for exactly that reason.
+        expect(Object.keys(tool.inputSchema), `${target}/${tool.name}`).not.toContain("$schema");
+        expect(Object.keys(tool.inputSchema), `${target}/${tool.name}`).not.toContain("$id");
+        seen += 1;
+      }
+      // …and the body is untouched: the constraints still travel.
+      const cite = tools.find((tool) => tool.name === "cite");
+      expect(Object.keys((cite?.inputSchema.properties ?? {}) as object), target).toContain(
+        "start_line",
+      );
     }
-    // …and the body is untouched: the constraints still travel.
-    const cite = tools.find((tool) => tool.name === "cite");
-    expect(Object.keys((cite?.inputSchema.properties ?? {}) as object)).toContain("start_line");
+    // A count, so a loop that silently stopped iterating cannot pass as a clean sweep.
+    expect(seen).toBe(96);
   });
 
   it("a Sequence seat is served no settle_absent, because Sequence admits no absence", async () => {
     const server = await serverWith();
     const lane = server.openLane({ generationId: "gen-1", target: "sequence", lint: lint() });
-    const url = lane.address({
-      seat: "sequence",
-      author: { kind: "lens-agent", id: "lens:sequence" },
-    }).url;
+    const url = addressOf(
+      lane.address({ seat: "sequence", author: { kind: "lens-agent", id: "lens:sequence" } }),
+    ).url;
     await handshake(url);
     const listed = await rpc(url, { jsonrpc: "2.0", id: 2, method: "tools/list" });
     const names = (result(listed).tools as { name: string }[]).map((tool) => tool.name);
@@ -334,11 +375,13 @@ describe("an address names a board and a bearer authenticates the caller (2.5)",
     // A SIBLING lane runs on. Its live address is what keeps the settled one's 404 about
     // this lane rather than about an empty registry (controls M2/M4, 2026-09-05).
     const sibling = server.openLane({ generationId: "gen-1", target: "sequence", lint: lint() });
-    const siblingUrl = sibling.address({
-      seat: "sequence",
-      author: { kind: "lens-agent", id: "lens:sequence" },
-      idPrefix: "q",
-    }).url;
+    const siblingUrl = addressOf(
+      sibling.address({
+        seat: "sequence",
+        author: { kind: "lens-agent", id: "lens:sequence" },
+        idPrefix: "q",
+      }),
+    ).url;
     await handshake(url);
     await handshake(siblingUrl);
     const before = await rpc(url, {
@@ -376,10 +419,9 @@ describe("an address names a board and a bearer authenticates the caller (2.5)",
     const design = await designLane(server);
     const sequence = server.openLane({ generationId: "gen-1", target: "sequence", lint: lint() });
     const designUrl = designAddress(design).url;
-    const sequenceUrl = sequence.address({
-      seat: "sequence",
-      author: { kind: "lens-agent", id: "lens:sequence" },
-    }).url;
+    const sequenceUrl = addressOf(
+      sequence.address({ seat: "sequence", author: { kind: "lens-agent", id: "lens:sequence" } }),
+    ).url;
 
     server.settleGeneration("gen-1");
 
@@ -432,22 +474,56 @@ describe("an address names a board and a bearer authenticates the caller (2.5)",
     // A retry re-opens the lane. A freshly minted token here would change the url under a
     // session that is still open, and its next turn would be refused as a mismatch.
     const again = server.openLane({ generationId: "gen-1", target: "design", lint: lint() });
-    expect(
-      again.address({
-        seat: "design",
-        author: { kind: "lens-agent", id: "lens:design" },
-        idPrefix: "d",
-      }).url,
-    ).toBe(before);
+    expect(designAddress(again).url).toBe(before);
   });
 
   it("gives two generations' same-named seats different addresses", async () => {
     const server = await serverWith();
     const first = designAddress(await designLane(server)).url;
-    const second = server
-      .openLane({ generationId: "gen-2", target: "design", lint: lint() })
-      .address({ seat: "design", author: { kind: "lens-agent", id: "lens:design" } }).url;
+    const second = addressOf(
+      server
+        .openLane({ generationId: "gen-2", target: "design", lint: lint() })
+        .address({ seat: "design", author: { kind: "lens-agent", id: "lens:design" } }),
+    ).url;
     expect(first).not.toBe(second);
+  });
+
+  it("mints no address at all while there is no sidecar to derive from", async () => {
+    currentBearer = "";
+    const server = await serverWith();
+    const lane = await designLane(server);
+    // HMAC over an EMPTY key is a publicly computable value, and it would stay live in the
+    // registry once the next sidecar arrived. Refusing withholds nothing: there is no
+    // sidecar for a call to have come from, so there is no seat to serve.
+    expect(
+      lane.address({ seat: "design", author: { kind: "lens-agent", id: "lens:design" } }),
+    ).toBeUndefined();
+
+    // An empty PRESENTED bearer never gets as far as the registry either: `bearerOf`'s
+    // `.+` is what stops `sha256("")` matching `sha256("")` while no sidecar is up.
+    expect((await rpc(`${server.origin}/board/anything`, { jsonrpc: "2.0", id: 1 })).status).toBe(
+      401,
+    );
+
+    // The real claim: once a sidecar IS up, the token an attacker could have computed from
+    // the empty key still reaches nothing, because it was never registered. Computed here
+    // exactly as the derivation would compute it.
+    currentBearer = BEARER;
+    const guessable = createHmac("sha256", "").update("gen-1 design design").digest("base64url");
+    expect(
+      (
+        await rpc(`${server.origin}/board/${encodeURIComponent(guessable)}`, {
+          jsonrpc: "2.0",
+          id: 2,
+          method: "ping",
+        })
+      ).status,
+    ).toBe(404);
+
+    // …and the seat now gets its real address, which is a different string.
+    const real = designAddress(lane);
+    expect(real.url).toContain("/board/");
+    expect(real.url).not.toContain(encodeURIComponent(guessable));
   });
 
   it("a seat's address carries no bearer: the credential travels by variable NAME", async () => {
@@ -459,9 +535,65 @@ describe("an address names a board and a bearer authenticates the caller (2.5)",
     // it — only the name of the variable the child reads it out of is on the turn at all.
     expect(address.url).not.toContain(BEARER);
     expect(JSON.stringify(address)).not.toContain(BEARER);
-    // The token is DERIVED from the bearer, so this is the assertion that matters: the
-    // derivation must not be invertible on sight.
+    // A url-encoded bearer is a different string from a raw one — see BEARER's note — so
+    // this asks a second question: the token is DERIVED from the bearer, and the
+    // derivation must not put it in the address in either spelling.
+    expect(encodeURIComponent(BEARER)).not.toBe(BEARER);
     expect(address.url).not.toContain(encodeURIComponent(BEARER));
+  });
+});
+
+// ── 2.5 The port survives the daemon that bound it ───────────────────────────
+
+describe("the listener comes back on the port it recorded (2.5)", () => {
+  it("re-binds the recorded port, so a live session's url still resolves", async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "rennet-board-port-"));
+    scratch.push(stateDir);
+    const first = await serverWith({ stateDir });
+    const port = first.port;
+    expect(JSON.parse(readFileSync(join(stateDir, "board-server.json"), "utf8"))).toEqual({ port });
+    await first.close();
+    started = started.filter((server) => server !== first);
+
+    // A new daemon, the same sidecar, the same generation. Nothing tells this listener
+    // which port to take but the record it left.
+    const second = await serverWith({ stateDir });
+    expect(second.port).toBe(port);
+  });
+
+  it("falls back to a fresh port when something took the recorded one, and rewrites the record", async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "rennet-board-port-"));
+    scratch.push(stateDir);
+    const first = await serverWith({ stateDir });
+    const taken = first.port;
+    await first.close();
+    started = started.filter((server) => server !== first);
+
+    // Something else grabbed it while the daemon was down.
+    const squatter = createServer();
+    await new Promise<void>((resolve) => {
+      squatter.listen(taken, "127.0.0.1", resolve);
+    });
+    try {
+      const second = await serverWith({ stateDir });
+      // Not fatal: the whole feature does not go down for a port number. The seats of a
+      // generation that was mid-flight get new urls and are refused by name, which is loud.
+      expect(second.port).not.toBe(taken);
+      expect(JSON.parse(readFileSync(join(stateDir, "board-server.json"), "utf8"))).toEqual({
+        port: second.port,
+      });
+    } finally {
+      await new Promise<void>((resolve) => {
+        squatter.close(() => {
+          resolve();
+        });
+      });
+    }
+  });
+
+  it("binds an ephemeral port and records nothing when it is given no state dir", async () => {
+    const server = await serverWith();
+    expect(server.port).toBeGreaterThan(0);
   });
 });
 
@@ -471,16 +603,20 @@ describe("a Flagged lane gets two addresses onto one board (2.6, D9)", () => {
   it("both seats write the ONE board and the ids they are handed cannot collide", async () => {
     const server = await serverWith();
     const lane = server.openLane({ generationId: "gen-1", target: "flagged", lint: lint() });
-    const claude = lane.address({
-      seat: "flagged-claude",
-      author: { kind: "lens-agent", id: "lens:flagged:claudeAgent" },
-      idPrefix: "f",
-    });
-    const codex = lane.address({
-      seat: "flagged-codex",
-      author: { kind: "lens-agent", id: "lens:flagged:codex" },
-      idPrefix: "g",
-    });
+    const claude = addressOf(
+      lane.address({
+        seat: "flagged-claude",
+        author: { kind: "lens-agent", id: "lens:flagged:claudeAgent" },
+        idPrefix: "f",
+      }),
+    );
+    const codex = addressOf(
+      lane.address({
+        seat: "flagged-codex",
+        author: { kind: "lens-agent", id: "lens:flagged:codex" },
+        idPrefix: "g",
+      }),
+    );
     expect(claude.url).not.toBe(codex.url);
 
     await handshake(claude.url);
@@ -559,16 +695,20 @@ describe("a Flagged lane gets two addresses onto one board (2.6, D9)", () => {
   it("one voice can cite an element the other voice created, because it is one board", async () => {
     const server = await serverWith();
     const lane = server.openLane({ generationId: "gen-1", target: "flagged", lint: lint() });
-    const claude = lane.address({
-      seat: "flagged-claude",
-      author: { kind: "lens-agent", id: "lens:flagged:claudeAgent" },
-      idPrefix: "f",
-    });
-    const codex = lane.address({
-      seat: "flagged-codex",
-      author: { kind: "lens-agent", id: "lens:flagged:codex" },
-      idPrefix: "g",
-    });
+    const claude = addressOf(
+      lane.address({
+        seat: "flagged-claude",
+        author: { kind: "lens-agent", id: "lens:flagged:claudeAgent" },
+        idPrefix: "f",
+      }),
+    );
+    const codex = addressOf(
+      lane.address({
+        seat: "flagged-codex",
+        author: { kind: "lens-agent", id: "lens:flagged:codex" },
+        idPrefix: "g",
+      }),
+    );
     await handshake(claude.url);
     await handshake(codex.url);
 
@@ -602,11 +742,13 @@ describe("a Flagged lane gets two addresses onto one board (2.6, D9)", () => {
   it("opening the same lane twice returns the board that is already being written", async () => {
     const server = await serverWith();
     const first = server.openLane({ generationId: "gen-1", target: "flagged", lint: lint() });
-    const url = first.address({
-      seat: "flagged-claude",
-      author: { kind: "lens-agent", id: "lens:flagged:claudeAgent" },
-      idPrefix: "f",
-    }).url;
+    const url = addressOf(
+      first.address({
+        seat: "flagged-claude",
+        author: { kind: "lens-agent", id: "lens:flagged:claudeAgent" },
+        idPrefix: "f",
+      }),
+    ).url;
     await handshake(url);
     await rpc(url, {
       jsonrpc: "2.0",

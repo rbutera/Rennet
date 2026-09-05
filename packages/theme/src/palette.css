@@ -105,10 +105,20 @@
   --rn-syn-var: #8a5a1e;
   /* the brand mark's single ink (paper on dark, ink on light) */
   --rn-mark-ink: #0b0d10;
-  /* type — three voices plus code (root DESIGN.md §Typography) */
+  /* type — ONE interface voice plus code (root DESIGN.md §Typography).
+   *
+   * Rai, 2026-09-04: "i changed my mind about serif in the design system. lets just use
+   * sans serif for all chrome (except code which should be monospace ofc!". So Geist runs
+   * every chrome surface — headings, display moments, annotations, review prose — and
+   * Geist Mono runs source, diffs and exact technical values. `--rn-font-serif` and
+   * `--rn-font-display` are kept as ALIASES of the sans stack rather than deleted: they
+   * are consumed through `--font-serif`/`--font-display` by Tailwind's `font-serif` and
+   * `font-display` utilities across the app, and one binding here retires the voice
+   * everywhere at once. Rebinding them, not removing them, is also what keeps a theme pack
+   * honest — packs are colour only and never touch type. */
   --rn-font-sans: "Geist Variable", system-ui, -apple-system, sans-serif;
-  --rn-font-serif: "Newsreader Variable", Georgia, serif;
-  --rn-font-display: "Fraunces Variable", Georgia, serif;
+  --rn-font-serif: var(--rn-font-sans);
+  --rn-font-display: var(--rn-font-sans);
   --rn-font-mono: "Geist Mono Variable", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   /* depth — true overlays only */
   --rn-shadow-overlay: 0 12px 40px rgb(30 20 5 / 0.18), 0 2px 8px rgb(30 20 5 / 0.1);

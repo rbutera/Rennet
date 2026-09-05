@@ -61,10 +61,12 @@ describe("Section fold grammar", () => {
     ).toBe("2 findings · 1 requirement · 3 steps · 1 comment");
   });
 
-  it("a delta section opens expanded with the gold dot, and interacting clears it via the store", async () => {
+  it("a delta section folds like every other, keeping the gold dot that clears via the store", async () => {
     const { container, getByText, queryByTestId, user } = renderSection("g2-open");
     const root = container.querySelector("[data-kind=board-section]");
-    expect(root?.getAttribute("data-open")).toBe("true"); // delta ⇒ expanded
+    // A delta section used to open itself. Every foldable now arrives folded (Rai,
+    // 2026-09-04) and the DOT carries "this is new" on its own.
+    expect(root?.getAttribute("data-open")).toBe("false");
     expect(root?.getAttribute("data-delta")).toBe("reworked");
     // The transient gold dot with its screen-reader label.
     expect(queryByTestId("delta-dot")).toBeTruthy();
@@ -92,9 +94,13 @@ describe("Section fold grammar", () => {
     const root = container.querySelector("[data-kind=board-section]");
     const highlight = container.querySelector<HTMLElement>("[data-quote-highlight]");
 
-    expect(root?.getAttribute("data-open")).toBe("true");
+    // The claim is that clicking a highlighted title opens its THREAD and does not move the
+    // fold. Assert against the section's state before the click rather than a literal, so
+    // the test keeps asking that question whatever the fold default becomes.
+    const before = root?.getAttribute("data-open");
+    expect(before).toBe("false");
     if (highlight) await user.click(highlight);
-    expect(root?.getAttribute("data-open")).toBe("true");
+    expect(root?.getAttribute("data-open")).toBe(before);
     expect(container.querySelector(`[data-thread-id="${id}"]`)).toBeTruthy();
   });
 });

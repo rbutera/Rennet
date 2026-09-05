@@ -24,13 +24,13 @@ colors:
   danger-dark: "#db7a6a"
 typography:
   display:
-    fontFamily: "Fraunces Variable, Georgia, serif"
+    fontFamily: "Geist Variable, system-ui, sans-serif"
     fontSize: "clamp(2.8rem, 5vw, 6rem)"
     fontWeight: 500
     lineHeight: 1.02
     letterSpacing: "-0.015em"
   serif:
-    fontFamily: "Newsreader Variable, Georgia, serif"
+    fontFamily: "Geist Variable, system-ui, sans-serif"
     fontSize: "17px"
     fontWeight: 400
     lineHeight: 1.55
@@ -134,9 +134,10 @@ Beyond it, a viewer may select a bundled **theme pack** (GitHub, One Dark Pro, D
 
 ## Typography
 
-- **Fraunces** is for brand moments, display headings, screen titles, and empty states. Use the self-hosted variable font with Georgia as the fallback.
-- **Newsreader** is for annotations and quoted prose excerpts. Use the self-hosted variable font with Georgia as the fallback. Conversations and the review body run Geist (amended 2026-08-26; the serif voice narrowed as prose surfaces moved to sans).
-- **Geist** is for controls, labels, inputs, navigation, and metadata. Use the self-hosted variable font with the system sans-serif stack as the fallback.
+**Amended 2026-09-04 (Rai): there is no serif voice.** Every chrome surface runs sans; code runs mono. The serif narrowing of 2026-08-26 went all the way.
+
+- **Geist** is the one interface voice — display headings, screen titles, empty states, annotations, quoted prose, the review body, conversations, controls, labels, inputs, navigation, and metadata. Use the self-hosted variable font with the system sans-serif stack as the fallback.
+- **Fraunces and Newsreader are retired from the app.** `--rn-font-display` and `--rn-font-serif` remain as aliases of the sans stack so the `font-display` and `font-serif` utilities still resolve; neither names a serif face any more. The marketing and documentation sites keep their own type and are not governed by this line.
 - **Geist Mono** is for source code, diffs, and exact technical values, falling back to the platform monospace stack.
 
 The wordmark is vector artwork. Do not recreate it with a font.
@@ -159,7 +160,7 @@ Desktop components use `10 / 11 / 12 / 12.5 / 13 / 14 / 15 / 16 / 18 / 20 / 24` 
 - **14px / `text-sm`** chrome — the standard chrome label and control text.
 - **15px / `text-15`** prose — chat turns and review prose.
 - **16px / `text-base`** reading — reading text, emphasised labels, inputs.
-- **18px / `text-lg`** body — comfortable body and the annotation serif.
+- **18px / `text-lg`** body — comfortable body and annotations.
 - **20px / `text-xl`** section — screen and section headings.
 - **24px / `text-2xl`** title — the largest in-app screen title.
 
@@ -274,7 +275,7 @@ The alias map lives in [`packages/theme/src/theme.css`](packages/theme/src/theme
 
 - Keep one ground color from title bar to canvas.
 - Reserve gold for selection, decisions, focus, and primary actions.
-- Use serif for annotations and quoted prose excerpts. Use sans serif for the review body, conversations, controls, and data (amended 2026-08-26 — see Typography).
+- Use sans serif for every chrome surface — headings, annotations, quoted prose, the review body, conversations, controls, and data — and monospace only for code, diffs, and exact technical values (amended 2026-09-04 — see Typography).
 - Test light and dark schemes.
 - Preserve the full review and all important claims at every breakpoint.
 - Do not use decorative gradients, neon, glass, or monospace as generic developer-tool styling. Functional progress and state graphics may use a gradient when the gradient encodes the state. Chrome floating over content in the full-bleed state may use a translucent, blurred ground — the one sanctioned exception (see Material, Rai 2026-08-28); opaque grounds remain the rule everywhere else.

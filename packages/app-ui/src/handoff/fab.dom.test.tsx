@@ -102,6 +102,11 @@ describe("ExitFab", () => {
         <ExitFab mode="teammate-pr" open={false} onToggle={noop} />
       </BridgeProvider>,
     );
+    // Findings arrive folded (Rai, 2026-09-04) and a closed `Collapse` mounts no children,
+    // so the staging control is reached the way a reviewer reaches it: open the card first.
+    const [disclosure] = r.getAllByRole("button", { expanded: false });
+    if (!disclosure) throw new Error("no folded finding to open");
+    await r.user.click(disclosure);
     const [request] = r.getAllByText("Request This Change");
     expect(store().signal.inFlight + store().signal.landed).toBe(0); // no flight before the click
     if (request) await r.user.click(request);

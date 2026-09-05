@@ -1,7 +1,7 @@
-import { AnchorReveal } from "../../review";
 import { SourceChips, SpecDeltaBadge, StoryStatus } from "../design-meta";
 import { InlineQuoteHighlight, QuoteHighlightLayer } from "../quote-highlight";
 import type { ElementOf } from "../registry";
+import { BoardAnchorReveal } from "./board-anchor-reveal";
 import { useBoardPatchsetId, useCodeRefs, useElements } from "./element-context";
 import { ProseElement } from "./prose";
 import { BoardElement } from "./renderers";
@@ -123,7 +123,7 @@ export function RequirementElement({ element }: { readonly element: ElementOf<"r
           />
         </div>
       ) : null}
-      {citations.length > 0 && <AnchorReveal citations={citations} />}
+      {citations.length > 0 && <BoardAnchorReveal citations={citations} />}
     </div>
   );
 }

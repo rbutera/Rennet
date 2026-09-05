@@ -93,6 +93,24 @@ export const reportBoardFixture: RoundReportBoard = {
   },
 };
 
+/**
+ * The PRODUCTION shape that broke the packaged v0.7.1 card — the shape the four short
+ * outcomes above hid. Real `ask.ref` is the serialized dispatched-ask id
+ * (`round-report-verification.ts` matches it against `knownAskIds`): a long UNBROKEN string.
+ * Real `ask.text` is the finding's WHOLE instruction: a multi-section markdown blob. The card
+ * must read well on both — a concise title (the instruction's first line, no raw `###`) and a
+ * ref that can never collapse the header. `askTitle` derives the header from `ask.text`, so the
+ * stored blob stays intact (verification locks `ask.text` to the ask; the ledger reads it).
+ */
+export const productionShapedOutcome: HostElement = roundOutcome("ro-production", {
+  status: "addressed",
+  ask: {
+    ref: 'finding:["gen:0f3a7c9d1e2b4a5c6d7e8f90112233445566778899aabbccddeeff00112233445","1f2e3d4c-5b6a-7980-b1c2-d3e4f5061728","b:finding-ambient-commits"]',
+    text: "### Ambient commits leak into the ask inventory\n#### Inputs\n- packages/server/src/runtime/lens-pipeline.ts\n- the dispatched-ask manifest for this round\n#### Fix\nScope the change inventory to the round's own commit range so ambient history stays out of the report.",
+  },
+  note: "The refresh layer now scopes the inventory to the round's commit range, and the worker covered the ambient-history exit the ask never named.",
+});
+
 /** A map of report boards by id — what the fixture source's `reportBoard` read resolves. */
 export const FIXTURE_REPORT_BOARDS: Readonly<Record<string, RoundReportBoard>> = {
   [reportBoardFixture.boardId]: reportBoardFixture,
