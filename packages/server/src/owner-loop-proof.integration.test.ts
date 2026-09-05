@@ -35,6 +35,7 @@ import {
   OWNER_LOOP_SEQUENCE_QUOTE,
   OWNER_LOOP_SOURCE,
   OWNER_LOOP_SPEC,
+  OWNER_LOOP_UNCITED,
   writeOwnerLoopScriptedHarnessPlan,
 } from "./owner-loop-proof-fixture";
 import { loadScriptedHarnessPlan, loadScriptedT3Seats } from "./scripted-harness-plan";
@@ -56,6 +57,7 @@ function seedTargetRepo(root: string): void {
   git(root, "config", "core.excludesFile", "/dev/null");
   writeRepoFile(root, ".gitignore", ".rennet/\n");
   writeRepoFile(root, OWNER_LOOP_SOURCE, "export const ownerValue = 'base';\n");
+  writeRepoFile(root, OWNER_LOOP_UNCITED, "export const generatedAt = 'base';\n");
   writeRepoFile(
     root,
     "package.json",
@@ -84,12 +86,25 @@ function seedTargetRepo(root: string): void {
       "",
     ].join("\n"),
   );
-  git(root, "add", ".gitignore", OWNER_LOOP_SOURCE, OWNER_LOOP_SPEC, "package.json");
+  git(
+    root,
+    "add",
+    ".gitignore",
+    OWNER_LOOP_SOURCE,
+    OWNER_LOOP_UNCITED,
+    OWNER_LOOP_SPEC,
+    "package.json",
+  );
   git(root, "commit", "-qm", "base");
   git(root, "remote", "add", "origin", "git@github.com:owner/target.git");
   git(root, "checkout", "-qb", "feature/shared");
   writeRepoFile(root, OWNER_LOOP_SOURCE, "export const ownerValue = 'reviewed';\n");
-  git(root, "add", OWNER_LOOP_SOURCE);
+  // MODIFIED, and cited by nobody. This is the Noise lane's material: without it the four
+  // core lenses cite the whole change and the complement is empty, which is the `no-noise`
+  // settlement (D16e) and not a five-board proof. A modification rather than an addition
+  // on purpose — it is the shape #864 was about.
+  writeRepoFile(root, OWNER_LOOP_UNCITED, "export const generatedAt = 'reviewed';\n");
+  git(root, "add", OWNER_LOOP_SOURCE, OWNER_LOOP_UNCITED);
   git(root, "commit", "-qm", "reviewed owner value");
   // The clone goes back to `main` and stays there. Nothing has `feature/shared` out, so the
   // session binds to a worktree Rennet creates — which is what makes "the seats and the
@@ -236,7 +251,15 @@ async function waitForFiveBoards(
           throw new Error(`${lens} board lost its code anchor: ${JSON.stringify(read.board)}`);
         }
         const refs = read.board?.elements.filter((element) => element.kind === "code_ref") ?? [];
-        expect(refs.every((element) => element.data.path === OWNER_LOOP_SOURCE)).toBe(true);
+        // The four core lenses cite the reviewed source. The NOISE board cites what none
+        // of them did — its members are the host's complement, not the seat's picks — so
+        // it answers for the other file, and a Noise citation of `src/owner.ts` would mean
+        // the complement had kept a region four boards had just read (#864).
+        const citable = lens === "noise" ? OWNER_LOOP_UNCITED : OWNER_LOOP_SOURCE;
+        expect(
+          refs.map((element) => element.data.path).filter((path) => path !== citable),
+          `${lens} cited a path outside ${citable}`,
+        ).toEqual([]);
         // At least one citation stamped with THIS capture. Found by its patchset stamp
         // rather than by a plan-authored id (`${lens}-code`): every id on a board is
         // host-minted since `lens-board-tools` 3.2, so that id names nothing here — and
@@ -472,6 +495,25 @@ describe("#685 owner loop through a real server", () => {
       initial.activePatchsetId,
     );
     await expectEveryBoardWasPublishedAsItWasWritten(first, reviewId, initialGeneration);
+    // #864 THROUGH THE REAL SERVER. The reviewed branch modifies two files; the four core
+    // lenses cite one of them, on its HEAD side. The complement is therefore exactly the
+    // other file's one hunk, filed ONCE — not twice under two line ranges, and not three
+    // times with the cited file's base side alongside.
+    //
+    // Both halves are load-bearing and they fail differently. A per-SIDE subtraction puts
+    // `src/owner.ts` back in the complement (the sibling citations named the head side),
+    // which the path check above catches; a per-side PLACEMENT keeps the count at two.
+    const noiseBoard = parseCommandOutput(
+      "board.read",
+      await first.dispatch("board.read", {
+        reviewId,
+        generation: initialGeneration,
+        lens: "noise",
+      }),
+    ).board;
+    const noiseMembers =
+      noiseBoard?.elements.filter((element) => element.kind === "noise_verdict") ?? [];
+    expect(noiseMembers).toHaveLength(1);
     // Every board that just landed came off a SIDECAR SEAT THREAD, one per seat, opened in
     // the checkout the review is bound to — there is no ephemeral leg left for one to have
     // taken (session-bound-workspace 5.7). The seam recorded the whole `threadFor` input,

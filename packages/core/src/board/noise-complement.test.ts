@@ -89,7 +89,10 @@ describe("the Noise board is the complement of the other four (D16)", () => {
 
   it("a base-side citation does not claim the head-side region at the same lines", () => {
     // The sides are separate inventories, and a complement that collapsed them would hand
-    // the reviewer a board missing a region nobody read.
+    // the reviewer a board missing a region nobody read. These two regions carry no
+    // `hunk`, so they are two changes that happen to share a path and a line range —
+    // which is all a caller with no diff index can say. Two SIDES OF ONE HUNK are the
+    // suite below, and they answer differently on purpose.
     const membership = deriveNoiseMembers({
       regions: [
         { path: "src/legacy.ts", side: "base", start: 5, end: 9 },
@@ -158,5 +161,115 @@ describe("the Noise board is the complement of the other four (D16)", () => {
       ]),
     });
     expect(membership.kind).toBe("unknowable");
+  });
+});
+
+/**
+ * #864 — the unit of the complement is the HUNK, not the side.
+ *
+ * The live defect: a one-hunk change (`@@ -1,6 +1,6 @@`), Sequence cited head 3-6, and the
+ * host still filed base 1-6 as a Noise member — then spent a 75-second Codex seat turn
+ * writing a board that called a sibling-cited change noise. Two consequences: `no-noise`
+ * was unreachable for any change containing a modification, and the Noise board
+ * systematically re-filed what the other lenses had just read.
+ *
+ * The fixtures here all carry a MODIFIED hunk cited on ONE side, which is the shape every
+ * pre-existing fixture was missing — they were additions, and an addition has one side, so
+ * the subtraction and the placement could not tell the two rules apart.
+ */
+describe("the unit of the complement is the hunk, not the side (#864)", () => {
+  /** `@@ -1,6 +1,6 @@` on one file: one hunk, two sides, one change. */
+  const MODIFIED: readonly ChangedRegion[] = [
+    { path: "docs/README.md", side: "head", start: 1, end: 6, hunk: "h1" },
+    { path: "docs/README.md", side: "base", start: 1, end: 6, hunk: "h1" },
+  ];
+
+  it("a head-side citation cancels the hunk's base side, so no-noise is reachable", () => {
+    const membership = deriveNoiseMembers({
+      regions: MODIFIED,
+      siblings: allSettled([
+        settled("sequence", [{ path: "docs/README.md", side: "head", start: 3, end: 6 }]),
+      ]),
+    });
+    // The live bug returned `[docs/README.md:base:1-6]` here. Empty is the `no-noise`
+    // settlement (D16e) — the four lanes between them read the whole change.
+    expect(membership).toEqual({ kind: "derived", members: [] });
+  });
+
+  it("a BASE-side citation cancels the head side too — the rule is not one-directional", () => {
+    const membership = deriveNoiseMembers({
+      regions: MODIFIED,
+      siblings: allSettled([
+        settled("flagged", [{ path: "docs/README.md", side: "base", start: 1, end: 2 }]),
+      ]),
+    });
+    expect(membership).toEqual({ kind: "derived", members: [] });
+  });
+
+  it("an UNCITED modified hunk is filed ONCE, on its head side", () => {
+    // The placement half, and the one that halves the member list: filing both sides put
+    // the same change on the board twice under two line ranges. On the 95-file drive that
+    // was 1,259 code_ref + 1,259 noise_verdict members against ~630 real changes, and a
+    // seat whose only verb moves one member at a time.
+    const membership = deriveNoiseMembers({ regions: MODIFIED, siblings: allSettled() });
+    if (membership.kind !== "derived") throw new Error("expected a derivation");
+    expect(pathsOf(membership.members)).toEqual(["docs/README.md:head:1-6"]);
+  });
+
+  it("a pure DELETION has no head side, so it files its base side", () => {
+    const membership = deriveNoiseMembers({
+      regions: [{ path: "src/gone.ts", side: "base", start: 1, end: 12, hunk: "h9" }],
+      siblings: allSettled(),
+    });
+    if (membership.kind !== "derived") throw new Error("expected a derivation");
+    expect(pathsOf(membership.members)).toEqual(["src/gone.ts:base:1-12"]);
+  });
+
+  it("a rename's two base names are one change, filed once and cancelled together", () => {
+    // `changedRegions` emits a renamed file base side under BOTH names so either
+    // resolves. They are one hunk, so the complement must not file the change twice.
+    const renamed: readonly ChangedRegion[] = [
+      { path: "src/new.ts", side: "head", start: 10, end: 11, hunk: "h2" },
+      { path: "src/old.ts", side: "base", start: 10, end: 11, hunk: "h2" },
+      { path: "src/new.ts", side: "base", start: 10, end: 11, hunk: "h2" },
+    ];
+    expect(deriveNoiseMembers({ regions: renamed, siblings: allSettled() })).toMatchObject({
+      members: [renamed[0]],
+    });
+    expect(
+      deriveNoiseMembers({
+        regions: renamed,
+        siblings: allSettled([
+          settled("design", [{ path: "src/old.ts", side: "base", start: 10, end: 10 }]),
+        ]),
+      }),
+    ).toEqual({ kind: "derived", members: [] });
+  });
+
+  it("cancelling one hunk leaves its neighbours: the key groups, it does not collapse", () => {
+    // The failure mode of a too-broad key. If regions grouped by PATH, or if every region
+    // shared one key, a single citation would empty the whole complement — which reads as
+    // `no-noise` and is the same class of harm in the other direction.
+    const twoHunks: readonly ChangedRegion[] = [
+      { path: "src/a.ts", side: "head", start: 1, end: 4, hunk: "h1" },
+      { path: "src/a.ts", side: "base", start: 1, end: 3, hunk: "h1" },
+      { path: "src/a.ts", side: "head", start: 40, end: 44, hunk: "h2" },
+      { path: "src/a.ts", side: "base", start: 40, end: 42, hunk: "h2" },
+    ];
+    const membership = deriveNoiseMembers({
+      regions: twoHunks,
+      siblings: allSettled([
+        settled("design", [{ path: "src/a.ts", side: "head", start: 2, end: 3 }]),
+      ]),
+    });
+    if (membership.kind !== "derived") throw new Error("expected a derivation");
+    expect(pathsOf(membership.members)).toEqual(["src/a.ts:head:40-44"]);
+  });
+
+  it("a FAILED sibling still refuses the complement, keys or no keys", () => {
+    // The keying must not reach the D16d branch: silence is still not an empty set.
+    expect(
+      deriveNoiseMembers({ regions: MODIFIED, siblings: allSettled([failed("flagged")]) }),
+    ).toEqual({ kind: "unknowable", unknown: ["flagged"] });
   });
 });

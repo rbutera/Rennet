@@ -297,7 +297,14 @@ describe("C15 1.5 — runRound trigger over the assembled collation (fake ports)
     });
     const ctx = collation.lintContextFor("flagged");
     // The bridge really derived the regions from the patchset (PATCH: old 1..2, new 1..2).
-    expect(ctx.regions).toEqual([
+    expect(
+      ctx.regions.map((region) => ({
+        path: region.path,
+        side: region.side,
+        start: region.start,
+        end: region.end,
+      })),
+    ).toEqual([
       { path: "src/a.ts", side: "head", start: 1, end: 2 },
       { path: "src/a.ts", side: "base", start: 1, end: 2 },
     ]);

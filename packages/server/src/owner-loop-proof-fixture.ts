@@ -5,6 +5,17 @@ import type { ScriptedHarnessPlan } from "./scripted-harness-plan";
 
 export const OWNER_LOOP_LANE = "owner-loop-685";
 export const OWNER_LOOP_SOURCE = "src/owner.ts";
+/**
+ * A second MODIFIED file on the reviewed branch that no core lens cites — so the Noise
+ * complement has something real to be the complement OF (#864).
+ *
+ * Before the complement subtracted per hunk, this proof drafted a Noise board over the
+ * BASE side of `src/owner.ts`: the one line all four siblings had just cited, kept in the
+ * remainder because their citations named the head side. The board was green over the
+ * defect. A modified hunk nobody reads is the honest shape, and it is also the shape the
+ * fix is about — one change with two sides, filed once.
+ */
+export const OWNER_LOOP_UNCITED = "src/generated.ts";
 export const OWNER_LOOP_SPEC = "openspec/changes/owner-loop/specs/owner/spec.md";
 export const OWNER_LOOP_ROUND_ONE_ASK = "owner-loop-round-one";
 export const OWNER_LOOP_ROUND_TWO_ASK = "owner-loop-round-two";
@@ -17,7 +28,7 @@ const askPlanValue = `\${askId}`;
 const evidenceIdsPlanValue = `\${evidenceIds}`;
 const askIdsPlanValue = `\${askIds}`;
 
-function codeRef(id: string): DraftBoard["elements"][number] {
+function codeRef(id: string, path: string = OWNER_LOOP_SOURCE): DraftBoard["elements"][number] {
   return {
     id,
     kind: "code_ref",
@@ -26,7 +37,7 @@ function codeRef(id: string): DraftBoard["elements"][number] {
       // NO `patchset_id`: a seat is never told the captured patchset's identity, so a
       // scripted seat that emitted one would be modelling a channel that does not exist.
       // `validateDraft` stamps it once, on the board it returns for persistence.
-      path: OWNER_LOOP_SOURCE,
+      path,
       side: "head",
       start_line: 1,
       end_line: 1,
@@ -207,7 +218,9 @@ function noiseBoard(): DraftBoard {
       measure: "reading",
     },
     elements: [
-      codeRef("noise-code"),
+      // The Noise seat cites what it GROUPS, which is the file no core lens read — the
+      // host's own complement members point there too.
+      codeRef("noise-code", OWNER_LOOP_UNCITED),
       {
         id: "noise-verdict",
         kind: "noise_verdict",
