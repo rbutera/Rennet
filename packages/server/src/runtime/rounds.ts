@@ -606,6 +606,9 @@ export interface RoundInput {
    *  (PR #802); a branch review has none and names none. */
   readonly prPaper?: SessionContextFile;
   readonly lintContextFor: (lens: LintTarget) => LintContext;
+  /** The deterministic Design fast path, when this review's branch carries an OpenSpec
+   *  change: a host-side board build with no model turn. Absent ⇒ the Design seat runs. */
+  readonly assembleDesignBoard?: (ctx: LintContext) => DraftBoard | undefined;
   /** The prior generation's boards, for the pipeline's R58 delta stamps (optional). */
   readonly previous?: ReadonlyMap<LintTarget, DraftBoard>;
   /**
@@ -1483,6 +1486,9 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
         ? {}
         : { persistFindingResolutions: input.persistFindingResolutions }),
       lintContextFor: input.lintContextFor,
+      ...(input.assembleDesignBoard === undefined
+        ? {}
+        : { assembleDesignBoard: input.assembleDesignBoard }),
       readPrompt: deps.readPrompt,
       collector,
       whiteboard,
