@@ -162,6 +162,15 @@ with the corrected command, and it deletes any entry whose recorded byte count i
 no longer on disk, which turns a silently wrong build back into an honest miss.
 Run it on its own with `pnpm nx:doctor` after deleting cache files by hand.
 
+Worktrees share one artifact store on purpose. A per-worktree store was tried, to
+stop one worktree's cleanup deleting another's live artifacts, but that cleanup
+existed only to remove the per-worktree store: removing both removes the hazard
+too. What remains is a bare `pnpm nx reset` from a worktree, which the section
+above already rules out, and which `pnpm nx:doctor` recovers from — the affected
+worktrees rebuild rather than restore nothing. Reaching for `NX_CACHE_DIRECTORY`
+the next time worktrees contend does not help, because it does not move the half
+that decides a hit.
+
 ## Place new work
 
 | Change | Owner |

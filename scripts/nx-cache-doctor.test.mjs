@@ -169,7 +169,11 @@ describe("nx cache doctor", () => {
     const { root } = fixture([]);
     const result = runScript({ NX_CACHE_DIRECTORY: join(root, "elsewhere", "cache") });
     assert.equal(result.status, 1);
-    assert.match(result.stderr, /split across two unrelated stores/);
+    // A lane reads this cold, having been briefed with the old command. It has
+    // to name the variable, disown the briefing, and give the replacement.
+    assert.match(result.stderr, /NX_CACHE_DIRECTORY is set without\nNX_WORKSPACE_DATA_DIRECTORY/);
+    assert.match(result.stderr, /BRIEFING IS THE OLD RECIPE/);
+    assert.match(result.stderr, /CI=true NX_DAEMON=false pnpm check/);
   });
 
   it("reports an unreadable database and lets the gate continue", () => {
