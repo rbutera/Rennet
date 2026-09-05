@@ -1,8 +1,7 @@
-import { normalizeOutputSchema } from "@rennet/adapters";
 import { BOARD_TARGETS, boardToolsByName } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
-import { z } from "zod";
 import { boardOutputSchema, designDraftOutputSchema } from "../runtime/lens-pipeline";
+import { servedToolCatalog } from "./board-mcp-server";
 
 /**
  * Task 2.7 — how big the tool surface each seat now receives is, beside the output schema
@@ -19,15 +18,12 @@ import { boardOutputSchema, designDraftOutputSchema } from "../runtime/lens-pipe
 const bytes = (value: unknown): number => Buffer.byteLength(JSON.stringify(value), "utf8");
 
 /**
- * The `tools` array as the board server serves it: name, description, rendered input with
- * the top-level meta keys dropped, exactly as `toolCatalogFor` serves it.
+ * The `tools` array THE SERVER SERVES, not a copy of it. Measuring a local reconstruction
+ * was the first version and it was a mirror: a control that stopped the server dropping
+ * the `$schema` stamps reddened the wire test and left this figure untouched, so the
+ * number would have gone on describing a surface nobody was sent.
  */
-const toolSurface = (target: (typeof BOARD_TARGETS)[number]): unknown =>
-  [...boardToolsByName(target).values()].map((tool) => ({
-    name: tool.name,
-    description: tool.description,
-    inputSchema: normalizeOutputSchema(z.toJSONSchema(tool.input, { io: "input" })),
-  }));
+const toolSurface = (target: (typeof BOARD_TARGETS)[number]): unknown => servedToolCatalog(target);
 
 /** What that seat's turn carries today: one board schema, or Design's board-or-absence. */
 const outputSchemaFor = (target: (typeof BOARD_TARGETS)[number]): unknown =>

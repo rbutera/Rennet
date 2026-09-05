@@ -222,13 +222,20 @@ const JSON_RPC_METHOD_NOT_FOUND = -32601;
  * before the turn ran. It is also 57 bytes per tool of overhead no reader and no model
  * ever sees. The schema BODY is untouched.
  */
-function toolCatalogFor(entry: SeatEntry, typedKinds?: OpenLaneInput["typedKinds"]): unknown[] {
-  const tools = boardToolsByName(entry.target, typedKinds);
+export function servedToolCatalog(
+  target: LintTarget,
+  typedKinds?: OpenLaneInput["typedKinds"],
+): { readonly name: string; readonly description: string; readonly inputSchema: unknown }[] {
+  const tools = boardToolsByName(target, typedKinds);
   return [...tools.values()].map((tool) => ({
     name: tool.name,
     description: tool.description,
     inputSchema: normalizeOutputSchema(z.toJSONSchema(tool.input, { io: "input" })),
   }));
+}
+
+function toolCatalogFor(entry: SeatEntry, typedKinds?: OpenLaneInput["typedKinds"]): unknown[] {
+  return servedToolCatalog(entry.target, typedKinds);
 }
 
 export interface StartBoardMcpServerOptions {
