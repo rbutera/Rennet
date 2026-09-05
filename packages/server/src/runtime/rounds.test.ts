@@ -1897,7 +1897,15 @@ describe("createRoundsRuntime", () => {
           createRennetBoard: async () => `${attempt}:${targets[nextBoard++]}`,
           service: {
             apply: async (boardId: string) => {
-              if (crashFlagged && boardId === `${attempt}:noise`) {
+              // The SEQUENCE board, which this fixture used to crash on Noise. Noise is now
+              // the four core lanes' complement and runs on their settlements, so a Flagged
+              // lane that fails — which is exactly what the migration throw below makes it
+              // do — means the Noise seat never writes and a crash aimed there can never
+              // fire. Sequence is written concurrently with Flagged, so the `await` still
+              // orders this crash strictly after the migration rather than racing it, and
+              // attempt A still dies INSIDE the pipeline, before the terminal boundary that
+              // would fold its drafting identity into settled lens boards.
+              if (crashFlagged && boardId === `${attempt}:sequence`) {
                 await migrationReached;
                 throw new Error("crash after Flagged migration");
               }

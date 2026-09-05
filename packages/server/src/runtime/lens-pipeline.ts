@@ -2261,8 +2261,34 @@ export async function runLensPipeline(deps: LensPipelineDeps): Promise<LensPipel
       lens === "design" ? designContext : seatContext,
       reportBoard,
     );
+    // ── What the Noise complement is allowed to subtract ────────────────────────────
+    // D16d says a lane that FAILED stated nothing while a board or an admissible absence
+    // is a positive statement. The rule that makes that operational is: subtract only what
+    // a RESTART COULD RE-READ, because the complement has to be reconstructible from the
+    // same durable evidence the reveal is.
+    //
+    // A board clears that bar the moment `runLensBoard` returns: the elements are on the
+    // whiteboard and `persistBoardMeta` has already run inside it. So the statement is
+    // recorded HERE, before the publishes below — recording it after them (as it first
+    // was) let a durable-write throw downstream of a board that was already on disk erase
+    // a statement the lane had plainly made, and the Noise derivation then read that lane
+    // as silent. That is matching on the absence of a record rather than on a positive
+    // contradiction, which is the exact error D16d exists to forbid.
+    //
+    // An absence is different, and the difference is the whole reason this is a rule and
+    // not a line: nothing but `onLensAbsence` records it. If that write throws, no restart
+    // can re-read the declaration, so the row is withdrawn again below and the lane reads
+    // as one whose citations are unknown. A throw from `runLensBoard` itself leaves no row
+    // at all, because then there genuinely is no statement.
+    settledCore.set(lens, outcome);
     if (outcome.absence !== undefined) {
-      await publish(() => deps.onLensAbsence?.(lens, outcome.absence as LensAbsenceReason));
+      const absence = outcome.absence;
+      try {
+        await publish(() => deps.onLensAbsence?.(lens, absence));
+      } catch (error) {
+        settledCore.delete(lens);
+        throw error;
+      }
       lastRevealAt = clock();
     }
     // #725 D4 — the lane's settlement is published HERE, the moment this board is
@@ -2300,17 +2326,13 @@ export async function runLensPipeline(deps: LensPipelineDeps): Promise<LensPipel
   };
 
   const coreLenses: readonly LensKind[] = LENS_KINDS.filter((lens) => lens !== "noise");
-  const settledCoreOutcomes = await Promise.allSettled(
-    coreLenses.map(async (lens) => {
-      const outcome = await runLane(lens);
-      settledCore.set(lens, outcome);
-      return outcome;
-    }),
-  );
-  // Noise starts on the four settlements, and only on them. A core lane that REJECTED
-  // (an infrastructure throw, not a recorded failure) leaves this map without its row,
-  // which `runLensBoard` reads as a lane whose citations are unknown — the same answer a
-  // recorded failure gets, and the right one: neither said what it cites.
+  const settledCoreOutcomes = await Promise.allSettled(coreLenses.map(runLane));
+  // Noise starts on the four settlements, and only on them. A core lane whose DRAFT threw
+  // — an infrastructure failure before any outcome existed, not a recorded failure —
+  // leaves `settledCore` without its row, which reads as a lane whose citations are
+  // unknown: the same answer a recorded failure gets, and the right one, because neither
+  // said what it cites. A lane that settled and then threw on the way to disk is not that
+  // case; see `runLane`.
   const noiseOutcome = await Promise.allSettled([
     (async (): Promise<LensBoardOutcome> => {
       const membership = deriveNoiseMembers({
@@ -2322,11 +2344,25 @@ export async function runLensPipeline(deps: LensPipelineDeps): Promise<LensPipel
         // that never arrived is not the complement of an empty one, and a Noise board
         // built over it would file un-reviewed regions as skippable.
         const failure = unknowableComplementFailure(membership.unknown);
+        // The classification is the SIBLINGS', not an assumption about this lane. D16d's
+        // own sentence — "it becomes runnable again when that sibling's per-lens retry
+        // settles" — is conditional on there being a retry left to settle, so a lane whose
+        // named siblings have every one of them exhausted their own ladders has exhausted
+        // its own by derivation. Claiming `retryable` there is a claim about a future that
+        // cannot happen, and #549 reads a retryable account as proof the RESTART path must
+        // re-draft: an unconditional `retryable` therefore made every generation carrying a
+        // terminal core failure re-draft all five lanes on every restart, spending a model
+        // to rebuild boards already on disk and arrive back at the same terminal failure.
+        // A sibling with no account at all — a draft that threw — stays `retryable`,
+        // because an unknown ladder is not an exhausted one.
+        const classification = membership.unknown.every(
+          (sibling) => settledCore.get(sibling)?.failureAccount?.classification === "terminal",
+        )
+          ? "terminal"
+          : "retryable";
         const outcome: LensBoardOutcome = failedLensOutcome("noise", {
           failure,
-          // RETRYABLE: the sibling's per-lens retry is exactly what makes this lane
-          // runnable again, so this is not a terminal state the reviewer must live with.
-          failureAccount: { attempt: deps.boardAttempt ?? 0, classification: "retryable" },
+          failureAccount: { attempt: deps.boardAttempt ?? 0, classification },
         });
         await publish(() => deps.onLensFailure?.("noise", failure, outcome.failureAccount));
         return outcome;
