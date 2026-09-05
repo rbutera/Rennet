@@ -246,6 +246,13 @@ app-owned `.rennet/boards/` prefix is excluded from capture, the repository
 watcher, and freshness; everything else there is the user's project content and
 captures normally.
 
+The repository watcher reads the repository's own ignore rules — it asks git —
+and stops at a hard descriptor bound whatever those rules say, because it holds
+one operating-system watch per file and the daemon needs descriptors to start
+anything at all. [What the repository watcher
+watches](./architecture-contracts.md#what-the-repository-watcher-watches) has the
+rule.
+
 The SQLite review store persists commands and events transactionally. Reading a
 review folds its event history into the current projection. Conversation files
 are separate so completed messages and interrupted turns survive client or
