@@ -191,6 +191,7 @@ jobs:
   #    for its WSL daemon bundle.
   build-linux-native:
     needs: version
+    if: ${{ always() && needs.version.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -237,6 +238,7 @@ jobs:
   #    minutes (10x macOS multiplier) instead of 400.
   build-macos:
     needs: version
+    if: ${{ always() && needs.version.result == 'success' }}
     runs-on: macos-14 # arm64 — matches Rennet-darwin-arm64
     timeout-minutes: 45
     environment: release
@@ -343,6 +345,7 @@ jobs:
   #    Squirrel feed (Setup.exe, *-full.nupkg, RELEASES) plus the win32 zip.
   build-windows:
     needs: [version, build-linux-native]
+    if: ${{ always() && needs.version.result == 'success' && needs.build-linux-native.result == 'success' }}
     # Desktop build traverses to adapters; the ruled Electron node-gyp fork
     # recognises Visual Studio only through 2022.
     runs-on: windows-2022
@@ -403,6 +406,7 @@ jobs:
   #    feed resolves them by name.
   publish:
     needs: [version, build-macos, build-windows]
+    if: ${{ always() && needs.version.result == 'success' && needs.build-macos.result == 'success' && needs.build-windows.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
