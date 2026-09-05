@@ -192,33 +192,15 @@
    * away. Its keyframe still belongs here (keyframes declared in `@theme` are emitted
    * whether or not a utility references them) and the pseudo names it directly. */
   --animate-processing-pulse: processing-pulse 1.6s ease-in-out infinite;
-  /* The bench's glance (t3-lens-threads 3.1): a gold dot travelling UP a reader's gaze
-   * line toward the slab, while that seat has a tool call actually in flight. The track
-   * is `h-8` (2rem) and the dot is `size-1` (0.25rem), so 1.75rem is the full run — the
-   * two numbers are the reader's, and a change to either belongs here too.
+  /* The lamp on the lens rail's stop: a band of that lens's own colour travelling along
+   * it while the seat is writing. The band is `w-1/3` of the stop and the track is the
+   * stop, so the run is expressed in percent — a stop's width is its tab's, and a tab's
+   * width is the container query's.
    *
-   * `motion-reduce:animate-none` at the call site is safe: the settled state is the dot
-   * at rest at the foot of the line, which is where `translateY(0)` already puts it. */
-  --animate-bench-glance: rn-bench-glance 1.9s cubic-bezier(0.4, 0, 0.2, 1) infinite;
-  /* The bench's lamp: a band of that lens's own colour travelling DOWN a core sample
-   * while the seat is under way. The plug is `h-11` (2.75rem) and the band is `h-2`
-   * (0.5rem), so it enters from above the sample and leaves past its foot — the two
-   * numbers are the reader's, and a change to either belongs here too.
-   *
-   * The call site pairs this with `motion-reduce:hidden`, NOT `animate-none`: with
-   * the animation off the band parks at the top of the plug and reads as a mark of
-   * its own, and "under way" is already carried by the dashed strata underneath it.
-   * Removing it is the honest reduced-motion state; freezing it is not. */
-  --animate-bench-core-scan: rn-bench-core-scan 2.2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
-  /* The lamp at RAIL scale (lens-board-tools 5.5): the bench's core-sample scan moved
-   * onto the lens stop when the bench was deleted, so the same "this seat is writing
-   * right now" motion survives in the one place the register now lives. The band is
-   * `w-1/3` of the stop and the track is the stop, so the run is expressed in percent —
-   * a rail stop's width is the tab's, and the tab's width is the container query's.
-   *
-   * The call site pairs this with `motion-reduce:hidden`, NOT `animate-none`, for the
-   * same reason the core scan did: parked at the left the band is a mark of its own,
-   * and the dashed stop underneath already says "under way". */
+   * The call site pairs this with `motion-reduce:hidden`, NOT `animate-none`: parked at
+   * the left the band is a mark of its own, and the dashed stop underneath already says
+   * "under way" without it. Removing it is the honest reduced-motion state; freezing it
+   * is not. */
   --animate-lens-stop-scan: rn-lens-stop-scan 2.2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
 
   @keyframes rn-lens-stop-scan {
@@ -233,34 +215,6 @@
     100% {
       opacity: 0;
       transform: translateX(300%);
-    }
-  }
-  @keyframes rn-bench-core-scan {
-    0% {
-      opacity: 0;
-      transform: translateY(-0.5rem);
-    }
-    18%,
-    82% {
-      opacity: 1;
-    }
-    100% {
-      opacity: 0;
-      transform: translateY(2.75rem);
-    }
-  }
-  @keyframes rn-bench-glance {
-    0% {
-      opacity: 0;
-      transform: translateY(0);
-    }
-    18%,
-    82% {
-      opacity: 1;
-    }
-    100% {
-      opacity: 0;
-      transform: translateY(-1.75rem);
     }
   }
   @keyframes rn-welcome-step-in {

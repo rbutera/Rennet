@@ -76,12 +76,16 @@ function Voice({
   working,
   failed,
   open,
+  openable: openableVoice,
   onOpen,
 }: {
   readonly voice: SeatVoice;
   readonly working: boolean;
   readonly failed: boolean;
   readonly open: boolean;
+  /** This voice's transcript can actually be opened — a thread, and a review to open it
+   *  under. False renders no control at all rather than a dead one. */
+  readonly openable: boolean;
   readonly onOpen: (voice: SeatVoice) => void;
 }) {
   return (
@@ -102,8 +106,9 @@ function Voice({
         </span>
       </div>
       {/* ABSENT, not disabled (the house convention). A seat whose thread does not exist
-          yet has no transcript to open, and a greyed control is a door onto an excuse. */}
-      {voice.thread === undefined ? null : (
+          yet — or a frame with no review to address it under — has no transcript to open,
+          and a greyed control is a door onto an excuse. */}
+      {!openableVoice ? null : (
         <button
           type="button"
           data-seat-transcript={voice.seat}
@@ -153,6 +158,8 @@ export function SeatWidget({
   const watched = useWatchedFor(`${lens}:${primary?.seat ?? ""}`, working);
 
   const onOpen = (voice: SeatVoice) => {
+    // Unreachable: every control that calls this is gated on `openable` below. Kept as
+    // the type narrowing for `voice.thread`, not as a runtime guard standing in for one.
     if (voice.thread === undefined || reviewId.length === 0) return;
     const already =
       openRef !== null && openRef.seat === voice.seat && openRef.reviewId === reviewId;
@@ -160,6 +167,9 @@ export function SeatWidget({
   };
   const isOpen = (voice: SeatVoice) =>
     openRef !== null && openRef.reviewId === reviewId && openRef.seat === voice.seat;
+  /** A transcript this widget can actually open: a thread to address, and a review to
+   *  address it under. Absent, the control is not rendered — never rendered dead. */
+  const openable = (voice: SeatVoice) => voice.thread !== undefined && reviewId.length > 0;
 
   // The settled receipt (D13): one line, and it still opens the transcript.
   if (settled) {
@@ -188,7 +198,7 @@ export function SeatWidget({
         </span>
         <span className="flex-1" />
         {seat.voices.map((voice) =>
-          voice.thread === undefined ? null : (
+          !openable(voice) ? null : (
             <button
               key={voice.seat}
               type="button"
@@ -277,6 +287,7 @@ export function SeatWidget({
             working={working}
             failed={failed}
             open={isOpen(voice)}
+            openable={openable(voice)}
             onOpen={onOpen}
           />
         ))}

@@ -28,10 +28,6 @@ import { LENS_LABEL } from "./lens-seats";
 // scroll apart.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** The width the drawer takes beside the board, and the width below which it takes the
- *  whole region instead. Both are the drawer's own; the dock's are `shell/constants.ts`. */
-export const SEAT_DRAWER_WIDTH = 380;
-
 export function SeatTranscriptDrawer({ reviewId }: { readonly reviewId: string }) {
   const open = useRennetStore((s) => s.ui.seatTranscript);
   const openSeatTranscript = useRennetStore((s) => s.uiActions.openSeatTranscript);
@@ -57,9 +53,17 @@ export function SeatTranscriptDrawer({ reviewId }: { readonly reviewId: string }
       data-seat={open.seat}
       aria-label={`${LENS_LABEL[open.lens]} seat transcript`}
       className={cn(
-        // Full width below the shell's minimum surface width, a right-aligned column
-        // above it. The container query is the BOARD REGION's, not the viewport's, so a
-        // wide window with a wide chat dock still gets the narrow treatment.
+        // FULL WIDTH when the board region is narrow, a 380px right-aligned column when it
+        // is not. The threshold is a container query on the BOARD REGION at 54rem — not
+        // the viewport, so a wide window with a wide chat dock still gets the narrow
+        // treatment, which is the case that matters.
+        //
+        // D14 says "below the shell's `MIN_SURFACE_WIDTH`", and that is NOT what ships:
+        // that constant is 400px of viewport and this is 54rem of container, which is the
+        // measure that actually decides whether two columns fit here. Written down rather
+        // than quietly diverged from. The two numbers live in the class because Tailwind
+        // reads source text — a width built from an exported constant generates no CSS,
+        // which is why there is no constant to export.
         "flex min-h-0 w-full shrink-0 flex-col overflow-hidden border-line border-l bg-surface",
         "@[54rem]:w-[380px]",
       )}

@@ -364,6 +364,129 @@ describe("a drafting board says so three ways, and they clear together", () => {
   });
 });
 
+describe("a run that is over never says a seat is still writing", () => {
+  // THE REGRESSION, driven through the real app and read off the rendered text — which is
+  // how it was found and the only way it is visible. Both screens below shipped in this
+  // wave's first commit: `useGenerationLanes` answered `[]` for any preparation with no
+  // `lanes` key, `lens-seats.ts` read `[]` as "in flight, lanes not opened yet", and that
+  // `drafting` reached the board's own copy.
+  //
+  // The assertion is on the WHOLE rendered text rather than on one element, because the
+  // defect was several surfaces agreeing with each other and disagreeing with the header:
+  // a chip, a sentence, a ghost row and an animating rail lamp, over a screen that said
+  // the run was cancelled.
+
+  const noStillWriting = () => {
+    const text = document.body.textContent ?? "";
+    return {
+      inProgressMark: document.querySelector('[data-kind="board-in-progress"]') !== null,
+      stillBeingWritten: /still being written/i.test(text),
+      placeholderRow: document.querySelector('[data-kind="board-ghost"]') !== null,
+      seatWidget: document.querySelector('[data-kind="seat-widget"]') !== null,
+      workingLens: document.querySelector('[data-register="working"]') !== null,
+      openCut: document.querySelector('[data-cut="open"]') !== null,
+    };
+  };
+
+  it("says nothing is being written after the reviewer cancels a drafting generation", async () => {
+    // A cancel keeps the lanes exactly as they stood — Design frozen mid-run.
+    const live = liveBridge({
+      preparation: { status: "drafting", reviewId: REVIEW.id, lanes: DRAFTING },
+      boards: { sequence: at(FIXTURE_BOARDS.gen1?.sequence) },
+    });
+    open(live, "?lens=design");
+
+    // The control half: while it IS drafting, the board says so. Without this the test
+    // would pass over a build that never shows the signals at all.
+    await waitFor(() => expect(noStillWriting().stillBeingWritten).toBe(true));
+
+    live.setPreparation({
+      status: "cancelled",
+      stage: "boards",
+      reviewId: REVIEW.id,
+      lanes: DRAFTING,
+    });
+
+    await waitFor(
+      () =>
+        expect(noStillWriting()).toEqual({
+          inProgressMark: false,
+          stillBeingWritten: false,
+          placeholderRow: false,
+          // The widget survives: the lane ran, so its transcript is still worth reaching.
+          seatWidget: true,
+          workingLens: false,
+          openCut: false,
+        }),
+      { timeout: 4_000 },
+    );
+    // …and the screen still says what happened, in one voice rather than two.
+    expect(document.querySelector('[data-testid="workspace-header"]')?.textContent).toContain(
+      "cancelled",
+    );
+  });
+
+  it("says nothing is being written when capture failed before any lane opened", async () => {
+    // The worse of the two, because it needs no lanes at all: a failed CAPTURE has no
+    // `lanes` key, which the old reading turned into five queued seats — and into a Noise
+    // tab claiming to wait on four lanes that were not running.
+    const live = liveBridge({
+      review: false,
+      preparation: {
+        status: "failed",
+        stage: "capture",
+        reason: "Could not resolve the repository.",
+      },
+    });
+    open(live, "?lens=design");
+
+    await waitFor(() =>
+      expect(document.querySelector('[data-kind="lens-board-view"]')).toBeTruthy(),
+    );
+    expect(noStillWriting()).toEqual({
+      inProgressMark: false,
+      stillBeingWritten: false,
+      placeholderRow: false,
+      // No lane was ever opened, so there is no seat to name.
+      seatWidget: false,
+      workingLens: false,
+      openCut: false,
+    });
+    // Noise waits on nobody. The rail still LISTS all five (5.1) — that part was right.
+    expect(tabOf("noise")?.getAttribute("data-waiting-on")).toBeNull();
+    expect(document.querySelectorAll('[data-kind="lens-switcher"] [data-lens]')).toHaveLength(5);
+    expect(document.querySelector('[data-testid="workspace-header"]')?.textContent).toContain(
+      "Could not resolve the repository.",
+    );
+  });
+
+  it("draws no board being written while capture is still running", async () => {
+    // The explicit decision D13 left open: during capture nothing is being written, so no
+    // board carries the in-progress copy. The rail is where the five lenses are listed.
+    const live = liveBridge({
+      review: false,
+      preparation: { status: "capturing", step: "capturing-change" },
+    });
+    open(live, "?lens=design");
+
+    await waitFor(() =>
+      expect(document.querySelector('[data-kind="lens-board-view"]')).toBeTruthy(),
+    );
+    expect(noStillWriting()).toEqual({
+      inProgressMark: false,
+      stillBeingWritten: false,
+      placeholderRow: false,
+      seatWidget: false,
+      workingLens: false,
+      openCut: false,
+    });
+    // Five lenses, all honestly waiting — and none of them claiming a board.
+    expect(document.querySelectorAll('[data-kind="lens-switcher"] [data-lens]')).toHaveLength(5);
+    expect(tabOf("design")?.getAttribute("data-register")).toBe("waiting");
+    expect(tabOf("noise")?.getAttribute("data-waiting-on")).toBeNull();
+  });
+});
+
 describe("Noise waits on its siblings, and the coverage surface is gone", () => {
   it("reads as waiting on the lanes it needs — not working, not failed — and reports no coverage", async () => {
     // 5.7/D16c. Noise is the COMPLEMENT of the other four, so it cannot start until they

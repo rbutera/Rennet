@@ -321,7 +321,12 @@ describe("state 3 — the floating chip layer (C20 §5)", () => {
       },
     } as never);
     const { container, findByTestId } = mount(
-      <RennetRouterApp bridge={bridge} history={memoryHistory("/s/sess-bench")} />,
+      // `?lens=design` because the fixture opens a DESIGN lane and no Flagged one, and
+      // the seat widget renders only for a lens that actually has a lane. The default
+      // lens is Flagged, which here has no seat — and a widget naming a seat that does
+      // not exist is precisely the lie this wave's review caught, so the test points at
+      // the lens the fixture seats rather than at whichever one the URL defaults to.
+      <RennetRouterApp bridge={bridge} history={memoryHistory("/s/sess-bench?lens=design")} />,
     );
     // Drive the app to the drafting workspace and take a real element off the BOARD — the
     // thing that has to be reachable — rather than a container chosen by class.

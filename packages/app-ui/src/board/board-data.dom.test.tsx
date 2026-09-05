@@ -88,13 +88,16 @@ describe("board-data seam — the single board resolution point", () => {
       }) as unknown as LensBoardResolutions;
     // Two lanes still running, so Noise's own entry is derived rather than read.
     const seats = lensSeatStates(
-      [
-        { id: "design", label: "Design", status: "absent", reason: "No spec found." },
-        { id: "sequence", label: "Sequence", status: "running" },
-        { id: "decisions", label: "Decisions", status: "running" },
-        { id: "flagged", label: "Flagged", status: "failed", reason: "boom" },
-        { id: "noise", label: "Noise", status: "queued" },
-      ] as LensLane[],
+      {
+        running: true,
+        lanes: [
+          { id: "design", label: "Design", status: "absent", reason: "No spec found." },
+          { id: "sequence", label: "Sequence", status: "running" },
+          { id: "decisions", label: "Decisions", status: "running" },
+          { id: "flagged", label: "Flagged", status: "failed", reason: "boom" },
+          { id: "noise", label: "Noise", status: "queued" },
+        ] as LensLane[],
+      },
       resolutions("no-spec"),
     );
 
@@ -148,13 +151,16 @@ describe("board-data seam — the single board resolution point", () => {
       noise: missing,
     } as unknown as LensBoardResolutions;
     const seats = lensSeatStates(
-      [
-        { id: "design", label: "Design", status: "done", verdict: "reworked" },
-        { id: "sequence", label: "Sequence", status: "running" },
-        { id: "decisions", label: "Decisions", status: "running" },
-        { id: "flagged", label: "Flagged", status: "queued" },
-        { id: "noise", label: "Noise", status: "queued" },
-      ] as LensLane[],
+      {
+        running: true,
+        lanes: [
+          { id: "design", label: "Design", status: "done", verdict: "reworked" },
+          { id: "sequence", label: "Sequence", status: "running" },
+          { id: "decisions", label: "Decisions", status: "running" },
+          { id: "flagged", label: "Flagged", status: "queued" },
+          { id: "noise", label: "Noise", status: "queued" },
+        ] as LensLane[],
+      },
       reads,
     );
     expect(seats.design.register).toBe("settled");
@@ -183,10 +189,67 @@ describe("board-data seam — the single board resolution point", () => {
       flagged: missing,
       noise: missing,
     } as unknown as LensBoardResolutions;
-    expect(lensSeatStates([], reads).design.register).toBe("waiting");
-    expect(lensSeatStates([], reads).design.drafting).toBe(true);
-    expect(lensSeatStates(undefined, reads).design.register).toBe("none");
-    expect(lensSeatStates(undefined, reads).design.drafting).toBe(false);
+    const capturing = lensSeatStates({ lanes: [], running: true }, reads);
+    expect(capturing.design.register).toBe("waiting");
+    // …and NOTHING is being written, because no lane is open. The rail lists five queued
+    // lenses (5.1); no board of any of them claims to be filling.
+    expect(capturing.design.drafting).toBe(false);
+    expect(capturing.design.seated).toBe(false);
+    // Noise names nobody: four lanes that are not running are not four lanes it waits on.
+    expect(capturing.noise.waitingOn).toEqual([]);
+
+    const settled = lensSeatStates(undefined, reads);
+    expect(settled.design.register).toBe("none");
+    expect(settled.design.drafting).toBe(false);
+  });
+
+  it("a stopped generation's frozen lanes never read as live seats", () => {
+    // THE CANCELLED-REVIEW LIE, as a test. `cancelSessionPreparation` writes the lanes
+    // exactly as they stood — so a lane caught at `running` is a record of a run that is
+    // over, not a seat still working. Reading it as live is what put "the seat is still
+    // writing — the next element lands here" on a screen that also said the run was
+    // cancelled, with the lens's lamp animating over it.
+    const missing = { status: "missing" } as const;
+    const reads = {
+      design: missing,
+      sequence: missing,
+      decisions: missing,
+      flagged: missing,
+      noise: missing,
+    } as unknown as LensBoardResolutions;
+    const lanes = [
+      { id: "design", label: "Design", status: "running" },
+      { id: "sequence", label: "Sequence", status: "queued" },
+      { id: "decisions", label: "Decisions", status: "done", verdict: "reworked" },
+      { id: "flagged", label: "Flagged", status: "failed", reason: "boom" },
+      { id: "noise", label: "Noise", status: "queued" },
+    ] as LensLane[];
+
+    const stopped = lensSeatStates({ lanes, running: false }, reads);
+    // The two non-terminal lanes fall back to their board read — which has no answer, so
+    // `none`. Not `working`, not `waiting`: nothing is coming.
+    expect(stopped.design.register).toBe("none");
+    expect(stopped.design.drafting).toBe(false);
+    expect(stopped.design.cut).not.toBe("open");
+    expect(stopped.sequence.register).toBe("none");
+    expect(stopped.sequence.drafting).toBe(false);
+    // A TERMINAL lane keeps its own result: cancelling a generation does not un-draft
+    // what it already drafted, and this is the contrast that stops the fix from passing
+    // by flattening every lane to `none`.
+    expect(stopped.decisions.register).toBe("settled");
+    expect(stopped.flagged.register).toBe("failed");
+    // Its seats are still reachable — the lane ran, so its transcript is worth opening.
+    expect(stopped.design.seated).toBe(true);
+    // And Noise waits on nobody, because nobody is running.
+    expect(stopped.noise.waitingOn).toEqual([]);
+
+    // THE CONTROL, in the same test: the identical lanes on a RUNNING generation read
+    // live. Without it this could pass over a derivation that never reports work at all.
+    const live = lensSeatStates({ lanes, running: true }, reads);
+    expect(live.design.register).toBe("working");
+    expect(live.design.drafting).toBe(true);
+    expect(live.design.cut).toBe("open");
+    expect(live.noise.waitingOn).toEqual(["design", "sequence"]);
   });
 
   it("renders a durable lens failure instead of polling it as an empty board", async () => {

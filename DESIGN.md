@@ -108,7 +108,7 @@ Light and dark schemes are complete designs. Use `data-scheme="light|dark"` in R
 
 Do not add a decorative interface hue. Never use color as the only statement of state.
 
-The one exception is **the lens register**, and it is identity rather than decoration (Rai, 2026-09-04). Five review lenses run in parallel on one change, and a reviewer has to tell them apart across two surfaces at once — the bench's readers and the lens rail. Colour is what does that, so the register is admitted under three conditions: it appears at small mass only (a rule, a stop, a core sample — never a fill and never type), it never carries state, and every state it sits beside is stated by shape and by words. A lens hue answers *which lens*; anything else on that surface answers *how it is doing*.
+The one exception is **the lens register**, and it is identity rather than decoration (Rai, 2026-09-04). Five review lenses run in parallel on one change, and a reviewer has to tell them apart across two surfaces at once — the lens rail and the seat widget above the board it selects. Colour is what does that, so the register is admitted under three conditions: it appears at small mass only (a rule, a stop — never a fill and never type), it never carries state, and every state it sits beside is stated by shape and by words. A lens hue answers *which lens*; anything else on that surface answers *how it is doing*.
 
 ### The lens register
 

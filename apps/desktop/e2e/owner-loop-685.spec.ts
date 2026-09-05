@@ -252,7 +252,9 @@ async function runLaunchedOwnerLoop(
     await expect(targetRow).toHaveCount(1);
     await targetRow.click();
 
-    await expect(page.locator('[data-screen="session-preparation"]')).toBeVisible({
+    // The workspace opens on its boards, with capture reported in its own header
+    // (`lens-board-tools` 5.2) — there is no preparation screen in front of it any more.
+    await expect(page.locator('[data-testid="workspace-header"]')).toBeVisible({
       timeout: 5_000,
     });
     await expect(page.locator("article[data-lens]")).toBeVisible({ timeout: 180_000 });

@@ -18,18 +18,30 @@ import {
 // The inputs are both things the daemon already publishes, and nothing here invents a
 // state that neither of them said:
 //
-//   • the generation's LANES — `session.preparation.lanes` for the initial generation,
-//     the round machine's `lanes` for a regeneration. A lane carries its status, its
-//     seats, each seat's thread and each seat's latest line.
+//   • the generation's LANES, and whether that generation is RUNNING — `GenerationLanes`.
+//     A lane carries its status, its seats, each seat's thread and each seat's latest
+//     line; `running` says whether any of that is still true. They are separate fields
+//     because a preparation that FAILED or was CANCELLED keeps its lanes: they are the
+//     record of a run that is over, and reading them as live is how a cancelled review
+//     came to say "the seat is still writing" over a screen that also said "cancelled".
 //   • the per-lens BOARD READ — `board.read`'s resolution, which is the only thing that
 //     answers for a generation with no lanes left in flight (an old review, a frozen
-//     generation drill-down).
+//     generation drill-down), and which is also what a stopped run falls back to.
 //
-// `lanes === undefined` and `lanes === []` are DIFFERENT and the difference is the whole
-// of the capture frame: `undefined` means no generation is in flight, so a lens with no
-// board is simply not there (`none`); `[]` means a generation IS in flight and has not
-// opened its lanes yet, so every lens is `waiting`. Collapsing the two would either
-// invent five queued seats on a settled review or draw a live capture as five dead ends.
+// THREE THINGS THIS ANSWERS, and they are not the same question:
+//
+//   • `register` — what the rail shows. Every lens has one from the first frame (5.1),
+//     including during capture, where all five are honestly `waiting`.
+//   • `seated` — whether a lane for this lens exists at all. The seat widget is gated on
+//     it, because "Design seat · waiting" over a capture that has opened no lane names a
+//     seat that does not exist.
+//   • `drafting` — whether this lens's board is being written RIGHT NOW. It gates the
+//     board's own in-progress copy and its placeholder row, and it is the strictest of
+//     the three: it needs a running generation AND a lane of its own that has not reached
+//     a terminal state. During capture no lane is open and nothing is being written, so
+//     no board says it is; after a cancel or a failure nothing is running, so no board
+//     says it is either. The deleted bench had the same rule and said why: "an empty
+//     bench is honest, five invented 'queued' readers would not be.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** Reader-facing lens names — the id vocabulary (`manifests/`) is lower-case. */
@@ -96,8 +108,37 @@ export interface LensSeatState {
   readonly waitingOn: readonly LensKind[];
   /** A settled lane that was re-cut this generation — the rail's seam. */
   readonly reworked: boolean;
-  /** True while the lens's board may still gain elements: the provisional signal's source. */
+  /**
+   * A lane for this lens exists — the daemon opened one, so there is or was a seat. False
+   * during capture, when no lane has been opened yet, and false for a lens a generation
+   * never ran. The seat widget is gated on it: a widget naming a seat that does not exist
+   * is the same class of lie as a board that says it is being written when it is not.
+   */
+  readonly seated: boolean;
+  /**
+   * This lens's board is being written RIGHT NOW: the generation is running and this lens
+   * has a lane of its own that has not reached a terminal state. The board's in-progress
+   * mark, its "still being written" line and its placeholder row are all gated on this,
+   * and so is the rail's `open` cut.
+   *
+   * It is deliberately NARROWER than `register === "waiting" || "working"`. A lens can be
+   * `waiting` on the rail with nothing being written — during capture, where the rail
+   * honestly lists five queued lenses and no board of any of them exists yet.
+   */
   readonly drafting: boolean;
+}
+
+/**
+ * The generation's lanes and whether it is still going.
+ *
+ * `running` is NOT derivable from the lanes: a cancelled preparation keeps the lanes it
+ * had, frozen at whatever status they held, and a preparation cancelled during capture
+ * keeps none at all. Both are records of a run that is over, and only the preparation's
+ * own status says so.
+ */
+export interface GenerationLanes {
+  readonly lanes: readonly LensLane[];
+  readonly running: boolean;
 }
 
 export type LensSeatStates = Readonly<Record<LensKind, LensSeatState>>;
@@ -213,6 +254,37 @@ function cutOf(register: SeatRegister, reworked: boolean): SeatCut {
   }
 }
 
+/**
+ * A lens answered for by its board read alone: no lane, or a lane on a generation that
+ * has stopped. `running` decides the one case the read cannot answer — a `missing` board
+ * on a live generation is a lane not opened yet (`waiting`), and on a stopped one is
+ * simply nothing (`none`).
+ *
+ * `seated` carries whether a lane exists even here, because a cancelled generation's
+ * frozen lane is still a seat that ran: its transcript is worth reaching, and the widget
+ * is what reaches it.
+ */
+function fromReadAlone(
+  lens: LensKind,
+  read: LensReadStatus,
+  running: boolean,
+  lane?: LensLane,
+): LensSeatState {
+  const register = registerOfRead(read) ?? (running ? "waiting" : "none");
+  return {
+    lens,
+    label: lane !== undefined && lane.label.length > 0 ? lane.label : LENS_LABEL[lens],
+    register,
+    cut: cutOf(register, false),
+    voices: lane === undefined ? voiceFromRead(lens, register) : voicesOf(lane),
+    waitingOn: [],
+    reworked: false,
+    seated: lane !== undefined,
+    // Never: either no lane exists, or the generation carrying it has stopped.
+    drafting: false,
+  };
+}
+
 /** The quiet, board-only voice for a lens with no lane — the read's own account, so a
  *  settled review's rail says what its boards say and never invents a seat. */
 function voiceFromRead(lens: LensKind, register: SeatRegister): readonly SeatVoice[] {
@@ -235,47 +307,51 @@ function voiceFromRead(lens: LensKind, register: SeatRegister): readonly SeatVoi
  * of them has a lane or a board yet.
  */
 export function lensSeatStates(
-  lanes: readonly LensLane[] | undefined,
+  generation: GenerationLanes | undefined,
   reads: Readonly<Record<LensKind, LensReadStatus>>,
 ): LensSeatStates {
   const byLens = new Map<LensKind, LensLane>();
-  for (const lane of lanes ?? []) {
+  for (const lane of generation?.lanes ?? []) {
     const lens = lensOf(lane.id);
     if (lens !== undefined) byLens.set(lens, lane);
   }
-  const live = lanes !== undefined;
+  const running = generation?.running === true;
 
   const base = LENS_KINDS.map((lens): LensSeatState => {
     const lane = byLens.get(lens);
     const read = reads[lens];
     if (lane !== undefined) {
-      const register = registerOfLane(lane);
+      const laneRegister = registerOfLane(lane);
+      const terminal = laneRegister !== "waiting" && laneRegister !== "working";
+      // A NON-TERMINAL lane on a generation that has STOPPED is a frozen record, not a
+      // live seat: a cancel writes the lanes exactly as they stood, so a lane left at
+      // `running` would go on animating over a screen that says the run was cancelled.
+      // The board read is what answers for it instead, exactly as it answers for a lens
+      // that never had a lane. A terminal lane keeps its own register either way — that
+      // is a real result, and cancelling a generation does not un-draft what it drafted.
+      if (!terminal && !running) {
+        return fromReadAlone(lens, read, false, lane);
+      }
       const reworked = lane.status === "done" && lane.verdict !== "carrying-forward";
       return {
         lens,
         label: lane.label.length > 0 ? lane.label : LENS_LABEL[lens],
-        register,
-        cut: cutOf(register, reworked),
+        register: laneRegister,
+        cut: cutOf(laneRegister, reworked),
         voices: voicesOf(lane),
         waitingOn: [],
         reworked,
-        drafting: register === "waiting" || register === "working",
+        seated: true,
+        // The lane exists and has not settled on a generation that is still going, so
+        // this board is genuinely being written into.
+        drafting: !terminal,
       };
     }
-    // No lane for this lens. A generation IS in flight (`live`) ⇒ its seat has not been
-    // opened yet, which is `waiting`; otherwise the board read is the only witness, and
-    // a missing board with no witness is `none` rather than an invented promise.
-    const register = registerOfRead(read) ?? (live ? "waiting" : "none");
-    return {
-      lens,
-      label: LENS_LABEL[lens],
-      register,
-      cut: cutOf(register, false),
-      voices: voiceFromRead(lens, register),
-      waitingOn: [],
-      reworked: false,
-      drafting: live && (register === "waiting" || register === "working"),
-    };
+    // NO LANE FOR THIS LENS. On a running generation its lane has not been opened yet,
+    // which the rail shows as `waiting` — but nothing is being written, so `drafting` is
+    // false and no board claims otherwise. Off a running generation the board read is the
+    // only witness, and a missing board with no witness is `none`, never a promise.
+    return fromReadAlone(lens, read, running);
   });
 
   // D16c — Noise is the COMPLEMENT of the other four, so it does not start until they
@@ -283,9 +359,13 @@ export function lensSeatStates(
   // states the daemon already published, not a second opinion about them: the lanes it
   // lists are exactly the ones whose own entry says they have not reached a terminal
   // state. It NEVER makes Noise read as working or failed — those come off its own lane.
+  //
+  // It names only lanes that are ACTUALLY still owed — `drafting`, not merely `waiting` —
+  // so a stopped generation's Noise entry names nobody, and a capture that has opened no
+  // lane at all does not claim to be waiting on four lanes that are not running.
   const noise = base.find((entry) => entry.lens === "noise");
   const waitingOn =
-    noise !== undefined && noise.register === "waiting"
+    noise !== undefined && noise.register === "waiting" && running
       ? base.filter((entry) => entry.lens !== "noise" && entry.drafting).map((entry) => entry.lens)
       : [];
 

@@ -110,8 +110,18 @@ export function foldLensDraft(
     }
     case "state":
       return { ...base, state: update.state };
-    default:
+    case "closed":
       return { ...base, state: update.state, closed: true };
+    default: {
+      // EXHAUSTIVE, not a fallthrough. A `default:` that settled the board would make a
+      // fifth update kind — added upstream and not yet understood here — silently CLOSE
+      // every board it touched, handing the reveal back to the durable read mid-draft with
+      // nothing saying why. An unknown kind advances the revision and changes nothing else,
+      // which is the honest reading of a frame this client cannot interpret.
+      const exhaustive: never = update;
+      void exhaustive;
+      return base;
+    }
   }
 }
 
