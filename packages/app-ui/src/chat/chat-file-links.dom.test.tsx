@@ -180,7 +180,11 @@ describe("the dock hands that callback to whatever the host mounted", () => {
         wsUrl: "ws://127.0.0.1:1",
         accessToken: "t",
         environmentId: "env-1",
-        threadId: "thread-1",
+        thread: {
+          status: "bound",
+          threadId: "thread-1",
+          threadUrl: "http://127.0.0.1:1/env-1/thread-1",
+        },
       }),
     });
     useRennetStore.setState((s) => ({

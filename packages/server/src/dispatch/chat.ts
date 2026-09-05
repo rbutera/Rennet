@@ -50,6 +50,10 @@ export async function bindReviewThread(
   });
 }
 
+/** A thrown thing as a sentence a reviewer can read. Same shape as `t3/threads.ts`. */
+export const describeThreadError = (error: unknown): string =>
+  error instanceof Error ? error.message : String(error);
+
 export function chatHandlers(rt: DispatchRuntime) {
   const { deps } = rt;
   return {
@@ -68,14 +72,29 @@ export function chatHandlers(rt: DispatchRuntime) {
       const session = await deps.t3Sidecar.session();
       if (input.reviewId === undefined) return parseCommandOutput(name, session);
       // With a review: its own thread, through the one assembly point. `review.capture`
-      // has normally bound it already, so this reads the existing row. The review lookup
-      // throws for an unknown id, like every review read.
-      const binding = await bindReviewThread(rt, input.reviewId);
-      return parseCommandOutput(name, {
-        ...session,
-        threadId: binding.threadId,
-        threadUrl: `${session.origin}/${session.environmentId}/${binding.threadId}`,
-      });
+      // has normally bound it already, so this reads the existing row.
+      //
+      // A FAILED BIND IS A REPORTED STATE, NOT A REJECTION (#872). The environment and the
+      // bearer above are good whatever the bind does, and throwing here threw them away
+      // too: an unknown review id, or a bound workspace that has been deleted, surfaced in
+      // the dock as "T3 Code sidecar unavailable" over a perfectly healthy sidecar, and the
+      // mount never rendered. The reviewer gets the session, plus the reason in the arm.
+      try {
+        const binding = await bindReviewThread(rt, input.reviewId);
+        return parseCommandOutput(name, {
+          ...session,
+          thread: {
+            status: "bound",
+            threadId: binding.threadId,
+            threadUrl: `${session.origin}/${session.environmentId}/${binding.threadId}`,
+          },
+        });
+      } catch (error) {
+        return parseCommandOutput(name, {
+          ...session,
+          thread: { status: "unavailable", reason: describeThreadError(error) },
+        });
+      }
     },
     // chat.t3Send (t3-lens-threads 4.2): start a turn on the review's bound thread with the
     // client's text. The anchored ask's path — it replaces `review.ask`, whose orchestrator

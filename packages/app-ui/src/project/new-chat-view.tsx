@@ -118,7 +118,13 @@ export function NewChatView({ projectId }: { readonly projectId: string }) {
   const [starting, setStarting] = useState<string | null>(null);
   const mint = useNewChatMint(projectId);
   const claimed = useClaimedTargets(projectId);
-  const { data: detail } = useCommand("project.detail", {
+  // `pending` is the FIRST load of this project's branches and change requests, and it is
+  // load-bearing for the empty-state copy below (#872): `rows` is `[]` until `detail`
+  // arrives, and on a network clone that scan runs for minutes, during which the list read
+  // "no open branches or change requests yet" — honest-empty wording for a state that was
+  // actually still scanning. A refetch (the merged-PR toggle) keeps `data`, so it stays
+  // false and the rows already on screen are not replaced by a scanning line.
+  const { data: detail, pending: scanning } = useCommand("project.detail", {
     projectId,
     prStates: showMerged ? ["open", "merged"] : ["open"],
   });
@@ -294,9 +300,11 @@ export function NewChatView({ projectId }: { readonly projectId: string }) {
                   ))}
                   {visible.length === 0 ? (
                     <div className="px-4 py-12 text-center text-12-5 text-ink-faint">
-                      {unclaimed.length === 0
-                        ? "no open branches or change requests yet"
-                        : "nothing matches"}
+                      {scanning
+                        ? "scanning this project's branches and change requests…"
+                        : unclaimed.length === 0
+                          ? "no open branches or change requests yet"
+                          : "nothing matches"}
                     </div>
                   ) : null}
                 </div>

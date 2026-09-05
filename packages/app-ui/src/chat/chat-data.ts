@@ -40,11 +40,41 @@ export interface ChatTrail {
  * commandId, so the route screen and this hook hit ONE cache entry, not two fetches.
  */
 export function useRouteReviewId(): string | undefined {
+  return reviewIdOf(useSlugResolution(useRouteSlug()));
+}
+
+function useRouteSlug(): string {
   const [onSession, sessionParams] = useRoute(ROUTES.session);
   const [, runParams] = useRoute(ROUTES.sessionRun);
   const raw = (onSession ? sessionParams?.slug : runParams?.slug) ?? "";
-  const slug = raw === "" ? "" : decodeURIComponent(raw);
-  return reviewIdOf(useSlugResolution(slug));
+  return raw === "" ? "" : decodeURIComponent(raw);
+}
+
+/**
+ * WHAT THE DOCK IS LOOKING AT — three answers, because two of them are not "a review"
+ * and the dock had been treating both as one (#872).
+ *
+ * `useRouteReviewId` collapses everything that is not a review into `undefined`, and the
+ * dock turned that single silence into "Starting the T3 Code sidecar…" — the `pending ||
+ * !data` arm of a read that is DISABLED off a review and therefore never resolves. On a
+ * chat-only session (a New Chat mint before its capture attaches, or a session that never
+ * gets one) the reviewer watched the app report a bring-up that was not happening and
+ * never would.
+ *
+ * So the two are separated. `resolving` is a real wait on `session.list` + `review.load`;
+ * `no-review` is settled for as long as the route stays there. Neither of them starts a
+ * sidecar, because there is nothing to start one for.
+ */
+export type ChatDockTarget =
+  | { readonly kind: "resolving" }
+  | { readonly kind: "review"; readonly reviewId: string }
+  | { readonly kind: "no-review" };
+
+export function useRouteChatTarget(): ChatDockTarget {
+  const resolution = useSlugResolution(useRouteSlug());
+  if (resolution.status === "pending") return { kind: "resolving" };
+  const reviewId = reviewIdOf(resolution);
+  return reviewId === undefined ? { kind: "no-review" } : { kind: "review", reviewId };
 }
 
 /**

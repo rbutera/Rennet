@@ -139,10 +139,10 @@ describe.skipIf(!realBundle)("review.capture binds the chat thread ahead of the 
     // second one: a caller that assembled the binding input differently would mint another
     // and split the review's transcript across two threads.
     const session = (await f.chat$["chat.t3Session"]({ reviewId: f.review.id })) as {
-      threadId: string;
-      threadUrl: string;
+      thread?: { status: string; threadId?: string; threadUrl?: string };
     };
-    expect(session.threadId).toBe(bound?.threadId);
-    expect(session.threadUrl).toContain(session.threadId);
+    expect(session.thread?.status).toBe("bound");
+    expect(session.thread?.threadId).toBe(bound?.threadId);
+    expect(session.thread?.threadUrl).toContain(bound?.threadId as string);
   }, 90_000);
 });

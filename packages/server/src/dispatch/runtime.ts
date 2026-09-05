@@ -124,6 +124,13 @@ export interface DispatchDeps {
     reviewId: string,
   ) => Promise<{ readonly root: string; readonly branch?: string } | undefined>;
   /**
+   * Where a background failure this layer cannot report to a caller goes (#872): today the
+   * capture-time chat-thread bind, which is fire-and-forget by design and therefore has no
+   * caller to reject. Absent ⇒ `console.warn`, which is what `t3/threads.ts`'s sweep uses.
+   * It exists so a test can READ the warning instead of hijacking the console.
+   */
+  readonly warn?: (message: string) => void;
+  /**
    * The session id a REVIEW's context files are keyed on — the same key
    * `purgeSessionContext` above is called with, resolved by the composition root from the
    * session store (`sessionIdForReview`).

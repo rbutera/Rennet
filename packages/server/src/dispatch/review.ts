@@ -16,7 +16,7 @@ import {
   type Review,
 } from "@rennet/protocol";
 import { writeSessionContext } from "../context-files";
-import { bindReviewThread } from "./chat";
+import { bindReviewThread, describeThreadError } from "./chat";
 import type { CommandHandler, DispatchRuntime } from "./runtime";
 
 export function reviewHandlers(rt: DispatchRuntime) {
@@ -54,11 +54,20 @@ export function reviewHandlers(rt: DispatchRuntime) {
    * still leaves `chat.t3Session` to say so in the dock exactly as it did before — this
    * only moves WHEN the work happens, never whether its failure is reported.
    *
+   * The catch WARNS rather than swallowing (#872). `.catch(() => undefined)` made this the
+   * one live path with a failure mode that left no trace anywhere: not in the dock, not on
+   * disk, not in the log — so "why did this review never get a thread" had no evidence to
+   * answer it from. Warning costs nothing and is not a gate; the capture still returns.
+   *
    * Costs no tokens: creating a thread is an RPC to the sidecar, not a harness turn.
    */
   const warmReviewThread = (reviewId: string): void => {
     if (!deps.t3Sidecar) return;
-    void bindReviewThread(rt, reviewId).catch(() => undefined);
+    void bindReviewThread(rt, reviewId).catch((error: unknown) => {
+      (deps.warn ?? console.warn)(
+        `rennet: review ${reviewId} did not get a chat thread at capture: ${describeThreadError(error)}`,
+      );
+    });
   };
   return {
     "review.capture": async (rawInput) => {
