@@ -26,7 +26,7 @@ Ships on its own: a seat thread can call one tool and get an answer, with no boa
 
 Closes the #810 class in production; partially answers #785 on the return side, not the prompt side.
 
-- [ ] 3.1 Create every lens board empty and `drafting` when its seat thread is created, before the first turn; a lane that writes nothing settles over that board with its reason
+- [ ] 3.1 Create every lens board empty and `drafting` when its seat thread is created, before the first turn; a lane that writes nothing settles over that board with its reason. In the same task, name the daemon's board server in the health report as LOCAL once a lane actually opens (the `t3code-sidecar` delta's disclosure clause, which group 2 deliberately left unmet because a status field claiming a running loopback server while none ran would be a lie in the UI)
 - [ ] 3.2 Stop setting `outputFormat` on board seat turns; remove `boardOutputSchema()` from the seat path; `draftOneLens` and `validateDraft` settle on `finish` / settle-absent instead of parsing a return. `StructuredOutput` stops appearing on a seat thread at all
 - [ ] 3.3 Attempt accounting: a refusal and a `finish` verdict cost nothing; an attempt is spent only by a turn that ends unsettled. The partial board is kept and marked unsettled with its reason; `renderRepairTurn` carries the last verdict and nothing else and resumes the same board. Control: a turn with ten refusals and one verdict records one attempt
 - [ ] 3.4 Flagged: two seats write one board, each element stamped with its voice; `reconcileFindings` stamps concurrence and accord at lane settle, not at write. Control with a two-voice fixture that the marks are absent until both voices settle

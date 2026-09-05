@@ -23,6 +23,9 @@ import {
 
 const BEARER = "process-bearer-under-test";
 
+/** The bearer the listener reads on every call, so a test can respawn the sidecar under it. */
+let currentBearer = BEARER;
+
 const REGIONS: ChangedRegion[] = [
   { path: "src/auth.ts", side: "head", start: 10, end: 14 },
   { path: "src/util.ts", side: "head", start: 1, end: 3 },
@@ -42,13 +45,14 @@ let started: BoardMcpServer[] = [];
 afterEach(async () => {
   const running = started;
   started = [];
+  currentBearer = BEARER;
   for (const server of running) await server.close();
 });
 
 async function serverWith(
   options: Partial<Parameters<typeof startBoardMcpServer>[0]> = {},
 ): Promise<BoardMcpServer> {
-  const server = await startBoardMcpServer({ bearer: BEARER, ...options });
+  const server = await startBoardMcpServer({ bearer: () => currentBearer, ...options });
   started.push(server);
   return server;
 }
@@ -65,7 +69,7 @@ async function rpc(
   message: unknown,
   init: { readonly bearer?: string | null } = {},
 ): Promise<RpcAnswer> {
-  const bearer = init.bearer === undefined ? BEARER : init.bearer;
+  const bearer = init.bearer === undefined ? currentBearer : init.bearer;
   const response = await fetch(url, {
     method: "POST",
     headers: {
@@ -176,6 +180,27 @@ describe("a seat's MCP client discovers and calls the board tools (2.5)", () => 
     // step verb rather than refusing one after the fact.
     expect(names).not.toContain("add_step");
     for (const tool of tools) expect(tool.inputSchema.type).toBe("object");
+  });
+
+  it("serves no meta declaration on any tool's input schema", async () => {
+    const server = await serverWith();
+    const url = designAddress(await designLane(server)).url;
+    await handshake(url);
+    const listed = await rpc(url, { jsonrpc: "2.0", id: 2, method: "tools/list" });
+    const tools = result(listed).tools as { name: string; inputSchema: Record<string, unknown> }[];
+    // Zod stamps a draft-2020-12 `$schema` on every rendered input, and this `inputSchema`
+    // is carried by the harness child into the provider's own tool definitions with
+    // nothing on that path to strip it. A meta declaration a validator does not recognise
+    // is what #810 was — a schema refused before the turn ran — and Rennet's own adapter
+    // already drops these keys for exactly that reason (`normalizeOutputSchema`).
+    expect(tools.length).toBeGreaterThan(0);
+    for (const tool of tools) {
+      expect(Object.keys(tool.inputSchema), tool.name).not.toContain("$schema");
+      expect(Object.keys(tool.inputSchema), tool.name).not.toContain("$id");
+    }
+    // …and the body is untouched: the constraints still travel.
+    const cite = tools.find((tool) => tool.name === "cite");
+    expect(Object.keys((cite?.inputSchema.properties ?? {}) as object)).toContain("start_line");
   });
 
   it("a Sequence seat is served no settle_absent, because Sequence admits no absence", async () => {
@@ -362,6 +387,69 @@ describe("an address names a board and a bearer authenticates the caller (2.5)",
     expect((await rpc(sequenceUrl, { jsonrpc: "2.0", id: 1, method: "ping" })).status).toBe(404);
   });
 
+  it("keeps working when the sidecar respawns under it with a fresh bearer", async () => {
+    const server = await serverWith();
+    const lane = await designLane(server);
+    const url = designAddress(lane).url;
+    await handshake(url);
+    expect((await rpc(url, { jsonrpc: "2.0", id: 1, method: "ping" })).status).toBe(200);
+
+    // The supervisor's child exited and the next `ensure()` spawned a fresh sidecar, whose
+    // environment carries a fresh bearer. Every harness child now presents the NEW one.
+    // A listener that captured the first bearer would 401 every seat from here to the end
+    // of the daemon's life — silently, while the seats ran and billed.
+    currentBearer = "the-respawned-sidecars-bearer";
+
+    const after = await rpc(url, { jsonrpc: "2.0", id: 2, method: "ping" });
+    expect(after.status).toBe(200);
+    // …and the bearer the first sidecar handed out is no longer one of ours.
+    expect(
+      (await rpc(url, { jsonrpc: "2.0", id: 3, method: "ping" }, { bearer: BEARER })).status,
+    ).toBe(401);
+  });
+
+  it("hands a seat the SAME address after a restart, because a session's url is fixed", async () => {
+    const first = await serverWith({ port: 0 });
+    const lane = await designLane(first);
+    const before = designAddress(lane).url;
+    const port = first.port;
+    await first.close();
+    started = started.filter((server) => server !== first);
+
+    // A new daemon, a new listener, the same sidecar and the same generation. Both
+    // providers fixed the session's MCP configuration when the child was created, so a
+    // seat whose url moved is refused by name on its next turn rather than served.
+    const second = await serverWith({ port });
+    const restored = second.openLane({ generationId: "gen-1", target: "design", lint: lint() });
+    expect(designAddress(restored).url).toBe(before);
+  });
+
+  it("hands a re-opened lane's seat the address its session already holds", async () => {
+    const server = await serverWith();
+    const lane = await designLane(server);
+    const before = designAddress(lane).url;
+    lane.settle();
+    // A retry re-opens the lane. A freshly minted token here would change the url under a
+    // session that is still open, and its next turn would be refused as a mismatch.
+    const again = server.openLane({ generationId: "gen-1", target: "design", lint: lint() });
+    expect(
+      again.address({
+        seat: "design",
+        author: { kind: "lens-agent", id: "lens:design" },
+        idPrefix: "d",
+      }).url,
+    ).toBe(before);
+  });
+
+  it("gives two generations' same-named seats different addresses", async () => {
+    const server = await serverWith();
+    const first = designAddress(await designLane(server)).url;
+    const second = server
+      .openLane({ generationId: "gen-2", target: "design", lint: lint() })
+      .address({ seat: "design", author: { kind: "lens-agent", id: "lens:design" } }).url;
+    expect(first).not.toBe(second);
+  });
+
   it("a seat's address carries no bearer: the credential travels by variable NAME", async () => {
     const server = await serverWith();
     const address = designAddress(await designLane(server));
@@ -371,15 +459,9 @@ describe("an address names a board and a bearer authenticates the caller (2.5)",
     // it — only the name of the variable the child reads it out of is on the turn at all.
     expect(address.url).not.toContain(BEARER);
     expect(JSON.stringify(address)).not.toContain(BEARER);
-  });
-
-  it("two seats of two generations do not share an address", async () => {
-    const server = await serverWith();
-    const first = designAddress(await designLane(server));
-    const second = server
-      .openLane({ generationId: "gen-2", target: "design", lint: lint() })
-      .address({ seat: "design", author: { kind: "lens-agent", id: "lens:design" } });
-    expect(first.url).not.toBe(second.url);
+    // The token is DERIVED from the bearer, so this is the assertion that matters: the
+    // derivation must not be invertible on sight.
+    expect(address.url).not.toContain(encodeURIComponent(BEARER));
   });
 });
 

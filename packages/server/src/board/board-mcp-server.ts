@@ -42,7 +42,8 @@
 // session management is optional and the address already identifies the seat. `GET`
 // (the server→client stream) is answered `405`, which the transport also permits.
 
-import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { createHash, timingSafeEqual } from "node:crypto";
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import {
   createServer,
   type Server as HttpServer,
@@ -50,6 +51,8 @@ import {
   type ServerResponse,
 } from "node:http";
 import type { AddressInfo } from "node:net";
+import { join } from "node:path";
+import { normalizeOutputSchema } from "@rennet/adapters";
 import {
   type BoardToolOutcome,
   type BoardVoice,
@@ -66,18 +69,9 @@ import {
   type DraftKind,
 } from "@rennet/protocol";
 import { z } from "zod";
+import { BOARD_BEARER_ENV_VAR, BOARD_MCP_SERVER_NAME, deriveSeatToken } from "./board-credentials";
 
-/**
- * The name the seat's board server is bound to on the turn.
- *
- * A TOML bare key, because Codex writes it into a dotted config path; and a name the
- * sidecar's own server (`t3-code`) and a user's own Codex config are not plausibly going
- * to carry, because a collision is REFUSED by name at the adapter rather than merged.
- */
-export const BOARD_MCP_SERVER_NAME = "rennet_board";
-
-/** The environment variable the harness child reads the process bearer out of. */
-export const BOARD_BEARER_ENV_VAR = "RENNET_BOARD_BEARER";
+export { BOARD_BEARER_ENV_VAR, BOARD_MCP_SERVER_NAME } from "./board-credentials";
 
 /** The MCP protocol revisions this server answers. The newest is what an unknown one gets. */
 const SUPPORTED_PROTOCOL_VERSIONS = ["2025-06-18", "2025-03-26", "2024-11-05"] as const;
@@ -119,8 +113,6 @@ export interface BoardLane {
    * refreshes the seat's liveness instead of minting again.
    */
   readonly address: (voice: BoardSeatVoice) => SeatBoardServer;
-  /** Liveness, refreshed per turn. Silent for a seat with no address yet. */
-  readonly refresh: (seat: string) => void;
   /** The board as it stands, whichever voice wrote each element. */
   readonly board: () => DraftBoard;
   /** The writer this lane's seats share — one board, however many voices. */
@@ -219,27 +211,80 @@ interface JsonRpcRequest {
 const JSON_RPC_INVALID_PARAMS = -32602;
 const JSON_RPC_METHOD_NOT_FOUND = -32601;
 
-/** The tools this seat may call, in the MCP `tools/list` shape. */
+/**
+ * The tools this seat may call, in the MCP `tools/list` shape.
+ *
+ * `normalizeOutputSchema` is what drops the top-level `$schema`/`$id` Zod stamps, and it
+ * is the SAME choke point Rennet's own adapter routes every provider-bound schema
+ * through. It matters more here, not less: an `inputSchema` is carried by the harness
+ * child into the provider's tool definitions with nothing on that path to strip it, and
+ * a meta declaration a validator does not recognise is what #810 was — a schema refused
+ * before the turn ran. It is also 57 bytes per tool of overhead no reader and no model
+ * ever sees. The schema BODY is untouched.
+ */
 function toolCatalogFor(entry: SeatEntry, typedKinds?: OpenLaneInput["typedKinds"]): unknown[] {
   const tools = boardToolsByName(entry.target, typedKinds);
   return [...tools.values()].map((tool) => ({
     name: tool.name,
     description: tool.description,
-    inputSchema: z.toJSONSchema(tool.input, { io: "input" }),
+    inputSchema: normalizeOutputSchema(z.toJSONSchema(tool.input, { io: "input" })),
   }));
 }
 
 export interface StartBoardMcpServerOptions {
   /**
-   * The process bearer every call must carry: the value the daemon put in the sidecar's
-   * environment under {@link BOARD_BEARER_ENV_VAR}. Only its digest is kept here.
+   * The process bearer every call must carry, READ ON EVERY CALL: the value that is in
+   * the sidecar's environment under {@link BOARD_BEARER_ENV_VAR} right now.
+   *
+   * A supplier and not a value, because the sidecar RESPAWNS within one daemon's life —
+   * the supervisor clears its handle when the child exits and the next `ensure()` spawns
+   * a fresh one — and every spawn puts a fresh bearer in a fresh environment. A listener
+   * holding the first sidecar's bearer would 401 every seat of every later one, silently
+   * and for the daemon's whole life: seats would run, bill the user's subscription and
+   * write nothing. Only the digest of whatever this returns is ever compared.
    */
-  readonly bearer: string;
+  readonly bearer: () => string;
   /** The interface to bind. Loopback, and there is no option that is not. */
   readonly host?: "127.0.0.1" | "::1";
+  /**
+   * Where the port this listener bound is remembered, so a restarted daemon comes back on
+   * the SAME port and a seat's url is the url its session was opened with. The sidecar's
+   * private base dir; absent ⇒ nothing is remembered and an ephemeral port is bound, which
+   * is what a test wants.
+   */
+  readonly stateDir?: string;
+  /** Bind exactly this port. Overrides whatever {@link StartBoardMcpServerOptions.stateDir} remembers. */
   readonly port?: number;
   readonly now?: () => number;
   readonly livenessMs?: number;
+}
+
+/** Where the bound port is remembered between daemon runs. Not a secret; a port. */
+const PORT_RECORD = "board-server.json";
+
+function rememberedPort(stateDir: string | undefined): number | undefined {
+  if (stateDir === undefined) return undefined;
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(join(stateDir, PORT_RECORD), "utf8"));
+    const port = (parsed as { port?: unknown }).port;
+    return typeof port === "number" && Number.isInteger(port) && port > 0 ? port : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function rememberPort(stateDir: string | undefined, port: number): void {
+  if (stateDir === undefined) return;
+  try {
+    mkdirSync(stateDir, { recursive: true });
+    const path = join(stateDir, PORT_RECORD);
+    const tmp = `${path}.tmp-${process.pid}`;
+    writeFileSync(tmp, `${JSON.stringify({ port })}\n`);
+    renameSync(tmp, path);
+  } catch {
+    // A port we could not write down is a url that will not survive a restart, which the
+    // adapter refuses loudly. It is not a reason to fail the listener that is working.
+  }
 }
 
 /**
@@ -255,7 +300,6 @@ export async function startBoardMcpServer(
   const host = options.host ?? "127.0.0.1";
   const now = options.now ?? Date.now;
   const livenessMs = options.livenessMs ?? SEAT_LIVENESS_MS;
-  const bearerDigest = sha256(options.bearer);
 
   const lanes = new Map<
     string,
@@ -294,9 +338,17 @@ export async function startBoardMcpServer(
           existing.expiresAt = now() + livenessMs;
           return existing.server;
         }
-        // 32 random bytes. Only the digest is kept; the token exists in the returned url
-        // and nowhere else on this side.
-        const token = randomBytes(32).toString("base64url");
+        // Derived from the sidecar's own bearer over (generation, board, seat), so this
+        // seat's url is the same url after a daemon restart and after a settled lane is
+        // re-opened for a retry — both of which a random token loses, and both of which
+        // the provider then refuses as an MCP-server mismatch. Only the digest is kept
+        // here; see `deriveSeatToken` for why this is not weaker than minting.
+        const token = deriveSeatToken({
+          bearer: options.bearer(),
+          generationId: input.generationId,
+          target: input.target,
+          seat: voice.seat,
+        });
         const server: SeatBoardServer = {
           name: BOARD_MCP_SERVER_NAME,
           url: `http://${host}:${boundPort}/board/${token}`,
@@ -319,10 +371,6 @@ export async function startBoardMcpServer(
         digestBySeat.set(seatKey(input.generationId, voice.seat), digest);
         seats.add(voice.seat);
         return server;
-      },
-      refresh: (seat) => {
-        const entry = entryFor(input.generationId, seat);
-        if (entry !== undefined) entry.expiresAt = now() + livenessMs;
       },
       board: () => writer.board(),
       writer: () => writer,
@@ -491,7 +539,9 @@ export async function startBoardMcpServer(
       // The process bearer first: a caller with the right address and the wrong bearer has
       // no more standing than one with neither.
       const presented = bearerOf(req);
-      if (presented === undefined || !digestsMatch(sha256(presented), bearerDigest)) {
+      // Read NOW, not at construction: the sidecar may have respawned under us with a
+      // fresh bearer in a fresh environment (see the option's note).
+      if (presented === undefined || !digestsMatch(sha256(presented), sha256(options.bearer()))) {
         sendPlain(res, 401, "unauthorized", {
           "www-authenticate": 'Bearer realm="rennet-board"',
         });
@@ -557,14 +607,34 @@ export async function startBoardMcpServer(
     });
   });
 
-  await new Promise<void>((resolve, reject) => {
-    httpServer.once("error", reject);
-    httpServer.listen(options.port ?? 0, host, () => {
-      boundPort = (httpServer.address() as AddressInfo).port;
-      httpServer.removeListener("error", reject);
-      resolve();
+  const bindTo = async (port: number): Promise<void> =>
+    new Promise<void>((resolve, reject) => {
+      const onError = (error: unknown) => {
+        reject(error instanceof Error ? error : new Error(String(error)));
+      };
+      httpServer.once("error", onError);
+      httpServer.listen(port, host, () => {
+        boundPort = (httpServer.address() as AddressInfo).port;
+        httpServer.removeListener("error", onError);
+        resolve();
+      });
     });
-  });
+
+  const wanted = options.port ?? rememberedPort(options.stateDir);
+  if (wanted === undefined) {
+    await bindTo(0);
+  } else {
+    try {
+      await bindTo(wanted);
+    } catch {
+      // Something else took it while the daemon was down. An ephemeral port is the honest
+      // fallback: the seats of a generation that was mid-flight get new urls and their
+      // next turn is refused by name, which is loud, where binding nothing would take the
+      // whole feature down for a port number.
+      await bindTo(0);
+    }
+  }
+  rememberPort(options.stateDir, boundPort);
 
   return {
     port: boundPort,

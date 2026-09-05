@@ -1364,13 +1364,25 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   /**
    * The daemon's loopback board server (`lens-board-tools` D8), started on first use.
    *
-   * Its process bearer is the sidecar's own: the value the daemon put in the sidecar's
-   * environment at spawn, which every harness child inherits. A daemon that never opens a
-   * board lane never binds this port — {@link generationBoards} is what starts it.
+   * The bearer it checks is read from the CURRENT sidecar on every request, never captured
+   * here: the supervisor respawns the sidecar within one daemon's life, each spawn puts a
+   * fresh bearer in a fresh environment, and a listener holding the first one would 401
+   * every seat of every later sidecar — silently, for the daemon's whole life, while the
+   * seats ran and billed. `t3Sidecar.boardBearer()` is that reading.
+   *
+   * A daemon that never opens a board lane never binds this port; {@link generationBoards}
+   * is what starts it. A FAILED start is not memoised, so a transient bind failure costs
+   * one lane rather than board writing for the rest of the daemon's life.
    */
   let boardMcpServer: Promise<BoardMcpServer> | null = null;
-  const ensureBoardMcpServer = (bearer: string): Promise<BoardMcpServer> => {
-    boardMcpServer ??= startBoardMcpServer({ bearer });
+  const ensureBoardMcpServer = (stateDir: string): Promise<BoardMcpServer> => {
+    boardMcpServer ??= startBoardMcpServer({
+      bearer: () => t3Sidecar.boardBearer(),
+      stateDir,
+    }).catch((error: unknown) => {
+      boardMcpServer = null;
+      throw error;
+    });
     return boardMcpServer;
   };
 
@@ -1399,7 +1411,9 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // one, and a seat whose lane is not open is given no address — so a turn names no
     // board server rather than one that resolves to nothing.
     const boards = generationBoards(input.generationId, () =>
-      ensureBoardMcpServer(sidecar.boardBearer),
+      // The sidecar's own private base dir: where the listener remembers its port, so a
+      // restarted daemon comes back on the url a live session was opened with.
+      ensureBoardMcpServer(sidecar.claim.baseDir),
     );
     return {
       environmentId,
@@ -5375,7 +5389,12 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     store?.close();
     pushTokenStore.close();
     roundOperationStore.close();
-    void boardMcpServer?.then((server) => server.close());
+    void boardMcpServer
+      ?.then((server) => server.close())
+      .catch(() => {
+        // A listener that never started, or one whose close threw, must not take the rest
+        // of the shutdown sequence with it.
+      });
     void wsListener?.close();
   };
   return {

@@ -35,7 +35,7 @@ import { createServer } from "node:net";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
-import { BOARD_BEARER_ENV_VAR } from "../board/board-mcp-server";
+import { BOARD_BEARER_ENV_VAR } from "../board/board-credentials";
 import { isRunning } from "../process-state";
 
 /** The sidecar's claim: where the daemon says its sidecar listens, and which daemon spawned it. */
@@ -409,7 +409,15 @@ export async function spawnSidecar(options: SpawnSidecarOptions): Promise<Runnin
   const bootstrapToken = randomBytes(24).toString("base64url");
   // The board server's process bearer (D8). Minted here because the sidecar's environment
   // is fixed at spawn and every harness child inherits it from there.
-  const boardBearer = randomBytes(32).toString("base64url");
+  //
+  // REUSED across respawns of the same base dir when one was already recorded, because a
+  // seat's address token is derived from it: rotating it on every respawn would change
+  // every live seat's url, and both providers refuse a turn whose MCP servers differ from
+  // the ones its session was opened with. The value is one 32-byte secret in a 0600 file
+  // that only this machine's daemon and its own sidecar ever see; rotating it buys nothing
+  // that file's permissions do not already give.
+  const boardBearer =
+    readSidecarCredentials(baseDir)?.boardBearer ?? randomBytes(32).toString("base64url");
   const logFd = openSync(join(baseDir, "sidecar.log"), "a");
   let child: ChildProcess;
   try {

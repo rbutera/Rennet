@@ -133,24 +133,45 @@ When a turn does end unsettled, the board it wrote SHALL be kept, marked as unse
 
 ### Requirement: A seat reaches its board through a daemon-hosted loopback endpoint addressed per seat
 
-The daemon SHALL host the board tool surface as a loopback HTTP MCP server bound to the local interface, and SHALL give each seat its own address and its own credential, so a call names the board it writes without the seat having to carry a board identifier. The credential SHALL be minted per seat, stored only as a one-way digest, refreshed while the seat works, and revoked when its lane settles rather than left to expire. A seat's credential SHALL NOT appear on any process's argument list.
+The daemon SHALL host the board tool surface as a loopback HTTP MCP server bound to the local interface, and SHALL give each seat its own address, so a call names the board it writes without the seat having to carry a board identifier.
+
+A seat's credential SHALL be TWO parts, because no single value can satisfy both of the properties this requirement needs. The transport permits a caller to name only an environment VARIABLE for a server's credential, and the harness child reads that variable out of an environment fixed when the daemon spawned the sidecar — so a value delivered that way cannot be per seat, and a value delivered any other way is on the child's argument list. Therefore:
+
+- The **seat token** SHALL be per seat and scoped to the generation, the board and the seat, unguessable without the daemon's own secret, held only as a one-way digest, and revoked when its lane settles rather than left to expire. It travels in the seat's address.
+- The **process bearer** SHALL be the sidecar's own, placed in the environment the harness child inherits, and SHALL NOT appear on any process's argument list.
+
+Both SHALL be required on every call, so an argument list yields an address and not access.
+
+Because the seat token travels in the address, and the address travels on the turn command the sidecar persists, a per-seat secret DOES land in a durable event row. Eager revocation is what answers that: a token replayed after its lane settled reaches nothing.
+
+A seat's address SHALL be stable for as long as the provider session that was opened with it: both providers fix a session's MCP configuration when the harness child is created, and a later turn naming a different address is refused by the adapter rather than served. It SHALL therefore survive a daemon restart under a sidecar that outlived it, and a settled lane being re-opened for a retry.
 
 This addressing SHALL NOT be described or implemented as a restriction on what a seat may do: it names the board a call writes, exactly as a file handle names a file.
 
 #### Scenario: Two seats on one lane write one board
 
 - **WHEN** the Flagged lens runs a Claude seat and a Codex seat
-- **THEN** each has its own address and credential, both write to the one Flagged board, each element carries the voice that wrote it, and the ids they receive cannot collide
+- **THEN** each has its own address, both write to the one Flagged board, each element carries the voice that wrote it, and the ids they receive cannot collide
 
 #### Scenario: The credential is not on the process table
 
 - **WHEN** a seat's harness child is running
-- **THEN** its argument list contains no board credential
+- **THEN** its argument list contains no process bearer, and the address on it is not sufficient to write a board
 
 #### Scenario: A settled lane's credential stops working
 
 - **WHEN** a lane settles
-- **THEN** its seats' credentials are revoked at once rather than waiting for a liveness window
+- **THEN** its seats' addresses are revoked at once rather than waiting for a liveness window, and a token replayed from the sidecar's event store reaches nothing
+
+#### Scenario: The sidecar respawns under a running daemon
+
+- **WHEN** the sidecar exits and the daemon spawns a fresh one within its own life
+- **THEN** the board server accepts the new sidecar's children, rather than refusing every seat from then on against the bearer of the sidecar that died
+
+#### Scenario: A seat's address outlives the daemon that minted it
+
+- **WHEN** the daemon restarts while a seat's provider session is still open on a surviving sidecar
+- **THEN** the seat is handed the same address it had, so its next turn is not refused as an MCP-server mismatch
 
 ### Requirement: A board tool call reaches the reviewer as a receipt, never as a payload
 

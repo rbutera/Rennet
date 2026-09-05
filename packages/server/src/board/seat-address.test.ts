@@ -24,7 +24,7 @@ afterEach(async () => {
 
 const boardsFor = async (generationId: string) =>
   generationBoards(generationId, async () => {
-    const server = await startBoardMcpServer({ bearer: "bearer-under-test" });
+    const server = await startBoardMcpServer({ bearer: () => "bearer-under-test" });
     started.push(server);
     return server;
   });

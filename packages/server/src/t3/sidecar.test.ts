@@ -177,6 +177,19 @@ describe("t3 sidecar: spawn, claim, credentials", () => {
     expect(readSidecarCredentials(running.claim.baseDir)?.boardBearer).toBe(running.boardBearer);
   }, 20_000);
 
+  it("reuses the recorded board bearer when it respawns on the same base dir", async () => {
+    const f = fixture();
+    const first = await start(f);
+    await stopSidecar(f.dataDir);
+    const second = await start(f);
+    // A seat's address token is DERIVED from this value, so rotating it on a respawn would
+    // change every live seat's url — and both providers refuse a turn whose MCP servers
+    // differ from the ones its session was opened with.
+    expect(second.boardBearer).toBe(first.boardBearer);
+    const dump = JSON.parse(readFileSync(join(second.claim.baseDir, "fake-spawn.json"), "utf8"));
+    expect(dump.env.RENNET_BOARD_BEARER).toBe(first.boardBearer);
+  }, 30_000);
+
   it("seeds provider binaries into settings.json without clobbering the user's other keys", async () => {
     const f = fixture();
     const userdata = join(sidecarBaseDir(f.dataDir), "userdata");

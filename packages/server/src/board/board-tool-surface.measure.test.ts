@@ -1,3 +1,4 @@
+import { normalizeOutputSchema } from "@rennet/adapters";
 import { BOARD_TARGETS, boardToolsByName } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
@@ -17,12 +18,15 @@ import { boardOutputSchema, designDraftOutputSchema } from "../runtime/lens-pipe
 
 const bytes = (value: unknown): number => Buffer.byteLength(JSON.stringify(value), "utf8");
 
-/** The `tools` array as the board server serves it: name, description, rendered input. */
+/**
+ * The `tools` array as the board server serves it: name, description, rendered input with
+ * the top-level meta keys dropped, exactly as `toolCatalogFor` serves it.
+ */
 const toolSurface = (target: (typeof BOARD_TARGETS)[number]): unknown =>
   [...boardToolsByName(target).values()].map((tool) => ({
     name: tool.name,
     description: tool.description,
-    inputSchema: z.toJSONSchema(tool.input, { io: "input" }),
+    inputSchema: normalizeOutputSchema(z.toJSONSchema(tool.input, { io: "input" })),
   }));
 
 /** What that seat's turn carries today: one board schema, or Design's board-or-absence. */
@@ -31,13 +35,18 @@ const outputSchemaFor = (target: (typeof BOARD_TARGETS)[number]): unknown =>
 
 /**
  * The declared bounds (token discipline: "every dynamic interpolation declares a byte
- * bound at its call site"). Measured 2026-09-05: the worst seat is Design at 1.44x its
- * schema, and a generation's seven seats together are 1.07x. A change that pushes past
- * these has grown what every seat sends on every request, and the PR that makes it has to
- * say so — which is why this is a test and not a script somebody once ran.
+ * bound at its call site"). Measured 2026-09-05, with the top-level `$schema`/`$id` stamps
+ * dropped as the server drops them: the worst seat is Design at 1.33x its schema, and a
+ * generation's seven seats together are 0.97x — the tool surface is SMALLER in aggregate
+ * than the output schema it replaces.
+ *
+ * The generation bound is therefore set at parity, which makes it a claim rather than
+ * slack: a change that takes a generation's seats past what they replace has grown what
+ * every seat sends on every request, and the PR that makes it has to say so. That is why
+ * this is a test and not a script somebody once ran.
  */
-const PER_SEAT_CEILING = 1.5;
-const GENERATION_CEILING = 1.15;
+const PER_SEAT_CEILING = 1.4;
+const GENERATION_CEILING = 1.0;
 
 describe("the tool surface a seat receives, beside the output schema it replaces (2.7)", () => {
   it("stays inside the declared bound against the board schema it replaces", () => {
