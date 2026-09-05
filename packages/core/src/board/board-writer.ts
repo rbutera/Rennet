@@ -95,6 +95,37 @@ export type BoardToolResult =
 /** How the board stands: still being written, finished, or declared absent. */
 export type BoardWriterState = "drafting" | "settled" | "absent";
 
+/**
+ * What one accepted write did to the board (`lens-board-tools` D11, task 4.1).
+ *
+ * The DIFF, not the board. A call adds one element and may touch one other — the parent
+ * whose `children` grew, or the group a member was re-parented out of — so what a reader
+ * needs to stay equal to the board is those elements and their positions, and the ids a
+ * removal took. Publishing the whole board per call would be quadratic in the board's own
+ * size, which is exactly what the surface it feeds is trying not to be.
+ *
+ * Emitted only for a call the writer ACCEPTED. A refusal changed nothing, so it publishes
+ * nothing; the seat reads the refusal and fixes the thing inside the same turn (D6).
+ */
+export interface BoardWrite {
+  /** Elements this call added or changed, each at its index in the board's element list. */
+  readonly changed: readonly { readonly index: number; readonly element: DraftElement }[];
+  /** Ids this call took off the board, the removed element's whole subtree included. */
+  readonly removed: readonly string[];
+  /** The document, when this call set it. */
+  readonly document?: BoardDocument;
+  /** How the board stands after the call. */
+  readonly state: BoardWriterState;
+}
+
+/**
+ * Told about every accepted write, in the order the writer applied them.
+ *
+ * Never throws into the call it describes: a publication seam is decoration over a seat's
+ * work, and a broken observer must not refuse a write the board already took.
+ */
+export type BoardWriteObserver = (write: BoardWrite) => void;
+
 // ── Options ──────────────────────────────────────────────────────────────────
 
 export interface BoardWriterOptions {
@@ -121,6 +152,12 @@ export interface BoardWriterOptions {
   readonly idPrefix?: string;
   /** The typed-kind assignment, overridable so a test can vary it. */
   readonly typedKinds?: Readonly<Record<BoardTarget, readonly DraftKind[]>>;
+  /**
+   * Told about every accepted write, so the board can be published as it is written
+   * (D11, task 4.1). Absent ⇒ nothing is published and the writer behaves exactly as
+   * before; a board with no observer is the direct-call shape a unit test builds.
+   */
+  readonly onWrite?: BoardWriteObserver;
 }
 
 /**
@@ -161,6 +198,15 @@ export interface BoardVoiceWriter {
     | undefined;
   /** What THIS voice's last `finish` said. */
   readonly voiceVerdict: () => readonly FinishPointer[] | undefined;
+  /**
+   * How many board tool calls THIS voice has made, refusals included (task 4.3).
+   *
+   * Refusals count because the seat made them and the provider billed them; a count that
+   * only saw the accepted calls would report a seat that fought the boundary ten times as
+   * cheaper than one that got it right first go. Monotonic over the lane's life, so a
+   * turn's own figure is the difference across it.
+   */
+  readonly callCount: () => number;
 }
 
 // ── Host-owned values (on no tool input; the host writes them) ───────────────
@@ -197,6 +243,8 @@ interface VoiceRecord {
   state: BoardWriterState;
   absence?: { reason: LensAbsenceReason; note: string };
   verdict?: readonly FinishPointer[];
+  /** Every call this voice made, refusals included. See `BoardVoiceWriter.callCount`. */
+  calls: number;
 }
 
 // ── The writer ───────────────────────────────────────────────────────────────
@@ -314,6 +362,9 @@ export class BoardWriter {
     kind: DraftKind,
     regions: readonly { path: string; side: "base" | "head"; start: number; end: number }[],
   ): readonly string[] {
+    // COPIED, not aliased: this method pushes into `this.elements` in place, so holding
+    // the array itself would compare the list against itself and find nothing changed.
+    const before = [...this.elements];
     const placed: string[] = [];
     for (const region of regions) {
       const citationId = this.mintId();
@@ -345,6 +396,11 @@ export class BoardWriter {
     }
     // The board moved, so any settlement over the board as it was no longer holds.
     this.reopen();
+    // Published like any other write (D11): a host-placed member is an element the
+    // reviewer sees on the board, and it lands BEFORE the seat's first turn. A stream
+    // that only carried the seat's calls would show a derived board arriving out of
+    // nowhere at settle.
+    this.publishWrite(before, this.document);
     return placed;
   }
 
@@ -365,13 +421,25 @@ export class BoardWriter {
       voiceStatus: () => this.voiceStatus(voice),
       voiceAbsence: () => this.voiceAbsence(voice),
       voiceVerdict: () => this.voiceVerdict(voice),
+      callCount: () => this.callCount(voice),
     };
+  }
+
+  /** Every board tool call this voice has made, refusals included (task 4.3). */
+  callCount(voice: BoardVoice | undefined): number {
+    return this.byVoice.get(this.voiceKey(voice))?.calls ?? 0;
   }
 
   /** Apply one tool call. Never throws on bad input: a refusal is a result. `finish` and
    * every other argument-free verb take none. A `voice` overrides the writer's own author
    * and id prefix for this call, and nothing else. */
   call(name: string, rawInput?: unknown, voice?: BoardVoice): BoardToolResult {
+    // Counted BEFORE the tool is even resolved, and for every arm below including the
+    // refusals: the seat made a call and the provider billed it, whether or not this
+    // board would take it (task 4.3).
+    this.countCall(voice);
+    const before = this.elements;
+    const beforeDocument = this.document;
     const tool = this.tools.get(name);
     if (tool === undefined) {
       return refuse(
@@ -405,7 +473,10 @@ export class BoardWriter {
     })();
     // A refusal changes nothing, including this: the seat has not settled and has not
     // un-settled, so the voice's record is exactly where it was.
-    if (result.ok) this.recordVoice(voice, result.outcome);
+    if (result.ok) {
+      this.recordVoice(voice, result.outcome);
+      this.publishWrite(before, beforeDocument);
+    }
     return result;
   }
 
@@ -414,10 +485,65 @@ export class BoardWriter {
     return (voice?.author ?? this.options.author).id;
   }
 
+  /** This voice's own record, created on first sight. */
+  private recordFor(voice: BoardVoice | undefined): VoiceRecord {
+    const key = this.voiceKey(voice);
+    const held = this.byVoice.get(key);
+    if (held !== undefined) return held;
+    const fresh: VoiceRecord = { state: "drafting", calls: 0 };
+    this.byVoice.set(key, fresh);
+    return fresh;
+  }
+
+  private countCall(voice: BoardVoice | undefined): void {
+    this.recordFor(voice).calls += 1;
+  }
+
+  /**
+   * Tell the observer what this accepted call did to the board (D11, task 4.1).
+   *
+   * The changed set is found by IDENTITY against the list as it stood: every mutation
+   * path here rebuilds only the elements it touched (`adopt` and `withoutChildren` both
+   * return the element unchanged when they change nothing, and `update` maps every other
+   * element through untouched), so the elements that are not identical to one held before
+   * are exactly the ones this call wrote. That is the diff, and it is why the stream is
+   * bounded by the call rather than by the board.
+   *
+   * Never throws into the call: a publication seam is decoration over the seat's work,
+   * and an observer that failed must not un-write a board the writer has already moved.
+   */
+  private publishWrite(
+    before: readonly DraftElement[],
+    beforeDocument: BoardDocument | undefined,
+  ): void {
+    const observer = this.options.onWrite;
+    if (observer === undefined) return;
+    const held = new Set<DraftElement>(before);
+    const changed: { index: number; element: DraftElement }[] = [];
+    this.elements.forEach((element, index) => {
+      if (!held.has(element)) changed.push({ index, element });
+    });
+    const survivors = new Set(this.elements.map((element) => element.id));
+    const removed = before
+      .filter((element) => !survivors.has(element.id))
+      .map((element) => element.id);
+    try {
+      observer({
+        changed,
+        removed,
+        ...(this.document === beforeDocument || this.document === undefined
+          ? {}
+          : { document: this.document }),
+        state: this.state,
+      });
+    } catch {
+      // Diagnostics and surfaces never change the board they describe.
+    }
+  }
+
   /** How this voice left the board after the call it just made. */
   private recordVoice(voice: BoardVoice | undefined, outcome: BoardToolOutcome): void {
-    const key = this.voiceKey(voice);
-    const record = this.byVoice.get(key) ?? { state: "drafting" as BoardWriterState };
+    const record = this.recordFor(voice);
     switch (outcome.kind) {
       case "settled":
         record.state = "settled";
@@ -440,7 +566,6 @@ export class BoardWriter {
         delete record.absence;
         break;
     }
-    this.byVoice.set(key, record);
   }
 
   /**

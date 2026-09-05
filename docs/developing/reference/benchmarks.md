@@ -37,8 +37,16 @@ Three pipelines carry stage records:
   evidence manifest, resolving the seat, the turn, deterministic verification —
   and `report-classification` is the provider turn inside it.
 
-Beside those sit the generation-wide records: `coverage`, `reveal`, and
-`first-core-board`, the last measured from the reviewer's own wait origin.
+Beside those sit `coverage` and `reveal`, and two latency figures measured from
+the reviewer's own wait origin: `first-core-board`, the first core lane that
+SETTLED, and `first-element`, the first element any board published on its
+element stream. Boards draw themselves as they are written now, so the two answer
+different questions and neither is redefined — the first element is what the
+reviewer can see, the first settled board is what they can trust, and the gap
+between them is the drafting they now watch instead of waiting through. Both name
+the lane they belong to. A generation on which no lens ever wrote an element
+records no `first-element` at all; a zero would claim a board drew itself the
+instant the generation started.
 
 ## How the modes are derived
 

@@ -34,7 +34,10 @@ import { commands, isCommandName, parseCommandInput, parseCommandOutput } from "
 // front door: a row click mints a durable session AND claims its target in one act, the
 // server path C12's cluster 7 was gated on and never came back for), plus benchmarks.list
 // and settings.setBenchmarkRecording (#731 — the Settings benchmarks panel's read over the
-// durable archive, and the default-on recording toggle beside it). A
+// durable archive, and the default-on recording toggle beside it), plus board.draft
+// (`lens-board-tools` 4.1 — the catch-up half of the element stream: the board a seat is
+// writing RIGHT NOW, so a surface that mounts mid-draft starts from what is on the board
+// rather than from a hole the live frames can never fill). A
 // dropped or renamed command fails this loudly; a NEW command is added here deliberately,
 // with its registry row — and with its row in docs/developing/reference/command-menu-exposure.md,
 // which carries a menu-exposure verdict for every command in this list.
@@ -56,6 +59,7 @@ const ABSORBED_IDS = [
   "ask.unstage",
   "attention.acknowledge",
   "benchmarks.list",
+  "board.draft",
   "board.read",
   "chat.t3Send",
   "chat.t3Session",
@@ -180,7 +184,7 @@ const MENU_INVENTORY: readonly string[] = [];
 describe("command registry invariants (#465)", () => {
   it("matches the recorded command snapshot (settings.setRepoLocus demoted, #476)", () => {
     expect(Object.keys(commands).sort()).toEqual([...ABSORBED_IDS]);
-    expect(ABSORBED_IDS).toHaveLength(104);
+    expect(ABSORBED_IDS).toHaveLength(105);
   });
 
   it("every row carries label, exposure, and locus with today's uniform values", () => {

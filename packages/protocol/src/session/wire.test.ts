@@ -293,3 +293,63 @@ describe("attentionItemSchema — refined actions (#382 M2 finding 11)", () => {
     expect(longLabel.success).toBe(false);
   });
 });
+
+describe("the lensDraft frame (`lens-board-tools` D11, task 4.1)", () => {
+  const frame = (update: unknown) => ({
+    type: "lensDraft",
+    reviewId: "rev-1",
+    event: { generation: "gen-1", lens: "sequence", revision: 3, update },
+  });
+
+  it("parses through the union, carrying an element at its position", () => {
+    const parsed = parseSessionFrame(
+      frame({
+        kind: "elements",
+        changed: [
+          {
+            index: 2,
+            element: {
+              id: "e3",
+              kind: "prose",
+              data: { author: { kind: "lens-agent", id: "seq" }, markdown: "why" },
+            },
+          },
+        ],
+        removed: [],
+      }),
+    );
+    expect(parsed.type).toBe("lensDraft");
+  });
+
+  it("parses the open, the state move and the close", () => {
+    for (const update of [
+      { kind: "opened" },
+      { kind: "state", state: "settled" },
+      { kind: "closed", state: "drafting" },
+    ]) {
+      expect(parseSessionFrame(frame(update)).type).toBe("lensDraft");
+    }
+  });
+
+  it("refuses a frame with no generation to key it by", () => {
+    // The generation is what stops a superseded attempt painting over a live one, so a
+    // frame that cannot be keyed is not a frame a reader may fold.
+    const bad = {
+      type: "lensDraft",
+      reviewId: "rev-1",
+      event: { lens: "sequence", revision: 0, update: { kind: "opened" } },
+    };
+    expect(() => parseSessionFrame(bad)).toThrow();
+  });
+
+  it("refuses an unknown update kind and a negative revision", () => {
+    expect(() => parseSessionFrame(frame({ kind: "who-knows" }))).toThrow();
+    expect(() =>
+      parseSessionFrame({
+        type: "lensDraft",
+        reviewId: "rev-1",
+        event: { generation: "gen-1", lens: "sequence", revision: -1, update: { kind: "opened" } },
+      }),
+    ).toThrow();
+  });
+});

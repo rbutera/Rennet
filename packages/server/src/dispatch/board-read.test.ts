@@ -5,6 +5,7 @@ import { GenerationStore } from "@rennet/adapters";
 import type { LensBoard, Review } from "@rennet/protocol";
 import { parseCommandOutput } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
+import { LensDraftHub } from "../runtime/lens-draft-hub";
 import { boardHandlers } from "./board";
 import { createDispatchRuntime, type DispatchDeps } from "./runtime";
 
@@ -166,6 +167,64 @@ describe("board.read — the lens-board read", () => {
         generation: "gen-1",
         lens: "design",
       }),
+    ).rejects.toThrow();
+  });
+});
+
+// The `board.draft` handler (`lens-board-tools` D11, task 4.1): the catch-up half of the
+// element stream, served straight off the daemon's live hub.
+describe("board.draft — the DRAFTING board read", () => {
+  const drafting = () => {
+    const hub = new LensDraftHub();
+    hub.opened(REVIEW_ID, "gen-1", "design");
+    hub.wrote(REVIEW_ID, "gen-1", "design", {
+      changed: [{ index: 0, element: DESIGN.elements[0] as never }],
+      removed: [],
+      state: "drafting",
+    });
+    return harness({
+      lensDraftForReview: (reviewId, generation, lens) => hub.read(reviewId, generation, lens),
+    });
+  };
+
+  it("serves the board as it stands, with the revision to fold from", async () => {
+    const out = await drafting()["board.draft"]({
+      reviewId: REVIEW_ID,
+      generation: "gen-1",
+      lens: "design",
+    });
+    const parsed = parseCommandOutput("board.draft", out);
+    expect(parsed.draft?.generation).toBe("gen-1");
+    expect(parsed.draft?.state).toBe("drafting");
+    expect(parsed.draft?.closed).toBe(false);
+    expect(parsed.draft?.elements.map(({ id }) => id)).toEqual(["p"]);
+    // The revision the snapshot is current with: the open was 0, the write is 1.
+    expect(parsed.draft?.revision).toBe(1);
+  });
+
+  it("answers honest-MISSING for a lens no lane opened, and for another generation", async () => {
+    const handlers = drafting();
+    expect(
+      await handlers["board.draft"]({ reviewId: REVIEW_ID, generation: "gen-1", lens: "flagged" }),
+    ).toEqual({ draft: null });
+    expect(
+      await handlers["board.draft"]({ reviewId: REVIEW_ID, generation: "gen-2", lens: "design" }),
+    ).toEqual({ draft: null });
+  });
+
+  it("answers honest-MISSING when no hub is wired at all", async () => {
+    expect(
+      await harness()["board.draft"]({
+        reviewId: REVIEW_ID,
+        generation: "gen-1",
+        lens: "design",
+      }),
+    ).toEqual({ draft: null });
+  });
+
+  it("an unknown review is a genuine error, like every review read", async () => {
+    await expect(
+      drafting()["board.draft"]({ reviewId: "nope", generation: "gen-1", lens: "design" }),
     ).rejects.toThrow();
   });
 });

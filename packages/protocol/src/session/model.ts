@@ -7,8 +7,11 @@
 import { z } from "zod";
 import {
   AskLifecycleSchema,
+  BoardDocumentSchema,
+  DraftElementSchema,
   generationIdForPatchset,
   LensAbsenceReasonSchema,
+  LensKindSchema,
   QuoteAnchorSchema,
   RoundReportBoardSchema,
 } from "../board";
@@ -167,6 +170,14 @@ export type LensFailureAccount = z.infer<typeof LensFailureAccountSchema>;
  * in which settled lanes became visible, and
  * `first-core-board` is measured from the round's own start to the first core lane's
  * arrival — the latency the reviewer actually waits.
+ *
+ * `first-element` is its DURABLE COMPANION, not its replacement (`lens-board-tools` D11,
+ * task 4.4): the same origin, stopped at the first element published on any board's
+ * element stream — the first thing a reviewer could actually see. Boards now draw
+ * themselves as they are written, so the two numbers answer two different questions and
+ * neither is redefined. A generation whose every lane settled absent or failed without
+ * writing an element records NO `first-element` at all, because nothing was ever on
+ * screen; an absent lane is a real settlement and a zero would be a lie about it.
  */
 export const GenerationPhaseSchema = z.enum([
   "report",
@@ -183,6 +194,7 @@ export const GenerationPhaseSchema = z.enum([
   "coverage",
   "reveal",
   "first-core-board",
+  "first-element",
 ]);
 export type GenerationPhase = z.infer<typeof GenerationPhaseSchema>;
 
@@ -198,6 +210,7 @@ export const LENS_SCOPED_PHASES = [
   "lens-repair",
   "lens-post-process",
   "first-core-board",
+  "first-element",
 ] as const satisfies readonly GenerationPhase[];
 
 /**
@@ -1408,6 +1421,93 @@ export const LensLaneSchema = z.discriminatedUnion("status", [
   z.object({ ...lensLaneBase, status: z.literal("failed"), reason: z.string() }),
 ]);
 export type LensLane = z.infer<typeof LensLaneSchema>;
+
+// ── The board's element stream (`lens-board-tools` D11, task 4.1) ────────────
+//
+// A lens board is written CALL BY CALL now, so the reviewer can watch it fill in. What
+// travels is the write, not the board: one frame per accepted tool call, carrying the
+// elements that call touched and where they sit. A whole-board snapshot per call would be
+// quadratic in the board's own size and is the shape the lane's live-line throttle exists
+// to bound; this one is bounded by the seat's accepted writes, which are tens per board.
+//
+// The board's durable copy is still written whole at settle: a drafting element carries no
+// patchset stamp and no round-delta mark (both are stamped where the board is persisted,
+// and D13 withholds the marks until the lane settles), so this stream is the LIVE view and
+// the whiteboard is the durable one. Two surfaces, neither pretending to be the other.
+
+/** How a lens board stands while it is being written. Mirrors `BoardWriterState`. */
+export const LensDraftStateSchema = z.enum(["drafting", "settled", "absent"]);
+export type LensDraftState = z.infer<typeof LensDraftStateSchema>;
+
+/** One element of a drafting board, at the position it occupies in the board's own list. */
+export const LensDraftElementSchema = z.object({
+  index: z.number().int().nonnegative(),
+  element: DraftElementSchema,
+});
+export type LensDraftElement = z.infer<typeof LensDraftElementSchema>;
+
+/**
+ * One thing that happened to a drafting lens board.
+ *
+ * `opened` is the lane opening its empty board — the RESET marker as well as the first
+ * frame, so a re-drafted generation starts the reader from nothing rather than appending
+ * a second board onto the first. `elements` is one accepted tool call: the elements it
+ * added or changed (a parent whose `children` grew is one of them), the ids it removed,
+ * and the document when it set one. No frame names the seat that made the call: Flagged
+ * runs two voices into one board and every element already carries the `author` that voice
+ * stamped on it (task 3.4), so a second attribution on the envelope would be one fact with
+ * two sources. `state` is the board's own settlement moving.
+ * `closed` is the lane settling: nothing more will land on this board, and `state` says
+ * how it finally stood — a failed lane closes still `drafting`, which is the honest shape
+ * and is why the lane's own status stays the authority on whether the LANE succeeded.
+ */
+export const LensDraftUpdateSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("opened") }),
+  z.object({
+    kind: z.literal("elements"),
+    changed: z.array(LensDraftElementSchema),
+    removed: z.array(z.string().min(1)),
+    document: BoardDocumentSchema.optional(),
+  }),
+  z.object({ kind: z.literal("state"), state: LensDraftStateSchema }),
+  z.object({ kind: z.literal("closed"), state: LensDraftStateSchema }),
+]);
+export type LensDraftUpdate = z.infer<typeof LensDraftUpdateSchema>;
+
+/**
+ * One published write, keyed so a reader can place it and so a SUPERSEDED attempt cannot
+ * paint over a live one.
+ *
+ * `generation` is the key that does that work: a re-drafting attempt owns a different
+ * generation, and a reader rendering generation B drops every frame stamped A rather than
+ * merging the two — the reveal path has had that bug once already. `revision` is monotonic
+ * per `(generation, lens)` and never resets, so a frame at or below what the reader has
+ * already folded is a duplicate and a gap says a frame was missed.
+ */
+export const LensDraftEventSchema = z.object({
+  generation: id,
+  lens: LensKindSchema,
+  revision: z.number().int().nonnegative(),
+  update: LensDraftUpdateSchema,
+});
+export type LensDraftEvent = z.infer<typeof LensDraftEventSchema>;
+
+/**
+ * The drafting board as it stands — what a reader that joined late reads once, before it
+ * starts folding frames. `revision` is the frame it is current with, so folding resumes
+ * from exactly there with no gap and no replay.
+ */
+export const LensDraftSnapshotSchema = z.object({
+  generation: id,
+  lens: LensKindSchema,
+  revision: z.number().int().nonnegative(),
+  state: LensDraftStateSchema,
+  /** True once the lane settled: nothing more will land on this board. */
+  closed: z.boolean(),
+  elements: z.array(DraftElementSchema),
+  document: BoardDocumentSchema.optional(),
+});
+export type LensDraftSnapshot = z.infer<typeof LensDraftSnapshotSchema>;
 
 /**
  * The durable preparation state for a session opened from New Chat. The session is minted

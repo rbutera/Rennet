@@ -3,6 +3,7 @@ import { boardToolsByName } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import {
   type BoardToolResult,
+  type BoardWrite,
   BoardWriter,
   type BoardWriterOptions,
   type FinishPointer,
@@ -1224,5 +1225,126 @@ describe("a refusal costs nothing and a verdict costs nothing (D6)", () => {
     );
     expect(ok(w.call("finish")).outcome.kind).toBe("settled");
     expect(voiceStatus()).toBe("settled");
+  });
+});
+
+// ── The element stream and the call count (`lens-board-tools` D11, tasks 4.1/4.3) ──
+
+describe("BoardWriter publication", () => {
+  /** A writer with its observer's writes recorded in order. */
+  const observed = (target: LintTarget = "sequence") => {
+    const writes: BoardWrite[] = [];
+    const w = writer(target, { onWrite: (write) => writes.push(write) });
+    return { w, writes };
+  };
+
+  it("publishes the elements one call touched, at their positions, and nothing else", () => {
+    const { w, writes } = observed();
+    const section = idOf(w.call("add_section", { title: "Reading Order" }));
+    expect(writes).toHaveLength(1);
+    expect(writes[0]?.changed.map(({ index, element }) => [index, element.id])).toEqual([
+      [0, section],
+    ]);
+    expect(writes[0]?.removed).toEqual([]);
+    expect(writes[0]?.state).toBe("drafting");
+
+    // A parented add touches TWO elements — the child and the parent whose `children`
+    // grew — and the stream carries both, because a reader folding only the child would
+    // hold a parent that does not name it.
+    const span = idOf(
+      w.call("cite", { path: "src/auth.ts", side: "head", start_line: 10, end_line: 14 }),
+    );
+    const step = idOf(
+      w.call("add_step", { parent_id: section, title: "Read the entry point", span_ref_id: span }),
+    );
+    const last = writes.at(-1);
+    expect(last?.changed.map(({ element }) => element.id).sort()).toEqual([section, step].sort());
+    // The child lands at its own index; the parent is re-published at the index it already
+    // occupies, so folding it is a replace and not a second copy.
+    expect(last?.changed.find(({ element }) => element.id === step)?.index).toBe(2);
+    expect(last?.changed.find(({ element }) => element.id === section)?.index).toBe(0);
+  });
+
+  it("publishes nothing for a refused call, and the board did not move either", () => {
+    const { w, writes } = observed();
+    const before = writes.length;
+    const refusal = w.call("cite", {
+      path: "src/never-changed.ts",
+      side: "head",
+      start_line: 1,
+      end_line: 2,
+    });
+    expect(refusal.ok).toBe(false);
+    expect(writes).toHaveLength(before);
+    expect(w.board().elements).toHaveLength(0);
+  });
+
+  it("publishes a removal by id, with the whole subtree it took", () => {
+    const { w, writes } = observed();
+    const section = idOf(w.call("add_section", { title: "Reading Order" }));
+    const prose = idOf(w.call("add_prose", { parent_id: section, markdown: "why" }));
+    ok(w.call("remove_element", { element_id: section }));
+    const last = writes.at(-1);
+    expect([...(last?.removed ?? [])].sort()).toEqual([prose, section].sort());
+    expect(last?.changed).toEqual([]);
+  });
+
+  it("carries the board's state on every write, so `finish` publishes the settlement", () => {
+    const { w, writes } = observed();
+    const section = idOf(w.call("add_section", { title: "Reading Order" }));
+    const span = idOf(
+      w.call("cite", { path: "src/auth.ts", side: "head", start_line: 10, end_line: 14 }),
+    );
+    idOf(
+      w.call("add_step", { parent_id: section, title: "Read the entry point", span_ref_id: span }),
+    );
+    expect(writes.at(-1)?.state).toBe("drafting");
+    expect(ok(w.call("finish")).outcome.kind).toBe("settled");
+    expect(writes.at(-1)?.state).toBe("settled");
+    expect(writes.at(-1)?.changed).toEqual([]);
+  });
+
+  it("publishes the members the HOST places, before any seat call", () => {
+    // A derived board's members land before the Noise seat's first turn (D16). A stream
+    // that only carried the seat's own calls would show a derived board appear out of
+    // nowhere at settle.
+    const { w, writes } = observed("noise");
+    const placed = w.placeMembers("noise_verdict", [
+      { path: "src/util.ts", side: "head", start: 1, end: 3 },
+    ]);
+    expect(placed).toHaveLength(1);
+    expect(writes).toHaveLength(1);
+    // One `code_ref` and one member, both host-minted, both published.
+    expect(writes[0]?.changed.map(({ element }) => element.kind)).toEqual([
+      "code_ref",
+      "noise_verdict",
+    ]);
+    expect(writes[0]?.changed.map(({ index }) => index)).toEqual([0, 1]);
+  });
+
+  it("counts every call this voice made, refusals and unknown tools included", () => {
+    const w = writer("sequence");
+    const voice = w.voice({ author });
+    expect(voice.callCount()).toBe(0);
+    idOf(voice.call("add_section", { title: "Reading Order" }));
+    expect(voice.callCount()).toBe(1);
+    // A refused call is a call the seat made and the provider billed. A count that only
+    // saw the accepted ones would report a seat fighting the boundary as the cheaper one.
+    expect(
+      voice.call("cite", { path: "src/nope.ts", side: "head", start_line: 1, end_line: 2 }).ok,
+    ).toBe(false);
+    expect(voice.call("no_such_verb", {}).ok).toBe(false);
+    expect(voice.callCount()).toBe(3);
+  });
+
+  it("counts each voice separately, because Flagged is two seats over one board", () => {
+    const w = writer("flagged");
+    const claude = w.voice({ author: { kind: "lens-agent", id: "seat:flagged-claude" } });
+    const codex = w.voice({ author: { kind: "lens-agent", id: "seat:flagged-codex" } });
+    idOf(claude.call("add_section", { title: "Findings" }));
+    idOf(claude.call("add_prose", { markdown: "one" }));
+    idOf(codex.call("add_prose", { markdown: "two" }));
+    expect(claude.callCount()).toBe(2);
+    expect(codex.callCount()).toBe(1);
   });
 });

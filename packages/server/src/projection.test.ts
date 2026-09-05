@@ -816,6 +816,15 @@ const PATH_FIELD_CLASSIFICATIONS: Readonly<Record<string, PathClassification>> =
     "board.read.output.board.document.sources.path",
     "board.read.output.board.elements.data.source.path",
     "board.read.output.board.elements.data.sources.path",
+    // The DRAFTING board read (`lens-board-tools` 4.1) serves the same elements the read
+    // above serves, one attempt earlier: the citations a seat is making right now are
+    // refused at the boundary unless they resolve against the captured patchset, so they
+    // are the same repo-relative coordinate space by construction. The live `lensDraft`
+    // frame carries the same shapes and takes the same scrub in `ws-listener.ts`.
+    "board.draft.output.draft.elements.data.path",
+    "board.draft.output.draft.document.sources.path",
+    "board.draft.output.draft.elements.data.source.path",
+    "board.draft.output.draft.elements.data.sources.path",
     // The round diff (#571): the ledger read splits `RoundRecord.diff` — a `git diff` run
     // INSIDE the repo — into per-file patches, so each `path` is the `diff --git a/… b/…`
     // header's repo-relative path, exactly like a patchset's `files.path` above. Never

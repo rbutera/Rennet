@@ -30,6 +30,7 @@ import type {
   AttentionItem,
   BoardEventFrame,
   CommandName,
+  LensDraftEvent,
   ProjectProcessEvent,
   ProjectProgressEvent,
   RoundEvent,
@@ -300,6 +301,14 @@ export interface WsListener {
    * rehydrates via `session.roundEvents`.
    */
   broadcastRoundProgress(reviewId: string, event: RoundEvent): void;
+  /**
+   * Fan one write onto a drafting lens board out, keyed by the review that owns it
+   * (`lens-board-tools` D11, task 4.1) — how a board reaches the screen as it is written.
+   * Same per-class fan-out and the same scrub as the round progress above. LIVE ONLY: a
+   * client that joins mid-draft catches up with `board.draft` and folds from there, so
+   * nothing here is replayed and nothing is logged.
+   */
+  broadcastLensDraft(reviewId: string, event: LensDraftEvent): void;
   /**
    * Ask ONE connection a question and resolve with its answer (issue #380, wire only).
    * Rejects if the connection is unknown or drops before answering. A `serverRequestResolved`
@@ -923,6 +932,43 @@ export async function startWsListener(deps: WsListenerDeps): Promise<WsListener>
     }
   };
 
+  // The live element stream behind a drafting board (`lens-board-tools` D11, task 4.1):
+  // the same per-class fan-out the round progress above takes, for the same reason. An
+  // element's prose and its citations' paths are free text, so a projected connection gets
+  // the blanket root/home scrub; `pairing-only` is excluded.
+  const broadcastLensDraft = (reviewId: string, event: LensDraftEvent): void => {
+    const rawPayload = JSON.stringify({
+      type: "lensDraft",
+      reviewId,
+      event,
+    } satisfies SessionFrame);
+    let projectedPayload: string | null = null;
+    for (const connection of connections) {
+      if (connection.socket.readyState !== WebSocket.OPEN) continue;
+      if (!connection.helloReceived || connection.connectionClass === "pairing-only") continue;
+      if (connection.connectionClass === "projected") {
+        if (projectedPayload === null) {
+          projectedPayload = JSON.stringify({
+            type: "lensDraft",
+            reviewId,
+            event: scrubProjectedValue(event, contextOf()) as LensDraftEvent,
+          } satisfies SessionFrame);
+        }
+        try {
+          connection.socket.send(projectedPayload);
+        } catch {
+          // One bad socket must not starve the rest of the fan-out.
+        }
+      } else if (connection.connectionClass === "private") {
+        try {
+          connection.socket.send(rawPayload);
+        } catch {
+          // Same isolation for the raw path.
+        }
+      }
+    }
+  };
+
   /** Send an attention frame to every authorized (helloReceived, non-pairing-only) socket. */
   const broadcastAttention = (frame: SessionFrame): void => {
     const payload = JSON.stringify(frame);
@@ -1085,6 +1131,7 @@ export async function startWsListener(deps: WsListenerDeps): Promise<WsListener>
     broadcastBoardEvent,
     broadcastAskProjection,
     broadcastRoundProgress,
+    broadcastLensDraft,
     askConnection,
     raiseAttention,
     acknowledgeAttention,

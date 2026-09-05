@@ -578,6 +578,40 @@ counted twice — that is **65,633 B of tools against 68,604 B of schema, 4.3% l
 is the one seat that costs more than it saves, at 1.34x, because it authors two typed kinds
 no other lens does.
 
+### The board's element stream
+
+The board reaches the reviewer as it is written, not only when it settles. Every write the
+board writer ACCEPTS reaches an observer the lane was opened with, and that observer
+publishes one `lensDraft` frame per call, keyed by review. What travels is the write: the
+elements that call touched and the index each holds, the ids it removed, the document when
+it set one. A whole-board snapshot per call would be quadratic in the board's own size.
+
+Four kinds of frame. `opened` when the lane creates its empty board — before any seat thread
+exists, and also the reset marker, so a re-drafted board starts a reader from nothing.
+`elements` for a write. `state` when the board's own settlement moves (`drafting`,
+`settled`, `absent`). `closed` when the lane settles, carrying how the board finally stood —
+which on a failed lane is still `drafting`, because the lane's own status is what says
+whether the LANE succeeded and restating it here would be one fact with two sources.
+
+Every frame carries its generation and a revision monotonic within `(generation, lens)`. The
+generation is the load-bearing half: a superseded drafting attempt owns a different one, so
+a reader rendering the live generation drops its frames rather than merging two attempts'
+boards. A refused call publishes nothing — the seat reads the refusal and fixes it inside
+the same turn — and a `finish` that came back with pointers publishes nothing either,
+because the board did not move.
+
+The frames are live only. A reader that joins mid-draft takes `board.draft` for the board as
+it stands plus the revision it is current with, and folds from exactly there. The hub keeps
+a closed board rather than dropping it, because a lane that FAILED persisted no board at all
+and the elements its seat did write would otherwise be readable only by whoever happened to
+be watching; the record leaves when the review's next generation opens a lane, which bounds
+the hub to five boards per review.
+
+The durable copy is still written whole, at settle, through the whiteboard. A drafting
+element carries no patchset stamp and no round-delta mark — both are stamped where the board
+is persisted, and the marks are withheld until the lane settles — so the stream is the live
+view and the whiteboard is the durable one, neither pretending to be the other.
+
 ## The live line on a lane
 
 While a seat's lane runs, the daemon holds one subscription to that seat's thread and
@@ -596,6 +630,26 @@ payload falls back to T3's summary, and contributes no line at all when the summ
 payload too, leaving the seat's own prose to speak. A known verb whose subject is a JSON blob
 keeps the verb alone (`reading`), which is also what a call still streaming its
 `input_json_delta` reads as until the input closes.
+
+A call onto the seat's own board is read as a RECEIPT rather than as a status, and it is the
+one arm ahead of everything above. `add_step` reads `added step 3`, `cite` reads ``cited
+`src/foo.ts:41-58` ``, `finish` reads `finished the board` or `finish returned 1 pointer`,
+and a refusal reads the sentence the board wrote to be read. Nothing in a board call's input
+reaches the line except the two fields that are addresses rather than payload — a citation's
+path and the element id a revision or a removal names. `packages/server/src/t3/board-receipt.ts`
+owns it, and the tool table it recognises is derived from the same `boardToolsByName` the
+served catalog is built from, so a verb added to a lens appears here with nothing edited. A
+call is read as a board call only when the tool name carries this daemon's own server name:
+a seat inherits the user's own MCP servers, and a bare `finish` from somebody else's must
+not read as this board settling.
+
+A board call also keeps speaking after it has finished, which every other tool does not. The
+daemon answers one in microseconds, so its in-flight window is invisible to a reviewer; what
+they want from the line is not what the seat is waiting on but what it just put on the
+board. The ordinal in `added step 3` is the seat's own count of that verb within the turn,
+grouped by the runtime's call id so one call's three lifecycle rows share one number — and
+omitted entirely when the activity carries no call id, because a number derived from rows
+would be wrong and would look right.
 
 A tool call is only "in flight" until it finishes. T3 emits started, updated and completed
 tool activities with the same `tool` tone, so the projector reads the lifecycle — the
@@ -1193,7 +1247,8 @@ enumeration, so a large delta costs the turn nothing and the file stays complete
 - `packages/server/src/t3/client.ts`: the daemon-side RPC client, the one Rennet module importing `effect` and `@t3tools/contracts`.
 - `packages/server/src/t3/threads.ts`: the (repository root, session id) and (repository root, generation id, seat) → thread bindings, `seatThreadTitle`, and the seat → board target and seat → voice tables.
 - `packages/server/src/board/board-mcp-server.ts`: the loopback MCP board server — lanes, per-seat addresses, liveness and revocation, and the MCP wire; `board/board-credentials.ts` is the leaf the sidecar spawn shares with it (the variable name, the server name, the seat-token derivation); `board/seat-address.ts` maps a seat thread onto its lane's board. `create-server.ts` starts the listener on the first lane and closes it on shutdown.
-- `packages/server/src/t3/latest-event.ts`: the pure thread → `LaneLatest` projector; `t3/seat-progress.ts`: the throttled subscription that feeds a lane.
+- `packages/server/src/t3/latest-event.ts`: the pure thread → `LaneLatest` projector; `t3/board-receipt.ts`: its board arm, which reads a board call back as a receipt; `t3/seat-progress.ts`: the throttled subscription that feeds a lane.
+- `packages/server/src/runtime/lens-draft-hub.ts`: the board element stream's fold and its `board.draft` snapshot; `runtime/lens-pipeline.ts` opens each lane with the observer that feeds it, `runtime/rounds.ts` stamps the generation and records `first-element`, and `ws-listener.ts` fans the `lensDraft` frame out per connection class.
 - `packages/adapters/src/t3-seat-turn.ts`: the seat leg (`createT3SeatTurn`); `council-seat-turn.ts` routes board jobs to it when the seam is present, and `runtime/rounds.ts` builds the seam per generation.
 - `packages/server/src/t3/handoff.ts`: the handoff exit, which `create-server.ts` runs for every work order that names a review.
 - `packages/server/src/bound-workspace.ts`: the one binding decision (`decideBoundWorkspace`); `create-server.ts` records it on the session as `boundRoot` and reads it back through `boundRootForSession` / `boundWorkspaceForReview`.

@@ -10,6 +10,7 @@ import type {
 import { councilSeatTurn } from "@rennet/adapters";
 import {
   type BoardVoiceWriter,
+  type BoardWrite,
   type ChangedRegion,
   carriedElementIds,
   composeFindingRound,
@@ -1344,6 +1345,20 @@ export interface LensPipelineDeps {
    */
   readonly boards?: GenerationBoards;
   /**
+   * The board's element stream (`lens-board-tools` D11, task 4.1) — how a lens board
+   * reaches the reviewer's screen as it is written rather than only when it settles.
+   *
+   * `opened` fires as each lane's empty board is created, before any seat thread exists;
+   * `write` on every accepted tool call, host-placed members included; `closed` when the
+   * lane settles, whichever way it went. Absent ⇒ nothing is published and every board is
+   * seen only at settle, which is the direct-call shape and the shape before this task.
+   */
+  readonly onBoardDraft?: {
+    readonly opened: (lens: LensKind) => void;
+    readonly write: (lens: LensKind, write: BoardWrite) => void;
+    readonly closed: (lens: LensKind) => void;
+  };
+  /**
    * Why there is no seam (review finding 1). Set by the round runtime when the daemon
    * composed a sidecar and could not bring it up, so a board seat's failure names the real
    * reason rather than the generic "no sidecar seam".
@@ -1824,11 +1839,20 @@ function resolveBoardSeatDetails(
   outputSchema?: unknown,
   onProviderSettled?: (milestone: ProviderTurnSettlement) => void,
 ) {
+  // This seat's board, looked up the ONE way a seat maps to a board (`seat-address.ts`'s
+  // rule): through `SEAT_BOARD_TARGET`, never by reading the seat name as a target — the
+  // Flagged lane runs two seats over one board, and both must count onto it. `undefined`
+  // for the round-report seat and for any caller with no board server behind it, and the
+  // metric then carries no tool-call figure rather than a zero it did not measure.
+  const seatLane = deps.boards?.lane(SEAT_BOARD_TARGET[seat]);
+  const toolCalls = seatLane === undefined ? undefined : () => seatLane.seatCalls(seat);
   return councilSeatTurn(
     jobId,
     outputSchema,
     {
-      ...(deps.t3 === undefined ? {} : { t3: { seat, seam: deps.t3 } }),
+      ...(deps.t3 === undefined
+        ? {}
+        : { t3: { seat, seam: deps.t3, ...(toolCalls === undefined ? {} : { toolCalls }) } }),
       ...(deps.t3Unavailable === undefined ? {} : { t3Unavailable: deps.t3Unavailable }),
       repoRoot: deps.repoRoot,
       // The SEAT, not just the job: `lens-draft` runs Design, Sequence and Decisions, and
@@ -2268,6 +2292,7 @@ export async function runLensPipeline(deps: LensPipelineDeps): Promise<LensPipel
   // server before any seat turn is dispatched` in `rounds.test.ts` executes the real order.
   if (deps.boards !== undefined) {
     const boards = deps.boards;
+    const draft = deps.onBoardDraft;
     await Promise.all(
       LENS_KINDS.map(async (lens) => {
         // The lane's own `target` IS the lens, so the context is handed over without it —
@@ -2277,7 +2302,17 @@ export async function runLensPipeline(deps: LensPipelineDeps): Promise<LensPipel
           target: lens,
           lint: omitLens(context),
           author: { kind: "lens-agent", id: `lens:${lens}` },
+          // The element stream's observer, bound at the ONE place a lane is opened
+          // (D11, task 4.1). Every write onto this board — a seat's call, and the members
+          // the host places on a derived board before its seat's first turn — goes
+          // through the writer this hands the observer to.
+          ...(draft === undefined
+            ? {}
+            : { onWrite: (write: BoardWrite) => draft.write(lens, write) }),
         });
+        // Published AFTER the lane exists, so the empty board a reader starts from is one
+        // the daemon is actually holding rather than one it is about to hold.
+        draft?.opened(lens);
       }),
     );
   }
@@ -2329,6 +2364,10 @@ export async function runLensPipeline(deps: LensPipelineDeps): Promise<LensPipel
     // Before the statement below and before the publishes, because both read a board that
     // is finished and neither wants a seat still able to move it.
     deps.boards?.settleLane(lens);
+    // Nothing more will land on this board, whichever way the lane went. Published here,
+    // beside the revocation, because they are one fact: the seats can no longer write and
+    // the stream can no longer carry anything (D11, task 4.1).
+    deps.onBoardDraft?.closed(lens);
     // ── What the Noise complement is allowed to subtract ────────────────────────────
     // D16d says a lane that FAILED stated nothing while a board or an admissible absence
     // is a positive statement. The rule that makes that operational is: subtract only what
@@ -2435,6 +2474,7 @@ export async function runLensPipeline(deps: LensPipelineDeps): Promise<LensPipel
           failureAccount: { attempt: deps.boardAttempt ?? 0, classification },
         });
         deps.boards?.settleLane("noise");
+        deps.onBoardDraft?.closed("noise");
         await publish(() => deps.onLensFailure?.("noise", failure, outcome.failureAccount));
         return outcome;
       }
@@ -2443,6 +2483,7 @@ export async function runLensPipeline(deps: LensPipelineDeps): Promise<LensPipel
         // this BEFORE any turn, so the lane settles with no seat at all, which is also
         // the cheapest turn in the change.
         deps.boards?.settleLane("noise");
+        deps.onBoardDraft?.closed("noise");
         await publish(() => deps.onLensAbsence?.("noise", "no-noise"));
         lastRevealAt = clock();
         return {

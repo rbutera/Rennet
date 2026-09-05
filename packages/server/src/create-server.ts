@@ -289,6 +289,7 @@ import {
   projectRoundReportBoard,
   readRoundReportBoardForRecord,
 } from "./runtime/lens-board-read";
+import { LensDraftHub } from "./runtime/lens-draft-hub";
 import { createNodePromptReader } from "./runtime/lens-pipeline";
 import { createProjectScoutRuntime, scoutQuestionnaire } from "./runtime/project-scout";
 import {
@@ -3080,6 +3081,14 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   const roundProgress = new RoundProgressHub((reviewId, event) =>
     wsListener?.broadcastRoundProgress(reviewId, event),
   );
+  // The live element stream behind every drafting board (`lens-board-tools` D11, task
+  // 4.1). Deliberately NOT the round-progress log: that log is capped at 200 events and
+  // replayed as catch-up, and a board's writes would evict the round's own phase events.
+  // The catch-up here is the `board.draft` snapshot instead. Late-bound to the WS
+  // listener exactly as the round hub is.
+  const lensDrafts = new LensDraftHub((reviewId, event) =>
+    wsListener?.broadcastLensDraft(reviewId, event),
+  );
   const promptsSrcDir = (() => {
     try {
       // Dev/test/source: `@rennet/prompts` exports `./src/index.ts`; its dir is the
@@ -3331,6 +3340,14 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     recapture,
     reviewNow,
     draftingRootFor,
+    // The element stream, bound to THIS review (`lens-board-tools` D11, task 4.1) — the
+    // same binding `emit` has, and the same key `board.read` and the round-progress
+    // channel use. The generation is stamped downstream by the rounds runtime.
+    lensDrafts: {
+      opened: (generation, lens) => lensDrafts.opened(review.id, generation, lens),
+      write: (generation, lens, write) => lensDrafts.wrote(review.id, generation, lens, write),
+      closed: (generation, lens) => lensDrafts.closed(review.id, generation, lens),
+    },
     // The packet's fan-in reads the snapshot gated fresh at the patchset's own
     // base OID. The reader is the OVERLAY-MERGED one: a review on a non-default
     // base resolves through a warmed overlay, and a bare reader would refuse it
@@ -4881,6 +4898,14 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       const account = stored.failedLensAccounts?.[lens];
       return { message, ...(account === undefined ? {} : { account }) };
     },
+    // The live drafting board, straight off the hub the pipeline publishes into
+    // (`lens-board-tools` D11, task 4.1). No generation-store check ahead of it, unlike
+    // the two reads above: the hub is keyed on the generation ITSELF and holds only what
+    // this daemon opened a lane for, so it cannot answer with another patchset's board —
+    // and the generation whose boards are being written is exactly the one not yet in the
+    // store when a reader first asks.
+    lensDraftForReview: (reviewId: string, generation: string, lens: LensKind) =>
+      lensDrafts.read(reviewId, generation, lens),
     retryRound: async ({ review }) => {
       const sessionId = sessionIdForReview(review);
       const failed = roundOperationStore.read(sessionId);

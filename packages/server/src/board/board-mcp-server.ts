@@ -57,6 +57,7 @@ import {
   type BoardToolOutcome,
   type BoardVoice,
   type BoardVoiceWriter,
+  type BoardWriteObserver,
   BoardWriter,
   type LintContext,
   type LintTarget,
@@ -121,6 +122,14 @@ export interface BoardLane {
   readonly writer: () => BoardWriter;
   /** This seat's handle on the shared board, for a caller that is not going through HTTP. */
   readonly seatWriter: (seat: string) => BoardVoiceWriter | undefined;
+  /**
+   * How many board tool calls this SEAT has made onto this board, refusals included
+   * (task 4.3) — monotonic over the lane's life, so one turn's own figure is the
+   * difference across it. `undefined` when the seat holds no address on this lane, which
+   * is a seat whose thread has not been bound: a turn that made no call is `0`, and never
+   * having known is not the same fact as none.
+   */
+  readonly seatCalls: (seat: string) => number | undefined;
   /** Revoke every address of this lane. Eager: a settled lane's seats stop writing now. */
   readonly settle: () => void;
 }
@@ -133,6 +142,16 @@ export interface OpenLaneInput {
   /** The lane's author when a seat has not named its own voice. */
   readonly author?: Author;
   readonly typedKinds?: Readonly<Record<BoardTarget, readonly DraftKind[]>>;
+  /**
+   * Told about every accepted write onto this lane's board (D11, task 4.1) — how the
+   * board reaches the reviewer's screen as it is written. Absent means nothing is
+   * published, which is the direct-call shape a test with no publication sink builds.
+   *
+   * Read on the lane's FIRST open and not afterwards: a lane is opened once per
+   * generation and its writer holds the board for the lane's whole life, so a second
+   * `openLane` hands back the lane the first one opened, observer included.
+   */
+  readonly onWrite?: BoardWriteObserver;
 }
 
 export interface BoardMcpServer {
@@ -402,6 +421,10 @@ export async function startBoardMcpServer(
         const entry = entryFor(input.generationId, seat);
         return entry === undefined ? undefined : writer.voice(entry.voice);
       },
+      seatCalls: (seat) => {
+        const entry = entryFor(input.generationId, seat);
+        return entry === undefined ? undefined : writer.callCount(entry.voice);
+      },
       settle: () => {
         for (const seat of seats) revokeSeat(input.generationId, seat);
         seats.clear();
@@ -418,6 +441,7 @@ export async function startBoardMcpServer(
           lint: input.lint,
           author: input.author ?? { kind: "lens-agent", id: `lens:${input.target}` },
           ...(input.typedKinds === undefined ? {} : { typedKinds: input.typedKinds }),
+          ...(input.onWrite === undefined ? {} : { onWrite: input.onWrite }),
         }),
         input,
         seats: new Set<string>(),

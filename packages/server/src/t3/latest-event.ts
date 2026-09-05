@@ -12,6 +12,7 @@
 // Docs: docs/developing/concepts/t3code-sidecar.md
 
 import type { LaneLatest } from "@rennet/protocol";
+import { boardCallOf, boardReceipt } from "./board-receipt";
 
 /** The honest cap on every projected line, including the `…` marker. */
 export const LATEST_EVENT_MAX_CHARS = 120;
@@ -218,7 +219,25 @@ function detailOf(activity: ThreadActivityLike): string | undefined {
  * it is, an unknown tool whose input is JSON reads as its own name, and a payload with no
  * tool name in front of it contributes NO line at all, leaving the seat's prose to speak.
  */
-export function toolLine(activity: ThreadActivityLike, repoRoot?: string): string {
+export function toolLine(
+  activity: ThreadActivityLike,
+  repoRoot?: string,
+  /** This tool's own count within the turn, for the receipt's "added step 3" (task 4.2). */
+  ordinal?: number,
+): string {
+  // The BOARD ARM, ahead of everything below it (D11, task 4.2). A board call's input is
+  // the element the seat is writing, so every path further down this function would render
+  // it as `<toolName>: <json>` — the payload in the slot the reviewer reads as speech,
+  // which is #819 arriving one call at a time. See `board-receipt.ts`.
+  const call = boardCallOf(activity);
+  if (call !== undefined) {
+    return capLine(
+      boardReceipt(call, {
+        ...(ordinal === undefined ? {} : { ordinal }),
+        ...(repoRoot === undefined ? {} : { repoRoot }),
+      }),
+    );
+  }
   const detail = detailOf(activity);
   if (detail === undefined) return capLine(activity.summary);
   const { tool, rest } = splitToolDetail(detail);
@@ -290,10 +309,38 @@ export function projectLatestEvent(
     if (newestAt === null || at > newestAt) newestAt = at;
   };
 
+  // A board call's ordinal within the turn — the "3" in "added step 3". Keyed on the
+  // runtime's own call id, so the started/updated/completed rows of ONE call share one
+  // number instead of counting to three. An activity with no call id gets no ordinal at
+  // all: the line then names the thing without a number, which is the honest degrade —
+  // a number derived from rows rather than calls would be wrong and would look right.
+  const boardOrdinal = new Map<string, number>();
+  const boardCalls = new Map<string, number>();
+
   for (const activity of thread.activities) {
     if (activity.tone !== "tool" || !inTurn(activity.turnId)) continue;
     const at = timeOf(activity.createdAt);
     witness(at);
+    // A BOARD call speaks whether or not it has finished (D11, task 4.2). The daemon
+    // answers one in microseconds, so its in-flight window is invisible to a reviewer, and
+    // what they want from the line is not what the seat is waiting on but what it just put
+    // on the board. Every other tool keeps the in-flight rule: a finished `Read` is no
+    // longer what the seat is doing, and saying it is would be a lie in the UI.
+    const call = boardCallOf(activity);
+    if (call !== undefined) {
+      const callId = toolPayloadField(activity, "toolCallId");
+      let ordinal: number | undefined;
+      if (callId !== undefined) {
+        ordinal = boardOrdinal.get(callId);
+        if (ordinal === undefined) {
+          ordinal = (boardCalls.get(call.tool) ?? 0) + 1;
+          boardCalls.set(call.tool, ordinal);
+          boardOrdinal.set(callId, ordinal);
+        }
+      }
+      consider(at, "tool", toolLine(activity, options.repoRoot, ordinal));
+      continue;
+    }
     // A completed or denied call falls back to whatever the seat is saying instead.
     if (!inFlight(activity)) continue;
     consider(at, "tool", toolLine(activity, options.repoRoot));

@@ -16,7 +16,10 @@ import { EventSchema as boardOpEventSchema } from "@wboard/core";
 import { z } from "zod";
 import { isCommandName, projectProgressEventSchema } from "../index";
 import { AskProjectionSchema as askProjectionSchema } from "./ask-log";
-import { RoundEventSchema as roundEventSchema } from "./model";
+import {
+  LensDraftEventSchema as lensDraftEventSchema,
+  RoundEventSchema as roundEventSchema,
+} from "./model";
 
 /**
  * The protocol version this build speaks. Version 3 is the context-map kill:
@@ -307,6 +310,28 @@ export const roundProgressFrameSchema = z.object({
   event: roundEventSchema,
 });
 
+/**
+ * Server → client: one write onto a lens board that is being drafted (`lens-board-tools`
+ * D11, task 4.1), keyed by the review that owns it — the same key `board.read` and
+ * `roundProgress` use, so the board surface subscribes with the id it already holds.
+ *
+ * NOT a snapshot and never re-emitted: one frame per accepted tool call, carrying the
+ * elements that call touched. It is deliberately unthrottled, because it is not the shape
+ * a throttle exists to bound — the lane's live line republishes the whole lane list on
+ * every tick and is capped at four a second for that reason, while a board's writes are
+ * tens per board and each frame stands alone. `board.draft` is the catch-up read a
+ * reader joining mid-draft takes before it starts folding these.
+ *
+ * A `projected` connection receives the privacy-scrubbed variant: an element's prose is
+ * free text and its citations carry repo-relative paths, so the blanket root/home scrub
+ * applies exactly as it does to the round-progress frame.
+ */
+export const lensDraftFrameSchema = z.object({
+  type: z.literal("lensDraft"),
+  reviewId: z.string().min(1),
+  event: lensDraftEventSchema,
+});
+
 /** Server → client: an attention item was raised, or one/more were cleared. */
 export const attentionEventFrameSchema = z
   .object({
@@ -347,6 +372,7 @@ export const sessionFrameSchema = z.discriminatedUnion("type", [
   boardEventFrameSchema,
   askProjectionFrameSchema,
   roundProgressFrameSchema,
+  lensDraftFrameSchema,
 ]);
 
 export type HelloFrame = z.infer<typeof helloFrameSchema>;
@@ -363,6 +389,7 @@ export type AttentionEventFrame = z.infer<typeof attentionEventFrameSchema>;
 export type BoardEventFrame = z.infer<typeof boardEventFrameSchema>;
 export type AskProjectionFrame = z.infer<typeof askProjectionFrameSchema>;
 export type RoundProgressFrame = z.infer<typeof roundProgressFrameSchema>;
+export type LensDraftFrame = z.infer<typeof lensDraftFrameSchema>;
 export type SessionFrame = z.infer<typeof sessionFrameSchema>;
 
 /** Parse an untrusted value into a `SessionFrame`, throwing on an invalid frame. */

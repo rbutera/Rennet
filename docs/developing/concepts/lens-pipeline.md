@@ -357,6 +357,19 @@ order regardless of which drafter finished first, because that array is
 completion bookkeeping rather than the reveal. The rounds machinery consumes the
 arrival events to drive the reveal; the pipeline only emits them.
 
+**A board is published as it is written, not only when it arrives.** Every write
+the board writer accepts — a seat's call, and the members the host places on a
+derived board before its seat's first turn — reaches an observer the lane was
+opened with, and goes out as one frame carrying the elements that call touched
+and the position each holds. A lane's `opened` frame is the empty board, ahead of
+any seat thread; its `closed` frame says nothing more will land. Every frame
+carries its generation, so a superseded drafting attempt cannot paint over the
+live one, and a revision monotonic within `(generation, lens)`, so a reader can
+tell a duplicate from a gap. The stream and the durable board are two surfaces:
+the elements travel live without patchset stamps or round-delta marks, because
+both are stamped where the board is persisted at settle. See
+[the T3 Code sidecar](t3code-sidecar.md) for the wire and its catch-up read.
+
 **Coverage is a projection, never a gate.** No step checks that every changed
 region was taught or accounted for: a board carries no skip list, composition
 runs no coverage assertion, and no reveal is blocked, failed, or annotated on
@@ -367,8 +380,8 @@ than an obligation on a seat.
 **Per-phase timings are durable and versioned.** One record per phase —
 `report` (the whole report gate) and `report-classification` (the provider turn
 inside it), each lane's `lens-draft` / `lens-repair` / `lens-post-process`, plus
-`reveal` and `first-core-board` — carries the wall-clock start and the measured
-duration. They live on the generation under a versioned `timings`
+`reveal`, `first-core-board` and `first-element` — carries the wall-clock start
+and the measured duration. They live on the generation under a versioned `timings`
 record, so no label can absorb another phase's time and the
 [benchmark archive](../reference/benchmarks.md) reads this one spine rather than
 measuring anything a second time. `lens` is discriminated on the record: the four
@@ -376,7 +389,12 @@ lane-scoped phases require it, the generation-wide ones forbid it.
 
 **Spend is durable beside the timings.** Every seat turn the pipeline runs
 (board, report, repair, on either harness) records one metric into the
-generation's collector: tokens and, when the provider gave one, its price. The orchestrator's compose turn is not yet
+generation's collector: tokens, its wall-clock duration, the number of board tool
+calls it made — refusals included, because the seat made them and the provider
+billed them — and, when the provider gave one, its price. A board turn that
+dropped any of the three would be spend the reviewer cannot see; a turn with no
+board to call carries no count rather than a zero, because zero is a real
+measurement of a seat that wrote nothing. The orchestrator's compose turn is not yet
 counted. The sum rides the lens progress frame while the generation drafts and
 lands on the generation as `usage` when it settles; a repeat drafting attempt
 adds to the prior attempt's total rather than replacing it. The round shows it
@@ -386,14 +404,18 @@ turn was metered and priced; a subscription session shows tokens and no invented
 dollar figure. Retries are counted like any other turn, and a repair is always a
 further turn on the seat's own thread.
 
-Two of those records are measured from a boundary the pipeline does not own.
+Three of those records are measured from a boundary the pipeline does not own.
 `first-core-board` starts from the moment the **reviewer's** wait began — the
 captured input becoming ready on an initial generation, the round landing and
 its report verifying on a returned one — which the caller supplies, because
 measuring from the drafting runtime's own entry would silently exclude board
-minting, partial-state cleanup and provider resolution. `reveal` ends at the
-last lane that actually revealed something; a lane that failed revealed nothing
-and does not extend the window.
+minting, partial-state cleanup and provider resolution. `first-element` shares
+that origin and stops at the first element any board published on its element
+stream, which is the first thing the reviewer could see; a lane that settles
+absent writes nothing and so is never what it names, and a generation on which
+no lens ever wrote an element records no such figure at all. `reveal` ends at
+the last lane that actually revealed something; a lane that failed revealed
+nothing and does not extend the window.
 
 **Every stage record names what ran it, one record per seat.** A single-seat
 lane emits one `lens-draft` record carrying that seat's harness and model. The

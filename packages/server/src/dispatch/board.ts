@@ -39,5 +39,25 @@ export function boardHandlers(rt: DispatchRuntime) {
         ...(failure?.account === undefined ? {} : { failureAccount: failure.account }),
       });
     },
+    /**
+     * The catch-up half of the element stream (`lens-board-tools` D11, task 4.1).
+     *
+     * `board.read` above serves what the pipeline PERSISTED at settle; this serves the
+     * board a seat is writing right now, out of the daemon's own live hub, so a surface
+     * that mounts mid-draft starts from what is on the board rather than from a hole the
+     * live frames can never fill. `revision` is the frame it is current with, so the
+     * client resumes folding from exactly there.
+     *
+     * `draft: null` is the honest missing answer — no lane of that generation ever opened
+     * this lens on this daemon. It is never a drafting board invented over a settled one.
+     */
+    "board.draft": async (rawInput) => {
+      const name = "board.draft" as const;
+      const input = parseCommandInput(name, rawInput);
+      rt.requireReviewById(input.reviewId);
+      const draft =
+        rt.deps.lensDraftForReview?.(input.reviewId, input.generation, input.lens) ?? null;
+      return parseCommandOutput(name, { draft });
+    },
   } satisfies Record<string, CommandHandler>;
 }

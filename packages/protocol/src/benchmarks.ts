@@ -62,9 +62,9 @@ export const REPO_MAP_STAGES = [
 
 /**
  * The generation's stages. `report`/`report-classification`/`lens-draft`/`lens-repair`/
- * `lens-post-process`/`reveal`/`first-core-board` are the #725 phases verbatim (`coverage` is
- * the retired cross-lens gate's phase, kept so older records parse) —
- * a benchmark stage IS a spine phase, renamed nowhere.
+ * `lens-post-process`/`reveal`/`first-core-board`/`first-element` are the #725 phases
+ * verbatim (`coverage` is the retired cross-lens gate's phase, kept so older records
+ * parse) — a benchmark stage IS a spine phase, renamed nowhere.
  *
  * There is deliberately no `lens-total`, `lens-dual-review` or `whole-process` stage:
  * those are SPANS OVER the per-seat records ({@link benchmarkLensTotals},
@@ -80,6 +80,7 @@ export const GENERATION_STAGES = [
   "coverage",
   "reveal",
   "first-core-board",
+  "first-element",
 ] as const satisfies readonly GenerationPhase[];
 
 export const benchmarkStageNameSchema = z.enum([...REPO_MAP_STAGES, ...GENERATION_STAGES]);
@@ -92,6 +93,7 @@ export const LENS_SCOPED_STAGES = [
   "lens-repair",
   "lens-post-process",
   "first-core-board",
+  "first-element",
 ] as const satisfies readonly BenchmarkStageName[];
 
 const stagesForKind: Record<BenchmarkRunKind, ReadonlySet<BenchmarkStageName>> = {

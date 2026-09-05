@@ -138,6 +138,17 @@ export interface T3SeatTurnOptions {
   readonly outputSchema?: unknown;
   readonly label: string;
   readonly collector?: MetricsCollector;
+  /**
+   * The seat's running board tool-call count, read once before the turn and once after,
+   * so the turn's own figure is the difference (`lens-board-tools` D11, task 4.3).
+   *
+   * A READER, not a number: the count lives on the board this seat writes into and moves
+   * while the turn runs, so a value passed in would be the count before the turn every
+   * time. `undefined` — from the option or from the reader — means this seat has no board
+   * to call, and the metric then carries no `toolCalls` at all rather than a zero that
+   * would read as a seat that wrote nothing.
+   */
+  readonly toolCalls?: () => number | undefined;
   readonly signal?: AbortSignal;
   /** Content-free provider settlement, the same milestone the ephemeral legs emit. The
    *  round-report's diagnostic stream reads it, and a seat leg that dropped it would make
@@ -322,16 +333,27 @@ export function createT3SeatTurn(
       `start attempt=${attempt} harness=t3:${provider} model=${model} effort=${effort} seat=${seat}`,
     );
     const inline = inlineContextMetric(prompt);
+    // Read BEFORE the turn is dispatched: the board's counter is monotonic over the lane's
+    // life, so this turn's own calls are what it moved by. On attempt 0 the seat has no
+    // address yet and this reads `undefined`, which the difference below treats as the
+    // zero it is — the seat cannot have called a board it had not been given.
+    const callsBefore = options.toolCalls?.();
     const record = (
       status: "emitted" | "failed",
       settled: T3SettledTurn | null,
       error?: string,
     ): void => {
+      const callsAfter = options.toolCalls?.();
+      // Absent only when the seat had no board AT ALL. A seat that had one and called it
+      // zero times records `0`, which is a real and interesting measurement: it is what a
+      // turn that ended without writing looks like.
+      const toolCalls =
+        callsAfter === undefined ? undefined : Math.max(0, callsAfter - (callsBefore ?? 0));
       // The seat rides on the settle line as it does on the start line: three lenses share
       // the `board.lens-draft` label, and without it their timings cannot be told apart.
       logSeat(
         label,
-        `${status} attempt=${attempt} seat=${seat} in ${now() - started} ms${error === undefined ? "" : ` (${error})`}`,
+        `${status} attempt=${attempt} seat=${seat} in ${now() - started} ms${toolCalls === undefined ? "" : ` tools=${toolCalls}`}${error === undefined ? "" : ` (${error})`}`,
       );
       options.collector?.record({
         label,
@@ -341,6 +363,7 @@ export function createT3SeatTurn(
         // T3 runs the user's own `claude`/`codex` logins; no credential source is reported.
         apiKeySource: null,
         ...inline,
+        ...(toolCalls === undefined ? {} : { toolCalls }),
         status,
         // The provider's own clock for the turn when it reported one; the wrapper's
         // wall clock (thread binding, dispatch, the wait) only when it did not.

@@ -155,6 +155,51 @@ describe("createT3SeatTurn", () => {
     expect(collector.metrics.map((m) => m.label)).toEqual(["board.lens-draft", "board.lens-draft"]);
   });
 
+  it("records each turn's OWN board tool-call count beside its tokens and its duration", async () => {
+    // `lens-board-tools` D11, task 4.3. The board's counter is monotonic over the lane's
+    // life, so a turn's own figure is what it moved by; recording the raw counter would
+    // bill the drafting turn's calls to the repair as well.
+    const collector = createMetricsCollector();
+    const { seam, client } = stubs([settled({ structuredOutput: {}, durationMs: 100 })]);
+    let calls = 0;
+    // The seat's calls land WHILE its turn runs, so the stub moves the board's counter as
+    // the turn settles: seven on the drafting turn, two more on the repair.
+    const perTurn = [7, 2];
+    client.waitForTurnSettled.mockImplementation(async () => {
+      calls += perTurn.shift() ?? 0;
+      return settled({ structuredOutput: {}, durationMs: 100 });
+    });
+    const turn = createT3SeatTurn(seam, { ...options, collector, toolCalls: () => calls });
+    await turn("BASE", 0);
+    await turn("REPAIR", 1);
+
+    expect(calls, "the board saw nine calls in all").toBe(9);
+    expect(collector.metrics.map((metric) => metric.toolCalls)).toEqual([7, 2]);
+    // Beside, not instead of: the other two figures still reach the same record.
+    expect(collector.metrics[0]?.latencyMs).toBe(100);
+    expect(collector.metrics[0]?.label).toBe("board.lens-draft");
+  });
+
+  it("records ZERO for a seat that had a board and called it not once", async () => {
+    // A real and interesting measurement — it is what a turn that ended without writing
+    // looks like — and distinct from a seat that had no board at all.
+    const collector = createMetricsCollector();
+    const { seam } = stubs([settled({ structuredOutput: {} })]);
+    await createT3SeatTurn(seam, { ...options, collector, toolCalls: () => 0 })("P", 0);
+    expect(collector.metrics[0]?.toolCalls).toBe(0);
+  });
+
+  it("carries NO count when the seat has no board lane at all", async () => {
+    // THE CONTROL FOR 4.3: drop the reader on this seat path and the count leaves the
+    // record entirely. A `0` here would say the seat wrote nothing when the truth is that
+    // nothing was measured.
+    const collector = createMetricsCollector();
+    const { seam } = stubs([settled({ structuredOutput: {} })]);
+    await createT3SeatTurn(seam, { ...options, collector })("P", 0);
+    expect(collector.metrics[0]?.toolCalls).toBeUndefined();
+    expect("toolCalls" in (collector.metrics[0] ?? {})).toBe(false);
+  });
+
   it("takes the whole figure when the session counter restarted below the previous turn", async () => {
     // T3 restarting the Claude session between draft and repair begins a new cumulative
     // counter; subtracting the old watermark would clamp the repair to zero spend.

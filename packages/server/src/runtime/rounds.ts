@@ -43,6 +43,7 @@ import {
   WhiteboardClient,
 } from "@rennet/adapters";
 import type {
+  BoardWrite,
   CodexExecutor,
   DeltaPacket,
   HarnessPort,
@@ -649,7 +650,24 @@ export interface RoundInput {
    * bound rather than inventing an earlier origin.
    */
   readonly firstBoardWaitOriginMs?: number;
+  /**
+   * Where this generation's boards are published as they are written (`lens-board-tools`
+   * D11, task 4.1). Bound to the REVIEW by the caller, because a review is what a board
+   * reader subscribes by (`board.read` and the round-progress channel both key on it) and
+   * this runtime holds a session; the generation is stamped here, where it is known.
+   *
+   * Absent ⇒ nothing is published and a board is seen only when it settles, which is the
+   * direct-call shape and the behaviour before this task.
+   */
+  readonly lensDrafts?: LensDraftSink;
   readonly signal?: AbortSignal;
+}
+
+/** Where a generation's board writes are published, keyed by the review the caller bound. */
+export interface LensDraftSink {
+  readonly opened: (generation: string, lens: LensKind) => void;
+  readonly write: (generation: string, lens: LensKind, write: BoardWrite) => void;
+  readonly closed: (generation: string, lens: LensKind) => void;
 }
 
 export interface RoundDraftPlan {
@@ -1376,6 +1394,44 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
     const onPhaseTiming = (timing: GenerationPhaseTiming): void => {
       reveal.timings.push(timing);
     };
+    /**
+     * The board's element stream, bound to this generation (`lens-board-tools` D11,
+     * task 4.1), and the origin of TIME-TO-FIRST-ELEMENT (task 4.4).
+     *
+     * The two figures are companions, not a replacement. `first-core-board` still stops
+     * at the first core lane that SETTLED — the wait for a finished board. This one stops
+     * at the first element any board published, which is the first thing the reviewer
+     * could see, because boards now draw themselves as they are written. Same origin, so
+     * the two are directly comparable and the gap between them is the drafting the
+     * reviewer now watches instead of waits through.
+     *
+     * A lane that settles ABSENT writes no element and so contributes nothing here; a
+     * generation whose every lane settled absent or failed records no `first-element` at
+     * all. That is the honest shape — nothing was ever on screen — and a zero would claim
+     * the opposite.
+     */
+    const draftSink = input.lensDrafts;
+    const lensDrafts: LensPipelineDeps["onBoardDraft"] =
+      draftSink === undefined
+        ? undefined
+        : {
+            opened: (lens) => draftSink.opened(attemptGeneration.id, lens),
+            write: (lens, write) => {
+              if (
+                write.changed.length > 0 &&
+                reveal.timings.every((timing) => timing.phase !== "first-element")
+              ) {
+                reveal.timings.push({
+                  phase: "first-element",
+                  lens,
+                  startedAtMs: generationStartedAt,
+                  durationMs: Math.max(0, clock() - generationStartedAt),
+                });
+              }
+              draftSink.write(attemptGeneration.id, lens, write);
+            },
+            closed: (lens) => draftSink.closed(attemptGeneration.id, lens),
+          };
     const onReportDiagnostic =
       onProgress === undefined
         ? undefined
@@ -1518,6 +1574,7 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
           }),
       onBoardArrival,
       onPhaseTiming,
+      ...(lensDrafts === undefined ? {} : { onBoardDraft: lensDrafts }),
       // A `"partial"` start is a REPEATED whole-board attempt over this generation — the
       // redraft wave 3's restart recovery runs. It draws the reduced per-lane ladder
       // (#725 7.5), which is what bounds the cost of one restart to less than a full

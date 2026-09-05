@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BoardMetaStore, GenerationStore, RoundRecordStore } from "@rennet/adapters";
 import type {
+  BoardWrite,
   CodexExecutor,
   DeltaPacket,
   HarnessPort,
@@ -21,6 +22,7 @@ import {
   GenerationSchema,
   generationIdForDispatch,
   LENS_KINDS,
+  type LensKind,
   lensAdmitsAbsence,
   ROUND_NO_REGEN,
   type RoundEvent,
@@ -590,6 +592,138 @@ describe("createRoundsRuntime", () => {
     expect(order[0], "the first turn is not a lens").not.toSatisfy((entry: string) =>
       lensTurns.has(entry),
     );
+  });
+
+  it("publishes every lens board's element stream through a REAL round, and times the first element", async () => {
+    // `lens-board-tools` D11, tasks 4.1 and 4.4, asserted at the ROUND level for the
+    // reason the lane-opening test above states: the publication path is guarded on
+    // `deps.boards` AND on `input.lensDrafts`, and only the round runtime supplies the
+    // first while only the composition root supplies the second. Driven through
+    // `runLensPipeline` alone, both guards would be satisfied by the test's own arguments
+    // and the production wire could be missing — which is exactly how the board handle
+    // `rounds.ts` composed and dropped shipped ticked, twice in this change.
+    //
+    // THE CONTROL FOR 4.1: drop the `onWrite` observer from the pipeline's `openLane` and
+    // this reddens with `seats wrote through the stream: expected 0 to be greater than 0`,
+    // run 2026-09-05.
+    const frames: {
+      kind: "opened" | "write" | "closed";
+      generation: string;
+      lens: LensKind;
+      write?: BoardWrite;
+    }[] = [];
+    const clock = (() => {
+      let now = 1_000;
+      return () => {
+        now += 10;
+        return now;
+      };
+    })();
+    const runtime = createRoundsRuntime(
+      withFakeT3Seats(baseDeps({ now: clock }), fixtureGenerationBoards()),
+    );
+    const { boardGeneration } = await runtime.runRound(
+      roundInput({
+        firstBoardWaitOriginMs: 1_000,
+        lensDrafts: {
+          opened: (generation, lens) => frames.push({ kind: "opened", generation, lens }),
+          write: (generation, lens, write) =>
+            frames.push({ kind: "write", generation, lens, write }),
+          closed: (generation, lens) => frames.push({ kind: "closed", generation, lens }),
+        },
+      }),
+    );
+
+    // Every lane opened, every lane closed, and every frame stamped with THIS generation —
+    // the key that stops a superseded attempt painting over a live one.
+    const opened = frames.filter(({ kind }) => kind === "opened").map(({ lens }) => lens);
+    const closed = frames.filter(({ kind }) => kind === "closed").map(({ lens }) => lens);
+    expect([...opened].sort()).toEqual([...LENS_KINDS].sort());
+    expect([...closed].sort()).toEqual([...LENS_KINDS].sort());
+    expect(frames.every(({ generation }) => generation === boardGeneration.id)).toBe(true);
+
+    // The writes are real: elements landed on real boards through the real writer.
+    const writes = frames.filter(({ kind }) => kind === "write");
+    expect(writes.length, "seats wrote through the stream").toBeGreaterThan(0);
+    expect(
+      writes.some(({ write }) => (write?.changed.length ?? 0) > 0),
+      "at least one write carried an element",
+    ).toBe(true);
+
+    // POSITION, not membership. A lane's board must be opened before anything is written
+    // into it and closed after everything is — a set of frames is satisfied by a run that
+    // publishes them in any order, which is what a reader folding them would then get wrong.
+    for (const lens of LENS_KINDS) {
+      const forLens = frames.filter((frame) => frame.lens === lens);
+      expect(forLens[0]?.kind, `${lens} opened first`).toBe("opened");
+      expect(forLens.at(-1)?.kind, `${lens} closed last`).toBe("closed");
+    }
+
+    // 4.4 — time-to-first-element, beside time-to-first-core-board and never instead of it.
+    const timings = boardGeneration.timings?.phases ?? [];
+    const firstElement = timings.filter(({ phase }) => phase === "first-element");
+    expect(firstElement, "exactly one first-element record").toHaveLength(1);
+    expect(firstElement[0]?.startedAtMs, "measured from the reviewer's own origin").toBe(1_000);
+    expect(firstElement[0]?.lens, "the lane that put it on screen").toBeDefined();
+    const firstCore = timings.find(({ phase }) => phase === "first-core-board");
+    expect(firstCore, "first-core-board still recorded").toBeDefined();
+    expect(firstCore?.startedAtMs, "the two figures share an origin").toBe(1_000);
+    // The first element is on screen no later than the first settled board, which is the
+    // whole reason the second figure exists.
+    expect(firstElement[0]?.durationMs).toBeLessThanOrEqual(firstCore?.durationMs ?? 0);
+  });
+
+  it("never names a lane that settled absent as the first element on screen", async () => {
+    // What happens to `first-element` on a lane that writes nothing (4.4). A settle-absent
+    // turn declares its absence and writes no element, so it puts nothing on the reviewer's
+    // screen and cannot be what the figure names. Design, Decisions and Flagged declare
+    // theirs here; Sequence is the only lane that writes.
+    //
+    // The stronger claim — a generation with NO element at all records no figure — is not
+    // asserted from here because it is unreachable through `runRound`: a generation whose
+    // lenses all failed throws before any timing is read (`The regeneration drafted no lens
+    // boards`), and Sequence admits no absence. The rule is in the protocol's own note on
+    // the phase; what is executable is this half.
+    const wroteFor: string[] = [];
+    const runtime = createRoundsRuntime(
+      withFakeT3Seats(
+        baseDeps({
+          resolveClaudePort: async () =>
+            fakeClaudePort([], (prompt, label) => {
+              const lens = lensFromPrompt(prompt, label);
+              if (lens === "design") return { absence: "no-spec" };
+              if (lens === "decisions") return { absence: "no-decisions" };
+              if (lens === "flagged") return { absence: "no-findings" };
+              return cleanBody(lens);
+            }),
+        }),
+        fixtureGenerationBoards(),
+      ),
+    );
+    const { boardGeneration } = await runtime.runRound(
+      roundInput({
+        lensDrafts: {
+          opened: () => undefined,
+          write: (_generation, lens, write) => {
+            if (write.changed.length > 0) wroteFor.push(lens);
+          },
+          closed: () => undefined,
+        },
+      }),
+    );
+    // The three absences really were declared, so the assertion below is about lanes that
+    // settled rather than lanes that never ran.
+    expect(boardGeneration.absentLenses?.design).toBe("no-spec");
+    expect(boardGeneration.absentLenses?.decisions).toBe("no-decisions");
+    expect(boardGeneration.absentLenses?.flagged).toBe("no-findings");
+    expect(wroteFor).not.toContain("design");
+    expect(wroteFor).not.toContain("decisions");
+    expect(wroteFor).not.toContain("flagged");
+    const firstElement = (boardGeneration.timings?.phases ?? []).filter(
+      ({ phase }) => phase === "first-element",
+    );
+    expect(firstElement).toHaveLength(1);
+    expect(firstElement[0]?.lens).toBe("sequence");
   });
 
   it("records a RoundRecord pinning asks, commit range, minted+board generation, and report board", async () => {
