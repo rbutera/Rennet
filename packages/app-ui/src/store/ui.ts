@@ -24,7 +24,16 @@ export interface UiState {
    *  session. That is why the write is `setFolded(id, folded)` and not a bare
    *  toggle: from an absent entry a flip has no current value to invert. */
   readonly sidebarFolds: Readonly<Record<string, boolean>>;
-  /** The chat dock is open (its slot is always mounted; this toggles its visible width). */
+  /**
+   * The chat dock is open (its slot is always mounted; this toggles its visible width).
+   *
+   * OPEN is the default (#849). The dock holds the session's own orchestrator thread —
+   * #823 settled that a lens transcript gets its own surface — so it is the reviewer's
+   * conversation with Rennet, not an optional panel, and a reviewer who has to know to
+   * open it lands on a review with the conversation hidden. A reviewer's explicit close
+   * still sticks: `setChatOpen(false)` writes this field and nothing re-opens it, so the
+   * dock stays shut across every navigation for the rest of the app's run.
+   */
   readonly chatOpen: boolean;
   /** Monotonic signal for moving keyboard focus into the always-mounted chat composer. */
   readonly chatComposerFocusRevision: number;
@@ -113,7 +122,9 @@ export interface UiSlice {
 const initialUi: UiState = {
   sidebarOpen: true,
   sidebarFolds: {},
-  chatOpen: false,
+  // Open on arrival (#849). Nothing persists this slice, so there is no stored `false`
+  // from an older build to migrate: every launch starts from exactly this value.
+  chatOpen: true,
   chatComposerFocusRevision: 0,
   // 420 — the INVENTORY §1 double-click reset, made the default too (proposal
   // reconciliation 8: C01's interim 360 corrected here, one number, inventory wins).

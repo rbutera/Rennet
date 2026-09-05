@@ -7,7 +7,7 @@
 // during verification): dropping the `inert` wiring in layout.tsx reddens the
 // takeover assertion below.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { useRennetStore } from "../store";
+import { createRennetStore, useRennetStore } from "../store";
 import { act, cleanup, fireEvent, mount, waitFor } from "../test/dom";
 import { frontDoorBridge } from "../test/fixtures/front-door";
 import { RennetRouterApp } from "./app";
@@ -219,5 +219,62 @@ describe("corner-slot focus hand-off across a collapse (C20)", () => {
     fireEvent.click(expand);
     const collapseAgain = await waitFor(() => getByLabelText("Collapse sidebar"));
     expect(document.activeElement).toBe(collapseAgain);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The dock is OPEN on arrival at a review (#849).
+//
+// The dock holds the session's own orchestrator thread (#823), so a reviewer who lands on
+// a review with it shut is looking at a screen with the conversation hidden and no sign
+// that there is one. What is asserted here is the RENDERED dock — `inert` shed and a real
+// width — off the app's genuine initial store state, never a value these tests chose.
+//
+// The second test is the fence around the first: "open by default" must not become "opens
+// itself again", which is what a per-route effect would do. It is a SEQUENCE assertion
+// (open, then closed by the reviewer, then still closed after a navigation) rather than a
+// set of membership checks, because the failure mode is entirely about order.
+//
+// WHAT THESE CANNOT CATCH: they assert the dock's box, not its contents, so a dock that
+// opens on time and shows nothing useful passes both. And "sticks across a navigation" is
+// proved for a session-to-session move; a route class neither test visits could still
+// re-open it, and nothing here would see that.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("chat dock open by default (#849)", () => {
+  /** The ui state a launch really produces. There is no persist middleware, so a fresh
+   *  store IS the app's cold-start state — this reads it rather than restating it. */
+  const launchUi = () =>
+    act(() => useRennetStore.setState({ ui: createRennetStore().getState().ui }));
+
+  it("renders the dock open on arrival at a session route, with nobody opening it", async () => {
+    launchUi();
+    const { getByTestId } = mount(
+      <RennetRouterApp bridge={frontDoorBridge()} history={memoryHistory("/s/review-1")} />,
+    );
+    await waitFor(() => expect(getByTestId("chat-dock-slot").hasAttribute("inert")).toBe(false));
+    // 420 chat + the 4px canvas gutter — the same width an explicitly opened dock renders.
+    expect(getByTestId("chat-dock-slot").style.width).toBe("424px");
+  });
+
+  it("keeps a reviewer's close shut when they navigate to another session", async () => {
+    launchUi();
+    const history = memoryHistory("/s/review-1");
+    const { getByTestId } = mount(<RennetRouterApp bridge={frontDoorBridge()} history={history} />);
+    await waitFor(() => expect(getByTestId("chat-dock-slot").hasAttribute("inert")).toBe(false));
+
+    // The reviewer closes it.
+    act(() => useRennetStore.getState().uiActions.setChatOpen(false));
+    await waitFor(() => expect(getByTestId("chat-dock-slot").hasAttribute("inert")).toBe(true));
+    expect(getByTestId("chat-dock-slot").style.width).toBe("0px");
+
+    // ...and it stays closed through a navigation to a different review.
+    act(() => history.navigate("/s/review-2"));
+    await waitFor(() =>
+      expect(getByTestId("chat-dock-slot").getAttribute("data-open")).toBe("false"),
+    );
+    expect(getByTestId("chat-dock-slot").hasAttribute("inert")).toBe(true);
+    expect(getByTestId("chat-dock-slot").style.width).toBe("0px");
+    expect(useRennetStore.getState().ui.chatOpen).toBe(false);
   });
 });
