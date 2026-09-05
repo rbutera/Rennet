@@ -1,5 +1,5 @@
-import { AnchorReveal } from "../../review";
 import type { ElementOf } from "../registry";
+import { BoardAnchorReveal } from "./board-anchor-reveal";
 import { toCodeRef, useBoardPatchsetId } from "./element-context";
 
 // `code_ref` (C05 3.2) — a citation into the captured patchset (code is never copied,
@@ -12,7 +12,7 @@ export function CodeRefElement({ element }: { readonly element: ElementOf<"code_
   const patchsetId = useBoardPatchsetId();
   return (
     <div data-kind="code_ref">
-      <AnchorReveal citations={[toCodeRef(element, patchsetId)]} />
+      <BoardAnchorReveal citations={[toCodeRef(element, patchsetId)]} />
     </div>
   );
 }

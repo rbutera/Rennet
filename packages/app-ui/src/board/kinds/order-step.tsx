@@ -1,6 +1,6 @@
-import { AnchorReveal } from "../../review";
 import { InlineQuoteHighlight } from "../quote-highlight";
 import type { ElementOf } from "../registry";
+import { BoardAnchorReveal } from "./board-anchor-reveal";
 import { useCodeRefOf } from "./element-context";
 import { BoardChildren } from "./renderers";
 
@@ -16,7 +16,7 @@ export function OrderStepElement({ element }: { readonly element: ElementOf<"ord
       <h3 className="font-semibold text-base text-foreground leading-snug">
         <InlineQuoteHighlight text={title} elementId={element.id} />
       </h3>
-      {spanRef && <AnchorReveal citations={[spanRef]} />}
+      {spanRef && <BoardAnchorReveal citations={[spanRef]} />}
       {children.length > 0 && <BoardChildren ids={children} />}
     </div>
   );

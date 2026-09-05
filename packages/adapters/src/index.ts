@@ -14,6 +14,7 @@ export {
   type Timers,
   type WatchFn,
 } from "./baseline-advance-watcher";
+export { readBmadSpec, resolveBmadPaths, selectedBmadSpec } from "./bmad-spec-reader";
 export {
   type BoardMetaInput,
   type BoardMetaRecord,
@@ -288,6 +289,7 @@ export {
   type GitLabPrSubmissionCommandRunner,
   type GitLabPrSubmissionConfig,
 } from "./gitlab-pr-submission";
+export { readGrillSpec, selectedGrillDocPaths } from "./grill-spec-reader";
 export { claudeHandoffRunPort } from "./handoff-run-live";
 export {
   compareVersions,
@@ -305,6 +307,7 @@ export {
   type VersionRange,
   wslDiscoveryDeps,
 } from "./harness-discovery";
+export { readKiroSpec, selectedKiroFeatureName } from "./kiro-spec-reader";
 export {
   activePatchset,
   type BuildReviewContextManifestDeps,
@@ -582,6 +585,7 @@ export {
   SnapshotOverlayStore,
 } from "./snapshot-overlay-store";
 export { SqliteReviewStore } from "./sqlite-review-store";
+export { readSuperpowersSpec, selectedSuperpowersArtifacts } from "./superpowers-spec-reader";
 export {
   createT3SeatTurn,
   outputSchemaFor,

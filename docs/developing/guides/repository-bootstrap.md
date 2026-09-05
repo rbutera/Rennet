@@ -102,8 +102,11 @@ Use Nx for builds, tests, lint, and type checks. The full local and CI gate is:
 pnpm check
 ```
 
-It runs `format`, `architecture`, `licenses`, `lint`, `typecheck`, `test`, and
-`build` across the workspace. Use the affected gate while iterating:
+It runs `format`, `architecture`, `licenses`, `vendor-ledger`, `lint`,
+`typecheck`, and `build` across the workspace, then `test` and `dogfood-test`
+together. `dogfood-test` is the uncacheable suite that reads the live rennet
+checkout; scheduling it in the same `run-many` keeps it off the critical path.
+Use the affected gate while iterating:
 
 ```sh
 pnpm nx affected -t lint,typecheck,test,build
@@ -122,20 +125,51 @@ the target inputs.
 
 Do not run concurrent Nx processes in one worktree. Nx can race its task-history
 database and report `FOREIGN KEY constraint failed` or `disk I/O error` after a
-target succeeds. Nx 23.1 shares the default artifact cache through the main
-worktree, so an active worktree uses its own cache for a gate:
+target succeeds. Nx 23.1 shares both halves of the cache through the main
+worktree, so every worktree gates with the same command:
 
 ```sh
-CI=true NX_DAEMON=false NX_CACHE_DIRECTORY="$PWD/.nx-isolated/cache" pnpm check
+CI=true NX_DAEMON=false pnpm check
 ```
 
 For that exact failure, wait for every Nx process in the worktree to exit, then
-run `pnpm nx reset --onlyDaemon` without `NX_DAEMON=false` and remove
-`.nx-isolated/`. The daemon-only reset stops the daemon without a full reset;
-a bare `pnpm nx reset` from a worktree can clear the main checkout's cache and
-workspace data. Lane-local caches isolate cleanup, so the gate does not need
-`--parallel=false`. Long-running, interactive, and end-to-end targets are not
-cacheable.
+run `pnpm nx reset --onlyDaemon` without `NX_DAEMON=false`. The daemon-only reset
+stops the daemon without a full reset; a bare `pnpm nx reset` from a worktree can
+clear the main checkout's cache and workspace data. Long-running, interactive,
+and end-to-end targets are not cacheable.
+
+### Keep the two halves of the cache together
+
+Nx stores a cache entry in two places. The artifact store holds the files a hit
+restores and honours `NX_CACHE_DIRECTORY`. The metadata database decides whether
+a task is a hit at all, lives in `.nx/workspace-data`, and does not honour that
+variable — Nx resolves it against the main worktree so every worktree shares one
+database. Nx declares a hit from the database alone and never checks that the
+artifact store still holds the bytes.
+
+Redirecting one store without the other therefore manufactures hits that restore
+nothing: a build reports `Cache: 1/1 hit (100%)`, exits 0, writes no `dist/`, and
+whatever depends on it fails on a missing bundle. Set both variables or neither:
+
+```sh
+# isolate a worktree's whole cache, both halves together
+NX_CACHE_DIRECTORY="$PWD/.nx-isolated/cache" \
+NX_WORKSPACE_DATA_DIRECTORY="$PWD/.nx-isolated/workspace-data" pnpm check
+```
+
+`pnpm check` runs `scripts/nx-cache-doctor.mjs` first. It refuses a split pair
+with the corrected command, and it deletes any entry whose recorded byte count is
+no longer on disk, which turns a silently wrong build back into an honest miss.
+Run it on its own with `pnpm nx:doctor` after deleting cache files by hand.
+
+Worktrees share one artifact store on purpose. A per-worktree store was tried, to
+stop one worktree's cleanup deleting another's live artifacts, but that cleanup
+existed only to remove the per-worktree store: removing both removes the hazard
+too. What remains is a bare `pnpm nx reset` from a worktree, which the section
+above already rules out, and which `pnpm nx:doctor` recovers from — the affected
+worktrees rebuild rather than restore nothing. Reaching for `NX_CACHE_DIRECTORY`
+the next time worktrees contend does not help, because it does not move the half
+that decides a hit.
 
 ## Place new work
 

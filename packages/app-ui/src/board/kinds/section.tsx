@@ -1,6 +1,7 @@
 import { DesignSectionMetadata, SourceChips, SpecDeltaBadge } from "../design-meta";
 import { InlineQuoteHighlight } from "../quote-highlight";
 import type { ElementOf } from "../registry";
+import { useDesignMetaVisible } from "./element-context";
 import { BoardChildren } from "./renderers";
 
 // `section` (C05 3.4, registry totality) — a nested section element encountered inside
@@ -11,6 +12,7 @@ import { BoardChildren } from "./renderers";
 
 export function SectionElement({ element }: { readonly element: ElementOf<"section"> }) {
   const { title, children, sources, spec_delta: specDelta } = element.data;
+  const designMeta = useDesignMetaVisible();
   return (
     <section
       id={element.id}
@@ -24,7 +26,7 @@ export function SectionElement({ element }: { readonly element: ElementOf<"secti
           <InlineQuoteHighlight text={title} elementId={element.id} />
         </h3>
         {specDelta ? <SpecDeltaBadge delta={specDelta} /> : null}
-        <SourceChips sources={sources ?? []} className="ml-auto" />
+        <SourceChips sources={designMeta ? (sources ?? []) : []} className="ml-auto" />
       </div>
       <DesignSectionMetadata taskManifest={element.data.task_manifest} />
       <BoardChildren ids={children} />

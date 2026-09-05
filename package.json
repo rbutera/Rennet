@@ -88,12 +88,14 @@
       },
       "test": {
         "cache": true,
-        "command": "node --test scripts/t3-upstream.test.mjs scripts/stage-t3-sidecar.test.mjs",
+        "command": "node --test scripts/t3-upstream.test.mjs scripts/stage-t3-sidecar.test.mjs scripts/nx-cache-doctor.test.mjs",
         "inputs": [
           "{workspaceRoot}/scripts/t3-upstream.mjs",
           "{workspaceRoot}/scripts/t3-upstream.test.mjs",
           "{workspaceRoot}/scripts/stage-t3-sidecar.mjs",
           "{workspaceRoot}/scripts/stage-t3-sidecar.test.mjs",
+          "{workspaceRoot}/scripts/nx-cache-doctor.mjs",
+          "{workspaceRoot}/scripts/nx-cache-doctor.test.mjs",
           "sharedGlobals"
         ]
       }
@@ -104,13 +106,14 @@
     "architecture": "nx run rennet:architecture",
     "audit": "nx run rennet:audit",
     "build": "nx run-many -t build",
-    "check": "nx run-many -t format,architecture,licenses,vendor-ledger,lint,typecheck,build && nx run-many -t test --exclude 't3code-*'",
+    "check": "node scripts/nx-cache-doctor.mjs && nx run-many -t format,architecture,licenses,vendor-ledger,lint,typecheck,build && nx run-many -t test,dogfood-test --exclude 't3code-*'",
     "check:affected": "nx affected -t lint,typecheck,test,build",
     "check:event-store": "nx run event-store-publish-failure:check",
     "dev": "nx run rennet-desktop:dev",
     "e2e": "nx run rennet-desktop:e2e",
     "graph": "nx graph",
     "notices": "node scripts/generate-notices.mjs",
+    "nx:doctor": "node scripts/nx-cache-doctor.mjs",
     "prepare": "husky",
     "real-turn": "nx run rennet-adapters:real-turn",
     "release:check": "node scripts/check-release.mjs",
