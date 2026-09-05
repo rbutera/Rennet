@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { type BoardTool, boardToolsByName } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import {
   expandPromptPartials,
@@ -24,13 +25,31 @@ describe("lens prompt manifest", () => {
       expect(text.length, `${kind} prompt`).toBeGreaterThan(500);
       expect(text).toMatch(/^# /);
       expect(text).toContain("Ground rules");
-      expect(text).toContain("`document.title`");
-      expect(text).toContain("`document.introMarkdown`");
-      // The board is OPENED with a call now, not authored into a returned document.
+      // The board is OPENED with a call now, not authored into a returned document, so
+      // the prompt names the CALL and its flat arguments — not a `document` struct.
       expect(text).toContain("`set_document`");
+      expect(text, `${kind} prompt`).toContain("`title`");
+      expect(text, `${kind} prompt`).toContain("`intro_markdown`");
+      // ── The net for a field the seat cannot reach ────────────────────────────────
       // `measure` is host-owned and on no tool input (D2), so an instruction to set it
-      // would name a field the seat cannot reach — a live prompt citing a dead field.
-      expect(text, `${kind} prompt`).not.toContain("document.measure");
+      // names a field that does not exist. That was asserted as one string; the same
+      // defect arrived by another door — `document.sources` and `document.stats` are
+      // flattened to `source_paths` / `stat_labels` / `stat_values`, and `introMarkdown`
+      // is renamed `intro_markdown`, so every one of those was a live prompt naming a
+      // field the seat cannot reach. Two rules cover the whole family instead:
+      //
+      //  • no `document.<field>` at all — the seat calls a verb, it does not fill a struct;
+      //  • no camelCase identifier — every real tool input name is lower_snake by
+      //    construction, so a camelCase one is a pre-flattening name by definition.
+      expect(text, `${kind} prompt names a document struct field`).not.toMatch(/`document\.\w/);
+      expect(text, `${kind} prompt names a camelCase field`).not.toMatch(/`[a-z]+[A-Z]\w*`/);
+      // …and the two it does name are real inputs on this lens's own `set_document`.
+      const documentFields = new Set(
+        (boardToolsByName(kind).get("set_document") as BoardTool).fields.map(({ name }) => name),
+      );
+      expect(documentFields, `${kind} set_document`).toContain("title");
+      expect(documentFields, `${kind} set_document`).toContain("intro_markdown");
+      expect(documentFields, "the struct name is not an input").not.toContain("introMarkdown");
       // Citations are a path and a line range, resolved on the daemon: no board carries
       // a skip list and no lens accounts for hunks it did not cite. This assertion is
       // the whole producer-side guard against the vocabulary creeping back in a prompt.

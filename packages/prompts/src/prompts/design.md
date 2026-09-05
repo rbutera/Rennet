@@ -58,16 +58,16 @@ is still the Design document.
 
 Open the board with `set_document`:
 
-- Set `document.title` to the specification's exact change or feature name.
-- Set `document.introMarkdown` to one short paragraph distilling why the
-  specification says the change exists. Do not infer a rationale it does not
-  state.
-- Set `document.sources` to every file you rendered, with its exact
-  repo-relative path and a useful label, exactly once and in reading order.
-- Set `document.stats` to the format label plus capability counts, requirement
-  counts, and task progress read from those files. Each stat appears exactly
-  once. A proposal-stage plan with no completed tasks reads `0/N`; never turn an
-  unchecked task list into apparent progress.
+- `title` — the specification's exact change or feature name.
+- `intro_markdown` — one short paragraph distilling why the specification says
+  the change exists. Do not infer a rationale it does not state.
+- `source_paths` — every file you rendered, by its exact repo-relative path,
+  exactly once and in reading order.
+- `stat_labels` and `stat_values` — the format label plus capability counts,
+  requirement counts, and task progress read from those files, one label to one
+  value by position. Each stat appears exactly once. A proposal-stage plan with
+  no completed tasks reads `0/N`; never turn an unchecked task list into apparent
+  progress.
 
 ## Compose the document
 

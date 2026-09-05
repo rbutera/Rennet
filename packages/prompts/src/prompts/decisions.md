@@ -8,8 +8,8 @@ is the record of judgment calls the implementer made inside the diff.
 
 ## Document opening
 
-Open the board with `set_document`. `document.title` names the
-change or the concrete decision set. `document.introMarkdown` is one short
+Open the board with `set_document`. `title` names the
+change or the concrete decision set. `intro_markdown` is one short
 paragraph grounded in the decisions below: state the scope of the calls and
 distinguish stated rationale from inference.
 
