@@ -45,7 +45,7 @@
     "dogfood-test": {
       "cache": false,
       "dependsOn": ["build"],
-      "command": "pnpm exec vitest run packages/adapters/src/project-snapshot-generator.dogfood.test.ts"
+      "command": "pnpm exec vitest run packages/adapters/src/project-snapshot-generator.dogfood.test.ts packages/adapters/src/repo-watcher.dogfood.test.ts"
     },
     "snapshot-profile": {
       "cache": false,

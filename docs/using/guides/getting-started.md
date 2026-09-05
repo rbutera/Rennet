@@ -146,7 +146,8 @@ Rennet mints the session, claims that target, and takes you into it immediately.
 
 The workspace opens at once, on **the bench**: its first frame, inside the same
 shell as everything else, with the sidebar, the session top bar and the chat
-slot already around it. The change itself is the centrepiece — the branch or
+column already open around it. The chat's own thread is being made while the
+capture runs, so the column says so until it is ready rather than looking empty. The change itself is the centrepiece — the branch or
 pull request you started from, and once capture settles, how many files were
 captured. Capture is the bench's first beat rather than a page in front of it:
 two named steps, *resolving the repository* then *capturing the change*, with
@@ -337,7 +338,10 @@ comments key to new-side line numbers, so a requested change carries a real
 diff position.
 
 **Say it in chat.** The chat column beside the surface is the review's T3 Code
-thread, and it travels with you across every board. Ask it about the change and it
+thread, and it travels with you across every board. It is **open when you arrive**
+— it holds the conversation about this review, not an optional extra panel — and
+`⌘J` closes it if you want the room. A close is yours: it stays shut, through every
+navigation, until you open it again. Ask it about the change and it
 runs a real turn on your own installed harness, working in this review's checkout,
 and streams the answer back as it arrives. The thread persists in the sidecar, so it
 is still there after a reload. Asking about a highlighted span sends your question

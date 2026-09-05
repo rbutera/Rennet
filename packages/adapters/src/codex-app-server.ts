@@ -42,6 +42,7 @@ import { Readable } from "node:stream";
 import { HOST_LOCUS, type Locus, locusCommand } from "@rennet/core";
 import type { RspTokenUsage } from "@rennet/protocol";
 import { execa } from "execa";
+import { describeSpawnFailure } from "./descriptor-exhaustion";
 
 /** How Rennet introduces itself on `initialize`. */
 export const CODEX_CLIENT_INFO = { name: "rennet", title: "Rennet", version: "1" } as const;
@@ -736,6 +737,14 @@ export const defaultSpawnAppServer: SpawnAppServer = ({ bin, args, cwd }) => {
   child.stderr?.on("data", (chunk: unknown) => {
     stderr += String(chunk);
   });
+  // A child that exits early ends its stdio under our feet, and the next `write` to it
+  // is an `ERR_STREAM_WRITE_AFTER_END` — emitted as an `'error'` EVENT on the stream,
+  // not thrown, so no `try` around `send` can catch it. Unhandled, an `'error'` event on
+  // an EventEmitter IS a process crash: this took the whole daemon down five times in
+  // forty minutes and every in-flight review with it (#851). Nothing here needs to act
+  // on a broken pipe — the child is gone, and the runner already has a terminal path for
+  // "the stream ended before the turn completed" — so consuming the event is the fix.
+  child.stdin?.on("error", () => undefined);
   // `stdout: "pipe"` always yields a stream; the empty fallback is defensive only.
   const messages = readAppServerMessages(child.stdout ?? Readable.from([]));
   const exit: Promise<AppServerExit> = child.then(
@@ -759,7 +768,11 @@ export const defaultSpawnAppServer: SpawnAppServer = ({ bin, args, cwd }) => {
         stderr,
         aborted: r.isCanceled === true,
         ...(spawnFailed
-          ? { spawnError: r.shortMessage ?? r.code ?? "codex app-server failed to spawn" }
+          ? {
+              spawnError: describeSpawnFailure(
+                r.shortMessage ?? r.code ?? "codex app-server failed to spawn",
+              ),
+            }
           : {}),
       };
     },
@@ -767,15 +780,44 @@ export const defaultSpawnAppServer: SpawnAppServer = ({ bin, args, cwd }) => {
       exitCode: null,
       stderr,
       aborted: false,
-      spawnError: error instanceof Error ? error.message : String(error),
+      spawnError: describeSpawnFailure(error instanceof Error ? error.message : String(error)),
     }),
   );
   return {
     send: (message) => {
-      child.stdin?.write(`${JSON.stringify(message)}\n`);
+      // Checked as well as handled, and the two are deliberately redundant for the case
+      // measured: removing EITHER one leaves #851's tests green, removing BOTH reproduces
+      // `ERR_STREAM_WRITE_AFTER_END` reaching the process. They are kept together because
+      // they answer different things. The `'error'` listener above is survival, and it
+      // covers cases a check cannot — a pipe can break between the check and the write.
+      // This check is legibility: the run then ends by the child's own exit code and
+      // stderr (`source: "exit"`) rather than by a stream error that names nothing.
+      //
+      // A dropped message is never silence: the only reason stdin is unwritable is that
+      // the child is dead, and its death is what terminates the run.
+      const stdin = child.stdin;
+      if (stdin === undefined || stdin.destroyed || stdin.writableEnded || !stdin.writable) return;
+      stdin.write(`${JSON.stringify(message)}\n`);
     },
     messages,
     kill: () => {
+      // NEVER signal a subprocess with no pid, and this is not defensive coding — it is a
+      // fix for the daemon killing ITSELF (#851, found while reproducing it).
+      //
+      // When `child_process.spawn` throws synchronously, execa returns the dummy
+      // subprocess from `handleEarlyError`, which is a bare `new ChildProcess()`. Node's
+      // constructor gives that an UNSPAWNED libuv `Process` handle, so `pid` is undefined
+      // and `kill()` reaches `uv_process_kill` with pid 0 — which on POSIX is
+      // `kill(0, SIGTERM)`: every process in the CALLER'S process group. execa's own
+      // `killDescendants` path guards on exactly this, but the early-error path never
+      // installs that function and falls back to the raw, unguarded `ChildProcess.kill`.
+      //
+      // The caller is `probeAppServerHandshake`, which kills in a `finally` on every
+      // probe. So a discovery pass run while descriptors were exhausted did not merely
+      // fail to find codex: it SIGTERMed the daemon and everything sharing its group.
+      // Reproduced by driving the real spawn with an invalid `cwd`, which took the vitest
+      // runner down with exit 144 (128 + SIGTERM) before it could print a single result.
+      if (child.pid === undefined) return;
       child.kill();
     },
     exit,

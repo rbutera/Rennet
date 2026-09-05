@@ -637,6 +637,16 @@ const MATERIAL_KIND_BY_LENS: Partial<Record<LensKind, DraftElement["kind"]>> = {
   sequence: "order_step",
   decisions: "decision",
   flagged: "finding",
+  // Noise is here for a different reason from the other three, and it is worth stating
+  // rather than reading as symmetry. The other three name what a SEAT must produce. This
+  // names what the HOST already placed: a Noise lane only reaches a seat when the
+  // complement is non-empty (an empty one settles `no-noise` with no turn at all), so a
+  // settled Noise board with no reachable member is a board that lost the regions it
+  // exists to account for — the prose about the mechanical edits with none of the
+  // mechanical edits under it. Nothing else catches that: `derived-member-grouped` is
+  // vacuous when there is nothing to parent, and an element count is satisfied by the
+  // seat's own grouping section.
+  noise: "noise_verdict",
 };
 
 /** Whether a lens produced content the served board can actually render as its result. */
@@ -1946,6 +1956,8 @@ function requiredBoardFailure(lens: LensKind): string {
       return "decisions lens: produced no reachable `decision` in the emitted board; retry the generation to distinguish decisions from malformed output.";
     case "flagged":
       return "flagged lens: produced no reachable `finding` in the emitted board; retry the generation to distinguish findings from malformed output.";
+    case "noise":
+      return "noise lens: the host placed the changed regions no other board cited on this board and none of them is reachable on the settled one; retry the generation rather than shipping the account without the regions it accounts for.";
     default:
       return `${lens} lens: produced zero elements in the emitted board; retry the generation to draft this required board.`;
   }
@@ -3435,7 +3447,22 @@ async function draftLensBoard(
   markPostProcess();
 
   const validated: ValidatedLike = {
-    board: draft.board,
+    // The capture's id on every `code_ref` the SEAT wrote, once, here — before round
+    // composition, which is exactly where `validateDraft` stamped it on the document path.
+    // It is host-owned and on no tool input (`HOST_OWNED_FIELDS`): a seat is never told the
+    // capture's id, so a citation that carried one would be a value the seat invented.
+    //
+    // BEFORE composition and not after, and the ordering is the whole point. A round's
+    // composition carries the previous generation's "Round N · Addressed" chapter onto this
+    // board verbatim, and its anchors cite the EARLIER generation's patchset by design —
+    // which is why `admitBoardReferences` exempts the host composer by name
+    // ({@link isHostComposedHistory}). A stamp that ran afterwards would map over those
+    // anchors too and relabel round 1's citations as round 2's: durably wrong on disk, and
+    // wrong on screen, because the client falls back to the board's patchset only for an
+    // element that carries none. It would also make two guards vacuous — that exemption,
+    // and lint's cross-patchset `citation-resolves` arm — by leaving nothing for either to
+    // find.
+    board: stampPatchsetId(draft.board, deps.deltaPacket.patchset.id),
     // The ladder that produced these is gone from the seat path (3.2). A structural rule
     // is refused where the call is made and a whole-board rule comes back from `finish`,
     // both inside the seat's own turn, so a settled board has no dropped element to
@@ -3597,21 +3624,8 @@ async function finishLensBoard(
 
   const boardId = flaggedBoardId ?? deps.boardIdFor(lens);
 
-  // The capture's id on every `code_ref`, once, here, immediately before persistence —
-  // where `validateDraft` stamped it on the document path, for the same reason it did.
-  // It is host-owned and on no tool input (`HOST_OWNED_FIELDS`): a seat is never told the
-  // capture's id, so a citation that carried one would be a value the seat invented.
-  // Stamped AFTER every check that reads it, so nothing this writes can make a
-  // cross-patchset check agree with itself.
-  //
-  // From the DELTA PACKET, not from the lint context, because the very next line hands the
-  // board to `admitBoardReferences` against `deps.deltaPacket.patchset.id` — a citation
-  // stamped with any other id is refused there as one this board cannot prove. Two sources
-  // for one fact is exactly the agreement that goes wrong silently; there is one now.
-  const identified = stampPatchsetId(validated.board, deps.deltaPacket.patchset.id);
-
   // R58 delta stamps against the prior generation's board (cluster 4).
-  const stamped = stampDeltas(deps.previous?.get(lens), identified);
+  const stamped = stampDeltas(deps.previous?.get(lens), validated.board);
 
   // Write the board and INSPECT the response (finding 2): a rejected batch is a lens
   // failure, never announced as arrived. On acceptance the coverage/validation metadata is

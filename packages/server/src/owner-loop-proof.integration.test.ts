@@ -460,10 +460,17 @@ describe("#685 owner loop through a real server", () => {
     expect(missing.board).toBeNull();
 
     // The element the quote is anchored to is read OFF the initial Sequence board rather
-    // than named as a fixture id: every id is host-minted since `lens-board-tools` 3.2, so
-    // a quote opened against `sequence-step` would be attached to nothing from the start
-    // and the re-anchor below would have nothing to carry — a green bar over a thread that
-    // was never attached.
+    // than named as a fixture id. `sequence-step` was a REAL id until this change — the
+    // scripted plan minted it (`owner-loop-proof-fixture.ts`) — and it stopped resolving
+    // only because ids became host-minted in `lens-board-tools` 3.2. So the quote is not
+    // being rescued from a fixture that was always wrong; it is being re-pointed at the
+    // element the host now names, which is the same element.
+    //
+    // What this assertion CANNOT tell you, stated because nothing here checks it: the
+    // writer's `mintId` restarts at `e1` per lane, so "the target is on round one's
+    // Sequence board" does not distinguish a correct re-anchor from a re-anchor onto the
+    // wrong element of the right board. It discriminates only in company with the
+    // `generation` assertion beside it, which says the thread moved forward at all.
     const initialSequence = parseCommandOutput(
       "board.read",
       await first.dispatch("board.read", {

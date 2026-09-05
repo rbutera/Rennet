@@ -2324,6 +2324,104 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     expect(decisionsTurns).toHaveLength(2);
   });
 
+  it("places the complement on the Noise board: a cited region is absent, an uncited one is a member (3.8)", async () => {
+    // Task 3.8's two named controls, which existed nowhere: `deriveNoiseMembers` and
+    // `placeMembers` were each unit-tested and NOTHING joined them. That is the same
+    // reconstruction trap this file names one call site over — a helper proven in isolation
+    // does not prove the pipeline calls it — and it is why replacing the `placeMembers`
+    // call with a no-op left the whole server suite green: `hasLensMaterial` had no row for
+    // Noise and fell through to an element count the seat's own grouping prose satisfies,
+    // and `derived-member-grouped` is vacuous with no members to parent. A Noise lane
+    // holding the account of the regions, and none of the regions, settled as a success.
+    //
+    // TWO changed regions, one of them cited by a sibling. That is the shape the assertion
+    // needs: a one-region fixture cannot tell "the complement was placed" from "everything
+    // was placed", and a fixture where nothing is cited cannot tell either from "nothing
+    // was subtracted".
+    const CITED = { path: "src/cited.ts", side: "head" as const, start: 1, end: 4 };
+    const seatTurns: SeatCapture[] = [];
+    const result = await runLensPipeline({
+      ...boardSeats(seatTurns, (prompt, label) => {
+        const lens = lensFromPrompt(prompt, label);
+        if (lens !== "sequence") return cleanBody(lens);
+        // Sequence cites `src/cited.ts` and says nothing about `src/uncited.ts`.
+        const body = meaningfulSequenceBody();
+        return {
+          elements: [
+            ...body.elements.map((element) =>
+              element.id === "sequence-root"
+                ? {
+                    ...element,
+                    data: { ...element.data, children: ["sequence-step", "cited-ref"] },
+                  }
+                : element,
+            ),
+            {
+              id: "cited-ref",
+              kind: "code_ref",
+              data: {
+                author: { kind: "lens-agent", id: "sequence-seat" },
+                patchset_id: "ps-1",
+                path: CITED.path,
+                side: CITED.side,
+                start_line: CITED.start,
+                end_line: CITED.end,
+              },
+            },
+          ],
+        } as unknown as DraftBoard;
+      }),
+      repoRoot: "/pr-worktree",
+      deltaPacket: PACKET,
+      lintContextFor: (lens) => ({
+        ...lintContextFor(lens),
+        regions: [CITED, UNCITED_REGION],
+        files: new Map([
+          [CITED.path, 100],
+          [UNCITED_REGION.path, 100],
+        ]),
+      }),
+      readPrompt,
+      whiteboard: fakeWhiteboard([]),
+      boardIdFor: (lens) => `board:${lens}`,
+    });
+
+    const sequence = result.boards.find(({ lens }) => lens === "sequence");
+    expect(
+      sequence?.failure,
+      "the citing lane must settle, or nothing was subtracted",
+    ).toBeUndefined();
+    const noise = result.boards.find(({ lens }) => lens === "noise");
+    expect(noise?.failure).toBeUndefined();
+    expect(noise?.absence, "the complement is not empty, so this lane runs a seat").toBeUndefined();
+
+    // The members ARE on the board the pipeline wrote, and each one's citation is followed
+    // to the `code_ref` beside it rather than counted: a count says the host placed
+    // something, and what 3.8 claims is WHICH regions it placed.
+    const board = noise?.board;
+    const members = board?.elements.filter((element) => element.kind === "noise_verdict") ?? [];
+    const pathOf = (member: DraftBoard["elements"][number]): string | undefined => {
+      const hunk = (member.data as { hunk?: unknown }).hunk;
+      const cited = board?.elements.find((element) => element.id === hunk);
+      return (cited?.data as { path?: unknown } | undefined)?.path as string | undefined;
+    };
+    expect(members.map(pathOf)).toEqual([UNCITED_REGION.path]);
+    // …and the region a sibling cited is on no member of this board. Asserted as its own
+    // line, because "one member, and it is the uncited one" and "the cited one is absent"
+    // fail differently: a derivation that placed both would fail the first, and one that
+    // placed neither would fail it too while passing this.
+    expect(members.map(pathOf)).not.toContain(CITED.path);
+
+    // Host-stamped, not seat-authored (D16f). Both are constants once membership is a
+    // position, so neither is on any tool input and the seat could not have written them.
+    for (const member of members) {
+      expect(member.data).toMatchObject({ verdict: "noise", judge: "deterministic" });
+    }
+    // The seat ran and grouped them, so this is the placement reaching a SETTLED board
+    // rather than a writer read before anyone touched it.
+    expect(seatTurns.map(({ seat }) => seat)).toContain("noise");
+  });
+
   it("settles no-noise with NO seat dispatched when the four lanes cite every region (3.11, D16e)", async () => {
     // Task 3.11's own required control, which did not exist. Every other fixture in this
     // file runs against `UNCITED_REGION` — a region no board cites — precisely so the Noise
@@ -3125,6 +3223,132 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     expect(modelFor("prompts/design.md")).toBe("opus-4.8");
     expect(modelFor("prompts/noise.md")).toBe("haiku");
     expect(modelFor("prompts/flagged.md")).toBe("opus-4.8"); // Opus, not Sonnet (Rai, 2026-09-03)
+  });
+
+  it("leaves the cross-seat marks OFF the board while one voice is still writing (3.4)", async () => {
+    // Task 3.4's stated control, which existed in no form: the positive half — both voices
+    // settled, both models tallied — is proven by the dual-seat test below, and the
+    // NEGATIVE half was not. Replacing `stampVoiceConcurrence(lane.board(), labelFor)` with
+    // a bare `lane.board()` left the whole server suite green, because nothing anywhere
+    // read a Flagged board that had NOT been through a fold.
+    //
+    // The shape: the Claude voice writes a finding and settles; the Codex voice writes one
+    // and its turn ENDS without finishing, on every attempt, so it never settles and no
+    // fold may run. What the board must then say is what actually happened — each finding
+    // credited to the voice that wrote it, and NO `accord`, because there was no agreement
+    // to report. A board that came back carrying `concur` here would be claiming a second
+    // opinion from a seat that never gave one.
+    const seatTurns: SeatCapture[] = [];
+    const flaggedCtx: LintContext = {
+      lens: "flagged",
+      regions: [
+        { path: "src/auth.ts", side: "head", start: 10, end: 14 },
+        { path: "src/util.ts", side: "head", start: 1, end: 3 },
+      ],
+      files: new Map([
+        ["src/auth.ts", 200],
+        ["src/util.ts", 50],
+      ]),
+      patchsetId: PACKET.patchset.id,
+    };
+    const CLAUDE_CONCERN = "The refresh token is classified as an error before its code is read.";
+    const CODEX_CONCERN = "A different concern, in a different file, from the seat that died.";
+
+    const result = await runLensPipeline({
+      ...boardSeats(
+        seatTurns,
+        (prompt, label) => {
+          const lens = lensFromPrompt(prompt, label);
+          if (lens !== "flagged") return cleanBody(lens);
+          if (label === "flagged-codex") {
+            // Writes, then STOPS. No `finish`, no settle-absent: the turn ends unsettled,
+            // which is the one event that spends an attempt — and this voice never settles.
+            return (voice: BoardVoiceWriter): void => {
+              const cited = idOf(
+                voice.call("cite", {
+                  path: "src/util.ts",
+                  side: "head",
+                  start_line: 1,
+                  end_line: 3,
+                }),
+              );
+              okCall(
+                voice.call("add_finding", {
+                  severity: "medium",
+                  concern: CODEX_CONCERN,
+                  code_ref_ids: [cited],
+                }),
+              );
+            };
+          }
+          return (voice: BoardVoiceWriter): void => {
+            const root = idOf(voice.call("add_section", { title: "Findings" }));
+            const cited = idOf(
+              voice.call("cite", {
+                path: "src/auth.ts",
+                side: "head",
+                start_line: 11,
+                end_line: 12,
+              }),
+            );
+            okCall(
+              voice.call("add_finding", {
+                severity: "high",
+                concern: CLAUDE_CONCERN,
+                code_ref_ids: [cited],
+                parent_id: root,
+              }),
+            );
+            okCall(voice.call("finish"));
+          };
+        },
+        ["claude-code", "codex"],
+      ),
+      repoRoot: "/pr-worktree",
+      deltaPacket: PACKET,
+      lintContextFor: (lens) => (lens === "flagged" ? flaggedCtx : lintContextFor(lens)),
+      readPrompt,
+      whiteboard: fakeWhiteboard([]),
+      boardIdFor: (lens) => `board:${lens}`,
+    });
+
+    const flagged = result.boards.find(({ lens }) => lens === "flagged");
+    // The lane still settles: one seat finished, and one seat that never did is a degrade,
+    // not a lane failure.
+    expect(flagged?.failure).toBeUndefined();
+    const board = flagged?.board as DraftBoard | undefined;
+    const findingBy = (concern: string): string =>
+      board?.elements.find(
+        (element) =>
+          element.kind === "finding" && (element.data as { concern?: unknown }).concern === concern,
+      )?.id ?? "";
+    const claudeFinding = findingBy(CLAUDE_CONCERN);
+    const codexFinding = findingBy(CODEX_CONCERN);
+
+    // BOTH findings are on the one board — the unsettled voice's work is kept, not
+    // discarded, which is the same partial-board rule the repair path relies on.
+    expect(claudeFinding, "the settled voice's finding is missing").not.toBe("");
+    expect(codexFinding, "the unsettled voice's finding was discarded").not.toBe("");
+
+    // NO fold ran, so each finding names ONLY the voice that wrote it…
+    expect(concurrenceOf(board as DraftBoard, claudeFinding)).toEqual([
+      { model: "Claude", agree: 1, total: 1 },
+    ]);
+    expect(concurrenceOf(board as DraftBoard, codexFinding)).toEqual([
+      { model: "Codex", agree: 1, total: 1 },
+    ]);
+    // …and neither carries an `accord`, in either direction. `concur` would claim a second
+    // opinion that never ran and `split` would name a disagreement with nobody, so the
+    // honest mark is no mark at all.
+    expect(accordOn(board as DraftBoard, claudeFinding)).toBeUndefined();
+    expect(accordOn(board as DraftBoard, codexFinding)).toBeUndefined();
+
+    // The credit is per VOICE, not one label over the board: the seat that died wrote a
+    // finding, and reporting it under the survivor's model would credit a model that never
+    // saw it. A single-label stamp passes every assertion above except this one.
+    expect(
+      concurrenceOf(board as DraftBoard, codexFinding).map(({ model }) => model),
+    ).not.toContain("Claude");
   });
 
   it("runs the Flagged lens as a dual seat under both harnesses — cross-model concurrence", async () => {
@@ -4863,6 +5087,130 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     expect(chapters).toEqual(["Round 1 · Addressed", "Round 2 · Addressed"]);
     const persistedSequence = applied.find(({ boardId }) => boardId === "board:sequence");
     expect(JSON.stringify(persistedSequence?.ops)).toContain("Round 2 · Addressed");
+  });
+
+  it("leaves a carried Round 1 chapter's citation naming ROUND 1's patchset, not this round's", async () => {
+    // The stamp that writes `patchset_id` onto every `code_ref` must run BEFORE round
+    // composition, and this is what says so. Composition carries the previous generation's
+    // "Round N · Addressed" chapter onto this board verbatim, and its anchors cite the
+    // EARLIER generation's capture by design — which is why `admitBoardReferences` exempts
+    // the host composer by name (`isHostComposedHistory`). A stamp running afterwards maps
+    // over those anchors too and relabels round 1's citation as round 2's.
+    //
+    // Three things break at once and no other test sees any of them: the board is durably
+    // wrong on disk; the client relabels the citation, because it falls back to the board's
+    // patchset only for an element that carries none; and two guards go vacuous — that
+    // exemption, and lint's cross-patchset `citation-resolves` arm — because there is
+    // nothing left for either to find.
+    const applied: Applied[] = [];
+    const hostAuthor = { kind: "orchestrator" as const, id: "rennet:round-composition" };
+    const CARRIED_REF = "rennet:host:round-addressed:1:0:code-ref";
+    const PRIOR_PATCHSET = "ps-0";
+    const previousSequence = mkBoard([
+      {
+        id: "rennet:host:round-addressed:1:section",
+        kind: "section",
+        data: {
+          author: hostAuthor,
+          title: "Round 1 · Addressed",
+          children: ["rennet:host:round-addressed:1:0:prose"],
+        },
+      } as DraftBoard["elements"][number],
+      {
+        id: "rennet:host:round-addressed:1:0:prose",
+        kind: "prose",
+        data: { author: hostAuthor, markdown: "**First ask**\n\nFixed." },
+      } as DraftBoard["elements"][number],
+      // The anchor round 1 wrote, against round 1's capture.
+      {
+        id: CARRIED_REF,
+        kind: "code_ref",
+        data: {
+          author: hostAuthor,
+          patchset_id: PRIOR_PATCHSET,
+          path: "src/auth.ts",
+          side: "head",
+          start_line: 11,
+          end_line: 12,
+        },
+      } as DraftBoard["elements"][number],
+    ]);
+    const retryDiff = [
+      "diff --git a/src/auth.ts b/src/auth.ts",
+      "--- a/src/auth.ts",
+      "+++ b/src/auth.ts",
+      "@@ -1 +1 @@",
+      "-outsideRetry();",
+      "+insideRetry();",
+    ].join("\n");
+
+    const result = await runLensPipeline({
+      ...boardSeats([], (prompt, label) => {
+        const lens = lensFromPrompt(prompt, label);
+        if (lens === "report") {
+          return {
+            outcomes: [
+              {
+                askId: "ask-2",
+                status: "addressed",
+                note: "The retry boundary now owns the refresh.",
+                evidenceIds: manifestIds(retryDiff),
+              },
+            ],
+            beyond: [],
+          };
+        }
+        return cleanBody(lens);
+      }),
+      repoRoot: "/pr-worktree",
+      deltaPacket: PACKET,
+      round: {
+        number: 2,
+        previousGeneration: "gen:ps-0",
+        dispatchedAsks: [
+          {
+            id: "ask-2",
+            path: "src/auth.ts",
+            type: "request-change",
+            instruction: "Keep the refresh inside the retry boundary.",
+            context: "",
+          },
+        ],
+        findingDispositions: {},
+        worker: {
+          outcome: "completed",
+          diff: retryDiff,
+          changedPaths: ["src/auth.ts"],
+          commitRange: { from: "same-head", to: "same-head" },
+        },
+      },
+      lintContextFor,
+      previous: new Map([["sequence", previousSequence]]),
+      readPrompt,
+      whiteboard: fakeWhiteboard(applied),
+      boardIdFor: (lens) => `board:${lens}`,
+    });
+
+    const sequence = result.boards.find((outcome) => outcome.lens === "sequence");
+    expect(sequence?.failure).toBeUndefined();
+    const carried = sequence?.board?.elements.find(({ id }) => id === CARRIED_REF);
+    expect(carried, "the carried Round 1 citation is not on the board at all").toBeDefined();
+    expect((carried?.data as { patchset_id?: unknown } | undefined)?.patchset_id).toBe(
+      PRIOR_PATCHSET,
+    );
+    // …and it reaches DISK that way. The returned outcome and the ops the whiteboard
+    // received are two different objects, and only the second is what a restart re-reads.
+    const persisted = applied.find(({ boardId }) => boardId === "board:sequence");
+    expect(JSON.stringify(persisted?.ops)).toContain(`"${PRIOR_PATCHSET}"`);
+
+    // The seat's OWN citations on the same board do carry this round's capture, so this is
+    // not a stamp that stopped running — it is one that runs before the carry.
+    const seatRefs = (sequence?.board?.elements ?? []).filter(
+      (element) => element.kind === "code_ref" && element.id !== CARRIED_REF,
+    );
+    for (const ref of seatRefs) {
+      expect((ref.data as { patchset_id?: unknown }).patchset_id).toBe(PACKET.patchset.id);
+    }
   });
 
   it("persists Flagged resolution migration before returning typed absence", async () => {

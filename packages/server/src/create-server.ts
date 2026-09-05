@@ -1343,8 +1343,8 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
    */
   let liveBoardMcpServer: BoardMcpServer | undefined;
 
-  // The owned T3 Code sidecar (t3code-sidecar-chat): composed here, started on the first
-  // `chat.t3Session`, adopted from a previous daemon when it still answers, stopped with the
+  // The owned T3 Code sidecar (t3code-sidecar-chat): composed here, started EAGERLY a few
+  // lines below, adopted from a previous daemon when it still answers, stopped with the
   // daemon. Its provider binaries are the SAME absolute paths Rennet's discovery resolved,
   // so a GUI-launched daemon with launchd's PATH still gives it a working `claude`/`codex`.
   const t3Sidecar = createT3SidecarSupervisor({
@@ -1376,6 +1376,18 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       };
     },
   });
+  // Start it NOW, not at the first `chat.t3Session` (#849). Rai, 2026-09-05: "t3 sidecar
+  // should start up immediately on daemon launch, no?" — and more generally, "almost
+  // nothing should be lazy in rennet -> this is an electron app we run locally.
+  // time-to-first-message is kinda important."
+  //
+  // `start()` is synchronous and void: the spawn, the health poll and the bootstrap
+  // exchange all run detached from here, so composition continues at once and the whole
+  // bring-up overlaps the rest of this function and the WS listener's bind. A sidecar that
+  // cannot start does NOT fail the daemon — it leaves the supervisor `degraded` with the
+  // reason, `daemon.status` carries it, and the chat dock renders it. That is the same
+  // shape as before; only the moment it is discovered has moved earlier.
+  t3Sidecar.start();
 
   /**
    * The sidecar's seat runtime for one generation (t3-lens-threads). Every board seat of

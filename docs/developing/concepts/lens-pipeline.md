@@ -124,7 +124,9 @@ and calls board regeneration through this runtime.
 
    An OpenSpec branch's Design board takes a **deterministic fast path** and settles with
    no model turn at all: the assembler transforms the change's own artifacts into the
-   board. A change it cannot settle falls back to the seat, which renders the same change. A verified report arrives before any lens turn starts and
+   board. A change it cannot settle falls back to the seat, which renders the same change.
+
+   A verified report arrives before any lens turn starts and
    opens that boundary, after which all five lens lanes run
    independently rather than waiting for the preceding display-order lens. A
    required report that fails or proves unavailable ends the round at report

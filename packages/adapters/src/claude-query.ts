@@ -151,8 +151,11 @@ export function normalizeOutputSchema(schema: unknown): Record<string, unknown> 
   // `anyOf` envelope was tried and measured live on 2026-09-04 (#810): it only trades
   // `400 ...input_schema.type: Field required` for `400 ...input_schema: input_schema does
   // not support oneOf, allOf, or anyOf at the top level`. The API takes one object at the
-  // root, so a caller's schema must BE one (see `DesignDraftOutputSchema`); merging the
-  // branches here would silently widen every caller's contract instead.
+  // root, so a caller's schema must BE one; merging the branches here would silently widen
+  // every caller's contract instead. The schema that provoked this — Design's board-or-
+  // absence envelope — no longer exists: a lens seat writes its board through tools and
+  // carries no output schema at all (`lens-board-tools` 3.2). The rule stands for every
+  // caller that still sends one.
   return rest;
 }
 
