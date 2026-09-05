@@ -3352,6 +3352,35 @@ async function runLensBoard(
   }
 }
 
+/**
+ * How much of an assembler refusal reaches the log. A `finish` refusal lists one pointer
+ * per unsettled element, so the string is unbounded in the board's own size; a cap with an
+ * honest marker keeps one avoidable seat from writing a screenful. The rule id and the
+ * field are at the FRONT of every refusal the assembler throws, so the cap never eats the
+ * part that says why.
+ */
+const ASSEMBLER_REFUSAL_LOG_BYTES = 600;
+
+/**
+ * Say, on the daemon log, that the deterministic Design board was refused and a model seat
+ * is being bought instead (#877).
+ *
+ * `[seat]`-prefixed and shaped like the seat lines beside it (`t3-seat-turn.ts`), because
+ * the reader is someone scanning `daemon.log` for where a round's minutes went, and the
+ * whole complaint in #877 is that this cost was indistinguishable from an ordinary seat.
+ * Newlines are flattened so one refusal is one greppable line.
+ */
+function logAssemblerFallback(error: unknown): void {
+  const detail = (error instanceof Error ? error.message : String(error)).replace(/\s+/g, " ");
+  const shown =
+    detail.length > ASSEMBLER_REFUSAL_LOG_BYTES
+      ? `${detail.slice(0, ASSEMBLER_REFUSAL_LOG_BYTES)}… (truncated)`
+      : detail;
+  console.info(
+    `[seat] board.lens-draft.design assembler refused, running the model seat instead — ${shown}`,
+  );
+}
+
 async function draftLensBoard(
   lens: LensKind,
   deps: LensPipelineDeps,
@@ -3391,11 +3420,18 @@ async function draftLensBoard(
   // straight through to the seat below, unchanged.
   //
   // The assembler THROWS when a change it accepted cannot settle: either the source prose
-  // trips a boundary rule the deterministic path can't rephrase (a code fence or an
-  // indented list in `## Why`, a machinery word in the change name), or a genuine mapping
+  // trips an integrity rule the deterministic path can't rephrase (a code fence or an
+  // indented list in `## Why`, a citation that does not resolve), or a genuine mapping
   // defect. Both fall back to the seat — the seat renders the same change — rather than
   // rejecting the lane, which would rethrow and kill the whole round with its four settled
   // siblings. A silent slow-down is the worst case; a crashed round is not on the table.
+  //
+  // It is no longer SILENT, which was the other half of #877. A drive spent 882.9 s and 144
+  // provider round trips on a Design seat this path had already refused, and the daemon log
+  // recorded nothing but an ordinary seat — spend the reader cannot see, which is the
+  // "lie in the UI" family. The fall-through is right and stays; the refusal is now on the
+  // log, naming the rule and the field, so an avoidable model seat is visible while it
+  // happens rather than inferred a fortnight later.
   //
   // It spends NO attempt and needs no lane, which is the honest reading of `runSeatTurns`'
   // accounting rather than an exemption from it: an attempt is a turn that ended unsettled,
@@ -3404,7 +3440,8 @@ async function draftLensBoard(
   if (lens === "design" && deps.assembleDesignBoard !== undefined) {
     try {
       assembledDesign = deps.assembleDesignBoard(deps.lintContextFor(lens));
-    } catch {
+    } catch (error) {
+      logAssemblerFallback(error);
       assembledDesign = undefined;
     }
   }

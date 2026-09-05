@@ -2964,6 +2964,73 @@ export const DRAFT_LINT_RULES: readonly Rule[] = LENS_RULES.filter(
   (rule) => !SETTLEMENT_SET.has(rule),
 );
 
+/**
+ * ── The register: who WROTE the prose (#877) ─────────────────────────────────
+ *
+ * The two tiers above split the registry by WHEN a rule can be decided. This is a
+ * different question, and it is orthogonal to both: WHO wrote the text the rule is
+ * reading. Not a third tier — a register, and every rule still belongs to exactly
+ * one tier whichever register is in force.
+ *
+ * Almost every board is AUTHORED: a seat chose each sentence, so every rule has a
+ * writer to address and the register is `authored`. But `assembleDesignBoard` is a
+ * host-side TRANSCRIPTION — it ships the change's own `## Why`, its `## Decisions`
+ * paragraphs, its task lines and its requirement text verbatim, and writes nothing
+ * of its own beyond fixed labels ("Proposal", "Design", "Tasks", "OpenSpec"). There
+ * is no voice on that path to police.
+ *
+ * That distinction matters because a rule about VOICE, run over quoted source, is
+ * enforced against the wrong party. `process-vocabulary` exists to stop a model
+ * writing about Rennet's machinery instead of the change under review; applied to a
+ * transcription it refuses the AUTHOR's own spec for describing the author's own
+ * pipeline. On this repo the bite is systematic rather than unlucky — Rennet's specs
+ * are ABOUT lenses, seats, boards and drafts — and it lands the same way on any
+ * project whose specs discuss their own machinery. Measured over
+ * `openspec/changes/archive/`, it was the single largest cause of a deterministic
+ * board being thrown away and re-bought as an ~880-second model seat.
+ *
+ * The line is INTEGRITY vs VOICE, and only the voice half is dropped:
+ *
+ * - A rule that protects a READER from a broken board runs in both registers, always
+ *   — citations well-formed and resolving, references resolving, code bytes, kind
+ *   allowlist, scaffold lane, grounding, the source and requirement screens, and
+ *   every whole-board finish rule. A transcription can still produce a board a reader
+ *   cannot follow, and it is refused for it exactly as a seat's board would be.
+ * - A rule that polices a WRITER's choices has no subject when nobody chose. Those
+ *   are {@link VOICE_RULES}, and they are skipped for `transcribed` alone.
+ *
+ * This is deliberately NOT an allowlist widening. Adding "session", "workspace",
+ * … to `PROCESS_VOCAB`'s exemptions treats the symptom and needs widening again for
+ * the next repository whose specs name their own parts; naming the register answers
+ * the question once, for every host-assembled path there will ever be.
+ */
+export type BoardRegister = "authored" | "transcribed";
+
+/**
+ * The rules that address a WRITER rather than the board: register, not correctness.
+ *
+ * Read each one's own message and the membership reads itself — every one of them is
+ * phrased as an instruction to whoever is composing the sentence. `process-vocabulary`
+ * says "name the domain object, not the pipeline"; `no-dialogue` says authored dialogue
+ * is "never a drafter's"; `no-remainder-narration` says "drop the remainder sentence".
+ * None of the three can be addressed to a transcriber, because the transcriber did not
+ * pick the words and cannot pick different ones without ceasing to quote.
+ *
+ * A member here is still an ordinary registry member with an ordinary tier — this is a
+ * SUBSET of {@link LENS_RULES}, asserted by name in `lint.test.ts`, not a fourth list
+ * living outside it. That is the same hole the settlement rules were moved into the
+ * registry to close.
+ *
+ * `no-code-bytes` is deliberately NOT here, though a fenced block in a quoted `## Why`
+ * is also the author's. A board that carries code as bytes instead of a `code_ref` is
+ * broken for the reader whatever produced it, so it stays in both registers and the
+ * change routes to the seat. Same for the citation screens: a bare-basename citation
+ * quoted verbatim is still a citation a reader cannot resolve.
+ */
+export const VOICE_RULES: readonly Rule[] = [processVocabulary, noDialogue, noRemainderNarration];
+
+const VOICE_SET: ReadonlySet<Rule> = new Set(VOICE_RULES);
+
 /** Which tier a rule is answered in. */
 export type LintTier = "boundary" | "finish";
 
@@ -2984,18 +3051,39 @@ const BOUNDARY_SET: ReadonlySet<Rule> = new Set(BOUNDARY_RULES);
  * tier's complement over the registry, so a rule dropped from {@link BOUNDARY_RULES}
  * silently reappears here rather than going missing. The assertion that a rule is in
  * exactly one AUTHORED tier is what catches that, and it names the rule when it fails.
+ *
+ * `register` subtracts {@link VOICE_RULES} and NOTHING else — the tier a rule belongs to
+ * is the same in both registers, so a `transcribed` set is always a subset of the
+ * `authored` set of the same tier, never a different assignment. Defaulted, so every
+ * existing caller keeps the authored register it already had.
  */
-export function rulesForTier(target: LintTarget, tier: LintTier): readonly Rule[] {
+export function rulesForTier(
+  target: LintTarget,
+  tier: LintTier,
+  register: BoardRegister = "authored",
+): readonly Rule[] {
   const registry = target === "report" ? REPORT_RULES : LENS_RULES;
-  return registry.filter((rule) => BOUNDARY_SET.has(rule) === (tier === "boundary"));
+  return registry.filter(
+    (rule) =>
+      BOUNDARY_SET.has(rule) === (tier === "boundary") &&
+      (register === "authored" || !VOICE_SET.has(rule)),
+  );
 }
 
 /**
  * Lint one tier of a board. Pure, and the same rule functions `lint` runs — the
  * tool boundary and `finish` differ in WHEN they ask, never in what they know.
+ *
+ * `register` is WHO wrote the prose ({@link BoardRegister}); a transcription skips the
+ * {@link VOICE_RULES} and answers every other rule exactly as an authored board does.
  */
-export function lintTier(draft: DraftBoard, ctx: LintContext, tier: LintTier): Violation[] {
-  return rulesForTier(ctx.lens, tier).flatMap((rule) => rule(draft, ctx));
+export function lintTier(
+  draft: DraftBoard,
+  ctx: LintContext,
+  tier: LintTier,
+  register: BoardRegister = "authored",
+): Violation[] {
+  return rulesForTier(ctx.lens, tier, register).flatMap((rule) => rule(draft, ctx));
 }
 
 /**

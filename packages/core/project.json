@@ -10,6 +10,12 @@
       "command": "pnpm exec eslint packages/core/src --max-warnings=0 && pnpm exec biome check packages/core/src"
     },
     "typecheck": { "command": "pnpm exec tsc -p packages/core/tsconfig.json" },
-    "test": { "command": "pnpm exec vitest run packages/core/src" }
+    "test": {
+      "command": "pnpm exec vitest run packages/core/src --exclude '**/*.dogfood.test.ts'"
+    },
+    "dogfood-test": {
+      "cache": false,
+      "command": "pnpm exec vitest run packages/core/src/board/design-assembler-corpus.dogfood.test.ts"
+    }
   }
 }

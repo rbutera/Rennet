@@ -147,7 +147,12 @@ and calls board regeneration through this runtime.
 
    An OpenSpec branch's Design board takes a **deterministic fast path** and settles with
    no model turn at all: the assembler transforms the change's own artifacts into the
-   board. A change it cannot settle falls back to the seat, which renders the same change.
+   board. Every string it writes is the change's own text shipped verbatim or a fixed
+   label, so it lints in the **transcribed register** described under *Validate* below.
+   A change it cannot settle falls back to the seat, which renders the same change — and
+   the daemon log carries a `[seat]` line naming the rule that refused it, so a Design
+   seat the host could have avoided is visible as it runs rather than inferred afterwards
+   from a round's wall clock.
 
    A verified report arrives before any lens turn starts and
    opens that boundary, after which all five lens lanes run
@@ -195,6 +200,23 @@ and calls board regeneration through this runtime.
    an element ref, one sentence each — that the seat fixes with further calls before
    calling `finish` again. Neither costs anything: **a refusal and a `finish` verdict are
    both results inside a live turn.**
+
+   The tiers split the rules by *when* a rule can be decided. A third question is *who
+   wrote the text*, and it is orthogonal to both. A seat's board is **authored** — a model
+   chose every sentence, so every rule has a writer to address. The Design assembler's
+   board is **transcribed**: the host is quoting the project's own artifacts, and a rule
+   that tells a writer to choose different words has no subject. So the transcribed
+   register drops exactly the voice rules — `process-vocabulary`, `no-dialogue`,
+   `no-remainder-narration` — and runs every other rule of both tiers unchanged. A
+   transcription is still refused for a citation a reader cannot resolve, for code carried
+   as bytes instead of a `code_ref`, and for anything `finish` finds over the whole board.
+
+   The distinction is load-bearing rather than tidy. `process-vocabulary` exists to stop a
+   model writing about the review machinery instead of the change under review; run over a
+   quoted spec it refuses the author's own words for describing the author's own system,
+   which happens by construction in any repository whose specs discuss their own pipeline.
+   Each such refusal threw away a board the host already had and bought a model seat to
+   render the same quoted text.
 
    An attempt is spent by exactly one event: **a turn that ENDS with the board neither
    finished nor declared absent** — the context ran out, the harness died, the seat

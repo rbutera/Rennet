@@ -133,6 +133,44 @@ describe("assembleDesignBoard", () => {
     expect(assemble({ name: "empty" })).toBeUndefined();
   });
 
+  // #877 — the change from the live drive in miniature: a `## Decisions` paragraph whose
+  // subject IS the pipeline, which is what an OpenSpec change in this repository normally
+  // is. Before the register, `add_decision` refused it on `process-vocabulary` and the
+  // board — free, already built — was thrown away for an 882.9 s model seat.
+  //
+  // The assertion is on the rendered TEXT, not on "it did not throw": the fix would also
+  // be satisfied by an assembler that dropped the offending decision, and that would be a
+  // board that quietly omits a decision the author stated.
+  it("renders a decision whose subject is the pipeline, because it is QUOTING the author", () => {
+    const aboutTheMachinery: OpenSpecChangeSource = {
+      ...CHANGE,
+      designMd: [
+        "## Decisions",
+        "",
+        "### Decision: The Design lens drafts from the spec",
+        "**The Design lens drafts from the spec.** Chosen because the seat reads the artifact.",
+      ].join("\n"),
+    };
+    const board = assemble(aboutTheMachinery);
+    expect(board).toBeDefined();
+    const statements = (board?.elements ?? [])
+      .filter((element) => element.kind === "decision")
+      .map((element) => (element.data as { statement?: string }).statement);
+    expect(statements).toEqual(["The Design lens drafts from the spec"]);
+  });
+
+  // The other half, and the one that keeps `transcribed` from meaning "lint off": the
+  // register drops the VOICE screens and nothing else. A citation the reader cannot
+  // resolve is still a broken board, whoever wrote the sentence, so it still throws — and
+  // it throws naming `citation-well-formed`, not some generic mapping error.
+  it("still refuses quoted prose that carries a citation a reader cannot resolve", () => {
+    const badCitation: OpenSpecChangeSource = {
+      ...CHANGE,
+      proposalMd: ["## Why", "The restart path is wrong; see app.tsx:551."].join("\n"),
+    };
+    expect(() => assemble(badCitation)).toThrow(/citation-well-formed/);
+  });
+
   // POSITIVE CONTROL: the assembled board goes through the SAME lint every seat board
   // does. A `## Why` carrying a fenced code block is `no-code-bytes` in the document
   // intro, so a real check must redden — and it must redden for THAT rule, not a

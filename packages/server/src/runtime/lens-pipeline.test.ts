@@ -35,7 +35,7 @@ import {
   ROUND_REPORT_MAX_BEYOND_ENTRIES,
   type RoundReportDiagnosticMilestone,
 } from "@rennet/protocol";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 import type { GenerationBoards } from "../board/board-mcp-server";
 import { seatBoardServer } from "../board/seat-address";
 import {
@@ -1683,28 +1683,43 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     );
   });
 
-  it("falls the Design lane back to the seat when the assembler throws, never crashing the round", async () => {
+  it("falls the Design lane back to the seat when the assembler throws, SAYING SO on the log", async () => {
     // The round-crash regression: a throwing assembler used to reject the Design lane, which
     // `Promise.allSettled` then rethrows, killing the whole generation and its four settled
-    // siblings. A `## Why` with an indented list or a machinery-word change name throws on
-    // VALID input, so the fast path must degrade to the seat, not take the round down.
+    // siblings. A `## Why` with an indented list throws on VALID input, so the fast path
+    // must degrade to the seat, not take the round down.
+    //
+    // #877 added the second half. The fall-through was right and stayed; the SILENCE was
+    // the bug. A live drive bought an 882.9 s / 144-call Design seat for a board this path
+    // had already refused, and `daemon.log` recorded nothing but an ordinary seat, so the
+    // avoidable spend was invisible until someone reproduced the refusal offline a
+    // fortnight later. The refusal text now reaches the log with the rule id in it.
     const captures: SeatCapture[] = [];
     const applied: Applied[] = [];
     const bodyFor = (prompt: string, label?: string): unknown =>
       cleanBody(lensFromPrompt(prompt, label));
-
-    const result = await runLensPipeline({
-      ...boardSeats(captures, bodyFor),
-      repoRoot: "/pr-worktree",
-      deltaPacket: PACKET,
-      lintContextFor,
-      readPrompt,
-      whiteboard: fakeWhiteboard(applied),
-      boardIdFor: (lens) => `board:${lens}`,
-      assembleDesignBoard: () => {
-        throw new Error("design-assembler: board did not settle — no-code-bytes @ document");
-      },
+    const logged: string[] = [];
+    const info = vi.spyOn(console, "info").mockImplementation((...args: unknown[]) => {
+      logged.push(args.map(String).join(" "));
     });
+
+    let result: Awaited<ReturnType<typeof runLensPipeline>>;
+    try {
+      result = await runLensPipeline({
+        ...boardSeats(captures, bodyFor),
+        repoRoot: "/pr-worktree",
+        deltaPacket: PACKET,
+        lintContextFor,
+        readPrompt,
+        whiteboard: fakeWhiteboard(applied),
+        boardIdFor: (lens) => `board:${lens}`,
+        assembleDesignBoard: () => {
+          throw new Error("design-assembler: board did not settle — no-code-bytes @ document");
+        },
+      });
+    } finally {
+      info.mockRestore();
+    }
 
     // All five lanes still settle, Design included, and none fails.
     const lenses: LensKind[] = ["design", "sequence", "decisions", "flagged", "noise"];
@@ -1712,6 +1727,17 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     for (const outcome of result.boards) expect(outcome.failure).toBeUndefined();
     // The Design SEAT ran — the throw fell through to the model exactly like `undefined` does.
     expect(captures.some(({ prompt }) => lensFromPrompt(prompt ?? "") === "design")).toBe(true);
+
+    // Exactly one line, and it carries the RULE and the field — not just "the assembler
+    // failed". A reader scanning `daemon.log` for where a round's minutes went has to be
+    // able to tell an avoidable seat from a necessary one, and the rule id is what says
+    // which. Asserting on the substance rather than on `toHaveBeenCalled` is deliberate:
+    // a log line that said nothing would satisfy the weaker check.
+    const fallback = logged.filter((line) => line.includes("assembler refused"));
+    expect(fallback).toHaveLength(1);
+    expect(fallback[0]).toContain("[seat] board.lens-draft.design");
+    expect(fallback[0]).toContain("running the model seat instead");
+    expect(fallback[0]).toContain("no-code-bytes @ document");
   });
 
   it("skips the Design seat entirely when the assembler settles a board (the fast path)", async () => {
