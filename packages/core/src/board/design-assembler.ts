@@ -8,13 +8,21 @@
  * seat would, so every element passes the same boundary + finish lint. No model, no
  * spend, and it is the fastest lens.
  *
+ * It writes in the `transcribed` register (#877): every string it emits is the change's
+ * own text shipped verbatim, or a fixed label. The `BoardRegister` doc in `lint.ts` is
+ * the whole argument, and the short of it is that a rule telling a WRITER to choose
+ * different words has no subject here, while every rule protecting a READER from a
+ * broken board still runs and still refuses.
+ *
  * A PURE ADDITIVE fast path: the caller runs the existing Design seat whenever this
  * returns `undefined` (no sources, or a change with no renderable obligations). The seat
  * is never removed.
  *
  * A refusal is never swallowed. The mapping from a valid OpenSpec change to board calls
  * is deterministic, so a refusal or an unsettled `finish` is a defect — this throws with
- * the pointer text rather than shipping a board the lint would reject.
+ * the pointer text rather than shipping a board the lint would reject. The caller logs
+ * that throw before falling back, because an avoidable model seat nobody can see is the
+ * defect #877 was filed for.
  */
 
 import type { Author, DraftBoard } from "@rennet/protocol";
@@ -93,7 +101,13 @@ export function assembleDesignBoard(
   ).length;
   const candidate = first.candidate;
 
-  const writer = new BoardWriter({ target: "design", lint, author });
+  // `transcribed`, because this function authors nothing (#877). Every string below is
+  // either the change's own text shipped verbatim or a fixed label ("Proposal", "Design",
+  // "Tasks", "OpenSpec"), so the voice screens have no writer to address and refusing on
+  // one throws away a free board to buy a model seat that renders the same quoted text.
+  // The integrity screens — citations, references, code bytes, the whole finish tier —
+  // still run, and still throw. See `BoardRegister` in `lint.ts` for the whole reasoning.
+  const writer = new BoardWriter({ target: "design", lint, author, register: "transcribed" });
   const must = (result: BoardToolResult, what: string): BoardToolOutcome => {
     if (!result.ok) throw new Error(`design-assembler: ${what} refused — ${result.refusal}`);
     return result.outcome;
@@ -109,9 +123,10 @@ export function assembleDesignBoard(
   must(
     writer.call("set_document", {
       title: candidate,
-      // ponytail: the `## Why` prose ships verbatim; a Why that trips a prose rule (a code
-      // fence, a machinery word) throws rather than being sanitized. Ceiling: OpenSpec
-      // Why sections are plain English. Upgrade path: strip offending spans if it bites.
+      // ponytail: the `## Why` prose ships verbatim; a Why that trips an INTEGRITY rule (a
+      // code fence, an unresolvable citation) throws rather than being sanitized. Machinery
+      // words no longer bite — the register answers those. Ceiling: OpenSpec Why sections
+      // are plain English. Upgrade path: strip offending spans if it bites.
       intro_markdown: proposalWhy(proposal) ?? `OpenSpec change ${candidate}.`,
       source_paths: readingOrder.map((source) => source.path),
       stat_labels: ["Format", "Capabilities", "Requirements", "Tasks"],

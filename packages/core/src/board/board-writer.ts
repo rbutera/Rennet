@@ -52,7 +52,7 @@ import {
   TYPED_KINDS_BY_TARGET,
   type Violation,
 } from "@rennet/protocol";
-import { type LintContext, type LintTarget, lintTier } from "./lint";
+import { type BoardRegister, type LintContext, type LintTarget, lintTier } from "./lint";
 
 // ── Results ──────────────────────────────────────────────────────────────────
 
@@ -144,6 +144,19 @@ export interface BoardWriterOptions {
   readonly lint: Omit<LintContext, "lens">;
   /** The seat that wrote each element. Host-supplied: it is on no tool input. */
   readonly author: Author;
+  /**
+   * WHO wrote the prose this writer is handed (#877). `authored` — the default, and every
+   * seat — means a model chose each sentence, so every rule has a writer to address.
+   * `transcribed` means the HOST is quoting the project's own artifacts verbatim, and the
+   * {@link VOICE_RULES} are skipped for it: a rule that tells a writer to pick different
+   * words has no subject when nobody picked. Every other rule runs unchanged, so a
+   * transcription is still refused for a board a reader cannot follow.
+   *
+   * `assembleDesignBoard` is the only `transcribed` caller today. Read {@link BoardRegister}
+   * before adding a second: the register is a claim that the host wrote none of the prose,
+   * and a seat handed it would escape the voice screen it exists to be held to.
+   */
+  readonly register?: BoardRegister;
   /**
    * Prefixes every minted id. Flagged runs two seats over one board (D9); giving each
    * writer its own prefix is what makes the ids they receive unable to collide when the
@@ -278,10 +291,13 @@ export class BoardWriter {
   private readonly byVoice = new Map<string, VoiceRecord>();
 
   private readonly lint: LintContext;
+  /** See {@link BoardWriterOptions.register}. Every board is authored unless said otherwise. */
+  private readonly register: BoardRegister;
 
   constructor(options: BoardWriterOptions) {
     this.options = options;
     this.lint = { ...options.lint, lens: options.target };
+    this.register = options.register ?? "authored";
     this.tools = boardToolsByName(options.target, options.typedKinds ?? TYPED_KINDS_BY_TARGET);
   }
 
@@ -776,7 +792,7 @@ export class BoardWriter {
   }
 
   private finish(): BoardToolResult {
-    const pointers = lintTier(this.board(), this.lint, "finish");
+    const pointers = lintTier(this.board(), this.lint, "finish", this.register);
     // Recorded whichever way it went, because a repair turn carries the last verdict and
     // nothing else (D6) and `[]` is a different fact from "never asked".
     this.verdict = pointers;
@@ -917,8 +933,10 @@ export class BoardWriter {
    * for what IT did rather than for something a caller cannot fix from here.
    */
   private introducedViolations(next: DraftBoard): Violation[] {
-    const before = new Set(lintTier(this.board(), this.lint, "boundary").map(violationKey));
-    return lintTier(next, this.lint, "boundary").filter(
+    const before = new Set(
+      lintTier(this.board(), this.lint, "boundary", this.register).map(violationKey),
+    );
+    return lintTier(next, this.lint, "boundary", this.register).filter(
       (violation) => !before.has(violationKey(violation)),
     );
   }

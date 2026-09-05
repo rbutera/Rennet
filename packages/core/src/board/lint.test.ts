@@ -15,6 +15,7 @@ import {
   REPORT_RULES,
   rulesForTier,
   SETTLEMENT_RULES,
+  VOICE_RULES,
 } from "./lint";
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
@@ -4832,6 +4833,89 @@ describe("LENS_RULES partitions into the boundary tier and the finish tier", () 
     ]);
     expect(atBoundary(ungrounded, { lens: "decisions" })).toContain("decision-grounded");
     expect(atFinish(ungrounded, { lens: "decisions" })).not.toContain("decision-grounded");
+  });
+});
+
+// ── The register: who wrote the prose (#877) ─────────────────────────────────
+
+describe("the transcribed register drops the voice rules and nothing else", () => {
+  const name = (rule: unknown) => (rule as { name?: string }).name ?? "(anonymous)";
+
+  it("VOICE_RULES are registry members, named, so a rule cannot join or leave unnoticed", () => {
+    // Named, not counted. A membership test over a length would pass while a rule swapped
+    // for another, and the whole question this constant answers is WHICH rules stop
+    // applying to text the host is quoting — so the failure has to print the name.
+    expect(VOICE_RULES.map(name)).toEqual([
+      "processVocabulary",
+      "noDialogue",
+      "noRemainderNarration",
+    ]);
+    // A subset of the registry, like the settlement rules — not a fourth list living
+    // outside it where the partition assertion cannot reach.
+    const foreign = VOICE_RULES.filter((rule) => !LENS_RULES.includes(rule));
+    expect(foreign.map(name)).toEqual([]);
+  });
+
+  it("the integrity rules stay in force, so a transcription is still refused for a broken board", () => {
+    // The half that matters most: `transcribed` must not become "lint off". Each of these
+    // is a rule that protects the READER, and each fires on a transcribed board exactly as
+    // it does on an authored one.
+    const transcribed = (draft: DraftBoard, over: Partial<LintContext> = {}) =>
+      rulesHit(lintTier(draft, ctx(over), "boundary", "transcribed"));
+
+    const codeBytes = board([el("p1", "prose", { markdown: "```ts\nconst x = 1;\n```" })]);
+    expect(transcribed(codeBytes)).toContain("no-code-bytes");
+
+    const basename = board([el("p2", "prose", { markdown: "See app.tsx:551." })]);
+    expect(transcribed(basename)).toContain("citation-well-formed");
+
+    const unresolved = board([el("p3", "prose", { markdown: "See `src/auth.ts:900`." })]);
+    expect(transcribed(unresolved)).toContain("citation-resolves");
+
+    const outside = board([codeRef("c1", "src/auth.ts", 180, 190)]);
+    expect(transcribed(outside)).toContain("unresolvable-citation");
+  });
+
+  it("the same board that is refused when authored is accepted when transcribed", () => {
+    // The pair is the point: one board, two registers, opposite verdicts, and the ONLY
+    // difference is who is said to have written it. `authored` is asserted first so this
+    // cannot pass with a fixture that trips nothing.
+    const machinery = board([
+      el("s1", "section", { title: "What the lens found", children: [] }),
+      el("p1", "prose", { markdown: "The rest of the diff is not covered here." }),
+    ]);
+    const authoredHits = rulesHit(lintTier(machinery, ctx(), "boundary"));
+    expect(authoredHits).toContain("process-vocabulary");
+    expect(authoredHits).toContain("no-remainder-narration");
+    expect(lintTier(machinery, ctx(), "boundary", "transcribed")).toEqual([]);
+  });
+
+  it("transcribed is the authored set minus the voice rules, tier by tier, by name", () => {
+    // Over `rulesForTier`, the function the writer actually calls — and asserted as a set
+    // difference rather than a hand-written list, so a rule added to VOICE_RULES without a
+    // tier, or dropped from the registry, shows up here as a name.
+    for (const tier of ["boundary", "finish"] as const) {
+      const authored = rulesForTier("design", tier);
+      const transcribed = rulesForTier("design", tier, "transcribed");
+      expect(transcribed.map(name)).toEqual(
+        authored.filter((rule) => !VOICE_RULES.includes(rule)).map(name),
+      );
+    }
+    // Every voice rule is answered SOMEWHERE in the authored register, or the subtraction
+    // above would be vacuous for it.
+    const answered = [...rulesForTier("design", "boundary"), ...rulesForTier("design", "finish")];
+    for (const rule of VOICE_RULES) expect(answered.includes(rule)).toBe(true);
+  });
+
+  it("`lint` and every existing caller keep the authored register they always had", () => {
+    // The register is defaulted, and a default that silently flipped would turn the voice
+    // screens off for every seat board in the product. This is that assertion.
+    const machinery = board([el("s1", "section", { title: "What the lens found", children: [] })]);
+    expect(rulesHit(lint(machinery, ctx()))).toContain("process-vocabulary");
+    expect(rulesHit(lintTier(machinery, ctx(), "boundary"))).toContain("process-vocabulary");
+    expect(rulesForTier("design", "boundary").map(name)).toEqual(
+      rulesForTier("design", "boundary", "authored").map(name),
+    );
   });
 });
 
