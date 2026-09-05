@@ -64,6 +64,7 @@ import {
   type GenerationPhaseTiming,
   generationIdForDispatch,
   generationIdForPatchset,
+  hostDerivedMemberKind,
   type LaneLatest,
   type LaneSeat,
   type LaneThreadRef,
@@ -175,7 +176,9 @@ export function createRegenerationLanes(
       ...(seats === undefined ? {} : { seats }),
       ...next,
     });
-    if (next.status !== "running") onSettled?.(lens);
+    // `waiting` is not a settlement: the lane's seat has not started, and dropping its
+    // watches here would drop them before there was anything to watch.
+    if (next.status !== "running" && next.status !== "waiting") onSettled?.(lens);
   };
   /** The lane a seat belongs to, or nothing for a seat with no lane (the report seat). */
   const laneOf = (seat: string): { lens: LensKind; lane: LensLane } | undefined => {
@@ -196,11 +199,32 @@ export function createRegenerationLanes(
      *  regeneration) AND at the pipeline's own lens kickoff, which fires on every run —
      *  including the one where a report was expected and failed, the case an arrival-only
      *  trigger left reading `queued` for the whole run. Idempotent by construction: only
-     *  queued lanes are promoted, so the second caller is a no-op rather than a reset. */
+     *  queued lanes are promoted, so the second caller is a no-op rather than a reset.
+     *
+     *  A HOST-DERIVED lane does not start here (#865, D16c). Its board is the complement
+     *  of its siblings, so it has no seat, no thread and nothing to write until they
+     *  settle; promoting it to `running` with the rest is what made the rail animate, the
+     *  widget say "drafting · watching 0:01" and the board say "still being written" for
+     *  the whole fan-out. It goes to `waiting` and {@link running} promotes it when the
+     *  pipeline really opens it. The test is `hostDerivedMemberKind`, the same row that
+     *  takes the target's member-creating verb away — one fact, read where it applies,
+     *  rather than a second list of which lens waits. */
     start(): void {
       const queued = LENS_KINDS.filter((lens) => lanes.get(lens)?.status === "queued");
       if (queued.length === 0) return;
-      for (const lens of queued) set(lens, { status: "running" });
+      for (const lens of queued) {
+        set(lens, { status: hostDerivedMemberKind(lens) === undefined ? "running" : "waiting" });
+      }
+      emit(snapshot());
+    },
+    /** This lane's seat is starting NOW. The four core lanes are already `running` from
+     *  {@link start}, so this is a no-op for them; it is how a `waiting` lane leaves the
+     *  state, at the moment the pipeline has its complement and opens the lane. A lane
+     *  that has already settled is never re-opened by it. */
+    running(lens: LensKind): void {
+      const status = lanes.get(lens)?.status;
+      if (status !== "queued" && status !== "waiting") return;
+      set(lens, { status: "running" });
       emit(snapshot());
     },
     /**
@@ -1509,7 +1533,12 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
               // A seat whose lane has ALREADY settled gets no watch at all: a repair that
               // rebinds after the fact would otherwise open a socket nothing reads.
               const settled = lanes.statusOf(lens);
-              if (settled !== undefined && settled !== "running" && settled !== "queued") {
+              if (
+                settled !== undefined &&
+                settled !== "running" &&
+                settled !== "queued" &&
+                settled !== "waiting"
+              ) {
                 watch.stop();
                 return;
               }
@@ -1585,6 +1614,11 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
       onLensAbsence,
       onLensFailure,
       ...(lanes === undefined ? {} : { onLensDraftingStart: () => lanes.start() }),
+      // A lane's own seat is starting. For the four core lanes this lands right after
+      // `start()` and changes nothing; for the derived lane it is the only thing that
+      // takes it out of `waiting`, which is why the pipeline calls it per lane rather
+      // than letting kickoff speak for all five (#865).
+      ...(lanes === undefined ? {} : { onLensLaneStart: (lens: LensKind) => lanes.running(lens) }),
       ...(persistBoardMeta === undefined && lanes === undefined
         ? {}
         : {

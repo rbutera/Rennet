@@ -105,14 +105,18 @@ function RunReceiptSummary({
   );
 }
 
-/** The greeting's per-lane status label — EXHAUSTIVE over `RowStatus` (finding 5). A
- *  regenerating lane reads "re-drafting"; a queued one "queued"; a drafted-but-unannounced
- *  one "drafted"; a successful no-material lane "not present"; a FAILED one "failed" —
- *  never the old "done" that made a queued or failed drafter lie as a settled success. */
-function laneStatusLabel(status: RowStatus): string {
+/** The greeting's per-lane status label — EXHAUSTIVE over `RowStatus` plus the lens
+ *  lane's own `waiting` (finding 5). A regenerating lane reads "re-drafting"; a queued one
+ *  "queued"; a lane still owed its siblings' citations "waiting on the other lenses"; a
+ *  drafted-but-unannounced one "drafted"; a successful no-material lane "not present"; a
+ *  FAILED one "failed" — never the old "done" that made a queued or failed drafter lie as
+ *  a settled success. */
+function laneStatusLabel(status: RowStatus | "waiting"): string {
   switch (status) {
     case "queued":
       return "queued";
+    case "waiting":
+      return "waiting on the other lenses";
     case "running":
       return "re-drafting";
     case "drafted":

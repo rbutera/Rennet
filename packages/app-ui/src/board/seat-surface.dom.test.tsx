@@ -91,7 +91,10 @@ const DRAFTING: LensLane[] = [
       },
     ],
   },
-  { id: "noise", label: "Noise", status: "queued" },
+  // `waiting`, the post-kickoff state the daemon publishes for the derived lane (#865):
+  // its board is the complement of the four above, so it has no seat and no thread until
+  // they settle. `queued` — which this fixture held — only exists before kickoff.
+  { id: "noise", label: "Noise", status: "waiting" },
 ] as LensLane[];
 
 const SETTLED: LensLane[] = DRAFTING.map((lane) =>
@@ -211,6 +214,51 @@ describe("one widget above the board names the seat doing the work", () => {
     expect(
       (w as Element).compareDocumentPosition(article as Node) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
+  });
+
+  it("a waiting Noise seat says what it waits for and never claims to be drafting", async () => {
+    // #865. While the four core seats work, the Noise lane has no thread and no seat, and
+    // by design cannot have one. The widget used to read "DRAFTING · Noise seat ·
+    // watching 0:01 · under way" for that whole window — a chip, a stopwatch and a live
+    // line, all about a seat that did not exist.
+    const h = harness({ boards: { noise: null } });
+    h.open("?lens=noise");
+
+    await waitFor(() => expect(widget()?.getAttribute("data-lens")).toBe("noise"));
+    const w = widget();
+    expect(w?.getAttribute("data-register")).toBe("waiting");
+    // The WORKING shape, not the settled receipt: nothing is finished either.
+    expect(w?.getAttribute("data-shape")).toBe("working");
+    expect(w?.querySelector('[data-testid="seat-chip"]')?.textContent).toBe("waiting");
+    // No stopwatch. It counted the time a seat had been watched, and there is no seat.
+    expect(w?.querySelector('[data-testid="seat-watched"]')).toBeNull();
+    // It names the lanes it is owed — Design has settled, the other three have not.
+    expect(w?.querySelector('[data-testid="seat-waiting-on"]')?.textContent).toBe(
+      "waiting on Sequence, Decisions and Flagged",
+    );
+    // ...and no transcript control, because there is no thread to open.
+    expect(transcriptButton("noise")).toBeNull();
+  });
+
+  it("counts what the SEAT wrote apart from what the host placed on a derived board", async () => {
+    // #864 fold-in. The host places the complement — one `code_ref` and one
+    // `noise_verdict` per uncited change — before the seat first turn, so counting every
+    // element as "written" credited the seat with the whole derivation. The drive read
+    // "2522 elements written · 1259 cited" on a board whose seat wrote four sections.
+    const settledNoise = SETTLED.map((lane) =>
+      lane.id === "noise"
+        ? ({ id: "noise", label: "Noise", status: "done", verdict: "reworked" } as LensLane)
+        : lane,
+    );
+    const h = harness({ lanes: settledNoise, boards: { noise: at(FIXTURE_BOARDS.gen1?.noise) } });
+    h.open("?lens=noise");
+
+    await waitFor(() => expect(widget()?.getAttribute("data-shape")).toBe("receipt"));
+    // The fixture board is 8 elements: a section and a prose the seat wrote, and three
+    // host-placed member pairs. The seat wrote two of them.
+    expect(widget()?.querySelector('[data-testid="seat-written"]')?.textContent).toBe(
+      "2 elements written · 3 regions placed",
+    );
   });
 
   it("shows both Flagged voices side by side, each with its own line and its own control", async () => {

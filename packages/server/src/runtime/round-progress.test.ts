@@ -670,9 +670,13 @@ describe("runRound emits the real regeneration progress (C15 3.1/3.3)", () => {
     // No report announced — the premise, asserted rather than assumed.
     expect(events.some((e) => e.type === "report")).toBe(false);
 
-    // The FIRST lens frame is the kickoff one, and every independent lane is running.
+    // The FIRST lens frame is the kickoff one, and every INDEPENDENT lane is running.
     // Asserting the first frame (not "some frame ever") is load-bearing: later drafted
     // frames cannot prove the scheduler represented concurrent work while it was live.
+    //
+    // Noise is not independent (#865, D16c): its board is the complement of the other
+    // four, so at kickoff it has no seat, no thread and nothing to write. It reads
+    // `waiting`, which is what the rail, the widget and the board all render honestly.
     const first = events.find((e) => e.type === "lens");
     if (first?.type !== "lens") throw new Error("no lens lanes were emitted");
     expect(first.lanes.map((lane) => [lane.id, lane.status])).toEqual([
@@ -680,10 +684,62 @@ describe("runRound emits the real regeneration progress (C15 3.1/3.3)", () => {
       ["sequence", "running"],
       ["decisions", "running"],
       ["flagged", "running"],
-      ["noise", "running"],
+      ["noise", "waiting"],
     ]);
     // ...and it arrives before any board has landed: nothing is drafted yet in that frame.
     expect(first.lanes.some((lane) => lane.status === "drafted")).toBe(false);
+  });
+
+  it("keeps Noise `waiting` AFTER kickoff, never `running` while a sibling is unsettled", async () => {
+    // THE BUG (#865): `start()` promoted every queued lane, Noise included, so for the
+    // whole core fan-out the rail animated a travelling lamp, the widget said
+    // "DRAFTING · Noise seat · watching 0:01" and the board said "This board is still
+    // being written" — over a lane with no thread and no seat, which by design cannot
+    // have one until its four siblings settle.
+    //
+    // The honest rendering existed only in the window BEFORE kickoff, which is exactly
+    // the window a fixture samples and the reviewer never sees. So this asserts over
+    // every frame the daemon really published, and its load-bearing clause is the
+    // post-kickoff one: a frame in which the core lanes are live and Noise is not.
+    const events: RoundEvent[] = [];
+    await runtimeWith((lens) => sectioned(lens, "same")).runRound({
+      session: { ...session, id: "noise-waits-session" } as SessionModel,
+      repoRoot: root,
+      previousGeneration: mintGeneration("gen:ps-prior", "ps-prior"),
+      asksDispatched: ["t-1"],
+      runWorkers: async () => ({ commitRange: { from: "c0", to: "c1" }, patchsetId: "ps-landed" }),
+      onProgress: (event) => events.push(event),
+      ...collationFor(),
+    });
+
+    const frames = events.filter((event) => event.type === "lens");
+    const statusIn = (frame: (typeof frames)[number], id: string) =>
+      frame.type === "lens" ? frame.lanes.find((lane) => lane.id === id)?.status : undefined;
+    const core = ["design", "sequence", "decisions", "flagged"] as const;
+    const unsettled = new Set(["queued", "waiting", "running"]);
+
+    // 1. A frame AFTER kickoff in which the four core seats are working and Noise is
+    //    plainly not. This is the frame the drive screenshotted saying "DRAFTING".
+    expect(
+      frames.some(
+        (frame) =>
+          core.every((lens) => statusIn(frame, lens) === "running") &&
+          statusIn(frame, "noise") === "waiting",
+      ),
+    ).toBe(true);
+
+    // 2. Noise NEVER claims a seat while a sibling is unsettled — over every frame, not
+    //    the first one. The `waiting` state would be worth nothing if the lane were
+    //    promoted a frame later.
+    for (const frame of frames) {
+      if (statusIn(frame, "noise") !== "running") continue;
+      expect(core.filter((lens) => unsettled.has(statusIn(frame, lens) ?? ""))).toEqual([]);
+    }
+
+    // 3. …and it does not sit in `waiting` forever: the last frame has it settled, so
+    //    clause 2 is not satisfied by a lane that simply never runs.
+    const last = frames.at(-1);
+    expect(last === undefined ? undefined : statusIn(last, "noise")).toBe("done");
   });
 
   it("fails before any lens starts when the required report is invalid", async () => {

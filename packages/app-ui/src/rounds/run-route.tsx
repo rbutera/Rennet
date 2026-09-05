@@ -53,13 +53,17 @@ export function StatusIcon({
   status,
   compact = false,
 }: {
-  readonly status: RowStatus;
+  /** A step row's status, or a lens lane's — which adds `waiting`, the state of a lane
+   *  whose board is the complement of siblings that have not settled (#865). */
+  readonly status: RowStatus | "waiting";
   readonly compact?: boolean;
 }) {
   const size = compact ? "size-3" : "size-3.5";
   if (status === "running")
     return <Spinner className={cn(size, "shrink-0 text-model")} aria-hidden="true" />;
-  if (status === "queued")
+  // The same hollow ring `queued` gets: neither has started, and a spinner on either
+  // would animate over a lane with no seat.
+  if (status === "queued" || status === "waiting")
     return (
       <span className={cn(size, "shrink-0 rounded-full border border-border")} aria-hidden="true" />
     );
