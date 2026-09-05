@@ -169,13 +169,16 @@ describe("the lens register on the rail", () => {
 });
 
 describe("the stop as identity, mounted directly", () => {
-  const seats = lensSeatStates(LANES, {
-    design: { status: "missing" },
-    sequence: { status: "missing" },
-    decisions: { status: "missing" },
-    flagged: { status: "missing" },
-    noise: { status: "missing" },
-  });
+  const seats = lensSeatStates(
+    { lanes: LANES, running: true },
+    {
+      design: { status: "missing" },
+      sequence: { status: "missing" },
+      decisions: { status: "missing" },
+      flagged: { status: "missing" },
+      noise: { status: "missing" },
+    },
+  );
   const entries = LENSES.map(
     (lens) =>
       ({
@@ -207,13 +210,16 @@ describe("the stop as identity, mounted directly", () => {
       { id: "design", label: "Design", status: "done", verdict: "carrying-forward" },
       { id: "sequence", label: "Sequence", status: "done", verdict: "carrying-forward" },
     ] as LensLane[];
-    const settledSeats = lensSeatStates(settledLanes, {
-      design: { status: "missing" },
-      sequence: { status: "missing" },
-      decisions: { status: "missing" },
-      flagged: { status: "missing" },
-      noise: { status: "missing" },
-    });
+    const settledSeats = lensSeatStates(
+      { lanes: settledLanes, running: true },
+      {
+        design: { status: "missing" },
+        sequence: { status: "missing" },
+        decisions: { status: "missing" },
+        flagged: { status: "missing" },
+        noise: { status: "missing" },
+      },
+    );
     const settled = (["design", "sequence"] as const).map(
       (lens) =>
         ({

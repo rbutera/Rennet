@@ -897,11 +897,13 @@ change that merely sorts first is not this branch's.
 
 When the repository holds no specification for this branch, the seat returns
 `{ "absence": "no-spec" }` and drafts nothing. The lane settles **absent**, not
-failed: a branch without a spec workflow is an ordinary branch. The bench reader
-says "No spec found for this branch." and the finished board views carry no Design
-tab at all, because an empty Design board would be a lie about what the repository
-holds. Design's older `no-material` absence stays readable for generations recorded
-before this change; nothing settles it now.
+failed: a branch without a spec workflow is an ordinary branch. Design keeps its
+place on the rail and its board says "No spec found for this branch." — a stated
+result rather than a gap, and rather than an empty board, which would be a lie about
+what the repository holds. The tab stays because a lens that vanished as it settled
+would move the reviewer's selection out from under them. Design's older `no-material`
+absence stays readable for generations recorded before this change; nothing settles
+it now.
 
 The resulting board is a structured composition, not a Markdown viewer. Its header
 names the source set, displays the format, and reports capability, requirement, and

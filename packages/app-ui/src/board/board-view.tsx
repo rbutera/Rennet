@@ -271,10 +271,13 @@ export function LensBoardView({
         />
       </div>
 
-      {/* THE SEAT WIDGET, directly above the board it is writing (6.1). Live generation
-          only: a frozen predecessor's seats are long gone, and naming one would be a claim
-          about a run that is over. */}
-      {entry !== undefined && live && slug.length > 0 ? (
+      {/* THE SEAT WIDGET, directly above the board it is writing (6.1).
+          Live generation only: a frozen predecessor's seats are long gone, and naming one
+          would be a claim about a run that is over. And gated on `seated` — a lane for
+          this lens actually exists — because during capture the daemon has opened no lane,
+          and a widget reading "Design seat · waiting" would name a seat that does not
+          exist. The workspace header is what speaks for capture; this speaks for seats. */}
+      {entry !== undefined && live && slug.length > 0 && seat.seated ? (
         <SeatWidget
           reviewId={reviewId}
           entry={entry}

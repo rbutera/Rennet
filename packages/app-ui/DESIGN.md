@@ -127,48 +127,63 @@ Two rules follow from past drift:
   region's `button, a, input, code` opt-out silently failed for any other interactive
   child.
 
-## Surface rules: the bench
+## Surface rules: the board workspace
 
-The bench (`src/app/preparation-bench.tsx`) is the review workspace's first frame while
-capture and the first board generation run. It is the one surface in this package whose
-rules are worth writing down, because it is the only one that renders a live external
-process and the failure mode is a surface that quietly lies about it.
+A review opens on its boards (`src/app/review-workspace-route.tsx`, and
+`src/app/preparing-workspace.tsx` for the frame before the review exists). These rules are
+worth writing down because this is the surface that renders a live external process, and
+the failure mode is a surface that quietly lies about it.
 
-- **Not a table.** The change is a slab; the lenses are five readers standing under it,
-  each holding the core sample it drew out of the change — a plug on a shaft rising into
-  a socket in the slab's underside — with a line of speech per seat beneath it. A reader
-  with one seat speaks one line; Flagged has two seats (Claude and Codex) and speaks two,
-  each under its speaker's name, and each line is the control that opens that seat's
-  transcript. Rows, columns and dividers are the shape this surface exists to replace.
-  The reader's speech is the review serif (`font-serif`); its name and the chrome around
-  it are sans.
-- **One row, always.** The readers sit in an explicit grid of exactly as many equal
-  columns as the daemon opened lanes. A wrapping flex row orphaned the fifth reader onto
-  a line of its own at narrow widths, which broke the scene the surface exists to draw.
-- **Colour is which lens, so state is the cut.** Each lane binds its lens's hue from the
-  theme's portable register (`src/board/lens-colour.ts`), so colour answers *which
-  reader*, not *how it is doing* — and the five registers are told apart by the way the
-  sample is cut instead: an empty tube (queued), dashed strata (under way), solid strata
-  (settled), a doubled seam (reworked), a snapped plug (failed), a dashed outline
-  (absent). A failed lane snaps in its **own** lens colour; painting it red would say
-  "Flagged". The speech under it is the second statement in every case.
-- **Never an amount.** `LensLane` carries no progress, so nothing on the bench fills,
-  grows, or completes. Registers differ by pattern and structure; a bar that lengthened
-  would be claiming a number the daemon never sent.
-- **Motion only where it carries a fact.** The travelling glance
-  (`animate-bench-glance`) and the sample's lamp (`animate-bench-core-scan`) run only
-  while that seat has a tool call actually in flight, or is running. The glance carries
-  `motion-reduce:animate-none` because its settled state is its rest state; the lamp
-  carries `motion-reduce:hidden`, because parked it would read as a mark of its own and
-  the dashed strata already say "under way" without it.
-- **A settled reader's board opens beneath it, now.** A `drafted`/`done` lane renders its
-  board on the bench (`LensBoardDocument`, the workspace's own document) the moment
-  `board.read` answers, without waiting for the other lanes; the reader stays above it as
-  the way to that lens's transcript. The bench never waits for the slowest lens.
-- **It never invents a state.** Every line comes off the lane arm that carries it: a
-  running lane with no `latest` says "under way", an `idle` projection is rendered in the
-  quiet voice with the daemon's own words, and a failed lane speaks its `reason`. A
-  voice whose seat has no thread is disabled, not offered.
+- **Boards first, and nothing in front of them.** There is no preparation screen. Capture
+  is reported in the workspace's own header (`src/board/workspace-header.tsx`) — its two
+  named beats and its cancel — over a board view that is already there. When nothing is
+  being prepared the header renders nothing rather than restating a finished step.
+- **The rail carries every lens, from the first frame.** `src/board/lens-switcher.tsx`
+  renders one tab per lens whether or not that lens has a result, each carrying the state
+  of its seat. A running lens is selectable, never a disabled segment, and no lens is
+  dropped as it settles — a tab that vanished under the reviewer would move their
+  selection. Flagged carries one working mark per voice, because it runs two seats.
+- **Colour is which lens, so state is the cut.** Each tab binds its lens's hue from the
+  theme's portable register (`src/board/lens-colour.ts`), so colour answers *which lens*,
+  not *how it is doing* — and the registers are told apart by the way the tab's stop is
+  cut instead: a faint rule (unstarted), a dashed rule with a travelling lamp (open), a
+  solid rule (clean), a rule split by a gap (seamed), two offset pieces (snapped), a
+  dotted rule (empty). A failed lane snaps in its **own** lens colour; painting it red
+  would say "Flagged". The words beside it are the second statement in every case.
+- **Never an amount.** `LensLane` carries no progress, so nothing here fills, grows or
+  completes. Registers differ by pattern and structure; a bar that lengthened would be
+  claiming a number the daemon never sent.
+- **Motion only where it carries a fact.** The stop's lamp (`animate-lens-stop-scan`) runs
+  only while that seat is actually writing. It carries `motion-reduce:hidden` rather than
+  `animate-none`, because parked it would read as a mark of its own and the dashed rule
+  already says "under way" without it.
+- **A board is the same view settled or not.** The selected board renders each element as
+  its seat writes it and says it is provisional in three independent ways: the rail entry
+  shows the seat working, the board header carries an `in progress` mark and states that
+  the board is still being written, and the last row is a placeholder naming where the
+  next element lands. All three clear together at settle. Nothing navigates — the drafting
+  view and the finished view are one component at one route — and the round-delta marks
+  are withheld until settle, because a partial board would mark everything new.
+- **One widget names the seat, and only when there is one.** `src/board/seat-widget.tsx`
+  sits above the selected board with that seat's provider, live line and output so far;
+  Flagged shows both voices. It renders only when a lane for that lens actually exists.
+  During capture the daemon has opened no lane, so there is no widget and no board claims
+  to be filling — an empty workspace is honest, five invented seats would not be.
+- **It never invents a state, and a stopped run is not a live one.** Every line comes off
+  the lane arm that carries it: a running lane with no `latest` says "under way", an
+  `idle` projection is rendered in the quiet voice with the daemon's own words, and a
+  failed lane speaks its `reason`. A cancelled or failed generation keeps its lanes frozen
+  at whatever status they held, so liveness is read from the preparation's own status and
+  never from the presence of lanes (`src/board/lens-seats.ts`) — otherwise a cancelled
+  review goes on saying its seats are still writing.
+- **A seat's transcript never takes the reviewer's conversation.** It opens in a drawer
+  inside the board region (`src/board/seat-transcript-drawer.tsx`), a second mount of the
+  T3 thread view; the chat dock keeps the session's own thread in every state of every
+  lane (#823). The drawer and the diff view share one slot.
+- **The board region scrolls.** It takes the repo's primary-scroller idiom
+  (`min-h-0 flex-1 overflow-y-auto`) with the widget inside it, because the outlet is a
+  flex column inside a `fixed inset-0 overflow-hidden` shell and a surface that does not
+  declare it is simply clipped at the fold.
 
 ## Radius scale
 

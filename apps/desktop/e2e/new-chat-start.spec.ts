@@ -136,13 +136,13 @@ async function backToNewChat(page: Page): Promise<void> {
  */
 async function clickRowAndLand(page: Page, name: RegExp): Promise<void> {
   await page.locator('[data-row="target"]', { hasText: name }).first().click();
-  await expect(
-    page
-      .locator(
-        '[data-kind="lens-board-view"], [data-screen="session-preparation"][data-status="failed"]',
-      )
-      .first(),
-  ).toBeVisible({ timeout: 180_000 });
+  // ONE selector, not two. The second arm used to catch a preparation that FAILED,
+  // which was a different screen from the board; boards-first means the board view is
+  // on screen in every outcome — a failure is reported in the workspace header over it
+  // — so an alternation would now be an OR whose second branch can never match.
+  await expect(page.locator('[data-kind="lens-board-view"]').first()).toBeVisible({
+    timeout: 180_000,
+  });
   await expect(page.locator('[data-screen="chat-only-session"]')).toHaveCount(0);
   expect(await page.evaluate(() => location.hash)).toMatch(/#\/s\//);
 }
@@ -174,21 +174,36 @@ test("#668: a row click opens real generation progress before held drafting comp
     // The session route paints while the daemon deliberately holds capture itself. Before #668
     // the row click awaited this exact command, so holding only board drafting would miss the
     // original renderer-blocking seam.
-    const progress = page.locator('[data-screen="session-preparation"]');
-    await expect(progress).toBeVisible({ timeout: 5_000 });
+    //
+    // WHAT CHANGED, and it is the whole of `lens-board-tools` 5.2: the surface that paints is
+    // the BOARD WORKSPACE, not a preparation screen in front of it. This test used to assert
+    // that the board had NOT taken over while capture was held; boards-first inverts that, so
+    // the assertion is inverted with it rather than deleted. Capture is reported in the
+    // workspace header, over boards that are already there.
+    const header = page.locator('[data-testid="workspace-header"]');
+    await expect(header).toBeVisible({ timeout: 5_000 });
     expect(await page.evaluate(() => location.hash)).toMatch(/#\/s\//);
-    await expect(progress.getByText("Resolving the repository", { exact: true })).toBeVisible();
-    await expect(progress.locator("[data-row]")).toHaveCount(0);
-    // ⚠️ ABSENCE ASSERTION: the board has NOT taken over while capture is held. Its selector
-    // is the board element (it was the removed `REVIEW ·` eyebrow); if that selector ever
-    // drifts from `board/board-view.tsx` this passes vacuously.
-    await expect(page.locator('[data-kind="lens-board-view"]')).toHaveCount(0);
+    await expect(header.getByText("Resolving the repository", { exact: true })).toBeVisible();
+    await expect(page.locator('[data-kind="lens-board-view"]')).toBeVisible();
+    // All five lenses are on the rail from the first frame (5.1), while capture is still
+    // held — and the count is what proves it is all five rather than one.
+    await expect(page.locator('[data-kind="lens-switcher"] [data-lens]')).toHaveCount(5);
+    // ⚠️ ABSENCE ASSERTIONS, and they are the honest half of boards-first: the daemon has
+    // opened NO lane yet, so nothing on screen may claim a seat is working or a board is
+    // being written. This is the exact lie this wave's own review caught.
+    await expect(page.locator('[data-kind="seat-widget"]')).toHaveCount(0);
+    await expect(page.locator('[data-kind="board-in-progress"]')).toHaveCount(0);
+    await expect(page.locator('[data-kind="board-ghost"]')).toHaveCount(0);
+    await expect(page.locator('[data-register="working"]')).toHaveCount(0);
 
     // Cancellation is a live command, not a disabled navigation state. The review remains on
     // the same route with an explicit terminal account and can be retried in place.
-    await progress.getByRole("button", { name: "Cancel" }).click();
-    await expect(progress).toHaveAttribute("data-status", "cancelled");
-    await expect(progress.getByRole("button", { name: "Retry" })).toBeVisible();
+    await header.getByRole("button", { name: "Cancel" }).click();
+    await expect(header).toHaveAttribute("data-status", "cancelled");
+    await expect(header.getByRole("button", { name: "Retry" })).toBeVisible();
+    // …and a cancelled run still says nothing is being written.
+    await expect(page.locator('[data-kind="board-ghost"]')).toHaveCount(0);
+    await expect(page.locator('[data-register="working"]')).toHaveCount(0);
   } finally {
     await application.close();
     rmSync(repository, { recursive: true, force: true });
@@ -298,13 +313,13 @@ test("#587: in a two-repo workspace, the click captures the repo the ROW named",
       .filter({ hasText: "acme/beta" });
     await expect(betaRow).toHaveCount(1);
     await betaRow.click();
-    await expect(
-      page
-        .locator(
-          '[data-kind="lens-board-view"], [data-screen="session-preparation"][data-status="failed"]',
-        )
-        .first(),
-    ).toBeVisible({ timeout: 180_000 });
+    // ONE selector, not two. The second arm used to catch a preparation that FAILED,
+    // which was a different screen from the board; boards-first means the board view is
+    // on screen in every outcome — a failure is reported in the workspace header over it
+    // — so an alternation would now be an OR whose second branch can never match.
+    await expect(page.locator('[data-kind="lens-board-view"]').first()).toBeVisible({
+      timeout: 180_000,
+    });
 
     const session = (await daemon.sessions()).find((s) => s.claim?.branch === "shared/feature");
     expect(session?.reviewId).toBeTruthy();

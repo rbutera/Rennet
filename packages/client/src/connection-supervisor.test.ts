@@ -156,6 +156,14 @@ const ASK: AskProjection = {
   verdictOverride: null,
 } as unknown as AskProjection;
 
+/** One accepted board write, as the daemon publishes it (`lens-board-tools` D11). */
+const DRAFT_FRAME: LensDraftEvent = {
+  generation: "gen:ps-1",
+  lens: "sequence",
+  revision: 1,
+  update: { kind: "state", state: "drafting" },
+};
+
 describe("ConnectionSupervisor — reachability", () => {
   it("starts connecting and reaches online on the handshake, notifying subscribers", async () => {
     const { supervisor, bridges } = makeSupervisor();
@@ -312,6 +320,45 @@ describe("ConnectionSupervisor — resubscribe registry (#389 client half)", () 
     expect(nth(bridges, 1).askProjectionListeners.get("rev-1")?.size).toBe(1);
     nth(bridges, 1).emitAskProjection("rev-1", ASK);
     expect(received).toHaveLength(2); // delivered again, at most once per emit
+  });
+
+  it("re-delivers lens-draft frames to the same listener after a reconnect", async () => {
+    // `lens-board-tools` D11, and the LAST link of a seam this wave exists to close.
+    // `onLensDraft` shipped in wave 4 with no caller; this wave supplied one, and every
+    // link between the socket and the screen has a control except this one — the registry
+    // re-attach, which is silent when it breaks because nothing re-subscribes to notice.
+    //
+    // A board is written over minutes, so a socket that drops mid-generation is the
+    // ordinary case rather than the exotic one: without the re-attach, the reviewer's
+    // board simply stops filling and nothing anywhere says why. Missed frames are not
+    // replayed by design — `board.draft`'s `revision` is what closes that gap — so this
+    // proves the CHANNEL resumes, which is the part the registry owns.
+    const { supervisor, bridges } = makeSupervisor();
+    track(supervisor);
+    await waitFor(() => bridges.length === 1);
+    nth(bridges, 0).goOnline();
+
+    const received: LensDraftEvent[] = [];
+    supervisor.onLensDraft("rev-1", (e) => received.push(e)); // ONE consumer subscribe, ever
+    nth(bridges, 0).emitLensDraft("rev-1", DRAFT_FRAME);
+    expect(received).toHaveLength(1);
+
+    // Socket drops mid-draft; the supervisor reconnects onto a FRESH bridge.
+    nth(bridges, 0).goOffline();
+    await waitFor(() => bridges.length === 2);
+    nth(bridges, 1).goOnline();
+
+    // The fresh bridge carries the listener, wired by the registry rather than by the
+    // consumer — which never re-subscribed and has no way to know it should.
+    expect(nth(bridges, 1).lensDraftListeners.get("rev-1")?.size).toBe(1);
+    nth(bridges, 1).emitLensDraft("rev-1", DRAFT_FRAME);
+    expect(received).toHaveLength(2); // delivered again, at most once per emit
+
+    // KEYED, not broadcast: another review's frames never reach this listener. Without
+    // this the assertion above would pass over a registry that re-attached everything to
+    // everyone, which is a different bug wearing the same green bar.
+    nth(bridges, 1).emitLensDraft("rev-2", DRAFT_FRAME);
+    expect(received).toHaveLength(2);
   });
 
   it("re-delivers attention events to the same listener after a reconnect (#383 batch)", async () => {

@@ -5,11 +5,15 @@ import {
   LensBoardSchema,
   type LensFailureAccount,
   type LensKind,
-  type LensLane,
 } from "@rennet/protocol";
 import { useCommand } from "../data";
 import { useRoundState } from "../rounds/rounds-data";
-import { type LensSeatState, type LensSeatStates, lensSeatStates } from "./lens-seats";
+import {
+  type GenerationLanes,
+  type LensSeatState,
+  type LensSeatStates,
+  lensSeatStates,
+} from "./lens-seats";
 import { BOARD_EXCLUDED_KINDS } from "./registry";
 
 const excludedKinds: ReadonlySet<string> = new Set(BOARD_EXCLUDED_KINDS);
@@ -245,27 +249,43 @@ export function lensReadsSettled(byLens: LensBoardResolutions): boolean {
 }
 
 /**
- * The generation's lanes — the seat states the rail, the widget and the drawer all read.
+ * The generation's lanes AND whether it is still going — what the rail, the widget and the
+ * drawer all read their seat states from.
  *
  * TWO sources, because a generation has two shapes and only one of them is in flight at a
- * time: `session.preparation.lanes` for the initial generation (the daemon's durable
- * preparation record) and the round machine's `lanes` for a post-round regeneration. The
- * round state wins when it has lanes, because a regeneration is the later generation.
+ * time: `session.preparation` for the initial generation (the daemon's durable preparation
+ * record) and the round machine's state for a post-round regeneration. The round state
+ * wins when it has lanes, because a regeneration is the later generation.
  *
- * `undefined` means NO generation is in flight, which is a different answer from "in
- * flight with no lanes opened yet" (`[]`, the capture frame) — see `lens-seats.ts`.
+ * `running` IS THE FIELD THAT MATTERS, and it is read off the record's own status rather
+ * than inferred from the lanes. `SessionPreparation` makes `lanes` optional on BOTH
+ * terminal arms: a cancel during capture writes `{status:"cancelled", stage:"capture"}`
+ * with no lanes at all, and a cancel during drafting keeps the lanes frozen at whatever
+ * status they held. Neither is a running generation, and treating "no lanes key" as "in
+ * flight, lanes not opened yet" is what made a cancelled review say its seats were still
+ * writing.
+ *
+ * `undefined` means there is no generation record here at all — an old review, a frozen
+ * generation drill-down — and every lens is answered for by its board read.
  */
-export function useGenerationLanes(slug: string): readonly LensLane[] | undefined {
+export function useGenerationLanes(slug: string): GenerationLanes | undefined {
   const { data } = useCommand("session.list", {}, { enabled: slug.length > 0 });
   const roundState = useRoundState(slug);
   const roundLanes = "lanes" in roundState ? roundState.lanes : undefined;
-  if (roundLanes !== undefined && roundLanes.length > 0) return roundLanes;
+  if (roundLanes !== undefined && roundLanes.length > 0) {
+    // A regeneration is running while it is composing or verifying. `composed` carries its
+    // lanes forward so the block does not blink out at the moment it finishes — which is
+    // exactly the case that must not read as live.
+    const phase = roundState.phase;
+    return { lanes: roundLanes, running: phase === "composing" || phase === "verifying" };
+  }
   const preparation = data?.sessions.find((candidate) => candidate.id === slug)?.preparation;
   if (preparation === undefined) return undefined;
-  // `capturing` has no lanes at all and that is honest: the daemon has not opened one. The
-  // empty array is what tells the rail this generation IS running, so its five lenses read
-  // waiting rather than absent.
-  return "lanes" in preparation ? preparation.lanes : [];
+  const running = preparation.status === "capturing" || preparation.status === "drafting";
+  // `capturing` has no lanes at all, and that is honest: the daemon has not opened one. It
+  // is still a RUNNING generation, so the rail lists five queued lenses — but no lane means
+  // no board of any of them is being written, which `lens-seats.ts` is what enforces.
+  return { lanes: "lanes" in preparation ? (preparation.lanes ?? []) : [], running };
 }
 
 /** Every lens's seat state for the generation the session is on. */
