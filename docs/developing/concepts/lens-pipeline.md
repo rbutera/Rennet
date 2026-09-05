@@ -236,7 +236,11 @@ and calls board regeneration through this runtime.
      names an element in that exact board, and the reference graph is acyclic so
      the host can create each target before its citer;
    - **decision-grounded** — a decision carries non-empty evidence and
-     alternatives;
+     alternatives. `alternatives` is PLAIN TEXT — one sentence per road not
+     taken — and not element references: every reader of the field treats it as
+     text, and the Decisions target has no verb that creates an
+     "alternative-option element", so an input asking for ids asked for
+     something the seat could not obtain;
    - **a process-vocabulary screen** flags structural-field prose that names
      lenses, boards, agents, seats, or drafts.
 
@@ -611,6 +615,20 @@ Decisions and Flagged all passed over — so its membership is set subtraction r
 a model's judgement about reading effort. Every changed region of a change is in exactly
 one of two sets, and the partition is total by construction rather than by diligence.
 
+**The unit is the hunk, not the side.** A changed region is one SIDE of one hunk, because
+that is what a citation names: a modified hunk offers a base-side region and a head-side
+region, and they are genuinely different text. The complement asks a different question of
+them — *did any lens read this change* — and for that the hunk is the unit. So a citation
+on either side cancels the hunk, and an uncited hunk becomes one member: its head side
+where it has one, its base side when it is a pure deletion. `changedRegions` stamps each
+region with the hunk it came from, and nothing in citation geometry reads that stamp.
+
+Subtracting per side instead made `no-noise` unreachable for any change containing a
+modification, and put the exact regions the other lenses had just read back on the Noise
+board — the misfiled-noise harm the ruling exists to prevent, arriving through the
+derivation rather than a seat's judgement. Filing per side also doubled the member list: a
+renamed file's two base names are one change and were filed twice under two names.
+
 `deriveNoiseMembers` in `packages/core/src/board/noise-complement.ts` takes the
 subtraction. It is handed what each of the four core lanes SAID, and the three cases are
 not two:
@@ -653,6 +671,21 @@ settled is not knowable, so the four core lanes fan out together and Noise start
 settlements. That is a sequencing fact rather than a barrier: every core board still
 reveals the moment it lands. The cost is a tail on the generation's wall clock, accepted
 by ruling and measured rather than argued.
+
+**And the lane says so.** A lens lane carries a `waiting` status distinct from both
+`queued` (the generation has not kicked off) and `running` (a seat is writing). The lens
+kickoff promotes the four core lanes to `running` and the derived lane to `waiting`; the
+derived lane leaves `waiting` only when the pipeline really opens it, which is after its
+siblings settle. The test is the same `HOST_DERIVED_MEMBER_KIND` row that takes the
+target's member-creating verb away, so which lens waits is one fact read where it applies
+rather than a second list.
+
+The client keys on it. The rail shows Noise as unstarted and names the un-settled lanes it
+is owed; the seat widget shows a `waiting` chip with no stopwatch and no live line; the
+board says it has not started and what it is waiting for. Without the status, all three
+surfaces claimed a seat that did not exist for the whole core fan-out — a travelling lamp
+on the rail, "DRAFTING · Noise seat · watching 0:01", and "This board is still being
+written" over a lane with no thread.
 
 **An empty complement is settled without a seat.** When the four lanes between them cited
 every changed region, the host knows the remainder is empty before any turn, and the lane
