@@ -118,6 +118,23 @@ and calls board regeneration through this runtime.
    admits no absence, and neither does Noise, because the host settles a Noise lane's
    absence from the derivation before any seat runs.
 
+   **The Noise seat also has `write_board`, which writes its whole board in one call**, and
+   it is the only seat that does. The payload is a JSON string carrying a list of that
+   board's own verbs with their own inputs — no second authoring format — applied in order
+   through the same boundary tier, then finished. A payload names an element it creates with
+   `local_id` and uses that name wherever an id goes; the host resolves it to the id it
+   minted. The answer is per entry: it names any entry it would not take by position, keeps
+   everything else on the board, and reports separately the entries that hung under a
+   refused one and were therefore not applied. `finish` runs only when every entry landed.
+
+   Why one seat and not five: batching pays when the writing is bulk and costs when it is
+   thought. The Noise seat groups members the host placed and did not choose, and on the
+   95-file drive that was 961 one-at-a-time calls and 317.8 s — a third of the generation's
+   wall clock — against 4 calls and 108.7 s with the verb. The four reasoning lenses compose
+   their boards while they write them, and the same measurement had them slightly slower
+   with it, so they do not carry its 486 B of tool surface. The scoping is derived from the
+   host-derived membership table rather than listed again (`writesWholeBoard`).
+
    Each drafting instruction requires a document envelope with an authored title, a short
    Markdown introduction, and a measure. The target owns the final measure: Design is
    `structured`; Sequence, Decisions, Flagged, and Noise are `reading`. The host constructs

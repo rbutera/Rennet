@@ -114,13 +114,35 @@ const bigPacket = buildDeltaPacket(synthetic(), []);
 // Codex leg does), and it carried that on EVERY turn while this text rides the base
 // prompt once per thread — a repair turn now carries the `finish` verdict alone.
 //
+// ── #869: +800 B on NOISE, and on no other lens ─────────────────────────────────
+//
+// `noise.md` gained two paragraphs teaching `write_board`, the whole-board verb. Measured
+// here on 2026-09-05, through this file's own helpers rather than copied from the spike:
+//
+//   design    14,223 → 14,223  (unchanged)
+//   sequence   8,503 →  8,503  (unchanged)
+//   decisions  8,294 →  8,294  (unchanged)
+//   flagged    9,226 →  9,226  (unchanged)
+//   noise      8,103 →  8,903  (+800)
+//
+// The four zeroes are the point of the change and not an accident of where the text went.
+// The spike (draft PR #878) put this teaching in the shared `write-with-tools.md` partial
+// and paid +870 B on every lens, ~5.2 KB across a generation's six threads, for a verb its
+// own measurement showed made the four reasoning lenses SLOWER. Here it rides `noise.md`'s
+// own tail, beside the `update_noise_verdict` paragraph it belongs with, so one thread
+// pays for it. The tool surface is scoped the same way (`writesWholeBoard`).
+//
+// +800 B once per thread against 961 → 4 board calls and 317.8 s → 108.7 s on the lane
+// that is the generation's serial tail, measured on the 95-file drive. That is the trade,
+// and it is stated because it is a real growth in what a seat is sent.
+//
 // Budgets are measurement + 10% headroom, as this file's convention has always been.
 const BUDGET: Record<(typeof LENS_KINDS)[number], number> = {
   design: 15_650,
   sequence: 9_360,
   decisions: 9_130,
   flagged: 10_150,
-  noise: 8_920,
+  noise: 9_790,
 };
 
 describe("drafter prompt byte budget (tripwire, #737)", () => {
