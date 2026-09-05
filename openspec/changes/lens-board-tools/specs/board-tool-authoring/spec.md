@@ -214,3 +214,36 @@ A lens whose absence is decided by the host from that derivation SHALL carry no 
 
 - **WHEN** the Noise seat's tool set is built
 - **THEN** it carries no settle-absent verb, because a Noise lane with no members is settled by the host without a seat turn
+
+### Requirement: A seat whose writing is bulk SHALL be able to write its whole board in one call
+
+A target whose membership the host derives SHALL carry one further verb that applies a whole payload of that board's own calls and then finishes the board, and no other target SHALL carry it. The payload SHALL travel as a single flat string scalar, parsed by the host after the call, so no board shape reaches a provider's tool schema. Every entry SHALL be one of that board's own verbs with its own flat input, applied in order through the same boundary tier, the same refusal sentences and the same host-minted ids as a one-at-a-time call; there SHALL be no second authoring format. An entry SHALL be able to name an element the payload itself creates, by a name the host resolves to the id it minted.
+
+A refusal SHALL be answered per entry, naming the entry's position, and SHALL NOT roll the batch back: what was accepted stays on the board. An entry that names an element an earlier REFUSED entry would have created SHALL NOT be applied, and its answer SHALL name the position of the entry that actually failed rather than reporting a missing id of its own. The finish tier SHALL run only when every entry landed.
+
+Every list and every payload-supplied name the answer renders SHALL be bounded, because a tool result is billed exactly as a prompt is.
+
+#### Scenario: Only the derived-membership seat has the verb
+
+- **WHEN** each target's tool set is built
+- **THEN** the Noise set carries the whole-board verb and the Design, Sequence, Decisions, Flagged and report sets carry none, and a call to it on those targets is refused by name
+
+#### Scenario: A whole board costs one round trip
+
+- **WHEN** the Noise seat sends one payload carrying its document, its groups and every member's grouping
+- **THEN** the board settles, and the seat's own call count for the turn is one
+
+#### Scenario: A refused entry is answered by position and the rest stay
+
+- **WHEN** one entry of a payload is refused by the boundary tier
+- **THEN** the answer names that entry's position and what would be admissible, the other entries remain on the board, and the finish tier does not run
+
+#### Scenario: A refused parent's children are reported as one cause
+
+- **WHEN** an entry creating a group is refused and later entries hang under it, some of them at two levels' remove
+- **THEN** none of those entries is applied, each is attributed to the position of the entry that was refused, and none of them reports a missing id of its own
+
+#### Scenario: Positive control removes the cascade attribution
+
+- **WHEN** a control stops attributing an entry to the refusal that made it impossible
+- **THEN** the cascaded entries are applied, come back as separate missing-id refusals, and the assertions naming one cause fail
