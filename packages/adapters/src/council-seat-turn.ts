@@ -15,6 +15,7 @@ import type {
   CouncilResolveContext,
   RspTokenUsage,
 } from "@rennet/protocol";
+import { describeSpawnFailure } from "./descriptor-exhaustion";
 import { createT3SeatTurn, type T3SeatSeam } from "./t3-seat-turn";
 import { extractClaudeUsage, inlineContextMetric, type MetricsCollector } from "./turn-metrics";
 
@@ -391,7 +392,7 @@ export function councilSeatTurn(
         failure:
           deps.t3Unavailable === undefined
             ? `${jobId} is a board job and runs only on a T3 sidecar seat; this caller composed no sidecar seam`
-            : `T3 sidecar unavailable: ${deps.t3Unavailable}`,
+            : `T3 sidecar unavailable: ${describeSpawnFailure(deps.t3Unavailable)}`,
       };
     }
     const provider = resolution.harness === "codex" ? "codex" : "claudeAgent";
