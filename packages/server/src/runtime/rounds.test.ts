@@ -2059,17 +2059,23 @@ describe("createRoundsRuntime", () => {
         input(),
       ),
     ).rejects.toThrow("crash after Flagged migration");
-    const attemptAFinding = {
+    // The finding's ID is the HOST's now (`lens-board-tools` 3.2) — the seat writes through
+    // tools and mints nothing — so the event is read for what this test is about: one
+    // dismissal, on ATTEMPT A's board, under this generation. The id is taken from the
+    // event rather than asserted as a literal, and then used verbatim below, so a run that
+    // filed the migration against the wrong board still fails on `boardId`.
+    expect(migrationEvents).toHaveLength(1);
+    const dismissal = migrationEvents[0];
+    expect(dismissal?.kind).toBe("finding-dismiss");
+    const attemptAFinding = (
+      dismissal as {
+        readonly finding: { generation: string; boardId: string; findingId: string };
+      }
+    ).finding;
+    expect(attemptAFinding).toMatchObject({
       generation: "gen:ps-1",
       boardId: "attempt-a:flagged",
-      findingId: priorFinding.findingId,
-    };
-    expect(migrationEvents).toEqual([
-      {
-        kind: "finding-dismiss",
-        finding: attemptAFinding,
-      },
-    ]);
+    });
     expect(Object.keys(dispositions).sort()).toEqual(
       [findingRefKey(priorFinding), findingRefKey(attemptAFinding)].sort(),
     );
@@ -2081,19 +2087,28 @@ describe("createRoundsRuntime", () => {
     ).runRound(input());
     const retryBoardId = recovered.boardGeneration.lensBoards.flagged;
     const retryOutcome = recovered.pipeline.boards.find((outcome) => outcome.lens === "flagged");
-    const retrySection = retryOutcome?.board?.elements.find((element) => element.id === "findings");
+    // By TITLE, not by fixture id: the host mints every id, so `element.id === "findings"`
+    // names nothing on the board that came back.
+    const retrySection = retryOutcome?.board?.elements.find(
+      (element) =>
+        element.kind === "section" && (element.data as { title?: unknown }).title === "Findings",
+    );
 
     expect(retryBoardId).toBe("attempt-b:flagged");
-    expect(retrySection?.kind === "section" ? retrySection.data.children : []).toEqual([
-      priorFinding.findingId,
-    ]);
+    // ONE finding under the section, whatever the host called it: the retry board holds the
+    // concern the retry seat wrote and not attempt A's.
+    const retryChildren =
+      retrySection?.kind === "section" ? (retrySection.data.children ?? []) : [];
+    expect(retryChildren).toHaveLength(1);
+    // Attempt A's migration did not run again, and no disposition was filed against
+    // attempt B's board for the finding attempt A dismissed.
     expect(migrationEvents).toHaveLength(1);
     expect(
       dispositions[
         findingRefKey({
           generation: "gen:ps-1",
           boardId: "attempt-b:flagged",
-          findingId: priorFinding.findingId,
+          findingId: attemptAFinding.findingId,
         })
       ],
     ).toBeUndefined();

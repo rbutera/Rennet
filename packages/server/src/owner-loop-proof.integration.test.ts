@@ -237,8 +237,12 @@ async function waitForFiveBoards(
         }
         const refs = read.board?.elements.filter((element) => element.kind === "code_ref") ?? [];
         expect(refs.every((element) => element.data.path === OWNER_LOOP_SOURCE)).toBe(true);
-        const currentLensRef = refs.find((element) => element.id === `${lens}-code`);
-        if (currentLensRef?.data.patchset_id !== patchsetId) {
+        // At least one citation stamped with THIS capture. Found by its patchset stamp
+        // rather than by a plan-authored id (`${lens}-code`): every id on a board is
+        // host-minted since `lens-board-tools` 3.2, so that id names nothing here — and
+        // the stamp is what the sentence above was always about. A board carrying only a
+        // carried-forward citation from the prior generation still fails.
+        if (!refs.some((element) => element.data.patchset_id === patchsetId)) {
           throw new Error(
             `${lens} board lost its current-patchset citation: ${JSON.stringify({ patchsetId, refs })}`,
           );
@@ -455,12 +459,31 @@ describe("#685 owner loop through a real server", () => {
     );
     expect(missing.board).toBeNull();
 
+    // The element the quote is anchored to is read OFF the initial Sequence board rather
+    // than named as a fixture id: every id is host-minted since `lens-board-tools` 3.2, so
+    // a quote opened against `sequence-step` would be attached to nothing from the start
+    // and the re-anchor below would have nothing to carry — a green bar over a thread that
+    // was never attached.
+    const initialSequence = parseCommandOutput(
+      "board.read",
+      await first.dispatch("board.read", {
+        reviewId,
+        generation: initialGeneration,
+        lens: "sequence",
+      }),
+    );
+    const quotedElement = initialSequence.board?.elements.find(
+      (element) => element.kind === "order_step",
+    );
+    if (quotedElement === undefined) {
+      throw new Error("the initial Sequence board holds no step to anchor a quote to");
+    }
     await first.dispatch("ask.quoteOpen", {
       sessionId: reviewId,
       threadId: "owner-loop-quote",
       thread: {
         anchor: OWNER_LOOP_SEQUENCE_QUOTE,
-        target: "sequence-step",
+        target: quotedElement.id,
         generation: initialGeneration,
         lifecycle: "attached",
         messages: [{ author: "user", text: "Keep this reading anchor." }],
@@ -591,11 +614,28 @@ describe("#685 owner loop through a real server", () => {
       "ask.read",
       await first.dispatch("ask.read", { sessionId: reviewId }),
     );
-    expect(afterRoundOneAsks.projection.quoteThreads["owner-loop-quote"]).toMatchObject({
+    const reanchored = afterRoundOneAsks.projection.quoteThreads["owner-loop-quote"];
+    expect(reanchored).toMatchObject({
       lifecycle: "attached",
-      target: "sequence-step",
       generation: roundOneGeneration,
     });
+    // The quote re-anchored onto an element that IS on round one's Sequence board — read
+    // off the board rather than compared to a fixture id, because every id is host-minted
+    // since `lens-board-tools` 3.2. This is the stronger claim of the two: naming the id
+    // the plan happened to use only said the string survived, while this says the anchor
+    // resolves on the generation it claims to be attached to.
+    const roundOneSequence = parseCommandOutput(
+      "board.read",
+      await first.dispatch("board.read", {
+        reviewId,
+        generation: roundOneGeneration,
+        lens: "sequence",
+      }),
+    );
+    expect(
+      roundOneSequence.board?.elements.map((element) => element.id) ?? [],
+      "the quote's target is not on round one's Sequence board",
+    ).toContain(reanchored?.target);
 
     first.shutdown();
     shutdowns.pop();
@@ -682,11 +722,23 @@ describe("#685 owner loop through a real server", () => {
       "ask.read",
       await restarted.dispatch("ask.read", { sessionId: reviewId }),
     );
-    expect(afterRoundTwoAsks.projection.quoteThreads["owner-loop-quote"]).toMatchObject({
+    const reanchoredTwice = afterRoundTwoAsks.projection.quoteThreads["owner-loop-quote"];
+    expect(reanchoredTwice).toMatchObject({
       lifecycle: "attached",
-      target: "sequence-step",
       generation: roundTwoGeneration,
     });
+    const roundTwoSequence = parseCommandOutput(
+      "board.read",
+      await restarted.dispatch("board.read", {
+        reviewId,
+        generation: roundTwoGeneration,
+        lens: "sequence",
+      }),
+    );
+    expect(
+      roundTwoSequence.board?.elements.map((element) => element.id) ?? [],
+      "the quote's target is not on round two's Sequence board",
+    ).toContain(reanchoredTwice?.target);
     await expectFrozenBoardsRemainReadable(restarted, reviewId, initialGeneration, initialBoardIds);
     await expectFrozenBoardsRemainReadable(
       restarted,

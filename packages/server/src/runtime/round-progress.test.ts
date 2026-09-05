@@ -23,7 +23,9 @@ import {
   sha256Hex,
 } from "@rennet/protocol";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { applySeatTurn, fixtureGenerationBoards, seatVoiceOn } from "../board/seat-fixture";
 import { type BoardsRuntime, createBoardsRuntime } from "../boards/boards-runtime";
+import type { SeatKind } from "../t3/threads";
 import { seatThreadTitle } from "../t3/threads";
 import { withFakeT3Seats } from "../t3-seat-fake";
 import {
@@ -1465,6 +1467,11 @@ describe("a board seat has one backend (review finding 1)", () => {
     };
     const promptFor = new Map<string, string>();
     const seatOf = (threadId: string): string => threadId.replace(/^thread-/, "");
+    // This generation's real lanes. A seat WRITES its board now (`lens-board-tools` 3.2),
+    // so a runtime with none leaves every lens with nothing to write into and no thread is
+    // ever opened — which would make "every seat opened a watch" vacuous in the direction
+    // that matters.
+    const lanes = fixtureGenerationBoards();
     const t3Client = {
       startTurn: async ({ threadId, text }: { threadId: string; text: string }) => {
         promptFor.set(threadId, text);
@@ -1473,11 +1480,20 @@ describe("a board seat has one backend (review finding 1)", () => {
       waitForTurnSettled: async (threadId: string) => {
         const delay = SETTLE_DELAY_MS[seatOf(threadId)] ?? 0;
         await new Promise((resolve) => setTimeout(resolve, delay));
+        // The board is written AFTER the delay, so the lanes still settle at the different
+        // times this test is about — the stagger is what separates per-lane teardown from
+        // the generation-wide one it replaced.
+        const seat = seatOf(threadId) as SeatKind;
+        const voice = seatVoiceOn(lanes, seat);
+        const written = boardAnswer(promptFor.get(threadId) ?? "", (lens) =>
+          sectioned(lens, "same"),
+        );
+        if (voice !== undefined) await applySeatTurn(written, seat, voice);
         return {
           state: "completed",
-          structuredOutput: boardAnswer(promptFor.get(threadId) ?? "", (lens) =>
-            sectioned(lens, "same"),
-          ),
+          // The report seat has no lane and still returns its document; a lens seat's turn
+          // settles carrying nothing, because its work is on its board.
+          ...(voice === undefined ? { structuredOutput: written } : {}),
           thread: {},
         };
       },
@@ -1496,6 +1512,7 @@ describe("a board seat has one backend (review finding 1)", () => {
           readPrompt,
           resolveT3Seats: async () => ({
             environmentId: "env-1",
+            boards: lanes,
             seam: {
               client: async () => t3Client,
               threadFor: async ({ seat }: { seat: string }) => ({

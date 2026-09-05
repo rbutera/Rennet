@@ -221,9 +221,57 @@ export async function applySeatTurn(
   // was a parse failure that seeded the ladder; a seat that ACTS has no return to malform,
   // so the honest translation is a turn that made no calls and therefore ends unsettled.
   if (!Array.isArray((written as { elements?: unknown }).elements)) return;
-  replayBoard(voice, target, written as DraftBoard);
+  replayBoard(voice, target, withoutDerivedMembers(written as DraftBoard, target));
   groupDerivedMembers(voice, target);
   okCall(voice.call("finish"));
+}
+
+/**
+ * Drop the members of a HOST-DERIVED board from a fixture before replaying it.
+ *
+ * A fixture that predates D16 authors the Noise board's `noise_verdict` elements, because
+ * that is what the seat used to return. The seat has no verb for one now — membership is a
+ * derivation and the host places it — so replaying them would be refused, and refusing them
+ * is the surface being right rather than the fixture being broken. What the fixture still
+ * says, and what is replayed, is everything the seat DOES author; the members it named come
+ * from the complement, and {@link groupDerivedMembers} groups whatever the host placed.
+ *
+ * The citations only a dropped member cited go with it: a `code_ref` no surviving element
+ * names would land as an orphan the fixture never meant to write.
+ */
+function withoutDerivedMembers(board: DraftBoard, target: BoardTarget): DraftBoard {
+  const memberKind = hostDerivedMemberKind(target);
+  if (memberKind === undefined) return board;
+  const members = board.elements.filter((element) => element.kind === memberKind);
+  if (members.length === 0) return board;
+  const dropped = new Set(members.map((element) => element.id));
+  const survivors = board.elements.filter((element) => !dropped.has(element.id));
+  const stillCited = new Set(
+    survivors.flatMap((element) =>
+      elementReferences(element).map((reference) => reference.targetId),
+    ),
+  );
+  const orphanedCitations = new Set(
+    members
+      .flatMap((element) => elementReferences(element).map((reference) => reference.targetId))
+      .filter((id) => !stillCited.has(id)),
+  );
+  return {
+    ...board,
+    elements: survivors
+      .filter((element) => !orphanedCitations.has(element.id))
+      .map((element) => withoutDroppedChildren(element, dropped)),
+  };
+}
+
+/** Re-write a section's `children` so it does not name a member the host will place. */
+function withoutDroppedChildren(element: DraftElement, dropped: ReadonlySet<string>): DraftElement {
+  const children = (element.data as { children?: unknown }).children;
+  if (!Array.isArray(children)) return element;
+  const kept = children.filter((child) => typeof child !== "string" || !dropped.has(child));
+  return kept.length === children.length
+    ? element
+    : ({ ...element, data: { ...(element.data as object), children: kept } } as DraftElement);
 }
 
 /** This seat's handle on its lane's board, or `undefined` when its lane is not open. */

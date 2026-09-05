@@ -41,10 +41,13 @@ the pipeline reads the prompt so five files cannot drift apart on it.
 The package exports a typed manifest. Noise has two instruction sets on
 purpose: `noise.md` drives the Noise lens board seat, and the `NOISE_CONTRACT`
 prompt contract drives the RSP noise-document runner behind the noise index;
-they emit different shapes to different validators. The board schema is never prompt text:
-each lens seat's session is bound to it once, as the harness's structured-output
-format, and the landed-round report seat is bound to a much smaller
-classification schema instead.
+they emit different shapes to different validators. The board schema is never prompt text,
+and since the board tool surface landed it is not the seat's contract either: **no output
+schema travels on a lens seat's turn at all.** A lens seat writes its board through tools
+and returns no document, so nothing binds its session, nothing is parsed back off it, and
+no structured payload appears as a message on its thread. The landed-round report seat is
+the one board job still bound to a schema — a narrow classification shape, not the
+all-kind board schema — because it still returns a document for the host to build from.
 
 ## The drafting flow
 
@@ -95,18 +98,33 @@ and calls board regeneration through this runtime.
    supplies the older round context without an exact worker receipt. It retains
    the generic drafting path for compatibility. A live durable coding round
    always carries the receipt and never selects that path.
-1. **Draft.** One agent per lens receives the delta context and its lens
-   prompt and returns a structured board. The host board schema, derived once
-   from the frozen `DraftBoardSchema`, binds the seat's session as its
-   structured-output format and is not repeated in the prompt. Each drafting instruction
-   requires a document envelope with an authored title, a short Markdown
-   introduction, and a measure. The target owns the final measure: Design is
-   `structured`; Sequence, Decisions, Flagged, and Noise are `reading`. The host
-   constructs the landed-round report document with the `reading` measure.
+1. **Draft.** Every lens board of a generation is created — empty, `drafting`,
+   addressable — before its seat's thread exists. One agent per lens then receives the
+   delta context and its lens prompt and **writes into that board, call by call**, through
+   a tool set scoped to the kinds its lens authors. It returns nothing. The board is not
+   brought into existence by a seat's return, and a lane whose seat writes nothing settles
+   over the board that was already there rather than over a missing one.
+
+   A seat settles in one of two ways, each an explicit call: `finish`, which either settles
+   the board or comes back with a pointer list the seat answers with further calls in the
+   same turn; or the one settle-absent verb its lens admits, whose reason is fixed by the
+   lens and carries no field to name it with. Sequence has no such verb, because Sequence
+   admits no absence, and neither does Noise, because the host settles a Noise lane's
+   absence from the derivation before any seat runs.
+
+   Each drafting instruction requires a document envelope with an authored title, a short
+   Markdown introduction, and a measure. The target owns the final measure: Design is
+   `structured`; Sequence, Decisions, Flagged, and Noise are `reading`. The host constructs
+   the landed-round report document with the `reading` measure.
    The host, never the drafter, writes the board ops through
    `whiteboard-client` (the sole op writer); drafters never call whiteboard
-   tools. The Flagged lens runs two independent seats (Claude and Codex) on the
-   same instructions. A verified report arrives before any lens turn starts and
+   tools. The Flagged lens runs two seats (Claude and Codex) on the same instructions,
+   over **one** board: each element is stamped with the voice that wrote it as it lands,
+   and the ids come from one mint counter, so the two seats' ids cannot collide.
+
+   An OpenSpec branch's Design board takes a **deterministic fast path** and settles with
+   no model turn at all: the assembler transforms the change's own artifacts into the
+   board. A change it cannot settle falls back to the seat, which renders the same change. A verified report arrives before any lens turn starts and
    opens that boundary, after which all five lens lanes run
    independently rather than waiting for the preceding display-order lens. A
    required report that fails or proves unavailable ends the round at report
@@ -145,38 +163,46 @@ and calls board regeneration through this runtime.
    With only one harness available the lens degrades to a single seat, stamped
    with honest single-model concurrence and no accord: one seat has no
    agreement to report.
-3. **Validate.** A deterministic loop guarantees every lens draft before a human
-   sees it. It parses the frozen schema and runs the per-lens lint rules. A lint
-   failure returns the draft to its seat as ZodError-shaped JSON pointers on one
-   retry channel; the seat returns a patch, and passing elements **freeze** — a
-   frozen element is never re-linted or re-drafted. The repair turn is
-   pointer-only on every leg: it carries the pointers (each naming the element it
-   is about), the frozen ids as a list so references stay valid, and the
-   instruction — never the lens prompt, the previous draft, or anything of the
-   change. That only means something to a session that already holds the draft —
-   and every board seat is one, because a board job runs on a sidecar seat thread
-   and nowhere else. A generation with no sidecar drafts no board at all: each
-   lane settles as a typed failure naming the missing sidecar, so there is no leg
-   left that could be handed pointers it cannot resolve. The host merges the
-   frozen bodies back itself. After a turn that emitted nothing, the re-ask is for
-   the whole board — that one carries no reference to a draft the session must
-   remember. Validation spends at most
-   one model repair turn after the initial draft. An element that remains
-   invalid takes an **honest-omission exit**: it is dropped and the drop is
-   recorded as an omission naming the element and the reason. Unresolved
-   board-level or schema violations ship as labelled `blemishes` —
-   **visible, never blocking**.
+3. **Validate.** Validation is **two-tier, and both tiers run inside the seat's own
+   turn.** A rule decidable from the element a call carries is enforced at the tool
+   boundary: the call is refused, the element is not created, and the refusal names the
+   field and says what would be admissible. A rule that can only be answered over the whole
+   board runs when the seat calls `finish`, which comes back as a pointer list — a rule id,
+   an element ref, one sentence each — that the seat fixes with further calls before
+   calling `finish` again. Neither costs anything: **a refusal and a `finish` verdict are
+   both results inside a live turn.**
 
-   After validation, the host checks the material the served board actually
-   needs. Sequence requires a reachable `order_step`. Decisions and Flagged
-   require a reachable `decision` or `finding`, unless the provider returned a
-   parsed zero-element board that supports typed `no-decisions` or `no-findings`
-   absence. Noise is not among them: its membership is derived rather than authored
-   (see *The Noise board is the complement* below), so its `no-noise` absence is
+   An attempt is spent by exactly one event: **a turn that ENDS with the board neither
+   finished nor declared absent** — the context ran out, the harness died, the seat
+   stopped. The board it wrote is KEPT, marked unsettled with its reason, and the follow-up
+   turn carries the last `finish` verdict and nothing else: never the lens prompt, never
+   the board, never a draft. That only means something to a session that already holds the
+   conversation and a board that survived the turn — and every board seat is one, because a
+   board job runs on a sidecar seat thread and nowhere else. A generation with no sidecar
+   drafts no board at all: each lane settles as a typed failure naming the missing sidecar.
+   A lane whose attempts are spent while its board is unfinished settles as a **typed
+   terminal failure** naming the lens, the attempts spent and what the last verdict said —
+   not as an empty board and not as an absence — and the elements the seat did write stay
+   on the lane's board. Anything the host finds after the seats settle, such as the Flagged
+   reconciliation's own wire check, ships as a labelled `blemish`: **visible, never
+   blocking.**
+
+   Two things the document path had are simply gone from a seat's life, because the states
+   they accounted for cannot occur. There is no **honest-omission exit**: an element the
+   old ladder would have dropped is one the boundary tier refuses before it exists, so
+   there is nothing to drop and nothing to account for. And there is no *inferred* absence:
+   an empty board is never read as a claim, because a seat that means "there is nothing
+   here" has a verb for saying so.
+
+   After the seats settle, the host checks the material the served board actually needs.
+   `finish` has already refused to settle a board holding no `order_step`, `decision` or
+   `finding` for its lens, so what this catches is the gap that rule names in its own
+   comment: Decisions and Flagged have no reachability rule, so `finish` accepts material no
+   served root reaches. Noise is not among them: its membership is derived rather than
+   authored (see *The Noise board is the complement* below), so its `no-noise` absence is
    settled by the host from an empty complement before any Noise seat runs.
-   Missing core material
-   becomes that honest absence or a precise failure; it never starts a second
-   full drafting session and never lands as an empty successful board.
+   Unreachable core material becomes a precise failure; it never starts a second full
+   drafting session and never lands as an empty successful board.
 
    The kind palette is enforced *structurally at parse time*: the frozen
    `DraftBoardSchema` has no `thread`, `message`, or `code` kind, so an
@@ -192,8 +218,8 @@ and calls board regeneration through this runtime.
      the changed regions of the captured patchset with the same predicate the
      citation reader uses: every cited line must sit inside a captured region on
      the named side, so a range one line past a hunk, or spanning the gap between
-     two, comes back to the seat as an unresolvable-citation pointer carrying the
-     path, the range and the nearest changed range (a rename's base side answers
+     two, is refused by the citing call itself — in the turn that made it, carrying the
+     path, the range and the nearest changed range, with no element created (a rename's base side answers
      to either name; a truncated capture's tail counts as changed rather than
      being claimed outside; a range past the end of the file is the
      citation-resolves overrun pointer alone; a citation naming a side that is
@@ -251,11 +277,17 @@ and calls board regeneration through this runtime.
    the frozen schema deliberately does not carry (they wait on a schema
    follow-up rather than being enforced against absent data). The reviewer-voice
    authored prose is screened by a separate, narrower register.
-   A drafting turn that emits **no board at all** is not a settlement. It seeds
-   the same retry ladder an unparseable first return does, so the seat is
-   re-asked rather than the lane failing at attempt zero. Only a ladder that ran
-   out without any turn emitting settles a failure, and that failure names both
-   facts: the original non-emission and the re-asks it spent.
+   A turn that writes **nothing at all** is not a settlement. It ended unsettled like any
+   other, so it spends the lane's one attempt and the seat is re-asked rather than the lane
+   failing at attempt zero — and the re-ask says exactly that, because there is no verdict
+   to carry when `finish` was never called. Only a ladder that runs out with the board
+   still unfinished settles a failure.
+
+   The document path — parse the return, lint it, hand ZodError-shaped pointers back on a
+   retry channel, freeze the passers — survives for exactly one caller: the **legacy**
+   round-report leg, which supplies no evidence manifest and is still bound to the full
+   board schema. `lint`, `validateDraft` and the pointer-only `renderRepairPrompt` are that
+   caller's loop and nothing else's.
 4. **Freeze.** The validated structured draft becomes the lens board without a
    second model rewrite. Host-owned Design projections, Flagged reconciliation,
    round composition, delta stamps, and metadata persistence remain deterministic.
