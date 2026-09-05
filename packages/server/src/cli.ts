@@ -2,7 +2,9 @@
 // protocol is real by driving it from a terminal with no window in sight.
 // `node:util` parseArgs, no prompts, honest exit codes:
 //   serve   run the daemon in the FOREGROUND (dev / power tool; the packaged app spawns
-//           its own detached daemon and never depends on this).
+//           its own detached daemon and never depends on this). It resolves the T3 Code
+//           sidecar bundle exactly as `daemon-main.ts` does (#875), so a review captured
+//           through this daemon has the backend its board seats need.
 //   status  read the daemon.json claim and probe /healthz; print pid/port/versions.
 //   stop    ask the claimed daemon to shut down over its own wire (SIGTERM if it cannot
 //           answer) and wait (bounded) for the claim to disappear.
@@ -37,7 +39,7 @@ import { createBenchmarkRecording } from "./benchmark-store";
 import { defaultDataDir, runDaemon } from "./daemon";
 import { readDaemonFile, removeDaemonFile } from "./daemon-file";
 import { findHealthyDaemon, requestDaemonShutdown } from "./supervise";
-import { type StopSidecarOutcome, stopSidecar } from "./t3/sidecar";
+import { resolveSidecarBundle, type StopSidecarOutcome, stopSidecar } from "./t3/sidecar";
 
 export interface CliIo {
   out(line: string): void;
@@ -67,11 +69,14 @@ const defaultDeps: CliDeps = {
   stopSidecar,
 };
 
+/** `serve`'s usage line, one string so the flags cannot drift between HELP and the error. */
+const SERVE_USAGE = "Usage: rennet serve [--data-dir <dir>] [--ui-dist <dir>] [--t3-bundle <file>]";
+
 const HELP = [
   "rennet — the local review daemon",
   "",
   "Usage:",
-  "  rennet serve   [--data-dir <dir>] [--ui-dist <dir>]   run the daemon in the foreground",
+  "  rennet serve   [--data-dir <dir>] [--ui-dist <dir>] [--t3-bundle <file>]   run the daemon in the foreground",
   "  rennet status  [--data-dir <dir>]   report the daemon's health",
   "  rennet stop    [--data-dir <dir>]   stop the running daemon",
   "  rennet pair    [--data-dir <dir>]   mint a device pairing code (5-minute TTL)",
@@ -80,6 +85,8 @@ const HELP = [
   "  rennet benchmarks export [--out <file>] [--data-dir <dir>] [--revision <rev>] [--timestamp <iso>]   write the docs benchmark data",
   "",
   "The data dir defaults to $RENNET_USER_DATA, then the platform user-data path.",
+  "`rennet serve` resolves the T3 Code sidecar the board lenses run on from --t3-bundle,",
+  "then $RENNET_T3_BUNDLE, then the vendored build; it warns and serves on without one.",
   "`rennet map` needs no daemon: it builds the Repo Map for the repository at <path>",
   "(default: the current directory) and stores it under ~/.rennet/projects/.",
   "on your installed harnesses — model choice is the Model Council's.",
@@ -95,21 +102,38 @@ export async function runCli(
   const [subcommand, ...rest] = argv;
   switch (subcommand) {
     case "serve": {
-      let parsed: { "data-dir"?: string; "ui-dist"?: string };
+      let parsed: { "data-dir"?: string; "ui-dist"?: string; "t3-bundle"?: string };
       try {
         parsed = parseArgs({
           args: [...rest],
           allowPositionals: false,
           strict: true,
-          options: { "data-dir": { type: "string" }, "ui-dist": { type: "string" } },
+          options: {
+            "data-dir": { type: "string" },
+            "ui-dist": { type: "string" },
+            "t3-bundle": { type: "string" },
+          },
         }).values;
       } catch (error) {
         io.err(`rennet serve: ${error instanceof Error ? error.message : String(error)}`);
-        io.err("Usage: rennet serve [--data-dir <dir>] [--ui-dist <dir>]");
+        io.err(SERVE_USAGE);
         return 2;
       }
       const dataDir = parsed["data-dir"] ?? env.RENNET_USER_DATA ?? defaultDataDir();
-      return serve(dataDir, parsed["ui-dist"] ?? defaultUiDist(), io, env, deps);
+      return serve(
+        dataDir,
+        parsed["ui-dist"] ?? defaultUiDist(),
+        // The SAME fallback `daemon-main.ts` has (#875). Without it `serve` built a
+        // DaemonConfig with no `t3BundlePath` at all, the sidecar supervisor went
+        // `degraded`, and every board seat failed on "the vendored T3 Code server bundle
+        // is not built" — at the far end of a review rather than at startup. The two
+        // process entries now resolve the sidecar the same way, from the same flag and
+        // the same `RENNET_T3_BUNDLE`.
+        parsed["t3-bundle"] ?? resolveSidecarBundle(env),
+        io,
+        env,
+        deps,
+      );
     }
     case "status":
     case "stop":
@@ -253,7 +277,8 @@ function parseDataDir(argv: readonly string[], env: NodeJS.ProcessEnv): string {
 
 /**
  * The served browser UI (issue #381, design D2): by convention `dist/browser` sits beside
- * the server bundle. In the standalone `rennet` CLI (esbuild) import.meta.url is empty, so
+ * the server bundle. The standalone `rennet` CLI has no such sibling — its bundle is
+ * `packages/server/dist/rennet.cjs` and nothing builds a browser bundle next to it — so
  * this yields undefined and `rennet serve` is headless unless `--ui-dist` is passed; the
  * packaged app's own daemon (dist/server sibling) resolves its browser bundle directly.
  */
@@ -268,10 +293,30 @@ function defaultUiDist(): string | undefined {
   }
 }
 
+/**
+ * What `serve` says when it could not find a T3 Code server bundle (#875).
+ *
+ * It STARTS anyway. Refusing to run the daemon over a missing sidecar was the other
+ * option this issue put on the table, and it is the wrong one: `serve` is also how you
+ * read a captured review, pair a device, list devices and serve the browser UI, none of
+ * which touch the sidecar, and taking all of that away to protect the reviewer from one
+ * subsystem is a lockdown, not a fix. What was actually wrong was WHEN the reviewer found
+ * out — twenty minutes into a generation, in five failed lanes. So the daemon comes up and
+ * the CLI says the thing at second zero, in the terminal the operator is already looking
+ * at, naming the two ways to fix it. `daemon.status` carries the same reason to a client.
+ */
+export const NO_SIDECAR_WARNING = [
+  "warning: no T3 Code server bundle found, so this daemon has no chat sidecar.",
+  "         Board lenses run on it and nothing else, so every review this daemon captures",
+  "         will finish with failed lanes. Point at a built bundle with --t3-bundle <file>",
+  "         or RENNET_T3_BUNDLE, or build it with `pnpm nx build t3code-server`.",
+].join("\n");
+
 /** Run the daemon in the foreground; resolves never (the process lives until a signal). */
 async function serve(
   dataDir: string,
   uiDist: string | undefined,
+  t3BundlePath: string | undefined,
   io: CliIo,
   env: NodeJS.ProcessEnv,
   deps: CliDeps,
@@ -286,12 +331,15 @@ async function serve(
     serverVersion: env.RENNET_SERVER_VERSION ?? "0.0.0-dev",
     env,
     uiDist,
+    t3BundlePath,
   };
   const daemon = await runDaemon(config);
   io.out(
     `rennet daemon listening on ${daemon.info.host ?? "127.0.0.1"}:${daemon.info.wsPort} (pid ${daemon.info.pid}, v${daemon.info.version})`,
   );
   io.out(`data dir: ${config.dataDir}`);
+  if (config.t3BundlePath) io.out(`T3 sidecar bundle: ${config.t3BundlePath}`);
+  else io.err(NO_SIDECAR_WARNING);
   // Hold the process open: the WS listener + watchers keep the event loop alive, and the
   // SIGTERM/SIGINT handlers runDaemon installed call process.exit(0) on stop. The executor
   // never settles the promise on purpose — the process ends by signal, not by resolution.

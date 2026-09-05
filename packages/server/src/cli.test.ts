@@ -1,5 +1,6 @@
 import { type ChildProcess, execFile, spawn } from "node:child_process";
 import {
+  cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -9,13 +10,14 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, resolve } from "node:path";
+import { basename, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { PROTOCOL_VERSION } from "@rennet/protocol";
-import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { WebSocket } from "ws";
-import { type CliIo, runCli as runSourceCli } from "./cli";
+import { type CliIo, NO_SIDECAR_WARNING, runCli as runSourceCli } from "./cli";
 import { type DaemonInfo, readDaemonFile, removeDaemonFile, writeDaemonFile } from "./daemon-file";
+import { resolveSidecarBundle } from "./t3/sidecar";
 
 // End-to-end proof of the `rennet` CLI managing a REAL out-of-process daemon (#379, task
 // 5.2): spawn `serve`, `status` reports it running, a command travels the same WS wire the
@@ -172,6 +174,189 @@ describe("rennet CLI ↔ real daemon lifecycle (#379)", () => {
   }, 30_000);
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// #875 — `rennet serve` and the T3 Code sidecar.
+//
+// `serve` used to build its `DaemonConfig` without `t3BundlePath` at all, so the daemon it
+// started came up with a `degraded` sidecar. Board seats have that sidecar as their only
+// backend, so every lens of every review captured through the CLI failed — at the far end
+// of a generation rather than at startup, which is why the desktop app looked fine and the
+// CLI did not.
+//
+// The proof is NOT that a config field is populated. It is a REAL daemon, started by the
+// real bundled `rennet serve`, spawning a REAL vendored T3 server, reporting `ready` on the
+// same `daemon.status` wire a client reads. Nothing here is a spy.
+//
+// AND IT IS RUN FROM OUTSIDE THE REPO, which is the load-bearing half of the fixture.
+// `resolveSidecarBundle`'s last resort walks up six directories from the bundle's own
+// location looking for `vendor/t3code/apps/server/dist/bin.mjs`, and `packages/server/dist`
+// is four levels under a checkout that has one. Run in place, EVERY row below would find a
+// bundle no matter which way in it was meant to be testing — the flag row would pass with
+// the flag ignored, and the no-bundle row could not exist at all. Copying the CLI to a temp
+// directory first takes the walk away, so each row has exactly one way to succeed.
+//
+// WHAT THIS CANNOT CATCH: it does not run a lens seat, so it does not prove a board seat
+// succeeds end to end — only that the backend those seats require is up and says so.
+// `ready` is a claim about the listener answering `/.well-known/t3/environment`, not about
+// a turn completing, so a sidecar that comes up and then serves badly still reads green.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** The vendored T3 server bundle `pnpm check`'s own `build` target produces. */
+const vendoredSidecar = resolveSidecarBundle({});
+
+/** Poll an async probe until it answers non-null. */
+async function pollAsync<T>(
+  fn: () => Promise<T | null>,
+  timeoutMs = 60_000,
+  intervalMs = 250,
+): Promise<T> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const value = await fn();
+    if (value !== null) return value;
+    if (Date.now() >= deadline) throw new Error("async poll timed out");
+    await new Promise((r) => setTimeout(r, intervalMs));
+  }
+}
+
+interface StatusWithSidecar {
+  readonly t3Sidecar?: { readonly state: string; readonly detail?: string };
+}
+
+describe("`rennet serve` brings up the sidecar its board seats need (#875)", () => {
+  let dataDir: string;
+  let serveChild: ChildProcess | undefined;
+  /** The CLI, copied out of the checkout so its last-resort walk finds no vendored tree. */
+  let detachedCli: string;
+  let detachedRoot: string;
+
+  beforeAll(() => {
+    if (!existsSync(bundle))
+      throw new Error(`CLI bundle missing at ${bundle} — run rennet-server:build`);
+    detachedRoot = mkdtempSync(resolve(tmpdir(), "rennet-875-cli-"));
+    // The whole `dist`, not just `rennet.cjs`: the prompts the daemon reads live beside it.
+    cpSync(dirname(bundle), resolve(detachedRoot, "dist"), { recursive: true });
+    detachedCli = resolve(detachedRoot, "dist", basename(bundle));
+    // The fixture's own premise, executed rather than assumed. If a later change makes the
+    // walk reach a vendored tree from here anyway, every row below silently stops
+    // discriminating — so it is asserted, from the copy's own directory.
+    expect(
+      resolveSidecarBundle({ RENNET_T3_BUNDLE: "" }),
+      "the repo's own walk still reaches a bundle — the detached copy is not detached",
+    ).toBe(vendoredSidecar);
+  });
+
+  afterAll(() => {
+    if (detachedRoot) rmSync(detachedRoot, { recursive: true, force: true });
+  });
+
+  /** Run a subcommand on the DETACHED copy; resolve its exit code + captured output. */
+  function runDetachedCli(args: string[]): Promise<{ code: number; stdout: string }> {
+    return new Promise((resolvePromise) => {
+      execFile("node", [detachedCli, ...args], (error, stdout) => {
+        const code = error && typeof error.code === "number" ? error.code : error ? 1 : 0;
+        resolvePromise({ code, stdout });
+      });
+    });
+  }
+
+  afterEach(async () => {
+    // `stop` reaps the daemon AND its sidecar; the kill is the belt for a test that failed
+    // before it got there. A survivor would hold a port and a base dir into the next run.
+    if (dataDir) await runDetachedCli(["stop", "--data-dir", dataDir]).catch(() => undefined);
+    if (serveChild && serveChild.exitCode === null) serveChild.kill("SIGKILL");
+    serveChild = undefined;
+    if (dataDir) rmSync(dataDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  });
+
+  // Two ways in, both of them ways `rennet-daemon` already had and neither of which `serve`
+  // had: the `--t3-bundle` flag, and the `RENNET_T3_BUNDLE` the packaged app sets. Run from
+  // the detached copy, each row has exactly one of them and no fallback behind it, so a row
+  // that passes proves that row's way in carried the bundle.
+  it.skipIf(!vendoredSidecar).each([
+    ["RENNET_T3_BUNDLE", "env"],
+    ["--t3-bundle", "flag"],
+  ] as const)(
+    "a daemon served with %s reaches a ready sidecar, not a degraded one",
+    async (_label, how) => {
+      dataDir = mkdtempSync(resolve(tmpdir(), "rennet-875-"));
+      const home = resolve(dataDir, "home");
+      mkdirSync(home, { recursive: true });
+      const args = ["serve", "--data-dir", dataDir];
+      if (how === "flag") args.push("--t3-bundle", vendoredSidecar as string);
+      const env: NodeJS.ProcessEnv = { ...process.env, HOME: home, RENNET_USER_DATA: dataDir };
+      if (how === "env") env.RENNET_T3_BUNDLE = vendoredSidecar as string;
+      else delete env.RENNET_T3_BUNDLE;
+
+      serveChild = spawn("node", [detachedCli, ...args], { stdio: "ignore", env });
+      const claim = await poll(() => readDaemonFile(dataDir));
+
+      // Read the sidecar's state off the SAME command a connected client reads it from.
+      // Poll for `ready` but keep the LAST state seen, so a run that never gets there fails
+      // on the state it actually reported rather than on a bare timeout: with no bundle the
+      // supervisor never leaves `off`, and "expected 'off' to be 'ready'" is the sentence a
+      // reader needs. The `.catch` is what lets the assertion below be the failure.
+      let seen: { readonly state: string; readonly detail?: string } | undefined;
+      await pollAsync(async () => {
+        const out = (await invokeOverWire(claim.wsPort, "daemon.status", {})) as StatusWithSidecar;
+        seen = out.t3Sidecar;
+        return seen?.state === "ready" ? seen : null;
+      }, 45_000).catch(() => undefined);
+      expect(
+        seen?.state,
+        `the sidecar never became ready (detail: ${seen?.detail ?? "none"})`,
+      ).toBe("ready");
+    },
+    120_000,
+  );
+
+  // The other half of the #875 question, decided and executed: a daemon that cannot find a
+  // bundle STARTS, and says so at second zero. Refusing to serve would take `status`,
+  // `pair`, `devices`, the browser UI and every already-captured review away to protect the
+  // reviewer from one subsystem — a lockdown, not a fix. What was wrong was never that the
+  // daemon ran; it was that nobody was told until five lanes had failed.
+  it("with no bundle anywhere it warns on stderr and serves on, rather than refusing", async () => {
+    dataDir = mkdtempSync(resolve(tmpdir(), "rennet-875-nobundle-"));
+    const home = resolve(dataDir, "home");
+    mkdirSync(home, { recursive: true });
+    const env: NodeJS.ProcessEnv = { ...process.env, HOME: home, RENNET_USER_DATA: dataDir };
+    // With the flag absent, the env cleared and the walk out of reach, this CLI has
+    // genuinely nothing to resolve — the state a user without a built vendor tree is in.
+    delete env.RENNET_T3_BUNDLE;
+
+    const child = spawn("node", [detachedCli, "serve", "--data-dir", dataDir], {
+      stdio: ["ignore", "pipe", "pipe"],
+      env,
+    });
+    serveChild = child;
+    let stderr = "";
+    child.stderr?.on("data", (chunk) => {
+      stderr += String(chunk);
+    });
+
+    // It came up: the claim is published and the wire answers.
+    const claim = await poll(() => readDaemonFile(dataDir));
+    const bootstrap = await invokeOverWire(claim.wsPort, "app.bootstrap", {});
+    expect(bootstrap).toHaveProperty("repositoryPresent");
+
+    // And it said so, in the terminal, before a review could discover it.
+    await poll(() => (stderr.includes("no T3 Code server bundle found") ? stderr : null));
+    expect(stderr).toContain(NO_SIDECAR_WARNING);
+    expect(stderr).toContain("RENNET_T3_BUNDLE");
+    expect(child.exitCode).toBeNull();
+
+    // And on the wire the sidecar is `off` — the SAME thing the desktop's own daemon entry
+    // reports with no bundle, which is the agreement #875 is about. `off` rather than
+    // `degraded` is deliberate upstream (#849: with no bundle the supervisor starts nothing
+    // and stays silent, and names the reason to whoever calls `ensure`), so the terminal
+    // warning above is what actually tells an operator. Pinned here so a change to either
+    // half is a change both entries make together.
+    const status = ((await invokeOverWire(claim.wsPort, "daemon.status", {})) as StatusWithSidecar)
+      .t3Sidecar;
+    expect(status?.state).toBe("off");
+  }, 60_000);
+});
+
 describe("rennet CLI argument and daemon-identity handling", () => {
   const dirs: string[] = [];
   afterEach(() => {
@@ -215,10 +400,11 @@ describe("rennet CLI argument and daemon-identity handling", () => {
         },
       );
       expect(code).toBe(2);
-      // `serve` also advertises --ui-dist (#381); the others take only --data-dir.
+      // `serve` also advertises --ui-dist (#381) and --t3-bundle (#875, the same flag
+      // `rennet-daemon` takes); the others take only --data-dir.
       const usage =
         subcommand === "serve"
-          ? "Usage: rennet serve [--data-dir <dir>] [--ui-dist <dir>]"
+          ? "Usage: rennet serve [--data-dir <dir>] [--ui-dist <dir>] [--t3-bundle <file>]"
           : `Usage: rennet ${subcommand} [--data-dir <dir>]`;
       expect(captured.err.at(-1)).toBe(usage);
     },
