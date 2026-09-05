@@ -61,9 +61,10 @@ composition root that supplies the scheduler's open seams — `onBoardArrival` t
 the board-event broadcast, `persistBoardMeta` to the durable `BoardMeta` store,
 `composeTurn` to the orchestrator's authoring turn, `readPrompt` to the node
 prompt reader — and drives a generation visit: the round-report seat settles its
-sequencing boundary first, then the five independent lens lanes draft concurrently.
+sequencing boundary first, then the four core lens lanes draft concurrently and the
+Noise lane runs on their settlements.
 The per-board arrival events this scheduler emits drive the progressive reveal — each
-lane publishes its own settlement as it lands, so a slow Design or Noise lane never holds
+lane publishes its own settlement as it lands, so a slow Design lane never holds
 a finished core board back — and a
 `PipelineStartGuard` keyed on the session and
 exact generation visit makes a retry of that dispatch reattach rather than
@@ -170,9 +171,10 @@ and calls board regeneration through this runtime.
    needs. Sequence requires a reachable `order_step`. Decisions and Flagged
    require a reachable `decision` or `finding`, unless the provider returned a
    parsed zero-element board that supports typed `no-decisions` or `no-findings`
-   absence. Noise has the equivalent `no-noise` absence, and its prompt asks for exactly
-   that empty board when nothing in the change is skip-safe, rather than a board of
-   "this must be read" verdicts. Missing core material
+   absence. Noise is not among them: its membership is derived rather than authored
+   (see *The Noise board is the complement* below), so its `no-noise` absence is
+   settled by the host from an empty complement before any Noise seat runs.
+   Missing core material
    becomes that honest absence or a precise failure; it never starts a second
    full drafting session and never lands as an empty successful board.
 
@@ -537,6 +539,58 @@ triple's board-meta record, projects the element state, and assembles one
 `LensBoard` with the persisted document, the element pool in creation order,
 and one fold line per top-level section.
 
+## The Noise board is the complement
+
+Rai's ruling, 2026-09-04: anything not covered by one of the other boards is noise.
+Noise is a POSITION, not a property of a hunk — a changed region that Design, Sequence,
+Decisions and Flagged all passed over — so its membership is set subtraction rather than
+a model's judgement about reading effort. Every changed region of a change is in exactly
+one of two sets, and the partition is total by construction rather than by diligence.
+
+`deriveNoiseMembers` in `packages/core/src/board/noise-complement.ts` takes the
+subtraction. It is handed what each of the four core lanes SAID, and the three cases are
+not two:
+
+- A lane that **settled a board** stated its citations, and they subtract.
+- A lane that **declared an admissible absence** stated that it cites nothing. An absence
+  is an empty citation set and subtracts safely.
+- A lane that **failed** stated nothing, and nothing is not an empty set.
+
+When any core lane failed, the Noise lane does not settle a board at all. It settles as a
+typed failure naming the lanes whose citations are unknown, and becomes runnable again
+when one of them settles on a retry. A complement taken over a partial set of siblings
+would present un-reviewed regions as safely skippable, which is the failure the lens
+exists to avoid; a partial complement is worse than no Noise board, because the reviewer
+cannot see which part of it is guesswork.
+
+**The lane runs last, and nothing waits on it.** The complement of boards that have not
+settled is not knowable, so the four core lanes fan out together and Noise starts on their
+settlements. That is a sequencing fact rather than a barrier: every core board still
+reveals the moment it lands. The cost is a tail on the generation's wall clock, accepted
+by ruling and measured rather than argued.
+
+**An empty complement is settled without a seat.** When the four lanes between them cited
+every changed region, the host knows the remainder is empty before any turn, and the lane
+settles `no-noise` with no Noise seat dispatched — the cheapest turn in the change. The
+reader-facing wording changed with the meaning: `no-noise` used to say that nothing here
+was safely skippable, and now says that every changed region is on another board, which
+is a different and much rarer claim.
+
+**The seat makes no judgement of any kind.** A member's `verdict` and its `judge` mark are
+host-stamped constants — `noise` and `deterministic` — and appear on no tool input, because
+each has exactly one admissible value once membership is derived, and a one-valued field
+offered to a seat states a choice that does not exist. The Noise seat has no verb that
+creates a member, none that removes one, and no settle-absent verb. Its update verb is how
+it parents a member into a group and writes that group's reason, and **the grouping is the
+only thing it can get wrong**: `finish` refuses to settle while any member is unparented or
+any group carries no reason.
+
+The assurance that nothing worth reading is filed as skippable now rests on the other four
+lenses' citation coverage, not on a Noise seat's second opinion. A hunk that matters and
+that no lens cited is a defect in the lens that missed it, and is answered there. The
+failure mode did not disappear; it moved from an invisible one — a hunk quietly filed as
+noise — to a visible one a reviewer can see, name and route.
+
 Fold counts are reader-facing domain objects, not raw element-kind tallies. The
 projection emits findings, decisions, requirements, steps, outcomes, groups,
 files, and comments from each section's direct children. Repeated code refs for
@@ -544,8 +598,8 @@ one path count as one file, and structural prose does not inflate the count. A
 pair with no persisted board answers `null`. A successful empty result is typed
 instead of persisted as a zero-element board: Design uses `no-spec`,
 Decisions uses `no-decisions`, Flagged uses `no-findings`, and Noise uses
-`no-noise`. An empty Design board is never an absence — only the seat's own
-`no-spec` return is. For the three core review lenses, material follows the topology the
+`no-noise` — which the host settles, not the seat. An empty Design board is never an
+absence — only the seat's own `no-spec` declaration is. For the three core review lenses, material follows the topology the
 client serves, not the flat element pool. Sequence needs a reachable
 `order_step`, Decisions a reachable `decision`, and Flagged a reachable `finding`.
 Prose-only boards, empty sections, and detached typed elements do not satisfy
