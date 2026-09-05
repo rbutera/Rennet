@@ -74,6 +74,30 @@ export type NoiseMembership =
  * `regions` is the captured patchset's own changed regions — the same list every citation
  * rule resolves against, so a member is a region a seat could have cited and did not,
  * rather than a second notion of "changed" invented here.
+ *
+ * ── THE UNIT IS THE HUNK, NOT THE SIDE (#864) ────────────────────────────────────
+ * A region is one SIDE of one hunk, because that is what a citation names: a modified
+ * hunk offers a base-side region and a head-side region, and they are genuinely
+ * different text. But the question the complement asks is not "was this side cited", it
+ * is *did any lens read this change* — and for that the hunk is the unit.
+ *
+ * Subtracting per side made `no-noise` UNREACHABLE for any change containing a
+ * modification: Sequence citing head 3-6 of `@@ -1,6 +1,6 @@` left base 1-6 in the
+ * complement, so the host filed as noise the exact lines a sibling had just read, and
+ * dispatched a seat turn to write a board about them. That is the misfiled-noise harm
+ * D16's own header names, arriving through the derivation rather than through a seat's
+ * judgement.
+ *
+ * So: a citation on EITHER side cancels the hunk, and an uncited hunk is filed ONCE —
+ * the head side where it has one, its base side when it is a pure deletion. Filing both
+ * sides would put the same change on the board twice under two line ranges, which is
+ * also what made the member list on a 95-file branch twice the size it had any reason
+ * to be.
+ *
+ * Regions are grouped by {@link ChangedRegion.hunk}. A region with none is its own
+ * change and behaves exactly as it did before the key existed — a hand-built context is
+ * not silently regrouped by a guess about which regions belong together, because that
+ * guess is not derivable from a path and a line range.
  */
 export function deriveNoiseMembers(input: {
   readonly regions: readonly ChangedRegion[];
@@ -95,7 +119,36 @@ export function deriveNoiseMembers(input: {
     if (sibling.kind !== "settled") continue;
     for (const region of citedRegions(sibling.elements, input.regions)) cited.add(region);
   }
-  return { kind: "derived", members: input.regions.filter((region) => !cited.has(region)) };
+
+  // A cited region cancels its whole CHANGE, and an uncited change is filed ONCE.
+  const citedChanges = new Set<string>();
+  for (const region of cited) if (region.hunk !== undefined) citedChanges.add(region.hunk);
+  const sidesOf = new Map<string, ChangedRegion[]>();
+  for (const region of input.regions) {
+    if (region.hunk === undefined) continue;
+    const sides = sidesOf.get(region.hunk);
+    if (sides === undefined) sidesOf.set(region.hunk, [region]);
+    else sides.push(region);
+  }
+
+  const members: ChangedRegion[] = [];
+  const filed = new Set<string>();
+  for (const region of input.regions) {
+    // A region with no change to belong to is its own change: it subtracts and files on
+    // its own identity, which is what every caller got before the key existed.
+    if (region.hunk === undefined) {
+      if (!cited.has(region)) members.push(region);
+      continue;
+    }
+    if (citedChanges.has(region.hunk) || filed.has(region.hunk)) continue;
+    filed.add(region.hunk);
+    // The HEAD side is the member when the change has one: it is the text the branch
+    // now carries, and it is what a reviewer opening a noise member wants to read. A
+    // pure deletion has no head side and files its base side instead.
+    const sides = sidesOf.get(region.hunk) ?? [region];
+    members.push(sides.find((side) => side.side === "head") ?? region);
+  }
+  return { kind: "derived", members };
 }
 
 /**

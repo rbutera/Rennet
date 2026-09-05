@@ -86,7 +86,12 @@ const DRAFTING: LensLane[] = [
       },
     ],
   },
-  { id: "noise", label: "Noise", status: "queued" },
+  // `waiting`, not `queued`. That is what the daemon publishes for this lane once the
+  // lens kickoff has fired (#865): its board is the complement of the four above, so it
+  // has no seat and nothing to write until they settle. The fixture held `queued` — a
+  // state that only exists BEFORE kickoff — which is why this suite went green while the
+  // real app rendered "DRAFTING · Noise seat · watching 0:01" for the whole fan-out.
+  { id: "noise", label: "Noise", status: "waiting" },
 ] as LensLane[];
 
 /** The same generation, settled. Sequence carries a delta-bearing board here. */
@@ -490,7 +495,9 @@ describe("a run that is over never says a seat is still writing", () => {
 describe("Noise waits on its siblings, and the coverage surface is gone", () => {
   it("reads as waiting on the lanes it needs — not working, not failed — and reports no coverage", async () => {
     // 5.7/D16c. Noise is the COMPLEMENT of the other four, so it cannot start until they
-    // settle. The fixture has two lanes still running, which is the shape the task names.
+    // settle. The fixture has two lanes still running, which is the shape the task names,
+    // and the Noise lane is `waiting` — the post-kickoff state the daemon publishes, not
+    // the pre-kickoff `queued` this fixture used to hold (#865).
     const live = liveBridge({
       preparation: { status: "drafting", reviewId: REVIEW.id, lanes: DRAFTING },
       boards: { sequence: at(FIXTURE_BOARDS.gen1?.sequence) },
@@ -513,6 +520,16 @@ describe("Noise waits on its siblings, and the coverage surface is gone", () => 
     );
     // Not failed.
     expect(noise?.getAttribute("data-failed")).toBeNull();
+
+    // …and the BOARD says the same thing the rail does. This is the third surface that
+    // claimed a seat which did not exist: an in-progress chip over "This board is still
+    // being written", on a lane with no thread. It now says what it is waiting for.
+    const body = document.body.textContent ?? "";
+    expect(document.querySelector('[data-kind="board-waiting"]')).toBeTruthy();
+    expect(body).toContain("This board has not started.");
+    expect(body).toContain("waiting on Sequence, Decisions and Flagged");
+    expect(body).not.toContain("This board is still being written.");
+    expect(document.querySelector('[data-kind="board-drafting"]')).toBeNull();
 
     // THE SWEEP (D16a): the uncited regions have exactly one home, the Noise board, and no
     // second surface reports a coverage state or an uncovered count. The literal is

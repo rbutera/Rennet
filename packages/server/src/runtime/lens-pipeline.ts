@@ -1475,6 +1475,14 @@ export interface LensPipelineDeps {
    */
   readonly onLensDraftingStart?: () => void;
   /**
+   * THIS lane's seat is starting. Fires once per lane, immediately before `runLensBoard`
+   * opens it. For the four core lanes it lands in the same tick as
+   * {@link onLensDraftingStart} and says nothing new; for the DERIVED lane it is the only
+   * honest start signal there is, because that lane sits out the whole core fan-out
+   * waiting for the citations its board is the complement of (#865, D16c).
+   */
+  readonly onLensLaneStart?: (lens: LensKind) => void;
+  /**
    * The durable home for a board's validation metadata (finding 3): the document
    * opening and validation blemishes the whiteboard event log cannot carry.
    * Called after the board's ops are accepted and BEFORE its arrival is announced,
@@ -2365,6 +2373,9 @@ export async function runLensPipeline(deps: LensPipelineDeps): Promise<LensPipel
    */
   const settledCore = new Map<LensKind, LensBoardOutcome>();
   const runLane = async (lens: LensKind, derivedMembers?: readonly ChangedRegion[]) => {
+    // The lane is opening for real. Said HERE and not at kickoff, because kickoff is a
+    // statement about the four lanes that fan out together and the derived lane does not.
+    deps.onLensLaneStart?.(lens);
     const outcome = await runLensBoard(
       lens,
       deps,

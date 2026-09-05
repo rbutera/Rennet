@@ -1404,7 +1404,7 @@ const lensLaneBase = {
 
 /**
  * One lens drafter's lane in the regeneration block. Same discipline as {@link
- * LaneRowSchema}, with the verdict bound to the state that can HAVE one: `queued` and
+ * LaneRowSchema}, with the verdict bound to the state that can HAVE one: `queued`, `waiting` and
  * `running` carry no verdict because none has been computed; `drafted` is the real window
  * between a board's draft landing and its arrival (cross-lens coverage runs in between,
  * and the verdict rides the arrival); `done` REQUIRES the verdict; `absent` records a
@@ -1414,6 +1414,16 @@ const lensLaneBase = {
  */
 export const LensLaneSchema = z.discriminatedUnion("status", [
   z.object({ ...lensLaneBase, status: z.literal("queued") }),
+  /**
+   * The lane's seat cannot start yet, because this board is the COMPLEMENT of its
+   * siblings (`lens-board-tools` D16c). Distinct from `queued` — which is "the
+   * generation has not kicked off" — and distinct from `running`, which claims a seat
+   * is writing. Noise held `running` for the whole fan-out before this arm existed, so
+   * the rail animated, the widget said "drafting" and the board said "still being
+   * written" over a lane with no thread and no seat (#865). Carries no `latest`:
+   * nothing is in flight to project.
+   */
+  z.object({ ...lensLaneBase, status: z.literal("waiting") }),
   z.object({ ...lensLaneBase, status: z.literal("running"), latest: LaneLatestSchema.optional() }),
   z.object({ ...lensLaneBase, status: z.literal("drafted") }),
   z.object({ ...lensLaneBase, status: z.literal("done"), verdict: LaneVerdictSchema }),

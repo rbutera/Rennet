@@ -240,7 +240,7 @@ describe("a reference argument is refused when the board does not hold it (D4)",
         statement: "Refresh is decided before classification.",
         why: "The classifier reads a code the refresh path has already consumed.",
         evidence_ref_ids: [ref],
-        alternative_ids: [ref],
+        alternatives: ["Classify first and re-read the code."],
       }),
     );
 
@@ -251,7 +251,7 @@ describe("a reference argument is refused when the board does not hold it (D4)",
           statement: "A second call.",
           why: "Because.",
           evidence_ref_ids: ["never-minted"],
-          alternative_ids: [ref],
+          alternatives: ["Do it the other way."],
         }),
       ),
     ).toContain("never-minted");
@@ -286,11 +286,11 @@ describe("a reference argument is refused when the board does not hold it (D4)",
 
   it("a reference cycle is unconstructible: an update that closes a loop is refused", () => {
     // The boundary does not constrain what KIND a reference names — `checkReferences`
-    // asks only whether the board holds the id — so `alternative_ids`,
-    // `evidence_ref_ids`, `scenario_ids`, `trace_ref_ids` and `code_ref_ids` can each
-    // name an ancestor section and close a loop through the host-maintained `children`
-    // edge, which is the one edge that runs forward. This is the UPDATE path; the add
-    // path is the test below.
+    // asks only whether the board holds the id — so `evidence_ref_ids`, `scenario_ids`,
+    // `trace_ref_ids`, `code_ref_id` and `code_ref_ids` can each name an ancestor
+    // section and close a loop through the host-maintained `children` edge, which is the
+    // one edge that runs forward. This is the UPDATE path; the add path is the test
+    // below.
     const w = writer("decisions");
     const section = idOf(w.call("add_section", { title: "Storage" }));
     const ref = idOf(
@@ -301,35 +301,34 @@ describe("a reference argument is refused when the board does not hold it (D4)",
         statement: "Storage stays on the caller.",
         why: "The alternative moved the lifetime into a shared cache.",
         evidence_ref_ids: [ref],
-        alternative_ids: [ref],
+        alternatives: ["Move the lifetime into a shared cache."],
         parent_id: section,
       }),
     );
-    // section --children--> decision --alternatives--> section  is a cycle.
+    // section --children--> decision --evidence--> section  is a cycle.
     const refusal = refusalOf(
-      w.call("update_decision", { element_id: decision, alternative_ids: [section] }),
+      w.call("update_decision", { element_id: decision, evidence_ref_ids: [section] }),
     );
     expect(refusal).toContain("cycle");
     // Name what refuses it: the boundary tier's `element-reference-resolves`, which is
     // the mechanism D5 assigns and the one the control below removes.
     expect(refusal).toContain("element-reference-resolves");
     // …and the board still carries the reference it had.
-    expect(dataOf<{ alternatives: string[] }>(w, decision).alternatives).toEqual([ref]);
+    expect(dataOf<{ evidence: string[] }>(w, decision).evidence).toEqual([ref]);
   });
 
-  it("a reference cycle is unconstructible on the ADD path too, through evidence", () => {
+  it("a reference cycle is unconstructible on the ADD path too, through a single ref", () => {
     // The same loop, closed by the call that CREATES the element rather than by a later
-    // update, and through a different reference field — so the guard is not something
-    // only `update_*` happens to run.
+    // update, and through a SINGLE-valued reference field rather than a list — so the
+    // guard is not something only `update_*`, and not something only a list field,
+    // happens to run.
     const w = writer("decisions");
     const section = idOf(w.call("add_section", { title: "Storage" }));
     const refusal = refusalOf(
-      w.call("add_decision", {
-        statement: "Storage stays on the caller.",
-        why: "The alternative moved the lifetime into a shared cache.",
-        // section --children--> (this decision) --evidence--> section
-        evidence_ref_ids: [section],
-        alternative_ids: [section],
+      // section --children--> (this annotation) --code_ref--> section
+      w.call("add_annotation", {
+        body: "Storage stays on the caller.",
+        code_ref_id: section,
         parent_id: section,
       }),
     );
@@ -356,7 +355,7 @@ describe("a reference argument is refused when the board does not hold it (D4)",
         statement: "Storage stays on the caller.",
         why: "The alternative moved the lifetime into a shared cache.",
         evidence_ref_ids: [ref],
-        alternative_ids: [ref],
+        alternatives: ["Move the lifetime into a shared cache."],
       }),
     );
     expect(elementById(w, decision)).toBeDefined();
@@ -392,7 +391,7 @@ describe("a boundary rule is a refusal in the same call, naming the field", () =
         statement: "We picked a queue.",
         why: "It was there.",
         evidence_ref_ids: [],
-        alternative_ids: [],
+        alternatives: [],
       }),
     );
     expect(refusal).toContain("decision-grounded");
@@ -492,7 +491,7 @@ describe("cite resolves against the captured patchset in the same call", () => {
         statement: "Storage stays on the caller.",
         why: "The alternative moved the lifetime into a shared cache.",
         evidence_ref_ids: [ref],
-        alternative_ids: [ref],
+        alternatives: ["Move the lifetime into a shared cache."],
       }),
     );
     const refusal = refusalOf(w.call("remove_element", { element_id: ref }));

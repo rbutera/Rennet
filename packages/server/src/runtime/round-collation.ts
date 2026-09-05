@@ -51,7 +51,15 @@ import { GenerationSupersededError } from "./rounds";
  * either can never resolve. A file whose capture was truncated (`lossy`) gets one
  * open-ended region per side from its last parsed hunk's end: the seat reads the whole
  * diff and may cite lines past the cut, and the daemon must not claim as "outside the
- * change" lines it never captured. The hunk id does not survive into this shape. Pure.
+ * change" lines it never captured. Pure.
+ *
+ * Every region carries the hunk it is a side of (#864). Nothing about a citation reads
+ * it — it is how the Noise complement asks its one hunk-level question, "did any lens
+ * read this change", of a shape whose rows are sides. A renamed file's two base-side
+ * rows share their hunk's key, so one citation cancels both and the pair cannot be filed
+ * twice under two names. A truncated file's open-ended tail is not a parsed hunk and
+ * gets its own key per path: the un-captured remainder is one change whichever side of
+ * it a seat cites.
  */
 export function changedRegions(
   hunks: HunkIndex,
@@ -72,11 +80,23 @@ export function changedRegions(
     const headEnd = hunk.spans.new.start + hunk.spans.new.lines - 1;
     const baseEnd = hunk.spans.old.start + hunk.spans.old.lines - 1;
     if (hunk.spans.new.lines > 0) {
-      regions.push({ path: hunk.path, side: "head", start: hunk.spans.new.start, end: headEnd });
+      regions.push({
+        path: hunk.path,
+        side: "head",
+        start: hunk.spans.new.start,
+        end: headEnd,
+        hunk: hunk.id,
+      });
     }
     if (hunk.spans.old.lines > 0) {
       for (const path of basePathsFor(hunk.path)) {
-        regions.push({ path, side: "base", start: hunk.spans.old.start, end: baseEnd });
+        regions.push({
+          path,
+          side: "base",
+          start: hunk.spans.old.start,
+          end: baseEnd,
+          hunk: hunk.id,
+        });
       }
     }
     if (hunk.lossy) {
@@ -89,12 +109,21 @@ export function changedRegions(
   }
   for (const [path, end] of lossyEnds) {
     const status = fileByPath.get(path)?.status;
+    // Not a hunk id — there is no hunk — but one key per truncated file, so the tail is
+    // one change on both sides rather than two the complement could file separately.
+    const tail = `truncated-tail:${path}`;
     if (status !== "deleted") {
-      regions.push({ path, side: "head", start: end.head + 1, end: REGION_OPEN_END });
+      regions.push({ path, side: "head", start: end.head + 1, end: REGION_OPEN_END, hunk: tail });
     }
     if (status !== "added") {
       for (const basePath of basePathsFor(path)) {
-        regions.push({ path: basePath, side: "base", start: end.base + 1, end: REGION_OPEN_END });
+        regions.push({
+          path: basePath,
+          side: "base",
+          start: end.base + 1,
+          end: REGION_OPEN_END,
+          hunk: tail,
+        });
       }
     }
   }

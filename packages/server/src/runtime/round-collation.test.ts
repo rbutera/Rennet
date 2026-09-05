@@ -76,7 +76,14 @@ const PS = patchset([
 describe("changedRegions", () => {
   it("emits one region per hunk per side, a rename's base side under BOTH its names", () => {
     const regions = changedRegions(buildHunkIndex(PS), PS.files);
-    expect(regions).toEqual([
+    expect(
+      regions.map((region) => ({
+        path: region.path,
+        side: region.side,
+        start: region.start,
+        end: region.end,
+      })),
+    ).toEqual([
       { path: "src/a.ts", side: "head", start: 1, end: 4 },
       { path: "src/a.ts", side: "base", start: 1, end: 3 },
       { path: "src/new.ts", side: "head", start: 10, end: 11 },
@@ -85,14 +92,30 @@ describe("changedRegions", () => {
     ]);
   });
 
+  it("names the ONE hunk each side is a view of, so the rename's three rows are one change", () => {
+    // #864 — the complement asks "did any lens read this change", which is a question
+    // about the hunk and not about the side. Every row therefore carries the hunk it
+    // came from: the two sides of `src/a.ts` share one, and the rename's head row and
+    // BOTH of its base rows share one. Without it, a sibling citing the head side left
+    // the base side in the Noise complement, which made `no-noise` unreachable on any
+    // change containing a modification.
+    const regions = changedRegions(buildHunkIndex(PS), PS.files);
+    const hunkOf = (path: string, side: "base" | "head") =>
+      regions.find((region) => region.path === path && region.side === side)?.hunk;
+    for (const region of regions) expect(typeof region.hunk).toBe("string");
+    expect(hunkOf("src/a.ts", "head")).toBe(hunkOf("src/a.ts", "base"));
+    expect(hunkOf("src/new.ts", "head")).toBe(hunkOf("src/old.ts", "base"));
+    expect(hunkOf("src/new.ts", "head")).toBe(hunkOf("src/new.ts", "base"));
+    // Two DIFFERENT hunks are two different changes, or the key would collapse the
+    // whole patchset into one and cancel it on any citation at all.
+    expect(hunkOf("src/a.ts", "head")).not.toBe(hunkOf("src/new.ts", "head"));
+  });
+
   it("a head-side citation over a region's range resolves; one past it does not (control)", () => {
     const regions = changedRegions(buildHunkIndex(PS), PS.files);
-    expect(resolveCitation({ path: "src/a.ts", side: "head", start: 2, end: 3 }, regions)).toEqual({
-      path: "src/a.ts",
-      side: "head",
-      start: 1,
-      end: 4,
-    });
+    expect(resolveCitation({ path: "src/a.ts", side: "head", start: 2, end: 3 }, regions)).toEqual(
+      expect.objectContaining({ path: "src/a.ts", side: "head", start: 1, end: 4 }),
+    );
     expect(
       resolveCitation({ path: "src/a.ts", side: "head", start: 99, end: 100 }, regions),
     ).toBeUndefined();
@@ -152,18 +175,19 @@ describe("changedRegions", () => {
       }),
     ]);
     const regions = changedRegions(buildHunkIndex(lossy), lossy.files);
-    expect(regions).toContainEqual({
-      path: "src/a.ts",
-      side: "head",
-      start: 5,
-      end: REGION_OPEN_END,
-    });
-    expect(regions).toContainEqual({
-      path: "src/a.ts",
-      side: "base",
-      start: 4,
-      end: REGION_OPEN_END,
-    });
+    const tail = (side: "base" | "head") =>
+      regions.find(
+        (region) =>
+          region.path === "src/a.ts" && region.side === side && region.end === REGION_OPEN_END,
+      );
+    expect(tail("head")).toMatchObject({ start: 5, end: REGION_OPEN_END });
+    expect(tail("base")).toMatchObject({ start: 4, end: REGION_OPEN_END });
+    // The un-captured tail is ONE change on both sides — it is not a parsed hunk, so it
+    // gets its own key rather than none, and the complement cannot file it twice.
+    expect(tail("head")?.hunk).toBe(tail("base")?.hunk);
+    expect(tail("head")?.hunk).not.toBe(
+      regions.find((region) => region.path === "src/a.ts" && region.end === 4)?.hunk,
+    );
     expect(
       resolveCitation({ path: "src/a.ts", side: "head", start: 500, end: 510 }, regions),
     ).toBeDefined();

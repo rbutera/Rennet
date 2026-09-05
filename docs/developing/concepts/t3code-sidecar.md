@@ -1283,6 +1283,11 @@ generation rather than hidden inside it. On the **one-file** branch the last sib
 Noise ran in parallel at 39.3 s and added nothing, **the one-file generation is 75.6 s longer
 for this reason alone.** Its prompt is 8,392 bytes (was 6,377).
 
+That 75.6 s was spent on the defect below: the one-file branch's only hunk had been cited by
+Sequence, and the tail is the seat writing a board about it anyway. With the complement fixed
+that branch settles `no-noise` with no seat and no tail at all — the number stands as a
+measurement of the drive, not of the shipped path.
+
 On the **95-file** branch the tail did not terminate, and that is the drive's most important
 number. The four core lanes revealed 1,633.1 s after the drafting kickoff (31 min 7 s from the
 branch pick, against 9 min 32 s on v0.7.0). The Noise lane then started, and the host had
@@ -1297,14 +1302,39 @@ cancelled it. A tail proportional to the *hunk count* of the change, paid one pr
 trip per hunk, is not a tail; the one-file branch's 75.6 s is the shape of it only because
 that branch has one hunk.
 
-The side-matching defect that inflates that number: `offeredRegions` emits one changed region
-per SIDE of every hunk, and `regionOverlaps` requires the citation's side to equal the
-region's. A seat citing `head 3-6` therefore leaves `base 1-6` uncited, and the host files it
-as noise. Hand-checked on the one-file branch, whose entire change is `@@ -1,6 +1,6 @@` in
-`docs/README.md`: Sequence cited `head 3-6`, and the Noise board still opened with `base 1-6`
-as its single member and a Codex seat turn spent calling it noise. The empty complement — the
-`no-noise` settlement with no seat turn at all — is therefore unreachable for any change
-containing a modification.
+The side-matching defect that inflated that number, **since fixed in
+[#864](https://github.com/rbutera/Rennet/issues/864)**: the complement subtracted per SIDE,
+and a citation's side had to equal the region's. A seat citing `head 3-6` therefore left
+`base 1-6` uncited and the host filed it as noise. Hand-checked on the one-file branch,
+whose entire change is `@@ -1,6 +1,6 @@` in `docs/README.md`: Sequence cited `head 3-6`, and
+the Noise board still opened with `base 1-6` as its single member and a Codex seat turn spent
+calling it noise. The empty complement — the `no-noise` settlement with no seat turn at all —
+was therefore unreachable for any change containing a modification.
+
+The complement now subtracts per HUNK and files an uncited hunk once, on its head side (see
+`lens-pipeline.md`). The one-file branch settles `no-noise` with no seat, and the member
+count on a modification-heavy change roughly halves. **The 1,259-member tail is reduced, not
+removed**: a change with hundreds of genuinely uncited hunks still gives the seat hundreds of
+members and one `update_noise_verdict` round trip each. A grouping verb that takes several
+members at once is the remaining half of that problem and is not in #864.
+
+### A lane that waits, and said it was working
+
+While the four core seats drafted, the Noise lane had no thread and no seat — and all three
+surfaces said otherwise: a travelling lamp on the rail, *"DRAFTING · Noise seat · watching
+0:01 · under way"* on the widget, and *"IN PROGRESS · This board is still being written"* on
+the board. Seen on both branches. The lens kickoff promoted every queued lane to `running`,
+Noise included, and the wire carried no state between "not started" and "in progress", so the
+honest rendering — which the client can draw, and does — existed only in the window before
+kickoff.
+
+This is the third of one family in two days, after a failed lane reading as quiet
+([#813](https://github.com/rbutera/Rennet/issues/813)) and a cancelled generation still
+"being written" ([#863](https://github.com/rbutera/Rennet/pull/863)). Each time a status
+could not tell "not started" from "in progress", and each time the fixture held the state the
+daemon does not publish. Fixed in
+[#865](https://github.com/rbutera/Rennet/issues/865) by giving the lane a `waiting` status;
+see `lens-pipeline.md`.
 
 ### Cancel, checked live
 

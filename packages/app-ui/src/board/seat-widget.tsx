@@ -1,4 +1,4 @@
-import type { LensBoard } from "@rennet/protocol";
+import { hostDerivedMemberKind, type LensBoard } from "@rennet/protocol";
 import { cn } from "@rennet/ui";
 import { useEffect, useRef, useState } from "react";
 import { useRennetStore } from "../store";
@@ -55,14 +55,42 @@ function useWatchedFor(key: string, running: boolean): string | undefined {
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
 }
 
-/** What the board holds so far, in the board's own units. Counted off the resolved
- *  board, so a partial board says how far it has got and a settled one says what it is. */
+/**
+ * What the board holds so far, in the board's own units. Counted off the resolved
+ * board, so a partial board says how far it has got and a settled one says what it is.
+ *
+ * A HOST-DERIVED board is counted in two piles, because one number would be a lie about
+ * authorship (#864 fold-in). The host places the complement — one `code_ref` and one
+ * member per uncited change — before the seat's first turn, so a Noise board where the
+ * seat wrote four sections read "2522 elements written · 1259 cited", crediting the seat
+ * with 2,518 elements it never wrote and calling host citations "cited". The seat's own
+ * total is what is left when the placed pairs come out, and the placed members are named
+ * as the host's.
+ */
 function writtenSoFar(board: LensBoard | undefined): string {
   if (board === undefined) return "nothing written yet";
-  const elements = board.elements.length;
-  const cited = board.elements.filter((element) => element.kind === "code_ref").length;
+  const memberKind = hostDerivedMemberKind(board.lens);
+  const members =
+    memberKind === undefined ? [] : board.elements.filter((element) => element.kind === memberKind);
+  // Each placed member names the `code_ref` placed with it, so the pair is counted from
+  // the member's own pointer rather than from an assumption that every code_ref is one.
+  const placedRefs = new Set(
+    members
+      .map((element) => (element.data as { hunk?: unknown }).hunk)
+      .filter((id): id is string => typeof id === "string"),
+  );
+  const placed = members.length + placedRefs.size;
+  const elements = board.elements.length - placed;
+  const cited = board.elements.filter(
+    (element) => element.kind === "code_ref" && !placedRefs.has(element.id),
+  ).length;
   const written = `${elements} ${elements === 1 ? "element" : "elements"} written`;
-  return cited === 0 ? written : `${written} · ${cited} cited`;
+  const parts = [written];
+  if (cited > 0) parts.push(`${cited} cited`);
+  if (members.length > 0) {
+    parts.push(`${members.length} ${members.length === 1 ? "region" : "regions"} placed`);
+  }
+  return parts.join(" · ");
 }
 
 function ProviderName({ voice }: { readonly voice: SeatVoice }) {
@@ -153,7 +181,11 @@ export function SeatWidget({
   const openRef = useRennetStore((s) => s.ui.seatTranscript);
   const working = seat.register === "working";
   const failed = seat.register === "failed";
-  const settled = !seat.drafting && !failed;
+  // A WAITING lane is not settled: nothing has been written and nothing is finished, so
+  // the receipt shape ("Noise · seat", a filled dot, a count) would read as a result.
+  // It keeps the working shape, whose chip already says "waiting" and whose line names
+  // the lanes it is waiting on (#865).
+  const settled = !seat.drafting && !failed && seat.register !== "waiting";
   const primary = seat.voices[0];
   const watched = useWatchedFor(`${lens}:${primary?.seat ?? ""}`, working);
 

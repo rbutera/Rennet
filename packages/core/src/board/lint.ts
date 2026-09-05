@@ -69,12 +69,22 @@ export type LintTarget = BoardTarget;
  * be cited from the base side. No hunk identifier reaches this shape. A region whose `end`
  * is {@link REGION_OPEN_END} runs to the end of its file: the capture was truncated there,
  * so the daemon cannot say which later lines changed and claims none of them are outside.
+ *
+ * `hunk` names the ONE change the region is a view of. It is not citation geometry and no
+ * citation rule reads it: a citation still names a side and resolves against that side's
+ * lines, because the two sides of a modified hunk are genuinely different text. It exists
+ * for the one question that is asked of the hunk rather than of the side — *did any lens
+ * read this change?* — which the Noise complement asks (#864). Optional because a caller
+ * that assembles regions without a diff index (a fixture, a hand-built context) has no
+ * hunk to name, and a region with no name is its own change.
  */
 export interface ChangedRegion {
   readonly path: string;
   readonly side: "base" | "head";
   readonly start: number;
   readonly end: number;
+  /** The hunk this region is one side of; regions sharing it are one change. */
+  readonly hunk?: string;
 }
 
 /** The `end` of a region that runs to the end of its file (a truncated capture's tail). */

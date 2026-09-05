@@ -3135,14 +3135,18 @@ describe("createRoundsRuntime", () => {
     // Durable before the screen, by the same write: the lane a reviewer sees failed is a
     // lane the daemon has already recorded as failed.
     expect(atFailure?.durable).toBe(true);
-    // …and not one sibling had settled when it happened: `queued` and `running` are the
-    // two unsettled states, and every other lane was in one of them.
+    // …and not one sibling had settled when it happened: `queued`, `waiting` and
+    // `running` are the three unsettled states, and every other lane was in one of them.
+    // (`waiting` is the derived Noise lane's, which cannot start until these four do.)
     const atThatMoment = laneFrames[(atFailure?.frames ?? 1) - 1] ?? [];
     expect(atThatMoment).toContain("design:failed");
     expect(
       atThatMoment.filter(
         (entry) =>
-          !entry.startsWith("design:") && !entry.endsWith(":queued") && !entry.endsWith(":running"),
+          !entry.startsWith("design:") &&
+          !entry.endsWith(":queued") &&
+          !entry.endsWith(":waiting") &&
+          !entry.endsWith(":running"),
       ),
     ).toEqual([]);
 

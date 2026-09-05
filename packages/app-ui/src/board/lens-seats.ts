@@ -116,14 +116,17 @@ export interface LensSeatState {
    */
   readonly seated: boolean;
   /**
-   * This lens's board is being written RIGHT NOW: the generation is running and this lens
-   * has a lane of its own that has not reached a terminal state. The board's in-progress
-   * mark, its "still being written" line and its placeholder row are all gated on this,
-   * and so is the rail's `open` cut.
+   * This lens's board is being written RIGHT NOW: the generation is running and this
+   * lens's own lane says a seat is working. The board's in-progress mark, its "still
+   * being written" line and its placeholder row are all gated on this, and so is the
+   * rail's `open` cut.
    *
-   * It is deliberately NARROWER than `register === "waiting" || "working"`. A lens can be
-   * `waiting` on the rail with nothing being written — during capture, where the rail
-   * honestly lists five queued lenses and no board of any of them exists yet.
+   * It is exactly `register === "working"`, and deliberately NOT "has a lane that has not
+   * settled". A lane can exist, be non-terminal and have nothing being written: during
+   * capture, before kickoff, and — for the whole core fan-out — on the derived Noise lane
+   * whose board is the complement of four lanes that have not settled (#865). Reading a
+   * non-terminal lane as drafting is what put "IN PROGRESS · This board is still being
+   * written" over a lane with no thread and no seat.
    */
   readonly drafting: boolean;
 }
@@ -160,7 +163,11 @@ function lensOf(id: string): LensKind | undefined {
 }
 
 function registerOfLane(lane: LensLane): SeatRegister {
-  if (lane.status === "queued") return "waiting";
+  // `queued` (the generation has not kicked off) and `waiting` (this lane's board is the
+  // complement of siblings that have not settled) are both honestly "not started". They
+  // are two states on the wire because the daemon can tell them apart and the rail
+  // sentence differs — a waiting lane names who it is waiting on — but neither is work.
+  if (lane.status === "queued" || lane.status === "waiting") return "waiting";
   if (lane.status === "running") return "working";
   if (lane.status === "failed") return "failed";
   if (lane.status === "absent") return "absent";
@@ -193,6 +200,10 @@ export function speechOf(lane: LensLane, latest: LaneLatest | undefined): SeatSp
   switch (lane.status) {
     case "queued":
       return { text: "queued", quiet: true };
+    // The lane's own words. WHO it waits on is the derivation's answer, not the lane's
+    // (`waitingOn` + `waitingOnLine`), and the rail and the widget print that instead.
+    case "waiting":
+      return { text: "waiting on the other lenses", quiet: true };
     case "running":
       // No projection yet is its own honest state: the thread exists, nothing has come
       // off it. Saying "reading the change" here would be an invention.
@@ -342,9 +353,9 @@ export function lensSeatStates(
         waitingOn: [],
         reworked,
         seated: true,
-        // The lane exists and has not settled on a generation that is still going, so
-        // this board is genuinely being written into.
-        drafting: !terminal,
+        // A seat is working on a generation that is still going, so this board is
+        // genuinely being written into. A waiting or queued lane is not.
+        drafting: laneRegister === "working",
       };
     }
     // NO LANE FOR THIS LENS. On a running generation its lane has not been opened yet,
@@ -360,13 +371,20 @@ export function lensSeatStates(
   // lists are exactly the ones whose own entry says they have not reached a terminal
   // state. It NEVER makes Noise read as working or failed — those come off its own lane.
   //
-  // It names only lanes that are ACTUALLY still owed — `drafting`, not merely `waiting` —
-  // so a stopped generation's Noise entry names nobody, and a capture that has opened no
-  // lane at all does not claim to be waiting on four lanes that are not running.
+  // It names only lanes that are ACTUALLY still owed: a lane that EXISTS (the daemon
+  // opened it) and has not reached a terminal state. So a stopped generation's Noise
+  // entry names nobody — the whole derivation is gated on `running` — and a capture that
+  // has opened no lane at all does not claim to be waiting on four lanes that are not
+  // running. It is NOT `drafting`: a sibling that is queued or waiting is still owed, and
+  // only a settled one is not.
   const noise = base.find((entry) => entry.lens === "noise");
+  const owed = (entry: LensSeatState): boolean =>
+    entry.lens !== "noise" &&
+    entry.seated &&
+    (entry.register === "working" || entry.register === "waiting");
   const waitingOn =
     noise !== undefined && noise.register === "waiting" && running
-      ? base.filter((entry) => entry.lens !== "noise" && entry.drafting).map((entry) => entry.lens)
+      ? base.filter(owed).map((entry) => entry.lens)
       : [];
 
   return Object.fromEntries(

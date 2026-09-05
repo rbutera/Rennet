@@ -140,7 +140,10 @@ export function assembleDesignBoard(
         statement: obligation.text,
         why: obligation.rationale,
         evidence_ref_ids: [],
-        alternative_ids: [],
+        // Plain text now, not element ids (#864 fold-in). The Design assembler states no
+        // alternatives of its own — the artifact's are the seat's to read — so it stays
+        // empty; the field's shape is what changed, not what this call says.
+        alternatives: [],
         inferred: false,
         source_path: design.path,
         source_line: obligation.line,

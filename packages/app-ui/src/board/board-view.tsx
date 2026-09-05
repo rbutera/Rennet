@@ -24,6 +24,7 @@ import { SourceChips } from "./design-meta";
 import { DesignCapabilityGrid } from "./design-structure";
 import { GenerationSwitcher } from "./generation-switcher";
 import { BoardElementsProvider, useBoardPatchsetId } from "./kinds/element-context";
+import { waitingOnLine } from "./lens-seats";
 import { liveBoards, useLensDrafts } from "./live-draft";
 import { SeatWidget } from "./seat-widget";
 import { Section } from "./section";
@@ -183,8 +184,19 @@ export function LensBoardView({
   // A lens whose durable board has not arrived but whose seat is WRITING one holds the
   // selection: the reviewer asked for that lens and there is a board of it on screen, so
   // falling back to a settled sibling would move them off the thing they are watching.
+  //
+  // A WAITING seat holds it too (#865). Its board has not started — that is the honest
+  // answer, and `BoardAccount` gives it — so falling back would put another lens's board
+  // under a tab the rail marks as Noise, which is the same disagreement between two
+  // surfaces the waiting state exists to end.
+  // A lane the daemon really opened and parked. Not merely `register === "waiting"`,
+  // which is also what a lens with NO lane reads as during capture — that one has
+  // nothing to say and should still fall back.
+  const seatWaiting = seats[lens].register === "waiting" && seats[lens].seated;
   const effectiveLens: LensKind =
-    selected.status === "missing" && liveByLens[lens] === undefined ? fallbackLens : lens;
+    selected.status === "missing" && liveByLens[lens] === undefined && !seatWaiting
+      ? fallbackLens
+      : lens;
 
   // Every lens folds every section, Flagged included (Rai, 2026-09-04). R44's
   // findings-open-on-arrival is retired: the reader takes the summaries first and opens
@@ -296,7 +308,11 @@ export function LensBoardView({
           drafting={drafting}
         />
       ) : (
-        <BoardAccount resolution={shown} drafting={drafting} />
+        <BoardAccount
+          resolution={shown}
+          drafting={drafting}
+          {...(live && seatWaiting && effectiveLens === lens ? { waitingOn: seat.waitingOn } : {})}
+        />
       )}
     </main>
   );
@@ -316,6 +332,7 @@ export function LensBoardView({
 export function BoardAccount({
   resolution,
   drafting = false,
+  waitingOn,
 }: {
   readonly resolution: BoardResolution;
   /** This lens's seat is still writing. A board that has not answered yet then reads as
@@ -323,7 +340,17 @@ export function BoardAccount({
    *  in-board provisional signals a partial board does, so "an unsettled board says so
    *  three ways" is true at every moment of the lane, not only once elements exist. */
   readonly drafting?: boolean;
+  /** This board is the complement of these lanes and they have not settled, so it has no
+   *  seat yet (#865). Present ⇒ the board says what it is waiting for, instead of the
+   *  "still being written" line that named a seat which did not exist, or the "no board
+   *  for this generation yet" line that reads as a result. */
+  readonly waitingOn?: readonly LensKind[];
 }) {
+  if (
+    waitingOn !== undefined &&
+    (resolution.status === "pending" || resolution.status === "missing")
+  )
+    return <WaitingBoard waitingOn={waitingOn} />;
   switch (resolution.status) {
     case "valid":
       return null;
@@ -387,6 +414,26 @@ export function BoardAccount({
         </p>
       );
   }
+}
+
+/**
+ * A board that has no seat YET because it is the remainder of the other four (D16c).
+ *
+ * Deliberately NOT `EmptyDraftingBoard`: nothing is being written, no thread exists, and
+ * the in-progress chip beside "This board is still being written" was the third of the
+ * three surfaces that claimed otherwise for the whole core fan-out (#865). It says what
+ * it is waiting for, in the same words the rail and the widget use.
+ */
+function WaitingBoard({ waitingOn }: { readonly waitingOn: readonly LensKind[] }) {
+  return (
+    <div data-kind="board-waiting" className="flex flex-col gap-1 text-sm">
+      <p className="font-medium text-foreground">This board has not started.</p>
+      <p className="text-muted-foreground">
+        Noise is whatever the other four lenses did not cite, so it is drafted last —{" "}
+        {waitingOnLine(waitingOn)}.
+      </p>
+    </div>
+  );
 }
 
 /** A board whose seat is writing and whose first element has not landed. It carries the
