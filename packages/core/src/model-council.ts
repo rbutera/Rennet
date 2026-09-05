@@ -32,6 +32,8 @@ import type {
   CouncilJob,
   CouncilJobId,
   CouncilModel,
+  CouncilOverridePick,
+  CouncilOverrides,
   CouncilPick,
   CouncilProvider,
   CouncilResolution,
@@ -538,6 +540,89 @@ function reviewHarnessFor(scenario: CouncilScenario): CouncilHarnessId {
   // decomposition-proposal is present in every table; the fallback keeps the
   // function total under `noUncheckedIndexedAccess` without an assertion.
   return proposal === undefined ? "claude-code" : providerHarness(proposal.model);
+}
+
+/**
+ * What a production dispatch site reads its reviewer's own role overrides with. Handed the
+ * availability the site probed, because the persisted overrides are keyed BY SCENARIO
+ * (Rai, 2026-08-28) and it is the installed set that selects the column.
+ */
+export type CouncilOverrideReader = (
+  availability: CouncilAvailability,
+) => CouncilOverrides | undefined;
+
+/**
+ * The council context a production dispatch site builds: what this host HAS, plus the
+ * reviewer's own overrides for the scenario that installed set selects (#876).
+ *
+ * Every live site goes through here so the two halves cannot drift apart. Before #876 each
+ * site wrote `{ availability: { installed } }` by hand and none of them passed `overrides`,
+ * so a role assignment the settings surface persisted, read back and displayed reached no
+ * turn at all. A site building the context literally is the shape that regressed, so a
+ * production `availability: { installed }` outside this function is the tell — the only
+ * ones left are the Flagged lane's two provider-pinned legs, which synthesise a
+ * single-provider availability on purpose and narrow the overrides that come with it
+ * ({@link overridesForHarness}).
+ */
+export function councilContextFor(
+  installed: readonly CouncilHarnessId[],
+  overrides?: CouncilOverrideReader,
+): CouncilResolveContext {
+  const availability: CouncilAvailability = { installed };
+  const resolved = overrides?.(availability);
+  return resolved === undefined ? { availability } : { availability, overrides: resolved };
+}
+
+/** One override cell as a PROVIDER-PINNED leg may honour it, or nothing. */
+function pickForHarness(
+  pick: CouncilOverridePick,
+  harness: CouncilHarnessId,
+): CouncilOverridePick | undefined {
+  if (pick.model === undefined) return pick;
+  if (providerHarness(pick.model) === harness) return pick;
+  // The model names the other provider. The effort is still the reviewer's own answer, so
+  // it survives on its own; the model does not, because this leg cannot run it.
+  return pick.effort === undefined ? undefined : { effort: pick.effort };
+}
+
+/**
+ * The overrides a PROVIDER-PINNED leg may honour (#876).
+ *
+ * The Flagged lane runs ONE job on TWO seats, one per provider, each resolved against a
+ * synthetic single-provider availability so it lands on that provider's table row
+ * (`runFlaggedDual`). A task override naming the OTHER provider's model would resolve that
+ * leg onto a harness its own synthetic availability does not hold, and the seat would die
+ * with "resolved to codex, which is not installed" — naming a harness the host actually
+ * has. So a MODEL override reaches only the leg whose provider it names; an EFFORT
+ * override reaches both, because effort is provider-independent.
+ *
+ * This is not a second precedence rule: `resolveAssignment` still decides everything. It
+ * is which of the reviewer's cells a pinned leg is even given.
+ */
+export function overridesForHarness(
+  overrides: CouncilOverrides | undefined,
+  harness: CouncilHarnessId,
+): CouncilOverrides | undefined {
+  if (overrides === undefined) return undefined;
+  const task: Record<string, CouncilOverridePick> = {};
+  for (const [jobId, pick] of Object.entries(overrides.task ?? {})) {
+    if (pick === undefined) continue;
+    const kept = pickForHarness(pick, harness);
+    if (kept !== undefined) task[jobId] = kept;
+  }
+  const tier: Record<string, CouncilOverridePick> = {};
+  for (const [tierId, pick] of Object.entries(overrides.tier ?? {})) {
+    if (pick === undefined) continue;
+    const kept = pickForHarness(pick, harness);
+    if (kept !== undefined) tier[tierId] = kept;
+  }
+  const hasTask = Object.keys(task).length > 0;
+  const hasTier = Object.keys(tier).length > 0;
+  if (!hasTask && !hasTier) return undefined;
+  return {
+    ...(hasTask ? { task: task as CouncilOverrides["task"] } : {}),
+    ...(hasTier ? { tier: tier as CouncilOverrides["tier"] } : {}),
+  };
 }
 
 /**

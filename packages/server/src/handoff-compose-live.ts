@@ -4,8 +4,10 @@ import {
   type ComposeGroup,
   type ComposePort,
   type ComposePortResult,
+  type CouncilOverrideReader,
   composeAsksContextFile,
   composeHandoffBundle,
+  councilContextFor,
   type HarnessPort,
   providerHarness,
   resolveAssignment,
@@ -188,6 +190,11 @@ export function claudeComposePort(port: HarnessPort, cwd: string, model?: string
 
 /** The deps the live composer is bound to (all injected so the module stays testable). */
 export interface LiveComposeDeps {
+  /**
+   * The reviewer's own role overrides, read per dispatch (#876). Absent means the council's
+   * own tables decide, which is what every site did before the overrides were wired.
+   */
+  readonly councilOverrides?: CouncilOverrideReader;
   /** The Claude harness adapter, or null when no `claude` is installed. */
   claudePort(repoRoot: string): Promise<HarnessPort | null>;
   /** The Codex executor resolved to the absolute binary, or null when no `codex`.
@@ -255,7 +262,10 @@ export function createLiveComposeBundle(
       if (claudePort !== null) installed.push("claude-code");
       if (executor !== null) installed.push("codex");
 
-      const resolution = resolveAssignment(COMPOSE_JOB_ID, { availability: { installed } });
+      const resolution = resolveAssignment(
+        COMPOSE_JOB_ID,
+        councilContextFor(installed, deps.councilOverrides),
+      );
       if (resolution.kind === "model") {
         const harness = providerHarness(resolution.model);
         if (harness === "codex" && executor !== null) {

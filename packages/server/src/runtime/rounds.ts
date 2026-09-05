@@ -45,13 +45,14 @@ import {
 import type {
   BoardWrite,
   CodexExecutor,
+  CouncilOverrideReader,
   DeltaPacket,
   HarnessPort,
   LintContext,
   LintTarget,
   RegisterLintContext,
 } from "@rennet/core";
-import { sessionContextRelativeDir } from "@rennet/core";
+import { councilContextFor, sessionContextRelativeDir } from "@rennet/core";
 import type { CouncilHarnessId, GenerationUsage } from "@rennet/protocol";
 import {
   type AskOccurrence,
@@ -752,6 +753,13 @@ export interface RoundsRuntimeDeps {
   readonly resolveClaudePort: (repoRoot: string) => Promise<HarnessPort | null>;
   /** The locus-aware codex utility executor probe (null when no `codex` resolves). */
   readonly resolveCodexExecutor: (repoRoot: string) => Promise<CodexExecutor | null>;
+  /**
+   * The reviewer's own role overrides, read per generation (#876). This is the site the
+   * Environments -> Review settings surface reaches: without it a role assignment the
+   * surface persisted, read back and displayed reached no seat of any round. Absent means
+   * the council's own tables decide.
+   */
+  readonly councilOverrides?: CouncilOverrideReader;
   /**
    * The T3 sidecar's seat runtime for one generation (t3-lens-threads). Every board seat
    * runs on it — T3 is their only backend — so a daemon that cannot bring the sidecar up
@@ -1548,7 +1556,7 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
 
     const writeSessionContext = deps.writeSessionContext;
     const pipelineInput = {
-      council: { availability: { installed } },
+      council: councilContextFor(installed, deps.councilOverrides),
       ...(input.prPaper === undefined ? {} : { prPaper: input.prPaper }),
       ...(t3Seam === undefined ? {} : { t3: t3Seam }),
       // This generation's lanes on the daemon's loopback board server. Without it the

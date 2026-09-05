@@ -251,9 +251,16 @@ council job id and then the scenario. An install that never changed a mapping ha
 `routing` key at all, and clearing the last override removes it again. A malformed
 config refuses the write rather than overwriting unreadable bytes.
 
-Model Mappings changes **which model carries a role**. It does not add council jobs,
-change the versioned default tables, or persist which providers are available — provider
-availability is detected, not configured.
+Model Mappings changes **which model carries a role**, and the change reaches the turns
+that role runs. Every production dispatch reads the column its own probed availability
+answers to — `dual` on a host with both harnesses, `claudeOnly` or `codexOnly` on a host
+with one — on every dispatch, so the next round runs on the model you picked rather than
+the next daemon restart. See [Where an override
+reaches](../concepts/model-council.md#where-an-override-reaches) for the sites that read it
+and for the one narrowing the Flagged lane applies.
+
+It does not add council jobs, change the versioned default tables, or persist which
+providers are available — provider availability is detected, not configured.
 
 Device pairing lives on the This Machine card, because a pairing bootstraps a
 connection to this machine's daemon. See [Device pairing](#device-pairing).

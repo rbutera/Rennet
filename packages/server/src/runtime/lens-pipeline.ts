@@ -30,6 +30,7 @@ import {
   lintReviewDraft,
   NO_CONCERN_ANSWER,
   type Omission,
+  overridesForHarness,
   type RegisterLintContext,
   reconcileFindingsWithProvenance,
   reviewedDiffCommand,
@@ -59,6 +60,7 @@ import {
   type CouncilHarnessId,
   type CouncilJobId,
   type CouncilModel,
+  type CouncilOverrides,
   type CouncilResolveContext,
   type DraftBoard,
   DraftBoardSchema,
@@ -3132,6 +3134,15 @@ export function aggregateFailureAccount(
  * findings when one of two seats fails. Returns a failure only when neither seat can run
  * or neither settled.
  */
+/** One Flagged leg's slice of the reviewer's overrides, or nothing to spread. */
+function flaggedLegOverrides(
+  council: CouncilResolveContext,
+  harness: CouncilHarnessId,
+): { overrides?: CouncilOverrides } {
+  const narrowed = overridesForHarness(council.overrides, harness);
+  return narrowed === undefined ? {} : { overrides: narrowed };
+}
+
 async function runFlaggedDual(
   deps: LensPipelineDeps,
   council: CouncilResolveContext,
@@ -3148,14 +3159,22 @@ async function runFlaggedDual(
   // the seat that produced it (#726 D8) — including the single-seat degrade, which ran
   // exactly one resolved seat and can say which.
   const installed = council.availability.installed;
+  // Each leg resolves against a SYNTHETIC single-provider availability, which is how one
+  // job seats two providers off two table rows. The reviewer's overrides come with it,
+  // narrowed to what a leg pinned to that provider can honour (#876): an effort override
+  // reaches both legs, a model override reaches only the leg whose provider it names.
+  // Passing them whole would resolve one leg onto the other's harness and lose the seat to
+  // a "not installed" failure naming a harness this host has.
   const claudeSeat = installed.includes("claude-code")
     ? resolveBoardSeatDetails("lens-draft-flagged", "flagged-claude", deps, {
         availability: { installed: ["claude-code"] },
+        ...flaggedLegOverrides(council, "claude-code"),
       })
     : { failure: "no claude harness" };
   const codexSeat = installed.includes("codex")
     ? resolveBoardSeatDetails("lens-draft-flagged", "flagged-codex", deps, {
         availability: { installed: ["codex"] },
+        ...flaggedLegOverrides(council, "codex"),
       })
     : { failure: "no codex harness" };
 
