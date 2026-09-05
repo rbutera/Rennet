@@ -588,7 +588,9 @@ export { SqliteReviewStore } from "./sqlite-review-store";
 export { readSuperpowersSpec, selectedSuperpowersArtifacts } from "./superpowers-spec-reader";
 export {
   createT3SeatTurn,
+  outputSchemaFor,
   parseFinalMessageJson,
+  type SeatBoardMcpServer,
   settledTurnUsage,
   type T3SeatClient,
   type T3SeatSeam,

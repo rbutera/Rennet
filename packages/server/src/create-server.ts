@@ -205,6 +205,12 @@ import {
   sha256Hex,
 } from "@rennet/protocol";
 import { createBenchmarkRecording } from "./benchmark-store";
+import {
+  type BoardMcpServer,
+  generationBoards,
+  startBoardMcpServer,
+} from "./board/board-mcp-server";
+import { seatBoardServer } from "./board/seat-address";
 import { type BoardsRuntime, createBoardsRuntime } from "./boards/boards-runtime";
 import { comparablePath, decideBoundWorkspace, repinBoundWorkspace } from "./bound-workspace";
 import { attachCiSignal } from "./ci-signal";
@@ -1355,6 +1361,31 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
    * a silent fallback would run the lens without its thread, transcript, live line or
    * same-thread repair while the bench showed nothing wrong (review finding 1).
    */
+  /**
+   * The daemon's loopback board server (`lens-board-tools` D8), started on first use.
+   *
+   * The bearer it checks is read from the CURRENT sidecar on every request, never captured
+   * here: the supervisor respawns the sidecar within one daemon's life, each spawn puts a
+   * fresh bearer in a fresh environment, and a listener holding the first one would 401
+   * every seat of every later sidecar — silently, for the daemon's whole life, while the
+   * seats ran and billed. `t3Sidecar.boardBearer()` is that reading.
+   *
+   * A daemon that never opens a board lane never binds this port; {@link generationBoards}
+   * is what starts it. A FAILED start is not memoised, so a transient bind failure costs
+   * one lane rather than board writing for the rest of the daemon's life.
+   */
+  let boardMcpServer: Promise<BoardMcpServer> | null = null;
+  const ensureBoardMcpServer = (stateDir: string): Promise<BoardMcpServer> => {
+    boardMcpServer ??= startBoardMcpServer({
+      bearer: () => t3Sidecar.boardBearer(),
+      stateDir,
+    }).catch((error: unknown) => {
+      boardMcpServer = null;
+      throw error;
+    });
+    return boardMcpServer;
+  };
+
   const resolveT3SeatRuntime = async (input: {
     /** The REPOSITORY the generation belongs to: the T3 project, and half the binding key. */
     readonly repoRoot: string;
@@ -1376,8 +1407,17 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       return { unavailable: error instanceof Error ? error.message : String(error) };
     }
     const environmentId = sidecar.environment.environmentId;
+    // This generation's board lanes. Nothing is open until the drafting pipeline opens
+    // one, and a seat whose lane is not open is given no address — so a turn names no
+    // board server rather than one that resolves to nothing.
+    const boards = generationBoards(input.generationId, () =>
+      // The sidecar's own private base dir: where the listener remembers its port, so a
+      // restarted daemon comes back on the url a live session was opened with.
+      ensureBoardMcpServer(sidecar.claim.baseDir),
+    );
     return {
       environmentId,
+      boards,
       seam: {
         client: () => t3Sidecar.client(),
         threadFor: async ({ seat, provider, model, effort }) => {
@@ -1403,7 +1443,15 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
               { effort },
             ),
           });
-          return { threadId: binding.threadId, projectId: binding.projectId };
+          // The seat's own address onto its lane's board, minted on the seat's first turn
+          // and refreshed on every later one. Flagged's two seats resolve to the ONE
+          // flagged lane and are given two addresses onto it (D9).
+          const boardServer = seatBoardServer(boards, seat);
+          return {
+            threadId: binding.threadId,
+            projectId: binding.projectId,
+            ...(boardServer === undefined ? {} : { boardServer }),
+          };
         },
       },
       watch: (threadId, publish) => {
@@ -5341,6 +5389,12 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     store?.close();
     pushTokenStore.close();
     roundOperationStore.close();
+    void boardMcpServer
+      ?.then((server) => server.close())
+      .catch(() => {
+        // A listener that never started, or one whose close threw, must not take the rest
+        // of the shutdown sequence with it.
+      });
     void wsListener?.close();
   };
   return {

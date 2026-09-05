@@ -79,6 +79,7 @@ import {
   type SessionModel,
 } from "@rennet/protocol";
 import { generationBenchmarkRun } from "../benchmark-recorder";
+import type { GenerationBoards } from "../board/board-mcp-server";
 import type { BoardsRuntime } from "../boards/boards-runtime";
 import type { SessionContextFile } from "../context-files";
 import { PipelineStartGuard } from "../session/pipeline-guard";
@@ -675,6 +676,13 @@ export interface T3SeatRuntime {
   readonly seam: T3SeatSeam;
   /** The sidecar environment a lane's `thread` ref is addressed in. */
   readonly environmentId: string;
+  /**
+   * This generation's board lanes on the daemon's loopback board server
+   * (`lens-board-tools` D8). Opening a lane is what gives that board's seats an address;
+   * settling one revokes them. Absent for a caller with no board server behind it — a
+   * direct-call test — in which case seats simply carry no board address.
+   */
+  readonly boards?: GenerationBoards;
   /** Hold the seat thread's subscription and publish its latest event, throttled. */
   readonly watch: (
     threadId: string,

@@ -163,6 +163,33 @@ describe("t3 sidecar: spawn, claim, credentials", () => {
     expect(dump.env.T3CODE_CLERK_PUBLISHABLE_KEY).toBeUndefined();
   }, 20_000);
 
+  it("puts the board bearer in the sidecar's environment and on no argument list", async () => {
+    const f = fixture();
+    const running = await start(f);
+    const dump = JSON.parse(readFileSync(join(running.claim.baseDir, "fake-spawn.json"), "utf8"));
+    // It really was delivered — every harness child the sidecar starts inherits it — so
+    // its absence from argv below says something.
+    expect(dump.env.RENNET_BOARD_BEARER).toBe(running.boardBearer);
+    expect(running.boardBearer.length).toBeGreaterThan(20);
+    expect(JSON.stringify(dump.argv)).not.toContain(running.boardBearer);
+    // Recorded in the 0600 credentials file, because a later daemon that ADOPTS this
+    // sidecar cannot re-mint it: the value is fixed in an environment already handed out.
+    expect(readSidecarCredentials(running.claim.baseDir)?.boardBearer).toBe(running.boardBearer);
+  }, 20_000);
+
+  it("reuses the recorded board bearer when it respawns on the same base dir", async () => {
+    const f = fixture();
+    const first = await start(f);
+    await stopSidecar(f.dataDir);
+    const second = await start(f);
+    // A seat's address token is DERIVED from this value, so rotating it on a respawn would
+    // change every live seat's url — and both providers refuse a turn whose MCP servers
+    // differ from the ones its session was opened with.
+    expect(second.boardBearer).toBe(first.boardBearer);
+    const dump = JSON.parse(readFileSync(join(second.claim.baseDir, "fake-spawn.json"), "utf8"));
+    expect(dump.env.RENNET_BOARD_BEARER).toBe(first.boardBearer);
+  }, 30_000);
+
   it("seeds provider binaries into settings.json without clobbering the user's other keys", async () => {
     const f = fixture();
     const userdata = join(sidecarBaseDir(f.dataDir), "userdata");
@@ -206,6 +233,26 @@ describe("t3 sidecar: adoption, stale claims, stop", () => {
     const f = fixture();
     await start(f);
     expect(await adoptSidecar(f.dataDir, "def456")).toBeNull();
+  }, 20_000);
+
+  it("an adopted sidecar carries the board bearer forward", async () => {
+    const f = fixture();
+    const first = await start(f);
+    const adopted = await adoptSidecar(f.dataDir, "abc123");
+    expect(adopted?.boardBearer).toBe(first.boardBearer);
+  }, 20_000);
+
+  it("refuses to adopt a sidecar that carries no board bearer", async () => {
+    const f = fixture();
+    const first = await start(f);
+    const file = join(first.claim.baseDir, "rennet-credentials.json");
+    const { boardBearer, ...withoutBearer } = JSON.parse(readFileSync(file, "utf8"));
+    expect(boardBearer).toBeDefined();
+    writeFileSync(file, JSON.stringify(withoutBearer));
+    // A sidecar spawned before the board server existed has no `RENNET_BOARD_BEARER` in
+    // the environment its harness children inherited, so its seats could never reach a
+    // board. Refused for the same reason a snapshot mismatch is.
+    expect(await adoptSidecar(f.dataDir, "abc123")).toBeNull();
   }, 20_000);
 
   it("re-exchanges the bootstrap grant when the stored bearer no longer works", async () => {
@@ -266,6 +313,21 @@ describe("t3 sidecar: environment", () => {
   it("drops every T3CODE_* key from the parent and forces telemetry off", () => {
     const env = sidecarEnvironment({ PATH: "/bin", T3CODE_HOME: "/x", T3CODE_PORT: "9" });
     expect(env).toEqual({ PATH: "/bin", T3CODE_TELEMETRY_ENABLED: "false" });
+  });
+
+  it("sets the board bearer the daemon minted, and never the one a parent shell carried", () => {
+    const parent = { PATH: "/bin", RENNET_BOARD_BEARER: "from-the-users-shell" };
+    expect(sidecarEnvironment(parent, "minted-by-this-daemon")).toEqual({
+      PATH: "/bin",
+      T3CODE_TELEMETRY_ENABLED: "false",
+      RENNET_BOARD_BEARER: "minted-by-this-daemon",
+    });
+    // No bearer to set ⇒ the name is absent rather than inherited, so a sidecar without a
+    // board server cannot be reached with a value its parent shell happened to hold.
+    expect(sidecarEnvironment(parent)).toEqual({
+      PATH: "/bin",
+      T3CODE_TELEMETRY_ENABLED: "false",
+    });
   });
 });
 

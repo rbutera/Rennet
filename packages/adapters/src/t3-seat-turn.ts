@@ -23,6 +23,28 @@ import { type ClaudeTurnUsage, inlineContextMetric, type MetricsCollector } from
 export interface T3SeatThread {
   readonly threadId: string;
   readonly projectId: string;
+  /**
+   * The daemon's board server, addressed to THIS seat (`lens-board-tools` D8). Present
+   * once the seat's board lane is open; absent means the lane has none, and the turn
+   * names no server at all rather than an address that resolves to nothing.
+   *
+   * Stable across the thread's turns on purpose: both providers fix a session's MCP
+   * configuration when the harness child is created, so a later turn naming a different
+   * url is refused by the adapter as a mismatch rather than run against the wrong tools.
+   */
+  readonly boardServer?: SeatBoardMcpServer;
+}
+
+/** One named MCP server on a turn: where it is, and which variable holds its credential. */
+export interface SeatBoardMcpServer {
+  readonly name: string;
+  readonly url: string;
+  /**
+   * The environment variable the harness child reads the credential OUT OF. The value
+   * never travels here: the command is written to the sidecar's event store and Claude's
+   * SDK puts its whole MCP option on the child's argument list.
+   */
+  readonly bearerTokenEnvVar: string;
 }
 
 /** What the seat leg needs from a settled T3 turn. */
@@ -58,6 +80,10 @@ export interface T3SeatClient {
       readonly threadId: string;
       readonly text: string;
       readonly outputSchema?: unknown;
+      /** By name; each names the environment variable holding its credential, never the credential. */
+      readonly mcpServers?: Readonly<
+        Record<string, { readonly url: string; readonly bearerTokenEnvVar?: string }>
+      >;
     },
     options?: { readonly signal?: AbortSignal },
   ) => Promise<T3TurnStart>;
@@ -357,6 +383,18 @@ export function createT3SeatTurn(
             // Once per turn, as the turn's structured-output contract, shaped for the
             // provider that will validate it. Never in the text.
             outputSchema: outputSchemaFor(provider, options.outputSchema),
+            // The seat's own board address, when its lane has one. The same set on every
+            // turn of the thread: the provider fixed it when the child was created.
+            ...(thread.boardServer === undefined
+              ? {}
+              : {
+                  mcpServers: {
+                    [thread.boardServer.name]: {
+                      url: thread.boardServer.url,
+                      bearerTokenEnvVar: thread.boardServer.bearerTokenEnvVar,
+                    },
+                  },
+                }),
           },
           // The start is bounded like the wait: an abort or a stalled sidecar releases the
           // seat here instead of holding it on an RPC that never answers.

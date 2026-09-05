@@ -4,6 +4,7 @@ import {
   outputSchemaFor,
   parseFinalMessageJson,
   type T3SeatSeam,
+  type T3SeatThread,
   type T3SettledTurn,
 } from "./t3-seat-turn";
 import { createMetricsCollector } from "./turn-metrics";
@@ -24,9 +25,14 @@ const settled = (over: Partial<T3SettledTurn> = {}): T3SettledTurn => ({
   ...over,
 });
 
-function stubs(outcomes: T3SettledTurn[]) {
+function stubs(outcomes: T3SettledTurn[], thread: Partial<T3SeatThread> = {}) {
   const startTurn = vi.fn(
-    async (input: { threadId: string; text: string; outputSchema?: unknown }) => {
+    async (input: {
+      threadId: string;
+      text: string;
+      outputSchema?: unknown;
+      mcpServers?: unknown;
+    }) => {
       void input;
       return START;
     },
@@ -48,7 +54,7 @@ function stubs(outcomes: T3SettledTurn[]) {
     ),
     interruptTurn: vi.fn(async (threadId: string) => void threadId),
   };
-  const threadFor = vi.fn(async () => ({ threadId: "t-design", projectId: "p1" }));
+  const threadFor = vi.fn(async () => ({ threadId: "t-design", projectId: "p1", ...thread }));
   const onThread = vi.fn();
   const seam: T3SeatSeam = { client: async () => client, threadFor, onThread };
   return { seam, client, startTurn, threadFor, onThread };
@@ -440,5 +446,51 @@ describe("createT3SeatTurn — inline context is measured where the prompt is se
     expect(collector.metrics[0]?.inlineContextBytes).toBeGreaterThan(10_000);
     expect(collector.metrics[0]?.usage).toMatchObject({ inputTokens: 4_000 });
     expect(collector.metrics[1]).not.toHaveProperty("inlineContextBytes");
+  });
+});
+
+// ── The seat's board address (`lens-board-tools` 2.6) ────────────────────────
+
+describe("a seat turn carries its own board server, by name and by variable", () => {
+  const boardServer = {
+    name: "rennet_board",
+    url: "http://127.0.0.1:51234/board/QUFBQUFB",
+    bearerTokenEnvVar: "RENNET_BOARD_BEARER",
+  };
+
+  it("names the seat's server on every turn of the thread, identically", async () => {
+    const { seam, startTurn } = stubs([settled({ structuredOutput: {} })], { boardServer });
+    const runTurn = createT3SeatTurn(seam, options);
+    await runTurn("BASE PROMPT", 0);
+    await runTurn("REPAIR POINTERS", 1);
+
+    const sent = startTurn.mock.calls.map((call) => call[0].mcpServers);
+    // Both providers fix the session's MCP configuration when the child is created, so a
+    // repair naming a different set would be refused by the adapter as a mismatch.
+    expect(sent).toEqual([
+      { rennet_board: { url: boardServer.url, bearerTokenEnvVar: "RENNET_BOARD_BEARER" } },
+      { rennet_board: { url: boardServer.url, bearerTokenEnvVar: "RENNET_BOARD_BEARER" } },
+    ]);
+  });
+
+  it("carries the variable NAME and never a credential", async () => {
+    const { seam, startTurn } = stubs([settled({ structuredOutput: {} })], { boardServer });
+    await createT3SeatTurn(seam, options)("P", 0);
+    // Everything the turn sends, as one string. The bearer's VALUE lives in the sidecar's
+    // environment; what travels here is the name of the variable holding it, because this
+    // command is written to the sidecar's event store and Claude's SDK puts its whole MCP
+    // option on the child's argument list.
+    const sent = JSON.stringify(startTurn.mock.calls[0]?.[0]);
+    expect(sent).toContain("RENNET_BOARD_BEARER");
+    expect(sent).not.toContain('bearerToken"');
+    expect(sent).not.toContain("Bearer ");
+  });
+
+  it("a seat whose lane has no board names no server at all", async () => {
+    const { seam, startTurn } = stubs([settled({ structuredOutput: {} })]);
+    await createT3SeatTurn(seam, options)("P", 0);
+    // Not an empty map: an empty `mcpServers` is a set the session would be opened
+    // against, and a later turn that DID carry the board would then be a mismatch.
+    expect(startTurn.mock.calls[0]?.[0]).not.toHaveProperty("mcpServers");
   });
 });

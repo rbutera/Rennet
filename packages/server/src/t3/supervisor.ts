@@ -33,6 +33,17 @@ export interface T3SidecarSupervisor {
   /** Broker a session for a client: the origin, the WS URL, the bearer, the environment id. */
   readonly session: () => Promise<T3Session>;
   readonly status: () => T3SidecarStatus;
+  /**
+   * The board server's process bearer as it stands in the CURRENT sidecar's environment
+   * (`lens-board-tools` D8), or an empty string before one is running.
+   *
+   * A reader, not a value handed out once: a sidecar respawn within one daemon's life
+   * replaces the environment every harness child inherits, and a board listener holding
+   * the old bearer would refuse every seat of the new sidecar while they ran and billed.
+   * An empty string matches no presented bearer, which is the correct answer when there is
+   * no sidecar for a call to have come from.
+   */
+  readonly boardBearer: () => string;
   /** The daemon's own RPC client over the sidecar socket, connected on first use. */
   readonly client: () => Promise<T3Client>;
   /** The T3 thread bound to (repository root, key), created on first use. */
@@ -235,6 +246,10 @@ export function createT3SidecarSupervisor(
     ensure,
     session,
     status: () => status,
+    // Read off whatever sidecar is running RIGHT NOW. `running` is cleared when the child
+    // exits, so between a crash and the next `ensure()` this is empty and no bearer
+    // matches — which is honest: there is no sidecar for a call to have come from.
+    boardBearer: () => running?.boardBearer ?? "",
     client,
     threadFor,
     forgetSession,

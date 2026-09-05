@@ -123,6 +123,36 @@ export interface BoardWriterOptions {
   readonly typedKinds?: Readonly<Record<BoardTarget, readonly DraftKind[]>>;
 }
 
+/**
+ * One voice writing into a board: who is speaking, and the prefix its minted ids carry.
+ *
+ * Flagged is two seats over ONE board (D9). Two `BoardWriter`s hold two element lists, so
+ * they are two boards however their ids are prefixed; the one board is a single writer
+ * handed a voice per call. {@link BoardWriter.voice} is that handle, and the daemon's
+ * board server gives each of the lane's two addresses one of them.
+ */
+export interface BoardVoice {
+  readonly author: Author;
+  /**
+   * Prefixes the ids THIS voice is handed. Ids cannot collide without it either — the two
+   * voices share one mint counter — but the prefix is what makes an id say, on sight,
+   * which seat was given it.
+   */
+  readonly idPrefix?: string;
+}
+
+/** One voice's handle on a shared board. Every read is of the WHOLE board, not this voice's share. */
+export interface BoardVoiceWriter {
+  /** Apply one tool call as this voice. */
+  readonly call: (name: string, rawInput?: unknown) => BoardToolResult;
+  readonly toolNames: () => readonly string[];
+  readonly board: () => DraftBoard;
+  readonly status: () => BoardWriterState;
+  readonly declaredAbsence: () =>
+    | { readonly reason: LensAbsenceReason; readonly note: string }
+    | undefined;
+}
+
 // ── Host-owned values (on no tool input; the host writes them) ───────────────
 
 /** What the host stamps on each kind, over and above the `author` every kind carries. */
@@ -189,9 +219,26 @@ export class BoardWriter {
     return this.absence;
   }
 
+  /**
+   * This board, written by one named voice (D9). The board is the writer's; the voice
+   * decides what an element's `author` says and what its id is prefixed with. Two voices
+   * on one writer are Flagged's two seats: one element list, two authors, one mint
+   * counter — which is why the ids they are handed cannot collide.
+   */
+  voice(voice: BoardVoice): BoardVoiceWriter {
+    return {
+      call: (name, rawInput) => this.call(name, rawInput, voice),
+      toolNames: () => this.toolNames(),
+      board: () => this.board(),
+      status: () => this.status(),
+      declaredAbsence: () => this.declaredAbsence(),
+    };
+  }
+
   /** Apply one tool call. Never throws on bad input: a refusal is a result. `finish` and
-   * every other argument-free verb take none. */
-  call(name: string, rawInput?: unknown): BoardToolResult {
+   * every other argument-free verb take none. A `voice` overrides the writer's own author
+   * and id prefix for this call, and nothing else. */
+  call(name: string, rawInput?: unknown, voice?: BoardVoice): BoardToolResult {
     const tool = this.tools.get(name);
     if (tool === undefined) {
       return refuse(
@@ -211,7 +258,7 @@ export class BoardWriter {
       case "set_document":
         return this.setDocument(tool, input);
       case "add":
-        return this.add(tool, input);
+        return this.add(tool, input, voice);
       case "update":
         return this.update(tool, input);
       case "remove_element":
@@ -245,7 +292,11 @@ export class BoardWriter {
     return { ok: true, outcome: { kind: "document" } };
   }
 
-  private add(tool: BoardTool, input: Record<string, unknown>): BoardToolResult {
+  private add(
+    tool: BoardTool,
+    input: Record<string, unknown>,
+    voice?: BoardVoice,
+  ): BoardToolResult {
     const kind = tool.kind;
     if (kind === undefined) return refuse(`\`${tool.name}\` authors no element.`);
 
@@ -259,12 +310,12 @@ export class BoardWriter {
     const alignment = this.checkListAlignment(tool, input);
     if (alignment !== undefined) return refuse(alignment);
 
-    const id = this.mintId();
+    const id = this.mintId(voice);
     const element = {
       id,
       kind,
       data: {
-        author: this.options.author,
+        author: voice?.author ?? this.options.author,
         ...(HOST_DEFAULTS[kind] ?? {}),
         ...dataFromInput(tool, input, {}),
       },
@@ -371,9 +422,9 @@ export class BoardWriter {
 
   // ── Refusal machinery ──────────────────────────────────────────────────────
 
-  private mintId(): string {
+  private mintId(voice?: BoardVoice): string {
     this.minted += 1;
-    return `${this.options.idPrefix ?? ""}e${this.minted}`;
+    return `${voice?.idPrefix ?? this.options.idPrefix ?? ""}e${this.minted}`;
   }
 
   private withElements(elements: readonly DraftElement[]): DraftBoard {
