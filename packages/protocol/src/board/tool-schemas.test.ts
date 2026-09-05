@@ -147,7 +147,12 @@ describe("a seat cannot type a count (D10)", () => {
     // a reconstructed tool surface, a raw schema and a one-target meta-key sweep have each
     // already shipped green in it. Deriving the expected total from `buildBoardTools`
     // again would inherit the same emptiness and assert nothing, so these are the measured
-    // figures (2026-09-05): 6 targets, 94 tools, 369 input fields between them. They are
+    // figures (2026-09-05): 6 targets, 95 tools, 370 input fields between them. Two changes
+    // moved the field count in one day, and both are named because the number is otherwise
+    // unreadable: 345 → 346 when `write_board` added one tool and one field on the ONE
+    // target that has it (#869; the four reasoning lenses and the report do not carry the
+    // verb, see `writesWholeBoard`), and 346 → 370 when `scenario_clauses` (#856) added two
+    // flat inputs to `add_prose` and `update_prose` on all six targets. They are
     // deliberately brittle — the tool list is what every seat is sent on every request, so
     // a change to any of these three numbers is a change to that, and the pull request
     // making it says so.
@@ -155,8 +160,8 @@ describe("a seat cannot type a count (D10)", () => {
     // 345 → 369 on 2026-09-05: `scenario_clauses` (#856) flattens to two inputs, and
     // `prose` has an `add` and an `update` on all six targets — 2 × 2 × 6 = 24.
     expect(targetsSwept.size, "targets swept").toBe(6);
-    expect(toolsSwept.size, "tools swept").toBe(94);
-    expect(swept, "target/tool/field triples swept").toHaveLength(369);
+    expect(toolsSwept.size, "tools swept").toBe(95);
+    expect(swept, "target/tool/field triples swept").toHaveLength(370);
   });
 
   it("the section verb carries the authored one-line gist and nothing tallied", () => {

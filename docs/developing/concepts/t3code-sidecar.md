@@ -689,7 +689,36 @@ board-or-absence shape, and 10,874 B for the Flagged Codex seat, whose schema is
 ship them, not rebuilt for the measurement. Across one generation's seven seats — Flagged
 counted twice — that is **65,633 B of tools against 68,604 B of schema, 4.3% less**; Design
 is the one seat that costs more than it saves, at 1.34x, because it authors two typed kinds
-no other lens does.
+no other lens does. `board-tool-surface.measure.test.ts` prints this table on every run and
+asserts the aggregate at parity, so re-run it rather than reading a figure that has moved:
+after #869 it reads 65,081 B against 68,582 B.
+
+**One seat is given a verb the others are not: Noise's `write_board`**, which carries every
+call the seat would otherwise have made, applies them in order through the same tools and
+the same boundary tier, and finishes the board. The payload is one flat `string` scalar, so
+the API never sees the board's tree and #810's class is unconstructible through this door
+rather than merely absent; the host parses it after the call and answers **in-turn**, with
+the same refusals and the same finish pointers, so a rejected board costs a few hundred
+bytes of tool result rather than a whole repair turn. A payload names an element it creates
+with `local_id` and uses that name wherever an id goes.
+
+It is Noise-only because batching pays when the writing is bulk and costs when it is
+thought: the Noise seat groups host-placed members it did not choose (961 calls and 317.8 s
+on the 95-file drive, against 4 and 108.7 s), and the four reasoning lenses were measured
+slightly slower with the verb. The scoping is derived from the host-derived membership table
+(`writesWholeBoard`), and it costs the Noise seat 486 B of tool surface once per session and
+every other seat nothing.
+
+A refused entry does not roll the batch back — one bad entry in a hundred would otherwise
+cost the seat the whole payload again, which is the round-trip cost the verb exists to
+remove. What it does instead is report a **cascade as a cascade**: an entry naming an id an
+earlier refused entry would have created is not applied at all, and its refusal carries the
+position of the entry that actually failed, at any depth. Applying it would send a local name
+to the boundary tier and come back "This board holds no `sec-cap-lbd`" — true, useless, and
+indistinguishable from an invented id, which is how one refused `add_section` became eight
+refusal sentences on the spike's drive. Every list the result renders is bounded, and so is
+every payload-supplied name it quotes back: a tool result is billed like a prompt and gets
+the same byte discipline (#871).
 
 ### The board's element stream
 
@@ -758,7 +787,11 @@ keeps the verb alone (`reading`), which is also what a call still streaming its
 A call onto the seat's own board is read as a RECEIPT rather than as a status, and it is the
 one arm ahead of everything above. `add_step` reads `added step 3`, `cite` reads ``cited
 `src/foo.ts:41-58` ``, `finish` reads `finished the board` or `finish returned 1 pointer`,
-and a refusal reads the sentence the board wrote to be read. Nothing in a board call's input
+`write_board` reads `wrote the board — 615 elements` or `wrote 123, 16 refused`, and a
+refusal reads the sentence the board wrote to be read. `write_board`'s line is read off
+Rennet's own result sentence for exactly the reason `finish`'s is: its input is a whole
+board as JSON, which is the one thing this line must never show (#819). Nothing in a board
+call's input
 reaches the line except the two fields that are addresses rather than payload — a citation's
 path and the element id a revision or a removal names. `packages/server/src/t3/board-receipt.ts`
 owns it, and the tool table it recognises is derived from the same `boardToolsByName` the

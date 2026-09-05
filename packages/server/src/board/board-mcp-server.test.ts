@@ -244,8 +244,9 @@ describe("a seat's MCP client discovers and calls the board tools (2.5)", () => 
     // A count, so a loop that silently stopped iterating cannot pass as a clean sweep.
     // 94, not 96: the Noise seat lost two verbs when its membership became the host's
     // derivation (D16) — no verb creates a member, and none settles the absence the host
-    // decides from an empty complement.
-    expect(seen).toBe(94);
+    // decides from an empty complement. 95, not 94, because the same derivation is what
+    // gives the Noise seat `write_board` and no other seat it (#869).
+    expect(seen).toBe(95);
   });
 
   it("a Sequence seat is served no settle_absent, because Sequence admits no absence", async () => {
@@ -315,6 +316,148 @@ describe("a seat's MCP client discovers and calls the board tools (2.5)", () => 
     });
     expect(response.status).toBe(405);
     await response.text();
+  });
+});
+
+// ── #869 The whole-board verb, over the wire, on the lane it was measured for ──
+
+/**
+ * `write_board` end to end — `tools/list` serves it, `tools/call` applies it, the board
+ * settles, and the seat reads a receipt.
+ *
+ * This block exists because of a failure mode this change has produced four times: code
+ * shipped ticked with nothing invoking it. `board-writer.test.ts` proves the writer applies
+ * a payload; it calls the writer directly, so it would stay green with the tool absent from
+ * every served catalog and no route reaching it. Everything here goes over HTTP to a
+ * listener bound on loopback, so the seat's own path is what is exercised.
+ *
+ * And it is the NOISE lane, because that is the only lane the verb is on (#869 landed it
+ * where the spike measured it paying: 961 calls → 4, 317.8 s → 108.7 s). The Sequence case
+ * below is the other half of that claim, asked the same way — over the wire, of the served
+ * catalog, not of a local rebuild.
+ */
+describe("a Noise seat writes its whole board in one call (#869)", () => {
+  /** A Noise lane with the members the host derives, exactly as the pipeline places them. */
+  const noiseLane = async (server: BoardMcpServer) => {
+    const lane = server.openLane({ generationId: "gen-869", target: "noise", lint: lint() });
+    const members = lane.writer().placeMembers("noise_verdict", [
+      { path: "src/util.ts", side: "head", start: 1, end: 3 },
+      { path: "src/auth.ts", side: "head", start: 10, end: 14 },
+    ]);
+    const url = addressOf(
+      lane.address({ seat: "noise", author: { kind: "lens-agent", id: "lens:noise" } }),
+    ).url;
+    await handshake(url);
+    return { lane, url, members };
+  };
+
+  const boardJson = (calls: readonly Record<string, unknown>[]) => JSON.stringify({ calls });
+
+  it("tools/list serves write_board to Noise and to no other lens", async () => {
+    const server = await serverWith();
+    const { url } = await noiseLane(server);
+    const listed = await rpc(url, { jsonrpc: "2.0", id: 2, method: "tools/list" });
+    const names = (result(listed).tools as { name: string }[]).map((tool) => tool.name);
+    expect(names).toContain("write_board");
+    expect(names).toContain("update_noise_verdict");
+
+    // The four reasoning lenses compose rather than bulk-write, and were measured slightly
+    // SLOWER with this verb, so they do not pay its tool surface once per session.
+    for (const target of ["design", "sequence", "decisions", "flagged"] as const) {
+      const lane = server.openLane({ generationId: "gen-869-b", target, lint: lint() });
+      const other = addressOf(
+        lane.address({ seat: target, author: { kind: "lens-agent", id: `lens:${target}` } }),
+      ).url;
+      await handshake(other);
+      const theirs = await rpc(other, { jsonrpc: "2.0", id: 2, method: "tools/list" });
+      expect(
+        (result(theirs).tools as { name: string }[]).map((tool) => tool.name),
+        target,
+      ).not.toContain("write_board");
+    }
+  });
+
+  it("one tools/call writes the whole board, settles it, and answers with a receipt", async () => {
+    const server = await serverWith();
+    const { lane, url, members } = await noiseLane(server);
+    const before = lane.seatCalls("noise") ?? 0;
+    const called = await rpc(url, {
+      jsonrpc: "2.0",
+      id: 3,
+      method: "tools/call",
+      params: {
+        name: "write_board",
+        arguments: {
+          board_json: boardJson([
+            {
+              tool: "set_document",
+              title: "What no other lane cited",
+              intro_markdown: "The remainder is formatter churn over two files.",
+            },
+            { tool: "add_section", local_id: "g1", title: "Formatter-Only Churn" },
+            {
+              tool: "add_prose",
+              parent_id: "g1",
+              markdown: "Reflowed when the import block above them moved.",
+            },
+            ...members.map((id) => ({
+              tool: "update_noise_verdict",
+              element_id: id,
+              parent_id: "g1",
+              reason: "Reflowed by the formatter when the import block above it moved.",
+            })),
+          ]),
+        },
+      },
+    });
+    expect(isError(called)).toBe(false);
+    expect(textOf(called)).toBe("wrote 5 — board settled");
+    expect(lane.writer().status()).toBe("settled");
+    // The board the address names really holds it: a group with its reason and both
+    // members under it, in the order the payload listed them. Order and not membership —
+    // a set of `toContain` checks is satisfied by a batch that applied the entries in the
+    // wrong order, and applied-in-order is the property `local_id` resolution rests on.
+    const prose = lane.board().elements.find((element) => element.kind === "prose");
+    const group = lane.board().elements.find((element) => element.kind === "section");
+    expect((group?.data as { children?: string[] })?.children).toEqual([prose?.id, ...members]);
+    // And it cost the seat ONE round trip, which is the entire point (#869). Written as a
+    // difference across the call so it is the seat's own count and not the fixture's.
+    expect((lane.seatCalls("noise") ?? 0) - before).toBe(1);
+  });
+
+  it("reports a cascade as a cascade, naming the one entry that actually failed", async () => {
+    // The defect the spike found: one refused `add_section` came back as EIGHT refusal
+    // sentences, seven of them "This board holds no `sec-cap-lbd`" from the entries hanging
+    // under it. Asserted over the wire on the string the seat actually reads.
+    const server = await serverWith();
+    const { lane, url } = await noiseLane(server);
+    const called = await rpc(url, {
+      jsonrpc: "2.0",
+      id: 4,
+      method: "tools/call",
+      params: {
+        name: "write_board",
+        arguments: {
+          board_json: boardJson([
+            { tool: "add_section", local_id: "g1" },
+            { tool: "add_prose", parent_id: "g1", markdown: "one" },
+            { tool: "add_prose", parent_id: "g1", markdown: "two" },
+            { tool: "add_section", title: "Lockfile Regeneration" },
+          ]),
+        },
+      },
+    });
+    const text = textOf(called);
+    expect(text).toContain("wrote 1, refused 1");
+    expect(text).toContain("calls[0] add_section:");
+    expect(text).toContain("2 further entries hang under those and were not applied");
+    expect(text).toContain("calls[1], calls[2]");
+    // The sentence that must NOT be here: the seat is told one thing went wrong, once.
+    expect(text).not.toContain("This board holds no");
+    // Position, not membership: the cascade line comes after the refusal it explains.
+    expect(text.indexOf("calls[0] add_section:")).toBeLessThan(text.indexOf("2 further entries"));
+    // A cascade is not a rollback — the independent entry is on the board.
+    expect(lane.board().elements.some((el) => el.kind === "section")).toBe(true);
   });
 });
 

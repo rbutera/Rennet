@@ -70,22 +70,35 @@ const retiredSchema = (row: SeatRow): unknown => outputSchemaFor(row.provider, b
 
 /**
  * The declared bounds (token discipline: "every dynamic interpolation declares a byte
- * bound at its call site"). Re-measured 2026-09-05 with both operands as-sent: the worst
+ * bound at its call site"). RE-MEASURED 2026-09-05 with both operands as-sent, after #869
+ * gave the Noise seat `write_board` and #856 gave `prose` its scenario clauses: the worst
  * seat is Design at 1.36x the schema it replaces, and a generation's seven seats together
- * are 0.98x (68,417 B of tools against 70,057 B of schema) — the tool surface is still
+ * are 0.984x (68,903 B of tools against 70,057 B of schema) — the tool surface is still
  * SMALLER in aggregate than the output schema it replaces.
  *
- * That moved from 0.94x (64,785 B / 68,582 B) when `scenario_clauses` was declared on
- * `prose` (#856). BOTH operands grew, which is the thing to notice: the field flattens to
- * two tool inputs on `add_prose` and `update_prose` for all six targets (+3,632 B of
- * tools), and it is a field of the board schema, so the output schema the tools replaced
- * grew with it (+1,475 B). The margin is thinner than it was — 0.02 rather than 0.06 —
- * and the next field on a universal kind is the one that will have to argue for itself.
+ * Two moves, one day apart, both worth telling apart:
+ *
+ * - #869 moved the Noise seat 7,693 → 8,179 B and no other seat at all, so the generation
+ *   moved 64,595 → 65,081, +486 B once per session.
+ * - #856 declared `scenario_clauses` on `prose`, which is a UNIVERSAL kind, so it lands on
+ *   `add_prose` and `update_prose` for all six targets: +546 B on EVERY seat, 65,081 →
+ *   68,903, +3,822 per generation. And because it is a field of the board schema, the
+ *   output schema this is measured against grew too — 68,582 → 70,057, +1,475. Both
+ *   operands moving is why the ratio only went 0.949 → 0.984, and the margin on the
+ *   generation bound is now 0.02 rather than 0.05.
+ *
+ * (The figure this note carried before #869, 64,785, had drifted: it was measured before
+ * #864/#868 changed the Noise verb set. Re-run the test — it prints the table — rather than
+ * copying a number forward, which is this file's whole point. That is not a hypothetical:
+ * the first draft of the #856 measurement subtracted from the drifted 64,785 and reported
+ * a +3,632 delta that was 190 B per seat wrong.)
  *
  * The generation bound is therefore set at parity, which makes it a claim rather than
  * slack: a change that takes a generation's seats past what they replace has grown what
  * every seat sends on every request, and the PR that makes it has to say so. That is why
- * this is a test and not a script somebody once ran.
+ * this is a test and not a script somebody once ran. It is also why #869 is Noise-only:
+ * the spike that measured the verb put it on all seven and reached 67,997 B, 0.99x, with
+ * its first draft over the ceiling at 69,222 B.
  */
 const PER_SEAT_CEILING = 1.4;
 const GENERATION_CEILING = 1.0;
@@ -120,6 +133,28 @@ describe("the tool surface a seat receives, beside the output schema it replaces
       surface / schemas,
       `a generation's seven seats carry ${surface} B of tools against ${schemas} B of output schema`,
     ).toBeLessThan(GENERATION_CEILING);
+  });
+
+  it("prices `write_board` where it is served, and it is served to one seat (#869)", () => {
+    // The PR's cost sentence, made executable. It is taken from `servedToolCatalog` — what
+    // `tools/list` actually answers with — and not from a local rebuild of the tool set:
+    // the recurring defect of this change is an assertion pointed at a copy of the thing,
+    // and this file's own header names three times it happened.
+    const priced = SEATS.map((row) => {
+      const served = servedToolCatalog(row.target);
+      const without = served.filter((tool) => tool.name !== "write_board");
+      return { seat: row.seat, cost: bytes(served) - bytes(without) };
+    });
+    const carrying = priced.filter((row) => row.cost > 0);
+    console.info(
+      `write_board is served to ${carrying.map((row) => row.seat).join(", ") || "no seat"} at ${carrying[0]?.cost ?? 0} B`,
+    );
+    // ONE seat. The other six do not pay for a verb the spike measured them slower with.
+    expect(carrying.map((row) => row.seat)).toEqual(["noise"]);
+    // And what that one seat pays, once per session — the whole of #869's session cost.
+    // 486 and not 485: the verb's own JSON is 485 B and the catalog's separator is the
+    // other byte, which is what the seat is actually sent.
+    expect(carrying[0]?.cost).toBe(486);
   });
 
   it("measures the schema the seat leg SENDS, not the one the pipeline holds", () => {

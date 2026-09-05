@@ -87,6 +87,19 @@ const MAX_BODY_BYTES = 1_000_000;
 /** How many `finish` pointers one tool result carries before it says how many more there are. */
 const POINTER_SAMPLE = 20;
 
+/**
+ * How many CASCADED positions a `write_board` result names before it says how many more.
+ *
+ * A tool result is billed like a prompt and gets the same byte discipline (#871, where a
+ * boundary refusal enumerated 1,252 element ids into one). A batch can be 615 entries, so
+ * every list this result renders is bounded: the root refusals at {@link POINTER_SAMPLE},
+ * the positions that hung under them here, and each individual sentence by the board
+ * writer's own caps. Positions are cheap — `calls[123], ` is about eleven bytes — so this
+ * is larger than the pointer sample, and the whole arm is still bounded above by roughly
+ * `POINTER_SAMPLE` refusal sentences plus half a kilobyte of positions.
+ */
+const CASCADE_SAMPLE = 40;
+
 /** What a turn names so its harness child can reach one seat's board. */
 export interface SeatBoardServer {
   readonly name: string;
@@ -227,7 +240,56 @@ export function describeOutcome(outcome: BoardToolOutcome): string {
         ...(more > 0 ? [`… and ${more} more`] : []),
       ].join("\n");
     }
+    case "wrote":
+      return describeWrote(outcome);
   }
+}
+
+/**
+ * The whole-board write's answer, held to the same rule as every other result here: it
+ * says only what the seat cannot work out for itself. A clean settle is four words; the
+ * expensive shapes — a refused entry, an unsettled board — are the ones that spend bytes,
+ * and they spend them naming exactly what to redo.
+ *
+ * **A cascade is reported as a cascade.** Entries that were not applied because an earlier
+ * entry they hang under was refused are separated from the entries that actually failed,
+ * and named only by position. Listing them as ordinary refusals is what the spike's drive
+ * did, and it turned one refused `add_section` into eight sentences a seat had to
+ * correlate for itself — while spending the bytes of eight sentences to say one thing.
+ */
+function describeWrote(outcome: BoardToolOutcome & { kind: "wrote" }): string {
+  if (outcome.refusals.length > 0) {
+    const roots = outcome.refusals.filter((one) => one.causedBy === undefined);
+    const cascaded = outcome.refusals.filter((one) => one.causedBy !== undefined);
+    const shown = roots
+      .slice(0, POINTER_SAMPLE)
+      .map((one) => `calls[${one.index}] ${one.tool}: ${one.refusal}`);
+    const more = roots.length - shown.length;
+    const positions = cascaded.slice(0, CASCADE_SAMPLE).map((one) => `calls[${one.index}]`);
+    const morePositions = cascaded.length - positions.length;
+    return [
+      `wrote ${outcome.accepted}, refused ${roots.length} — the rest are on the board; redo these:`,
+      ...shown,
+      ...(more > 0 ? [`… and ${more} more`] : []),
+      ...(cascaded.length === 0
+        ? []
+        : [
+            `${cascaded.length} further ${cascaded.length === 1 ? "entry hangs" : "entries hang"} under those and ${cascaded.length === 1 ? "was" : "were"} not applied: ${positions.join(", ")}${morePositions > 0 ? `, and ${morePositions} more` : ""}. Redo them once the entries above are fixed.`,
+          ]),
+      "Then call finish.",
+    ].join("\n");
+  }
+  if (outcome.settled) return `wrote ${outcome.accepted} — board settled`;
+  const pointers = outcome.pointers ?? [];
+  const shown = pointers
+    .slice(0, POINTER_SAMPLE)
+    .map((pointer) => `${pointer.elementRef} (${pointer.ruleId}): ${pointer.message}`);
+  const more = pointers.length - shown.length;
+  return [
+    `wrote ${outcome.accepted}, not settled — ${pointers.length} to fix, then call finish again:`,
+    ...shown,
+    ...(more > 0 ? [`… and ${more} more`] : []),
+  ].join("\n");
 }
 
 interface JsonRpcRequest {

@@ -118,6 +118,23 @@ and calls board regeneration through this runtime.
    admits no absence, and neither does Noise, because the host settles a Noise lane's
    absence from the derivation before any seat runs.
 
+   **The Noise seat also has `write_board`, which writes its whole board in one call**, and
+   it is the only seat that does. The payload is a JSON string carrying a list of that
+   board's own verbs with their own inputs — no second authoring format — applied in order
+   through the same boundary tier, then finished. A payload names an element it creates with
+   `local_id` and uses that name wherever an id goes; the host resolves it to the id it
+   minted. The answer is per entry: it names any entry it would not take by position, keeps
+   everything else on the board, and reports separately the entries that hung under a
+   refused one and were therefore not applied. `finish` runs only when every entry landed.
+
+   Why one seat and not five: batching pays when the writing is bulk and costs when it is
+   thought. The Noise seat groups members the host placed and did not choose, and on the
+   95-file drive that was 961 one-at-a-time calls and 317.8 s — a third of the generation's
+   wall clock — against 4 calls and 108.7 s with the verb. The four reasoning lenses compose
+   their boards while they write them, and the same measurement had them slightly slower
+   with it, so they do not carry its 486 B of tool surface. The scoping is derived from the
+   host-derived membership table rather than listed again (`writesWholeBoard`).
+
    Each drafting instruction requires a document envelope with an authored title, a short
    Markdown introduction, and a measure. The target owns the final measure: Design is
    `structured`; Sequence, Decisions, Flagged, and Noise are `reading`. The host constructs
@@ -130,7 +147,12 @@ and calls board regeneration through this runtime.
 
    An OpenSpec branch's Design board takes a **deterministic fast path** and settles with
    no model turn at all: the assembler transforms the change's own artifacts into the
-   board. A change it cannot settle falls back to the seat, which renders the same change.
+   board. Every string it writes is the change's own text shipped verbatim or a fixed
+   label, so it lints in the **transcribed register** described under *Validate* below.
+   A change it cannot settle falls back to the seat, which renders the same change — and
+   the daemon log carries a `[seat]` line naming the rule that refused it, so a Design
+   seat the host could have avoided is visible as it runs rather than inferred afterwards
+   from a round's wall clock.
 
    A verified report arrives before any lens turn starts and
    opens that boundary, after which all five lens lanes run
@@ -178,6 +200,23 @@ and calls board regeneration through this runtime.
    an element ref, one sentence each — that the seat fixes with further calls before
    calling `finish` again. Neither costs anything: **a refusal and a `finish` verdict are
    both results inside a live turn.**
+
+   The tiers split the rules by *when* a rule can be decided. A third question is *who
+   wrote the text*, and it is orthogonal to both. A seat's board is **authored** — a model
+   chose every sentence, so every rule has a writer to address. The Design assembler's
+   board is **transcribed**: the host is quoting the project's own artifacts, and a rule
+   that tells a writer to choose different words has no subject. So the transcribed
+   register drops exactly the voice rules — `process-vocabulary`, `no-dialogue`,
+   `no-remainder-narration` — and runs every other rule of both tiers unchanged. A
+   transcription is still refused for a citation a reader cannot resolve, for code carried
+   as bytes instead of a `code_ref`, and for anything `finish` finds over the whole board.
+
+   The distinction is load-bearing rather than tidy. `process-vocabulary` exists to stop a
+   model writing about the review machinery instead of the change under review; run over a
+   quoted spec it refuses the author's own words for describing the author's own system,
+   which happens by construction in any repository whose specs discuss their own pipeline.
+   Each such refusal threw away a board the host already had and bought a model seat to
+   render the same quoted text.
 
    An attempt is spent by exactly one event: **a turn that ENDS with the board neither
    finished nor declared absent** — the context ran out, the harness died, the seat
