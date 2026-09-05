@@ -211,6 +211,7 @@ import {
 } from "@rennet/protocol";
 import { createBenchmarkRecording } from "./benchmark-store";
 import {
+  BOARD_MCP_SERVER_NAME,
   type BoardMcpServer,
   generationBoards,
   startBoardMcpServer,
@@ -1334,6 +1335,13 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   );
   const watcher = new RepoWatcher();
 
+  /**
+   * The board listener once it has actually bound, for the health report to read
+   * synchronously. `boardMcpServer` below is the promise; this is its resolution, and it
+   * stays `undefined` for a daemon that never opens a lane.
+   */
+  let liveBoardMcpServer: BoardMcpServer | undefined;
+
   // The owned T3 Code sidecar (t3code-sidecar-chat): composed here, started on the first
   // `chat.t3Session`, adopted from a previous daemon when it still answers, stopped with the
   // daemon. Its provider binaries are the SAME absolute paths Rennet's discovery resolved,
@@ -1342,6 +1350,18 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     dataDir,
     env,
     bundlePath: options.t3BundlePath,
+    // The disclosure clause of `t3code-sidecar` (`lens-board-tools` 3.1): a tool server the
+    // daemon SUPPLIES to a thread is named in the health report as local, so a reader can
+    // tell a loopback tool call from egress. Read live and only once a lane is actually
+    // open — group 2 left this unmet on purpose, because a status field claiming a running
+    // loopback server while none ran would be a lie in the UI.
+    localToolServers: () => {
+      const server = liveBoardMcpServer;
+      const lanes = server?.openLaneCount() ?? 0;
+      return server === undefined || lanes === 0
+        ? []
+        : [{ name: BOARD_MCP_SERVER_NAME, origin: server.origin, openLanes: lanes }];
+    },
     // The sidecar runs on the host, so this is the host's own discovery (the same probe
     // `harness.detect` discloses), not a review's locus-threaded harness.
     resolveBinaries: async () => {
@@ -1384,10 +1404,18 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     boardMcpServer ??= startBoardMcpServer({
       bearer: () => t3Sidecar.boardBearer(),
       stateDir,
-    }).catch((error: unknown) => {
-      boardMcpServer = null;
-      throw error;
-    });
+    })
+      .then((server) => {
+        // The RESOLVED server, so the health report can read its origin and its open-lane
+        // count synchronously. A report cannot await a promise, and a report that awaited
+        // one would start the listener merely by asking about it.
+        liveBoardMcpServer = server;
+        return server;
+      })
+      .catch((error: unknown) => {
+        boardMcpServer = null;
+        throw error;
+      });
     return boardMcpServer;
   };
 

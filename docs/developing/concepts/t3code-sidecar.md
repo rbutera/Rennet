@@ -76,6 +76,19 @@ except the harness's own provider traffic and any MCP servers the user configure
 Rennet's own board server is reached over loopback and is not egress; it is described
 under [The board server](#the-board-server) below.
 
+**The health report says so, and only once it is true.** `daemon.status` carries the
+sidecar's state, its telemetry setting, and — once a board lane is actually open —
+`localToolServers`: the daemon's own tool servers, each with its loopback origin and how
+many boards it is serving. A reader can therefore tell a loopback tool call from egress
+without inferring it. The field is absent rather than empty when nothing is serving, and
+that is deliberate: a status field naming a running loopback server while none runs is a
+lie in the UI, which is why the clause was left unmet until lanes were opened eagerly.
+What makes the count move is one hand-over — the round runtime passes the generation's
+`boards` to the drafting pipeline, which opens all five lens lanes before it dispatches a
+lens seat. Without it the pipeline's lane-opening loop is unreachable, every board is
+minted only when a seat first writes to it, and this field can never report anything.
+This is disclosure, not a consent step: no dialog is shown.
+
 One variable is also SET on that environment: `RENNET_BOARD_BEARER`, the daemon-minted
 credential for that board server. It is set rather than inherited — a value the parent
 shell happened to carry under that name is dropped like a `T3CODE_*` key — and it is the

@@ -46,33 +46,28 @@ Generated stamps such as `.openspec.yaml` are not specification documents.
 ## When there is no specification
 
 Repositories without a spec workflow are ordinary. If you have looked and this
-branch has none, return exactly:
+branch has none, call `settle_absent` and say in its note where you looked.
 
-```json
-{ "absence": "no-spec" }
-```
-
-Return that instead of a board — not an empty board, not a placeholder, and not
-the nearest document you could find. An unfinished search is not an absence:
+Call it instead of writing a board — not an empty board, not a placeholder, and
+not the nearest document you could find. An unfinished search is not an absence:
 read the commit messages and the pull request body before you conclude there is
 nothing. Sparseness is not absence either; a thin ADR that describes this change
 is still the Design document.
 
 ## Document opening
 
-Always author `document`:
+Open the board with `set_document`:
 
-- Set `document.title` to the specification's exact change or feature name.
-- Set `document.introMarkdown` to one short paragraph distilling why the
-  specification says the change exists. Do not infer a rationale it does not
-  state.
-- Set `document.measure` to `structured`.
-- Set `document.sources` to every file you rendered, with its exact
-  repo-relative path and a useful label, exactly once and in reading order.
-- Set `document.stats` to the format label plus capability counts, requirement
-  counts, and task progress read from those files. Each stat appears exactly
-  once. A proposal-stage plan with no completed tasks reads `0/N`; never turn an
-  unchecked task list into apparent progress.
+- `title` — the specification's exact change or feature name.
+- `intro_markdown` — one short paragraph distilling why the specification says
+  the change exists. Do not infer a rationale it does not state.
+- `source_paths` — every file you rendered, by its exact repo-relative path,
+  exactly once and in reading order.
+- `stat_labels` and `stat_values` — the format label plus capability counts,
+  requirement counts, and task progress read from those files, one label to one
+  value by position. Each stat appears exactly once. A proposal-stage plan with
+  no completed tasks reads `0/N`; never turn an unchecked task list into apparent
+  progress.
 
 ## Compose the document
 
@@ -201,5 +196,10 @@ Each lens owns a lane, and material in another lane is omitted, not narrated.
 - Put code tokens in prose in backticks.
 - Never name lenses, boards, agents, or review machinery in reader-facing prose.
 - Threads and messages represent real exchanges; never invent one.
-- Return only a draft board using the supplied host schema, or the `no-spec`
-  absence.
+{{write-with-tools}}
+
+`add_requirement` and `add_decision` are this lens's own verbs: a shall-statement
+with the source it came from, and a decision the specification states. Source
+refs travel as their own fields on those calls. `settle_absent` is the other
+ending — call it when you have looked and this branch has no specification, and
+say in one note where you looked.

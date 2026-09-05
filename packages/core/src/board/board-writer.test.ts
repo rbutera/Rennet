@@ -602,12 +602,15 @@ describe("finish is the whole-board verdict and returns pointers only", () => {
   });
 
   it("settle_absent declares the lens's own absence and takes only a note", () => {
-    const w = writer("noise");
-    const outcome = ok(w.call("settle_absent", { note: "Every hunk carries meaning." })).outcome;
+    // Decisions, not Noise: `no-noise` became the HOST's settlement at D16e — it knows
+    // the derived membership is empty before the seat's first turn — so the Noise seat
+    // has no settle-absent verb to make this call with.
+    const w = writer("decisions");
+    const outcome = ok(w.call("settle_absent", { note: "Nothing was decided here." })).outcome;
     expect(outcome).toEqual({
       kind: "absent",
-      reason: "no-noise",
-      note: "Every hunk carries meaning.",
+      reason: "no-decisions",
+      note: "Nothing was decided here.",
     });
     expect(w.status()).toBe("absent");
   });
@@ -739,12 +742,12 @@ describe("status stops claiming a settlement the board has moved past", () => {
   });
 
   it("a call after settle_absent reopens it too, and drops the declared absence", () => {
-    const w = writer("noise");
-    ok(w.call("settle_absent", { note: "Every hunk carries meaning." }));
+    const w = writer("decisions");
+    ok(w.call("settle_absent", { note: "Nothing was decided here." }));
     expect(w.status()).toBe("absent");
-    expect(w.declaredAbsence()?.reason).toBe("no-noise");
+    expect(w.declaredAbsence()?.reason).toBe("no-decisions");
 
-    ok(w.call("add_prose", { markdown: "On reflection, the lockfile churn is skip-safe." }));
+    ok(w.call("add_prose", { markdown: "On reflection, the retry cap was a call." }));
     expect(w.status()).toBe("drafting");
     // The absence described a board with nothing on it; it does not survive an element.
     expect(w.declaredAbsence()).toBeUndefined();
@@ -890,5 +893,336 @@ describe("the document is the seat's prose and the host's measure", () => {
       // `resolveBoardDocument` owns this, and `measure` is on no tool input.
       measure: "structured",
     });
+  });
+});
+
+/**
+ * D16 — the Noise board's members are the host's derivation, so the seat is handed them.
+ *
+ * Every claim here is proven by ATTEMPTING the thing through the surface: the tool a seat
+ * would use to add a member does not exist and the call is refused by name, and a removal
+ * is refused with its reason — never asserted about a board the test built by hand.
+ */
+describe("a host-derived board's members belong to the host (D16)", () => {
+  const noiseWriter = () => writer("noise");
+
+  it("places one citation and one member per uncited region, stamped with the constants", () => {
+    const w = noiseWriter();
+    const placed = w.placeMembers("noise_verdict", [
+      { path: "src/util.ts", side: "head", start: 1, end: 3 },
+    ]);
+    const [memberId] = placed;
+    if (memberId === undefined) throw new Error("the host placed no member");
+
+    const citationId = w.board().elements.find((el) => el.kind === "code_ref")?.id;
+    if (citationId === undefined) throw new Error("the host placed no citation");
+
+    expect(heldElement(w, memberId).kind).toBe("noise_verdict");
+    const member = dataOf<Record<string, unknown>>(w, memberId);
+    // Both host-stamped constants (D16f), and both absent from every tool input.
+    expect(member.verdict).toBe("noise");
+    expect(member.judge).toBe("deterministic");
+    // The member points at the citation the host placed beside it.
+    expect(member.hunk).toBe(citationId);
+    expect(dataOf<Record<string, unknown>>(w, citationId).path).toBe("src/util.ts");
+    expect(w.hostPlacedIds()).toEqual([citationId, memberId]);
+  });
+
+  it("there is no verb that creates a member, so a seat cannot add one", () => {
+    const w = noiseWriter();
+    expect(w.toolNames()).not.toContain("add_noise_verdict");
+    // Attempted, not asserted about: this is the call a seat would actually make.
+    expect(
+      refusalOf(w.call("add_noise_verdict", { hunk_ref_id: "e1", reason: "lockfile" })),
+    ).toContain("There is no `add_noise_verdict` on this board");
+  });
+
+  it("remove_element refuses a host-placed member and still removes the seat's own section", () => {
+    const w = noiseWriter();
+    const [member] = w.placeMembers("noise_verdict", [
+      { path: "src/util.ts", side: "head", start: 1, end: 3 },
+    ]);
+    if (member === undefined) throw new Error("the host placed no member");
+
+    const refusal = refusalOf(w.call("remove_element", { element_id: member }));
+    expect(refusal).toContain(member);
+    expect(refusal).toContain("no other board cited");
+    expect(w.board().elements.some((el) => el.id === member)).toBe(true);
+
+    // The seat's OWN elements still go: the refusal is about derived membership, not
+    // about removal.
+    const group = idOf(w.call("add_section", { title: "Lockfile Regeneration" }));
+    ok(w.call("remove_element", { element_id: group }));
+    expect(w.board().elements.some((el) => el.id === group)).toBe(false);
+  });
+
+  it("removing a group the members hang under is refused too, not just the member itself", () => {
+    // The sideways door: `remove_element` takes the whole subtree, so removing the group
+    // would take its members off the board without the call ever naming one.
+    const w = noiseWriter();
+    const [member] = w.placeMembers("noise_verdict", [
+      { path: "src/util.ts", side: "head", start: 1, end: 3 },
+    ]);
+    if (member === undefined) throw new Error("the host placed no member");
+    const group = idOf(w.call("add_section", { title: "Lockfile Regeneration" }));
+    ok(w.call("update_noise_verdict", { element_id: member, parent_id: group }));
+
+    expect(refusalOf(w.call("remove_element", { element_id: group }))).toContain(member);
+    expect(w.board().elements.some((el) => el.id === member)).toBe(true);
+  });
+
+  it("update_noise_verdict is how the seat groups a member and says why", () => {
+    const w = noiseWriter();
+    const [member] = w.placeMembers("noise_verdict", [
+      { path: "src/util.ts", side: "head", start: 1, end: 3 },
+    ]);
+    if (member === undefined) throw new Error("the host placed no member");
+    const group = idOf(w.call("add_section", { title: "Formatter-Only Churn" }));
+
+    ok(
+      w.call("update_noise_verdict", {
+        element_id: member,
+        parent_id: group,
+        reason: "Reflowed by the formatter when the import block above it moved.",
+      }),
+    );
+    expect(dataOf<{ children: string[] }>(w, group).children).toContain(member);
+    const updated = dataOf<Record<string, unknown>>(w, member);
+    expect(updated.reason).toContain("formatter");
+    // The constants survive the update; there is no field on the input to change them.
+    expect(updated.verdict).toBe("noise");
+    expect(updated.judge).toBe("deterministic");
+  });
+
+  it("finish points at an ungrouped member and at a group with no reason", () => {
+    const w = noiseWriter();
+    const placed = w.placeMembers("noise_verdict", [
+      { path: "src/util.ts", side: "head", start: 1, end: 3 },
+      { path: "src/auth.ts", side: "head", start: 10, end: 14 },
+    ]);
+    const [first, second] = placed;
+    if (first === undefined || second === undefined) throw new Error("two members expected");
+
+    const group = idOf(w.call("add_section", { title: "Formatter-Only Churn" }));
+    ok(w.call("update_noise_verdict", { element_id: first, parent_id: group }));
+
+    // One grouped without a reason, one not grouped at all — both come back as pointers.
+    const verdict = pointersOf(w.call("finish"));
+    expect(verdict.map((p) => p.ruleId)).toContain("derived-member-grouped");
+    expect(verdict.map((p) => p.ruleId)).toContain("derived-group-reasoned");
+    expect(verdict.some((p) => p.elementRef.includes(second))).toBe(true);
+
+    // The seat answers both in the same turn, and the next finish settles.
+    ok(w.call("update_noise_verdict", { element_id: second, parent_id: group }));
+    ok(
+      w.call("add_prose", {
+        parent_id: group,
+        markdown: "Reflowed by the formatter when the import block above them moved.",
+      }),
+    );
+    expect(ok(w.call("finish")).outcome.kind).toBe("settled");
+    expect(w.status()).toBe("settled");
+  });
+
+  it("regrouping a member MOVES it, so it can never be in two groups at once", () => {
+    // The "exactly one group" half of the rule is therefore unconstructible through the
+    // surface, and it is the zero-group arm the rule actually fires on. Named here rather
+    // than left implied: the two-group message exists and no seat can reach it.
+    const w = noiseWriter();
+    const [member] = w.placeMembers("noise_verdict", [
+      { path: "src/util.ts", side: "head", start: 1, end: 3 },
+    ]);
+    if (member === undefined) throw new Error("the host placed no member");
+    const first = idOf(w.call("add_section", { title: "Formatter-Only Churn" }));
+    const second = idOf(w.call("add_section", { title: "Lockfile Regeneration" }));
+    ok(w.call("update_noise_verdict", { element_id: member, parent_id: first }));
+    ok(w.call("update_noise_verdict", { element_id: member, parent_id: second }));
+
+    expect(dataOf<{ children: string[] }>(w, first).children).not.toContain(member);
+    expect(dataOf<{ children: string[] }>(w, second).children).toEqual([member]);
+    // …and the same parent twice does not count it twice either.
+    ok(w.call("update_noise_verdict", { element_id: member, parent_id: second }));
+    expect(dataOf<{ children: string[] }>(w, second).children).toEqual([member]);
+  });
+
+  it("a group that does not exist is refused, so a member is never parked on nothing", () => {
+    const w = noiseWriter();
+    const [member] = w.placeMembers("noise_verdict", [
+      { path: "src/util.ts", side: "head", start: 1, end: 3 },
+    ]);
+    if (member === undefined) throw new Error("the host placed no member");
+    expect(
+      refusalOf(w.call("update_noise_verdict", { element_id: member, parent_id: "nope" })),
+    ).toContain("This board holds no `nope`");
+  });
+});
+
+/** D6 — the last `finish` verdict is the whole content of a repair turn. */
+describe("the writer remembers what finish said", () => {
+  it("nothing before the first finish, the pointers after a failed one, [] after a clean one", () => {
+    const w = writer("sequence");
+    // Never asked is a different fact from settled: a turn that died before calling
+    // `finish` has no verdict to carry, and its repair turn has to say so.
+    expect(w.lastVerdict()).toBeUndefined();
+
+    const span = idOf(
+      w.call("cite", { path: "src/auth.ts", side: "head", start_line: 10, end_line: 14 }),
+    );
+    const orphan = idOf(w.call("add_step", { title: "Read the entry point", span_ref_id: span }));
+    const failed = pointersOf(w.call("finish"));
+    expect(failed.length).toBeGreaterThan(0);
+    expect(w.lastVerdict()).toEqual(failed);
+    expect(failed.some((p) => p.elementRef.includes(orphan))).toBe(true);
+
+    // Answer the pointer in the same turn: give the step a parent it can be reached from.
+    const section = idOf(w.call("add_section", { title: "Reading Order" }));
+    ok(w.call("remove_element", { element_id: orphan }));
+    const span2 = idOf(
+      w.call("cite", { path: "src/auth.ts", side: "head", start_line: 10, end_line: 14 }),
+    );
+    idOf(
+      w.call("add_step", {
+        parent_id: section,
+        title: "Read the entry point",
+        span_ref_id: span2,
+      }),
+    );
+    expect(ok(w.call("finish")).outcome.kind).toBe("settled");
+    expect(w.lastVerdict()).toEqual([]);
+  });
+
+  it("a voice reads the same verdict as the writer, because there is one board", () => {
+    const w = writer("flagged");
+    const voice = w.voice({ author: { kind: "lens-agent", id: "flagged-codex" }, idPrefix: "b" });
+    expect(voice.lastVerdict()).toBeUndefined();
+    voice.call("finish");
+    expect(voice.lastVerdict()).toEqual(w.lastVerdict());
+    expect(voice.lastVerdict()?.length).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * D9 — Flagged is two seats, two voices, ONE board. The lane needs each voice's own
+ * settlement, because one seat finishing is not the lane finishing.
+ */
+describe("two voices on one board keep their own settlements (D9)", () => {
+  const twoVoices = () => {
+    const w = writer("flagged");
+    const claude = w.voice({ author: { kind: "lens-agent", id: "flagged-claude" }, idPrefix: "a" });
+    const codex = w.voice({ author: { kind: "lens-agent", id: "flagged-codex" }, idPrefix: "b" });
+    return { w, claude, codex };
+  };
+
+  /** A finding, cited, under a section — the smallest board `finish` will settle. */
+  const writeFinding = (voice: ReturnType<BoardWriter["voice"]>, concern: string): string => {
+    const section = idOf(voice.call("add_section", { title: "Findings" }));
+    const cite = idOf(
+      voice.call("cite", { path: "src/auth.ts", side: "head", start_line: 10, end_line: 14 }),
+    );
+    return idOf(
+      voice.call("add_finding", {
+        parent_id: section,
+        severity: "high",
+        concern,
+        code_ref_ids: [cite],
+      }),
+    );
+  };
+
+  it("each element carries the voice that wrote it, and the ids cannot collide", () => {
+    const { w, claude, codex } = twoVoices();
+    const a = writeFinding(claude, "The retry cap is unbounded.");
+    const b = writeFinding(codex, "The retry cap is unbounded.");
+
+    expect(a).not.toBe(b);
+    expect(a.startsWith("a")).toBe(true);
+    expect(b.startsWith("b")).toBe(true);
+    // One board, two authors — the stamp is what the reconciliation partitions on.
+    expect(dataOf<{ author: Author }>(w, a).author.id).toBe("flagged-claude");
+    expect(dataOf<{ author: Author }>(w, b).author.id).toBe("flagged-codex");
+    expect(w.board().elements.filter((el) => el.kind === "finding")).toHaveLength(2);
+  });
+
+  it("one voice finishing does not settle the other, and does not settle the lane", () => {
+    const { claude, codex } = twoVoices();
+    writeFinding(claude, "The retry cap is unbounded.");
+    writeFinding(codex, "The retry cap is unbounded.");
+
+    expect(ok(claude.call("finish")).outcome.kind).toBe("settled");
+    expect(claude.voiceStatus()).toBe("settled");
+    // The other voice has said nothing about being finished, and the lane is not settled
+    // until it does. Reading the BOARD's state per seat is what would get this wrong.
+    expect(codex.voiceStatus()).toBe("drafting");
+
+    expect(ok(codex.call("finish")).outcome.kind).toBe("settled");
+    expect(codex.voiceStatus()).toBe("settled");
+    expect(claude.voiceStatus()).toBe("settled");
+  });
+
+  it("one voice writing again does not un-finish the other", () => {
+    const { claude, codex } = twoVoices();
+    writeFinding(claude, "The retry cap is unbounded.");
+    ok(claude.call("finish"));
+    expect(claude.voiceStatus()).toBe("settled");
+
+    writeFinding(codex, "The lockfile was hand-edited.");
+    // The board moved, so the BOARD is drafting again — but Claude's seat said what it
+    // had to say and its lane state must survive its partner's next element.
+    expect(claude.voiceStatus()).toBe("settled");
+    expect(codex.voiceStatus()).toBe("drafting");
+  });
+
+  it("a voice's own next element does un-finish that voice", () => {
+    const { claude } = twoVoices();
+    writeFinding(claude, "The retry cap is unbounded.");
+    ok(claude.call("finish"));
+    ok(claude.call("add_prose", { markdown: "One more thing about the cap." }));
+    expect(claude.voiceStatus()).toBe("drafting");
+  });
+});
+
+/**
+ * D6 — a refusal and a `finish` verdict are answered INSIDE the turn that caused them,
+ * so neither is a settlement and neither is an un-settlement. The lane's attempt
+ * accounting reads `voiceStatus()` once per turn, so what this proves is the fact that
+ * accounting rests on.
+ */
+describe("a refusal costs nothing and a verdict costs nothing (D6)", () => {
+  it("ten refusals and one verdict leave the seat exactly where it was: still drafting", () => {
+    const w = writer("sequence");
+    // The writer's OWN author: every call below is `w.call`, so the voice being read is
+    // the default one. Reading a different voice's record here would assert nothing.
+    const voiceStatus = () => w.voiceStatus(undefined);
+
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      // Outside the change on a path the patchset does not hold — refused at the boundary.
+      const refusal = w.call("cite", {
+        path: "src/never-changed.ts",
+        side: "head",
+        start_line: attempt + 1,
+        end_line: attempt + 2,
+      });
+      expect(refusal.ok).toBe(false);
+    }
+    // A verdict with work in it. Not a settlement — and, crucially, not a state the lane
+    // could mistake for one.
+    const span = idOf(
+      w.call("cite", { path: "src/auth.ts", side: "head", start_line: 10, end_line: 14 }),
+    );
+    const orphan = idOf(w.call("add_step", { title: "Read the entry point", span_ref_id: span }));
+    expect(pointersOf(w.call("finish")).length).toBeGreaterThan(0);
+    expect(voiceStatus()).toBe("drafting");
+
+    // The seat answers the verdict in the SAME turn and finishes. One turn, one attempt.
+    ok(w.call("remove_element", { element_id: orphan }));
+    const section = idOf(w.call("add_section", { title: "Reading Order" }));
+    const span2 = idOf(
+      w.call("cite", { path: "src/auth.ts", side: "head", start_line: 10, end_line: 14 }),
+    );
+    idOf(
+      w.call("add_step", { parent_id: section, title: "Read the entry point", span_ref_id: span2 }),
+    );
+    expect(ok(w.call("finish")).outcome.kind).toBe("settled");
+    expect(voiceStatus()).toBe("settled");
   });
 });

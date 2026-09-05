@@ -27,6 +27,7 @@ import {
   type RoundRunReceipt,
 } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
+import type { GenerationBoards } from "../board/board-mcp-server";
 import { type BoardsRuntime, createBoardsRuntime } from "../boards/boards-runtime";
 import { withFakeT3Seats } from "../t3-seat-fake";
 import type { BoardArrivalEvent, BoardMeta } from "./lens-pipeline";
@@ -521,6 +522,67 @@ describe("createRoundsRuntime", () => {
     ]);
     // Without a drafting root the writer is bound to the review root itself.
     expect([...new Set(await rootsWrittenFor({}))]).toEqual(["/pr-worktree"]);
+  });
+
+  it("opens every lens lane on the board server before any seat turn is dispatched", async () => {
+    // 3.1's OTHER half, and the reason it is asserted at the round level rather than the
+    // pipeline's: the lane-opening loop is guarded on `deps.boards`, and the only thing
+    // that can supply it is the round runtime handing over the sidecar's
+    // `T3SeatRuntime.boards`. With the loop tested through `runLensPipeline` alone the
+    // guard was satisfied by the test's own argument and the production wire was missing —
+    // `openLaneCount()` was 0 forever and the `t3code-sidecar` disclosure clause could
+    // never report a thing. This drives `runRound`, so it fails if that hand-over is
+    // dropped again.
+    const order: string[] = [];
+    const opened: LintTarget[] = [];
+    const boards: GenerationBoards = {
+      openLane: async ({ target }) => {
+        opened.push(target);
+        order.push(`open:${target}`);
+        return { seats: [] } as unknown as Awaited<ReturnType<GenerationBoards["openLane"]>>;
+      },
+      lane: () => undefined,
+      settleLane: () => undefined,
+      settleAll: () => undefined,
+    };
+    const runtime = createRoundsRuntime(
+      withFakeT3Seats(
+        baseDeps({
+          resolveClaudePort: async () =>
+            fakeClaudePort([], (prompt, label) => {
+              order.push(`turn:${lensFromPrompt(prompt, label) ?? label ?? "report"}`);
+              return cleanBody(lensFromPrompt(prompt, label));
+            }),
+        }),
+        boards,
+      ),
+    );
+    await runtime.runRound(roundInput());
+
+    // Every lens, and only lenses: the report seat has no lane.
+    expect([...opened].sort()).toEqual([...LENS_KINDS].sort());
+    expect(opened, "one lane per lens, no repeats").toHaveLength(LENS_KINDS.length);
+    // POSITION, not membership. A set of `toContain` checks is satisfied by a run that
+    // opens the lanes after the seats have already written, which is the failure the
+    // ordering exists to prevent: a seat dispatched before its lane exists carries no
+    // board address and has nothing to write with.
+    //
+    // The LENS turns, deliberately. The round-report seat runs before this loop and has no
+    // lane of its own, so including it would assert an ordering the code does not have and
+    // never claimed to — `board-tool-authoring` is about the boards a lens seat writes.
+    const lensTurns = new Set(LENS_KINDS.map((lens) => `turn:${lens}`));
+    const lastOpen = order.findLastIndex((entry) => entry.startsWith("open:"));
+    const firstLensTurn = order.findIndex((entry) => lensTurns.has(entry));
+    expect(firstLensTurn, "at least one lens seat turn ran").toBeGreaterThanOrEqual(0);
+    expect(lastOpen, "at least one lane was opened").toBeGreaterThanOrEqual(0);
+    expect(lastOpen).toBeLessThan(firstLensTurn);
+    // …and the report seat is what occupies index 0, ahead of every lane. Named rather
+    // than filtered silently, because the comment in `lens-pipeline.ts` used to claim the
+    // lanes opened "before the report gate's own dispatch" and they do not.
+    expect(order[0]?.startsWith("turn:"), `first entry was ${order[0]}`).toBe(true);
+    expect(order[0], "the first turn is not a lens").not.toSatisfy((entry: string) =>
+      lensTurns.has(entry),
+    );
   });
 
   it("records a RoundRecord pinning asks, commit range, minted+board generation, and report board", async () => {
@@ -1224,7 +1286,12 @@ describe("createRoundsRuntime", () => {
       ),
     ).runRound(input);
 
-    for (const boardId of Object.values(boardIds)) {
+    // The noise board is excluded, and that is D16d: Sequence failed on the first
+    // attempt, so the Noise lane refused to take a complement over its silence and wrote
+    // nothing there was anything to clear.
+    const swept = Object.entries(boardIds).filter(([lens]) => lens !== "noise");
+    expect(swept, "every non-derived board swept").toHaveLength(Object.keys(boardIds).length - 1);
+    for (const [, boardId] of swept) {
       expect(recoveryOrder.indexOf(`remove:${boardId}`)).toBeGreaterThanOrEqual(0);
       expect(recoveryOrder.indexOf(`clear:${boardId}`)).toBeGreaterThan(
         recoveryOrder.indexOf(`remove:${boardId}`),
@@ -1552,10 +1619,14 @@ describe("createRoundsRuntime", () => {
 
       const failedAttempt = generations.load("gen:ps-1");
       expect(failedAttempt?.lensBoards.design).toBe(boardIds.design);
-      expect(failedAttempt?.lensBoards.noise).toBe(boardIds.noise);
       expect(failedAttempt?.failedLenses?.[failedCoreLens]).toEqual(expect.any(String));
       expect(meta.load(boardIds.design)?.lens).toBe("design");
-      expect(meta.load(boardIds.noise)?.lens).toBe("noise");
+      // Noise settled NO board on this attempt, and that is D16d rather than a second
+      // defect: its membership is the four core lanes' complement, one of them stated
+      // nothing about what it cites, and a complement over that silence would file
+      // un-reviewed regions as skippable. It names the lane instead.
+      expect(meta.load(boardIds.noise)).toBeUndefined();
+      expect(failedAttempt?.failedLenses?.noise).toContain(failedCoreLens);
 
       const retryCaptures: { prompt?: string }[] = [];
       const recovered = await createRoundsRuntime(
@@ -1618,7 +1689,10 @@ describe("createRoundsRuntime", () => {
     const firstFailure = first.pipeline.boards.find(({ lens }) => lens === "design")?.failure;
     expect(firstFailure).toEqual(expect.any(String));
     expect(first.boardGeneration.failedLenses?.design).toBe(firstFailure);
-    expect(Object.keys(first.boardGeneration.lensBoards)).toHaveLength(4);
+    // THREE, not four: Design stated nothing about what it cites, so the Noise lane
+    // refused the complement (D16d) and settled a failure naming it instead of a board.
+    expect(Object.keys(first.boardGeneration.lensBoards)).toHaveLength(3);
+    expect(first.boardGeneration.failedLenses?.noise).toContain("design");
 
     const recovered = await createRoundsRuntime(
       withFakeT3Seats(
@@ -1885,7 +1959,15 @@ describe("createRoundsRuntime", () => {
           createRennetBoard: async () => `${attempt}:${targets[nextBoard++]}`,
           service: {
             apply: async (boardId: string) => {
-              if (crashFlagged && boardId === `${attempt}:noise`) {
+              // The SEQUENCE board, which this fixture used to crash on Noise. Noise is now
+              // the four core lanes' complement and runs on their settlements, so a Flagged
+              // lane that fails — which is exactly what the migration throw below makes it
+              // do — means the Noise seat never writes and a crash aimed there can never
+              // fire. Sequence is written concurrently with Flagged, so the `await` still
+              // orders this crash strictly after the migration rather than racing it, and
+              // attempt A still dies INSIDE the pipeline, before the terminal boundary that
+              // would fold its drafting identity into settled lens boards.
+              if (crashFlagged && boardId === `${attempt}:sequence`) {
                 await migrationReached;
                 throw new Error("crash after Flagged migration");
               }

@@ -161,3 +161,42 @@ export function settleAbsentReasonFor(target: BoardTarget): LensAbsenceReason | 
   }
   return live[0];
 }
+
+// ── Host-derived membership (D16) ────────────────────────────────────────────
+
+/**
+ * The kind whose membership the HOST derives rather than a seat authoring it.
+ *
+ * Rai's ruling, 2026-09-04: noise is a POSITION, not a property — a changed region no
+ * other lens board cited. So the Noise board's `noise_verdict` members are the complement
+ * of the other four boards' citations over the captured patchset, placed by the host
+ * before the seat's first turn, and the seat's job is the grouping and the reasons.
+ *
+ * One row, read in four places, which is why it is a table and not four conditionals:
+ * the target loses its member-creating verb ({@link buildBoardTools}), it loses
+ * `settle_absent` ({@link hostSettlesAbsenceFor} — the host knows the remainder is empty
+ * before any turn), its `remove_element` refuses a host-placed member (the board writer),
+ * and its update verb carries the parenting a creating call would otherwise have carried.
+ *
+ * A target with no row here authors its own membership, which is every other target.
+ */
+export const HOST_DERIVED_MEMBER_KIND: Readonly<Partial<Record<BoardTarget, DraftKind>>> = {
+  noise: "noise_verdict",
+};
+
+/** The kind `target`'s host derives, or `undefined` when the seat authors its own. */
+export function hostDerivedMemberKind(target: BoardTarget): DraftKind | undefined {
+  return HOST_DERIVED_MEMBER_KIND[target];
+}
+
+/**
+ * Whether the HOST settles this target's absence rather than the seat declaring it (D16e).
+ *
+ * DERIVED from {@link HOST_DERIVED_MEMBER_KIND}, not listed again: the host knows a derived
+ * membership is empty before the seat's first turn, so there is nothing left for a seat to
+ * declare that the host does not already know. `LENS_ADMISSIBLE_ABSENCES` still carries
+ * `no-noise` — it remains a lane outcome, and a first-class success — but no verb offers it.
+ */
+export function hostSettlesAbsenceFor(target: BoardTarget): boolean {
+  return hostDerivedMemberKind(target) !== undefined;
+}

@@ -242,7 +242,10 @@ describe("a seat's MCP client discovers and calls the board tools (2.5)", () => 
       );
     }
     // A count, so a loop that silently stopped iterating cannot pass as a clean sweep.
-    expect(seen).toBe(96);
+    // 94, not 96: the Noise seat lost two verbs when its membership became the host's
+    // derivation (D16) — no verb creates a member, and none settles the absence the host
+    // decides from an empty complement.
+    expect(seen).toBe(94);
   });
 
   it("a Sequence seat is served no settle_absent, because Sequence admits no absence", async () => {
@@ -758,5 +761,48 @@ describe("a Flagged lane gets two addresses onto one board (2.6, D9)", () => {
     });
     const second = server.openLane({ generationId: "gen-1", target: "flagged", lint: lint() });
     expect(second.board().elements).toHaveLength(1);
+  });
+});
+
+// ── 3.1 What the health report is allowed to say ─────────────────────────────
+
+/**
+ * `openLaneCount` is the ONLY input to the `t3code-sidecar` disclosure clause: the daemon's
+ * `localToolServers` reports this listener as local exactly when it is serving at least one
+ * lane, and reports nothing when it is not, so that a status field never claims a running
+ * loopback server while none runs. It had no test, and its production caller was reading a
+ * number that could not move because the pipeline's lane-opening loop was never handed its
+ * board runtime — see `opens every lens lane on the board server before any seat turn is
+ * dispatched` in `rounds.test.ts` for the other half.
+ */
+describe("the listener discloses how many lanes it is serving (3.1)", () => {
+  it("counts open lanes, keeps counting a settled one, and forgets a settled generation", async () => {
+    const server = await serverWith();
+    expect(server.openLaneCount(), "nothing open yet, so nothing to disclose").toBe(0);
+
+    for (const target of ["design", "sequence", "decisions"] as const) {
+      server.openLane({ generationId: "gen-1", target, lint: lint() });
+    }
+    expect(server.openLaneCount()).toBe(3);
+
+    // Re-opening the same lane returns the existing one; it is not a second board.
+    server.openLane({ generationId: "gen-1", target: "design", lint: lint() });
+    expect(server.openLaneCount(), "re-opening a lane does not add one").toBe(3);
+
+    // A second generation's lanes are this listener's too — the disclosure is about the
+    // SERVER, not about one generation.
+    server.openLane({ generationId: "gen-2", target: "design", lint: lint() });
+    expect(server.openLaneCount()).toBe(4);
+
+    // `settle()` revokes a lane's seat addresses; the board is still served, and saying
+    // otherwise would under-report a listener that is still listening.
+    server.lane("gen-1", "design")?.settle();
+    expect(server.openLaneCount(), "a settled lane is still a board this listener serves").toBe(4);
+
+    // `settleGeneration` DELETES its lanes, so the count falls.
+    server.settleGeneration("gen-1");
+    expect(server.openLaneCount()).toBe(1);
+    server.settleGeneration("gen-2");
+    expect(server.openLaneCount(), "nothing left to disclose").toBe(0);
   });
 });

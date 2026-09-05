@@ -3,6 +3,8 @@ import { z } from "zod";
 import {
   authorableKindsFor,
   type BoardTarget,
+  hostDerivedMemberKind,
+  hostSettlesAbsenceFor,
   type LensAbsenceReason,
   settleAbsentReasonFor,
   TYPED_KINDS_BY_TARGET,
@@ -95,7 +97,12 @@ const VERB_NOUN: Readonly<Partial<Record<DraftKind, { add: string; update: strin
 /** Fields the HOST writes; they appear on no tool input. See the module note. */
 export const HOST_OWNED_FIELDS: Readonly<Partial<Record<DraftKind, readonly string[]>>> = {
   finding: ["concurrence", "accord", "status"],
-  noise_verdict: ["judge"],
+  // Both host-stamped constants once membership is derived (D16f): every member is a
+  // region no other board cited, so `verdict` is `noise` and `judge` is `deterministic`
+  // on all of them, always. A one-valued enum on an input is worse than no field — it
+  // renders as a choice, and a model offered a choice will eventually take the other
+  // branch — which is why `flatInputViolations` now fails on one.
+  noise_verdict: ["judge", "verdict"],
   code_ref: ["patchset_id"],
   section: ["delta"],
 };
@@ -399,19 +406,32 @@ function addTool(kind: DraftKind): BoardTool {
   };
 }
 
-function updateTool(kind: DraftKind): BoardTool {
+/**
+ * `update_<kind>`, and — when the HOST derives this kind's membership (D16) — the only
+ * verb the seat has for it.
+ *
+ * `reparents` is that case. A seat normally names an element's parent once, on the call
+ * that creates it, so an update carries no `parent_id`; but a derived member is created
+ * by the host before the seat's first turn, and grouping it is precisely the seat's job.
+ * The parenting has to ride the one verb the seat is left with.
+ */
+function updateTool(kind: DraftKind, reparents = false): BoardTool {
   const noun = VERB_NOUN[kind];
   if (noun === undefined) throw new Error(`board tools: \`${kind}\` has no verb noun`);
-  // Every field is optional on an update: the call carries only what changes. Parenting
-  // is not among them — a child names its parent once, when it is created.
+  // Every field is optional on an update: the call carries only what changes.
   const fields = toolFieldsForKind(kind).map((field) => ({ ...field, required: false }));
   return {
     name: noun.update,
     verb: "update",
     kind,
-    description: `Change fields of an existing \`${kind}\` element. Only the fields given change.`,
+    description: reparents
+      ? `Group an existing \`${kind}\` under a section and say why it is there. Only the fields given change.`
+      : `Change fields of an existing \`${kind}\` element. Only the fields given change.`,
     fields,
-    input: objectOf(fields, { element_id: ELEMENT_ID }),
+    input: objectOf(
+      fields,
+      reparents ? { element_id: ELEMENT_ID, parent_id: PARENT_ID } : { element_id: ELEMENT_ID },
+    ),
   };
 }
 
@@ -475,11 +495,19 @@ export function buildBoardTools(
   table: Readonly<Record<BoardTarget, readonly DraftKind[]>> = TYPED_KINDS_BY_TARGET,
 ): readonly BoardTool[] {
   const kinds = authorableKindsFor(target, table);
-  const absence = settleAbsentReasonFor(target);
+  // The kind whose membership the host derives, when this target has one (D16). It is
+  // read three times below and nowhere else in this module: the add verb goes, the
+  // update verb grows the parenting the add verb used to carry, and `settle_absent`
+  // goes with it. Every other target has no row and is unaffected.
+  const derived = hostDerivedMemberKind(target);
+  const absence = hostSettlesAbsenceFor(target) ? undefined : settleAbsentReasonFor(target);
   return [
     documentTool(),
-    ...kinds.map(addTool),
-    ...kinds.map(updateTool),
+    // No verb creates a derived member: one the seat could add would be a region another
+    // board cited, which the ruling forbids. `remove_element` refusing one is the board
+    // writer's half of the same rule — removing a member breaks the complement's totality.
+    ...kinds.filter((kind) => kind !== derived).map((kind) => addTool(kind)),
+    ...kinds.map((kind) => updateTool(kind, kind === derived)),
     removeTool(),
     ...(absence === undefined ? [] : [settleAbsentTool(absence)]),
     finishTool(),
@@ -574,6 +602,32 @@ export function flatInputViolations(toolName: string, input: z.ZodType): string[
         `${toolName}: \`${name}\` renders as \`${String(type)}\` — a tool input field is a scalar, a string enum, or an array of those.`,
       );
     }
+    const single = oneValuedEnum(property);
+    if (single !== undefined) {
+      out.push(
+        `${toolName}: \`${name}\` is an enum with one value (\`${single}\`) — a field with one admissible value states a choice that does not exist. The host stamps it (D16f).`,
+      );
+    }
   }
   return out;
+}
+
+/**
+ * The single value of a one-valued enum, or `undefined`.
+ *
+ * A separate screen from the scalar walk above, because a one-valued enum IS a scalar and
+ * renders perfectly admissibly: `{"type":"string","enum":["noise"]}` is a legal tool input,
+ * and that is the problem. D16f's ruling is that a field a seat can only fill one way is
+ * worse than no field — the model reads it as a decision and will eventually take the
+ * branch that does not exist — so it is refused by name.
+ *
+ * `const` is checked too: `z.literal()` renders that way rather than as a one-entry
+ * `enum`, and a rule that only saw `enum` would let the same defect in through the other
+ * door.
+ */
+function oneValuedEnum(property: Record<string, unknown>): string | undefined {
+  if ("const" in property) return String(property.const);
+  const values = property.enum;
+  if (!Array.isArray(values) || values.length !== 1) return undefined;
+  return String(values[0]);
 }
