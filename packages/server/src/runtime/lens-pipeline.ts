@@ -3003,10 +3003,21 @@ async function draftLensBoard(
   // is a host-side transform from the change artifacts, so it settles here with NO model
   // turn. `undefined` — no OpenSpec change, or a change with nothing to render — falls
   // straight through to the seat below, unchanged.
-  const assembledDesign =
-    lens === "design" && deps.assembleDesignBoard !== undefined
-      ? deps.assembleDesignBoard(ctx)
-      : undefined;
+  //
+  // The assembler THROWS when a change it accepted cannot settle: either the source prose
+  // trips a boundary rule the deterministic path can't rephrase (a code fence or an
+  // indented list in `## Why`, a machinery word in the change name), or a genuine mapping
+  // defect. Both fall back to the seat — the seat renders the same change — rather than
+  // rejecting the lane, which would rethrow and kill the whole round with its four settled
+  // siblings. A silent slow-down is the worst case; a crashed round is not on the table.
+  let assembledDesign: DraftBoard | undefined;
+  if (lens === "design" && deps.assembleDesignBoard !== undefined) {
+    try {
+      assembledDesign = deps.assembleDesignBoard(ctx);
+    } catch {
+      assembledDesign = undefined;
+    }
+  }
   if (assembledDesign !== undefined) {
     validated = {
       board: assembledDesign,

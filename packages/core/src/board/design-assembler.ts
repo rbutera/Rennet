@@ -76,6 +76,13 @@ export function assembleDesignBoard(
   const design = byRole("design");
   const tasks = byRole("tasks");
   const specDeltas = sources.filter((source) => source.role === "spec-delta");
+  // OpenSpec RENAMED sections are `FROM:`/`TO:` list pairs, not `### Requirement:` headings,
+  // so the parser yields no obligation for them: rendering here would drop the rename AND
+  // undercount the Requirements stat. Route the whole change to the seat instead, which
+  // reads the rename pair directly. (Renames are rare; correctness beats the fast path.)
+  if (specDeltas.some((source) => /^##\s+RENAMED\s+Requirements\b/im.test(source.text))) {
+    return undefined;
+  }
   const readingOrder = [proposal, design, tasks, ...specDeltas].filter(
     (source): source is CandidateDesignSource => source !== undefined,
   );
@@ -150,9 +157,9 @@ export function assembleDesignBoard(
         title: group.title ?? "Tasks",
         parent_id: sectionId,
       });
-      const checklist = group.tasks
-        .map((taskObligation) => `- [${taskObligation.done ? "x" : " "}] ${taskObligation.text}`)
-        .join("\n");
+      // `obligation.text` is the whole checklist line already (`- [x] …`), so it ships
+      // verbatim — re-wrapping it in another `- [ ] ` doubled the marker on every task.
+      const checklist = group.tasks.map((taskObligation) => taskObligation.text).join("\n");
       addElement("add_prose", { markdown: checklist, parent_id: groupId });
     }
   }

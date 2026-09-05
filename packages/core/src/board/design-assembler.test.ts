@@ -89,6 +89,42 @@ describe("assembleDesignBoard", () => {
     const decData = decision?.data as { statement?: string; inferred?: boolean };
     expect(decData.statement).toBe("Store sessions as JSONL");
     expect(decData.inferred).toBe(false);
+
+    // The checklist ships each source line verbatim — a task line is ALREADY `- [x] …`, so
+    // it must not be re-wrapped into `- [x] - [x] …`. The Tasks stat ("1/3") could not see
+    // this; only reading the rendered prose does.
+    const taskProse = board.elements.find(
+      (el) =>
+        el.kind === "prose" &&
+        ((el.data as { markdown?: string }).markdown ?? "").includes(
+          "Write the failing restart test",
+        ),
+    );
+    const taskMarkdown = (taskProse?.data as { markdown?: string } | undefined)?.markdown ?? "";
+    expect(taskMarkdown).toContain("- [x] Write the failing restart test");
+    expect(taskMarkdown).not.toContain("- [x] - [x]");
+  });
+
+  it("declines the fast path when a spec-delta renames a requirement, leaving it to the seat", () => {
+    // OpenSpec RENAMED sections are FROM/TO list pairs the parser yields no obligation for.
+    // Rendering here would drop the rename and undercount the Requirements stat, so the whole
+    // change routes to the seat, which reads the rename pair directly.
+    const withRename: OpenSpecChangeSource = {
+      ...CHANGE,
+      specDeltas: [
+        ...(CHANGE.specDeltas ?? []),
+        {
+          capability: "session",
+          md: [
+            "## RENAMED Requirements",
+            "",
+            "- FROM: `### Requirement: Persist sessions`",
+            "- TO: `### Requirement: Persist open sessions`",
+          ].join("\n"),
+        },
+      ],
+    };
+    expect(assemble(withRename)).toBeUndefined();
   });
 
   it("returns undefined when there is nothing to render", () => {
