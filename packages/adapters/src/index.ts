@@ -388,7 +388,11 @@ export {
   type OmpTransportEffects,
   renderOmpMcpConfig,
 } from "./omp-turn-transport";
-export { readOpenSpecChange, selectedOpenSpecChangeName } from "./openspec-change-reader";
+export {
+  readOpenSpecChange,
+  readOpenSpecChangeSource,
+  selectedOpenSpecChangeName,
+} from "./openspec-change-reader";
 export {
   branchWorktreePath,
   ensureBranchWorktree,
