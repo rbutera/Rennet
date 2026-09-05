@@ -111,8 +111,10 @@ export interface BoardLane {
    * fix the session's MCP configuration on the thread's first turn, and a later turn
    * naming a different url is refused by the adapter as a mismatch. A repeat call
    * refreshes the seat's liveness instead of minting again.
+   *
+   * `undefined` when there is no sidecar bearer to derive from — see the implementation.
    */
-  readonly address: (voice: BoardSeatVoice) => SeatBoardServer;
+  readonly address: (voice: BoardSeatVoice) => SeatBoardServer | undefined;
   /** The board as it stands, whichever voice wrote each element. */
   readonly board: () => DraftBoard;
   /** The writer this lane's seats share — one board, however many voices. */
@@ -345,13 +347,20 @@ export async function startBoardMcpServer(
           existing.expiresAt = now() + livenessMs;
           return existing.server;
         }
+        // No sidecar, no address. The bearer is empty between a sidecar exiting and the
+        // next `ensure()`, and HMAC over an EMPTY key is a publicly computable value —
+        // one that would then stay live in the registry once the next sidecar arrived.
+        // Refusing to derive from it withholds nothing from any seat: there is no sidecar
+        // for its call to have come from, so there is no seat to serve.
+        const bearer = options.bearer();
+        if (bearer.length === 0) return undefined;
         // Derived from the sidecar's own bearer over (generation, board, seat), so this
         // seat's url is the same url after a daemon restart and after a settled lane is
         // re-opened for a retry — both of which a random token loses, and both of which
         // the provider then refuses as an MCP-server mismatch. Only the digest is kept
         // here; see `deriveSeatToken` for why this is not weaker than minting.
         const token = deriveSeatToken({
-          bearer: options.bearer(),
+          bearer,
           generationId: input.generationId,
           target: input.target,
           seat: voice.seat,
@@ -439,6 +448,15 @@ export async function startBoardMcpServer(
     return token === undefined || token.length === 0 ? undefined : decodeURIComponent(token);
   };
 
+  /**
+   * The presented bearer, or `undefined`.
+   *
+   * The `.+` is LOAD-BEARING and is not ordinary parsing: it is what makes an EMPTY
+   * presented bearer unrepresentable. Relax it to `.*` and `Authorization: Bearer ` with
+   * nothing after it presents the empty string, which digests equal to the empty supplier
+   * value the moment there is no sidecar — `sha256("") === sha256("")`, and the door is
+   * open. Do not simplify this regex.
+   */
   const bearerOf = (req: IncomingMessage): string | undefined => {
     const header = req.headers.authorization;
     if (typeof header !== "string") return undefined;

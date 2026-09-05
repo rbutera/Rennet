@@ -556,10 +556,13 @@ the turn ran. The schema body is untouched.
 The tools themselves are derived per lens from the kind tables
 (`packages/protocol/src/board/tool-schemas.ts`) and applied by the board writer
 (`packages/core/src/board/board-writer.ts`). Measured 2026-09-05, the served tool surface is
-8,005 B (Sequence) to 12,892 B (Design) per seat, against the 9,675–9,697 B output schema it
-is on course to replace in the next group. Across one generation's seven seats — Flagged
-counted twice — that is **65,633 B of tools against 67,747 B of schema, 3.1% less**; Design
-is the one seat that costs more than it saves, at 1.33x, because it authors two typed kinds
+8,005 B (Sequence) to 12,892 B (Design) per seat, against the output schema it is on course
+to replace in the next group — 9,618 B as a Claude seat receives it, 9,640 B for Design's
+board-or-absence shape, and 10,874 B for the Flagged Codex seat, whose schema is
+`sanitizeSchemaForCodex`'d on the way out. Both figures are taken from the modules that
+ship them, not rebuilt for the measurement. Across one generation's seven seats — Flagged
+counted twice — that is **65,633 B of tools against 68,604 B of schema, 4.3% less**; Design
+is the one seat that costs more than it saves, at 1.34x, because it authors two typed kinds
 no other lens does.
 
 ## The live line on a lane
