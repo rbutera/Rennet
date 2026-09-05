@@ -36,6 +36,7 @@ import {
   type BoardTarget,
   type DraftBoard,
   type DraftElement,
+  hostDerivedMemberKind,
   SHARED_KINDS,
   typedKindsFor,
   type Violation,
@@ -2701,6 +2702,81 @@ const boardHasMaterial: Rule = (draft, ctx) => {
 };
 
 /**
+ * D16's one new rule, and on a HOST-DERIVED board the only thing the seat can get wrong.
+ *
+ * Membership is a derivation, `verdict` and `judge` are host-stamped constants, and every
+ * citation was refused or admitted where it was made — so what is left to ask of the whole
+ * board is the grouping, and this asks it. Every member is parented into exactly one group
+ * section, and every group section says why its members are there.
+ *
+ * A group's reason is prose UNDER the section, not a field on it: the frozen `section`
+ * kind carries a title and children and nothing that could hold a sentence, and this
+ * change does not touch the palette. So the group block the prompt asks for — a label and
+ * a reason — is a section titled with the pattern and one prose element saying why, which
+ * is what a reader sees folded and unfolded.
+ *
+ * The rule is scoped by {@link hostDerivedMemberKind}, so it is silent on every board
+ * whose membership its seat authors. It joins {@link LENS_RULES} and {@link FINISH_RULES}
+ * like any other rule, and the partition assertion is what stops it landing unassigned.
+ */
+const derivedMembersGrouped: Rule = (draft, ctx) => {
+  const memberKind = hostDerivedMemberKind(ctx.lens);
+  if (memberKind === undefined) return [];
+  const members = draft.elements.filter((element) => element.kind === memberKind);
+  if (members.length === 0) return [];
+
+  const sections = draft.elements.filter((element) => element.kind === "section");
+  const parentsOf = new Map<string, string[]>();
+  for (const section of sections) {
+    const children = (section.data as { children?: unknown }).children;
+    if (!Array.isArray(children)) continue;
+    for (const child of children) {
+      if (typeof child !== "string") continue;
+      parentsOf.set(child, [...(parentsOf.get(child) ?? []), section.id]);
+    }
+  }
+
+  const out: Violation[] = [];
+  const groupIds = new Set<string>();
+  for (const member of members) {
+    const parents = parentsOf.get(member.id) ?? [];
+    const [only] = parents;
+    if (only !== undefined && parents.length === 1) {
+      groupIds.add(only);
+      continue;
+    }
+    out.push({
+      ruleId: "derived-member-grouped",
+      elementRef: ref(member.id),
+      message:
+        parents.length === 0
+          ? `\`${member.id}\` is in no group. Every changed region on this board belongs to exactly one group that names its pattern — put it in one.`
+          : `\`${member.id}\` is in ${parents.length} groups (${parents.join(", ")}). Every region belongs to exactly one; leave it in the group whose pattern accounts for it.`,
+    });
+  }
+
+  const byId = new Map(draft.elements.map((element) => [element.id, element]));
+  for (const groupId of groupIds) {
+    const children = (byId.get(groupId)?.data as { children?: unknown } | undefined)?.children;
+    const reasoned =
+      Array.isArray(children) &&
+      children.some((child) => {
+        const element = typeof child === "string" ? byId.get(child) : undefined;
+        if (element?.kind !== "prose") return false;
+        const markdown = (element.data as { markdown?: unknown }).markdown;
+        return typeof markdown === "string" && markdown.trim().length > 0;
+      });
+    if (reasoned) continue;
+    out.push({
+      ruleId: "derived-group-reasoned",
+      elementRef: ref(groupId),
+      message: `Group \`${groupId}\` carries no reason. Write one line under it saying why these regions are here in THIS change — a reason that would fit any change explains nothing.`,
+    });
+  }
+  return out;
+};
+
+/**
  * The per-draft rule registry for a LENS board, in evaluation order. The report
  * seat runs {@link REPORT_RULES} instead — it cites the round's own diff, not the
  * reviewed patchset, so the changed-region rule does not apply to it.
@@ -2729,6 +2805,7 @@ export const LENS_RULES: readonly Rule[] = [
   requirementOrder,
   sequenceStepsReachable,
   boardHasMaterial,
+  derivedMembersGrouped,
 ];
 
 /**
@@ -2815,6 +2892,9 @@ export const FINISH_RULES: readonly Rule[] = [
   designIncompletenessVisible,
   sequenceStepsReachable,
   boardHasMaterial,
+  // D16's grouping rule. Whole-board by nature: "exactly one group" is a question about
+  // every section at once, and it is the only thing a derived board's seat can get wrong.
+  derivedMembersGrouped,
 ];
 
 /**

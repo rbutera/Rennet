@@ -151,6 +151,8 @@ export interface BoardVoiceWriter {
   readonly declaredAbsence: () =>
     | { readonly reason: LensAbsenceReason; readonly note: string }
     | undefined;
+  /** What the last `finish` said — the whole content of a repair turn (D6). */
+  readonly lastVerdict: () => readonly FinishPointer[] | undefined;
 }
 
 // ── Host-owned values (on no tool input; the host writes them) ───────────────
@@ -160,8 +162,11 @@ const HOST_DEFAULTS: Readonly<Partial<Record<DraftKind, Readonly<Record<string, 
   // A drafted finding is `open` and has no cross-seat agreement yet: `reconcileFindings`
   // stamps concurrence and accord when both Flagged voices have settled.
   finding: { status: "open", concurrence: [] },
-  // A seat is an `llm` judge; the deterministic one is a different producer entirely.
-  noise_verdict: { judge: "llm" },
+  // A member of a derived board is host-placed and host-stamped (D16f): membership is a
+  // POSITION — a changed region no other board cited — so `verdict` is `noise` and the
+  // judge is `deterministic` on every member, always. Neither is on any tool input; this
+  // is where they are written, and `placeMembers` is the only caller that reaches it.
+  noise_verdict: { judge: "deterministic", verdict: "noise" },
   // Maintained from the parent each call names.
   section: { children: [] },
   order_step: { children: [] },
@@ -169,6 +174,15 @@ const HOST_DEFAULTS: Readonly<Partial<Record<DraftKind, Readonly<Record<string, 
 
 /** How many ids a refusal lists before it says how many more there are. */
 const HELD_ID_SAMPLE = 20;
+
+/**
+ * What a host-placed member's `reason` says before the seat writes one.
+ *
+ * The schema requires a reason and the derivation genuinely has one — this region is here
+ * because no other board cited it, which is the whole definition. It is a true sentence
+ * rather than a placeholder, so a board whose seat died mid-turn still reads honestly.
+ */
+const DERIVED_MEMBER_REASON = "No other lens board cited this changed region.";
 
 // ── The writer ───────────────────────────────────────────────────────────────
 
@@ -180,6 +194,14 @@ export class BoardWriter {
   private minted = 0;
   private state: BoardWriterState = "drafting";
   private absence: { reason: LensAbsenceReason; note: string } | undefined;
+  /**
+   * The ids the HOST placed, so `remove_element` can refuse one (D16). Empty on every
+   * board but a derived one, which is why the refusal reads as a property of the board
+   * rather than a per-lens conditional.
+   */
+  private readonly hostPlaced = new Set<string>();
+  /** The pointers the last `finish` returned; `[]` when it settled, `undefined` before any. */
+  private verdict: readonly FinishPointer[] | undefined;
 
   private readonly lint: LintContext;
 
@@ -220,6 +242,87 @@ export class BoardWriter {
   }
 
   /**
+   * What the last `finish` said: the pointers it returned, `[]` when it settled the
+   * board, `undefined` when the seat never called it.
+   *
+   * This is the whole content of a repair turn (D6). A turn that ends unsettled spends an
+   * attempt, and the follow-up carries this and nothing else — the base prompt and every
+   * element the seat wrote are already in the thread and on the board, so re-sending
+   * either is paying twice for what the seat is holding.
+   *
+   * The three states are distinguishable on purpose. `undefined` says the turn died
+   * before asking, so the follow-up has no verdict to carry and says so; `[]` says the
+   * board settled and something moved afterwards; a non-empty list is the correction.
+   */
+  lastVerdict(): readonly FinishPointer[] | undefined {
+    return this.verdict;
+  }
+
+  /**
+   * The ids the host placed on this board, in placement order (D16).
+   *
+   * A derived board's members are the host's: it works out the complement, writes it, and
+   * the seat groups and explains it. They are named here so the lane can tell what it
+   * placed from what the seat wrote, and so `remove_element` can refuse one.
+   */
+  hostPlacedIds(): readonly string[] {
+    return [...this.hostPlaced];
+  }
+
+  /**
+   * Place the members of a HOST-DERIVED board (D16), one `code_ref` + one member element
+   * per region, and return the member ids.
+   *
+   * Not a tool and not reachable from one: no verb creates a member, because a member the
+   * seat could add would be a region another board cited, which the ruling forbids. The
+   * boundary tier is not run over these because the host is not guessing — the regions ARE
+   * the patchset's changed regions, so the citation they carry resolves by construction,
+   * and the one thing that could fail (`scaffold-is-noise-lane`) is the derived lens's own
+   * lane.
+   *
+   * `verdict` and `judge` come from {@link HOST_DEFAULTS} and are constants (D16f). The
+   * `reason` each member starts with is the derivation's own factual account; the seat
+   * refines it with `update_*`, which is the only verb it has for a member.
+   */
+  placeMembers(
+    kind: DraftKind,
+    regions: readonly { path: string; side: "base" | "head"; start: number; end: number }[],
+  ): readonly string[] {
+    const placed: string[] = [];
+    for (const region of regions) {
+      const citationId = this.mintId();
+      this.elements.push({
+        id: citationId,
+        kind: "code_ref",
+        data: {
+          author: this.options.author,
+          path: region.path,
+          side: region.side,
+          start_line: region.start,
+          end_line: region.end,
+        },
+      } as DraftElement);
+      const memberId = this.mintId();
+      this.elements.push({
+        id: memberId,
+        kind,
+        data: {
+          author: this.options.author,
+          ...(HOST_DEFAULTS[kind] ?? {}),
+          hunk: citationId,
+          reason: DERIVED_MEMBER_REASON,
+        },
+      } as DraftElement);
+      this.hostPlaced.add(citationId);
+      this.hostPlaced.add(memberId);
+      placed.push(memberId);
+    }
+    // The board moved, so any settlement over the board as it was no longer holds.
+    this.reopen();
+    return placed;
+  }
+
+  /**
    * This board, written by one named voice (D9). The board is the writer's; the voice
    * decides what an element's `author` says and what its id is prefixed with. Two voices
    * on one writer are Flagged's two seats: one element list, two authors, one mint
@@ -232,6 +335,7 @@ export class BoardWriter {
       board: () => this.board(),
       status: () => this.status(),
       declaredAbsence: () => this.declaredAbsence(),
+      lastVerdict: () => this.lastVerdict(),
     };
   }
 
@@ -357,6 +461,18 @@ export class BoardWriter {
     const alignment = this.checkListAlignment(tool, input);
     if (alignment !== undefined) return refuse(alignment);
 
+    // Parenting rides an UPDATE only on a host-derived kind (D16), where the seat's job
+    // is to group members it did not create and there is no `add` call to have named a
+    // parent on. `parent_id` is absent from every other update input, so this branch is
+    // reached exactly when the tool surface offered the field.
+    const reparentTo =
+      "parent_id" in (tool.input as { shape: Record<string, unknown> }).shape &&
+      typeof input.parent_id === "string"
+        ? input.parent_id
+        : undefined;
+    const parentRefusal = this.checkParent(reparentTo);
+    if (parentRefusal !== undefined) return refuse(parentRefusal);
+
     const patched = {
       ...current,
       data: {
@@ -364,7 +480,20 @@ export class BoardWriter {
         ...dataFromInput(tool, input, current.data as Record<string, unknown>),
       },
     } as DraftElement;
-    const nextElements = this.elements.map((element, at) => (at === index ? patched : element));
+    const patchedElements = this.elements.map((element, at) => (at === index ? patched : element));
+    // Re-parenting is a MOVE, not a second membership: the element leaves whatever group
+    // held it before. Without the removal a seat that changed its mind about a member's
+    // pattern would leave it counted in two groups, which is exactly what
+    // `derived-member-grouped` then refuses to settle over — a refusal for a thing the
+    // tool did rather than for a thing the seat asked for.
+    const nextElements =
+      reparentTo === undefined
+        ? patchedElements
+        : adopt(
+            patchedElements.map((element) => withoutChildren(element, new Set([elementId]))),
+            reparentTo,
+            elementId,
+          );
     const next = this.withElements(nextElements);
 
     const structural = this.structuralRefusal(next);
@@ -382,6 +511,21 @@ export class BoardWriter {
       return refuse(this.unheldMessage(elementId));
     }
     const doomed = this.subtreeOf(elementId);
+    // D16 — a member the host derived is not the seat's to remove: the complement is
+    // total, and a board missing one of its members no longer accounts for the change.
+    // The subtree is checked, not just the named element, so removing a group section
+    // cannot take its members out sideways. The seat's OWN sections and prose still go.
+    const derived = [...doomed].filter((id) => this.hostPlaced.has(id));
+    if (derived.length > 0) {
+      const named = derived
+        .slice(0, HELD_ID_SAMPLE)
+        .map((id) => `\`${id}\``)
+        .join(", ");
+      const more = derived.length - Math.min(derived.length, HELD_ID_SAMPLE);
+      return refuse(
+        `Removing \`${elementId}\` would take ${named}${more > 0 ? `, and ${more} more,` : ""} off this board. This board's members are the changed regions no other board cited — they are placed here by derivation, not by judgement, and removing one would leave part of the change accounted for nowhere. Group it and say why it is there instead.`,
+      );
+    }
     const survivors = this.elements
       .filter((element) => !doomed.has(element.id))
       // The host maintains `children`, so a removed child leaves its parent's list with
@@ -415,6 +559,9 @@ export class BoardWriter {
 
   private finish(): BoardToolResult {
     const pointers = lintTier(this.board(), this.lint, "finish");
+    // Recorded whichever way it went, because a repair turn carries the last verdict and
+    // nothing else (D6) and `[]` is a different fact from "never asked".
+    this.verdict = pointers;
     if (pointers.length > 0) return { ok: true, outcome: { kind: "pointers", pointers } };
     this.state = "settled";
     return { ok: true, outcome: { kind: "settled" } };
