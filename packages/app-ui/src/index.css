@@ -210,7 +210,31 @@
    * its own, and "under way" is already carried by the dashed strata underneath it.
    * Removing it is the honest reduced-motion state; freezing it is not. */
   --animate-bench-core-scan: rn-bench-core-scan 2.2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+  /* The lamp at RAIL scale (lens-board-tools 5.5): the bench's core-sample scan moved
+   * onto the lens stop when the bench was deleted, so the same "this seat is writing
+   * right now" motion survives in the one place the register now lives. The band is
+   * `w-1/3` of the stop and the track is the stop, so the run is expressed in percent —
+   * a rail stop's width is the tab's, and the tab's width is the container query's.
+   *
+   * The call site pairs this with `motion-reduce:hidden`, NOT `animate-none`, for the
+   * same reason the core scan did: parked at the left the band is a mark of its own,
+   * and the dashed stop underneath already says "under way". */
+  --animate-lens-stop-scan: rn-lens-stop-scan 2.2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
 
+  @keyframes rn-lens-stop-scan {
+    0% {
+      opacity: 0;
+      transform: translateX(-100%);
+    }
+    18%,
+    82% {
+      opacity: 1;
+    }
+    100% {
+      opacity: 0;
+      transform: translateX(300%);
+    }
+  }
   @keyframes rn-bench-core-scan {
     0% {
       opacity: 0;

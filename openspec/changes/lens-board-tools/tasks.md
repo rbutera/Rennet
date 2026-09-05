@@ -52,24 +52,24 @@ Closes the JSON-as-speech half of #819. The client group depends on this.
 
 Closes the scroll and the no-provisional-state halves of #819.
 
-- [ ] 5.1 `lensBoardsFromResolutions` lists all five lenses for the generation from the first frame, each carrying its seat state; a running lens is selectable and is never a disabled segment; Flagged carries one indicator per voice
-- [ ] 5.2 The review route opens on the board view; capture is reported in the workspace header with its two named beats and its cancel; no waiting stage stands in front of the boards
-- [ ] 5.3 The board renders each element as it lands, with the three independent provisional signals — the rail indicator, the board header's in-progress mark and its "still being written" line, and the placeholder last row — all clearing together at settle. Control: remove one signal and watch the three-ways assertion fail
-- [ ] 5.4 Withhold round-delta marks while a board is unsettled and show them at settle; move the retry to per-lens on a failed lane, with the generation-wide retry in the workspace header
-- [ ] 5.5 Move the core-sample cut register onto the rail's existing per-lens stop, which `lens-switcher.tsx` already calls the same device at rail scale (#818)
-- [ ] 5.6 Give the board region the repo's primary-scroller idiom (`min-h-0 flex-1 overflow-y-auto`); a settled board on a 95-file change is reachable end to end, widget included. Prove it by driving the app, not by reading the class list (R44)
-- [ ] 5.7 Noise on the rail (D16c): its entry reads WAITING while its siblings run — naming the lanes it waits on, showing no working indicator and no failure — and becomes working when it starts. Any surviving coverage surface, state or uncovered count is deleted rather than relabelled, because the Noise board is now the only place the uncited regions are shown. Control: a fixture with two lanes still running finds the Noise entry waiting and finds no coverage figure anywhere on the workspace
+- [x] 5.1 `lensBoardsFromResolutions` lists all five lenses for the generation from the first frame, each carrying its seat state; a running lens is selectable and is never a disabled segment; Flagged carries one indicator per voice
+- [x] 5.2 The review route opens on the board view; capture is reported in the workspace header with its two named beats and its cancel; no waiting stage stands in front of the boards
+- [x] 5.3 The board renders each element as it lands, with the three independent provisional signals — the rail indicator, the board header's in-progress mark and its "still being written" line, and the placeholder last row — all clearing together at settle. Control: remove one signal and watch the three-ways assertion fail
+- [x] 5.4 Withhold round-delta marks while a board is unsettled and show them at settle; move the retry to per-lens on a failed lane, with the generation-wide retry in the workspace header
+- [x] 5.5 Move the core-sample cut register onto the rail's existing per-lens stop, which `lens-switcher.tsx` already calls the same device at rail scale (#818)
+- [x] 5.6 Give the board region the repo's primary-scroller idiom (`min-h-0 flex-1 overflow-y-auto`); a settled board on a 95-file change is reachable end to end, widget included. Prove it by driving the app, not by reading the class list (R44)
+- [x] 5.7 Noise on the rail (D16c): its entry reads WAITING while its siblings run — naming the lanes it waits on, showing no working indicator and no failure — and becomes working when it starts. Any surviving coverage surface, state or uncovered count is deleted rather than relabelled, because the Noise board is now the only place the uncited regions are shown. Control: a fixture with two lanes still running finds the Noise entry waiting and finds no coverage figure anywhere on the workspace
 
 ## 6. Client: the widget, the drawer, and the dock restored (D14)
 
 Closes #823 and the disabled-reader half of #819.
 
-- [ ] 6.1 The seat widget above the selected board: lens, provider, model, elapsed, live line, what it has written so far; two voices side by side for Flagged; failure in place with that lens's retry; collapsing to a one-line receipt at settle, which still opens the transcript
-- [ ] 6.2 The transcript drawer as a SECOND mount of the T3 thread view, right-aligned inside the board region, read-only, streaming, opened from the widget. Selecting a lens moves board, widget and transcript together
-- [ ] 6.3 Delete `ui.lensThread`, `uiActions.openLensThread`, the dock's lens-thread arm and its back button; the chat dock shows the session's thread in every state. Control: a test that points the slot at a seat thread and finds no way to
-- [ ] 6.4 The drawer and the diff view share one slot: opening either closes the other and the control says which; below the shell's minimum surface width the drawer takes the whole board region and still does not touch the dock
-- [ ] 6.5 Delete `preparation-bench.tsx` once its slab, its capture rail, its readers and its core marks all have homes, and remove its route branch
-- [ ] 6.6 Docs: `docs/developing/concepts/lens-pipeline.md` (the four sentences that say the seat's session is bound to the board schema, and the paragraph claiming Codex board seats get an explicit empty MCP-server table — which describes the deleted ephemeral legs, not the sidecar path), `t3code-sidecar.md` (the output-schema-as-contract section, the per-thread MCP servers, the loopback board server in the egress statement), `harness-adapters.md`, `architecture-contracts.md`, and the `docs/using` pages that describe waiting for boards
+- [x] 6.1 The seat widget above the selected board: lens, provider, model, elapsed, live line, what it has written so far; two voices side by side for Flagged; failure in place with that lens's retry; collapsing to a one-line receipt at settle, which still opens the transcript
+- [x] 6.2 The transcript drawer as a SECOND mount of the T3 thread view, right-aligned inside the board region, read-only, streaming, opened from the widget. Selecting a lens moves board, widget and transcript together
+- [x] 6.3 Delete `ui.lensThread`, `uiActions.openLensThread`, the dock's lens-thread arm and its back button; the chat dock shows the session's thread in every state. Control: a test that points the slot at a seat thread and finds no way to
+- [x] 6.4 The drawer and the diff view share one slot: opening either closes the other and the control says which; below the shell's minimum surface width the drawer takes the whole board region and still does not touch the dock
+- [x] 6.5 Delete `preparation-bench.tsx` once its slab, its capture rail, its readers and its core marks all have homes, and remove its route branch
+- [x] 6.6 Docs: `docs/developing/concepts/lens-pipeline.md` (the four sentences that say the seat's session is bound to the board schema, and the paragraph claiming Codex board seats get an explicit empty MCP-server table — which describes the deleted ephemeral legs, not the sidecar path), `t3code-sidecar.md` (the output-schema-as-contract section, the per-thread MCP servers, the loopback board server in the egress statement), `harness-adapters.md`, `architecture-contracts.md`, and the `docs/using` pages that describe waiting for boards
 
 ## 7. Proof
 

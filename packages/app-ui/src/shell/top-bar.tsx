@@ -4,7 +4,7 @@ import { ArrowLeft, FileDiff, History, type LucideIcon, PanelLeft } from "lucide
 import { Fragment, useEffect } from "react";
 import { useLocation, useRoute, useSearch } from "wouter";
 import { LensSwitcher } from "../board";
-import { useBoardData, useLensBoards } from "../board/board-data";
+import { lensesWithResult, useBoardData, useLensBoards } from "../board/board-data";
 import { countOpenFindings } from "../board/finding-lifecycle";
 import { Icon } from "../components/icon";
 import { useRoundRecords, useRoundState, useRoundsUnavailable } from "../rounds/rounds-data";
@@ -127,7 +127,10 @@ export function TopBar() {
       : currentGenerationId(roundRecords, review.activePatchsetId)
     : "";
   const selectedGeneration = routeQuery.generation ?? liveGeneration;
-  const lenses = useLensBoards(review?.id ?? "", selectedGeneration);
+  // The rail lists all five lenses from the first frame, each carrying its seat state
+  // (5.1/D12) — which is why it takes the SLUG: the lanes are read off the session row,
+  // and during capture there is no review to read a board from at all.
+  const lenses = useLensBoards(slug, review?.id ?? "", selectedGeneration);
   const stagedAsks = useRennetStore((s) => s.review.stagedAsks);
   const findingDispositions = useRennetStore((s) => s.review.findingDispositions);
   const flaggedBoard = lenses.find(({ lens }) => lens === "flagged")?.board;
@@ -135,7 +138,10 @@ export function TopBar() {
     ? countOpenFindings(flaggedBoard, { stagedAsks, findingDispositions })
     : 0;
   const selectedBoard = useBoardData(review?.id ?? "", selectedGeneration, routeQuery.lens);
-  const fallbackLens = lenses[0]?.lens;
+  // The fallback is a lens with something to OPEN, not the first rail entry: the rail
+  // now always starts at Design, and falling back to it would open an empty board over
+  // a settled sibling.
+  const fallbackLens = lensesWithResult(lenses)[0]?.lens;
   const effectiveLens =
     selectedBoard.status === "missing" && fallbackLens !== undefined
       ? fallbackLens

@@ -144,53 +144,58 @@ filter contains text, the first Escape clears it and the next leaves.
 Clicking a row starts the session — it is not a selection you then confirm.
 Rennet mints the session, claims that target, and takes you into it immediately.
 
-The workspace opens at once, on **the bench**: its first frame, inside the same
-shell as everything else, with the sidebar, the session top bar and the chat
-column already open around it. The chat's own thread is being made while the
-capture runs, so the column says so until it is ready rather than looking empty. The change itself is the centrepiece — the branch or
-pull request you started from, and once capture settles, how many files were
-captured. Capture is the bench's first beat rather than a page in front of it:
-two named steps, *resolving the repository* then *capturing the change*, with
-cancel beside them.
+**You land on the boards.** There is no waiting screen: the review workspace
+opens at once, inside the same shell as everything else, with the sidebar, the
+session top bar and the chat column already around it. The chat's own thread is
+being made while the capture runs, so the column says so until it is ready rather
+than looking empty.
 
-Five readers stand under it, one per lens, in one row. Each holds the core
-sample it drew out of the change: a small plug on a shaft rising into the slab
-above it, in that lens's own colour — Flagged red, Decisions yellow, Design
-blue, Sequence green, Noise neutral. The colour tells you *which* reader, and it
-is the same colour that lens carries on the rail once the boards arrive, so the
-two surfaces agree.
+What is still happening *to* the boards is said in a line across the top of the
+workspace, over the boards rather than in front of them. While the change is being
+captured it names the step it is on — *resolving the repository*, then *capturing
+the change* — with cancel beside it. While the lenses are drafting it says so.
+When nothing is happening, the line is not there.
 
-How the reader is doing is the way its sample is cut, not what colour it is. An
-empty tube is queued. Dashed layers, with a lamp travelling down the plug, mean
-the seat is reading right now. Solid layers mean it is cut clean and finished; a
-doubled seam across the middle means that lens came back with something changed.
-A snapped plug — in its own colour, never red — means the seat failed. A dashed
-outline means the lens had nothing to say.
+**All five lenses are on the rail from the first second**, in the session top bar,
+each in its own colour — Flagged red, Decisions yellow, Design blue, Sequence
+green, Noise neutral. The colour tells you *which* lens. How that lens is doing is
+the rule under its tab, and it is a shape, not a colour: a faint rule means nothing
+has been drawn yet; a dashed rule with a lamp travelling along it means the seat is
+writing right now; a solid rule means the board is cut clean; a rule split by a
+seam means that lens came back with something changed; two offset pieces mean the
+seat failed; a dotted rule means the lens had nothing to say. Flagged carries one
+working mark per voice, because it runs two seats. Noise waits for the other four
+and says which ones it is waiting on — its board is whatever they did not cite, so
+it cannot start until they finish.
 
-Under each sample is a line of what that seat is doing right now, read straight
-off its own thread: the file it is reading, the command it is running, or the
-last thing it said. A seat that has gone quiet says so instead of freezing on
-its last line. A settled reader's board opens on the bench right beneath the
-readers, readable at once while the other seats keep working — you do not wait
-for the slowest lens to read the fastest one's board. The bench scrolls, so a
-board that lands below the fold is still reachable, and a line above the stack
-says the stack is still being built: what is on the bench is the lenses that
-finished early, not the finished review. A failed reader speaks the reason it
-failed, rather than spinning forever.
+Selecting a lens shows its board, running or not. **A board draws itself while you
+watch.** An unsettled board says so three ways at once, so there is no mistaking
+it: the lens's tab shows its seat working, the board's own header carries an *in
+progress* mark and says the board is still being written, and the last row is a
+placeholder saying where the next element lands. All three clear together the
+moment the lane settles, and nothing navigates — the board you were watching is the
+board you are reading. The marks that show what changed since the last round are
+held back until then, because a half-written board would mark everything as new.
 
-Every reader's line is also a control: activating it opens that seat's full
-transcript in the chat slot, read-only, and it keeps streaming while the seat
-runs. Flagged has two seats, one on Claude and one on Codex, so it speaks two
-lines, each under its speaker's name, and each opens its own transcript. A line
-whose seat has not opened a thread yet is inert rather than pretending to have
-one.
+**Above the board is the seat writing it**: which lens, which model provider, how
+long you have been watching it, what it is doing right now — the file it is
+reading, the command it is running, or the last thing it said — and how much it has
+written so far. A seat that has gone quiet says so instead of freezing on its last
+line. Flagged shows both of its voices side by side. A seat that failed shows its
+reason there, with the retry beside it. When the lane settles, the widget collapses
+to one line: who drafted it, and what the board holds.
 
-You can leave the bench without stopping the work, or cancel and retry it in
-place. A failed capture or board generation keeps the session and names the
-failed stage instead of dropping the review. Anything already typed in the
-composer travels with you as the opening ask, waiting in the chat box rather
-than being sent for you. When preparation settles, the bench gives way to the
-populated review workspace.
+Activating it opens that seat's **full transcript**, read-only and still streaming,
+in a drawer beside the board — never over your own conversation. The chat column
+keeps your thread with Rennet the whole time. Choosing another lens moves the
+board, the widget and the transcript together, so the three can never describe
+different lenses. Opening the Diff view closes the drawer; the two share one space.
+
+The board region scrolls, so a long board on a large change is readable end to end.
+You can leave without stopping the work, or cancel and retry it in place. A failed
+capture or board generation keeps the session and names the failed stage instead of
+dropping the review. Anything already typed in the composer travels with you as the
+opening ask, waiting in the chat box rather than being sent for you.
 
 What gets captured depends on the row. A pull-request row opens that pull
 request's diff. The pinned **Current Checkout** row captures your working tree,
@@ -249,10 +254,10 @@ identity rather than its display name.
 
 Each lens is its own board. The session top bar centres the lens rail and keeps
 the boards in the order shown below. Every tab carries a coloured stop along its
-foot — the same colour that lens had on the bench, at full strength on the tab
-you are reading and dimmed on the rest. The stop says which lens; which one is
-selected is still said by the raised fill and the ink, so the rail reads the
-same with colour ignored. The session URL owns the selection:
+foot, in that lens's own colour, at full strength on the tab you are reading and
+dimmed on the rest. The stop says which lens, and how it is cut says how its seat
+is doing; which one is selected is still said by the raised fill and the ink, so
+the rail reads the same with colour ignored. The session URL owns the selection:
 Flagged is the address-free default and another lens uses `?lens=`. A completed
 frozen generation without Flagged falls back to its first available board and
 replaces the URL with that honest address. A live generation keeps the requested
@@ -267,9 +272,11 @@ returns to its board. Reloading the URL opens the same selection.
 | Flagged | Where did automated analysis find a problem or a disagreement? |
 | Noise | What remains, and why may it need less attention? |
 
-A lens rail shows only the boards present in the selected generation. Reviewing
-a proposal before any code exists gives you Design alone, not four disabled
-segments.
+The rail carries every lens, always, and none of them is ever a disabled segment.
+A lens with nothing to show says so on the board — a typed absence in its own
+words, or the reason it failed — rather than leaving a gap where a tab used to
+be. Reviewing a proposal before any code exists gives you a Design board and four
+lenses that say they found nothing to draft.
 
 Design reads the specification the branch was written against. Rennet does not
 hand it one: the reader looks through the checkout where specifications live —
@@ -277,13 +284,14 @@ OpenSpec changes, Kiro and BMAD documents, superpowers plans, ADRs, grill-me
 notes — using the branch's own commit messages and pull request body as the
 clue, and it cites the line that ties the document to the branch so you can
 check the link. Repositories without a spec workflow are ordinary, and Rennet
-says so plainly: the bench reads "No spec found for this branch." and the
-finished boards have no Design tab, rather than an empty one.
+says so plainly: the Design board reads "No spec found for this branch.", which
+is a result rather than a gap.
 
 The board drafter writes each title and short intro. Design uses a wider
 structured measure for specification content. Sequence, Decisions, Flagged, and Noise use a
 narrower reading measure. Sections fold to a one-line gist and unfold to their
-contents; every board opens folded except Flagged, which opens ready to read.
+contents; every board opens folded, so you take the summaries first and open what
+you want to read.
 Folded counts name review objects: findings, decisions, requirements, steps,
 outcomes, groups, files, and comments.
 

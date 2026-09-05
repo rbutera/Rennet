@@ -8,6 +8,8 @@ import {
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useRoute, useSearch } from "wouter";
 import { LensBoardView } from "../board";
+import { SeatTranscriptDrawer } from "../board/seat-transcript-drawer";
+import { WorkspaceHeader } from "../board/workspace-header";
 import { useCommand, useMutation } from "../data";
 import { useHandoffExits } from "../handoff/exits";
 import { ExitFab } from "../handoff/fab";
@@ -262,6 +264,19 @@ export function ReviewWorkspace({ review }: { review: Review }) {
   // reachability half on top; a desktop window IS its daemon connection, so this is the whole rule.
   const stale = isReviewStale(review);
 
+  // ONE SLOT FOR THE DRAWER AND THE DIFF (6.4/D14). The transcript drawer lives inside the
+  // board region and the diff is a `?view`, so the two would otherwise be able to occupy
+  // the same space at once — or worse, the drawer would survive the navigation invisibly
+  // and reappear when the reviewer came back to the board without asking for it. Leaving
+  // the board view CLOSES the transcript, which is the half of "share one slot" a route
+  // change can express; the other half is structural, since the control that opens the
+  // drawer is the seat widget and the seat widget is on the board view only.
+  const openSeatTranscript = useRennetStore((s) => s.uiActions.openSeatTranscript);
+  const onBoardView = view === "board";
+  useEffect(() => {
+    if (!onBoardView) openSeatTranscript(null);
+  }, [onBoardView, openSeatTranscript]);
+
   function toHandoff() {
     const { path, replace } = viewToggle(slug, "handoff", {
       lens: query.lens,
@@ -307,6 +322,11 @@ export function ReviewWorkspace({ review }: { review: Review }) {
           </button>
         </div>
       ) : null}
+      {/* CAPTURE IN THE WORKSPACE, NOT IN FRONT OF IT (5.2). While a generation is being
+          prepared this names the step it is on and offers cancel; when nothing is being
+          prepared it renders nothing. The boards are on screen behind it either way —
+          there is no waiting stage between the reviewer and their review. */}
+      <WorkspaceHeader slug={slug} />
       {view === "handoff" ? (
         <HandoffMount key={slug} review={review} slug={slug} navigate={navigate} />
       ) : view === "diff" ? (
@@ -318,52 +338,65 @@ export function ReviewWorkspace({ review }: { review: Review }) {
           round={query.round ?? undefined}
         />
       ) : (
-        <div className="chrome-scroll-clearance min-h-0 flex-1 overflow-y-auto">
-          {view === "rounds" && roundsUnavailable !== undefined ? (
-            <RoundsUnavailable reason={roundsUnavailable} />
-          ) : view === "rounds" && roundRecords.length > 0 ? (
-            <RoundsLedger reviewId={review.id} slug={slug} records={roundRecords} />
-          ) : showRoundGreeting ? (
-            // Report phase with the greeting armed: the report GATES the reveal. A valid report
-            // leads the surface (regeneration streaming beneath); a missing or invalid report is
-            // surfaced HONESTLY — never silently swallowed, and the new generation stays HIDDEN
-            // behind the reveal (finding 1). Falling through to `LensBoardView` here would open
-            // the composed generation with no "View the New Boards" act and hide the failure.
-            report.status === "valid" ? (
-              <RoundGreeting
-                board={report.board}
-                state={roundState}
-                onReveal={consumeRoundReport}
-                {...(greetingReceipt === undefined ? {} : { receipt: greetingReceipt })}
-              />
+        // THE BOARD REGION (5.6/6.2/D15): a ROW of the board's own primary scroller and the
+        // seat-transcript drawer beside it. The scroller is the board column's, not the
+        // row's, so the drawer scrolls on its own and a tall board scrolls under a drawer
+        // that stays put. `@container` is the drawer's measure: it takes the whole region
+        // below the shell's minimum surface width, and that width is the REGION's, not the
+        // window's, so a wide window with a wide chat dock still gets the narrow treatment.
+        <div data-region="board" className="flex min-h-0 flex-1 @container">
+          <div className="chrome-scroll-clearance min-h-0 min-w-0 flex-1 overflow-y-auto">
+            {view === "rounds" && roundsUnavailable !== undefined ? (
+              <RoundsUnavailable reason={roundsUnavailable} />
+            ) : view === "rounds" && roundRecords.length > 0 ? (
+              <RoundsLedger reviewId={review.id} slug={slug} records={roundRecords} />
+            ) : showRoundGreeting ? (
+              // Report phase with the greeting armed: the report GATES the reveal. A valid report
+              // leads the surface (regeneration streaming beneath); a missing or invalid report is
+              // surfaced HONESTLY — never silently swallowed, and the new generation stays HIDDEN
+              // behind the reveal (finding 1). Falling through to `LensBoardView` here would open
+              // the composed generation with no "View the New Boards" act and hide the failure.
+              report.status === "valid" ? (
+                <RoundGreeting
+                  board={report.board}
+                  state={roundState}
+                  onReveal={consumeRoundReport}
+                  {...(greetingReceipt === undefined ? {} : { receipt: greetingReceipt })}
+                />
+              ) : (
+                <ReportUnavailable status={report.status} />
+              )
             ) : (
-              <ReportUnavailable status={report.status} />
-            )
-          ) : (
-            // No eyebrow. The board opens on the board (spike `main-surface.tsx`); a
-            // `REVIEW · <repo>` strip above it was app-only chrome restating the top bar's
-            // own trail, and it pushed the document down a row on every read.
-            <LensBoardView
-              reviewId={review.id}
-              generation={boardGeneration}
-              selectedGeneration={query.generation ?? boardGeneration}
-              lens={query.lens}
-              generations={boardGenerations}
-              onGenerationSelect={(generation) =>
-                navigate(
-                  sessionPath(slug, {
-                    view: "board",
-                    lens: query.lens,
-                    generation: generation === boardGeneration ? undefined : generation,
-                    file: query.file ?? undefined,
-                    round: query.round ?? undefined,
-                    ask: query.ask ?? undefined,
-                  }),
-                  { replace: true },
-                )
-              }
-            />
-          )}
+              // No eyebrow. The board opens on the board (spike `main-surface.tsx`); a
+              // `REVIEW · <repo>` strip above it was app-only chrome restating the top bar's
+              // own trail, and it pushed the document down a row on every read.
+              <LensBoardView
+                slug={slug}
+                reviewId={review.id}
+                generation={boardGeneration}
+                selectedGeneration={query.generation ?? boardGeneration}
+                lens={query.lens}
+                generations={boardGenerations}
+                onGenerationSelect={(generation) =>
+                  navigate(
+                    sessionPath(slug, {
+                      view: "board",
+                      lens: query.lens,
+                      generation: generation === boardGeneration ? undefined : generation,
+                      file: query.file ?? undefined,
+                      round: query.round ?? undefined,
+                      ask: query.ask ?? undefined,
+                    }),
+                    { replace: true },
+                  )
+                }
+              />
+            )}
+          </div>
+          {/* The seat transcript, right-aligned inside the board region and never over the
+              chat dock (#823) — the dock is outside the outlet entirely, so no state of
+              this drawer can reach it. */}
+          <SeatTranscriptDrawer reviewId={review.id} />
         </div>
       )}
       <ExitFab mode={mode} open={view === "handoff"} onToggle={toHandoff} />

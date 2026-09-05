@@ -336,6 +336,7 @@ export function RoundsLedger({
         )}
 
         <LensBoardView
+          slug={slug}
           reviewId={reviewId}
           generation={liveGeneration}
           selectedGeneration={selectedGeneration}

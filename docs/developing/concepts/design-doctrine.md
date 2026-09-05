@@ -43,11 +43,11 @@ shape, or position.
 
 The lens register is the one hue family that is not a semantic role. Five lenses
 read one change in parallel, and a reviewer tracks them across two surfaces — the
-bench's readers and the lens rail — so each lens carries a colour: Flagged red,
-Decisions yellow, Design blue, Sequence green, Noise neutral. It is admitted as
-identity, at small mass, on marks only. A lens hue is never a fill, never type, and
-never says how a lane is doing; on the bench, state is the way the core sample is
-cut, so a failed lane snaps in its own colour rather than turning red. The slots are
+lens rail and the seat widget above the board it selects — so each lens carries a
+colour: Flagged red, Decisions yellow, Design blue, Sequence green, Noise neutral.
+It is admitted as identity, at small mass, on marks only. A lens hue is never a
+fill, never type, and never says how a lane is doing: state is the way the rail's
+stop is CUT, so a failed lane snaps in its own colour rather than turning red. The slots are
 hue names (`--rn-lens-red`, `--rn-lens-blue`, …) rather than lens names, which is
 what makes them portable: `packages/theme` binds five hues and knows nothing about
 lenses, and `packages/app-ui/src/board/lens-colour.ts` owns the mapping. Because the

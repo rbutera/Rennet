@@ -28,13 +28,14 @@ function BoardHarness({
 }) {
   const [selectedGeneration, setSelectedGeneration] = useState(generation);
   const [lens, setLens] = useState<LensKind>(initialLens);
-  const lenses = useLensBoards("rev-1", selectedGeneration);
+  const lenses = useLensBoards("", "rev-1", selectedGeneration);
   const available = lenses.map((entry) => entry.lens);
   const selectedLens = available.includes(lens) ? lens : (available[0] ?? lens);
   return (
     <>
       <LensSwitcher lenses={lenses} selected={selectedLens} onSelect={setLens} />
       <LensBoardView
+        slug=""
         reviewId="rev-1"
         generation={generation}
         selectedGeneration={selectedGeneration}
@@ -85,7 +86,7 @@ describe("LensBoardView — board document, switchers, drill-down", () => {
           })
         }
       >
-        <LensBoardView reviewId="rev-1" generation="gen1" lens="design" />
+        <LensBoardView slug="" reviewId="rev-1" generation="gen1" lens="design" />
       </BridgeProvider>,
     );
 
@@ -163,15 +164,29 @@ describe("LensBoardView — board document, switchers, drill-down", () => {
     expect(container.querySelector('[data-kind="finding"] h4')?.textContent).toContain("Fix");
   });
 
-  it("renders a segment only for lenses present this generation (absent-not-disabled)", async () => {
+  it("renders a segment for every lens, and says which have a board (5.1)", async () => {
+    // The rail lists all five from the first frame (D12) and never drops one — a tab that
+    // vanished when its lane settled would move the reviewer's selection out from under
+    // them. What tells the two apart is the STATE on each segment, not its presence:
+    // gen2 carries sequence + flagged, and the other three read `none` rather than being
+    // absent from the rail.
     const { container } = await renderView("gen2");
     const tabs = container.querySelector("[data-kind=lens-switcher]");
-    // gen2 carries sequence + flagged; the other three lenses have no board — no segment.
-    expect(tabs?.querySelector("[data-lens=sequence]")).toBeTruthy();
-    expect(tabs?.querySelector("[data-lens=flagged]")).toBeTruthy();
-    expect(tabs?.querySelector("[data-lens=design]")).toBeNull();
-    expect(tabs?.querySelector("[data-lens=decisions]")).toBeNull();
-    expect(tabs?.querySelector("[data-lens=noise]")).toBeNull();
+    expect(
+      [...(tabs?.querySelectorAll("[data-lens]") ?? [])].map((t) => t.getAttribute("data-lens")),
+    ).toEqual(["design", "sequence", "decisions", "flagged", "noise"]);
+    expect(tabs?.querySelector("[data-lens=sequence]")?.getAttribute("data-register")).toBe(
+      "settled",
+    );
+    expect(tabs?.querySelector("[data-lens=flagged]")?.getAttribute("data-register")).toBe(
+      "settled",
+    );
+    // No lane in flight and no board: honestly nothing, not a promise of one coming.
+    for (const lens of ["design", "decisions", "noise"]) {
+      expect(tabs?.querySelector(`[data-lens=${lens}]`)?.getAttribute("data-register")).toBe(
+        "none",
+      );
+    }
   });
 
   it("keeps a failed lens selectable so its exact generation failure is reachable", async () => {
@@ -302,7 +317,11 @@ describe("LensBoardView — board document, switchers, drill-down", () => {
     await settled(container);
     // gen0 carries only the frozen Design board — the board swaps to it, resolved by id.
     expect(lensOf(container)).toBe("design");
-    expect(container.querySelector("[data-lens=flagged]")).toBeNull();
+    // Flagged is still a tab (the rail is total) but it has nothing to open in gen0, and
+    // it is that absence of a result — not an absence of the tab — that carries the fact.
+    expect(container.querySelector("[data-lens=flagged]")?.getAttribute("data-register")).toBe(
+      "none",
+    );
   });
 
   it("hides the generation switcher when there is only one generation", async () => {
