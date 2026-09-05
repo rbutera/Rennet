@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { after, describe, it } from "node:test";
+import { fileURLToPath } from "node:url";
 
 import { findDatabases, repairDatabase, storedBytes, storesArePaired } from "./nx-cache-doctor.mjs";
 
@@ -150,6 +152,43 @@ describe("nx cache doctor", () => {
     writeFileSync(join(data, "project-graph.json"), "{}");
     assert.deepEqual(findDatabases(data), [databasePath]);
     assert.deepEqual(findDatabases(join(data, "absent")), []);
+  });
+
+  // The two tests below run the script itself, because both claims are about
+  // its exit code and neither is reachable from the exported functions.
+  const script = join(dirname(fileURLToPath(import.meta.url)), "nx-cache-doctor.mjs");
+
+  function runScript(env) {
+    return spawnSync(process.execPath, [script], {
+      encoding: "utf8",
+      env: { ...process.env, ...env },
+    });
+  }
+
+  it("refuses to run when the two stores are split", () => {
+    const { root } = fixture([]);
+    const result = runScript({ NX_CACHE_DIRECTORY: join(root, "elsewhere", "cache") });
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /split across two unrelated stores/);
+  });
+
+  it("reports an unreadable database and lets the gate continue", () => {
+    // A live Nx process elsewhere can hold the database. That tells us nothing
+    // about the cache, so the doctor must not fail the gate over it.
+    const { root, data } = fixture([
+      { hash: "keep", project: "rennet-core", target: "build", terminal: "ok\n", output: "b" },
+    ]);
+    writeFileSync(join(data, "broken-v3.db"), "not a database");
+    const result = runScript({
+      NX_CACHE_DIRECTORY: join(root, ".nx", "cache"),
+      NX_WORKSPACE_DATA_DIRECTORY: data,
+    });
+    assert.equal(result.status, 0);
+    assert.match(result.stderr, /could not read/);
+    // The readable database has an entry, so the summary reports what it did
+    // check AND carries the failure, rather than claiming a clean cache.
+    assert.match(result.stdout, /1 cache entries, all restorable/);
+    assert.match(result.stdout, /1 database unreadable, not checked/);
   });
 
   it("calls the stores paired only when they share a parent", () => {

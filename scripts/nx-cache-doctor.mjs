@@ -182,19 +182,40 @@ function main(argv) {
   }
 
   let checked = 0;
+  let unread = 0;
   const removed = [];
   for (const databasePath of databases) {
-    const result = repairDatabase(databasePath, stores.artifacts, { dryRun });
+    let result;
+    try {
+      result = repairDatabase(databasePath, stores.artifacts, { dryRun });
+    } catch (error) {
+      // A live Nx process in another worktree holds this database. We have
+      // learned nothing about the cache, so we say so and get out of the way
+      // rather than failing a gate over a lock. The split case above is
+      // different: there we know the run is unsafe.
+      process.stderr.write(
+        `nx-cache-doctor: could not read ${databasePath} (${error.message}). ` +
+          "Another Nx process is probably using it; re-run `pnpm nx:doctor` once it exits.\n",
+      );
+      unread += 1;
+      continue;
+    }
     checked += result.checked;
     removed.push(...result.unrestorable);
   }
 
   const verb = dryRun ? "would drop" : "dropped";
-  if (removed.length === 0) {
-    process.stdout.write(`nx-cache-doctor: ${checked} cache entries, all restorable\n`);
+  const note =
+    unread > 0 ? `; ${unread} database${unread === 1 ? "" : "s"} unreadable, not checked` : "";
+  if (checked === 0 && unread > 0) {
+    process.stdout.write(
+      `nx-cache-doctor: cache not checked, ${unread} database${unread === 1 ? "" : "s"} unreadable\n`,
+    );
+  } else if (removed.length === 0) {
+    process.stdout.write(`nx-cache-doctor: ${checked} cache entries, all restorable${note}\n`);
   } else {
     process.stdout.write(
-      `nx-cache-doctor: ${verb} ${removed.length} of ${checked} cache entries whose artifacts are missing from ${stores.artifacts} (${describe(removed)})\n`,
+      `nx-cache-doctor: ${verb} ${removed.length} of ${checked} cache entries whose artifacts are missing from ${stores.artifacts} (${describe(removed)})${note}\n`,
     );
   }
   return 0;
