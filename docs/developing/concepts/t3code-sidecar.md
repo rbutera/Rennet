@@ -200,36 +200,43 @@ Rennet takes the click only when it owns the answer. The mount's `onOpenFile` pr
   `app-ui` itself never imports the vendored app, and a host that provides nothing shows
   a line saying so rather than an empty box.
 
-The slot's other caller is **the bench** — the review workspace's first frame while
-capture and the first board generation run (`packages/app-ui/src/app/preparation-bench.tsx`,
-mounted by `SessionScreen` in the session outlet, so the sidebar, top bar and chat slot
-stay around it). The bench draws the change as its centrepiece with one reader per lens,
-each showing its seats' `latest` lines from `SessionPreparation` — the daemon's plain-words
-projection of each seat's newest thread activity — and capture as the first beat of the same
-scene rather than a separate screen. Each seat's line is a control: activating one writes
-that seat's `thread` (`{ environmentId, threadId }`) through `uiActions.openLensThread` and
-opens the dock, and the slot renders that transcript read-only (below). As a lane settles
-(`drafted`/`done`) its board opens on the bench beneath the readers through
-`LensBoardDocument`, read off the same per-lens `board.read` seam the workspace uses
-(`useLensBoardResolutions` at the initial generation), so three settled lanes and two
-running ones show three boards and two live readers. A settled lane whose read answered
-with something other than a board — malformed, for another generation, unreadable, or a
-lens that failed to draft — shows that account in the board's place, in the same words the
-workspace uses, rather than an empty space under a reader that says "drafted". A lane with no
-`thread` yet is disabled rather than offered as a transcript that does not exist.
+The slot's other caller is **the board workspace**. A review opens on its boards from the
+first frame; there is no separate preparation screen and no waiting stage of any kind
+between the reviewer and their boards.
 
-The bench is its own primary scroller (`chrome-scroll-clearance min-h-0 flex-1
+- The **lens rail** (`packages/app-ui/src/board/lens-switcher.tsx`) lists all five lenses
+  for the generation from the moment it starts, each carrying its seat's state — waiting,
+  working, settled, failed or absent — read from the generation's lanes through
+  `board/lens-seats.ts`. A running lens is selectable, never a disabled segment, and
+  Flagged carries one indicator per voice because it runs two seats. The register rides
+  the stop under each tab as a `data-cut` (`unstarted` / `open` / `clean` / `seamed` /
+  `snapped` / `empty`), so it survives the colour being ignored — the hue says which lens
+  this is, so a failed Design lane is a snapped blue stop and never a red one.
+- The **seat widget** (`board/seat-widget.tsx`) sits directly above the selected board and
+  names the seat writing it: its lens, its provider, how long this window has watched it,
+  its `latest` line from `SessionPreparation` in the daemon's plain words, and what the
+  board holds so far. Flagged shows both voices side by side, each with its own control. A
+  failed seat shows its failure in place. When the lane settles the widget collapses to a
+  one-line receipt, which is still the way back into the seat's transcript.
+- The **workspace header** (`board/workspace-header.tsx`) reports capture over the boards
+  — its two named beats and its cancel — and carries the generation-wide retry. Once
+  nothing is being prepared it renders nothing.
+- The **board itself** renders each element as the seat writes it, through the same
+  per-lens `board.read` seam the settled workspace uses. While the lane is unsettled the
+  board says so in three independent ways: the rail entry shows its seat working, the
+  board header carries an `in progress` mark and states that the board is still being
+  written, and the last row is a placeholder saying where the next element lands. All
+  three clear together at settle, and the round-delta marks are withheld until then — a
+  partial board would mark every section new. Nothing navigates: the drafting view and the
+  finished view are the same view at the same route.
+
+The board region is its own primary scroller (`chrome-scroll-clearance min-h-0 flex-1
 overflow-y-auto`, the repo-wide idiom), because the outlet is a flex column inside a
 `fixed inset-0 overflow-hidden` shell and a surface that does not declare it is simply
-clipped at the fold — which put every landed board out of reach. The safe-centring that
-keeps a short bench in the middle lives on the inner column, inside the scroller. While
-lenses are still working, one line above the stack says the boards are still landing; it
-is dropped once nothing is drafting, where it would be a promise nothing is keeping.
-The review a reader opens its transcript against is the preparation record's `reviewId`,
-falling back to the session's own attached `reviewId`: only the `drafting` arm requires
-the field, while `failed` and `cancelled` make it optional and both keep their lanes —
-threads and all — so without the fallback a stopped preparation drew readers holding real
-transcripts that no click could open.
+clipped at the fold, and a board on a ninety-five-file change is far taller than a pane.
+A session whose review does not exist yet (capture is still running, so there is no board
+to read) takes `app/preparing-workspace.tsx`, which is the same board view with an empty
+review id: the rail still lists five lenses, all waiting.
 
 The mount's environment registration persists in each host's IndexedDB under T3's
 catalog (the same store T3's hosted app uses for paired machines), keyed by one stable
@@ -254,10 +261,22 @@ bottom instead of reserving a gap. No vendored file is edited and there is no
 gate either: it hides a composer that would otherwise start a turn on a seat's thread,
 which is confusing rather than dangerous.
 
-The workspace opens one by writing a seat's thread ref into the store
-(`uiActions.openLensThread(ref)`) — on the bench every seat's line of speech is its own
-control, so Flagged offers two, one per provider; `T3ChatDock` then renders `T3ThreadView` for it with a
-"Back to the session" control that clears it. The transcript keeps streaming while the
+**The transcript never takes the chat slot** (#823). The chat dock shows the session's own
+thread in every state of every lane, and there is no control anywhere that points it
+elsewhere; `T3ThreadView` is mounted a SECOND time instead, by the board region's own
+transcript drawer (`packages/app-ui/src/board/seat-transcript-drawer.tsx`). Rai, 2026-09-04:
+*"we take over the orchestrator's chat with the lens agent's chat thread.. thats a big nono
+and should be removed or reworked. i'd want a right sidebar or something or a drawer or
+something like that, but the orchestrator chat should always be there."*
+
+The workspace opens one by writing a seat's ref into the store
+(`uiActions.openSeatTranscript({ reviewId, lens, seat, thread })`) from the seat widget —
+Flagged offers two controls, one per voice — and the drawer renders `T3ThreadView`
+read-only, right-aligned inside the board region. The drawer and the diff view share one
+slot: opening the diff closes the transcript. Selecting another lens moves the board, the
+widget and the transcript together, so the three cannot describe different lenses. Below the
+board region's minimum width the drawer takes the whole region, and it never touches the
+dock, which is mounted outside the outlet entirely. The transcript keeps streaming while the
 seat runs — that is upstream's thread subscription, nothing Rennet drives — and stays
 readable after the seat settles and after the boards reveal.
 
@@ -283,7 +302,8 @@ The council still routes each seat: a Claude seat is a thread on T3's `claudeAge
 instance at the council's model, a Codex seat one on `codex`. Flagged runs both, on two
 threads. A lane holds its seats in provider order — Claude first, Codex second, never the
 order the two threads happened to bind in — so the lane's own `thread` and `latest` always
-mirror the Claude seat, and the bench lists the two voices the same way on every run.
+mirror the Claude seat, and the rail and the widget list the two voices the same way on
+every run.
 
 Three things follow from the thread being persistent.
 
@@ -441,7 +461,7 @@ supervisor.
 **T3 is a board seat's only backend, structurally.** A daemon that cannot bring the sidecar
 up — no vendored bundle, a spawn failure — answers with the reason instead of a runtime, and
 every board seat of that generation fails as `T3 sidecar unavailable: <detail>`, which the
-bench speaks in the failed reader's own voice. A caller that composed no sidecar at all
+seat widget speaks in that lens's own voice. A caller that composed no sidecar at all
 fails the same way, naming that instead. There is nothing to fall back to: the board
 pipeline holds no harness port, and `councilSeatTurn` refuses a board job without a seam
 before it reaches either ephemeral leg. Those legs still run every non-board job — the
@@ -862,7 +882,7 @@ minutes, of which the capture and scout took about ninety seconds.
 | Decisions (Opus, high) | 309 s | 232 s | 452 s |
 | Design (Opus, high) | start dropped, 120 s timeout | 1 s (no draft to repair) | start dropped, never settled |
 
-The first core board (Flagged) reached the bench at 336 s; the whole generation settled at
+The first core board (Flagged) reached the surface at 336 s; the whole generation settled at
 541 s. On v0.6.8 every repair "settled" in tens of milliseconds because the wait answered
 with the previous turn; on v0.6.9 the repairs are real follow-up turns on the same thread,
 which is what the pointer-only repair was built for.
@@ -928,7 +948,7 @@ smaller still: the Design repair turn carried **133 bytes** of lint pointers, ag
 12,441-byte drafting turn on the same thread.
 
 Wall clock from branch pick to the last board was **9 min 32 s** on the 95-file branch (capture
-and scout took 72 s of it; the first core board reached the bench at 360 s and the generation
+and scout took 72 s of it; the first core board reached the surface at 360 s and the generation
 settled at 499 s) and **1 min 35 s** on the one-file branch (19 s of capture and scout, reveal
 at 76 s). The 95-file generation billed 6,687,639 tokens across 11 turns, of which 6,231,962
 were cache reads; the one-file generation billed 617,178 across 8.
@@ -980,7 +1000,7 @@ in production: the branch with no specification produced the same refusal, not "
 for this branch." Filed as [#810](https://github.com/rbutera/Rennet/issues/810). **The Design
 lens is not proven by this drive**, in either direction.
 
-While the seat was dead the bench went on reading *"Design — quiet for 320 s"*, and the durable
+While the seat was dead the surface went on reading *"Design — quiet for 320 s"*, and the durable
 lane stayed `running`, for the five minutes after its last attempt failed at 33 s
 ([#813](https://github.com/rbutera/Rennet/issues/813), fixed in
 [#816](https://github.com/rbutera/Rennet/pull/816): a lens failure is published on the same
@@ -1058,7 +1078,7 @@ change that falsified them. A string only a person reads is only caught by a per
 it. Each of the three now has a dom test over the rendered surface, which closes these three
 and not the class: a fourth string nobody thought to assert would go the same way.
 
-The bench's "quiet for 320 s" and the round's "0 files changed" are both true sentences about
+The surface's "quiet for 320 s" and the round's "0 files changed" are both true sentences about
 the wrong quantity, which no assertion about the same quantity would catch. You find them by
 watching a screen while knowing what the disk says.
 
@@ -1290,7 +1310,7 @@ enumeration, so a large delta costs the turn nothing and the file stays complete
 - `packages/server/src/bound-workspace.ts`: the one binding decision (`decideBoundWorkspace`); `create-server.ts` records it on the session as `boundRoot` and reads it back through `boundRootForSession` / `boundWorkspaceForReview`.
 - `packages/server/src/legacy-worktrees.ts`: the daemon-start sweep of the retired round and review worktrees.
 - `packages/adapters/src/pr-worktree.ts`: `worktreeForBranch`, `ensureBranchWorktree`, `branchWorktreePath` beside the pull-request worktree helpers.
-- `packages/app-ui/src/chat/t3-chat-dock.tsx`: the slot, its header trail, the session-or-lens choice and the hand-off to the host-provided components (`chat/t3-chat-slot.tsx`); `packages/app-ui/src/store/ui.ts`: `lensThread` and `openLensThread`.
+- `packages/app-ui/src/chat/t3-chat-dock.tsx`: the slot, its header trail and the hand-off to the host-provided components (`chat/t3-chat-slot.tsx`) — it shows the session's thread and nothing else; `packages/app-ui/src/board/seat-transcript-drawer.tsx`: the second mount, for a seat's transcript; `packages/app-ui/src/store/ui.ts`: `seatTranscript` and `openSeatTranscript`.
 - `packages/t3-chat/src/native-chat.tsx`: the native mount (routes, providers, environment registration, the thread and draft route views mirrored from upstream's route files, and `T3ThreadView`); `session.ts`: the session-to-registration mapping and the route builder both views share; `t3.css`: the theme bridge and the read-only composer rule. `apps/desktop/vite.renderer.config.ts` and `vite.browser.config.ts` each carry the alias, dedupe and defines; `apps/desktop/src/renderer/index.tsx` and `src/browser/entry.tsx` each provide both components.
 - `packages/server/src/dispatch/chat.ts`: `chat.t3Session`; `dispatch/daemon.ts` adds `t3Sidecar` to `daemon.status`.
 - `packages/protocol/src/wire.ts`: `t3SidecarStatusSchema`, `t3SessionSchema`.

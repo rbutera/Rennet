@@ -275,12 +275,22 @@ describe("state 3 — the floating chip layer (C20 §5)", () => {
     });
   }
 
-  it("gives the preparation bench a real primary scroller, so its boards are reachable", async () => {
-    // #819: the bench was `mx-auto flex min-h-full … justify-center-safe` and NOTHING else
-    // — no scroller at all. The outlet is a flex column and the shell root is `fixed
-    // inset-0 overflow-hidden`, so every board that landed below the fold was clipped where
-    // no scroll could reach it. This file covered the session branches and the run route;
-    // the bench, which is the FIRST surface a new review lands on, had no guard.
+  it("gives the drafting workspace a real primary scroller, widget included", async () => {
+    // #819 / lens-board-tools 5.6 (D15). The bench this used to name is deleted; the
+    // surface a new review lands on is the board workspace, and the defect it guards
+    // against is unchanged: the outlet is a flex column and the shell root is `fixed
+    // inset-0 overflow-hidden`, so a surface with no scroller in the chain is CLIPPED
+    // where no scroll can reach it.
+    //
+    // The board region is a ROW now (the board column and the seat-transcript drawer),
+    // so the scroller is the COLUMN's, one level deeper than the bench's was — which is
+    // what makes the height chain worth re-proving rather than assuming.
+    //
+    // WHAT THIS CANNOT CATCH, said plainly: happy-dom computes no layout, so nothing here
+    // measures a pixel. It proves the chain is DECLARED — one marked scroller between the
+    // board and the clipping frame, nothing between them re-clipping it, and the seat
+    // widget inside it rather than pinned above it. That the pane actually scrolls on a
+    // 95-file board is task 7.1's real drive, and only a real drive can say it.
     const row = {
       id: "sess-bench",
       projectId: "proj-1",
@@ -313,7 +323,11 @@ describe("state 3 — the floating chip layer (C20 §5)", () => {
     const { container, findByTestId } = mount(
       <RennetRouterApp bridge={bridge} history={memoryHistory("/s/sess-bench")} />,
     );
-    await findByTestId("bench-readers");
+    // Drive the app to the drafting workspace and take a real element off the BOARD — the
+    // thing that has to be reachable — rather than a container chosen by class.
+    const widget = await findByTestId("workspace-header");
+    const board = container.ownerDocument.querySelector('[data-kind="lens-board-view"]');
+    if (!board) throw new Error("the workspace did not render a board view");
     const region = container.ownerDocument.querySelector("[data-floating-chrome]");
     if (!region) throw new Error("no outlet content region");
     // Exactly one claim, as everywhere else in this file: none means the clearance lands
@@ -321,18 +335,34 @@ describe("state 3 — the floating chip layer (C20 §5)", () => {
     const scrollers = region.querySelectorAll(".chrome-scroll-clearance");
     expect(scrollers.length).toBe(1);
     const scroller = scrollers[0];
-    if (!scroller) throw new Error("the bench has no marked primary scroller");
-    // The trio, and then the two facts that make it real: `flex-1` is inert unless the
-    // scroller is a direct flex child of the flex-column region, which is exactly how the
-    // board branch's dead scroller passed a class-only assertion once before.
+    if (!scroller) throw new Error("the workspace has no marked primary scroller");
     expect(scroller.className).toContain("overflow-y-auto");
     expect(scroller.className).toContain("min-h-0");
     expect(scroller.className).toContain("flex-1");
-    expect(scroller.parentElement).toBe(region);
     expect(region.className).toContain("flex-col");
-    // ...and it is the element carrying the bench, not some unrelated bounded list.
-    expect(scroller.getAttribute("data-screen")).toBe("session-preparation");
-    expect(scroller.querySelector('[data-testid="bench-readers"]')).toBeTruthy();
+    // The board is INSIDE it — walked, not asserted by class. A scroller that renders
+    // beside the content it is supposed to carry is the exact shape of the dead scroller
+    // this file caught once before.
+    expect(scroller.contains(board)).toBe(true);
+    // Every ancestor between the scroller and the region declares `min-h-0`, which is what
+    // makes `flex-1` bound rather than grow: one link missing and the whole chain is inert.
+    // Walked from the real DOM, so a restructure that inserts a wrapper is caught here.
+    const chain: Element[] = [];
+    for (let node = scroller.parentElement; node && node !== region; node = node.parentElement) {
+      chain.push(node);
+    }
+    expect(chain.length).toBeGreaterThan(0);
+    for (const node of chain) {
+      expect(node.className, `${node.className} bounds its height`).toContain("min-h-0");
+      // …and nothing between them re-clips: an `overflow-hidden` ancestor inside the
+      // scroller's chain is #819 with the scroller present but useless.
+      expect(node.className).not.toContain("overflow-hidden");
+    }
+    // The widget is carried by the scroller too (5.6, "widget included"): the header sits
+    // ABOVE it deliberately, so it is the board's own widget that must scroll with the board.
+    expect(widget).toBeTruthy();
+    const seatWidget = scroller.querySelector('[data-kind="seat-widget"]');
+    expect(seatWidget, "the seat widget scrolls with its board").toBeTruthy();
   });
 
   it("gives a TAKEOVER surface plain clearance, never the scroll treatment", () => {

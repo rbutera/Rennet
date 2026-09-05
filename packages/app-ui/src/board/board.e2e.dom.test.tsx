@@ -37,13 +37,14 @@ function BoardHarness({
 }) {
   const [selectedGeneration, setSelectedGeneration] = useState(generation);
   const [lens, setLens] = useState<LensKind>(initialLens);
-  const lenses = useLensBoards("rev-1", selectedGeneration);
+  const lenses = useLensBoards("", "rev-1", selectedGeneration);
   const available = lenses.map((entry) => entry.lens);
   const selectedLens = available.includes(lens) ? lens : (available[0] ?? lens);
   return (
     <>
       <LensSwitcher lenses={lenses} selected={selectedLens} onSelect={setLens} />
       <LensBoardView
+        slug=""
         reviewId="rev-1"
         generation={generation}
         selectedGeneration={selectedGeneration}
@@ -295,13 +296,22 @@ describe("board E2E — the full fixture set through the real LensBoardView", ()
     expect(container.textContent).toContain("why silent?");
   });
 
-  it("absent-lens: a lens with no board this generation yields no segment (never disabled)", async () => {
+  it("absent-lens: a lens with no board this generation is present but says so (never disabled)", async () => {
     const { container } = await renderView("gen2");
     const tabs = container.querySelector("[data-kind=lens-switcher]");
-    expect(tabs?.querySelector("[data-lens=sequence]")).toBeTruthy();
-    expect(tabs?.querySelector("[data-lens=flagged]")).toBeTruthy();
+    expect(tabs?.querySelector("[data-lens=sequence]")?.getAttribute("data-register")).toBe(
+      "settled",
+    );
+    expect(tabs?.querySelector("[data-lens=flagged]")?.getAttribute("data-register")).toBe(
+      "settled",
+    );
     for (const absent of ["design", "decisions", "noise"] as const) {
-      expect(tabs?.querySelector(`[data-lens=${absent}]`)).toBeNull();
+      const tab = tabs?.querySelector<HTMLButtonElement>(`[data-lens=${absent}]`);
+      // Present, and NOT disabled — the rule the old name protected has not changed, only
+      // where a lens with no board is said to be (5.1: never omitted, never disabled).
+      expect(tab, `${absent} is on the rail`).toBeTruthy();
+      expect(tab?.disabled).toBe(false);
+      expect(tab?.getAttribute("data-register")).toBe("none");
     }
   });
 
@@ -316,6 +326,9 @@ describe("board E2E — the full fixture set through the real LensBoardView", ()
     await settled(container);
     // gen0 = the frozen propose-time Design board only; the document swaps to it by id.
     expect(lensOf(container)).toBe("design");
-    expect(container.querySelector("[data-lens=flagged]")).toBeNull();
+    // Flagged keeps its tab (the rail is total since 5.1) and carries nothing to open.
+    expect(container.querySelector("[data-lens=flagged]")?.getAttribute("data-register")).toBe(
+      "none",
+    );
   });
 });

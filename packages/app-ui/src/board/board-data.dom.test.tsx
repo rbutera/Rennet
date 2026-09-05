@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import type { LensBoard, LensKind } from "@rennet/protocol";
+import type { LensBoard, LensKind, LensLane } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { BridgeProvider } from "../data";
 import { mount } from "../test/dom";
@@ -8,9 +8,11 @@ import { MemoryBridge } from "../test/memory-bridge";
 import {
   type LensBoardResolutions,
   lensBoardsFromResolutions,
+  lensesWithResult,
   lensReadsSettled,
   useBoardData,
 } from "./board-data";
+import { lensSeatStates, waitingOnLine } from "./lens-seats";
 
 // The board-fetch seam resolves boards through the registered `board.read` command
 // (C18). The fixtures live behind the import fence and reach the seam only as a
@@ -67,34 +69,124 @@ describe("board-data seam — the single board resolution point", () => {
     expect(lensReadsSettled({ ...resolutions, design: { status: "missing" } })).toBe(false);
   });
 
-  it("omits an absent Design lane from the lens list when the branch has no spec", () => {
-    // session-bound-workspace D6: `no-spec` means this branch has no specification, so
-    // there is no Design tab and no empty board — every other absence stays selectable
-    // so its reason is still reachable, including Design's legacy `no-material`.
-    const valid = { status: "valid", board: FIXTURE_BOARDS.gen1?.sequence } as never;
+  it("lists every lens, result or none, and never drops one as it settles", () => {
+    // lens-board-tools 5.1/D12. The rail is the bench now, so it must carry all five from
+    // the first frame — INCLUDING a lens whose board has not arrived (`missing`) and a
+    // Design lane that settled `no-spec`. The `no-spec` omission that
+    // `session-bound-workspace` D6 introduced is what this reverses, and the reason is the
+    // other half of the same spec: "nothing navigates when a lane settles". A tab that
+    // exists while its lane runs and VANISHES when the lane settles `no-spec` moves the
+    // reviewer's selection out from under them.
     const resolutions = (designReason: "no-spec" | "no-material"): LensBoardResolutions =>
       ({
         design: { status: "absent", reason: designReason },
-        sequence: valid,
+        sequence: { status: "valid", board: FIXTURE_BOARDS.gen1?.sequence },
         decisions: { status: "absent", reason: "no-decisions" },
         flagged: { status: "failed", reason: "The structured response did not validate." },
-        noise: { status: "absent", reason: "no-noise" },
+        // No answer at all: the case the old list dropped silently.
+        noise: { status: "missing" },
       }) as unknown as LensBoardResolutions;
+    // Two lanes still running, so Noise's own entry is derived rather than read.
+    const seats = lensSeatStates(
+      [
+        { id: "design", label: "Design", status: "absent", reason: "No spec found." },
+        { id: "sequence", label: "Sequence", status: "running" },
+        { id: "decisions", label: "Decisions", status: "running" },
+        { id: "flagged", label: "Flagged", status: "failed", reason: "boom" },
+        { id: "noise", label: "Noise", status: "queued" },
+      ] as LensLane[],
+      resolutions("no-spec"),
+    );
 
-    const withoutSpec = lensBoardsFromResolutions(resolutions("no-spec"));
+    const withoutSpec = lensBoardsFromResolutions(resolutions("no-spec"), seats);
+    // POSITION, not membership: canonical lens order, all five, every time.
     expect(withoutSpec.map(({ lens }) => lens)).toEqual([
+      "design",
       "sequence",
       "decisions",
       "flagged",
       "noise",
     ]);
-    // Control for the omission: only the `no-spec` pairing is dropped. A Design lane
-    // carrying any other absence — or a board — is still in the list, so this cannot
-    // pass by dropping Design (or every absence) wholesale.
-    const legacy = lensBoardsFromResolutions(resolutions("no-material"));
-    expect(legacy.map(({ lens }) => lens)).toContain("design");
+    // Each still carries the result it has, so nothing was flattened to make the list
+    // total: an absence keeps its reason, a failure keeps its message, a board keeps its
+    // board, and the result-less lens carries none of the three.
+    expect(withoutSpec.find(({ lens }) => lens === "design")?.absence).toBe("no-spec");
+    expect(withoutSpec.find(({ lens }) => lens === "decisions")?.absence).toBe("no-decisions");
+    expect(withoutSpec.find(({ lens }) => lens === "flagged")?.failure).toContain("validate");
+    expect(withoutSpec.find(({ lens }) => lens === "sequence")?.board).toBeTruthy();
+    const noise = withoutSpec.find(({ lens }) => lens === "noise");
+    expect(noise?.board).toBeUndefined();
+    expect(noise?.absence).toBeUndefined();
+    expect(noise?.failure).toBeUndefined();
+
+    // …and the FALLBACK set is the one that still discriminates, which is why the rail
+    // going total does not make an empty Design board the fallback target for a missing
+    // selection. `no-spec` Design has a reason to show, so it is in it; `missing` Noise
+    // has nothing at all, so it is not.
+    expect(lensesWithResult(withoutSpec).map(({ lens }) => lens)).toEqual([
+      "design",
+      "sequence",
+      "decisions",
+      "flagged",
+    ]);
+    // The legacy absence reads exactly the same way — the list never depended on WHICH
+    // absence a lens settled with.
+    const legacy = lensBoardsFromResolutions(resolutions("no-material"), seats);
     expect(legacy.find(({ lens }) => lens === "design")?.absence).toBe("no-material");
-    expect(withoutSpec.map(({ absence }) => absence)).toContain("no-decisions");
+  });
+
+  it("derives each lens's seat state from the lanes, and Noise's from its siblings", () => {
+    // 5.1/5.7 and D16c. Three facts in one derivation, because they are one derivation:
+    // a running lane is `working`, a lane the daemon has not opened is `waiting`, and
+    // NOISE names the lanes it is waiting on rather than reading as working or failed.
+    const missing = { status: "missing" } as const;
+    const reads = {
+      design: missing,
+      sequence: missing,
+      decisions: missing,
+      flagged: missing,
+      noise: missing,
+    } as unknown as LensBoardResolutions;
+    const seats = lensSeatStates(
+      [
+        { id: "design", label: "Design", status: "done", verdict: "reworked" },
+        { id: "sequence", label: "Sequence", status: "running" },
+        { id: "decisions", label: "Decisions", status: "running" },
+        { id: "flagged", label: "Flagged", status: "queued" },
+        { id: "noise", label: "Noise", status: "queued" },
+      ] as LensLane[],
+      reads,
+    );
+    expect(seats.design.register).toBe("settled");
+    expect(seats.design.cut).toBe("seamed");
+    expect(seats.sequence.register).toBe("working");
+    expect(seats.sequence.cut).toBe("open");
+    expect(seats.noise.register).toBe("waiting");
+    // The lanes it names are exactly the un-settled ones — Flagged is queued and so is
+    // still owed, Design has settled and so is not.
+    expect(seats.noise.waitingOn).toEqual(["sequence", "decisions", "flagged"]);
+    expect(waitingOnLine(seats.noise.waitingOn)).toBe("waiting on Sequence, Decisions and Flagged");
+    // Waiting is not working and is not failed — the two things D16c forbids it reading as.
+    expect(seats.noise.voices.some((voice) => voice.speech.quiet)).toBe(true);
+  });
+
+  it("tells a live generation with no lanes yet from a settled one with no boards", () => {
+    // The capture frame. `[]` is a generation IN FLIGHT whose lanes are not open (so every
+    // lens is waiting); `undefined` is no generation in flight at all (so a lens with no
+    // board is `none`, not a promise of one that is never coming). Collapsing the two is
+    // the whole reason this argument is `readonly LensLane[] | undefined`.
+    const missing = { status: "missing" } as const;
+    const reads = {
+      design: missing,
+      sequence: missing,
+      decisions: missing,
+      flagged: missing,
+      noise: missing,
+    } as unknown as LensBoardResolutions;
+    expect(lensSeatStates([], reads).design.register).toBe("waiting");
+    expect(lensSeatStates([], reads).design.drafting).toBe(true);
+    expect(lensSeatStates(undefined, reads).design.register).toBe("none");
+    expect(lensSeatStates(undefined, reads).design.drafting).toBe(false);
   });
 
   it("renders a durable lens failure instead of polling it as an empty board", async () => {

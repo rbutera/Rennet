@@ -3,6 +3,7 @@ import type {
   LensAbsenceReason,
   LensBoard,
   LensKind,
+  LensSection,
   SourceRef,
 } from "@rennet/protocol";
 import { cn } from "@rennet/ui";
@@ -10,17 +11,23 @@ import { type RefCallback, useEffect, useMemo } from "react";
 import { useCoachAnchor } from "../coach/registry";
 import { useRefreshCommand } from "../data";
 import { ProseSelectionLayer, ReviewAnchoredAskProvider, RichText } from "../review";
+import { useRennetStore } from "../store";
 import {
   type BoardResolution,
   lensBoardsFromResolutions,
+  lensesWithResult,
   lensReadsSettled,
   useLensBoardResolutions,
+  useLensSeats,
 } from "./board-data";
 import { SourceChips } from "./design-meta";
 import { DesignCapabilityGrid } from "./design-structure";
 import { GenerationSwitcher } from "./generation-switcher";
 import { BoardElementsProvider, useBoardPatchsetId } from "./kinds/element-context";
+import { liveBoards, useLensDrafts } from "./live-draft";
+import { SeatWidget } from "./seat-widget";
 import { Section } from "./section";
+import { useGenerationRetry } from "./workspace-header";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The lens board document (C05 6.1, Objective clause 6) — the review's reading
@@ -45,11 +52,17 @@ import { Section } from "./section";
  *  learned-nothing reads it takes before the poll SLOWS (10 minutes of silence), and the
  *  cadence it slows to. It never stops — see the effect below for why. */
 const POLL_MS = 5_000;
+/** The cadence while a seat is actually writing — fast enough that a board fills in front
+ *  of the reviewer rather than in five-second steps (lens-board-tools 5.3). */
+const DRAFTING_POLL_MS = 1_500;
 const POLL_LIMIT = 120;
 const SLOW_POLL_MS = 60_000;
 const SLOW_POLL_EVERY = SLOW_POLL_MS / POLL_MS;
 
 export interface LensBoardViewProps {
+  /** The session route this workspace is on — how the lanes (and so the seat states)
+   *  are read. Empty ⇒ no session, so no lanes and no widget. */
+  readonly slug: string;
   /** The review whose boards are read — half of the `board.read` identity. */
   readonly reviewId: string;
   /** The live generation to open on. */
@@ -67,6 +80,7 @@ export interface LensBoardViewProps {
 }
 
 export function LensBoardView({
+  slug,
   reviewId,
   generation,
   selectedGeneration = generation,
@@ -79,8 +93,17 @@ export function LensBoardView({
   const highlightRef = useCoachAnchor("highlight");
 
   const resolutions = useLensBoardResolutions(reviewId, selectedGeneration);
-  const lenses = lensBoardsFromResolutions(resolutions);
-  const available = lenses.map((l) => l.lens);
+  // The boards being WRITTEN, folded from the element stream (D11). A lens with an open
+  // draft renders from this; a lens whose lane has closed renders from the durable read,
+  // which is the copy that carries the patchset stamps and the delta marks.
+  const drafts = useLensDrafts(reviewId, selectedGeneration);
+  const liveByLens = liveBoards(drafts);
+  const seats = useLensSeats(slug, resolutions);
+  const lenses = lensBoardsFromResolutions(resolutions, seats);
+  // The FALLBACK set is the lenses that have something to open, not the rail's list: the
+  // rail now lists all five from the first frame, so `lenses[0]` is always Design and
+  // falling back to it would open an empty board over a settled sibling.
+  const available = lensesWithResult(lenses).map((l) => l.lens);
 
   // Drafting takes minutes and the daemon has no board-arrival push, so without this the
   // boards a capture just kicked would land on disk and the surface would keep saying "no
@@ -105,8 +128,18 @@ export function LensBoardView({
   // is not the burn the audit measured; a silent surface is a bug. Upgrade path: a daemon-side
   // board-arrival channel (the `roundProgress` push already proves the transport), at which
   // point this whole effect goes and neither throttle is needed.
+  //
+  // DRAFTING IS THE FAST WINDOW, AND IT IS THE FALLBACK PATH (lens-board-tools 5.3). The
+  // element stream above is how a board fills in front of the reviewer; `onLensDraft` is
+  // OPTIONAL on the bridge, so a host that does not provide it has only this read, and a
+  // five-second cadence would make "renders each element as it lands" land in five-second
+  // batches. While any seat is working the poll runs at `DRAFTING_POLL_MS` and every tick
+  // reads; it reverts to the throttled cadence the moment the last seat stops, which is
+  // what keeps the never-settling case off the burn the audit measured — the budget
+  // answered SILENCE, and a working seat is the opposite of silence.
   const refreshBoards = useRefreshCommand("board.read");
   const awaitingLenses = !lensReadsSettled(resolutions);
+  const anyWorking = Object.values(seats).some((state) => state.register === "working");
   // The observable "something happened": a lens moving BETWEEN statuses — missing/pending to
   // valid/absent/failed/invalid, or back. This is a STATUS key, not a content key: a settled
   // lens that re-drafts different content stays `valid` and does NOT restart the budget. An
@@ -116,16 +149,17 @@ export function LensBoardView({
     .join(",");
   // biome-ignore lint/correctness/useExhaustiveDependencies: statusKey is an intentional re-run trigger, not a body reference — a lens changing status must restart the poll's fast window, and re-running the effect is what resets `spent`.
   useEffect(() => {
-    if (!awaitingLenses) return;
+    if (!awaitingLenses && !anyWorking) return;
     let spent = 0;
     const tick = () => {
       if (document.hidden) return;
       spent += 1;
-      // Past the budget the interval keeps waking but only reads once a minute.
-      if (spent > POLL_LIMIT && spent % SLOW_POLL_EVERY !== 0) return;
+      // Past the budget the interval keeps waking but only reads once a minute. A working
+      // seat is never throttled: something IS arriving.
+      if (!anyWorking && spent > POLL_LIMIT && spent % SLOW_POLL_EVERY !== 0) return;
       refreshBoards();
     };
-    const timer = setInterval(tick, POLL_MS);
+    const timer = setInterval(tick, anyWorking ? DRAFTING_POLL_MS : POLL_MS);
     // Electron throttles a hidden window's timers to about one wake a minute, so coming back
     // to the window reads immediately instead of waiting out a throttled tick. This read is
     // free of the budget: returning to the window is the user telling us to look again, and
@@ -138,7 +172,7 @@ export function LensBoardView({
       clearInterval(timer);
       document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, [awaitingLenses, refreshBoards, statusKey]);
+  }, [anyWorking, awaitingLenses, refreshBoards, statusKey]);
 
   // A generation may not carry every lens. A genuinely missing selected lens falls back
   // to the first populated, empty, or failed lens in canonical order. Invalid and pending
@@ -146,7 +180,11 @@ export function LensBoardView({
   const selected = resolutions[lens];
   const fallbackLens = available[0] ?? lens;
   const fallback = resolutions[fallbackLens];
-  const effectiveLens: LensKind = selected.status === "missing" ? fallbackLens : lens;
+  // A lens whose durable board has not arrived but whose seat is WRITING one holds the
+  // selection: the reviewer asked for that lens and there is a board of it on screen, so
+  // falling back to a settled sibling would move them off the thing they are watching.
+  const effectiveLens: LensKind =
+    selected.status === "missing" && liveByLens[lens] === undefined ? fallbackLens : lens;
 
   // Every lens folds every section, Flagged included (Rai, 2026-09-04). R44's
   // findings-open-on-arrival is retired: the reader takes the summaries first and opens
@@ -158,7 +196,63 @@ export function LensBoardView({
   // effective (valid) lens; with none present, probe the reviewer's pick or the R44
   // default so a malformed board there still surfaces instead of vanishing.
   const shown = effectiveLens === lens ? selected : fallback;
-  const board = shown.status === "valid" ? shown.board : undefined;
+  // THE LIVE BOARD WINS WHILE THE LANE IS OPEN (D11). `board.read` serves the copy the
+  // pipeline persisted; the element stream serves the one the seat is writing. Comparing
+  // them here is the only place the two sources meet: an open draft is the fresher of the
+  // two and is what the reviewer is watching, and the moment the lane closes the durable
+  // copy takes over — it is the one that carries the patchset stamps and the delta marks
+  // a drafting element has never had.
+  const drafted = liveByLens[effectiveLens];
+  const board = drafted ?? (shown.status === "valid" ? shown.board : undefined);
+  const entry = lenses.find((candidate) => candidate.lens === effectiveLens);
+  const seat = seats[effectiveLens];
+  // The drafting signals belong to the LIVE generation. Drilling into a frozen predecessor
+  // shows a finished board, and painting this generation's running seat over it would say
+  // a settled board is still being written.
+  const live = selectedGeneration === generation;
+  const drafting = live && seat.drafting;
+  const { retry, pending: retrying } = useGenerationRetry(slug);
+
+  // ONE CONTROL, THREE PANES (6.2/D14). Selecting a lens moves the board, the widget and
+  // the transcript together, so the three cannot describe different lenses — a drawer left
+  // on the Sequence seat above the Decisions board is exactly the kind of quiet mismatch a
+  // reviewer reads straight past. The transcript follows to the new lens's own seat when it
+  // has one, and closes when it does not, because there is nothing there to show.
+  const openTranscript = useRennetStore((s) => s.ui.seatTranscript);
+  const openSeatTranscript = useRennetStore((s) => s.uiActions.openSeatTranscript);
+  const transcriptLens = openTranscript?.lens;
+  const transcriptReview = openTranscript?.reviewId;
+  const followed = seat.voices.find((voice) => voice.thread !== undefined);
+  // Depended on by IDENTITY-FREE parts: `voices` is rebuilt on every render, so an effect
+  // keyed on the object would re-run every render for nothing.
+  const followedSeat = followed?.seat;
+  const followedEnvironment = followed?.thread?.environmentId;
+  const followedThread = followed?.thread?.threadId;
+  useEffect(() => {
+    if (transcriptReview === undefined || transcriptReview !== reviewId) return;
+    if (transcriptLens === effectiveLens) return;
+    openSeatTranscript(
+      followedSeat === undefined ||
+        followedEnvironment === undefined ||
+        followedThread === undefined
+        ? null
+        : {
+            reviewId,
+            lens: effectiveLens,
+            seat: followedSeat,
+            thread: { environmentId: followedEnvironment, threadId: followedThread },
+          },
+    );
+  }, [
+    effectiveLens,
+    followedEnvironment,
+    followedSeat,
+    followedThread,
+    openSeatTranscript,
+    reviewId,
+    transcriptLens,
+    transcriptReview,
+  ]);
 
   return (
     <main
@@ -177,15 +271,29 @@ export function LensBoardView({
         />
       </div>
 
+      {/* THE SEAT WIDGET, directly above the board it is writing (6.1). Live generation
+          only: a frozen predecessor's seats are long gone, and naming one would be a claim
+          about a run that is over. */}
+      {entry !== undefined && live && slug.length > 0 ? (
+        <SeatWidget
+          reviewId={reviewId}
+          entry={entry}
+          retrying={retrying}
+          {...(board === undefined ? {} : { board })}
+          {...(retry === undefined ? {} : { onRetry: retry })}
+        />
+      ) : null}
+
       {board ? (
         <LensBoardDocument
           reviewId={reviewId}
           board={board}
           forceOpen={forceOpen}
           anchorRef={highlightRef}
+          drafting={drafting}
         />
       ) : (
-        <BoardAccount resolution={shown} />
+        <BoardAccount resolution={shown} drafting={drafting} />
       )}
     </main>
   );
@@ -202,7 +310,17 @@ export function LensBoardView({
  * 2026-09-03). Reusing this component is what keeps that from happening again in a
  * second set of words.
  */
-export function BoardAccount({ resolution }: { readonly resolution: BoardResolution }) {
+export function BoardAccount({
+  resolution,
+  drafting = false,
+}: {
+  readonly resolution: BoardResolution;
+  /** This lens's seat is still writing. A board that has not answered yet then reads as
+   *  a board being written rather than as an absence — and it carries the same two
+   *  in-board provisional signals a partial board does, so "an unsettled board says so
+   *  three ways" is true at every moment of the lane, not only once elements exist. */
+  readonly drafting?: boolean;
+}) {
   switch (resolution.status) {
     case "valid":
       return null;
@@ -226,7 +344,9 @@ export function BoardAccount({ resolution }: { readonly resolution: BoardResolut
         </div>
       );
     case "pending":
-      return (
+      return drafting ? (
+        <EmptyDraftingBoard />
+      ) : (
         <p data-kind="board-pending" className="text-muted-foreground text-sm">
           Reading this board…
         </p>
@@ -256,7 +376,9 @@ export function BoardAccount({ resolution }: { readonly resolution: BoardResolut
         </div>
       );
     default:
-      return (
+      return drafting ? (
+        <EmptyDraftingBoard />
+      ) : (
         <p data-kind="board-empty" className="text-muted-foreground text-sm">
           No board for this generation yet.
         </p>
@@ -264,18 +386,59 @@ export function BoardAccount({ resolution }: { readonly resolution: BoardResolut
   }
 }
 
+/** A board whose seat is writing and whose first element has not landed. It carries the
+ *  same in-progress mark and placeholder row a partial board does — the rail's indicator
+ *  is the third — so the three-ways rule (D13) holds from the lane's first second. */
+function EmptyDraftingBoard() {
+  return (
+    <div data-kind="board-drafting" className="flex flex-col gap-4">
+      <div className="flex flex-wrap items-center gap-3">
+        <InProgressChip />
+        <span className="text-muted-foreground text-sm">This board is still being written.</span>
+      </div>
+      <GhostRow />
+    </div>
+  );
+}
+
+/** The in-progress mark: one of the three independent ways an unsettled board says so. */
+function InProgressChip() {
+  return (
+    <span
+      data-kind="board-in-progress"
+      className="rounded-chip border border-line px-2 py-0.5 font-medium text-2xs text-ink-soft uppercase tracking-wide"
+    >
+      in progress
+    </span>
+  );
+}
+
+/** The placeholder last row: the third of the three, and the one that says WHERE the
+ *  next element lands rather than merely that one is coming. */
+function GhostRow() {
+  return (
+    <p
+      data-kind="board-ghost"
+      className="rounded-window border border-line border-dashed px-4 py-3 text-center font-serif text-13 text-ink-faint"
+    >
+      The seat is still writing — the next element lands here.
+    </p>
+  );
+}
+
 /**
  * One resolved board as a document: the ask provider, the element pool and the selection
- * layer around the article. The workspace's `LensBoardView` renders it for the selected
- * lens; the bench renders one per lens that has settled while the others still draft, so
- * a board is readable the moment it lands (t3-lens-threads: "boards replace their presence
- * as they settle"). Both read through the same `board.read` seam.
+ * layer around the article. It is THE SAME VIEW settled or not (D13) — the drafting view
+ * and the finished view are one route, one component, and nothing navigates when the lane
+ * settles. `drafting` only adds the two in-board provisional signals and withholds the
+ * delta marks; the elements themselves render identically either way.
  */
 export function LensBoardDocument({
   reviewId,
   board,
   forceOpen,
   anchorRef,
+  drafting = false,
 }: {
   readonly reviewId: string;
   readonly board: LensBoard;
@@ -284,7 +447,25 @@ export function LensBoardDocument({
   /** The coach anchor for the document — the workspace's alone, since an anchor id
    *  registers once and the bench can show several documents at a time. */
   readonly anchorRef?: RefCallback<Element>;
+  /** This board's seat is still writing it. */
+  readonly drafting?: boolean;
 }) {
+  // WITHHELD WHILE UNSETTLED (5.4/D13). A partial board's sections would every one carry a
+  // `new` delta the moment a regeneration started writing them, which reads as "all of this
+  // changed this round" — a lie the reviewer would act on by re-reading a whole board. The
+  // marks are the round's answer and they belong to a finished round, so they appear at
+  // settle. The stripped list is stable across renders for the same board and flag, which
+  // matters because `Section` is `memo`'d on its `entry`.
+  const sections = useMemo(
+    () =>
+      drafting
+        ? board.sections.map(({ delta, ...rest }): LensSection => {
+            void delta;
+            return rest;
+          })
+        : board.sections,
+    [board.sections, drafting],
+  );
   return (
     <ReviewAnchoredAskProvider reviewId={reviewId}>
       <BoardElementsProvider
@@ -306,12 +487,13 @@ export function LensBoardDocument({
             data-generation={board.generation}
             className="flex flex-col"
           >
-            <BoardHeader board={board} />
+            <BoardHeader board={board} drafting={drafting} />
             {board.lens === "design" ? <DesignCapabilityGrid board={board} /> : null}
             <div className="flex flex-col gap-8">
-              {board.sections.map((entry) => (
+              {sections.map((entry) => (
                 <Section key={entry.ref} entry={entry} lens={board.lens} defaultOpen={forceOpen} />
               ))}
+              {drafting ? <GhostRow /> : null}
             </div>
           </article>
         </ProseSelectionLayer>
@@ -374,7 +556,13 @@ function sourceTarget(
   })?.ref;
 }
 
-function BoardHeader({ board }: { readonly board: LensBoard }) {
+function BoardHeader({
+  board,
+  drafting = false,
+}: {
+  readonly board: LensBoard;
+  readonly drafting?: boolean;
+}) {
   const document: BoardDocument = board.document;
   // One index for every source chip, instead of one rebuilt per chip per render.
   const byId = useMemo(
@@ -383,9 +571,19 @@ function BoardHeader({ board }: { readonly board: LensBoard }) {
   );
   return (
     <header className="mb-8 flex flex-col gap-4">
-      <h1 className="font-display font-semibold text-2xl text-foreground tracking-tight">
-        {document.title}
-      </h1>
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-2">
+        <h1 className="font-display font-semibold text-2xl text-foreground tracking-tight">
+          {document.title}
+        </h1>
+        {drafting ? (
+          <>
+            <InProgressChip />
+            <span className="text-muted-foreground text-sm">
+              This board is still being written.
+            </span>
+          </>
+        ) : null}
+      </div>
       {document.stats && document.stats.length > 0 ? (
         <dl data-kind="board-stats" className="flex flex-wrap items-baseline gap-x-5 gap-y-2">
           {document.stats.map((stat) => (

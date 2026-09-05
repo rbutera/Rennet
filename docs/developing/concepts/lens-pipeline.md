@@ -22,16 +22,20 @@ first present lens and replaces the URL with that canonical address. A live
 generation drafts progressively: it may show the first board that arrives, but
 it keeps the requested address so a later Flagged arrival restores that reading.
 A typed absence or explicit failure remains selectable and renders its terminal
-state. Only a lens with no durable terminal evidence has no segment; that lens
-can still be in flight.
+state. **Every lens has a segment from the moment the generation starts**, whether
+or not it has a result yet, and each segment carries the state of its seat —
+waiting, working, settled, failed or absent. A lens whose seat is still running is
+selectable, never a disabled control, and a lens is never dropped from the rail as
+it settles: a tab that vanished under the reviewer would move their selection.
 
 New Chat persists a session before it captures the selected target and navigates
 to that session immediately. The session's durable preparation snapshot records
 capture, then folds the pipeline's real per-lens events into five progress lanes.
 It is distinct from round progress: no coding round is fabricated for an initial
-generation. Completion clears the snapshot and reveals the review workspace;
-failure, cancellation, and daemon interruption remain explicit, retryable session
-states.
+generation. The client reads those lanes as the seats' states; capture is reported
+in the workspace's own header, over boards that are already on screen, rather than
+by a screen in front of them. Failure, cancellation, and daemon interruption remain
+explicit, retryable session states.
 
 The prompts live in `packages/prompts` (`@rennet/prompts`), one markdown file
 per lens plus the reviewer-voice file, the round-report classifier prompt, and
@@ -68,7 +72,9 @@ sequencing boundary first, then the four core lens lanes draft concurrently and 
 Noise lane runs on their settlements.
 The per-board arrival events this scheduler emits drive the progressive reveal — each
 lane publishes its own settlement as it lands, so a slow Design lane never holds
-a finished core board back — and a
+a finished core board back; the client reads each board through the same per-lens
+`board.read` seam while its seat is still writing, so a board is readable element by
+element rather than only at settle — and a
 `PipelineStartGuard` keyed on the session and
 exact generation visit makes a retry of that dispatch reattach rather than
 double-start. `create-server` owns the live trigger: the own-branch round loop
@@ -139,11 +145,10 @@ and calls board regeneration through this runtime.
    such as a settings-env `ANTHROPIC_BASE_URL` credential proxy, lives there,
    and a seat that skipped user settings would reach the API on the wrong
    credential. That inheritance includes the user's hooks, plugins, and
-   configured MCP servers, which start per seat. The one narrowing is on the
-   Codex side: the five board-pipeline jobs hand Codex an explicit empty
-   MCP-server table (which also disables Codex plugins), because Codex starts
-   configured MCP servers eagerly and these one-shot seats use only their
-   session context directory and native repository tools.
+   configured MCP servers, which start per seat. Every board seat runs as a
+   persistent thread in the T3 Code sidecar, so its MCP servers are the ones the
+   sidecar's own turn command carries — the daemon's per-seat loopback board
+   server among them — rather than anything a one-shot leg narrowed for it.
    A clean generation makes one drafting turn for Design, Sequence, Decisions,
    and Noise, plus the two parallel Flagged seats. It does not run a separate
    board editor after those turns, and no lens spends a second turn accounting

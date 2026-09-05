@@ -150,11 +150,12 @@ function bridgeWith(handlers: ConstructorParameters<typeof MemoryBridge>[0]): Me
 }
 
 function BoardCoachSurface() {
-  const lenses = useLensBoards("rev-1", "gen1");
+  const lenses = useLensBoards("", "rev-1", "gen1");
   return (
     <>
       <LensSwitcher lenses={lenses} selected="flagged" onSelect={() => undefined} />
       <LensBoardView
+        slug=""
         reviewId="rev-1"
         generation="gen1"
         lens="flagged"

@@ -1,4 +1,4 @@
-import type { LaneThreadRef, ProjectProcessEvent } from "@rennet/protocol";
+import type { LaneThreadRef, LensKind, ProjectProcessEvent } from "@rennet/protocol";
 import type { StateCreator } from "zustand";
 import type { RennetState } from "./index";
 
@@ -70,21 +70,31 @@ export interface UiState {
    */
   readonly backgroundEvents: Readonly<Record<string, readonly ProjectProcessEvent[]>>;
   /**
-   * The lens seat transcript the chat slot is showing instead of the review's own thread
-   * (t3-lens-threads 3.4). Client state: which reader the reviewer opened, not something
-   * the daemon knows. `null` ⇒ the slot is back on the session's thread. The ref carries
-   * BOTH thread ids because a thread is addressed by (environment, thread), never by the
-   * lane — and the REVIEW it belongs to, because this slice is global while the dock is
-   * mounted once for whatever review the route names. Without that, navigating to another
-   * session rendered the new session's header around the previous session's transcript
-   * (review finding 4). A ref for another review is not this dock's, and it is cleared.
+   * The lens seat transcript open in the board region's own drawer (#823, D14).
+   *
+   * IT IS NOT THE CHAT SLOT'S. There used to be a `lensThread` here that RETARGETED the
+   * chat dock at a seat's thread, which took the reviewer's own conversation away from
+   * them the moment they looked at a seat — "a big nono" (Rai, 2026-09-04). That field,
+   * its action, the dock's arm and the dock's back button are all deleted; the dock shows
+   * the session's thread in every state of every lane, and the transcript opens beside
+   * the board instead.
+   *
+   * Client state: which seat the reviewer opened, not something the daemon knows. `null`
+   * ⇒ no drawer. The ref carries the REVIEW because this slice is global while the drawer
+   * is mounted once for whatever review the route names — without it, navigating to
+   * another session renders the new session's board around the previous session's
+   * transcript. It carries the LENS so selecting another lens moves the board, the widget
+   * and the transcript together, and the SEAT so a two-voice lane opens the voice that
+   * was clicked rather than the lane's primary.
    */
-  readonly lensThread: LensThreadRef | null;
+  readonly seatTranscript: SeatTranscriptRef | null;
 }
 
-/** A lens transcript, and the review whose bench opened it. */
-export interface LensThreadRef {
+/** A seat transcript, and which review, lens and voice it belongs to. */
+export interface SeatTranscriptRef {
   readonly reviewId: string;
+  readonly lens: LensKind;
+  readonly seat: string;
   readonly thread: LaneThreadRef;
 }
 
@@ -114,8 +124,9 @@ export interface UiSlice {
     setProjectProcessing(projectId: string, processing: boolean): void;
     /** Retain one background narration line for `projectId`. */
     appendBackgroundEvent(projectId: string, event: ProjectProcessEvent): void;
-    /** Show a lens seat's transcript in the chat slot; `null` returns to the session. */
-    openLensThread(ref: LensThreadRef | null): void;
+    /** Open a seat's transcript in the board region's drawer; `null` closes it. The chat
+     *  slot is untouched either way — it is never pointed at a seat's thread (#823). */
+    openSeatTranscript(ref: SeatTranscriptRef | null): void;
   };
 }
 
@@ -134,7 +145,7 @@ const initialUi: UiState = {
   openDialogs: [],
   processingProjectIds: [],
   backgroundEvents: {},
-  lensThread: null,
+  seatTranscript: null,
 };
 
 export const createUiSlice: StateCreator<RennetState, [], [], UiSlice> = (set) => ({
@@ -202,7 +213,7 @@ export const createUiSlice: StateCreator<RennetState, [], [], UiSlice> = (set) =
           ui: { ...s.ui, backgroundEvents: { ...s.ui.backgroundEvents, [projectId]: next } },
         };
       }),
-    openLensThread: (ref) => set((s) => ({ ui: { ...s.ui, lensThread: ref } })),
+    openSeatTranscript: (ref) => set((s) => ({ ui: { ...s.ui, seatTranscript: ref } })),
   },
 });
 

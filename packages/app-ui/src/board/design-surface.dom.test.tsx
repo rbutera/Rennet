@@ -116,7 +116,12 @@ describe("Design board document metadata", () => {
     });
     const view = mount(
       <BridgeProvider bridge={bridge}>
-        <LensBoardView reviewId="review-design" generation={board.generation} lens="design" />
+        <LensBoardView
+          slug=""
+          reviewId="review-design"
+          generation={board.generation}
+          lens="design"
+        />
       </BridgeProvider>,
     );
 
@@ -372,7 +377,12 @@ describe("Design board document metadata", () => {
           })
         }
       >
-        <LensBoardView reviewId="review-structure" generation={board.generation} lens="design" />
+        <LensBoardView
+          slug=""
+          reviewId="review-structure"
+          generation={board.generation}
+          lens="design"
+        />
       </BridgeProvider>,
     );
 
@@ -515,7 +525,12 @@ describe("Design board document metadata", () => {
           })
         }
       >
-        <LensBoardView reviewId="review-superpowers" generation={board.generation} lens="design" />
+        <LensBoardView
+          slug=""
+          reviewId="review-superpowers"
+          generation={board.generation}
+          lens="design"
+        />
       </BridgeProvider>,
     );
 
@@ -575,6 +590,7 @@ describe("Design board document metadata", () => {
         }
       >
         <LensBoardView
+          slug=""
           reviewId="review-design-checklist"
           generation={board.generation}
           lens="design"
@@ -907,7 +923,7 @@ describe("Design section metadata", () => {
           })
         }
       >
-        <LensBoardView reviewId="review-bmad" generation={board.generation} lens="design" />
+        <LensBoardView slug="" reviewId="review-bmad" generation={board.generation} lens="design" />
       </BridgeProvider>,
     );
 
@@ -1021,7 +1037,12 @@ describe("Design section metadata", () => {
           })
         }
       >
-        <LensBoardView reviewId="review-bmad-story" generation={board.generation} lens="design" />
+        <LensBoardView
+          slug=""
+          reviewId="review-bmad-story"
+          generation={board.generation}
+          lens="design"
+        />
       </BridgeProvider>,
     );
 

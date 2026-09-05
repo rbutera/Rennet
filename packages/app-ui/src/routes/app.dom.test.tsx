@@ -323,19 +323,27 @@ describe("/s/:slug during New Chat preparation (#668)", () => {
     const history = memoryHistory("/s/sess-progress");
     const { user, findByText } = mount(<RennetRouterApp bridge={bridge} history={history} />);
 
-    expect(await findByText("Generating the Boards")).toBeTruthy();
-    expect(
-      document.querySelectorAll('[data-screen="session-preparation"] [data-row]'),
-    ).toHaveLength(5);
-    expect(document.querySelector('[data-row="design"]')?.getAttribute("data-status")).toBe("done");
-    expect(document.querySelector('[data-row="sequence"]')?.getAttribute("data-status")).toBe(
-      "running",
+    // BOARDS FIRST (lens-board-tools 5.2). A drafting session lands on the board view,
+    // not a stage in front of it: the drafting is reported in the workspace's own header
+    // and each lens's seat state rides its rail entry.
+    expect(await findByText("Generating the boards")).toBeTruthy();
+    expect(document.querySelector('[data-kind="lens-board-view"]')).toBeTruthy();
+    expect(document.querySelectorAll('[data-kind="lens-switcher"] [data-lens]')).toHaveLength(5);
+    expect(document.querySelector('[data-lens="design"]')?.getAttribute("data-register")).toBe(
+      "settled",
+    );
+    expect(document.querySelector('[data-lens="sequence"]')?.getAttribute("data-register")).toBe(
+      "working",
+    );
+    // …and a running lens is SELECTABLE, never a disabled segment (5.1).
+    expect(document.querySelector<HTMLButtonElement>('[data-lens="sequence"]')?.disabled).toBe(
+      false,
     );
 
     await user.click(screen.getByRole("button", { name: "Cancel" }));
     await waitFor(() =>
       expect(
-        document.querySelector('[data-screen="session-preparation"]')?.getAttribute("data-status"),
+        document.querySelector('[data-testid="workspace-header"]')?.getAttribute("data-status"),
       ).toBe("cancelled"),
     );
     expect(history.history.at(-1)).toBe("/s/sess-progress");

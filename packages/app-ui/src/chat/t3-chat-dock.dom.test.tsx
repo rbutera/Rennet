@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { RennetRouterApp } from "../routes/app";
 import { memoryHistory } from "../routes/history";
 import { useRennetStore } from "../store";
-import { act, cleanup, fireEvent, mount, waitFor } from "../test/dom";
+import { act, cleanup, mount, waitFor } from "../test/dom";
 import { emptySettings, frontDoorHandlers } from "../test/fixtures/front-door";
 import { MemoryBridge } from "../test/memory-bridge";
 import { T3ChatSlotProvider, type T3NativeChatProps, type T3ThreadViewProps } from "./t3-chat-slot";
@@ -16,12 +16,15 @@ import { T3ChatSlotProvider, type T3NativeChatProps, type T3ThreadViewProps } fr
 // yield Rennet's own dock, so mounting T3 anyway is the converted proof that the switch
 // is gone rather than a default flipped the other way.
 //
-// And which THREAD the rung-two slot shows (t3-lens-threads 3.4): the review's own, or
-// the lens seat the store's `lensThread` names, with a control back to the session.
+// And which THREAD it shows (#823, lens-board-tools 6.3): the SESSION'S, in every state
+// of every lane, and there is no longer any way to make it show another. The dock used to
+// carry a lens-thread arm driven by `ui.lensThread`; that field, its action, the arm and
+// its "← Back to the session" button are deleted, and a seat's transcript opens in the
+// board region's own drawer instead.
 
 afterEach(() => {
   cleanup();
-  act(() => useRennetStore.getState().uiActions.openLensThread(null));
+  act(() => useRennetStore.getState().uiActions.openSeatTranscript(null));
 });
 
 const layered = (value: string) => ({ value, layer: "builtin" as const });
@@ -107,7 +110,11 @@ function mountDock(slot?: {
     useRennetStore.getState().uiActions.setSidebarOpen(false);
     useRennetStore.getState().uiActions.setChatOpen(true);
   });
-  const history = memoryHistory("/s/review-1");
+  // `?lens=sequence` so the seat transcript the control below opens is the SELECTED lens's.
+  // Selecting a lens moves board, widget and transcript together (6.2), so a ref pointed at
+  // a lens the route is not on is legitimately re-pointed or closed — which would make the
+  // control's own premise disappear rather than test the dock.
+  const history = memoryHistory("/s/review-1?lens=sequence");
   const app = <RennetRouterApp bridge={bridge} history={history} />;
   const view = mount(
     slot ? (
@@ -167,72 +174,87 @@ describe("the chat slot is always the T3 thread", () => {
     expect(dock.querySelector('[data-slot="t3-native-stub"]')?.textContent).toBe("thread-1");
     expect(dock.querySelector('[data-slot="t3-chat-view"]')).toBeNull();
     expect(seen.at(-1)?.environmentId).toBe("env-1");
-    // The control half of the lens tests below: with no lens opened, the read-only
-    // thread view is absent, so its presence there cannot be a mount-always artefact.
+    // With nothing open, the read-only thread view is absent — so the control below,
+    // which asserts it is STILL absent with a seat transcript open, cannot pass merely
+    // because this stub is never mounted anywhere.
     expect(dock.querySelector('[data-slot="t3-thread-stub"]')).toBeNull();
   });
 
-  it("opens the lens seat's thread read-only in place of the session view", async () => {
+  // ── #823, the control (6.3): there is no way to point the slot at a seat ──────
+  //
+  // "we take over the orchestrator's chat with the lens agent's chat thread.. thats a big
+  // nono" (Rai, 2026-09-04). The test the task asks for is one that TRIES and finds no way
+  // to, so it does two things a single assertion could not:
+  //
+  //   1. It enumerates the store's whole UI action surface and finds nothing that names a
+  //      thread the dock could be retargeted at. That is the half that catches a rename —
+  //      an `openLensThread` restored under any other name would have to appear here.
+  //   2. It then does the closest thing the surviving API allows — opens a SEAT transcript,
+  //      the successor field, pointing at a seat's thread on this very review — and finds
+  //      the dock still on the session's own thread with its composer.
+  //
+  // Deleting the arm is what makes 2 pass; without 1, a future arm reading a differently
+  // named field would pass 2 as well, since 2 only writes `seatTranscript`.
+  it("offers no way to point the chat slot at a seat's thread", async () => {
     const { getByTestId, opened } = mountWithSlot();
     const dock = getByTestId("chat-dock-slot");
     await waitFor(() => expect(dock.querySelector('[data-slot="t3-native-stub"]')).not.toBeNull());
+
+    // 1. Nothing in the action surface names a thread for the chat slot. HARD-CODED count:
+    //    deriving it from the object under test would be satisfied by an empty surface.
+    const actions = Object.keys(useRennetStore.getState().uiActions);
+    expect(actions).toHaveLength(15);
+    expect(actions.filter((name) => /thread/i.test(name))).toEqual([]);
+    expect(Object.keys(useRennetStore.getState().ui)).not.toContain("lensThread");
+
+    // 2. The successor field, aimed at a seat on this review — the exact ref the deleted
+    //    arm consumed. The dock does not move.
     act(() =>
-      useRennetStore.getState().uiActions.openLensThread({
+      useRennetStore.getState().uiActions.openSeatTranscript({
         reviewId: "review-1",
+        lens: "sequence",
+        seat: "sequence",
         thread: { environmentId: "env-1", threadId: "seat-sequence" },
       }),
     );
-    await waitFor(() => expect(dock.querySelector('[data-slot="t3-thread-stub"]')).not.toBeNull());
-    // The ref the store carried reached the view whole — both ids, not just the thread.
-    expect(opened.at(-1)?.thread).toEqual({ environmentId: "env-1", threadId: "seat-sequence" });
-    expect(opened.at(-1)?.readOnly).toBe(true);
-    expect(opened.at(-1)?.session.environmentId).toBe("env-1");
-    // The session's own thread is not also mounted: one view fills the slot.
-    expect(dock.querySelector('[data-slot="t3-native-stub"]')).toBeNull();
-  });
-
-  it("returns to the session view when the back control clears the lens", async () => {
-    const { getByTestId } = mountWithSlot();
-    const dock = getByTestId("chat-dock-slot");
-    act(() =>
-      useRennetStore.getState().uiActions.openLensThread({
-        reviewId: "review-1",
-        thread: { environmentId: "env-1", threadId: "seat-design" },
-      }),
+    await waitFor(() =>
+      expect(dock.querySelector('[data-slot="t3-native-stub"]')?.textContent).toBe("thread-1"),
     );
-    await waitFor(() => expect(dock.querySelector('[data-slot="t3-thread-stub"]')).not.toBeNull());
-    const back = dock.querySelector('[data-slot="t3-thread-back"]');
-    expect(back?.textContent).toContain("Back to the session");
-    act(() => {
-      fireEvent.click(back as Element);
-    });
-    await waitFor(() => expect(dock.querySelector('[data-slot="t3-native-stub"]')).not.toBeNull());
     expect(dock.querySelector('[data-slot="t3-thread-stub"]')).toBeNull();
-    expect(useRennetStore.getState().ui.lensThread).toBeNull();
+    expect(dock.querySelector('[data-slot="t3-thread-back"]')).toBeNull();
+    // The transcript DID open — in the board region's own drawer, which is the surface
+    // that replaced the dock's arm. Asserting that too is what stops this passing over a
+    // build where the transcript opens nowhere at all: "the dock did not take it" and
+    // "nothing shows it" would otherwise be the same green bar.
+    await waitFor(() =>
+      expect(
+        document.querySelector('[data-kind="seat-transcript-drawer"] [data-slot="t3-thread-stub"]'),
+      ).not.toBeNull(),
+    );
+    expect(opened.at(-1)?.thread.threadId).toBe("seat-sequence");
+    expect(opened.at(-1)?.readOnly).toBe(true);
+    // …and the dock is STILL on the session's thread after the drawer arrived, so this is
+    // not merely a race the assertion above won.
+    expect(dock.querySelector('[data-slot="t3-native-stub"]')?.textContent).toBe("thread-1");
+    expect(dock.querySelector('[data-slot="t3-thread-stub"]')).toBeNull();
   });
 
-  // Review finding 4. The slice is global and the dock is mounted once, so a lens left open
-  // in one review used to render UNDER THE NEXT SESSION'S HEADER — a transcript from another
-  // review, labelled as this one. The two-review fixture is what makes it visible at all.
-  it("drops a lens transcript when the route moves to another review", async () => {
+  // The dock survives a navigation with the session's own thread — the old arm's failure
+  // mode (review finding 4) was a seat transcript from ANOTHER review rendering under this
+  // session's header, and the two-review fixture is what makes that visible. There is no
+  // arm to leak through now; this pins that the surviving path still follows the route.
+  it("follows the route to the next session's own thread", async () => {
     const { getByTestId, history } = mountWithSlot();
     const dock = getByTestId("chat-dock-slot");
-    act(() =>
-      useRennetStore.getState().uiActions.openLensThread({
-        reviewId: "review-1",
-        thread: { environmentId: "env-1", threadId: "seat-noise" },
-      }),
+    await waitFor(() =>
+      expect(dock.querySelector('[data-slot="t3-native-stub"]')?.textContent).toBe("thread-1"),
     );
-    await waitFor(() => expect(dock.querySelector('[data-slot="t3-thread-stub"]')).not.toBeNull());
 
     act(() => history.navigate("/s/review-2"));
 
-    // Review 2's own session thread fills the slot — not review 1's seat transcript.
     await waitFor(() =>
       expect(dock.querySelector('[data-slot="t3-native-stub"]')?.textContent).toBe("thread-2"),
     );
     expect(dock.querySelector('[data-slot="t3-thread-stub"]')).toBeNull();
-    // And the stale ref is gone, so coming back to review 1 does not reopen it either.
-    await waitFor(() => expect(useRennetStore.getState().ui.lensThread).toBeNull());
   });
 });

@@ -3,7 +3,7 @@ import { Button } from "@rennet/ui";
 import { FolderPlus } from "lucide-react";
 import { Component, lazy, type ReactNode, Suspense, useEffect, useRef, useState } from "react";
 import { Redirect, Route, Router, Switch, useLocation, useSearch } from "wouter";
-import { PreparationBench } from "../app/preparation-bench";
+import { PreparingWorkspace } from "../app/preparing-workspace";
 import { ReviewWorkspace } from "../app/review-workspace-route";
 import { Icon } from "../components/icon";
 import { BridgeProvider, useCommand, useMutation } from "../data";
@@ -299,24 +299,27 @@ function FirstRunEligibility({
  *  resolves to the review workspace, an honest chat-only session when no review is
  *  attached yet, or an honest not-found / load-error.
  *
- *  A session still preparing renders the BENCH (t3-lens-threads 3.1) — the workspace's
- *  first frame, in this outlet, inside the same `AppLayout` that keeps the sidebar, the
- *  session top bar and the chat slot mounted around it. It is not a separate route and
- *  not a takeover, which is what lets a reader open a lens transcript in the slot while
- *  the lenses are still running. */
+ *  BOARDS FIRST (lens-board-tools 5.2, D12). There is no preparation stage in front of the
+ *  workspace any more — `preparation-bench.tsx` is deleted. A session whose review has
+ *  resolved goes straight to `ReviewWorkspace`, WHETHER OR NOT it is still drafting: the
+ *  workspace's own header reports the drafting, the rail lists all five lenses with their
+ *  seats' states, and each board draws itself while the reviewer watches. Only a session
+ *  whose review does not exist yet (capture is still running, so there is nothing to read
+ *  a board from) takes `PreparingWorkspace`, which is the same board view with an empty
+ *  review id.
+ *
+ *  The order matters and is the change: the review branch is FIRST, so a drafting session
+ *  is the review workspace rather than a screen the workspace later replaces. */
 function SessionScreen({ slug }: { readonly slug: string }) {
   const { data: sessions } = useCommand("session.list", {});
   const session = sessions?.sessions.find((candidate) => candidate.id === slug);
   useRememberProject(session?.projectId);
   const resolution = useSlugResolution(slug);
-  if (session?.preparation !== undefined) {
-    return (
-      <PreparationBench
-        session={session}
-        preparation={session.preparation}
-        {...(resolution.status === "review" ? { review: resolution.review } : {})}
-      />
-    );
+  // The review WINS over the preparation record: a session that is still drafting has a
+  // review the moment capture settles, and from that moment its boards are readable and
+  // its lanes are reportable in the workspace's own header.
+  if (resolution.status !== "review" && session?.preparation !== undefined) {
+    return <PreparingWorkspace slug={slug} />;
   }
   if (resolution.status === "pending") {
     return <p className="p-10 font-serif text-ink-soft">Opening…</p>;

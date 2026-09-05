@@ -2,6 +2,7 @@
 import type { PatchFile, Review, SidebarSession } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { Router } from "wouter";
+import { SeatTranscriptDrawer } from "../board/seat-transcript-drawer";
 import { BridgeProvider } from "../data";
 import { CodeDestinationProvider, useOpenCapturedPath } from "../review/code-destination";
 import { memoryHistory } from "../routes/history";
@@ -160,8 +161,15 @@ describe("a file reference in the chat opens Rennet's Diff view", () => {
 });
 
 describe("the dock hands that callback to whatever the host mounted", () => {
-  /** A stand-in for `@rennet/t3-chat`'s components — app-ui may not import the real ones. */
-  function mountDock(lensThread: { environmentId: string; threadId: string } | null) {
+  /**
+   * A stand-in for `@rennet/t3-chat`'s components — app-ui may not import the real ones.
+   *
+   * BOTH MOUNTS, together: the dock (the session's thread, always) and the board region's
+   * seat-transcript drawer (a seat's thread, when one is open). They are two mounts of the
+   * same slot since #823, and the point of mounting both here is that the file-link opener
+   * has to reach BOTH — a seat's transcript is where a reviewer reads what the seat read.
+   */
+  function mountDock(seat: { environmentId: string; threadId: string } | null) {
     const seen: { session?: unknown; thread?: unknown } = {};
     const bridge = new MemoryBridge({
       ...frontDoorHandlers(),
@@ -179,7 +187,10 @@ describe("the dock hands that callback to whatever the host mounted", () => {
       ui: {
         ...s.ui,
         chatOpen: true,
-        lensThread: lensThread === null ? null : { reviewId: REVIEW.id, thread: lensThread },
+        seatTranscript:
+          seat === null
+            ? null
+            : { reviewId: REVIEW.id, lens: "sequence" as const, seat: "sequence", thread: seat },
       },
     }));
     const history = memoryHistory("/s/session-1");
@@ -202,6 +213,7 @@ describe("the dock hands that callback to whatever the host mounted", () => {
               }}
             >
               <T3ChatDock />
+              <SeatTranscriptDrawer reviewId={REVIEW.id} />
             </T3ChatSlotProvider>
           </CodeDestinationProvider>
         </Router>
@@ -222,10 +234,19 @@ describe("the dock hands that callback to whatever the host mounted", () => {
     expect((seen.session as (p: string) => boolean)(UNCAPTURED)).toBe(false);
   });
 
-  it("gives a lens transcript the same opener, so a seat's file links land in Diff too", async () => {
+  it("gives a seat transcript the same opener, so a seat's file links land in Diff too", async () => {
     const seen = mountDock({ environmentId: "env-1", threadId: "thread-lens" });
     await waitFor(() => expect(document.querySelector('[data-testid="mock-thread"]')).toBeTruthy());
     expect(typeof seen.thread).toBe("function");
     expect((seen.thread as (p: string) => boolean)(CAPTURED)).toBe(true);
+    // The thread view is the DRAWER's, not the dock's — the dock still holds the session's
+    // own thread beside it (#823). Asserting both mounts here is what keeps this test from
+    // passing over a build that put the transcript back in the dock.
+    expect(document.querySelector('[data-testid="mock-session"]')).toBeTruthy();
+    expect(
+      document
+        .querySelector('[data-kind="seat-transcript-drawer"]')
+        ?.querySelector('[data-testid="mock-thread"]'),
+    ).toBeTruthy();
   });
 });
