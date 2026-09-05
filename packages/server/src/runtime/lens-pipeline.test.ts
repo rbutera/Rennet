@@ -2191,6 +2191,84 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     expect(lensAdmitsAbsence("noise", "no-noise")).toBe(true);
   });
 
+  it("settles no-noise with NO seat dispatched when the four lanes cite every region (3.11, D16e)", async () => {
+    // Task 3.11's own required control, which did not exist. Every other fixture in this
+    // file runs against `UNCITED_REGION` — a region no board cites — precisely so the Noise
+    // lane HAS a remainder and its seat runs; that fixture choice is what left the
+    // empty-complement arm bare, so this test supplies the opposite shape rather than
+    // changing the shared one.
+    //
+    // D16e: when the four lanes between them cite every changed region, the host knows the
+    // remainder is empty BEFORE any turn, so the lane settles `no-noise` with no seat at
+    // all — the cheapest turn in the change, and the whole point of deriving membership
+    // instead of asking a model for it. A Noise seat dispatched here would be a paid turn
+    // to be told there is nothing to group.
+    const seatTurns: SeatCapture[] = [];
+    const result = await runLensPipeline({
+      ...boardSeats(seatTurns, (prompt, label) => {
+        const lens = lensFromPrompt(prompt, label);
+        if (lens !== "sequence") return cleanBody(lens);
+        // The one board that cites the fixture's only changed region, which makes the
+        // complement empty by subtraction.
+        const body = meaningfulSequenceBody();
+        return {
+          elements: [
+            ...body.elements.map((element) =>
+              element.id === "sequence-root"
+                ? {
+                    ...element,
+                    data: { ...element.data, children: ["sequence-step", "uncited-ref"] },
+                  }
+                : element,
+            ),
+            {
+              id: "uncited-ref",
+              kind: "code_ref",
+              data: {
+                author: { kind: "lens-agent", id: "sequence-seat" },
+                patchset_id: "ps-1",
+                path: UNCITED_REGION.path,
+                side: UNCITED_REGION.side,
+                start_line: UNCITED_REGION.start,
+                end_line: UNCITED_REGION.end,
+              },
+            },
+          ],
+        } as unknown as DraftBoard;
+      }),
+      repoRoot: "/pr-worktree",
+      deltaPacket: PACKET,
+      // The file inventory the citation resolves against. Without it the `code_ref` is
+      // unresolvable, admissibility strips it, and the board cites nothing after all —
+      // which would make this test pass or fail for a reason that is not the one written
+      // above it.
+      lintContextFor: (lens) => ({
+        ...lintContextFor(lens),
+        files: new Map([[UNCITED_REGION.path, 100]]),
+      }),
+      readPrompt,
+      whiteboard: fakeWhiteboard([]),
+      boardIdFor: (lens) => `board:${lens}`,
+    });
+
+    const sequence = result.boards.find(({ lens }) => lens === "sequence");
+    expect(sequence?.failure, "the citing lane settled a board").toBeUndefined();
+    expect(sequence?.boardId).toBeDefined();
+    const noise = result.boards.find(({ lens }) => lens === "noise");
+    expect(noise?.absence).toBe("no-noise");
+    expect(noise?.failure).toBeUndefined();
+    expect(noise?.boardId, "no board was written for a lane that ran no seat").toBeUndefined();
+    // The load-bearing half: NO seat. A membership assertion alone passes over a pipeline
+    // that dispatches the seat and then discards its board.
+    const providerCalls = seatTurns.map(({ prompt }) => lensFromPrompt(prompt ?? ""));
+    expect(providerCalls, "at least the other four lanes ran").not.toHaveLength(0);
+    expect(providerCalls).not.toContain("noise");
+    expect(
+      seatTurns.filter(({ seat }) => seat === "noise"),
+      "no thread was opened for the Noise seat either",
+    ).toHaveLength(0);
+  });
+
   it("classifies a lane that never parsed across its ladder as TERMINAL (#549)", async () => {
     const result = await runLensPipeline({
       ...boardSeats([], (prompt, label) => {
