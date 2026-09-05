@@ -1897,6 +1897,13 @@ const EMPTY_LENS_ABSENCE: Partial<Record<LensKind, LensAbsenceReason>> = Object.
   }),
 );
 
+/** A lint context without its lens: what a board lane is opened with (the target is the lens). */
+function omitLens(context: LintContext): Omit<LintContext, "lens"> {
+  const rest: Record<string, unknown> = { ...context };
+  delete rest.lens;
+  return rest as Omit<LintContext, "lens">;
+}
+
 /**
  * What one core lane SAID about what it cites, for the Noise complement (D16d).
  *
@@ -2202,10 +2209,12 @@ export async function runLensPipeline(deps: LensPipelineDeps): Promise<LensPipel
     const boards = deps.boards;
     await Promise.all(
       LENS_KINDS.map(async (lens) => {
-        const { lens: _lens, ...lint } = deps.lintContextFor(lens);
+        // The lane's own `target` IS the lens, so the context is handed over without it —
+        // one source, no agreement to keep between two fields that must not disagree.
+        const context = deps.lintContextFor(lens);
         await boards.openLane({
           target: lens,
-          lint,
+          lint: omitLens(context),
           author: { kind: "lens-agent", id: `lens:${lens}` },
         });
       }),

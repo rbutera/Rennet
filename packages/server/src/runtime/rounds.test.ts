@@ -1224,7 +1224,12 @@ describe("createRoundsRuntime", () => {
       ),
     ).runRound(input);
 
-    for (const boardId of Object.values(boardIds)) {
+    // The noise board is excluded, and that is D16d: Sequence failed on the first
+    // attempt, so the Noise lane refused to take a complement over its silence and wrote
+    // nothing there was anything to clear.
+    const swept = Object.entries(boardIds).filter(([lens]) => lens !== "noise");
+    expect(swept, "every non-derived board swept").toHaveLength(Object.keys(boardIds).length - 1);
+    for (const [, boardId] of swept) {
       expect(recoveryOrder.indexOf(`remove:${boardId}`)).toBeGreaterThanOrEqual(0);
       expect(recoveryOrder.indexOf(`clear:${boardId}`)).toBeGreaterThan(
         recoveryOrder.indexOf(`remove:${boardId}`),
@@ -1552,10 +1557,14 @@ describe("createRoundsRuntime", () => {
 
       const failedAttempt = generations.load("gen:ps-1");
       expect(failedAttempt?.lensBoards.design).toBe(boardIds.design);
-      expect(failedAttempt?.lensBoards.noise).toBe(boardIds.noise);
       expect(failedAttempt?.failedLenses?.[failedCoreLens]).toEqual(expect.any(String));
       expect(meta.load(boardIds.design)?.lens).toBe("design");
-      expect(meta.load(boardIds.noise)?.lens).toBe("noise");
+      // Noise settled NO board on this attempt, and that is D16d rather than a second
+      // defect: its membership is the four core lanes' complement, one of them stated
+      // nothing about what it cites, and a complement over that silence would file
+      // un-reviewed regions as skippable. It names the lane instead.
+      expect(meta.load(boardIds.noise)).toBeUndefined();
+      expect(failedAttempt?.failedLenses?.noise).toContain(failedCoreLens);
 
       const retryCaptures: { prompt?: string }[] = [];
       const recovered = await createRoundsRuntime(
@@ -1618,7 +1627,10 @@ describe("createRoundsRuntime", () => {
     const firstFailure = first.pipeline.boards.find(({ lens }) => lens === "design")?.failure;
     expect(firstFailure).toEqual(expect.any(String));
     expect(first.boardGeneration.failedLenses?.design).toBe(firstFailure);
-    expect(Object.keys(first.boardGeneration.lensBoards)).toHaveLength(4);
+    // THREE, not four: Design stated nothing about what it cites, so the Noise lane
+    // refused the complement (D16d) and settled a failure naming it instead of a board.
+    expect(Object.keys(first.boardGeneration.lensBoards)).toHaveLength(3);
+    expect(first.boardGeneration.failedLenses?.noise).toContain("design");
 
     const recovered = await createRoundsRuntime(
       withFakeT3Seats(

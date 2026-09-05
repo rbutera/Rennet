@@ -242,7 +242,10 @@ describe("a seat's MCP client discovers and calls the board tools (2.5)", () => 
       );
     }
     // A count, so a loop that silently stopped iterating cannot pass as a clean sweep.
-    expect(seen).toBe(96);
+    // 94, not 96: the Noise seat lost two verbs when its membership became the host's
+    // derivation (D16) — no verb creates a member, and none settles the absence the host
+    // decides from an empty complement.
+    expect(seen).toBe(94);
   });
 
   it("a Sequence seat is served no settle_absent, because Sequence admits no absence", async () => {
