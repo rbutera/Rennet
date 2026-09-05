@@ -114,13 +114,32 @@ const bigPacket = buildDeltaPacket(synthetic(), []);
 // Codex leg does), and it carried that on EVERY turn while this text rides the base
 // prompt once per thread — a repair turn now carries the `finish` verdict alone.
 //
+// ── #869's spike: +870 B on every lens, and this is the sentence it owes ─────────
+//
+// `write-with-tools.md` gained a section teaching `write_board`, the whole-board verb.
+// It is the SAME partial on every seat, so the growth is identical across the five:
+//
+//   design    14,223 → 15,093
+//   sequence   8,503 →  9,373
+//   decisions  8,294 →  9,164
+//   flagged    9,226 → 10,096
+//   noise      8,103 →  8,973
+//
+// +870 B each, ~5.2 KB across a generation's six threads, once per thread. What it buys
+// is measured rather than argued (see the spike's PR): board tool calls fell 1,223 → 43
+// on the 95-file drive, and the Noise lane — the one #869 was filed about — went 961 → 4
+// calls and 317.8 s → 108.7 s. The section is deliberately prose-only: it carries no JSON
+// example, because `packages/prompts/src/index.test.ts` forbids a schema or a field list
+// in this slot and the payload grammar rides the tool description instead, where it
+// travels once per session rather than once per thread.
+//
 // Budgets are measurement + 10% headroom, as this file's convention has always been.
 const BUDGET: Record<(typeof LENS_KINDS)[number], number> = {
-  design: 15_650,
-  sequence: 9_360,
-  decisions: 9_130,
-  flagged: 10_150,
-  noise: 8_920,
+  design: 16_600,
+  sequence: 10_310,
+  decisions: 10_080,
+  flagged: 11_100,
+  noise: 9_870,
 };
 
 describe("drafter prompt byte budget (tripwire, #737)", () => {
