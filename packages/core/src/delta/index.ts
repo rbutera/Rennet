@@ -6,6 +6,7 @@ export * from "./bmad-spec";
 export * from "./counterpart-hints";
 export * from "./delta-packet";
 export * from "./element-diffs";
+export * from "./grill-spec";
 export { buildHunkIndex, type HunkIndex, type IndexedHunk } from "./hunk-index";
 export * from "./kiro-spec";
 export * from "./noise-preclass";

@@ -9,6 +9,19 @@
       "{projectRoot}/native/**/*",
       "{workspaceRoot}/scripts/build-exclusive-namespace-move.mjs",
       { "externalDependencies": ["@electron/node-gyp"] }
+    ],
+    "testEnv": [
+      { "env": "RENNET_CODEX_BIN" },
+      { "env": "RENNET_LIVE_APPSERVER_CODEX" },
+      { "env": "RENNET_LIVE_CODEX" },
+      { "env": "RENNET_LIVE_CODEX_MCP_CONFIG" },
+      { "env": "RENNET_LIVE_HARNESS" },
+      { "env": "RENNET_LIVE_OMP" },
+      { "env": "RENNET_LIVE_SESSIONS" },
+      { "env": "RENNET_LIVE_WSL_CODEX" },
+      { "env": "RENNET_LIVE_WSL_DISTRO" },
+      { "env": "RENNET_ROUND_STORE_RACE_ROLE" },
+      { "env": "RENNET_VERIFY_EXEC" }
     ]
   },
   "targets": {
@@ -23,10 +36,15 @@
     },
     "typecheck": { "command": "pnpm exec tsc -p packages/adapters/tsconfig.json" },
     "test": {
+      "cache": true,
+      "dependsOn": ["build"],
+      "inputs": ["default", "^production", "nativeHelper", "testEnv"],
+      "command": "pnpm exec vitest run packages/adapters/src --exclude '**/*.dogfood.test.ts'"
+    },
+    "dogfood-test": {
       "cache": false,
       "dependsOn": ["build"],
-      "inputs": ["default", "^production", "nativeHelper"],
-      "command": "pnpm exec vitest run packages/adapters/src"
+      "command": "pnpm exec vitest run packages/adapters/src/project-snapshot-generator.dogfood.test.ts"
     },
     "native-test": {
       "cache": false,
