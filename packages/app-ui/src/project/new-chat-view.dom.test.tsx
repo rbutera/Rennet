@@ -34,7 +34,6 @@ afterEach(cleanup);
 
 const GITHUB_RENNET = { forge: "github", owner: "rbutera", name: "rennet" } as const;
 const GITHUB_WIDGET = { forge: "github", owner: "acme", name: "widget" } as const;
-const GITHUB_GADGET = { forge: "github", owner: "acme", name: "gadget" } as const;
 const GITLAB_WIDGET = { forge: "gitlab", owner: "acme", name: "widget" } as const;
 
 function project(id: string, name: string): Project {
@@ -86,6 +85,7 @@ function detailP1(): ProjectDetail {
         additions: 10,
         deletions: 2,
         changedFiles: 3,
+        createdAt: "2026-08-24T08:00:00.000Z",
         lastActivityAt: "2026-08-26T08:00:00.000Z",
       },
       {
@@ -102,6 +102,7 @@ function detailP1(): ProjectDetail {
         additions: 4,
         deletions: 1,
         changedFiles: 1,
+        createdAt: "2026-08-20T08:00:00.000Z",
         lastActivityAt: "2026-08-26T10:00:00.000Z",
       },
       {
@@ -118,6 +119,7 @@ function detailP1(): ProjectDetail {
         additions: 100,
         deletions: 20,
         changedFiles: 8,
+        createdAt: "2026-08-10T08:00:00.000Z",
         lastActivityAt: "2026-08-25T08:00:00.000Z",
       },
     ],
@@ -151,58 +153,6 @@ function crossForgeDetail(): ProjectDetail {
         forgeRepository: GITLAB_WIDGET,
       },
     ],
-  };
-}
-
-function crossForgeLocalDetail(): ProjectDetail {
-  const base = detailP1().locals[0];
-  if (base === undefined) throw new Error("missing local fixture");
-  return {
-    viewer: { login: "rai" },
-    truncated: false,
-    locals: [
-      {
-        ...base,
-        id: "github-widget-main",
-        branch: "main",
-        repository: "acme/widget",
-        forgeRepository: GITHUB_WIDGET,
-      },
-      {
-        ...base,
-        id: "gitlab-widget-main",
-        branch: "main",
-        repository: "acme/widget",
-        forgeRepository: GITLAB_WIDGET,
-      },
-    ],
-    prs: [],
-  };
-}
-
-function sameForgeLocalDetail(): ProjectDetail {
-  const base = detailP1().locals[0];
-  if (base === undefined) throw new Error("missing local fixture");
-  return {
-    viewer: { login: "rai" },
-    truncated: false,
-    locals: [
-      {
-        ...base,
-        id: "github-widget-main",
-        branch: "main",
-        repository: "acme/widget",
-        forgeRepository: GITHUB_WIDGET,
-      },
-      {
-        ...base,
-        id: "github-gadget-release",
-        branch: "release",
-        repository: "acme/gadget",
-        forgeRepository: GITHUB_GADGET,
-      },
-    ],
-    prs: [],
   };
 }
 
@@ -347,12 +297,12 @@ describe("NewChatView", () => {
     renderView("p1", { p1: detailP1() });
     await screen.findByText("My open change");
 
-    // 1 local + 3 PRs, no dedupe (distinct branches).
-    expect(screen.getByRole("button", { name: /^All/ }).textContent).toContain("4");
+    // Merged work stays hidden until the toggle is enabled.
+    expect(screen.getByRole("button", { name: /^All/ }).textContent).toContain("3");
     expect(screen.getByRole("button", { name: /^Needs you/ }).textContent).toContain("1");
-    expect(screen.getByRole("button", { name: /^Mine/ }).textContent).toContain("3");
-    expect(screen.getByRole("button", { name: /^Local/ }).textContent).toContain("1");
-    expect(screen.getByRole("button", { name: /^Requests/ }).textContent).toContain("3");
+    expect(screen.getByRole("button", { name: /^Yours/ }).textContent).toContain("2");
+    expect(screen.getByRole("button", { name: /^Local branches/ }).textContent).toContain("1");
+    expect(screen.getByRole("button", { name: /^Pull requests/ }).textContent).toContain("2");
   });
 
   it("names an unavailable forge on the routed surface without hiding healthy rows", async () => {
@@ -386,9 +336,25 @@ describe("NewChatView", () => {
     expect(screen.queryByText("feat/local-x")).toBeNull();
   });
 
+  it("sorts by activity by default and by created time from the headers", async () => {
+    renderView("p1", { p1: detailP1() });
+    await screen.findByText("Teammate span fix");
+    const titles = () =>
+      screen
+        .getAllByRole("button")
+        .filter((button) => button.dataset.row === "target")
+        .map((button) => button.textContent);
+
+    expect(titles()[0]).toContain("Teammate span fix");
+    fireEvent.click(screen.getByRole("button", { name: "Sort by created" }));
+    expect(titles()[0]).toContain("My open change");
+    fireEvent.click(screen.getByRole("button", { name: "Sort by created" }));
+    expect(titles()[0]).toContain("Teammate span fix");
+  });
+
   it("text-filters across the documented fields", async () => {
     renderView("p1", { p1: detailP1() });
-    const filter = await screen.findByLabelText("Filter branches and change requests");
+    const filter = await screen.findByLabelText("Search branches, pull requests, and authors");
 
     // A PR title match.
     fireEvent.change(filter, { target: { value: "span" } });
@@ -401,46 +367,9 @@ describe("NewChatView", () => {
     expect(screen.queryByText("Teammate span fix")).toBeNull();
   });
 
-  it("visibly and accessibly disambiguates identical local targets from different forges", async () => {
-    renderView("p1", { p1: crossForgeLocalDetail() });
-
-    const github = await screen.findByRole("button", {
-      name: /main.*Reviewed.*GitHub.*acme\/widget/i,
-    });
-    const gitlab = screen.getByRole("button", {
-      name: /main.*Reviewed.*GitLab.*acme\/widget/i,
-    });
-    expect(within(github).getByText("GitHub")).toBeTruthy();
-    expect(within(gitlab).getByText("GitLab")).toBeTruthy();
-    expect(within(github).getByText("acme/widget")).toBeTruthy();
-    expect(within(gitlab).getByText("acme/widget")).toBeTruthy();
-
-    const filter = screen.getByLabelText("Filter branches and change requests");
-    fireEvent.change(filter, { target: { value: "gitlab" } });
-    expect(
-      screen.getByRole("button", { name: /main.*Reviewed.*GitLab.*acme\/widget/i }),
-    ).toBeTruthy();
-    expect(
-      screen.queryByRole("button", { name: /main.*Reviewed.*GitHub.*acme\/widget/i }),
-    ).toBeNull();
-  });
-
-  it("keeps ordinary same-forge repository labels as plain owner/name", async () => {
-    renderView("p1", { p1: sameForgeLocalDetail() });
-
-    expect(await screen.findByText("acme/widget")).toBeTruthy();
-    expect(screen.getByText("acme/gadget")).toBeTruthy();
-    expect(screen.queryByText("GitHub")).toBeNull();
-
-    fireEvent.change(screen.getByLabelText("Filter branches and change requests"), {
-      target: { value: "github" },
-    });
-    expect(await screen.findByText("nothing matches")).toBeTruthy();
-  });
-
   it("filtered-empty and empty states read honestly", async () => {
     renderView("p1", { p1: detailP1() });
-    const filter = await screen.findByLabelText("Filter branches and change requests");
+    const filter = await screen.findByLabelText("Search branches, pull requests, and authors");
     fireEvent.change(filter, { target: { value: "zzz-nothing" } });
     expect(screen.getByText("nothing matches")).toBeTruthy();
 
@@ -453,7 +382,7 @@ describe("NewChatView", () => {
     const { history } = renderView("p1", { p1: detailP1() }, undefined, sessionStore(), {
       current: "/s/session-before-new-chat?view=diff",
     });
-    const filter = await screen.findByLabelText("Filter branches and change requests");
+    const filter = await screen.findByLabelText("Search branches, pull requests, and authors");
     fireEvent.change(filter, { target: { value: "span" } });
 
     // First Escape (filter non-empty): clears it, does NOT navigate.
@@ -504,6 +433,8 @@ describe("NewChatView", () => {
 
   it("merged rows dim (read-only lift), single-repo drops the repo column", async () => {
     renderView("p1", { p1: detailP1() });
+    expect(screen.queryByText("Old merged work")).toBeNull();
+    fireEvent.click(await screen.findByRole("switch", { name: "Show merged PRs" }));
     await screen.findByText("Old merged work");
     const merged = rowButton(/Old merged work/);
     expect(merged.className).toContain("opacity-50");
@@ -511,30 +442,16 @@ describe("NewChatView", () => {
     expect(within(merged).queryByText("rennet")).toBeNull();
   });
 
-  it("seeds the composer from an ?ask= handoff (the context map's discuss lands here)", async () => {
-    renderView("p1", { p1: detailP1() }, "About X: is this claim right?");
-    const composer = (await screen.findByLabelText(
-      "Message the orchestrator",
-    )) as HTMLTextAreaElement;
-    expect(composer.value).toBe("About X: is this claim right?");
-  });
-
   it("state chips read the DERIVED target vocabulary, not just the bare kind", async () => {
     renderView("p1", { p1: detailP1() });
     await screen.findByText("Teammate span fix");
-    // A teammate PR that needs you reads "Needs you" — the derived state, never the flat
-    // "Teammate PR" the kind-only label would print (finding 13).
-    expect(within(rowButton(/Teammate span fix/)).getByText("Needs you")).toBeTruthy();
+    expect(within(rowButton(/Teammate span fix/)).getByText("Review requested")).toBeTruthy();
     expect(within(rowButton(/Teammate span fix/)).queryByText("Teammate PR")).toBeNull();
-    // A merged PR reads "Merged".
-    expect(within(rowButton(/Old merged work/)).getByText("Merged")).toBeTruthy();
-    // A local target whose served pipeline stage is reviewed reads "Reviewed".
-    expect(within(rowButton(/feat\/local-x/)).getByText("Reviewed")).toBeTruthy();
-    // A mine open PR has no derived state → it reads by its kind, "Your PR".
+    expect(within(rowButton(/feat\/local-x/)).queryByText("Your PR")).toBeNull();
     expect(within(rowButton(/My open change/)).getByText("Your PR")).toBeTruthy();
   });
 
-  it("shows Needs you ahead of the owner kind when the review state demands attention", async () => {
+  it("keeps ownership distinct when your own PR has failing CI", async () => {
     const detail = detailP1();
     detail.prs = detail.prs.map((pr) =>
       pr.id === "pr-mine" ? { ...pr, ci: "failing" as const } : pr,
@@ -542,8 +459,8 @@ describe("NewChatView", () => {
     renderView("p1", { p1: detail });
 
     await screen.findByText("My open change");
-    expect(within(rowButton(/My open change/)).getByText("Needs you")).toBeTruthy();
-    expect(within(rowButton(/My open change/)).queryByText("Your PR")).toBeNull();
+    expect(within(rowButton(/My open change/)).getByText("Your PR")).toBeTruthy();
+    expect(within(rowButton(/My open change/)).getByLabelText("CI failing")).toBeTruthy();
   });
 
   // The `new-chat` mark ("Start Here") anchors the SIDEBAR's New Chat row now, not this
@@ -618,12 +535,10 @@ describe("NewChatView", () => {
 });
 
 describe("NewChatView — a row click starts the session (C21, R26)", () => {
-  it("mints a session, claims the PR target, and lands on it carrying the typed ask", async () => {
+  it("mints a session, claims the PR target, and lands on it", async () => {
     const { history, store } = renderView("p1", { p1: detailP1() });
     await screen.findByText("My open change");
 
-    const composer = screen.getByLabelText("Message the orchestrator") as HTMLTextAreaElement;
-    fireEvent.change(composer, { target: { value: "  Why is this diff so large?  " } });
     fireEvent.click(rowButton(/My open change/));
 
     // The mint really happened on the host: one session, claiming the row's branch AND
@@ -644,10 +559,7 @@ describe("NewChatView — a row click starts the session (C21, R26)", () => {
     expect(store.captures[0]?.repoPath).toBeUndefined();
     // The session the host answers with ALREADY holds its review — that is the whole act.
     expect(store.sessions[0]?.reviewId).toBe("rev-1");
-    // …and the client landed on THAT session's route, carrying the trimmed ask.
-    await waitFor(() =>
-      expect(history.history.at(-1)).toBe("/s/sess-1?ask=Why+is+this+diff+so+large%3F"),
-    );
+    await waitFor(() => expect(history.history.at(-1)).toBe("/s/sess-1"));
   });
 
   it("keeps identical GitHub and GitLab targets separate through mint and session reload", async () => {
@@ -674,26 +586,6 @@ describe("NewChatView — a row click starts the session (C21, R26)", () => {
     expect(rowButton(/GitLab widget/).textContent).toContain("!7");
   });
 
-  it("the Current Checkout row starts a NO-TARGET session — it claims nothing", async () => {
-    const { history, store } = renderView("p1", { p1: detailP1() });
-    await screen.findByText("My open change");
-
-    fireEvent.click(rowButton(/Current Checkout/));
-
-    await waitFor(() => expect(store.sessions).toHaveLength(1));
-    expect(store.sessions[0]?.claim).toBeUndefined();
-    // No branch, no repository: the no-target row is the project as a whole, which is the
-    // one case where the project's own path IS the right repo.
-    await waitFor(() => expect(store.captures).toHaveLength(1));
-    expect(store.captures[0]).toMatchObject({ command: "session.mint", projectId: "p1" });
-    expect(store.captures[0]?.branch).toBeUndefined();
-    expect(store.captures[0]?.repository).toBeUndefined();
-    // It still holds a review — the checkout row starts a REVIEW, not a bare chat.
-    expect(store.sessions[0]?.reviewId).toBe("rev-1");
-    // No ask typed ⇒ no `?ask=` on the route; nothing is invented.
-    await waitFor(() => expect(history.history.at(-1)).toBe("/s/sess-1"));
-  });
-
   it("POSITIVE CONTROL: a claimed row leaves the list, and comes back on archive", async () => {
     // A live session already claiming `feat/mine` — exactly what the click above creates.
     const claimed: SidebarSession = {
@@ -708,7 +600,7 @@ describe("NewChatView — a row click starts the session (C21, R26)", () => {
     await screen.findByText("Teammate span fix");
     // GONE — and the tab counts fall with it, so the list never advertises a row it hides.
     expect(screen.queryByText("My open change")).toBeNull();
-    expect(screen.getByRole("button", { name: /^All/ }).textContent).toContain("3");
+    expect(screen.getByRole("button", { name: /^All/ }).textContent).toContain("2");
     withClaim.unmount();
     cleanup();
 
@@ -716,7 +608,7 @@ describe("NewChatView — a row click starts the session (C21, R26)", () => {
     // If the filter keyed on anything but a live claim, this control would not flip.
     renderView("p1", { p1: detailP1() }, undefined, sessionStore([{ ...claimed, archived: true }]));
     expect(await screen.findByText("My open change")).toBeTruthy();
-    expect(screen.getByRole("button", { name: /^All/ }).textContent).toContain("4");
+    expect(screen.getByRole("button", { name: /^All/ }).textContent).toContain("3");
   });
 
   it("the row a click just claimed is gone when New Chat is reopened", async () => {
@@ -858,15 +750,13 @@ describe("NewChatView — a row click starts the session (C21, R26)", () => {
     return { ...view, history };
   }
 
-  /** Type into the composer and press its Send — the OTHER start entry point. */
-  async function composerSend(user: ReturnType<typeof mount>["user"]): Promise<void> {
-    await user.type(screen.getByLabelText("Message the orchestrator"), "what changed?");
-    await user.click(screen.getByLabelText("Send"));
+  function startAnotherRow(): void {
+    fireEvent.click(rowButton(/feat\/local-x/));
   }
 
-  it("a RESOLVED mint releases the row it marked — the composer's next send marks the checkout", async () => {
+  it("a RESOLVED mint releases the row it marked before another row starts", async () => {
     const mint = stagedMint();
-    const { user } = renderStaged(mint.handler);
+    renderStaged(mint.handler);
     await screen.findByText("My open change");
 
     fireEvent.click(rowButton(/My open change/));
@@ -874,16 +764,14 @@ describe("NewChatView — a row click starts the session (C21, R26)", () => {
     await mint.settle("resolve");
     await waitFor(() => expect(rowButton(/My open change/).dataset.starting).toBeUndefined());
 
-    // The composer starts the CHECKOUT row. Before the fix the id from the settled flight
-    // was still held, so this second flight re-lit the PR row instead.
-    await composerSend(user);
-    await waitFor(() => expect(rowButton(/Current Checkout/).dataset.starting).toBe("true"));
+    startAnotherRow();
+    await waitFor(() => expect(rowButton(/feat\/local-x/).dataset.starting).toBe("true"));
     expect(rowButton(/My open change/).dataset.starting).toBeUndefined();
   });
 
-  it("a REJECTED mint releases it too — a failed row does not resurrect under the composer", async () => {
+  it("a REJECTED mint releases it too — a failed row does not resurrect", async () => {
     const mint = stagedMint();
-    const { user } = renderStaged(mint.handler);
+    renderStaged(mint.handler);
     await screen.findByText("My open change");
 
     fireEvent.click(rowButton(/My open change/));
@@ -891,32 +779,27 @@ describe("NewChatView — a row click starts the session (C21, R26)", () => {
     await mint.settle("reject");
     await screen.findByRole("alert");
 
-    await composerSend(user);
-    await waitFor(() => expect(rowButton(/Current Checkout/).dataset.starting).toBe("true"));
+    startAnotherRow();
+    await waitFor(() => expect(rowButton(/feat\/local-x/).dataset.starting).toBe("true"));
     expect(rowButton(/My open change/).dataset.starting).toBeUndefined();
   });
 
   it("switching project mid-flight does not carry the mark onto the new project's row", async () => {
-    // `CHECKOUT_ROW_ID` is a CONSTANT, so it collides across every project by construction:
-    // the old project's in-flight mark landed on the new project's checkout row, naming a
-    // start that had nothing to do with it. This is the many-repos-one-identity shape again.
     const { user } = renderStaged(
       () => new Promise<CommandOutput<"session.mint">>(() => undefined),
     );
     await screen.findByText("My open change");
 
-    fireEvent.click(rowButton(/Current Checkout/));
-    await waitFor(() => expect(rowButton(/Current Checkout/).dataset.starting).toBe("true"));
+    fireEvent.click(rowButton(/My open change/));
+    await waitFor(() => expect(rowButton(/My open change/).dataset.starting).toBe("true"));
 
     await user.click(screen.getByRole("button", { name: "Choose project" }));
     await user.click(await screen.findByText("whiteboard"));
 
-    // p2 is empty, so its checkout row is the only row — and the flight it would be
-    // reporting belongs to p1.
     await waitFor(() =>
       expect(screen.getByText("no open branches or change requests yet")).toBeTruthy(),
     );
-    expect(rowButton(/Current Checkout/).dataset.starting).toBeUndefined();
+    expect(document.querySelector('[data-starting="true"]')).toBeNull();
   });
 
   it("a failed mint says so and stays put — nothing is claimed to have started", async () => {

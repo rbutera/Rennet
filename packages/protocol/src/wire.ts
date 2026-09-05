@@ -922,6 +922,8 @@ export const pullRequestSchema = z
     additions: z.number().int().nonnegative().optional(),
     deletions: z.number().int().nonnegative().optional(),
     changedFiles: z.number().int().nonnegative().optional(),
+    /** Provider-reported creation time. Optional for legacy project-detail producers. */
+    createdAt: z.iso.datetime().optional(),
     lastActivityAt: z.iso.datetime(),
   })
   .refine(
