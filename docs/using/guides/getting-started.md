@@ -138,8 +138,10 @@ project shows that project's branches and pull requests in one list. Local
 branch rows appear immediately; pull-request rows join as each repository
 finishes loading, and the progress names the repository being read rather than
 guessing a percentage. If the project's forge is unreachable, local work stays
-available. The left rail filters by attention, ownership, local branches, or
-pull requests. **Created** and **Activity** are sortable column headers, and
+available. Until that first read answers, the list says it is **scanning** — a
+project on a network mount can take minutes, and an empty list mid-scan is not the
+same claim as a project with nothing open. The left rail filters by attention,
+ownership, local branches, or pull requests. **Created** and **Activity** are sortable column headers, and
 **Show merged PRs** adds faded historical rows to the same list.
 The back arrow or Escape leaves New Chat for the surface you came from. When the
 filter contains text, the first Escape clears it and the next leaves.
@@ -356,6 +358,15 @@ is still there after a reload. Asking about a highlighted span sends your questi
 with the cited lines into the same thread and opens the chat on the answer.
 Nothing the thread says stages anything: you stage an ask yourself, from the board,
 a line, or a highlighted span.
+
+If the thread is not there yet, the column says which kind of "not there" it is,
+and it never claims something is coming when nothing is. *Connecting to the T3 Code
+sidecar…* is a real wait — the thread exists and is arriving. *This review has no
+thread, and none is being opened* is settled, and carries the reason Rennet could
+not open one. *This review's thread is no longer in the T3 Code sidecar* means it
+was deleted. On a chat-only session — a new chat before its capture attaches — the
+column simply says no review is attached, because there is nothing to open a thread
+for yet.
 
 Clicking a file the thread mentions opens it in **Diff**, Rennet's own viewer, at
 that file — not in a second file pane inside the chat. A file the review never

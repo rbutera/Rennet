@@ -18,7 +18,7 @@ import {
   RouterProvider,
   useNavigate,
 } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { createContext, useContext, useEffect, useState } from "react";
 import ChatView from "~/components/ChatView";
 import {
   resolveDraftPromotionNavigationTarget,
@@ -39,7 +39,6 @@ import { useRightPanelStore } from "~/rightPanelStore";
 import { AppAtomRegistryProvider } from "~/rpc/atomRegistry";
 import {
   setActiveEnvironmentId,
-  useEnvironmentThreadRefs,
   useThread,
   useThreadDetail,
   useThreadRefs,
@@ -49,14 +48,22 @@ import {
 import { useEnvironmentQuery } from "~/state/query";
 import { environmentShell } from "~/state/shell";
 import { useAtomCommand } from "~/state/use-atom-command";
-import {
-  buildThreadRouteParams,
-  resolveThreadRouteRef,
-  resolveThreadRouteRenderState,
-} from "~/threadRoutes";
+import { buildThreadRouteParams, resolveThreadRouteRef } from "~/threadRoutes";
 import { resolveThreadSyncPhase } from "~/threadSync";
-import { ConnectionsNotice, ThreadOpeningNotice, ThreadSyncingNotice } from "./placeholders";
-import { type SidecarSession, sidecarRegistration, sidecarThreadPath } from "./session";
+import {
+  ConnectionsNotice,
+  ThreadGoneNotice,
+  ThreadSyncingNotice,
+  ThreadUnavailableNotice,
+} from "./placeholders";
+import {
+  resolvePinnedThreadView,
+  type SidecarSession,
+  type SidecarThread,
+  sidecarRegistration,
+  sidecarSessionPath,
+  sidecarThreadPath,
+} from "./session";
 
 /** See `RouteFileOpens`. `false` = Rennet did not take the click. */
 export type OpenFileInDiff = (path: string, line?: number) => boolean;
@@ -94,12 +101,30 @@ const rootRoute = createRootRoute({
   ),
 });
 
-// The words in these three routes live in ./placeholders, which imports no `~/` module and
-// so can be rendered and read back by this package's own test (#849).
+/**
+ * Why the mount has no thread, for the home route to say out loud.
+ *
+ * A route component takes no props, and the reason is a fact of the SESSION the mount was
+ * handed — so it arrives by context rather than being re-derived. Undefined only in the
+ * `T3ThreadView` mount, which is pointed at an explicit thread ref and never routes home.
+ */
+const MountThreadContext = createContext<SidecarThread | undefined>(undefined);
+
+// The words in these routes live in ./placeholders, which imports no `~/` module and so
+// can be rendered and read back by this package's own test (#849, corrected by #872).
+function HomeRouteView() {
+  const thread = useContext(MountThreadContext);
+  return (
+    <ThreadUnavailableNotice
+      {...(thread?.status === "unavailable" ? { reason: thread.reason } : {})}
+    />
+  );
+}
+
 const homeRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/",
-  component: ThreadOpeningNotice,
+  component: HomeRouteView,
 });
 
 const settingsRoute = createRoute({
@@ -131,31 +156,29 @@ function createChatRouter(initialPath: string) {
 }
 
 function ThreadRouteView() {
-  const navigate = useNavigate();
   const threadRef = threadRoute.useParams({
     select: (params) => resolveThreadRouteRef(params),
   });
+  // The environment's own bootstrap. Read here — not only for the decision below — because
+  // subscribing to the shell atom is what starts and keeps the snapshot current.
   const shell = useEnvironmentQuery(
     threadRef === null ? null : environmentShell.stateAtom(threadRef.environmentId),
   );
   const serverThreadShell = useThreadShell(threadRef);
   const serverThreadDetail = useThreadDetail(threadRef);
   const serverThreadStatus = useThreadStatus(threadRef);
-  const environmentThreadRefs = useEnvironmentThreadRefs(threadRef?.environmentId ?? null);
-  const bootstrapComplete = shell.data?.snapshot._tag === "Some";
-  const environmentHasServerThreads = environmentThreadRefs.length > 0;
   const draftThread = useComposerDraftStore((store) =>
     threadRef ? store.getDraftThreadByRef(threadRef) : null,
   );
-  const environmentHasDraftThreads = useComposerDraftStore((store) =>
-    threadRef ? store.hasDraftThreadsInEnvironment(threadRef.environmentId) : false,
-  );
-  const renderState = resolveThreadRouteRenderState({
-    bootstrapComplete,
-    serverThreadShellExists: serverThreadShell !== null,
-    serverThreadDetailExists: serverThreadDetail !== null,
-    serverThreadDetailDeleted: serverThreadStatus === "deleted",
-    draftThreadExists: draftThread !== null,
+  // THE MOUNT IS PINNED TO THIS THREAD (#872), so there is no redirect here and no reading
+  // of the rest of the environment to decide one — upstream's "go to the list" answer has
+  // no list to go to inside Rennet's dock, and firing it lost the thread permanently.
+  const view = resolvePinnedThreadView({
+    bootstrapComplete: shell.data?.snapshot._tag === "Some",
+    detailExists: serverThreadDetail !== null,
+    draftExists: draftThread !== null,
+    shellExists: serverThreadShell !== null,
+    deleted: serverThreadStatus === "deleted",
   });
   const threadSyncPhase = resolveThreadSyncPhase({
     detailExists: serverThreadDetail !== null,
@@ -163,14 +186,6 @@ function ThreadRouteView() {
     status: serverThreadStatus,
   });
   const serverThreadStarted = threadHasStarted(serverThreadDetail);
-  const environmentHasAnyThreads = environmentHasServerThreads || environmentHasDraftThreads;
-
-  useEffect(() => {
-    if (!threadRef || !bootstrapComplete) return;
-    if (renderState === "missing" && environmentHasAnyThreads) {
-      void navigate({ to: "/", replace: true });
-    }
-  }, [bootstrapComplete, environmentHasAnyThreads, navigate, renderState, threadRef]);
 
   useEffect(() => {
     if (!threadRef || !serverThreadStarted || !draftThread) return;
@@ -178,9 +193,8 @@ function ThreadRouteView() {
   }, [draftThread, serverThreadStarted, threadRef]);
 
   if (!threadRef) return null;
-  if (renderState !== "ready" && !(renderState === "loading" && serverThreadShell !== null)) {
-    return <ThreadSyncingNotice />;
-  }
+  if (view === "gone") return <ThreadGoneNotice />;
+  if (view === "syncing") return <ThreadSyncingNotice />;
   return (
     <ChatView
       environmentId={threadRef.environmentId}
@@ -315,17 +329,19 @@ function FollowPath({
 }
 
 export default function T3NativeChat({ session, onOpenFile }: T3NativeChatProps) {
-  const [router] = useState(() => createChatRouter(sidecarThreadPath(session)));
+  const [router] = useState(() => createChatRouter(sidecarSessionPath(session)));
   return (
     <div
       data-slot="t3-native-chat"
       className="flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-background text-foreground"
     >
       <AppAtomRegistryProvider>
-        <SidecarEnvironment session={session} />
-        <RouteFileOpens {...(onOpenFile === undefined ? {} : { onOpenFile })} />
-        <FollowPath router={router} path={sidecarThreadPath(session)} />
-        <RouterProvider router={router} />
+        <MountThreadContext.Provider value={session.thread}>
+          <SidecarEnvironment session={session} />
+          <RouteFileOpens {...(onOpenFile === undefined ? {} : { onOpenFile })} />
+          <FollowPath router={router} path={sidecarSessionPath(session)} />
+          <RouterProvider router={router} />
+        </MountThreadContext.Provider>
       </AppAtomRegistryProvider>
     </div>
   );

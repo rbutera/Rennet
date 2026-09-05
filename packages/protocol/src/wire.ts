@@ -3034,6 +3034,37 @@ export const t3SidecarStatusSchema = z.object({
 export type T3SidecarStatus = z.infer<typeof t3SidecarStatusSchema>;
 
 /**
+ * WHAT HAPPENED TO THE REVIEW'S THREAD — an ARM, not an optional id (#872).
+ *
+ * The dock's mount routes on this, and the two things it must be able to tell apart are
+ * "the thread is on its way" and "there is no thread and none is coming". A bare optional
+ * `threadId` could not: silence meant the daemon had not been asked, or had been asked and
+ * failed, and the dock had to guess. It guessed "coming", and a reviewer read *Opening this
+ * review's thread* for a whole session while nothing opened. Same family as #863 and #865,
+ * and the same answer both times: give the wire the state it is missing.
+ *
+ * `unavailable` is a SETTLED absence — the bind was attempted and it failed, so the caller
+ * may say so flatly. It is not an error on the session read: the environment is still good
+ * (the reviewer can still see other threads), and collapsing the whole brokered session
+ * into a rejection because one bind failed hid the reason behind "sidecar unavailable".
+ */
+export const t3ThreadBindingSchema = z.discriminatedUnion("status", [
+  z.object({
+    status: z.literal("bound"),
+    /** The thread bound to the review that asked (repository root + review id). */
+    threadId: z.string().min(1),
+    /** The sidecar UI's route for that thread, for an embedded T3 view. */
+    threadUrl: z.string().min(1),
+  }),
+  z.object({
+    status: z.literal("unavailable"),
+    /** Why the bind failed, in the daemon's own words — the dock shows it verbatim. */
+    reason: z.string().min(1),
+  }),
+]);
+export type T3ThreadBinding = z.infer<typeof t3ThreadBindingSchema>;
+
+/**
  * A brokered sidecar session for a client (`chat.t3Session`). The daemon owns the token
  * file; a client gets the origin, the WebSocket URL, the bearer to open it with, and the
  * sidecar's environment id.
@@ -3043,9 +3074,10 @@ export const t3SessionSchema = z.object({
   wsUrl: z.string(),
   accessToken: z.string(),
   environmentId: z.string(),
-  /** The thread bound to the review that asked (repository root + review id), when one was. */
-  threadId: z.string().optional(),
-  /** The sidecar UI's route for that thread, for an embedded T3 view. */
-  threadUrl: z.string().optional(),
+  /**
+   * The review's thread. Absent ⇔ the CALLER NAMED NO REVIEW — a fact about the request,
+   * not about the sidecar. Every ask that carries a `reviewId` gets one arm or the other.
+   */
+  thread: t3ThreadBindingSchema.optional(),
 });
 export type T3Session = z.infer<typeof t3SessionSchema>;

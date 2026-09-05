@@ -139,7 +139,16 @@ so that field is what puts every turn of the thread in the tree the session is b
 the reviewer's own checkout for a branch review they are standing on, a Rennet-created
 worktree for a branch they are not, the detached worktree at the reviewed head for a
 pull-request snapshot. The binding is persisted beside the sidecar's state and returned as
-`threadId` plus the sidecar UI's `threadUrl`.
+the output's `thread` field.
+
+That field is an **arm, never an optional id**. Called with a review, `chat.t3Session`
+answers `{ status: "bound", threadId, threadUrl }` or `{ status: "unavailable", reason }`;
+it is absent only when the caller named no review, which is a fact about the ask rather than
+about the sidecar. A failed bind does **not** reject the read: the origin, the bearer and the
+environment id are good whatever the bind did, and rejecting threw them away — a healthy
+sidecar with one missing workspace used to surface in the dock as "T3 Code sidecar
+unavailable" and the mount never rendered at all. The reason travels instead, and the dock
+prints it.
 
 The same is true of every seat thread and of the handoff thread: they are created with the
 session's bound workspace, never the project root alone, so all six lens seats, the chat and
@@ -155,9 +164,39 @@ The review usually binds that thread before the dock ever asks. `review.capture`
 point, `bindReviewThread` in `dispatch/chat.ts`, so no caller can key a second thread for
 the same review — fire-and-forget, so a capture never waits on the sidecar and never fails
 on it. By the time a reviewer opens the dock, `chat.t3Session` reads the row that is
-already there. Until it does, the mount's home route says the thread is being opened and
-will appear, rather than reporting an absence: the thread is not missing, it has not been
-made yet.
+already there. Fire-and-forget has no caller to reject, so the catch **warns** with the
+review id and the reason rather than swallowing: it is the one bind whose failure nothing
+else would record.
+
+### What the mount rests on when there is no thread yet
+
+The mount is pinned to exactly one thread and **never navigates away from it**. Upstream's
+thread route redirects to the thread list when the environment snapshot does not carry the
+thread the URL names; that is right in T3 Code, where the reader navigated there and the
+list is somewhere to land, and wrong inside Rennet's dock, which has no list. The redirect
+fired on the first frame whenever the snapshot predated a thread the daemon had just made —
+which is every session opened after the environment has already bootstrapped — and the
+mount's `FollowPath` re-asserts its path only when the *path* changes, so nothing ever came
+back. One frame of a race left a dead dock for the rest of the session.
+
+So the route waits, and names which wait it is in (`resolvePinnedThreadView`, in
+`packages/t3-chat/src/session.ts`):
+
+| state | when | what the reviewer reads |
+| --- | --- | --- |
+| `chat` | the thread's detail or shell is here | the thread |
+| `syncing` | the snapshot has not delivered it yet | *Connecting to the T3 Code sidecar…* |
+| `gone` | the sidecar positively reports it **deleted** | *This review's thread is no longer in the T3 Code sidecar. Nothing is being written to it.* |
+
+The home route is now reachable one way only — the daemon said `unavailable` — so it states
+that flatly and carries the daemon's reason: *This review has no thread, and none is being
+opened. Rennet could not open one: …*. It does not promise an arrival, because in that state
+there is none. `gone` exists so `syncing` cannot become a permanent wait for something that
+will never come.
+
+Off a review entirely — a chat-only session, which is what a New Chat mint is until its
+capture attaches — the dock renders none of this and asks the daemon nothing. It says *No
+review is attached to this session, so there is no thread to open.*
 
 ## The chat slot
 

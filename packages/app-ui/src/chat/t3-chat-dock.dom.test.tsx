@@ -101,8 +101,11 @@ function mountDock(slot?: {
         wsUrl: "ws://127.0.0.1:43117/ws",
         accessToken: "bearer-never-in-the-guest",
         environmentId: "env-1",
-        threadId: reviewId === "review-2" ? "thread-2" : "thread-1",
-        threadUrl: "http://127.0.0.1:43117/env-1/thread-1",
+        thread: {
+          status: "bound",
+          threadId: reviewId === "review-2" ? "thread-2" : "thread-1",
+          threadUrl: "http://127.0.0.1:43117/env-1/thread-1",
+        },
       };
     },
   });
@@ -128,13 +131,68 @@ function mountDock(slot?: {
   return { ...view, asks, history };
 }
 
+/**
+ * A CHAT-ONLY SESSION — the New Chat route as the daemon actually publishes it (#872).
+ *
+ * The fixture is written from the daemon's side, not the dock's: `session.list` carries a
+ * real session with NO `reviewId`, and `review.load` throws the daemon's own literal
+ * "Review not found" for it (the sentence `routes/slug.ts` matches on). That is the shape
+ * `/s/<slug>` has for a New Chat mint before its capture attaches and for a session that
+ * never gets one, and it is a SESSION route — so the dock is open, not hidden.
+ *
+ * A fixture that simply omitted the review would have resolved to `not-found` and passed
+ * this test while the real route (a session that exists and holds no review) still showed
+ * the sidecar-starting line.
+ */
+function mountChatOnly() {
+  const asks: unknown[] = [];
+  const bridge = new MemoryBridge({
+    ...frontDoorHandlers(),
+    "settings.get": () => ({ ...emptySettings(), projects: [projectRow()] }),
+    "session.list": () => ({
+      sessions: [
+        {
+          id: "chat-only",
+          projectId: "p1",
+          title: "New review",
+          target: "your-branch",
+          createdAt: 1,
+        },
+      ],
+    }),
+    "review.load": () => {
+      throw new Error("Review not found");
+    },
+    "chat.t3Session": (input) => {
+      asks.push(input);
+      return {
+        origin: "http://127.0.0.1:43117",
+        wsUrl: "ws://127.0.0.1:43117/ws",
+        accessToken: "bearer-never-in-the-guest",
+        environmentId: "env-1",
+      };
+    },
+  });
+  act(() => {
+    useRennetStore.getState().uiActions.setSidebarOpen(false);
+    useRennetStore.getState().uiActions.setChatOpen(true);
+  });
+  const history = memoryHistory("/s/chat-only");
+  const view = mount(<RennetRouterApp bridge={bridge} history={history} />);
+  return { ...view, asks };
+}
+
 /** Both rung-two components provided, each recording its props. */
 function mountWithSlot() {
   const seen: T3NativeChatProps["session"][] = [];
   const opened: T3ThreadViewProps[] = [];
   const Session = ({ session }: T3NativeChatProps) => {
     seen.push(session);
-    return <div data-slot="t3-native-stub">{session.threadId}</div>;
+    return (
+      <div data-slot="t3-native-stub">
+        {session.thread?.status === "bound" ? session.thread.threadId : ""}
+      </div>
+    );
   };
   const Thread = (props: T3ThreadViewProps) => {
     opened.push(props);
@@ -256,5 +314,42 @@ describe("the chat slot is always the T3 thread", () => {
       expect(dock.querySelector('[data-slot="t3-native-stub"]')?.textContent).toBe("thread-2"),
     );
     expect(dock.querySelector('[data-slot="t3-thread-stub"]')).toBeNull();
+  });
+
+  // ── #872: the dock may only claim a bring-up it is actually waiting on ────────
+  //
+  // "Starting the T3 Code sidecar…" is the `pending || !data` arm of a read that is
+  // DISABLED with no review, so `data` is undefined forever and the line never resolved.
+  // It is not the copy that was wrong — it is that the arm was reachable at all from a
+  // route where nothing is being started.
+  it("never says the sidecar is starting on a session that holds no review", async () => {
+    const { getByTestId, asks } = mountChatOnly();
+    const dock = getByTestId("chat-dock-slot");
+    await waitFor(() =>
+      expect(dock.querySelector('[data-slot="t3-chat-no-review"]')).not.toBeNull(),
+    );
+    expect(dock.querySelector('[data-slot="t3-chat-no-review"]')?.textContent).toContain(
+      "No review is attached to this session",
+    );
+    // The line the issue was filed about, gone from this route.
+    expect(dock.querySelector('[data-slot="t3-chat-starting"]')).toBeNull();
+    // And it is not merely unrendered: nothing was ASKED of the sidecar either, which is
+    // the fact the copy was misreporting. A dock that still fired the read and hid the
+    // line would pass the assertion above and keep lying about the same thing.
+    expect(asks).toEqual([]);
+    // The dock is on a session route, so it is open and this is really on screen.
+    expect(dock.getAttribute("data-open")).toBe("true");
+  });
+
+  // The control for the pair above: the SAME assertions on a route that does hold a
+  // review must find the opposite, or "no-review everywhere" would satisfy both.
+  it("still reaches the sidecar on a session that holds one", async () => {
+    const { getByTestId, asks } = mountDock();
+    const dock = getByTestId("chat-dock-slot");
+    await waitFor(() =>
+      expect(dock.querySelector('[data-slot="t3-chat-unmounted"]')).not.toBeNull(),
+    );
+    expect(dock.querySelector('[data-slot="t3-chat-no-review"]')).toBeNull();
+    expect(asks).toEqual([{ reviewId: "review-1" }]);
   });
 });

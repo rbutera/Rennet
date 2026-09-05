@@ -1,7 +1,7 @@
 import { type ReactNode, Suspense } from "react";
 import { useCommand } from "../data/query";
 import { useOpenCapturedPath } from "../review/code-destination";
-import { useChatTrail, useRouteReviewId } from "./chat-data";
+import { useChatTrail, useRouteChatTarget } from "./chat-data";
 import { ChatHeader } from "./chat-header";
 import { useT3ChatSlot } from "./t3-chat-slot";
 
@@ -12,7 +12,10 @@ import { useT3ChatSlot } from "./t3-chat-slot";
  * nothing says so rather than showing an empty box.
  */
 export function T3ChatDock({ corner }: { readonly corner?: ReactNode }) {
-  const reviewId = useRouteReviewId();
+  // WHICH of the three the route names decides what this dock may claim (#872). The read
+  // below only runs for a review, so only a review may be told the sidecar is starting.
+  const target = useRouteChatTarget();
+  const reviewId = target.kind === "review" ? target.reviewId : undefined;
   const { data, error, pending } = useCommand(
     "chat.t3Session",
     reviewId === undefined ? {} : { reviewId },
@@ -47,7 +50,11 @@ export function T3ChatDock({ corner }: { readonly corner?: ReactNode }) {
       className="flex h-full min-h-0 flex-col overflow-hidden border-r border-line"
     >
       <ChatHeader trail={trail} {...(corner ? { corner } : {})} />
-      {error ? (
+      {target.kind === "resolving" ? null : target.kind === "no-review" ? (
+        <p data-slot="t3-chat-no-review" className="p-3 text-xs text-ink-soft">
+          No review is attached to this session, so there is no thread to open.
+        </p>
+      ) : error ? (
         <p data-slot="t3-chat-error" className="p-3 text-xs text-ink-soft">
           T3 Code sidecar unavailable: {error instanceof Error ? error.message : String(error)}
         </p>

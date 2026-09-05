@@ -378,6 +378,35 @@ describe("NewChatView", () => {
     await screen.findByText("no open branches or change requests yet");
   });
 
+  // #872, the same family as the chat dock's: a surface that cannot tell "nothing here"
+  // from "still looking" defaulted to the settled reading. `rows` is `[]` until
+  // `project.detail` answers, and on a network-mounted clone that scan runs for minutes —
+  // so the list stated an empty result for a scan that had not finished.
+  //
+  // The read is held OPEN here (a promise that never settles), which is the state the
+  // reviewer was actually in. A fixture that resolved fast would never render this frame.
+  it("says it is still scanning while project.detail has not answered", async () => {
+    const history = memoryHistory(newChatPath("p1"));
+    const bridge = new MemoryBridge({
+      "projects.list": () => ({ projects: [project("p1", "rennet")] }),
+      "project.detail": () => new Promise<CommandOutput<"project.detail">>(() => undefined),
+      ...sessionStore().handlers,
+    } satisfies MemoryBridgeHandlers);
+    mount(
+      <BridgeProvider bridge={bridge}>
+        <Router hook={history.hook} searchHook={history.searchHook}>
+          <PriorSurfaceProvider value={{ current: newChatPath() }}>
+            <NewChatView projectId="p1" />
+          </PriorSurfaceProvider>
+        </Router>
+      </BridgeProvider>,
+    );
+    await screen.findByText("scanning this project's branches and change requests…");
+    // The settled sentence must NOT be on screen at the same time, or the fix would be a
+    // second line rather than a different state.
+    expect(screen.queryByText("no open branches or change requests yet")).toBeNull();
+  });
+
   it("Escape is two-stage: clear the filter, then return to the prior surface", async () => {
     const { history } = renderView("p1", { p1: detailP1() }, undefined, sessionStore(), {
       current: "/s/session-before-new-chat?view=diff",

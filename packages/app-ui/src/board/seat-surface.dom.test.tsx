@@ -145,14 +145,20 @@ function harness(options: {
       wsUrl: "ws://127.0.0.1:1",
       accessToken: "t",
       environmentId: "env-1",
-      threadId: "thread-session",
+      thread: {
+        status: "bound",
+        threadId: "thread-session",
+        threadUrl: "http://127.0.0.1:1/env-1/thread-session",
+      },
     }),
   } as never);
 
   /** Both mounts of the T3 slot, each recording what it was handed. */
   const threads: T3ThreadViewProps[] = [];
   const Session = ({ session }: T3NativeChatProps) => (
-    <div data-testid="dock-session-thread">{session.threadId}</div>
+    <div data-testid="dock-session-thread">
+      {session.thread?.status === "bound" ? session.thread.threadId : ""}
+    </div>
   );
   const Thread = (props: T3ThreadViewProps) => {
     threads.push(props);
