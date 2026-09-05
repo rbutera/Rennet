@@ -5,8 +5,11 @@ import {
   LensBoardSchema,
   type LensFailureAccount,
   type LensKind,
+  type LensLane,
 } from "@rennet/protocol";
 import { useCommand } from "../data";
+import { useRoundState } from "../rounds/rounds-data";
+import { type LensSeatState, type LensSeatStates, lensSeatStates } from "./lens-seats";
 import { BOARD_EXCLUDED_KINDS } from "./registry";
 
 const excludedKinds: ReadonlySet<string> = new Set(BOARD_EXCLUDED_KINDS);
@@ -145,34 +148,30 @@ export function useBoardData(
   });
 }
 
-/** Every terminal lens result the switcher can open: populated, empty, or failed. */
-export type LensBoardEntry =
-  | {
-      readonly lens: LensKind;
-      readonly board: LensBoard;
-      readonly failure?: never;
-      readonly absence?: never;
-    }
-  | {
-      readonly lens: LensKind;
-      readonly board?: never;
-      readonly failure?: never;
-      readonly absence: LensAbsenceReason;
-    }
-  | {
-      readonly lens: LensKind;
-      readonly board?: never;
-      readonly failure: string;
-      readonly absence?: never;
-    };
+/**
+ * One lens's row on the rail: its seat's state, always, plus whatever result the board
+ * read has for it — a board, a typed absence, a failure, or nothing yet.
+ *
+ * `seat` is on EVERY arm because the rail now lists all five lenses from the first frame
+ * (lens-board-tools D12), and the state of a lens with no result yet is the whole point
+ * of it being there. The fourth, result-less arm is what that added: before this change
+ * a lens with no terminal result was dropped from the list entirely.
+ */
+export type LensBoardEntry = {
+  readonly lens: LensKind;
+  readonly seat: LensSeatState;
+} & (
+  | { readonly board: LensBoard; readonly failure?: never; readonly absence?: never }
+  | { readonly board?: never; readonly failure?: never; readonly absence: LensAbsenceReason }
+  | { readonly board?: never; readonly failure: string; readonly absence?: never }
+  | { readonly board?: never; readonly failure?: never; readonly absence?: never }
+);
 
 /**
- * Every terminal lens result in `generation` — the lens switcher's
- * absent-not-disabled set (C05 6.2). Probes every lens through the one seam and
- * keeps populated, typed-empty, and failed results, so "which lenses are settled"
- * is derived from board-data, never invented. A lens with no terminal result is
- * simply unavailable. `LENS_KINDS` is fixed-length, so the per-lens reads are
- * hooks-safe.
+ * Every lens's board read in `generation`. Probes every lens through the one seam and
+ * keeps populated, typed-empty, and failed results, so "which lenses have settled" is
+ * derived from board-data, never invented. `LENS_KINDS` is fixed-length, so the per-lens
+ * reads are hooks-safe.
  */
 export type LensBoardResolutions = Readonly<Record<LensKind, BoardResolution>>;
 
@@ -193,21 +192,49 @@ export function useLensBoardResolutions(
   };
 }
 
-export function lensBoardsFromResolutions(byLens: LensBoardResolutions): LensBoardEntry[] {
-  return LENS_KINDS.flatMap<LensBoardEntry>((lens) => {
+/**
+ * The rail, from the board reads and the generation's lanes: ALL FIVE lenses, in canonical
+ * order, each carrying its seat's state (lens-board-tools 5.1, D12).
+ *
+ * WHAT CHANGED AND WHY, because it reverses a rule that was deliberate. Until this change a
+ * lens with no terminal result was omitted, and a Design lane that settled `no-spec` was
+ * omitted too (session-bound-workspace D6: there is nothing to open). Both omissions are
+ * gone, for one reason each:
+ *
+ *  • `live-board-workspace` requires all five listed "from the moment the generation starts,
+ *    whether or not a lens has a result", because a running lens has to be selectable —
+ *    that is the whole of "boards first".
+ *  • A lens that appears and then DISAPPEARS as it settles breaks the same spec's "nothing
+ *    navigates when a lane settles": the reviewer's selected tab would vanish under them.
+ *    `no-spec` Design is exactly that case, and the wireframe draws an absent lens IN the
+ *    rail (`— absent`) rather than out of it.
+ *
+ * The `no-spec` board is not empty: `BoardAccount` renders the absence's own words, which is
+ * what the tab now opens onto. Callers that need "which lenses actually have something to
+ * read" — the selected-lens fallback — ask {@link lensesWithResult}, not this list's length.
+ */
+export function lensBoardsFromResolutions(
+  byLens: LensBoardResolutions,
+  seats: LensSeatStates,
+): LensBoardEntry[] {
+  return LENS_KINDS.map<LensBoardEntry>((lens) => {
     const resolution = byLens[lens];
-    if (resolution.status === "valid") return [{ lens, board: resolution.board }];
-    // A Design lane that settled `no-spec` has no tab at all (session-bound-workspace D6):
-    // this branch has no specification, so there is nothing to open and an empty board
-    // would be a lie. Every other absence stays selectable so its reason is reachable —
-    // including Design's legacy `no-material`, which older generations still carry.
-    if (resolution.status === "absent" && lens === "design" && resolution.reason === "no-spec") {
-      return [];
-    }
-    if (resolution.status === "absent") return [{ lens, absence: resolution.reason }];
-    if (resolution.status === "failed") return [{ lens, failure: resolution.reason }];
-    return [];
+    const seat = seats[lens];
+    if (resolution.status === "valid") return { lens, seat, board: resolution.board };
+    if (resolution.status === "absent") return { lens, seat, absence: resolution.reason };
+    if (resolution.status === "failed") return { lens, seat, failure: resolution.reason };
+    return { lens, seat };
   });
+}
+
+/** The entries that have something to open — a board, a typed absence, or a failure. The
+ *  selected-lens fallback reads THIS, so a rail that now lists a result-less lens cannot
+ *  make it the fallback target. */
+export function lensesWithResult(entries: readonly LensBoardEntry[]): LensBoardEntry[] {
+  return entries.filter(
+    (entry) =>
+      entry.board !== undefined || entry.absence !== undefined || entry.failure !== undefined,
+  );
 }
 
 /** Whether every lens has reached a durable or terminal read result. */
@@ -217,6 +244,41 @@ export function lensReadsSettled(byLens: LensBoardResolutions): boolean {
   );
 }
 
-export function useLensBoards(reviewId: string, generation: string): LensBoardEntry[] {
-  return lensBoardsFromResolutions(useLensBoardResolutions(reviewId, generation));
+/**
+ * The generation's lanes — the seat states the rail, the widget and the drawer all read.
+ *
+ * TWO sources, because a generation has two shapes and only one of them is in flight at a
+ * time: `session.preparation.lanes` for the initial generation (the daemon's durable
+ * preparation record) and the round machine's `lanes` for a post-round regeneration. The
+ * round state wins when it has lanes, because a regeneration is the later generation.
+ *
+ * `undefined` means NO generation is in flight, which is a different answer from "in
+ * flight with no lanes opened yet" (`[]`, the capture frame) — see `lens-seats.ts`.
+ */
+export function useGenerationLanes(slug: string): readonly LensLane[] | undefined {
+  const { data } = useCommand("session.list", {}, { enabled: slug.length > 0 });
+  const roundState = useRoundState(slug);
+  const roundLanes = "lanes" in roundState ? roundState.lanes : undefined;
+  if (roundLanes !== undefined && roundLanes.length > 0) return roundLanes;
+  const preparation = data?.sessions.find((candidate) => candidate.id === slug)?.preparation;
+  if (preparation === undefined) return undefined;
+  // `capturing` has no lanes at all and that is honest: the daemon has not opened one. The
+  // empty array is what tells the rail this generation IS running, so its five lenses read
+  // waiting rather than absent.
+  return "lanes" in preparation ? preparation.lanes : [];
+}
+
+/** Every lens's seat state for the generation the session is on. */
+export function useLensSeats(slug: string, resolutions: LensBoardResolutions): LensSeatStates {
+  const lanes = useGenerationLanes(slug);
+  return lensSeatStates(lanes, resolutions);
+}
+
+export function useLensBoards(
+  slug: string,
+  reviewId: string,
+  generation: string,
+): LensBoardEntry[] {
+  const resolutions = useLensBoardResolutions(reviewId, generation);
+  return lensBoardsFromResolutions(resolutions, useLensSeats(slug, resolutions));
 }

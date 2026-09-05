@@ -13,30 +13,40 @@ import { Icon } from "../components/icon";
 import { useRennetStore } from "../store";
 import type { LensBoardEntry } from "./board-data";
 import { lensSlot, lensTint } from "./lens-colour";
+import { LENS_LABEL, type SeatCut, type SeatRegister, waitingOnLine } from "./lens-seats";
 import { deltaKey } from "./viewed-delta";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// The lens switcher (C05 6.2, Objective clause 7) — a segmented control, one
-// segment per lens that produced a terminal result this generation. `lenses` is already
-// resolved through the board-data seam (the top bar calls `useLensBoards`): a durable
-// failure or typed empty result remains selectable so its reason is reachable, while a
-// lens with no terminal result simply is not in the list (never a disabled segment).
+// The lens rail (C05 6.2, Objective clause 7; lens-board-tools 5.1/5.5/5.7) — a
+// segmented control with one segment per lens, ALL FIVE, from the first frame of the
+// generation. `lenses` is resolved through the board-data seam, which now carries each
+// lens's seat state beside its board: the rail renders what it is given and decides
+// nothing about which lenses exist.
 //
-// Delta rollup (Objective clause 7 / #486): each segment carries a small gold pip
-// counting the sections in that lens's board that carry a `new`/`reworked` delta and
-// are still UNVIEWED. It is the section-level dot (`section.tsx`) rolled up — derived
-// live from the SAME UI-only `viewedDelta` slice, never a stored count (store's
-// DELETE-ON-SIGHT rule), so it clears as the reviewer reads those sections.
+// THE STOP IS THE STATE, IN SHAPE (5.5, D12). The bench's five core samples are gone and
+// their register moved here, onto the stop this rail already drew — `lens-switcher.tsx`'s
+// own comment called it "the same device the bench's core samples hang on, at rail scale",
+// so the `data-cut` vocabulary rides it rather than being invented somewhere new:
+//
+//   unstarted  a faint rule: nothing has been drawn yet.
+//   open       a dashed rule with a lamp travelling along it — the one moving thing on
+//              the rail, and it means this seat is writing right now.
+//   clean      a solid rule: the board is cut and it stops moving.
+//   seamed     the same, split by a gap where the board was re-cut this generation.
+//   snapped    two offset pieces: the seat broke before it settled.
+//   empty      a dotted outline — the lens settled with nothing to draw.
+//
+// COLOUR IS IDENTITY, NEVER STATE. The hue says which lens this is (#818), so a failed
+// Design lane is a snapped BLUE stop, never a red one, and every register above survives
+// the colour being ignored entirely.
+//
+// Delta rollup (Objective clause 7 / #486): each segment carries a small gold pip counting
+// the sections in that lens's board that carry a `new`/`reworked` delta and are still
+// UNVIEWED — WITHHELD while the board is still being written (5.4/D13), because a partial
+// board would mark every element new and a reviewer would act on the count.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Reader-facing lens names — the id vocabulary (`manifests/`) is lower-case. */
-export const LENS_LABEL: Record<LensKind, string> = {
-  design: "Design",
-  sequence: "Sequence",
-  decisions: "Decisions",
-  flagged: "Flagged",
-  noise: "Noise",
-};
+export { LENS_LABEL };
 
 const LENS_ICON: Readonly<Record<LensKind, LucideIcon>> = {
   design: DraftingCompass,
@@ -45,6 +55,89 @@ const LENS_ICON: Readonly<Record<LensKind, LucideIcon>> = {
   flagged: Flag,
   noise: VolumeX,
 };
+
+/** One lens's stop, cut the way its seat's register says. Lens-AGNOSTIC: it paints in
+ *  `lens`/`lens-line`, which resolve against whatever `--rn-lens` the tab bound. */
+function LensStop({ cut, active }: { readonly cut: SeatCut; readonly active: boolean }) {
+  const ink = active ? "bg-lens" : "bg-lens-line";
+  if (cut === "snapped") {
+    // Two pieces, offset, with nothing between them — a break is a SHAPE, so it reads
+    // with the colour turned off.
+    return (
+      <span
+        data-testid="lens-stop"
+        data-cut={cut}
+        aria-hidden="true"
+        className="absolute inset-x-2 bottom-1 flex h-1 items-start"
+      >
+        <span className={cn("h-0.5 w-1/3 rounded-full", ink)} />
+        <span className="w-1/3" />
+        <span className={cn("mt-0.5 h-0.5 w-1/3 self-end rounded-full", ink)} />
+      </span>
+    );
+  }
+  if (cut === "seamed") {
+    return (
+      <span
+        data-testid="lens-stop"
+        data-cut={cut}
+        aria-hidden="true"
+        className="absolute inset-x-2 bottom-1 flex h-0.5 gap-1"
+      >
+        <span className={cn("h-0.5 flex-1 rounded-full", ink)} />
+        <span className={cn("h-0.5 flex-1 rounded-full", ink)} />
+      </span>
+    );
+  }
+  return (
+    <span
+      data-testid="lens-stop"
+      data-cut={cut}
+      aria-hidden="true"
+      className={cn(
+        "absolute inset-x-2 bottom-1 h-0.5 overflow-hidden rounded-full transition-colors",
+        cut === "clean" && ink,
+        cut === "unstarted" && "bg-lens-line/60",
+        // A settled absence and an unstarted lane are both quiet, and they are quiet in
+        // different SHAPES: dotted says "the socket was never filled", faint says "not yet".
+        cut === "empty" &&
+          "bg-[length:4px_2px] bg-[linear-gradient(to_right,var(--color-lens-line)_50%,transparent_50%)] bg-repeat-x",
+        cut === "open" &&
+          "bg-[length:4px_2px] bg-[linear-gradient(to_right,var(--color-lens)_50%,transparent_50%)] bg-repeat-x",
+      )}
+    >
+      {cut === "open" && (
+        // The affineur's lamp, at rail scale. `motion-reduce:hidden`, not `animate-none`:
+        // parked at the left it is a static band that reads as a mark of its own, and the
+        // dashed rule under it already says "under way".
+        <span className="pointer-events-none block h-0.5 w-1/3 rounded-full bg-lens animate-lens-stop-scan motion-reduce:hidden" />
+      )}
+    </span>
+  );
+}
+
+/** The per-voice working indicator: one ring per seat, so Flagged carries two. */
+function SeatIndicators({
+  register,
+  voices,
+}: {
+  readonly register: SeatRegister;
+  readonly voices: number;
+}) {
+  if (register !== "working") return null;
+  return (
+    <span data-testid="lens-working" data-voices={voices} className="flex shrink-0 items-center">
+      {Array.from({ length: Math.max(1, voices) }, (_, index) => (
+        <span
+          // biome-ignore lint/suspicious/noArrayIndexKey: the voices are positional marks with no identity of their own beyond their count.
+          key={index}
+          aria-hidden="true"
+          className="-ml-0.5 first:ml-0 size-1.5 rounded-full border border-lens animate-processing-pulse motion-reduce:animate-none"
+        />
+      ))}
+    </span>
+  );
+}
 
 export function LensSwitcher({
   lenses,
@@ -77,22 +170,30 @@ export function LensSwitcher({
         className,
       )}
     >
-      {lenses.map(({ lens, board, failure, absence }) => {
-        const unviewedDeltas =
-          board?.sections.filter(
-            (s) => s.delta !== undefined && !viewed[deltaKey(board.boardId, s.ref)],
-          ).length ?? 0;
-        const openCount = lens === "flagged" ? flaggedOpenCount : 0;
+      {lenses.map(({ lens, board, failure, absence, seat }) => {
+        // Withheld while the board is still being written (5.4): a partial board would
+        // mark every section new, which is a lie the reviewer would act on.
+        const unviewedDeltas = seat.drafting
+          ? 0
+          : (board?.sections.filter(
+              (s) => s.delta !== undefined && !viewed[deltaKey(board.boardId, s.ref)],
+            ).length ?? 0);
+        const openCount = lens === "flagged" && !seat.drafting ? flaggedOpenCount : 0;
+        const waiting = seat.register === "waiting" ? waitingOnLine(seat.waitingOn) : "";
         const accessibleStatus =
-          failure !== undefined
-            ? ", failed to generate"
-            : absence !== undefined
-              ? `, ${absenceAccessibleStatus(absence)}`
-              : lens === "flagged"
-                ? `, ${openCount} open${openCount === 0 && unviewedDeltas > 0 ? ", changed this round" : ""}`
-                : unviewedDeltas > 0
-                  ? ", changed this round"
-                  : "";
+          seat.register === "working"
+            ? `, working${seat.voices.length > 1 ? `, ${seat.voices.length} voices` : ""}`
+            : seat.register === "waiting"
+              ? `, ${waiting}`
+              : failure !== undefined
+                ? ", failed to generate"
+                : absence !== undefined
+                  ? `, ${absenceAccessibleStatus(absence)}`
+                  : lens === "flagged"
+                    ? `, ${openCount} open${openCount === 0 && unviewedDeltas > 0 ? ", changed this round" : ""}`
+                    : unviewedDeltas > 0
+                      ? ", changed this round"
+                      : "";
         const active = lens === selected;
         return (
           <button
@@ -101,11 +202,17 @@ export function LensSwitcher({
             role="tab"
             aria-selected={active}
             aria-label={`${LENS_LABEL[lens]}${accessibleStatus}`}
-            title={LENS_LABEL[lens]}
+            title={
+              seat.register === "waiting" && waiting
+                ? `${LENS_LABEL[lens]} — ${waiting}`
+                : LENS_LABEL[lens]
+            }
             data-lens={lens}
             data-lens-slot={lensSlot(lens)}
+            data-register={seat.register}
             data-failed={failure === undefined ? undefined : "true"}
             data-absent={absence === undefined ? undefined : absence}
+            {...(seat.waitingOn.length > 0 ? { "data-waiting-on": seat.waitingOn.join(",") } : {})}
             onClick={() => onSelect(lens)}
             className={cn(
               // The tab binds its lens's hue for its own subtree; the stop and the
@@ -117,20 +224,7 @@ export function LensSwitcher({
                 : "text-muted-foreground hover:text-foreground",
             )}
           >
-            {/* THE STOP — the same device the bench's core samples hang on, at rail
-                scale: a 2px rule in this lens's colour along the foot of its tab, full
-                strength when selected and dimmed when not. It is identity, not state:
-                selection is still carried by `aria-selected`, by the raised fill, and
-                by the ink stepping up — so the rail reads correctly with colour
-                ignored entirely. */}
-            <span
-              data-testid="lens-stop"
-              aria-hidden="true"
-              className={cn(
-                "absolute inset-x-2 bottom-1 h-0.5 rounded-full transition-colors",
-                active ? "bg-lens" : "bg-lens-line",
-              )}
-            />
+            <LensStop cut={seat.cut} active={active} />
             <span className="relative flex shrink-0">
               <Icon icon={LENS_ICON[lens]} className={cn("size-4", active && "text-lens")} />
               {openCount > 0 ? (
@@ -151,6 +245,7 @@ export function LensSwitcher({
               ) : null}
             </span>
             <span className="hidden @[46rem]:inline">{LENS_LABEL[lens]}</span>
+            <SeatIndicators register={seat.register} voices={seat.voices.length} />
           </button>
         );
       })}

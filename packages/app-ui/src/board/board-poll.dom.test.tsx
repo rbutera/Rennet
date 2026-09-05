@@ -46,7 +46,7 @@ async function mountBoard(drafted: () => boolean = () => true) {
   });
   mount(
     <BridgeProvider bridge={bridge}>
-      <LensBoardView reviewId="rev-1" generation="gen0" lens="design" />
+      <LensBoardView slug="" reviewId="rev-1" generation="gen0" lens="design" />
     </BridgeProvider>,
   );
   // Let the five first reads resolve, so the baseline is the poll's doing and nothing else.

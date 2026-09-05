@@ -4,6 +4,7 @@ import type {
   CommandInput,
   CommandName,
   CommandOutput,
+  LensDraftEvent,
   ProjectDetailProgressEvent,
   ProjectProcessEvent,
   RennetBridge,
@@ -90,6 +91,7 @@ export class MemoryBridge implements RennetBridge {
   readonly #detailProgress = new KeyedEmitter<ProjectDetailProgressEvent>();
   readonly #askProjection = new KeyedEmitter<AskProjection>();
   readonly #roundProgress = new KeyedEmitter<RoundEvent>();
+  readonly #lensDraft = new KeyedEmitter<LensDraftEvent>();
   readonly #attention = new Emitter<AttentionEventFrame>();
   readonly #updateReady = new Emitter<UpdateReadyInfo>();
 
@@ -144,6 +146,10 @@ export class MemoryBridge implements RennetBridge {
     return this.#roundProgress.subscribe(reviewId, listener);
   }
 
+  onLensDraft(reviewId: string, listener: Listener<LensDraftEvent>): () => void {
+    return this.#lensDraft.subscribe(reviewId, listener);
+  }
+
   onAttention(listener: Listener<AttentionEventFrame>): () => void {
     return this.#attention.subscribe(listener);
   }
@@ -168,6 +174,11 @@ export class MemoryBridge implements RennetBridge {
   /** Push one live round-progress event to the review's subscribers (C15 3.1). */
   emitRoundProgress(reviewId: string, event: RoundEvent): void {
     this.#roundProgress.emit(reviewId, event);
+  }
+
+  /** Push one accepted board write to the review's subscribers (`lens-board-tools` D11). */
+  emitLensDraft(reviewId: string, event: LensDraftEvent): void {
+    this.#lensDraft.emit(reviewId, event);
   }
 
   emitAttention(event: AttentionEventFrame): void {

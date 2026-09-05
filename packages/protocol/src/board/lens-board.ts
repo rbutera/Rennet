@@ -144,3 +144,92 @@ export function generationIdForPatchset(patchsetId: string): string {
 export function generationIdForDispatch(patchsetId: string, dispatchId: string): string {
   return `gen:${patchsetId}:dispatch:${dispatchId}`;
 }
+
+// ── The fold-line projection, shared by the two readers of a board ───────────
+//
+// A board's sections are DERIVED from its elements: the top-level `section` elements, in
+// the order the ops created them, each tallying its own resolved children. Two callers
+// need that derivation and must not disagree about it — the daemon projecting the
+// PERSISTED board for `board.read`, and the client folding the LIVE element stream for a
+// board being written (`lens-board-tools` D11/D13). A board that read one way while it was
+// being written and another way once it settled would reorganise itself under the reviewer
+// at the moment the lane settled, which is the one thing "nothing navigates when a lane
+// settles" forbids.
+//
+// Pure and structural: the caller supplies elements as `{ id, kind, data }`, which both the
+// board service's projected state and a `DraftElement` already are.
+
+/** One element as either reader holds it, before it is validated as a `HostElement`. */
+export interface BoardStateElement {
+  readonly id: string;
+  readonly kind: string;
+  readonly data: Record<string, unknown>;
+}
+
+const DOMAIN_COUNT_ENTRIES = [
+  ["finding", "findings"],
+  ["decision", "decisions"],
+  ["requirement", "requirements"],
+  ["order_step", "steps"],
+  ["round_outcome", "outcomes"],
+  ["noise_verdict", "groups"],
+  ["code_ref", "files"],
+  ["review_comment", "comments"],
+] as const satisfies readonly (readonly [string, DomainCountKind])[];
+
+const DOMAIN_COUNT_FOR_HOST_KIND = new Map<string, DomainCountKind>(DOMAIN_COUNT_ENTRIES);
+
+const asBoardString = (value: unknown): string | undefined =>
+  typeof value === "string" ? value : undefined;
+
+/** The element ids some element names as a child — the nested set, excluded from the
+ *  top-level fold lines. Only `children` is a containment relation; other element-typed
+ *  attributes (a finding's `code`, a decision's `evidence`) are citations, not nesting. */
+function nestedBoardIds(elements: readonly BoardStateElement[]): ReadonlySet<string> {
+  const nested = new Set<string>();
+  for (const element of elements) {
+    const children = element.data.children;
+    if (!Array.isArray(children)) continue;
+    for (const child of children) if (typeof child === "string") nested.add(child);
+  }
+  return nested;
+}
+
+/**
+ * The top-level section entries of a board, in reading order, each with its fold line.
+ * `gist` falls back to the section's own TITLE when the drafter authored none — its own
+ * words, never a summary this projection wrote.
+ */
+export function projectBoardSections(elements: readonly BoardStateElement[]): LensSection[] {
+  const byId = new Map(elements.map((element) => [element.id, element]));
+  const nested = nestedBoardIds(elements);
+  return elements
+    .filter((element) => element.kind === "section" && !nested.has(element.id))
+    .map((element) => {
+      const children = Array.isArray(element.data.children) ? element.data.children : [];
+      const counts: Record<string, number> = {};
+      // A file is counted once however many spans cite it, so a section citing four ranges
+      // of one file reads "1 file" rather than four.
+      const countedFilePaths = new Set<string>();
+      for (const child of children) {
+        const childElement = typeof child === "string" ? byId.get(child) : undefined;
+        const hostKind = childElement?.kind;
+        const domainKind =
+          hostKind === undefined ? undefined : DOMAIN_COUNT_FOR_HOST_KIND.get(hostKind);
+        if (domainKind === undefined) continue;
+        if (domainKind === "files") {
+          const path = asBoardString(childElement?.data.path);
+          if (path === undefined || countedFilePaths.has(path)) continue;
+          countedFilePaths.add(path);
+        }
+        counts[domainKind] = (counts[domainKind] ?? 0) + 1;
+      }
+      const delta = element.data.delta;
+      return {
+        ref: element.id,
+        gist: asBoardString(element.data.gist) ?? asBoardString(element.data.title) ?? "",
+        counts,
+        ...(delta === "new" || delta === "reworked" ? { delta } : {}),
+      };
+    });
+}

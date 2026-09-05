@@ -3,6 +3,7 @@ import type {
   CommandInput,
   CommandName,
   CommandOutput,
+  LensDraftEvent,
   ProjectDetailProgressEvent,
   ProjectProcessEvent,
   RennetBridge,
@@ -20,6 +21,7 @@ import { commandKey } from "./cache";
 //   • projectDetailProgress  (onProjectDetailProgress, by commandId) → project.detail
 //   • askProjection          (onAskProjection, keyed by reviewId)    → ask.read
 //   • roundProgress          (onRoundProgress, keyed by reviewId)    → session.roundEvents
+//   • lensDraft              (onLensDraft, keyed by reviewId)        → board.draft
 // The daemon-wide channels (onAttention/onUpdateReady) fold into the store, not a read,
 // so they are consumed directly, not through this hook.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -29,6 +31,7 @@ interface ChannelEvent {
   projectDetailProgress: ProjectDetailProgressEvent;
   askProjection: AskProjection;
   roundProgress: RoundEvent;
+  lensDraft: LensDraftEvent;
 }
 type StreamChannelName = keyof ChannelEvent;
 
@@ -50,6 +53,8 @@ function subscribeChannel<C extends StreamChannelName>(
       return bridge.onAskProjection?.(subscriptionKey, listener as (e: AskProjection) => void);
     case "roundProgress":
       return bridge.onRoundProgress?.(subscriptionKey, listener as (e: RoundEvent) => void);
+    case "lensDraft":
+      return bridge.onLensDraft?.(subscriptionKey, listener as (e: LensDraftEvent) => void);
     default:
       return undefined;
   }

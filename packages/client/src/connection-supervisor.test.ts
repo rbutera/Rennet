@@ -2,6 +2,7 @@ import type { AddressInfo } from "node:net";
 import type {
   AskProjection,
   AttentionEventFrame,
+  LensDraftEvent,
   ProjectDetailProgressEvent,
   ProjectProcessEvent,
   RoundEvent,
@@ -61,6 +62,13 @@ class FakeBridge implements SupervisedBridge {
   }
   emitRound(reviewId: string, event: RoundEvent): void {
     for (const l of this.roundListeners.get(reviewId) ?? []) l(event);
+  }
+  readonly lensDraftListeners = new Map<string, Set<(e: LensDraftEvent) => void>>();
+  onLensDraft(reviewId: string, listener: (e: LensDraftEvent) => void): () => void {
+    return add(this.lensDraftListeners, reviewId, listener);
+  }
+  emitLensDraft(reviewId: string, event: LensDraftEvent): void {
+    for (const l of this.lensDraftListeners.get(reviewId) ?? []) l(event);
   }
   onProgress(commandId: string, listener: (e: ProjectProcessEvent) => void): () => void {
     return add(this.progressListeners, commandId, listener);

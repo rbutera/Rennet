@@ -1,7 +1,6 @@
-import { type ReactNode, Suspense, useEffect } from "react";
+import { type ReactNode, Suspense } from "react";
 import { useCommand } from "../data/query";
 import { useOpenCapturedPath } from "../review/code-destination";
-import { useRennetStore } from "../store";
 import { useChatTrail, useRouteReviewId } from "./chat-data";
 import { ChatHeader } from "./chat-header";
 import { useT3ChatSlot } from "./t3-chat-slot";
@@ -20,25 +19,17 @@ export function T3ChatDock({ corner }: { readonly corner?: ReactNode }) {
     { enabled: reviewId !== undefined },
   );
   const slot = useT3ChatSlot();
-  // Which thread the slot is showing: a lens seat's transcript when the reviewer opened
-  // one from the bench (t3-lens-threads 3.4), the review's own thread otherwise.
+  // WHICH THREAD THE SLOT SHOWS: the session's own, in every state of every lane (#823).
   //
-  // The store slice is global, this dock is mounted once, and the review under it changes
-  // with the route — so a ref belonging to ANOTHER review is not this dock's transcript.
-  // It is treated as none in the same render (an effect alone would paint one frame of the
-  // previous session's thread under this session's header) and cleared right after.
-  const openRef = useRennetStore((s) => s.ui.lensThread);
-  const openLensThread = useRennetStore((s) => s.uiActions.openLensThread);
+  // There is no second answer and no branch that could produce one. Until this change the
+  // dock had a lens-thread arm: a bench reader wrote `ui.lensThread` and the dock replaced
+  // the reviewer's conversation with that seat's transcript, behind a "← Back to the
+  // session" button. Rai, 2026-09-04: "we take over the orchestrator's chat with the lens
+  // agent's chat thread.. thats a big nono and should be removed or reworked." It is
+  // removed. A seat's transcript opens in the board region's own drawer
+  // (`board/seat-transcript-drawer.tsx`), which is a SECOND mount of `slot.thread` — this
+  // dock is no longer the only one, and it no longer has to choose.
   //
-  // A POSITIVE CONTRADICTION, never silence (AGENTS.md): the route not having resolved its
-  // review yet is not evidence that this transcript belongs to another one, and treating it
-  // as such would clear the lens a bench opened while its own review was still resolving.
-  // Only a review id that is known AND different disowns the ref.
-  const foreign = openRef !== null && reviewId !== undefined && openRef.reviewId !== reviewId;
-  const lensThread = openRef !== null && !foreign ? openRef.thread : null;
-  useEffect(() => {
-    if (foreign) openLensThread(null);
-  }, [foreign, openLensThread]);
   // The trail TRANSFERS here when the dock opens (C20 state 2): the top bar hands it off,
   // so the dock has to render it or the open dock names no session at all. It rides the
   // dock's own header, above whatever fills the slot, and the header owns the corner too.
@@ -72,26 +63,7 @@ export function T3ChatDock({ corner }: { readonly corner?: ReactNode }) {
             </p>
           }
         >
-          {lensThread ? (
-            <>
-              <button
-                type="button"
-                data-slot="t3-thread-back"
-                onClick={() => openLensThread(null)}
-                className="flex-none border-line border-b px-3 py-2 text-left text-ink-soft text-xs hover:text-ink"
-              >
-                ← Back to the session
-              </button>
-              <slot.thread
-                session={data}
-                thread={lensThread}
-                readOnly
-                onOpenFile={openFileInDiff}
-              />
-            </>
-          ) : (
-            <slot.session session={data} onOpenFile={openFileInDiff} />
-          )}
+          <slot.session session={data} onOpenFile={openFileInDiff} />
         </Suspense>
       ) : (
         <p data-slot="t3-chat-unmounted" className="p-3 text-xs text-ink-soft">
