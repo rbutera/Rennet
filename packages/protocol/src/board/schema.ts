@@ -454,7 +454,16 @@ export const AUTHORED_BOARD_SCHEMA = defineSchema({
   decision: authored("A design decision recovered from the change.", {
     statement: a("string", true, "The decision, stated."),
     evidence: a("element", true, "code_ref elements evidencing it.", true),
-    alternatives: a("element", true, "Alternative-option elements considered.", true),
+    // PLAIN TEXT, not element ids (#864 fold-in). Every other reader already treats it
+    // as text: lint's `decision-grounded` calls it a frozen `string[]`, the Design
+    // obligation check compares its entries to the artifact verbatim, the Decisions
+    // prompt says "It is a text field: never an element id", and the renderer carries a
+    // shim that resolves the ids some seat once minted back to their prose. Declaring it
+    // `element` made the tool surface the one dissenter, and it asked for ids of an
+    // "Alternative-option element" that no verb on the Decisions target can create — the
+    // Decisions seat refused twelve times on the 2026-09-05 drive before inlining the
+    // alternatives as prose and giving up on the field.
+    alternatives: a("string", true, "Alternatives considered, one plain sentence each.", true),
     why: a("string", true, "Rationale, as markdown."),
     inferred: a("boolean", false, "False when the source artifact states the decision."),
     source: a("json", false, "Source artifact { path, candidate?, label?, line? }."),

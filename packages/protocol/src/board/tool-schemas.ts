@@ -128,7 +128,6 @@ const ELEMENT_INPUT_NAME: Readonly<Record<string, string>> = {
   code: "code_ref_ids",
   code_ref: "code_ref_id",
   evidence: "evidence_ref_ids",
-  alternatives: "alternative_ids",
   scenarios: "scenario_ids",
   trace: "trace_ref_ids",
   span: "span_ref_id",

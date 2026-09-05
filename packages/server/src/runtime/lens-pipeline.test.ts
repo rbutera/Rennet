@@ -1803,13 +1803,10 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
             end_line: 12,
           }),
         );
-        const alternativeId = idOf(
-          voice.call("add_prose", { markdown: "Write each event independently." }),
-        );
         const refused = voice.call("add_decision", {
           statement: "Keep writes atomic.",
           evidence_ref_ids: ["missing-decision-code"],
-          alternative_ids: [alternativeId],
+          alternatives: ["Write each event independently."],
           why: "Readers never observe a partial batch.",
           parent_id: rootId,
         });
@@ -1819,7 +1816,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
           voice.call("add_decision", {
             statement: "Keep writes atomic.",
             evidence_ref_ids: [citationId],
-            alternative_ids: [alternativeId],
+            alternatives: ["Write each event independently."],
             why: "Readers never observe a partial batch.",
             parent_id: rootId,
           }),
