@@ -108,6 +108,21 @@ export async function readSuperpowersSpec(
   patchset: Patchset,
   git: GitExec,
 ): Promise<SuperpowersSpec | null> {
+  const source = await readSuperpowersSpecSource(patchset, git);
+  return source === null ? null : parseSuperpowersSpec(source);
+}
+
+/**
+ * The raw artifact text for the Superpowers feature the reviewed patchset selected, read
+ * from the immutable reviewed tree — the same read {@link readSuperpowersSpec} does,
+ * WITHOUT the parse step. The Design assembler consumes this raw source directly (a
+ * deterministic host-side board build, no model turn), while the Spec angle parses it.
+ * Returns `null` when the patchset touches no Superpowers artifact.
+ */
+export async function readSuperpowersSpecSource(
+  patchset: Patchset,
+  git: GitExec,
+): Promise<SuperpowersSpecSource | null> {
   const paths = selectedSuperpowersArtifacts(patchset.files.map((file) => file.path));
   if (paths.plans.length === 0 && paths.specs.length === 0 && paths.progress.length === 0) {
     return null;
@@ -148,11 +163,10 @@ export async function readSuperpowersSpec(
   // empty spec that reads as "a Superpowers feature with no content".
   if (plans.length === 0 && specs.length === 0 && progress.length === 0) return null;
 
-  const source: SuperpowersSpecSource = {
+  return {
     name: featureName(paths),
     specs,
     plans,
     progress,
   };
-  return parseSuperpowersSpec(source);
 }

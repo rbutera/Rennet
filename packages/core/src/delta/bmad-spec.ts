@@ -41,7 +41,17 @@ export interface BmadSpecSource {
   /** The specification's anchor label (the touched story id, epic, or PRD the reader selected). */
   readonly name: string;
   readonly prdMd?: string;
+  /** Where `prdMd` was read from (`core-config.yaml` may relocate it), for citations. */
+  readonly prdPath?: string;
   readonly architectureMd?: string;
+  /** Where `architectureMd` was read from, when it is one monolithic document. */
+  readonly architecturePath?: string;
+  /**
+   * The touched shards a sharded architecture was recovered from, each with its own
+   * path, when there is no monolith. `architectureMd` is their concatenation; a board
+   * cites a shard, never the concatenation, because only the shard has the line.
+   */
+  readonly architectureShards?: readonly { readonly path: string; readonly md: string }[];
   /** Epic documents, keyed by their repo-relative path. */
   readonly epics?: readonly { readonly path: string; readonly md: string }[];
   /** Story documents, keyed by their repo-relative path. */

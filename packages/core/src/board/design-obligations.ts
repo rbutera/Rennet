@@ -1,4 +1,8 @@
+import type { BmadSpecSource } from "../delta/bmad-spec";
+import type { GrillSpecSource } from "../delta/grill-spec";
+import type { KiroSpecSource } from "../delta/kiro-spec";
 import type { OpenSpecChangeSource } from "../delta/openspec-change";
+import type { SuperpowersSpecSource } from "../delta/superpowers-spec";
 
 export type DesignSourceFormat = "openspec" | "kiro" | "bmad" | "superpowers" | "grill-with-docs";
 
@@ -1484,6 +1488,114 @@ export function openSpecChangeSourceToDesignSources(
   for (const delta of source.specDeltas ?? []) {
     out.push(make("spec-delta", `${dir}/specs/${delta.capability}/spec.md`, delta.md));
   }
+  return out;
+}
+
+/** The file stem of a repo-relative path (`docs/adr/0003-foo.md` → `0003-foo`). */
+function pathStem(path: string): string {
+  return (path.split("/").at(-1) ?? path).replace(/\.md$/i, "");
+}
+
+/**
+ * Map one raw Kiro feature into design sources, the Kiro sibling of
+ * {@link openSpecChangeSourceToDesignSources}. Reading order: requirements, design,
+ * tasks, bugfix. The roles are the ones {@link parseDesignSourceObligations} dispatches on.
+ */
+export function kiroSpecSourceToDesignSources(source: KiroSpecSource): CandidateDesignSource[] {
+  const candidate = source.feature;
+  const dir = `.kiro/specs/${candidate}`;
+  const make = (role: string, file: string, text: string): CandidateDesignSource => ({
+    format: "kiro",
+    role,
+    path: `${dir}/${file}`,
+    text,
+    candidate,
+  });
+  const out: CandidateDesignSource[] = [];
+  if (source.requirementsMd !== undefined) {
+    out.push(make("requirements", "requirements.md", source.requirementsMd));
+  }
+  if (source.designMd !== undefined) out.push(make("design", "design.md", source.designMd));
+  if (source.tasksMd !== undefined) out.push(make("tasks", "tasks.md", source.tasksMd));
+  if (source.bugfixMd !== undefined) out.push(make("bugfix", "bugfix.md", source.bugfixMd));
+  return out;
+}
+
+/**
+ * Map one raw BMAD specification into design sources. Reading order: PRD, architecture,
+ * epics, stories. A sharded architecture yields one `architecture` source per shard,
+ * because a citation needs the file that holds the line; the PRD and monolith carry the
+ * paths the reader resolved through `core-config.yaml`, and a PRD or monolith the reader
+ * did not give a path for is omitted rather than cited at a guessed one.
+ */
+export function bmadSpecSourceToDesignSources(source: BmadSpecSource): CandidateDesignSource[] {
+  const candidate = source.name;
+  const make = (role: string, path: string, text: string): CandidateDesignSource => ({
+    format: "bmad",
+    role,
+    path,
+    text,
+    candidate,
+  });
+  const out: CandidateDesignSource[] = [];
+  if (source.prdMd !== undefined && source.prdPath !== undefined) {
+    out.push(make("prd", source.prdPath, source.prdMd));
+  }
+  if (source.architectureMd !== undefined && source.architecturePath !== undefined) {
+    out.push(make("architecture", source.architecturePath, source.architectureMd));
+  } else {
+    for (const shard of source.architectureShards ?? []) {
+      out.push(make("architecture", shard.path, shard.md));
+    }
+  }
+  for (const epic of source.epics ?? []) out.push(make("epic", epic.path, epic.md));
+  for (const story of source.stories ?? []) out.push(make("story", story.path, story.md));
+  return out;
+}
+
+/**
+ * Map one raw Superpowers feature into design sources. Reading order: design specs,
+ * plans, progress ledgers. A design spec takes the `design` role (its stated decisions
+ * are what the parser reads off it); plans and ledgers keep their own.
+ */
+export function superpowersSpecSourceToDesignSources(
+  source: SuperpowersSpecSource,
+): CandidateDesignSource[] {
+  const candidate = source.name;
+  const make = (role: string, path: string, text: string): CandidateDesignSource => ({
+    format: "superpowers",
+    role,
+    path,
+    text,
+    candidate,
+  });
+  const out: CandidateDesignSource[] = [];
+  for (const spec of source.specs ?? []) out.push(make("design", spec.path, spec.md));
+  for (const plan of source.plans ?? []) out.push(make("plan", plan.path, plan.md));
+  for (const ledger of source.progress ?? []) out.push(make("progress", ledger.path, ledger.md));
+  return out;
+}
+
+/**
+ * Map one raw grill-with-docs set into design sources. Reading order: ADRs, `CONTEXT.md`
+ * glossaries, context maps. Grill has no change name of its own, so the candidate is the
+ * first document's file stem — a label a reader can find, never an invented title.
+ */
+export function grillSpecSourceToDesignSources(source: GrillSpecSource): CandidateDesignSource[] {
+  const first = source.adrs?.[0] ?? source.contextDocs?.[0] ?? source.contextMaps?.[0];
+  if (first === undefined) return [];
+  const candidate = pathStem(first.path);
+  const make = (role: string, path: string, text: string): CandidateDesignSource => ({
+    format: "grill-with-docs",
+    role,
+    path,
+    text,
+    candidate,
+  });
+  const out: CandidateDesignSource[] = [];
+  for (const adr of source.adrs ?? []) out.push(make("adr", adr.path, adr.md));
+  for (const doc of source.contextDocs ?? []) out.push(make("context", doc.path, doc.md));
+  for (const map of source.contextMaps ?? []) out.push(make("context-map", map.path, map.md));
   return out;
 }
 

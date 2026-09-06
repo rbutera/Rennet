@@ -145,14 +145,23 @@ and calls board regeneration through this runtime.
    over **one** board: each element is stamped with the voice that wrote it as it lands,
    and the ids come from one mint counter, so the two seats' ids cannot collide.
 
-   An OpenSpec branch's Design board takes a **deterministic fast path** and settles with
-   no model turn at all: the assembler transforms the change's own artifacts into the
-   board. Every string it writes is the change's own text shipped verbatim or a fixed
+   A branch that carries a specification in a format Rennet parses takes a
+   **deterministic fast path** for its Design board and settles with no model turn at
+   all: the assembler transforms the specification's own files into the board. It reads
+   the first format the patchset touches, in a fixed order — OpenSpec, Kiro, BMAD,
+   Superpowers, then grill-with-docs (ADRs, `CONTEXT.md` glossaries, context maps) — so
+   one specification is drafted, never a merge, and the same patchset always assembles
+   the same board. The assembler renders by obligation kind rather than by format:
+   requirements with their scenarios, stated decisions with their stated rationale, task
+   groups, a bug fix's behaviour sections, glossary terms and progress-ledger rows each
+   land the same way whichever file they came from, under a section per source file.
+   Every string it writes is the specification's own text shipped verbatim or a fixed
    label, so it lints in the **transcribed register** described under *Validate* below.
-   A change it cannot settle falls back to the seat, which renders the same change — and
-   the daemon log carries a `[seat]` line naming the rule that refused it, so a Design
-   seat the host could have avoided is visible as it runs rather than inferred afterwards
-   from a round's wall clock.
+   A specification it cannot settle falls back to the seat, which renders the same
+   specification — and the daemon log carries a `[seat]` line naming the rule that
+   refused it, so a Design seat the host could have avoided is visible as it runs rather
+   than inferred afterwards from a round's wall clock. A branch with no specification in
+   any of those formats runs the seat, which searches the checkout for itself.
 
    A verified report arrives before any lens turn starts and
    opens that boundary, after which all five lens lanes run

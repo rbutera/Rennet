@@ -95,8 +95,8 @@ import {
   RoundOperationConflictError,
   RoundOperationStore,
   RoundRecordStore,
+  readDesignSources,
   readOpenSpecChange,
-  readOpenSpecChangeSource,
   readSetupLogTail,
   readSetupStatus,
   readTreeLineCounts,
@@ -155,7 +155,6 @@ import {
   LocusPathUntranslatableError,
   mechanicalComposition,
   mintSession,
-  openSpecChangeSourceToDesignSources,
   planQuoteThreadReanchors,
   prPaperContextFile,
   ReviewService,
@@ -3438,28 +3437,26 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         // the same context sink as the seats' own files, which is what puts it in the root
         // the seats actually run in rather than the repository root alone.
         const prPaper = prPaperContextFile(reviewNow());
-        // The deterministic Design fast path (phase 1: OpenSpec). When the round's
-        // patchset carries an OpenSpec change, read its artifacts ONCE here — where the
-        // full patchset + git are in scope — and hand the pipeline a pure host-side
-        // assembler. The Design seat still runs whenever this is absent or the change
-        // yields no board (a pure additive fast path; the seat is never removed). The
-        // `deltaPacket.openspec` gate skips the git read for a non-OpenSpec round.
-        const roundPatchset =
-          input.deltaPacket.openspec === undefined
-            ? undefined
-            : reviewNow().patchsets.find((p) => p.id === input.deltaPacket.patchset.id);
-        const designSource =
+        // The deterministic Design fast path. When the round's patchset carries a
+        // specification in a format the obligation parser reads (OpenSpec, Kiro, BMAD,
+        // Superpowers, grill-with-docs), read its files ONCE here — where the full
+        // patchset + git are in scope — and hand the pipeline a pure host-side assembler.
+        // The Design seat still runs whenever this is absent or the specification yields
+        // no board (a pure additive fast path; the seat is never removed). Every reader is
+        // path-selected before it touches git, so a round with no specification costs one
+        // `git show` at most.
+        const roundPatchset = reviewNow().patchsets.find(
+          (p) => p.id === input.deltaPacket.patchset.id,
+        );
+        const designSources =
           roundPatchset === undefined
             ? null
-            : await readOpenSpecChangeSource(
-                roundPatchset,
-                gitForRepo(roundPatchset.repository.root),
-              );
+            : await readDesignSources(roundPatchset, gitForRepo(roundPatchset.repository.root));
         const assembleDesignBoardFor =
-          designSource === null
+          designSources === null
             ? undefined
             : (ctx: LintContext): DraftBoard | undefined =>
-                assembleDesignBoard(openSpecChangeSourceToDesignSources(designSource), ctx, {
+                assembleDesignBoard(designSources, ctx, {
                   kind: "lens-agent",
                   id: "design-seat",
                 });

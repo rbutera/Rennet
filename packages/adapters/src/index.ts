@@ -14,7 +14,12 @@ export {
   type Timers,
   type WatchFn,
 } from "./baseline-advance-watcher";
-export { readBmadSpec, resolveBmadPaths, selectedBmadSpec } from "./bmad-spec-reader";
+export {
+  readBmadSpec,
+  readBmadSpecSource,
+  resolveBmadPaths,
+  selectedBmadSpec,
+} from "./bmad-spec-reader";
 export {
   type BoardMetaInput,
   type BoardMetaRecord,
@@ -131,6 +136,7 @@ export {
   type SwarmTurnOptions,
 } from "./council-seat-turn";
 export { describeSpawnFailure } from "./descriptor-exhaustion";
+export { readDesignSources } from "./design-source-reader";
 export { type DossierKey, DossierStore } from "./dossier-store";
 export {
   createExclusiveNamespaceMover,
@@ -291,7 +297,7 @@ export {
   type GitLabPrSubmissionCommandRunner,
   type GitLabPrSubmissionConfig,
 } from "./gitlab-pr-submission";
-export { readGrillSpec, selectedGrillDocPaths } from "./grill-spec-reader";
+export { readGrillSpec, readGrillSpecSource, selectedGrillDocPaths } from "./grill-spec-reader";
 export { claudeHandoffRunPort } from "./handoff-run-live";
 export {
   compareVersions,
@@ -309,7 +315,7 @@ export {
   type VersionRange,
   wslDiscoveryDeps,
 } from "./harness-discovery";
-export { readKiroSpec, selectedKiroFeatureName } from "./kiro-spec-reader";
+export { readKiroSpec, readKiroSpecSource, selectedKiroFeatureName } from "./kiro-spec-reader";
 export {
   activePatchset,
   type BuildReviewContextManifestDeps,
@@ -593,7 +599,11 @@ export {
   SnapshotOverlayStore,
 } from "./snapshot-overlay-store";
 export { SqliteReviewStore } from "./sqlite-review-store";
-export { readSuperpowersSpec, selectedSuperpowersArtifacts } from "./superpowers-spec-reader";
+export {
+  readSuperpowersSpec,
+  readSuperpowersSpecSource,
+  selectedSuperpowersArtifacts,
+} from "./superpowers-spec-reader";
 export {
   createT3SeatTurn,
   outputSchemaFor,
