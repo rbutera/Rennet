@@ -14,6 +14,20 @@ import { filesystemIgnoresCase, isIgnoredPath, readGitIgnoredEntries } from "./r
  * every caller asserts on that. Only the "stayed SILENT" checks keep a fixed window, because
  * absence can only be observed by waiting a fixed time.
  */
+async function waitForClean(
+  watcher: { isDirty(): boolean; setDirty(value: boolean): void },
+  budget = 6_000,
+): Promise<boolean> {
+  const deadline = Date.now() + budget;
+  while (Date.now() < deadline) {
+    watcher.setDirty(false);
+    if (!watcher.isDirty()) return true;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  watcher.setDirty(false);
+  return !watcher.isDirty();
+}
+
 async function waitForDirty(watcher: { isDirty(): boolean }, budget = 6_000): Promise<boolean> {
   const deadline = Date.now() + budget;
   while (Date.now() < deadline) {
@@ -255,7 +269,6 @@ describe("RepoWatcher hardening", () => {
     const { mkdirSync, mkdtempSync, rmSync, writeFileSync } = await import("node:fs");
     const { tmpdir } = await import("node:os");
     const { join } = await import("node:path");
-    const { setTimeout: sleep } = await import("node:timers/promises");
     const root = mkdtempSync(join(tmpdir(), "rennet-repo-watcher-first-save-"));
     for (let i = 0; i < 400; i += 1) {
       const dir = join(root, `d${Math.floor(i / 50)}`);
@@ -283,11 +296,12 @@ describe("RepoWatcher hardening", () => {
       expect(await waitForDirty(watcher)).toBe(true);
 
       // And the flag is not merely pinned on. A watcher that cried stale forever would
-      // satisfy the assertion above while being useless, so: once the walk has finished
-      // and the ask has cleared, an untouched tree answers "unchanged".
-      watcher.setDirty(false);
-      await sleep(300);
-      expect(watcher.isDirty()).toBe(false);
+      // satisfy the assertion above while being useless, so: on an untouched tree the clear
+      // has to STICK. Retrying the clear to a deadline rather than clearing once after a
+      // fixed sleep, because "has this watcher become trustworthy yet" is exactly the
+      // question the daemon re-asks on every freshness ask — and because the per-entry
+      // backend earns it when chokidar finishes walking, which is not a fixed 300ms.
+      expect(await waitForClean(watcher)).toBe(true);
 
       // A later save — the ordinary, always-worked path — is still reported.
       writeFileSync(edited, "export const value = 1000;\n");
@@ -479,12 +493,17 @@ describe("RepoWatcher descriptor cost (#892)", () => {
     const { tmpdir } = await import("node:os");
     const { join } = await import("node:path");
     const root = mkdtempSync(join(tmpdir(), "rennet-repo-watcher-cost-"));
+    // 1,200 files in THREE directories. Many files, few directories, on purpose: it is the
+    // shape that tells a per-file backend apart from a per-directory one, and it is how CI
+    // established that Node's Linux recursive watcher is neither — 1,204 handles is 1,200
+    // files plus four directories, so it is per ENTRY.
     for (let d = 0; d < 3; d += 1) {
       mkdirSync(join(root, `d${d}`), { recursive: true });
       for (let i = 0; i < 400; i += 1)
         writeFileSync(join(root, `d${d}`, `f${i}.ts`), "export {};\n");
     }
     const watcher = new RepoWatcher();
+    const quiet = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const before = await settledCounts();
     try {
       watcher.start(root);
@@ -494,27 +513,47 @@ describe("RepoWatcher descriptor cost (#892)", () => {
       // Non-vacuous, and it has to come first: a watcher that failed to arm would satisfy
       // every bound below by costing nothing. It armed, and this platform's measurement
       // can see it.
-      expect(watcher.backend()).toBe("recursive");
       expect(after.handles - before.handles).toBeGreaterThan(0);
 
-      // The claim. 1,200 files, and the cost is a handful of descriptors — not 1,200, and
-      // not a number that grows with the tree. This is the assertion the old backend fails
-      // by two orders of magnitude.
+      // THE claim, and it holds on every platform: 1,200 files, and the process's real open
+      // descriptors barely move. This is what the installed daemon violated by 5,125.
+      //
+      // It is load-bearing for different reasons per platform, which is why it is asserted
+      // unconditionally and the handle count is not. On macOS libuv answers `fs.watch` on a
+      // non-directory with kqueue and an `open()`, so descriptors ARE the per-file cost and
+      // the old backend fails this by two orders of magnitude (measured: `expected 1200 to
+      // be less than 16`). On Linux libuv keeps one inotify instance per loop and adds
+      // watches to it, so descriptors stay flat under either backend and what this assertion
+      // proves there is narrower: that nothing in the new path leaks one.
       expect(after.descriptors - before.descriptors).toBeLessThan(16);
-      expect(after.handles - before.handles).toBeLessThan(8);
 
-      // And it is a WORKING watcher at that price, which is the half that stops "cheap"
-      // from being satisfied by watching nothing. Nested, because a recursive watch that
-      // only covered the root directory would still be cheap and still be wrong.
+      if (process.platform === "darwin" || process.platform === "win32") {
+        // Where the kernel has a recursive watch, the whole tree is ONE handle. This is the
+        // assertion the old cost model misses by 1,200.
+        expect(watcher.backend()).toBe("recursive");
+        expect(after.handles - before.handles).toBeLessThan(8);
+        expect(watcher.watchedPaths()).toEqual([root]);
+      } else {
+        // Linux has no recursive watch in the kernel; Node's is userland and arms one per
+        // entry, so this platform keeps the pruning per-entry backend it always had. Stated
+        // rather than skipped: the cost here is inotify watches, not descriptors, and the
+        // bound that matters is the cap and the ignore rules, exercised in the tests below.
+        expect(watcher.backend()).toBe("per-entry");
+        expect(watcher.watchedPaths().length).toBeGreaterThan(400);
+      }
+
+      // And it is a WORKING watcher at that price, whichever backend ran — the half that
+      // stops "cheap" from being satisfied by watching nothing. Nested, because a recursive
+      // watch that only covered the root directory would still be cheap and still be wrong.
       watcher.setDirty(false);
       expect(watcher.isDirty()).toBe(false);
       writeFileSync(join(root, "d2", "f399.ts"), "export const changed = 1;\n");
       expect(await waitForDirty(watcher)).toBe(true);
 
-      // …and it never had to give up part of the tree to get there. Truncation is the
-      // honest-degradation path; on this backend there is nothing to truncate.
+      // …and it never had to give up part of the tree to get there.
       expect(watcher.isTruncated()).toBe(false);
     } finally {
+      quiet.mockRestore();
       await watcher.close();
       rmSync(root, { recursive: true, force: true });
     }
@@ -667,7 +706,7 @@ describe("RepoWatcher descriptor cost (#892)", () => {
         writeFileSync(join(root, `d${d}`, `f${i}.ts`), "export {};\n");
     }
 
-    const watcher = new RepoWatcher({ maxPolledEntries: 64 });
+    const watcher = new RepoWatcher({ maxWatchedEntries: 64 });
     const warned = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     try {
       watcher.start(root, { kind: "wsl", distro: "Ubuntu" });
@@ -687,10 +726,10 @@ describe("RepoWatcher descriptor cost (#892)", () => {
       watcher.setDirty(false);
       expect(watcher.isDirty()).toBe(true);
       const said = warned.mock.calls.map((call) => String(call[0])).join("\n");
-      expect(said).toContain("poll cap spent: 64 entries");
+      expect(said).toContain("watch cap spent: 64 entries");
       expect(said).toContain(root);
       // Said once for the root, not once per entry.
-      expect(said.match(/poll cap spent/g)).toHaveLength(1);
+      expect(said.match(/watch cap spent/g)).toHaveLength(1);
     } finally {
       warned.mockRestore();
       await watcher.close();
@@ -701,31 +740,34 @@ describe("RepoWatcher descriptor cost (#892)", () => {
   // A root no watcher can be armed on must not read as a quiet one. There is no fallback to
   // a per-entry watcher — that is the cost model this change removes — so the answer is to
   // stop vouching, which makes every freshness ask run a real diff.
-  it("refuses to vouch for a root it could not arm a watch on", async () => {
-    const { RepoWatcher } = await import("./repo-watcher");
-    const { mkdtempSync, rmSync } = await import("node:fs");
-    const { tmpdir } = await import("node:os");
-    const { join } = await import("node:path");
-    const root = mkdtempSync(join(tmpdir(), "rennet-repo-watcher-unarmable-"));
-    const watcher = new RepoWatcher();
-    const warned = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    try {
-      // The root is gone by the time the watch is asked for, which is what `fs.watch`
-      // throwing looks like from the watcher's side.
-      rmSync(root, { recursive: true, force: true });
-      watcher.start(root);
-      expect(watcher.backend()).toBe("none");
-      expect(watcher.isTruncated()).toBe(true);
-      watcher.setDirty(false);
-      expect(watcher.isDirty()).toBe(true);
-      expect(warned.mock.calls.map((call) => String(call[0])).join("\n")).toContain(
-        "no recursive watch available",
-      );
-    } finally {
-      warned.mockRestore();
-      await watcher.close();
-    }
-  });
+  it.skipIf(process.platform !== "darwin" && process.platform !== "win32")(
+    "refuses to vouch for a root it could not arm a watch on",
+    async () => {
+      const { RepoWatcher } = await import("./repo-watcher");
+      const { mkdtempSync, rmSync } = await import("node:fs");
+      const { tmpdir } = await import("node:os");
+      const { join } = await import("node:path");
+      const root = mkdtempSync(join(tmpdir(), "rennet-repo-watcher-unarmable-"));
+      const watcher = new RepoWatcher();
+      const warned = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+      try {
+        // The root is gone by the time the watch is asked for, which is what `fs.watch`
+        // throwing looks like from the watcher's side.
+        rmSync(root, { recursive: true, force: true });
+        watcher.start(root);
+        expect(watcher.backend()).toBe("none");
+        expect(watcher.isTruncated()).toBe(true);
+        watcher.setDirty(false);
+        expect(watcher.isDirty()).toBe(true);
+        expect(warned.mock.calls.map((call) => String(call[0])).join("\n")).toContain(
+          "no recursive watch available",
+        );
+      } finally {
+        warned.mockRestore();
+        await watcher.close();
+      }
+    },
+  );
 
   it("returns no git answer for a directory that is not a repository, and still ignores the floor", async () => {
     const { mkdtempSync, rmSync } = await import("node:fs");

@@ -109,7 +109,7 @@ export type GitIgnoredEntries = ReadonlySet<string>;
  */
 
 /**
- * The cap on the POLLING backend's watched entries.
+ * The cap on the PER-ENTRY backends' watched entries — Linux native watching, and WSL polling.
  *
  * This bounds CPU, not descriptors, and the distinction is the whole point. `fs.watchFile`
  * — what chokidar arms when `usePolling` is set — is a libuv `uv_fs_poll_t` and holds no
@@ -121,7 +121,42 @@ export type GitIgnoredEntries = ReadonlySet<string>;
  * The native backend has no matching constant because it has nothing to bound: one
  * `fs.watch(root, { recursive: true })` is ONE handle for the whole tree, at any size.
  */
-export const MAX_POLLED_ENTRIES = 32_768;
+export const MAX_WATCHED_ENTRIES = 32_768;
+
+/**
+ * True where one `fs.watch(root, { recursive: true })` really is one watch for the tree.
+ *
+ * macOS answers recursive watching with FSEvents and Windows with a recursive
+ * `ReadDirectoryChangesW`: one kernel subscription, one handle, one descriptor, at any tree
+ * size. **Linux has no recursive watch in the kernel**, so Node ships a userland one that
+ * walks the tree and arms an `fs.watch` on every entry it finds. Measured in CI on a
+ * 1,200-file fixture in three directories: **1,204 handles** — the files plus the
+ * directories. Per entry, not per directory.
+ *
+ * That is not a smaller version of the same win, it is the absence of it, plus a loss: the
+ * userland walk is Node's, so it does not consult this module's ignore rules and would arm
+ * watches inside `node_modules` that the per-entry backend prunes. Descriptors survive that
+ * — libuv keeps ONE inotify instance per loop and adds watches to it, which is why the
+ * descriptor assertion passes on Linux under either backend — but
+ * `fs.inotify.max_user_watches` does not, and exhausting it is the same class of failure
+ * wearing a different errno.
+ *
+ * There is a second reason, and it is the sharper one. The recursive backend marks itself
+ * settled the instant it is created, which is only safe because a failure to arm THROWS. On
+ * Linux the userland watcher defers its walk and returns a watcher object for a root that
+ * does not exist — CI caught exactly that. A backend that cannot detect its own failure to
+ * arm and vouches anyway is a freshness lie, which is worse than the descriptor bug this
+ * change fixes.
+ *
+ * So Linux keeps the pruning per-entry backend it always had, where `settled` waits on
+ * chokidar's `ready` and provides that net. Nothing is lost: the descriptor exhaustion is a
+ * macOS property, because macOS is where libuv falls back to kqueue and a real `open()` for
+ * every non-directory. Rennet ships no Linux desktop — this platform is the in-WSL daemon
+ * and CI.
+ */
+function hasKernelRecursiveWatch(): boolean {
+  return process.platform === "darwin" || process.platform === "win32";
+}
 
 /**
  * The decade a repeated log line is worth restating at: 1, 10, 100, 1,000, 10,000 …
@@ -353,7 +388,7 @@ export class RepoWatcher {
    * whole tree — `setDirty(false)` stops sticking and every freshness ask runs a real diff.
    *
    * Two ways to get here, both honest degradation rather than silent loss: the polling
-   * backend spent {@link MAX_POLLED_ENTRIES}, or the recursive backend could not arm at all
+   * backend spent {@link MAX_WATCHED_ENTRIES}, or the recursive backend could not arm at all
    * and there is no watcher on this root.
    */
   private truncated = false;
@@ -369,9 +404,9 @@ export class RepoWatcher {
    * choice is made from the LOCUS as well as the path: a `wsl` locus on a path that is not
    * a UNC view still polls, and nothing about that path says so.
    */
-  private mode: "recursive" | "polling" | "none" = "none";
-  /** The polling backend's entry cap. Production always takes the default. */
-  private readonly maxPolledEntries: number;
+  private mode: "recursive" | "per-entry" | "polling" | "none" = "none";
+  /** The per-entry backends' cap. Production always takes the default. */
+  private readonly maxWatchedEntries: number;
   /**
    * The watcher's error channel, collapsed. An `EMFILE` storm produced 41,887 identical
    * lines in one daemon lifetime and made the log useless; this says the first, each
@@ -382,12 +417,12 @@ export class RepoWatcher {
   });
 
   /**
-   * `maxPolledEntries` exists so the polling cap can be exercised at a size a test can
+   * `maxWatchedEntries` exists so the polling cap can be exercised at a size a test can
    * build. The daemon constructs a `RepoWatcher()` with no argument and gets
-   * {@link MAX_POLLED_ENTRIES}; nothing in production passes this.
+   * {@link MAX_WATCHED_ENTRIES}; nothing in production passes this.
    */
-  constructor(options?: { readonly maxPolledEntries?: number }) {
-    this.maxPolledEntries = options?.maxPolledEntries ?? MAX_POLLED_ENTRIES;
+  constructor(options?: { readonly maxWatchedEntries?: number }) {
+    this.maxWatchedEntries = options?.maxWatchedEntries ?? MAX_WATCHED_ENTRIES;
   }
 
   /**
@@ -438,7 +473,7 @@ export class RepoWatcher {
    * **The WSL/9P path still polls**, for the reasons it always did (design decision 7:
    * inotify events do not cross the 9P/UNC boundary, and the bridge returns spurious lstat
    * errors). Polling holds no descriptors — `fs.watchFile` is a libuv poll timer — so the
-   * cap there is {@link MAX_POLLED_ENTRIES}, and it is about `stat` storms, not exhaustion.
+   * cap there is {@link MAX_WATCHED_ENTRIES}, and it is about `stat` storms, not exhaustion.
    */
   start(repositoryRoot: string, locus: Locus = HOST_LOCUS): void {
     // Re-`start` on the root already being watched is a NO-OP, and that is a correctness fix,
@@ -468,10 +503,15 @@ export class RepoWatcher {
     }
     this.generation += 1;
     if (locus.kind === "wsl" || wslUncRoot) {
-      this.startPolling(repositoryRoot, pathOptions, gitIgnored);
+      this.startByEntry(repositoryRoot, pathOptions, gitIgnored, true);
       return;
     }
-    this.startRecursive(repositoryRoot, pathOptions, gitIgnored);
+    if (hasKernelRecursiveWatch()) {
+      this.startRecursive(repositoryRoot, pathOptions, gitIgnored);
+      return;
+    }
+    // Linux: no kernel recursive watch worth having, so the pruning per-entry backend stays.
+    this.startByEntry(repositoryRoot, pathOptions, gitIgnored, false);
   }
 
   /**
@@ -537,10 +577,11 @@ export class RepoWatcher {
    * thread pool and the 9P bridge, not about exhaustion. Pruning still happens at the walk,
    * because the walk is exactly what costs something in this mode.
    */
-  private startPolling(
+  private startByEntry(
     repositoryRoot: string,
     pathOptions: RepositoryPathOptions,
     gitIgnored: GitIgnoredEntries | undefined,
+    polling: boolean,
   ): void {
     // Distinct paths admitted past the ignore rules, so the cap counts ENTRIES and
     // not predicate calls: chokidar asks about the same path more than once.
@@ -548,13 +589,12 @@ export class RepoWatcher {
     const generation = this.generation;
     const watcher = watchByEntry(repositoryRoot, {
       ignoreInitial: true,
-      usePolling: true,
-      interval: 500,
+      ...(polling ? { usePolling: true, interval: 500 } : {}),
       ignored: (path) => {
         if (isIgnoredPath(repositoryRoot, path, pathOptions, gitIgnored)) return true;
         const key = path.replace(/\\/g, "/").replace(/\/+$/, "");
         if (admitted.has(key)) return false;
-        if (admitted.size >= this.maxPolledEntries) {
+        if (admitted.size >= this.maxWatchedEntries) {
           this.noteCapSpent(repositoryRoot, generation);
           return true;
         }
@@ -563,7 +603,7 @@ export class RepoWatcher {
       },
     });
     this.watcher = watcher;
-    this.mode = "polling";
+    this.mode = polling ? "polling" : "per-entry";
     watcher.on("ready", () => {
       this.settled = true;
     });
@@ -579,13 +619,13 @@ export class RepoWatcher {
   }
 
   /**
-   * Said ONCE per root, the first time the polling cap runs out, and it names the count.
+   * Said ONCE per root, the first time the per-entry cap runs out, and it names the count.
    */
   private noteCapSpent(repositoryRoot: string, generation: number): void {
     if (this.truncated || generation !== this.generation) return;
     this.truncated = true;
     console.warn(
-      `[repo-watcher] poll cap spent: ${this.maxPolledEntries} entries under ${repositoryRoot}, and the tree is bigger than that. The rest is unwatched, so freshness stops trusting this watcher and runs a real diff on every ask. Check what large directory is NOT gitignored here.`,
+      `[repo-watcher] watch cap spent: ${this.maxWatchedEntries} entries under ${repositoryRoot}, and the tree is bigger than that. The rest is unwatched, so freshness stops trusting this watcher and runs a real diff on every ask. Check what large directory is NOT gitignored here.`,
     );
   }
 
@@ -606,7 +646,7 @@ export class RepoWatcher {
    * Which backend the live watcher is, so a test can assert the cheap one was chosen rather
    * than infer it from a resource count that a broken watcher would also satisfy.
    */
-  backend(): "recursive" | "polling" | "none" {
+  backend(): "recursive" | "per-entry" | "polling" | "none" {
     return this.watcher === null ? "none" : this.mode;
   }
 

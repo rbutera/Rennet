@@ -93,14 +93,26 @@ describe("RepoWatcher — dogfood over the REAL rennet checkout (#850, #892)", (
       await new Promise((resolve) => setTimeout(resolve, 1_000));
       const after = openDescriptors();
 
-      // It really is the cheap backend, named rather than inferred from a number that a
-      // watcher which failed to arm would also produce.
-      expect(watcher.backend()).toBe("recursive");
-      expect(watcher.watchedPaths()).toEqual([repoRoot]);
+      // The backend this platform actually selects, named rather than inferred from a
+      // number that a watcher which failed to arm would also produce. macOS and Windows get
+      // the kernel's recursive watch — one watched path for the whole checkout. Linux has no
+      // recursive watch in the kernel (Node's is userland and arms one per ENTRY, measured
+      // in CI at 1,204 handles for 1,200 files), so it keeps the pruning per-entry backend,
+      // and there the interesting property is that it mapped the tree without entering what
+      // git ignores. Rennet ships no Linux desktop; this is the in-WSL daemon's platform.
+      if (process.platform === "darwin" || process.platform === "win32") {
+        expect(watcher.backend()).toBe("recursive");
+        expect(watcher.watchedPaths()).toEqual([repoRoot]);
+      } else {
+        expect(watcher.backend()).toBe("per-entry");
+        expect(watcher.watchedPaths().length).toBeGreaterThan(500);
+      }
 
       // THE claim, on the real tree that cost the installed daemon 5,125 file descriptors:
-      // watching the whole of it now costs a constant. The old backend misses this bound by
-      // three orders of magnitude.
+      // watching the whole of it costs a handful. On macOS that is the fix — one FSEvents
+      // subscription instead of one `open()` per file. On Linux it holds for a different
+      // reason (libuv keeps one inotify instance per loop), and there this asserts only that
+      // nothing leaks; the pruning assertions below are what carry weight on that platform.
       expect(after - before).toBeLessThan(16);
 
       // …for the WHOLE tree, not a pruned part of it. Truncation is the honest-degradation
