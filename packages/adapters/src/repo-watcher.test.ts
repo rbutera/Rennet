@@ -374,46 +374,142 @@ describe("RepoWatcher hardening", () => {
   });
 });
 
-// #850 — the descriptor budget. chokidar's Node backend arms one `fs.watch` per FILE,
-// so the size of the watched set is not a performance number, it is the daemon's supply
-// of file descriptors. On Rai's machine the watcher held 19,896 of them, 13,438 under
-// `.claude/worktrees/` — gitignored as `.claude/*`, and invisible to a hardcoded
-// `.git`/`.nx`/`node_modules` list — and after that every `spawn` failed `EBADF`: the
-// T3 sidecar died, all five lens lanes with it.
+// #892 — the cost model. The bug this replaces was NOT a bound set too high: it was a
+// bound derived from a number that does not bind. `watchBudget()` was half of
+// `process.report`'s `userLimits.open_files.soft`, and on macOS Node raises `RLIMIT_NOFILE`
+// towards an unlimited hard limit at startup, so that field reads 1,048,575 on every Mac
+// while the kernel enforces `kern.maxfilesperproc` (92,149 measured here) regardless. Half
+// of a million is over the ceiling, so the budget was the constant 32,768 on every Mac and
+// never once fired: the 0.9.1 daemon log held 41,887 `EMFILE … watch` lines and ZERO
+// `watch budget spent` lines.
 //
-// So these tests measure the RESOURCE, twice over: chokidar's own watch bookkeeping, and
-// the process's live `FSEventWrap` handles, which is one per `fs.watch` on every platform
-// (`process.getActiveResourcesInfo()`; verified against a bare 5-file `fs.watch` loop).
-// A test asserting that an ignore function was consulted would pass with the budget gone.
-describe("RepoWatcher descriptor budget (#850)", () => {
-  /** Live `fs.watch` handles in this process — one descriptor each. */
+// So these tests do not measure a budget. They measure the RESOURCE — this process's real
+// open descriptors, read from the kernel's own `/dev/fd` (or `/proc/self/fd`), plus live
+// `fs.watch` handles from `process.getActiveResourcesInfo()`. A test that asserted the
+// watcher's own accounting would be exactly the defect under repair, because the accounting
+// was never what was wrong.
+describe("RepoWatcher descriptor cost (#892)", () => {
+  /**
+   * Poll until the watcher reports a change, up to `budget` ms. Every "a change WAS
+   * reported" assertion in this suite goes through here rather than through a fixed sleep:
+   * the first version used 400ms and flaked under load, and a flaky test is a test whose
+   * red means nothing.
+   */
+  async function waitForDirty(watcher: { isDirty(): boolean }, budget = 4_000): Promise<boolean> {
+    const deadline = Date.now() + budget;
+    while (Date.now() < deadline) {
+      if (watcher.isDirty()) return true;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    return watcher.isDirty();
+  }
+
+  /** Live `fs.watch` handles in this process — the watcher's own libuv handles. */
   function fsWatchHandles(): number {
     return process.getActiveResourcesInfo().filter((resource) => /fsevent/i.test(resource)).length;
   }
 
   /**
-   * The same count, taken once the previous test's handles have actually gone. This is
-   * a PROCESS-wide measurement, so a baseline read while a sibling watcher is still
-   * closing makes the delta negative — which is how the positive control for the first
-   * test made the second one fail too, on nothing.
+   * This process's REAL open descriptor count, from the kernel rather than from anything
+   * Rennet counts. `/proc/self/fd` on Linux, `/dev/fd` on macOS; both list one entry per
+   * open descriptor. Reading the directory itself opens one, consistently in both samples,
+   * so a delta is exact.
    */
-  async function settledFsWatchHandles(): Promise<number> {
+  async function openDescriptors(): Promise<number> {
+    const { readdirSync } = await import("node:fs");
+    return readdirSync(process.platform === "linux" ? "/proc/self/fd" : "/dev/fd").length;
+  }
+
+  /**
+   * The same counts, taken once the previous test's handles have actually gone. These are
+   * PROCESS-wide measurements, so a baseline read while a sibling watcher is still closing
+   * makes the delta wrong on nothing that happened in this test.
+   */
+  async function settledCounts(): Promise<{ handles: number; descriptors: number }> {
     let previous = -1;
     for (let attempt = 0; attempt < 20; attempt += 1) {
       const current = fsWatchHandles();
-      if (current === previous) return current;
+      if (current === previous) break;
       previous = current;
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
-    return fsWatchHandles();
+    return { handles: fsWatchHandles(), descriptors: await openDescriptors() };
   }
 
-  it("watches what git tracks and not the gitignored tree beside it, measured in descriptors", async () => {
+  // THE test. 1,200 files in three directories, nothing ignored, and the watcher must cost
+  // a constant. Under the chokidar backend this fixture cost ~1,200 descriptors, because
+  // libuv answers `fs.watch` on a non-directory with kqueue and an `open()` — measured
+  // directly on this machine: 20,000 file watches cost 20,000 descriptors, and under a
+  // 256-descriptor limit exactly 245 watches and 245 plain `open`s succeeded before EMFILE.
+  //
+  // The shape of the fixture is deliberate: many files, FEW directories. A per-file backend
+  // is ~1,200 either way, while every recursive backend — FSEvents on macOS, a recursive
+  // ReadDirectoryChangesW on Windows, per-directory inotify watches on one shared descriptor
+  // on Linux — is a small constant on all three. So the bound below is lethal to the old
+  // cost model on every platform this runs on, not only the one it was measured on.
+  it("costs a constant number of descriptors for a tree of any size, and still reports a change", async () => {
+    const { RepoWatcher } = await import("./repo-watcher");
+    const { mkdirSync, mkdtempSync, rmSync, writeFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const root = mkdtempSync(join(tmpdir(), "rennet-repo-watcher-cost-"));
+    for (let d = 0; d < 3; d += 1) {
+      mkdirSync(join(root, `d${d}`), { recursive: true });
+      for (let i = 0; i < 400; i += 1)
+        writeFileSync(join(root, `d${d}`, `f${i}.ts`), "export {};\n");
+    }
+    const watcher = new RepoWatcher();
+    const before = await settledCounts();
+    try {
+      watcher.start(root);
+      await new Promise((resolve) => setTimeout(resolve, 1_500));
+      const after = await settledCounts();
+
+      // Non-vacuous, and it has to come first: a watcher that failed to arm would satisfy
+      // every bound below by costing nothing. It armed, and this platform's measurement
+      // can see it.
+      expect(watcher.backend()).toBe("recursive");
+      expect(after.handles - before.handles).toBeGreaterThan(0);
+
+      // The claim. 1,200 files, and the cost is a handful of descriptors — not 1,200, and
+      // not a number that grows with the tree. This is the assertion the old backend fails
+      // by two orders of magnitude.
+      expect(after.descriptors - before.descriptors).toBeLessThan(16);
+      expect(after.handles - before.handles).toBeLessThan(8);
+
+      // And it is a WORKING watcher at that price, which is the half that stops "cheap"
+      // from being satisfied by watching nothing. Nested, because a recursive watch that
+      // only covered the root directory would still be cheap and still be wrong.
+      watcher.setDirty(false);
+      expect(watcher.isDirty()).toBe(false);
+      writeFileSync(join(root, "d2", "f399.ts"), "export const changed = 1;\n");
+      expect(await waitForDirty(watcher)).toBe(true);
+
+      // …and it never had to give up part of the tree to get there. Truncation is the
+      // honest-degradation path; on this backend there is nothing to truncate.
+      expect(watcher.isTruncated()).toBe(false);
+    } finally {
+      await watcher.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  // The ignore rules survive the backend change, at a different seam. They can no longer
+  // prune a walk — the kernel watches the subtree whole — so they filter EVENTS instead,
+  // through the same `isIgnoredPath` and the same `git ls-files --others --ignored
+  // --directory` answer. The fixture is #850's, at a size a test can build, and it exercises
+  // four mechanisms a hand-rolled matcher gets wrong: a root `.gitignore`, a NESTED one, a
+  // NEGATION re-including a directory its parent excluded, and `.git/info/exclude`.
+  //
+  // Both halves in one run on purpose: a watcher that reported nothing would pass every
+  // "stays quiet" assertion perfectly.
+  it("does not go dirty for the gitignored tree beside the one it watches", async () => {
     const { RepoWatcher } = await import("./repo-watcher");
     const { execFileSync } = await import("node:child_process");
     const { mkdirSync, mkdtempSync, rmSync, writeFileSync } = await import("node:fs");
     const { tmpdir } = await import("node:os");
     const { join } = await import("node:path");
+    const { setTimeout: sleep } = await import("node:timers/promises");
     const root = mkdtempSync(join(tmpdir(), "rennet-repo-watcher-gitignore-"));
     const git = (...args: string[]): void => {
       execFileSync("git", args, { cwd: root, stdio: "ignore" });
@@ -428,85 +524,83 @@ describe("RepoWatcher descriptor budget (#850)", () => {
     mkdirSync(join(root, "src"), { recursive: true });
     for (let i = 0; i < 12; i += 1) writeFileSync(join(root, "src", `f${i}.ts`), "export {};\n");
     mkdirSync(join(root, ".claude", "worktrees", "lane-a"), { recursive: true });
-    for (let i = 0; i < 600; i += 1)
+    for (let i = 0; i < 20; i += 1)
       writeFileSync(join(root, ".claude", "worktrees", "lane-a", `f${i}.ts`), "export {};\n");
-
-    // Four rules a hand-rolled matcher gets wrong and git does not, so what is under test
-    // is the decision to ask git rather than the wording of one pattern: a NESTED
-    // `.gitignore`, a NEGATION re-including a directory its parent rule excluded,
-    // `.git/info/exclude` — not a `.gitignore` file at all — and a single ignored FILE.
     mkdirSync(join(root, "packages", "app", "src"), { recursive: true });
     mkdirSync(join(root, "packages", "app", "build"), { recursive: true });
     writeFileSync(join(root, "packages", "app", ".gitignore"), "build/\n");
     writeFileSync(join(root, "packages", "app", "src", "a.ts"), "export {};\n");
-    for (let i = 0; i < 80; i += 1)
-      writeFileSync(join(root, "packages", "app", "build", `b${i}.js`), "0;\n");
+    writeFileSync(join(root, "packages", "app", "build", "b0.js"), "0;\n");
     mkdirSync(join(root, "vendor", "drop"), { recursive: true });
     mkdirSync(join(root, "vendor", "keep"), { recursive: true });
-    for (let i = 0; i < 80; i += 1)
-      writeFileSync(join(root, "vendor", "drop", `d${i}.ts`), "export {};\n");
+    writeFileSync(join(root, "vendor", "drop", "d0.ts"), "export {};\n");
     writeFileSync(join(root, "vendor", "keep", "k.ts"), "export {};\n");
     mkdirSync(join(root, "scratch"), { recursive: true });
-    for (let i = 0; i < 80; i += 1)
-      writeFileSync(join(root, "scratch", `s${i}.ts`), "export {};\n");
+    writeFileSync(join(root, "scratch", "s0.ts"), "export {};\n");
     writeFileSync(join(root, ".git", "info", "exclude"), "scratch/\n");
     writeFileSync(join(root, "notes.log"), "noise\n");
     // Committed, because git's collapsed answer stops at the outermost directory it has
-    // no reason to enter — see the note on the last assertion. A repository under review
-    // has tracked files by definition.
+    // no reason to enter — see the last assertion. A repository under review has tracked
+    // files by definition.
     git("add", "-A");
     git("commit", "-qm", "fixture");
 
     const watcher = new RepoWatcher();
     const quiet = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    const handlesBefore = await settledFsWatchHandles();
     try {
       watcher.start(root);
-      await new Promise((resolve) => setTimeout(resolve, 1_500));
+      await sleep(300);
 
-      const watched = watcher.watchedPaths();
-      const armed = fsWatchHandles() - handlesBefore;
+      // Each ignored tree, written to individually and asserted individually, so a pass
+      // bought by ignoring EVERYTHING — which would also keep the reviewer's own edit
+      // quiet — cannot hide behind an aggregate.
+      const ignoredWrites: ReadonlyArray<readonly [string, string]> = [
+        ["root .gitignore", join(root, ".claude", "worktrees", "lane-a", "f0.ts")],
+        ["nested .gitignore", join(root, "packages", "app", "build", "b0.js")],
+        ["vendor/*", join(root, "vendor", "drop", "d0.ts")],
+        [".git/info/exclude", join(root, "scratch", "s0.ts")],
+        ["a single ignored file", join(root, "notes.log")],
+        [".git itself", join(root, ".git", "rennet-probe")],
+      ];
+      // Each ignored write gets its own silence window AND its own proof that the window
+      // was live: immediately after it, a write git does NOT ignore must be reported. So a
+      // "stayed quiet" verdict can never be bought by a watcher that had stopped delivering
+      // — the vacuous pass this suite would otherwise be one slow FSEvents flush away from.
+      const sentinel = join(root, "src", "sentinel.ts");
+      const wentDirty: string[] = [];
+      const channelWasDead: string[] = [];
+      for (const [why, path] of ignoredWrites) {
+        watcher.setDirty(false);
+        writeFileSync(path, "touched\n");
+        await sleep(600);
+        if (watcher.isDirty()) wentDirty.push(why);
+        writeFileSync(sentinel, `export const after = "${why}";\n`);
+        if (!(await waitForDirty(watcher))) channelWasDead.push(why);
+      }
+      expect({ wentDirty, channelWasDead }).toEqual({ wentDirty: [], channelWasDead: [] });
 
-      // Non-vacuous first: the watcher really did arm watches, and the measurement really
-      // does see them on this platform. Without this the bounds below pass on a watcher
-      // that watched nothing at all.
-      expect(watched.length).toBeGreaterThan(12);
-      expect(armed).toBeGreaterThan(12);
-
-      // The resource claim. 856 files exist under this root and 16 of them are watchable;
-      // the other 840 are ignored by four different git mechanisms. With the ignore rules
-      // gone the count is ~860 either way, so this bound is what separates the two.
-      expect(watched.length).toBeLessThan(40);
-      expect(armed).toBeLessThan(40);
-
-      // …and specifically these trees, named, so a bound met by dropping the wrong things
-      // still fails.
-      const joined = watched.join("\n");
-      expect(joined).not.toMatch(/\.claude/); // root .gitignore
-      expect(joined).not.toMatch(/packages\/app\/build/); // nested .gitignore
-      expect(joined).not.toMatch(/vendor\/drop/); // `vendor/*`
-      expect(joined).not.toMatch(/scratch/); // .git/info/exclude
-      expect(joined).not.toMatch(/notes\.log/); // a single ignored file
-      // The negation is git's answer too, and it is watched.
-      expect(joined).toMatch(/vendor\/keep\/k\.ts/);
-      expect(joined).toMatch(/packages\/app\/src\/a\.ts/);
-      expect(joined).toMatch(/src\/f0\.ts/);
-
-      // A watcher this small still has to report the reviewer's own edit, or the bound
-      // above is satisfied by a watcher that gave up.
-      watcher.setDirty(false);
-      expect(watcher.isDirty()).toBe(false);
-      writeFileSync(join(root, "src", "f0.ts"), "export const changed = 1;\n");
-      await new Promise((resolve) => setTimeout(resolve, 700));
-      expect(watcher.isDirty()).toBe(true);
+      // …and the files git does NOT ignore, including the negation git re-included, are
+      // every one of them reported. Same loop shape, opposite verdict.
+      const watchedWrites: ReadonlyArray<readonly [string, string]> = [
+        ["tracked source", join(root, "src", "f0.ts")],
+        ["the negation re-included by !vendor/keep/", join(root, "vendor", "keep", "k.ts")],
+        ["a file beside a nested ignore rule", join(root, "packages", "app", "src", "a.ts")],
+      ];
+      const stayedClean: string[] = [];
+      for (const [why, path] of watchedWrites) {
+        watcher.setDirty(false);
+        writeFileSync(path, "export const changed = 1;\n");
+        if (!(await waitForDirty(watcher))) stayedClean.push(why);
+      }
+      expect(stayedClean).toEqual([]);
 
       // What this does NOT catch, executed and stated rather than left to be discovered.
       // `git ls-files --directory` collapses at the outermost directory git has no reason
       // to enter, so an ignored subtree inside a WHOLLY UNTRACKED directory is absent from
       // git's answer even though git itself calls it ignored — the two assertions below
-      // are that disagreement, run. Closing it means enumerating every ignored file, which
-      // on this repository is 122,561 entries, 8.1 MB and 2.35s of blocked event loop
-      // against 46 entries, 1.3 KB and 42ms. So the BUDGET covers this case, not the rules.
+      // are that disagreement, run. Under the old backend the budget was what made that
+      // survivable; under this one it costs nothing, because an event the rules fail to
+      // recognise is a spurious dirty flag and a real diff, not a descriptor.
       mkdirSync(join(root, "untracked", "dropme"), { recursive: true });
       writeFileSync(join(root, "untracked", "dropme", "x.js"), "0;\n");
       expect(readGitIgnoredEntries(root)?.has("untracked/dropme/")).toBe(false);
@@ -521,21 +615,20 @@ describe("RepoWatcher descriptor budget (#850)", () => {
       await watcher.close();
       rmSync(root, { recursive: true, force: true });
     }
-  }, 20_000);
+  }, 30_000);
 
-  // The bound has to hold when the ignore rules are RIGHT and the tree is simply bigger
-  // than the watcher can hold — the case no ignore rule can fix. Exercised at 64 entries
-  // rather than the production 8,192 so the fixture is buildable; the mechanism is the
-  // same code path, and `MAX_WATCHED_ENTRIES` is what the daemon's `new RepoWatcher()`
-  // takes. What this cannot catch: whether 8,192 is the right number for a real machine's
-  // descriptor limit. That is a judgement recorded where the constant is declared.
-  it("stops at its budget on a tree with nothing to ignore, and says so instead of failing silently", async () => {
+  // The polling backend keeps a cap, and the cap keeps its honest degradation. It is a
+  // DIFFERENT bound with a different reason: `fs.watchFile` is a libuv poll timer and holds
+  // no descriptor, so what this bounds is `stat` storms over the 9P bridge, not exhaustion.
+  // Exercised at 64 entries so the fixture is buildable, and reached through a `wsl` locus
+  // because that — not the path — is what selects polling.
+  it("stops at its poll cap on the WSL path, and says so instead of failing silently", async () => {
     const { RepoWatcher } = await import("./repo-watcher");
     const { execFileSync } = await import("node:child_process");
     const { mkdirSync, mkdtempSync, rmSync, writeFileSync } = await import("node:fs");
     const { tmpdir } = await import("node:os");
     const { join } = await import("node:path");
-    const root = mkdtempSync(join(tmpdir(), "rennet-repo-watcher-budget-"));
+    const root = mkdtempSync(join(tmpdir(), "rennet-repo-watcher-pollcap-"));
     execFileSync("git", ["init", "-q", "-b", "main"], { cwd: root, stdio: "ignore" });
     for (let d = 0; d < 6; d += 1) {
       mkdirSync(join(root, `d${d}`), { recursive: true });
@@ -543,19 +636,16 @@ describe("RepoWatcher descriptor budget (#850)", () => {
         writeFileSync(join(root, `d${d}`, `f${i}.ts`), "export {};\n");
     }
 
-    const watcher = new RepoWatcher({ maxWatchedEntries: 64 });
+    const watcher = new RepoWatcher({ maxPolledEntries: 64 });
     const warned = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    const handlesBefore = await settledFsWatchHandles();
     try {
-      watcher.start(root);
+      watcher.start(root, { kind: "wsl", distro: "Ubuntu" });
       await new Promise((resolve) => setTimeout(resolve, 1_500));
 
-      const armed = fsWatchHandles() - handlesBefore;
-      expect(armed).toBeGreaterThan(0);
-      // 306 entries exist; the budget is 64. `getWatched` counts a few bookkeeping
-      // entries the walk never armed a descriptor for, so the descriptor count is the
-      // one held to the budget exactly.
-      expect(armed).toBeLessThanOrEqual(64);
+      // The locus, not the path, chose this backend — and it really is the polling one.
+      expect(watcher.backend()).toBe("polling");
+      // 306 entries exist; the cap is 64.
+      expect(watcher.watchedPaths().length).toBeGreaterThan(0);
       expect(watcher.watchedPaths().length).toBeLessThan(80);
 
       // Honest degradation, which is the half that keeps the daemon usable: the watcher
@@ -566,39 +656,47 @@ describe("RepoWatcher descriptor budget (#850)", () => {
       watcher.setDirty(false);
       expect(watcher.isDirty()).toBe(true);
       const said = warned.mock.calls.map((call) => String(call[0])).join("\n");
-      expect(said).toContain("watch budget spent: 64 entries");
+      expect(said).toContain("poll cap spent: 64 entries");
       expect(said).toContain(root);
-      // Said once for the root, not once per entry — the failure it replaces was 16,751
-      // identical lines in one daemon lifetime.
-      expect(said.match(/watch budget spent/g)).toHaveLength(1);
+      // Said once for the root, not once per entry.
+      expect(said.match(/poll cap spent/g)).toHaveLength(1);
     } finally {
       warned.mockRestore();
       await watcher.close();
       rmSync(root, { recursive: true, force: true });
     }
-  }, 20_000);
+  }, 30_000);
 
-  // The budget is derived from the process's real `RLIMIT_NOFILE`, not guessed, because
-  // the number that matters differs by an order of magnitude between a shell and an app
-  // launched from Finder — and a constant tuned for one is wrong for the other.
-  it("takes half of this process's own descriptor limit, capped at the ceiling", async () => {
-    const { MAX_WATCHED_ENTRIES, watchBudget } = await import("./repo-watcher");
-    const limits = (
-      process.report.getReport() as {
-        userLimits?: { open_files?: { soft?: number | string } };
-      }
-    ).userLimits;
-    const soft = limits?.open_files?.soft;
-    // Non-vacuous: this platform must actually report a limit, or the expectation below
-    // is comparing the ceiling with itself.
-    expect(typeof soft).toBe("number");
-    expect(watchBudget()).toBe(Math.min(MAX_WATCHED_ENTRIES, Math.floor(Number(soft) / 2)));
-    // …and this shell's limit is high, so the ceiling is what is actually in force here.
-    // The halving branch is the one that matters on a Finder-launched daemon.
-    expect(watchBudget()).toBeGreaterThan(0);
+  // A root no watcher can be armed on must not read as a quiet one. There is no fallback to
+  // a per-entry watcher — that is the cost model this change removes — so the answer is to
+  // stop vouching, which makes every freshness ask run a real diff.
+  it("refuses to vouch for a root it could not arm a watch on", async () => {
+    const { RepoWatcher } = await import("./repo-watcher");
+    const { mkdtempSync, rmSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const root = mkdtempSync(join(tmpdir(), "rennet-repo-watcher-unarmable-"));
+    const watcher = new RepoWatcher();
+    const warned = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      // The root is gone by the time the watch is asked for, which is what `fs.watch`
+      // throwing looks like from the watcher's side.
+      rmSync(root, { recursive: true, force: true });
+      watcher.start(root);
+      expect(watcher.backend()).toBe("none");
+      expect(watcher.isTruncated()).toBe(true);
+      watcher.setDirty(false);
+      expect(watcher.isDirty()).toBe(true);
+      expect(warned.mock.calls.map((call) => String(call[0])).join("\n")).toContain(
+        "no recursive watch available",
+      );
+    } finally {
+      warned.mockRestore();
+      await watcher.close();
+    }
   });
 
-  it("returns no git answer for a directory that is not a repository, and the caller still bounds it", async () => {
+  it("returns no git answer for a directory that is not a repository, and still ignores the floor", async () => {
     const { mkdtempSync, rmSync } = await import("node:fs");
     const { tmpdir } = await import("node:os");
     const { join } = await import("node:path");
@@ -606,11 +704,91 @@ describe("RepoWatcher descriptor budget (#850)", () => {
     try {
       // `git ls-files` outside a repository exits non-zero. The watcher must fall back to
       // the `.git`/`.nx`/`node_modules` floor rather than treat "no answer" as "nothing
-      // is ignored" — and the budget is what makes that fallback survivable.
+      // is ignored".
       expect(readGitIgnoredEntries(root)).toBeUndefined();
       expect(isIgnoredPath(root, join(root, "node_modules", "x", "index.js"))).toBe(true);
       expect(isIgnoredPath(root, join(root, "src", "app.ts"))).toBe(false);
     } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+// The log storm is its own defect. The 0.9.1 daemon log was 42,697 lines of which 41,887
+// were one identical EMFILE sentence — 98% of the file — and two real daemon crashes plus a
+// dead T3 sidecar were buried in the remainder. Rai reads that file to diagnose.
+describe("RepeatCollapsingLog", () => {
+  it("collapses a storm to one line per decade and never loses the count", async () => {
+    const { RepeatCollapsingLog } = await import("./repo-watcher");
+    const lines: string[] = [];
+    const log = new RepeatCollapsingLog((line) => lines.push(line));
+    for (let i = 0; i < 41_887; i += 1) log.record("EMFILE: too many open files, watch");
+    // Five lines while the storm runs: the first, then each decade.
+    expect(lines).toEqual([
+      "EMFILE: too many open files, watch",
+      "EMFILE: too many open files, watch (repeated 10 times)",
+      "EMFILE: too many open files, watch (repeated 100 times)",
+      "EMFILE: too many open files, watch (repeated 1000 times)",
+      "EMFILE: too many open files, watch (repeated 10000 times)",
+    ]);
+    // …and the exact total on flush, so the reader learns how many there were rather than
+    // that there were "lots". This is the assertion that stops collapsing from hiding.
+    log.flush();
+    expect(lines.at(-1)).toBe("EMFILE: too many open files, watch (repeated 41887 times)");
+    expect(lines).toHaveLength(6);
+    // Flushing again adds nothing: the total is already on the record.
+    log.flush();
+    expect(lines).toHaveLength(6);
+  });
+
+  it("closes off the running count when a DIFFERENT message arrives, so nothing is merged", async () => {
+    const { RepeatCollapsingLog } = await import("./repo-watcher");
+    const lines: string[] = [];
+    const log = new RepeatCollapsingLog((line) => lines.push(line));
+    for (let i = 0; i < 3; i += 1) log.record("EISDIR: illegal operation");
+    log.record("ENOENT: no such file");
+    expect(lines).toEqual([
+      "EISDIR: illegal operation",
+      "EISDIR: illegal operation (repeated 3 times)",
+      "ENOENT: no such file",
+    ]);
+    // A second error is not swallowed by the first one's tally, and its own count starts
+    // from scratch rather than continuing the previous message's.
+    for (let i = 0; i < 9; i += 1) log.record("ENOENT: no such file");
+    expect(lines.at(-1)).toBe("ENOENT: no such file (repeated 10 times)");
+  });
+});
+
+// The watcher's own error channel is the collapsing one — an unhandled "error" event on an
+// EventEmitter is a process crash, and 41,887 handled-but-unread ones is a useless log.
+describe("RepoWatcher error channel", () => {
+  it("survives an error storm without crashing and without 41,887 log lines", async () => {
+    const { RepoWatcher } = await import("./repo-watcher");
+    const { mkdtempSync, rmSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const root = mkdtempSync(join(tmpdir(), "rennet-repo-watcher-storm-"));
+    const watcher = new RepoWatcher();
+    const said = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      watcher.start(root);
+      const inner = (watcher as unknown as { watcher: { emit(e: string, x: unknown): void } })
+        .watcher;
+      const storm = Object.assign(new Error("EMFILE: too many open files, watch"), {
+        code: "EMFILE",
+      });
+      // Unhandled, any one of these emits would kill the process.
+      for (let i = 0; i < 5_000; i += 1) {
+        expect(() => inner.emit("error", storm)).not.toThrow();
+      }
+      // 5,000 errors, four lines — and `close` adds the exact total as a fifth.
+      expect(said).toHaveBeenCalledTimes(4);
+      await watcher.close();
+      expect(said).toHaveBeenCalledTimes(5);
+      expect(String(said.mock.calls.at(-1)?.[1])).toContain("(repeated 5000 times)");
+    } finally {
+      said.mockRestore();
+      await watcher.close();
       rmSync(root, { recursive: true, force: true });
     }
   });

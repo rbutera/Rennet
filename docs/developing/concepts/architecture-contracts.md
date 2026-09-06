@@ -47,33 +47,56 @@ fresh.
 ### What the repository watcher watches
 
 The watcher answers one question — has the tree moved since the review was
-pinned — and it answers it by watching files, one operating-system watch per
-file. That count is the daemon's supply of file descriptors, so what the watcher
-declines to watch is a correctness rule about the daemon staying alive, not a
-performance tuning knob.
+pinned — and on a host repository it answers it with **one recursive operating-system
+watch for the whole tree**. One handle, one descriptor, at any repository size.
+macOS answers that with FSEvents, Windows with a recursive directory-change
+subscription, Linux with per-directory inotify watches on a single shared
+descriptor. There is no per-file cost and therefore no descriptor bound to set.
 
-It declines on the repository's own terms. A single `git ls-files --others
---ignored --exclude-standard --directory` per watched root asks git which entries
-its ignore rules exclude, so nested `.gitignore` files, negations, the global
-excludes file, and `.git/info/exclude` all decide the answer, and the watcher
-agrees with capture — which excludes ignored files too — rather than approximating
-it. `.git`, `.nx`, and `node_modules` are excluded underneath that, because git
-never reports its own directory and because the other two are worth pruning even
-where git cannot be asked. The app-owned `.rennet/boards/` prefix is excluded by
-the shared authority described below.
+That is a correctness rule, not a performance one, and it was learned twice. A
+per-file watcher costs one descriptor per file, so the size of the repository
+becomes the daemon's supply of descriptors — and a daemon with no descriptors
+cannot start `git`, cannot start the coding-harness sidecar, and cannot answer a
+chat turn. Bounding the count did not save it: the bound has to come from the
+process's real descriptor limit, and no API in the process reports that limit
+honestly. Node raises `RLIMIT_NOFILE` towards an unlimited hard limit at startup,
+so the soft limit a Mac reports afterwards is about a million while the kernel
+enforces something far smaller. The bound never fired, and the daemon drowned
+anyway. **A watcher whose cost depends on the size of the tree cannot be made
+safe by choosing a better number.**
 
-Above the rules sits a hard bound: half the process's own descriptor limit, and
-never more than 32,768 entries. A root larger than that is watched in part, and
-the watcher says so once, naming the root and the count — and then refuses to
-vouch for the tree at all, so every freshness ask falls through to a real diff.
-A partial watcher's silence means nothing, exactly as an unfinished initial walk's
-silence means nothing, and neither is allowed to answer "unchanged".
+The repository's ignore rules still decide what counts as a change, and they come
+from the repository. A single `git ls-files --others --ignored --exclude-standard
+--directory` per watched root asks git which entries its ignore rules exclude, so
+nested `.gitignore` files, negations, the global excludes file, and
+`.git/info/exclude` all decide the answer, and the watcher agrees with capture —
+which excludes ignored files too — rather than approximating it. `.git`, `.nx`,
+and `node_modules` are excluded underneath that, because git never reports its own
+directory and because the other two are worth excluding even where git cannot be
+asked. The app-owned `.rennet/boards/` prefix is excluded by the shared authority
+described below. What changed with the backend is only *where* those rules apply:
+the kernel watches the subtree whole, so the rules filter events rather than
+pruning a walk. An `.nx` write still does not mark the tree dirty.
 
-The bound exists because the failure it prevents is not a stale review. A watcher
-that takes every descriptor makes every subsequent `spawn` fail, which takes down
-the coding-harness sidecar, the lens lanes, and the chat dock — subsystems whose
-error messages then name themselves rather than the cause. When a spawn does fail
-for want of descriptors, the message a reader sees says so.
+A WSL project reached over the `\\wsl.localhost\…` bridge still **polls**,
+because inotify events do not cross that boundary. Polling holds no descriptors —
+it is a repeated `stat`, not a watch — so the bound there is about the cost of
+those `stat` calls, and a root larger than 32,768 entries is polled in part. When
+that happens, or when no watch can be armed on a root at all, the watcher says so
+once, naming the root, and then refuses to vouch for the tree: every freshness ask
+falls through to a real diff. A partial watcher's silence means nothing, exactly
+as an unfinished walk's silence means nothing, and neither is allowed to answer
+"unchanged".
+
+Two properties follow from the recursive backend and are worth knowing. It arms in
+the same tick it is created, so the first freshness ask after a capture can be
+answered from the watcher rather than from a diff — the walk it replaced took most
+of a second on this repository and lost every edit that landed inside it. And it
+does not follow symlinks out of the tree, so a repository whose source is a
+symlink to somewhere else reports no changes for that content.
+
+When a spawn does fail for want of descriptors, the message a reader sees says so
+rather than naming whichever subsystem happened to ask first.
 
 ## Repo Map and project context
 

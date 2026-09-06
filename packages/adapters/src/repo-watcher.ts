@@ -1,12 +1,13 @@
 import { execFileSync } from "node:child_process";
-import { statSync } from "node:fs";
+import { type FSWatcher as NodeFsWatcher, statSync, watch as watchRecursive } from "node:fs";
+import { join } from "node:path";
 import { HOST_LOCUS, type Locus } from "@rennet/core";
 import {
   isAppOwnedPath,
   type RepositoryPathOptions,
   toRepositoryRelativePath,
 } from "@rennet/protocol";
-import { type FSWatcher, watch } from "chokidar";
+import { type FSWatcher as ChokidarWatcher, watch as watchByEntry } from "chokidar";
 
 /** True for a `\\wsl.localhost\…` / `\\wsl$\…` UNC view of a WSL filesystem. */
 export function isWslUncPath(path: string): boolean {
@@ -70,59 +71,117 @@ const IGNORED_SEGMENT = /[/\\](?:\.git|\.nx|node_modules)(?:[/\\]|$)/;
 export type GitIgnoredEntries = ReadonlySet<string>;
 
 /**
- * The ceiling on the watcher's descriptor budget, whatever the process's own limit is.
+ * ## Why there is no descriptor budget here any more (#892)
  *
- * chokidar's Node backend calls `fs.watch` once per directory AND once per file, and each
- * of those is one descriptor — measured with `process.getActiveResourcesInfo()` on a
- * 640-file fixture: 643 `FSEventWrap` handles for 643 entries. So the entry count IS the
- * descriptor count, and #850 is what happens with no bound on it: this repository wants
- * 36,142 watches without its ignore rules and 6,436 with them.
+ * There used to be a `watchBudget()` in this file: half of `process.report.getReport()
+ * .userLimits.open_files.soft`, capped at a 32,768 ceiling. It was derived rather than
+ * guessed, which is why it read as principled — and it was inert, because the number it
+ * derived from is not the number that binds. Measured on Node 24.20 / macOS 15, 2026-09-06:
  *
- * 32,768 is above any repository Rennet is asked to review and below the point where the
- * bookkeeping itself is the problem. It is the ceiling, not the answer — {@link watchBudget}
- * is the answer, and on a process with a small descriptor limit it is far lower.
+ *     soft limit `process.report` reports    1,048,575
+ *     files the process could actually open     92,149   (= `kern.maxfilesperproc`)
+ *
+ * Node raises `RLIMIT_NOFILE` towards the hard limit during startup, and macOS's default
+ * hard limit is `unlimited`, so the soft limit it reports afterwards is 1,048,575 on every
+ * Mac — while the kernel goes on enforcing `kern.maxfilesperproc` regardless. Half of
+ * 1,048,575 is over the ceiling, so `watchBudget()` returned 32,768 on every Mac, always.
+ * The derivation never ran. A repository would have to want more than 32,768 watches before
+ * the bound existed at all, and this one wants about 6,000.
+ *
+ * The field evidence says precisely that, and it is what makes this a measurement rather
+ * than an argument. On the installed 0.9.1 daemon (pid 91325, 59 minutes up) `~/.rennet/
+ * daemon.log` held **41,887** `EMFILE: too many open files, watch` lines in a 42,697-line
+ * file — and **zero** `watch budget spent` lines. The bound never fired while the daemon
+ * drowned. `lsof` on that daemon: 5,147 descriptors, 5,125 of them `REG` files under the
+ * checkout. So the real ceiling for that process was somewhere near 5,100 — a number that
+ * neither 1,048,575 nor 92,149 predicts, because an Electron child's true limit is set by
+ * machinery that reports nothing to the process it constrains.
+ *
+ * That is the general shape, and it is why a tuning nudge was never going to work: **the
+ * safe size of a per-file watcher depends on a limit no API in the process can tell you.**
+ * Every value is a guess, every guess is wrong on some machine, and the failure mode of
+ * guessing high is that the daemon loses every descriptor and cannot spawn `git`, cannot
+ * start the T3 sidecar, and cannot answer a chat turn — which is the bug the user reported
+ * as "explain no longer works".
+ *
+ * So the fix is not a better number. It is a backend whose cost does not depend on the size
+ * of the tree: see {@link RepoWatcher.start}.
  */
-export const MAX_WATCHED_ENTRIES = 32_768;
-
-/** Node's diagnostic report, narrowed to the one field this module reads. */
-interface ReportWithUserLimits {
-  readonly userLimits?: { readonly open_files?: { readonly soft?: number | string } };
-}
-
-let cachedWatchBudget: number | undefined;
 
 /**
- * How many entries this process may watch: **half its own descriptor limit**, capped at
- * {@link MAX_WATCHED_ENTRIES}.
+ * The cap on the POLLING backend's watched entries.
  *
- * Derived rather than guessed, because the number that matters is not a property of the
- * repository — it is `RLIMIT_NOFILE` for whatever process the daemon happens to be, and
- * that varies by an order of magnitude between a shell (1,048,576 here) and an app
- * launched from Finder, which inherits launchd's. A fixed constant is right for one of
- * those and wrong for the other; #850 was the wrong half. Node's diagnostic report
- * carries the real value (`userLimits.open_files.soft`), so it is read once per process
- * — the report costs ~11ms to build, which is why it is memoised — and halved.
+ * This bounds CPU, not descriptors, and the distinction is the whole point. `fs.watchFile`
+ * — what chokidar arms when `usePolling` is set — is a libuv `uv_fs_poll_t` and holds no
+ * descriptor at all; what it costs is one `stat` per entry per interval, which over the 9P
+ * bridge is the storm that starved the daemon's libuv thread pool (lancelot, 2026-08-20).
+ * So this is a flat number and it is allowed to be generous: exceeding it degrades speed,
+ * never the daemon's ability to spawn.
  *
- * Half is generous to the daemon on purpose: what the daemon needs descriptors FOR is a
- * handful of things — the T3 sidecar, `git` children, HTTP sockets, the log — dozens, not
- * thousands. The failure being prevented is not the watcher taking slightly too many, it
- * is the watcher taking ALL of them and every subsequent `spawn` returning `EBADF`.
- *
- * A platform with no such limit to report (Windows) gets the ceiling.
+ * The native backend has no matching constant because it has nothing to bound: one
+ * `fs.watch(root, { recursive: true })` is ONE handle for the whole tree, at any size.
  */
-export function watchBudget(): number {
-  if (cachedWatchBudget !== undefined) return cachedWatchBudget;
-  let half = MAX_WATCHED_ENTRIES;
-  try {
-    const soft = (process.report?.getReport() as ReportWithUserLimits | undefined)?.userLimits
-      ?.open_files?.soft;
-    if (typeof soft === "number" && Number.isFinite(soft) && soft > 0) half = Math.floor(soft / 2);
-  } catch {
-    // No report, no limit to honour: the ceiling stands and the truncation notice tells
-    // the reader what happened.
+export const MAX_POLLED_ENTRIES = 32_768;
+
+/**
+ * The decade a repeated log line is worth restating at: 1, 10, 100, 1,000, 10,000 …
+ *
+ * See {@link RepeatCollapsingLog}. Chosen over a time window because a count threshold is
+ * deterministic, so the test for it does not need fake timers to be honest.
+ */
+function isDecade(count: number): boolean {
+  if (count < 10) return false;
+  let decade = 10;
+  while (decade < count) decade *= 10;
+  return decade === count;
+}
+
+/**
+ * A log channel that says a repeated message once, then at each decade, then the exact final
+ * total — so 41,887 identical lines become six and the reader loses nothing.
+ *
+ * This is its own defect, not decoration. The 0.9.1 daemon log was 42,697 lines of which
+ * 41,887 were the same `EMFILE` sentence: 98% of the file, and Rai reads that file to
+ * diagnose. Two real daemon crashes and a dead T3 sidecar were in there, buried. A log that
+ * repeats itself into unreadability hides the evidence as effectively as not logging at all.
+ *
+ * The count is never dropped. {@link flush} — called when the message changes and on close —
+ * emits the final total if the last emitted line did not already name it, so the reader
+ * always learns how many there were, not merely that there were "lots".
+ */
+export class RepeatCollapsingLog {
+  private last: string | undefined;
+  private count = 0;
+  private emitted = 0;
+
+  constructor(private readonly emit: (line: string) => void) {}
+
+  /** Record one occurrence, emitting only at the first, at each decade, and on change. */
+  record(message: string): void {
+    if (message !== this.last) {
+      this.flush();
+      this.last = message;
+      this.count = 0;
+      this.emitted = 0;
+    }
+    this.count += 1;
+    if (this.count === 1) {
+      this.emit(message);
+      this.emitted = 1;
+      return;
+    }
+    if (isDecade(this.count)) {
+      this.emit(`${message} (repeated ${this.count} times)`);
+      this.emitted = this.count;
+    }
   }
-  cachedWatchBudget = Math.max(1, Math.min(MAX_WATCHED_ENTRIES, half));
-  return cachedWatchBudget;
+
+  /** Emit the final total for the current message unless the last line already named it. */
+  flush(): void {
+    if (this.last === undefined || this.count <= this.emitted) return;
+    this.emit(`${this.last} (repeated ${this.count} times)`);
+    this.emitted = this.count;
+  }
 }
 
 /** How long `git ls-files` may take before the watcher gives up and falls back. */
@@ -269,12 +328,18 @@ export function filesystemIgnoresCase(root: string): boolean {
 }
 
 export class RepoWatcher {
-  private watcher: FSWatcher | null = null;
+  /**
+   * The live watcher. A `node:fs` recursive watcher on the native path, a chokidar
+   * per-entry poller on the WSL/9P path; both are EventEmitters and both `close()`.
+   */
+  private watcher: NodeFsWatcher | ChokidarWatcher | null = null;
   /** The root the live watcher is on, so a repeat `start` for it is recognised as a no-op. */
   private root: string | null = null;
   /**
-   * False until chokidar has finished its initial walk of the tree. Nothing that
-   * lands before that walk arms a watch is ever reported — see `setDirty`.
+   * Has the watcher finished arming? The recursive backend arms synchronously and sets this
+   * in the same tick (measured: 20 of 20 same-tick writes reported); the polling backend
+   * walks the tree first, and nothing landing before that walk arms a watch is ever
+   * reported — see `setDirty`.
    */
   private settled = false;
   /**
@@ -284,9 +349,12 @@ export class RepoWatcher {
    */
   private dirty = true;
   /**
-   * Did this root spend its {@link watchBudget}? Once true the watcher is only looking
-   * at part of the tree, so it can never again vouch for the whole of it —
-   * `setDirty(false)` stops sticking and every freshness ask runs a real diff.
+   * Is this root only PARTLY watched? Once true the watcher can never again vouch for the
+   * whole tree — `setDirty(false)` stops sticking and every freshness ask runs a real diff.
+   *
+   * Two ways to get here, both honest degradation rather than silent loss: the polling
+   * backend spent {@link MAX_POLLED_ENTRIES}, or the recursive backend could not arm at all
+   * and there is no watcher on this root.
    */
   private truncated = false;
   /**
@@ -296,45 +364,79 @@ export class RepoWatcher {
    * one can neither spend the budget nor report it spent.
    */
   private generation = 0;
-  /** This watcher's descriptor budget. Production always takes the default. */
-  private readonly maxWatchedEntries: number;
+  /**
+   * Which backend is live. Recorded rather than re-derived from the root, because the
+   * choice is made from the LOCUS as well as the path: a `wsl` locus on a path that is not
+   * a UNC view still polls, and nothing about that path says so.
+   */
+  private mode: "recursive" | "polling" | "none" = "none";
+  /** The polling backend's entry cap. Production always takes the default. */
+  private readonly maxPolledEntries: number;
+  /**
+   * The watcher's error channel, collapsed. An `EMFILE` storm produced 41,887 identical
+   * lines in one daemon lifetime and made the log useless; this says the first, each
+   * decade, and the exact total.
+   */
+  private readonly errors = new RepeatCollapsingLog((line) => {
+    console.error("[repo-watcher] watcher error (freshness may miss changes):", line);
+  });
 
   /**
-   * `maxWatchedEntries` exists so the budget can be exercised at a size a test can
+   * `maxPolledEntries` exists so the polling cap can be exercised at a size a test can
    * build. The daemon constructs a `RepoWatcher()` with no argument and gets
-   * {@link watchBudget}; nothing in production passes this.
+   * {@link MAX_POLLED_ENTRIES}; nothing in production passes this.
    */
-  constructor(options?: { readonly maxWatchedEntries?: number }) {
-    this.maxWatchedEntries = options?.maxWatchedEntries ?? watchBudget();
+  constructor(options?: { readonly maxPolledEntries?: number }) {
+    this.maxPolledEntries = options?.maxPolledEntries ?? MAX_POLLED_ENTRIES;
   }
 
   /**
-   * Watch a repo root for changes. For a WSL-locus project the root is a
-   * `\\wsl.localhost\<distro>\…` UNC view, where inotify events do NOT propagate
-   * across the 9P/UNC boundary (design decision 7) — so the WSL locus watches by
-   * POLLING. Host projects keep native (event-driven) watching.
+   * Watch a repo root for changes.
    *
-   * What is NOT watched is the repository's own answer: `git ls-files --others
-   * --ignored --directory` once per root (#850), plus the app-owned `.rennet/boards/`
-   * and the `.git`/`.nx`/`node_modules` floor. Both separator flavours match
-   * (backslashes on Windows/UNC); pruning `node_modules` is also what keeps the WSL
-   * poll from stat-storming the 9P bridge.
+   * **The native path is one `fs.watch(root, { recursive: true })` — one handle, one
+   * descriptor, for a tree of any size.** That is the fix for #892 and it is a change of
+   * cost model, not of tuning. chokidar's Node backend arms one `fs.watch` per FILE, and on
+   * macOS libuv falls back to kqueue for a non-directory (`uv_fs_event_start`: "FSEvents
+   * works only with directories"), which is `open()` — so the entry count IS the descriptor
+   * count. Measured here: watching 20,000 files cost 20,000 descriptors, and under a
+   * 256-descriptor limit exactly 245 watches and 245 plain `open`s succeeded before EMFILE.
+   * Recursive `fs.watch` on the same 6,000-file checkout cost **1** descriptor and **1**
+   * `FSEventWrap`, because macOS answers it with FSEvents on the directory tree, Windows
+   * with a recursive `ReadDirectoryChangesW`, and Linux with per-directory inotify watches
+   * on the loop's single shared inotify descriptor. No budget can be right when the cost is
+   * per file; no budget is needed once it is not.
    *
-   * And whatever the rules say, no root gets more than its {@link watchBudget}
-   * watches. The ignore rules are what makes the tree the right size; the budget is
-   * what makes a wrong answer survivable, because one `fs.watch` per file means an
-   * unexpected tree does not degrade freshness, it takes the daemon's descriptors and
-   * every `spawn` after that fails.
+   * It is also *faster to trust*. The recursive watcher arms in the tick it is created:
+   * a write issued in the same tick as `start()` was reported in **20 of 20** runs, against
+   * **0 of 20** for the chokidar walk the same test was written for (#601). So `settled` is
+   * true immediately and the first freshness ask after a capture can be answered from the
+   * watcher instead of a diff.
+   *
+   * What the ignore rules do here has changed with it, and this is the trade to understand:
+   * they can no longer PRUNE, because the kernel watches the subtree whole. They are applied
+   * to each EVENT instead — the same `git ls-files --others --ignored --directory` answer
+   * (#850), the same app-owned `.rennet/boards/` prefix, the same `.git`/`.nx`/`node_modules`
+   * floor, through the same {@link isIgnoredPath}. So `.nx` churn still does not mark the
+   * tree dirty. The cost moves from tens of thousands of descriptors to a handful of Set
+   * lookups per event, and once the tree is already dirty even that is skipped.
+   *
+   * Two things the recursive backend genuinely does not do, written down rather than
+   * discovered later: it does not follow symlinks out of the tree (chokidar did), so a
+   * repository whose source is a symlink to somewhere else reports nothing for it; and
+   * FSEvents coalesces, so events arrive collapsed. The second costs nothing here — this
+   * watcher's whole output is one boolean — and the first is a real, narrow regression.
+   *
+   * **The WSL/9P path still polls**, for the reasons it always did (design decision 7:
+   * inotify events do not cross the 9P/UNC boundary, and the bridge returns spurious lstat
+   * errors). Polling holds no descriptors — `fs.watchFile` is a libuv poll timer — so the
+   * cap there is {@link MAX_POLLED_ENTRIES}, and it is about `stat` storms, not exhaustion.
    */
   start(repositoryRoot: string, locus: Locus = HOST_LOCUS): void {
     // Re-`start` on the root already being watched is a NO-OP, and that is a correctness fix,
-    // not an optimisation. Tearing the watcher down and re-walking the tree opens a window in
-    // which `ignoreInitial: true` means every edit that lands is never reported — a review that
-    // went stale and never says so, the exact failure freshness exists to prevent. `review.load`
-    // calls `startWatching` on every open, so any client that re-reads a review (the #576
-    // freshness ask does, on every window focus) would otherwise rebuild the chokidar tree on
-    // each alt-tab. Same root ⇒ keep the live watcher, its armed watches and its accumulated
-    // dirty flag; a repeat start on a settled root must NOT re-open the warm-up window below.
+    // not an optimisation. Tearing the watcher down and rebuilding opens a window in which
+    // anything that lands is never reported — a review that went stale and never says so,
+    // the exact failure freshness exists to prevent. `review.load` calls `startWatching` on
+    // every open, and the #576 freshness ask does it on every window focus.
     if (this.watcher && this.root === repositoryRoot) return;
     void this.close();
     this.root = repositoryRoot;
@@ -343,71 +445,138 @@ export class RepoWatcher {
     // returns spurious lstat errors (EISDIR on plain files, observed live on the
     // lancelot test bed 2026-08-19), so native watching over it is wrong twice.
     const wslUncRoot = isWslUncPath(repositoryRoot);
-    // Probed once per root, not per event: `ignored` runs for every entry in the walk.
+    // Probed once per root, not per event: the predicate below runs for every event.
     const pathOptions: RepositoryPathOptions = {
       ignoreCase: filesystemIgnoresCase(repositoryRoot),
     };
     // One `git` process per root, not per entry. `git check-ignore` per path would be
-    // correct and unaffordable — the predicate below runs tens of thousands of times.
+    // correct and unaffordable.
     const gitIgnored = readGitIgnoredEntries(repositoryRoot, pathOptions);
     if (gitIgnored === undefined) {
       console.warn(
-        `[repo-watcher] git could not report the ignore rules for ${repositoryRoot}; watching everything except .git/.nx/node_modules, up to ${this.maxWatchedEntries} entries`,
+        `[repo-watcher] git could not report the ignore rules for ${repositoryRoot}; watching everything except .git/.nx/node_modules`,
       );
     }
-    // Distinct paths admitted past the ignore rules, so the budget counts ENTRIES and
-    // not predicate calls: chokidar asks about the same path more than once (once bare,
-    // once with stats, once through readdirp's filter).
-    const admitted = new Set<string>();
     this.generation += 1;
+    if (locus.kind === "wsl" || wslUncRoot) {
+      this.startPolling(repositoryRoot, pathOptions, gitIgnored);
+      return;
+    }
+    this.startRecursive(repositoryRoot, pathOptions, gitIgnored);
+  }
+
+  /**
+   * The native backend: ONE recursive watch for the whole tree.
+   *
+   * A throw here means this platform or filesystem cannot answer a recursive watch. The
+   * answer is not to fall back to a per-entry watcher — that is the failure this change
+   * exists to remove — it is to say so once and stop vouching, so every freshness ask runs
+   * a real diff. Slower, and correct; a watcher that quietly saw nothing would be the lie.
+   */
+  private startRecursive(
+    repositoryRoot: string,
+    pathOptions: RepositoryPathOptions,
+    gitIgnored: GitIgnoredEntries | undefined,
+  ): void {
+    let watcher: NodeFsWatcher;
+    try {
+      watcher = watchRecursive(repositoryRoot, { recursive: true, persistent: true });
+    } catch (error) {
+      this.truncated = true;
+      console.warn(
+        `[repo-watcher] no recursive watch available for ${repositoryRoot} (${error instanceof Error ? error.message : String(error)}). Freshness cannot trust a watcher here, so every ask runs a real diff.`,
+      );
+      return;
+    }
+    this.watcher = watcher;
+    this.mode = "recursive";
+    // Armed in this tick. Unlike the chokidar walk this replaces, there is no window between
+    // `start` returning and events being delivered: measured at 20 of 20 same-tick writes
+    // reported, against 0 of 20 for the walk (#601). So a clear may stick straight away.
+    this.settled = true;
+    watcher.on("change", (_eventType, filename) => {
+      // Already dirty ⇒ nothing an event can tell us changes the answer, so the ignore rules
+      // are not consulted at all. This is what keeps a `pnpm install` or an `nx` run — which
+      // is thousands of events under directories we ignore — free rather than merely cheap.
+      if (this.dirty) return;
+      // A platform that cannot name the path leaves us unable to apply the ignore rules, and
+      // the safe direction is to report a change that might be ignorable rather than to miss
+      // one that is not.
+      if (filename === null || filename === undefined) {
+        this.dirty = true;
+        return;
+      }
+      const relative = typeof filename === "string" ? filename : filename.toString("utf8");
+      if (isIgnoredPath(repositoryRoot, join(repositoryRoot, relative), pathOptions, gitIgnored)) {
+        return;
+      }
+      this.dirty = true;
+    });
+    // A watcher error MUST NOT kill the daemon: an unhandled "error" event on an
+    // EventEmitter is a process crash, which is what took the daemon down in a loop when
+    // lstat over the WSL UNC bridge failed. Freshness degrades to missed events; the daemon
+    // lives — and the message is collapsed so a storm cannot bury the log.
+    watcher.on("error", (error) => {
+      this.errors.record(error instanceof Error ? error.message : String(error));
+    });
+  }
+
+  /**
+   * The WSL/9P backend: chokidar, polling, pruned by the ignore rules and capped.
+   *
+   * Polling costs `stat` calls rather than descriptors, so the cap here is about the libuv
+   * thread pool and the 9P bridge, not about exhaustion. Pruning still happens at the walk,
+   * because the walk is exactly what costs something in this mode.
+   */
+  private startPolling(
+    repositoryRoot: string,
+    pathOptions: RepositoryPathOptions,
+    gitIgnored: GitIgnoredEntries | undefined,
+  ): void {
+    // Distinct paths admitted past the ignore rules, so the cap counts ENTRIES and
+    // not predicate calls: chokidar asks about the same path more than once.
+    const admitted = new Set<string>();
     const generation = this.generation;
-    this.watcher = watch(repositoryRoot, {
+    const watcher = watchByEntry(repositoryRoot, {
       ignoreInitial: true,
+      usePolling: true,
+      interval: 500,
       ignored: (path) => {
         if (isIgnoredPath(repositoryRoot, path, pathOptions, gitIgnored)) return true;
         const key = path.replace(/\\/g, "/").replace(/\/+$/, "");
         if (admitted.has(key)) return false;
-        if (admitted.size >= this.maxWatchedEntries) {
-          this.noteBudgetSpent(repositoryRoot, generation);
+        if (admitted.size >= this.maxPolledEntries) {
+          this.noteCapSpent(repositoryRoot, generation);
           return true;
         }
         admitted.add(key);
         return false;
       },
-      ...(locus.kind === "wsl" || wslUncRoot ? { usePolling: true, interval: 500 } : {}),
     });
-    this.watcher.on("ready", () => {
+    this.watcher = watcher;
+    this.mode = "polling";
+    watcher.on("ready", () => {
       this.settled = true;
     });
     // Recorded synchronously, with no debounce. The flag is read by a freshness ask
     // that can arrive at any moment, and a 250ms coalescing window was simply 250ms
     // in which an edit that HAD been seen still answered "current".
-    this.watcher.on("all", () => {
+    watcher.on("all", () => {
       this.dirty = true;
     });
-    // A watcher error MUST NOT kill the daemon: chokidar's FSWatcher is an
-    // EventEmitter, and an unhandled "error" event is a process crash — which is
-    // exactly what took the daemon down in a loop when lstat over the WSL UNC
-    // bridge failed. Freshness degrades to missed events; the daemon lives.
-    this.watcher.on("error", (error) => {
-      console.error(
-        "[repo-watcher] watcher error (freshness may miss changes):",
-        error instanceof Error ? error.message : error,
-      );
+    watcher.on("error", (error) => {
+      this.errors.record(error instanceof Error ? error.message : String(error));
     });
   }
 
   /**
-   * Said ONCE per root, the first time the budget runs out, and it names the count —
-   * because the failure this replaces was 16,751 identical `EMFILE` lines in one daemon
-   * lifetime, which told the reader nothing except that something was very wrong
-   * somewhere else. This line says which root, how many, and what it costs.
+   * Said ONCE per root, the first time the polling cap runs out, and it names the count.
    */
-  private noteBudgetSpent(repositoryRoot: string, generation: number): void {
+  private noteCapSpent(repositoryRoot: string, generation: number): void {
     if (this.truncated || generation !== this.generation) return;
     this.truncated = true;
     console.warn(
-      `[repo-watcher] watch budget spent: ${this.maxWatchedEntries} entries under ${repositoryRoot}, and the tree is bigger than that. The rest is unwatched, so freshness stops trusting this watcher and runs a real diff on every ask. Check what large directory is NOT gitignored here.`,
+      `[repo-watcher] poll cap spent: ${this.maxPolledEntries} entries under ${repositoryRoot}, and the tree is bigger than that. The rest is unwatched, so freshness stops trusting this watcher and runs a real diff on every ask. Check what large directory is NOT gitignored here.`,
     );
   }
 
@@ -417,20 +586,33 @@ export class RepoWatcher {
   }
 
   /**
-   * Whether this root spent its {@link watchBudget} and is only partly watched.
-   * Diagnostic, and the thing a test asserts about honest degradation.
+   * Whether this root is only partly watched — the polling cap was spent, or no watcher
+   * could be armed at all. Diagnostic, and the thing a test asserts about honest degradation.
    */
   isTruncated(): boolean {
     return this.truncated;
   }
 
   /**
-   * Every path the live watcher currently holds a watch on — one `fs.watch`, and so one
-   * descriptor, each. This is chokidar's own bookkeeping (`getWatched`), which is what
-   * makes it the resource measurement rather than a restatement of the predicate.
+   * Which backend the live watcher is, so a test can assert the cheap one was chosen rather
+   * than infer it from a resource count that a broken watcher would also satisfy.
+   */
+  backend(): "recursive" | "polling" | "none" {
+    return this.watcher === null ? "none" : this.mode;
+  }
+
+  /**
+   * Every path the live watcher holds a watch on.
+   *
+   * For the recursive backend that is the root, and only the root: one `fs.watch` covers the
+   * subtree, so this list has length 1 no matter how large the repository is. That is not a
+   * simplification of the answer, it IS the answer, and it is the whole of #892. For the
+   * polling backend it is chokidar's own bookkeeping (`getWatched`).
    */
   watchedPaths(): readonly string[] {
-    const watched = this.watcher?.getWatched() ?? {};
+    if (this.watcher === null) return [];
+    if (this.mode === "recursive") return this.root === null ? [] : [this.root];
+    const watched = (this.watcher as ChokidarWatcher).getWatched();
     const paths: string[] = [];
     for (const [directory, entries] of Object.entries(watched)) {
       paths.push(directory);
@@ -442,38 +624,22 @@ export class RepoWatcher {
   /**
    * Record, or clear, "the tree has moved since the review was pinned".
    *
-   * Clearing only STICKS once the initial walk has finished (#601). chokidar arms
-   * its watches file by file as it walks, and `ignoreInitial: true` suppresses
-   * everything it finds on the way — so a save that lands before the walk reaches
-   * that file is not late, it is *lost*, permanently. Measured on this repo: a
-   * write issued in the same tick as `start()` on a 400-file tree was never
-   * reported in 20 of 20 runs, while the walk itself finished in ~14ms. A real
-   * repository is far larger, which is why the daemon was seen answering "current"
-   * nine seconds after an edit.
+   * Clearing only STICKS once the watcher has armed. For the recursive backend that is
+   * immediate — it arms in the tick `start` runs, measured at 20 of 20 same-tick writes
+   * reported — so the first freshness ask after a capture can be answered from the watcher
+   * rather than from a diff. That is the #601 window closed rather than merely survived:
+   * chokidar armed its watches file by file as it walked, `ignoreInitial: true` suppressed
+   * everything it met on the way, and a save landing before the walk reached that file was
+   * not late but *lost*. Measured on a 400-file tree: 0 of 20 reported, while the walk
+   * itself finished in ~14ms; on a real repository the walk was 834–893ms, which is how the
+   * daemon came to answer "current" nine seconds after an edit.
    *
-   * So while the walk is in flight the watcher refuses to vouch for the tree, and
-   * the caller falls through to a real diff instead of trusting a silence that
-   * means nothing yet.
+   * For the polling backend the walk is still real and `ready` still gates the clear.
    *
-   * What that costs, measured on this repository rather than guessed: with `.nx`
-   * pruned the walk finishes in 834–893ms, so it is a diff or two. Before `.nx` was
-   * pruned the same walk took 62–63 seconds, and the cost stayed bounded anyway only
-   * because the walk blocks the event loop, which prevents an ask storm rather than
-   * absorbing one. That is not a property to rely on: this stays cheap only while
-   * the ignore list above stays honest about what is not worth walking.
-   *
-   * What it does NOT promise: that every later change is reported. `ready` fires
-   * when chokidar has finished walking, which is not the same as every watch being
-   * armed — measured on this repository before `.nx` was pruned, it fired after
-   * 4,186–4,314 EMFILE failures, and chokidar does not retry a nested failure. So
-   * the guarantee here is exactly "chokidar says it has finished looking", and no
-   * more. That closes the first-save window, which is the defect.
-   *
-   * Descriptor exhaustion was the other half, and this is its answer (#850): a root
-   * that spent its {@link watchBudget} is only watching part of its tree, so a
-   * clear can never stick for it either. Silence from a partial watcher means nothing,
-   * exactly as silence from an unfinished walk means nothing, and the caller falls
-   * through to a real diff for as long as the watcher is on that root.
+   * And a partly-watched root can never clear at all. Silence from a watcher that is only
+   * looking at some of the tree means nothing, exactly as silence from an unfinished walk
+   * means nothing, so the caller falls through to a real diff for as long as the watcher is
+   * on that root — whether it ran out of poll cap or could not arm in the first place.
    */
   setDirty(value: boolean): void {
     this.dirty = value || !this.settled || this.truncated;
@@ -482,15 +648,18 @@ export class RepoWatcher {
   async close(): Promise<void> {
     // Release the fields BEFORE awaiting. `start` calls `close` without awaiting and
     // then synchronously installs the new watcher; nulling after the await would land
-    // in a later microtask and wipe that new watcher out, orphaning a live chokidar
-    // instance and defeating the same-root no-op above — which re-walks the tree on
-    // the next `review.load` and re-opens the very window `setDirty` exists to close.
+    // in a later microtask and wipe that new watcher out, orphaning a live watcher
+    // and defeating the same-root no-op above.
     const watcher = this.watcher;
     this.watcher = null;
+    this.mode = "none";
     this.root = null;
     this.settled = false;
     this.dirty = true;
     this.truncated = false;
+    // Whatever the storm reached, the reader gets the exact total rather than the last
+    // decade — a count that stops short is the same defect as a log that repeats forever.
+    this.errors.flush();
     await watcher?.close();
   }
 }
