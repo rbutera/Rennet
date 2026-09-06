@@ -30,6 +30,42 @@ function openDescriptors(): number {
   return readdirSync(process.platform === "linux" ? "/proc/self/fd" : "/dev/fd").length;
 }
 
+/**
+ * Wait until the watcher will vouch for the tree, up to `budget` ms.
+ *
+ * Not a convenience. The two backends earn trust at different moments and the difference is
+ * enormous on a real checkout: the recursive one is trustworthy in the tick it is created,
+ * while the per-entry one waits for chokidar to finish walking this repository, which is
+ * seconds. Asserting a clear after a fixed sleep therefore tested the machine, not the
+ * watcher — CI failed here as `expected true to be false` before this existed.
+ *
+ * It is still a real assertion: a watcher that never becomes trustworthy returns false, and
+ * every caller asserts on that.
+ */
+async function waitForClean(
+  watcher: { isDirty(): boolean; setDirty(value: boolean): void },
+  budget = 30_000,
+): Promise<boolean> {
+  const deadline = Date.now() + budget;
+  while (Date.now() < deadline) {
+    watcher.setDirty(false);
+    if (!watcher.isDirty()) return true;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  watcher.setDirty(false);
+  return !watcher.isDirty();
+}
+
+/** Poll until the watcher reports a change, up to `budget` ms. */
+async function waitForDirty(watcher: { isDirty(): boolean }, budget = 15_000): Promise<boolean> {
+  const deadline = Date.now() + budget;
+  while (Date.now() < deadline) {
+    if (watcher.isDirty()) return true;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  return watcher.isDirty();
+}
+
 /** True when git itself ignores `path` — asked of git, not of the watcher under test. */
 function gitIgnores(repoRoot: string, path: string): boolean {
   try {
@@ -90,7 +126,11 @@ describe("RepoWatcher — dogfood over the REAL rennet checkout (#850, #892)", (
     const before = openDescriptors();
     try {
       watcher.start(repoRoot);
-      await new Promise((resolve) => setTimeout(resolve, 1_000));
+      // Wait for the watcher to become trustworthy rather than for a fixed sleep, then
+      // measure. On the recursive backend this returns immediately; on the per-entry one it
+      // is the whole initial walk of this checkout, and measuring before it finished would
+      // read a descriptor count that is still climbing.
+      expect(await waitForClean(watcher)).toBe(true);
       const after = openDescriptors();
 
       // The backend this platform actually selects, named rather than inferred from a
@@ -120,20 +160,17 @@ describe("RepoWatcher — dogfood over the REAL rennet checkout (#850, #892)", (
       expect(watcher.isTruncated()).toBe(false);
 
       // Cheap is worth nothing if it does not work. A write three directories deep in this
-      // repository is reported, which also proves the one recursive watch reaches past the
-      // root it was armed on.
-      watcher.setDirty(false);
-      expect(watcher.isDirty()).toBe(false);
+      // repository is reported, which also proves the watch reaches past the root.
+      expect(await waitForClean(watcher)).toBe(true);
       writeFileSync(watchedProbe, "probe\n");
-      await new Promise((resolve) => setTimeout(resolve, 1_500));
-      expect(watcher.isDirty()).toBe(true);
+      expect(await waitForDirty(watcher)).toBe(true);
 
-      // And this repository's OWN ignore rules still hold — applied to events now rather
-      // than to a walk. Whatever git says this checkout ignores, writing there is silent.
-      watcher.setDirty(false);
-      expect(watcher.isDirty()).toBe(false);
+      // And this repository's OWN ignore rules still hold. Whatever git says this checkout
+      // ignores, writing there is silent — filtered from the events on the recursive
+      // backend, never walked into on the per-entry one.
+      expect(await waitForClean(watcher)).toBe(true);
       writeFileSync(ignoredProbe as string, "probe\n");
-      await new Promise((resolve) => setTimeout(resolve, 1_500));
+      await new Promise((resolve) => setTimeout(resolve, 2_000));
       expect(watcher.isDirty()).toBe(false);
     } finally {
       await watcher.close();
