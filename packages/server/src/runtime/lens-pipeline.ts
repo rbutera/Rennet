@@ -13,6 +13,7 @@ import {
   type BoardWrite,
   type ChangedRegion,
   carriedElementIds,
+  changeIndexContextFile,
   composeFindingRound,
   DEFAULT_SEAT_LABELS,
   type DeltaPacket,
@@ -2284,7 +2285,17 @@ export async function runLensPipeline(deps: LensPipelineDeps): Promise<LensPipel
   // seats read `git diff` for everything else.
   const roundFile =
     deps.round === undefined ? undefined : roundContextFile(deps.round, reportBoard);
-  const seatFiles = roundFile === undefined ? [] : [roundFile];
+  // `change-index.md`: the shape of the change, derived once on the host (#867). Measured
+  // on 26 seat turns, 25 of them opened by re-deriving it — `git diff --stat` then
+  // `git log --oneline` — a fifth of all their Bash traffic and a provider round trip
+  // apiece, for facts the packet already carried. Named to EVERY seat, because every seat
+  // was running those commands. `undefined` when the packet names no changed file, so a
+  // round with nothing to orient by does not gain an empty index.
+  const changeIndex = changeIndexContextFile(deps.deltaPacket);
+  const seatFiles = [
+    ...(roundFile === undefined ? [] : [roundFile]),
+    ...(changeIndex === undefined ? [] : [changeIndex]),
+  ];
   // `pr.md` is WRITTEN for the whole session — through this sink, so it lands in the root
   // the seats actually run in, which for a PR-snapshot review is not the repository root
   // the review was opened from — and NAMED to the Design seat alone (PR #802). It is the
