@@ -145,14 +145,23 @@ and calls board regeneration through this runtime.
    over **one** board: each element is stamped with the voice that wrote it as it lands,
    and the ids come from one mint counter, so the two seats' ids cannot collide.
 
-   An OpenSpec branch's Design board takes a **deterministic fast path** and settles with
-   no model turn at all: the assembler transforms the change's own artifacts into the
-   board. Every string it writes is the change's own text shipped verbatim or a fixed
+   A branch that carries a specification in a format Rennet parses takes a
+   **deterministic fast path** for its Design board and settles with no model turn at
+   all: the assembler transforms the specification's own files into the board. It reads
+   the first format the patchset touches, in a fixed order — OpenSpec, Kiro, BMAD,
+   Superpowers, then grill-with-docs (ADRs, `CONTEXT.md` glossaries, context maps) — so
+   one specification is drafted, never a merge, and the same patchset always assembles
+   the same board. The assembler renders by obligation kind rather than by format:
+   requirements with their scenarios, stated decisions with their stated rationale, task
+   groups, a bug fix's behaviour sections, glossary terms and progress-ledger rows each
+   land the same way whichever file they came from, under a section per source file.
+   Every string it writes is the specification's own text shipped verbatim or a fixed
    label, so it lints in the **transcribed register** described under *Validate* below.
-   A change it cannot settle falls back to the seat, which renders the same change — and
-   the daemon log carries a `[seat]` line naming the rule that refused it, so a Design
-   seat the host could have avoided is visible as it runs rather than inferred afterwards
-   from a round's wall clock.
+   A specification it cannot settle falls back to the seat, which renders the same
+   specification — and the daemon log carries a `[seat]` line naming the rule that
+   refused it, so a Design seat the host could have avoided is visible as it runs rather
+   than inferred afterwards from a round's wall clock. A branch with no specification in
+   any of those formats runs the seat, which searches the checkout for itself.
 
    A verified report arrives before any lens turn starts and
    opens that boundary, after which all five lens lanes run
@@ -1012,18 +1021,23 @@ task remains its own canonical element so later dispositions can address it. A s
 is owned only through its requirement's `scenarios` list, never repeated in section
 children.
 
-Format-specific display fields are authored by the seat from the source text it read,
-on the element that owns them: Kiro `requirement_refs` on task prose; BMAD `status` on
-a story requirement and `acceptance_criteria` on task prose; Superpowers `task_manifest`
-file, interface, and verification arrays on a task-group section; `task_progress` on the
-top-level source section; `source_cells` on a matched tech-stack or architecture
-decision; grill `glossary_term` on the glossary-entry prose; and `scenario_clauses`
-split from a scenario's own WHEN/THEN words, written as the two flat inputs
-`scenario_condition` and `scenario_response` and rendered as a Trigger/Outcome pair. A
-scenario that names neither still renders, as the prose the seat wrote. Every array
+Format-specific display fields are stamped by the host assembler, which holds the
+parsed source structure, onto the elements it built once the board settles: Kiro
+`requirement_refs` on task prose; BMAD `status` on a story requirement and
+`acceptance_criteria` on task prose; Superpowers `task_manifest` file, interface, and
+verification arrays on a task-group section; `task_progress` on the top-level source
+section and each task-group section; `source_cells` on a matched tech-stack or
+architecture decision; and grill `glossary_term` on the glossary-entry prose. They are
+not authored fields: the tool surface carries no input for them (#889 is why they will
+not gain seven), and a model seat runs only when the host found no parseable
+specification, so it has nothing to transcribe them from. The one projection a seat
+writes is `scenario_clauses`, split from a scenario's own WHEN/THEN words as the two
+flat inputs `scenario_condition` and `scenario_response` and rendered as a
+Trigger/Outcome pair; the assembler writes the same pair from the parser's split. A
+scenario that names neither still renders, as the prose it was written as. Every array
 preserves source order, and the surface renders each projection once at its owner. A
-field whose shape does not match is not rendered, so a guess buys nothing. Stated decisions continue to use their canonical
-statement, rationale, alternatives, and evidence fields.
+field whose shape does not match is not rendered. Stated decisions continue to use
+their canonical statement, rationale, alternatives, and evidence fields.
 
 A requirement cites the code that implements it through `trace` — `code_ref` elements
 by path and line range — and names implementing paths in `related_files`. Those

@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { parseKiroSpec } from "@rennet/core";
+import { type KiroSpecSource, parseKiroSpec } from "@rennet/core";
 import type { KiroSpec, Patchset } from "@rennet/protocol";
 import { createGitShowFileRead } from "./finding-verification-backend";
 import type { GitExec } from "./git-range-diff";
@@ -53,6 +53,21 @@ type ReadArtifact = (repoRelativePath: string) => Promise<string | undefined>;
  * "no Kiro spec in this review" case.
  */
 export async function readKiroSpec(patchset: Patchset, git: GitExec): Promise<KiroSpec | null> {
+  const source = await readKiroSpecSource(patchset, git);
+  return source === null ? null : parseKiroSpec(source);
+}
+
+/**
+ * The raw artifact text for the Kiro feature the reviewed patchset selected, read from
+ * the immutable reviewed tree — the same read {@link readKiroSpec} does, WITHOUT the
+ * parse step. The Design assembler consumes this raw source directly (a deterministic
+ * host-side board build, no model turn), while the Spec angle parses it.
+ * Returns `null` when the patchset touches no `.kiro/specs/<feature>/`.
+ */
+export async function readKiroSpecSource(
+  patchset: Patchset,
+  git: GitExec,
+): Promise<KiroSpecSource | null> {
   const feature = selectedKiroFeatureName(patchset.files.map((file) => file.path));
   if (feature === null) return null;
 
@@ -79,11 +94,11 @@ export async function readKiroSpec(patchset: Patchset, git: GitExec): Promise<Ki
   )
     return null;
 
-  return parseKiroSpec({
+  return {
     feature,
     ...(requirementsMd !== undefined ? { requirementsMd } : {}),
     ...(designMd !== undefined ? { designMd } : {}),
     ...(tasksMd !== undefined ? { tasksMd } : {}),
     ...(bugfixMd !== undefined ? { bugfixMd } : {}),
-  });
+  };
 }

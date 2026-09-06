@@ -87,6 +87,21 @@ export function selectedGrillDocPaths(changedFilePaths: readonly string[]): {
  * patchset touches no grill document — the honest "no grill spec in this review" case.
  */
 export async function readGrillSpec(patchset: Patchset, git: GitExec): Promise<GrillSpec | null> {
+  const source = await readGrillSpecSource(patchset, git);
+  return source === null ? null : parseGrillSpec(source);
+}
+
+/**
+ * The raw document text for the grill-with-docs specification the reviewed patchset
+ * touched, read from the immutable reviewed tree — the same read {@link readGrillSpec}
+ * does, WITHOUT the parse step. The Design assembler consumes this raw source directly
+ * (a deterministic host-side board build, no model turn), while the Spec angle parses
+ * it. Returns `null` when the patchset touches no grill document.
+ */
+export async function readGrillSpecSource(
+  patchset: Patchset,
+  git: GitExec,
+): Promise<GrillSpecSource | null> {
   const selected = selectedGrillDocPaths(patchset.files.map((file) => file.path));
   if (
     selected.adrs.length === 0 &&
@@ -115,10 +130,9 @@ export async function readGrillSpec(patchset: Patchset, git: GitExec): Promise<G
   ]);
   if (adrs.length === 0 && contextDocs.length === 0 && contextMaps.length === 0) return null;
 
-  const source: GrillSpecSource = {
+  return {
     ...(adrs.length === 0 ? {} : { adrs }),
     ...(contextDocs.length === 0 ? {} : { contextDocs }),
     ...(contextMaps.length === 0 ? {} : { contextMaps }),
   };
-  return parseGrillSpec(source);
 }

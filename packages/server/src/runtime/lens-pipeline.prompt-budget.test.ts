@@ -161,9 +161,20 @@ const bigPacket = buildDeltaPacket(synthetic(), []);
 // trip costs the whole conversation, not 317 tokens. It is only a good trade while the
 // text is instruction; restatement in here is paid for on every trip and buys nothing.
 //
+// ── #898: −1,555 B on DESIGN, and on no other lens ──────────────────────────────
+//
+// `design.md` lost its "Format-specific structured fields" section, which named seven
+// fields the tool surface has no input for, so the seat was paying to read instructions
+// it could not follow. The host assembler stamps those projections now; the seat keeps
+// the one it can write, `scenario_clauses`. Measured here on 2026-09-06, after #867:
+//
+//   design    15,501 → 13,946  (−1,555)
+//
+// The other four are unchanged, which is the check that the cut is the section alone.
+//
 // Budgets are measurement + 10% headroom, as this file's convention has always been.
 const BUDGET: Record<(typeof LENS_KINDS)[number], number> = {
-  design: 17_050,
+  design: 15_340,
   sequence: 10_760,
   decisions: 10_530,
   flagged: 11_550,

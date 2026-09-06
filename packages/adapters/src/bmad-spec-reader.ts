@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { parseBmadSpec } from "@rennet/core";
+import { type BmadSpecSource, parseBmadSpec } from "@rennet/core";
 import type { BmadSpec, Patchset } from "@rennet/protocol";
 import { createGitShowFileRead } from "./finding-verification-backend";
 import type { GitExec } from "./git-range-diff";
@@ -222,6 +222,23 @@ export function selectedBmadSpec(
  * document is absent at the reviewed tree (a deletion-only change).
  */
 export async function readBmadSpec(patchset: Patchset, git: GitExec): Promise<BmadSpec | null> {
+  const source = await readBmadSpecSource(patchset, git);
+  return source === null ? null : parseBmadSpec(source);
+}
+
+/**
+ * The raw document text for the BMAD specification the reviewed patchset selected, read
+ * from the immutable reviewed tree — the same read {@link readBmadSpec} does, WITHOUT the
+ * parse step. The Design assembler consumes this raw source directly (a deterministic
+ * host-side board build, no model turn), while the Spec angle parses it. The PRD and
+ * architecture paths ride along so a board can cite them: they are resolved through
+ * `core-config.yaml`, so nothing downstream can guess them.
+ * Returns `null` when the patchset touches no BMAD document.
+ */
+export async function readBmadSpecSource(
+  patchset: Patchset,
+  git: GitExec,
+): Promise<BmadSpecSource | null> {
   const root = patchset.repository.root;
   const reviewedOid = patchset.repository.reviewedTreeOid ?? patchset.repository.headOid;
   const gitShow = createGitShowFileRead({ git, repositoryRoot: root, headOid: reviewedOid });
@@ -244,14 +261,16 @@ export async function readBmadSpec(patchset: Patchset, git: GitExec): Promise<Bm
   // A sharded architecture explodes the monolith into `docs/architecture/*.md`; when the
   // monolith is absent, the touched shards (e.g. `tech-stack.md`) ARE the architecture
   // document — parse their concatenation so the Tech Stack table still renders.
-  const architectureShards: string[] = [];
+  const architectureShards: { path: string; md: string }[] = [];
   for (const path of selected.architectureShardPaths) {
     const md = await read(path);
-    if (md !== undefined) architectureShards.push(md);
+    if (md !== undefined) architectureShards.push({ path, md });
   }
   const architectureMd =
     architectureMonolith ??
-    (architectureShards.length > 0 ? architectureShards.join("\n\n") : undefined);
+    (architectureShards.length > 0
+      ? architectureShards.map((shard) => shard.md).join("\n\n")
+      : undefined);
 
   const epics: { path: string; md: string }[] = [];
   for (const path of selected.epicPaths) {
@@ -276,11 +295,18 @@ export async function readBmadSpec(patchset: Patchset, git: GitExec): Promise<Bm
     return null;
   }
 
-  return parseBmadSpec({
+  return {
     name: selected.name,
-    ...(prdMd !== undefined ? { prdMd } : {}),
+    ...(prdMd !== undefined ? { prdMd, prdPath: paths.prdFile } : {}),
     ...(architectureMd !== undefined ? { architectureMd } : {}),
+    // The path is the monolith's only when the monolith was read; a sharded architecture
+    // names its shards instead, so a citation lands on the file that holds the line.
+    ...(architectureMonolith !== undefined
+      ? { architecturePath: paths.architectureFile }
+      : architectureShards.length > 0
+        ? { architectureShards }
+        : {}),
     epics,
     stories,
-  });
+  };
 }

@@ -133,37 +133,13 @@ what the specification says changed; `delta` reports whether this board section
 changed since the previous review generation. Never use one in place of the
 other.
 
-## Format-specific structured fields
+## Scenario clauses
 
-Some source formats carry structure the surface renders as its own display: task
-progress, a story's acceptance criteria, a plan's file-and-verification manifest, a
-glossary entry, a tech-stack row. Author these from the exact source text you read,
-on the element that owns them, or omit them. A field whose shape does not match is
-simply not rendered, so a guess buys nothing.
-
-- `requirement_refs` — a string array in source order, on the task prose element
-  whose source line carries `_Requirements:`.
-- `status` — the exact story status string, on the requirement it belongs to;
-  `acceptance_criteria` — a string array in source order, on each owning task prose
-  element.
-- `task_manifest` — on the task group section: `files` entries are
-  `{ operation, value }`, `interfaces` entries are `{ direction, value }`, and
-  `verifications` entries are `{ run, expected }`, all in source order.
-- `task_progress` — on the top-level source section: `{ kind: "source", format,
-  role, layout: "ungrouped", done, total }` when its tasks are one flat list, or
-  `{ kind: "source", format, role, layout: "grouped" }` with one
-  `{ kind: "group", state }` per nested task-group section, `state` being
-  `complete`, `incomplete`, or `static` where the source states no completion.
-- `source_cells` — a string array in source order, on the decision matched to a
-  tech-stack or architecture table row.
-- `glossary_term` — `{ term, definition, avoid }` (avoid is a source-ordered
-  string array) on the glossary-entry prose element, under one glossary group.
-- `scenario_clauses` — `{ condition, response }` split from the scenario's own
-  WHEN/THEN text, on that scenario's prose element. The words are the source's,
-  never a paraphrase.
-
-Nothing validates these against the source, so an invented value is a claim the
-reader cannot check. Copy, or leave the field out.
+A WHEN/THEN scenario renders as a Trigger/Outcome row when its two halves are
+named: give `scenario_condition` and `scenario_response` on that scenario's
+prose element, split from the scenario's own text. The words are the source's,
+never a paraphrase. Give both or neither; a scenario that names neither still
+renders as the prose you wrote.
 
 ## What not to do
 
