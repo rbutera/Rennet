@@ -52,7 +52,7 @@ Structural verdict at the measured baseline: **no timer in the codebase paused o
 
 **H1.** `packages/app-ui/src/board/board-view.tsx:85` — `setInterval(refreshBoards, 5_000)` fires 5 loopback `board.read` WS reads every 5s until `lensReadsSettled`. The code's own comment (:76) admits a review whose Noise lens drafts nothing never settles → polls forever while the board is open. Fix: bounded attempts or the daemon push the comment already names.
 
-**H2.** `packages/adapters/src/repo-watcher.ts:88` — chokidar `usePolling: true, interval: 500` for WSL/UNC roots: stats the whole repo tree 2×/s for the daemon's life (started per review load, never stopped). HIGH on WSL, LOW on host (native events there).
+**H2.** `packages/adapters/src/repo-watcher.ts`, `startPolling` — chokidar `usePolling: true, interval: 500` for WSL/UNC roots: stats the whole repo tree 2×/s for the daemon's life (started per review load, never stopped). HIGH on WSL, LOW on host. *Still open on WSL.* The host half is gone: #892 moved host roots to a single recursive `fs.watch`, so there is no walk and no per-file watch there at all. Polling remains the WSL/UNC backend because inotify does not cross 9P.
 
 **H3.** `packages/app-ui/src/coach/coachmark.tsx:44` — unconditional rAF loop calling `getBoundingClientRect()` + `getComputedStyle()` every frame (120Hz on ProMotion) while a coachmark is elected. Forced layout at display rate. Fix: ~250ms key-compare interval or bail on `document.hidden`.
 
