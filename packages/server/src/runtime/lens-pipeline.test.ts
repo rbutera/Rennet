@@ -10,6 +10,8 @@ import {
 } from "@rennet/adapters";
 import {
   type BoardVoiceWriter,
+  buildDeltaPacket,
+  CHANGE_INDEX_FILE,
   type DeltaPacket,
   HOST_COMPOSER_AUTHOR_ID,
   inlineContextViolation,
@@ -5645,6 +5647,122 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     });
     expect(written.map(({ name }) => name)).not.toContain("pr.md");
     for (const turn of turns) expect(turn.prompt, turn.seat).not.toContain("pr.md");
+  });
+
+  // #867: 25 of 26 measured seat turns opened by re-deriving the change's shape with
+  // `git diff --stat` and `git log --oneline` — a fifth of their Bash traffic, and a
+  // provider round trip each, for facts the host had already computed.
+  describe("`change-index.md` — the shape of the change, derived once (#867)", () => {
+    /** A two-file packet with real hunks, so the index has something to say. */
+    const INDEXED_PACKET = buildDeltaPacket(
+      {
+        id: "ps-1",
+        createdAt: "2026-09-06T00:00:00.000Z",
+        repository: {
+          root: "/pr-worktree",
+          baseRef: "main",
+          baseOid: "b".repeat(40),
+          headOid: "h".repeat(40),
+        },
+        files: [
+          {
+            path: "src/widget.ts",
+            status: "modified",
+            additions: null,
+            deletions: null,
+            binary: false,
+            patch: [
+              "diff --git a/src/widget.ts b/src/widget.ts",
+              "--- a/src/widget.ts",
+              "+++ b/src/widget.ts",
+              "@@ -1,1 +1,2 @@",
+              "-export const widget = 2;",
+              `+export const widget = ${SECRET("3")};`,
+              "+export const other = 4;",
+            ].join("\n"),
+          },
+          {
+            path: "docs/note.md",
+            status: "added",
+            additions: 1,
+            deletions: 0,
+            binary: false,
+            patch: [
+              "diff --git a/docs/note.md b/docs/note.md",
+              "--- /dev/null",
+              "+++ b/docs/note.md",
+              "@@ -0,0 +1 @@",
+              "+A note.",
+            ].join("\n"),
+          },
+        ],
+        rawDiff: "",
+        byteLength: 0,
+        truncated: false,
+      } as never,
+      [],
+    );
+
+    it("writes it through the sink and names it to EVERY seat, carrying none of its rows", async () => {
+      const turns: SeatCapture[] = [];
+      const written: SessionContextFile[] = [];
+      await runLensPipeline({
+        ...boardSeats(turns, (prompt, seat) => cleanBody(lensFromPrompt(prompt, seat))),
+        repoRoot: "/pr-worktree",
+        deltaPacket: INDEXED_PACKET,
+        lintContextFor,
+        readPrompt,
+        whiteboard: fakeWhiteboard([]),
+        boardIdFor: (lens) => `board:${lens}`,
+        writeContext: (files) => {
+          written.push(...files);
+          return ".rennet/context/s1";
+        },
+      });
+      // It reached the ONE writer, with the derived rows in its body…
+      expect(written.map(({ name }) => name)).toContain(CHANGE_INDEX_FILE);
+      const index = written.find(({ name }) => name === CHANGE_INDEX_FILE);
+      expect(index?.body).toContain("2 files changed, +3 -1, 2 hunks.");
+      expect(index?.body).toContain("- `src/widget.ts` — modified, +2 -1, 1 hunk: 1-2");
+      expect(index?.body).toContain("- `docs/note.md` — added, +1 -0, 1 hunk: 1-1");
+      // …and every seat is told the path, so none of them has to derive it again.
+      expect(turns.map((turn) => turn.seat).sort()).toEqual(
+        ["decisions", "design", "flagged-claude", "noise", "sequence"].sort(),
+      );
+      for (const turn of turns) {
+        expect(turn.prompt, turn.seat).toContain(`\`.rennet/context/s1/${CHANGE_INDEX_FILE}\``);
+        // The rows stay in the FILE. A prompt carrying them would grow with the change,
+        // which is the #737 regression the budget tripwire exists to catch.
+        expect(turn.prompt, turn.seat).not.toContain("2 files changed");
+        expect(turn.prompt, turn.seat).not.toContain("src/widget.ts");
+        expect(turn.prompt, turn.seat).not.toContain(SECRET("export const widget = 3;"));
+        expect(inlineContextViolation(turn.prompt), turn.seat).toBeUndefined();
+      }
+    });
+
+    it("writes none, and names none, for a packet with no changed file", async () => {
+      // The control for the test above: the same pipeline over `PACKET` (no files) and the
+      // line disappears. A prompt naming an index of nothing sends the seat to a file that
+      // would tell it the change is empty when the packet simply never carried the rows.
+      const turns: SeatCapture[] = [];
+      const written: SessionContextFile[] = [];
+      await runLensPipeline({
+        ...boardSeats(turns, (prompt, seat) => cleanBody(lensFromPrompt(prompt, seat))),
+        repoRoot: "/pr-worktree",
+        deltaPacket: PACKET,
+        lintContextFor,
+        readPrompt,
+        whiteboard: fakeWhiteboard([]),
+        boardIdFor: (lens) => `board:${lens}`,
+        writeContext: (files) => {
+          written.push(...files);
+          return ".rennet/context/s1";
+        },
+      });
+      expect(turns.length).toBeGreaterThan(0);
+      expect(written.map(({ name }) => name)).not.toContain(CHANGE_INDEX_FILE);
+      for (const turn of turns) expect(turn.prompt, turn.seat).not.toContain(CHANGE_INDEX_FILE);
+    });
   });
 
   it("settles every board as a typed failure naming the missing sidecar, drafting nothing", async () => {
