@@ -342,15 +342,187 @@ function screenPatchsetIdentifiers(text: string, ids: ReadonlySet<string> | unde
 
 // ── Shared prose checks (board fields AND the review-draft register reuse) ────
 
-/** Every `path:line(-line)?` citation mention in a prose string. */
+/** The SHAPE of a `path:line(-line)?` citation mention — dotted token, colon, digits. */
 const CITATION = /(`?)([\w./@-]+\.[A-Za-z0-9]+):(\d+)(?:-(\d+))?/g;
 /** The GitHub blob form `path#L12` / `path#L12-L15` — a bare basename or full path. */
 const GITHUB_CITATION = /([\w./@-]+\.[A-Za-z0-9]+)#L\d+(?:-L?\d+)?/gi;
 
+/**
+ * The extensions a citation's left side may end in (#883).
+ *
+ * Shape alone cannot tell `127.0.0.1:0` from `app.tsx:551`: both are a dotted token, a
+ * colon and digits, and only one is a citation. The extension is what separates them, so
+ * membership here is the "is this a citation AT ALL" test, asked before either citation
+ * rule gets a say. A token whose last dot segment is a digit run — an IP address, a
+ * version (`v1.2.3:4`), an ordinal (`foo.9:12`) — is prose and is left alone; `app.tsx:551`
+ * IS a citation, and is still refused for naming no directory.
+ *
+ * The list is deliberately WIDER than this repository's own extension census. Rennet
+ * reviews other people's branches, so a seat must be able to cite into a Python service or
+ * a Go binary it is reading; erring toward recognition costs a false refusal at worst,
+ * where erring toward omission silently stops the rule seeing a real broken citation. It
+ * stops short of "any letters", because that is the rule the IP address already defeated.
+ *
+ * This is NOT an inventory check. Whether the file exists is `citation-resolves`'s
+ * question and it answers it against `ctx.files`; deciding it here would collapse the split
+ * between "looks like a citation" and "points at something real", which is deliberate.
+ */
+const CITED_EXTENSIONS: ReadonlySet<string> = new Set([
+  // TypeScript / JavaScript and their config-adjacent forms
+  "ts",
+  "tsx",
+  "mts",
+  "cts",
+  "js",
+  "jsx",
+  "mjs",
+  "cjs",
+  // Data, config and lockfiles
+  "json",
+  "jsonc",
+  "json5",
+  "yaml",
+  "yml",
+  "toml",
+  "ini",
+  "cfg",
+  "conf",
+  "env",
+  "lock",
+  "properties",
+  "plist",
+  "gyp",
+  "gradle",
+  "cmake",
+  "mk",
+  "nix",
+  "tf",
+  "tfvars",
+  // Prose and docs
+  "md",
+  "mdx",
+  "markdown",
+  "mdc",
+  "txt",
+  "rst",
+  "adoc",
+  "tex",
+  "csv",
+  "tsv",
+  // Markup, styling and web templates
+  "html",
+  "htm",
+  "xml",
+  "svg",
+  "css",
+  "scss",
+  "sass",
+  "less",
+  "styl",
+  "astro",
+  "vue",
+  "svelte",
+  "hbs",
+  "ejs",
+  "pug",
+  "liquid",
+  "njk",
+  "mustache",
+  "webmanifest",
+  // Other languages a reviewed branch may be written in
+  "py",
+  "pyi",
+  "rb",
+  "go",
+  "rs",
+  "java",
+  "kt",
+  "kts",
+  "scala",
+  "swift",
+  "c",
+  "h",
+  "cc",
+  "cpp",
+  "cxx",
+  "hpp",
+  "hh",
+  "m",
+  "mm",
+  "cs",
+  "php",
+  "pl",
+  "pm",
+  "lua",
+  "r",
+  "jl",
+  "zig",
+  "nim",
+  "hs",
+  "clj",
+  "cljs",
+  "edn",
+  "elm",
+  "ex",
+  "exs",
+  "erl",
+  "hrl",
+  "dart",
+  "groovy",
+  "coffee",
+  "sol",
+  "s",
+  "asm",
+  "vb",
+  "sbt",
+  "pp",
+  // Shells and query/schema languages
+  "sh",
+  "bash",
+  "zsh",
+  "fish",
+  "ps1",
+  "bat",
+  "cmd",
+  "sql",
+  "graphql",
+  "gql",
+  "proto",
+  "prisma",
+  "ipynb",
+  // Artifacts a review cites by line: patches, snapshots, generated diffs
+  "patch",
+  "diff",
+  "snap",
+  "log",
+]);
+
+/**
+ * Whether a matched left side ends in an extension that makes it a citation candidate.
+ *
+ * Case-insensitive: `README.MD:3` is the same citation as `readme.md:3`.
+ */
+function hasCitedExtension(path: string): boolean {
+  const dot = path.lastIndexOf(".");
+  return dot >= 0 && CITED_EXTENSIONS.has(path.slice(dot + 1).toLowerCase());
+}
+
+/**
+ * The citation mentions in one prose string: `CITATION`'s matches, minus the ones whose
+ * left side is not a file at all.
+ *
+ * Shared by BOTH citation rules on purpose, so there is exactly one answer to "is this a
+ * citation" and the two rules differ only in what they then ask of it — `citation-well-formed`
+ * about its shape, `citation-resolves` about the file it names.
+ */
+function citationMatches(text: string): RegExpMatchArray[] {
+  return [...text.matchAll(CITATION)].filter((m) => hasCitedExtension(m[2] ?? ""));
+}
+
 /** L3 — one prose string's citations are full repo-relative `path:line`. */
 function checkCitationWellFormed(text: string, elementRef: string): Violation[] {
   const out: Violation[] = [];
-  for (const m of text.matchAll(CITATION)) {
+  for (const m of citationMatches(text)) {
     const path = m[2] ?? "";
     const absolute = path.startsWith("/") || path.startsWith("~");
     const basenameOnly = !path.includes("/");
@@ -364,6 +536,7 @@ function checkCitationWellFormed(text: string, elementRef: string): Violation[] 
   }
   // The GitHub `#L` form never carries a colon, so `CITATION` never sees it — screen it directly.
   for (const m of text.matchAll(GITHUB_CITATION)) {
+    if (!hasCitedExtension(m[1] ?? "")) continue;
     out.push({
       ruleId: "citation-well-formed",
       elementRef,
@@ -380,7 +553,7 @@ function checkCitationResolves(
   elementRef: string,
 ): Violation[] {
   const out: Violation[] = [];
-  for (const m of text.matchAll(CITATION)) {
+  for (const m of citationMatches(text)) {
     const path = m[2] ?? "";
     // Malformed citations (absolute / bare basename) are L3's lane, not L4's.
     if (!path.includes("/") || path.startsWith("/") || path.startsWith("~")) continue;
