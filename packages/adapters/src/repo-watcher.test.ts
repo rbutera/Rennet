@@ -296,9 +296,11 @@ describe("RepoWatcher hardening", () => {
       await watcher.close();
       rmSync(root, { recursive: true, force: true });
     }
-  });
+    // Above vitest's 5s default: `waitForDirty` alone may spend 6s, and under a full
+    // `pnpm check` — thirteen other projects on the same cores — it has needed most of it.
+  }, 30_000);
 
-  // #729 through the real chokidar: Rennet writing its own board must not mark the
+  // #729 through the real filesystem: Rennet writing its own board must not mark the
   // reviewer's tree dirty, and the same watcher must still report the file beside it.
   // The two halves are one run on purpose — a watcher that reported nothing at all
   // would satisfy the first assertion perfectly.
@@ -342,7 +344,7 @@ describe("RepoWatcher hardening", () => {
       await watcher.close();
       rmSync(root, { recursive: true, force: true });
     }
-  });
+  }, 30_000);
 
   // The macOS shape, through the real chokidar. A `.Rennet/Boards/` directory already
   // exists; the board writer's lowercase join lands INSIDE it, because on this filesystem
@@ -387,7 +389,7 @@ describe("RepoWatcher hardening", () => {
       await watcher.close();
       rmSync(root, { recursive: true, force: true });
     }
-  });
+  }, 30_000);
 
   it("classifies WSL UNC roots so they poll regardless of locus", async () => {
     const { isWslUncPath } = await import("./repo-watcher");
@@ -600,6 +602,11 @@ describe("RepoWatcher descriptor cost (#892)", () => {
         if (watcher.isDirty()) wentDirty.push(why);
         writeFileSync(sentinel, `export const after = "${why}";\n`);
         if (!(await waitForDirty(watcher))) channelWasDead.push(why);
+        // Drain the sentinel's stragglers BEFORE the next iteration clears the flag.
+        // FSEvents can deliver more than one event for one write, and a duplicate landing
+        // inside the next silence window would read as an ignored path going dirty — a red
+        // that says the opposite of what happened.
+        await sleep(300);
       }
       expect({ wentDirty, channelWasDead }).toEqual({ wentDirty: [], channelWasDead: [] });
 
