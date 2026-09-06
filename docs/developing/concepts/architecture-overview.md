@@ -247,10 +247,12 @@ watcher, and freshness; everything else there is the user's project content and
 captures normally.
 
 The repository watcher reads the repository's own ignore rules — it asks git —
-and holds a single recursive operating-system watch for the whole tree, so its
-cost is one descriptor at any repository size. That is a correctness rule: a
-watcher that cost one descriptor per file took every descriptor the daemon had,
-and a daemon with none cannot start `git`, the sidecar, or a chat turn. [What the
+and on macOS and Windows holds a single recursive operating-system watch for the
+whole tree, so its cost is one descriptor at any repository size. That is a
+correctness rule: a watcher that cost one descriptor per file took every
+descriptor the daemon had, and a daemon with none cannot start `git`, the
+sidecar, or a chat turn. Linux has no recursive watch in the kernel and keeps a
+pruning per-entry watcher. [What the
 repository watcher
 watches](./architecture-contracts.md#what-the-repository-watcher-watches) has the
 rule.
