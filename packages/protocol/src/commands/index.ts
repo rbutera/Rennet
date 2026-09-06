@@ -75,6 +75,7 @@ import {
   sidebarSessionSchema,
   sourceSchema,
   symbolInspectionSchema,
+  t3SendResultSchema,
   t3SessionSchema,
   t3SidecarStatusSchema,
   themePackSchema,
@@ -520,7 +521,10 @@ const definitions = {
       /** The turn's prompt. Bounded by the caller; the daemon sends it verbatim. */
       text: z.string().min(1).max(8_000),
     }),
-    output: z.object({ threadId: z.string().min(1) }),
+    /** A discriminated outcome, never a bare success shape. An ask that could not go out
+     *  resolves `unavailable` with the daemon's reason, exactly as `chat.t3Session` reports
+     *  a failed bind (#872) — the client renders it on the quote thread that asked. */
+    output: t3SendResultSchema,
   },
   // Re-attempt the handshake to ONE host's daemon (C17 cluster 5, #533) — the operation behind
   // the host card's Reconnect button. The same per-host handshake `daemon.status` polls, run on

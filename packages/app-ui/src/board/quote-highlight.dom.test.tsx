@@ -1,9 +1,14 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it } from "vitest";
 import { BridgeProvider } from "../data";
-import { type AnchoredAskInput, AnchoredAskProvider, ProseSelectionLayer } from "../review";
+import {
+  type AnchoredAskInput,
+  AnchoredAskProvider,
+  ProseSelectionLayer,
+  ReviewAnchoredAskProvider,
+} from "../review";
 import { useRennetStore } from "../store";
-import { act, mount } from "../test/dom";
+import { act, mount, waitFor } from "../test/dom";
 import { designBoard, designGen0Board, prose } from "../test/fixtures/boards";
 import { MemoryBridge } from "../test/memory-bridge";
 import { BoardElement, BoardElementsProvider } from "./kinds";
@@ -322,5 +327,130 @@ describe("QuoteHighlightLayer — durable quote highlights", () => {
     );
     expect(container.querySelector("[data-quote-highlight]")).toBeNull();
     expect(container.textContent).toContain("Renewal was silent");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// #888 — an anchored ask that does not go out must say so on the thread that asked.
+//
+// The defect these cover is NOT "an error was swallowed". It is that the reviewer's own
+// question was used as false evidence of delivery. Every anchored-ask call site appends the
+// message to the thread and clears the draft box BEFORE the send — `quote-highlight`'s Enter
+// handler here, `discussFinding` in board/kinds/finding, `startThread` in
+// review/selection-toolbar — so a failed send leaves the question sitting in the exchange
+// looking exactly like one that landed. Rai's own `~/.rennet/asks/…json` is that record: one
+// `quote-open`, `kind: "explain"`, one user message, no reply, no error, ever.
+//
+// So these assert what the REVIEWER SEES, not that a handler ran: the alert is in the DOM,
+// it carries the daemon's own sentence, and the question is still there beside it.
+//
+// The whole stack is real — the real `ReviewAnchoredAskProvider`, the real `useMutation`,
+// the real store, the real popover. Only the daemon is a stub, and it is a stub that THROWS
+// or REPORTS rather than a MISSING handler: a missing handler makes MemoryBridge reject with
+// its own "no handler" text, which asserts a fact about the harness instead of the product
+// (memory-bridge.ts says so at length, having watched four green tests sit on top of an
+// unbound dispatch).
+// ─────────────────────────────────────────────────────────────────────────────
+describe("an anchored ask that does not go out (#888)", () => {
+  /** Mount the real provider over a daemon stub, with one seeded thread on the prose. */
+  function renderWithAsk(handler: () => unknown) {
+    const id = seed("costs nothing per token", "Is this actually free?");
+    const view = mount(
+      <BridgeProvider bridge={new MemoryBridge({ "chat.t3Send": handler })}>
+        <ReviewAnchoredAskProvider reviewId="review-1">
+          <QuoteHighlightLayer
+            text={PROSE}
+            elementId={EL}
+            patchsetId="ps-1"
+            paragraphClassName="prose-p"
+          />
+        </ReviewAnchoredAskProvider>
+      </BridgeProvider>,
+    );
+    return { id, view };
+  }
+
+  /** Open the thread (if the click toggled it shut, it is already open) and send a reply —
+   *  the reviewer's actual gesture, not a direct store write. */
+  async function reply(view: ReturnType<typeof mount>, text: string) {
+    if (view.container.querySelector("textarea") === null) {
+      const highlight = view.container.querySelector<HTMLElement>("[data-quote-highlight]");
+      if (!highlight) throw new Error("no highlight to open");
+      await view.user.click(highlight);
+    }
+    const box = view.container.querySelector<HTMLTextAreaElement>("textarea");
+    if (!box) throw new Error("no reply box");
+    await view.user.click(box);
+    await view.user.keyboard(`${text}{Enter}`);
+  }
+
+  const SIDECAR_DOWN = "T3 sidecar unavailable: the vendored T3 Code server bundle is not built";
+
+  it("says the question was not sent, in the daemon's own words, when the send is refused", async () => {
+    const { id, view } = renderWithAsk(() => {
+      throw new Error(SIDECAR_DOWN);
+    });
+
+    await reply(view, "Why is this free?");
+
+    // What the reviewer sees. `role="alert"` because a dropped question is not a muted
+    // notice — the `t3-chat-*` slots are notices and that is exactly why the dock looked
+    // healthy while the ask went nowhere.
+    const alert = await waitFor(() => view.getByRole("alert"));
+    expect(alert.textContent).toContain("This question was not sent.");
+    // The daemon's sentence, verbatim. "Sidecar not built" and "spawn EBADF" are different
+    // problems and only one of them is worth retrying; a generic line would hide which.
+    expect(alert.textContent).toContain(SIDECAR_DOWN);
+    // And it is ON THE THREAD THAT ASKED, not in a corner.
+    expect(view.container.querySelector(`[data-thread-id="${id}"]`)?.textContent).toContain(
+      "This question was not sent.",
+    );
+    // The question stays: they did ask it. This is the half that makes the alert load-bearing
+    // rather than decorative — without it the reviewer reads their own words as delivered.
+    expect(useRennetStore.getState().review.quoteThreads[id]?.messages.at(-1)).toEqual({
+      author: "user",
+      text: "Why is this free?",
+    });
+  });
+
+  it("says so for a REPORTED unavailable outcome too, not only a rejection", async () => {
+    // The daemon reached a verdict and it was "this did not go out" (#872's shape, extended
+    // to `chat.t3Send`). It RESOLVES, so a `catch`-only surface would miss it entirely and
+    // the reviewer would be back to silence — which is why this case is its own test.
+    const { view } = renderWithAsk(() => ({
+      status: "unavailable",
+      reason: "no bound workspace for review-1",
+    }));
+
+    await reply(view, "Explain this passage.");
+
+    const alert = await waitFor(() => view.getByRole("alert"));
+    expect(alert.textContent).toContain("This question was not sent.");
+    expect(alert.textContent).toContain("no bound workspace for review-1");
+  });
+
+  it("clears the failure when a later ask on the same thread goes through", async () => {
+    let refuse = true;
+    const { view } = renderWithAsk(() => {
+      if (refuse) throw new Error(SIDECAR_DOWN);
+      return { status: "sent", threadId: "t3-thread-1" };
+    });
+
+    await reply(view, "First try.");
+    await waitFor(() => expect(view.getByRole("alert")).toBeTruthy());
+
+    refuse = false;
+    await reply(view, "Second try.");
+
+    // A stale failure beside a question that DID go is the same lie pointing the other way.
+    await waitFor(() => expect(view.queryByRole("alert")).toBeNull());
+  });
+
+  it("does not leave a failure behind on a thread the reviewer closed", () => {
+    const { id } = renderWithAsk(() => ({ status: "sent", threadId: "t3-thread-1" }));
+    act(() => useRennetStore.getState().reviewActions.setQuoteAskFailure(id, SIDECAR_DOWN));
+    expect(useRennetStore.getState().review.quoteAskFailures[id]).toBe(SIDECAR_DOWN);
+    act(() => useRennetStore.getState().reviewActions.removeQuoteComment(id));
+    expect(useRennetStore.getState().review.quoteAskFailures[id]).toBeUndefined();
   });
 });

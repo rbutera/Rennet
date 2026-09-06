@@ -177,6 +177,21 @@ export interface ReviewState {
   readonly quoteThreads: Readonly<Record<string, QuoteThread>>;
   /** The focused thread id, or null. */
   readonly focusedThreadId: string | null;
+  /**
+   * Why a thread's last anchored ask did not go out, keyed by thread id. Empty when every
+   * ask landed.
+   *
+   * Client-transient by contract, exactly like {@link focusedThreadId} — a delivery failure
+   * is a fact about this client's last attempt, not part of the durable ask projection, and
+   * writing it into the projection would resurrect it on every reader of that review.
+   *
+   * It exists because the three anchored-ask call sites all mint the reviewer's message into
+   * the thread BEFORE the send, and clear the draft box with it. Without this the reviewer is
+   * left looking at their own question sitting in the thread, draft gone, indistinguishable
+   * from one that was delivered (#888). This is the retraction: the question stays (they did
+   * ask it) and the thread says it never went, with the daemon's reason.
+   */
+  readonly quoteAskFailures: Readonly<Record<string, string>>;
   /** The retired ledger: whole asks the reviewer withdrew, newest last, each with its reason. */
   readonly retired: readonly RetiredEntry[];
   /** An explicit verdict override, or null (derive from dispositions). */
@@ -221,6 +236,8 @@ export interface ReviewSlice {
     /** Drop a quote thread. */
     removeQuoteComment(threadId: string): void;
     setFocusedThread(threadId: string | null): void;
+    /** Record why a thread's anchored ask did not go out, or clear it with `undefined`. */
+    setQuoteAskFailure(threadId: string, reason: string | undefined): void;
     /** Retire a staged ask WHOLE (dropped/deleted) with its reason — dedup by `ask.id`. */
     retire(ask: StagedAsk, reason: string): void;
     /** Restore a retired ask by its `id` — removes it from the ledger (the caller re-stages). */
@@ -236,6 +253,7 @@ const initialReview: ReviewState = {
   codeComments: {},
   quoteThreads: {},
   focusedThreadId: null,
+  quoteAskFailures: {},
   retired: [],
   verdictOverride: null,
 };
@@ -389,12 +407,24 @@ export const createReviewSlice: StateCreator<RennetState, [], [], ReviewSlice> =
         set((s) => {
           const rest = { ...s.review.quoteThreads };
           delete rest[threadId];
-          return { review: { ...s.review, quoteThreads: rest } };
+          // The failure belonged to the thread; it goes with it.
+          const failures = { ...s.review.quoteAskFailures };
+          delete failures[threadId];
+          return { review: { ...s.review, quoteThreads: rest, quoteAskFailures: failures } };
         });
       },
       // Client-transient by contract — the focused thread is not in the projection.
       setFocusedThread: (threadId) =>
         set((s) => ({ review: { ...s.review, focusedThreadId: threadId } })),
+      // Client-transient for the same reason, and NOT `durable(...)`: a send that failed on
+      // this client is not a fact about the review.
+      setQuoteAskFailure: (threadId, reason) =>
+        set((s) => {
+          const next = { ...s.review.quoteAskFailures };
+          if (reason === undefined) delete next[threadId];
+          else next[threadId] = reason;
+          return { review: { ...s.review, quoteAskFailures: next } };
+        }),
       retire: (ask, reason) => {
         // The server's `retire` withdraws the staged ask INTO the ledger in one event; the
         // client splits the same act across `retire` + `unstageAsk`, and the fold is total, so

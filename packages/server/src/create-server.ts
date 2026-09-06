@@ -334,6 +334,7 @@ import {
   type T3HandoffTurnOutcome,
   type T3TurnCheckpointRead,
 } from "./t3/handoff";
+import { resolveProviderBinaries } from "./t3/resolve-provider-binaries";
 import { type SeatThreadWatch, watchSeatThread } from "./t3/seat-progress";
 import { createT3SidecarSupervisor } from "./t3/supervisor";
 import { roundThreadTitle, type SeatKind, seatThreadTitle, sweepIfArchived } from "./t3/threads";
@@ -1366,16 +1367,14 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     },
     // The sidecar runs on the host, so this is the host's own discovery (the same probe
     // `harness.detect` discloses), not a review's locus-threaded harness.
-    resolveBinaries: async () => {
-      const [claude, codex] = await Promise.all([
-        discoverClaude(defaultDiscoveryDeps(), CLAUDE_TESTED_RANGE).catch(() => null),
-        discoverCodex(defaultCodexDiscoveryDeps(), {}).catch(() => null),
-      ]);
-      return {
-        ...(claude?.chosen ? { claude: claude.chosen.path } : {}),
-        ...(codex?.chosen ? { codex: codex.chosen.path } : {}),
-      };
-    },
+    // #890: name every harness discovery could not resolve. Both probes still run and
+    // neither harness becomes opt-in — the failure is merely legible now. See
+    // `t3/resolve-provider-binaries.ts` for the two silences this replaced.
+    resolveBinaries: () =>
+      resolveProviderBinaries({
+        claude: () => discoverClaude(defaultDiscoveryDeps(), CLAUDE_TESTED_RANGE),
+        codex: () => discoverCodex(defaultCodexDiscoveryDeps(), {}),
+      }),
   });
   // Start it NOW, not at the first `chat.t3Session` (#849). Rai, 2026-09-05: "t3 sidecar
   // should start up immediately on daemon launch, no?" — and more generally, "almost

@@ -106,10 +106,29 @@ export function chatHandlers(rt: DispatchRuntime) {
       if (!deps.t3Sidecar) {
         throw new Error("chat.t3Send: this daemon has no T3 Code sidecar composed");
       }
-      const binding = await bindReviewThread(rt, input.reviewId);
-      const client = await deps.t3Sidecar.client();
-      await client.startTurn({ threadId: binding.threadId, text: input.text });
-      return parseCommandOutput(name, { threadId: binding.threadId });
+      // A FAILED ASK IS A REPORTED STATE, NOT A REJECTION — the #872 ruling `chat.t3Session`
+      // already follows twenty lines up, applied to the send. It threw here, so the IDENTICAL
+      // condition (a deleted bound workspace, an unknown review, a sidecar that will not come
+      // up) rendered calmly in the dock on the read and became an untyped rejection on the
+      // send. The client had nowhere to put an untyped rejection and dropped it on the floor:
+      // the dock opened, nothing streamed, and the reviewer concluded "explain no longer
+      // works" (#888) while their own question sat in the quote thread looking delivered.
+      //
+      // The reason travels verbatim so the reviewer can tell the two apart — a sidecar that
+      // is not built ("the vendored T3 Code server bundle is not built") reads nothing like a
+      // daemon whose descriptors ran out ("spawn EBADF"), and only one of those is worth
+      // retrying. Nothing here fabricates a reply; it reports that the question did not go.
+      try {
+        const binding = await bindReviewThread(rt, input.reviewId);
+        const client = await deps.t3Sidecar.client();
+        await client.startTurn({ threadId: binding.threadId, text: input.text });
+        return parseCommandOutput(name, { status: "sent", threadId: binding.threadId });
+      } catch (error) {
+        return parseCommandOutput(name, {
+          status: "unavailable",
+          reason: describeThreadError(error),
+        });
+      }
     },
   } satisfies Record<string, CommandHandler>;
 }
