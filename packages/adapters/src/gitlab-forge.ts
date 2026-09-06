@@ -16,6 +16,7 @@ import type {
 import { extractMarker, locusCommand } from "@rennet/core";
 import type {
   ForgeRepoIdentity,
+  ProjectViewer,
   PullRequest,
   PullRequestState,
   SmartListCi,
@@ -25,7 +26,10 @@ import { z } from "zod";
 import { type ForgeDetectionDeps, gitlabForge, resolveForgeBinary } from "./forge-discovery";
 import { type ProjectPrSource, ProjectPrSourceUnavailable } from "./project-pr-source";
 
-const userSchema = z.object({ username: z.string().min(1) });
+const userSchema = z.object({
+  username: z.string().min(1),
+  avatar_url: z.url().nullable().optional(),
+});
 const pipelineSchema = z
   .object({ status: z.string().min(1) })
   .nullable()
@@ -179,7 +183,7 @@ export class GitLabForgeAdapter implements ForgePort, ProjectPrSource, ForgePubl
   };
 
   private readonly run: GitLabForgeCommandRunner;
-  private viewer: string | null | undefined;
+  private viewer: ProjectViewer | null | undefined;
 
   constructor(private readonly config: GitLabForgeConfig) {
     this.run = config.run ?? defaultRunner;
@@ -248,7 +252,7 @@ export class GitLabForgeAdapter implements ForgePort, ProjectPrSource, ForgePubl
     return result.stdout;
   }
 
-  async resolveViewer(): Promise<string | null> {
+  async resolveViewer(): Promise<ProjectViewer | null> {
     if (this.viewer !== undefined) return this.viewer;
     const stdout = await this.execute([
       "api",
@@ -258,8 +262,17 @@ export class GitLabForgeAdapter implements ForgePort, ProjectPrSource, ForgePubl
       "--output",
       "json",
     ]);
-    this.viewer = decodeJson(stdout, userSchema, "GitLab user").username;
+    const user = decodeJson(stdout, userSchema, "GitLab user");
+    this.viewer = {
+      login: user.username,
+      ...(user.avatar_url ? { avatarUrl: user.avatar_url } : {}),
+    };
     return this.viewer;
+  }
+
+  /** The signed-in username alone, for the ownership comparisons below. */
+  private async resolveViewerLogin(): Promise<string | null> {
+    return (await this.resolveViewer())?.login ?? null;
   }
 
   async listPullRequests(
@@ -267,7 +280,7 @@ export class GitLabForgeAdapter implements ForgePort, ProjectPrSource, ForgePubl
     states: readonly PullRequestState[] = ["open"],
   ): Promise<{ prs: PullRequest[]; truncated: boolean }> {
     this.assertRepository(repository);
-    const viewer = await this.resolveViewer();
+    const viewer = await this.resolveViewerLogin();
     const endpoint = `projects/${projectPath(repository)}/merge_requests?scope=all&per_page=100&order_by=updated_at&sort=desc${requestedStates(states)}`;
     const stdout = await this.execute([
       "api",
@@ -291,6 +304,9 @@ export class GitLabForgeAdapter implements ForgePort, ProjectPrSource, ForgePubl
           forgeRepository: repository,
           branch: mergeRequest.source_branch,
           author: mergeRequest.author.username,
+          ...(mergeRequest.author.avatar_url
+            ? { authorAvatarUrl: mergeRequest.author.avatar_url }
+            : {}),
           viewerDidAuthor: viewer === mergeRequest.author.username,
           state: pullRequestState(mergeRequest.state),
           reviewRequestedFromViewer:
@@ -360,7 +376,7 @@ export class GitLabForgeAdapter implements ForgePort, ProjectPrSource, ForgePubl
     if (mergeRequest.diff_refs === undefined) {
       throw new Error("GitLab merge request response did not include pinned diff OIDs.");
     }
-    const viewer = await this.resolveViewer();
+    const viewer = await this.resolveViewerLogin();
     return {
       ref,
       title: mergeRequest.title,
@@ -471,7 +487,7 @@ export class GitLabForgeAdapter implements ForgePort, ProjectPrSource, ForgePubl
   }
 
   private async viewerHasApproved(target: ForgeReviewTarget): Promise<boolean> {
-    const viewer = await this.resolveViewer();
+    const viewer = await this.resolveViewerLogin();
     if (viewer === null) return false;
     const stdout = await this.execute([
       "api",

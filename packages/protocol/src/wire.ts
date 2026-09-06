@@ -859,6 +859,24 @@ export const localWorkSchema = z
     /** Uncommitted changes present in the worktree. */
     dirty: z.boolean(),
     /**
+     * True when this row is a checkout on disk (a worktree), so `dirty` was measured.
+     * Absent/false for a bare local branch, where `dirty` is a structural `false` and
+     * the list says nothing about cleanliness. Optional for legacy producers.
+     */
+    worktree: z.boolean().optional(),
+    /**
+     * The branch's committed diff against the primary branch (`primary...branch`),
+     * the same columns a change request carries. Absent when the branch is not ahead
+     * (nothing to review yet) or the base is unresolvable — never `0/0` for an
+     * unknown base, for the same reason as `ahead`/`behind` below. Uncommitted edits
+     * are not counted; `dirty` says they exist.
+     */
+    additions: z.number().int().nonnegative().optional(),
+    deletions: z.number().int().nonnegative().optional(),
+    changedFiles: z.number().int().nonnegative().optional(),
+    /** Author time of the branch's first commit past the primary branch (ISO). Absent when not ahead. */
+    createdAt: z.iso.datetime().optional(),
+    /**
      * Commits ahead of / behind the primary branch. `null` means the comparison could
      * NOT be computed (the base ref is unresolvable in this repo) — distinct from `0`,
      * which is a genuinely even branch. A live source must never collapse an
@@ -912,6 +930,8 @@ export const pullRequestSchema = z
     /** The PR's head branch (half of the composite dedupe key against a local worktree). */
     branch: z.string().min(1),
     author: z.string().min(1),
+    /** The author's forge avatar, when the forge reports one (a deleted account has none). */
+    authorAvatarUrl: z.url().optional(),
     /** Provider-authenticated ownership; avoids cross-forge username comparisons. */
     viewerDidAuthor: z.boolean().optional(),
     state: pullRequestStateSchema,
@@ -937,7 +957,15 @@ export const pullRequestSchema = z
 export type PullRequest = z.infer<typeof pullRequestSchema>;
 
 /** The signed-in GitHub user, so the renderer can tag ownership (mine vs theirs). */
-export const projectViewerSchema = z.object({ login: z.string().min(1) });
+/**
+ * Who is looking: the signed-in forge login when a forge resolved, else the local
+ * git identity. `avatarUrl` rides along from the forge so local rows — always the
+ * viewer's own work — carry the same face as their PRs.
+ */
+export const projectViewerSchema = z.object({
+  login: z.string().min(1),
+  avatarUrl: z.url().optional(),
+});
 export type ProjectViewer = z.infer<typeof projectViewerSchema>;
 
 export const forgeUnavailableSchema = z.object({
