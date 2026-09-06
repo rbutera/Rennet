@@ -1,6 +1,28 @@
 import { describe, expect, it, vi } from "vitest";
 import { filesystemIgnoresCase, isIgnoredPath, readGitIgnoredEntries } from "./repo-watcher";
 
+/**
+ * Poll until the watcher reports a change, up to `budget` ms.
+ *
+ * Every "a change WAS reported" assertion in this file goes through here rather than
+ * through a fixed sleep. A fixed sleep is not a weaker assertion, it is a FLAKIER one: this
+ * suite passed on its own and failed inside `pnpm check`, where thirteen other projects'
+ * tests are competing for the same cores and an FSEvents flush arrives late. A test that
+ * reddens on machine load is a test whose red means nothing.
+ *
+ * It is still a real assertion — the helper returns false if the change never arrives, and
+ * every caller asserts on that. Only the "stayed SILENT" checks keep a fixed window, because
+ * absence can only be observed by waiting a fixed time.
+ */
+async function waitForDirty(watcher: { isDirty(): boolean }, budget = 6_000): Promise<boolean> {
+  const deadline = Date.now() + budget;
+  while (Date.now() < deadline) {
+    if (watcher.isDirty()) return true;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  return watcher.isDirty();
+}
+
 describe("isIgnoredPath (add-windows-support: both separator flavours)", () => {
   it("ignores .git on POSIX paths", () => {
     expect(isIgnoredPath("/repo", "/repo/.git/HEAD")).toBe(true);
@@ -209,19 +231,26 @@ describe("RepoWatcher hardening", () => {
     }
   });
 
-  // #601 — the first save after a fresh capture. chokidar arms its watches file by file
-  // as it walks the tree, and `ignoreInitial: true` suppresses everything it meets on the
-  // way, so a save landing before the walk reaches that file is not reported late, it is
-  // never reported at all. The reviewer edits their working tree, comes back to Rennet,
-  // and is told nothing has changed while reading a diff that no longer matches.
+  // #601 — the first save after a fresh capture, and READ THE REASON, because it changed
+  // with #892 and the old one no longer applies.
   //
-  // This drives the real filesystem and the real chokidar, because the defect is in what
-  // chokidar does and cannot be seen through a fake. The tree is 400 files over eight
-  // directories — smaller than any repository a reviewer would actually open — and at
-  // that size the raw watcher reported this write in 0 of 20 measured runs, while its own
-  // initial walk finished in about 14ms. On a real repository the walk takes seconds,
-  // which is how the daemon came to answer "current" nine seconds after an edit.
-  it("reports a save that lands while the tree is still being walked, then settles honestly", async () => {
+  // Under the chokidar backend this test passed by REFUSING TO VOUCH. chokidar armed its
+  // watches file by file as it walked, `ignoreInitial: true` suppressed everything it met on
+  // the way, and a save landing before the walk reached that file was never reported at all
+  // — measured at 0 of 20 runs on this very fixture. So the watcher had to keep saying
+  // "dirty" until its walk finished, and the assertion below held because the flag was
+  // pinned on, not because the save was seen.
+  //
+  // Under the recursive backend it passes because the save is GENUINELY REPORTED. One
+  // `fs.watch(root, { recursive: true })` arms in the tick it is created: the same-tick write
+  // this test issues was reported in 20 of 20 measured runs. The window is closed rather than
+  // survived, which is why the second half — an untouched tree clearing and STAYING clear —
+  // is the load-bearing half now. Without it, a watcher that simply never cleared would pass
+  // the first assertion perfectly, which is exactly what the old backend did.
+  //
+  // The tree is 400 files over eight directories, kept from the original so the two backends
+  // are measured on the same fixture.
+  it("reports a save that lands in the same tick as the watch, and clears once nothing moves", async () => {
     const { RepoWatcher } = await import("./repo-watcher");
     const { mkdirSync, mkdtempSync, rmSync, writeFileSync } = await import("node:fs");
     const { tmpdir } = await import("node:os");
@@ -248,11 +277,10 @@ describe("RepoWatcher hardening", () => {
       watcher.setDirty(false);
       // The reviewer's first save, landing inside the walk. chokidar will never mention it.
       writeFileSync(edited, "export const value = 999;\n");
-      // Far longer than the walk needs. The event is not slow; it does not exist.
-      await sleep(1_500);
-      // So the freshness ask must NOT short-circuit here — it has to run a real diff,
-      // which is what makes the review go stale and tells the reviewer what happened.
-      expect(watcher.isDirty()).toBe(true);
+      // The recursive watch was armed before the write landed, so this is a reported
+      // change, not a pinned flag. Under the old backend this write did not exist as far
+      // as the watcher was concerned and the assertion held on `!settled` instead.
+      expect(await waitForDirty(watcher)).toBe(true);
 
       // And the flag is not merely pinned on. A watcher that cried stale forever would
       // satisfy the assertion above while being useless, so: once the walk has finished
@@ -263,8 +291,7 @@ describe("RepoWatcher hardening", () => {
 
       // A later save — the ordinary, always-worked path — is still reported.
       writeFileSync(edited, "export const value = 1000;\n");
-      await sleep(500);
-      expect(watcher.isDirty()).toBe(true);
+      expect(await waitForDirty(watcher)).toBe(true);
     } finally {
       await watcher.close();
       rmSync(root, { recursive: true, force: true });
@@ -306,13 +333,11 @@ describe("RepoWatcher hardening", () => {
       // The prefix boundary and the tracked house rules are the user's, and both are in
       // the capture — so both have to be reported.
       writeFileSync(join(root, ".rennet", "boards-extra", "notes.md"), "mine, edited\n");
-      await sleep(700);
-      expect(watcher.isDirty()).toBe(true);
+      expect(await waitForDirty(watcher)).toBe(true);
 
       watcher.setDirty(false);
       writeFileSync(join(root, ".rennet", "conventions.json"), '{"rules":["one"]}\n');
-      await sleep(700);
-      expect(watcher.isDirty()).toBe(true);
+      expect(await waitForDirty(watcher)).toBe(true);
     } finally {
       await watcher.close();
       rmSync(root, { recursive: true, force: true });
@@ -357,8 +382,7 @@ describe("RepoWatcher hardening", () => {
       // …and the same watcher still reports the reviewer's own file, so "quiet" above is
       // not a watcher that had stopped reporting anything.
       writeFileSync(join(root, "src.ts"), "export const value = 2;\n");
-      await sleep(700);
-      expect(watcher.isDirty()).toBe(true);
+      expect(await waitForDirty(watcher)).toBe(true);
     } finally {
       await watcher.close();
       rmSync(root, { recursive: true, force: true });
