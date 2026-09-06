@@ -412,6 +412,15 @@ export class RepoWatcher {
    * true immediately and the first freshness ask after a capture can be answered from the
    * watcher instead of a diff.
    *
+   * Arming is not delivery, and the distinction matters for what may be believed. Being
+   * armed means no write is *lost*: every one that lands after `start()` will be reported.
+   * When it is reported is FSEvents' business, and on a loaded machine that has been
+   * measured at seconds — the watcher suite's own same-tick test needed more than five of
+   * them during a full `pnpm check`. So a freshness ask arriving inside that gap still
+   * answers "unchanged" for a tree that has moved. That is a property of every event-driven
+   * watcher rather than something this backend introduced (the walk it replaces lost the
+   * write outright), and it is why `dirty` starts true and a clear has to be earned.
+   *
    * What the ignore rules do here has changed with it, and this is the trade to understand:
    * they can no longer PRUNE, because the kernel watches the subtree whole. They are applied
    * to each EVENT instead — the same `git ls-files --others --ignored --directory` answer
