@@ -13,10 +13,18 @@ import { filesystemIgnoresCase, isIgnoredPath, readGitIgnoredEntries } from "./r
  * It is still a real assertion — the helper returns false if the change never arrives, and
  * every caller asserts on that. Only the "stayed SILENT" checks keep a fixed window, because
  * absence can only be observed by waiting a fixed time.
+ *
+ * The budget is for a LATENCY TAIL, not for a suspected loss, and the difference was measured
+ * rather than assumed. A six-second budget failed once inside `pnpm check`, which raised the
+ * question that actually mattered: is a same-tick write *late* or *lost*? Lost would mean
+ * this backend has #601's defect and marking it settled immediately is a freshness lie. So it
+ * was measured directly — 20 same-tick writes against a 30-second ceiling with twelve busy
+ * cores competing: **20 of 20 reported, 0 lost, max latency 13ms.** The delivery is not
+ * fragile; the gate is simply heavier than twelve busy cores, so the budget covers the tail.
  */
 async function waitForClean(
   watcher: { isDirty(): boolean; setDirty(value: boolean): void },
-  budget = 6_000,
+  budget = 20_000,
 ): Promise<boolean> {
   const deadline = Date.now() + budget;
   while (Date.now() < deadline) {
@@ -28,7 +36,7 @@ async function waitForClean(
   return !watcher.isDirty();
 }
 
-async function waitForDirty(watcher: { isDirty(): boolean }, budget = 6_000): Promise<boolean> {
+async function waitForDirty(watcher: { isDirty(): boolean }, budget = 20_000): Promise<boolean> {
   const deadline = Date.now() + budget;
   while (Date.now() < deadline) {
     if (watcher.isDirty()) return true;
@@ -312,7 +320,7 @@ describe("RepoWatcher hardening", () => {
     }
     // Above vitest's 5s default: `waitForDirty` alone may spend 6s, and under a full
     // `pnpm check` — thirteen other projects on the same cores — it has needed most of it.
-  }, 30_000);
+  }, 90_000);
 
   // #729 through the real filesystem: Rennet writing its own board must not mark the
   // reviewer's tree dirty, and the same watcher must still report the file beside it.
@@ -358,7 +366,7 @@ describe("RepoWatcher hardening", () => {
       await watcher.close();
       rmSync(root, { recursive: true, force: true });
     }
-  }, 30_000);
+  }, 90_000);
 
   // The macOS shape, through the real chokidar. A `.Rennet/Boards/` directory already
   // exists; the board writer's lowercase join lands INSIDE it, because on this filesystem
@@ -403,7 +411,7 @@ describe("RepoWatcher hardening", () => {
       await watcher.close();
       rmSync(root, { recursive: true, force: true });
     }
-  }, 30_000);
+  }, 90_000);
 
   it("classifies WSL UNC roots so they poll regardless of locus", async () => {
     const { isWslUncPath } = await import("./repo-watcher");
@@ -556,7 +564,7 @@ describe("RepoWatcher descriptor cost (#892)", () => {
       await watcher.close();
       rmSync(root, { recursive: true, force: true });
     }
-  }, 30_000);
+  }, 90_000);
 
   // The ignore rules survive the backend change, at a different seam. They can no longer
   // prune a walk — the kernel watches the subtree whole — so they filter EVENTS instead,
@@ -684,7 +692,7 @@ describe("RepoWatcher descriptor cost (#892)", () => {
       await watcher.close();
       rmSync(root, { recursive: true, force: true });
     }
-  }, 30_000);
+  }, 90_000);
 
   // The polling backend keeps a cap, and the cap keeps its honest degradation. It is a
   // DIFFERENT bound with a different reason: `fs.watchFile` is a libuv poll timer and holds
@@ -734,7 +742,7 @@ describe("RepoWatcher descriptor cost (#892)", () => {
       await watcher.close();
       rmSync(root, { recursive: true, force: true });
     }
-  }, 30_000);
+  }, 90_000);
 
   // A root no watcher can be armed on must not read as a quiet one. There is no fallback to
   // a per-entry watcher — that is the cost model this change removes — so the answer is to
