@@ -2,6 +2,7 @@ import type { Octokit } from "@octokit/core";
 import {
   type ForgeRepoIdentity,
   forgeRepositorySlug,
+  type ProjectViewer,
   type PullRequest,
   type PullRequestState,
   type SmartListCi,
@@ -43,8 +44,8 @@ import { parseGitHubSso } from "./github-sso";
 
 /** The boundary the project-detail source consumes; a GitHub impl is provided below. */
 export interface ProjectPrSource {
-  /** The signed-in GitHub login, or `null` when the viewer query returns none. */
-  resolveViewer(): Promise<string | null>;
+  /** The signed-in forge identity (login + avatar), or `null` when the viewer query returns none. */
+  resolveViewer(): Promise<ProjectViewer | null>;
   /**
    * Pull requests for one provider-qualified repository in the given states. A source must
    * reject another provider before making a request; the project registry selects it first.
@@ -82,7 +83,7 @@ export interface GitHubProjectPrSourceConfig {
 const PAGE_SIZE = 50;
 const DEFAULT_MAX_PAGES = 5;
 
-const VIEWER_QUERY = `query{ viewer{ login } }`;
+const VIEWER_QUERY = `query{ viewer{ login avatarUrl } }`;
 
 const PRS_QUERY = `query($owner:String!,$name:String!,$states:[PullRequestState!]!,$cursor:String){
   repository(owner:$owner,name:$name){
@@ -91,7 +92,7 @@ const PRS_QUERY = `query($owner:String!,$name:String!,$states:[PullRequestState!
       pageInfo{ hasNextPage endCursor }
       nodes{
         id number title state createdAt updatedAt additions deletions changedFiles headRefName
-        author{ login }
+        author{ login avatarUrl }
         reviewRequests(first:50){ nodes{ requestedReviewer{ __typename ... on User { login } } } }
         commits(last:1){ nodes{ commit{ statusCheckRollup{ state } } } }
       }
@@ -111,7 +112,7 @@ interface GraphqlPrNode {
   changedFiles: number;
   headRefName: string;
   /** `null` when the PR author's account was deleted (GitHub's "ghost"). */
-  author: { login: string } | null;
+  author: { login: string; avatarUrl?: string | null } | null;
   reviewRequests: {
     nodes: { requestedReviewer: { __typename: string; login?: string } | null }[];
   };
@@ -193,6 +194,7 @@ function mapNode(
     branch: node.headRefName,
     // A deleted-account author is GitHub's "ghost"; never an empty string (min(1)).
     author: node.author?.login ?? "ghost",
+    ...(node.author?.avatarUrl ? { authorAvatarUrl: node.author.avatarUrl } : {}),
     viewerDidAuthor: viewerLogin !== null && node.author?.login === viewerLogin,
     state: mapState(node.state),
     reviewRequestedFromViewer,
@@ -238,7 +240,7 @@ function createSemaphore(limit: number): <T>(run: () => Promise<T>) => Promise<T
 export function createGitHubProjectPrSource(config: GitHubProjectPrSourceConfig): ProjectPrSource {
   const maxPages = config.maxPages ?? DEFAULT_MAX_PAGES;
   const withListSlot = createSemaphore(MAX_CONCURRENT_LIST_FETCHES);
-  let viewerLogin: string | null | undefined;
+  let viewer: ProjectViewer | null | undefined;
 
   async function graphql<T>(
     query: string,
@@ -256,11 +258,18 @@ export function createGitHubProjectPrSource(config: GitHubProjectPrSourceConfig)
     return { data: parsed.data, partial: sso.kind === "partial-results" };
   }
 
-  async function resolveViewer(): Promise<string | null> {
-    if (viewerLogin !== undefined) return viewerLogin;
-    const { data } = await graphql<{ viewer: { login: string } | null }>(VIEWER_QUERY, {});
-    viewerLogin = data.viewer?.login ?? null;
-    return viewerLogin;
+  async function resolveViewer(): Promise<ProjectViewer | null> {
+    if (viewer !== undefined) return viewer;
+    const { data } = await graphql<{
+      viewer: { login: string; avatarUrl?: string | null } | null;
+    }>(VIEWER_QUERY, {});
+    viewer = data.viewer
+      ? {
+          login: data.viewer.login,
+          ...(data.viewer.avatarUrl ? { avatarUrl: data.viewer.avatarUrl } : {}),
+        }
+      : null;
+    return viewer;
   }
 
   // One page of PRs in the requested states. Kept out of the pagination loop with an
@@ -289,7 +298,7 @@ export function createGitHubProjectPrSource(config: GitHubProjectPrSourceConfig)
     if (repository.forge !== "github") {
       throw new Error(`GitHub project source cannot list ${repository.forge} repositories`);
     }
-    const viewer = await resolveViewer();
+    const viewerLogin = (await resolveViewer())?.login ?? null;
 
     const prs: PullRequest[] = [];
     let cursor: string | null = null;
@@ -305,7 +314,7 @@ export function createGitHubProjectPrSource(config: GitHubProjectPrSourceConfig)
       );
       if (partial) sawPartial = true;
       if (!page) break; // repo not found / no access → no rows, and no false completeness claim below
-      for (const prNode of page.nodes) prs.push(mapNode(prNode, repository, viewer));
+      for (const prNode of page.nodes) prs.push(mapNode(prNode, repository, viewerLogin));
       cursor = page.pageInfo.endCursor;
       hasNext = page.pageInfo.hasNextPage;
       pages += 1;

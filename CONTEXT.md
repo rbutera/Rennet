@@ -45,7 +45,7 @@ This file defines the terms shared by the product, documentation, and code. It c
 
 ## Reviewing pull requests
 
-- **Smart list**: a project's unified list of local working branches and GitHub pull requests. Local rows appear before GitHub loading finishes, and pull-request progress is reported per repository.
+- **Smart list**: a project's unified list of local working branches and change requests from the project's forges (GitHub pull requests, GitLab merge requests). Every row carries the same columns — author, CI, lines added and removed, files, created, activity — and a local row measures its committed diff against the primary branch. Local rows appear before forge loading finishes, and change-request progress is reported per repository.
 - **Retrospective review**: a review of a closed or merged pull request. It can inspect the captured change but cannot post.
 - **Managed clone**: a repository clone that Rennet owns because it could not use a matching local clone.
 - **PR worktree**: a checkout of the exact pull-request commit under review.

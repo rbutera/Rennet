@@ -72,6 +72,12 @@ interface RepoFixture {
   aheadBehind?: Record<string, { ahead: number; behind: number }>;
   /** worktree paths considered dirty by `status --porcelain`. */
   dirtyWorktrees?: string[];
+  /**
+   * branch → its `diff --numstat -z primary...branch` records (`additions`, `deletions`,
+   * `path`; `"-"` marks a binary side) and the author times of its commits past the
+   * base, newest first, for `log --format=%at primary..branch`.
+   */
+  diffstat?: Record<string, { numstat: [string, string, string][]; authorTimes: number[] }>;
 }
 
 /** Build an injected GitExec over a set of repo roots + their worktrees' dirtiness. */
@@ -107,8 +113,19 @@ function makeGit(repos: Record<string, RepoFixture>): GitExec {
         // `--left-right --count` prints "behind<TAB>ahead" for `primary...branch`.
         return `${ab.behind}\t${ab.ahead}\n`;
       }
-      case "log":
+      case "diff": {
+        const branch = (args[3] ?? "").split("...")[1] ?? "";
+        const records = repo.diffstat?.[branch]?.numstat ?? [];
+        return records.map(([add, del, path]) => `${add}\t${del}\t${path}\0`).join("");
+      }
+      case "log": {
+        if (args[1] === "--format=%at") {
+          const branch = (args[2] ?? "").split("..")[1] ?? "";
+          const times = repo.diffstat?.[branch]?.authorTimes ?? [];
+          return `${times.join("\n")}\n`;
+        }
         return "0\n";
+      }
       default:
         return "";
     }
@@ -209,12 +226,24 @@ describe("loadProjectDetail — live local work (B1)", () => {
         worktrees: twoWorktrees,
         aheadBehind: { "feat/x": { ahead: 3, behind: 0 }, "feat/y": { ahead: 1, behind: 2 } },
         dirtyWorktrees: ["/wt/x"],
+        diffstat: {
+          // A binary file counts as a changed file and contributes no lines.
+          "feat/x": {
+            numstat: [
+              ["12", "3", "src/a.ts"],
+              ["-", "-", "brand/logo.png"],
+              ["0", "40", "src/old.ts"],
+            ],
+            authorTimes: [1990, 1800, 1700], // newest first; the branch was born at 1700
+          },
+          "feat/y": { numstat: [["1", "1", "README.md"]], authorTimes: [1400] },
+        },
       },
     });
 
     const detail = await loadProjectDetail(depsWith(git, ["/repo"]), repoProject("/repo"));
 
-    expect(detail.viewer.login).toBe("Rai Butera");
+    expect(detail.viewer).toEqual({ login: "Rai Butera" });
     expect(detail.prs).toEqual([]);
     expect(detail.truncated).toBe(false);
 
@@ -228,6 +257,11 @@ describe("loadProjectDetail — live local work (B1)", () => {
       branch: "feat/x",
       author: "Rai Butera", // local work is the viewer's
       dirty: true,
+      worktree: true, // a checkout on disk, so `dirty` was measured
+      additions: 12,
+      deletions: 43,
+      changedFiles: 3,
+      createdAt: iso(1700), // the FIRST commit past the base, not the newest
       ahead: 3,
       behind: 0,
       stage: "captured",
@@ -239,12 +273,37 @@ describe("loadProjectDetail — live local work (B1)", () => {
       forgeRepository: { forge: "github", owner: "acme", name: "widget" },
       branch: "feat/y",
       author: "Rai Butera",
-      dirty: false,
+      dirty: false, // structural: no worktree, so no `worktree` flag either
+      additions: 1,
+      deletions: 1,
+      changedFiles: 1,
+      createdAt: iso(1400),
       ahead: 1,
       behind: 2,
       stage: "captured",
       lastActivityAt: iso(1500),
     });
+  });
+
+  it("measures no diffstat for a branch that is not ahead (nothing to review, never 0/0)", async () => {
+    const git = makeGit({
+      "/repo": {
+        remoteUrl: "git@github.com:acme/widget.git",
+        userName: "rai",
+        branches: { main: 1000, "feat/even": 900, "feat/orphan": 800 },
+        aheadBehind: { "feat/even": { ahead: 0, behind: 4 } }, // feat/orphan: base unresolvable
+      },
+    });
+
+    const detail = await loadProjectDetail(depsWith(git, ["/repo"]), repoProject("/repo"));
+    for (const branch of ["feat/even", "feat/orphan"]) {
+      const local = detail.locals.find((l) => l.branch === branch);
+      expect(local).toBeDefined();
+      expect(local).not.toHaveProperty("additions");
+      expect(local).not.toHaveProperty("deletions");
+      expect(local).not.toHaveProperty("changedFiles");
+      expect(local).not.toHaveProperty("createdAt");
+    }
   });
 
   it("folds a checked-out branch into ONE row (worktree wins over the bare ref)", async () => {
@@ -421,7 +480,7 @@ describe("loadProjectDetail — live remote PRs (B2)", () => {
       },
     });
     const prSource: ProjectPrSource = {
-      resolveViewer: async () => "octocat",
+      resolveViewer: async () => ({ login: "octocat" }),
       listPullRequests: async (forgeRepository) => ({
         prs: [
           pr({
@@ -463,7 +522,7 @@ describe("loadProjectDetail — live remote PRs (B2)", () => {
     });
     const listed: ForgeRepoIdentity[] = [];
     const githubSource: ProjectPrSource = {
-      resolveViewer: async () => "octocat",
+      resolveViewer: async () => ({ login: "octocat" }),
       listPullRequests: async (forgeRepository) => {
         listed.push(forgeRepository);
         return {
@@ -519,7 +578,10 @@ describe("loadProjectDetail — live remote PRs (B2)", () => {
       },
     });
     const githubSource: ProjectPrSource = {
-      resolveViewer: async () => "github-rai",
+      resolveViewer: async () => ({
+        login: "github-rai",
+        avatarUrl: "https://avatars.example/github-rai.png",
+      }),
       listPullRequests: async (forgeRepository) => ({
         prs: [
           pr({
@@ -553,6 +615,13 @@ describe("loadProjectDetail — live remote PRs (B2)", () => {
 
     expect(detail.prs.map((pullRequest) => pullRequest.forgeRepository?.forge)).toEqual(["github"]);
     expect(detail.locals).toHaveLength(2);
+    // The healthy provider's identity — face included — becomes the viewer, and local
+    // rows are pinned to that login so they read as the viewer's own work.
+    expect(detail.viewer).toEqual({
+      login: "github-rai",
+      avatarUrl: "https://avatars.example/github-rai.png",
+    });
+    expect(detail.locals.every((local) => local.author === "github-rai")).toBe(true);
     expect(detail.forgeUnavailable).toEqual([
       {
         repository: { forge: "gitlab", owner: "acme", name: "platform" },
@@ -574,7 +643,7 @@ describe("loadProjectDetail — live remote PRs (B2)", () => {
       },
     });
     const prSource: ProjectPrSource = {
-      resolveViewer: async () => "octocat",
+      resolveViewer: async () => ({ login: "octocat" }),
       listPullRequests: async (forgeRepository) => ({
         prs: [
           pr({ repository: forgeRepositorySlug(forgeRepository), forgeRepository }),
@@ -610,7 +679,7 @@ describe("loadProjectDetail — live remote PRs (B2)", () => {
       },
     });
     const prSource: ProjectPrSource = {
-      resolveViewer: async () => "octocat",
+      resolveViewer: async () => ({ login: "octocat" }),
       listPullRequests: async (forgeRepository) => ({
         prs: [
           pr({
@@ -642,7 +711,7 @@ describe("loadProjectDetail — live remote PRs (B2)", () => {
       },
     });
     const prSource: ProjectPrSource = {
-      resolveViewer: async () => "octocat",
+      resolveViewer: async () => ({ login: "octocat" }),
       listPullRequests: async () => ({ prs: [], truncated: true }),
     };
     const detail = await loadProjectDetail(
@@ -676,7 +745,7 @@ describe("loadProjectDetail — live remote PRs (B2)", () => {
       "/some/repo": { commonDir: "/some/repo/.git", userName: "rai", branches: { main: 1 } },
     });
     const listPullRequests = vi.fn(async () => ({ prs: [], truncated: false }));
-    const resolveViewer = vi.fn(async () => "octocat");
+    const resolveViewer = vi.fn(async () => ({ login: "octocat" }));
     const detail = await loadProjectDetail(
       depsWithPr(git, ["/some/repo"], { resolveViewer, listPullRequests }),
       repoProject("/some/repo"),
@@ -746,7 +815,7 @@ describe("loadProjectDetail — the post-establishment outage (bounded, honest)"
       },
     });
     const prSource: ProjectPrSource = {
-      resolveViewer: async () => "octocat",
+      resolveViewer: async () => ({ login: "octocat" }),
       listPullRequests: () => Promise.reject(netError()),
     };
     const detail = await loadProjectDetail(depsFor(git, ["/repo"], prSource), repoProject("/repo"));
@@ -766,7 +835,7 @@ describe("loadProjectDetail — the post-establishment outage (bounded, honest)"
       },
     });
     const prSource: ProjectPrSource = {
-      resolveViewer: async () => "octocat",
+      resolveViewer: async () => ({ login: "octocat" }),
       listPullRequests: () => Promise.reject(new Error("GraphQL schema drift")),
     };
     await expect(
@@ -786,7 +855,7 @@ describe("loadProjectDetail — the post-establishment outage (bounded, honest)"
     let inFlight = 0;
     let maxInFlight = 0;
     const prSource: ProjectPrSource = {
-      resolveViewer: async () => "octocat",
+      resolveViewer: async () => ({ login: "octocat" }),
       listPullRequests: async () => {
         inFlight += 1;
         maxInFlight = Math.max(maxInFlight, inFlight);
@@ -873,7 +942,7 @@ describe("the fan-out cap is SHARED per source instance (overlapping loads)", ()
     const { roots, fixtures } = eightForgeRepos("r");
     let launches = 0;
     const prSource: ProjectPrSource = {
-      resolveViewer: async () => "octocat",
+      resolveViewer: async () => ({ login: "octocat" }),
       listPullRequests: async (repository) => {
         launches += 1;
         if (forgeRepositorySlug(repository) === "acme/r0") {
