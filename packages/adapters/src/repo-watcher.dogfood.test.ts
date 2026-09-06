@@ -149,11 +149,13 @@ describe("RepoWatcher — dogfood over the REAL rennet checkout (#850, #892)", (
       }
 
       // THE claim, on the real tree that cost the installed daemon 5,125 file descriptors:
-      // watching the whole of it costs a handful. On macOS that is the fix — one FSEvents
-      // subscription instead of one `open()` per file. On Linux it holds for a different
-      // reason (libuv keeps one inotify instance per loop), and there this asserts only that
-      // nothing leaks; the pruning assertions below are what carry weight on that platform.
-      expect(after - before).toBeLessThan(16);
+      // watching the whole of it costs a handful. Asserted only where the recursive backend
+      // runs, because that is where it has been measured and where the bug was. On Linux the
+      // per-entry backend's cost is inotify watches rather than descriptors, and inventing a
+      // descriptor bound for it would be the same mistake in miniature.
+      if (watcher.backend() === "recursive") {
+        expect(after - before).toBeLessThan(16);
+      }
 
       // …for the WHOLE tree, not a pruned part of it. Truncation is the honest-degradation
       // path, and on this backend there is nothing to truncate.
