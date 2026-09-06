@@ -1607,6 +1607,20 @@ actually carries, so the prompt still never invites an invented section; **hando
 writes `compose/asks.json` and gets back a partition over the ids in it; the **handoff run**
 writes `work-order.md`; the **delta digest** writes `digest-input.json`.
 
+Board drafting writes `change-index.md` before the first seat turn, and names it to every
+seat. It is the change's **orientation index**: one row per changed file carrying the status,
+the added and deleted counts, and the new-side line span of each hunk, over a header giving
+the reviewed range and the totals. The seats were deriving all of it themselves — on a
+26-turn sample, 25 opened with `git diff --stat` over the range followed by
+`git log --oneline`, a fifth of all their Bash traffic, and each of those is a provider round
+trip for a fact the host had already computed into the delta packet. The file carries the
+shape and never the content: no hunk bodies, no file text, so the seat still reads what it
+decides it needs from the checkout. A packet naming no changed file writes no index rather
+than an empty one, the same honest absence `pr.md` makes. It is rendered under a declared
+24 KiB bound (`CHANGE_INDEX_MAX_BYTES` in `@rennet/core`), and a change that overruns it ends
+on `… truncated, N more files` rather than trailing off, because an index that stops without
+saying so lies about the change it indexes.
+
 Board drafting writes one more before the first seat turn: `pr.md`, the reviewed pull
 request's own title and description, for a review that has a post target and a capture that
 recorded one. The Design seat is told the pull request body is its strongest clue to which
