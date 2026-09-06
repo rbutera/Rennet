@@ -714,6 +714,23 @@ describe("RepoWatcher descriptor cost (#892)", () => {
   });
 });
 
+// What none of the above catches, written down rather than left to be discovered.
+//
+// - **Windows.** The recursive backend's Windows path (`ReadDirectoryChangesW`) is never
+//   executed by any gate: `pnpm check` runs on macOS locally and ubuntu in CI, and the only
+//   Windows job in CI is the native-module matrix. The descriptor claim is a property of
+//   every recursive backend, but that is reasoning, not a run.
+// - **Symlinks.** The recursive backend does not follow a symlink out of the tree and the
+//   per-entry one did. That is a real, narrow regression and there is no test for it here;
+//   it is stated at `RepoWatcher.start` instead.
+// - **The daemon's real descriptor ceiling.** These tests prove the cost is a constant, not
+//   that any particular machine's limit is survivable — which is precisely the number that
+//   turned out to be unknowable, and the reason the constant is what matters.
+// - **The 41,887 storm itself.** `RepoWatcher error channel` drives 5,000 synthetic error
+//   events through the real emitter. It proves the collapsing and the survival; it does not
+//   reproduce EMFILE, because reproducing EMFILE means exhausting the test runner's own
+//   descriptors, which is what took a vitest run down with exit 144 in #855.
+
 // The log storm is its own defect. The 0.9.1 daemon log was 42,697 lines of which 41,887
 // were one identical EMFILE sentence — 98% of the file — and two real daemon crashes plus a
 // dead T3 sidecar were buried in the remainder. Rai reads that file to diagnose.
