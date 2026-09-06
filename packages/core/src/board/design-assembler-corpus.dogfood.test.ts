@@ -47,16 +47,22 @@ const ARCHIVE = join(ROOT, "openspec/changes/archive");
  * tautological — an assembler that rendered nothing would satisfy a derived expectation —
  * and the whole value of this test is that the number is a fact someone measured.
  *
- * Before #877 it was 65. The 26 it gained are the changes whose only obstacle was a rule
- * addressed to a writer's voice, run over prose the assembler was quoting rather than
- * writing (`VOICE_RULES` in `lint.ts`). Each of those was a Design seat that ran, and
- * billed, for a board the host already had: one measured drive spent 882.9 s and 144
- * provider round trips on exactly one of them.
+ * Before #877 it was 65, and #877's register took it to 91: the 26 it gained are the
+ * changes whose only obstacle was a rule addressed to a writer's voice, run over prose the
+ * assembler was quoting rather than writing (`VOICE_RULES` in `lint.ts`). Each of those was
+ * a Design seat that ran, and billed, for a board the host already had: one measured drive
+ * spent 882.9 s and 144 provider round trips on exactly one of them.
+ *
+ * #883 took it to 93, and those two are a different kind of gain — not a rule pointed at
+ * the wrong party, but a rule reading prose wrong. `citation-well-formed` saw `127.0.0.1:0`
+ * as the file `127.0.0.1` at line 0; it now asks for a plausible file extension before a
+ * `<token>:<digits>` counts as a citation at all. Nothing was silenced to move the number:
+ * every other entry below is unchanged, and the 14 bare-basename refusals still refuse.
  *
  * When a new OpenSpec change is archived this number moves, and moving it is the correct
  * response — it is a coverage figure, not a constant.
  */
-const ASSEMBLED = 91;
+const ASSEMBLED = 93;
 
 /**
  * Every archived change the fast path does NOT render, and why. Sorted, so the failure
@@ -68,10 +74,10 @@ const ASSEMBLED = 91;
  *
  * - `citation-well-formed` — the author cited a bare basename (`app.tsx:551`). Kept in
  *   force for a transcription on purpose: a citation a reader cannot resolve is a broken
- *   board whoever wrote it. Two of these (`add-remote-surface`, `add-ws-transport`) are a
- *   FALSE POSITIVE and are recorded as such rather than worked around: the citation regex
- *   reads `127.0.0.1:0` as the file `127.0.0.1` at line 0. That is a defect in the rule,
- *   not in the assembler, and it is out of #877's scope.
+ *   board whoever wrote it. Every remaining entry under this rule is a real bare basename:
+ *   the two that were NOT (`add-remote-surface`, `add-ws-transport`, refused for prose
+ *   containing `127.0.0.1:0`) assemble since #883 taught the rule that a token has to end
+ *   in a plausible file extension before it counts as a citation at all.
  * - `citation-resolves` — the cited file has moved or shrunk since the change was archived.
  *   See the header: an artefact of resolving old citations against today's tree.
  * - `no-code-bytes` — a fenced or indented code block in the artifact prose. Genuinely
@@ -104,8 +110,6 @@ const NOT_ASSEMBLED: readonly string[] = [
   "2026-09-01-c19-direct-post — declined",
   "2026-09-01-desktop-styling-convergence — citation-well-formed",
   "2026-09-01-f1-chat-orchestrator — no-code-bytes",
-  "add-remote-surface — citation-well-formed",
-  "add-ws-transport — citation-well-formed",
 ];
 
 const AUTHOR = { kind: "lens-agent", id: "design-seat" } as const;
@@ -176,7 +180,7 @@ describe("assembleDesignBoard over openspec/changes/archive", () => {
   const assemble = (dir: string) =>
     assembleDesignBoard(openSpecChangeSourceToDesignSources(readChange(dir)), lint, AUTHOR);
 
-  it("renders 91 of the 118 archived changes, and names every one it cannot", () => {
+  it("renders 93 of the 118 archived changes, and names every one it cannot", () => {
     const dirs = readdirSync(ARCHIVE).sort();
     let assembled = 0;
     const notAssembled: string[] = [];

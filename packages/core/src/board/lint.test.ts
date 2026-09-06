@@ -184,6 +184,66 @@ describe("citations (L3 well-formed / L4 resolves)", () => {
     expect(rulesHit(lint(bad, ctx()))).toContain("citation-resolves");
   });
 
+  it("L3 refuses ONLY the bare basename when prose also carries a host:port and a real citation (#883)", () => {
+    // The #883 fixture, all three tokens in ONE element so the rule has to tell them apart:
+    //   `127.0.0.1:0`   — shape of a citation, extension `1`, NOT a citation at all
+    //   `auth.ts:11`    — a real extension and no directory: a citation, and a broken one
+    //   `src/auth.ts:11` — repo-relative and resolvable: a citation, and a good one
+    const bad = board([
+      el("p", "prose", {
+        markdown:
+          "The daemon binds 127.0.0.1:0 and the guard at src/auth.ts:11 runs first; auth.ts:11 is where it lives.",
+      }),
+    ]);
+    const violations = lint(bad, ctx()).filter((v) => v.ruleId === "citation-well-formed");
+    // Exactly one refusal, and its message names the basename — not the IP, not the good one.
+    expect(violations.map((v) => v.message)).toEqual([
+      "R25/R26: cite `auth.ts:11` as a repo-relative path:line — no leading / or ~, no bare basename.",
+    ]);
+    // WHAT THIS CANNOT CATCH: nothing here proves the IP is invisible to `citation-resolves`
+    // too, because L4 already skips any path without a `/` and `127.0.0.1` has none — an
+    // assertion about L4 on THIS text would pass however the gate is written. The shared
+    // gate is tested where it can actually fail, below, with a slash-carrying non-file.
+  });
+
+  it("L3 leaves a bare host:port alone (#883)", () => {
+    const ok = board([el("p", "prose", { markdown: "The listener comes up on 127.0.0.1:0." })]);
+    expect(rulesHit(lint(ok, ctx()))).not.toContain("citation-well-formed");
+  });
+
+  it("L3 leaves a version and an ordinal alone — a digit tail is not an extension (#883)", () => {
+    const ok = board([
+      el("p", "prose", {
+        markdown: "Pinned at v1.2.3:4 and the ninth case foo.9:12 is unchanged.",
+      }),
+    ]);
+    // Only L3 is asserted: neither token carries a `/`, so L4 skips both whatever the
+    // gate does, and an L4 assertion here would be satisfied by any implementation.
+    expect(rulesHit(lint(ok, ctx()))).not.toContain("citation-well-formed");
+  });
+
+  it("both citation rules share one gate, so L4 ignores a non-file too (#883)", () => {
+    // `docs/v1.2:30` is the case that separates the two rules' gates from one shared gate.
+    // It carries a `/`, so L3 passed it and L4 then reported "no such file at the review
+    // commit" — for a version number. Deciding "is this a citation at all" ONCE, before
+    // either rule, is what makes the split honest: L3 asks about shape, L4 about
+    // existence, and neither is asked until the token looks like a file.
+    const ok = board([el("p", "prose", { markdown: "Pinned to docs/v1.2:30 for now." })]);
+    const hit = rulesHit(lint(ok, ctx()));
+    expect(hit).not.toContain("citation-well-formed");
+    expect(hit).not.toContain("citation-resolves");
+  });
+
+  it("L3 still refuses a bare basename with a real extension (#883 must not over-permit)", () => {
+    const bad = board([el("p", "prose", { markdown: "See app.tsx:551 for the mount." })]);
+    expect(rulesHit(lint(bad, ctx()))).toContain("citation-well-formed");
+  });
+
+  it("L3 still refuses a `~`-rooted citation (#883 must not over-permit)", () => {
+    const bad = board([el("p", "prose", { markdown: "See ~/src/auth.ts:11 for the guard." })]);
+    expect(rulesHit(lint(bad, ctx()))).toContain("citation-well-formed");
+  });
+
   it("passes a resolvable repo-relative citation", () => {
     const ok = board([el("p", "prose", { markdown: "See src/auth.ts:11 for the guard." })]);
     const hit = rulesHit(lint(ok, ctx()));
@@ -4276,6 +4336,11 @@ describe("citation range + form (S3 / S8)", () => {
   it("citation-well-formed fires on a GitHub `#L` citation (colon-less form)", () => {
     const bad = board([el("p", "prose", { markdown: "See src/auth.ts#L11 for the guard." })]);
     expect(rulesHit(lint(bad, ctx()))).toContain("citation-well-formed");
+  });
+
+  it("citation-well-formed leaves a GitHub-shaped `#L` on a non-file alone (#883)", () => {
+    const ok = board([el("p", "prose", { markdown: "The host 127.0.0.1#L11 is not a citation." })]);
+    expect(rulesHit(lint(ok, ctx()))).not.toContain("citation-well-formed");
   });
 
   it("citation-resolves fires on an inverted prose range (999-1)", () => {

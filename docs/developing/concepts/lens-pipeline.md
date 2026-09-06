@@ -259,6 +259,13 @@ and calls board regeneration through this runtime.
      board is a `code_ref` (path plus line span) the surface hydrates, so
      numbering cannot drift from the file it claims to show (backticked
      identifiers and patchset ids are exempt);
+   - **citation well formed** — a `path:line` in prose is read as a citation only
+     when its left side ends in a plausible source, config or markup extension, so
+     a host and port (`127.0.0.1:0`), a pinned version or an ordinal stay prose
+     rather than being refused as a citation of a file named `127.0.0.1`. What IS
+     a citation must then be repo-relative: an absolute or `~`-rooted path, a bare
+     basename (`app.tsx:551`), or the GitHub `path#L12` form is refused, because a
+     reader cannot resolve any of them;
    - **citation resolves** — every citation is a repository path plus a 1-based
      line range on the new or the old side, and the daemon resolves it against
      the changed regions of the captured patchset with the same predicate the
