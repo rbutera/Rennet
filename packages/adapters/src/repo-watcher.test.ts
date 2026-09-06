@@ -515,29 +515,28 @@ describe("RepoWatcher descriptor cost (#892)", () => {
       // can see it.
       expect(after.handles - before.handles).toBeGreaterThan(0);
 
-      // THE claim, and it holds on every platform: 1,200 files, and the process's real open
-      // descriptors barely move. This is what the installed daemon violated by 5,125.
-      //
-      // It is load-bearing for different reasons per platform, which is why it is asserted
-      // unconditionally and the handle count is not. On macOS libuv answers `fs.watch` on a
-      // non-directory with kqueue and an `open()`, so descriptors ARE the per-file cost and
-      // the old backend fails this by two orders of magnitude (measured: `expected 1200 to
-      // be less than 16`). On Linux libuv keeps one inotify instance per loop and adds
-      // watches to it, so descriptors stay flat under either backend and what this assertion
-      // proves there is narrower: that nothing in the new path leaks one.
-      expect(after.descriptors - before.descriptors).toBeLessThan(16);
-
+      // Each backend is held to the claim that was actually MEASURED for it, rather than to
+      // one bound stretched until it passes everywhere. A bound loose enough for both would
+      // stop proving anything on the platform where the bug is, and a bound invented for a
+      // platform I have not measured would be the very mistake this change exists to remove.
       if (process.platform === "darwin" || process.platform === "win32") {
-        // Where the kernel has a recursive watch, the whole tree is ONE handle. This is the
-        // assertion the old cost model misses by 1,200.
+        // THE claim. 1,200 files, and the process's real open descriptors barely move. On
+        // macOS libuv answers `fs.watch` on a non-directory with kqueue and an `open()`, so
+        // descriptors ARE the per-file cost, and the old backend fails this by two orders of
+        // magnitude — measured, as `expected 1200 to be less than 16`.
         expect(watcher.backend()).toBe("recursive");
+        expect(after.descriptors - before.descriptors).toBeLessThan(16);
+        // …and the whole tree is ONE handle, which the old cost model misses by 1,200.
         expect(after.handles - before.handles).toBeLessThan(8);
         expect(watcher.watchedPaths()).toEqual([root]);
       } else {
         // Linux has no recursive watch in the kernel; Node's is userland and arms one per
-        // entry, so this platform keeps the pruning per-entry backend it always had. Stated
-        // rather than skipped: the cost here is inotify watches, not descriptors, and the
-        // bound that matters is the cap and the ignore rules, exercised in the tests below.
+        // ENTRY (CI: 1,204 handles for 1,200 files in three directories), so this platform
+        // keeps the pruning per-entry backend it always had. Descriptors are NOT asserted
+        // here: the cost model on Linux is inotify watches, libuv keeps one inotify instance
+        // per loop, and no descriptor bound has been measured for chokidar on this platform.
+        // What is claimed is what was always claimed — it mapped the tree — and the cap and
+        // ignore-rule tests below are what bound it.
         expect(watcher.backend()).toBe("per-entry");
         expect(watcher.watchedPaths().length).toBeGreaterThan(400);
       }
