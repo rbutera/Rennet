@@ -704,7 +704,9 @@ with `local_id` and uses that name wherever an id goes.
 
 It is Noise-only because batching pays when the writing is bulk and costs when it is
 thought: the Noise seat groups host-placed members it did not choose (961 calls and 317.8 s
-on the 95-file drive, against 4 and 108.7 s), and the four reasoning lenses were measured
+on the 95-file drive, both read from that drive's own record; the `4 calls and 108.7 s`
+after the change was reported by the #878 spike and has no surviving data behind it, so it
+is a claim rather than a measurement), and the four reasoning lenses were measured
 slightly slower with the verb. The scoping is derived from the host-derived membership table
 (`writesWholeBoard`), and it costs the Noise seat 486 B of tool surface once per session and
 every other seat nothing.
@@ -1358,6 +1360,37 @@ output schema does not touch that: the surface is what travels, the round trips 
 bill. On the one-file branch, where the seats made 1–8 calls each, the same generation
 billed 1,428,952 tokens across 6 turns against 617,178 across 8 on v0.7.0 — 2.3x, on the
 same mechanism at a smaller multiple.
+
+**Which 95-file total to quote.** The 27,581,248 above is a *live* reading taken while the
+generation was still running. The settled record for that same generation reads
+**27,854,531** tokens, 138,781 output and 27,248,273 cache reads, and it carries
+`unmeasuredTurns: 1` — so even that total is a floor, not the whole bill. One generation
+read twice, not two results: quote the record for the number, the live reading only for
+what the reviewer saw while it ran. A second trap sits behind that one — the generation id
+derives from the patchset, not the run, so the same id appears in another drive directory
+with its own bill: 12,760,225 tokens with Noise settled at 317.8 s, against this run's
+27,854,531 with Noise cancelled at 255.6 s. Same cut, two runs, one id, and the id does not
+tell them apart.
+
+**Two counting traps, both of which produced a confident wrong number before they were
+caught.** Anyone measuring round trips from these logs walks into both.
+
+*A `claude/assistant` frame is not a message.* The SDK emits one frame per content block as
+the message streams, so a single message arrives as `[thinking]`, `[text]`, `[tool_use]`,
+`[tool_use]` — four frames. Counting `tool_use` blocks **per frame** therefore returns
+exactly 1.000 no matter what the model did; it is a statistic that cannot report any other
+value. That is where "every assistant message carries exactly one tool call" came from, and
+it was false. Group by `message.id` and dedupe on the `tool_use` block's own id. Re-measured
+that way across every drive still on disk — 2,862 calls — the fleet mean is **1.33 calls per
+message, not 1.00**, with single messages carrying as many as 25. The seats were always
+batching some calls; nobody could see it.
+
+*`num_turns` does not count round trips.* On every clean single-session seat it equals
+**main-session tool calls plus one**, exactly: 69→70, 78→79, 76→77, 60→61. It is insensitive
+to batching by construction — a seat that made 60 calls in 19 messages still reports 61. Use
+it as a tool-call count, never as a round-trip count, and note that it excludes sub-agent
+calls (a seat with `Agent` sub-sessions reports 37 while 106 calls appear in its log). **The
+number of distinct assistant message ids is the round-trip count.**
 
 Timings on the 95-file branch, from the drafting kickoff: **time to first element 339.8 s**,
 **time to first core board 555.7 s** (Sequence). Against the v0.7.0 figure of 360 s to first
