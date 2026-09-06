@@ -10,7 +10,7 @@ import {
 import { useRennetStore } from "../store";
 import { act, mount, waitFor } from "../test/dom";
 import { designBoard, designGen0Board, prose } from "../test/fixtures/boards";
-import { MemoryBridge } from "../test/memory-bridge";
+import { type CommandHandler, MemoryBridge } from "../test/memory-bridge";
 import { BoardElement, BoardElementsProvider } from "./kinds";
 import { InlineQuoteHighlight, QuoteHighlightLayer } from "./quote-highlight";
 
@@ -353,7 +353,7 @@ describe("QuoteHighlightLayer — durable quote highlights", () => {
 // ─────────────────────────────────────────────────────────────────────────────
 describe("an anchored ask that does not go out (#888)", () => {
   /** Mount the real provider over a daemon stub, with one seeded thread on the prose. */
-  function renderWithAsk(handler: () => unknown) {
+  function renderWithAsk(handler: CommandHandler<"chat.t3Send">) {
     const id = seed("costs nothing per token", "Is this actually free?");
     const view = mount(
       <BridgeProvider bridge={new MemoryBridge({ "chat.t3Send": handler })}>
