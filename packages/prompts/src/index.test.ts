@@ -109,10 +109,17 @@ describe("lens prompt manifest", () => {
     // voice, so this asserts the falsehood is gone rather than merely that a truth is present.
     expect(normalized).not.toContain("A refusal costs you nothing");
     expect(normalized).toContain("a refusal is not free");
-    // The seat batches independent calls. Every one of 2,245 tool calls measured across the
-    // surviving drive corpus carried exactly one tool_use block, and this partial is where
-    // that is taught, so the ordering contract must name both what may travel together and
-    // what may not. Naming only the permission would invite refusals, which cost round trips.
+    // The seat batches independent calls, and this partial is where that is taught, so the
+    // ordering contract must name both what may travel together and what may not. Naming
+    // only the permission would invite refusals, which cost round trips.
+    //
+    // This assertion was originally justified by "every one of 2,245 tool calls carried
+    // exactly one tool_use block". That was FALSE — an artifact of counting tool_use blocks
+    // per `claude/assistant` FRAME, and the SDK emits one frame per content block, so that
+    // count returns 1.000 whatever the model did. Re-measured by `message.id` over the same
+    // corpus the mean is 1.33, with messages carrying up to 25 calls. The seats already
+    // batched; the treatment raised board calls per message 1.83 → 4.74 on a two-arm drive.
+    // The assertion stands on what the prompt must SAY, not on that dead number.
     expect(normalized).toContain("Send independent calls together");
     expect(normalized).toContain("In order, in separate messages");
     // No schema, no type declaration, no field list — the tool list carries all three.
