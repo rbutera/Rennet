@@ -136,13 +136,38 @@ const bigPacket = buildDeltaPacket(synthetic(), []);
 // that is the generation's serial tail, measured on the 95-file drive. That is the trade,
 // and it is stated because it is a real growth in what a seat is sent.
 //
+// ── #867: +1,278 B on EVERY lens, from one partial ──────────────────────────────
+//
+// `write-with-tools.md` went 1,814 → 3,092 B: a new "Send independent calls together"
+// section teaching the seats to batch calls that do not depend on each other, and a
+// rewrite of the refusal paragraph that deletes the false sentence claiming a refusal
+// costs nothing. The partial is spliced into all five lens prompts, so the growth is
+// uniform — measured here through this file's own helpers, not copied forward:
+//
+//   design    14,223 → 15,501  (+1,278)
+//   sequence   8,503 →  9,781  (+1,278)
+//   decisions  8,294 →  9,572  (+1,278)
+//   flagged    9,226 → 10,504  (+1,278)
+//   noise      8,903 → 10,181  (+1,278)
+//
+// The five identical deltas are the check that the growth is the partial and nothing
+// else: `change-index.md` (the other commit on this branch) writes a context FILE and
+// adds a fixed bullet that was already there, so it costs the prompt zero bytes, and the
+// zero shows up here as the absence of a sixth different number.
+//
+// The cost, stated because a token regression is invisible in a diff: ~317 tokens, on the
+// base prompt of every seat thread, re-read on every round trip that thread makes. That
+// is what it is buying against — the batching it teaches removes round trips, and a round
+// trip costs the whole conversation, not 317 tokens. It is only a good trade while the
+// text is instruction; restatement in here is paid for on every trip and buys nothing.
+//
 // Budgets are measurement + 10% headroom, as this file's convention has always been.
 const BUDGET: Record<(typeof LENS_KINDS)[number], number> = {
-  design: 15_650,
-  sequence: 9_360,
-  decisions: 9_130,
-  flagged: 10_150,
-  noise: 9_790,
+  design: 17_050,
+  sequence: 10_760,
+  decisions: 10_530,
+  flagged: 11_550,
+  noise: 11_200,
 };
 
 describe("drafter prompt byte budget (tripwire, #737)", () => {
