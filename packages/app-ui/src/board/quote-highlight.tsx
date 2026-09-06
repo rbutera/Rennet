@@ -50,6 +50,7 @@ interface RangedThread extends KeyedThread, RawTextRange {}
  *  `<p>` and nested block/button elements are invalid there (spike keep-list note). */
 function QuoteThreadPopover({ threads }: { readonly threads: readonly KeyedThread[] }) {
   const addQuoteReply = useRennetStore((s) => s.reviewActions.addQuoteReply);
+  const askFailures = useRennetStore((s) => s.review.quoteAskFailures);
   const sendAnchoredAsk = useAnchoredAsk();
   const [drafts, setDrafts] = useState<Record<string, string>>({});
 
@@ -81,6 +82,26 @@ function QuoteThreadPopover({ threads }: { readonly threads: readonly KeyedThrea
               </span>
             ))}
           </span>
+          {askFailures[id] === undefined ? null : (
+            // The retraction. Every call site appends the reviewer's message and clears the
+            // draft box BEFORE the send, so a failed ask leaves their question sitting in the
+            // thread looking exactly like one that landed — the reviewer's own words used as
+            // false evidence of delivery (#888). This says it did not go, and prints the
+            // daemon's reason verbatim (`board-view.tsx`'s `board-failed` shape).
+            //
+            // A `<span>` with `role="alert"`, not a `<p>`: this stack renders inside a `<p>`
+            // and a nested block element is invalid there. `role="alert"` is deliberate and
+            // is what the `t3-chat-*` slots lack — a dropped question is not a muted notice,
+            // and a reviewer who has already looked away needs it announced.
+            <span
+              data-slot="quote-ask-failed"
+              role="alert"
+              className="mb-1.5 block text-2xs leading-relaxed text-destructive"
+            >
+              <span className="block font-medium">This question was not sent.</span>
+              <span className="block text-destructive/85">{askFailures[id]}</span>
+            </span>
+          )}
           <textarea
             value={drafts[id] ?? ""}
             onChange={(event) => setDrafts((d) => ({ ...d, [id]: event.target.value }))}

@@ -3081,3 +3081,29 @@ export const t3SessionSchema = z.object({
   thread: t3ThreadBindingSchema.optional(),
 });
 export type T3Session = z.infer<typeof t3SessionSchema>;
+
+/**
+ * The outcome of an anchored ask (`chat.t3Send`), as a state rather than a rejection.
+ *
+ * Same ruling as {@link t3ThreadBindingSchema} above (#872): a failed bind is a REPORTED
+ * STATE. `chat.t3Session` already reported it that way while `chat.t3Send` threw, so the
+ * identical broken workspace rendered calmly on the read and vanished on the send — and a
+ * rejection is untyped, which is why the client had nowhere to put it and dropped it.
+ *
+ * `unavailable` is a SETTLED absence: the ask was attempted, the sidecar or the bind said
+ * no, and the reviewer is owed that sentence verbatim. It is NOT a fabricated reply — the
+ * thread records that the question did not go out, never an answer nobody produced.
+ */
+export const t3SendResultSchema = z.discriminatedUnion("status", [
+  z.object({
+    status: z.literal("sent"),
+    /** The thread the turn was started on. */
+    threadId: z.string().min(1),
+  }),
+  z.object({
+    status: z.literal("unavailable"),
+    /** Why the ask did not go out, in the daemon's own words — shown verbatim. */
+    reason: z.string().min(1),
+  }),
+]);
+export type T3SendResult = z.infer<typeof t3SendResultSchema>;

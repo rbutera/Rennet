@@ -114,6 +114,16 @@ through T3's settings. A daemon launched by the desktop app inherits launchd's m
 PATH, and T3 resolves a bare `claude` on the server's PATH, so the absolute paths are
 what make the sidecar's providers report ready.
 
+When discovery cannot resolve one of them, the daemon **names the harness and the reason**
+(`resolveProviderBinaries` in `server/src/t3/resolve-provider-binaries.ts`). Both failure
+modes used to be discarded on the way out: a thrown probe went into `.catch(() => null)`,
+and a probe that answered "no" had its `health.reason`/`health.detail` dropped by a check
+that read only `chosen`. So a Codex app-server handshake that failed — descriptors
+exhausted, asdf version drift, a broken vendored native binary — left the sidecar running
+without `codex`, the Codex seat failing later with something unrelated, and nothing anywhere
+saying why. The probe still runs and both harnesses stay on by default; the degradation is
+merely legible now.
+
 The environment handed to the sidecar drops every `T3CODE_*` key the parent shell
 carried and sets `T3CODE_TELEMETRY_ENABLED=false`. No relay URL and no Clerk keys are
 passed, so T3 Connect is unavailable in the sidecar and nothing leaves the machine
@@ -178,6 +188,24 @@ environment id are good whatever the bind did, and rejecting threw them away —
 sidecar with one missing workspace used to surface in the dock as "T3 Code sidecar
 unavailable" and the mount never rendered at all. The reason travels instead, and the dock
 prints it.
+
+`chat.t3Send` — the anchored ask, "ask about this span" — answers the same way, and for the
+same reason. It returns `{ status: "sent", threadId }` or `{ status: "unavailable", reason }`,
+never a bare success shape. It used to reject on a failed bind, so the identical condition
+rendered calmly in the dock on the session read and became an untyped rejection on the send;
+the client had nowhere to put an untyped rejection and dropped it. The dock opened, nothing
+streamed, and the reviewer concluded the feature was broken.
+
+That silence was worse than it sounds, because every anchored-ask call site appends the
+reviewer's question to the quote thread and clears the draft box **before** the send. A
+failed ask left their own words sitting in the exchange, indistinguishable from a question
+that landed. The quote thread now carries the retraction: an alert saying the question was
+not sent, with the daemon's reason verbatim, beside the question itself. Nothing fabricates
+a reply — the thread records what was asked and whether it went, never an answer.
+
+A transport failure is the one thing that cannot become an arm: if the connection drops
+there is no daemon verdict to report. The client renders that case from the rejection, and
+distinguishes it, because a daemon that died is worth retrying and a refused command is not.
 
 The same is true of every seat thread and of the handoff thread: they are created with the
 session's bound workspace, never the project root alone, so all six lens seats, the chat and

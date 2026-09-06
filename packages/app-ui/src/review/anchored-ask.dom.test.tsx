@@ -231,7 +231,7 @@ describe("ReviewAnchoredAskProvider (t3-lens-threads 4.2)", () => {
     const bridge = new MemoryBridge({
       "chat.t3Send": (input) => {
         sends.push(input);
-        return { threadId: "t3-thread-1" };
+        return { status: "sent", threadId: "t3-thread-1" };
       },
     });
     act(() => useRennetStore.getState().uiActions.setChatOpen(false));
