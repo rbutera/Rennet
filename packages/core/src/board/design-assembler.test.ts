@@ -239,6 +239,7 @@ describe("assembleDesignBoard on the other formats", () => {
           "",
           "- [x] 1. Build the session store",
           "- [ ] 1.1 Add persistence",
+          "  - _Requirements: 1.1_",
         ].join("\n"),
         bugfixMd: [
           "# Session restart bugfix",
@@ -293,6 +294,24 @@ describe("assembleDesignBoard on the other formats", () => {
       },
     });
     expect(proseOf(board)).toContain("A restart drops the active session.");
+
+    // The host-derived projections (#898): the task carries its refs, its group its
+    // state, and the source section its layout — stamped after settle, never authored.
+    const taskProse = board.elements.find(
+      (el) => (el.data as { markdown?: string }).markdown === "- [ ] 1.1 Add persistence",
+    );
+    expect(taskProse?.data).toMatchObject({ requirement_refs: ["1.1"] });
+    const [tasksSection, groupSection] = board.elements.filter(
+      (el) =>
+        el.kind === "section" &&
+        /Tasks|Build the session store/.test(String((el.data as { title?: string }).title)),
+    );
+    expect(tasksSection?.data).toMatchObject({
+      task_progress: { kind: "source", format: "kiro", role: "tasks", layout: "grouped" },
+    });
+    expect(groupSection?.data).toMatchObject({
+      task_progress: { kind: "group", state: "incomplete" },
+    });
   });
 
   it("renders a BMAD specification: PRD registry, story acceptance, tasks, and a tech-stack choice", () => {
@@ -322,6 +341,10 @@ describe("assembleDesignBoard on the other formats", () => {
             path: "docs/stories/1.1.restore-session.md",
             md: [
               "# Story 1.1",
+              "",
+              "## Status",
+              "",
+              "Draft",
               "",
               "## Story",
               "",
@@ -378,8 +401,15 @@ describe("assembleDesignBoard on the other formats", () => {
         statement: "Language · TypeScript 5.6",
         why: "One language across the stack",
         source: { path: "docs/architecture/tech-stack.md", line: 7 },
+        source_cells: ["Language", "TypeScript 5.6", "One language across the stack"],
       }),
     ]);
+    // The story's status and each task's acceptance criteria ride on their owners.
+    expect(requirements[1]?.data).toMatchObject({ status: "Draft" });
+    const storyTask = board.elements.find(
+      (el) => (el.data as { markdown?: string }).markdown === "- [x] Task 1 (AC: 1)",
+    );
+    expect(storyTask?.data).toMatchObject({ acceptance_criteria: ["1"] });
   });
 
   it("renders a Superpowers feature: the spec's decisions, the plan's task groups, the ledger's rows", () => {
@@ -408,6 +438,10 @@ describe("assembleDesignBoard on the other formats", () => {
               "**Spec:** docs/superpowers/specs/session.md",
               "",
               "### Task 1: Store sessions",
+              "",
+              "**Files:**",
+              "- Create: packages/core/src/session-store.ts",
+              "- Test: packages/core/src/session-store.test.ts",
               "",
               "- [x] **Step 1: Write the failing test**",
               "- [ ] **Step 2: Implement storage**",
@@ -456,6 +490,26 @@ describe("assembleDesignBoard on the other formats", () => {
       inferred: false,
     });
     expect(proseOf(board)).toContain("Task 1: complete (all steps green)");
+
+    // The plan's groups carry the ledger's verdict and the first task's manifest.
+    const groups = board.elements.filter(
+      (el) =>
+        el.kind === "section" && /^Task \d/.test(String((el.data as { title?: string }).title)),
+    );
+    expect(groups.map((el) => (el.data as { task_progress?: unknown }).task_progress)).toEqual([
+      { kind: "group", state: "complete" },
+      { kind: "group", state: "incomplete" },
+    ]);
+    expect(groups[0]?.data).toMatchObject({
+      task_manifest: {
+        files: [
+          { operation: "create", value: "packages/core/src/session-store.ts" },
+          { operation: "test", value: "packages/core/src/session-store.test.ts" },
+        ],
+        interfaces: [],
+        verifications: [],
+      },
+    });
   });
 
   it("renders grill-with-docs: an ADR's decision and a glossary's terms, titled by the ADR's stem", () => {
@@ -496,11 +550,16 @@ describe("assembleDesignBoard on the other formats", () => {
       why: "It preserves review history.",
     });
     // A glossary entry is its source lines through the `_Avoid_` line, on one line.
-    expect(
-      proseOf(board).some((markdown) =>
-        markdown.startsWith("- **Invoice**: A request for payment sent after delivery."),
-      ),
-    ).toBe(true);
+    const entry = board.elements.find((el) =>
+      String((el.data as { markdown?: string }).markdown).startsWith("- **Invoice**:"),
+    );
+    expect(entry?.data).toMatchObject({
+      glossary_term: {
+        term: "Invoice",
+        definition: "A request for payment sent after delivery.",
+        avoid: ["Bill", "payment request"],
+      },
+    });
   });
 
   it("tells two sources of one role apart by their file stems", () => {

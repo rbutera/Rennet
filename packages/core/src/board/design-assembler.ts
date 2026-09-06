@@ -38,6 +38,7 @@ import {
   type CandidateDesignSource,
   type DesignSourceFormat,
   type DesignSourceObligation,
+  type DesignTaskProgressGroup,
   deriveDesignTaskProgress,
   parseDesignSourceObligations,
 } from "./design-obligations";
@@ -213,6 +214,19 @@ export function assembleDesignBoard(
     }
     return outcome.id;
   };
+  // Host-derived projections (#898): the structured halves the parser split off a line —
+  // a glossary term, a task's requirement refs and acceptance criteria, a group's
+  // manifest, a decision's table cells, a story's status, task progress. The renderer has
+  // read these off element data all along and persistence keeps them (`withAuthor` is a
+  // loose object), but no verb carries them: they are not authored fields, and #889 is
+  // the reason they will not become seven more tool inputs. The host is the one writer
+  // holding the parsed structure, so it stamps them onto the elements it built, after
+  // the board settles — a transcription of the same source text the element already
+  // quotes, keyed by element id.
+  const stamps = new Map<string, Record<string, unknown>>();
+  const stamp = (id: string, fields: Record<string, unknown>): void => {
+    stamps.set(id, { ...(stamps.get(id) ?? {}), ...fields });
+  };
 
   // ponytail: the intro prose ships verbatim; an intro that trips an INTEGRITY rule (a
   // code fence, an unresolvable citation) throws rather than being sanitized. Machinery
@@ -279,7 +293,7 @@ export function assembleDesignBoard(
             }),
           );
           const operation = /requirements:(\w+)$/.exec(obligation.parentKey)?.[1];
-          addElement("add_requirement", {
+          const requirementId = addElement("add_requirement", {
             shall: obligation.text,
             ...(obligation.label === undefined ? {} : { name: obligation.label }),
             ...(obligation.capability === undefined ? {} : { capability: obligation.capability }),
@@ -291,13 +305,14 @@ export function assembleDesignBoard(
             source_line: obligation.line,
             parent_id: sectionId,
           });
+          if (obligation.status !== undefined) stamp(requirementId, { status: obligation.status });
           break;
         }
         case "decision": {
           // ponytail: skip a decision with no stated rationale — `why` is required and
           // the Design lens forbids inventing one.
           if (obligation.rationale === undefined) break;
-          addElement("add_decision", {
+          const decisionId = addElement("add_decision", {
             statement: obligation.text,
             why: obligation.rationale,
             evidence_ref_ids: [],
@@ -310,6 +325,9 @@ export function assembleDesignBoard(
             source_line: obligation.line,
             parent_id: sectionId,
           });
+          if (obligation.sourceCells !== undefined) {
+            stamp(decisionId, { source_cells: obligation.sourceCells });
+          }
           break;
         }
         case "source-section": {
@@ -322,11 +340,24 @@ export function assembleDesignBoard(
           addElement("add_prose", { markdown: obligation.text, parent_id: headingId });
           break;
         }
-        case "glossary-term":
+        case "glossary-term": {
+          // The entry's own lines, verbatim, and the term / definition / avoid triple the
+          // parser split off them, which the renderer shows as a glossary card.
+          const termId = addElement("add_prose", {
+            markdown: obligation.text,
+            parent_id: sectionId,
+          });
+          stamp(termId, {
+            glossary_term: {
+              term: obligation.term,
+              definition: obligation.definition,
+              avoid: obligation.avoid,
+            },
+          });
+          break;
+        }
         case "progress-entry":
-          // The line itself, verbatim: a glossary entry or a ledger row. The structured
-          // halves the parser split off are not authorable fields on the surface, so the
-          // reader gets the source's own line.
+          // A ledger row, verbatim.
           addElement("add_prose", { markdown: obligation.text, parent_id: sectionId });
           break;
         case "scenario":
@@ -340,15 +371,65 @@ export function assembleDesignBoard(
     }
 
     const progressSource = progress.sources.find((entry) => entry.source === source);
-    for (const group of progressSource?.groups ?? []) {
-      const groupId = addElement("add_section", {
-        title: group.title ?? "Tasks",
-        parent_id: sectionId,
-      });
-      // `obligation.text` is the whole checklist line already (`- [x] …`), so it ships
-      // verbatim — re-wrapping it in another `- [ ] ` doubled the marker on every task.
-      const checklist = group.tasks.map((taskObligation) => taskObligation.text).join("\n");
-      addElement("add_prose", { markdown: checklist, parent_id: groupId });
+    if (progressSource !== undefined) {
+      // One prose element per task, so each task is its own disposition anchor and
+      // carries its own refs and criteria. `obligation.text` is the whole checklist line
+      // already (`- [x] …`), so it ships verbatim — re-wrapping it in another `- [ ] `
+      // doubled the marker on every task.
+      const placeTasks = (group: DesignTaskProgressGroup, parentId: string): void => {
+        for (const taskObligation of group.tasks) {
+          const taskId = addElement("add_prose", {
+            markdown: taskObligation.text,
+            parent_id: parentId,
+          });
+          stamp(taskId, {
+            ...(taskObligation.requirementRefs === undefined
+              ? {}
+              : { requirement_refs: taskObligation.requirementRefs }),
+            ...(taskObligation.acceptanceCriteria === undefined
+              ? {}
+              : { acceptance_criteria: taskObligation.acceptanceCriteria }),
+          });
+        }
+      };
+      const [only] = progressSource.groups;
+      if (progressSource.groups.length === 1 && only !== undefined && only.title === undefined) {
+        // One flat list: the tasks sit directly under the source section, and the
+        // section's progress is the count.
+        placeTasks(only, sectionId);
+        stamp(sectionId, {
+          task_progress: {
+            kind: "source",
+            format: progressSource.format,
+            role: source.role,
+            layout: "ungrouped",
+            done: progressSource.done,
+            total: progressSource.total,
+          },
+        });
+      } else {
+        stamp(sectionId, {
+          task_progress: {
+            kind: "source",
+            format: progressSource.format,
+            role: source.role,
+            layout: "grouped",
+          },
+        });
+        for (const group of progressSource.groups) {
+          const groupId = addElement("add_section", {
+            title: group.title ?? "Tasks",
+            parent_id: sectionId,
+          });
+          // The manifest rides on a group's first task (`parseSuperpowersTaskManifest`).
+          const manifest = group.tasks[0]?.manifest;
+          stamp(groupId, {
+            task_progress: { kind: "group", state: group.complete ? "complete" : "incomplete" },
+            ...(manifest === undefined ? {} : { task_manifest: manifest }),
+          });
+          placeTasks(group, groupId);
+        }
+      }
     }
   }
 
@@ -362,5 +443,15 @@ export function assembleDesignBoard(
         : `unexpected \`${finished.kind}\``;
     throw new Error(`design-assembler: board did not settle — ${detail}`);
   }
-  return writer.board();
+  const board = writer.board();
+  if (stamps.size === 0) return board;
+  return {
+    ...board,
+    elements: board.elements.map((element) => {
+      const fields = stamps.get(element.id);
+      if (fields === undefined) return element;
+      // The spread widens the kind union; the element's own kind is what it stays.
+      return { ...element, data: { ...element.data, ...fields } } as typeof element;
+    }),
+  };
 }

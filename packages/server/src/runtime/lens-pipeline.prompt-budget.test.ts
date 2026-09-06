@@ -136,9 +136,14 @@ const bigPacket = buildDeltaPacket(synthetic(), []);
 // that is the generation's serial tail, measured on the 95-file drive. That is the trade,
 // and it is stated because it is a real growth in what a seat is sent.
 //
+// #898 (2026-09-06) took design 14,223 → 12,668 (−1,555): the "Format-specific
+// structured fields" section named seven fields the tool surface has no input for, so
+// the seat was paying to read instructions it could not follow. The host assembler
+// stamps those projections now; the seat keeps the one it can write, `scenario_clauses`.
+//
 // Budgets are measurement + 10% headroom, as this file's convention has always been.
 const BUDGET: Record<(typeof LENS_KINDS)[number], number> = {
-  design: 15_650,
+  design: 13_930,
   sequence: 9_360,
   decisions: 9_130,
   flagged: 10_150,

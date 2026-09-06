@@ -91,7 +91,11 @@ const NOT_ASSEMBLED: readonly string[] = [
   "2026-08-15-deixis-pointing — citation-resolves",
   "2026-08-16-add-windows-support — citation-well-formed",
   "2026-08-17-add-command-registry-v1 — citation-resolves",
-  "2026-08-17-polish-sweep — citation-well-formed",
+  // Both rules bite this change. It read `citation-well-formed` while a task group was
+  // one prose element (the joined checklist tripped that rule first); since #898 each
+  // task is its own prose, and the first task line lint reaches carries a citation that
+  // no longer resolves. Same outcome, same seat, earlier line.
+  "2026-08-17-polish-sweep — citation-resolves",
   "2026-08-17-product-debt-sweep — citation-well-formed",
   "2026-08-19-mobile-app-m2 — citation-well-formed",
   "2026-08-20-rennet-docsite — no-code-bytes",
