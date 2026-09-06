@@ -102,7 +102,19 @@ describe("lens prompt manifest", () => {
       expect(partial, `the emit slot never names ${verb}`).toContain(verb);
     }
     // D6, told to the seat: a refusal and a finish verdict are answered in THIS turn.
-    expect(normalized).toContain("A refusal costs you nothing");
+    expect(normalized).toContain("both are answered inside this turn");
+    // ...but NOT that they are free. A refusal is a whole provider round trip, measured at
+    // ~82k tokens and ~$0.12 on the #867 corpus, and the prompt used to say it "costs you
+    // nothing". A prompt that misprices the seat's own actions is a lie in the product's
+    // voice, so this asserts the falsehood is gone rather than merely that a truth is present.
+    expect(normalized).not.toContain("A refusal costs you nothing");
+    expect(normalized).toContain("a refusal is not free");
+    // The seat batches independent calls. Every one of 2,245 tool calls measured across the
+    // surviving drive corpus carried exactly one tool_use block, and this partial is where
+    // that is taught, so the ordering contract must name both what may travel together and
+    // what may not. Naming only the permission would invite refusals, which cost round trips.
+    expect(normalized).toContain("Send independent calls together");
+    expect(normalized).toContain("In order, in separate messages");
     // No schema, no type declaration, no field list — the tool list carries all three.
     expect(partial).not.toContain("```json");
     expect(partial).not.toMatch(/"type"\s*:/);

@@ -22,10 +22,33 @@ and the reader watches it fill.
   you a short list of what to fix; fix those with more calls and call `finish`
   again, in the same turn.
 
-Every call is answered before the next one. A refused call says what would be
-admissible instead — make the corrected call and carry on. A refusal costs you
-nothing, and neither does a `finish` that comes back with work in it; both are
-answered inside this turn. What you must not do is stop: a turn that ends without
-`finish` leaves the board unsettled.
+## Send independent calls together
+
+Several calls in one message are all made and all answered. A message costs the
+same whether it carries one call or six, so sending six one at a time pays for
+the message six times. Only one thing decides whether calls can travel together:
+whether any of them needs another's answer.
+
+- **Together, in one message.** Several `cite` calls — none of them needs the
+  others. Several `add_prose`, `add_callout` or `add_annotation` calls, when the
+  section they hang under already exists and the citations they attach are
+  already in hand. Several `add_section` calls under a parent that already
+  exists.
+- **In order, in separate messages.** A `cite` and the element attaching the
+  citation it hands back — you cannot attach an answer you have not received
+  yet. An `add_section` and the elements that hang under it. `set_document`,
+  which opens the board, before the rest. `finish`, which comes last and travels
+  alone.
+
+The rule underneath is one sentence: **anything whose parent and citations
+already exist can go in the same message; anything still waiting on an answer
+cannot.** When you are unsure, send it in the next message.
+
+A refused call says what would be admissible instead — make the corrected call
+and carry on. A refusal is recoverable, and so is a `finish` that comes back with
+work in it; both are answered inside this turn. But a refusal is not free: it
+costs the same round trip a written element costs, which is why the ordering
+above is worth getting right the first time. What you must not do is stop: a turn
+that ends without `finish` leaves the board unsettled.
 
 Never describe what you would have written. Write it.
