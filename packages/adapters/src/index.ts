@@ -443,6 +443,17 @@ export {
   type ProjectDiscoveryDeps,
 } from "./project-discovery";
 export {
+  copyDetectedLogo,
+  detectedLogoExists,
+  extensionForLogoMime,
+  logoFile,
+  logoMimeForExtension,
+  type ProjectLogoFile,
+  readLogo,
+  type StoredProjectLogo,
+  writeUploadLogo,
+} from "./project-mark-store";
+export {
   createGitHubProjectPrSource,
   type GitHubProjectPrSourceConfig,
   type ProjectPrSource,
@@ -455,7 +466,12 @@ export {
   resolveProjectKey,
 } from "./project-relocate";
 export {
+  acceptLogoPick,
+  detectProjectLogo,
+  LOGO_INVENTORY_CAP,
+  type LogoInventory,
   loadScoutFacts,
+  logoInventory,
   PROJECT_SCOUT_CONTEXT_PREFIX,
   PROJECT_SCOUT_SCHEMA,
   type ProjectScoutDeps,

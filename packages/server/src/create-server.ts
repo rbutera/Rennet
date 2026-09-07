@@ -50,6 +50,7 @@ import {
   defaultProjectDetailSourceDeps,
   defaultProjectDiscoveryDeps,
   deriveProjectDraft,
+  detectedLogoExists,
   discoverClaude,
   discoverCodex,
   discoverProject,
@@ -274,6 +275,7 @@ import {
   type ProjectPullRequestOpener,
   resolveProjectRepositoryRoot,
 } from "./project-forge-registry";
+import { createProjectMarks } from "./project-marks";
 import {
   createProjectProcessJournal,
   type ProjectProcessJournalRecord,
@@ -4600,6 +4602,109 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     });
   };
 
+  // The config-ladder composition, hoisted out of the dispatch deps because the project
+  // mark's upload verb writes its `mark` pref through this exact composition's
+  // `setProjectValue` — one write path for a user's pick and for an upload's implied one.
+  const settingsComposition = createSettingsComposition({
+    listProjects: () => projectStore.list(),
+    loadConfigState: (repoKey) => snapshotStore.loadConfigState(repoKey),
+    readGlobalState: () => clientSettingsStore.readState(),
+    updateGlobal: (update) => clientSettingsStore.update(update),
+    // This host's daemon-settings — the local host's global rung, the only one
+    // locally readable; remote/WSL hosts keep theirs on that host (#476, §4.2).
+    readDaemonSettings: () => daemonSettingsStore.read(),
+    // The tracker section (#461, B7) is a global-rung host fact, so it writes to
+    // daemon-settings — the same store `resolveTrackerConfig` reads it back from.
+    updateDaemon: (update) => daemonSettingsStore.update(update),
+    // Paired devices are the source for project-less remote hosts on the surface
+    // (#476, finding 9) — a device paired before its first project is still listed.
+    listPairedDevices: () => pairingStore.listDevices(),
+    // Ask ONE host's daemon whether it is running, for the host cards (C17, #485).
+    probeDaemon: (source) => probeDaemonForHost(source, dataDir, serverVersion),
+    // The same handshake, on demand, behind Reconnect (C17 cluster 5, #533) — throwing the
+    // reason for a host kind this daemon cannot reach at all.
+    reconnectDaemon: (source) => reconnectDaemonForHost(source, dataDir, serverVersion),
+    // The version a host's daemon would update TO — served ONLY for a host Rennet can
+    // actually update (review finding 5). A WSL distro can be updated when this daemon has a
+    // bundle to deliver; this machine's daemon ships with the app and a paired device
+    // updates itself, so neither gets an `updateAvailable` flag whose button could only fail.
+    latestDaemonVersionFor: (source) =>
+      source.startsWith("wsl:") && options.hostBundlePath ? serverVersion : undefined,
+    // Ask ONE host which coding agents are installed on IT (C17 cluster 3, #485).
+    detectHarnessesOn,
+    // …and which forge CLIs it has (C17 amendment B), so a WSL card shows its own state.
+    detectForgesOn,
+    // The real per-host daemon update behind Update Daemon (C17 cluster 6, #534). A host
+    // kind with no mechanism throws its reason, so the card never reads a fake success.
+    updateDaemonOn: updateDaemonForHost,
+    gitTopLevel: async (workingPath) => {
+      let topLevel: string;
+      try {
+        topLevel = (
+          await gitForRepo(workingPath)(workingPath, ["rev-parse", "--show-toplevel"], {
+            reject: true,
+          })
+        ).trim();
+      } catch (error) {
+        if (error instanceof LocusDistroMismatchError) throw error;
+        return null;
+      }
+      if (!topLevel) return null;
+      try {
+        const locus = locusForRepo(workingPath);
+        const hostTopLevel =
+          locus.kind === "wsl" && topLevel.startsWith("/")
+            ? toWindowsView(topLevel, locus.distro)
+            : topLevel;
+        return realpathSync(hostTopLevel);
+      } catch {
+        return null;
+      }
+    },
+    discoverWorkspaceRepos: async (project) => {
+      const result = await discoverProject(
+        defaultProjectDiscoveryDeps(gitForRepo(project.path)),
+        project.path,
+        "workspace",
+      );
+      return result.repos.map((repo) => repo.path);
+    },
+    loadGuidance: (repoRoot) => loadConventionCatalogue(repoRoot),
+    applyVisibility: async ({ repoKey, repoRoot, target }) => {
+      const preview = await applyVisibilitySwitch(
+        snapshotStore,
+        repoKey,
+        repoRoot,
+        target,
+        gitForRepo(repoRoot),
+      );
+      return { changed: preview.changed, gitignorePath: preview.gitignorePath };
+    },
+    // The repo rung of the settings ladder (C18 group A): one pref written into the
+    // project's own `config.json`. `updateConfig` REFUSES a malformed file (Rule 75),
+    // so a corrupt config is never clobbered by an edit.
+    writeRepoValue: ({ repoKey, field, value }) => {
+      snapshotStore.updateConfig(repoKey, (current) => withRepoPref(current, field, value));
+    },
+    // The scout's DETECTED offers for the row's provenance — the SAME offers
+    // `resolveTrackerConfig` folds, so the chip names the layer retrieval used.
+    scoutOffers: (repoKey) => scoutSettingsOffers(snapshotStore, repoKey),
+    // The `detected` rung of the `mark` ladder (#900): whether the copy is on disk, not
+    // whether the scout once recorded a path — the mark is bytes Rennet owns (ADR 0004).
+    detectedLogoExists: (repoKey) => detectedLogoExists(snapshotStore, repoKey),
+    // The guidance WRITER beside the reader: the repo's own `.rennet/conventions.json`.
+    saveGuidance: (repoRoot, rules) => saveConventionCatalogue(repoRoot, rules),
+    clearRepoValue: ({ repoKey, field }) => {
+      // Drop a repo-scoped field so the value falls back down the ladder (Reset).
+      // `updateConfig` refuses a malformed file (Rule 75), so nothing is clobbered.
+      snapshotStore.updateConfig(repoKey, (current) => {
+        const next: Record<string, unknown> = { ...current };
+        delete next[field];
+        return next as unknown as typeof current;
+      });
+    },
+  });
+
   dispatch = createDispatch({
     t3Sidecar,
     // The lines a truncated capture cut short, read from the immutable object the patchset
@@ -5351,58 +5456,21 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // visibility switch. The malformed refusals live in the stores themselves.
     // The benchmarks panel's read side (#731 9.6) — newest runs, capped by the caller.
     listBenchmarks: (limit) => benchmarkStore.read(limit),
-    settings: createSettingsComposition({
+    settings: settingsComposition,
+    // The project mark's three verbs (#900, ADR 0004). Detection reuses the scout runtime's
+    // own seat, so there is still exactly one harness path for the scout; the upload's pref
+    // write goes through the settings composition above, not a second writer.
+    projectMarks: createProjectMarks({
+      store: snapshotStore,
       listProjects: () => projectStore.list(),
-      loadConfigState: (repoKey) => snapshotStore.loadConfigState(repoKey),
-      readGlobalState: () => clientSettingsStore.readState(),
-      updateGlobal: (update) => clientSettingsStore.update(update),
-      // This host's daemon-settings — the local host's global rung, the only one
-      // locally readable; remote/WSL hosts keep theirs on that host (#476, §4.2).
-      readDaemonSettings: () => daemonSettingsStore.read(),
-      // The tracker section (#461, B7) is a global-rung host fact, so it writes to
-      // daemon-settings — the same store `resolveTrackerConfig` reads it back from.
-      updateDaemon: (update) => daemonSettingsStore.update(update),
-      // Paired devices are the source for project-less remote hosts on the surface
-      // (#476, finding 9) — a device paired before its first project is still listed.
-      listPairedDevices: () => pairingStore.listDevices(),
-      // Ask ONE host's daemon whether it is running, for the host cards (C17, #485).
-      probeDaemon: (source) => probeDaemonForHost(source, dataDir, serverVersion),
-      // The same handshake, on demand, behind Reconnect (C17 cluster 5, #533) — throwing the
-      // reason for a host kind this daemon cannot reach at all.
-      reconnectDaemon: (source) => reconnectDaemonForHost(source, dataDir, serverVersion),
-      // The version a host's daemon would update TO — served ONLY for a host Rennet can
-      // actually update (review finding 5). A WSL distro can be updated when this daemon has a
-      // bundle to deliver; this machine's daemon ships with the app and a paired device
-      // updates itself, so neither gets an `updateAvailable` flag whose button could only fail.
-      latestDaemonVersionFor: (source) =>
-        source.startsWith("wsl:") && options.hostBundlePath ? serverVersion : undefined,
-      // Ask ONE host which coding agents are installed on IT (C17 cluster 3, #485).
-      detectHarnessesOn,
-      // …and which forge CLIs it has (C17 amendment B), so a WSL card shows its own state.
-      detectForgesOn,
-      // The real per-host daemon update behind Update Daemon (C17 cluster 6, #534). A host
-      // kind with no mechanism throws its reason, so the card never reads a fake success.
-      updateDaemonOn: updateDaemonForHost,
       gitTopLevel: async (workingPath) => {
-        let topLevel: string;
         try {
-          topLevel = (
+          const topLevel = (
             await gitForRepo(workingPath)(workingPath, ["rev-parse", "--show-toplevel"], {
               reject: true,
             })
           ).trim();
-        } catch (error) {
-          if (error instanceof LocusDistroMismatchError) throw error;
-          return null;
-        }
-        if (!topLevel) return null;
-        try {
-          const locus = locusForRepo(workingPath);
-          const hostTopLevel =
-            locus.kind === "wsl" && topLevel.startsWith("/")
-              ? toWindowsView(topLevel, locus.distro)
-              : topLevel;
-          return realpathSync(hostTopLevel);
+          return topLevel ? realpathSync(topLevel) : null;
         } catch {
           return null;
         }
@@ -5415,37 +5483,8 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         );
         return result.repos.map((repo) => repo.path);
       },
-      loadGuidance: (repoRoot) => loadConventionCatalogue(repoRoot),
-      applyVisibility: async ({ repoKey, repoRoot, target }) => {
-        const preview = await applyVisibilitySwitch(
-          snapshotStore,
-          repoKey,
-          repoRoot,
-          target,
-          gitForRepo(repoRoot),
-        );
-        return { changed: preview.changed, gitignorePath: preview.gitignorePath };
-      },
-      // The repo rung of the settings ladder (C18 group A): one pref written into the
-      // project's own `config.json`. `updateConfig` REFUSES a malformed file (Rule 75),
-      // so a corrupt config is never clobbered by an edit.
-      writeRepoValue: ({ repoKey, field, value }) => {
-        snapshotStore.updateConfig(repoKey, (current) => withRepoPref(current, field, value));
-      },
-      // The scout's DETECTED offers for the row's provenance — the SAME offers
-      // `resolveTrackerConfig` folds, so the chip names the layer retrieval used.
-      scoutOffers: (repoKey) => scoutSettingsOffers(snapshotStore, repoKey),
-      // The guidance WRITER beside the reader: the repo's own `.rennet/conventions.json`.
-      saveGuidance: (repoRoot, rules) => saveConventionCatalogue(repoRoot, rules),
-      clearRepoValue: ({ repoKey, field }) => {
-        // Drop a repo-scoped field so the value falls back down the ladder (Reset).
-        // `updateConfig` refuses a malformed file (Rule 75), so nothing is clobbered.
-        snapshotStore.updateConfig(repoKey, (current) => {
-          const next: Record<string, unknown> = { ...current };
-          delete next[field];
-          return next as unknown as typeof current;
-        });
-      },
+      detectLogoForRepo: (input) => projectScoutRuntime.detectLogoForRepo(input),
+      setProjectValue: (input) => settingsComposition.setProjectValue(input),
     }),
   });
 

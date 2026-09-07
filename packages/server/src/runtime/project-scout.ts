@@ -1,16 +1,24 @@
 import { randomUUID } from "node:crypto";
 import { basename } from "node:path";
 import {
+  copyDetectedLogo,
   councilSeatTurn,
+  detectProjectLogo,
   type GitExec,
   PROJECT_SCOUT_CONTEXT_PREFIX,
   PROJECT_SCOUT_SCHEMA,
   type ProjectSnapshotStore,
   runProjectScout,
+  type ScoutFact,
   type ScoutResult,
   saveScoutFacts,
 } from "@rennet/adapters";
-import type { CodexExecutor, CouncilOverrideReader, HarnessPort } from "@rennet/core";
+import type {
+  CodexExecutor,
+  CouncilOverrideReader,
+  HarnessPort,
+  HarnessTurnResult,
+} from "@rennet/core";
 import { councilContextFor } from "@rennet/core";
 import type {
   CouncilHarnessId,
@@ -60,6 +68,16 @@ export interface ProjectScoutRunInput {
 
 export interface ProjectScoutRuntime {
   runForRepo(input: ProjectScoutRunInput): Promise<ScoutResult | null>;
+  /**
+   * Re-run ONLY the logo half for one repo, and copy the pick into its project dir (#900) —
+   * Identity's "Detect again". It routes through the SAME council seat `runForRepo` does, so
+   * there is one harness path for the scout; it just asks a smaller question. `null` means no
+   * candidate survived, and any previous copy is left where it is.
+   */
+  detectLogoForRepo(input: {
+    readonly repoKey: string;
+    readonly repoRoot: string;
+  }): Promise<ScoutFact | null>;
 }
 
 const ANSWER_HINT: Record<ProjectScoutAnswer["key"], string> = {
@@ -72,7 +90,7 @@ const ANSWER_HINT: Record<ProjectScoutAnswer["key"], string> = {
   worktreeBaseDir: "where this repository's own worktrees live",
   gateCommand: "a coding round asks its worker to run this before committing",
   logoPath:
-    "cosmetic repository evidence only; choose the sidebar mark in Settings → Projects → Identity",
+    "the logo Rennet copies in and shows as this project's mark; change it in Settings → Projects → Identity",
 };
 
 const ANSWER_OPTIONS: Partial<Record<ProjectScoutAnswer["key"], readonly string[]>> = {
@@ -110,7 +128,54 @@ export function scoutQuestionnaire(repo: string, result: ScoutResult): ProjectSc
 }
 
 export function createProjectScoutRuntime(deps: ProjectScoutRuntimeDeps): ProjectScoutRuntime {
+  /**
+   * The `project-scout` council seat for one repo, or null when no harness is installed.
+   * ONE resolution shared by the full run and by logo-only re-detection, so both reach the
+   * single `port.createSession` the council owns and neither grows a second harness path.
+   */
+  const resolveSeat = async (
+    repoRoot: string,
+  ): Promise<((prompt: string, attempt: number) => Promise<HarnessTurnResult>) | null> => {
+    // Each resolver failure is isolated to its own harness: a rejected
+    // discovery must not skip the deterministic pass (which needs no model
+    // at all) — it just narrows availability.
+    const [claudePort, codexExecutor] = await Promise.all([
+      deps.resolveClaudePort(repoRoot).catch(() => null),
+      deps.resolveCodexExecutor(repoRoot).catch(() => null),
+    ]);
+    const installed: CouncilHarnessId[] = [];
+    if (claudePort) installed.push("claude-code");
+    if (codexExecutor) installed.push("codex");
+    if (installed.length === 0) return null;
+    const seat = councilSeatTurn(
+      "project-scout",
+      PROJECT_SCOUT_SCHEMA,
+      { claudePort, codexExecutor, repoRoot, label: "project.scout" },
+      councilContextFor(installed, deps.councilOverrides),
+    );
+    return "runTurn" in seat ? seat.runTurn : null;
+  };
+
+  /** Copy the fact's file into the project dir, so the mark is bytes Rennet owns (ADR 0004).
+   *  The repo comes from the FACT, never from the project — a workspace maps many repos to
+   *  one identity and the project cannot say which one this path is relative to. */
+  const copyMark = (repoKey: string, fact: ScoutFact | undefined): void => {
+    if (fact?.provenance !== "detected" || fact.value === "") return;
+    // A fact with no recorded root predates #900 and cannot be resolved to a repository
+    // here without guessing one. Copying nothing is the honest answer; "Detect again"
+    // recomputes it with a root attached.
+    if (!fact.repoRoot) return;
+    copyDetectedLogo(deps.store, repoKey, fact.repoRoot, fact.value);
+  };
+
   return {
+    async detectLogoForRepo(input): Promise<ScoutFact | null> {
+      const runTurn = await resolveSeat(input.repoRoot).catch(() => null);
+      const fact = await detectProjectLogo({ repoRoot: input.repoRoot, runTurn });
+      if (fact) copyMark(input.repoKey, fact);
+      return fact;
+    },
+
     async runForRepo(input: ProjectScoutRunInput): Promise<ScoutResult | null> {
       const repoLabel = basename(input.repoRoot);
       const narrate = (event: ProjectProcessEvent): void => {
@@ -118,30 +183,7 @@ export function createProjectScoutRuntime(deps: ProjectScoutRuntimeDeps): Projec
         else deps.narrate?.(input.projectId, event);
       };
       try {
-        // Each resolver failure is isolated to its own harness: a rejected
-        // discovery must not skip the deterministic pass (which needs no model
-        // at all) — it just narrows availability.
-        const [claudePort, codexExecutor] = await Promise.all([
-          deps.resolveClaudePort(input.repoRoot).catch(() => null),
-          deps.resolveCodexExecutor(input.repoRoot).catch(() => null),
-        ]);
-        const installed: CouncilHarnessId[] = [];
-        if (claudePort) installed.push("claude-code");
-        if (codexExecutor) installed.push("codex");
-        const seat =
-          installed.length === 0
-            ? null
-            : councilSeatTurn(
-                "project-scout",
-                PROJECT_SCOUT_SCHEMA,
-                {
-                  claudePort,
-                  codexExecutor,
-                  repoRoot: input.repoRoot,
-                  label: "project.scout",
-                },
-                councilContextFor(installed, deps.councilOverrides),
-              );
+        const runTurn = await resolveSeat(input.repoRoot);
         // The scout runs for a PROJECT, before any session exists, so its context sits in
         // the repo it is scouting under an id of its OWN — one per run, and purged when
         // the run returns. A fixed id was never a session id, so every daemon start read
@@ -154,7 +196,7 @@ export function createProjectScoutRuntime(deps: ProjectScoutRuntimeDeps): Projec
             repoRoot: input.repoRoot,
             git: deps.gitForRepo(input.repoRoot),
             ...(input.defaultBranch ? { knownDefaultBranch: input.defaultBranch } : {}),
-            runTurn: seat !== null && "runTurn" in seat ? seat.runTurn : null,
+            runTurn,
             writeContext: (files) => writeSessionContext(input.repoRoot, contextId, files),
             onProgress: (progress) => {
               if (!input.runId) return;
@@ -182,6 +224,10 @@ export function createProjectScoutRuntime(deps: ProjectScoutRuntimeDeps): Projec
           purgeSessionContext(input.repoRoot, contextId);
         }
         saveScoutFacts(deps.store, input.repoKey, result);
+        // A project add copies its mark with no user action (#900): the scout's detected
+        // logo becomes bytes in the project dir, which is what the `mark` ladder's
+        // `detected` rung is offered on.
+        copyMark(input.repoKey, result.facts.logoPath);
         const questionnaire = scoutQuestionnaire(repoLabel, result);
         if (input.runId) {
           narrate({

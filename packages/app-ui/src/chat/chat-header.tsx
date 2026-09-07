@@ -1,5 +1,6 @@
 import { cn } from "@rennet/ui";
 import type { ReactNode } from "react";
+import { useMacTrafficLights } from "../shell/corner-slot";
 import { Trail } from "../shell/trail";
 import type { ChatTrail } from "./chat-data";
 
@@ -24,11 +25,16 @@ export function ChatHeader({
   /** State 2's corner slot — present exactly when the chat pane owns it. */
   readonly corner?: ReactNode;
 }) {
+  const mac = useMacTrafficLights();
   return (
     <header
       className={cn(
         "flex h-14 shrink-0 items-center gap-2 border-b border-border pr-3",
         corner ? "pl-0" : "pl-3",
+        // The dock header drags the window on darwin: it holds only the corner slot
+        // (which carries its own drag region and its one control opts out) and the
+        // trail, whose location control opts out of the drag region.
+        mac && "app-region-drag",
       )}
     >
       {corner}

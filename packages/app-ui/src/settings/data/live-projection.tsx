@@ -2,7 +2,10 @@ import {
   councilPickSchema,
   type DaemonHostStatus,
   type DetectedForge,
+  type ProjectLogo,
   type ProjectSource,
+  projectLogoMimeSchema,
+  projectMarkChoiceSchema,
   type ReviewRoleCell,
   type ReviewRoleMapping,
   type SettingsProject,
@@ -11,8 +14,14 @@ import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { useBridge, useCommand, useMutation } from "../../data";
 import type { AgentToolId } from "../assets/agent-marks";
 import { type HostOS, osFromPlatform } from "../assets/os-glyphs";
-import { PROJECT_ICON_NAMES, type ProjectIconName } from "../assets/project-icon";
+import {
+  DEFAULT_PROJECT_ICON,
+  PROJECT_ICON_NAMES,
+  type ProjectIconName,
+} from "../assets/project-icon";
+import { logoMark, type ProjectMarkView } from "../assets/project-mark";
 import { DEFAULT_WORKTREE_PATTERN, DEFAULT_WORKTREE_ROOT } from "../assets/worktree";
+import { useDetectProjectLogo, useProjectLogos, useUploadProjectLogo } from "./live";
 import {
   type DaemonInfo,
   type DetectedTool,
@@ -109,6 +118,12 @@ import type { Layered } from "./provenance";
 // command — `project.rename`, read back off `projects.list` — so `nameEditsPersist` and
 // `projectEditsPersist` are separate flags over two separate stores.
 //
+// The project MARK (#900) folds those two sources into one answer: `project.logos` carries
+// the bytes each project holds and `settings.get`'s resolved `mark` pref says which of them
+// shows, so `markByProject` is composed here rather than asked for. A `mark` naming a logo
+// whose bytes are absent falls back to the glyph — the file was removed, or the logo read
+// has not landed — and nothing invents a ladder the daemon did not resolve.
+//
 // This provider wraps the live Settings takeover. Tests that mount a page directly
 // supply their own projection, so the seam stays fully test-drivable; a test may still
 // exercise THIS provider by supplying the four bridge handlers it reads.
@@ -169,6 +184,7 @@ function forgeRow(forge: DetectedForge, disabled: ReadonlySet<string>): Detected
  *  vocabulary, minus the ones no control on these pages edits. */
 type ProjectPrefKey =
   | "glyph"
+  | "mark"
   | "worktreeRoot"
   | "worktreePattern"
   | "trackerKind"
@@ -193,6 +209,18 @@ function layeredOr(resolved: { value: string; layer: Layered<string>["layer"] },
  *  rendered as a missing glyph. */
 function isProjectIconName(value: string): value is ProjectIconName {
   return (PROJECT_ICON_NAMES as readonly string[]).includes(value);
+}
+
+/** A picked file's bytes as base64. Chunked so a large image cannot overflow the argument
+ *  list `String.fromCharCode` is spread into; no size cap by ruling (2026-09-07). */
+async function fileBase64(file: File): Promise<string> {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const chunk = 0x8000;
+  let binary = "";
+  for (let index = 0; index < bytes.length; index += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + chunk));
+  }
+  return btoa(binary);
 }
 
 /** A served tracker kind, or `none` — the surface never shows a kind it cannot render. */
@@ -240,6 +268,10 @@ export function LiveSettingsProjectionProvider({ children }: { readonly children
   const { data: status } = useCommand("daemon.status", {});
   // The forge CLIs on EACH enumerated host, probed server-side through that host's own deps.
   const { data: forges } = useCommand("forge.hosts", {});
+  // Every project's logo bytes in ONE read (#900). The sidebar draws a mark per project
+  // row, so a read per project would fan the whole tree out over the bridge; the mark a
+  // row shows is then decided from this set plus the row's own resolved `mark` pref.
+  const { data: logoData } = useProjectLogos();
   // The toggle is a served WRITE: it persists, then invalidates the detection read so the
   // switch reflects what is actually STORED rather than an optimistic local guess.
   const { mutate: setEnabled } = useMutation("harness.setEnabled", {
@@ -285,6 +317,11 @@ export function LiveSettingsProjectionProvider({ children }: { readonly children
   const { mutate: renameProject } = useMutation("project.rename", {
     invalidates: ["projects.list"],
   });
+  // The two logo WRITES (#900). Both stale the same pair: `project.logos` holds the bytes
+  // and `settings.get` holds the resolved `mark` that chooses between them, so the mark on
+  // screen settles on what the host stored rather than on the click.
+  const { mutate: uploadLogo } = useUploadProjectLogo();
+  const { mutate: detectLogo } = useDetectProjectLogo();
   const [adopted, setAdopted] = useState<readonly ReviewRole[] | null>(null);
 
   // The adoption covers exactly one gap — between a write's response and the read it
@@ -382,7 +419,15 @@ export function LiveSettingsProjectionProvider({ children }: { readonly children
     for (const row of settings?.projects ?? []) {
       if (!rowByProject.has(row.projectId)) rowByProject.set(row.projectId, row);
     }
+    // The logo FILES, keyed by project then by kind. This is what EXISTS; the `mark` pref
+    // below decides which of them (if either) a project actually shows.
+    const logosByProject: Record<string, { detected?: ProjectLogo; upload?: ProjectLogo }> = {};
+    for (const logo of logoData?.logos ?? []) {
+      logosByProject[logo.projectId] = { ...logosByProject[logo.projectId], [logo.logo]: logo };
+    }
+
     const glyphByProject: Record<string, ProjectIconName> = {};
+    const markByProject: Record<string, ProjectMarkView> = {};
     const worktreeByProject: Record<string, WorktreeSettings> = {};
     const trackerByProject: Record<string, IssueTrackerSettings> = {};
     const guidanceByProject: Record<string, readonly GuidanceRule[]> = {};
@@ -392,6 +437,21 @@ export function LiveSettingsProjectionProvider({ children }: { readonly children
       // honest empty state rather than showing a value nobody resolved.
       if (!prefs) continue;
       if (isProjectIconName(prefs.glyph.value)) glyphByProject[projectId] = prefs.glyph.value;
+      // The mark the ladder resolved. A choice of `detected`/`upload` whose bytes are not
+      // in the logo read shows the GLYPH — the file was removed, or the read has not
+      // landed — rather than an empty square where a mark should be.
+      const choice = projectMarkChoiceSchema.safeParse(prefs.mark.value);
+      const chosenLogo = choice.success
+        ? choice.data === "glyph"
+          ? undefined
+          : logosByProject[projectId]?.[choice.data]
+        : undefined;
+      markByProject[projectId] = chosenLogo
+        ? logoMark(chosenLogo)
+        : {
+            kind: "glyph",
+            icon: isProjectIconName(prefs.glyph.value) ? prefs.glyph.value : DEFAULT_PROJECT_ICON,
+          };
       worktreeByProject[projectId] = {
         // An empty resolved value IS "nobody has set this", so the client's own default
         // shows — carrying the layer the resolver reported, not a fabricated one.
@@ -457,10 +517,41 @@ export function LiveSettingsProjectionProvider({ children }: { readonly children
       sourceControlByHost,
       agentsByHost,
       glyphByProject,
+      markByProject,
+      logosByProject,
       worktreeByProject,
       trackerByProject,
       guidanceByProject,
-      setProjectGlyph: (projectId, icon) => writePref(projectId, "glyph", icon),
+      // Picking a glyph names WHICH glyph and says a glyph shows at all — two keys, because
+      // a project wearing its repo's logo would otherwise keep wearing it while the grid
+      // moved underneath. The mark write is what the sidebar reacts to.
+      setProjectGlyph: (projectId, icon) => {
+        writePref(projectId, "glyph", icon);
+        writePref(projectId, "mark", "glyph");
+      },
+      setProjectMark: (projectId, choice) => writePref(projectId, "mark", choice),
+      uploadProjectLogo: (projectId, file) => {
+        // A type the wire refuses is not sent: the surface names the accepted formats
+        // before it gets here, and this is the boundary that keeps a mis-typed file from
+        // becoming a rejected invocation the reviewer never asked for.
+        const mimeType = projectLogoMimeSchema.safeParse(file.type);
+        if (!mimeType.success) return;
+        void fileBase64(file)
+          .then((bytesBase64) =>
+            uploadLogo({ projectId, mimeType: mimeType.data, bytesBase64, fileName: file.name }),
+          )
+          // A refused write leaves the mark where the served read put it — never a preview
+          // of bytes the host declined to store.
+          .catch(() => undefined);
+      },
+      detectProjectLogo: async (projectId) => {
+        try {
+          return await detectLogo({ projectId });
+        } catch {
+          // A rejected dispatch IS a detection that found nothing, reported as one.
+          return { found: false, source: null };
+        }
+      },
       setWorktreeRoot: (projectId, root) => writePref(projectId, "worktreeRoot", root),
       setWorktreePattern: (projectId, pattern) => writePref(projectId, "worktreePattern", pattern),
       setTracker: (projectId, tracker) => {
@@ -558,6 +649,9 @@ export function LiveSettingsProjectionProvider({ children }: { readonly children
     settings,
     status,
     forges,
+    logoData,
+    uploadLogo,
+    detectLogo,
     bridge.platform,
     setEnabled,
     setForgeEnabled,

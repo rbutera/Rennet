@@ -248,8 +248,8 @@ export function TopBar() {
   // shadows was not amended, so the chips carry a hairline, not a shadow.
   const chip = "border border-line/60 bg-surface/70 backdrop-blur-md";
   const iconButton = floating
-    ? cn("size-8 rounded-full", chip)
-    : "size-6 rounded-md hover:bg-secondary";
+    ? cn("app-region-no-drag size-8 rounded-full", chip)
+    : "app-region-no-drag size-6 rounded-md hover:bg-secondary";
   return (
     <header
       data-slot="session-top-bar"
@@ -259,6 +259,12 @@ export function TopBar() {
         floating
           ? "pointer-events-none absolute inset-x-0 top-0 z-30 min-h-11"
           : "min-h-14 shrink-0 border-b border-line",
+        // In the SOLID bar (states 1–2), the empty space and the trail text drag
+        // the window on darwin — the same titlebar affordance the corner slot carries.
+        // Every control inside marks itself `app-region-no-drag` (below) or it goes dead.
+        // The floating bar is `pointer-events-none` and dissolves into interactive chips,
+        // so it never claims the drag region — dragging over full-bleed content is not it.
+        !floating && mac && "app-region-drag",
       )}
     >
       {/* LEFT slot: back arrow (off-board), the one chat toggle, trail. In state 3 it
@@ -312,7 +318,7 @@ export function TopBar() {
           present on non-board views with no active segment; choosing one returns to its board. */}
       <div
         data-slot="lens-switcher"
-        className="flex min-w-0 grow items-center overflow-x-auto @max-[640px]:order-3 @max-[640px]:basis-full"
+        className="app-region-no-drag flex min-w-0 grow items-center overflow-x-auto @max-[640px]:order-3 @max-[640px]:basis-full"
       >
         <LensSwitcher
           lenses={lenses}
@@ -333,7 +339,7 @@ export function TopBar() {
           context, not by direct-child position, so nesting keeps arrow keys. */}
       <div
         className={cn(
-          "ml-auto flex min-w-0 items-center justify-end overflow-x-auto",
+          "app-region-no-drag ml-auto flex min-w-0 items-center justify-end overflow-x-auto",
           floating && "pointer-events-auto",
         )}
       >

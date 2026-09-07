@@ -52,6 +52,7 @@ function projectRow(): SettingsProject {
     configMalformed: false,
     prefs: {
       glyph: layered(""),
+      mark: layered("glyph"),
       worktreeRoot: layered(""),
       worktreePattern: layered(""),
       tracker: {

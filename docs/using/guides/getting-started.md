@@ -94,10 +94,13 @@ check command is what a coding round's work order asks its agent to run before
 committing; Rennet never runs it itself. Every answer carries a chip reading
 **detected** or **guessed** —
 the value, provenance, and evidence line come from the scout record Rennet just
-saved, rather than from canned UI defaults. A detected logo path remains cosmetic:
-it is evidence for choosing one of the fixed sidebar glyphs in **Settings →
-Projects → Identity**, and never enters agent context. Answer it or skip it — the
-map finishes and the project works either way.
+saved, rather than from canned UI defaults. When the scout finds a logo in the
+repository, Rennet copies it in and the project shows it straight away — no click.
+You can override that in **Settings → Projects → Identity**: pick one of the fixed
+glyphs, upload your own image, or ask Rennet to detect again. Your pick wins over a
+later detection, and the mark stays cosmetic — it never enters agent context.
+Answer the questionnaire or skip it — the map finishes and the project works
+either way.
 
 When the map is built, the processing view shows a **Project Ready** summary —
 its scope and file counts — and a full-width **Start a Review** button beneath it

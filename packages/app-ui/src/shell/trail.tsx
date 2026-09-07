@@ -47,7 +47,7 @@ export function Trail({ title, projectName, target, targetState, workspace }: Tr
                 <button
                   type="button"
                   aria-label="Review location"
-                  className="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-secondary"
+                  className="app-region-no-drag shrink-0 rounded p-0.5 text-muted-foreground hover:bg-secondary"
                 />
               }
             >

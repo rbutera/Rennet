@@ -36,6 +36,7 @@ import type {
   HarnessHostDetection,
   PairedDevice,
   Project,
+  ProjectMarkChoice,
   ProjectSource,
   ProjectVisibility,
   ReviewRoleMapping,
@@ -85,6 +86,7 @@ export interface SettingsCompositionDeps {
           visibility?: ProjectVisibility;
           promoted?: boolean;
           glyph?: string;
+          mark?: string;
           worktreeBaseDir?: string;
           worktreePattern?: string;
           tracker?: {
@@ -111,6 +113,16 @@ export interface SettingsCompositionDeps {
    * with no scout wired.
    */
   scoutOffers?(repoKey: string): Readonly<Record<string, string | undefined>>;
+  /**
+   * Whether ONE repo's project dir holds a copied detected logo (#900, ADR 0004) — the
+   * `detected` rung of the `mark` ladder. It asks about the FILE, not the scout's recorded
+   * path: the mark is bytes Rennet owns, so a scout fact whose file was never copied (or
+   * was removed) must not offer a mark the surface cannot render.
+   *
+   * Absent dep ⇒ no project offers `detected`, which is the honest answer for a composition
+   * with no mark store wired.
+   */
+  detectedLogoExists?(repoKey: string): boolean;
   /**
    * Write a repo's guidance catalogue to its `.rennet/conventions.json` (C18 group A)
    * — the WRITER beside `loadGuidance`. Returns the catalogue read BACK off the file,
@@ -517,6 +529,9 @@ const PROJECT_PREF: Record<
   { readonly field: RepoPrefField; readonly validate: (value: string) => string }
 > = {
   glyph: { field: "glyph", validate: SETTINGS_REGISTRY.projectGlyph.validate },
+  // The mark vocabulary is enforced by the SAME validator the resolver reads by, so
+  // `mark: "photo"` is refused at the write rather than resolving to nothing later.
+  mark: { field: "mark", validate: SETTINGS_REGISTRY.projectMark.validate },
   worktreeRoot: { field: "worktreeBaseDir", validate: SETTINGS_REGISTRY.worktreeBaseDir.validate },
   worktreePattern: {
     field: "worktreePattern",
@@ -562,6 +577,12 @@ function trackerView(resolved: ResolvedTracker): SettingsProjectPrefs["tracker"]
     baseUrl: { value: resolved.baseUrl.value, layer: resolved.baseUrl.layer },
     tokenEnv: { value: resolved.tokenEnv.value, layer: resolved.tokenEnv.layer },
   };
+}
+
+/** A STORED mark choice as a ladder offer, on the same terms as the tracker kind: a
+ *  hand-edited `mark: "photo"` is DROPPED rather than thrown into resolution. */
+function markOffer(value: string | undefined): ProjectMarkChoice | undefined {
+  return value === "glyph" || value === "detected" || value === "upload" ? value : undefined;
 }
 
 /** A STORED tracker kind as a ladder offer: only the real vocabulary is offered, so a
@@ -687,10 +708,18 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
     target: RepoTarget,
     config: {
       glyph?: string;
+      mark?: string;
       worktreeBaseDir?: string;
       worktreePattern?: string;
       tracker?: { kind?: string; projectKey?: string; baseUrl?: string; tokenEnv?: string };
     } | null,
+    /**
+     * Every repo key of the project this row belongs to. The mark's `detected` rung is
+     * offered when ANY of them holds a copied logo, not only this row's: the scout runs per
+     * repo, so in a workspace the logo may have been found in the second repo while the
+     * client reads the FIRST row's prefs. Resolving per-target alone would hide it.
+     */
+    projectRepoKeys: readonly string[],
   ): SettingsProjectPrefs => {
     const detected = deps.scoutOffers?.(target.repoKey) ?? {};
     const globalTracker = deps.readDaemonSettings().tracker ?? {};
@@ -702,6 +731,17 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
     const guidance = deps.loadGuidance(target.repoRoot);
     return {
       glyph: layered(resolve(SETTINGS_REGISTRY.projectGlyph, { repo: offer(config?.glyph) })),
+      // The `detected` rung is the EXISTENCE of a copied logo file, not the scout's stored
+      // path (ADR 0004): the mark is bytes in the project dir, so a path that no longer
+      // resolves must not offer a mark the surface cannot show.
+      mark: layered(
+        resolve(SETTINGS_REGISTRY.projectMark, {
+          ...(projectRepoKeys.some((repoKey) => deps.detectedLogoExists?.(repoKey))
+            ? { detected: "detected" as const }
+            : {}),
+          repo: markOffer(config?.mark),
+        }),
+      ),
       worktreeRoot: layered(
         resolve(SETTINGS_REGISTRY.worktreeBaseDir, {
           detected: offer(detected.worktreeBaseDir),
@@ -748,6 +788,10 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
     project: Project,
     target: RepoTarget,
     multiRepo: boolean,
+    /** Every repo key of this project, for the prefs a project resolves across its repos
+     *  (the mark's `detected` rung). Defaults to this row's own, which is the whole set
+     *  for a single-repo project. */
+    projectRepoKeys: readonly string[] = [target.repoKey],
   ): SettingsProject => {
     const configState = deps.loadConfigState(target.repoKey);
     const configMalformed = configState.status === "malformed";
@@ -775,7 +819,7 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
       // A malformed config contributes NO repo offers (`config` is null), so the row
       // shows the lower layers' answers and its edits are refused — the same rule the
       // rest of the row already follows.
-      prefs: resolvePrefs(target, config),
+      prefs: resolvePrefs(target, config, projectRepoKeys),
     };
   };
 
@@ -785,13 +829,25 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
   const liveTarget = async (
     projectId: string,
     repoPath: string,
-  ): Promise<{ project: Project; target: RepoTarget; multiRepo: boolean } | null> => {
+  ): Promise<{
+    project: Project;
+    target: RepoTarget;
+    multiRepo: boolean;
+    /** Every repo key of the project, so a post-write re-resolution sees the same
+     *  cross-repo prefs `get()` does (the mark's `detected` rung). */
+    repoKeys: string[];
+  } | null> => {
     const project = deps.listProjects().find((entry) => entry.id === projectId);
     if (!project) return null;
     const targets = await targetsFor(project);
     const target = targets.find((entry) => entry.repoPath === repoPath);
     if (!target) return null;
-    return { project, target, multiRepo: targets.length > 1 };
+    return {
+      project,
+      target,
+      multiRepo: targets.length > 1,
+      repoKeys: targets.map((entry) => entry.repoKey),
+    };
   };
 
   // Every daemon host the surface covers (#476): the LOCAL host first (its
@@ -879,10 +935,11 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
       for (const project of allProjects) {
         const targets = await targetsFor(project);
         const multiRepo = targets.length > 1;
+        const repoKeys = targets.map((entry) => entry.repoKey);
         for (const target of targets) {
           if (emittedRepoPaths.has(target.repoPath)) continue;
           emittedRepoPaths.add(target.repoPath);
-          projects.push(resolveRow(project, target, multiRepo));
+          projects.push(resolveRow(project, target, multiRepo, repoKeys));
         }
       }
       return {
@@ -1233,10 +1290,14 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
         return { status: "malformed", key: input.key, project: null };
       }
       const pref = PROJECT_PREF[input.key];
-      // Validate through the registry declaration the RESOLVER reads by, so the write
-      // and the read cannot disagree about what a legal value is. A blank value is a
-      // RESET — the entry is dropped so the value falls back down the ladder.
-      const validated = input.value === null ? null : pref.validate(input.value);
+      // A blank value is a RESET — the entry is dropped so the value falls back down the
+      // ladder — and that is decided BEFORE validation: a key with a closed vocabulary
+      // (`mark`) would otherwise throw on "", so "clear this" would mean two different
+      // things depending on the key. Everything else validates through the registry
+      // declaration the RESOLVER reads by, so the write and the read cannot disagree about
+      // what a legal value is.
+      const validated =
+        input.value === null || input.value === "" ? null : pref.validate(input.value);
       deps.writeRepoValue({
         repoKey: live.target.repoKey,
         field: pref.field,
@@ -1246,7 +1307,7 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
       return {
         status: "applied",
         key: input.key,
-        project: resolveRow(live.project, live.target, live.multiRepo),
+        project: resolveRow(live.project, live.target, live.multiRepo, live.repoKeys),
       };
     },
 
@@ -1338,7 +1399,7 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
       return {
         status: "applied",
         key: input.key,
-        project: resolveRow(live.project, live.target, live.multiRepo),
+        project: resolveRow(live.project, live.target, live.multiRepo, live.repoKeys),
       };
     },
 
@@ -1358,7 +1419,7 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
       }
       // Resolve the value at command time (not the renderer's snapshot), then write
       // it at the repo layer through the setter that owns that key's side effects.
-      const current = resolveRow(live.project, live.target, live.multiRepo);
+      const current = resolveRow(live.project, live.target, live.multiRepo, live.repoKeys);
       await deps.applyVisibility({
         repoKey: live.target.repoKey,
         repoRoot: live.target.repoRoot,
@@ -1367,7 +1428,7 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
       return {
         status: "applied",
         key: input.key,
-        project: resolveRow(live.project, live.target, live.multiRepo),
+        project: resolveRow(live.project, live.target, live.multiRepo, live.repoKeys),
       };
     },
   };

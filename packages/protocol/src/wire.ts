@@ -1927,6 +1927,46 @@ export type ResolvedProvenance = z.infer<typeof resolvedProvenanceSchema>;
 const layeredStringSchema = z.object({ value: z.string(), layer: settingsLayerSchema });
 
 /**
+ * Which project mark a project shows (#900): a glyph from the fixed vocabulary, the
+ * logo the project scout found in the repo, or one the user uploaded. Resolved off the
+ * settings ladder like every other pref — `glyph` is the builtin, a copied repo logo
+ * offers `detected`, and the user's own pick sits on the repo rung — so a fresh add
+ * shows the repo's logo with no click, and an explicit glyph beats a later detection.
+ */
+export const projectMarkChoiceSchema = z.enum(["glyph", "detected", "upload"]);
+export type ProjectMarkChoice = z.infer<typeof projectMarkChoiceSchema>;
+
+/** The two logo files a project can hold in its project dir (ADR 0004). */
+export const projectLogoKindSchema = z.enum(["detected", "upload"]);
+export type ProjectLogoKind = z.infer<typeof projectLogoKindSchema>;
+
+/** The image formats a project logo may be. Anything else is refused at the write. */
+export const projectLogoMimeSchema = z.enum([
+  "image/svg+xml",
+  "image/png",
+  "image/jpeg",
+  "image/webp",
+]);
+export type ProjectLogoMime = z.infer<typeof projectLogoMimeSchema>;
+
+/**
+ * One project logo as the renderer receives it: the bytes ride the wire base64 and
+ * render through a `data:` URL, so the desktop renderer and the served browser tab
+ * share one path with no static route and no second traversal guard. No size cap by
+ * ruling (2026-09-07).
+ */
+export const projectLogoSchema = z.object({
+  projectId: z.string().min(1),
+  logo: projectLogoKindSchema,
+  mimeType: projectLogoMimeSchema,
+  bytesBase64: z.string(),
+  /** Where the bytes came from: the repo-relative path the scout chose, or the
+   *  uploaded file's name. Provenance for the Identity tile, never model-facing. */
+  source: z.string(),
+});
+export type ProjectLogo = z.infer<typeof projectLogoSchema>;
+
+/**
  * The per-project preferences the Projects surface reads and writes (C18 group A),
  * each resolved off the settings ladder. `tracker` is the issue-tracker section
  * (#461) at project scope — the one that reaches RETRIEVAL, since the same repo rung
@@ -1936,6 +1976,9 @@ const layeredStringSchema = z.object({ value: z.string(), layer: settingsLayerSc
  */
 export const settingsProjectPrefsSchema = z.object({
   glyph: layeredStringSchema,
+  /** Which mark the project shows (a {@link projectMarkChoiceSchema} value), resolved
+   *  off the ladder. `glyph` names WHICH glyph; this says whether a glyph shows at all. */
+  mark: layeredStringSchema,
   worktreeRoot: layeredStringSchema,
   worktreePattern: layeredStringSchema,
   tracker: z.object({
@@ -2343,6 +2386,7 @@ export type SettingsRepoWriteOutcome = z.infer<typeof settingsRepoWriteOutcomeSc
  */
 export const settingsProjectValueKeySchema = z.enum([
   "glyph",
+  "mark",
   "worktreeRoot",
   "worktreePattern",
   "trackerKind",

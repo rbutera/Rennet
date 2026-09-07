@@ -2,9 +2,11 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "n
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  detectedLogoExists,
   loadScoutFacts,
   PROJECT_SCOUT_CONTEXT_PREFIX,
   ProjectSnapshotStore,
+  readLogo,
   SCOUT_DETECTED_FILE,
 } from "@rennet/adapters";
 import type { HarnessEvent, HarnessPort } from "@rennet/core";
@@ -109,6 +111,68 @@ describe("createProjectScoutRuntime", () => {
     ).toEqual(["trackerKind", "defaultBranch", "gateCommand", "logoPath"]);
     expect(loadScoutFacts(store, "repo")?.facts.worktreeBaseDir).toBeDefined();
     expect(loadScoutFacts(store, "repo")?.facts.defaultBranch?.value).toBe("trunk");
+  });
+
+  // ── The project mark is copied at project add, with no user action (#900) ──
+
+  it("copies the scout's detected logo into the project dir when the run persists", async () => {
+    const store = new ProjectSnapshotStore(tempDir());
+    const repoRoot = tempDir();
+    writeFileSync(join(repoRoot, "logo.svg"), "<svg>orbital</svg>");
+    const runtime = createProjectScoutRuntime({
+      store,
+      gitForRepo: () => (_root, args) => Promise.reject(new Error(`no ${args[0]}`)),
+      resolveClaudePort: async () => null,
+      resolveCodexExecutor: async () => null,
+      narrate: () => undefined,
+    });
+
+    await runtime.runForRepo({ projectId: "p", repoKey: "repo", repoRoot });
+
+    // The ladder's `detected` rung is the FILE, so this is what makes the mark show.
+    expect(detectedLogoExists(store, "repo")).toBe(true);
+    const stored = readLogo(store, "repo", "detected");
+    expect(stored?.mimeType).toBe("image/svg+xml");
+    expect(Buffer.from(stored?.bytesBase64 ?? "", "base64").toString("utf8")).toBe(
+      "<svg>orbital</svg>",
+    );
+    expect(stored?.source).toBe("logo.svg");
+    // The recorded root is the repo the scout READ, not the project's open path — a
+    // workspace maps many repos to one identity, so the path alone cannot be re-resolved.
+    expect(loadScoutFacts(store, "repo")?.facts.logoPath?.repoRoot).toBe(repoRoot);
+  });
+
+  it("a repo with no candidate copies nothing — the control for the test above", async () => {
+    const store = new ProjectSnapshotStore(tempDir());
+    const runtime = createProjectScoutRuntime({
+      store,
+      gitForRepo: () => (_root, args) => Promise.reject(new Error(`no ${args[0]}`)),
+      resolveClaudePort: async () => null,
+      resolveCodexExecutor: async () => null,
+      narrate: () => undefined,
+    });
+    await runtime.runForRepo({ projectId: "p", repoKey: "repo", repoRoot: tempDir() });
+    expect(detectedLogoExists(store, "repo")).toBe(false);
+  });
+
+  it("detectLogoForRepo re-detects and re-copies on its own, with no harness installed", async () => {
+    const store = new ProjectSnapshotStore(tempDir());
+    const repoRoot = tempDir();
+    writeFileSync(join(repoRoot, "logo.png"), "png-bytes");
+    const runtime = createProjectScoutRuntime({
+      store,
+      gitForRepo: () => (_root, args) => Promise.reject(new Error(`no ${args[0]}`)),
+      resolveClaudePort: async () => null,
+      resolveCodexExecutor: async () => null,
+      narrate: () => undefined,
+    });
+
+    const fact = await runtime.detectLogoForRepo({ repoKey: "repo", repoRoot });
+    expect(fact).toMatchObject({ value: "logo.png", provenance: "detected" });
+    expect(readLogo(store, "repo", "detected")?.mimeType).toBe("image/png");
+    // An empty repo yields nothing and copies nothing.
+    expect(await runtime.detectLogoForRepo({ repoKey: "empty", repoRoot: tempDir() })).toBeNull();
+    expect(detectedLogoExists(store, "empty")).toBe(false);
   });
 
   // ── session-context-files 3.8/D4: the scout's detected facts are a FILE in the repo ──

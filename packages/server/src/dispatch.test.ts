@@ -210,6 +210,7 @@ function harness(
     draftDeltaDigest?: DispatchDeps["draftDeltaDigest"];
     draftReviewOpener?: DispatchDeps["draftReviewOpener"];
     flaggedReview?: DispatchDeps["flaggedReview"];
+    projectMarks?: DispatchDeps["projectMarks"];
     repositoryExists?: DispatchDeps["repositoryExists"];
     pushTokens?: DispatchDeps["pushTokens"];
     acknowledgeAttention?: DispatchDeps["acknowledgeAttention"];
@@ -366,6 +367,31 @@ function harness(
     projectDetail: () =>
       Promise.resolve({ viewer: { login: "rai" }, locals: [], prs: [], truncated: false }),
     cleanupWorktree: () => Promise.resolve({ ok: true }),
+    // The project mark's three verbs (#900). A fake composition, because the resolution
+    // rules they own are tested against the real store in `project-marks.test.ts`; what
+    // dispatch owns is parsing the input and the output, which is what these rows prove.
+    // `in`, not `??`: passing `projectMarks: undefined` is how a test says "no mark store
+    // wired at all", and `??` would quietly hand it the default instead.
+    projectMarks:
+      "projectMarks" in extra
+        ? extra.projectMarks
+        : {
+            logos: ({ projectId }) =>
+              Promise.resolve({
+                logos: [
+                  {
+                    projectId: projectId ?? "project-1",
+                    logo: "detected" as const,
+                    mimeType: "image/svg+xml" as const,
+                    bytesBase64: Buffer.from("<svg/>").toString("base64"),
+                    source: "public/logo.svg",
+                  },
+                ],
+              }),
+            upload: () =>
+              Promise.resolve({ status: "applied" as const, key: "mark" as const, project: null }),
+            detect: () => Promise.resolve({ found: true, source: "public/logo.svg" }),
+          },
     prWorktree: () => Promise.resolve(null),
     // Recording spy so a test can assert what `deepReview` the dispatch passed the
     // runner — the whole point of the default-dual mandate is that guarantee at the
@@ -3398,6 +3424,73 @@ describe("createDispatch — front door (issue #29)", () => {
     await expect(remounted).resolves.toEqual({ repos: [summary] });
     expect(beforeRemount.map((event) => event.kind)).toEqual(["repo-start"]);
     expect(afterRemount.map((event) => event.kind)).toEqual(["repo-start", "repo-done", "done"]);
+  });
+});
+
+describe("createDispatch — the project mark's three verbs (#900)", () => {
+  it("project.logos returns the composition's rows, validated on the way out", async () => {
+    const { dispatch } = harness();
+    const out = (await dispatch("project.logos", { projectId: "project-1" })) as {
+      logos: { projectId: string; logo: string; mimeType: string; source: string }[];
+    };
+    expect(out.logos).toEqual([
+      {
+        projectId: "project-1",
+        logo: "detected",
+        mimeType: "image/svg+xml",
+        bytesBase64: Buffer.from("<svg/>").toString("base64"),
+        source: "public/logo.svg",
+      },
+    ]);
+  });
+
+  it("project.uploadLogo refuses a MIME outside the accepted set at the wire", async () => {
+    const { dispatch } = harness();
+    await expect(
+      dispatch("project.uploadLogo", {
+        projectId: "project-1",
+        mimeType: "image/gif",
+        bytesBase64: "AAAA",
+        fileName: "x.gif",
+      }),
+    ).rejects.toThrow();
+    // The control: the same call with an accepted MIME goes through.
+    await expect(
+      dispatch("project.uploadLogo", {
+        projectId: "project-1",
+        mimeType: "image/png",
+        bytesBase64: "AAAA",
+        fileName: "x.png",
+      }),
+    ).resolves.toMatchObject({ status: "applied", key: "mark" });
+  });
+
+  it("project.detectLogo returns the re-detection's answer", async () => {
+    const { dispatch } = harness();
+    expect(await dispatch("project.detectLogo", { projectId: "project-1" })).toEqual({
+      found: true,
+      source: "public/logo.svg",
+    });
+  });
+
+  it("a composition with NO mark store answers honest absence, never a throw", async () => {
+    // Rule Zero: the verbs stay answerable. No rows, an `unresolved` write, `found: false`
+    // — each is the truth for a host that cannot store a mark, not a failure the client
+    // has to interpret.
+    const { dispatch } = harness(fakePublishPort(), {}, { projectMarks: undefined });
+    expect(await dispatch("project.logos", {})).toEqual({ logos: [] });
+    expect(
+      await dispatch("project.uploadLogo", {
+        projectId: "project-1",
+        mimeType: "image/png",
+        bytesBase64: "AAAA",
+        fileName: "x.png",
+      }),
+    ).toEqual({ status: "unresolved", key: "mark", project: null });
+    expect(await dispatch("project.detectLogo", { projectId: "project-1" })).toEqual({
+      found: false,
+      source: null,
+    });
   });
 });
 

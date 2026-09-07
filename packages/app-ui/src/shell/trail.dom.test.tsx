@@ -19,6 +19,7 @@ describe("Trail workspace", () => {
     );
     const slot = container.querySelector<HTMLElement>("[data-slot='trail']");
     expect(slot).not.toBeNull();
+    expect(slot?.querySelector("button")?.classList.contains("app-region-no-drag")).toBe(true);
     expect(slot?.textContent).not.toContain(WORKSPACE);
     // `truncate` clips a long path, so the untruncated value has to survive somewhere the
     // reviewer can actually read it.

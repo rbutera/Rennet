@@ -698,6 +698,9 @@ const PATH_FIELD_CLASSIFICATIONS: Readonly<Record<string, PathClassification>> =
     "settings.pinRepoValue.output.project.repoPath",
     "settings.setProjectValue.input.repoPath",
     "settings.setProjectValue.output.project.repoPath",
+    // An upload's outcome is a `settings.setProjectValue` outcome (#900): same row, same
+    // host path, projected by the same branch of `projectCommandOutput`.
+    "project.uploadLogo.output.project.repoPath",
     "settings.setGuidance.input.repoPath",
     "progressEvent.summary.path",
     "progressEvent.repos.path",

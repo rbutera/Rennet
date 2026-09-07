@@ -107,8 +107,8 @@ describe("settings registry + generic resolve (#28)", () => {
     expect(keys).toEqual([
       "gateCommand",
       "locus",
-      "logoPath",
       "projectGlyph",
+      "projectMark",
       "promoted",
       "scheme",
       "trackerBaseUrl",
@@ -228,7 +228,7 @@ describe("issue-tracker section (#461, B7)", () => {
     expect(detected.value).toBe("pnpm check");
     expect(detected.layer).toBe("detected");
 
-    const unset = resolve(SETTINGS_REGISTRY.logoPath, {});
+    const unset = resolve(SETTINGS_REGISTRY.worktreeBaseDir, {});
     expect(unset.value).toBe("");
     expect(unset.provenance.contributions[0]?.value).toBe("(unset)");
   });

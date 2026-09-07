@@ -2,6 +2,7 @@
 import type {
   ProcessedRepoSummary,
   Project,
+  ProjectLogo,
   ProjectProcessEvent,
   ProjectProcessRun,
   ProjectScoutQuestionnaire,
@@ -13,7 +14,7 @@ import { memoryHistory } from "../../routes/history";
 import { newChatPath, projectIndexingPath } from "../../routes/url";
 import { Sidebar } from "../../shell/sidebar/sidebar";
 import { selectProcessingProjectIds, useRennetStore } from "../../store";
-import { act, cleanup, fireEvent, mount, screen, waitFor } from "../../test/dom";
+import { act, cleanup, fireEvent, mount, screen, waitFor, within } from "../../test/dom";
 import { MemoryBridge } from "../../test/memory-bridge";
 import { IndexingView } from "./indexing-view";
 
@@ -125,12 +126,15 @@ function failedRun(
   };
 }
 
-function renderView(id: string, withSidebar = false) {
+function renderView(id: string, withSidebar = false, logos: readonly ProjectLogo[] = []) {
   const history = memoryHistory(projectIndexingPath(id));
   const process = deferred<{ repos: ProcessedRepoSummary[]; run?: ProjectProcessRun }>();
   let commandId = "";
   const bridge = new MemoryBridge({
     "projects.list": () => ({ projects: [project(id)] }),
+    // The logo the scout copied into the project dir (#900) — empty unless a test hands
+    // one over, which is the honest state for a repo with no image to find.
+    "project.logos": () => ({ logos: logos.map((logo) => ({ ...logo })) }),
     "project.process": (input) => {
       commandId = input.commandId;
       return process.promise;
@@ -185,7 +189,10 @@ describe("IndexingView — one durable project run", () => {
       expect(screen.getByText(/Scout finished.*does this look right/)).toBeTruthy(),
     );
     expect((screen.getByLabelText("Default branch") as HTMLInputElement).value).toBe("trunk");
-    expect((screen.getByLabelText("Logo / mark") as HTMLInputElement).value).toBe("docs/mark.svg");
+    // #900: the logo answer is not a path to retype. The row sends the reviewer to where
+    // marks are actually chosen, and the field that only rewrote the scout's evidence is gone.
+    expect(screen.queryByLabelText("Logo / mark")).toBeNull();
+    expect(screen.getByRole("button", { name: "Change in Settings" })).toBeTruthy();
     expect(screen.getAllByText("detected")).toHaveLength(3);
     expect(screen.getAllByText("guessed")).toHaveLength(1);
     // Four rows, not five: the worktree convention is scouted but never asked about
@@ -201,6 +208,57 @@ describe("IndexingView — one durable project run", () => {
       status: "running",
     });
     await waitFor(() => expect(screen.getByText("indexing")).toBeTruthy());
+  });
+
+  // #900 — the logo row shows the mark, because a mark is judged by looking at it. The
+  // path the scout chose used to sit in a text field that only rewrote its own evidence.
+  it("shows the detected logo itself in the questionnaire's logo row", async () => {
+    const logo: ProjectLogo = {
+      projectId: "p9",
+      logo: "detected",
+      mimeType: "image/svg+xml",
+      bytesBase64: "PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciLz4=",
+      source: "docs/mark.svg",
+    };
+    const run = renderView("p9", false, [logo]);
+    await waitFor(() => expect(run.commandId()).not.toBe(""));
+    run.emit({
+      kind: "scout-ready",
+      runId: run.commandId(),
+      repo: "rennet",
+      questionnaire: QUESTIONNAIRE,
+    });
+
+    const row = (await screen.findByText("Logo / mark")).closest("div")?.parentElement;
+    if (!row) throw new Error("logo row missing");
+    // The image is the host's own bytes, rendered inline — no static route, no path lookup.
+    await waitFor(() =>
+      expect(row.querySelector("img")?.getAttribute("src")).toBe(
+        `data:image/svg+xml;base64,${logo.bytesBase64}`,
+      ),
+    );
+    // …and the row still carries the provenance the answer came with, plus the way to
+    // change it. Nothing here edits the scout's evidence.
+    expect(row.textContent).toContain("repository image candidates");
+    expect(within(row).getByRole("button", { name: "Change in Settings" })).toBeTruthy();
+  });
+
+  // POSITIVE CONTROL for the preview above: a repo where nothing was found renders the row
+  // with no image at all, rather than a broken frame or a stale mark from another project.
+  it("shows no image in the logo row when the host holds no logo", async () => {
+    const run = renderView("p10");
+    await waitFor(() => expect(run.commandId()).not.toBe(""));
+    run.emit({
+      kind: "scout-ready",
+      runId: run.commandId(),
+      repo: "rennet",
+      questionnaire: QUESTIONNAIRE,
+    });
+    const row = (await screen.findByText("Logo / mark")).closest("div")?.parentElement;
+    expect(row?.querySelector("img")).toBeNull();
+    expect(
+      within(row as HTMLElement).getByRole("button", { name: "Change in Settings" }),
+    ).toBeTruthy();
   });
 
   it("puts the questionnaire BETWEEN the scout steps and the map steps", async () => {

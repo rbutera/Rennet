@@ -67,8 +67,8 @@ import {
   sessionPath,
   settingsPath,
 } from "../../routes/url";
-import { ProjectIcon } from "../../settings/assets/project-icon";
-import { useSettingsProjection } from "../../settings/data/projections";
+import { ProjectMark } from "../../settings/assets/project-mark";
+import { projectMarkFor, useSettingsProjection } from "../../settings/data/projections";
 import { useRennetStore } from "../../store";
 import { CornerSlot, useMacTrafficLights } from "../corner-slot";
 import { useReviewActivityState } from "../review-activity-state";
@@ -152,7 +152,7 @@ function UpdateControl() {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="ml-auto flex h-8 items-center gap-1.5 rounded-chip bg-update px-2.5 text-13 font-medium text-update-ink transition-colors hover:bg-update/90"
+        className="app-region-no-drag ml-auto flex h-8 items-center gap-1.5 rounded-chip bg-update px-2.5 text-13 font-medium text-update-ink transition-colors hover:bg-update/90"
       >
         <Icon icon={RefreshCw} className="size-3.5 shrink-0" />
         <span>Update</span>
@@ -242,7 +242,7 @@ function NewChatPicker({
   readonly onNewProject: () => void;
 }) {
   const [open, setOpen] = useState(false);
-  const { glyphByProject } = useSettingsProjection();
+  const projection = useSettingsProjection();
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger render={trigger as ReactElement} />
@@ -261,8 +261,8 @@ function NewChatPicker({
                     onPick(project.id);
                   }}
                 >
-                  <ProjectIcon
-                    icon={glyphByProject[project.id]}
+                  <ProjectMark
+                    mark={projectMarkFor(projection, project.id)}
                     className="size-3.5 text-ink-soft"
                   />
                   <span>{project.name}</span>
@@ -518,7 +518,7 @@ function SidebarTree() {
   const [, navigate] = useLocation();
   const { hosts } = useSidebarTree();
   const projection = useSidebarSessionProjection();
-  const { glyphByProject } = useSettingsProjection();
+  const settings = useSettingsProjection();
   const removeProject = useRemoveProject();
   const { activeSlug, activeProjectId, standingIn } = useActiveRoute();
   const [renamingProjectId, setRenamingProjectId] = useState<string | null>(null);
@@ -669,8 +669,8 @@ function SidebarTree() {
                               !expanded && "-rotate-90",
                             )}
                           />
-                          <ProjectIcon
-                            icon={glyphByProject[project.id]}
+                          <ProjectMark
+                            mark={projectMarkFor(settings, project.id)}
                             className="size-3.5 shrink-0 text-muted-foreground"
                           />
                           <input
@@ -721,8 +721,8 @@ function SidebarTree() {
                             !expanded && "-rotate-90",
                           )}
                         />
-                        <ProjectIcon
-                          icon={glyphByProject[project.id]}
+                        <ProjectMark
+                          mark={projectMarkFor(settings, project.id)}
                           className="size-3.5 shrink-0 text-muted-foreground"
                         />
                         <span className="flex-1 truncate">{project.name}</span>
@@ -801,17 +801,26 @@ function SidebarTree() {
  *  Update pushed to the far edge by its own `ml-auto`. Self-wiring. */
 function SidebarFooter() {
   const [, navigate] = useLocation();
+  const mac = useMacTrafficLights();
   const { hosts } = useSidebarTree();
   const archivedCount = hosts
     .flatMap((host) => host.projects)
     .reduce((count, project) => count + project.sessions.filter((s) => s.archived).length, 0);
   return (
-    <div className="flex flex-col gap-0.5 border-t border-line px-2 py-2">
+    // The footer strip drags the window on darwin, matching the corner slot at the top.
+    // Its controls each opt back out with `app-region-no-drag`; the empty gap the Update
+    // pill's `ml-auto` opens stays draggable, which is the point.
+    <div
+      className={cn(
+        "flex flex-col gap-0.5 border-t border-line px-2 py-2",
+        mac && "app-region-drag",
+      )}
+    >
       {archivedCount > 0 ? (
         <button
           type="button"
           onClick={() => navigate(archivedPath())}
-          className="flex h-8 items-center gap-2 rounded-chip px-2 text-left text-13 text-muted-foreground transition-colors hover:bg-raised hover:text-ink"
+          className="app-region-no-drag flex h-8 items-center gap-2 rounded-chip px-2 text-left text-13 text-muted-foreground transition-colors hover:bg-raised hover:text-ink"
         >
           <Icon icon={Archive} className="size-3.5 shrink-0" />
           <span className="flex-1">Archived</span>
@@ -828,7 +837,7 @@ function SidebarFooter() {
           aria-label="Settings"
           title="Settings"
           onClick={() => navigate(settingsPath("appearance"))}
-          className="flex size-8 shrink-0 items-center justify-center rounded-chip text-muted-foreground transition-colors hover:bg-raised hover:text-ink"
+          className="app-region-no-drag flex size-8 shrink-0 items-center justify-center rounded-chip text-muted-foreground transition-colors hover:bg-raised hover:text-ink"
         >
           <Icon icon={Settings} className="size-3.5" />
         </button>
@@ -838,7 +847,7 @@ function SidebarFooter() {
               type="button"
               aria-label="Help"
               title="Help"
-              className="flex size-8 shrink-0 items-center justify-center rounded-chip text-muted-foreground transition-colors hover:bg-raised hover:text-ink"
+              className="app-region-no-drag flex size-8 shrink-0 items-center justify-center rounded-chip text-muted-foreground transition-colors hover:bg-raised hover:text-ink"
             >
               <Icon icon={CircleHelp} className="size-3.5" />
             </button>

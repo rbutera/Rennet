@@ -122,6 +122,38 @@ export function projectHandlers(rt: DispatchRuntime) {
         ),
       );
     },
+    "project.logos": async (rawInput) => {
+      const name = "project.logos" as const;
+      // Every logo FILE the listed project (or every project) holds, as base64 bytes the
+      // renderer shows through a `data:` URL (ADR 0004). WHICH one a project shows is the
+      // resolved `mark` pref on `settings.get`; this read only says what exists. A
+      // composition with no mark store wired answers no rows rather than throwing.
+      const input = parseCommandInput(name, rawInput);
+      const result = (await deps.projectMarks?.logos(input)) ?? { logos: [] };
+      return parseCommandOutput(name, result);
+    },
+    "project.uploadLogo": async (rawInput) => {
+      const name = "project.uploadLogo" as const;
+      // Store the picked bytes and set the `mark` pref to `upload` in one call, through the
+      // SAME write path the Identity control uses — so the outcome carries the freshly
+      // re-resolved row and the surface adopts the resolver's own answer.
+      const input = parseCommandInput(name, rawInput);
+      const outcome = (await deps.projectMarks?.upload(input)) ?? {
+        status: "unresolved" as const,
+        key: "mark" as const,
+        project: null,
+      };
+      return parseCommandOutput(name, outcome);
+    },
+    "project.detectLogo": async (rawInput) => {
+      const name = "project.detectLogo" as const;
+      // Identity's "Detect again": re-run the logo half of the scout over the project's
+      // repos and re-copy the pick. `found: false` leaves any previous copy in place —
+      // a detection that found nothing must not delete the mark the project already shows.
+      const input = parseCommandInput(name, rawInput);
+      const result = (await deps.projectMarks?.detect(input)) ?? { found: false, source: null };
+      return parseCommandOutput(name, result);
+    },
     "project.cleanupWorktree": async (rawInput) => {
       const name = "project.cleanupWorktree" as const;
       // The merged-PR read-only row's clean-up. A destructive local act, so it is a

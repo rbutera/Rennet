@@ -51,6 +51,8 @@ import {
   processedRepoSummarySchema,
   projectDetailSchema,
   projectKindSchema,
+  projectLogoMimeSchema,
+  projectLogoSchema,
   projectProcessRunSchema,
   projectSchema,
   projectVisibilitySchema,
@@ -729,6 +731,42 @@ const definitions = {
     // again rather than an unnamed blank. Returns the renamed project and the fresh list.
     input: z.object({ projectId: z.string().min(1), name: z.string() }),
     output: z.object({ project: projectSchema.nullable(), projects: z.array(projectSchema) }),
+  },
+  // ── Project mark: the logos a project holds (#900, ADR 0004) ───────────────
+  // Every logo file on disk under the project dirs of the listed project (or of every
+  // project when `projectId` is omitted — the sidebar's one read), as base64 bytes the
+  // renderer shows through a `data:` URL. WHICH one a project shows is decided by the
+  // resolved `mark` pref on `settings.get`; this read only carries what exists. A
+  // project with no logo file contributes no rows.
+  "project.logos": {
+    input: z.object({ projectId: z.string().min(1).optional() }),
+    output: z.object({ logos: z.array(projectLogoSchema) }),
+  },
+  // Store a user-chosen logo in the project dir (`mark-upload.<ext>`) and set the
+  // `mark` pref to `upload` on the repo rung in one write, so the sidebar shows it on
+  // the next `settings.get`. Refuses only a MIME outside the accepted set (the schema
+  // does that) or a malformed repo config; no size cap by ruling.
+  "project.uploadLogo": {
+    input: z.object({
+      projectId: z.string().min(1),
+      mimeType: projectLogoMimeSchema,
+      bytesBase64: z.string().min(1),
+      /** The picked file's name, kept as the tile's provenance line. */
+      fileName: z.string().min(1),
+    }),
+    output: settingsProjectWriteOutcomeSchema,
+  },
+  // Re-run logo detection for a project's repos — the deterministic candidate
+  // inventory plus the scout seat's pick — and re-copy the chosen file into the
+  // project dir. Identity's "Detect again". `found: false` means no candidate
+  // survived and the previous detected copy (if any) is left in place.
+  "project.detectLogo": {
+    input: z.object({ projectId: z.string().min(1) }),
+    output: z.object({
+      found: z.boolean(),
+      /** The repo-relative path the scout chose, or null when nothing was found. */
+      source: z.string().nullable(),
+    }),
   },
   "projects.remove": {
     // Forget a project from Rennet's project list. Does NOT delete the repo on disk —

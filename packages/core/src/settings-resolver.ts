@@ -4,7 +4,9 @@ import {
   type ClientSettings,
   type Locus,
   locusSchema,
+  type ProjectMarkChoice,
   type ProjectVisibility,
+  projectMarkChoiceSchema,
   projectVisibilitySchema,
   type ResolvedProvenance,
   type SettingsLayer,
@@ -170,6 +172,23 @@ const CONFIG_ONLY: readonly SettingsLayer[] = ["builtin", "global", "repo"];
  *  exists for one — so the only offers are the builtin (unset) and the project's own. */
 const REPO_ONLY: readonly SettingsLayer[] = ["builtin", "repo"];
 
+/**
+ * Which project mark a project shows (#900): the builtin is `glyph`, the `detected` rung is
+ * offered when the project holds a copied repo logo, and the user's own answer sits on the
+ * repo rung. That ordering IS the product decision — a fresh add shows the repo's logo with
+ * no click, and an explicit glyph beats a later detection — and it is the whole reason this
+ * is a ladder row rather than a boolean somewhere. There is no global rung: a mark is a fact
+ * about ONE project, and a host-wide default for it would mean nothing.
+ */
+const PROJECT_MARK_SETTING: SettingDeclaration<ProjectMarkChoice> = {
+  key: "projectMark",
+  validate: (value) => projectMarkChoiceSchema.parse(value),
+  builtinDefault: "glyph",
+  layers: ["builtin", "detected", "repo"],
+  merge: "replace",
+  render: identity,
+};
+
 /** Every consumed setting, keyed by id. Adding a setting is one entry here. */
 export const SETTINGS_REGISTRY = {
   scheme: SCHEME_SETTING,
@@ -184,8 +203,6 @@ export const SETTINGS_REGISTRY = {
   // §4 non-tracker facts the ladder does not already resolve.
   worktreeBaseDir: stringSetting("worktreeBaseDir", DETECTABLE),
   gateCommand: stringSetting("gateCommand", DETECTABLE),
-  // Cosmetic: settings/UI only, never agent context (#461 §4).
-  logoPath: stringSetting("logoPath", DETECTABLE),
   // The per-project prefs the Projects surface edits (C18 group A). They ride the
   // SAME ladder as everything above — the repo rung is the project's own
   // `config.json`, so a per-project answer beats the host's global one and the
@@ -194,6 +211,7 @@ export const SETTINGS_REGISTRY = {
   // worktree pair; the naming pattern has no detector, so it is config-only.
   worktreePattern: stringSetting("worktreePattern", CONFIG_ONLY),
   projectGlyph: stringSetting("projectGlyph", REPO_ONLY),
+  projectMark: PROJECT_MARK_SETTING,
 } as const;
 
 /**

@@ -8,8 +8,10 @@
 
 export {
   useBenchmarks,
+  useDetectProjectLogo,
   useGuidance,
   usePinRepoValue,
+  useProjectLogos,
   useResetRepoValue,
   useResetWelcome,
   useSetAppearance,
@@ -17,6 +19,7 @@ export {
   useSetKeybinding,
   useSetRepoVisibility,
   useSettingsView,
+  useUploadProjectLogo,
 } from "./live";
 export { LiveSettingsProjectionProvider } from "./live-projection";
 export {
@@ -26,6 +29,7 @@ export {
   type GuidanceRule,
   type GuidanceSeverity,
   type IssueTrackerSettings,
+  projectMarkFor,
   type ReviewRole,
   type RoleAssignment,
   type RoleEffort,
