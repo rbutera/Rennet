@@ -13,6 +13,7 @@ import {
 import { detectLanguage, tokenizeDiffLine } from "../syntax/shiki";
 import { useCodeDestination } from "./code-destination";
 import { LineCommentEditor } from "./line-comment-editor";
+import { SymbolTokens } from "./symbol-inspection";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The ONE code surface (C4): every code appearance in the product renders through here.
@@ -234,14 +235,11 @@ export function CodeBlock({
                     </span>
                   </span>
                   <span className="whitespace-pre px-3 text-foreground/90">
-                    {lineTokens.length === 0
-                      ? " "
-                      : lineTokens.map((token, ti) => (
-                          // biome-ignore lint/suspicious/noArrayIndexKey: token order within a line is stable and positional.
-                          <span key={ti} className={`rtok rtok-${token.type}`}>
-                            {token.text}
-                          </span>
-                        ))}
+                    {lineTokens.length === 0 ? (
+                      " "
+                    ) : (
+                      <SymbolTokens tokens={lineTokens} patchsetId={patchsetId} />
+                    )}
                   </span>
                 </div>
                 {isOpen && (

@@ -334,6 +334,12 @@ unchanged or uncaptured counterpart gets no jump. In prose, a `path:line`
 citation is a chip: click it and the real lines unfold below the paragraph;
 click again and they fold away.
 
+Click an identifier in the current diff or a code card to inspect its definition
+and references. Each location can open in your editor; Escape returns focus to
+the identifier. The inspector labels structural matches and textual guesses.
+Its index covers the reviewed commit, so uncommitted edits and historical
+patchsets are not indexed by this lookup.
+
 A finding reads as flowing document text, not a boxed card: a severity chip, the
 claim as its title, a concurrence badge, then the body and the proposed fix as
 its own callout. The badge reads "concur 2/2" only when both review seats raised

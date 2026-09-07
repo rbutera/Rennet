@@ -122,11 +122,18 @@ and can miss a relationship that does not preserve the identifier text.
 
 ## Review integration
 
-Review context reaches the same backend through `context.symbol` and
-`context.references`. Responses carry freshness, evidence, totals, and
-truncation where applicable. The UI symbol
-inspector presents the definition candidates, references, and file neighbors
-without upgrading textual evidence to semantic certainty.
+Click an identifier in the current diff or a board's code snippet to open the
+symbol inspector. Keyboard users can focus an identifier and press Enter or
+Space. The inspector shows definition candidates and references, labels their
+structural or textual confidence, and offers an editor jump for each location.
+Escape or the close button dismisses the inspector and returns focus to the
+identifier. Selecting code text still works without opening an inspector.
+
+The lookup uses `review.symbolLookup`, which combines the same backend answers
+as `context.symbol` and `context.references`. A missing index or failed lookup
+appears in the inspector; reopening the symbol retries it. The lookup is scoped
+to the current review. Historical diffs and snippets from another patchset do
+not open a lookup against the current index.
 
 The pinned head tree covers committed code in the reviewed patchset. Diff tools
 remain the authority for staged, unstaged, and untracked changes captured on top

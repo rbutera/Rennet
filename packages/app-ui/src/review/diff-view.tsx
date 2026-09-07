@@ -27,6 +27,7 @@ import { detectLanguage, tokenizeDiffLine } from "../syntax/shiki";
 import { fileStats, hunkHeader, type NumberedLine, numberLines, parsePatch } from "./diff-parse";
 import { LineCommentEditor } from "./line-comment-editor";
 import { ProseSelectionLayer } from "./selection-toolbar";
+import { SymbolTokens } from "./symbol-inspection";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The Diff surface (C6, #489) — the raw patchset in GitHub's Files-changed shape:
@@ -802,14 +803,11 @@ const DiffFileCard = React.memo(function DiffFileCard({
                     {line.type === "add" ? "+" : line.type === "del" ? "−" : ""}
                   </span>
                   <span className="whitespace-pre pr-3 text-foreground/90">
-                    {tokens.length
-                      ? tokens.map((token, tokenIndex) => (
-                          // biome-ignore lint/suspicious/noArrayIndexKey: token order within a line is stable and positional.
-                          <span key={tokenIndex} className={`rtok rtok-${token.type}`}>
-                            {token.text}
-                          </span>
-                        ))
-                      : " "}
+                    {tokens.length ? (
+                      <SymbolTokens tokens={tokens} patchsetId={patchsetId} enabled={!historical} />
+                    ) : (
+                      " "
+                    )}
                   </span>
                 </div>
               );
