@@ -254,12 +254,10 @@ test("a persisted board owns lens, generation, and captured-code navigation in t
         .poll(() => Object.keys(askLog.readProjection(fixture.reviewId).stagedAsks))
         .toEqual([]);
     } catch (error) {
-      await test
-        .info()
-        .attach("persisted-ask-events", {
-          body: JSON.stringify(askLog.read(fixture.reviewId)),
-          contentType: "application/json",
-        });
+      await test.info().attach("persisted-ask-events", {
+        body: JSON.stringify(askLog.read(fixture.reviewId)),
+        contentType: "application/json",
+      });
       throw error;
     }
     await page.reload();
@@ -469,8 +467,7 @@ test("a persisted board owns lens, generation, and captured-code navigation in t
       generation: fixture.frozenGeneration,
       file: BOARD_IMPLEMENTATION_PATH,
     });
-    await expect(page.locator(`[id="diff-${BOARD_IMPLEMENTATION_PATH}"]`)).toBeVisible();
-    await expect.poll(() => scrollTargets(page)).toContain(`diff-${BOARD_IMPLEMENTATION_PATH}`);
+    await expect(page.locator(`[id="diff-${BOARD_IMPLEMENTATION_PATH}"]`)).toBeInViewport();
 
     await rail.getByRole("tab", { name: "Sequence" }).click();
     await openBoardSections(page);
