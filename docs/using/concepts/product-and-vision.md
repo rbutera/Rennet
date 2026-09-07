@@ -50,7 +50,7 @@ merge request named by the repository's effective push remote.
 
 ### Read the change, not the file list
 
-Work that implements one change reads as one thing: a board section with a gist,
+Work that implements one change reads as one thing: a board section with a folded preview,
 holding the findings, decisions, requirements, and cited code that belong
 together. Folding a section never hides what it contains from the reviewer.
 

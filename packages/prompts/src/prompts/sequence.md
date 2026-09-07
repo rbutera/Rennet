@@ -30,8 +30,9 @@ end of a section the reader should be able to predict why the next one exists.
   what the reader is about to see, and what they will know afterwards. Write
   it the way a good tutorial does. One idea per sentence.
 - A heading is not that narration. A section whose children are a title, a code
-  ref and a count expands to nothing a reader can read — they get the folded
-  summary twice and no walk. Every stop carries its prose or it is not a stop.
+  ref and a count expands to nothing a reader can read — the folded preview
+  already showed them the heading, and there is no walk. Every stop carries its
+  prose or it is not a stop.
 - Weave the code in at the point the narration needs it. Cite the exact lines
   (path and line range). Never paste code the narration does not discuss.
 - Emit an order step for each stop. The order steps are the board's spine; a

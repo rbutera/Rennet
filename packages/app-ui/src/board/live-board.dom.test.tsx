@@ -251,7 +251,9 @@ describe("the review opens on its boards, with no waiting stage in front of them
     expect(tabOf("sequence")?.getAttribute("data-register")).toBe("working");
     expect(tabOf("decisions")?.getAttribute("data-register")).toBe("working");
     expect(tabOf("flagged")?.getAttribute("data-register")).toBe("working");
-    // A running lens is SELECTABLE and is never a disabled segment.
+    // No tab is a DISABLED control: a running lens is selectable, and waiting Noise stays
+    // focusable so its explanation is reachable by keyboard — its unavailability is
+    // `aria-disabled` plus an inert click, asserted just below, not the `disabled` property.
     for (const lens of ["design", "sequence", "decisions", "flagged", "noise"]) {
       expect(document.querySelector<HTMLButtonElement>(`[data-lens="${lens}"]`)?.disabled).toBe(
         false,
@@ -279,8 +281,10 @@ describe("the review opens on its boards, with no waiting stage in front of them
 
 describe("a drafting board stays readable without explanatory chrome", () => {
   it("shows activity on the rail and heading without a placeholder", async () => {
-    // 5.3/D13. THE CONTROL for this is a mutation that removes ONE of the three; the
-    // single `toEqual` below is what makes any one removal redden it.
+    // 5.3/D13, as #904 leaves it: the rail indicator and the heading's activity mark are
+    // the two signals, and the placeholder row and "still being written" line are GONE.
+    // The single `toEqual` below reddens if either signal drops OR either retired element
+    // comes back.
     const live = liveBridge({
       preparation: { status: "drafting", reviewId: REVIEW.id, lanes: DRAFTING },
       boards: { sequence: at(FIXTURE_BOARDS.gen1?.sequence) },

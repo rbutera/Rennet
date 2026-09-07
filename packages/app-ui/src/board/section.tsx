@@ -208,7 +208,11 @@ export const Section = memo(function Section({
                   onClick={() => locate(id)}
                   className="block w-full rounded-sm text-left text-muted-foreground text-sm leading-relaxed transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
-                  <PreviewText text={text} />
+                  {/* A heading that runs long (a finding's first line, an over-written
+                      title) is clamped like the paragraph preview, not left to fill the fold. */}
+                  <span className="line-clamp-2">
+                    <PreviewText text={text} />
+                  </span>
                 </button>
               </li>
             ))}

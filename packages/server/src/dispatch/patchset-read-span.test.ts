@@ -480,6 +480,75 @@ describe("patchset.readSpan agrees with lint's predicate, line for line", () => 
 });
 
 describe("patchset.readEvidence", () => {
+  it("resolves a head citation by the file's CURRENT path when a rename freed that path for a new file", async () => {
+    // `b.ts` renamed to `a.ts`, then a NEW `b.ts` written: the patchset carries a rename
+    // row whose `previousPath` is `b.ts` AND an added row whose `path` is `b.ts`. A head
+    // citation of `b.ts` is the new file; a base citation of `b.ts` is the rename's pre-image.
+    // Matching either name in file order served the rename's diff for the new file.
+    const root = mkdtempSync(join(tmpdir(), "rennet-evidence-rename-"));
+    temporaries.push(root);
+    git(root, "init", "-q", "-b", "main");
+    git(root, "config", "user.email", "test@example.invalid");
+    git(root, "config", "user.name", "Test");
+    writeFileSync(join(root, "b.ts"), `${BASE.slice(0, 12).join("\n")}\n`);
+    git(root, "add", ".");
+    git(root, "commit", "-qm", "base");
+    const baseOid = git(root, "rev-parse", "HEAD").trim();
+    const moved = BASE.slice(0, 12);
+    moved[3] = "const line4 = 4; // moved";
+    writeFileSync(join(root, "a.ts"), `${moved.join("\n")}\n`);
+    rmSync(join(root, "b.ts"));
+    git(root, "add", "-A");
+    git(root, "commit", "-qm", "rename");
+    const renamedOid = git(root, "rev-parse", "HEAD").trim();
+    writeFileSync(join(root, "b.ts"), "export const fresh = true;\n");
+    git(root, "add", "-A");
+    git(root, "commit", "-qm", "reuse the name");
+    const headOid = git(root, "rev-parse", "HEAD").trim();
+    // Git pairs a rename only with a path that is GONE, so one diff cannot carry both rows;
+    // a patchset can (a capture over a range, or a rewrite git chose to pair). Both rows
+    // are still real `git diff` output, parsed by the production parser.
+    const renameFiles = [
+      ...parseUnifiedDiffFiles(git(root, "diff", "-M", "--no-color", baseOid, renamedOid)),
+      ...parseUnifiedDiffFiles(git(root, "diff", "-M", "--no-color", renamedOid, headOid)),
+    ];
+    const rawDiff = renameFiles.map((file) => file.patch).join("\n");
+    expect(renameFiles.map((file) => [file.status, file.path, file.previousPath])).toEqual([
+      ["renamed", "a.ts", "b.ts"],
+      ["added", "b.ts", undefined],
+    ]);
+    const store = new SqliteReviewStore(":memory:");
+    const service = new ReviewService(
+      { capture: () => Promise.reject(new Error("unused")) },
+      store,
+    );
+    await service.createReviewFromPatchset("evidence-rename", {
+      ...patchset,
+      id: "ps-rename",
+      repository: { ...patchset.repository, root, baseOid, headOid },
+      files: renameFiles,
+      rawDiff,
+    });
+    const dispatch = createDispatch({
+      service,
+      allowedRoots: new Set<string>(),
+      readBlobAtOid: async ({ oid, path }: { oid: string; path: string }) =>
+        git(root, "show", `${oid}:${path}`),
+    } as unknown as DispatchDeps);
+    const head = await dispatch("patchset.readEvidence", {
+      ref: ref({ patchsetId: "ps-rename", path: "b.ts", startLine: 1, endLine: 1 }),
+      includeSource: true,
+    });
+    expect(head).toMatchObject({ path: "b.ts", head: "export const fresh = true;\n" });
+    expect(head).not.toHaveProperty("previousPath");
+    expect((head as { patch: string }).patch).toContain("+export const fresh = true;");
+    const base = await dispatch("patchset.readEvidence", {
+      ref: ref({ patchsetId: "ps-rename", path: "b.ts", side: "base", startLine: 4, endLine: 4 }),
+      includeSource: true,
+    });
+    expect(base).toMatchObject({ path: "a.ts", previousPath: "b.ts" });
+    expect((base as { patch: string }).patch).toContain("-const line4 = 4;");
+  });
   it("resolves uncaptured context from immutable source and rejects nonexistent ranges", async () => {
     const store = new SqliteReviewStore(":memory:");
     const service = new ReviewService(

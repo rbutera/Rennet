@@ -1,6 +1,6 @@
 ---
 title: Command menu exposure
-description: Which of the 107 registered commands the ⌘K menu lists, and the rationale for every row.
+description: Which of the 109 registered commands the ⌘K menu lists, and the rationale for every row.
 ---
 
 The command registry in `packages/protocol/src/commands/index.ts` carries an
@@ -138,6 +138,7 @@ still goes through the one seam; only the label is hand-written.
 |---|---|
 | `fs.listDir` | Directory-browser read; its listing must be displayed. |
 | `patchset.readSpan` | Needs the citation, and its lines must be displayed. |
+| `patchset.readEvidence` | Needs the citation; its diff hunks, reviewed sources and test counterparts must be displayed. |
 | `board.read` | Read the board surface drives. |
 | `board.draft` | Read the board surface drives; it catches a mid-draft board up before folding its live frames. |
 | `benchmarks.list` | Read the Settings benchmarks panel drives; its runs must be displayed. |

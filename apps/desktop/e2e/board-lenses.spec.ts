@@ -568,9 +568,9 @@ test("review activity and code evidence remain usable across navigation", async 
     ).toBeVisible();
     const reviewing = page.getByRole("button", { name: "Reviewing the change", exact: true });
     await expect(reviewing).toBeDisabled();
+    // The motion claim is the computed animation under each media preference below; the
+    // arc's geometry is a visual choice, not a behaviour, and is not pinned here.
     const orbit = reviewing.locator("svg.animate-spin");
-    await expect(orbit.locator("circle")).toHaveAttribute("stroke-dasharray", "24 39");
-    await expect(orbit.locator("circle")).toHaveAttribute("stroke", "currentColor");
     await page.emulateMedia({ reducedMotion: "no-preference" });
     await expect
       .poll(() => orbit.evaluate((element) => getComputedStyle(element).animationName))

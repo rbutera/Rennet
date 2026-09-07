@@ -39,6 +39,17 @@ describe("ExitFab", () => {
     expect(toggled).toBe(1);
   });
 
+  it("says the review was interrupted, and does not advance, when there is no review to hand off", async () => {
+    let toggled = 0;
+    const r = mount(
+      <ExitFab mode="own-branch" ready={false} open={false} onToggle={() => toggled++} />,
+    );
+    const interrupted = r.getByRole("button", { name: "Review interrupted" });
+    await r.user.click(interrupted);
+    expect(toggled).toBe(0);
+    expect(r.queryByRole("button", { name: "Continue" })).toBeNull();
+  });
+
   it("shows the derived pip count, unchanged by a re-render (navigation)", () => {
     stage("a");
     stage("b");

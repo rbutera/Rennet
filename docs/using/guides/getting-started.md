@@ -320,9 +320,9 @@ gap.
 
 The board drafter writes each title and short intro. Design uses a wider
 structured measure for specification content. Sequence, Decisions, Flagged, and Noise use a
-narrower reading measure. Sections fold to a one-line gist and unfold to their
-contents; every board opens folded, so you take the summaries first and open what
-you want to read.
+narrower reading measure. A folded section lists its child headings, or its first
+paragraph when it has none, and unfolds to its contents; every board opens folded,
+so you take the previews first and open what you want to read.
 Folded counts name review objects: findings, decisions, requirements, steps,
 outcomes, groups, files, and comments.
 
@@ -331,8 +331,9 @@ exact line range and hydrates the real lines from the captured patchset, so
 numbering cannot drift from the code under review. When that path belongs to the
 active captured patchset, clicking it opens Diff on the file and preserves the
 other session query state. A code card adds **View test** or **View
-implementation** when both files are changed paths in that active patchset. An
-unchanged or uncaptured counterpart gets no jump. In prose, a `path:line`
+implementation** when the reviewed tree relates the two files, by import or by
+name; an unchanged test opens inline from the reviewed revision, and several
+matches offer a chooser. In prose, a `path:line`
 citation is a chip: click it and the real lines unfold below the paragraph;
 click again and they fold away.
 
@@ -554,7 +555,7 @@ generation is ready, never as a disabled button waiting to light up.
 
 The new generation shows you the delta by its own shape. Sections the round
 touched open expanded with a small gold dot; sections that carried forward stay
-folded to their gists. The dot rolls up to that board's segment in the switcher
+folded to their previews. The dot rolls up to that board's segment in the switcher
 and clears for good once you open the section. The previous generation stays
 readable as a folded drill-down, and Sequence grows a "Round N · Addressed"
 chapter at its foot, newest last. The selected generation lives in

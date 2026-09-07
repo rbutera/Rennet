@@ -120,11 +120,12 @@ export function ReviewWorkspace({ review }: { review: Review }) {
   // `LensBoardView` at the composed round's NEW generation (derived off the machine's
   // `composed` state, never a stored navigation target — the S9 fence).
   const roundState = useRoundState(slug);
+  // Continue is non-actionable while BOARDS are being written: the first preparation, and a
+  // round's regeneration. A round's worker run is not that — the boards are settled and the
+  // hand-off view is where the round is watched — so it is read off the live round machine,
+  // not the sidebar's coarser "an operation exists" projection.
   const reviewing =
-    preparationRunning ||
-    session?.reviewActivity?.status === "running" ||
-    roundState.phase === "composing" ||
-    roundState.phase === "verifying";
+    preparationRunning || roundState.phase === "composing" || roundState.phase === "verifying";
   // The rounds ledger (C09 §6.2). `?view=rounds` shows the ledger EXACTLY when a round
   // has completed — the derived-presence C5 uses for the lens switcher, and what the
   // top-bar's History pill is gated on. A `?view=rounds` deep-link with no completed
@@ -409,10 +410,14 @@ export function ReviewWorkspace({ review }: { review: Review }) {
         </div>
       )}
       <ExitFab
+        // "Interrupted" is reserved for a preparation that failed or was cancelled BEFORE there
+        // was a review to hand off — the header carries the failure and its Retry. Once a review
+        // exists, Continue stays actionable through a failed lane or a failed round: the
+        // hand-off view is the only way to dispatch again, and a failed round operation is
+        // durable until the next one, so gating on it would lock the reviewer out for good.
         ready={
-          preparation === undefined &&
-          session?.reviewActivity?.status !== "failed" &&
-          roundState.phase !== "failed"
+          preparation === undefined ||
+          ("reviewId" in preparation && preparation.reviewId !== undefined)
         }
         reviewing={reviewing}
         mode={mode}

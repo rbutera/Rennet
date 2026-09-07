@@ -1,5 +1,6 @@
 import { type CodeRef, type CommandOutput, isTestPath } from "@rennet/protocol";
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
+import { HUNK_HEADER_RE } from "../canvas/registrar";
 import { useCommand } from "../data";
 import { CodeBlock } from "./code-block";
 import { type NumberedLine, numberLines, parsePatch } from "./diff-parse";
@@ -26,11 +27,14 @@ export function evidenceRows(
   let old = 1;
   let next = 1;
   for (const hunk of hunks) {
-    while (
-      baseOnly
-        ? old < hunk.oldStart && old <= source.length
-        : next < hunk.newStart && next <= source.length
-    ) {
+    // A hunk with NO lines on the walked side (`@@ -2 +1,0 @@`, a zero-context deletion)
+    // names the line it follows, not the line it starts at, so that line is context that
+    // comes BEFORE the hunk. Every other hunk starts at its own first line.
+    const counts = HUNK_HEADER_RE.exec(hunk.header);
+    const walkedCount = Number((baseOnly ? counts?.[2] : counts?.[4]) ?? 1);
+    const start = baseOnly ? hunk.oldStart : hunk.newStart;
+    const contextThrough = walkedCount === 0 ? start : start - 1;
+    while ((baseOnly ? old : next) <= contextThrough && (baseOnly ? old : next) <= source.length) {
       rows.push({
         type: "context",
         text: source[(baseOnly ? old : next) - 1] ?? "",
@@ -95,6 +99,8 @@ export function EvidenceBlock({ citation, initial }: { citation: CodeRef; initia
   });
   const data = fetched ?? (!navigating ? initial : undefined);
   const counterparts = relationships?.counterparts ?? [];
+  // The same predicate the daemon's relationship index uses, so the label agrees with it.
+  const atTest = isTestPath(destination.path) || /(?:^|\/)__tests__\//.test(destination.path);
   useLayoutEffect(() => {
     if (navigating || !restorePosition.current || !data) return;
     if (context !== 0 && fetched === undefined && error === undefined) return;
@@ -156,16 +162,12 @@ export function EvidenceBlock({ citation, initial }: { citation: CodeRef; initia
               if (path) open(path);
             }}
           >
-            {isTestPath(destination.path) || /(?:^|\/)__tests__\//.test(destination.path)
-              ? "View implementation"
-              : "View test"}
+            {atTest ? "View implementation" : "View test"}
           </button>
         )}
         {counterparts.length > 1 && (
           <details className="relative">
-            <summary className={control}>
-              {isTestPath(destination.path) ? "View implementation" : "View tests"}
-            </summary>
+            <summary className={control}>{atTest ? "View implementation" : "View tests"}</summary>
             <div className="absolute z-20 flex min-w-64 flex-col rounded border border-border bg-popover p-1 shadow-overlay">
               {counterparts.map((path) => (
                 <button
@@ -209,7 +211,11 @@ export function EvidenceBlock({ citation, initial }: { citation: CodeRef; initia
       )}
       {data?.caption && <p className="text-xs text-muted-foreground">{data.caption}</p>}
       {!data ? (
-        <p className="text-xs text-muted-foreground">Loading reviewed source…</p>
+        // A failed read has already said why above; "Loading…" beside it would claim a
+        // read that is not happening.
+        error === undefined ? (
+          <p className="text-xs text-muted-foreground">Loading reviewed source…</p>
+        ) : null
       ) : rows.length === 0 ? (
         <p className="text-xs text-muted-foreground">
           {destination.path}:{destination.startLine}–{destination.endLine} ({destination.side}) is

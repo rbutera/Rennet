@@ -16,11 +16,13 @@ function normalized(text: string): string {
   return text.replace(/[`*#]/g, "").replace(/\s+/g, " ").trim().toLowerCase();
 }
 
-/** Old boards have only a statement. Keep its full text in the body, with a short label here. */
+/** Old boards have only a statement. Keep its full text in the body, with a short label here.
+ *  An authored title is bounded the same way: the prompt asks for a short heading, and a
+ *  paragraph that arrives in the `title` field is no more a navigation label than one in
+ *  the statement. */
 export function decisionHeading(data: ElementOf<"decision">["data"]): string {
   const title = data.title?.trim();
-  if (title) return title;
-  const firstLine = data.statement.trim().split(/\n/)[0] ?? "";
+  const firstLine = (title || data.statement.trim()).split(/\n/)[0] ?? "";
   if (firstLine.length <= 88) return firstLine;
   const words = firstLine.match(/`[^`]+`|\S+/g) ?? [];
   let heading = "";

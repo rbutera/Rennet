@@ -241,7 +241,11 @@ describe("Section content previews", () => {
     const paragraph = view.container.querySelector('[data-kind="section-paragraph-preview"]');
     expect(paragraph?.textContent).toBe("The projectLogoSchema stores the image.");
     expect(paragraph?.querySelector("code")?.textContent).toBe("projectLogoSchema");
-    expect(paragraph?.textContent).not.toContain("…");
+    // The two-line clamp and its ellipsis are `line-clamp-2` — a CSS fact happy-dom cannot
+    // lay out, so no assertion here can see them. The launched-app journey is where a
+    // long paragraph is looked at; what THIS test can pin is that the preview is the
+    // first paragraph alone, uncut, with nothing appended to it.
+    expect(paragraph?.className).toContain("line-clamp-2");
     expect(view.queryByText(/A second paragraph/)).toBeNull();
   });
 

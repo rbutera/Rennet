@@ -574,7 +574,7 @@ that host's repair.
    unchanged sections carry forward, and the composition step stamps what it
    touched (`new` / `reworked`; absence = carried). The marks read as unread
    state: touched sections open expanded while carried sections fold to
-   their gists — the board's own shape states the change — with a small
+   their previews — the board's own shape states the change — with a small
    transient accent dot per touched section that rolls up to the lens
    segment, clears on interaction, and is replaced wholesale next round.
    Generations are append-then-freeze: the prior generation's status moves

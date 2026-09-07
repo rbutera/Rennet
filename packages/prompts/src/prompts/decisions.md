@@ -34,7 +34,8 @@ failure; it never turns hidden material into no-decisions.
 
 Each decision block carries:
 
-- **Title** — a short heading naming the choice.
+- **Title** — a short heading naming the choice. The statement, why,
+  alternatives and evidence sit beneath it, never inside it.
 
 - **Statement** — the call that was made, one sentence, concrete.
 - **Why** — the reasoning, reconstructed from evidence: the code itself,

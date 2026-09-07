@@ -47,9 +47,12 @@ export function evidenceReader(rt: DispatchRuntime): CommandHandler {
     if (!patchset) throw new Error(`Patchset ${ref.patchsetId} is not in this Rennet's store.`);
     const { repository } = patchset;
     const headOid = repository.reviewedTreeOid ?? repository.headOid;
-    const file = patchset.files.find(
-      (entry) => entry.path === ref.path || entry.previousPath === ref.path,
-    );
+    // A head citation names the file as it is now; a base citation may name a rename's old
+    // path. Prefer the side's own identity, so a rename `b → a` plus a new `b` resolves a
+    // head citation of `b` to the NEW file rather than to the rename's pre-image.
+    const byPath = patchset.files.find((entry) => entry.path === ref.path);
+    const byPreviousPath = patchset.files.find((entry) => entry.previousPath === ref.path);
+    const file = ref.side === "base" ? (byPreviousPath ?? byPath) : (byPath ?? byPreviousPath);
     if (file?.binary) throw new Error(`${ref.path} is binary; the capture holds no text to cite.`);
     const path = file?.path ?? ref.path;
     const previousPath = file?.previousPath ?? path;
@@ -119,7 +122,9 @@ export function evidenceReader(rt: DispatchRuntime): CommandHandler {
           ])
         : undefined;
     const [base, head] = sources ?? [];
-    if (!resolved) {
+    // Only a source that was actually read can say a line does not exist. A truncated
+    // capture whose complete diff is unavailable keeps its hunks and captions the cut.
+    if (!resolved && sources !== undefined) {
       const source = ref.side === "base" ? base : head;
       const count =
         source == null || source === "" ? 0 : source.replace(/\n$/, "").split("\n").length;

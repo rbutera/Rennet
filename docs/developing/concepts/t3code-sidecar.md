@@ -303,17 +303,19 @@ between the reviewer and their boards.
 - The **lens rail** (`packages/app-ui/src/board/lens-switcher.tsx`) lists all five lenses
   for the generation from the moment it starts, each carrying its seat's state — waiting,
   working, settled, failed or absent — read from the generation's lanes through
-  `board/lens-seats.ts`. A running lens is selectable, never a disabled segment, and
+  `board/lens-seats.ts`. A running lens is selectable; Noise alone is unavailable while
+  the lanes it waits on are running, with its explanation on hover and keyboard focus.
   Flagged carries one indicator per voice because it runs two seats. The register rides
   the stop under each tab as a `data-cut` (`unstarted` / `open` / `clean` / `seamed` /
   `snapped` / `empty`), so it survives the colour being ignored — the hue says which lens
   this is, so a failed Design lane is a snapped blue stop and never a red one.
-- The **seat widget** (`board/seat-widget.tsx`) sits directly above the selected board and
-  names the seat writing it: its lens, its provider, how long this window has watched it,
-  its `latest` line from `SessionPreparation` in the daemon's plain words, and what the
-  board holds so far. Flagged shows both voices side by side, each with its own control. A
-  failed seat shows its failure in place. When the lane settles the widget collapses to a
-  one-line receipt, which is still the way back into the seat's transcript.
+- The **lens activity popover** (`board/lens-activity.tsx`) opens from an activity control
+  beside the selected tab, separate from selecting the lens, and anchors directly beneath
+  the tab bar so the board and its heading never move. It names the seat, how long this
+  window has followed it, its `latest` line from `SessionPreparation` in the daemon's plain
+  words, and a short rolling history of meaningful actions; raw tool calls stay in the
+  transcript. Flagged lists both voices, each with its own transcript control. The board
+  itself carries only a small activity mark beside the lens heading while its lane runs.
 - The **workspace header** (`board/workspace-header.tsx`) reports capture over the boards
   — its two named beats and its cancel — and carries the generation-wide retry. Once
   nothing is being prepared it renders nothing.
@@ -366,8 +368,8 @@ and should be removed or reworked. i'd want a right sidebar or something or a dr
 something like that, but the orchestrator chat should always be there."*
 
 The workspace opens one by writing a seat's ref into the store
-(`uiActions.openSeatTranscript({ reviewId, lens, seat, thread })`) from the seat widget —
-Flagged offers two controls, one per voice — and the drawer renders `T3ThreadView`
+(`uiActions.openSeatTranscript({ reviewId, lens, seat, thread })`) from the selected lens's
+activity popover — Flagged offers two controls, one per voice — and the drawer renders `T3ThreadView`
 read-only, right-aligned inside the board region. The drawer and the diff view share one
 slot: opening the diff closes the transcript. Selecting another lens moves the board, the
 widget and the transcript together, so the three cannot describe different lenses. Below the
@@ -557,7 +559,7 @@ supervisor.
 **T3 is a board seat's only backend, structurally.** A daemon that cannot bring the sidecar
 up — no vendored bundle, a spawn failure — answers with the reason instead of a runtime, and
 every board seat of that generation fails as `T3 sidecar unavailable: <detail>`, which the
-seat widget speaks in that lens's own voice. A caller that composed no sidecar at all
+lens rail and the board carry as that lane's failure. A caller that composed no sidecar at all
 fails the same way, naming that instead. There is nothing to fall back to: the board
 pipeline holds no harness port, and `councilSeatTurn` refuses a board job without a seam
 before it reaches either ephemeral leg. Those legs still run every non-board job — the
@@ -1309,6 +1311,13 @@ named, the Design refusal, the empty round receipt, the stale copy and the stuck
 answered; the two caveats above are what this drive leaves for the next one.
 
 ## Measured: v0.8.2 — the seats write their boards with tools
+
+> The surfaces this section quotes — the seat widget above the board, the board's
+> *in progress* line and its placeholder row — were replaced in #904 by the lens
+> activity popover and a single activity mark beside the lens heading. The
+> observations below are recorded as they were read at the time; the lane states
+> they proved (a waiting Noise lane, a failed sibling, cancel) still hold and are
+> now asserted by the launched-app board journey.
 
 Driven on 2026-09-05 against a development build of `447ec8eb` (v0.8.2 plus
 [#863](https://github.com/rbutera/Rennet/pull/863)) — a `nx run rennet-desktop:build` and a

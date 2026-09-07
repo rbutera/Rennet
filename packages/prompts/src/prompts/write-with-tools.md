@@ -26,8 +26,7 @@ and the reader watches it fill.
 
 Give sections and titled elements concise, descriptive headings. Keep one coherent
 idea per element, with its explanation and supporting evidence beneath the heading.
-For a decision, use a short title and separate the full statement, rationale,
-alternatives and evidence. A paragraph-length statement is never a navigation label.
+A paragraph-length statement is never a navigation label.
 The host derives folded previews from the current children; do not write a separate
 preview or repeat a section heading as its body. Preserve source wording where this
 lens requires it.

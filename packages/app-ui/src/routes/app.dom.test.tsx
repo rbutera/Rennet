@@ -326,7 +326,11 @@ describe("/s/:slug during New Chat preparation (#668)", () => {
     // BOARDS FIRST (lens-board-tools 5.2). A drafting session lands on the board view,
     // not a stage in front of it: the drafting is reported in the workspace's own header
     // and each lens's seat state rides its rail entry.
-    expect(await screen.findByTestId("preparation-stage")).toBeTruthy();
+    // The header's copy is the reviewer's task, not the machinery (#904): asserted here
+    // because this is the one test that mounts the workspace header over a drafting row.
+    expect((await screen.findByTestId("preparation-stage")).textContent).toBe(
+      "Reviewing the change",
+    );
     expect(document.querySelector('[data-kind="lens-board-view"]')).toBeTruthy();
     expect(document.querySelectorAll('[data-kind="lens-switcher"] [data-lens]')).toHaveLength(5);
     expect(document.querySelector('[data-lens="design"]')?.getAttribute("data-register")).toBe(

@@ -5,11 +5,16 @@ import { act, cleanup, mount, waitFor } from "../../test/dom";
 import { useReviewActivityState } from "../review-activity-state";
 import { SidebarReviewActivity } from "./review-activity";
 
+// ONE workspace project holding TWO repositories that both have a `main` (CLAUDE.md's
+// "many repos to one identity" shape): the rows differ only in session id and repository.
+// Activity keys on the session id, so the overlap is inert for this component — the fixture
+// carries the shape so a future key on project or branch would be caught here, not in the field.
 const session = (id: string, preparation?: SidebarSession["preparation"]): SidebarSession => ({
   id,
-  projectId: id,
+  projectId: "workspace",
   title: "main",
   target: "your-branch",
+  repository: `rbutera/${id}`,
   createdAt: 0,
   reviewId: `review-${id}`,
   ...(preparation ? { preparation } : {}),

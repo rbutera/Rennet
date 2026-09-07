@@ -148,10 +148,9 @@ describe("a board written by the stream reaches the screen", () => {
     // The fold line the SHARED projection derived — one step, counted as the daemon
     // counts it, which is the point of `projectBoardSections` living in the protocol.
     expect(document.querySelector('[data-kind="board-section"]')?.textContent).toContain("1 step");
-    // It is still drafting, so the three signals are still up and the delta marks are not.
+    // It is still drafting, so the heading's activity mark is up and the delta marks are
+    // not — and the retired chrome (the written counter, the placeholder row) stays gone.
     expect(document.querySelector('[data-kind="board-in-progress"]')).toBeTruthy();
-    expect(document.querySelector('[data-kind="board-in-progress"]')).toBeTruthy();
-    // …and the widget counts what is on screen, not the durable read's nothing.
     expect(document.querySelector('[data-testid="seat-written"]')).toBeNull();
     expect(document.querySelector('[data-kind="board-ghost"]')).toBeNull();
   });

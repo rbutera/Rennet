@@ -60,4 +60,19 @@ describe("review evidence rows", () => {
     expect(rows.map((row) => row.text)).toEqual(["one", "two"]);
     expect(rows.every((row) => row.newLine === null)).toBe(true);
   });
+  it("places a zero-context deletion after the line its header names, keeping old numbers true", () => {
+    // `git diff -U0` deleting B from A/B/C emits `@@ -2 +1,0 @@`: no lines on the new side,
+    // and the `+1` names the line the deletion FOLLOWS. Reconstructed against the head
+    // source it must read A, then -B, then C — with C still old line 3 / new line 2.
+    const rows = evidenceRows(
+      { ...evidence, patch: "@@ -2 +1,0 @@\n-B\n", base: "A\nB\nC\n", head: "A\nC\n" },
+      { ...ref, side: "base", startLine: 2, endLine: 2 },
+      "all",
+    );
+    expect(rows).toEqual([
+      { type: "context", text: "A", oldLine: 1, newLine: 1 },
+      { type: "del", text: "B", oldLine: 2, newLine: null },
+      { type: "context", text: "C", oldLine: 3, newLine: 2 },
+    ]);
+  });
 });
