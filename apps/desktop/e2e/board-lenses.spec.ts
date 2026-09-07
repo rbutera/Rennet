@@ -612,6 +612,7 @@ test("review activity and code evidence remain usable across navigation", async 
     if (!activityBox || !headingBox) throw new Error("activity or heading has no layout");
     expect(
       activityBox.y + activityBox.height <= headingBox.y ||
+        activityBox.y >= headingBox.y + headingBox.height ||
         activityBox.x >= headingBox.x + headingBox.width ||
         activityBox.x + activityBox.width <= headingBox.x,
     ).toBe(true);
