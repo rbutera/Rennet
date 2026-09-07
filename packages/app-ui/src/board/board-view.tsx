@@ -9,6 +9,7 @@ import type {
 import { cn } from "@rennet/ui";
 import { type RefCallback, useEffect, useMemo } from "react";
 import { useCoachAnchor } from "../coach/registry";
+import { ReviewActivity } from "../components/review-activity";
 import { useRefreshCommand } from "../data";
 import { ProseSelectionLayer, ReviewAnchoredAskProvider, RichText } from "../review";
 import { useRennetStore } from "../store";
@@ -24,11 +25,9 @@ import { SourceChips } from "./design-meta";
 import { DesignCapabilityGrid } from "./design-structure";
 import { GenerationSwitcher } from "./generation-switcher";
 import { BoardElementsProvider, useBoardPatchsetId } from "./kinds/element-context";
-import { waitingOnLine } from "./lens-seats";
+import { LENS_LABEL, waitingOnLine } from "./lens-seats";
 import { liveBoards, useLensDrafts } from "./live-draft";
-import { SeatWidget } from "./seat-widget";
 import { Section } from "./section";
-import { useGenerationRetry } from "./workspace-header";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The lens board document (C05 6.1, Objective clause 6) — the review's reading
@@ -216,17 +215,14 @@ export function LensBoardView({
   // a drafting element has never had.
   const drafted = liveByLens[effectiveLens];
   const board = drafted ?? (shown.status === "valid" ? shown.board : undefined);
-  const entry = lenses.find((candidate) => candidate.lens === effectiveLens);
   const seat = seats[effectiveLens];
   // The drafting signals belong to the LIVE generation. Drilling into a frozen predecessor
   // shows a finished board, and painting this generation's running seat over it would say
   // a settled board is still being written.
   const live = selectedGeneration === generation;
   const drafting = live && seat.drafting;
-  const { retry, pending: retrying } = useGenerationRetry(slug);
 
-  // ONE CONTROL, THREE PANES (6.2/D14). Selecting a lens moves the board, the widget and
-  // the transcript together, so the three cannot describe different lenses — a drawer left
+  // Selecting a lens moves its board, activity and transcript together — a drawer left
   // on the Sequence seat above the Decisions board is exactly the kind of quiet mismatch a
   // reviewer reads straight past. The transcript follows to the new lens's own seat when it
   // has one, and closes when it does not, because there is nothing there to show.
@@ -282,22 +278,6 @@ export function LensBoardView({
           onSelect={onGenerationSelect}
         />
       </div>
-
-      {/* THE SEAT WIDGET, directly above the board it is writing (6.1).
-          Live generation only: a frozen predecessor's seats are long gone, and naming one
-          would be a claim about a run that is over. And gated on `seated` — a lane for
-          this lens actually exists — because during capture the daemon has opened no lane,
-          and a widget reading "Design seat · waiting" would name a seat that does not
-          exist. The workspace header is what speaks for capture; this speaks for seats. */}
-      {entry !== undefined && live && slug.length > 0 && seat.seated ? (
-        <SeatWidget
-          reviewId={reviewId}
-          entry={entry}
-          retrying={retrying}
-          {...(board === undefined ? {} : { board })}
-          {...(retry === undefined ? {} : { onRetry: retry })}
-        />
-      ) : null}
 
       {board ? (
         <LensBoardDocument
@@ -436,43 +416,19 @@ function WaitingBoard({ waitingOn }: { readonly waitingOn: readonly LensKind[] }
   );
 }
 
-/** A board whose seat is writing and whose first element has not landed. It carries the
- *  same in-progress mark and placeholder row a partial board does — the rail's indicator
- *  is the third — so the three-ways rule (D13) holds from the lane's first second. */
 function EmptyDraftingBoard() {
   return (
-    <div data-kind="board-drafting" className="flex flex-col gap-4">
-      <div className="flex flex-wrap items-center gap-3">
-        <InProgressChip />
-        <span className="text-muted-foreground text-sm">This board is still being written.</span>
-      </div>
-      <GhostRow />
+    <div data-kind="board-drafting">
+      <InProgressChip />
     </div>
   );
 }
 
-/** The in-progress mark: one of the three independent ways an unsettled board says so. */
 function InProgressChip() {
   return (
-    <span
-      data-kind="board-in-progress"
-      className="rounded-chip border border-line px-2 py-0.5 font-medium text-2xs text-ink-soft uppercase tracking-wide"
-    >
-      in progress
+    <span data-kind="board-in-progress">
+      <ReviewActivity label="Reviewing this lens" />
     </span>
-  );
-}
-
-/** The placeholder last row: the third of the three, and the one that says WHERE the
- *  next element lands rather than merely that one is coming. */
-function GhostRow() {
-  return (
-    <p
-      data-kind="board-ghost"
-      className="rounded-window border border-line border-dashed px-4 py-3 text-center font-serif text-13 text-ink-faint"
-    >
-      The seat is still writing — the next element lands here.
-    </p>
   );
 }
 
@@ -543,7 +499,6 @@ export function LensBoardDocument({
               {sections.map((entry) => (
                 <Section key={entry.ref} entry={entry} lens={board.lens} defaultOpen={forceOpen} />
               ))}
-              {drafting ? <GhostRow /> : null}
             </div>
           </article>
         </ProseSelectionLayer>
@@ -623,17 +578,13 @@ function BoardHeader({
     <header className="mb-8 flex flex-col gap-4">
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-2">
         <h1 className="font-display font-semibold text-2xl text-foreground tracking-tight">
-          {document.title}
+          {LENS_LABEL[board.lens]}
         </h1>
-        {drafting ? (
-          <>
-            <InProgressChip />
-            <span className="text-muted-foreground text-sm">
-              This board is still being written.
-            </span>
-          </>
-        ) : null}
+        {drafting ? <InProgressChip /> : null}
       </div>
+      {document.title !== LENS_LABEL[board.lens] ? (
+        <p className="font-medium text-lg text-muted-foreground">{document.title}</p>
+      ) : null}
       {document.stats && document.stats.length > 0 ? (
         <dl data-kind="board-stats" className="flex flex-wrap items-baseline gap-x-5 gap-y-2">
           {document.stats.map((stat) => (

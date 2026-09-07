@@ -1,6 +1,6 @@
 import { currentGenerationId, type LensKind } from "@rennet/protocol";
 import { cn, Toggle, ToggleGroup } from "@rennet/ui";
-import { ArrowLeft, FileDiff, History, type LucideIcon, PanelLeft } from "lucide-react";
+import { ArrowLeft, FileDiff, History, type LucideIcon, MessageCircle } from "lucide-react";
 import { Fragment, useEffect } from "react";
 import { useLocation, useRoute, useSearch } from "wouter";
 import { LensSwitcher } from "../board";
@@ -249,7 +249,7 @@ export function TopBar() {
       data-slot="session-top-bar"
       data-floating={floating}
       className={cn(
-        "grid grid-cols-[1fr_auto_1fr] items-center px-3 @container",
+        "grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center px-3 @container",
         floating
           ? "pointer-events-none absolute inset-x-0 top-0 z-30 h-11"
           : "h-14 shrink-0 border-b border-line",
@@ -288,7 +288,7 @@ export function TopBar() {
             iconButton,
           )}
         >
-          <Icon icon={PanelLeft} className="size-3.5" />
+          <Icon icon={MessageCircle} className="size-3.5" />
         </button>
         {/* The trail belongs to whichever pane is leftmost. With the dock open the chat
             header already renders one (`chat/chat-header.tsx`), so showing it here too is
@@ -307,6 +307,7 @@ export function TopBar() {
       <div data-slot="lens-switcher" className="flex items-center justify-center">
         <LensSwitcher
           lenses={lenses}
+          reviewId={review?.id ?? ""}
           selected={query.view === "board" ? effectiveLens : null}
           onSelect={onLens}
           flaggedOpenCount={flaggedOpenCount}

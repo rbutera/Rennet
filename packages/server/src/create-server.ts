@@ -3090,8 +3090,14 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   // Durable rounds ledger (C15 2.2): one record per round, reconciled — the regeneration
   // round's real generation + frozen-predecessor id supersedes the dispatch placeholder.
   const roundRecordStore = new RoundRecordStore(join(dataDir, "rounds"));
-  const sidebarSessionFor = (session: SessionModel) =>
-    sidebarSessionOf(session, roundRecordStore.read(session.id));
+  const sidebarSessionFor = (session: SessionModel) => {
+    const operation = roundOperationStore.read(session.id);
+    return sidebarSessionOf(
+      session,
+      roundRecordStore.read(session.id),
+      operation?.reviewId === session.reviewId ? operation : undefined,
+    );
+  };
   // The live round-progress channel (C15 3.1): an append-only `RoundEvent` log per review,
   // pushed to live sockets as it grows and read back by a client that joins mid-round. The
   // WS listener is late-bound (assigned below), exactly as the board/ask fan-outs are.

@@ -321,12 +321,12 @@ describe("/s/:slug during New Chat preparation (#668)", () => {
       "review.load": () => ({ review: REVIEW }),
     } as never);
     const history = memoryHistory("/s/sess-progress");
-    const { user, findByText } = mount(<RennetRouterApp bridge={bridge} history={history} />);
+    const { user } = mount(<RennetRouterApp bridge={bridge} history={history} />);
 
     // BOARDS FIRST (lens-board-tools 5.2). A drafting session lands on the board view,
     // not a stage in front of it: the drafting is reported in the workspace's own header
     // and each lens's seat state rides its rail entry.
-    expect(await findByText("Generating the boards")).toBeTruthy();
+    expect(await screen.findByTestId("preparation-stage")).toBeTruthy();
     expect(document.querySelector('[data-kind="lens-board-view"]')).toBeTruthy();
     expect(document.querySelectorAll('[data-kind="lens-switcher"] [data-lens]')).toHaveLength(5);
     expect(document.querySelector('[data-lens="design"]')?.getAttribute("data-register")).toBe(

@@ -8,10 +8,13 @@ import {
   type LucideIcon,
   VolumeX,
 } from "lucide-react";
+import { Fragment } from "react";
 import { useCoachAnchor } from "../coach/registry";
 import { Icon } from "../components/icon";
+import { ReviewActivity } from "../components/review-activity";
 import { useRennetStore } from "../store";
 import type { LensBoardEntry } from "./board-data";
+import { LensActivity } from "./lens-activity";
 import { lensSlot, lensTint } from "./lens-colour";
 import { LENS_LABEL, type SeatCut, type SeatRegister, waitingOnLine } from "./lens-seats";
 import { deltaKey } from "./viewed-delta";
@@ -128,11 +131,11 @@ function SeatIndicators({
   return (
     <span data-testid="lens-working" data-voices={voices} className="flex shrink-0 items-center">
       {Array.from({ length: Math.max(1, voices) }, (_, index) => (
-        <span
+        <ReviewActivity
           // biome-ignore lint/suspicious/noArrayIndexKey: the voices are positional marks with no identity of their own beyond their count.
           key={index}
-          aria-hidden="true"
-          className="-ml-0.5 first:ml-0 size-1.5 rounded-full border border-lens animate-processing-pulse motion-reduce:animate-none"
+          className="size-3 text-lens"
+          label="Reviewing this lens"
         />
       ))}
     </span>
@@ -145,6 +148,7 @@ export function LensSwitcher({
   onSelect,
   flaggedOpenCount = 0,
   className,
+  reviewId = "",
 }: {
   readonly lenses: readonly LensBoardEntry[];
   readonly selected: LensKind | null;
@@ -152,6 +156,7 @@ export function LensSwitcher({
   /** Open findings derived from immutable board bytes plus durable reviewer actions. */
   readonly flaggedOpenCount?: number;
   readonly className?: string;
+  readonly reviewId?: string;
 }) {
   const viewed = useRennetStore((s) => s.viewedDelta.viewedDeltaSections);
   // The `lenses` coach mark anchors the switcher — registered inside the visible-guard so
@@ -196,57 +201,77 @@ export function LensSwitcher({
                       : "";
         const active = lens === selected;
         return (
-          <button
-            key={lens}
-            type="button"
-            role="tab"
-            aria-selected={active}
-            aria-label={`${LENS_LABEL[lens]}${accessibleStatus}`}
-            title={
-              seat.register === "waiting" && waiting
-                ? `${LENS_LABEL[lens]} — ${waiting}`
-                : LENS_LABEL[lens]
-            }
-            data-lens={lens}
-            data-lens-slot={lensSlot(lens)}
-            data-register={seat.register}
-            data-failed={failure === undefined ? undefined : "true"}
-            data-absent={absence === undefined ? undefined : absence}
-            {...(seat.waitingOn.length > 0 ? { "data-waiting-on": seat.waitingOn.join(",") } : {})}
-            onClick={() => onSelect(lens)}
-            className={cn(
-              // The tab binds its lens's hue for its own subtree; the stop and the
-              // active glyph below paint in it without naming a lens.
-              "relative flex items-center gap-2 whitespace-nowrap rounded-md px-3.5 pt-2 pb-2.5 font-medium text-13 transition-colors",
-              lensTint(lens),
-              active
-                ? "bg-secondary text-foreground"
-                : "text-muted-foreground hover:text-foreground",
-            )}
-          >
-            <LensStop cut={seat.cut} active={active} />
-            <span className="relative flex shrink-0">
-              <Icon icon={LENS_ICON[lens]} className={cn("size-4", active && "text-lens")} />
-              {openCount > 0 ? (
-                <span
-                  data-testid="lens-open-count"
-                  aria-hidden="true"
-                  className="-right-2 -top-2 absolute flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-destructive px-0.5 font-semibold text-10 text-destructive-foreground leading-none"
-                >
-                  {openCount}
-                </span>
-              ) : unviewedDeltas > 0 ? (
-                <span
-                  data-testid="lens-delta-pip"
-                  data-delta-count={unviewedDeltas}
-                  aria-hidden="true"
-                  className="-right-1 -top-1 absolute size-1.5 rounded-full bg-primary"
-                />
-              ) : null}
-            </span>
-            <span className="hidden @[46rem]:inline">{LENS_LABEL[lens]}</span>
-            <SeatIndicators register={seat.register} voices={seat.voices.length} />
-          </button>
+          <Fragment key={lens}>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={active}
+              aria-disabled={lens === "noise" && seat.waitingOn.length > 0}
+              aria-description={
+                lens === "noise" && seat.waitingOn.length > 0
+                  ? "Noise reviews what remains once the other lenses have finished."
+                  : undefined
+              }
+              aria-label={`${LENS_LABEL[lens]}${accessibleStatus}`}
+              title={
+                lens === "noise" && seat.waitingOn.length > 0
+                  ? "Noise reviews what remains once the other lenses have finished."
+                  : seat.register === "waiting" && waiting
+                    ? `${LENS_LABEL[lens]} — ${waiting}`
+                    : LENS_LABEL[lens]
+              }
+              data-lens={lens}
+              data-lens-slot={lensSlot(lens)}
+              data-register={seat.register}
+              data-failed={failure === undefined ? undefined : "true"}
+              data-absent={absence === undefined ? undefined : absence}
+              {...(seat.waitingOn.length > 0
+                ? { "data-waiting-on": seat.waitingOn.join(",") }
+                : {})}
+              onClick={() => {
+                if (lens !== "noise" || seat.waitingOn.length === 0) onSelect(lens);
+              }}
+              className={cn(
+                // The tab binds its lens's hue for its own subtree; the stop and the
+                // active glyph below paint in it without naming a lens.
+                "relative flex items-center gap-2 whitespace-nowrap rounded-md px-3.5 pt-2 pb-2.5 font-medium text-13 transition-colors",
+                lensTint(lens),
+                active
+                  ? "bg-secondary text-foreground"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              <LensStop cut={seat.cut} active={active} />
+              <span className="relative flex shrink-0">
+                <Icon icon={LENS_ICON[lens]} className={cn("size-4", active && "text-lens")} />
+                {openCount > 0 ? (
+                  <span
+                    data-testid="lens-open-count"
+                    aria-hidden="true"
+                    className="-right-2 -top-2 absolute flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-destructive px-0.5 font-semibold text-10 text-destructive-foreground leading-none"
+                  >
+                    {openCount}
+                  </span>
+                ) : unviewedDeltas > 0 ? (
+                  <span
+                    data-testid="lens-delta-pip"
+                    data-delta-count={unviewedDeltas}
+                    aria-hidden="true"
+                    className="-right-1 -top-1 absolute size-1.5 rounded-full bg-primary"
+                  />
+                ) : null}
+              </span>
+              <span>{LENS_LABEL[lens]}</span>
+              {lens === "noise" && seat.waitingOn.length > 0 ? (
+                <ReviewActivity label="Waiting for other lenses" className="size-3 text-lens" />
+              ) : (
+                <SeatIndicators register={seat.register} voices={seat.voices.length} />
+              )}
+            </button>
+            {active && seat.seated ? (
+              <LensActivity reviewId={reviewId} entry={{ lens, seat }} />
+            ) : null}
+          </Fragment>
         );
       })}
     </div>

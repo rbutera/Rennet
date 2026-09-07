@@ -27,6 +27,18 @@ afterEach(() => {
 });
 
 describe("ExitFab", () => {
+  it("cannot advance during review and becomes actionable when ready", async () => {
+    let toggled = 0;
+    const r = mount(
+      <ExitFab mode="own-branch" reviewing open={false} onToggle={() => toggled++} />,
+    );
+    await r.user.click(r.getByRole("button", { name: "Reviewing the change" }));
+    expect(toggled).toBe(0);
+    r.rerender(<ExitFab mode="own-branch" open={false} onToggle={() => toggled++} />);
+    await r.user.click(r.getByRole("button", { name: "Continue" }));
+    expect(toggled).toBe(1);
+  });
+
   it("shows the derived pip count, unchanged by a re-render (navigation)", () => {
     stage("a");
     stage("b");

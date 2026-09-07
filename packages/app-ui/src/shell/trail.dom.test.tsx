@@ -13,13 +13,13 @@ afterEach(cleanup);
 const WORKSPACE = "/Users/dev/.rennet/worktrees/-Users-dev-acme/feat-seam";
 
 describe("Trail workspace", () => {
-  it("names the bound workspace beside the branch, in full, on hover too", () => {
+  it("keeps the workspace available on demand without repeating it in the header", () => {
     const { container } = mount(
       <Trail title="feat/seam" projectName="acme" target="your-branch" workspace={WORKSPACE} />,
     );
-    const slot = container.querySelector<HTMLElement>("[data-slot='trail-workspace']");
+    const slot = container.querySelector<HTMLElement>("[data-slot='trail']");
     expect(slot).not.toBeNull();
-    expect(slot?.textContent).toBe(WORKSPACE);
+    expect(slot?.textContent).not.toContain(WORKSPACE);
     // `truncate` clips a long path, so the untruncated value has to survive somewhere the
     // reviewer can actually read it.
     expect(slot?.getAttribute("title")).toBe(WORKSPACE);
