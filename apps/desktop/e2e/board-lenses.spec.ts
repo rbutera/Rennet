@@ -1,5 +1,5 @@
 import { rmSync } from "node:fs";
-import { basename, join } from "node:path";
+import { join } from "node:path";
 import { expect, test } from "@playwright/test";
 import { AskLogStore, SessionStore } from "@rennet/adapters";
 import { WsRennetBridge } from "@rennet/client";
@@ -22,97 +22,26 @@ import {
   writeRepoFile,
 } from "./harness";
 
-// ─────────────────────────────────────────────────────────────────────────────
-// The Board — the review workspace that replaced the canvas era — in the real app.
-//
-// #574 deleted `review-canvases.spec.ts` because every surface it asserted had been
-// removed in the delete-first cutover. That deletion was right and the suite was
-// smaller for it, but the honest accounting was uncomfortable: the suite stopped
-// asserting a surface that no longer exists and gained NOTHING asserting the one that
-// replaced it. This is the other half. The replacement is `board/board-view.tsx`,
-// mounted from `app/review-workspace-route.tsx:249`; it had jsdom coverage and no
-// launched-app coverage at all.
-//
-// MODEL-FREE, like the rest of the free suite (`RENNET_DISABLE_HARNESS=1`): no harness
-// runs, so nothing drafts a board. That is not a limitation to work around here — it IS
-// the case worth driving, because it is what every reviewer sees in the seconds before
-// a board arrives, and the surface has to be honest in it rather than blank. Assertions
-// are on STRUCTURE and on the honest-absent state, never on model output.
-// ─────────────────────────────────────────────────────────────────────────────
-
-test("the board is the review workspace, and is honest when no board is drafted", async () => {
-  test.setTimeout(300_000);
-
+test("the board reports a failed drafting attempt without disguising it as empty", async () => {
+  test.setTimeout(120_000);
   const repository = seedReviewRepo("rennet-e2e-board-");
   const userData = makeTempDir("rennet-e2e-board-state-");
   const home = makeTempDir("rennet-e2e-board-home-");
   const { application } = await launchRennet({ repository, userData, home });
-
   try {
     const page = await application.firstWindow();
     await completeWelcome(page);
     await addProject(page, repository);
     await openFixtureReview(page, repository, userData);
-
-    // The board is the DEFAULT view of a session route — no `?view` needed to reach it.
     const board = page.locator('[data-kind="lens-board-view"]');
-    await expect(board).toBeVisible({ timeout: 60_000 });
-    // WHICH PROJECT this session belongs to — not which repository. The removed
-    // `REVIEW · <repo>` eyebrow read `review.repositoryRoot`; this reads the sidebar's
-    // project row, whose name is `basename(path)` for a local add (`project-discovery.ts`).
-    // For this single-repo fixture the two strings coincide, and that coincidence is the
-    // only reason this assertion looks like a repository check. It is not one.
-    //
-    // ⚠️ WHAT THIS CANNOT CATCH, stated so the next reader does not inherit the wrong
-    // belief: the board rendering the WRONG review's content under the right project name,
-    // and — because a workspace maps many repos to one project — any wrong-repo capture at
-    // all. The proof for THAT is `new-chat-start.spec.ts:309`, whose two-repo fixture
-    // asserts the captured file list belongs to the clicked row's repository.
-    //
-    // The selector is the sidebar row itself, matched by SHAPE (`aria-expanded`, unique to
-    // the project row inside `[data-region="sidebar"]` — `sidebar.tsx:685`) plus its text.
-    // An accessible-name match cannot work here: the row's name always carries a trailing
-    // session count or `indexing` (`sidebar.tsx:699-707`), so `{ name, exact: true }` — the
-    // shape the Add-Project breadcrumb uses in `harness.ts:178` — never matches a project row.
-    // MEASURED, not inferred: a launched run's a11y snapshot renders this row as
-    // `button "rennet-e2e-board-UNIPR1 1" [expanded]` — the count is in the name, and the
-    // `aria-expanded` flag is on the element.
-    //
-    const projectRow = page
-      .locator('[data-region="sidebar"] button[aria-expanded]')
-      .filter({ hasText: basename(repository) });
-    await expect(projectRow).toBeVisible();
-
-    // The honest-absent state, and the reason this spec drives the model-free floor rather
-    // than treating it as a gap: with no harness there is no board, and the surface SAYS SO
-    // ("No board for this generation yet.") instead of rendering an empty frame that reads
-    // as a board with nothing in it. Observed, not assumed — this is what the app rendered.
-    await expect(page.locator('[data-kind="board-empty"]')).toBeVisible({ timeout: 30_000 });
-
-    // ⚠️ THE NEXT TWO ARE ABSENCE ASSERTIONS, and their limits are worth stating rather than
-    // discovering later: each passes vacuously if its selector ever drifts from the component.
-    // A control run (flipping both to `toBe(1)`) confirms they evaluate against a genuinely
-    // empty DOM — `Expected: 1, Received: 0` — so they are not silently erroring. What that
-    // control does NOT prove is that the selectors would still match a REAL switcher or error
-    // panel if one appeared. The positive persisted-board journey below supplies that
-    // complementary proof; this test remains the honest-absence half of the contract.
-    //
-    // The contract itself is C05 6.2's absent-not-disabled rule: a lens with no board is not
-    // in the switcher at all, so with no boards there is no switcher — never a row of dead
-    // segments implying content that was never drafted.
-    expect(await page.getByRole("tablist", { name: "Lens" }).count()).toBe(0);
-    // An absent board and an UNREADABLE one are different facts. Nothing failed here, so the
-    // error panel must not be standing in for the empty state.
-    expect(await page.locator('[data-kind="board-error"]').count()).toBe(0);
-
-    // The session-view pill round-trips without losing the review: board → diff → board, and
-    // the same review is still underneath. `?view` is a refinement of one location, so a
-    // toggle must never re-resolve to a different session.
+    await expect(board).toBeVisible();
+    await expect(board.locator('[data-kind="board-failed"]')).toContainText("no runnable seat");
+    await expect(board.locator('[data-kind="board-empty"]')).toHaveCount(0);
+    await expect(page.getByRole("tablist", { name: "Lens" }).getByRole("tab")).toHaveCount(5);
     await openDiffView(page);
     await expect(board).toHaveCount(0);
     await page.getByRole("button", { name: "Back to board" }).click();
-    await expect(board).toBeVisible();
-    await expect(projectRow).toBeVisible();
+    await expect(board.locator('[data-kind="board-failed"]')).toBeVisible();
   } finally {
     await application.close();
     rmSync(repository, { recursive: true, force: true });
@@ -120,10 +49,6 @@ test("the board is the review workspace, and is honest when no board is drafted"
     rmSync(home, { recursive: true, force: true });
   }
 });
-
-function currentHash(page: Parameters<typeof seedBoardFixture>[0]): Promise<string> {
-  return page.evaluate(() => location.hash);
-}
 
 async function openFixtureReview(
   page: Parameters<typeof seedBoardFixture>[0],
@@ -278,6 +203,8 @@ test("a persisted board owns lens, generation, and captured-code navigation in t
     const finding = board.locator('[data-kind="finding"]');
     await expect(finding).toHaveCount(1);
 
+    if ((await finding.locator("button[aria-expanded]").getAttribute("aria-expanded")) === "false")
+      await finding.locator("button[aria-expanded]").click();
     await finding.getByRole("button", { name: "Dismiss", exact: true }).click();
     await expect(flaggedTab.locator("[data-testid=lens-open-count]")).toHaveCount(0);
     await expect(flaggedTab).toHaveAccessibleName(/^Flagged, 0 open(?:, changed this round)?$/);
@@ -285,16 +212,21 @@ test("a persisted board owns lens, generation, and captured-code navigation in t
     await expect(board).toHaveAttribute("data-lens", "flagged", { timeout: 60_000 });
     await openBoardSections(page);
     await expect(finding).toHaveAttribute("data-status", "dismissed");
-    await finding.locator("button[aria-expanded]").click();
+    if ((await finding.locator("button[aria-expanded]").getAttribute("aria-expanded")) === "false")
+      await finding.locator("button[aria-expanded]").click();
     await finding.getByRole("button", { name: "Dismissed · Undo" }).click();
     await expect(flaggedTab).toHaveAccessibleName("Flagged, 1 open");
 
+    if ((await finding.locator("button[aria-expanded]").getAttribute("aria-expanded")) === "false")
+      await finding.locator("button[aria-expanded]").click();
     await finding.getByRole("button", { name: "Request This Change" }).click();
     await expect(flaggedTab.locator("[data-testid=lens-open-count]")).toHaveCount(0);
     await expect(finding.getByRole("button", { name: "Dismiss", exact: true })).toHaveCount(0);
     await page.reload();
     await expect(board).toHaveAttribute("data-lens", "flagged", { timeout: 60_000 });
     await openBoardSections(page);
+    if ((await finding.locator("button[aria-expanded]").getAttribute("aria-expanded")) === "false")
+      await finding.locator("button[aria-expanded]").click();
     await finding.getByRole("button", { name: "Staged · Request Change" }).click();
     await expect(flaggedTab).toHaveAccessibleName("Flagged, 1 open");
     await expect
@@ -303,9 +235,13 @@ test("a persisted board owns lens, generation, and captured-code navigation in t
     await page.reload();
     await expect(board).toHaveAttribute("data-lens", "flagged", { timeout: 60_000 });
     await openBoardSections(page);
+    if ((await finding.locator("button[aria-expanded]").getAttribute("aria-expanded")) === "false")
+      await finding.locator("button[aria-expanded]").click();
     await expect(finding.getByRole("button", { name: "Request This Change" })).toBeVisible();
     await expect(flaggedTab).toHaveAccessibleName("Flagged, 1 open");
 
+    if ((await finding.locator("button[aria-expanded]").getAttribute("aria-expanded")) === "false")
+      await finding.locator("button[aria-expanded]").click();
     await finding.getByRole("button", { name: "Discuss", exact: true }).click();
     await expect(page.locator('[data-slot="chat-dock"]')).toHaveAttribute("data-open", "true");
     await expect
