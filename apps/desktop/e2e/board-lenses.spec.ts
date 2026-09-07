@@ -744,6 +744,7 @@ test("review activity and code evidence remain usable across navigation", async 
       );
     }
     if (await skipTips.isVisible()) await skipTips.click();
+    await page.screenshot({ path: test.info().outputPath("narrow-rail.png") });
     for (const name of ["Design", "Sequence", "Decisions", "Flagged", "Noise"]) {
       const tab = tabs.getByRole("tab", { name: new RegExp(`^${name}(?:,|$)`) });
       await tab.focus();
