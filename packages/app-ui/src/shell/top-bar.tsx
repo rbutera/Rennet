@@ -6,6 +6,7 @@ import { useLocation, useRoute, useSearch } from "wouter";
 import { LensSwitcher } from "../board";
 import { lensesWithResult, useBoardData, useLensBoards } from "../board/board-data";
 import { countOpenFindings } from "../board/finding-lifecycle";
+import { useLensActivityHistory } from "../board/lens-activity-state";
 import { Icon } from "../components/icon";
 import { useRoundRecords, useRoundState, useRoundsUnavailable } from "../rounds/rounds-data";
 import { useSlugResolution } from "../routes/slug";
@@ -131,6 +132,11 @@ export function TopBar() {
   // (5.1/D12) — which is why it takes the SLUG: the lanes are read off the session row,
   // and during capture there is no review to read a board from at all.
   const lenses = useLensBoards(slug, review?.id ?? "", selectedGeneration);
+  const observeActivity = useLensActivityHistory((state) => state.observe);
+  useEffect(
+    () => observeActivity(review?.id ?? slug, selectedGeneration, lenses),
+    [observeActivity, review?.id, slug, selectedGeneration, lenses],
+  );
   const stagedAsks = useRennetStore((s) => s.review.stagedAsks);
   const findingDispositions = useRennetStore((s) => s.review.findingDispositions);
   const flaggedBoard = lenses.find(({ lens }) => lens === "flagged")?.board;
@@ -249,10 +255,10 @@ export function TopBar() {
       data-slot="session-top-bar"
       data-floating={floating}
       className={cn(
-        "grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center px-3 @container",
+        "flex flex-wrap items-center gap-x-2 gap-y-0 px-3 py-2 @container",
         floating
-          ? "pointer-events-none absolute inset-x-0 top-0 z-30 h-11"
-          : "h-14 shrink-0 border-b border-line",
+          ? "pointer-events-none absolute inset-x-0 top-0 z-30 min-h-11"
+          : "min-h-14 shrink-0 border-b border-line",
       )}
     >
       {/* LEFT slot: back arrow (off-board), the one chat toggle, trail. In state 3 it
@@ -260,7 +266,7 @@ export function TopBar() {
         traffic lights, and elsewhere is just the pill around the toggle. */}
       <div
         className={cn(
-          "flex min-w-0 items-center gap-2",
+          "flex min-w-0 max-w-48 items-center gap-2",
           floating && cn("pointer-events-auto", mac ? "ml-[112px]" : "ml-11"),
         )}
       >
@@ -304,14 +310,18 @@ export function TopBar() {
 
       {/* CENTER slot: the available-lens projection for the selected generation. It remains
           present on non-board views with no active segment; choosing one returns to its board. */}
-      <div data-slot="lens-switcher" className="flex items-center justify-center">
+      <div
+        data-slot="lens-switcher"
+        className="flex min-w-0 flex-1 items-center overflow-x-auto @max-[640px]:order-3 @max-[640px]:h-10 @max-[640px]:basis-full"
+      >
         <LensSwitcher
           lenses={lenses}
-          reviewId={review?.id ?? ""}
+          reviewId={review?.id ?? slug}
+          generation={selectedGeneration}
           selected={query.view === "board" ? effectiveLens : null}
           onSelect={onLens}
           flaggedOpenCount={flaggedOpenCount}
-          className={floating ? cn("pointer-events-auto", chip) : undefined}
+          className={cn("shrink-0", floating && cn("pointer-events-auto", chip))}
         />
       </div>
 
@@ -321,7 +331,12 @@ export function TopBar() {
           round outline; Map and Diff share one, split by a hairline. The wrapping
           div is presentation: `ToggleGroup`'s composite registers its members by
           context, not by direct-child position, so nesting keeps arrow keys. */}
-      <div className={cn("flex items-center justify-end", floating && "pointer-events-auto")}>
+      <div
+        className={cn(
+          "ml-auto flex min-w-0 items-center justify-end overflow-x-auto",
+          floating && "pointer-events-auto",
+        )}
+      >
         <ToggleGroup
           value={pillValue}
           onValueChange={onPill}

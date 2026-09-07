@@ -1,4 +1,5 @@
 import { posix } from "node:path";
+import { sideLinesByFileLine } from "@rennet/core";
 import {
   DIFF_TRUNCATION_MARKER,
   implementationPathFor,
@@ -99,16 +100,36 @@ export function evidenceReader(rt: DispatchRuntime): CommandHandler {
           paths: [...new Set([previousPath, path])],
         })) ?? null)
       : undefined;
+    const patch = completePatch ?? file?.patch ?? "";
+    const captured = file
+      ? sideLinesByFileLine({ ...file, patch }, ref.side === "base" ? "deletions" : "additions")
+      : new Map<number, string>();
+    let resolved = true;
+    for (let line = ref.startLine; line <= ref.endLine; line++) {
+      if (!captured.has(line)) {
+        resolved = false;
+        break;
+      }
+    }
     const sources =
-      (includeSource || !file) && completePatch !== null
+      (includeSource || !resolved) && completePatch !== null
         ? await Promise.all([
             file?.status === "added" ? null : read(repository.baseOid, previousPath),
             file?.status === "deleted" ? null : read(headOid, path),
           ])
         : undefined;
     const [base, head] = sources ?? [];
+    if (!resolved) {
+      const source = ref.side === "base" ? base : head;
+      const count =
+        source == null || source === "" ? 0 : source.replace(/\n$/, "").split("\n").length;
+      if (ref.endLine > count)
+        throw new Error(
+          `${ref.path}:${ref.startLine}–${ref.endLine} (${ref.side}) is unavailable in the reviewed source.`,
+        );
+    }
     return parseCommandOutput(name, {
-      patch: completePatch ?? file?.patch ?? "",
+      patch,
       path,
       ...(previousPath === path ? {} : { previousPath }),
       ...(sources ? { base, head } : {}),

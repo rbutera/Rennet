@@ -586,3 +586,26 @@ describe("macOS traffic-light clearance (corner slot, state 1)", () => {
     }
   });
 });
+
+it("exposes running activity when the existing session row receives keyboard focus", async () => {
+  const view = mountSidebar({
+    projects: [project("p1", "atlas")],
+    sessions: [
+      {
+        id: "s1",
+        projectId: "p1",
+        title: "Alpha",
+        preparation: { status: "capturing", step: "capturing-change" },
+      },
+    ],
+  });
+  await openProject(view, "atlas");
+  const row = await view.findByRole("button", { name: /Alpha/ });
+  expect(view.getByRole("status", { name: "Reviewing the change" })).toBeTruthy();
+  for (let step = 0; step < 20 && document.activeElement !== row; step++) await view.user.tab();
+  expect(document.activeElement).toBe(row);
+  await waitFor(() =>
+    expect(view.getByRole("tooltip").textContent).toContain("Reviewing the change"),
+  );
+  expect(row.querySelector("button")).toBeNull();
+});

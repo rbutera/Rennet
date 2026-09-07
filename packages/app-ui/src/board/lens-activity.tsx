@@ -1,43 +1,60 @@
 import { cn, Popover, PopoverContent, PopoverTrigger } from "@rennet/ui";
 import { Activity, Pin, X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Icon } from "../components/icon";
 import { ReviewActivity } from "../components/review-activity";
 import { useRennetStore } from "../store";
 import type { LensBoardEntry } from "./board-data";
+import { lensActivityKey, useLensActivityHistory } from "./lens-activity-state";
 import { lensTint } from "./lens-colour";
 
 export function LensActivity({
   reviewId,
+  generation = "",
   entry,
 }: {
   readonly reviewId: string;
+  readonly generation?: string;
   readonly entry: Pick<LensBoardEntry, "lens" | "seat">;
 }) {
+  const trigger = useRef<HTMLButtonElement>(null);
+  const [sideOffset, setSideOffset] = useState(12);
   const [open, setOpen] = useState(false);
   const [pinned, setPinned] = useState(false);
-  const [history, setHistory] = useState<readonly string[]>([]);
-  const [observedAt] = useState(Date.now);
+
   const [now, setNow] = useState(Date.now);
   const openTranscript = useRennetStore((s) => s.uiActions.openSeatTranscript);
   const { seat, lens } = entry;
   const running = seat.register === "working";
-  const action = seat.voices
-    .map((voice) => (voice.latest?.kind === "tool" ? "Inspecting the change" : voice.speech.text))
-    .join(" · ");
+  const key = lensActivityKey(reviewId, generation, seat);
+  const record = useLensActivityHistory((state) => state.byRun[key]);
+  const observe = useLensActivityHistory((state) => state.observe);
+  useEffect(() => observe(reviewId, generation, [entry]), [observe, reviewId, generation, entry]);
+  const history = record?.history ?? [];
+  const observedAt = record?.observedAt ?? now;
   useEffect(() => {
     if (!running) return;
     const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
   }, [running]);
-  useEffect(() => {
-    setHistory((previous) =>
-      previous[0] === action
-        ? previous
-        : [action, ...previous.filter((text) => text !== action)].slice(0, 4),
-    );
-  }, [action]);
-  const seconds = Math.floor((now - observedAt) / 1000);
+  useLayoutEffect(() => {
+    if (!open) return;
+    const place = () => {
+      const heading = document.querySelector<HTMLElement>("[data-board-heading]");
+      setSideOffset(
+        Math.max(
+          12,
+          (heading?.getBoundingClientRect().bottom ?? 0) -
+            (trigger.current?.getBoundingClientRect().bottom ?? 0) +
+            12,
+        ),
+      );
+    };
+    place();
+    window.addEventListener("resize", place);
+    return () => window.removeEventListener("resize", place);
+  }, [open]);
+  const seconds = Math.max(0, Math.floor((now - observedAt) / 1000));
   return (
     <Popover
       open={open}
@@ -50,6 +67,7 @@ export function LensActivity({
       <PopoverTrigger
         render={
           <button
+            ref={trigger}
             type="button"
             aria-label={`${seat.label} activity`}
             className={cn(
@@ -69,8 +87,11 @@ export function LensActivity({
         aria-label={`${seat.label} activity details`}
         side="bottom"
         align="end"
-        sideOffset={12}
-        className={cn("w-80 max-w-[calc(100vw-2rem)] p-4", lensTint(lens))}
+        sideOffset={sideOffset}
+        className={cn(
+          "max-h-[var(--available-height)] w-80 max-w-[calc(100vw-2rem)] overflow-y-auto p-4",
+          lensTint(lens),
+        )}
       >
         <div className="flex items-center gap-2">
           {running ? <ReviewActivity className="text-lens" /> : null}
@@ -118,7 +139,7 @@ export function LensActivity({
               key={voice.seat}
               data-seat-transcript={voice.seat}
               type="button"
-              className="self-start rounded px-2 py-1 text-sm text-lens hover:bg-secondary"
+              className="self-start rounded px-2 py-1 text-sm text-primary hover:bg-secondary"
               onClick={() => {
                 if (!pinned) setOpen(false);
                 if (voice.thread)

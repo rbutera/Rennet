@@ -29,6 +29,9 @@ import {
   PopoverTitle,
   PopoverTrigger,
   Spinner,
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
   toast,
 } from "@rennet/ui";
 import {
@@ -50,7 +53,7 @@ import {
   Settings2,
   Trash2,
 } from "lucide-react";
-import { type ReactElement, type ReactNode, useEffect, useRef, useState } from "react";
+import { type ReactElement, type ReactNode, useEffect, useId, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { useCoachOptional } from "../../coach/context";
 import { useCoachAnchor } from "../../coach/registry";
@@ -301,6 +304,17 @@ function SessionRow({
   readonly onOpen: () => void;
   readonly onArchive: () => void;
 }) {
+  const activityDescriptionId = useId();
+  const [activityOpen, setActivityOpen] = useState(false);
+  const activity = useReviewActivityState((state) => state.bySession[session.id]);
+  const activityLabel =
+    activity?.kind === "running"
+      ? "Reviewing the change"
+      : activity?.kind === "failed"
+        ? activity.reason
+        : activity?.kind === "complete"
+          ? "Review ready"
+          : undefined;
   const projection = useSidebarSessionProjection();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
@@ -350,60 +364,74 @@ function SessionRow({
   return (
     <ContextMenu>
       <ContextMenuTrigger render={<div className="flex flex-col" />}>
-        <button
-          type="button"
-          onClick={onOpen}
-          aria-current={active}
-          className={cn(
-            "flex min-h-8 w-full flex-col justify-center gap-0.5 rounded-chip px-2 py-1 text-left transition-colors hover:bg-raised",
-            active && "bg-raised",
-          )}
-        >
-          <span className="flex items-center gap-1.5">
-            {/* The leading icon is always the target KIND (accent when needs-you);
+        <Tooltip open={activityOpen && activityLabel !== undefined} onOpenChange={setActivityOpen}>
+          <TooltipTrigger
+            render={
+              <button
+                type="button"
+                onClick={onOpen}
+                onFocus={() => setActivityOpen(true)}
+                onBlur={() => setActivityOpen(false)}
+                aria-describedby={activityOpen && activityLabel ? activityDescriptionId : undefined}
+                aria-current={active}
+                className={cn(
+                  "flex min-h-8 w-full flex-col justify-center gap-0.5 rounded-chip px-2 py-1 text-left transition-colors hover:bg-raised",
+                  active && "bg-raised",
+                )}
+              />
+            }
+          >
+            <span className="flex items-center gap-1.5">
+              {/* The leading icon is always the target KIND (accent when needs-you);
                 reviewed is a separate green tick beside the title, not a recolor (R36). */}
-            <TargetIcon
-              kind={session.target}
-              state={session.targetState === "reviewed" ? undefined : session.targetState}
-              className="size-3"
-            />
-            <span
-              className={cn(
-                "truncate text-13 leading-tight",
-                active ? "text-ink" : "text-foreground/80",
-              )}
-            >
-              {session.title}
-            </span>
-            <SidebarReviewActivity sessionId={session.id} active={active} />
-            {session.targetState === "reviewed" ? (
-              <Icon
-                icon={Check}
-                aria-label="Reviewed"
-                aria-hidden={false}
-                className="size-3 shrink-0 text-green"
+              <TargetIcon
+                kind={session.target}
+                state={session.targetState === "reviewed" ? undefined : session.targetState}
+                className="size-3"
               />
-            ) : null}
-            {session.pinned ? (
-              <Icon
-                icon={Pin}
-                aria-label="Pinned"
-                aria-hidden={false}
-                className="size-2.5 shrink-0 text-muted-foreground/60"
-              />
-            ) : null}
-            {/* Unread orchestrator activity — verdigris, the machine's register. The
-                ACTIVE row never shows it: being there means it has been read. */}
-            {session.unread && !active ? (
               <span
-                role="img"
-                className="size-1.5 shrink-0 rounded-full bg-model"
-                aria-label="Unread updates"
-              />
-            ) : null}
-          </span>
-          <span className="pl-[18px] text-2xs text-muted-foreground">{sublabel}</span>
-        </button>
+                className={cn(
+                  "truncate text-13 leading-tight",
+                  active ? "text-ink" : "text-foreground/80",
+                )}
+              >
+                {session.title}
+              </span>
+              <SidebarReviewActivity sessionId={session.id} active={active} />
+              {session.targetState === "reviewed" ? (
+                <Icon
+                  icon={Check}
+                  aria-label="Reviewed"
+                  aria-hidden={false}
+                  className="size-3 shrink-0 text-green"
+                />
+              ) : null}
+              {session.pinned ? (
+                <Icon
+                  icon={Pin}
+                  aria-label="Pinned"
+                  aria-hidden={false}
+                  className="size-2.5 shrink-0 text-muted-foreground/60"
+                />
+              ) : null}
+              {/* Unread orchestrator activity — verdigris, the machine's register. The
+                ACTIVE row never shows it: being there means it has been read. */}
+              {session.unread && !active ? (
+                <span
+                  role="img"
+                  className="size-1.5 shrink-0 rounded-full bg-model"
+                  aria-label="Unread updates"
+                />
+              ) : null}
+            </span>
+            <span className="pl-[18px] text-2xs text-muted-foreground">{sublabel}</span>
+          </TooltipTrigger>
+          {activityLabel && (
+            <TooltipContent id={activityDescriptionId} role="tooltip" side="right">
+              {activityLabel}
+            </TooltipContent>
+          )}
+        </Tooltip>
       </ContextMenuTrigger>
       <ContextMenuContent>
         <ContextMenuItem onClick={() => projection.setSessionPinned(session.id, !session.pinned)}>

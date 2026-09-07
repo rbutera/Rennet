@@ -192,7 +192,7 @@ export function ExitFab({ mode, open, onToggle, reviewing = false, ready = true 
         className={cn(
           "pointer-events-auto absolute right-6 bottom-6 h-12 gap-2 rounded-full px-5 font-semibold shadow-lg transition-all duration-200 hover:bg-primary/90 disabled:opacity-100",
           reviewing &&
-            "border border-primary/30 bg-primary/10 text-primary shadow-[0_0_28px_var(--color-primary)]",
+            "border border-primary/30 bg-primary/10 text-primary shadow-[0_0_20px_color-mix(in_oklab,var(--color-primary)_20%,transparent)]",
           open && "pointer-events-none scale-75 opacity-0",
         )}
       >

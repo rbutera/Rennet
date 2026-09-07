@@ -17,6 +17,20 @@ const evidence = {
 };
 
 describe("review evidence rows", () => {
+  it("never substitutes nearby hunks for an unavailable citation", () => {
+    expect(
+      evidenceRows(
+        { ...evidence, base: null, head: null },
+        { ...ref, startLine: 80, endLine: 80 },
+        0,
+      ),
+    ).toEqual([]);
+  });
+  it("resolves a citation in immutable unchanged context", () => {
+    expect(evidenceRows(evidence, { ...ref, startLine: 6, endLine: 6 }, 0).at(-1)?.text).toBe(
+      "end",
+    );
+  });
   it("shows both sides of the complete cited hunk, including uncited changes", () => {
     expect(evidenceRows(evidence, ref, 0)).toEqual([
       { type: "context", text: "before", oldLine: 2, newLine: 2 },

@@ -22,30 +22,7 @@ import {
 } from "../canvas/registrar";
 import { splitIdentifierRuns, tokenTextMayContainSymbol } from "../canvas/symbol";
 import { detectLanguage, type LanguageId, tokenizeDiffLine } from "../syntax/shiki";
-
-// The windowed-render range, inlined from the deleted `canvas/logic` (B2, #489): the
-// slice of rows to paint around the viewport, keeping the DOM node count bounded. The
-// discuss/disposition wiring that once wove this diff into the canvas conversation +
-// L2 surface is gone with those modules; the diff renderer itself is what C6 ports.
-interface WindowRange {
-  start: number;
-  end: number;
-}
-function windowRows(input: {
-  total: number;
-  rowHeight: number;
-  viewportHeight: number;
-  scrollTop: number;
-  overscan?: number;
-}): WindowRange {
-  const overscan = input.overscan ?? 6;
-  const visibleRows = Math.ceil(input.viewportHeight / input.rowHeight);
-  const maxFirst = Math.max(0, input.total - visibleRows);
-  const first = Math.min(Math.max(0, Math.floor(input.scrollTop / input.rowHeight)), maxFirst);
-  const start = Math.max(0, first - overscan);
-  const end = Math.min(input.total, first + visibleRows + overscan);
-  return { start, end };
-}
+import { type WindowRange, windowRows } from "./window-rows";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CodeView — the ONLY diff surface (R16), and now an INHABITED canvas (issue #77).

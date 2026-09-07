@@ -480,6 +480,31 @@ describe("patchset.readSpan agrees with lint's predicate, line for line", () => 
 });
 
 describe("patchset.readEvidence", () => {
+  it("resolves uncaptured context from immutable source and rejects nonexistent ranges", async () => {
+    const store = new SqliteReviewStore(":memory:");
+    const service = new ReviewService(
+      { capture: () => Promise.reject(new Error("unused")) },
+      store,
+    );
+    await service.createReviewFromPatchset("evidence-gap", patchset);
+    const reads: string[] = [];
+    const dispatch = createDispatch({
+      service,
+      allowedRoots: new Set<string>(),
+      readBlobAtOid: async ({ oid }: { oid: string }) => {
+        reads.push(oid);
+        return BASE.join("\n");
+      },
+    } as unknown as DispatchDeps);
+    const output = await dispatch("patchset.readEvidence", {
+      ref: ref({ startLine: 20, endLine: 20 }),
+    });
+    expect(output).toMatchObject({ head: BASE.join("\n") });
+    expect(reads).toContain(patchset.repository.headOid);
+    await expect(
+      dispatch("patchset.readEvidence", { ref: ref({ startLine: 200, endLine: 200 }) }),
+    ).rejects.toThrow("unavailable in the reviewed source");
+  });
   it("reads recorded objects and finds unchanged, differently named and multiple tests", async () => {
     const store = new SqliteReviewStore(":memory:");
     const service = new ReviewService(

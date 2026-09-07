@@ -20,10 +20,22 @@ export function ReviewActivity({
         aria-hidden="true"
         className="absolute inset-0 rounded-full border border-current opacity-20"
       />
-      <span
+      <svg
         aria-hidden="true"
-        className="absolute inset-0 animate-spin rounded-full border-2 border-transparent border-t-current border-r-current motion-reduce:animate-none"
-      />
+        viewBox="0 0 24 24"
+        className="absolute inset-0 size-full animate-spin motion-reduce:animate-none"
+      >
+        <circle
+          cx="12"
+          cy="12"
+          r="10"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeDasharray="24 39"
+        />
+      </svg>
       <span
         aria-hidden="true"
         className="size-1 rounded-full bg-current animate-processing-pulse motion-reduce:animate-none"

@@ -149,6 +149,7 @@ export function LensSwitcher({
   flaggedOpenCount = 0,
   className,
   reviewId = "",
+  generation = "",
 }: {
   readonly lenses: readonly LensBoardEntry[];
   readonly selected: LensKind | null;
@@ -157,6 +158,7 @@ export function LensSwitcher({
   readonly flaggedOpenCount?: number;
   readonly className?: string;
   readonly reviewId?: string;
+  readonly generation?: string;
 }) {
   const waitingExplanationId = useId();
   const viewed = useRennetStore((s) => s.viewedDelta.viewedDeltaSections);
@@ -282,7 +284,7 @@ export function LensSwitcher({
               tab
             )}
             {active && seat.seated ? (
-              <LensActivity reviewId={reviewId} entry={{ lens, seat }} />
+              <LensActivity reviewId={reviewId} generation={generation} entry={{ lens, seat }} />
             ) : null}
           </Fragment>
         );

@@ -1,5 +1,5 @@
 import { type CodeRef, type CommandOutput, isTestPath } from "@rennet/protocol";
-import { useLayoutEffect, useRef, useState } from "react";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useCommand } from "../data";
 import { CodeBlock } from "./code-block";
 import { type NumberedLine, numberLines, parsePatch } from "./diff-parse";
@@ -18,10 +18,8 @@ export function evidenceRows(
       return n !== null && n >= citation.startLine && n <= citation.endLine;
     }),
   );
-  if (context === 0 && hunks.length > 0)
-    return (relevant.length ? relevant : hunks).flatMap(numberLines);
-  if (data.base == null && data.head == null)
-    return (relevant.length ? relevant : hunks).flatMap(numberLines);
+  if (context === 0 && relevant.length > 0) return relevant.flatMap(numberLines);
+  if (data.base == null && data.head == null) return relevant.flatMap(numberLines);
   const baseOnly = data.head == null;
   const source = (data.head ?? data.base ?? "").replace(/\n$/, "").split("\n");
   const rows: NumberedLine[] = [];
@@ -63,8 +61,14 @@ export function evidenceRows(
   const indexes = rows.flatMap((row, i) =>
     selected.has(`${row.oldLine}:${row.newLine}`) ? [i] : [],
   );
-  const from = indexes[0] ?? 0;
-  const to = indexes.at(-1) ?? rows.length - 1;
+  const referenced = rows.flatMap((row, i) => {
+    const line = citation.side === "base" ? row.oldLine : row.newLine;
+    return line !== null && line >= citation.startLine && line <= citation.endLine ? [i] : [];
+  });
+  const from = relevant.length ? indexes[0] : referenced[0];
+  const to = relevant.length ? indexes.at(-1) : referenced.at(-1);
+  if (from === undefined || to === undefined) return [];
+  context = Math.max(context, 3);
   return rows.slice(Math.max(0, from - context), to + context + 1);
 }
 
@@ -73,9 +77,10 @@ export function EvidenceBlock({ citation, initial }: { citation: CodeRef; initia
   const origin = useRef<{
     context: number | "all";
     left: number;
+    codeTop: number;
     scrollParent: HTMLElement | null;
     top: number;
-  }>({ context: 0, left: 0, scrollParent: null, top: 0 });
+  }>({ context: 0, left: 0, codeTop: 0, scrollParent: null, top: 0 });
   const restorePosition = useRef(false);
   const [destination, setDestination] = useState<CodeRef>(citation);
   const [context, setContext] = useState<number | "all">(0);
@@ -93,7 +98,11 @@ export function EvidenceBlock({ citation, initial }: { citation: CodeRef; initia
   useLayoutEffect(() => {
     if (navigating || !restorePosition.current || !data) return;
     const scroller = container.current?.querySelector<HTMLElement>("[data-code-scroll]");
-    if (scroller) scroller.scrollLeft = origin.current.left;
+    if (scroller) {
+      scroller.scrollLeft = origin.current.left;
+      scroller.scrollTop = origin.current.codeTop;
+      scroller.dispatchEvent(new Event("scroll"));
+    }
     if (origin.current.scrollParent) origin.current.scrollParent.scrollTop = origin.current.top;
     restorePosition.current = false;
   }, [navigating, data]);
@@ -116,6 +125,8 @@ export function EvidenceBlock({ citation, initial }: { citation: CodeRef; initia
       origin.current = {
         context,
         left: container.current?.querySelector<HTMLElement>("[data-code-scroll]")?.scrollLeft ?? 0,
+        codeTop:
+          container.current?.querySelector<HTMLElement>("[data-code-scroll]")?.scrollTop ?? 0,
         scrollParent,
         top: scrollParent?.scrollTop ?? 0,
       };
@@ -123,7 +134,10 @@ export function EvidenceBlock({ citation, initial }: { citation: CodeRef; initia
     setDestination({ ...citation, path, side: "head", startLine: 1, endLine: 1 });
     setContext("all");
   };
-  const rows = data ? evidenceRows(data, destination, context) : [];
+  const rows = useMemo(
+    () => (data ? evidenceRows(data, destination, context) : []),
+    [data, destination, context],
+  );
   return (
     <div ref={container} className="flex flex-col gap-1.5" data-evidence-path={destination.path}>
       <div className="flex flex-wrap items-center gap-1">
@@ -195,11 +209,17 @@ export function EvidenceBlock({ citation, initial }: { citation: CodeRef; initia
       {data?.caption && <p className="text-xs text-muted-foreground">{data.caption}</p>}
       {!data ? (
         <p className="text-xs text-muted-foreground">Loading reviewed source…</p>
+      ) : rows.length === 0 ? (
+        <p className="text-xs text-muted-foreground">
+          {destination.path}:{destination.startLine}–{destination.endLine} ({destination.side}) is
+          outside the available reviewed source.
+        </p>
       ) : (
         <CodeBlock
           key={`${destination.path}:${destination.side}`}
           code={rows.map((row) => row.text).join("\n")}
           rows={rows}
+          focusRef={destination}
           startLine={rows[0]?.newLine ?? rows[0]?.oldLine ?? 1}
           path={data.path}
           previousPath={data.previousPath}

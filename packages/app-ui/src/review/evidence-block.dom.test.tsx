@@ -6,6 +6,7 @@ import { useRennetStore } from "../store";
 import { act, mount, waitFor } from "../test/dom";
 import { MemoryBridge } from "../test/memory-bridge";
 import { type AnchoredAskInput, AnchoredAskProvider } from "./anchored-ask";
+import { CodeBlock } from "./code-block";
 import { CitationBlock } from "./code-tabs";
 import { ProseSelectionLayer } from "./selection-toolbar";
 
@@ -130,4 +131,38 @@ it("saves a deleted-code selection and preserves its identity when replying", as
   expect(view.getByText("-")).toBeTruthy();
   await view.user.type(view.getByPlaceholderText("Reply…"), "Why remove it?{Enter}");
   expect(sent[0]?.codeRef).toEqual({ ...ref, side: "base" });
+});
+
+it("windows full-file evidence around its cited line and keeps exact identity while scrolling", async () => {
+  const rows = Array.from({ length: 20000 }, (_, index) => ({
+    type: "context" as const,
+    text: `line_${index + 1}`,
+    oldLine: index + 1,
+    newLine: index + 1,
+  }));
+  const view = mount(
+    <CodeBlock
+      code=""
+      rows={rows}
+      path={ref.path}
+      patchsetId={ref.patchsetId}
+      focusRef={{ ...ref, startLine: 10000, endLine: 10000 }}
+    />,
+  );
+  expect(view.container.querySelectorAll("[data-code-line]").length).toBeLessThan(40);
+  expect(view.container.querySelector('[data-code-line="10000"]')?.textContent).toContain(
+    "line_10000",
+  );
+  const scroll = view.container.querySelector<HTMLElement>("[data-code-scroll]");
+  if (!scroll) throw new Error("missing code scroller");
+  act(() => {
+    scroll.scrollTop = 19980 * 22;
+    scroll.dispatchEvent(new Event("scroll"));
+  });
+  await waitFor(() =>
+    expect(view.container.querySelector('[data-code-line="20000"]')?.textContent).toContain(
+      "line_20000",
+    ),
+  );
+  expect(view.container.querySelectorAll("[data-code-line]").length).toBeLessThan(40);
 });

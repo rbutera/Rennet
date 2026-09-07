@@ -1,8 +1,9 @@
 import type { CodeRef } from "@rennet/protocol";
 import { cn } from "@rennet/ui";
 import { Check, Copy, FileCode, MessageSquare, Plus } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "../components/icon";
+import { windowRows } from "../components/window-rows";
 import { useFlightBatcher } from "../handoff/exit-flight";
 import {
   codePositionKey,
@@ -30,6 +31,7 @@ export interface CodeBlockProps {
   readonly code: string;
   readonly rows?: readonly NumberedLine[];
   readonly previousPath?: string;
+  readonly focusRef?: CodeRef;
   /** File path — the header label and the language source (inferred by extension). */
   readonly path: string;
   /** Absolute line number of the first line, for a slice of a larger file. */
@@ -61,6 +63,7 @@ export function CodeBlock({
   code,
   rows,
   previousPath,
+  focusRef,
   path,
   startLine = 1,
   highlightLines,
@@ -103,12 +106,30 @@ export function CodeBlock({
   const [openLine, setOpenLine] = useState<number | null>(null);
 
   const language = useMemo(() => detectLanguage(path), [path]);
+  const sourceLines = useMemo(() => rows?.map((row) => row.text) ?? code.split("\n"), [rows, code]);
+  const lineCount = sourceLines.length;
+  const virtual = lineCount > 20;
+  const rowHeight = 22;
+  const viewportHeight = 440;
+  const scrollElement = useRef<HTMLDivElement>(null);
+  const [scrollTop, setScrollTop] = useState(0);
+  useLayoutEffect(() => {
+    if (!virtual || !focusRef) return;
+    const index =
+      rows?.findIndex(
+        (row) => (focusRef.side === "base" ? row.oldLine : row.newLine) === focusRef.startLine,
+      ) ?? -1;
+    if (index < 0) return;
+    const top = Math.max(0, index - 3) * rowHeight;
+    if (scrollElement.current) scrollElement.current.scrollTop = top;
+    setScrollTop(top);
+  }, [rows, focusRef, virtual]);
+  const range = virtual
+    ? windowRows({ total: lineCount, rowHeight, viewportHeight, scrollTop })
+    : { start: 0, end: lineCount };
   const tokenLines = useMemo(
-    () =>
-      (rows?.map((row) => row.text) ?? code.split("\n")).map((line) =>
-        tokenizeDiffLine(line, language),
-      ),
-    [code, rows, language],
+    () => sourceLines.slice(range.start, range.end).map((line) => tokenizeDiffLine(line, language)),
+    [sourceLines, range.start, range.end, language],
   );
   const highlightSet = useMemo(() => new Set(highlightLines ?? []), [highlightLines]);
   // Lines with a staged request-change ask at this exact side-qualified position read red.
@@ -123,7 +144,6 @@ export function CodeBlock({
     return lines;
   }, [stagedAsks, patchsetId, path, side]);
 
-  const lineCount = tokenLines.length;
   const endLine = rows?.at(-1)?.newLine ?? rows?.at(-1)?.oldLine ?? startLine + lineCount - 1;
   const gutterChars = String(endLine).length + 1;
 
@@ -189,9 +209,23 @@ export function CodeBlock({
         </div>
       </div>
 
-      <div data-code-scroll className="overflow-x-auto">
-        <div className="min-w-max py-1.5 font-mono text-12-5 leading-[1.7]">
-          {tokenLines.map((lineTokens, i) => {
+      <div
+        data-code-scroll
+        ref={scrollElement}
+        className="overflow-auto"
+        style={virtual ? { height: viewportHeight } : undefined}
+        onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
+      >
+        <div
+          className="relative min-w-max font-mono text-12-5"
+          style={
+            virtual
+              ? { height: lineCount * rowHeight, lineHeight: `${rowHeight}px` }
+              : { lineHeight: "1.7" }
+          }
+        >
+          {tokenLines.map((lineTokens, offset) => {
+            const i = range.start + offset;
             const row = rows?.[i];
             const rowSide = row?.newLine === null ? "LEFT" : row ? "RIGHT" : side;
             const rowPath = rowSide === "LEFT" ? (previousPath ?? path) : path;
@@ -253,8 +287,19 @@ export function CodeBlock({
                   ? "cited"
                   : "plain";
             return (
-              // biome-ignore lint/suspicious/noArrayIndexKey: rows are a fixed positional list; the index is the line offset.
-              <div key={i}>
+              <div
+                key={i}
+                style={
+                  virtual
+                    ? {
+                        position: "absolute",
+                        top: i * rowHeight,
+                        minWidth: "100%",
+                        zIndex: isOpen ? 10 : undefined,
+                      }
+                    : undefined
+                }
+              >
                 <div
                   data-line={lineNumber}
                   data-diff-kind={row?.type}

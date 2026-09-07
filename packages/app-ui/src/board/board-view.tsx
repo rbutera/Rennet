@@ -577,7 +577,10 @@ function BoardHeader({
   return (
     <header className="mb-8 flex flex-col gap-4">
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-2">
-        <h1 className="font-display font-semibold text-2xl text-foreground tracking-tight">
+        <h1
+          data-board-heading
+          className="font-display font-semibold text-2xl text-foreground tracking-tight"
+        >
           {LENS_LABEL[board.lens]}
         </h1>
         {drafting ? <InProgressChip /> : null}

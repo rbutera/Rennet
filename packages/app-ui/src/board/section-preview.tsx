@@ -131,7 +131,7 @@ export function PreviewText({ text }: { readonly text: string }) {
     const part = match[0];
     if (part.startsWith("`") && part.endsWith("`")) {
       return (
-        <code key={match.index} className="font-mono text-[0.95em]">
+        <code key={match.index} className="font-mono text-inherit">
           {part.slice(1, -1)}
         </code>
       );
