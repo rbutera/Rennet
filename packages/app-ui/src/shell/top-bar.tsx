@@ -321,6 +321,7 @@ export function TopBar() {
         className="app-region-no-drag flex min-w-0 grow items-center overflow-x-auto @max-[640px]:order-3 @max-[640px]:basis-full"
       >
         <LensSwitcher
+          key={`${review?.id ?? slug}:${selectedGeneration}`}
           lenses={lenses}
           reviewId={review?.id ?? slug}
           generation={selectedGeneration}

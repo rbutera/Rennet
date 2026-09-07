@@ -128,7 +128,7 @@ describe("session top-bar (C03 §4)", () => {
       const visibleLabel = [...(tab?.querySelectorAll("span") ?? [])].find(
         (span) => span.textContent === label,
       );
-      expect(tab?.getAttribute("title")).toBe(label);
+      expect(visibleLabel?.textContent).toBe(label);
       expect(tab?.querySelector("svg")).toBeTruthy();
       expect(visibleLabel?.className).not.toContain("hidden");
     }
@@ -236,11 +236,10 @@ describe("session top-bar (C03 §4)", () => {
             : null,
       }),
     };
-    const { findByLabelText, history } = mountTopBar("/s/s2", undefined, progressiveHandlers);
+    const { getByLabelText, history } = mountTopBar("/s/s2", undefined, progressiveHandlers);
 
-    const design = await findByLabelText("Design");
     await waitFor(() => {
-      expect(design.getAttribute("aria-selected")).toBe("true");
+      expect(getByLabelText("Design").getAttribute("aria-selected")).toBe("true");
       expect(history.history.at(-1)).toBe("/s/s2");
     });
   });
@@ -261,9 +260,8 @@ describe("session top-bar (C03 §4)", () => {
       frozenHandlers,
     );
 
-    const design = await findByLabelText("Design");
     await waitFor(() => expect(history.history.at(-1)).toBe("/s/s2?lens=design&generation=gen0"));
-    expect(design.getAttribute("aria-selected")).toBe("true");
+    expect((await findByLabelText("Design")).getAttribute("aria-selected")).toBe("true");
   });
 
   it("derives the pill selection from ?view", () => {
