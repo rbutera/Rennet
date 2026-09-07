@@ -262,6 +262,19 @@ describe("process-vocabulary (L7 / R20 / F2 / F3)", () => {
     expect(rulesHit(lint(bad, ctx()))).toContain("process-vocabulary");
   });
 
+  it("applies the existing heading vocabulary rule to an optional decision title", () => {
+    const decision = el("d", "decision", {
+      title: "What the lens agents drafted",
+      statement: "Keep the existing rows visible.",
+      why: "The list retains its position while data loads.",
+      evidence: [],
+      alternatives: [],
+    });
+    expect(lint(board([decision]), ctx())).toEqual(
+      expect.arrayContaining([expect.objectContaining({ ruleId: "process-vocabulary" })]),
+    );
+  });
+
   it("exempts a backticked identifier (F2 exemption 1)", () => {
     const ok = board([el("s", "section", { title: "The `LensBoard` projection", children: [] })]);
     expect(rulesHit(lint(ok, ctx()))).not.toContain("process-vocabulary");

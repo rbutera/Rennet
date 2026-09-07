@@ -176,6 +176,26 @@ const draftBoard = {
 const kindsOf = (union: typeof HostElementSchema): string[] =>
   union.options.map((o) => o.shape.kind.value as string).sort();
 
+it("retains optional decision headings while accepting older stored decisions", () => {
+  const legacy = {
+    id: "legacy",
+    kind: "decision",
+    data: {
+      author,
+      statement: "Store the bytes.",
+      why: "The project owns them.",
+      evidence: [],
+      alternatives: [],
+    },
+  };
+  expect(HostElementSchema.parse(legacy)).toEqual(legacy);
+  const untitled = { ...legacy, data: { ...legacy.data, title: "" } };
+  expect(HostElementSchema.parse(untitled)).toEqual(untitled);
+  const titled = { ...legacy, data: { ...legacy.data, title: "Project-owned image" } };
+  expect(HostElementSchema.parse(titled)).toEqual(titled);
+  expect(DraftElementSchema.parse(titled)).toEqual(titled);
+});
+
 describe("finding reference identity", () => {
   it("requires the draft-attempt board and keys retries separately", () => {
     const attemptA = { generation: "gen:ps-1", boardId: "board:flagged:a", findingId: "f-1" };

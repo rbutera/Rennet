@@ -1,6 +1,7 @@
 import { newCommandId, type SessionPreparation, type SidebarSession } from "@rennet/protocol";
 import { Button, cn } from "@rennet/ui";
 import { useEffect } from "react";
+import { ReviewActivity } from "../components/review-activity";
 import { useCommand, useMutation, useRefreshCommand } from "../data";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -97,10 +98,10 @@ export function WorkspaceHeader({ slug }: { readonly slug: string }) {
         ? "Resolving the repository"
         : "Capturing the change"
       : preparation.status === "drafting"
-        ? "Generating the boards"
+        ? "Reviewing the change"
         : preparation.stage === "capture"
           ? "Capture"
-          : "Board generation";
+          : "Review";
 
   return (
     <header
@@ -109,6 +110,7 @@ export function WorkspaceHeader({ slug }: { readonly slug: string }) {
       role={failed ? "alert" : "status"}
       className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-2 border-line border-b bg-surface px-6 py-2.5"
     >
+      {active ? <ReviewActivity /> : null}
       <span
         data-testid="preparation-stage"
         className={cn("font-medium text-13", failed ? "text-danger" : "text-ink")}
@@ -122,7 +124,7 @@ export function WorkspaceHeader({ slug }: { readonly slug: string }) {
           : cancelled
             ? "The review is still here. Retry when you’re ready."
             : preparation.status === "capturing"
-              ? "The boards open as their seats write them."
+              ? ""
               : ""}
       </span>
       <span className="flex-1" />

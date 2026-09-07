@@ -134,6 +134,34 @@ describe("lens prompt manifest", () => {
     }
   });
 
+  it("shares readable element structure and reviewer-owned highlighting across every lens", () => {
+    const partials = Object.fromEntries(
+      Object.entries(PROMPT_PARTIALS).map(([marker, file]) => [
+        marker,
+        readFileSync(join(srcDir, file), "utf8"),
+      ]),
+    );
+    const rule = "agents do not specify presentation highlights or copy source into prose";
+    for (const kind of LENS_KINDS) {
+      const source = readFileSync(join(srcDir, LENS_PROMPT_FILES[kind]), "utf8");
+      const prompt = expandPromptPartials(source, partials).replace(/\s+/g, " ");
+      expect(prompt.split(rule), kind).toHaveLength(2);
+      expect(prompt, kind).toContain("Highlighting and annotations belong to the reviewer");
+      expect(prompt, kind).toContain("Keep one coherent idea per element");
+      expect(prompt, kind).toContain("A paragraph-length statement is never a navigation label");
+      expect(prompt, kind).toContain("do not write a separate preview");
+      expect(prompt, kind).not.toContain("path + line span + highlighted lines");
+      expect(prompt, kind).not.toContain("one-line folded gist");
+    }
+    for (const lens of ["design", "decisions"] as const) {
+      expect(
+        boardToolsByName(lens)
+          .get("add_decision")
+          ?.fields.find((field) => field.name === "title"),
+      ).toMatchObject({ required: false });
+    }
+  });
+
   it("expandPromptPartials splices every shared partial and passes a marker-free text through", () => {
     const partial = readFileSync(join(srcDir, INVESTIGATE_PARTIAL_FILE), "utf8");
     expect(partial).toMatch(/^## Investigate before you draft\n/);

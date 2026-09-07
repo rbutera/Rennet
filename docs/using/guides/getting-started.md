@@ -197,28 +197,30 @@ working mark per voice, because it runs two seats. Noise waits for the other fou
 and says which ones it is waiting on — its board is whatever they did not cite, so
 it cannot start until they finish.
 
-Selecting a lens shows its board, running or not. **A board draws itself while you
-watch.** An unsettled board says so three ways at once, so there is no mistaking
-it: the lens's tab shows its seat working, the board's own header carries an *in
-progress* mark and says the board is still being written, and the last row is a
-placeholder saying where the next element lands. All three clear together the
-moment the lane settles, and nothing navigates — the board you were watching is the
-board you are reading. The marks that show what changed since the last round are
-held back until then, because a half-written board would mark everything as new.
+Each tab shows its icon and name. Noise is unavailable while the other lenses
+are running. Hover or focus its tab to learn why it waits. Once they finish,
+you can open Noise while it reviews the remaining change.
 
-**Above the board is the seat writing it**: which lens, which model provider, how
-long you have been watching it, what it is doing right now — the file it is
-reading, the command it is running, or the last thing it said — and how much it has
-written so far. A seat that has gone quiet says so instead of freezing on its last
-line. Flagged shows both of its voices side by side. A seat that failed shows its
-reason there, with the retry beside it. When the lane settles, the widget collapses
-to one line: who drafted it, and what the board holds.
+A board draws itself while you watch. Its main heading names the lens, with the
+generated title beneath it. Animated rings on the tab and heading show work in
+progress without interrupting the document. Changes since the previous round
+remain hidden until the board settles.
 
-Activating it opens that seat's **full transcript**, read-only and still streaming,
-in a drawer beside the board — never over your own conversation. The chat column
-keeps your thread with Rennet the whole time. Choosing another lens moves the
-board, the widget and the transcript together, so the three can never describe
-different lenses. Opening the Diff view closes the drawer; the two share one space.
+Open the activity button beside the selected tab to follow the review in a
+popover anchored directly beneath the tab bar. It shows a concise current action, recent activity and how long you
+have been following that lens. Open transcript stays visible and becomes available
+once the agent thread starts. It shows the selected agent's full conversation in a drawer beside the
+board. Your own chat stays in place. Choosing another lens moves the board and
+open transcript together; opening Diff closes the transcript drawer.
+
+While the change is being reviewed, the main action shows an animated reviewing
+indicator and cannot advance. It becomes Continue when the review is ready.
+Cancel and Retry remain available in the review header when applicable.
+
+You can navigate elsewhere while a review runs. Its sidebar row keeps an animated
+ring. Completion briefly shows a checkmark, then a dot until you open that review.
+Each review has its own indicator even when branch names match. Failure shows its
+reason on the row, and cancellation clears the running indicator.
 
 The board region scrolls, so a long board on a large change is readable end to end.
 You can leave without stopping the work, or cancel and retry it in place. A failed
@@ -318,9 +320,9 @@ gap.
 
 The board drafter writes each title and short intro. Design uses a wider
 structured measure for specification content. Sequence, Decisions, Flagged, and Noise use a
-narrower reading measure. Sections fold to a one-line gist and unfold to their
-contents; every board opens folded, so you take the summaries first and open what
-you want to read.
+narrower reading measure. A folded section lists its child headings, or its first
+paragraph when it has none, and unfolds to its contents; every board opens folded,
+so you take the previews first and open what you want to read.
 Folded counts name review objects: findings, decisions, requirements, steps,
 outcomes, groups, files, and comments.
 
@@ -329,8 +331,9 @@ exact line range and hydrates the real lines from the captured patchset, so
 numbering cannot drift from the code under review. When that path belongs to the
 active captured patchset, clicking it opens Diff on the file and preserves the
 other session query state. A code card adds **View test** or **View
-implementation** when both files are changed paths in that active patchset. An
-unchanged or uncaptured counterpart gets no jump. In prose, a `path:line`
+implementation** when the reviewed tree relates the two files, by import or by
+name; an unchanged test opens inline from the reviewed revision, and several
+matches offer a chooser. In prose, a `path:line`
 citation is a chip: click it and the real lines unfold below the paragraph;
 click again and they fold away.
 
@@ -558,7 +561,7 @@ generation is ready, never as a disabled button waiting to light up.
 
 The new generation shows you the delta by its own shape. Sections the round
 touched open expanded with a small gold dot; sections that carried forward stay
-folded to their gists. The dot rolls up to that board's segment in the switcher
+folded to their previews. The dot rolls up to that board's segment in the switcher
 and clears for good once you open the section. The previous generation stays
 readable as a folded drill-down, and Sequence grows a "Round N · Addressed"
 chapter at its foot, newest last. The selected generation lives in

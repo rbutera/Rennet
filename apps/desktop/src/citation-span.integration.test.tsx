@@ -149,7 +149,7 @@ describe("a code citation, against the real daemon", () => {
     // daemon read the captured patch, and the row's `data-line` proves the block was
     // numbered from the ref rather than from the top of the returned excerpt.
     const cited = await waitFor(() => {
-      const row = container.querySelector('[data-line="3"]');
+      const row = container.querySelector('[data-code-line="3"][data-code-side="head"]');
       if (!row) throw new Error("the cited line never rendered");
       return row;
     });
@@ -162,10 +162,14 @@ describe("a code citation, against the real daemon", () => {
       "return cheese + curd;",
     );
 
-    // The cited line is the highlighted one; its neighbours are context.
-    expect(cited.getAttribute("data-line-state")).not.toBe(
-      container.querySelector('[data-line="2"]')?.getAttribute("data-line-state"),
-    );
+    expect(cited.closest("[data-diff-kind]")?.getAttribute("data-diff-kind")).toBe("add");
+    expect(
+      container
+        .querySelector('[data-code-line="3"][data-code-side="base"]')
+        ?.closest("[data-diff-kind]")
+        ?.getAttribute("data-diff-kind"),
+    ).toBe("del");
+    expect(container.querySelector('[data-line-state="cited"]')).toBeNull();
   });
 
   it("names the specific absence when the span is outside the captured diff", async () => {

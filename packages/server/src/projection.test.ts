@@ -726,6 +726,26 @@ const PATH_FIELD_CLASSIFICATIONS: Readonly<Record<string, PathClassification>> =
     // The span-read row (B3, #489): a CodeRef citation's path is repo-relative
     // within the captured patchset.
     "patchset.readSpan.input.path",
+    "patchset.readEvidence.input.ref.path",
+    "patchset.readEvidence.output.path",
+    "ask.quoteOpen.input.thread.codeRef.path",
+    "ask.read.output.projection.quoteThreads.codeRef.path",
+    ...[
+      "ask.clearLineComment",
+      "ask.dismissFinding",
+      "ask.edit",
+      "ask.quoteClose",
+      "ask.quoteOpen",
+      "ask.quoteReply",
+      "ask.restore",
+      "ask.restoreFinding",
+      "ask.retire",
+      "ask.setLineComment",
+      "ask.setVerdictOverride",
+      "ask.stage",
+      "ask.unstage",
+      "review.reviseSpan",
+    ].map((command) => `${command}.output.receipt.thread.codeRef.path`),
     // A noise item's citation (path-line-citations): the model names the changed region
     // by path, side and line range, and that path is repo-relative within the reviewed
     // patchset — the same shape as every other citation. Nothing host-absolute reaches it,

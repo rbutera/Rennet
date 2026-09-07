@@ -4,6 +4,7 @@ import { Icon } from "../../components/icon";
 import { CodeTabs } from "../../review";
 import { InlineQuoteHighlight, QuoteHighlightLayer } from "../quote-highlight";
 import type { ElementOf } from "../registry";
+import { decisionHeading } from "../section-preview";
 import { useBoardElementIndex, useBoardPatchsetId, useCodeRefs } from "./element-context";
 
 // `decision` (C05 3.4) — a recovered design decision: the statement, the why, the
@@ -14,7 +15,7 @@ import { useBoardElementIndex, useBoardPatchsetId, useCodeRefs } from "./element
 // A decision is a BORDERED CARD, not loose prose (prototype `lens-board.tsx:381-414`):
 // the commit glyph and the box are what separate one weighed judgement from the next
 // when several sit in a column. The reasoning, the roads not taken and the evidence
-// indent under the statement, so the glyph column reads as the decision's spine.
+// sit beneath a concise heading; the complete statement remains readable in the body.
 
 /**
  * The text to print for one `alternatives` entry.
@@ -47,6 +48,7 @@ function alternativeText(entry: string, pool: ReadonlyMap<string, HostElement>):
 
 export function DecisionElement({ element }: { readonly element: ElementOf<"decision"> }) {
   const { statement, why, alternatives, evidence, inferred } = element.data;
+  const heading = decisionHeading(element.data);
   const patchsetId = useBoardPatchsetId();
   const citations = useCodeRefs(evidence);
   const pool = useBoardElementIndex();
@@ -63,7 +65,7 @@ export function DecisionElement({ element }: { readonly element: ElementOf<"deci
           className="mt-0.5 size-3.5 shrink-0 text-muted-foreground"
         />
         <h3 className="min-w-0 flex-1 font-medium text-13 text-foreground leading-snug">
-          <InlineQuoteHighlight text={statement} elementId={element.id} />
+          <InlineQuoteHighlight text={heading} elementId={element.id} />
         </h3>
         {inferred === true && (
           // The prompts (`prompts/decisions.md:34`) make the model mark a decision it
@@ -78,30 +80,41 @@ export function DecisionElement({ element }: { readonly element: ElementOf<"deci
           </span>
         )}
       </div>
-      <QuoteHighlightLayer
-        text={why}
-        elementId={element.id}
-        patchsetId={patchsetId}
-        className="pl-5"
-        // 13px, one step UNDER the 13.5px statement above and one over the 12.5px
-        // alternatives below (prototype `lens-board.tsx:384-402`). At `text-sm` the
-        // reasoning outsized the decision it explains — the hierarchy read inverted.
-        paragraphClassName="text-foreground/85 text-13 leading-relaxed"
-      />
+      {heading !== statement && (
+        <QuoteHighlightLayer
+          text={statement}
+          elementId={element.id}
+          patchsetId={patchsetId}
+          className="pl-5"
+          paragraphClassName="text-foreground/90 text-sm leading-relaxed"
+        />
+      )}
+      {why.trim().length > 0 && (
+        <div className="flex flex-col gap-1 pl-5">
+          <h4 className="font-medium text-muted-foreground text-xs">Rationale</h4>
+          <QuoteHighlightLayer
+            text={why}
+            elementId={element.id}
+            patchsetId={patchsetId}
+            paragraphClassName="text-foreground/85 text-13 leading-relaxed"
+          />
+        </div>
+      )}
       {alternatives.length > 0 && (
-        // One inline line, not a headed list: the roads not taken are context for the
-        // decision, and a heading over two words outweighed the words (prototype
-        // `lens-board.tsx:400-402`). Same data, dot-joined.
-        <p
-          data-kind="decision-alternatives"
-          className="pl-5 text-12-5 text-muted-foreground leading-relaxed"
-        >
-          Not taken:{" "}
-          <InlineQuoteHighlight text={roadsNotTaken.join(" · ")} elementId={element.id} />
-        </p>
+        <div data-kind="decision-alternatives" className="flex flex-col gap-1 pl-5">
+          <h4 className="font-medium text-muted-foreground text-xs">Not taken</h4>
+          <ul className="list-disc space-y-1 pl-4 text-12-5 text-muted-foreground leading-relaxed">
+            {roadsNotTaken.map((alternative) => (
+              <li key={alternative}>
+                <InlineQuoteHighlight text={alternative} elementId={element.id} />
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
       {citations.length > 0 && (
-        <div className="pl-5">
+        <div className="flex flex-col gap-1 pl-5">
+          <h4 className="font-medium text-muted-foreground text-xs">Evidence</h4>
           <CodeTabs citations={citations} />
         </div>
       )}

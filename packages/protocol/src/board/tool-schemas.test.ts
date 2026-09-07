@@ -161,12 +161,12 @@ describe("a seat cannot type a count (D10)", () => {
     // `prose` has an `add` and an `update` on all six targets — 2 × 2 × 6 = 24.
     expect(targetsSwept.size, "targets swept").toBe(6);
     expect(toolsSwept.size, "tools swept").toBe(95);
-    expect(swept, "target/tool/field triples swept").toHaveLength(370);
+    // #907 adds optional decision titles to add/update on Design and Decisions.
+    expect(swept, "target/tool/field triples swept").toHaveLength(374);
   });
 
-  it("the section verb carries the authored one-line gist and nothing tallied", () => {
-    // The gist stays the seat's: `title` is what the projection reads as the fold line's
-    // gist, and it is on `add_section`. The counts beside it are not on the input at all.
+  it("the section verb carries its title and nothing tallied", () => {
+    // Titles are authored; previews derive from current children and counts are host-owned.
     const section = boardToolsByName("sequence").get("add_section") as BoardTool;
     expect(fieldNames(section)).toContain("title");
     expect(fieldNames(section)).not.toContain("counts");

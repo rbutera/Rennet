@@ -88,6 +88,7 @@ const ABSORBED_IDS = [
   "pairing.listDevices",
   "pairing.mint",
   "pairing.revokeDevice",
+  "patchset.readEvidence",
   "patchset.readSpan",
   "project.cleanupWorktree",
   "project.detail",
@@ -187,7 +188,7 @@ const MENU_INVENTORY: readonly string[] = [];
 describe("command registry invariants (#465)", () => {
   it("matches the recorded command snapshot (settings.setRepoLocus demoted, #476)", () => {
     expect(Object.keys(commands).sort()).toEqual([...ABSORBED_IDS]);
-    expect(ABSORBED_IDS).toHaveLength(108);
+    expect(ABSORBED_IDS).toHaveLength(109);
   });
 
   it("every row carries label, exposure, and locus with today's uniform values", () => {

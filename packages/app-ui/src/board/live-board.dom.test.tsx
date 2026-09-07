@@ -239,7 +239,8 @@ describe("the review opens on its boards, with no waiting stage in front of them
       preparation: { status: "drafting", reviewId: REVIEW.id, lanes: DRAFTING },
       boards: { sequence: at(FIXTURE_BOARDS.gen1?.sequence) },
     });
-    open(live);
+    const history = memoryHistory("/s/sess-live?lens=sequence");
+    const { user } = mount(<RennetRouterApp bridge={live.bridge} history={history} />);
 
     await waitFor(() => expect(tabOf("noise")).toBeTruthy());
     const rail = document.querySelector('[data-kind="lens-switcher"]');
@@ -250,12 +251,23 @@ describe("the review opens on its boards, with no waiting stage in front of them
     expect(tabOf("sequence")?.getAttribute("data-register")).toBe("working");
     expect(tabOf("decisions")?.getAttribute("data-register")).toBe("working");
     expect(tabOf("flagged")?.getAttribute("data-register")).toBe("working");
-    // A running lens is SELECTABLE and is never a disabled segment.
+    // No tab is a DISABLED control: a running lens is selectable, and waiting Noise stays
+    // focusable so its explanation is reachable by keyboard — its unavailability is
+    // `aria-disabled` plus an inert click, asserted just below, not the `disabled` property.
     for (const lens of ["design", "sequence", "decisions", "flagged", "noise"]) {
       expect(document.querySelector<HTMLButtonElement>(`[data-lens="${lens}"]`)?.disabled).toBe(
         false,
       );
     }
+    const before = history.history.at(-1);
+    const noise = document.querySelector<HTMLButtonElement>('[data-lens="noise"]');
+    if (!noise) throw new Error("Noise tab missing");
+    expect(noise.getAttribute("aria-disabled")).toBe("true");
+    expect(noise.getAttribute("aria-description")).toBe(
+      "Noise reviews what remains once the other lenses have finished.",
+    );
+    await user.click(noise);
+    expect(history.history.at(-1)).toBe(before);
     // Flagged carries ONE INDICATOR PER VOICE, because it runs two seats. The contrast is
     // the assertion: Sequence is running too and carries one.
     expect(
@@ -267,10 +279,12 @@ describe("the review opens on its boards, with no waiting stage in front of them
   });
 });
 
-describe("a drafting board says so three ways, and they clear together", () => {
-  it("shows the rail indicator, the in-progress mark and the placeholder row at once", async () => {
-    // 5.3/D13. THE CONTROL for this is a mutation that removes ONE of the three; the
-    // single `toEqual` below is what makes any one removal redden it.
+describe("a drafting board stays readable without explanatory chrome", () => {
+  it("shows activity on the rail and heading without a placeholder", async () => {
+    // 5.3/D13, as #904 leaves it: the rail indicator and the heading's activity mark are
+    // the two signals, and the placeholder row and "still being written" line are GONE.
+    // The single `toEqual` below reddens if either signal drops OR either retired element
+    // comes back.
     const live = liveBridge({
       preparation: { status: "drafting", reviewId: REVIEW.id, lanes: DRAFTING },
       boards: { sequence: at(FIXTURE_BOARDS.gen1?.sequence) },
@@ -285,12 +299,12 @@ describe("a drafting board says so three ways, and they clear together", () => {
       railIndicator: "working",
       railCut: "open",
       inProgressMark: true,
-      stillBeingWritten: true,
-      placeholderRow: true,
+      stillBeingWritten: false,
+      placeholderRow: false,
     });
   });
 
-  it("clears all three the moment the lane settles, and nothing navigates", async () => {
+  it("clears activity when the lane settles without navigating", async () => {
     const live = liveBridge({
       preparation: { status: "drafting", reviewId: REVIEW.id, lanes: DRAFTING },
       boards: { sequence: at(FIXTURE_BOARDS.gen1?.sequence) },
@@ -310,8 +324,8 @@ describe("a drafting board says so three ways, and they clear together", () => {
         railIndicator: "working",
         railCut: "open",
         inProgressMark: true,
-        stillBeingWritten: true,
-        placeholderRow: true,
+        stillBeingWritten: false,
+        placeholderRow: false,
       }),
     );
     const before = history.history.at(-1);
@@ -403,7 +417,7 @@ describe("a run that is over never says a seat is still writing", () => {
 
     // The control half: while it IS drafting, the board says so. Without this the test
     // would pass over a build that never shows the signals at all.
-    await waitFor(() => expect(noStillWriting().stillBeingWritten).toBe(true));
+    await waitFor(() => expect(noStillWriting().workingLens).toBe(true));
 
     live.setPreparation({
       status: "cancelled",
@@ -418,8 +432,7 @@ describe("a run that is over never says a seat is still writing", () => {
           inProgressMark: false,
           stillBeingWritten: false,
           placeholderRow: false,
-          // The widget survives: the lane ran, so its transcript is still worth reaching.
-          seatWidget: true,
+          seatWidget: false,
           workingLens: false,
           openCut: false,
         }),

@@ -1,4 +1,5 @@
-import { ChevronRight } from "lucide-react";
+import { Popover, PopoverContent, PopoverTrigger } from "@rennet/ui";
+import { ChevronRight, MapPin } from "lucide-react";
 import { Icon } from "../components/icon";
 import { TargetIcon } from "./sidebar/target-icon";
 import { type SessionTarget, type SessionTargetState, TARGET_LABEL } from "./sidebar-data";
@@ -32,8 +33,33 @@ export interface TrailProps {
 export function Trail({ title, projectName, target, targetState, workspace }: TrailProps) {
   const needsYou = targetState === "needs-you";
   return (
-    <div data-slot="trail" className="flex min-w-0 flex-col justify-center gap-0.5">
-      <span className="truncate text-13 font-medium leading-tight text-ink">{title}</span>
+    <div
+      title={workspace}
+      data-slot="trail"
+      className="flex min-w-0 flex-col justify-center gap-0.5"
+    >
+      <div className="flex items-center gap-1.5">
+        <span className="truncate text-13 font-medium leading-tight text-ink">{title}</span>
+        {workspace ? (
+          <Popover>
+            <PopoverTrigger
+              render={
+                <button
+                  type="button"
+                  aria-label="Review location"
+                  className="app-region-no-drag shrink-0 rounded p-0.5 text-muted-foreground hover:bg-secondary"
+                />
+              }
+            >
+              <Icon icon={MapPin} className="size-3" />
+            </PopoverTrigger>
+            <PopoverContent className="w-80 text-xs [overflow-wrap:anywhere]">
+              <span className="font-medium">Review location</span>
+              <span>{workspace}</span>
+            </PopoverContent>
+          </Popover>
+        ) : null}
+      </div>
       {projectName && target ? (
         <span className="flex min-w-0 items-center gap-1 text-2xs leading-tight text-muted-foreground">
           <TargetIcon kind={target} state={targetState} className="size-3" />
@@ -43,14 +69,6 @@ export function Trail({ title, projectName, target, targetState, workspace }: Tr
             {TARGET_LABEL[target]}
             {needsYou ? " · needs you" : ""}
           </span>
-          {workspace ? (
-            <>
-              <Icon icon={ChevronRight} className="size-2.5 shrink-0 text-muted-foreground/50" />
-              <span data-slot="trail-workspace" className="truncate" title={workspace}>
-                {workspace}
-              </span>
-            </>
-          ) : null}
         </span>
       ) : null}
     </div>

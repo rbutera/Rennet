@@ -1,11 +1,12 @@
 import { currentGenerationId, type LensKind } from "@rennet/protocol";
 import { cn, Toggle, ToggleGroup } from "@rennet/ui";
-import { ArrowLeft, FileDiff, History, type LucideIcon, PanelLeft } from "lucide-react";
+import { ArrowLeft, FileDiff, History, type LucideIcon, MessageCircle } from "lucide-react";
 import { Fragment, useEffect } from "react";
 import { useLocation, useRoute, useSearch } from "wouter";
 import { LensSwitcher } from "../board";
 import { lensesWithResult, useBoardData, useLensBoards } from "../board/board-data";
 import { countOpenFindings } from "../board/finding-lifecycle";
+import { useLensActivityHistory } from "../board/lens-activity-state";
 import { Icon } from "../components/icon";
 import { useRoundRecords, useRoundState, useRoundsUnavailable } from "../rounds/rounds-data";
 import { useSlugResolution } from "../routes/slug";
@@ -131,6 +132,11 @@ export function TopBar() {
   // (5.1/D12) — which is why it takes the SLUG: the lanes are read off the session row,
   // and during capture there is no review to read a board from at all.
   const lenses = useLensBoards(slug, review?.id ?? "", selectedGeneration);
+  const observeActivity = useLensActivityHistory((state) => state.observe);
+  useEffect(
+    () => observeActivity(review?.id ?? slug, selectedGeneration, lenses),
+    [observeActivity, review?.id, slug, selectedGeneration, lenses],
+  );
   const stagedAsks = useRennetStore((s) => s.review.stagedAsks);
   const findingDispositions = useRennetStore((s) => s.review.findingDispositions);
   const flaggedBoard = lenses.find(({ lens }) => lens === "flagged")?.board;
@@ -249,11 +255,11 @@ export function TopBar() {
       data-slot="session-top-bar"
       data-floating={floating}
       className={cn(
-        "grid grid-cols-[1fr_auto_1fr] items-center px-3 @container",
+        "flex flex-wrap items-center gap-x-2 gap-y-0 px-3 py-2 @container",
         floating
-          ? "pointer-events-none absolute inset-x-0 top-0 z-30 h-11"
-          : "h-14 shrink-0 border-b border-line",
-        // In the SOLID bar (states 1–2), the empty grid tracks and the trail text drag
+          ? "pointer-events-none absolute inset-x-0 top-0 z-30 min-h-11"
+          : "min-h-14 shrink-0 border-b border-line",
+        // In the SOLID bar (states 1–2), the empty space and the trail text drag
         // the window on darwin — the same titlebar affordance the corner slot carries.
         // Every control inside marks itself `app-region-no-drag` (below) or it goes dead.
         // The floating bar is `pointer-events-none` and dissolves into interactive chips,
@@ -266,7 +272,7 @@ export function TopBar() {
         traffic lights, and elsewhere is just the pill around the toggle. */}
       <div
         className={cn(
-          "flex min-w-0 items-center gap-2",
+          "flex min-w-0 max-w-48 items-center gap-2",
           floating && cn("pointer-events-auto", mac ? "ml-[112px]" : "ml-11"),
         )}
       >
@@ -294,7 +300,7 @@ export function TopBar() {
             iconButton,
           )}
         >
-          <Icon icon={PanelLeft} className="size-3.5" />
+          <Icon icon={MessageCircle} className="size-3.5" />
         </button>
         {/* The trail belongs to whichever pane is leftmost. With the dock open the chat
             header already renders one (`chat/chat-header.tsx`), so showing it here too is
@@ -312,14 +318,16 @@ export function TopBar() {
           present on non-board views with no active segment; choosing one returns to its board. */}
       <div
         data-slot="lens-switcher"
-        className="app-region-no-drag flex items-center justify-center"
+        className="app-region-no-drag flex min-w-0 grow items-center overflow-x-auto @max-[640px]:order-3 @max-[640px]:basis-full"
       >
         <LensSwitcher
           lenses={lenses}
+          reviewId={review?.id ?? slug}
+          generation={selectedGeneration}
           selected={query.view === "board" ? effectiveLens : null}
           onSelect={onLens}
           flaggedOpenCount={flaggedOpenCount}
-          className={floating ? cn("pointer-events-auto", chip) : undefined}
+          className={cn("shrink-0", floating && cn("pointer-events-auto", chip))}
         />
       </div>
 
@@ -331,7 +339,7 @@ export function TopBar() {
           context, not by direct-child position, so nesting keeps arrow keys. */}
       <div
         className={cn(
-          "app-region-no-drag flex items-center justify-end",
+          "app-region-no-drag ml-auto flex min-w-0 items-center justify-end overflow-x-auto",
           floating && "pointer-events-auto",
         )}
       >

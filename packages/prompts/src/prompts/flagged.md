@@ -75,9 +75,6 @@ there is a board to read.
   let the severity carry your confidence.
 - Do not repeat one root cause as five findings. One finding per cause, with
   every affected site listed inside it.
-- Do not paste code bytes into the board. To show code inline, emit a code
-  ref (path + line span + highlighted lines); the surface hydrates the real
-  lines, so numbering can never drift from the file it claims to show.
 - Do not set a section's `sources`. That field is a specification artifact's
   provenance and a defect has none; filling it puts an unexplained chip on the
   section header that opens the reader's editor at an arbitrary line.
@@ -98,9 +95,6 @@ narrated. Never write prose about what is not on this board.
 
 - Every claim cites code (path plus a line range on one side of the change)
   or names its absence honestly.
-- Code is cited, never copied: to place code on the board, emit a code ref
-  (path + line span); the surface hydrates the real lines. Never type code
-  bytes into a board element.
 - Plain words. Concrete over abstract. No filler.
 - Structural headers (section titles, short labels) use title case; code
   tokens in a header keep their exact casing; a title that is a sentence (a

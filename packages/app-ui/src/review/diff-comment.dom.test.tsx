@@ -47,11 +47,11 @@ describe("DiffView line comments — the C4 machinery, one object with the board
     await user.type(getByPlaceholderText("Leave a comment on this line…"), "needs a guard");
     await user.click(getByText("Save"));
     expect(useRennetStore.getState().review.codeComments[PATH]?.[2]).toBe("needs a guard");
-    // The commented line now shows the persistent (edit) glyph and reads evidence green.
+    // The commented line now shows the persistent (edit) glyph and reads annotation blue.
     expect(getByLabelText("Edit comment on line 2")).toBeTruthy();
     expect(rowState(2, container)).toBe("comment");
     expect(container.querySelector('[data-line="2"][data-side="RIGHT"]')?.className).toContain(
-      "bg-green/15",
+      "bg-blue/15",
     );
   });
 
@@ -90,7 +90,7 @@ describe("DiffView line comments — the C4 machinery, one object with the board
     expect(container.querySelector('[data-line="1"]')?.className).toContain("bg-destructive/25");
   });
 
-  it("danger-red vs evidence-green follows the store, not local state", () => {
+  it("danger-red vs annotation-blue follows the store, not local state", () => {
     useRennetStore.getState().reviewActions.setCodeComment(PATH, 1, "plain note");
     useRennetStore.getState().reviewActions.setCodeComment(PATH, 2, "ask body");
     useRennetStore.getState().reviewActions.stageAsk({

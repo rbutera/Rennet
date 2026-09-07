@@ -97,19 +97,6 @@ const DRAFTING: LensLane[] = [
   { id: "noise", label: "Noise", status: "waiting" },
 ] as LensLane[];
 
-const SETTLED: LensLane[] = DRAFTING.map((lane) =>
-  lane.id === "sequence"
-    ? ({
-        id: lane.id,
-        label: lane.label,
-        status: "done",
-        verdict: "reworked",
-        thread: lane.thread,
-        seats: lane.seats,
-      } as LensLane)
-    : lane,
-);
-
 function harness(options: {
   readonly lanes?: LensLane[];
   readonly preparation?: SidebarSession["preparation"];
@@ -181,7 +168,6 @@ function harness(options: {
   };
 }
 
-const widget = () => document.querySelector('[data-kind="seat-widget"]');
 const drawer = () => document.querySelector('[data-kind="seat-transcript-drawer"]');
 const dock = () => document.querySelector('[data-testid="chat-dock-slot"]');
 const transcriptButton = (seat: string) =>
@@ -191,156 +177,33 @@ beforeEach(() => {
   useRennetStore.setState((s) => ({ ui: { ...s.ui, seatTranscript: null } }));
 });
 
-describe("one widget above the board names the seat doing the work", () => {
-  it("names the seat, how long it has been watched, what it is doing and what it has written", async () => {
+describe("lens activity lives outside the board", () => {
+  it("opens meaningful activity separately from selection and hides raw calls", async () => {
     const h = harness({ boards: { sequence: at(FIXTURE_BOARDS.gen1?.sequence) } });
-    h.open("?lens=sequence");
-
-    await waitFor(() => expect(widget()).toBeTruthy());
-    const w = widget();
-    expect(w?.getAttribute("data-lens")).toBe("sequence");
-    expect(w?.getAttribute("data-register")).toBe("working");
-    expect(w?.getAttribute("data-shape")).toBe("working");
-    expect(w?.textContent).toContain("Sequence seat");
-    expect(w?.querySelector('[data-testid="seat-chip"]')?.textContent).toBe("drafting");
-    // The live line in the daemon's own plain words, with no JSON in it (D11's rule read
-    // from the client end: whatever `projectLatestEvent` sends is what shows).
-    expect(w?.textContent).toContain("reading packages/adapters/src/github-auth.ts");
-    expect(w?.textContent).not.toContain("{");
-    // How long — a true statement about THIS WINDOW, because the wire carries no seat
-    // start time. `0:0…` rather than a fixed string: the second is real.
-    expect(w?.querySelector('[data-testid="seat-watched"]')?.textContent).toMatch(
-      /^watching \d+:\d\d$/,
-    );
-    // What it has written so far, counted off the board that is actually on screen.
-    const written = w?.querySelector('[data-testid="seat-written"]')?.textContent ?? "";
-    expect(written).toMatch(/^\d+ elements written · \d+ cited$/);
-    // And the widget sits ABOVE the board, not below it or beside it.
-    const article = document.querySelector("article[data-lens=sequence]");
-    expect(
-      (w as Element).compareDocumentPosition(article as Node) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
-  });
-
-  it("a waiting Noise seat says what it waits for and never claims to be drafting", async () => {
-    // #865. While the four core seats work, the Noise lane has no thread and no seat, and
-    // by design cannot have one. The widget used to read "DRAFTING · Noise seat ·
-    // watching 0:01 · under way" for that whole window — a chip, a stopwatch and a live
-    // line, all about a seat that did not exist.
-    const h = harness({ boards: { noise: null } });
-    h.open("?lens=noise");
-
-    await waitFor(() => expect(widget()?.getAttribute("data-lens")).toBe("noise"));
-    const w = widget();
-    expect(w?.getAttribute("data-register")).toBe("waiting");
-    // The WORKING shape, not the settled receipt: nothing is finished either.
-    expect(w?.getAttribute("data-shape")).toBe("working");
-    expect(w?.querySelector('[data-testid="seat-chip"]')?.textContent).toBe("waiting");
-    // No stopwatch. It counted the time a seat had been watched, and there is no seat.
-    expect(w?.querySelector('[data-testid="seat-watched"]')).toBeNull();
-    // It names the lanes it is owed — Design has settled, the other three have not.
-    expect(w?.querySelector('[data-testid="seat-waiting-on"]')?.textContent).toBe(
-      "waiting on Sequence, Decisions and Flagged",
-    );
-    // ...and no transcript control, because there is no thread to open.
-    expect(transcriptButton("noise")).toBeNull();
-  });
-
-  it("counts what the SEAT wrote apart from what the host placed on a derived board", async () => {
-    // #864 fold-in. The host places the complement — one `code_ref` and one
-    // `noise_verdict` per uncited change — before the seat first turn, so counting every
-    // element as "written" credited the seat with the whole derivation. The drive read
-    // "2522 elements written · 1259 cited" on a board whose seat wrote four sections.
-    const settledNoise = SETTLED.map((lane) =>
-      lane.id === "noise"
-        ? ({ id: "noise", label: "Noise", status: "done", verdict: "reworked" } as LensLane)
-        : lane,
-    );
-    const h = harness({ lanes: settledNoise, boards: { noise: at(FIXTURE_BOARDS.gen1?.noise) } });
-    h.open("?lens=noise");
-
-    await waitFor(() => expect(widget()?.getAttribute("data-shape")).toBe("receipt"));
-    // The fixture board is 8 elements: a section and a prose the seat wrote, and three
-    // host-placed member pairs. The seat wrote two of them.
-    expect(widget()?.querySelector('[data-testid="seat-written"]')?.textContent).toBe(
-      "2 elements written · 3 regions placed",
+    const { user, findByRole, getByRole } = h.open("?lens=sequence");
+    await user.click(await findByRole("button", { name: "Sequence activity" }));
+    expect(document.querySelector('[data-kind="seat-widget"]')).toBeNull();
+    const activity = getByRole("dialog", { name: "Sequence activity details" });
+    expect(activity.textContent).toContain("Inspecting the change");
+    expect(activity.textContent).toMatch(/Following for \d+:\d\d/);
+    expect(activity.textContent).not.toContain("github-auth.ts");
+    expect(activity.textContent).not.toContain("elements written");
+    expect(activity.querySelector('[aria-label="Pin activity"]')).toBeNull();
+    await user.click(getByRole("button", { name: "Close activity" }));
+    await waitFor(() =>
+      expect(document.querySelector('[aria-label="Sequence activity details"]')).toBeNull(),
     );
   });
 
-  it("shows both Flagged voices side by side, each with its own line and its own control", async () => {
+  it("offers both Flagged transcripts and retains the settled transcript", async () => {
     const h = harness({ boards: { flagged: at(FIXTURE_BOARDS.gen1?.flagged) } });
-    h.open("?lens=flagged");
-
-    await waitFor(() => expect(widget()?.getAttribute("data-lens")).toBe("flagged"));
-    const claude = document.querySelector('[data-seat="flagged-claude"]');
-    const codex = document.querySelector('[data-seat="flagged-codex"]');
-    expect(claude?.textContent).toContain("Claude");
-    expect(claude?.textContent).toContain("grepping withConnectResilience");
-    expect(codex?.textContent).toContain("Codex");
-    expect(codex?.textContent).toContain("The token refresh races the logout.");
-    // Two controls, one per voice — not one control for the lane.
-    expect(transcriptButton("flagged-claude")).toBeTruthy();
-    expect(transcriptButton("flagged-codex")).toBeTruthy();
-  });
-
-  it("shows a failed seat's failure in place, with the retry offered there", async () => {
-    const failed = DRAFTING.map((lane) =>
-      lane.id === "sequence"
-        ? ({
-            id: "sequence",
-            label: "Sequence",
-            status: "failed",
-            reason: "The seat turn settled without settling its board.",
-            thread: THREAD("seat-sequence"),
-          } as LensLane)
-        : lane,
+    const { user, findByRole, getByRole } = h.open("?lens=flagged");
+    await user.click(await findByRole("button", { name: "Flagged activity" }));
+    expect(getByRole("button", { name: "Open Claude transcript" })).toBeTruthy();
+    expect(getByRole("button", { name: "Open Codex transcript" })).toBeTruthy();
+    expect(getByRole("dialog", { name: "Flagged activity details" }).textContent).toContain(
+      "The token refresh races the logout.",
     );
-    const h = harness({
-      preparation: {
-        status: "failed",
-        stage: "boards",
-        reason: "Board generation failed.",
-        reviewId: REVIEW.id,
-        lanes: failed,
-      } as never,
-      boards: { sequence: at(FIXTURE_BOARDS.gen1?.sequence) },
-    });
-    h.open("?lens=sequence");
-
-    await waitFor(() => expect(widget()?.getAttribute("data-register")).toBe("failed"));
-    const w = widget();
-    expect(w?.querySelector('[data-testid="seat-chip"]')?.textContent).toBe("failed");
-    // The drafter's own reason, verbatim — not the lane's status word.
-    expect(w?.textContent).toContain("The seat turn settled without settling its board.");
-    // The retry is offered HERE, against the failed lane, rather than centred at the foot
-    // of a screen. It names its real scope: there is no per-lens retry command on the wire,
-    // so the button says what it actually does.
-    const retry = w?.querySelector('[data-testid="seat-retry"]');
-    expect(retry?.textContent).toBe("Draft the boards again");
-  });
-
-  it("collapses to a one-line receipt at settle, which still opens the transcript", async () => {
-    const h = harness({ boards: { sequence: at(FIXTURE_BOARDS.gen1?.sequence) } });
-    h.open("?lens=sequence");
-
-    await waitFor(() => expect(widget()?.getAttribute("data-shape")).toBe("working"));
-    h.setLanes(SETTLED);
-
-    await waitFor(() => expect(widget()?.getAttribute("data-shape")).toBe("receipt"), {
-      timeout: 4_000,
-    });
-    const w = widget();
-    expect(w?.textContent).toContain("Sequence");
-    expect(w?.textContent).toContain("reworked");
-    expect(w?.querySelector('[data-testid="seat-written"]')?.textContent).toMatch(
-      /\d+ elements written/,
-    );
-    // Still the way back into the thread — that is the whole reason a settled lane keeps
-    // its widget instead of dropping it.
-    expect(transcriptButton("sequence")).toBeTruthy();
-    // …and the working-state furniture is gone with the state.
-    expect(w?.querySelector('[data-testid="seat-chip"]')).toBeNull();
-    expect(w?.querySelector('[data-testid="seat-watched"]')).toBeNull();
   });
 });
 
@@ -348,7 +211,8 @@ describe("the transcript opens in its own surface and never displaces the conver
   it("streams the seat's thread in the drawer while the dock keeps the session's thread", async () => {
     // #823 AND 6.2, as one pair. Either half alone is a green bar over the bug.
     const h = harness({ boards: { sequence: at(FIXTURE_BOARDS.gen1?.sequence) } });
-    const { user } = h.open("?lens=sequence");
+    const { user, findByRole } = h.open("?lens=sequence");
+    await user.click(await findByRole("button", { name: "Sequence activity" }));
 
     await waitFor(() => expect(transcriptButton("sequence")).toBeTruthy());
     // Before: the dock has the session's thread and nothing has a seat's.
@@ -385,7 +249,8 @@ describe("the transcript opens in its own surface and never displaces the conver
         decisions: at(FIXTURE_BOARDS.gen1?.decisions),
       },
     });
-    const { user } = h.open("?lens=sequence");
+    const { user, findByRole } = h.open("?lens=sequence");
+    await user.click(await findByRole("button", { name: "Sequence activity" }));
 
     await waitFor(() => expect(transcriptButton("sequence")).toBeTruthy());
     await user.click(transcriptButton("sequence") as HTMLButtonElement);
@@ -398,9 +263,9 @@ describe("the transcript opens in its own surface and never displaces the conver
     await waitFor(() =>
       expect({
         board: document.querySelector("article[data-lens]")?.getAttribute("data-lens"),
-        widget: widget()?.getAttribute("data-lens"),
+        activity: document.querySelector('[aria-label="Decisions activity"]') !== null,
         transcript: drawer()?.getAttribute("data-lens"),
-      }).toEqual({ board: "decisions", widget: "decisions", transcript: "decisions" }),
+      }).toEqual({ board: "decisions", activity: true, transcript: "decisions" }),
     );
     expect(drawer()?.querySelector('[data-testid="drawer-seat-thread"]')?.textContent).toBe(
       "seat-decisions",
@@ -409,7 +274,8 @@ describe("the transcript opens in its own surface and never displaces the conver
 
   it("shares one slot with the diff view: opening the diff closes the transcript", async () => {
     const h = harness({ boards: { sequence: at(FIXTURE_BOARDS.gen1?.sequence) } });
-    const { user } = h.open("?lens=sequence");
+    const { user, findByRole } = h.open("?lens=sequence");
+    await user.click(await findByRole("button", { name: "Sequence activity" }));
 
     await waitFor(() => expect(transcriptButton("sequence")).toBeTruthy());
     await user.click(transcriptButton("sequence") as HTMLButtonElement);

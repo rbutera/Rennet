@@ -172,13 +172,16 @@ const bigPacket = buildDeltaPacket(synthetic(), []);
 //
 // The other four are unchanged, which is the check that the cut is the section alone.
 //
+// #904: evidence and section guidance measures 14,652 / 9,921 / 10,169 / 10,800 / 10,699 B.
+// The decision-title rule lives in the two lenses that carry `add_decision`, not the shared
+// partial, so Sequence, Flagged and Noise are ~100 B lighter than the first cut.
 // Budgets are measurement + 10% headroom, as this file's convention has always been.
 const BUDGET: Record<(typeof LENS_KINDS)[number], number> = {
-  design: 15_340,
-  sequence: 10_760,
-  decisions: 10_530,
-  flagged: 11_550,
-  noise: 11_200,
+  design: 16_118,
+  sequence: 10_914,
+  decisions: 11_186,
+  flagged: 11_880,
+  noise: 11_769,
 };
 
 describe("drafter prompt byte budget (tripwire, #737)", () => {

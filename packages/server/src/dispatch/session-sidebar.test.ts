@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { FileProjectStore, RoundRecordStore, SessionStore } from "@rennet/adapters";
 import { mintSession } from "@rennet/core";
 import {
+  parseCommandOutput,
   ROUND_NO_REGEN,
   type RoundRecord,
   type SessionModel,
@@ -113,6 +114,28 @@ const roundRecord = (
 });
 
 type Rows = { sessions: { id: string; title: string; pinned?: boolean; archived?: boolean }[] };
+
+describe("sidebar round activity projection", () => {
+  it("projects the durable operation and preserves failure through the command schema", () => {
+    const session = seed("s1", "main");
+    const running = sidebarSessionOf(session, [], {
+      operationId: "op-1",
+      state: { phase: "claimed" },
+    });
+    expect(running.reviewActivity).toEqual({ status: "running", operationId: "op-1" });
+    const failed = sidebarSessionOf(session, [], {
+      operationId: "op-1",
+      state: {
+        phase: "failed",
+        failure: { at: "preparing", reason: "Repository unavailable", failedAt: 1 },
+      },
+    });
+    expect(
+      parseCommandOutput("session.list", { sessions: [failed] }).sessions[0]?.reviewActivity,
+    ).toEqual({ status: "failed", operationId: "op-1", reason: "Repository unavailable" });
+    expect(sidebarSessionOf(session).reviewActivity).toBeUndefined();
+  });
+});
 
 describe("session.list + the sidebar's session writes (C18)", () => {
   it("lists the persisted sessions, titled by the claim it actually holds", async () => {

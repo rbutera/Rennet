@@ -9,7 +9,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { useLocation, useRoute, useSearch } from "wouter";
 import { LensBoardView } from "../board";
 import { SeatTranscriptDrawer } from "../board/seat-transcript-drawer";
-import { WorkspaceHeader } from "../board/workspace-header";
+import { useSessionRow, WorkspaceHeader } from "../board/workspace-header";
 import { useCommand, useMutation } from "../data";
 import { useHandoffExits } from "../handoff/exits";
 import { ExitFab } from "../handoff/fab";
@@ -86,6 +86,10 @@ export function ReviewWorkspace({ review }: { review: Review }) {
   const query = readSessionQuery(new URLSearchParams(useSearch()));
   const view = query.view;
   const slug = sessionParams?.slug ? decodeURIComponent(sessionParams.slug) : "";
+  const session = useSessionRow(slug);
+  const preparation = session?.preparation;
+  const preparationRunning =
+    preparation?.status === "capturing" || preparation?.status === "drafting";
   const mode = resolveEntryMode(review);
 
   // Review-identity isolation (C05's boardId lesson, applied to the singleton `review` slice): the
@@ -116,6 +120,12 @@ export function ReviewWorkspace({ review }: { review: Review }) {
   // `LensBoardView` at the composed round's NEW generation (derived off the machine's
   // `composed` state, never a stored navigation target — the S9 fence).
   const roundState = useRoundState(slug);
+  // Continue is non-actionable while BOARDS are being written: the first preparation, and a
+  // round's regeneration. A round's worker run is not that — the boards are settled and the
+  // hand-off view is where the round is watched — so it is read off the live round machine,
+  // not the sidebar's coarser "an operation exists" projection.
+  const reviewing =
+    preparationRunning || roundState.phase === "composing" || roundState.phase === "verifying";
   // The rounds ledger (C09 §6.2). `?view=rounds` shows the ledger EXACTLY when a round
   // has completed — the derived-presence C5 uses for the lens switcher, and what the
   // top-bar's History pill is gated on. A `?view=rounds` deep-link with no completed
@@ -399,7 +409,21 @@ export function ReviewWorkspace({ review }: { review: Review }) {
           <SeatTranscriptDrawer reviewId={review.id} />
         </div>
       )}
-      <ExitFab mode={mode} open={view === "handoff"} onToggle={toHandoff} />
+      <ExitFab
+        // "Interrupted" is reserved for a preparation that failed or was cancelled BEFORE there
+        // was a review to hand off — the header carries the failure and its Retry. Once a review
+        // exists, Continue stays actionable through a failed lane or a failed round: the
+        // hand-off view is the only way to dispatch again, and a failed round operation is
+        // durable until the next one, so gating on it would lock the reviewer out for good.
+        ready={
+          preparation === undefined ||
+          ("reviewId" in preparation && preparation.reviewId !== undefined)
+        }
+        reviewing={reviewing}
+        mode={mode}
+        open={view === "handoff"}
+        onToggle={toHandoff}
+      />
     </div>
   );
 }

@@ -2146,6 +2146,18 @@ export const sidebarSessionSchema = z
      * Absent for a session nothing has been captured for yet — honestly, there is no diff.
      */
     reviewId: z.string().min(1).optional(),
+    /** Latest durable round operation, including background regeneration after navigation. */
+    reviewActivity: z
+      .discriminatedUnion("status", [
+        z.object({ status: z.literal("running"), operationId: z.string().min(1) }),
+        z.object({ status: z.literal("complete"), operationId: z.string().min(1) }),
+        z.object({
+          status: z.literal("failed"),
+          operationId: z.string().min(1),
+          reason: z.string(),
+        }),
+      ])
+      .optional(),
     /** Durable New Chat capture/board progress, projected from the session record. */
     preparation: SessionPreparationSchema.optional(),
     /** When the session was minted (epoch ms) — the client renders the relative line. */

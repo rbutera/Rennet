@@ -750,12 +750,22 @@ siblings settle. The test is the same `HOST_DERIVED_MEMBER_KIND` row that takes 
 target's member-creating verb away, so which lens waits is one fact read where it applies
 rather than a second list.
 
-The client keys on it. The rail shows Noise as unstarted and names the un-settled lanes it
-is owed; the seat widget shows a `waiting` chip with no stopwatch and no live line; the
-board says it has not started and what it is waiting for. Without the status, all three
-surfaces claimed a seat that did not exist for the whole core fan-out — a travelling lamp
-on the rail, "DRAFTING · Noise seat · watching 0:01", and "This board is still being
-written" over a lane with no thread.
+The client keeps Noise unselectable while its siblings run, with a spinner and
+an explanation available on hover or keyboard focus. Its activity control is
+separate from tab selection. Detailed lane activity lives in a dismissible popover
+anchored directly beneath the selected lens in the tab bar. Its transcript actions
+remain visible and are disabled only until their agent threads exist. The
+observed history and elapsed time stay with the review, generation and seat thread
+across navigation and reconnection. A new generation or thread starts a fresh
+observation.
+
+The header says “Reviewing the change” while the review is being prepared.
+Continue carries the strongest activity treatment and cannot advance until the
+review is ready. The same session's sidebar row stays animated when the user
+navigates away. Completion becomes a check and then an unread dot until opened;
+failure retains its reason. Initial preparation and post-round regeneration
+project their durable state into this presentation rather than relying on the
+currently mounted board.
 
 **An empty complement is settled without a seat.** When the four lanes between them cited
 every changed region, the host knows the remainder is empty before any turn, and the lane
@@ -1061,35 +1071,42 @@ ruling lines remain visible in the progress region but never count as completion
 
 ## Reading affordances every board shares
 
-- The authored title and introduction open the document. A `reading` measure
-  keeps prose narrow; `structured` gives artifact-heavy content a wider column.
-- Sections fold to a one-line gist with domain counts; the gist summarizes,
-  never teases.
+- The lens name opens the document, with its authored title as a subtitle and
+  introduction beneath it. A `reading` measure keeps prose narrow; `structured`
+  gives artifact-heavy content a wider column.
+- Folded sections list their current child headings in document order. Selecting
+  an entry opens the section and focuses that element. Without titled children,
+  the first substantive paragraph is clamped to two lines. Counts remain
+  secondary, and a section never repeats its own title as its preview.
+- Decisions have a concise heading above their complete statement, rationale,
+  alternatives and evidence. Existing decisions without a separate title remain
+  readable without regenerating the board.
 - Code is cited, never copied: the code block card renders a citation with
   path and line span. In board prose, backticked terms render monospace and
   `path:line` citations are interactive — clicking one reveals the real
   cited lines inline.
-- A code-card filename opens `?view=diff&file=<path>` only when the path belongs
-  to the active captured patchset. The same active-path set resolves reversible
-  JavaScript and TypeScript counterparts (`foo.ts` with `foo.test.ts` or
-  `foo.spec.ts`). **View test** or **View implementation** appears only when
-  both paths were captured as changed; the client never guesses from the
-  working tree.
-- A revealed citation is served from the **captured patchset's own patch
-  text** (`patchset.readSpan`), never from the working tree. Two consequences
-  follow. A review whose repository has since moved or been deleted still
-  reveals every citation, because the content was captured. And a patchset
-  carries only its hunks, so a citation into a region the diff never showed
-  cannot be served — the surface says which absence it hit ("outside the diff
-  this patchset captured") rather than rendering an empty block.
-- The one span the reader goes outside the patch text for is a **truncated
-  capture's tail**, because lint accepts a citation there on purpose: the tail
-  region is open-ended, so the daemon never calls a seat's citation wrong over
-  lines it chose not to keep. Those lines come from the immutable object the
-  patchset recorded (`git show <reviewedTreeOid|baseOid>:<path>`) — the same
-  reviewed content, not the checkout as it stands today. With no repository to
-  read, the card shows an honest caption saying the diff was cut short, never a
-  refusal: a citation the board accepted must not read as a bad citation.
+- A code-card filename opens the captured file in Diff. **View test** and
+  **View implementation** use relationships from the reviewed tree, including
+  relative imports and naming conventions. An unchanged test can be inspected
+  inline; several matches offer a chooser, and Back restores the previous code
+  context and scroll position. Full-file inspection uses a bounded scrolling
+  viewport and renders only the visible rows.
+- A revealed citation displays the relevant captured diff hunks, with old/new
+  line numbers and addition/deletion markers. The citation positions the code;
+  it does not paint a reviewer selection. Syntax and diff colours remain distinct
+  from the reviewer's comments and selections.
+- Context expansion and full-file inspection read the immutable base and
+  reviewed-tree/head objects on demand. Later working-tree changes cannot alter
+  those bytes. Captured hunks remain readable when additional context is
+  unavailable, and the code surface names that limitation.
+- `patchset.readEvidence` returns the captured diff first. Full sources and the
+  cached test relationship index are separate requests. Selections carry the
+  patchset, file, side and line range into comments, explanations, change requests
+  and replies, including deleted lines. A selection spanning different files or
+  diff sides asks the reviewer to select a single source range.
+- Older daemons retain the existing `patchset.readSpan` response. Its single-side
+  excerpt fallback reads captured lines and, for a truncated capture's tail, the
+  recorded immutable object when available. Existing citations remain valid.
 - Multi-site evidence (a decision's excerpts) renders as one tabbed code
   viewer: quiet pill tabs, one visible code block card.
 - A finding is document flow, not a boxed card: severity and claim title,

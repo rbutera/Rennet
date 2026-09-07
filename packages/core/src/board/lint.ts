@@ -242,9 +242,9 @@ interface Field {
 /**
  * Per-kind field roles (S5 — one table, no duplicated kind-switch). `prose` is
  * the longform lane (code-byte / dialogue / citation / remainder rules); a
- * kind's `decision.statement` sits in BOTH because a decision statement is both
- * longform prose and a short structural label. `structural` is the process-
- * vocabulary lane (R20): titles and short labels, never body prose (#493 §5:
+ * kind's `decision.statement` sits in BOTH because older boards use the statement
+ * as their structural label. New boards also have a separate `title`.
+ * `structural` is the process-vocabulary lane (R20): titles and short labels, never body prose (#493 §5:
  * lint can only reject a whole element, and a body cannot lose one machinery
  * sentence without content — that is the post-process editor's lane).
  */
@@ -255,7 +255,7 @@ const FIELD_ROLES: Readonly<
   callout: { prose: ["body"], structural: ["variant"] },
   annotation: { prose: ["body"], structural: [] },
   finding: { prose: ["concern"], structural: [] },
-  decision: { prose: ["statement", "why"], structural: ["statement"] },
+  decision: { prose: ["statement", "why"], structural: ["title", "statement"] },
   requirement: { prose: ["shall"], structural: [] },
   noise_verdict: { prose: ["reason"], structural: [] },
   round_outcome: { prose: ["note"], structural: [] },
