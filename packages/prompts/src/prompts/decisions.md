@@ -53,7 +53,7 @@ Each decision block carries:
   header only when no code carries the decision at all.
 
 Group decisions into sections by theme when there are more than a handful.
-Give each section a title that states its shared takeaway; the host calculates counts.
+Group related choices under a concise section heading.
 
 ## What not to do
 

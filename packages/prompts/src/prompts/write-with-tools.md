@@ -18,9 +18,12 @@ addition. Prose in your reply does not reach it. Tool definitions carry the inpu
 Give sections and titled elements concise, descriptive headings. Keep one coherent
 idea per element, with its explanation and supporting evidence beneath the heading.
 A paragraph-length statement is never a navigation label.
-The host derives folded previews from the current children; do not write a separate
-preview or repeat a section heading as its body. Preserve source wording where this
-lens requires it.
+Every section needs a useful folded preview, distinct from its title. Write child
+subheadings that tell the reader what is inside. Without subheadings, open the
+section's prose with a self-contained summary. The host shows those subheadings or
+truncates the opening paragraph to two lines; it calculates counts from the children.
+Keep the title a concise label, not a substitute for the preview. Never repeat it
+as the opening paragraph. Preserve source wording where this lens requires it.
 
 Citations identify evidence. The host renders the actual diff and surrounding code;
 agents do not specify presentation highlights or copy source into prose. Highlighting

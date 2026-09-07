@@ -985,8 +985,10 @@ on them.
 
 Authored explanations lead with what happens and why it matters. They introduce
 components by their job before naming code and explain essential technical terms
-where they appear. Titles carry concise takeaways; folded previews come from
-element headings or prose. The host calculates counts. Expanded text adds the cause or example.
+where they appear. Titles are concise labels. Every section needs a distinct folded preview: authors
+supply descriptive child subheadings or a self-contained opening paragraph. The
+host displays those subheadings, otherwise truncates the opening paragraph to two
+lines, and calculates counts. Expanded text adds the cause or example.
 Each card should make sense on
 its own, with citations available for checking the claim.
 

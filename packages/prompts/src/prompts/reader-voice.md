@@ -7,8 +7,8 @@ reach for checking the evidence.
 - Lead with the consequence. Describe what the code does in everyday words;
   leave code names to citations unless needed to distinguish two things.
   Explain an essential technical term where it first appears.
-- Give the title one concrete takeaway. Expanded text supplies the cause or
-  example without repeating it.
+- Give the title a concise, descriptive label. The folded preview explains what
+  is inside; expanded text supplies the cause or example without repeating the title.
 - Open with the user-visible change in two short sentences, about 35 words total.
   Skip the itinerary: explain the change itself, not how to read its explanation.
 - Write explanations in about 40 words. Use two short sentences when they fit.

@@ -39,8 +39,6 @@ end of a section the reader should be able to predict why the next one exists.
 - Every order step must be reachable from a top-level section through section
   or order-step children. Prose, code refs, detached order steps, and empty
   sections do not constitute a Sequence result.
-- A section's title also appears when folded: state its takeaway rather than
-  teasing it. The host calculates counts from the section's children.
 
 ## What the walk leaves out
 

@@ -148,7 +148,13 @@ describe("lens prompt manifest", () => {
       expect(prompt, kind).toContain("Highlighting and annotations belong to the reviewer");
       expect(prompt, kind).toContain("Keep one coherent idea per element");
       expect(prompt, kind).toContain("A paragraph-length statement is never a navigation label");
-      expect(prompt, kind).toContain("do not write a separate preview");
+      expect(prompt, kind).toContain(
+        "Every section needs a useful folded preview, distinct from its title",
+      );
+      expect(prompt, kind).toContain(
+        "The host shows those subheadings or truncates the opening paragraph to two lines",
+      );
+      expect(prompt, kind).toContain("it calculates counts from the children");
       expect(prompt, kind).not.toContain("path + line span + highlighted lines");
       expect(prompt, kind).not.toContain("one-line folded gist");
     }
