@@ -328,7 +328,11 @@ line naming the gap rather than accepting edits that would vanish.
 
 Changing visibility never stages or commits files. Local visibility keeps the
 promoted map out of ordinary Git status through Rennet's entry in
-`.rennet/.gitignore`. Git-visible removes only that Rennet-owned exclusion.
+`.rennet/.gitignore`. Git-visible removes only that Rennet-owned exclusion. At
+either visibility the managed block keeps ignoring Rennet's own scratch: the
+per-session `context/` directory, and the `.gitignore` file itself, which Rennet
+writes in the background after a capture and which must never read as a change
+to the branch under review.
 
 Rennet detects where a repository runs from its path — a WSL locus from a WSL
 path, the host otherwise — and shows it as "Runs on". It is a detected fact, not

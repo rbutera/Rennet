@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -145,6 +146,35 @@ describe("ensureManagedIgnoreBlock (session-context-files 2.1)", () => {
     expect(written).toContain("context/");
   });
 
+  // The file Rennet writes must not itself be a change. It lands in the background after
+  // a capture, so without this line the next freshness capture found a new untracked path,
+  // minted a different patchset id, and invalidated the review (the #729 harm; a CI-only
+  // flake in `freshness-app-owned.test.ts` until the write was made to self-ignore).
+  // Real git, both halves: the entry is load-bearing (`add -A` skips the file), and the
+  // control is the same file with the entry stripped, which `add -A` stages.
+  it("the managed .gitignore ignores itself, so writing it never dirties the reviewed tree", () => {
+    const repo = mkdtempSync(join(tmpdir(), "rennet-selfignore-"));
+    scratch.push(repo);
+    const git = (...args: string[]) =>
+      execFileSync("git", ["-C", repo, ...args], { encoding: "utf8" }).trim();
+    git("init", "-q");
+
+    expect(ensureManagedIgnoreBlock(repo)).toBe(true);
+    const path = join(repo, ".rennet", ".gitignore");
+    expect(
+      execFileSync("git", ["-C", repo, "check-ignore", "-v", ".rennet/.gitignore"], {
+        encoding: "utf8",
+      }),
+    ).toContain(".rennet/.gitignore:");
+    git("add", "-A");
+    expect(git("diff", "--cached", "--name-only")).toBe("");
+
+    // Control: the same file without the self-ignore line IS staged by `add -A`.
+    writeFileSync(path, readFileSync(path, "utf8").replace(/^\.gitignore\n/m, ""));
+    git("add", "-A");
+    expect(git("diff", "--cached", "--name-only")).toBe(".rennet/.gitignore");
+  });
+
   it("recordedVisibility answers what the store holds, and `local` when it holds nothing", async () => {
     const repo = mkdtempSync(join(tmpdir(), "rennet-recvis-"));
     const storeDir = mkdtempSync(join(tmpdir(), "rennet-recvis-store-"));
@@ -178,7 +208,7 @@ describe("ensureManagedIgnoreBlock (session-context-files 2.1)", () => {
     // What a repo the reviewer switched to `git-visible` looks like on disk.
     writeFileSync(
       join(repo, ".rennet", ".gitignore"),
-      "# >>> rennet-managed (do not edit) >>>\ncontext/\n# <<< rennet-managed <<<\n",
+      "# >>> rennet-managed (do not edit) >>>\n.gitignore\ncontext/\n# <<< rennet-managed <<<\n",
     );
 
     // Nothing to do: `context/` is already there, and the derived entries must NOT come back.
