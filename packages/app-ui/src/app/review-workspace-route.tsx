@@ -9,7 +9,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { useLocation, useRoute, useSearch } from "wouter";
 import { LensBoardView } from "../board";
 import { SeatTranscriptDrawer } from "../board/seat-transcript-drawer";
-import { WorkspaceHeader } from "../board/workspace-header";
+import { useSessionRow, WorkspaceHeader } from "../board/workspace-header";
 import { useCommand, useMutation } from "../data";
 import { useHandoffExits } from "../handoff/exits";
 import { ExitFab } from "../handoff/fab";
@@ -86,6 +86,10 @@ export function ReviewWorkspace({ review }: { review: Review }) {
   const query = readSessionQuery(new URLSearchParams(useSearch()));
   const view = query.view;
   const slug = sessionParams?.slug ? decodeURIComponent(sessionParams.slug) : "";
+  const session = useSessionRow(slug);
+  const preparation = session?.preparation;
+  const preparationRunning =
+    preparation?.status === "capturing" || preparation?.status === "drafting";
   const mode = resolveEntryMode(review);
 
   // Review-identity isolation (C05's boardId lesson, applied to the singleton `review` slice): the
@@ -116,6 +120,11 @@ export function ReviewWorkspace({ review }: { review: Review }) {
   // `LensBoardView` at the composed round's NEW generation (derived off the machine's
   // `composed` state, never a stored navigation target — the S9 fence).
   const roundState = useRoundState(slug);
+  const reviewing =
+    preparationRunning ||
+    session?.reviewActivity?.status === "running" ||
+    roundState.phase === "composing" ||
+    roundState.phase === "verifying";
   // The rounds ledger (C09 §6.2). `?view=rounds` shows the ledger EXACTLY when a round
   // has completed — the derived-presence C5 uses for the lens switcher, and what the
   // top-bar's History pill is gated on. A `?view=rounds` deep-link with no completed
@@ -399,7 +408,17 @@ export function ReviewWorkspace({ review }: { review: Review }) {
           <SeatTranscriptDrawer reviewId={review.id} />
         </div>
       )}
-      <ExitFab mode={mode} open={view === "handoff"} onToggle={toHandoff} />
+      <ExitFab
+        ready={
+          preparation === undefined &&
+          session?.reviewActivity?.status !== "failed" &&
+          roundState.phase !== "failed"
+        }
+        reviewing={reviewing}
+        mode={mode}
+        open={view === "handoff"}
+        onToggle={toHandoff}
+      />
     </div>
   );
 }

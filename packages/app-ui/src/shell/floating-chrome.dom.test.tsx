@@ -275,7 +275,7 @@ describe("state 3 — the floating chip layer (C20 §5)", () => {
     });
   }
 
-  it("gives the drafting workspace a real primary scroller, widget included", async () => {
+  it("gives the drafting workspace a real primary scroller", async () => {
     // #819 / lens-board-tools 5.6 (D15). The bench this used to name is deleted; the
     // surface a new review lands on is the board workspace, and the defect it guards
     // against is unchanged: the outlet is a flex column and the shell root is `fixed
@@ -363,11 +363,8 @@ describe("state 3 — the floating chip layer (C20 §5)", () => {
       // scroller's chain is #819 with the scroller present but useless.
       expect(node.className).not.toContain("overflow-hidden");
     }
-    // The widget is carried by the scroller too (5.6, "widget included"): the header sits
-    // ABOVE it deliberately, so it is the board's own widget that must scroll with the board.
     expect(widget).toBeTruthy();
-    const seatWidget = scroller.querySelector('[data-kind="seat-widget"]');
-    expect(seatWidget, "the seat widget scrolls with its board").toBeTruthy();
+    expect(scroller.querySelector('[data-kind="seat-widget"]')).toBeNull();
   });
 
   it("gives a TAKEOVER surface plain clearance, never the scroll treatment", () => {

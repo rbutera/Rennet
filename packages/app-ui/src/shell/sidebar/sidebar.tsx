@@ -56,7 +56,7 @@ import { useCoachOptional } from "../../coach/context";
 import { useCoachAnchor } from "../../coach/registry";
 import { Icon } from "../../components/icon";
 import { useUpdateReady } from "../../components/update-ready";
-import { useBridge, useCommand } from "../../data";
+import { useBridge, useCommand, useRefreshCommand } from "../../data";
 import {
   archivedPath,
   newChatPath,
@@ -68,6 +68,7 @@ import { ProjectIcon } from "../../settings/assets/project-icon";
 import { useSettingsProjection } from "../../settings/data/projections";
 import { useRennetStore } from "../../store";
 import { CornerSlot, useMacTrafficLights } from "../corner-slot";
+import { useReviewActivityState } from "../review-activity-state";
 import {
   type SidebarProject,
   type SidebarSession,
@@ -77,6 +78,7 @@ import {
   useSidebarTree,
 } from "../sidebar-data";
 import { RennetLockup } from "./lockup";
+import { SidebarReviewActivity } from "./review-activity";
 import { TargetIcon } from "./target-icon";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -373,6 +375,7 @@ function SessionRow({
             >
               {session.title}
             </span>
+            <SidebarReviewActivity sessionId={session.id} active={active} />
             {session.targetState === "reviewed" ? (
               <Icon
                 icon={Check}
@@ -820,6 +823,31 @@ function SidebarFooter() {
 }
 
 export function Sidebar() {
+  const { activeSlug } = useActiveRoute();
+  const activeActivity = useReviewActivityState((s) =>
+    activeSlug ? s.bySession[activeSlug] : undefined,
+  );
+  const acknowledge = useReviewActivityState((s) => s.acknowledge);
+  useEffect(() => {
+    if (activeSlug && activeActivity?.kind === "complete") acknowledge(activeSlug);
+  }, [activeSlug, activeActivity, acknowledge]);
+  const refreshSessions = useRefreshCommand("session.list");
+  const reviewing = useReviewActivityState((s) =>
+    Object.values(s.bySession).some((state) => state.kind === "running"),
+  );
+  // biome-ignore lint/correctness/useExhaustiveDependencies: navigation refreshes a round started just before leaving its route.
+  useEffect(() => {
+    const refresh = () => {
+      if (!document.hidden) refreshSessions();
+    };
+    refresh();
+    const timer = setInterval(refresh, reviewing ? 1500 : 5000);
+    if (reviewing) document.addEventListener("visibilitychange", refresh);
+    return () => {
+      clearInterval(timer);
+      if (reviewing) document.removeEventListener("visibilitychange", refresh);
+    };
+  }, [reviewing, refreshSessions, activeSlug]);
   const mac = useMacTrafficLights();
   const open = useRennetStore((s) => s.ui.sidebarOpen);
   const asideRef = useRef<HTMLElement>(null);

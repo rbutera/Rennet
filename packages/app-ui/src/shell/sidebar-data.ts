@@ -1,9 +1,10 @@
 import type { Project, SidebarSession as WireSidebarSession } from "@rennet/protocol";
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import { useRoute } from "wouter";
 import { useCommand, useMutation } from "../data";
 import { ROUTES } from "../routes/url";
 import { selectProcessingProjectIds, useRennetStore } from "../store";
+import { useReviewActivityState } from "./review-activity-state";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The sidebar's SINGLE data-resolution point (C03, proposal reconciliation 2).
@@ -123,6 +124,10 @@ function toSidebarSession(row: WireSidebarSession): SidebarSession {
  */
 export function useSidebarSessionProjection(): SidebarSessionProjection {
   const { data } = useCommand("session.list", {});
+  const reconcile = useReviewActivityState((s) => s.reconcile);
+  useEffect(() => {
+    if (data) reconcile(data.sessions);
+  }, [data, reconcile]);
   const { mutate: rename } = useMutation("session.rename", { invalidates: ["session.list"] });
   const { mutate: setPinned } = useMutation("session.setPinned", {
     invalidates: ["session.list"],
