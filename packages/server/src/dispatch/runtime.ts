@@ -388,6 +388,15 @@ export interface DispatchDeps {
    */
   cleanupWorktree(input: { projectId: string; worktreeId: string }): Promise<{ ok: boolean }>;
   /**
+   * The project mark's logo store (#900, ADR 0004): read the copies a project holds, store
+   * an uploaded one (and set the pref in the same call), or re-run detection.
+   *
+   * Optional so a composition without the store still constructs — the three verbs then
+   * answer honest absence (no rows, an `unresolved` write, `found: false`) rather than
+   * throwing, exactly as `composeBundle` degrades.
+   */
+  readonly projectMarks?: import("../project-marks").ProjectMarkComposition;
+  /**
    * The Flagged lens's input (issue #138): the automated review layer's findings for
    * a review. The LIVE finding-generation runner (#32) is wired behind this — it
    * decomposes the review's active patchset and runs a real model turn over the diff,

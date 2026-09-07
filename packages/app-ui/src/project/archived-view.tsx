@@ -3,9 +3,9 @@ import { useEffect, useState } from "react";
 import { useLocation } from "wouter";
 import { Icon } from "../components/icon";
 import { newChatPath, sessionPath } from "../routes/url";
-import { ProjectIcon } from "../settings/assets/project-icon";
+import { ProjectMark, type ProjectMarkView } from "../settings/assets/project-mark";
 import { Segmented } from "../settings/atoms";
-import { useSettingsProjection } from "../settings/data/projections";
+import { projectMarkFor, useSettingsProjection } from "../settings/data/projections";
 import { TargetIcon } from "../shell/sidebar/target-icon";
 import {
   type SidebarProject,
@@ -25,8 +25,8 @@ import {
 // (by session title OR project name), sort (recent / project / title), open a row
 // (routes to the session), or unarchive it. Unarchive calls the projection's
 // `restoreSession`, returning the row to the live sidebar — release is archive-only, a
-// target is reclaimable by archiving its session, never deleted here. Project glyphs
-// come from the C10 settings projection (`glyphByProject`, default `layers`).
+// target is reclaimable by archiving its session, never deleted here. Project marks come
+// from the C10 settings projection (`projectMarkFor`, default the `layers` glyph).
 // ─────────────────────────────────────────────────────────────────────────────
 
 type SortKey = "recent" | "project" | "title";
@@ -55,7 +55,7 @@ export function ArchivedView() {
   const [, navigate] = useLocation();
   const { hosts } = useSidebarTree();
   const { restoreSession } = useSidebarSessionProjection();
-  const { glyphByProject } = useSettingsProjection();
+  const settings = useSettingsProjection();
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<SortKey>("recent");
   const back = () => navigate(newChatPath());
@@ -166,7 +166,7 @@ export function ArchivedView() {
                       key={session.id}
                       session={session}
                       project={project}
-                      glyph={glyphByProject[project.id]}
+                      mark={projectMarkFor(settings, project.id)}
                       onSelect={() => navigate(sessionPath(session.slug))}
                       onUnarchive={() => restoreSession(session.id)}
                     />
@@ -184,13 +184,13 @@ export function ArchivedView() {
 function ArchivedRow({
   session,
   project,
-  glyph,
+  mark,
   onSelect,
   onUnarchive,
 }: {
   readonly session: SidebarSession;
   readonly project: SidebarProject;
-  readonly glyph?: Parameters<typeof ProjectIcon>[0]["icon"];
+  readonly mark: ProjectMarkView;
   readonly onSelect: () => void;
   readonly onUnarchive: () => void;
 }) {
@@ -218,7 +218,7 @@ function ArchivedRow({
         <span className="pl-[18px] text-2xs text-ink-faint">{session.time}</span>
       </button>
       <span className="flex shrink-0 items-center gap-1.5 rounded-md border border-line px-2 py-0.5 text-xs text-ink-soft">
-        <ProjectIcon icon={glyph} className="size-3" />
+        <ProjectMark mark={mark} className="size-3" />
         {project.name}
       </span>
       <button

@@ -64,8 +64,8 @@ import {
   sessionPath,
   settingsPath,
 } from "../../routes/url";
-import { ProjectIcon } from "../../settings/assets/project-icon";
-import { useSettingsProjection } from "../../settings/data/projections";
+import { ProjectMark } from "../../settings/assets/project-mark";
+import { projectMarkFor, useSettingsProjection } from "../../settings/data/projections";
 import { useRennetStore } from "../../store";
 import { CornerSlot, useMacTrafficLights } from "../corner-slot";
 import {
@@ -237,7 +237,7 @@ function NewChatPicker({
   readonly onNewProject: () => void;
 }) {
   const [open, setOpen] = useState(false);
-  const { glyphByProject } = useSettingsProjection();
+  const projection = useSettingsProjection();
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger render={trigger as ReactElement} />
@@ -256,8 +256,8 @@ function NewChatPicker({
                     onPick(project.id);
                   }}
                 >
-                  <ProjectIcon
-                    icon={glyphByProject[project.id]}
+                  <ProjectMark
+                    mark={projectMarkFor(projection, project.id)}
                     className="size-3.5 text-ink-soft"
                   />
                   <span>{project.name}</span>
@@ -487,7 +487,7 @@ function SidebarTree() {
   const [, navigate] = useLocation();
   const { hosts } = useSidebarTree();
   const projection = useSidebarSessionProjection();
-  const { glyphByProject } = useSettingsProjection();
+  const settings = useSettingsProjection();
   const removeProject = useRemoveProject();
   const { activeSlug, activeProjectId, standingIn } = useActiveRoute();
   const [renamingProjectId, setRenamingProjectId] = useState<string | null>(null);
@@ -638,8 +638,8 @@ function SidebarTree() {
                               !expanded && "-rotate-90",
                             )}
                           />
-                          <ProjectIcon
-                            icon={glyphByProject[project.id]}
+                          <ProjectMark
+                            mark={projectMarkFor(settings, project.id)}
                             className="size-3.5 shrink-0 text-muted-foreground"
                           />
                           <input
@@ -690,8 +690,8 @@ function SidebarTree() {
                             !expanded && "-rotate-90",
                           )}
                         />
-                        <ProjectIcon
-                          icon={glyphByProject[project.id]}
+                        <ProjectMark
+                          mark={projectMarkFor(settings, project.id)}
                           className="size-3.5 shrink-0 text-muted-foreground"
                         />
                         <span className="flex-1 truncate">{project.name}</span>

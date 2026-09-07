@@ -13,6 +13,7 @@ import { useUpdateReady } from "../../components/update-ready";
 import { BridgeProvider } from "../../data";
 import { memoryHistory } from "../../routes/history";
 import type { ProjectIconName } from "../../settings/assets/project-icon";
+import type { ProjectMarkView } from "../../settings/assets/project-mark";
 import {
   EMPTY_SETTINGS_PROJECTION,
   SettingsProjectionProvider,
@@ -83,6 +84,8 @@ function mountSidebar(opts: {
   platform?: string;
   /** Persisted project glyphs, as the C10 settings projection serves them (D5). */
   glyphs?: Readonly<Record<string, ProjectIconName>>;
+  /** Resolved project marks (#900) — a logo here replaces the row's glyph. */
+  marks?: Readonly<Record<string, ProjectMarkView>>;
 }) {
   const history = memoryHistory(opts.path ?? "/");
   const bridge = new MemoryBridge(
@@ -96,7 +99,11 @@ function mountSidebar(opts: {
   const utils = mount(
     <BridgeProvider bridge={bridge}>
       <SettingsProjectionProvider
-        value={{ ...EMPTY_SETTINGS_PROJECTION, glyphByProject: opts.glyphs ?? {} }}
+        value={{
+          ...EMPTY_SETTINGS_PROJECTION,
+          glyphByProject: opts.glyphs ?? {},
+          markByProject: opts.marks ?? {},
+        }}
       >
         <Router hook={history.hook} searchHook={history.searchHook}>
           <Sidebar />
@@ -226,6 +233,20 @@ describe("sidebar tree (C03 §3)", () => {
     const bare = mountSidebar({ projects: [project("p1", "atlas")] });
     const bareRow = (await bare.findByText("atlas")).closest("button");
     expect(bareRow?.querySelector("svg.lucide-layers")).toBeTruthy();
+  });
+
+  // #900: a project whose resolved mark is a LOGO wears the image in the row, not a
+  // symbol. Positive control: the same project also carries a `rocket` glyph, so a row
+  // still reading `glyphByProject` would render that svg and no image at all.
+  it("renders a project's logo mark in the row, in place of its glyph", async () => {
+    const view = mountSidebar({
+      projects: [project("p1", "atlas")],
+      glyphs: { p1: "rocket" },
+      marks: { p1: { kind: "logo", logo: "detected", src: "data:image/png;base64,AQID" } },
+    });
+    const row = (await view.findByText("atlas")).closest("button");
+    expect(row?.querySelector("img")?.getAttribute("src")).toBe("data:image/png;base64,AQID");
+    expect(row?.querySelector("svg.lucide-rocket")).toBeNull();
   });
 
   it("groups a remote project under a remote host", async () => {

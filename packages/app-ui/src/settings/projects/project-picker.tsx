@@ -14,8 +14,8 @@ import { ChevronDown } from "lucide-react";
 import { useState } from "react";
 import { Icon } from "../../components/icon";
 import type { SidebarHost } from "../../shell/sidebar-data";
-import { DEFAULT_PROJECT_ICON, ProjectIcon } from "../assets/project-icon";
-import { useSettingsProjection } from "../data";
+import { ProjectMark } from "../assets/project-mark";
+import { projectMarkFor, useSettingsProjection } from "../data";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The Projects-page scope picker (C10 §8.1, claims 647–648). A single inline
@@ -70,8 +70,8 @@ export function ProjectPicker({
           />
         }
       >
-        <ProjectIcon
-          icon={active ? (projection.glyphByProject[active.id] ?? DEFAULT_PROJECT_ICON) : undefined}
+        <ProjectMark
+          {...(active ? { mark: projectMarkFor(projection, active.id) } : {})}
           className={cn(large ? "size-5" : "size-3.5", "text-ink-soft")}
         />
         {active ? displayName(active.id, active.name) : "No project"}
@@ -107,8 +107,8 @@ export function ProjectPicker({
                     }}
                     className="text-xs"
                   >
-                    <ProjectIcon
-                      icon={projection.glyphByProject[project.id] ?? DEFAULT_PROJECT_ICON}
+                    <ProjectMark
+                      mark={projectMarkFor(projection, project.id)}
                       className="size-3.5 text-ink-soft"
                     />
                     <span className="flex-1">{displayName(project.id, project.name)}</span>

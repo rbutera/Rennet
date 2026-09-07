@@ -129,6 +129,13 @@ export interface ProjectConfig {
    * project pointed at its own JIRA is actually queried there.
    */
   readonly glyph?: string;
+  /**
+   * Which project mark this project shows (#900): `glyph`, `detected`, or `upload`. Distinct
+   * from `glyph`, which names WHICH glyph; this says whether a glyph shows at all. Absent ⇒
+   * the ladder decides, so a copied repo logo shows with no click and an explicit answer here
+   * beats a later detection.
+   */
+  readonly mark?: string;
   readonly worktreeBaseDir?: string;
   readonly worktreePattern?: string;
   readonly tracker?: {
@@ -143,6 +150,7 @@ export interface ProjectConfig {
  *  {@link ProjectConfig}. The tracker keys nest; the rest are top-level. */
 export const REPO_PREF_FIELDS = [
   "glyph",
+  "mark",
   "worktreeBaseDir",
   "worktreePattern",
   "trackerKind",
@@ -183,7 +191,7 @@ export function withRepoPref(
     else next.tracker = tracker;
     return next;
   }
-  const topLevel = field as "glyph" | "worktreeBaseDir" | "worktreePattern";
+  const topLevel = field as "glyph" | "mark" | "worktreeBaseDir" | "worktreePattern";
   if (value === null) delete next[topLevel];
   else next[topLevel] = value;
   return next;
@@ -227,7 +235,7 @@ function isValidProjectConfig(value: unknown): value is ProjectConfig {
   // The repo-rung prefs (C18 group A) are validated on the SAME terms as the rest:
   // present-but-wrong-typed is MALFORMED, so a hand-edited `glyph: 7` refuses the
   // next write rather than leaking a number into the settings resolver.
-  for (const key of ["glyph", "worktreeBaseDir", "worktreePattern"] as const) {
+  for (const key of ["glyph", "mark", "worktreeBaseDir", "worktreePattern"] as const) {
     if (record[key] !== undefined && typeof record[key] !== "string") return false;
   }
   if (record.tracker !== undefined) {

@@ -1,7 +1,8 @@
-import type { T3SidecarStatus } from "@rennet/protocol";
+import type { ProjectLogo, ProjectMarkChoice, T3SidecarStatus } from "@rennet/protocol";
 import { createContext, useContext } from "react";
 import type { HostOS } from "../assets/os-glyphs";
-import type { ProjectIconName } from "../assets/project-icon";
+import { DEFAULT_PROJECT_ICON, type ProjectIconName } from "../assets/project-icon";
+import type { ProjectMarkView } from "../assets/project-mark";
 import type { Layered } from "./provenance";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -164,6 +165,20 @@ export interface SettingsProjection {
   readonly nameByProject: Readonly<Record<string, string>>;
   /** The chosen glyph per project id (absent ⇒ the default `layers`). */
   readonly glyphByProject: Readonly<Record<string, ProjectIconName>>;
+  /**
+   * The RESOLVED mark per project id (#900) — what the sidebar, the picker, the archived
+   * list and Identity all draw. The ladder decided it upstream (the user's choice, else a
+   * detected repo logo, else the glyph); a project with no entry falls back to its glyph
+   * through {@link projectMarkFor}, so a projection that only knows glyphs still renders.
+   */
+  readonly markByProject: Readonly<Record<string, ProjectMarkView>>;
+  /**
+   * The logo FILES a project holds, per project id — what exists, not what shows. Identity
+   * previews both so the reviewer can pick between them; a project with neither has no entry.
+   */
+  readonly logosByProject: Readonly<
+    Record<string, { readonly detected?: ProjectLogo; readonly upload?: ProjectLogo }>
+  >;
   /** The worktree settings per project id. */
   readonly worktreeByProject: Readonly<Record<string, WorktreeSettings>>;
   /** The issue-tracker settings per project id. */
@@ -235,6 +250,17 @@ export interface SettingsProjection {
   setProjectName(projectId: string, name: string): void;
   /** Set a project's glyph (applies live to the sidebar row). */
   setProjectGlyph(projectId: string, icon: ProjectIconName): void;
+  /** Set WHICH mark a project shows — its glyph, the detected repo logo, or the upload. */
+  setProjectMark(projectId: string, choice: ProjectMarkChoice): void;
+  /** Store a picked image as the project's uploaded logo. The write also makes it the
+   *  project's mark, so the sidebar shows it without a second click. */
+  uploadProjectLogo(projectId: string, file: File): void;
+  /** Re-run logo detection over the project's repos and re-copy what it finds. Resolves
+   *  the honest OUTCOME — `found: false` with a null source means nothing was found and
+   *  whatever was detected before is still in place. */
+  detectProjectLogo(
+    projectId: string,
+  ): Promise<{ readonly found: boolean; readonly source: string | null }>;
   /** Set a project's worktree location directory. */
   setWorktreeRoot(projectId: string, root: string): void;
   /** Set a project's worktree naming pattern. */
@@ -256,6 +282,8 @@ export const EMPTY_SETTINGS_PROJECTION: SettingsProjection = {
   reviewRoles: [],
   nameByProject: {},
   glyphByProject: {},
+  markByProject: {},
+  logosByProject: {},
   worktreeByProject: {},
   trackerByProject: {},
   guidanceByProject: {},
@@ -272,6 +300,10 @@ export const EMPTY_SETTINGS_PROJECTION: SettingsProjection = {
   setRoleAssignment: () => undefined,
   setProjectName: () => undefined,
   setProjectGlyph: () => undefined,
+  setProjectMark: () => undefined,
+  uploadProjectLogo: () => undefined,
+  // No backend to detect with, so the honest outcome is a detection that found nothing.
+  detectProjectLogo: async () => ({ found: false, source: null }),
   setWorktreeRoot: () => undefined,
   setWorktreePattern: () => undefined,
   setTracker: () => undefined,
@@ -287,4 +319,20 @@ export const SettingsProjectionProvider = SettingsProjectionContext.Provider;
 /** The one hook every settings page reads its projection through. */
 export function useSettingsProjection(): SettingsProjection {
   return useContext(SettingsProjectionContext);
+}
+
+/**
+ * The mark one project shows — the single read every mark call site makes (#900). A
+ * projection that resolved a mark supplies it; one that knows only glyphs (the context
+ * default, a fixture predating the mark) still renders its glyph, and a project nothing
+ * has been chosen for gets the builtin `layers`. Nothing here reads the ladder: the
+ * resolved answer arrives already decided, and this only picks up the older field.
+ */
+export function projectMarkFor(projection: SettingsProjection, projectId: string): ProjectMarkView {
+  return (
+    projection.markByProject[projectId] ?? {
+      kind: "glyph",
+      icon: projection.glyphByProject[projectId] ?? DEFAULT_PROJECT_ICON,
+    }
+  );
 }
