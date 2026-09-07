@@ -585,9 +585,7 @@ test("review activity and code evidence remain usable across navigation", async 
       board.getByRole("heading", { level: 1, name: "Sequence", exact: true }),
     ).toBeVisible();
     await page.getByRole("button", { name: "Sequence activity", exact: true }).click();
-    await page.getByRole("button", { name: "Pin activity" }).click();
-    await board.getByRole("heading", { level: 1 }).click();
-    await expect(page.getByRole("button", { name: "Unpin activity" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Open transcript", exact: true })).toBeDisabled();
     for (const action of ["Checking callers", "Comparing tests", "Writing the reading sequence"]) {
       const preparation = sessions.load(fixture.sessionId)?.preparation;
       if (preparation?.status !== "drafting") throw new Error("fixture stopped drafting");
@@ -605,17 +603,13 @@ test("review activity and code evidence remain usable across navigation", async 
     if (await skipTips.isVisible()) await skipTips.click();
     await page.emulateMedia({ colorScheme: "dark" });
     await page.screenshot({ path: test.info().outputPath("reviewing-dark.png") });
-    const [activityBox, headingBox] = await Promise.all([
+    const [activityBox, triggerBox] = await Promise.all([
       page.getByLabel("Sequence activity details", { exact: true }).boundingBox(),
-      board.getByRole("heading", { level: 1 }).boundingBox(),
+      page.getByRole("button", { name: "Sequence activity", exact: true }).boundingBox(),
     ]);
-    if (!activityBox || !headingBox) throw new Error("activity or heading has no layout");
-    expect(
-      activityBox.y + activityBox.height <= headingBox.y ||
-        activityBox.y >= headingBox.y + headingBox.height ||
-        activityBox.x >= headingBox.x + headingBox.width ||
-        activityBox.x + activityBox.width <= headingBox.x,
-    ).toBe(true);
+    if (!activityBox || !triggerBox) throw new Error("activity or trigger has no layout");
+    expect(activityBox.y - (triggerBox.y + triggerBox.height)).toBeGreaterThanOrEqual(0);
+    expect(activityBox.y - (triggerBox.y + triggerBox.height)).toBeLessThanOrEqual(16);
     await page.getByRole("button", { name: "Close activity" }).click();
     const sidebar = page.locator('[data-region="sidebar"]');
     const sessionRow = sidebar.getByRole("button", { name: /Review experience fixture/ });

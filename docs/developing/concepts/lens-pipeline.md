@@ -752,8 +752,9 @@ rather than a second list.
 
 The client keeps Noise unselectable while its siblings run, with a spinner and
 an explanation available on hover or keyboard focus. Its activity control is
-separate from tab selection. Detailed lane activity lives in a pinnable popover
-attached to each lens tab; it never occupies the board's reading surface. The
+separate from tab selection. Detailed lane activity lives in a dismissible popover
+anchored directly beneath the selected lens in the tab bar. Its transcript actions
+remain visible and are disabled only until their agent threads exist. The
 observed history and elapsed time stay with the review, generation and seat thread
 across navigation and reconnection. A new generation or thread starts a fresh
 observation.

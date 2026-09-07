@@ -1,6 +1,6 @@
 import { cn, Popover, PopoverContent, PopoverTrigger } from "@rennet/ui";
-import { Activity, Pin, X } from "lucide-react";
-import { type RefObject, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Activity, X } from "lucide-react";
+import { useEffect, useState } from "react";
 import { Icon } from "../components/icon";
 import { ReviewActivity } from "../components/review-activity";
 import { useRennetStore } from "../store";
@@ -17,10 +17,7 @@ export function LensActivity({
   readonly generation?: string;
   readonly entry: Pick<LensBoardEntry, "lens" | "seat">;
 }) {
-  const trigger = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
-  const sideOffset = useActivityOffset(open, trigger);
-  const [pinned, setPinned] = useState(false);
 
   const [now, setNow] = useState(Date.now);
   const openTranscript = useRennetStore((s) => s.uiActions.openSeatTranscript);
@@ -39,18 +36,10 @@ export function LensActivity({
   }, [running]);
   const seconds = Math.max(0, Math.floor((now - observedAt) / 1000));
   return (
-    <Popover
-      open={open}
-      onOpenChange={(next, event) => {
-        if (!next && pinned && event.reason !== "escape-key") return;
-        setOpen(next);
-        if (!next) setPinned(false);
-      }}
-    >
+    <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger
         render={
           <button
-            ref={trigger}
             type="button"
             aria-label={`${seat.label} activity`}
             className={cn(
@@ -69,8 +58,8 @@ export function LensActivity({
       <PopoverContent
         aria-label={`${seat.label} activity details`}
         side="bottom"
-        align="end"
-        sideOffset={sideOffset}
+        align="start"
+        sideOffset={8}
         className={cn(
           "max-h-[var(--available-height)] w-80 max-w-[calc(100vw-2rem)] overflow-y-auto p-4",
           lensTint(lens),
@@ -79,22 +68,7 @@ export function LensActivity({
         <div className="flex items-center gap-2">
           {running ? <ReviewActivity className="text-lens" /> : null}
           <strong className="flex-1">{seat.label}</strong>
-          <button
-            type="button"
-            aria-label={pinned ? "Unpin activity" : "Pin activity"}
-            onClick={() => setPinned(!pinned)}
-            className={cn("rounded p-1", pinned && "bg-secondary text-lens")}
-          >
-            <Icon icon={Pin} className="size-4" />
-          </button>
-          <button
-            type="button"
-            aria-label="Close activity"
-            onClick={() => {
-              setPinned(false);
-              setOpen(false);
-            }}
-          >
+          <button type="button" aria-label="Close activity" onClick={() => setOpen(false)}>
             <Icon icon={X} className="size-4" />
           </button>
         </div>
@@ -116,77 +90,28 @@ export function LensActivity({
             </li>
           ))}
         </ol>
-        {seat.voices.map((voice) =>
-          voice.thread === undefined ? null : (
-            <button
-              key={voice.seat}
-              data-seat-transcript={voice.seat}
-              type="button"
-              className="self-start rounded px-2 py-1 text-sm text-primary hover:bg-secondary"
-              onClick={() => {
-                if (!pinned) setOpen(false);
-                if (voice.thread)
-                  openTranscript({ reviewId, lens, seat: voice.seat, thread: voice.thread });
-              }}
-            >
-              {voice.name ? `Open ${voice.name} transcript` : "Open transcript"}
-            </button>
-          ),
-        )}
+        {seat.voices.map((voice) => (
+          <button
+            key={voice.seat}
+            data-seat-transcript={voice.seat}
+            disabled={voice.thread === undefined}
+            title={
+              voice.thread === undefined
+                ? "Transcript available when the agent thread starts"
+                : undefined
+            }
+            type="button"
+            className="self-start rounded px-2 py-1 text-sm text-primary hover:bg-secondary disabled:cursor-default disabled:opacity-50"
+            onClick={() => {
+              setOpen(false);
+              if (voice.thread)
+                openTranscript({ reviewId, lens, seat: voice.seat, thread: voice.thread });
+            }}
+          >
+            {voice.name ? `Open ${voice.name} transcript` : "Open transcript"}
+          </button>
+        ))}
       </PopoverContent>
     </Popover>
   );
-}
-
-export function useActivityOffset(
-  open: boolean,
-  trigger: RefObject<HTMLButtonElement | null>,
-): number {
-  const [sideOffset, setSideOffset] = useState(12);
-  useLayoutEffect(() => {
-    if (!open) return;
-    const place = () => {
-      const heading = document.querySelector<HTMLElement>("[data-board-heading]");
-      setSideOffset(
-        Math.max(
-          12,
-          (heading?.getBoundingClientRect().bottom ?? 0) -
-            (trigger.current?.getBoundingClientRect().bottom ?? 0) +
-            12,
-        ),
-      );
-    };
-    const resize = new ResizeObserver(place);
-    let heading: HTMLElement | null = null;
-    const observeHeading = () => {
-      const next = document.querySelector<HTMLElement>("[data-board-heading]");
-      if (next !== heading) {
-        if (heading) {
-          resize.unobserve(heading);
-          if (heading.parentElement) resize.unobserve(heading.parentElement);
-        }
-        heading = next;
-        if (heading) {
-          resize.observe(heading);
-          if (heading.parentElement) resize.observe(heading.parentElement);
-        }
-      }
-      place();
-    };
-    const changes = new MutationObserver(observeHeading);
-    changes.observe(document.body, { childList: true, subtree: true });
-    if (trigger.current) resize.observe(trigger.current);
-    const toolbar = trigger.current?.closest("[data-slot=session-top-bar]");
-    if (toolbar) resize.observe(toolbar);
-    observeHeading();
-    window.addEventListener("resize", place);
-    window.addEventListener("scroll", place, true);
-    return () => {
-      resize.disconnect();
-      changes.disconnect();
-      window.removeEventListener("resize", place);
-      window.removeEventListener("scroll", place, true);
-    };
-  }, [open, trigger]);
-  return sideOffset;
 }

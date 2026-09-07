@@ -178,7 +178,7 @@ beforeEach(() => {
 });
 
 describe("lens activity lives outside the board", () => {
-  it("opens meaningful activity separately from selection, pins it, and hides raw calls", async () => {
+  it("opens meaningful activity separately from selection and hides raw calls", async () => {
     const h = harness({ boards: { sequence: at(FIXTURE_BOARDS.gen1?.sequence) } });
     const { user, findByRole, getByRole } = h.open("?lens=sequence");
     await user.click(await findByRole("button", { name: "Sequence activity" }));
@@ -188,9 +188,7 @@ describe("lens activity lives outside the board", () => {
     expect(activity.textContent).toMatch(/Following for \d+:\d\d/);
     expect(activity.textContent).not.toContain("github-auth.ts");
     expect(activity.textContent).not.toContain("elements written");
-    await user.click(getByRole("button", { name: "Pin activity" }));
-    await user.click(document.body);
-    expect(getByRole("dialog", { name: "Sequence activity details" })).toBeTruthy();
+    expect(activity.querySelector('[aria-label="Pin activity"]')).toBeNull();
     await user.click(getByRole("button", { name: "Close activity" }));
     await waitFor(() =>
       expect(document.querySelector('[aria-label="Sequence activity details"]')).toBeNull(),

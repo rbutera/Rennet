@@ -207,9 +207,9 @@ progress without interrupting the document. Changes since the previous round
 remain hidden until the board settles.
 
 Open the activity button beside the selected tab to follow the review in a
-popover. It shows a concise current action, recent activity and how long you
-have been following that lens. Pin it to keep it open while reading. Open
-transcript shows the selected agent's full conversation in a drawer beside the
+popover anchored directly beneath the tab bar. It shows a concise current action, recent activity and how long you
+have been following that lens. Open transcript stays visible and becomes available
+once the agent thread starts. It shows the selected agent's full conversation in a drawer beside the
 board. Your own chat stays in place. Choosing another lens moves the board and
 open transcript together; opening Diff closes the transcript drawer.
 
