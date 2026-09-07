@@ -325,7 +325,10 @@ export async function seedBoardFixture(
               }
             : {
                 title: `${generation === liveGeneration ? "Live" : "Frozen"} ${lens}`,
-                introMarkdown: `Persisted ${lens} evidence for the launched desktop journey.`,
+                introMarkdown:
+                  lens === "sequence"
+                    ? "The widget changes in two places:\n- The implementation returns the reviewed value.\n  Existing callers keep the same interface.\n- The captured test checks that value."
+                    : `Persisted ${lens} evidence for the launched desktop journey.`,
                 measure: "reading",
               },
         blemishes: [],

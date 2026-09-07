@@ -584,6 +584,10 @@ test("review activity and code evidence remain usable across navigation", async 
     await expect(
       board.getByRole("heading", { level: 1, name: "Sequence", exact: true }),
     ).toBeVisible();
+    const bullets = board.getByRole("list").filter({ hasText: "Existing callers" });
+    await expect(bullets.getByRole("listitem")).toHaveCount(2);
+    await expect(bullets).toHaveCSS("list-style-type", "disc");
+    await expect(bullets).toHaveCSS("gap", "8px");
     await expect(page.getByRole("dialog", { name: "Sequence activity details" })).toBeVisible();
     await expect(page.getByRole("dialog", { name: /activity details$/ })).toHaveCount(1);
     await expect(

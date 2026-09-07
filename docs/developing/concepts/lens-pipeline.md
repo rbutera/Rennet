@@ -998,6 +998,12 @@ same code excerpt to the parent section.
 Independent changes stay separate; their presence in one diff is not a causal link.
 Decisions carry a viable alternative rather than padding the list with broken choices.
 
+Distinct effects, cases, or choices can use short, flat bullet lists with one
+point per item. A single explanation stays in prose. Review text renders `-`,
+`*`, and `+` bullets with hanging indentation and space between items, including
+a list immediately after a lead-in and indented continuation lines. Inline code,
+citations, and reviewer highlights retain their behavior inside list items.
+
 The target is about 40 words per explanation, with room for the
 trigger, consequence, and evidence. This is drafting guidance, not a word-count
 validator. Design retains its verbatim source obligations and quotations. Its
