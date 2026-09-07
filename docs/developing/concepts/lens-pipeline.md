@@ -750,12 +750,18 @@ siblings settle. The test is the same `HOST_DERIVED_MEMBER_KIND` row that takes 
 target's member-creating verb away, so which lens waits is one fact read where it applies
 rather than a second list.
 
-The client keys on it. The rail shows Noise as unstarted and names the un-settled lanes it
-is owed; the seat widget shows a `waiting` chip with no stopwatch and no live line; the
-board says it has not started and what it is waiting for. Without the status, all three
-surfaces claimed a seat that did not exist for the whole core fan-out — a travelling lamp
-on the rail, "DRAFTING · Noise seat · watching 0:01", and "This board is still being
-written" over a lane with no thread.
+The client keeps Noise unselectable while its siblings run, with a spinner and
+an explanation available on hover or keyboard focus. Its activity control is
+separate from tab selection. Detailed lane activity lives in a pinnable popover
+attached to each lens tab; it never occupies the board's reading surface.
+
+The header says “Reviewing the change” while the review is being prepared.
+Continue carries the strongest activity treatment and cannot advance until the
+review is ready. The same session's sidebar row stays animated when the user
+navigates away. Completion becomes a check and then an unread dot until opened;
+failure retains its reason. Initial preparation and post-round regeneration
+project their durable state into this presentation rather than relying on the
+currently mounted board.
 
 **An empty complement is settled without a seat.** When the four lanes between them cited
 every changed region, the host knows the remainder is empty before any turn, and the lane

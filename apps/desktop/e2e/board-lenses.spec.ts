@@ -339,9 +339,7 @@ test("a persisted board owns lens, generation, and captured-code navigation in t
     expect(await page.evaluate(() => history.length)).toBe(beforeDesign);
     await expectQuery(page, { lens: "design" });
     await expect(board).toHaveAttribute("data-lens", "design");
-    await expect(
-      board.getByRole("heading", { name: "Widget value specification", level: 1 }),
-    ).toBeVisible();
+    await expect(board.getByRole("heading", { name: "Design", level: 1 })).toBeVisible();
     await expect(
       board.getByText(
         "Reviewers need the specification and implementation evidence in one reading path.",
@@ -456,7 +454,7 @@ test("a persisted board owns lens, generation, and captured-code navigation in t
       .toBeLessThan(containerThreshold);
     await expect
       .poll(() => sequenceLabel.evaluate((label) => getComputedStyle(label).display))
-      .toBe("none");
+      .not.toBe("none");
     await expect(sequenceTab).toBeVisible();
     await expect(sequenceTab).toHaveAccessibleName(/Sequence/);
 
@@ -497,6 +495,7 @@ test("a persisted board owns lens, generation, and captured-code navigation in t
 
     await rail.getByRole("tab", { name: "Sequence" }).click();
     await expectQuery(page, { lens: "sequence", generation: fixture.frozenGeneration });
+    await openBoardSections(page);
     await page.getByRole("button", { name: "widget.ts:1" }).click();
     const implementation = page.getByRole("button", {
       name: BOARD_IMPLEMENTATION_PATH,
@@ -519,19 +518,14 @@ test("a persisted board owns lens, generation, and captured-code navigation in t
     await expect.poll(() => scrollTargets(page)).toContain(`diff-${BOARD_IMPLEMENTATION_PATH}`);
 
     await rail.getByRole("tab", { name: "Sequence" }).click();
+    await openBoardSections(page);
     await page.getByRole("button", { name: "widget.ts:1" }).click();
-    await installScrollProbe(page);
-    const beforeCounterpart = await page.evaluate(() => history.length);
+    const beforeCounterpart = await currentHash(page);
     await page.getByRole("button", { name: "View test", exact: true }).click();
-    expect(await page.evaluate(() => history.length)).toBe(beforeCounterpart);
-    await expectQuery(page, {
-      view: "diff",
-      lens: "sequence",
-      generation: fixture.frozenGeneration,
-      file: BOARD_TEST_PATH,
-    });
-    await expect(page.locator(`[id="diff-${BOARD_TEST_PATH}"]`)).toBeVisible();
-    await expect.poll(() => scrollTargets(page)).toContain(`diff-${BOARD_TEST_PATH}`);
+    await expect(page.locator(`[data-evidence-path="${BOARD_TEST_PATH}"]`)).toBeVisible();
+    expect(await currentHash(page)).toBe(beforeCounterpart);
+    await page.getByRole("button", { name: "Back to review", exact: true }).click();
+    await expect(page.locator(`[data-evidence-path="${BOARD_IMPLEMENTATION_PATH}"]`)).toBeVisible();
   } finally {
     await application.close();
     rmSync(repository, { recursive: true, force: true });
