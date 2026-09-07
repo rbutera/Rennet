@@ -242,8 +242,8 @@ export function TopBar() {
   // shadows was not amended, so the chips carry a hairline, not a shadow.
   const chip = "border border-line/60 bg-surface/70 backdrop-blur-md";
   const iconButton = floating
-    ? cn("size-8 rounded-full", chip)
-    : "size-6 rounded-md hover:bg-secondary";
+    ? cn("app-region-no-drag size-8 rounded-full", chip)
+    : "app-region-no-drag size-6 rounded-md hover:bg-secondary";
   return (
     <header
       data-slot="session-top-bar"
@@ -253,6 +253,12 @@ export function TopBar() {
         floating
           ? "pointer-events-none absolute inset-x-0 top-0 z-30 h-11"
           : "h-14 shrink-0 border-b border-line",
+        // In the SOLID bar (states 1–2), the empty grid tracks and the trail text drag
+        // the window on darwin — the same titlebar affordance the corner slot carries.
+        // Every control inside marks itself `app-region-no-drag` (below) or it goes dead.
+        // The floating bar is `pointer-events-none` and dissolves into interactive chips,
+        // so it never claims the drag region — dragging over full-bleed content is not it.
+        !floating && mac && "app-region-drag",
       )}
     >
       {/* LEFT slot: back arrow (off-board), the one chat toggle, trail. In state 3 it
@@ -304,7 +310,10 @@ export function TopBar() {
 
       {/* CENTER slot: the available-lens projection for the selected generation. It remains
           present on non-board views with no active segment; choosing one returns to its board. */}
-      <div data-slot="lens-switcher" className="flex items-center justify-center">
+      <div
+        data-slot="lens-switcher"
+        className="app-region-no-drag flex items-center justify-center"
+      >
         <LensSwitcher
           lenses={lenses}
           selected={query.view === "board" ? effectiveLens : null}
@@ -320,7 +329,12 @@ export function TopBar() {
           round outline; Map and Diff share one, split by a hairline. The wrapping
           div is presentation: `ToggleGroup`'s composite registers its members by
           context, not by direct-child position, so nesting keeps arrow keys. */}
-      <div className={cn("flex items-center justify-end", floating && "pointer-events-auto")}>
+      <div
+        className={cn(
+          "app-region-no-drag flex items-center justify-end",
+          floating && "pointer-events-auto",
+        )}
+      >
         <ToggleGroup
           value={pillValue}
           onValueChange={onPill}

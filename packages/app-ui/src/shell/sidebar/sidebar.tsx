@@ -147,7 +147,7 @@ function UpdateControl() {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="ml-auto flex h-8 items-center gap-1.5 rounded-chip bg-update px-2.5 text-13 font-medium text-update-ink transition-colors hover:bg-update/90"
+        className="app-region-no-drag ml-auto flex h-8 items-center gap-1.5 rounded-chip bg-update px-2.5 text-13 font-medium text-update-ink transition-colors hover:bg-update/90"
       >
         <Icon icon={RefreshCw} className="size-3.5 shrink-0" />
         <span>Update</span>
@@ -770,17 +770,26 @@ function SidebarTree() {
  *  Update pushed to the far edge by its own `ml-auto`. Self-wiring. */
 function SidebarFooter() {
   const [, navigate] = useLocation();
+  const mac = useMacTrafficLights();
   const { hosts } = useSidebarTree();
   const archivedCount = hosts
     .flatMap((host) => host.projects)
     .reduce((count, project) => count + project.sessions.filter((s) => s.archived).length, 0);
   return (
-    <div className="flex flex-col gap-0.5 border-t border-line px-2 py-2">
+    // The footer strip drags the window on darwin, matching the corner slot at the top.
+    // Its controls each opt back out with `app-region-no-drag`; the empty gap the Update
+    // pill's `ml-auto` opens stays draggable, which is the point.
+    <div
+      className={cn(
+        "flex flex-col gap-0.5 border-t border-line px-2 py-2",
+        mac && "app-region-drag",
+      )}
+    >
       {archivedCount > 0 ? (
         <button
           type="button"
           onClick={() => navigate(archivedPath())}
-          className="flex h-8 items-center gap-2 rounded-chip px-2 text-left text-13 text-muted-foreground transition-colors hover:bg-raised hover:text-ink"
+          className="app-region-no-drag flex h-8 items-center gap-2 rounded-chip px-2 text-left text-13 text-muted-foreground transition-colors hover:bg-raised hover:text-ink"
         >
           <Icon icon={Archive} className="size-3.5 shrink-0" />
           <span className="flex-1">Archived</span>
@@ -797,7 +806,7 @@ function SidebarFooter() {
           aria-label="Settings"
           title="Settings"
           onClick={() => navigate(settingsPath("appearance"))}
-          className="flex size-8 shrink-0 items-center justify-center rounded-chip text-muted-foreground transition-colors hover:bg-raised hover:text-ink"
+          className="app-region-no-drag flex size-8 shrink-0 items-center justify-center rounded-chip text-muted-foreground transition-colors hover:bg-raised hover:text-ink"
         >
           <Icon icon={Settings} className="size-3.5" />
         </button>
@@ -807,7 +816,7 @@ function SidebarFooter() {
               type="button"
               aria-label="Help"
               title="Help"
-              className="flex size-8 shrink-0 items-center justify-center rounded-chip text-muted-foreground transition-colors hover:bg-raised hover:text-ink"
+              className="app-region-no-drag flex size-8 shrink-0 items-center justify-center rounded-chip text-muted-foreground transition-colors hover:bg-raised hover:text-ink"
             >
               <Icon icon={CircleHelp} className="size-3.5" />
             </button>
