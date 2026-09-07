@@ -230,6 +230,7 @@ export interface ReviewSlice {
       text: string,
       kind?: "comment" | "explain",
       scope?: QuoteScope,
+      codeRef?: CodeRef,
     ): string;
     /** Append a reply to an existing thread (no-op if the thread is gone). */
     addQuoteReply(threadId: string, author: "user" | "orchestrator", text: string): void;
@@ -363,17 +364,19 @@ export const createReviewSlice: StateCreator<RennetState, [], [], ReviewSlice> =
           };
         });
       },
-      addQuoteComment: (anchor, text, kind, scope) => {
+      addQuoteComment: (anchor, text, kind, scope, codeRef) => {
         const id = nextQuoteThreadId(get().review.quoteThreads);
         const thread: QuoteThread =
           scope === undefined
             ? {
                 anchor,
+                ...(codeRef === undefined ? {} : { codeRef }),
                 ...(kind === undefined ? {} : { kind }),
                 messages: [{ author: "user", text }],
               }
             : {
                 anchor,
+                ...(codeRef === undefined ? {} : { codeRef }),
                 ...(kind === undefined ? {} : { kind }),
                 lifecycle: "attached",
                 target: scope.target,

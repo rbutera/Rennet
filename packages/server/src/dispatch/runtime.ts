@@ -243,6 +243,13 @@ export interface DispatchDeps {
    * cut short, so a citation lint accepts still opens. Absent ⇒ the reader answers with its
    * honest truncation caption instead. Never throws into the command.
    */
+  readonly readFilePatchAtOids?: (input: {
+    root: string;
+    baseOid: string;
+    headOid: string;
+    paths: readonly string[];
+  }) => Promise<string | null>;
+  readonly listTreePaths?: (input: { root: string; oid: string }) => Promise<readonly string[]>;
   readonly readBlobAtOid?: (input: {
     root: string;
     oid: string;

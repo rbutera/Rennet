@@ -4605,6 +4605,31 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // The lines a truncated capture cut short, read from the immutable object the patchset
     // recorded rather than the working tree (`patchset.readSpan`). Best-effort: a missing
     // repository, object or path answers `null` and the reader captions the gap.
+    readFilePatchAtOids: async ({ root, baseOid, headOid, paths }) => {
+      try {
+        return await gitForRepo(root)(root, [
+          "diff",
+          "--no-ext-diff",
+          "-M",
+          "--no-color",
+          baseOid,
+          headOid,
+          "--",
+          ...paths,
+        ]);
+      } catch {
+        return null;
+      }
+    },
+    listTreePaths: async ({ root, oid }) => {
+      try {
+        return (await gitForRepo(root)(root, ["ls-tree", "-r", "--name-only", "-z", oid]))
+          .split("\0")
+          .filter(Boolean);
+      } catch {
+        return [];
+      }
+    },
     readBlobAtOid: async ({ root, oid, path }) => {
       try {
         return await gitForRepo(root)(root, ["show", `${oid}:${path}`]);

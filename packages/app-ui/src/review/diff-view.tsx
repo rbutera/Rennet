@@ -509,6 +509,27 @@ const DiffFileCard = React.memo(function DiffFileCard({
     }
     return keys.sort().join("\n");
   });
+  const quotePositionKey = useRennetStore((state) => {
+    const keys: string[] = [];
+    for (const thread of Object.values(state.review.quoteThreads)) {
+      const ref = thread.codeRef;
+      if (
+        ref === undefined ||
+        ref.patchsetId !== patchsetId ||
+        (ref.path !== file.path && ref.path !== file.previousPath)
+      )
+        continue;
+      for (let line = ref.startLine; line <= ref.endLine; line++)
+        keys.push(
+          codePositionKey({ path: ref.path, line, side: ref.side === "base" ? "LEFT" : "RIGHT" }),
+        );
+    }
+    return keys.sort().join("\n");
+  });
+  const quotePositions = React.useMemo(
+    () => new Set(quotePositionKey.split("\n")),
+    [quotePositionKey],
+  );
   const askPositions = React.useMemo(
     () => new Set(askPositionKey === "" ? [] : askPositionKey.split("\n")),
     [askPositionKey],
@@ -717,9 +738,11 @@ const DiffFileCard = React.memo(function DiffFileCard({
               const commentLine = line.newLine;
               const hasComment =
                 !historical &&
-                rowSide === "RIGHT" &&
                 rowLine !== null &&
-                comments?.[rowLine] != null;
+                ((rowSide === "RIGHT" && comments?.[rowLine] != null) ||
+                  quotePositions.has(
+                    codePositionKey({ path: rowPath, line: rowLine, side: rowSide }),
+                  ));
               const hasAsk =
                 !historical &&
                 rowLine !== null &&
@@ -747,8 +770,8 @@ const DiffFileCard = React.memo(function DiffFileCard({
                     line.type === "add" && "bg-add",
                     line.type === "del" && "bg-del",
                     // The review states OVERRIDE the diff ground (twMerge keeps the last
-                    // background): a staged ask reads danger, a comment reads evidence green.
-                    hasAsk ? "bg-destructive/25" : (hasComment || isOpen) && "bg-green/15",
+                    // background): a staged ask reads danger, a comment reads annotation blue.
+                    hasAsk ? "bg-destructive/25" : (hasComment || isOpen) && "bg-blue/15",
                   )}
                   style={{ top: `${positioned.top}px` }}
                 >
@@ -801,7 +824,13 @@ const DiffFileCard = React.memo(function DiffFileCard({
                   >
                     {line.type === "add" ? "+" : line.type === "del" ? "−" : ""}
                   </span>
-                  <span className="whitespace-pre pr-3 text-foreground/90">
+                  <span
+                    data-code-patchset={patchsetId}
+                    data-code-path={rowPath}
+                    data-code-side={rowSide === "LEFT" ? "base" : "head"}
+                    data-code-line={rowLine ?? undefined}
+                    className="whitespace-pre pr-3 text-foreground/90"
+                  >
                     {tokens.length
                       ? tokens.map((token, tokenIndex) => (
                           // biome-ignore lint/suspicious/noArrayIndexKey: token order within a line is stable and positional.

@@ -618,6 +618,22 @@ const definitions = {
     input: z.object({ path: z.string().optional() }),
     output: z.object({ result: fsListDirResultSchema }),
   },
+  "patchset.readEvidence": {
+    input: z.object({
+      ref: codeRefSchema,
+      includeSource: z.boolean().optional(),
+      includeCounterparts: z.boolean().optional(),
+    }),
+    output: z.object({
+      patch: z.string(),
+      path: z.string(),
+      previousPath: z.string().optional(),
+      base: z.string().nullable().optional(),
+      head: z.string().nullable().optional(),
+      counterparts: z.array(z.string()),
+      caption: z.string().optional(),
+    }),
+  },
   "patchset.readSpan": {
     // Read a cited span from the CAPTURED patchset — never a working tree
     // (client asset risk 2, #489). Registered in B3 so Track C freezes against

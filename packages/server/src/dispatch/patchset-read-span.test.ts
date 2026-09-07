@@ -478,3 +478,109 @@ describe("patchset.readSpan agrees with lint's predicate, line for line", () => 
     }
   });
 });
+
+describe("patchset.readEvidence", () => {
+  it("reads recorded objects and finds unchanged, differently named and multiple tests", async () => {
+    const store = new SqliteReviewStore(":memory:");
+    const service = new ReviewService(
+      { capture: () => Promise.reject(new Error("unused")) },
+      store,
+    );
+    const reviewed = {
+      ...patchset,
+      repository: { ...patchset.repository, reviewedTreeOid: "2".repeat(40) },
+    };
+    await service.createReviewFromPatchset("evidence", reviewed);
+    const reads: Array<{ oid: string; path: string }> = [];
+    const dispatch = createDispatch({
+      service,
+      allowedRoots: new Set<string>(),
+      listTreePaths: async () => ["src/cheese.ts", "tests/maturing.test.ts", "src/cheese.spec.ts"],
+      readBlobAtOid: async (input: { oid: string; path: string }) => {
+        reads.push(input);
+        return input.path === "tests/maturing.test.ts"
+          ? 'import { cheese } from "../src/cheese";'
+          : `immutable ${input.oid}`;
+      },
+    } as unknown as DispatchDeps);
+    const output = await dispatch("patchset.readEvidence", {
+      ref: ref(),
+      includeSource: true,
+      includeCounterparts: true,
+    });
+    expect(output).toMatchObject({
+      patch: files.find((file) => file.path === "src/cheese.ts")?.patch,
+      base: `immutable ${reviewed.repository.baseOid}`,
+      head: `immutable ${reviewed.repository.reviewedTreeOid}`,
+      counterparts: expect.arrayContaining(["tests/maturing.test.ts", "src/cheese.spec.ts"]),
+    });
+    const reverse = await dispatch("patchset.readEvidence", {
+      ref: ref({ path: "tests/maturing.test.ts", startLine: 1, endLine: 1 }),
+      includeSource: true,
+      includeCounterparts: true,
+    });
+    expect(reverse).toMatchObject({ patch: "", counterparts: ["src/cheese.ts"] });
+    expect(
+      reads.every(
+        (read) =>
+          read.oid === reviewed.repository.baseOid ||
+          read.oid === reviewed.repository.reviewedTreeOid,
+      ),
+    ).toBe(true);
+  });
+  it("keeps captured hunks when source is unavailable", async () => {
+    const store = new SqliteReviewStore(":memory:");
+    const service = new ReviewService(
+      { capture: () => Promise.reject(new Error("unused")) },
+      store,
+    );
+    await service.createReviewFromPatchset("evidence-missing", patchset);
+    const dispatch = createDispatch({
+      service,
+      allowedRoots: new Set<string>(),
+    } as unknown as DispatchDeps);
+    expect(
+      await dispatch("patchset.readEvidence", { ref: ref(), includeSource: true }),
+    ).toMatchObject({
+      patch: files.find((file) => file.path === "src/cheese.ts")?.patch,
+      base: null,
+      head: null,
+      caption: expect.stringContaining("unavailable"),
+    });
+  });
+});
+
+it("reads full context from the captured uncommitted tree after the checkout changes", async () => {
+  const root = mkdtempSync(join(tmpdir(), "rennet-evidence-immutable-"));
+  temporaries.push(root);
+  git(root, "init", "-q", "-b", "main");
+  git(root, "config", "user.email", "test@example.invalid");
+  git(root, "config", "user.name", "Test");
+  writeFileSync(join(root, "cheese.ts"), "old\ncontext\n");
+  git(root, "add", ".");
+  git(root, "commit", "-qm", "base");
+  const baseOid = git(root, "rev-parse", "HEAD").trim();
+  writeFileSync(join(root, "cheese.ts"), "reviewed\ncontext\n");
+  git(root, "add", ".");
+  const reviewedTreeOid = git(root, "write-tree").trim();
+  const rawDiff = git(root, "diff", "--cached");
+  const store = new SqliteReviewStore(":memory:");
+  const service = new ReviewService({ capture: () => Promise.reject(new Error("unused")) }, store);
+  await service.createReviewFromPatchset("immutable-evidence", {
+    ...patchset,
+    repository: { ...patchset.repository, root, baseOid, headOid: baseOid, reviewedTreeOid },
+    files: parseUnifiedDiffFiles(rawDiff),
+    rawDiff,
+  });
+  const dispatch = createDispatch({
+    service,
+    allowedRoots: new Set<string>(),
+    readBlobAtOid: async ({ oid, path }: { oid: string; path: string }) =>
+      git(root, "show", `${oid}:${path}`),
+  } as unknown as DispatchDeps);
+  const input = { ref: ref({ path: "cheese.ts", startLine: 1, endLine: 1 }), includeSource: true };
+  const before = await dispatch("patchset.readEvidence", input);
+  writeFileSync(join(root, "cheese.ts"), "unrelated checkout edit\n");
+  expect(await dispatch("patchset.readEvidence", input)).toEqual(before);
+  expect(before).toMatchObject({ head: "reviewed\ncontext\n", base: "old\ncontext\n" });
+});

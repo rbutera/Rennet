@@ -1,15 +1,8 @@
 import type { CodeRef, CommandOutput } from "@rennet/protocol";
 import { type CommandResult, useCommand } from "../data";
 
-// ─────────────────────────────────────────────────────────────────────────────
-// The span-read seam (C4, reconciliation 6): the ONE point every citation hydrates
-// through, reading the CAPTURED patchset via `patchset.readSpan` — NEVER a filesystem
-// read (no `node:fs`/`node:path` reachable here; grep-provable, verification 8.3).
-// Dispatch is BOUND (`server/src/dispatch/patchset.ts`): the daemon serves the span out
-// of the patchset's own patch text, so a citation resolves even when the repository is
-// gone. A span the diff never captured cannot be served, and the daemon says which
-// absence it hit — `CitationBlock` renders that sentence rather than a generic line.
-// ─────────────────────────────────────────────────────────────────────────────
+// Compatibility span reader for persisted citations and older daemons. Current boards
+// use readEvidence for complete diff hunks; both commands read immutable reviewed content.
 
 export type { CodeRef };
 
@@ -51,7 +44,7 @@ export function useSpanRead(ref: CodeRef | null): CommandResult<SpanRead> {
 /**
  * Fold a fetched span into a code-block's props: the cited lines plus their
  * orientation context, with absolute line numbering derived from the ref so it
- * cannot drift, and the cited lines themselves highlighted.
+ * cannot drift. Citations never create reviewer selections.
  */
 export function spanToBlock(
   ref: CodeRef,
@@ -60,6 +53,6 @@ export function spanToBlock(
   const code = [...span.contextBefore, ...span.lines, ...span.contextAfter].join("\n");
   const startLine = ref.startLine - span.contextBefore.length;
   const highlightLines: number[] = [];
-  for (let line = ref.startLine; line <= ref.endLine; line++) highlightLines.push(line);
+
   return { code, startLine, highlightLines };
 }
