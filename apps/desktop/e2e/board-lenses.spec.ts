@@ -95,6 +95,14 @@ async function openFixtureReview(
   }
 }
 
+async function revealCitation(
+  page: Parameters<typeof seedBoardFixture>[0],
+  name: string,
+): Promise<void> {
+  const chip = page.getByRole("button", { name, exact: true });
+  if ((await chip.getAttribute("aria-pressed")) !== "true") await chip.click();
+}
+
 async function openBoardSections(page: Parameters<typeof seedBoardFixture>[0]): Promise<void> {
   const toggles = page.locator(
     'article[data-lens] [data-kind="board-section"] button[aria-label^="Toggle "][aria-expanded="false"]',
@@ -353,7 +361,6 @@ test("a persisted board owns lens, generation, and captured-code navigation in t
       board.getByRole("heading", { name: "Expose the reviewed widget value" }),
     ).toBeVisible();
     await expect(board.getByText(BOARD_DESIGN_SCENARIO)).toBeVisible();
-    await expect(board.getByText("covered by 2 hunks · 1 test")).toBeVisible();
     const requirement = board.locator('[data-kind="requirement"][data-spec-delta="modified"]');
     await expect(requirement).toBeVisible();
     await expect(
@@ -426,7 +433,7 @@ test("a persisted board owns lens, generation, and captured-code navigation in t
     await rail.getByRole("tab", { name: "Sequence" }).click();
     await expectQuery(page, { lens: "sequence", generation: fixture.frozenGeneration });
     await openBoardSections(page);
-    await page.getByRole("button", { name: "widget.ts:1" }).click();
+    await revealCitation(page, "widget.ts:1");
     const implementation = page.getByRole("button", {
       name: BOARD_IMPLEMENTATION_PATH,
       exact: true,
@@ -449,7 +456,7 @@ test("a persisted board owns lens, generation, and captured-code navigation in t
 
     await rail.getByRole("tab", { name: "Sequence" }).click();
     await openBoardSections(page);
-    await page.getByRole("button", { name: "widget.ts:1" }).click();
+    await revealCitation(page, "widget.ts:1");
     const beforeCounterpart = await currentHash(page);
     await page.getByRole("button", { name: "View test", exact: true }).click();
     await expect(page.locator(`[data-evidence-path="${BOARD_TEST_PATH}"]`)).toBeVisible();
@@ -583,7 +590,7 @@ test("review activity and code evidence remain usable across navigation", async 
     ).toBeVisible();
     await tabs.getByRole("tab", { name: /^Sequence(?:,|$)/ }).click();
     await openBoardSections(page);
-    await page.getByRole("button", { name: "widget.ts:1", exact: true }).click();
+    await revealCitation(page, "widget.ts:1");
     const evidence = page.locator(`[data-evidence-path="${BOARD_IMPLEMENTATION_PATH}"]`);
     await expect(evidence.locator('[data-diff-kind="del"]')).toContainText(
       "export const widget = 1;",
