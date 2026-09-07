@@ -201,9 +201,16 @@ test("a persisted board owns lens, generation, and captured-code navigation in t
     ).toEqual(["design", "sequence", "decisions", "flagged", "noise"]);
     const [topBarBox, railBox] = await Promise.all([topBar.boundingBox(), rail.boundingBox()]);
     if (topBarBox === null || railBox === null) throw new Error("lens rail has no layout box");
+    const [railSlotBox, viewControlsBox] = await Promise.all([
+      topBar.locator('[data-slot="lens-switcher"]').boundingBox(),
+      topBar.getByRole("group", { name: "Session view" }).boundingBox(),
+    ]);
+    if (!railSlotBox || !viewControlsBox) throw new Error("review navigation has no layout");
+    expect(railSlotBox.x).toBeGreaterThanOrEqual(topBarBox.x);
     expect(
-      Math.abs(topBarBox.x + topBarBox.width / 2 - (railBox.x + railBox.width / 2)),
-    ).toBeLessThan(2);
+      railSlotBox.x + railSlotBox.width <= viewControlsBox.x ||
+        railSlotBox.y >= viewControlsBox.y + viewControlsBox.height,
+    ).toBe(true);
 
     const flaggedTab = rail.locator('[data-lens="flagged"]');
     await expect(flaggedTab).toHaveAccessibleName("Flagged, 1 open");
@@ -561,7 +568,9 @@ test("review activity and code evidence remain usable across navigation", async 
     ).toBeVisible();
     const reviewing = page.getByRole("button", { name: "Reviewing the change", exact: true });
     await expect(reviewing).toBeDisabled();
-    const orbit = reviewing.locator(".animate-spin");
+    const orbit = reviewing.locator("svg.animate-spin");
+    await expect(orbit.locator("circle")).toHaveAttribute("stroke-dasharray", "24 39");
+    await expect(orbit.locator("circle")).toHaveAttribute("stroke", "currentColor");
     await page.emulateMedia({ reducedMotion: "no-preference" });
     await expect
       .poll(() => orbit.evaluate((element) => getComputedStyle(element).animationName))
@@ -645,14 +654,25 @@ test("review activity and code evidence remain usable across navigation", async 
     await expect(evidence.locator('[data-line-state="cited"]')).toHaveCount(0);
     writeRepoFile(repository, BOARD_IMPLEMENTATION_PATH, "export const widget = 999;\n");
     await evidence.getByRole("button", { name: "Full file", exact: true }).click();
-    await expect(evidence).toContainText("context44");
+    await expect(evidence).toContainText("export const widget = 2;");
     await expect(evidence).not.toContainText("widget = 999");
+    const codeScroller = evidence.locator("[data-code-scroll]");
+    await codeScroller.evaluate((element) => {
+      element.scrollTop = element.scrollHeight;
+    });
+    await expect(evidence).toContainText("context44");
+    await codeScroller.evaluate((element) => {
+      element.scrollTop = 0;
+    });
     await evidence.locator("summary", { hasText: "View tests" }).click();
     await evidence.getByRole("button", { name: "checks/behaviour.test.ts", exact: true }).click();
     const testEvidence = page.locator('[data-evidence-path="checks/behaviour.test.ts"]');
     await expect(testEvidence).toContainText("import { widget }");
     await testEvidence.getByRole("button", { name: "Back to review", exact: true }).click();
     await expect(evidence).toContainText("context44");
+    await codeScroller.evaluate((element) => {
+      element.scrollTop = 0;
+    });
     await evidence.locator('[data-code-side="base"][data-code-line="1"]').evaluate((element) => {
       const range = document.createRange();
       range.selectNodeContents(element);

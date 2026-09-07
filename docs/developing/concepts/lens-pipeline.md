@@ -753,7 +753,10 @@ rather than a second list.
 The client keeps Noise unselectable while its siblings run, with a spinner and
 an explanation available on hover or keyboard focus. Its activity control is
 separate from tab selection. Detailed lane activity lives in a pinnable popover
-attached to each lens tab; it never occupies the board's reading surface.
+attached to each lens tab; it never occupies the board's reading surface. The
+observed history and elapsed time stay with the review, generation and seat thread
+across navigation and reconnection. A new generation or thread starts a fresh
+observation.
 
 The header says “Reviewing the change” while the review is being prepared.
 Continue carries the strongest activity treatment and cannot advance until the
@@ -1084,7 +1087,9 @@ ruling lines remain visible in the progress region but never count as completion
 - A code-card filename opens the captured file in Diff. **View test** and
   **View implementation** use relationships from the reviewed tree, including
   relative imports and naming conventions. An unchanged test can be inspected
-  inline; several matches offer a chooser, and Back restores the previous code.
+  inline; several matches offer a chooser, and Back restores the previous code
+  context and scroll position. Full-file inspection uses a bounded scrolling
+  viewport and renders only the visible rows.
 - A revealed citation displays the relevant captured diff hunks, with old/new
   line numbers and addition/deletion markers. The citation positions the code;
   it does not paint a reviewer selection. Syntax and diff colours remain distinct
