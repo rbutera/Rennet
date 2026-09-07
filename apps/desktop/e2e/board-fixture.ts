@@ -4,6 +4,7 @@ import {
   BoardMetaStore,
   GenerationStore,
   RoundRecordStore,
+  SessionStore,
   WhiteboardClient,
 } from "@rennet/adapters";
 import { WsRennetBridge } from "@rennet/client";
@@ -351,6 +352,8 @@ export async function seedBoardFixture(
     reportBoard: "desktop-e2e-report",
     reworkCount: 0,
   });
+
+  new SessionStore(join(userData, "sessions")).setPreparation(review.sessionId, undefined);
 
   return {
     sessionId: review.sessionId,

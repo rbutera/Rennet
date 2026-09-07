@@ -1,7 +1,8 @@
 import { rmSync } from "node:fs";
 import { basename, join } from "node:path";
 import { expect, test } from "@playwright/test";
-import { AskLogStore } from "@rennet/adapters";
+import { AskLogStore, SessionStore } from "@rennet/adapters";
+import { WsRennetBridge } from "@rennet/client";
 import {
   BOARD_DESIGN_DECOY_PATH,
   BOARD_DESIGN_SCENARIO,
@@ -131,6 +132,54 @@ function currentHash(page: Parameters<typeof seedBoardFixture>[0]): Promise<stri
   return page.evaluate(() => location.hash);
 }
 
+async function openFixtureReview(
+  page: Parameters<typeof seedBoardFixture>[0],
+  repository: string,
+  userData: string,
+): Promise<void> {
+  // This journey starts with captured evidence. New Chat's target-picker journey
+  // has separate coverage; use its production mint/capture command here.
+  const port = await page.evaluate(() =>
+    (window as unknown as { rennet: { wsPort(): Promise<number> } }).rennet.wsPort(),
+  );
+  const bridge = new WsRennetBridge({ url: `ws://127.0.0.1:${port}`, autoReconnect: false });
+  try {
+    const { projects } = await bridge.invoke("projects.list", {});
+    const project = projects.find((candidate) => candidate.openPath === repository);
+    if (project === undefined) throw new Error("fixture project was not added");
+    const { session } = await bridge.invoke("session.mint", {
+      commandId: crypto.randomUUID(),
+      projectId: project.id,
+    });
+    if (session === null) throw new Error("fixture session was not minted");
+    await expect
+      .poll(
+        async () => {
+          const { sessions } = await bridge.invoke("session.list", {});
+          const captured = sessions.find((candidate) => candidate.id === session.id);
+          return captured?.reviewId !== undefined && captured.preparation?.status === "failed";
+        },
+        { timeout: 60_000 },
+      )
+      .toBe(true);
+    const sessions = new SessionStore(join(userData, "sessions"));
+    sessions.setPreparation(session.id, undefined);
+    await page.evaluate((id) => {
+      location.hash = `#/s/${encodeURIComponent(id)}`;
+    }, session.id);
+    await page.reload();
+  } finally {
+    bridge.close();
+  }
+}
+
+async function openBoardSections(page: Parameters<typeof seedBoardFixture>[0]): Promise<void> {
+  const toggles = page.locator(
+    'article[data-lens] [data-kind="board-section"] button[aria-label^="Toggle "][aria-expanded="false"]',
+  );
+  for (const toggle of await toggles.all()) await toggle.click();
+}
+
 async function expectQuery(
   page: Parameters<typeof seedBoardFixture>[0],
   expected: Record<string, string>,
@@ -200,7 +249,7 @@ test("a persisted board owns lens, generation, and captured-code navigation in t
     const page = await application.firstWindow();
     await completeWelcome(page);
     await addProject(page, repository);
-    await openWorkingTreeReview(page);
+    await openFixtureReview(page, repository, userData);
     const fixture = await seedBoardFixture(page, repository, userData);
     const askLog = new AskLogStore(join(userData, "asks"));
     await page.reload();
@@ -232,6 +281,7 @@ test("a persisted board owns lens, generation, and captured-code navigation in t
     await expect(flaggedTab.locator("[data-testid=lens-delta-pip]")).toHaveCount(0);
     await flaggedTab.click();
     await expect(board).toHaveAttribute("data-lens", "flagged");
+    await openBoardSections(page);
     const finding = board.locator('[data-kind="finding"]');
     await expect(finding).toHaveCount(1);
 
@@ -240,6 +290,7 @@ test("a persisted board owns lens, generation, and captured-code navigation in t
     await expect(flaggedTab).toHaveAccessibleName(/^Flagged, 0 open(?:, changed this round)?$/);
     await page.reload();
     await expect(board).toHaveAttribute("data-lens", "flagged", { timeout: 60_000 });
+    await openBoardSections(page);
     await expect(finding).toHaveAttribute("data-status", "dismissed");
     await finding.locator("button[aria-expanded]").click();
     await finding.getByRole("button", { name: "Dismissed · Undo" }).click();
@@ -250,6 +301,7 @@ test("a persisted board owns lens, generation, and captured-code navigation in t
     await expect(finding.getByRole("button", { name: "Dismiss", exact: true })).toHaveCount(0);
     await page.reload();
     await expect(board).toHaveAttribute("data-lens", "flagged", { timeout: 60_000 });
+    await openBoardSections(page);
     await finding.getByRole("button", { name: "Staged · Request Change" }).click();
     await expect(flaggedTab).toHaveAccessibleName("Flagged, 1 open");
     await expect
@@ -257,6 +309,7 @@ test("a persisted board owns lens, generation, and captured-code navigation in t
       .toEqual([]);
     await page.reload();
     await expect(board).toHaveAttribute("data-lens", "flagged", { timeout: 60_000 });
+    await openBoardSections(page);
     await expect(finding.getByRole("button", { name: "Request This Change" })).toBeVisible();
     await expect(flaggedTab).toHaveAccessibleName("Flagged, 1 open");
 
