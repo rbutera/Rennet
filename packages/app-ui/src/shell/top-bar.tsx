@@ -312,7 +312,7 @@ export function TopBar() {
           present on non-board views with no active segment; choosing one returns to its board. */}
       <div
         data-slot="lens-switcher"
-        className="flex min-w-0 flex-1 items-center overflow-x-auto @max-[640px]:order-3 @max-[640px]:h-10 @max-[640px]:basis-full"
+        className="flex min-w-0 grow items-center overflow-x-auto @max-[640px]:order-3 @max-[640px]:h-10 @max-[640px]:basis-full"
       >
         <LensSwitcher
           lenses={lenses}
