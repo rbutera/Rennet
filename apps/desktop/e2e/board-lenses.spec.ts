@@ -474,7 +474,11 @@ test("a persisted board owns lens, generation, and captured-code navigation in t
     await revealCitation(page, "widget.ts:1");
     const beforeCounterpart = await currentHash(page);
     await page.getByRole("button", { name: "View test", exact: true }).click();
-    await expect(page.locator(`[data-evidence-path="${BOARD_TEST_PATH}"]`)).toBeVisible();
+    await expect(
+      page
+        .locator(`[data-evidence-path="${BOARD_TEST_PATH}"]`)
+        .filter({ has: page.getByRole("button", { name: "Back to review", exact: true }) }),
+    ).toContainText("import { widget }");
     expect(await currentHash(page)).toBe(beforeCounterpart);
     await page.getByRole("button", { name: "Back to review", exact: true }).click();
     await expect(page.locator(`[data-evidence-path="${BOARD_IMPLEMENTATION_PATH}"]`)).toBeVisible();
