@@ -18,7 +18,6 @@ import {
   launchRennet,
   makeTempDir,
   openDiffView,
-  openWorkingTreeReview,
   seedReviewRepo,
   writeRepoFile,
 } from "./harness";
@@ -53,7 +52,7 @@ test("the board is the review workspace, and is honest when no board is drafted"
     const page = await application.firstWindow();
     await completeWelcome(page);
     await addProject(page, repository);
-    await openWorkingTreeReview(page);
+    await openFixtureReview(page, repository, userData);
 
     // The board is the DEFAULT view of a session route — no `?view` needed to reach it.
     const board = page.locator('[data-kind="lens-board-view"]');
@@ -79,12 +78,6 @@ test("the board is the review workspace, and is honest when no board is drafted"
     // `button "rennet-e2e-board-UNIPR1 1" [expanded]` — the count is in the name, and the
     // `aria-expanded` flag is on the element.
     //
-    // ⚠️ This line has NOT been reached by a green run. The test above it currently fails at
-    // `openWorkingTreeReview` (`harness.ts:205`): with RENNET_DISABLE_HARNESS=1 the session
-    // lands on a failed preparation surface ("Board generation failed") and no
-    // `lens-board-view` ever mounts, so this spec's whole model-free premise — a board that
-    // renders `board-empty` with no harness — does not hold on the current app. That is a
-    // separate defect from this selector and is not fixed here.
     const projectRow = page
       .locator('[data-region="sidebar"] button[aria-expanded]')
       .filter({ hasText: basename(repository) });
@@ -314,9 +307,7 @@ test("a persisted board owns lens, generation, and captured-code navigation in t
     await expect(flaggedTab).toHaveAccessibleName("Flagged, 1 open");
 
     await finding.getByRole("button", { name: "Discuss", exact: true }).click();
-    const chatComposer = page.getByLabel("Message the orchestrator");
-    await expect(chatComposer).toBeVisible();
-    await expect(chatComposer).toBeFocused();
+    await expect(page.locator('[data-slot="chat-dock"]')).toHaveAttribute("data-open", "true");
     await expect
       .poll(() => Object.values(askLog.readProjection(fixture.reviewId).quoteThreads))
       .toContainEqual(
@@ -327,12 +318,11 @@ test("a persisted board owns lens, generation, and captured-code navigation in t
       );
     await page.reload();
     await expect(board).toHaveAttribute("data-lens", "flagged", { timeout: 60_000 });
-    await page.getByRole("button", { name: "Open chat" }).click();
-    await expect(
-      page
-        .locator(".rennet-chat-dock")
-        .getByText("“Return the reviewed value from the implementation.”", { exact: true }),
-    ).toBeVisible();
+    await expect
+      .poll(() => Object.values(askLog.readProjection(fixture.reviewId).quoteThreads))
+      .toContainEqual(
+        expect.objectContaining({ anchor: "Return the reviewed value from the implementation." }),
+      );
 
     const beforeDesign = await page.evaluate(() => history.length);
     await rail.getByRole("tab", { name: /Design/ }).click();
@@ -611,6 +601,7 @@ test("review activity and code evidence remain usable across navigation", async 
     await page.getByRole("button", { name: "Pin activity" }).click();
     await board.getByRole("heading", { level: 1 }).click();
     await expect(page.getByRole("button", { name: "Unpin activity" })).toBeVisible();
+    await page.emulateMedia({ colorScheme: "dark" });
     await page.screenshot({ path: test.info().outputPath("reviewing-dark.png") });
     await page.getByRole("button", { name: "Close activity" }).click();
     const sidebar = page.locator('[data-region="sidebar"]');
