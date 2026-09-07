@@ -15,7 +15,9 @@ import { useLocation } from "wouter";
 import { useCoachAnchor, useMergedRefs } from "../../coach/registry";
 import { Icon } from "../../components/icon";
 import { useBridge, useCommand, useMutation } from "../../data";
-import { newChatPath } from "../../routes/url";
+import { newChatPath, projectSettingsPath } from "../../routes/url";
+import { logoMark, ProjectMark } from "../../settings/assets/project-mark";
+import { useProjectLogos } from "../../settings/data/live";
 import { selectBackgroundEvents, useRennetStore } from "../../store";
 
 function processCommandId(projectId: string): string {
@@ -334,7 +336,9 @@ export function IndexingView({ projectId }: { readonly projectId: string }) {
             <div className="flex flex-col gap-2">{scoutSteps.map(renderStep)}</div>
           ) : null}
 
-          {questionnaire ? <ScoutQuestionnaire questionnaire={questionnaire} /> : null}
+          {questionnaire ? (
+            <ScoutQuestionnaire questionnaire={questionnaire} projectId={projectId} />
+          ) : null}
 
           {mapSteps.length > 0 || placeholder !== null ? (
             <div className="flex flex-col gap-2">
@@ -421,11 +425,19 @@ function ProvenanceChip({ provenance }: { readonly provenance: ProjectScoutAnswe
 
 function ScoutQuestionnaire({
   questionnaire,
+  projectId,
 }: {
   readonly questionnaire: ProjectScoutQuestionnaire;
+  readonly projectId: string;
 }) {
+  const [, navigate] = useLocation();
   const [edits, setEdits] = useState<Record<string, string>>({});
   const [dismissed, setDismissed] = useState(false);
+  // The logo the scout copied into the project directory (ADR 0004), if it found one.
+  // The row shows the image itself rather than its path: a mark is judged by looking at
+  // it, and the path the scout chose is already the line under the label.
+  const { data: logos } = useProjectLogos(projectId);
+  const detectedLogo = logos?.logos.find((logo) => logo.logo === "detected");
   const currentValue = (answer: ProjectScoutAnswer) => edits[answer.key] ?? answer.value;
   const patch = (key: ProjectScoutAnswer["key"], value: string) =>
     setEdits((prior) => ({ ...prior, [key]: value }));
@@ -455,10 +467,10 @@ function ScoutQuestionnaire({
             {questionnaire.detected} detected · {questionnaire.guessed} guessed
           </span>
         </span>
-        {/* No "everything stays editable in Settings" (#812 review): the logo path is not
-            editable there by design (it is evidence for choosing a glyph), and the worktree
-            location that used to be the clearest example of an editable one is gone —
-            nothing placed a worktree from it. The promise now claims only what is true. */}
+        {/* No "everything stays editable in Settings" (#812 review): the worktree location
+            that used to be the clearest example of an editable answer is gone — nothing
+            placed a worktree from it. The logo is the one row that IS settled elsewhere
+            (#900), and it links there rather than offering a path to retype. */}
         <span className="text-xs text-ink-soft">
           The map is already continuing. Skipping is fine — nothing here blocks it.
         </span>
@@ -467,6 +479,9 @@ function ScoutQuestionnaire({
       <div className="flex flex-col divide-y divide-line">
         {questionnaire.answers.map((answer) => (
           <div key={answer.key} className="flex items-center gap-3 py-2">
+            {answer.key === "logoPath" && detectedLogo ? (
+              <ProjectMark mark={logoMark(detectedLogo)} className="size-6" />
+            ) : null}
             <div className="flex min-w-0 flex-col">
               <span className="flex items-center gap-1.5 text-sm font-medium text-ink">
                 {ANSWER_LABEL[answer.key]}
@@ -477,7 +492,18 @@ function ScoutQuestionnaire({
               </span>
             </div>
             <div className="ml-auto shrink-0">
-              {answer.options ? (
+              {answer.key === "logoPath" ? (
+                // The mark is chosen by picking one, not by typing a path — so this row
+                // goes where the picking happens instead of offering a field that only
+                // rewrites the scout's evidence.
+                <button
+                  type="button"
+                  onClick={() => navigate(projectSettingsPath(projectId))}
+                  className="rounded-control border border-line px-2 py-1 text-xs text-ink-soft transition-colors hover:bg-raised hover:text-ink"
+                >
+                  Change in Settings
+                </button>
+              ) : answer.options ? (
                 <ToggleGroup
                   value={[currentValue(answer)]}
                   onValueChange={(next: string[]) => {

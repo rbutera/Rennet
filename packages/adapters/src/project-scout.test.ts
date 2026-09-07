@@ -1,4 +1,12 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type HarnessTurnResult, inlineContextViolation } from "@rennet/core";
@@ -6,7 +14,11 @@ import { afterEach, describe, expect, it } from "vitest";
 import { loadConventionCatalogue } from "./convention-catalogue-reader";
 import type { GitExec } from "./git-range-diff";
 import {
+  acceptLogoPick,
+  detectProjectLogo,
+  LOGO_INVENTORY_CAP,
   loadScoutFacts,
+  logoInventory,
   PROJECT_SCOUT_CONTEXT_PREFIX,
   resolveTrackerConfig,
   runProjectScout,
@@ -271,6 +283,177 @@ describe("runProjectScout", () => {
     expect(prompt).not.toContain("already detected");
     // Still a usable prompt: the gaps are still named, so the seat still has its job.
     expect(prompt).toContain("Fill ONLY these unknown facts");
+  });
+});
+
+// ── The project mark: inventory + the seat's judgement, every run (#900) ──
+
+describe("logo detection", () => {
+  /** Write `path` (creating its parents) with a byte or two of content. */
+  function file(repo: string, path: string, body = "x"): string {
+    const full = join(repo, path);
+    mkdirSync(join(full, ".."), { recursive: true });
+    writeFileSync(full, body);
+    return full;
+  }
+
+  it("inventories by name AND by conventional directory, skipping build output", () => {
+    const repo = tempRepo();
+    file(repo, "logo.svg");
+    file(repo, "src/components/icon-button.png");
+    file(repo, "public/hero.webp"); // no mark word, but a conventional directory
+    file(repo, "docs/brand/wordmark.jpg");
+    file(repo, ".github/favicon-16.png");
+    file(repo, "src/index.ts"); // wrong extension
+    file(repo, "README.md"); // wrong extension
+    file(repo, "node_modules/pkg/logo.svg"); // dependency
+    file(repo, "dist/logo.svg"); // build output
+    file(repo, "vendor/upstream/logo.png"); // vendored
+
+    const { paths, total } = logoInventory(repo);
+    expect(paths).toContain("logo.svg");
+    expect(paths).toContain("src/components/icon-button.png");
+    expect(paths).toContain("public/hero.webp");
+    expect(paths).toContain("docs/brand/wordmark.jpg");
+    expect(paths).toContain(".github/favicon-16.png");
+    expect(paths).not.toContain("src/index.ts");
+    expect(paths.some((path) => path.startsWith("node_modules/"))).toBe(false);
+    expect(paths.some((path) => path.startsWith("dist/"))).toBe(false);
+    expect(paths.some((path) => path.startsWith("vendor/"))).toBe(false);
+    expect(total).toBe(paths.length);
+    // The old fixed list still ranks first, so determinism's guess did not move.
+    expect(paths[0]).toBe("logo.svg");
+  });
+
+  it("caps the inventory at 20 and reports the true total behind the cap", () => {
+    const repo = tempRepo();
+    for (let i = 0; i < 33; i += 1) file(repo, `assets/logo-${String(i).padStart(2, "0")}.png`);
+    const inventory = logoInventory(repo);
+    expect(inventory.paths).toHaveLength(LOGO_INVENTORY_CAP);
+    expect(inventory.total).toBe(33);
+    // The control: 19 files and the cap does not bite — the number above is the cap
+    // doing work, not the walk running out of files.
+    const small = tempRepo();
+    for (let i = 0; i < 19; i += 1) file(small, `assets/logo-${i}.png`);
+    expect(logoInventory(small).paths).toHaveLength(19);
+    expect(logoInventory(small).total).toBe(19);
+  });
+
+  it("the seat is asked for the mark EVEN WHEN determinism already found one", async () => {
+    const repo = tempRepo();
+    file(repo, "logo.png"); // determinism's pick
+    file(repo, "public/brand/mark.svg"); // the better one, only the seat can tell
+    let prompt = "";
+    const result = await runProjectScout({
+      repoRoot: repo,
+      git: gitStub({ config: "https://github.com/o/r.git", log: "chore: x" }),
+      runTurn: (sent) => {
+        prompt = sent;
+        return Promise.resolve(emitted({ facts: { logoPath: "public/brand/mark.svg" } }));
+      },
+    });
+    // The prompt asked (it named the candidates) and the answer overrode determinism —
+    // the ONE fact the seat may overwrite, because the mark is a judgement.
+    expect(prompt).toContain("public/brand/mark.svg");
+    expect(prompt).toContain("logo.png");
+    expect(result.facts.logoPath).toEqual({
+      value: "public/brand/mark.svg",
+      provenance: "detected",
+      source: "scout pick",
+      repoRoot: repo,
+    });
+  });
+
+  it("falls back to determinism's pick when the seat says nothing usable", async () => {
+    const repo = tempRepo();
+    file(repo, "logo.png");
+    file(repo, "public/brand/mark.svg");
+    const result = await runProjectScout({
+      repoRoot: repo,
+      git: gitStub({}),
+      runTurn: () => Promise.resolve(emitted({ facts: {} })),
+    });
+    expect(result.facts.logoPath).toMatchObject({
+      value: "logo.png",
+      provenance: "detected",
+      source: "file present",
+    });
+  });
+
+  it("refuses a pick outside the repo, a directory, a missing file, or a bad extension", async () => {
+    const repo = tempRepo();
+    const outside = tempRepo();
+    file(outside, "secret.png");
+    file(repo, "logo.png");
+    mkdirSync(join(repo, "assets"), { recursive: true });
+    file(repo, "README.md");
+
+    for (const bad of [
+      "../secret.png",
+      join(outside, "secret.png"),
+      "assets",
+      "assets/nothing-here.png",
+      "README.md",
+      "",
+      42,
+    ]) {
+      expect(acceptLogoPick(repo, bad)).toBeUndefined();
+    }
+    // The control: the same validator ACCEPTS the real file, so the refusals above are
+    // the guard talking and not a validator that refuses everything.
+    expect(acceptLogoPick(repo, "logo.png")).toBe("logo.png");
+    expect(acceptLogoPick(repo, "./logo.png")).toBe("logo.png");
+
+    // …and end to end: a seat naming an escape leaves determinism's pick standing.
+    const result = await runProjectScout({
+      repoRoot: repo,
+      git: gitStub({}),
+      runTurn: () => Promise.resolve(emitted({ facts: { logoPath: "../secret.png" } })),
+    });
+    expect(result.facts.logoPath?.value).toBe("logo.png");
+    expect(result.facts.logoPath?.source).toBe("file present");
+  });
+
+  it("a symlink pointing out of the repository is refused (realpath, not string prefix)", () => {
+    const repo = tempRepo();
+    const outside = tempRepo();
+    file(outside, "secret.png");
+    symlinkSync(join(outside, "secret.png"), join(repo, "logo.png"));
+    // The path READS as inside the repo; only resolving it says otherwise.
+    expect(existsSync(join(repo, "logo.png"))).toBe(true);
+    expect(acceptLogoPick(repo, "logo.png")).toBeUndefined();
+  });
+
+  it("detectProjectLogo is the standalone re-detect: seat pick, else the deterministic floor", async () => {
+    const repo = tempRepo();
+    file(repo, "logo.png");
+    file(repo, "public/brand/mark.svg");
+
+    const picked = await detectProjectLogo({
+      repoRoot: repo,
+      runTurn: () => Promise.resolve(emitted({ facts: { logoPath: "public/brand/mark.svg" } })),
+    });
+    expect(picked).toMatchObject({ value: "public/brand/mark.svg", source: "scout pick" });
+
+    // No seat at all, and a seat that throws, both land on the deterministic floor.
+    expect(await detectProjectLogo({ repoRoot: repo })).toMatchObject({ value: "logo.png" });
+    expect(
+      await detectProjectLogo({ repoRoot: repo, runTurn: () => Promise.reject(new Error("no")) }),
+    ).toMatchObject({ value: "logo.png" });
+    // An empty repository yields nothing rather than an invented mark.
+    expect(await detectProjectLogo({ repoRoot: tempRepo() })).toBeNull();
+  });
+
+  it("the logo path is NOT a settings offer — the mark resolves off the copied file", async () => {
+    const store = new ProjectSnapshotStore(tempRepo());
+    const repo = tempRepo();
+    file(repo, "logo.svg");
+    const result = await runProjectScout({ repoRoot: repo, git: gitStub({}) });
+    saveScoutFacts(store, "esc", result);
+    // The fact is stored (it is the copy SOURCE, ADR 0004) …
+    expect(loadScoutFacts(store, "esc")?.facts.logoPath?.value).toBe("logo.svg");
+    // … and it is not offered to the ladder, because nothing there reads it.
+    expect(scoutSettingsOffers(store, "esc")).not.toHaveProperty("logoPath");
   });
 });
 

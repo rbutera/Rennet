@@ -400,6 +400,9 @@ export function projectCommandOutput(
         "settings.resetRepoValue",
         "settings.pinRepoValue",
         "settings.setProjectValue",
+        // An upload's outcome IS a `settings.setProjectValue` outcome — it goes through
+        // that exact write — so its row carries the same host `repoPath` (#900).
+        "project.uploadLogo",
       ].includes(command)
         ? projectSettingsProject(o.project as Record<string, unknown>, ctx)
         : projectProject(o.project as Record<string, unknown>, ctx);

@@ -128,6 +128,9 @@ still goes through the one seam; only the label is hand-written.
 | `project.process` | Needs the project; the indexing surface narrates the run. |
 | `project.detail` | Read the project surface drives. |
 | `project.cleanupWorktree` | Needs the project and the worktree it removes. |
+| `project.logos` | Read the sidebar's project marks drive. |
+| `project.uploadLogo` | Needs the project and the picked file's bytes. |
+| `project.detectLogo` | Needs the project; Identity's "Detect again" runs it. |
 
 ### fs, patchset, board
 

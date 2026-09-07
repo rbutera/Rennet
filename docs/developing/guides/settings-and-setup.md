@@ -286,17 +286,17 @@ inherited value. Map promotion and "Runs on" are read-only in Settings;
 promotion is a separate project action, and "Runs on" is a detected fact.
 
 The Projects page also carries project **identity** (display name with the
-`org/repo` default, and a glyph) and the issue tracker's fields — GitHub rides
-the host's `gh` CLI and exposes no further fields; JIRA and Linear expose a
-project key, a base URL, and the *name* of the environment variable holding the
-token (never the token itself). These are wired to live commands. The display
-name writes through `project.rename`, which the sidebar's own rename also calls,
-and an emptied name restores the `org/repo` identity host-side. The glyph and
-issue-tracker fields write through `settings.setProjectValue`, which stores them
-on the **repository rung** — the project's own `config.json`, the same layer map
-visibility uses — so a per-project answer beats the host's global one, and an
-emptied field drops the entry and falls back down the ladder. Guidance rules
-write through `settings.setGuidance` into the repository's own
+`org/repo` default, and the project mark) and the issue tracker's fields —
+GitHub rides the host's `gh` CLI and exposes no further fields; JIRA and Linear
+expose a project key, a base URL, and the *name* of the environment variable
+holding the token (never the token itself). These are wired to live commands. The
+display name writes through `project.rename`, which the sidebar's own rename also
+calls, and an emptied name restores the `org/repo` identity host-side. The glyph,
+the mark and the issue-tracker fields write through `settings.setProjectValue`,
+which stores them on the **repository rung** — the project's own `config.json`,
+the same layer map visibility uses — so a per-project answer beats the host's
+global one, and an emptied field drops the entry and falls back down the ladder.
+Guidance rules write through `settings.setGuidance` into the repository's own
 `.rennet/conventions.json`, the file the review runners read.
 
 The page's **Worktrees** card is a statement, not a setting. It offered a
@@ -342,6 +342,34 @@ Malformed repository config resolves to defaults and disables writes for that
 row. Invalid entries in `.rennet/conventions.json` are dropped individually and
 reported in Settings; valid rules remain available to review runners.
 
+### The project mark
+
+The **project mark** is the visual that identifies a project everywhere the shell
+shows it — the sidebar rows and switcher, the project picker, and the archived
+list. It is either a **glyph** from Rennet's fixed symbol vocabulary or a
+**logo**: an image the project scout found in the repository, or one the reviewer
+uploaded. Identity shows all three choices together and exactly one reads as
+selected — the mark the shell is actually drawing.
+
+| Control | What it does |
+|---|---|
+| Glyph grid | Chooses a symbol. Writes both `glyph` (which symbol) and `mark` (that a symbol shows at all). |
+| Repo logo | Shown only when the project holds a detected logo, with the repository-relative path the scout chose as its provenance line. |
+| Upload an image | Accepts SVG, PNG, JPEG, or WebP. Any other type is refused with a line naming the formats, before anything is sent. There is no size limit. |
+| Detect again | Re-runs logo detection over the project's repositories and reports what it found, or that it found nothing. Offered even when nothing was detected, so a repository that gains a logo can be re-scouted. |
+
+Logo bytes do not live in the checkout. A detected or uploaded logo is copied into
+the host's per-project directory (ADR 0004) and served over `project.logos` as
+base64, which the client renders through a `data:` URL — one path for the desktop
+renderer and the served browser tab, with no static route. `project.uploadLogo`
+stores an upload and sets the mark to it in one write; `project.detectLogo`
+re-runs detection. A mark naming a logo whose bytes the host no longer holds
+falls back to the glyph rather than leaving an empty square.
+
+The project questionnaire shown while a project is being built has a logo row for
+the same reason: it previews what the scout found and links here, rather than
+offering a path to retype.
+
 ## Provenance
 
 Resolved settings carry the winning layer and every contribution. The current
@@ -353,9 +381,14 @@ builtin < detected < global < repo
 
 Appearance uses `builtin < global`. Map visibility uses `builtin < repo`. The
 per-project preferences resolve through the layers that actually have a producer
-today: the glyph is `builtin < repo`, and the issue-tracker keys are `builtin <
-detected < global < repo` — the tracker is the one section with a host-wide
-global rung, in `daemon-settings.json`. The worktree location and naming pattern
+today: the glyph is `builtin < repo`; the project mark is `builtin < detected <
+repo`, where the builtin is the glyph, the `detected` rung is offered once the
+project holds a copied repository logo, and the reviewer's own choice sits on the
+repository rung — so a freshly added project wears its repository's logo with no
+click, and an explicitly chosen glyph beats a later detection. There is no global
+rung for a mark: it is a fact about one project. The issue-tracker keys are
+`builtin < detected < global < repo` — the tracker is the one section with a
+host-wide global rung, in `daemon-settings.json`. The worktree location and naming pattern
 are not listed: they steer nothing, so they are not settings the page offers.
 
 The tracker section resolves as a **unit**, not key by key. The layer that

@@ -127,7 +127,14 @@ one document.
 
 Project processing writes its canonical state beneath
 `~/.rennet/projects/<escaped-path>/`. Promotion to `.rennet/map/` is explicit and
-never stages or commits those files.
+never stages or commits those files. That directory also holds the project's
+**mark**: `mark-detected.<ext>` is the logo the project scout found in the
+repository, copied in as bytes, and `mark-upload.<ext>` is one the user supplied.
+Each has a `mark-<kind>.json` sidecar carrying its source — the repository-relative
+path the scout chose, or the uploaded file's name. A mark is a property of the
+project, not of whichever branch happens to be checked out, so it is never read out
+of the checkout on demand; the repository can move or delete the file without the
+project losing its mark.
 
 An add-project run is one durable scout → structural-map sequence. Its stable
 command identity and per-repository checkpoints live in `project-process.json`

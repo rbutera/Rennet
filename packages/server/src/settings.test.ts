@@ -95,6 +95,7 @@ type FakeRepoConfig = {
   visibility?: ProjectVisibility;
   promoted?: boolean;
   glyph?: string;
+  mark?: string;
   worktreeBaseDir?: string;
   worktreePattern?: string;
   tracker?: { kind?: string; projectKey?: string; baseUrl?: string; tokenEnv?: string };
@@ -169,7 +170,13 @@ function statefulDeps(
     writeRepoValue: ({ field, value }) => {
       if (opts.malformed) throw new Error("refusing to overwrite a malformed project config");
       const next = withRepoPref({ ...store }, field, value);
-      for (const key of ["glyph", "worktreeBaseDir", "worktreePattern", "tracker"] as const) {
+      for (const key of [
+        "glyph",
+        "mark",
+        "worktreeBaseDir",
+        "worktreePattern",
+        "tracker",
+      ] as const) {
         delete store[key];
       }
       Object.assign(store, next);
@@ -1555,6 +1562,82 @@ describe("setProjectValue + setGuidance — the per-project repo rung (C18 group
     repoPath: "/orbital",
     key,
     value,
+  });
+
+  // ── The project mark's ladder (#900) ──
+
+  it("offers `detected` ONLY when a copied logo file exists for the project", async () => {
+    const { deps } = statefulDeps();
+    // Nothing copied: the builtin `glyph` stands, so a project with no logo shows a glyph.
+    const withoutFile = (await createSettingsComposition(deps).get()).projects[0];
+    expect(withoutFile?.prefs?.mark).toEqual({ value: "glyph", layer: "builtin" });
+
+    // The same composition, the same config — only the FILE appears — and the ladder moves.
+    // That is the whole claim: the `detected` rung is the copy on disk, not a stored path.
+    const withFile = (
+      await createSettingsComposition({ ...deps, detectedLogoExists: () => true }).get()
+    ).projects[0];
+    expect(withFile?.prefs?.mark).toEqual({ value: "detected", layer: "detected" });
+  });
+
+  it("an explicit glyph beats a later detection; a reset falls back to it", async () => {
+    const { deps, store } = statefulDeps();
+    const settings = createSettingsComposition({ ...deps, detectedLogoExists: () => true });
+
+    const pinned = await settings.setProjectValue(write("mark", "glyph"));
+    expect(pinned.status).toBe("applied");
+    expect(store.mark).toBe("glyph");
+    // The repo rung outranks the detected one, so the copied logo does NOT show.
+    expect(pinned.project?.prefs?.mark).toEqual({ value: "glyph", layer: "repo" });
+
+    // Reset (a blank value drops the entry) and the detected logo shows again.
+    const reset = await settings.setProjectValue(write("mark", ""));
+    expect(store.mark).toBeUndefined();
+    expect(reset.project?.prefs?.mark).toEqual({ value: "detected", layer: "detected" });
+  });
+
+  it("refuses a mark outside the vocabulary at the write, and drops one already on disk", async () => {
+    const { deps } = statefulDeps({ mark: "photo" });
+    // A hand-edited stored value is DROPPED rather than resolved: the row reads builtin.
+    const row = (await createSettingsComposition(deps).get()).projects[0];
+    expect(row?.prefs?.mark).toEqual({ value: "glyph", layer: "builtin" });
+    // …and the write refuses it through the same validator the resolver reads by.
+    await expect(
+      createSettingsComposition(deps).setProjectValue(write("mark", "photo")),
+    ).rejects.toThrow();
+    // The control: a legal value goes through, so the rejection is the vocabulary.
+    await expect(
+      createSettingsComposition(deps).setProjectValue(write("mark", "upload")),
+    ).resolves.toMatchObject({ status: "applied" });
+  });
+
+  it("a workspace's FIRST row offers `detected` for a logo found in ANOTHER included repo", async () => {
+    // The bug this pins: the scout runs per repo, so in a two-repo workspace the mark can
+    // be filed under the SECOND repo's key while the client reads the FIRST row's prefs.
+    // Resolving per-row alone hides it, and nothing errors — the sidebar just shows a glyph.
+    const workspace = project({
+      kind: "workspace",
+      path: "/work",
+      openPath: "/work/api",
+      includedRepoPaths: ["/work/api", "/work/web"],
+      repoCount: 2,
+    });
+    const { deps } = statefulDeps({}, { project: workspace });
+    const secondOnly = escapePath("/work/web");
+    const rows = (
+      await createSettingsComposition({
+        ...deps,
+        detectedLogoExists: (repoKey) => repoKey === secondOnly,
+      }).get()
+    ).projects;
+    expect(rows).toHaveLength(2);
+    expect(rows[0]?.prefs?.mark).toEqual({ value: "detected", layer: "detected" });
+    // The control: with the logo under NEITHER repo, the same two rows read builtin — so
+    // the row above is the cross-repo lookup and not a row that always says "detected".
+    const none = (
+      await createSettingsComposition({ ...deps, detectedLogoExists: () => false }).get()
+    ).projects;
+    expect(none[0]?.prefs?.mark).toEqual({ value: "glyph", layer: "builtin" });
   });
 
   it("a worktree-pattern edit reads back after a RELOAD — a fresh composition over the same store", async () => {

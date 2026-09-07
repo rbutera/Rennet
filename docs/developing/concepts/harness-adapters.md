@@ -215,6 +215,19 @@ as `ephemeral` sessions, which the Claude adapter maps to the SDK's
 to resume. Each carries everything it needs and is re-billed in full on a retry,
 which is why their prompts name paths instead of holding content.
 
+The **project scout** is one such turn, and it fills two different kinds of gap.
+Most of its answers are facts determinism either found or did not, so the seat is
+asked only for the ones left empty. The project's **logo** is not a fact but a
+judgement — which image best identifies this project — so the seat is asked for it
+on **every** run, even when the deterministic pass already found a file. What it
+receives is an inventory, not images: a bounded walk of the repository yields at
+most 20 candidate paths, with a truncation marker stating how many it did not
+list, and the prompt says what a suitable mark is (a standalone square mark over a
+wordmark, vector over raster, no sponsor logos, no screenshots) and that the list
+is a starting point rather than a fence. A path the seat returns is validated
+against the checkout — it must resolve to a real file, of an accepted image type,
+inside the repository — before it displaces determinism's own best guess.
+
 The **board seats** are the other shape, and they do not run on these adapters at
 all: a lens seat, the Flagged lane's two provider seats and the round report are
 persistent threads in the T3 sidecar, one per seat per generation. A repair there

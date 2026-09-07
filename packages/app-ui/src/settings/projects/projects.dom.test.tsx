@@ -10,6 +10,7 @@
 // editor without bubbling to the takeover.
 import {
   type Project,
+  type ProjectLogo,
   type SettingsProject,
   type SettingsProjectValueKey,
   settingsProjectValueKeySchema,
@@ -534,7 +535,7 @@ describe("ProjectsPage — live projection is honest about the unserved write st
       (n) => n.textContent ?? "",
     );
     expect(notes.length).toBe(3);
-    expect(notes.some((t) => /Glyphs aren/.test(t))).toBe(true);
+    expect(notes.some((t) => /Marks aren/.test(t))).toBe(true);
     expect(notes.some((t) => /Issue-tracker config/.test(t))).toBe(true);
     expect(notes.some((t) => /Guidance rules/.test(t))).toBe(true);
     cleanup();
@@ -560,6 +561,9 @@ const P1_PREFS: NonNullable<SettingsProject["prefs"]> = {
   // is not the client default to prove. (It used to be `worktreePattern`; that editor is
   // gone — nothing placed a worktree from it — so the glyph carries the proof now, #812.)
   glyph: { value: "rocket", layer: "repo" },
+  // The mark says WHETHER a glyph shows at all (#900); `glyph` here means it does, so the
+  // grid's lit cell is still the resolved answer rather than a guess about one.
+  mark: { value: "glyph", layer: "builtin" },
   worktreeRoot: { value: "", layer: "builtin" },
   worktreePattern: { value: "{project}-{branch}", layer: "repo" },
   tracker: {
@@ -575,7 +579,17 @@ function mountServedPrefs() {
   return mountServedPrefsWith(P1_PREFS);
 }
 
-function mountServedPrefsWith(prefs: NonNullable<SettingsProject["prefs"]>): {
+/** The logo files the served host holds for p1 (#900), and what the two logo WRITES did. */
+interface ServedLogos {
+  readonly logos?: readonly ProjectLogo[];
+  /** What `project.detectLogo` answers — a host that found something, or one that did not. */
+  readonly detection?: { readonly found: boolean; readonly source: string | null };
+}
+
+function mountServedPrefsWith(
+  prefs: NonNullable<SettingsProject["prefs"]>,
+  held: ServedLogos = {},
+): {
   writes: {
     projectId: string;
     repoPath: string;
@@ -586,6 +600,13 @@ function mountServedPrefsWith(prefs: NonNullable<SettingsProject["prefs"]>): {
     repoPath: string;
     rules: { id?: string; rule: string; severity: string }[];
   }[];
+  uploads: {
+    projectId: string;
+    mimeType: string;
+    bytesBase64: string;
+    fileName: string;
+  }[];
+  detections: string[];
   view: ReturnType<typeof mount>;
 } {
   const writes: {
@@ -598,9 +619,25 @@ function mountServedPrefsWith(prefs: NonNullable<SettingsProject["prefs"]>): {
     repoPath: string;
     rules: { id?: string; rule: string; severity: string }[];
   }[] = [];
+  const uploads: {
+    projectId: string;
+    mimeType: string;
+    bytesBase64: string;
+    fileName: string;
+  }[] = [];
+  const detections: string[] = [];
   const served = new MemoryBridge(
     {
       "projects.list": () => ({ projects: [...PROJECTS] }),
+      "project.logos": () => ({ logos: (held.logos ?? []).map((logo) => ({ ...logo })) }),
+      "project.uploadLogo": (input) => {
+        uploads.push({ ...input });
+        return { status: "applied" as const, key: "mark" as const, project: null };
+      },
+      "project.detectLogo": (input) => {
+        detections.push(input.projectId);
+        return held.detection ?? { found: false, source: null };
+      },
       "settings.get": () => ({
         scheme: "system",
         schemeProvenance: {
@@ -626,6 +663,8 @@ function mountServedPrefsWith(prefs: NonNullable<SettingsProject["prefs"]>): {
   return {
     writes,
     guidanceWrites,
+    uploads,
+    detections,
     view: mount(
       <BridgeProvider bridge={served}>
         <Router hook={history.hook} searchHook={history.searchHook}>
@@ -653,16 +692,19 @@ describe("ProjectsPage — the served per-project rung (C18 group A)", () => {
     cleanup();
   });
 
-  it("a glyph choice writes the repo rung for THIS project's repoPath", async () => {
+  // Two keys, not one (#900): `glyph` names WHICH symbol, `mark` says a symbol shows at
+  // all. Asserted as an ordered pair rather than as two memberships — a page that wrote
+  // only `mark` would satisfy a `some(key === "mark")` check while leaving the grid's
+  // chosen cell unstored, and one that wrote only `glyph` would leave a project wearing
+  // its repo's logo still wearing it after picking a symbol.
+  it("a glyph choice writes BOTH the glyph and the mark for THIS project's repoPath", async () => {
     const { writes, view } = mountServedPrefs();
     fireEvent.click(await view.findByRole("button", { name: "flask" }));
-    await waitFor(() => expect(writes.length).toBe(1));
-    expect(writes[0]).toEqual({
-      projectId: "p1",
-      repoPath: P1_ROW.repoPath,
-      key: "glyph",
-      value: "flask",
-    });
+    await waitFor(() => expect(writes.length).toBe(2));
+    expect(writes).toEqual([
+      { projectId: "p1", repoPath: P1_ROW.repoPath, key: "glyph", value: "flask" },
+      { projectId: "p1", repoPath: P1_ROW.repoPath, key: "mark", value: "glyph" },
+    ]);
     cleanup();
   });
 
@@ -767,6 +809,149 @@ describe("ProjectsPage — the served per-project rung (C18 group A)", () => {
       repoPath: P1_ROW.repoPath,
       rules: [{ rule: "keep main releasable", severity: "medium" }],
     });
+    cleanup();
+  });
+});
+
+// ── The project MARK over the live projection (#900) ─────────────────────────────
+// A mark is a glyph OR a logo, and WHICH one shows is resolved on the ladder before the
+// surface sees it: `settings.get` carries the `mark` pref and `project.logos` carries the
+// bytes, and the live projection folds the pair. These prove the fold — that a `detected`
+// mark reaches the picker as a real image, that a mark naming bytes the host does not hold
+// degrades to the glyph instead of an empty square, and that each Identity control writes
+// the key it claims to.
+
+const LOGO_SVG = "PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA4IDgiLz4=";
+
+const REPO_LOGO: ProjectLogo = {
+  projectId: "p1",
+  logo: "detected",
+  mimeType: "image/svg+xml",
+  bytesBase64: LOGO_SVG,
+  source: "assets/logo.svg",
+};
+
+/** The same served rung, but wearing the repo's logo rather than its glyph. */
+const MARK_DETECTED: NonNullable<SettingsProject["prefs"]> = {
+  ...P1_PREFS,
+  mark: { value: "detected", layer: "detected" },
+};
+
+/** The picker trigger, which draws the scoped project's mark beside its name. */
+async function markTrigger(view: ReturnType<typeof mount>): Promise<HTMLElement> {
+  return await view.findByRole("button", { name: "Choose project" });
+}
+
+describe("ProjectsPage — the resolved project mark (#900)", () => {
+  it("draws the repo's logo where the project is named, and lights no glyph", async () => {
+    const { view } = mountServedPrefsWith(MARK_DETECTED, { logos: [REPO_LOGO] });
+    const trigger = await markTrigger(view);
+    await waitFor(() =>
+      expect(trigger.querySelector("img")?.getAttribute("src")).toBe(
+        `data:image/svg+xml;base64,${LOGO_SVG}`,
+      ),
+    );
+    // The served glyph is still `rocket`, and it is still what the grid would light — but
+    // the project is not wearing it, so nothing in the grid may read as selected. (The
+    // paired assertion in "renders the RESOLVED prefs" has `rocket` pressed when the mark
+    // IS the glyph, so this is the same page answering a different resolved mark.)
+    expect((await view.findByRole("button", { name: "rocket" })).getAttribute("aria-pressed")).toBe(
+      "false",
+    );
+    // The repo-logo tile is the one lit instead.
+    expect(
+      (await view.findByRole("button", { name: "Repo logo" })).getAttribute("aria-pressed"),
+    ).toBe("true");
+    cleanup();
+  });
+
+  // The other half of the pair: the SAME `mark: detected` pref, with the bytes gone (the
+  // file was removed under the host, or the logo read has not landed). A surface that
+  // trusted the pref alone would render an empty square beside the project's name.
+  it("falls back to the glyph when the host holds no bytes for the chosen mark", async () => {
+    const { view } = mountServedPrefsWith(MARK_DETECTED, { logos: [] });
+    const trigger = await markTrigger(view);
+    await waitFor(() =>
+      expect(view.getByRole("button", { name: "rocket" }).getAttribute("aria-pressed")).toBe(
+        "true",
+      ),
+    );
+    expect(trigger.querySelector("img")).toBeNull();
+    expect(trigger.querySelector("svg.lucide-rocket")).toBeTruthy();
+    cleanup();
+  });
+
+  it("offers the repo-logo tile only for a project that actually has one", async () => {
+    // A repo with no image found: no tile to choose, and no empty frame pretending there is.
+    const bare = mountServedPrefs();
+    await bare.view.findByRole("button", { name: "rocket" });
+    expect(bare.view.queryByRole("button", { name: "Repo logo" })).toBeNull();
+    // …and "Detect again" is offered anyway, so a repo that GAINS a logo can be re-scouted.
+    expect(bare.view.getByRole("button", { name: "Detect again" })).toBeTruthy();
+    cleanup();
+
+    const held = mountServedPrefsWith(P1_PREFS, { logos: [REPO_LOGO] });
+    const tile = await held.view.findByRole("button", { name: "Repo logo" });
+    // Its provenance is the path the scout chose, shown as the line under the tiles.
+    expect(await held.view.findByText(/assets\/logo\.svg/)).toBeTruthy();
+    // Not selected: the served mark is still the glyph, so the tile offers a choice
+    // rather than reporting one.
+    expect(tile.getAttribute("aria-pressed")).toBe("false");
+    cleanup();
+  });
+
+  it("choosing the repo logo writes the mark alone — the glyph it keeps is untouched", async () => {
+    const { writes, view } = mountServedPrefsWith(P1_PREFS, { logos: [REPO_LOGO] });
+    fireEvent.click(await view.findByRole("button", { name: "Repo logo" }));
+    await waitFor(() => expect(writes.length).toBe(1));
+    expect(writes).toEqual([
+      { projectId: "p1", repoPath: P1_ROW.repoPath, key: "mark", value: "detected" },
+    ]);
+    cleanup();
+  });
+
+  it("an upload sends the picked image's type, bytes and file name", async () => {
+    const { uploads, view } = mountServedPrefs();
+    const input = (await view.findByLabelText("Upload an image")) as HTMLInputElement;
+    const file = new File([Uint8Array.from([1, 2, 3])], "brand.png", { type: "image/png" });
+    fireEvent.change(input, { target: { files: [file] } });
+    // The bytes are what the command carries — base64 of 0x01 0x02 0x03, not a path or a
+    // blob URL the daemon could never read.
+    await waitFor(() => expect(uploads.length).toBe(1));
+    expect(uploads[0]).toEqual({
+      projectId: "p1",
+      mimeType: "image/png",
+      bytesBase64: "AQID",
+      fileName: "brand.png",
+    });
+    cleanup();
+  });
+
+  it("names the formats it takes instead of sending a file the wire would refuse", async () => {
+    const { uploads, view } = mountServedPrefs();
+    const input = (await view.findByLabelText("Upload an image")) as HTMLInputElement;
+    fireEvent.change(input, {
+      target: { files: [new File(["notes"], "notes.txt", { type: "text/plain" })] },
+    });
+    expect(await view.findByText("Choose an SVG, PNG, JPEG, or WebP image.")).toBeTruthy();
+    expect(uploads).toEqual([]);
+    cleanup();
+  });
+
+  it("reports what a re-detection found, in the host's own words", async () => {
+    const found = mountServedPrefsWith(P1_PREFS, {
+      detection: { found: true, source: "assets/logo.svg" },
+    });
+    fireEvent.click(await found.view.findByRole("button", { name: "Detect again" }));
+    expect(await found.view.findByText("Found assets/logo.svg")).toBeTruthy();
+    expect(found.detections).toEqual(["p1"]);
+    cleanup();
+
+    // POSITIVE CONTROL for the sentence above: the same click over a host that found
+    // nothing must NOT read as a find. A single hardcoded line would pass one of these.
+    const none = mountServedPrefsWith(P1_PREFS);
+    fireEvent.click(await none.view.findByRole("button", { name: "Detect again" }));
+    expect(await none.view.findByText("No logo found in the repo")).toBeTruthy();
     cleanup();
   });
 });
