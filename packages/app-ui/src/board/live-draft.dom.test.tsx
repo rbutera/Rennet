@@ -59,8 +59,11 @@ const section = (id: string, title: string, children: string[]): DraftElement =>
     data: { title, gist: `${title} — folded`, children },
   }) as unknown as DraftElement;
 
-const step = (id: string, title: string): DraftElement =>
-  ({ id, kind: "order_step", data: { title } }) as unknown as DraftElement;
+const step = (id: string, title: string): DraftElement => ({
+  id,
+  kind: "order_step",
+  data: { author: { kind: "lens-agent", id: "sequence" }, title, span: "code-1", children: [] },
+});
 
 const frame = (revision: number, update: LensDraftEvent["update"]): LensDraftEvent => ({
   generation: LIVE,

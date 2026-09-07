@@ -29,7 +29,7 @@ end of a section the reader should be able to predict why the next one exists.
   first child of every order step: the narration saying why this stop is here,
   what the reader is about to see, and what they will know afterwards. Write
   it the way a good tutorial does. One idea per sentence.
-- The gist is NOT that narration. A section whose children are a title, a code
+- A heading is not that narration. A section whose children are a title, a code
   ref and a count expands to nothing a reader can read — they get the folded
   summary twice and no walk. Every stop carries its prose or it is not a stop.
 - Weave the code in at the point the narration needs it. Cite the exact lines
@@ -39,12 +39,6 @@ end of a section the reader should be able to predict why the next one exists.
 - Every order step must be reachable from a top-level section through section
   or order-step children. Prose, code refs, detached order steps, and empty
   sections do not constitute a Sequence result.
-- Give every section a one-line gist for its folded state, with honest counts
-  ("6 changes", "2 findings referenced"). The gist is what the reader sees when
-  they roll the section up, so it must summarize, not tease. Counts name
-  domain objects (steps, findings, decisions, requirements), never element
-  kinds — "1 prose · 2 code" tells the reader nothing; omit counts entirely
-  before writing that.
 
 ## What the walk leaves out
 
@@ -85,9 +79,6 @@ narrated. Never write prose about what is not on this board.
 
 - Every claim cites code (path plus a line range on one side of the change)
   or names its absence honestly.
-- Code is cited, never copied: to place code on the board, emit a code ref
-  (path + line span); the surface hydrates the real lines. Never type code
-  bytes into a board element.
 - Plain words. Concrete over abstract. No filler.
 - Structural headers (section titles, short labels) use title case; code
   tokens in a header keep their exact casing; a title that is a sentence (a

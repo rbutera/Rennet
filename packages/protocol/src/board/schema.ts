@@ -181,6 +181,7 @@ const findingData = withAuthor({
   status: z.enum(["open", "addressed", "dismissed"]),
 });
 const decisionData = withAuthor({
+  title: z.string().optional(),
   statement: z.string(),
   evidence: z.array(z.string()),
   alternatives: z.array(z.string()),
@@ -467,6 +468,11 @@ export const AUTHORED_BOARD_SCHEMA = defineSchema({
     },
   ),
   decision: authored("A design decision recovered from the change.", {
+    title: a(
+      "string",
+      false,
+      "A concise descriptive heading, separate from the decision statement.",
+    ),
     statement: a("string", true, "The decision, stated."),
     evidence: a("element", true, "code_ref elements evidencing it.", true),
     // PLAIN TEXT, not element ids (#864 fold-in). Every other reader already treats it
