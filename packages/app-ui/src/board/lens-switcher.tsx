@@ -8,7 +8,7 @@ import {
   type LucideIcon,
   VolumeX,
 } from "lucide-react";
-import { Fragment, useId } from "react";
+import { Fragment, useId, useLayoutEffect, useRef } from "react";
 import { useCoachAnchor } from "../coach/registry";
 import { Icon } from "../components/icon";
 import { ReviewActivity } from "../components/review-activity";
@@ -161,6 +161,10 @@ export function LensSwitcher({
   readonly generation?: string;
 }) {
   const waitingExplanationId = useId();
+  const selectedTab = useRef<HTMLButtonElement>(null);
+  useLayoutEffect(() => {
+    if (selected && selectedTab.current) revealTab(selectedTab.current);
+  }, [selected]);
   const viewed = useRennetStore((s) => s.viewedDelta.viewedDeltaSections);
   // The `lenses` coach mark anchors the switcher — registered inside the visible-guard so
   // the mark only elects when there is a switcher on screen (no lens boards ⇒ no anchor).
@@ -207,6 +211,8 @@ export function LensSwitcher({
         const tab = (
           <button
             type="button"
+            ref={active ? selectedTab : undefined}
+            onFocus={(event) => revealTab(event.currentTarget)}
             role="tab"
             aria-selected={active}
             aria-describedby={noiseWaiting ? waitingExplanationId : undefined}
@@ -306,4 +312,15 @@ function absenceAccessibleStatus(reason: NonNullable<LensBoardEntry["absence"]>)
     case "no-noise":
       return "every region is on another board";
   }
+}
+
+function revealTab(tab: HTMLButtonElement): void {
+  const scroller = tab.closest<HTMLElement>('[data-slot="lens-switcher"]');
+  if (!scroller) return;
+  const bounds = tab.getBoundingClientRect();
+  const viewport = scroller.getBoundingClientRect();
+  scroller.scrollLeft +=
+    bounds.left < viewport.left
+      ? bounds.left - viewport.left
+      : Math.max(0, bounds.right - viewport.right);
 }
