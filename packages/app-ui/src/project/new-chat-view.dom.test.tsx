@@ -246,11 +246,13 @@ function renderView(
   store = sessionStore(),
   priorSurface = { current: newChatPath() },
   coachStore?: CoachStore,
+  /** A `project.detail` that answers by state (slow merged pages, a failed read). */
+  detailHandler?: MemoryBridgeHandlers["project.detail"],
 ) {
   const history = memoryHistory(newChatPath(id, ask));
   const bridge = new MemoryBridge({
     "projects.list": () => ({ projects: [project("p1", "rennet"), project("p2", "whiteboard")] }),
-    "project.detail": (input) => details[input.projectId] ?? EMPTY_DETAIL,
+    "project.detail": detailHandler ?? ((input) => details[input.projectId] ?? EMPTY_DETAIL),
     ...store.handlers,
   } satisfies MemoryBridgeHandlers);
 
@@ -464,6 +466,47 @@ describe("NewChatView", () => {
     // Every row carries its project glyph.
     const row = screen.getByText("whiteboard").closest("[data-slot='command-item']");
     expect(row?.querySelector("svg")).not.toBeNull();
+  });
+
+  // The merged toggle is a second query with its own cache key. On GitHub the merged pages
+  // take ~2 s each, up to five, and the list used to replace every row with a scanning line
+  // for that long — which read as the toggle doing nothing. The open rows stay put and the
+  // list says what it is doing; the merged rows join when they land.
+  it("keeps the open rows on screen while the merged pages load, and says so", async () => {
+    let releaseMerged: () => void = () => undefined;
+    const merged = new Promise<void>((resolve) => {
+      releaseMerged = resolve;
+    });
+    renderView("p1", {}, undefined, undefined, undefined, undefined, async (input) => {
+      if (input.prStates?.includes("merged")) {
+        await merged;
+        return detailP1();
+      }
+      return { ...detailP1(), prs: detailP1().prs.filter((pr) => pr.state !== "merged") };
+    });
+    await screen.findByText("My open change");
+    fireEvent.click(screen.getByRole("switch", { name: "Show merged PRs" }));
+
+    // Still there, still clickable, and the wait is named rather than a blank scan.
+    expect(screen.getByText("My open change")).toBeTruthy();
+    expect(screen.getByRole("status").textContent).toContain("loading merged pull requests");
+    expect(screen.queryByText(/scanning this project/)).toBeNull();
+    expect(screen.queryByText("Old merged work")).toBeNull();
+
+    releaseMerged();
+    await screen.findByText("Old merged work");
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(screen.getByText("My open change")).toBeTruthy();
+  });
+
+  it("says when the read failed instead of calling the project empty", async () => {
+    renderView("p1", {}, undefined, undefined, undefined, undefined, () => {
+      throw new Error("GitHub is unreachable right now.");
+    });
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("GitHub is unreachable right now.");
+    expect(screen.getByText("nothing could be loaded")).toBeTruthy();
+    expect(screen.queryByText(/no open branches or change requests yet/)).toBeNull();
   });
 
   it("merged rows dim (read-only lift), single-repo drops the repo column", async () => {
