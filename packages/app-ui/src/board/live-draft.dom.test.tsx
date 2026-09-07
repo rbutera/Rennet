@@ -59,8 +59,11 @@ const section = (id: string, title: string, children: string[]): DraftElement =>
     data: { title, gist: `${title} — folded`, children },
   }) as unknown as DraftElement;
 
-const step = (id: string, title: string): DraftElement =>
-  ({ id, kind: "order_step", data: { title } }) as unknown as DraftElement;
+const step = (id: string, title: string): DraftElement => ({
+  id,
+  kind: "order_step",
+  data: { author: { kind: "lens-agent", id: "sequence" }, title, span: "code-1", children: [] },
+});
 
 const frame = (revision: number, update: LensDraftEvent["update"]): LensDraftEvent => ({
   generation: LIVE,
@@ -114,7 +117,9 @@ describe("a board written by the stream reaches the screen", () => {
     );
 
     // The board is empty and drafting, and says so — the placeholder, not a board.
-    await waitFor(() => expect(document.querySelector('[data-kind="board-ghost"]')).toBeTruthy());
+    await waitFor(() =>
+      expect(document.querySelector('[data-kind="board-in-progress"]')).toBeTruthy(),
+    );
     expect(document.querySelector("article[data-lens=sequence]")).toBeNull();
 
     // The lane opens its board, then one accepted call lands a section and a step.
@@ -143,13 +148,11 @@ describe("a board written by the stream reaches the screen", () => {
     // The fold line the SHARED projection derived — one step, counted as the daemon
     // counts it, which is the point of `projectBoardSections` living in the protocol.
     expect(document.querySelector('[data-kind="board-section"]')?.textContent).toContain("1 step");
-    // It is still drafting, so the three signals are still up and the delta marks are not.
+    // It is still drafting, so the heading's activity mark is up and the delta marks are
+    // not — and the retired chrome (the written counter, the placeholder row) stays gone.
     expect(document.querySelector('[data-kind="board-in-progress"]')).toBeTruthy();
-    expect(document.querySelector('[data-kind="board-ghost"]')).toBeTruthy();
-    // …and the widget counts what is on screen, not the durable read's nothing.
-    expect(document.querySelector('[data-testid="seat-written"]')?.textContent).toBe(
-      "2 elements written",
-    );
+    expect(document.querySelector('[data-testid="seat-written"]')).toBeNull();
+    expect(document.querySelector('[data-kind="board-ghost"]')).toBeNull();
   });
 
   it("keeps rendering the durable board once the lane closes", async () => {
@@ -160,7 +163,9 @@ describe("a board written by the stream reaches the screen", () => {
     mount(
       <RennetRouterApp bridge={bridge} history={memoryHistory("/s/sess-live?lens=sequence")} />,
     );
-    await waitFor(() => expect(document.querySelector('[data-kind="board-ghost"]')).toBeTruthy());
+    await waitFor(() =>
+      expect(document.querySelector('[data-kind="board-in-progress"]')).toBeTruthy(),
+    );
 
     bridge.emitLensDraft(REVIEW.id, frame(1, { kind: "opened", elements: [] }));
     bridge.emitLensDraft(

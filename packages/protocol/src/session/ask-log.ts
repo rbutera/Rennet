@@ -80,6 +80,7 @@ export const QuoteMessageSchema = z.object({
 export type QuoteMessage = z.infer<typeof QuoteMessageSchema>;
 
 const QuoteThreadBaseSchema = z.object({
+  codeRef: codeRefSchema.optional(),
   anchor: z.string(),
   kind: z.enum(["comment", "explain"]).optional(),
   messages: z.array(QuoteMessageSchema),

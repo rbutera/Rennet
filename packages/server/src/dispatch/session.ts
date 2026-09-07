@@ -6,6 +6,7 @@ import {
   type Review,
   ROUND_NO_REGEN,
   type RoundLedgerRecord,
+  type RoundOperation,
   type RoundRecord,
   type SessionModel,
   type SessionTrail,
@@ -96,8 +97,22 @@ function latestCompletedRoundNumber(records: readonly RoundRecord[]): number | u
 export function sidebarSessionOf(
   session: SessionModel,
   roundRecords: readonly RoundRecord[] = [],
+  operation?: Pick<RoundOperation, "operationId" | "state">,
 ): SidebarSession {
   const completedRoundNumber = latestCompletedRoundNumber(roundRecords);
+  const reviewActivity: SidebarSession["reviewActivity"] =
+    operation === undefined
+      ? undefined
+      : operation.state.phase === "failed"
+        ? {
+            status: "failed",
+            operationId: operation.operationId,
+            reason: operation.state.failure.reason,
+          }
+        : {
+            status: operation.state.phase === "completed" ? "complete" : "running",
+            operationId: operation.operationId,
+          };
   return {
     id: session.id,
     projectId: session.projectId,
@@ -119,6 +134,7 @@ export function sidebarSessionOf(
     // nothing has been captured for this session — honestly, there is no diff.
     ...(session.reviewId === undefined ? {} : { reviewId: session.reviewId }),
     ...(session.preparation === undefined ? {} : { preparation: session.preparation }),
+    ...(reviewActivity === undefined ? {} : { reviewActivity }),
     ...(completedRoundNumber === undefined
       ? {}
       : { subtitle: `Round ${completedRoundNumber} is back` }),

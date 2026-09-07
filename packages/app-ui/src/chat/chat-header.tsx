@@ -33,7 +33,7 @@ export function ChatHeader({
         corner ? "pl-0" : "pl-3",
         // The dock header drags the window on darwin: it holds only the corner slot
         // (which carries its own drag region and its one control opts out) and the
-        // presentational trail text, so the whole strip is a safe titlebar handle.
+        // trail, whose location control opts out of the drag region.
         mac && "app-region-drag",
       )}
     >

@@ -224,3 +224,115 @@ describe("ProseSelectionLayer — board-prose selection controls", () => {
     ).toBe(true);
   });
 });
+
+describe("code selections retain immutable range identity", () => {
+  const codeRef = {
+    patchsetId: "ps-reviewed",
+    path: "old-name.ts",
+    side: "base",
+    startLine: 9,
+    endLine: 10,
+  };
+  function codeLayer(sent: AnchoredAskInput[]) {
+    return mount(
+      <AnchoredAskProvider
+        value={async (input) => {
+          sent.push(input);
+        }}
+      >
+        <ProseSelectionLayer>
+          <div>
+            <span
+              data-code-patchset="ps-reviewed"
+              data-code-path="old-name.ts"
+              data-code-side="base"
+              data-code-line="9"
+            >
+              removed one
+            </span>
+            <span
+              data-code-patchset="ps-reviewed"
+              data-code-path="old-name.ts"
+              data-code-side="base"
+              data-code-line="10"
+            >
+              removed two
+            </span>
+          </div>
+        </ProseSelectionLayer>
+      </AnchoredAskProvider>,
+    );
+  }
+  function selectCode(view: ReturnType<typeof codeLayer>) {
+    const first = view.getByText("removed one");
+    const last = view.getByText("removed two");
+    const range = document.createRange();
+    range.setStart(first.firstChild ?? first, 0);
+    range.setEnd(last.firstChild ?? last, "removed two".length);
+    window.getSelection()?.removeAllRanges();
+    window.getSelection()?.addRange(range);
+    act(() => last.dispatchEvent(new MouseEvent("mouseup", { bubbles: true })));
+  }
+  it("Comment saves patchset, old path, base side and the whole selected range", async () => {
+    const view = codeLayer([]);
+    selectCode(view);
+    await view.user.click(view.getByText("Comment"));
+    await view.user.type(
+      view.getByPlaceholderText("Ask a question or leave a comment…"),
+      "Keep this",
+    );
+    await view.user.click(view.getByText("Save"));
+    expect(Object.values(reviewState().quoteThreads)[0]?.codeRef).toEqual(codeRef);
+  });
+  it("Explain sends the same immutable range and Request Changes stages it", async () => {
+    const sent: AnchoredAskInput[] = [];
+    const view = codeLayer(sent);
+    selectCode(view);
+    await view.user.click(view.getByText("Explain"));
+    expect(sent[0]?.codeRef).toEqual(codeRef);
+    selectCode(view);
+    await view.user.click(view.getByText("Request Changes"));
+    await view.user.type(
+      view.getByPlaceholderText("What change are you requesting?"),
+      "Restore these",
+    );
+    await view.user.click(view.getByText("Stage"));
+    expect(Object.values(reviewState().stagedAsks)[0]?.codeRef).toEqual(codeRef);
+  });
+});
+
+it("does not turn a cross-side code selection into a quote without provenance", () => {
+  const view = mount(
+    <ProseSelectionLayer>
+      <div>
+        <span
+          data-code-patchset="ps"
+          data-code-path="code.ts"
+          data-code-side="base"
+          data-code-line="1"
+        >
+          old
+        </span>
+        <span
+          data-code-patchset="ps"
+          data-code-path="code.ts"
+          data-code-side="head"
+          data-code-line="1"
+        >
+          new
+        </span>
+      </div>
+    </ProseSelectionLayer>,
+  );
+  const first = view.getByText("old");
+  const last = view.getByText("new");
+  const range = document.createRange();
+  range.setStart(first.firstChild ?? first, 0);
+  range.setEnd(last.firstChild ?? last, 3);
+  window.getSelection()?.removeAllRanges();
+  window.getSelection()?.addRange(range);
+  act(() => last.dispatchEvent(new MouseEvent("mouseup", { bubbles: true })));
+  expect(view.getByText("Select lines within one file and one side of the diff.")).toBeTruthy();
+  expect(view.queryByText("Comment")).toBeNull();
+  expect(Object.values(reviewState().quoteThreads)).toHaveLength(0);
+});

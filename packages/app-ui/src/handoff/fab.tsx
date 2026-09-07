@@ -1,8 +1,9 @@
 import { Button, cn } from "@rennet/ui";
-import { ArrowRight, PenLine } from "lucide-react";
+import { ArrowRight, Check, PenLine } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useCoachAnchor, useMergedRefs } from "../coach/registry";
 import { Icon } from "../components/icon";
+import { ReviewActivity } from "../components/review-activity";
 import { useRennetStore } from "../store";
 import { type EntryMode, modeHasExits } from "./handoff-data";
 import { selectExitPipCount } from "./selectors";
@@ -28,6 +29,8 @@ const COMPACT_BELOW_PX = 864;
 export interface ExitFabProps {
   /** The review's entry mode — drives the target-aware label; retrospective renders nothing. */
   readonly mode: EntryMode;
+  readonly reviewing?: boolean;
+  readonly ready?: boolean;
   /** Whether the hand-off view is open — the FAB YIELDS (shrink/fade/inert) while it is (R49). */
   readonly open: boolean;
   /** Toggle the hand-off view. */
@@ -97,7 +100,16 @@ function useExitFlight(fabRef: React.RefObject<HTMLButtonElement | null>) {
   }, [inFlight, land, fabRef]);
 }
 
-export function ExitFab({ mode, open, onToggle }: ExitFabProps) {
+export function ExitFab({ mode, open, onToggle, reviewing = false, ready = true }: ExitFabProps) {
+  const wasReviewing = useRef(reviewing);
+  const [justReady, setJustReady] = useState(false);
+  useEffect(() => {
+    if (wasReviewing.current && !reviewing && ready) setJustReady(true);
+    wasReviewing.current = reviewing;
+    if (reviewing) setJustReady(false);
+    const timer = setTimeout(() => setJustReady(false), 900);
+    return () => clearTimeout(timer);
+  }, [reviewing, ready]);
   const count = useRennetStore(selectExitPipCount);
   const landedTotal = useRennetStore((s) => s.signal.landed);
 
@@ -170,17 +182,32 @@ export function ExitFab({ mode, open, onToggle }: ExitFabProps) {
         ref={fabAnchorRef}
         variant="default"
         onClick={onToggle}
-        aria-label={accessibleName}
+        aria-label={
+          reviewing ? "Reviewing the change" : !ready ? "Review interrupted" : accessibleName
+        }
+        disabled={reviewing || !ready}
+        aria-busy={reviewing}
         aria-pressed={open}
         data-open={open || undefined}
         className={cn(
-          "pointer-events-auto absolute right-6 bottom-6 h-12 gap-2 rounded-full px-5 font-semibold shadow-lg transition-all duration-200 hover:bg-primary/90",
+          "pointer-events-auto absolute right-6 bottom-6 h-12 gap-2 rounded-full px-5 font-semibold shadow-lg transition-all duration-200 hover:bg-primary/90 disabled:opacity-100",
+          reviewing &&
+            "border border-primary/30 bg-primary/10 text-primary shadow-[0_0_20px_color-mix(in_oklab,var(--color-primary)_20%,transparent)]",
           open && "pointer-events-none scale-75 opacity-0",
         )}
       >
-        <Icon icon={glyph} className="size-4.5 shrink-0" />
-        {compact ? null : <span>{label}</span>}
-        {count > 0 && (
+        {reviewing ? (
+          <ReviewActivity className="size-8 text-current" />
+        ) : (
+          <Icon
+            icon={justReady ? Check : glyph}
+            className="size-4.5 shrink-0 motion-safe:animate-in motion-safe:zoom-in-50"
+          />
+        )}
+        {compact && !reviewing ? null : (
+          <span>{reviewing ? "Reviewing the change" : !ready ? "Review interrupted" : label}</span>
+        )}
+        {count > 0 && !reviewing && (
           <span
             ref={pipRef}
             data-pip="exit"

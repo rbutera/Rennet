@@ -1,3 +1,4 @@
+import type { CodeRef } from "@rennet/protocol";
 import type { ReactNode } from "react";
 import { createContext, useCallback, useContext } from "react";
 import { useMutation } from "../data";
@@ -12,6 +13,7 @@ import { useRennetStore } from "../store";
 
 export interface AnchoredAskInput {
   readonly threadId: string;
+  readonly codeRef?: CodeRef;
   readonly question: string;
   readonly excerpt: string;
   readonly target?: string;
@@ -34,12 +36,20 @@ export function useAnchoredAsk(): AnchoredAsk | null {
 const EXCERPT_CEILING = 600;
 
 /** The turn text: the question, then the span it was asked about, as one quoted line. */
-export function anchoredAskText(input: Pick<AnchoredAskInput, "question" | "excerpt">): string {
+export function anchoredAskText(
+  input: Pick<AnchoredAskInput, "question" | "excerpt" | "codeRef">,
+): string {
   const excerpt =
     input.excerpt.length > EXCERPT_CEILING
       ? `${input.excerpt.slice(0, EXCERPT_CEILING)}… (truncated)`
       : input.excerpt;
-  return excerpt === "" ? input.question : `${input.question}\n\nAbout this: ${excerpt}`;
+  const identity = input.codeRef === undefined ? "" : JSON.stringify(input.codeRef);
+  const boundedIdentity =
+    identity.length > 2048 ? `${identity.slice(0, 2048)}… (truncated)` : identity;
+  const reference = boundedIdentity ? `\n\nCode reference: ${boundedIdentity}` : "";
+  return (
+    (excerpt === "" ? input.question : `${input.question}\n\nAbout this: ${excerpt}`) + reference
+  );
 }
 
 /**
@@ -72,7 +82,7 @@ export function ReviewAnchoredAskProvider({
   const setQuoteAskFailure = useRennetStore((state) => state.reviewActions.setQuoteAskFailure);
 
   const ask = useCallback<AnchoredAsk>(
-    async ({ threadId, question, excerpt }) => {
+    async ({ threadId, question, excerpt, codeRef }) => {
       // Open the dock FIRST: the answer arrives in T3's view, so a reviewer who asked and
       // saw nothing open would think the ask was dropped.
       setChatOpen(true);
@@ -82,7 +92,7 @@ export function ReviewAnchoredAskProvider({
       try {
         const result = await send.mutate({
           reviewId,
-          text: anchoredAskText({ question, excerpt }),
+          text: anchoredAskText({ question, excerpt, codeRef }),
         });
         // A SETTLED ABSENCE, not a rejection: the daemon reached a verdict and it was "this
         // did not go out" (#872's shape, extended to the send in #888). The reason is the

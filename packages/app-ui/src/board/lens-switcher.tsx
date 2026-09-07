@@ -1,5 +1,5 @@
 import type { LensKind } from "@rennet/protocol";
-import { cn } from "@rennet/ui";
+import { cn, Tooltip, TooltipContent, TooltipTrigger } from "@rennet/ui";
 import {
   DraftingCompass,
   Flag,
@@ -8,10 +8,13 @@ import {
   type LucideIcon,
   VolumeX,
 } from "lucide-react";
+import { Fragment, useId, useLayoutEffect, useRef } from "react";
 import { useCoachAnchor } from "../coach/registry";
 import { Icon } from "../components/icon";
+import { ReviewActivity } from "../components/review-activity";
 import { useRennetStore } from "../store";
 import type { LensBoardEntry } from "./board-data";
+import { LensActivity } from "./lens-activity";
 import { lensSlot, lensTint } from "./lens-colour";
 import { LENS_LABEL, type SeatCut, type SeatRegister, waitingOnLine } from "./lens-seats";
 import { deltaKey } from "./viewed-delta";
@@ -128,11 +131,11 @@ function SeatIndicators({
   return (
     <span data-testid="lens-working" data-voices={voices} className="flex shrink-0 items-center">
       {Array.from({ length: Math.max(1, voices) }, (_, index) => (
-        <span
+        <ReviewActivity
           // biome-ignore lint/suspicious/noArrayIndexKey: the voices are positional marks with no identity of their own beyond their count.
           key={index}
-          aria-hidden="true"
-          className="-ml-0.5 first:ml-0 size-1.5 rounded-full border border-lens animate-processing-pulse motion-reduce:animate-none"
+          className="size-3 text-lens"
+          label="Reviewing this lens"
         />
       ))}
     </span>
@@ -145,6 +148,8 @@ export function LensSwitcher({
   onSelect,
   flaggedOpenCount = 0,
   className,
+  reviewId = "",
+  generation = "",
 }: {
   readonly lenses: readonly LensBoardEntry[];
   readonly selected: LensKind | null;
@@ -152,7 +157,14 @@ export function LensSwitcher({
   /** Open findings derived from immutable board bytes plus durable reviewer actions. */
   readonly flaggedOpenCount?: number;
   readonly className?: string;
+  readonly reviewId?: string;
+  readonly generation?: string;
 }) {
+  const waitingExplanationId = useId();
+  const selectedTab = useRef<HTMLButtonElement>(null);
+  useLayoutEffect(() => {
+    if (selected && selectedTab.current) revealTab(selectedTab.current);
+  }, [selected]);
   const viewed = useRennetStore((s) => s.viewedDelta.viewedDeltaSections);
   // The `lenses` coach mark anchors the switcher — registered inside the visible-guard so
   // the mark only elects when there is a switcher on screen (no lens boards ⇒ no anchor).
@@ -195,17 +207,28 @@ export function LensSwitcher({
                       ? ", changed this round"
                       : "";
         const active = lens === selected;
-        return (
+        const noiseWaiting = lens === "noise" && seat.waitingOn.length > 0;
+        const tab = (
           <button
-            key={lens}
             type="button"
+            ref={active ? selectedTab : undefined}
+            onFocus={(event) => revealTab(event.currentTarget)}
             role="tab"
             aria-selected={active}
+            aria-describedby={noiseWaiting ? waitingExplanationId : undefined}
+            aria-disabled={lens === "noise" && seat.waitingOn.length > 0}
+            aria-description={
+              lens === "noise" && seat.waitingOn.length > 0
+                ? "Noise reviews what remains once the other lenses have finished."
+                : undefined
+            }
             aria-label={`${LENS_LABEL[lens]}${accessibleStatus}`}
             title={
-              seat.register === "waiting" && waiting
-                ? `${LENS_LABEL[lens]} — ${waiting}`
-                : LENS_LABEL[lens]
+              noiseWaiting
+                ? undefined
+                : seat.register === "waiting" && waiting
+                  ? `${LENS_LABEL[lens]} — ${waiting}`
+                  : LENS_LABEL[lens]
             }
             data-lens={lens}
             data-lens-slot={lensSlot(lens)}
@@ -213,7 +236,9 @@ export function LensSwitcher({
             data-failed={failure === undefined ? undefined : "true"}
             data-absent={absence === undefined ? undefined : absence}
             {...(seat.waitingOn.length > 0 ? { "data-waiting-on": seat.waitingOn.join(",") } : {})}
-            onClick={() => onSelect(lens)}
+            onClick={() => {
+              if (lens !== "noise" || seat.waitingOn.length === 0) onSelect(lens);
+            }}
             className={cn(
               // The tab binds its lens's hue for its own subtree; the stop and the
               // active glyph below paint in it without naming a lens.
@@ -244,9 +269,30 @@ export function LensSwitcher({
                 />
               ) : null}
             </span>
-            <span className="hidden @[46rem]:inline">{LENS_LABEL[lens]}</span>
-            <SeatIndicators register={seat.register} voices={seat.voices.length} />
+            <span>{LENS_LABEL[lens]}</span>
+            {lens === "noise" && seat.waitingOn.length > 0 ? (
+              <ReviewActivity label="Waiting for other lenses" className="size-3 text-lens" />
+            ) : (
+              <SeatIndicators register={seat.register} voices={seat.voices.length} />
+            )}
           </button>
+        );
+        return (
+          <Fragment key={lens}>
+            {noiseWaiting ? (
+              <Tooltip>
+                <TooltipTrigger render={tab} />
+                <TooltipContent id={waitingExplanationId} role="tooltip" side="bottom">
+                  Noise reviews what remains once the other lenses have finished.
+                </TooltipContent>
+              </Tooltip>
+            ) : (
+              tab
+            )}
+            {active && seat.seated ? (
+              <LensActivity reviewId={reviewId} generation={generation} entry={{ lens, seat }} />
+            ) : null}
+          </Fragment>
         );
       })}
     </div>
@@ -266,4 +312,15 @@ function absenceAccessibleStatus(reason: NonNullable<LensBoardEntry["absence"]>)
     case "no-noise":
       return "every region is on another board";
   }
+}
+
+function revealTab(tab: HTMLButtonElement): void {
+  const scroller = tab.closest<HTMLElement>('[data-slot="lens-switcher"]');
+  if (!scroller) return;
+  const bounds = tab.getBoundingClientRect();
+  const viewport = scroller.getBoundingClientRect();
+  scroller.scrollLeft +=
+    bounds.left < viewport.left
+      ? Math.floor(bounds.left - viewport.left)
+      : Math.max(0, Math.ceil(bounds.right - viewport.right));
 }

@@ -76,9 +76,6 @@ narrated. Never write prose about what is not on this board.
 
 - Every claim cites code (path plus a line range on one side of the change)
   or names its absence honestly.
-- Code is cited, never copied: to place code on the board, emit a code ref
-  (path + line span); the surface hydrates the real lines. Never type code
-  bytes into a board element.
 - Plain words. Concrete over abstract. No filler.
 - Structural headers (section titles, short labels) use title case; code
   tokens in a header keep their exact casing; a title that is a sentence (a

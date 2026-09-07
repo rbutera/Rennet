@@ -34,6 +34,9 @@ failure; it never turns hidden material into no-decisions.
 
 Each decision block carries:
 
+- **Title** — a short heading naming the choice. The statement, why,
+  alternatives and evidence sit beneath it, never inside it.
+
 - **Statement** — the call that was made, one sentence, concrete.
 - **Why** — the reasoning, reconstructed from evidence: the code itself,
   commit messages, PR description, spec design documents, comments. When the
@@ -51,7 +54,6 @@ Each decision block carries:
   header only when no code carries the decision at all.
 
 Group decisions into sections by theme when there are more than a handful.
-Give each section a one-line folded gist with counts.
 
 ## What not to do
 
@@ -85,9 +87,6 @@ narrated. Never write prose about what is not on this board.
 
 - Every claim cites code (path plus a line range on one side of the change)
   or names its absence honestly.
-- Code is cited, never copied: to place code on the board, emit a code ref
-  (path + line span); the surface hydrates the real lines. Never type code
-  bytes into a board element.
 - Plain words. Concrete over abstract. No filler.
 - Structural headers (section titles, short labels) use title case; code
   tokens in a header keep their exact casing; a title that is a sentence (a

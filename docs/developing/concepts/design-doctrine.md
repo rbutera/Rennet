@@ -43,7 +43,7 @@ shape, or position.
 
 The lens register is the one hue family that is not a semantic role. Five lenses
 read one change in parallel, and a reviewer tracks them across two surfaces — the
-lens rail and the seat widget above the board it selects — so each lens carries a
+lens rail and its activity popover — so each lens carries a
 colour: Flagged red, Decisions yellow, Design blue, Sequence green, Noise neutral.
 It is admitted as identity, at small mass, on marks only. A lens hue is never a
 fill, never type, and never says how a lane is doing: state is the way the rail's

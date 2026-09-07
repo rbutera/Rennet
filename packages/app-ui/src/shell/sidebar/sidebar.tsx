@@ -29,6 +29,9 @@ import {
   PopoverTitle,
   PopoverTrigger,
   Spinner,
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
   toast,
 } from "@rennet/ui";
 import {
@@ -50,13 +53,13 @@ import {
   Settings2,
   Trash2,
 } from "lucide-react";
-import { type ReactElement, type ReactNode, useEffect, useRef, useState } from "react";
+import { type ReactElement, type ReactNode, useEffect, useId, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { useCoachOptional } from "../../coach/context";
 import { useCoachAnchor } from "../../coach/registry";
 import { Icon } from "../../components/icon";
 import { useUpdateReady } from "../../components/update-ready";
-import { useBridge, useCommand } from "../../data";
+import { useBridge, useCommand, useRefreshCommand } from "../../data";
 import {
   archivedPath,
   newChatPath,
@@ -68,6 +71,7 @@ import { ProjectMark } from "../../settings/assets/project-mark";
 import { projectMarkFor, useSettingsProjection } from "../../settings/data/projections";
 import { useRennetStore } from "../../store";
 import { CornerSlot, useMacTrafficLights } from "../corner-slot";
+import { useReviewActivityState } from "../review-activity-state";
 import {
   type SidebarProject,
   type SidebarSession,
@@ -77,6 +81,7 @@ import {
   useSidebarTree,
 } from "../sidebar-data";
 import { RennetLockup } from "./lockup";
+import { SidebarReviewActivity } from "./review-activity";
 import { TargetIcon } from "./target-icon";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -299,6 +304,17 @@ function SessionRow({
   readonly onOpen: () => void;
   readonly onArchive: () => void;
 }) {
+  const activityDescriptionId = useId();
+  const [activityOpen, setActivityOpen] = useState(false);
+  const activity = useReviewActivityState((state) => state.bySession[session.id]);
+  const activityLabel =
+    activity?.kind === "running"
+      ? "Reviewing the change"
+      : activity?.kind === "failed"
+        ? activity.reason
+        : activity?.kind === "complete"
+          ? "Review ready"
+          : undefined;
   const projection = useSidebarSessionProjection();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
@@ -348,59 +364,74 @@ function SessionRow({
   return (
     <ContextMenu>
       <ContextMenuTrigger render={<div className="flex flex-col" />}>
-        <button
-          type="button"
-          onClick={onOpen}
-          aria-current={active}
-          className={cn(
-            "flex min-h-8 w-full flex-col justify-center gap-0.5 rounded-chip px-2 py-1 text-left transition-colors hover:bg-raised",
-            active && "bg-raised",
-          )}
-        >
-          <span className="flex items-center gap-1.5">
-            {/* The leading icon is always the target KIND (accent when needs-you);
+        <Tooltip open={activityOpen && activityLabel !== undefined} onOpenChange={setActivityOpen}>
+          <TooltipTrigger
+            render={
+              <button
+                type="button"
+                onClick={onOpen}
+                onFocus={() => setActivityOpen(true)}
+                onBlur={() => setActivityOpen(false)}
+                aria-describedby={activityOpen && activityLabel ? activityDescriptionId : undefined}
+                aria-current={active}
+                className={cn(
+                  "flex min-h-8 w-full flex-col justify-center gap-0.5 rounded-chip px-2 py-1 text-left transition-colors hover:bg-raised",
+                  active && "bg-raised",
+                )}
+              />
+            }
+          >
+            <span className="flex items-center gap-1.5">
+              {/* The leading icon is always the target KIND (accent when needs-you);
                 reviewed is a separate green tick beside the title, not a recolor (R36). */}
-            <TargetIcon
-              kind={session.target}
-              state={session.targetState === "reviewed" ? undefined : session.targetState}
-              className="size-3"
-            />
-            <span
-              className={cn(
-                "truncate text-13 leading-tight",
-                active ? "text-ink" : "text-foreground/80",
-              )}
-            >
-              {session.title}
-            </span>
-            {session.targetState === "reviewed" ? (
-              <Icon
-                icon={Check}
-                aria-label="Reviewed"
-                aria-hidden={false}
-                className="size-3 shrink-0 text-green"
+              <TargetIcon
+                kind={session.target}
+                state={session.targetState === "reviewed" ? undefined : session.targetState}
+                className="size-3"
               />
-            ) : null}
-            {session.pinned ? (
-              <Icon
-                icon={Pin}
-                aria-label="Pinned"
-                aria-hidden={false}
-                className="size-2.5 shrink-0 text-muted-foreground/60"
-              />
-            ) : null}
-            {/* Unread orchestrator activity — verdigris, the machine's register. The
-                ACTIVE row never shows it: being there means it has been read. */}
-            {session.unread && !active ? (
               <span
-                role="img"
-                className="size-1.5 shrink-0 rounded-full bg-model"
-                aria-label="Unread updates"
-              />
-            ) : null}
-          </span>
-          <span className="pl-[18px] text-2xs text-muted-foreground">{sublabel}</span>
-        </button>
+                className={cn(
+                  "truncate text-13 leading-tight",
+                  active ? "text-ink" : "text-foreground/80",
+                )}
+              >
+                {session.title}
+              </span>
+              <SidebarReviewActivity sessionId={session.id} active={active} />
+              {session.targetState === "reviewed" ? (
+                <Icon
+                  icon={Check}
+                  aria-label="Reviewed"
+                  aria-hidden={false}
+                  className="size-3 shrink-0 text-green"
+                />
+              ) : null}
+              {session.pinned ? (
+                <Icon
+                  icon={Pin}
+                  aria-label="Pinned"
+                  aria-hidden={false}
+                  className="size-2.5 shrink-0 text-muted-foreground/60"
+                />
+              ) : null}
+              {/* Unread orchestrator activity — verdigris, the machine's register. The
+                ACTIVE row never shows it: being there means it has been read. */}
+              {session.unread && !active ? (
+                <span
+                  role="img"
+                  className="size-1.5 shrink-0 rounded-full bg-model"
+                  aria-label="Unread updates"
+                />
+              ) : null}
+            </span>
+            <span className="pl-[18px] text-2xs text-muted-foreground">{sublabel}</span>
+          </TooltipTrigger>
+          {activityLabel && (
+            <TooltipContent id={activityDescriptionId} role="tooltip" side="right">
+              {activityLabel}
+            </TooltipContent>
+          )}
+        </Tooltip>
       </ContextMenuTrigger>
       <ContextMenuContent>
         <ContextMenuItem onClick={() => projection.setSessionPinned(session.id, !session.pinned)}>
@@ -829,6 +860,31 @@ function SidebarFooter() {
 }
 
 export function Sidebar() {
+  const { activeSlug } = useActiveRoute();
+  const activeActivity = useReviewActivityState((s) =>
+    activeSlug ? s.bySession[activeSlug] : undefined,
+  );
+  const acknowledge = useReviewActivityState((s) => s.acknowledge);
+  useEffect(() => {
+    if (activeSlug && activeActivity?.kind === "complete") acknowledge(activeSlug);
+  }, [activeSlug, activeActivity, acknowledge]);
+  const refreshSessions = useRefreshCommand("session.list");
+  const reviewing = useReviewActivityState((s) =>
+    Object.values(s.bySession).some((state) => state.kind === "running"),
+  );
+  // biome-ignore lint/correctness/useExhaustiveDependencies: navigation refreshes a round started just before leaving its route.
+  useEffect(() => {
+    const refresh = () => {
+      if (!document.hidden) refreshSessions();
+    };
+    refresh();
+    const timer = setInterval(refresh, reviewing ? 1500 : 5000);
+    if (reviewing) document.addEventListener("visibilitychange", refresh);
+    return () => {
+      clearInterval(timer);
+      if (reviewing) document.removeEventListener("visibilitychange", refresh);
+    };
+  }, [reviewing, refreshSessions, activeSlug]);
   const mac = useMacTrafficLights();
   const open = useRennetStore((s) => s.ui.sidebarOpen);
   const asideRef = useRef<HTMLElement>(null);

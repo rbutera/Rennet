@@ -130,8 +130,7 @@ describe("session top-bar (C03 §4)", () => {
       );
       expect(tab?.getAttribute("title")).toBe(label);
       expect(tab?.querySelector("svg")).toBeTruthy();
-      expect(visibleLabel?.className).toContain("hidden");
-      expect(visibleLabel?.className).toContain("@[46rem]:inline");
+      expect(visibleLabel?.className).not.toContain("hidden");
     }
     expect(flagged.getAttribute("aria-selected")).toBe("true");
 

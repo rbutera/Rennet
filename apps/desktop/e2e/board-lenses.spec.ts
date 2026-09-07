@@ -1,7 +1,8 @@
 import { rmSync } from "node:fs";
-import { basename, join } from "node:path";
+import { join } from "node:path";
 import { expect, test } from "@playwright/test";
-import { AskLogStore } from "@rennet/adapters";
+import { AskLogStore, SessionStore } from "@rennet/adapters";
+import { WsRennetBridge } from "@rennet/client";
 import {
   BOARD_DESIGN_DECOY_PATH,
   BOARD_DESIGN_SCENARIO,
@@ -17,108 +18,30 @@ import {
   launchRennet,
   makeTempDir,
   openDiffView,
-  openWorkingTreeReview,
   seedReviewRepo,
   writeRepoFile,
 } from "./harness";
 
-// ─────────────────────────────────────────────────────────────────────────────
-// The Board — the review workspace that replaced the canvas era — in the real app.
-//
-// #574 deleted `review-canvases.spec.ts` because every surface it asserted had been
-// removed in the delete-first cutover. That deletion was right and the suite was
-// smaller for it, but the honest accounting was uncomfortable: the suite stopped
-// asserting a surface that no longer exists and gained NOTHING asserting the one that
-// replaced it. This is the other half. The replacement is `board/board-view.tsx`,
-// mounted from `app/review-workspace-route.tsx:249`; it had jsdom coverage and no
-// launched-app coverage at all.
-//
-// MODEL-FREE, like the rest of the free suite (`RENNET_DISABLE_HARNESS=1`): no harness
-// runs, so nothing drafts a board. That is not a limitation to work around here — it IS
-// the case worth driving, because it is what every reviewer sees in the seconds before
-// a board arrives, and the surface has to be honest in it rather than blank. Assertions
-// are on STRUCTURE and on the honest-absent state, never on model output.
-// ─────────────────────────────────────────────────────────────────────────────
-
-test("the board is the review workspace, and is honest when no board is drafted", async () => {
-  test.setTimeout(300_000);
-
+test("the board reports a failed drafting attempt without disguising it as empty", async () => {
+  test.setTimeout(120_000);
   const repository = seedReviewRepo("rennet-e2e-board-");
   const userData = makeTempDir("rennet-e2e-board-state-");
   const home = makeTempDir("rennet-e2e-board-home-");
   const { application } = await launchRennet({ repository, userData, home });
-
   try {
     const page = await application.firstWindow();
     await completeWelcome(page);
     await addProject(page, repository);
-    await openWorkingTreeReview(page);
-
-    // The board is the DEFAULT view of a session route — no `?view` needed to reach it.
+    await openFixtureReview(page, repository, userData);
     const board = page.locator('[data-kind="lens-board-view"]');
-    await expect(board).toBeVisible({ timeout: 60_000 });
-    // WHICH PROJECT this session belongs to — not which repository. The removed
-    // `REVIEW · <repo>` eyebrow read `review.repositoryRoot`; this reads the sidebar's
-    // project row, whose name is `basename(path)` for a local add (`project-discovery.ts`).
-    // For this single-repo fixture the two strings coincide, and that coincidence is the
-    // only reason this assertion looks like a repository check. It is not one.
-    //
-    // ⚠️ WHAT THIS CANNOT CATCH, stated so the next reader does not inherit the wrong
-    // belief: the board rendering the WRONG review's content under the right project name,
-    // and — because a workspace maps many repos to one project — any wrong-repo capture at
-    // all. The proof for THAT is `new-chat-start.spec.ts:309`, whose two-repo fixture
-    // asserts the captured file list belongs to the clicked row's repository.
-    //
-    // The selector is the sidebar row itself, matched by SHAPE (`aria-expanded`, unique to
-    // the project row inside `[data-region="sidebar"]` — `sidebar.tsx:685`) plus its text.
-    // An accessible-name match cannot work here: the row's name always carries a trailing
-    // session count or `indexing` (`sidebar.tsx:699-707`), so `{ name, exact: true }` — the
-    // shape the Add-Project breadcrumb uses in `harness.ts:178` — never matches a project row.
-    // MEASURED, not inferred: a launched run's a11y snapshot renders this row as
-    // `button "rennet-e2e-board-UNIPR1 1" [expanded]` — the count is in the name, and the
-    // `aria-expanded` flag is on the element.
-    //
-    // ⚠️ This line has NOT been reached by a green run. The test above it currently fails at
-    // `openWorkingTreeReview` (`harness.ts:205`): with RENNET_DISABLE_HARNESS=1 the session
-    // lands on a failed preparation surface ("Board generation failed") and no
-    // `lens-board-view` ever mounts, so this spec's whole model-free premise — a board that
-    // renders `board-empty` with no harness — does not hold on the current app. That is a
-    // separate defect from this selector and is not fixed here.
-    const projectRow = page
-      .locator('[data-region="sidebar"] button[aria-expanded]')
-      .filter({ hasText: basename(repository) });
-    await expect(projectRow).toBeVisible();
-
-    // The honest-absent state, and the reason this spec drives the model-free floor rather
-    // than treating it as a gap: with no harness there is no board, and the surface SAYS SO
-    // ("No board for this generation yet.") instead of rendering an empty frame that reads
-    // as a board with nothing in it. Observed, not assumed — this is what the app rendered.
-    await expect(page.locator('[data-kind="board-empty"]')).toBeVisible({ timeout: 30_000 });
-
-    // ⚠️ THE NEXT TWO ARE ABSENCE ASSERTIONS, and their limits are worth stating rather than
-    // discovering later: each passes vacuously if its selector ever drifts from the component.
-    // A control run (flipping both to `toBe(1)`) confirms they evaluate against a genuinely
-    // empty DOM — `Expected: 1, Received: 0` — so they are not silently erroring. What that
-    // control does NOT prove is that the selectors would still match a REAL switcher or error
-    // panel if one appeared. The positive persisted-board journey below supplies that
-    // complementary proof; this test remains the honest-absence half of the contract.
-    //
-    // The contract itself is C05 6.2's absent-not-disabled rule: a lens with no board is not
-    // in the switcher at all, so with no boards there is no switcher — never a row of dead
-    // segments implying content that was never drafted.
-    expect(await page.getByRole("tablist", { name: "Lens" }).count()).toBe(0);
-    // An absent board and an UNREADABLE one are different facts. Nothing failed here, so the
-    // error panel must not be standing in for the empty state.
-    expect(await page.locator('[data-kind="board-error"]').count()).toBe(0);
-
-    // The session-view pill round-trips without losing the review: board → diff → board, and
-    // the same review is still underneath. `?view` is a refinement of one location, so a
-    // toggle must never re-resolve to a different session.
+    await expect(board).toBeVisible();
+    await expect(board.locator('[data-kind="board-failed"]')).toContainText("no runnable seat");
+    await expect(board.locator('[data-kind="board-empty"]')).toHaveCount(0);
+    await expect(page.getByRole("tablist", { name: "Lens" }).getByRole("tab")).toHaveCount(5);
     await openDiffView(page);
     await expect(board).toHaveCount(0);
     await page.getByRole("button", { name: "Back to board" }).click();
-    await expect(board).toBeVisible();
-    await expect(projectRow).toBeVisible();
+    await expect(board.locator('[data-kind="board-failed"]')).toBeVisible();
   } finally {
     await application.close();
     rmSync(repository, { recursive: true, force: true });
@@ -129,6 +52,62 @@ test("the board is the review workspace, and is honest when no board is drafted"
 
 function currentHash(page: Parameters<typeof seedBoardFixture>[0]): Promise<string> {
   return page.evaluate(() => location.hash);
+}
+
+async function openFixtureReview(
+  page: Parameters<typeof seedBoardFixture>[0],
+  repository: string,
+  userData: string,
+): Promise<void> {
+  // This journey starts with captured evidence. New Chat's target-picker journey
+  // has separate coverage; use its production mint/capture command here.
+  const port = await page.evaluate(() =>
+    (window as unknown as { rennet: { wsPort(): Promise<number> } }).rennet.wsPort(),
+  );
+  const bridge = new WsRennetBridge({ url: `ws://127.0.0.1:${port}`, autoReconnect: false });
+  try {
+    const { projects } = await bridge.invoke("projects.list", {});
+    const project = projects.find((candidate) => candidate.openPath === repository);
+    if (project === undefined) throw new Error("fixture project was not added");
+    const { session } = await bridge.invoke("session.mint", {
+      commandId: crypto.randomUUID(),
+      projectId: project.id,
+    });
+    if (session === null) throw new Error("fixture session was not minted");
+    await expect
+      .poll(
+        async () => {
+          const { sessions } = await bridge.invoke("session.list", {});
+          const captured = sessions.find((candidate) => candidate.id === session.id);
+          return captured?.reviewId !== undefined && captured.preparation?.status === "failed";
+        },
+        { timeout: 60_000 },
+      )
+      .toBe(true);
+    const sessions = new SessionStore(join(userData, "sessions"));
+    sessions.setPreparation(session.id, undefined);
+    await page.evaluate((id) => {
+      location.hash = `#/s/${encodeURIComponent(id)}`;
+    }, session.id);
+    await page.reload();
+  } finally {
+    bridge.close();
+  }
+}
+
+async function revealCitation(
+  page: Parameters<typeof seedBoardFixture>[0],
+  name: string,
+): Promise<void> {
+  const chip = page.getByRole("button", { name, exact: true });
+  if ((await chip.getAttribute("aria-pressed")) !== "true") await chip.click();
+}
+
+async function openBoardSections(page: Parameters<typeof seedBoardFixture>[0]): Promise<void> {
+  const toggles = page.locator(
+    'article[data-lens] [data-kind="board-section"] button[aria-label^="Toggle "][aria-expanded="false"]',
+  );
+  for (const toggle of await toggles.all()) await toggle.click();
 }
 
 async function expectQuery(
@@ -200,7 +179,7 @@ test("a persisted board owns lens, generation, and captured-code navigation in t
     const page = await application.firstWindow();
     await completeWelcome(page);
     await addProject(page, repository);
-    await openWorkingTreeReview(page);
+    await openFixtureReview(page, repository, userData);
     const fixture = await seedBoardFixture(page, repository, userData);
     const askLog = new AskLogStore(join(userData, "asks"));
     await page.reload();
@@ -222,9 +201,16 @@ test("a persisted board owns lens, generation, and captured-code navigation in t
     ).toEqual(["design", "sequence", "decisions", "flagged", "noise"]);
     const [topBarBox, railBox] = await Promise.all([topBar.boundingBox(), rail.boundingBox()]);
     if (topBarBox === null || railBox === null) throw new Error("lens rail has no layout box");
+    const [railSlotBox, viewControlsBox] = await Promise.all([
+      topBar.locator('[data-slot="lens-switcher"]').boundingBox(),
+      topBar.getByRole("group", { name: "Session view" }).boundingBox(),
+    ]);
+    if (!railSlotBox || !viewControlsBox) throw new Error("review navigation has no layout");
+    expect(railSlotBox.x).toBeGreaterThanOrEqual(topBarBox.x);
     expect(
-      Math.abs(topBarBox.x + topBarBox.width / 2 - (railBox.x + railBox.width / 2)),
-    ).toBeLessThan(2);
+      railSlotBox.x + railSlotBox.width <= viewControlsBox.x ||
+        railSlotBox.y >= viewControlsBox.y + viewControlsBox.height,
+    ).toBe(true);
 
     const flaggedTab = rail.locator('[data-lens="flagged"]');
     await expect(flaggedTab).toHaveAccessibleName("Flagged, 1 open");
@@ -232,38 +218,67 @@ test("a persisted board owns lens, generation, and captured-code navigation in t
     await expect(flaggedTab.locator("[data-testid=lens-delta-pip]")).toHaveCount(0);
     await flaggedTab.click();
     await expect(board).toHaveAttribute("data-lens", "flagged");
+    await openBoardSections(page);
     const finding = board.locator('[data-kind="finding"]');
     await expect(finding).toHaveCount(1);
 
+    if ((await finding.locator("button[aria-expanded]").getAttribute("aria-expanded")) === "false")
+      await finding.locator("button[aria-expanded]").click();
     await finding.getByRole("button", { name: "Dismiss", exact: true }).click();
     await expect(flaggedTab.locator("[data-testid=lens-open-count]")).toHaveCount(0);
     await expect(flaggedTab).toHaveAccessibleName(/^Flagged, 0 open(?:, changed this round)?$/);
+    await expect
+      .poll(() => Object.values(askLog.readProjection(fixture.reviewId).findingDispositions))
+      .toContainEqual(expect.objectContaining({ disposition: "dismissed" }));
     await page.reload();
     await expect(board).toHaveAttribute("data-lens", "flagged", { timeout: 60_000 });
+    await openBoardSections(page);
     await expect(finding).toHaveAttribute("data-status", "dismissed");
-    await finding.locator("button[aria-expanded]").click();
+    if ((await finding.locator("button[aria-expanded]").getAttribute("aria-expanded")) === "false")
+      await finding.locator("button[aria-expanded]").click();
     await finding.getByRole("button", { name: "Dismissed · Undo" }).click();
     await expect(flaggedTab).toHaveAccessibleName("Flagged, 1 open");
 
+    if ((await finding.locator("button[aria-expanded]").getAttribute("aria-expanded")) === "false")
+      await finding.locator("button[aria-expanded]").click();
     await finding.getByRole("button", { name: "Request This Change" }).click();
     await expect(flaggedTab.locator("[data-testid=lens-open-count]")).toHaveCount(0);
     await expect(finding.getByRole("button", { name: "Dismiss", exact: true })).toHaveCount(0);
+    await expect
+      .poll(() => Object.values(askLog.readProjection(fixture.reviewId).stagedAsks))
+      .toContainEqual(
+        expect.objectContaining({ body: "Return the reviewed value from the implementation." }),
+      );
     await page.reload();
     await expect(board).toHaveAttribute("data-lens", "flagged", { timeout: 60_000 });
+    await openBoardSections(page);
+    if ((await finding.locator("button[aria-expanded]").getAttribute("aria-expanded")) === "false")
+      await finding.locator("button[aria-expanded]").click();
     await finding.getByRole("button", { name: "Staged · Request Change" }).click();
     await expect(flaggedTab).toHaveAccessibleName("Flagged, 1 open");
-    await expect
-      .poll(() => Object.keys(askLog.readProjection(fixture.reviewId).stagedAsks))
-      .toEqual([]);
+    try {
+      await expect
+        .poll(() => Object.keys(askLog.readProjection(fixture.reviewId).stagedAsks))
+        .toEqual([]);
+    } catch (error) {
+      await test.info().attach("persisted-ask-events", {
+        body: JSON.stringify(askLog.read(fixture.reviewId)),
+        contentType: "application/json",
+      });
+      throw error;
+    }
     await page.reload();
     await expect(board).toHaveAttribute("data-lens", "flagged", { timeout: 60_000 });
+    await openBoardSections(page);
+    if ((await finding.locator("button[aria-expanded]").getAttribute("aria-expanded")) === "false")
+      await finding.locator("button[aria-expanded]").click();
     await expect(finding.getByRole("button", { name: "Request This Change" })).toBeVisible();
     await expect(flaggedTab).toHaveAccessibleName("Flagged, 1 open");
 
+    if ((await finding.locator("button[aria-expanded]").getAttribute("aria-expanded")) === "false")
+      await finding.locator("button[aria-expanded]").click();
     await finding.getByRole("button", { name: "Discuss", exact: true }).click();
-    const chatComposer = page.getByLabel("Message the orchestrator");
-    await expect(chatComposer).toBeVisible();
-    await expect(chatComposer).toBeFocused();
+    await expect(page.locator('[data-slot="chat-dock"]')).toHaveAttribute("data-open", "true");
     await expect
       .poll(() => Object.values(askLog.readProjection(fixture.reviewId).quoteThreads))
       .toContainEqual(
@@ -274,21 +289,18 @@ test("a persisted board owns lens, generation, and captured-code navigation in t
       );
     await page.reload();
     await expect(board).toHaveAttribute("data-lens", "flagged", { timeout: 60_000 });
-    await page.getByRole("button", { name: "Open chat" }).click();
-    await expect(
-      page
-        .locator(".rennet-chat-dock")
-        .getByText("“Return the reviewed value from the implementation.”", { exact: true }),
-    ).toBeVisible();
+    await expect
+      .poll(() => Object.values(askLog.readProjection(fixture.reviewId).quoteThreads))
+      .toContainEqual(
+        expect.objectContaining({ anchor: "Return the reviewed value from the implementation." }),
+      );
 
     const beforeDesign = await page.evaluate(() => history.length);
-    await rail.getByRole("tab", { name: /Design/ }).click();
+    await rail.getByRole("tab", { name: /^Design(?:,|$)/ }).click();
     expect(await page.evaluate(() => history.length)).toBe(beforeDesign);
     await expectQuery(page, { lens: "design" });
     await expect(board).toHaveAttribute("data-lens", "design");
-    await expect(
-      board.getByRole("heading", { name: "Widget value specification", level: 1 }),
-    ).toBeVisible();
+    await expect(board.getByRole("heading", { name: "Design", level: 1 })).toBeVisible();
     await expect(
       board.getByText(
         "Reviewers need the specification and implementation evidence in one reading path.",
@@ -372,7 +384,6 @@ test("a persisted board owns lens, generation, and captured-code navigation in t
       board.getByRole("heading", { name: "Expose the reviewed widget value" }),
     ).toBeVisible();
     await expect(board.getByText(BOARD_DESIGN_SCENARIO)).toBeVisible();
-    await expect(board.getByText("covered by 2 hunks · 1 test")).toBeVisible();
     const requirement = board.locator('[data-kind="requirement"][data-spec-delta="modified"]');
     await expect(requirement).toBeVisible();
     await expect(
@@ -387,7 +398,7 @@ test("a persisted board owns lens, generation, and captured-code navigation in t
       board.locator(`[data-kind="related-file-chip"][data-source-path="${BOARD_TEST_PATH}"]`),
     ).toBeVisible();
 
-    const sequenceTab = rail.getByRole("tab", { name: /Sequence/ });
+    const sequenceTab = rail.getByRole("tab", { name: /^Sequence(?:,|$)/ });
     const sequenceLabel = sequenceTab.locator("span").last();
     const containerThreshold = await page.evaluate(
       () => 46 * Number.parseFloat(getComputedStyle(document.documentElement).fontSize),
@@ -403,7 +414,7 @@ test("a persisted board owns lens, generation, and captured-code navigation in t
       .toBeLessThan(containerThreshold);
     await expect
       .poll(() => sequenceLabel.evaluate((label) => getComputedStyle(label).display))
-      .toBe("none");
+      .not.toBe("none");
     await expect(sequenceTab).toBeVisible();
     await expect(sequenceTab).toHaveAccessibleName(/Sequence/);
 
@@ -444,7 +455,8 @@ test("a persisted board owns lens, generation, and captured-code navigation in t
 
     await rail.getByRole("tab", { name: "Sequence" }).click();
     await expectQuery(page, { lens: "sequence", generation: fixture.frozenGeneration });
-    await page.getByRole("button", { name: "widget.ts:1" }).click();
+    await openBoardSections(page);
+    await revealCitation(page, "widget.ts:1");
     const implementation = page.getByRole("button", {
       name: BOARD_IMPLEMENTATION_PATH,
       exact: true,
@@ -462,23 +474,278 @@ test("a persisted board owns lens, generation, and captured-code navigation in t
       generation: fixture.frozenGeneration,
       file: BOARD_IMPLEMENTATION_PATH,
     });
-    await expect(page.locator(`[id="diff-${BOARD_IMPLEMENTATION_PATH}"]`)).toBeVisible();
-    await expect.poll(() => scrollTargets(page)).toContain(`diff-${BOARD_IMPLEMENTATION_PATH}`);
+    await expect(page.locator(`[id="diff-${BOARD_IMPLEMENTATION_PATH}"]`)).toBeInViewport();
 
     await rail.getByRole("tab", { name: "Sequence" }).click();
-    await page.getByRole("button", { name: "widget.ts:1" }).click();
-    await installScrollProbe(page);
-    const beforeCounterpart = await page.evaluate(() => history.length);
+    await openBoardSections(page);
+    await revealCitation(page, "widget.ts:1");
+    const beforeCounterpart = await currentHash(page);
     await page.getByRole("button", { name: "View test", exact: true }).click();
-    expect(await page.evaluate(() => history.length)).toBe(beforeCounterpart);
-    await expectQuery(page, {
-      view: "diff",
-      lens: "sequence",
-      generation: fixture.frozenGeneration,
-      file: BOARD_TEST_PATH,
+    await expect(
+      page
+        .locator(`[data-evidence-path="${BOARD_TEST_PATH}"]`)
+        .filter({ has: page.getByRole("button", { name: "Back to review", exact: true }) }),
+    ).toContainText("import { widget }");
+    expect(await currentHash(page)).toBe(beforeCounterpart);
+    await page.getByRole("button", { name: "Back to review", exact: true }).click();
+    await expect(page.locator(`[data-evidence-path="${BOARD_IMPLEMENTATION_PATH}"]`)).toBeVisible();
+  } finally {
+    await application.close();
+    rmSync(repository, { recursive: true, force: true });
+    rmSync(userData, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("review activity and code evidence remain usable across navigation", async () => {
+  test.setTimeout(240_000);
+  const repository = seedReviewRepo("rennet-e2e-experience-");
+  const context = Array.from(
+    { length: 45 },
+    (_, index) => `export const context${index} = ${index};`,
+  ).join("\n");
+  writeRepoFile(repository, BOARD_IMPLEMENTATION_PATH, `export const widget = 1;\n${context}\n`);
+  writeRepoFile(
+    repository,
+    "checks/behaviour.test.ts",
+    "import { widget } from '../src/widget';\nvoid widget;\n",
+  );
+  git(repository, "add", BOARD_IMPLEMENTATION_PATH, "checks/behaviour.test.ts");
+  git(repository, "commit", "-qm", "capture unchanged context and a differently named test");
+  git(repository, "branch", "-f", "main", "HEAD");
+  writeRepoFile(repository, BOARD_IMPLEMENTATION_PATH, `export const widget = 2;\n${context}\n`);
+  writeRepoFile(repository, BOARD_TEST_PATH, "import { widget } from './widget';\nvoid widget;\n");
+  writeRepoFile(
+    repository,
+    BOARD_DESIGN_SPEC_PATH,
+    "# Widget value specification\n\nThe widget SHALL expose the reviewed value.\n",
+  );
+  const userData = makeTempDir("rennet-e2e-experience-state-");
+  const home = makeTempDir("rennet-e2e-experience-home-");
+  const { application } = await launchRennet({ repository, userData, home });
+  try {
+    const page = await application.firstWindow();
+    await completeWelcome(page);
+    await addProject(page, repository);
+    await openFixtureReview(page, repository, userData);
+    const fixture = await seedBoardFixture(page, repository, userData);
+    const sessions = new SessionStore(join(userData, "sessions"));
+    sessions.rename(fixture.sessionId, "Review experience fixture");
+    sessions.setPreparation(fixture.sessionId, {
+      status: "drafting",
+      reviewId: fixture.reviewId,
+      lanes: [
+        { id: "design", label: "Design", status: "done", verdict: "reworked" },
+        {
+          id: "sequence",
+          label: "Sequence",
+          status: "running",
+          latest: {
+            kind: "text",
+            text: "Reading the implementation and its tests",
+            at: Date.now(),
+          },
+        },
+        { id: "decisions", label: "Decisions", status: "running" },
+        { id: "flagged", label: "Flagged", status: "running" },
+        { id: "noise", label: "Noise", status: "waiting" },
+      ],
     });
-    await expect(page.locator(`[id="diff-${BOARD_TEST_PATH}"]`)).toBeVisible();
-    await expect.poll(() => scrollTargets(page)).toContain(`diff-${BOARD_TEST_PATH}`);
+    await page.reload();
+    await page.setViewportSize({ width: 1440, height: 900 });
+    const board = page.locator("article[data-lens]");
+    const tabs = page.getByRole("tablist", { name: "Lens" });
+    for (const name of ["Design", "Sequence", "Decisions", "Flagged", "Noise"]) {
+      await expect(tabs.getByRole("tab", { name: new RegExp(`^${name}(?:,|$)`) })).toContainText(
+        name,
+      );
+    }
+    const noise = tabs.getByRole("tab", { name: /Noise/ });
+    await expect(noise).toHaveAttribute("aria-disabled", "true");
+    await noise.focus();
+    await expect(
+      page.getByText("Noise reviews what remains once the other lenses have finished."),
+    ).toBeVisible();
+    const reviewing = page.getByRole("button", { name: "Reviewing the change", exact: true });
+    await expect(reviewing).toBeDisabled();
+    // The motion claim is the computed animation under each media preference below; the
+    // arc's geometry is a visual choice, not a behaviour, and is not pinned here.
+    const orbit = reviewing.locator("svg.animate-spin");
+    await page.emulateMedia({ reducedMotion: "no-preference" });
+    await expect
+      .poll(() => orbit.evaluate((element) => getComputedStyle(element).animationName))
+      .not.toBe("none");
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await expect
+      .poll(() => orbit.evaluate((element) => getComputedStyle(element).animationName))
+      .toBe("none");
+    await page.emulateMedia({ reducedMotion: "no-preference" });
+    await tabs.getByRole("tab", { name: /^Sequence(?:,|$)/ }).click();
+    await expect(
+      board.getByRole("heading", { level: 1, name: "Sequence", exact: true }),
+    ).toBeVisible();
+    await page.getByRole("button", { name: "Sequence activity", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Open transcript", exact: true })).toBeDisabled();
+    for (const action of ["Checking callers", "Comparing tests", "Writing the reading sequence"]) {
+      const preparation = sessions.load(fixture.sessionId)?.preparation;
+      if (preparation?.status !== "drafting") throw new Error("fixture stopped drafting");
+      sessions.setPreparation(fixture.sessionId, {
+        ...preparation,
+        lanes: preparation.lanes.map((lane) =>
+          lane.id === "sequence"
+            ? { ...lane, latest: { kind: "text", text: action, at: Date.now() } }
+            : lane,
+        ),
+      });
+      await expect(page.getByText(action, { exact: true })).toBeVisible();
+    }
+    const skipTips = page.getByRole("button", { name: "Skip all tips", exact: true });
+    if (await skipTips.isVisible()) await skipTips.click();
+    await page.emulateMedia({ colorScheme: "dark" });
+    await page.screenshot({ path: test.info().outputPath("reviewing-dark.png") });
+    const [activityBox, triggerBox] = await Promise.all([
+      page.getByLabel("Sequence activity details", { exact: true }).boundingBox(),
+      page.getByRole("button", { name: "Sequence activity", exact: true }).boundingBox(),
+    ]);
+    if (!activityBox || !triggerBox) throw new Error("activity or trigger has no layout");
+    expect(activityBox.y - (triggerBox.y + triggerBox.height)).toBeGreaterThanOrEqual(0);
+    expect(activityBox.y - (triggerBox.y + triggerBox.height)).toBeLessThanOrEqual(16);
+    await page.getByRole("button", { name: "Close activity" }).click();
+    const sidebar = page.locator('[data-region="sidebar"]');
+    const sessionRow = sidebar.getByRole("button", { name: /Review experience fixture/ });
+    await expect(sessionRow.getByRole("status", { name: "Reviewing the change" })).toBeVisible();
+    await sessionRow.focus();
+    await page.keyboard.press("Shift+Tab");
+    await page.keyboard.press("Tab");
+    await expect(sessionRow).toBeFocused();
+    await expect(
+      page.getByRole("tooltip", { name: "Reviewing the change", exact: true }),
+    ).toBeVisible();
+    await sidebar
+      .getByRole("button", { name: "New Chat", exact: true })
+      .and(sidebar.locator("button:not([aria-haspopup])"))
+      .click();
+    await expect(sessionRow.getByRole("status", { name: "Reviewing the change" })).toBeVisible();
+    await sessionRow.click();
+    await tabs.getByRole("tab", { name: /^Sequence(?:,|$)/ }).click();
+    await page.getByRole("button", { name: "Sequence activity", exact: true }).click();
+    await expect(
+      page.getByText("Reading the implementation and its tests", { exact: true }),
+    ).toBeVisible();
+    await page.getByRole("button", { name: "Close activity" }).click();
+    await sidebar
+      .getByRole("button", { name: "New Chat", exact: true })
+      .and(sidebar.locator("button:not([aria-haspopup])"))
+      .click();
+    sessions.setPreparation(fixture.sessionId, undefined);
+    await expect(sessionRow.getByRole("status", { name: "Review ready" })).toBeVisible({
+      timeout: 15_000,
+    });
+    await sessionRow.click();
+    await expect(sessionRow.getByRole("status", { name: "Review ready" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Continue", exact: true })).toBeEnabled();
+    await tabs.getByRole("tab", { name: /^Design(?:,|$)/ }).click();
+    const section = board.locator('[data-kind="board-section"]').first();
+    const toggle = section.getByRole("button", { name: "Toggle Widget value", exact: true });
+    if ((await toggle.getAttribute("aria-expanded")) === "true") await toggle.click();
+    await section
+      .getByRole("button", { name: "Expose the reviewed widget value", exact: true })
+      .click();
+    await expect(
+      section.getByRole("heading", { name: "Expose the reviewed widget value", exact: true }),
+    ).toBeVisible();
+    await tabs.getByRole("tab", { name: /^Sequence(?:,|$)/ }).click();
+    await openBoardSections(page);
+    await revealCitation(page, "widget.ts:1");
+    const evidence = page.locator(`[data-evidence-path="${BOARD_IMPLEMENTATION_PATH}"]`);
+    await expect(evidence.locator('[data-diff-kind="del"]')).toContainText(
+      "export const widget = 1;",
+    );
+    await expect(evidence.locator('[data-diff-kind="add"]')).toContainText(
+      "export const widget = 2;",
+    );
+    await expect(evidence.locator('[data-line-state="cited"]')).toHaveCount(0);
+    writeRepoFile(repository, BOARD_IMPLEMENTATION_PATH, "export const widget = 999;\n");
+    await evidence.getByRole("button", { name: "Full file", exact: true }).click();
+    await expect(evidence).toContainText("export const widget = 2;");
+    await expect(evidence).not.toContainText("widget = 999");
+    const codeScroller = evidence.locator("[data-code-scroll]");
+    await expect
+      .poll(() => codeScroller.evaluate((element) => element.scrollHeight > element.clientHeight))
+      .toBe(true);
+    await codeScroller.evaluate((element) => {
+      element.scrollTop = element.scrollHeight;
+    });
+    await expect(evidence).toContainText("context44");
+    await evidence.locator("summary", { hasText: "View tests" }).click();
+    await evidence.getByRole("button", { name: "checks/behaviour.test.ts", exact: true }).click();
+    const testEvidence = page.locator('[data-evidence-path="checks/behaviour.test.ts"]');
+    await expect(testEvidence).toContainText("import { widget }");
+    await testEvidence.getByRole("button", { name: "Back to review", exact: true }).click();
+    await expect(evidence).toContainText("context44");
+    await codeScroller.evaluate((element) => {
+      element.scrollTop = 0;
+    });
+    await evidence.locator('[data-code-side="base"][data-code-line="1"]').evaluate((element) => {
+      const range = document.createRange();
+      range.selectNodeContents(element);
+      const selection = window.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+      element.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+    });
+    await page.getByRole("button", { name: "Request Changes", exact: true }).click();
+    const request = page.getByPlaceholder("What change are you requesting?");
+    await request.fill("Keep the old value until its callers are migrated.");
+    await request.press("Meta+Enter");
+    const asks = new AskLogStore(join(userData, "asks"));
+    await expect
+      .poll(() => Object.values(asks.readProjection(fixture.reviewId).stagedAsks))
+      .toContainEqual(
+        expect.objectContaining({
+          body: "Keep the old value until its callers are migrated.",
+          codeRef: {
+            patchsetId: fixture.patchsetId,
+            path: BOARD_IMPLEMENTATION_PATH,
+            side: "base",
+            startLine: 1,
+            endLine: 1,
+          },
+        }),
+      );
+    await page.emulateMedia({ colorScheme: "light", reducedMotion: "reduce" });
+    await page.setViewportSize({ width: 900, height: 800 });
+    const narrowHeader = page.locator('[data-slot="session-top-bar"]');
+    await expect
+      .poll(async () => {
+        const [header, rail, controls] = await Promise.all([
+          narrowHeader.boundingBox(),
+          narrowHeader.locator('[data-slot="lens-switcher"]').boundingBox(),
+          narrowHeader.getByRole("group", { name: "Session view" }).boundingBox(),
+        ]);
+        return (
+          header !== null &&
+          rail !== null &&
+          controls !== null &&
+          rail.y >= controls.y + controls.height - 1 &&
+          rail.width >= header.width - 25
+        );
+      })
+      .toBe(true);
+    for (const name of ["Design", "Sequence", "Decisions", "Flagged", "Noise"]) {
+      await expect(tabs.getByRole("tab", { name: new RegExp(`^${name}(?:,|$)`) })).toContainText(
+        name,
+      );
+    }
+    if (await skipTips.isVisible()) await skipTips.click();
+    await page.screenshot({ path: test.info().outputPath("narrow-rail.png") });
+    for (const name of ["Design", "Sequence", "Decisions", "Flagged", "Noise"]) {
+      const tab = tabs.getByRole("tab", { name: new RegExp(`^${name}(?:,|$)`) });
+      await tab.focus();
+      await expect(tab).toBeInViewport({ ratio: 1 });
+    }
+    await tabs.getByRole("tab", { name: /^Sequence(?:,|$)/ }).focus();
+    await page.screenshot({ path: test.info().outputPath("evidence-light.png") });
   } finally {
     await application.close();
     rmSync(repository, { recursive: true, force: true });

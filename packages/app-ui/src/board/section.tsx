@@ -4,39 +4,23 @@ import {
   type LensKind,
   type LensSection,
 } from "@rennet/protocol";
-import { Collapse, cn } from "@rennet/ui";
+import { COLLAPSE_MS, Collapse, cn } from "@rennet/ui";
 import { ChevronDown } from "lucide-react";
-import { memo, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "../components/icon";
 import { useRennetStore } from "../store";
 import { SourceChips, SpecDeltaBadge } from "./design-meta";
 import { DesignSectionBody } from "./design-structure";
-import { useBoardId, useDesignMetaVisible, useElement } from "./kinds/element-context";
+import {
+  useBoardElementIndex,
+  useBoardId,
+  useDesignMetaVisible,
+  useElement,
+} from "./kinds/element-context";
 import { BoardChildren } from "./kinds/renderers";
 import { InlineQuoteHighlight } from "./quote-highlight";
+import { PreviewText, sectionPreview } from "./section-preview";
 import { selectDeltaViewed } from "./viewed-delta";
-
-// ─────────────────────────────────────────────────────────────────────────────
-// The fold grammar (C05 cluster 4, Objective clauses 2/3 + #486). A top-level
-// `LensSection` renders on `packages/ui`'s `Collapse`: folded, it is the one-line
-// `gist` plus its per-kind `counts`; unfolded, it is the referenced `section`
-// element's children through the registry (`BoardChildren`). This is the SEPARATE
-// fold component for the projection's section entries — distinct from the inline
-// `kinds/section.tsx` renderer that keeps the element registry total.
-//
-// Disclosure pattern (the spike's): the heading IS the toggle, and `Collapse` animates
-// grid-rows rather than switching a conditional render. It mounts only the side it is
-// showing, so exactly one of the two Collapses below holds nodes at rest (perf audit
-// §5 H2 — this pair used to render the fold line AND the whole body at once, which is
-// why folding a 700-claim board freed nothing). The trade is that folding a section
-// discards its children's own fold state: reopening a section reopens its findings at
-// their defaults. That is the fix, not a regression to route around.
-//
-// Delta marks (#486): a section carrying `delta: "new" | "reworked"` opens EXPANDED
-// and wears a transient gold dot (`bg-primary`) while unviewed; interacting (toggling
-// the heading, or clicking the folded gist) marks it viewed through the UI-only
-// `viewedDelta` slice, clearing the dot. Absence of a delta = carried-forward, no dot.
-// ─────────────────────────────────────────────────────────────────────────────
 
 const DELTA_LABEL: Record<"new" | "reworked", string> = {
   new: "new this round",
@@ -81,29 +65,8 @@ export function sectionCountText(counts: LensSection["counts"]): string {
   }).join(" · ");
 }
 
-/** The folded fold-line: a readable gist, then domain-object counts on their own line. */
-function FoldLine({
-  gist,
-  counts,
-}: {
-  readonly gist: string;
-  readonly counts: LensSection["counts"];
-}) {
-  const countText = sectionCountText(counts);
-  return (
-    <span className="flex min-w-0 flex-1 flex-col items-start gap-0.5">
-      <span className="w-full text-muted-foreground text-sm leading-relaxed">{gist}</span>
-      {countText.length > 0 ? (
-        <span data-kind="section-counts" className="text-muted-foreground/60 text-xs">
-          {countText}
-        </span>
-      ) : null}
-    </span>
-  );
-}
-
 /**
- * Render one top-level board section. `entry` is the projection's fold-line; the
+ * Render one top-level board section. The preview derives from the current children; the
  * section element (`entry.ref`) is resolved through the board pool for its title and
  * children.
  *
@@ -127,16 +90,44 @@ export const Section = memo(function Section({
   readonly defaultOpen?: boolean;
 }) {
   const boardId = useBoardId();
+  const index = useBoardElementIndex();
+  const root = useRef<HTMLElement>(null);
   const designMeta = useDesignMetaVisible();
   const el = useElement(entry.ref);
   const viewed = useRennetStore(selectDeltaViewed(boardId, entry.ref));
   const markViewed = useRennetStore((s) => s.viewedDeltaActions.markDeltaViewed);
   const [open, setOpen] = useState(defaultOpen ?? false);
+  const [target, setTarget] = useState<string | null>(null);
+  const preview = useMemo(
+    () => (el?.kind === "section" ? sectionPreview(el, index) : { kind: "empty" as const }),
+    [el, index],
+  );
+
+  useEffect(() => {
+    if (!open || target === null) return;
+    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const timer = setTimeout(
+      () => {
+        const child = [
+          ...(root.current?.querySelectorAll<HTMLElement>("[data-element-id]") ?? []),
+        ].find((node) => node.dataset.elementId === target);
+        if (child) {
+          child.tabIndex = -1;
+          child.focus({ preventScroll: true });
+          child.scrollIntoView({ behavior: reducedMotion ? "auto" : "smooth", block: "start" });
+        }
+        setTarget(null);
+      },
+      reducedMotion ? 0 : COLLAPSE_MS,
+    );
+    return () => clearTimeout(timer);
+  }, [open, target]);
 
   // A dangling / non-section ref renders nothing (mirrors the pool's other resolvers).
   if (el?.kind !== "section") return null;
   const { title, children, sources, spec_delta: specDelta } = el.data;
 
+  const countText = sectionCountText(entry.counts);
   const showDot = entry.delta !== undefined && !viewed;
   const headingLabel = [
     title,
@@ -144,12 +135,20 @@ export const Section = memo(function Section({
     ...(entry.delta === undefined ? [] : [DELTA_LABEL[entry.delta]]),
   ].join(", ");
   const interact = () => {
+    setTarget(null);
     setOpen((o) => !o);
+    if (entry.delta !== undefined) markViewed(boardId, entry.ref);
+  };
+
+  const locate = (id: string) => {
+    setTarget(id);
+    setOpen(true);
     if (entry.delta !== undefined) markViewed(boardId, entry.ref);
   };
 
   return (
     <section
+      ref={root}
       id={entry.ref}
       data-kind="board-section"
       data-section-id={entry.ref}
@@ -192,16 +191,43 @@ export const Section = memo(function Section({
           />
           {specDelta ? <SpecDeltaBadge delta={specDelta} /> : null}
         </h2>
+        {countText ? (
+          <span data-kind="section-counts" className="text-muted-foreground/60 text-xs">
+            {countText}
+          </span>
+        ) : null}
         <SourceChips sources={designMeta ? (sources ?? []) : []} />
       </div>
       <Collapse open={!open}>
-        <button
-          type="button"
-          onClick={interact}
-          className="flex w-full pl-5 text-left transition-colors hover:text-foreground/80"
-        >
-          <FoldLine gist={entry.gist} counts={entry.counts} />
-        </button>
+        {preview.kind === "headings" ? (
+          <ul aria-label={`${title} contents`} className="flex flex-col gap-1 pl-5">
+            {preview.entries.map(({ id, text }) => (
+              <li key={id}>
+                <button
+                  type="button"
+                  onClick={() => locate(id)}
+                  className="block w-full rounded-sm text-left text-muted-foreground text-sm leading-relaxed transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  {/* A heading that runs long (a finding's first line, an over-written
+                      title) is clamped like the paragraph preview, not left to fill the fold. */}
+                  <span className="line-clamp-2">
+                    <PreviewText text={text} />
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        ) : preview.kind === "paragraph" ? (
+          <button
+            type="button"
+            onClick={() => locate(preview.entry.id)}
+            className="w-full rounded-sm pl-5 text-left text-muted-foreground text-sm leading-relaxed transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <span data-kind="section-paragraph-preview" className="line-clamp-2">
+              <PreviewText text={preview.entry.text} />
+            </span>
+          </button>
+        ) : null}
       </Collapse>
       <Collapse open={open}>
         <div className="flex flex-col gap-6 pl-5">

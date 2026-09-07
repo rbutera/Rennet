@@ -1,8 +1,9 @@
 import type { CodeRef } from "@rennet/protocol";
 import { cn } from "@rennet/ui";
 import { Check, Copy, FileCode, MessageSquare, Plus } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "../components/icon";
+import { windowRows } from "../components/window-rows";
 import { useFlightBatcher } from "../handoff/exit-flight";
 import {
   codePositionKey,
@@ -12,7 +13,9 @@ import {
 } from "../store";
 import { detectLanguage, tokenizeDiffLine } from "../syntax/shiki";
 import { useCodeDestination } from "./code-destination";
+import type { NumberedLine } from "./diff-parse";
 import { LineCommentEditor } from "./line-comment-editor";
+import { QuoteThreadPopover } from "./quote-thread-popover";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The ONE code surface (C4): every code appearance in the product renders through here.
@@ -26,6 +29,9 @@ import { LineCommentEditor } from "./line-comment-editor";
 export interface CodeBlockProps {
   /** The source lines to render (newline-joined). */
   readonly code: string;
+  readonly rows?: readonly NumberedLine[];
+  readonly previousPath?: string;
+  readonly focusRef?: CodeRef;
   /** File path — the header label and the language source (inferred by extension). */
   readonly path: string;
   /** Absolute line number of the first line, for a slice of a larger file. */
@@ -55,6 +61,9 @@ export interface CodeBlockProps {
 
 export function CodeBlock({
   code,
+  rows,
+  previousPath,
+  focusRef,
   path,
   startLine = 1,
   highlightLines,
@@ -70,17 +79,57 @@ export function CodeBlock({
   const resolvedCounterpart =
     counterpart === undefined ? destination.counterpart : (counterpart ?? undefined);
   const comments = useRennetStore(selectCodeComments(path));
+  const quoteThreads = useRennetStore((s) => s.review.quoteThreads);
+  const codeThreads = useMemo(
+    () =>
+      Object.entries(quoteThreads).flatMap(([id, thread]) =>
+        thread.codeRef !== undefined &&
+        thread.codeRef.patchsetId === patchsetId &&
+        (thread.codeRef?.path === path || thread.codeRef?.path === previousPath)
+          ? [{ id, thread }]
+          : [],
+      ),
+    [quoteThreads, patchsetId, path, previousPath],
+  );
   const stagedAsks = useRennetStore((s) => s.review.stagedAsks);
-  const { setCodeComment, clearCodeComment, stageAsk } = useRennetStore((s) => s.reviewActions);
+  const {
+    setCodeComment,
+    clearCodeComment,
+    stageAsk,
+    addQuoteComment,
+    addQuoteReply,
+    removeQuoteComment,
+  } = useRennetStore((s) => s.reviewActions);
   const flight = useFlightBatcher();
 
   const [copied, setCopied] = useState(false);
   const [openLine, setOpenLine] = useState<number | null>(null);
 
   const language = useMemo(() => detectLanguage(path), [path]);
+  const sourceLines = useMemo(() => rows?.map((row) => row.text) ?? code.split("\n"), [rows, code]);
+  const lineCount = sourceLines.length;
+  const virtual = lineCount > 20;
+  const rowHeight = 22;
+  const viewportHeight = 440;
+  const scrollElement = useRef<HTMLDivElement>(null);
+  const [scrollTop, setScrollTop] = useState(0);
+  const focusIndex = focusRef
+    ? (rows?.findIndex(
+        (row) => (focusRef.side === "base" ? row.oldLine : row.newLine) === focusRef.startLine,
+      ) ?? -1)
+    : -1;
+  useLayoutEffect(() => {
+    if (!virtual || focusIndex < 0) return;
+    const top = Math.max(0, focusIndex - 3) * rowHeight;
+    if (scrollElement.current) scrollElement.current.scrollTop = top;
+    setScrollTop(top);
+  }, [focusIndex, virtual]);
+  const range = virtual
+    ? windowRows({ total: lineCount, rowHeight, viewportHeight, scrollTop })
+    : { start: 0, end: lineCount };
   const tokenLines = useMemo(
-    () => code.split("\n").map((line) => tokenizeDiffLine(line, language)),
-    [code, language],
+    () => sourceLines.slice(range.start, range.end).map((line) => tokenizeDiffLine(line, language)),
+    [sourceLines, range.start, range.end, language],
   );
   const highlightSet = useMemo(() => new Set(highlightLines ?? []), [highlightLines]);
   // Lines with a staged request-change ask at this exact side-qualified position read red.
@@ -95,9 +144,78 @@ export function CodeBlock({
     return lines;
   }, [stagedAsks, patchsetId, path, side]);
 
-  const lineCount = tokenLines.length;
-  const endLine = startLine + lineCount - 1;
+  const endLine = rows?.at(-1)?.newLine ?? rows?.at(-1)?.oldLine ?? startLine + lineCount - 1;
   const gutterChars = String(endLine).length + 1;
+
+  function commentEditor(i: number) {
+    const row = rows?.[i];
+    const rowSide = row?.newLine === null ? "LEFT" : row ? "RIGHT" : side;
+    const rowPath = rowSide === "LEFT" ? (previousPath ?? path) : path;
+    const lineNumber = row?.newLine ?? row?.oldLine ?? startLine + i;
+    const rowRef: CodeRef | undefined =
+      patchsetId === undefined
+        ? undefined
+        : {
+            patchsetId,
+            path: rowPath,
+            side: rowSide === "LEFT" ? "base" : "head",
+            startLine: lineNumber,
+            endLine: lineNumber,
+          };
+    const existingThread = codeThreads.find(({ thread }) => {
+      const ref = thread.codeRef;
+      return (
+        ref !== undefined &&
+        ref.path === rowPath &&
+        ref.side === (rowSide === "LEFT" ? "base" : "head") &&
+        ref.startLine <= lineNumber &&
+        ref.endLine >= lineNumber
+      );
+    });
+    const hasComment =
+      existingThread !== undefined || (rowSide === "RIGHT" && comments?.[lineNumber] != null);
+    return (
+      <div
+        data-line-comment-editor
+        className="w-full border-y border-border bg-secondary/40 px-3 py-2.5 font-sans"
+      >
+        <LineCommentEditor
+          key={i}
+          lineLabel={`L${lineNumber}`}
+          initialText={existingThread?.thread.messages.at(-1)?.text ?? comments?.[lineNumber] ?? ""}
+          hasComment={hasComment}
+          onCancel={() => setOpenLine(null)}
+          onSave={(text) => {
+            if (existingThread) {
+              if (text === null) removeQuoteComment(existingThread.id);
+              else addQuoteReply(existingThread.id, "user", text);
+            } else if (text === null) clearCodeComment(path, lineNumber);
+            else if (rowRef)
+              addQuoteComment(`${rowPath}:${lineNumber}`, text, "comment", undefined, rowRef);
+            else setCodeComment(path, lineNumber, text);
+            setOpenLine(null);
+          }}
+          onRequestChanges={(text) => {
+            // A code line is a real diff position: the comment saves AND a
+            // request-change ask stages against `${path}:${line}` (R36).
+            if (!rowRef) setCodeComment(path, lineNumber, text);
+            const position = { path: rowPath, line: lineNumber, side: rowSide };
+            const codeRef: CodeRef | undefined = rowRef;
+            stageAsk({
+              id: codePositionKey(position),
+              anchor: `${rowPath}:${lineNumber}`,
+              type: "request-change",
+              body: text,
+              side: rowSide,
+              ...(codeRef === undefined ? {} : { codeRef }),
+            });
+            flight.signal(); // the staging act flies one bubble to the FAB
+            setOpenLine(null);
+          }}
+        />
+      </div>
+    );
+  }
 
   async function handleCopy() {
     // Silent no-op when the clipboard API is unavailable (insecure context, denied).
@@ -161,14 +279,56 @@ export function CodeBlock({
         </div>
       </div>
 
-      <div className="overflow-x-auto">
-        <div className="min-w-max py-1.5 font-mono text-12-5 leading-[1.7]">
-          {tokenLines.map((lineTokens, i) => {
-            const lineNumber = startLine + i;
+      <div
+        data-code-scroll
+        ref={scrollElement}
+        className="overflow-auto"
+        style={virtual ? { height: viewportHeight } : undefined}
+        onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
+      >
+        <div
+          className="relative min-w-max font-mono text-12-5"
+          style={
+            virtual
+              ? { height: lineCount * rowHeight, lineHeight: `${rowHeight}px` }
+              : { lineHeight: "1.7" }
+          }
+        >
+          {tokenLines.map((lineTokens, offset) => {
+            const i = range.start + offset;
+            const row = rows?.[i];
+            const rowSide = row?.newLine === null ? "LEFT" : row ? "RIGHT" : side;
+            const rowPath = rowSide === "LEFT" ? (previousPath ?? path) : path;
+            const lineNumber = row?.newLine ?? row?.oldLine ?? startLine + i;
             const isHighlighted = highlightSet.has(lineNumber);
-            const hasComment = side === "RIGHT" && comments?.[lineNumber] != null;
-            const hasAsk = askLines.has(lineNumber);
-            const isOpen = openLine === lineNumber;
+            const hasComment =
+              (rowSide === "RIGHT" && comments?.[lineNumber] != null) ||
+              Object.values(quoteThreads).some((thread) => {
+                const ref = thread.codeRef;
+                return (
+                  ref !== undefined &&
+                  ref.patchsetId === patchsetId &&
+                  ref.path === rowPath &&
+                  ref.side === (rowSide === "LEFT" ? "base" : "head") &&
+                  ref.startLine <= lineNumber &&
+                  ref.endLine >= lineNumber
+                );
+              });
+            const hasAsk = row
+              ? Object.values(stagedAsks).some((ask) => {
+                  const ref = ask.codeRef;
+                  return (
+                    ask.type === "request-change" &&
+                    ref !== undefined &&
+                    ref.patchsetId === patchsetId &&
+                    ref.path === rowPath &&
+                    ref.side === (rowSide === "LEFT" ? "base" : "head") &&
+                    ref.startLine <= lineNumber &&
+                    ref.endLine >= lineNumber
+                  );
+                })
+              : askLines.has(lineNumber);
+            const isOpen = openLine === i;
             const state = hasAsk
               ? "ask"
               : hasComment
@@ -177,16 +337,31 @@ export function CodeBlock({
                   ? "cited"
                   : "plain";
             return (
-              // biome-ignore lint/suspicious/noArrayIndexKey: rows are a fixed positional list; the index is the line offset.
-              <div key={i}>
+              <div
+                key={i}
+                style={
+                  virtual
+                    ? {
+                        position: "absolute",
+                        top: i * rowHeight,
+                        minWidth: "100%",
+                      }
+                    : undefined
+                }
+              >
                 <div
                   data-line={lineNumber}
+                  data-diff-kind={row?.type}
                   data-line-state={state}
                   className={cn(
                     "group flex min-h-[1.7em]",
+                    row?.type === "add" && "bg-add",
+                    row?.type === "del" && "bg-del",
                     hasAsk
                       ? "bg-destructive/25"
-                      : (isHighlighted || hasComment || isOpen) && "bg-green/15",
+                      : isHighlighted
+                        ? "bg-green/15"
+                        : (hasComment || isOpen) && "bg-blue/15",
                   )}
                 >
                   <span
@@ -195,14 +370,14 @@ export function CodeBlock({
                       hasAsk
                         ? "border-destructive/60 bg-destructive/25"
                         : isHighlighted || hasComment || isOpen
-                          ? "border-green/50 bg-green/15"
+                          ? "border-blue/50 bg-blue/15"
                           : "border-transparent bg-card",
                     )}
                     style={{ minWidth: `${gutterChars}ch` }}
                   >
                     <button
                       type="button"
-                      onClick={() => setOpenLine(isOpen ? null : lineNumber)}
+                      onClick={() => setOpenLine(isOpen ? null : i)}
                       aria-label={
                         hasComment
                           ? `Edit comment on line ${lineNumber}`
@@ -230,10 +405,28 @@ export function CodeBlock({
                     <span
                       className={cn("tabular-nums", !hasComment && !isOpen && "group-hover:hidden")}
                     >
-                      {lineNumber}
+                      {row ? (
+                        <>
+                          <span className="inline-block w-8">{row.oldLine ?? ""}</span>
+                          <span className="inline-block w-8">{row.newLine ?? ""}</span>
+                        </>
+                      ) : (
+                        lineNumber
+                      )}
                     </span>
                   </span>
-                  <span className="whitespace-pre px-3 text-foreground/90">
+                  {row && (
+                    <span aria-hidden="true" className="w-4 shrink-0 select-none text-center">
+                      {row.type === "add" ? "+" : row.type === "del" ? "-" : " "}
+                    </span>
+                  )}
+                  <span
+                    data-code-patchset={patchsetId}
+                    data-code-path={rowPath}
+                    data-code-side={rowSide === "LEFT" ? "base" : "head"}
+                    data-code-line={lineNumber}
+                    className="whitespace-pre px-3 text-foreground/90"
+                  >
                     {lineTokens.length === 0
                       ? " "
                       : lineTokens.map((token, ti) => (
@@ -244,52 +437,17 @@ export function CodeBlock({
                         ))}
                   </span>
                 </div>
-                {isOpen && (
-                  <div className="sticky left-0 w-[100cqw] border-y border-border bg-secondary/40 px-3 py-2.5 font-sans">
-                    <LineCommentEditor
-                      lineLabel={`L${lineNumber}`}
-                      initialText={comments?.[lineNumber] ?? ""}
-                      hasComment={hasComment}
-                      onCancel={() => setOpenLine(null)}
-                      onSave={(text) => {
-                        if (text === null) clearCodeComment(path, lineNumber);
-                        else setCodeComment(path, lineNumber, text);
-                        setOpenLine(null);
-                      }}
-                      onRequestChanges={(text) => {
-                        // A code line is a real diff position: the comment saves AND a
-                        // request-change ask stages against `${path}:${line}` (R36).
-                        setCodeComment(path, lineNumber, text);
-                        const position = { path, line: lineNumber, side };
-                        const codeRef: CodeRef | undefined =
-                          patchsetId === undefined
-                            ? undefined
-                            : {
-                                patchsetId,
-                                path,
-                                side: side === "LEFT" ? "base" : "head",
-                                startLine: lineNumber,
-                                endLine: lineNumber,
-                              };
-                        stageAsk({
-                          id: codePositionKey(position),
-                          anchor: `${path}:${lineNumber}`,
-                          type: "request-change",
-                          body: text,
-                          side,
-                          ...(codeRef === undefined ? {} : { codeRef }),
-                        });
-                        flight.signal(); // the staging act flies one bubble to the FAB
-                        setOpenLine(null);
-                      }}
-                    />
-                  </div>
-                )}
               </div>
             );
           })}
         </div>
       </div>
+      {openLine !== null && commentEditor(openLine)}
+      {codeThreads.length > 0 && (
+        <div className="border-t border-border p-2">
+          <QuoteThreadPopover inline threads={codeThreads} />
+        </div>
+      )}
     </div>
   );
 }
