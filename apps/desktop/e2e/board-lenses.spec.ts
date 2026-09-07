@@ -50,6 +50,10 @@ test("the board reports a failed drafting attempt without disguising it as empty
   }
 });
 
+function currentHash(page: Parameters<typeof seedBoardFixture>[0]): Promise<string> {
+  return page.evaluate(() => location.hash);
+}
+
 async function openFixtureReview(
   page: Parameters<typeof seedBoardFixture>[0],
   repository: string,
@@ -555,7 +559,10 @@ test("review activity and code evidence remain usable across navigation", async 
     const sidebar = page.locator('[data-region="sidebar"]');
     const sessionRow = sidebar.getByRole("button", { name: /Review experience fixture/ });
     await expect(sessionRow.getByRole("status", { name: "Reviewing the change" })).toBeVisible();
-    await sidebar.getByRole("button", { name: "New Chat", exact: true }).click();
+    await sidebar
+      .getByRole("button", { name: "New Chat", exact: true })
+      .and(sidebar.locator("button:not([aria-haspopup])"))
+      .click();
     await expect(sessionRow.getByRole("status", { name: "Reviewing the change" })).toBeVisible();
     sessions.setPreparation(fixture.sessionId, undefined);
     await expect(sessionRow.getByRole("status", { name: "Review ready" })).toBeVisible({
