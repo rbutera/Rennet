@@ -633,6 +633,7 @@ test("review activity and code evidence remain usable across navigation", async 
       .click();
     await expect(sessionRow.getByRole("status", { name: "Reviewing the change" })).toBeVisible();
     await sessionRow.click();
+    await tabs.getByRole("tab", { name: /^Sequence(?:,|$)/ }).click();
     await page.getByRole("button", { name: "Sequence activity", exact: true }).click();
     await expect(
       page.getByText("Reading the implementation and its tests", { exact: true }),
@@ -675,6 +676,9 @@ test("review activity and code evidence remain usable across navigation", async 
     await expect(evidence).toContainText("export const widget = 2;");
     await expect(evidence).not.toContainText("widget = 999");
     const codeScroller = evidence.locator("[data-code-scroll]");
+    await expect
+      .poll(() => codeScroller.evaluate((element) => element.scrollHeight > element.clientHeight))
+      .toBe(true);
     await codeScroller.evaluate((element) => {
       element.scrollTop = element.scrollHeight;
     });
