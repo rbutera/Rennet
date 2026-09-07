@@ -539,3 +539,166 @@ test("a persisted board owns lens, generation, and captured-code navigation in t
     rmSync(home, { recursive: true, force: true });
   }
 });
+
+test("review activity and code evidence remain usable across navigation", async () => {
+  test.setTimeout(240_000);
+  const repository = seedReviewRepo("rennet-e2e-experience-");
+  const context = Array.from(
+    { length: 45 },
+    (_, index) => `export const context${index} = ${index};`,
+  ).join("\n");
+  writeRepoFile(repository, BOARD_IMPLEMENTATION_PATH, `export const widget = 1;\n${context}\n`);
+  writeRepoFile(
+    repository,
+    "checks/behaviour.test.ts",
+    "import { widget } from '../src/widget';\nvoid widget;\n",
+  );
+  git(repository, "add", BOARD_IMPLEMENTATION_PATH, "checks/behaviour.test.ts");
+  git(repository, "commit", "-qm", "capture unchanged context and a differently named test");
+  git(repository, "branch", "-f", "main", "HEAD");
+  writeRepoFile(repository, BOARD_IMPLEMENTATION_PATH, `export const widget = 2;\n${context}\n`);
+  writeRepoFile(repository, BOARD_TEST_PATH, "import { widget } from './widget';\nvoid widget;\n");
+  writeRepoFile(
+    repository,
+    BOARD_DESIGN_SPEC_PATH,
+    "# Widget value specification\n\nThe widget SHALL expose the reviewed value.\n",
+  );
+  const userData = makeTempDir("rennet-e2e-experience-state-");
+  const home = makeTempDir("rennet-e2e-experience-home-");
+  const { application } = await launchRennet({ repository, userData, home });
+  try {
+    const page = await application.firstWindow();
+    await completeWelcome(page);
+    await addProject(page, repository);
+    await openFixtureReview(page, repository, userData);
+    const fixture = await seedBoardFixture(page, repository, userData);
+    const sessions = new SessionStore(join(userData, "sessions"));
+    sessions.rename(fixture.sessionId, "Review experience fixture");
+    sessions.setPreparation(fixture.sessionId, {
+      status: "drafting",
+      reviewId: fixture.reviewId,
+      lanes: [
+        { id: "design", label: "Design", status: "done", verdict: "reworked" },
+        {
+          id: "sequence",
+          label: "Sequence",
+          status: "running",
+          latest: {
+            kind: "text",
+            text: "Reading the implementation and its tests",
+            at: Date.now(),
+          },
+        },
+        { id: "decisions", label: "Decisions", status: "running" },
+        { id: "flagged", label: "Flagged", status: "running" },
+        { id: "noise", label: "Noise", status: "waiting" },
+      ],
+    });
+    await page.reload();
+    await page.setViewportSize({ width: 1440, height: 900 });
+    const board = page.locator("article[data-lens]");
+    const tabs = page.getByRole("tablist", { name: "Lens" });
+    for (const name of ["Design", "Sequence", "Decisions", "Flagged", "Noise"]) {
+      await expect(tabs.getByRole("tab", { name: new RegExp(name) })).toContainText(name);
+    }
+    const noise = tabs.getByRole("tab", { name: /Noise/ });
+    await expect(noise).toHaveAttribute("aria-disabled", "true");
+    await noise.focus();
+    await expect(
+      page.getByText("Noise reviews what remains once the other lenses have finished."),
+    ).toBeVisible();
+    const reviewing = page.getByRole("button", { name: "Reviewing the change", exact: true });
+    await expect(reviewing).toBeDisabled();
+    await tabs.getByRole("tab", { name: /Sequence/ }).click();
+    await expect(
+      board.getByRole("heading", { level: 1, name: "Sequence", exact: true }),
+    ).toBeVisible();
+    await page.getByRole("button", { name: "Sequence activity", exact: true }).click();
+    await page.getByRole("button", { name: "Pin activity" }).click();
+    await board.getByRole("heading", { level: 1 }).click();
+    await expect(page.getByRole("button", { name: "Unpin activity" })).toBeVisible();
+    await page.screenshot({ path: test.info().outputPath("reviewing-dark.png") });
+    await page.getByRole("button", { name: "Close activity" }).click();
+    const sidebar = page.locator('[data-region="sidebar"]');
+    const sessionRow = sidebar.getByRole("button", { name: /Review experience fixture/ });
+    await expect(sessionRow.getByRole("status", { name: "Reviewing the change" })).toBeVisible();
+    await sidebar.getByRole("button", { name: "New Chat", exact: true }).click();
+    await expect(sessionRow.getByRole("status", { name: "Reviewing the change" })).toBeVisible();
+    sessions.setPreparation(fixture.sessionId, undefined);
+    await expect(sessionRow.getByRole("status", { name: "Review ready" })).toBeVisible({
+      timeout: 15_000,
+    });
+    await sessionRow.click();
+    await expect(sessionRow.getByRole("status", { name: "Review ready" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Continue", exact: true })).toBeEnabled();
+    await tabs.getByRole("tab", { name: /Design/ }).click();
+    const section = board.locator('[data-kind="board-section"]').first();
+    const toggle = section.getByRole("button", { name: "Toggle Widget value", exact: true });
+    if ((await toggle.getAttribute("aria-expanded")) === "true") await toggle.click();
+    await section
+      .getByRole("button", { name: "Expose the reviewed widget value", exact: true })
+      .click();
+    await expect(
+      section.getByRole("heading", { name: "Expose the reviewed widget value", exact: true }),
+    ).toBeVisible();
+    await tabs.getByRole("tab", { name: /Sequence/ }).click();
+    await openBoardSections(page);
+    await page.getByRole("button", { name: "widget.ts:1", exact: true }).click();
+    const evidence = page.locator(`[data-evidence-path="${BOARD_IMPLEMENTATION_PATH}"]`);
+    await expect(evidence.locator('[data-diff-kind="del"]')).toContainText(
+      "export const widget = 1;",
+    );
+    await expect(evidence.locator('[data-diff-kind="add"]')).toContainText(
+      "export const widget = 2;",
+    );
+    await expect(evidence.locator('[data-line-state="cited"]')).toHaveCount(0);
+    writeRepoFile(repository, BOARD_IMPLEMENTATION_PATH, "export const widget = 999;\n");
+    await evidence.getByRole("button", { name: "Full file", exact: true }).click();
+    await expect(evidence).toContainText("context44");
+    await expect(evidence).not.toContainText("widget = 999");
+    await evidence.locator("summary", { hasText: "View tests" }).click();
+    await evidence.getByRole("button", { name: "checks/behaviour.test.ts", exact: true }).click();
+    const testEvidence = page.locator('[data-evidence-path="checks/behaviour.test.ts"]');
+    await expect(testEvidence).toContainText("import { widget }");
+    await testEvidence.getByRole("button", { name: "Back to review", exact: true }).click();
+    await expect(evidence).toContainText("context44");
+    await evidence.locator('[data-code-side="base"][data-code-line="1"]').evaluate((element) => {
+      const range = document.createRange();
+      range.selectNodeContents(element);
+      const selection = window.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+      element.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+    });
+    await page.getByRole("button", { name: "Request Changes", exact: true }).click();
+    const request = page.getByPlaceholder("What change are you requesting?");
+    await request.fill("Keep the old value until its callers are migrated.");
+    await request.press("Meta+Enter");
+    const asks = new AskLogStore(join(userData, "asks"));
+    await expect
+      .poll(() => Object.values(asks.readProjection(fixture.reviewId).stagedAsks))
+      .toContainEqual(
+        expect.objectContaining({
+          body: "Keep the old value until its callers are migrated.",
+          codeRef: {
+            patchsetId: fixture.patchsetId,
+            path: BOARD_IMPLEMENTATION_PATH,
+            side: "base",
+            startLine: 1,
+            endLine: 1,
+          },
+        }),
+      );
+    await page.emulateMedia({ colorScheme: "light", reducedMotion: "reduce" });
+    await page.setViewportSize({ width: 900, height: 800 });
+    for (const name of ["Design", "Sequence", "Decisions", "Flagged", "Noise"]) {
+      await expect(tabs.getByRole("tab", { name: new RegExp(name) })).toContainText(name);
+    }
+    await page.screenshot({ path: test.info().outputPath("evidence-light.png") });
+  } finally {
+    await application.close();
+    rmSync(repository, { recursive: true, force: true });
+    rmSync(userData, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
+  }
+});
