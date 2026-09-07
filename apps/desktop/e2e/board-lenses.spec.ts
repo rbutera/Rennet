@@ -560,8 +560,33 @@ test("review activity and code evidence remain usable across navigation", async 
     await page.getByRole("button", { name: "Pin activity" }).click();
     await board.getByRole("heading", { level: 1 }).click();
     await expect(page.getByRole("button", { name: "Unpin activity" })).toBeVisible();
+    for (const action of ["Checking callers", "Comparing tests", "Writing the reading sequence"]) {
+      const preparation = sessions.load(fixture.sessionId)?.preparation;
+      if (preparation?.status !== "drafting") throw new Error("fixture stopped drafting");
+      sessions.setPreparation(fixture.sessionId, {
+        ...preparation,
+        lanes: preparation.lanes.map((lane) =>
+          lane.id === "sequence"
+            ? { ...lane, latest: { kind: "text", text: action, at: Date.now() } }
+            : lane,
+        ),
+      });
+      await expect(page.getByText(action, { exact: true })).toBeVisible();
+    }
+    const skipTips = page.getByRole("button", { name: "Skip all tips", exact: true });
+    if (await skipTips.isVisible()) await skipTips.click();
     await page.emulateMedia({ colorScheme: "dark" });
     await page.screenshot({ path: test.info().outputPath("reviewing-dark.png") });
+    const [activityBox, headingBox] = await Promise.all([
+      page.getByLabel("Sequence activity details", { exact: true }).boundingBox(),
+      board.getByRole("heading", { level: 1 }).boundingBox(),
+    ]);
+    if (!activityBox || !headingBox) throw new Error("activity or heading has no layout");
+    expect(
+      activityBox.y + activityBox.height <= headingBox.y ||
+        activityBox.x >= headingBox.x + headingBox.width ||
+        activityBox.x + activityBox.width <= headingBox.x,
+    ).toBe(true);
     await page.getByRole("button", { name: "Close activity" }).click();
     const sidebar = page.locator('[data-region="sidebar"]');
     const sessionRow = sidebar.getByRole("button", { name: /Review experience fixture/ });
@@ -643,6 +668,7 @@ test("review activity and code evidence remain usable across navigation", async 
         name,
       );
     }
+    if (await skipTips.isVisible()) await skipTips.click();
     await page.screenshot({ path: test.info().outputPath("evidence-light.png") });
   } finally {
     await application.close();
