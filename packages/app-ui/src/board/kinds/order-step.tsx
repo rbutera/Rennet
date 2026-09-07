@@ -12,7 +12,7 @@ export function OrderStepElement({ element }: { readonly element: ElementOf<"ord
   const { title, span, children } = element.data;
   const spanRef = useCodeRefOf(span);
   return (
-    <div data-kind="order_step" className="flex flex-col gap-1.5">
+    <div data-kind="order_step" data-element-id={element.id} className="flex flex-col gap-1.5">
       <h3 className="font-semibold text-base text-foreground leading-snug">
         <InlineQuoteHighlight text={title} elementId={element.id} />
       </h3>

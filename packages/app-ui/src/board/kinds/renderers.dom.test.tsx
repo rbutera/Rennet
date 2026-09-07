@@ -405,9 +405,10 @@ describe("board kind renderers over the fixture set", () => {
     const line = container.querySelector('[data-kind="decision-alternatives"]');
     // Each id resolves to its element's TEXT, and the standalone prose label is dropped
     // because the line already says "Not taken".
-    expect(line?.textContent).toBe(
-      "Not taken: a module-level singleton, which two tests cannot isolate from each other. · an event emitter",
-    );
+    expect([...(line?.querySelectorAll("li") ?? [])].map((item) => item.textContent)).toEqual([
+      "a module-level singleton, which two tests cannot isolate from each other.",
+      "an event emitter",
+    ]);
     expect(line?.textContent).not.toContain("alt-singleton");
     expect(line?.textContent).not.toContain("Alternative not taken:");
     unmount();

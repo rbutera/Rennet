@@ -1,8 +1,8 @@
 // @vitest-environment happy-dom
-import type { LensBoard, LensSection } from "@rennet/protocol";
-import { beforeEach, describe, expect, it } from "vitest";
+import type { HostElement, LensBoard, LensSection } from "@rennet/protocol";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useRennetStore } from "../store";
-import { mount } from "../test/dom";
+import { mount, waitFor, within } from "../test/dom";
 import { flaggedGen2Board } from "../test/fixtures/boards";
 import { BoardElementsProvider } from "./kinds/element-context";
 import { Section, sectionCountText } from "./section";
@@ -32,12 +32,11 @@ beforeEach(() => {
 });
 
 describe("Section fold grammar", () => {
-  it("a non-delta section starts folded with a full-width gist and unfolds on toggle", async () => {
+  it("a non-delta section starts folded without inventing content and unfolds on toggle", async () => {
     const { container, getByText, user } = renderSection("g2-gen1");
     const root = container.querySelector("[data-kind=board-section]");
     expect(root?.getAttribute("data-open")).toBe("false");
-    // Folded fold-line: the full gist is visible; structural prose is not exposed as a count.
-    expect(getByText(/The first read, before the round/)).toBeTruthy();
+    expect(container.textContent).not.toContain("The first read, before the round");
     expect(container.querySelector("[data-kind=section-counts]")).toBeNull();
     expect(root?.id).toBe("g2-gen1");
     expect(root?.querySelector("h2 > button")).toBeTruthy();
@@ -102,5 +101,208 @@ describe("Section fold grammar", () => {
     if (highlight) await user.click(highlight);
     expect(root?.getAttribute("data-open")).toBe(before);
     expect(container.querySelector(`[data-thread-id="${id}"]`)).toBeTruthy();
+  });
+});
+
+const author = { kind: "lens-agent", id: "decisions" } as const;
+const previewEntry: LensSection = { ref: "root", gist: "Repeated heading", counts: {} };
+
+function previewTree(children: string[], content: HostElement[]) {
+  const elements: HostElement[] = [
+    { id: "root", kind: "section", data: { author, title: "Storage", children } },
+    ...content,
+  ];
+  return (
+    <BoardElementsProvider elements={elements} boardId="preview-board">
+      <Section entry={previewEntry} />
+    </BoardElementsProvider>
+  );
+}
+
+describe("Section content previews", () => {
+  it("lists nested headings and titled children in document order, then opens and focuses the chosen child", async () => {
+    const scroll = vi
+      .spyOn(HTMLElement.prototype, "scrollIntoView")
+      .mockImplementation(() => undefined);
+    const view = mount(
+      previewTree(
+        ["intro", "nested", "choice"],
+        [
+          { id: "intro", kind: "prose", data: { author, markdown: "Introductory detail." } },
+          {
+            id: "nested",
+            kind: "section",
+            data: { author, title: "Representation", children: ["req"] },
+          },
+          {
+            id: "req",
+            kind: "requirement",
+            data: { author, name: "Image bytes", shall: "Images retain their bytes." },
+          },
+          {
+            id: "choice",
+            kind: "decision",
+            data: {
+              author,
+              title: "Store the logo",
+              statement: "The project stores logo bytes in its own directory.",
+              why: "The directory owns the project data.",
+              evidence: [],
+              alternatives: [],
+            },
+          },
+        ],
+      ),
+    );
+    const contents = view.getByRole("list", { name: "Storage contents" });
+    expect(
+      within(contents)
+        .getAllByRole("button")
+        .map((button) => button.textContent),
+    ).toEqual(["Representation", "Image bytes", "Store the logo"]);
+    expect(view.queryByText("Introductory detail.")).toBeNull();
+    const link = within(contents).getByRole("button", { name: "Store the logo" });
+    link.focus();
+    await view.user.keyboard("{Enter}");
+    const statement = view.getByText("The project stores logo bytes in its own directory.");
+    const decision = statement.closest('[data-kind="decision"]');
+    await waitFor(() => expect(document.activeElement).toBe(decision));
+    expect(scroll.mock.contexts).toContain(decision);
+    expect(view.getByRole("heading", { name: "Store the logo" })).toBeTruthy();
+    scroll.mockRestore();
+  });
+
+  it("locates a Sequence step from its folded title", async () => {
+    const scroll = vi
+      .spyOn(HTMLElement.prototype, "scrollIntoView")
+      .mockImplementation(() => undefined);
+    const view = mount(
+      previewTree(
+        ["step"],
+        [
+          {
+            id: "step",
+            kind: "order_step",
+            data: {
+              author,
+              title: "Follow the cached rows",
+              span: "code-1",
+              children: ["explanation"],
+            },
+          },
+          {
+            id: "code-1",
+            kind: "code_ref",
+            data: {
+              author,
+              patchset_id: "ps-1",
+              path: "view.ts",
+              side: "head",
+              start_line: 1,
+              end_line: 2,
+            },
+          },
+          {
+            id: "explanation",
+            kind: "prose",
+            data: { author, markdown: "The previous result remains visible." },
+          },
+        ],
+      ),
+    );
+    await view.user.click(view.getByRole("button", { name: "Follow the cached rows" }));
+    const step = view
+      .getByText("The previous result remains visible.")
+      .closest('[data-kind="order_step"]');
+    await waitFor(() => expect(document.activeElement).toBe(step));
+    expect(scroll.mock.contexts).toContain(step);
+    scroll.mockRestore();
+  });
+
+  it("falls back to the first substantive paragraph and retains inline code without repeating the heading", () => {
+    const view = mount(
+      previewTree(
+        ["duplicate", "body"],
+        [
+          { id: "duplicate", kind: "prose", data: { author, markdown: "**Storage**" } },
+          {
+            id: "body",
+            kind: "prose",
+            data: {
+              author,
+              markdown:
+                "# Storage\n\nThe `projectLogoSchema` stores the image.\n\nA second paragraph stays out of the preview.",
+            },
+          },
+        ],
+      ),
+    );
+    expect(view.queryByRole("list", { name: "Storage contents" })).toBeNull();
+    const paragraph = view.container.querySelector('[data-kind="section-paragraph-preview"]');
+    expect(paragraph?.textContent).toBe("The projectLogoSchema stores the image.");
+    expect(paragraph?.querySelector("code")?.textContent).toBe("projectLogoSchema");
+    expect(paragraph?.textContent).not.toContain("…");
+    expect(view.queryByText(/A second paragraph/)).toBeNull();
+  });
+
+  it("omits an empty preview and updates from children arriving on the same board", () => {
+    const view = mount(previewTree([], []));
+    expect(view.queryByRole("list")).toBeNull();
+    expect(view.container.querySelector('[data-kind="section-paragraph-preview"]')).toBeNull();
+    expect(view.queryByText("Repeated heading")).toBeNull();
+    view.rerender(
+      previewTree(
+        ["body"],
+        [{ id: "body", kind: "prose", data: { author, markdown: "The first content arrives." } }],
+      ),
+    );
+    expect(view.getByText("The first content arrives.")).toBeTruthy();
+    view.rerender(
+      previewTree(
+        ["body", "nested"],
+        [
+          { id: "body", kind: "prose", data: { author, markdown: "The first content arrives." } },
+          { id: "nested", kind: "section", data: { author, title: "Ownership", children: [] } },
+        ],
+      ),
+    );
+    expect(view.getByRole("button", { name: "Ownership" })).toBeTruthy();
+    expect(view.queryByText("The first content arrives.")).toBeNull();
+  });
+
+  it("keeps a long legacy decision statement out of navigation while preserving all of it in the body", async () => {
+    const statement =
+      "The logo bytes live in the project directory so that all sessions share the same persisted image without reading the mutable repository on every request.";
+    const view = mount(
+      previewTree(
+        ["choice"],
+        [
+          {
+            id: "choice",
+            kind: "decision",
+            data: {
+              author,
+              statement,
+              why: "A project owns its visual identity.",
+              alternatives: [
+                "Read the repository for each request.",
+                "Store a separate image per session.",
+              ],
+              evidence: [],
+            },
+          },
+        ],
+      ),
+    );
+    const contents = view.getByRole("list", { name: "Storage contents" });
+    const label = within(contents).getByRole("button").textContent;
+    expect(label?.length).toBeLessThan(89);
+    expect(label).not.toBe(statement);
+    await view.user.click(view.getByRole("button", { name: "Toggle Storage" }));
+    expect(view.getByRole("heading", { level: 3 }).textContent).toBe(label);
+    expect(view.getByText(statement)).toBeTruthy();
+    expect(view.getByRole("heading", { name: "Rationale" })).toBeTruthy();
+    const alternatives = view.container.querySelector('[data-kind="decision-alternatives"]');
+    expect(alternatives?.querySelectorAll("li")).toHaveLength(2);
   });
 });

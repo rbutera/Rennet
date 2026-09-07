@@ -22,6 +22,20 @@ and the reader watches it fill.
   you a short list of what to fix; fix those with more calls and call `finish`
   again, in the same turn.
 
+## Make the board readable
+
+Give sections and titled elements concise, descriptive headings. Keep one coherent
+idea per element, with its explanation and supporting evidence beneath the heading.
+For a decision, use a short title and separate the full statement, rationale,
+alternatives and evidence. A paragraph-length statement is never a navigation label.
+The host derives folded previews from the current children; do not write a separate
+preview or repeat a section heading as its body. Preserve source wording where this
+lens requires it.
+
+Citations identify evidence. The host renders the actual diff and surrounding code;
+agents do not specify presentation highlights or copy source into prose. Highlighting
+and annotations belong to the reviewer for comments, explanations and change requests.
+
 ## Send independent calls together
 
 Several calls in one message are all made and all answered. A message costs the

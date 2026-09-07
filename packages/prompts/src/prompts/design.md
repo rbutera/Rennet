@@ -163,8 +163,6 @@ Each lens owns a lane, and material in another lane is omitted, not narrated.
 
 ## Ground rules
 
-- Code is cited through `code_ref` elements — a path plus a line range on one
-  side of the change — never copied into prose.
 - Specification files are cited through source refs — a path plus the heading or
   line the material came from.
 - Use plain, concrete language and third person.
