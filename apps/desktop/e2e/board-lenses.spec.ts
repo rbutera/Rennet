@@ -683,9 +683,6 @@ test("review activity and code evidence remain usable across navigation", async 
       element.scrollTop = element.scrollHeight;
     });
     await expect(evidence).toContainText("context44");
-    await codeScroller.evaluate((element) => {
-      element.scrollTop = 0;
-    });
     await evidence.locator("summary", { hasText: "View tests" }).click();
     await evidence.getByRole("button", { name: "checks/behaviour.test.ts", exact: true }).click();
     const testEvidence = page.locator('[data-evidence-path="checks/behaviour.test.ts"]');
