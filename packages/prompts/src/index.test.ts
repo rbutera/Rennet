@@ -17,6 +17,12 @@ import {
 } from "./index.js";
 
 const srcDir = dirname(fileURLToPath(import.meta.url));
+const partials = Object.fromEntries(
+  Object.entries(PROMPT_PARTIALS).map(([marker, file]) => [
+    marker,
+    readFileSync(join(srcDir, file), "utf8"),
+  ]),
+);
 
 describe("lens prompt manifest", () => {
   it("carries a non-empty prompt file for every lens", () => {
@@ -24,7 +30,7 @@ describe("lens prompt manifest", () => {
       const text = readFileSync(join(srcDir, LENS_PROMPT_FILES[kind]), "utf8");
       expect(text.length, `${kind} prompt`).toBeGreaterThan(500);
       expect(text).toMatch(/^# /);
-      expect(text).toContain("Ground rules");
+      expect(expandPromptPartials(text, partials)).toContain("Ground rules");
       // The board is OPENED with a call now, not authored into a returned document, so
       // the prompt names the CALL and its flat arguments — not a `document` struct.
       expect(text).toContain("`set_document`");
@@ -69,16 +75,9 @@ describe("lens prompt manifest", () => {
       expect(text).not.toContain("## Investigate before you draft");
       expect(text).not.toContain("## How you write this board");
     }
-    // ── The COUNT, as LITERALS ──────────────────────────────────────────────────────
-    // Without it a `LENS_KINDS` or a `PROMPT_PARTIALS` that came back empty would leave
-    // this sweep asserting nothing and still green, which is the defect this change has
-    // now shipped four times (an empty registry, a reconstructed tool surface, a raw
-    // schema, a one-target meta-key sweep). Deriving the expectation from the same two
-    // tables would inherit their emptiness, so these are the measured figures
-    // (2026-09-05): five lenses, two shared markers, ten pairs.
     expect(LENS_KINDS, "lens prompts swept").toHaveLength(5);
-    expect(Object.keys(PROMPT_PARTIALS), "shared markers swept").toHaveLength(2);
-    expect(checked, "lens/marker pairs actually asserted").toHaveLength(10);
+    expect(Object.keys(PROMPT_PARTIALS), "shared markers swept").toHaveLength(3);
+    expect(checked, "lens/marker pairs actually asserted").toHaveLength(15);
   });
 
   /**
@@ -262,9 +261,10 @@ describe("lens prompt manifest", () => {
   ] as const)("requires a served root section for every non-empty %s result", (lens, kind) => {
     const text = readFileSync(join(srcDir, LENS_PROMPT_FILES[lens]), "utf8").replace(/\s+/g, " ");
 
-    expect(text).toContain("top-level `section`");
-    expect(text).toContain(`\`${kind}\``);
-    expect(text).toContain("`section.data.children`");
+    expect(text).toContain("top-level section with `add_section`");
+    expect(text).toContain(kind);
+    expect(text).toContain("returned parent id");
+    expect(text).not.toMatch(/return an empty|section\.data\.children/);
   });
 
   it("tells the Noise seat its board is the complement of the other four", () => {

@@ -38,10 +38,11 @@ by a screen in front of them. Failure, cancellation, and daemon interruption rem
 explicit, retryable session states.
 
 The prompts live in `packages/prompts` (`@rennet/prompts`), one markdown file
-per lens plus the reviewer-voice file, the round-report classifier prompt, and
-one shared partial: the "Investigate before you draft" section every lens file
-carries at a `{{investigate-before-you-draft}}` marker line, spliced in when
-the pipeline reads the prompt so five files cannot drift apart on it.
+per lens, the reviewer-voice file, the round-report classifier prompt, and three
+shared partials. The reader voice teaches explanation for someone with little
+time and no assumed programming knowledge. Investigation requires reading the
+pinned change before making claims. Tool guidance covers writing, batching, and
+settlement. The pipeline expands all three from the prompt manifest.
 The package exports a typed manifest. Noise has two instruction sets on
 purpose: `noise.md` drives the Noise lens board seat, and the `NOISE_CONTRACT`
 prompt contract drives the RSP noise-document runner behind the noise index;
@@ -981,6 +982,26 @@ absent from this board. Boards never carry remainder essays about what is not
 on them.
 
 ## Voice rules
+
+Authored explanations lead with what happens and why it matters. They introduce
+components by their job before naming code and explain essential technical terms
+where they appear. Titles carry concise takeaways; folded previews come from
+element headings or prose. The host calculates counts. Expanded text adds the cause or example.
+Each card should make sense on
+its own, with citations available for checking the claim.
+
+Openings state the user-visible change in two short sentences, about 35 words.
+They explain the change without an itinerary for reading the board. Sequence
+sections supply shared context, and their steps add detail without repeating it.
+Step citations are displayed through the step's span, without also attaching the
+same code excerpt to the parent section.
+Independent changes stay separate; their presence in one diff is not a causal link.
+Decisions carry a viable alternative rather than padding the list with broken choices.
+
+The target is about 40 words per explanation, with room for the
+trigger, consequence, and evidence. This is drafting guidance, not a word-count
+validator. Design retains its verbatim source obligations and quotations. Its
+deterministic rendering does not pass through these authoring instructions.
 
 - Boards narrate in third person about the change, never as its author.
 - Board prose never names lenses, boards, agents, or the review process;

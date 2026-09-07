@@ -482,7 +482,7 @@ const readPrompt = (file: string): string =>
   file === INVESTIGATE_PARTIAL_FILE
     ? PARTIAL_BODY
     : Object.values(LENS_PROMPT_FILES).includes(file)
-      ? `PROMPT_FILE:${file}\n${PROMPT_PARTIAL_MARKER}`
+      ? `PROMPT_FILE:${file}\n${PROMPT_PARTIAL_MARKER}\n{{reader-voice}}`
       : `PROMPT_FILE:${file}`;
 
 /**
@@ -3240,6 +3240,8 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     // the marker is not. Delete the `expandPromptPartials` call in `runLensPipeline` and this
     // reddens (the marker would ride raw and the body would be absent).
     expect(designTurn).toContain(PARTIAL_BODY);
+    expect(designTurn).toContain("PROMPT_FILE:prompts/reader-voice.md");
+    expect(designTurn).not.toContain("{{reader-voice}}");
     expect(designTurn).not.toContain(PROMPT_PARTIAL_MARKER);
   });
 

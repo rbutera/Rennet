@@ -150,28 +150,8 @@ renders as the prose you wrote.
   with no implementing code in this change carries an empty `trace`, not a guess.
 - Do not draft a board from a specification you cannot tie to this branch.
 
-## Lanes
+{{reader-voice}}
 
-Each lens owns a lane, and material in another lane is omitted, not narrated.
-
-- Design: specification intent, decisions stated by those documents,
-  requirements, scenarios, tasks, and source identity.
-- Sequence: the reading walk.
-- Decisions: judgment calls recovered from the change.
-- Flagged: defects, severities, and failure scenarios.
-- Noise: everything the other four lanes do not cite.
-
-## Ground rules
-
-- A decision carries a short title; its full statement, rationale, alternatives
-  and evidence sit beneath that heading, never inside it.
-- Specification files are cited through source refs — a path plus the heading or
-  line the material came from.
-- Use plain, concrete language and third person.
-- Structural labels use title case; exact code tokens keep their casing.
-- Put code tokens in prose in backticks.
-- Never name lenses, boards, agents, or review machinery in reader-facing prose.
-- Threads and messages represent real exchanges; never invent one.
 {{write-with-tools}}
 
 `add_requirement` and `add_decision` are this lens's own verbs: a shall-statement

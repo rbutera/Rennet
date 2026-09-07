@@ -27,10 +27,8 @@ import {
 //     is TALLIED from each section's own resolved children, exactly as the fold
 //     line is defined; `delta` is the R58 stamp the section element carries.
 //
-// The one derivation with a choice in it is `gist`. The drafters are asked for a
-// one-line folded gist (`prompts/*.md`) and the `section` kind is a loose object,
-// so a board that carries one is served it; a board that does not falls back to
-// the section's own TITLE — its own words, never a summary this projection wrote.
+// A stored `gist` wins when present; otherwise this wire view uses the section
+// title. The renderer derives its own content preview from the children.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** The wire element shape the board service projects — `{ id, kind, data }`. */

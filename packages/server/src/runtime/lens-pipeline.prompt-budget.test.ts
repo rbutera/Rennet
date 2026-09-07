@@ -2,12 +2,9 @@ import { readFileSync } from "node:fs";
 import { buildDeltaPacket } from "@rennet/core";
 import {
   expandPromptPartials,
-  INVESTIGATE_PARTIAL_FILE,
   LENS_KINDS,
   LENS_PROMPT_FILES,
-  PROMPT_PARTIAL_MARKER,
-  WRITE_WITH_TOOLS_MARKER,
-  WRITE_WITH_TOOLS_PARTIAL_FILE,
+  PROMPT_PARTIALS,
 } from "@rennet/prompts";
 import { type Patchset, patchsetSchema } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
@@ -25,10 +22,12 @@ const packet = buildDeltaPacket(patchset, []);
 const bytes = (text: string): number => Buffer.byteLength(text, "utf8");
 const read = (file: string): string => readFileSync(new URL(file, promptsDir), "utf8");
 const lensPrompt = (lens: (typeof LENS_KINDS)[number]): string =>
-  expandPromptPartials(read(LENS_PROMPT_FILES[lens]), {
-    [PROMPT_PARTIAL_MARKER]: read(INVESTIGATE_PARTIAL_FILE),
-    [WRITE_WITH_TOOLS_MARKER]: read(WRITE_WITH_TOOLS_PARTIAL_FILE),
-  });
+  expandPromptPartials(
+    read(LENS_PROMPT_FILES[lens]),
+    Object.fromEntries(
+      Object.entries(PROMPT_PARTIALS).map(([marker, file]) => [marker, read(file)]),
+    ),
+  );
 
 /**
  * A 74-file / 292-hunk patchset — the shape a large agent-written branch has, and the
@@ -61,127 +60,16 @@ function synthetic(): Patchset {
 
 const bigPacket = buildDeltaPacket(synthetic(), []);
 
-// Measured 2026-09-04 on this fixture (2 files, 3 hunks) once the context layer became a
-// path reference (session-bound-workspace 3.1), rendered WITHOUT a context directory:
-// design 12,152 B, flagged 6,673, sequence 6,288, noise 6,636, decisions 6,004. The
-// DeltaPacket no longer rides, so there is no per-file term any more — on the
-// 74-file/292-hunk packet below every one of these numbers is IDENTICAL, which is the
-// property the second test pins. Each budget is its measurement plus 10% headroom; one
-// shared number would let the small lenses grow by half before anything reddened.
-//
-// What this cannot catch, stated so no reader inherits a wider claim: the prompt is
-// rendered with no context directory, so the path-reference layer (bounded under 2 KB by
-// its own test in `lens-pipeline.test.ts`) is not measured here.
-// Noise moved 6,088 → 6,636 B on 2026-09-04, deliberately: Rai's ruling made the lens the
-// COMPLEMENT of the other four boards rather than an independent skip-safety verdict, so
-// `noise.md` carries the new definition and the total-remainder rule (openspec
-// `lens-board-tools` D16). It grew and then shrank again in the same change, because the
-// second half of the ruling deleted every instruction that invited the seat to judge.
-// 6,636 still fits the old 6,750 budget, but only by 1.7% — the number below is restated
-// as measurement + 10% so this file's own convention stays true and the next harmless
-// edit reddens for a real reason rather than for the leftover headroom.
-//
-// RAISED 2026-09-05 for `lens-board-tools` 3.6, deliberately and with the figure stated.
-// Each lens prompt's emit slot — "your output is a draft board of typed blocks in the
-// schema supplied with your task" — became the tool vocabulary: the shared
-// `write-with-tools.md` partial (1,654 B) plus the one line naming that lens's own verb.
-//
-// Measured on this fixture against `origin/main`, before → after (delta):
-//
-//   design    12,169 → 14,223  (+2,054)
-//   sequence   6,627 →  8,503  (+1,876)
-//   decisions  6,432 →  8,294  (+1,862)
-//   flagged    7,379 →  9,226  (+1,847)
-//   noise      6,636 →  8,103  (+1,467)
-//
-// Four of the five sit just above the partial's own 1,814 B, which is what a slot swap
-// costs; Noise is the one below it, because `noise.md` also LOST its members bullet, its
-// document instruction and the line stamping `verdict`/`judge` — the host writes all four
-// now (D16f).
-//
-// Three of these figures were first recorded as 8,033 / 7,735 / 8,389, which were wrong.
-// They were inherited from an earlier lane rather than re-derived, and their impossibility
-// was legible without re-running anything: the shared partial alone was 1,654 B and only
-// about 180 B came out, so no lens could have grown by 1,010–1,406. Re-measure through
-// `renderDrafterPrompt(lensPrompt(lens), packet)` — this file's own helpers — rather than
-// copying a number forward. The budget-headroom test below is the mechanical half of that
-// rule: it fails on a budget that no longer matches what the prompt actually measures, in
-// either direction, so a stale figure cannot sit here green for a whole change again.
-//
-// It is a real growth in what a seat is SENT and it is not free, so it is named rather
-// than absorbed. What pays for it is on the other side of the same change: the seat turn
-// stops carrying an output schema (9,618 B as the Claude leg sends it, 10,874 B as the
-// Codex leg does), and it carried that on EVERY turn while this text rides the base
-// prompt once per thread — a repair turn now carries the `finish` verdict alone.
-//
-// ── #869: +800 B on NOISE, and on no other lens ─────────────────────────────────
-//
-// `noise.md` gained two paragraphs teaching `write_board`, the whole-board verb. Measured
-// here on 2026-09-05, through this file's own helpers rather than copied from the spike:
-//
-//   design    14,223 → 14,223  (unchanged)
-//   sequence   8,503 →  8,503  (unchanged)
-//   decisions  8,294 →  8,294  (unchanged)
-//   flagged    9,226 →  9,226  (unchanged)
-//   noise      8,103 →  8,903  (+800)
-//
-// The four zeroes are the point of the change and not an accident of where the text went.
-// The spike (draft PR #878) put this teaching in the shared `write-with-tools.md` partial
-// and paid +870 B on every lens, ~5.2 KB across a generation's six threads, for a verb its
-// own measurement showed made the four reasoning lenses SLOWER. Here it rides `noise.md`'s
-// own tail, beside the `update_noise_verdict` paragraph it belongs with, so one thread
-// pays for it. The tool surface is scoped the same way (`writesWholeBoard`).
-//
-// +800 B once per thread against 961 → 4 board calls and 317.8 s → 108.7 s on the lane
-// that is the generation's serial tail, measured on the 95-file drive. That is the trade,
-// and it is stated because it is a real growth in what a seat is sent.
-//
-// ── #867: +1,278 B on EVERY lens, from one partial ──────────────────────────────
-//
-// `write-with-tools.md` went 1,814 → 3,092 B: a new "Send independent calls together"
-// section teaching the seats to batch calls that do not depend on each other, and a
-// rewrite of the refusal paragraph that deletes the false sentence claiming a refusal
-// costs nothing. The partial is spliced into all five lens prompts, so the growth is
-// uniform — measured here through this file's own helpers, not copied forward:
-//
-//   design    14,223 → 15,501  (+1,278)
-//   sequence   8,503 →  9,781  (+1,278)
-//   decisions  8,294 →  9,572  (+1,278)
-//   flagged    9,226 → 10,504  (+1,278)
-//   noise      8,903 → 10,181  (+1,278)
-//
-// The five identical deltas are the check that the growth is the partial and nothing
-// else: `change-index.md` (the other commit on this branch) writes a context FILE and
-// adds a fixed bullet that was already there, so it costs the prompt zero bytes, and the
-// zero shows up here as the absence of a sixth different number.
-//
-// The cost, stated because a token regression is invisible in a diff: ~317 tokens, on the
-// base prompt of every seat thread, re-read on every round trip that thread makes. That
-// is what it is buying against — the batching it teaches removes round trips, and a round
-// trip costs the whole conversation, not 317 tokens. It is only a good trade while the
-// text is instruction; restatement in here is paid for on every trip and buys nothing.
-//
-// ── #898: −1,555 B on DESIGN, and on no other lens ──────────────────────────────
-//
-// `design.md` lost its "Format-specific structured fields" section, which named seven
-// fields the tool surface has no input for, so the seat was paying to read instructions
-// it could not follow. The host assembler stamps those projections now; the seat keeps
-// the one it can write, `scenario_clauses`. Measured here on 2026-09-06, after #867:
-//
-//   design    15,501 → 13,946  (−1,555)
-//
-// The other four are unchanged, which is the check that the cut is the section alone.
-//
-// #904: evidence and section guidance measures 14,652 / 9,921 / 10,169 / 10,800 / 10,699 B.
-// The decision-title rule lives in the two lenses that carry `add_decision`, not the shared
-// partial, so Sequence, Flagged and Noise are ~100 B lighter than the first cut.
-// Budgets are measurement + 10% headroom, as this file's convention has always been.
+// Full prompts on this fixture, including the task layer but no context directory:
+// design 14,334 B; sequence 9,491 B; decisions 9,289 B; flagged 9,593 B; noise 9,841 B.
+// Budgets leave 10% headroom. The context-reference layer has its own bounded test.
+// These are bytes sent, not measured provider tokens or total conversation cost.
 const BUDGET: Record<(typeof LENS_KINDS)[number], number> = {
-  design: 16_118,
-  sequence: 10_914,
-  decisions: 11_186,
-  flagged: 11_880,
-  noise: 11_769,
+  design: 15_767,
+  sequence: 10_440,
+  decisions: 10_218,
+  flagged: 10_552,
+  noise: 10_825,
 };
 
 describe("drafter prompt byte budget (tripwire, #737)", () => {

@@ -1,26 +1,17 @@
 ## How you write this board
 
-Your board already exists, and you write it with tools rather than by returning a
-document — nothing you say in prose reaches it, only a call does. Unless your own
-instructions say otherwise it is empty and every element on it will be yours;
-where the host has already placed elements, your instructions say so and say what
-they are. Write as you work: each call lands on the board the moment you make it,
-and the reader watches it fill.
+The board already exists. Write it through tools as you work; readers see each
+addition. Prose in your reply does not reach it. Tool definitions carry the inputs.
 
-- `set_document` opens the board — its title and the paragraph under it. Call it
-  again and it replaces what was there.
-- `add_section` starts a section and names it. Anything you add afterwards can
-  hang under a section by naming it as its parent; the shape of the board is the
-  parenting, and nothing else.
-- `cite` names a path and a line range on one side of the change, and hands back
-  a citation for other calls to attach. A range the change does not cover comes
-  back refused, with the nearest changed range, and nothing is written.
-- `add_prose`, `add_callout` and `add_annotation` write the reading matter.
-- `update_*` changes something you already wrote. `remove_element` takes it back,
-  along with anything hanging under it.
-- `finish` asks whether the board is done. It either settles the board or hands
-  you a short list of what to fix; fix those with more calls and call `finish`
-  again, in the same turn.
+1. Open with `set_document`. Calling it again replaces the opening.
+2. Create sections with `add_section`. Attach children to their parent's returned id.
+3. Use `cite` for changed code ranges. Attach its returned citation to the element
+   it supports. Use the corrected range from a refusal only if it supports the claim.
+4. Write explanations with `add_prose`, `add_callout`, or `add_annotation`, and
+   use this lens's own verbs below. `update_*` revises an element;
+   `remove_element` deletes it and its descendants.
+5. Call `finish` alone after writing. Repair its pointers and call it again until
+   it settles. Refusals and unfinished verdicts both are answered inside this turn.
 
 ## Make the board readable
 
@@ -37,31 +28,10 @@ and annotations belong to the reviewer for comments, explanations and change req
 
 ## Send independent calls together
 
-Several calls in one message are all made and all answered. A message costs the
-same whether it carries one call or six, so sending six one at a time pays for
-the message six times. Only one thing decides whether calls can travel together:
-whether any of them needs another's answer.
+Batch calls whose parent and citations already exist in one message, including
+independent `cite` calls. In order, in separate messages, create a parent or
+citation before its consumers. Open the document before adding content.
 
-- **Together, in one message.** Several `cite` calls — none of them needs the
-  others. Several `add_prose`, `add_callout` or `add_annotation` calls, when the
-  section they hang under already exists and the citations they attach are
-  already in hand. Several `add_section` calls under a parent that already
-  exists.
-- **In order, in separate messages.** A `cite` and the element attaching the
-  citation it hands back — you cannot attach an answer you have not received
-  yet. An `add_section` and the elements that hang under it. `set_document`,
-  which opens the board, before the rest. `finish`, which comes last and travels
-  alone.
-
-The rule underneath is one sentence: **anything whose parent and citations
-already exist can go in the same message; anything still waiting on an answer
-cannot.** When you are unsure, send it in the next message.
-
-A refused call says what would be admissible instead — make the corrected call
-and carry on. A refusal is recoverable, and so is a `finish` that comes back with
-work in it; both are answered inside this turn. But a refusal is not free: it
-costs the same round trip a written element costs, which is why the ordering
-above is worth getting right the first time. What you must not do is stop: a turn
-that ends without `finish` leaves the board unsettled.
-
-Never describe what you would have written. Write it.
+Each round trip rereads the conversation, so a refusal is not free. Repair only
+rejected work; accepted elements are already there. Follow this lens's ending
+instructions when there is nothing to write.
