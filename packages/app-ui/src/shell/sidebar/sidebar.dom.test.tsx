@@ -586,3 +586,56 @@ describe("macOS traffic-light clearance (corner slot, state 1)", () => {
     }
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The footer is a second titlebar handle. On darwin the strip carries the drag
+// region (the empty gap the Update pill's `ml-auto` opens is the target), and
+// every standing control inside opts back out with `app-region-no-drag` — the
+// same convention the corner slot carries, so a new footer button that forgets
+// it goes dead to the click. jsdom cannot verify the OS actually drags the
+// window (Electron-only); it can pin the class contract that makes it possible.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** The footer strip: the `border-t` container that holds Settings · Help · Update. */
+function footer(container: Element, byLabel: (label: string) => HTMLElement): Element {
+  const strip = byLabel("Settings").closest("div.border-t");
+  if (!strip || !container.contains(strip)) throw new Error("sidebar has no footer strip");
+  return strip;
+}
+
+describe("window drag surface (footer)", () => {
+  it("makes the footer strip draggable on darwin while every control opts out", async () => {
+    useUpdateReady.setState({ ready: { version: "1.2.3" } });
+    const { container, getByLabelText, getByText, findByText } = mountSidebar({
+      projects: [project("p1", "atlas")],
+      sessions: [{ id: "s9", projectId: "p1", title: "Old", archived: true }],
+      platform: "darwin",
+    });
+    // Archived renders once the session projection resolves (async), like elsewhere.
+    await findByText("Archived");
+    const strip = footer(container, getByLabelText);
+    expect(strip.className).toContain("app-region-drag");
+    // Archived (count > 0), Settings, Help and the ready Update pill must each opt out,
+    // or a drag started on the control swallows its own click.
+    for (const control of [
+      getByText("Archived").closest("button"),
+      getByLabelText("Settings"),
+      getByLabelText("Help"),
+      getByText("Update").closest("button"),
+    ]) {
+      if (!control) throw new Error("missing footer control");
+      expect(control.className).toContain("app-region-no-drag");
+    }
+  });
+
+  it("leaves the footer undraggable on every non-darwin host", () => {
+    for (const platform of ["win32", "linux", undefined]) {
+      const { container, getByLabelText } = mountSidebar({
+        projects: [project("p1", "atlas")],
+        platform,
+      });
+      expect(footer(container, getByLabelText).className).not.toContain("app-region-drag");
+      cleanup();
+    }
+  });
+});
