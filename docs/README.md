@@ -43,6 +43,7 @@ reviews, and **Developing Rennet** for people who build Rennet.
 - Guides: [repository bootstrap](./developing/guides/repository-bootstrap.md)
   and [settings and setup](./developing/guides/settings-and-setup.md)
 - Plans: [board rebuild plan](./developing/plans/board-rebuild-plan.md),
+  [review experience](./developing/plans/review-experience.md),
   [performance audit (2026-08-31)](./developing/plans/perf-audit-2026-08-31.md),
   and [token efficiency plan (#737)](./developing/plans/token-efficiency-737.md)
 - [Decisions](./developing/decisions/contracts-and-rulings.md): the cross-cutting

@@ -146,6 +146,10 @@ export default defineConfig({
                     link: "/developing/plans/board-rebuild-plan/",
                   },
                   {
+                    label: "Review experience",
+                    link: "/developing/plans/review-experience/",
+                  },
+                  {
                     label: "Performance audit (2026-08-31)",
                     link: "/developing/plans/perf-audit-2026-08-31/",
                   },

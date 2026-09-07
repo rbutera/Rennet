@@ -1,6 +1,8 @@
 ---
 title: Review experience
 description: Planned improvements to review activity, board readability and code evidence.
+status: planned
+tracking: https://github.com/rbutera/rennet/issues/904
 ---
 
 This work is planned in [#904](https://github.com/rbutera/rennet/issues/904).
