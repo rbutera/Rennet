@@ -178,10 +178,10 @@ beforeEach(() => {
 });
 
 describe("lens activity lives outside the board", () => {
-  it("opens meaningful activity separately from selection and hides raw calls", async () => {
+  it("automatically opens meaningful activity on the selected running tab and hides raw calls", async () => {
     const h = harness({ boards: { sequence: at(FIXTURE_BOARDS.gen1?.sequence) } });
     const { user, findByRole, getByRole } = h.open("?lens=sequence");
-    await user.click(await findByRole("button", { name: "Sequence activity" }));
+    await findByRole("dialog", { name: "Sequence activity details" });
     expect(document.querySelector('[data-kind="seat-widget"]')).toBeNull();
     const activity = getByRole("dialog", { name: "Sequence activity details" });
     expect(activity.textContent).toContain("Inspecting the change");
@@ -198,7 +198,7 @@ describe("lens activity lives outside the board", () => {
   it("offers both Flagged transcripts and retains the settled transcript", async () => {
     const h = harness({ boards: { flagged: at(FIXTURE_BOARDS.gen1?.flagged) } });
     const { user, findByRole, getByRole } = h.open("?lens=flagged");
-    await user.click(await findByRole("button", { name: "Flagged activity" }));
+    await user.hover(await findByRole("tab", { name: /^Flagged/ }));
     expect(getByRole("button", { name: "Open Claude transcript" })).toBeTruthy();
     expect(getByRole("button", { name: "Open Codex transcript" })).toBeTruthy();
     expect(getByRole("dialog", { name: "Flagged activity details" }).textContent).toContain(
@@ -212,7 +212,7 @@ describe("the transcript opens in its own surface and never displaces the conver
     // #823 AND 6.2, as one pair. Either half alone is a green bar over the bug.
     const h = harness({ boards: { sequence: at(FIXTURE_BOARDS.gen1?.sequence) } });
     const { user, findByRole } = h.open("?lens=sequence");
-    await user.click(await findByRole("button", { name: "Sequence activity" }));
+    await findByRole("dialog", { name: "Sequence activity details" });
 
     await waitFor(() => expect(transcriptButton("sequence")).toBeTruthy());
     // Before: the dock has the session's thread and nothing has a seat's.
@@ -242,7 +242,7 @@ describe("the transcript opens in its own surface and never displaces the conver
     expect(document.querySelector('[data-region="board"]')?.contains(dock() as Node)).toBe(false);
   });
 
-  it("moves the board, the widget and the transcript together when the lens changes", async () => {
+  it("moves the board, the activity and the transcript together when the lens changes", async () => {
     const h = harness({
       boards: {
         sequence: at(FIXTURE_BOARDS.gen1?.sequence),
@@ -250,7 +250,7 @@ describe("the transcript opens in its own surface and never displaces the conver
       },
     });
     const { user, findByRole } = h.open("?lens=sequence");
-    await user.click(await findByRole("button", { name: "Sequence activity" }));
+    await findByRole("dialog", { name: "Sequence activity details" });
 
     await waitFor(() => expect(transcriptButton("sequence")).toBeTruthy());
     await user.click(transcriptButton("sequence") as HTMLButtonElement);
@@ -263,7 +263,7 @@ describe("the transcript opens in its own surface and never displaces the conver
     await waitFor(() =>
       expect({
         board: document.querySelector("article[data-lens]")?.getAttribute("data-lens"),
-        activity: document.querySelector('[aria-label="Decisions activity"]') !== null,
+        activity: document.querySelector('[aria-label="Decisions activity details"]') !== null,
         transcript: drawer()?.getAttribute("data-lens"),
       }).toEqual({ board: "decisions", activity: true, transcript: "decisions" }),
     );
@@ -275,7 +275,7 @@ describe("the transcript opens in its own surface and never displaces the conver
   it("shares one slot with the diff view: opening the diff closes the transcript", async () => {
     const h = harness({ boards: { sequence: at(FIXTURE_BOARDS.gen1?.sequence) } });
     const { user, findByRole } = h.open("?lens=sequence");
-    await user.click(await findByRole("button", { name: "Sequence activity" }));
+    await findByRole("dialog", { name: "Sequence activity details" });
 
     await waitFor(() => expect(transcriptButton("sequence")).toBeTruthy());
     await user.click(transcriptButton("sequence") as HTMLButtonElement);

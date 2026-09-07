@@ -206,8 +206,10 @@ generated title beneath it. Animated rings on the tab and heading show work in
 progress without interrupting the document. Changes since the previous round
 remain hidden until the board settles.
 
-Open the activity button beside the selected tab to follow the review in a
-popover anchored directly beneath the tab bar. It shows a concise current action, recent activity and how long you
+While the selected lens is generating, its activity popover appears automatically
+under that tab. Hovering another tab temporarily shows that lens's activity; leaving
+it returns to the active generating lens. On completion, a brief status animation
+plays and the popover fades away. Hover or focus a tab to read its activity again. It shows a concise current action, recent activity and how long you
 have been following that lens. Open transcript stays visible and becomes available
 once the agent thread starts. It shows the selected agent's full conversation in a drawer beside the
 board. Your own chat stays in place. Choosing another lens moves the board and
