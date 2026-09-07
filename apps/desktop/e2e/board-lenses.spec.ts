@@ -220,6 +220,9 @@ test("a persisted board owns lens, generation, and captured-code navigation in t
     await finding.getByRole("button", { name: "Dismiss", exact: true }).click();
     await expect(flaggedTab.locator("[data-testid=lens-open-count]")).toHaveCount(0);
     await expect(flaggedTab).toHaveAccessibleName(/^Flagged, 0 open(?:, changed this round)?$/);
+    await expect
+      .poll(() => Object.values(askLog.readProjection(fixture.reviewId).findingDispositions))
+      .toContainEqual(expect.objectContaining({ disposition: "dismissed" }));
     await page.reload();
     await expect(board).toHaveAttribute("data-lens", "flagged", { timeout: 60_000 });
     await openBoardSections(page);
@@ -234,6 +237,11 @@ test("a persisted board owns lens, generation, and captured-code navigation in t
     await finding.getByRole("button", { name: "Request This Change" }).click();
     await expect(flaggedTab.locator("[data-testid=lens-open-count]")).toHaveCount(0);
     await expect(finding.getByRole("button", { name: "Dismiss", exact: true })).toHaveCount(0);
+    await expect
+      .poll(() => Object.values(askLog.readProjection(fixture.reviewId).stagedAsks))
+      .toContainEqual(
+        expect.objectContaining({ body: "Return the reviewed value from the implementation." }),
+      );
     await page.reload();
     await expect(board).toHaveAttribute("data-lens", "flagged", { timeout: 60_000 });
     await openBoardSections(page);
@@ -241,9 +249,19 @@ test("a persisted board owns lens, generation, and captured-code navigation in t
       await finding.locator("button[aria-expanded]").click();
     await finding.getByRole("button", { name: "Staged · Request Change" }).click();
     await expect(flaggedTab).toHaveAccessibleName("Flagged, 1 open");
-    await expect
-      .poll(() => Object.keys(askLog.readProjection(fixture.reviewId).stagedAsks))
-      .toEqual([]);
+    try {
+      await expect
+        .poll(() => Object.keys(askLog.readProjection(fixture.reviewId).stagedAsks))
+        .toEqual([]);
+    } catch (error) {
+      await test
+        .info()
+        .attach("persisted-ask-events", {
+          body: JSON.stringify(askLog.read(fixture.reviewId)),
+          contentType: "application/json",
+        });
+      throw error;
+    }
     await page.reload();
     await expect(board).toHaveAttribute("data-lens", "flagged", { timeout: 60_000 });
     await openBoardSections(page);
