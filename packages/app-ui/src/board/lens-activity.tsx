@@ -50,9 +50,37 @@ export function LensActivity({
         ),
       );
     };
-    place();
+    const resize = new ResizeObserver(place);
+    let heading: HTMLElement | null = null;
+    const observeHeading = () => {
+      const next = document.querySelector<HTMLElement>("[data-board-heading]");
+      if (next !== heading) {
+        if (heading) {
+          resize.unobserve(heading);
+          if (heading.parentElement) resize.unobserve(heading.parentElement);
+        }
+        heading = next;
+        if (heading) {
+          resize.observe(heading);
+          if (heading.parentElement) resize.observe(heading.parentElement);
+        }
+      }
+      place();
+    };
+    const changes = new MutationObserver(observeHeading);
+    changes.observe(document.body, { childList: true, subtree: true });
+    if (trigger.current) resize.observe(trigger.current);
+    const toolbar = trigger.current?.closest("[data-slot=session-top-bar]");
+    if (toolbar) resize.observe(toolbar);
+    observeHeading();
     window.addEventListener("resize", place);
-    return () => window.removeEventListener("resize", place);
+    window.addEventListener("scroll", place, true);
+    return () => {
+      resize.disconnect();
+      changes.disconnect();
+      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", place, true);
+    };
   }, [open]);
   const seconds = Math.max(0, Math.floor((now - observedAt) / 1000));
   return (

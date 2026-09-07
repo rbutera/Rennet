@@ -147,6 +147,76 @@ export function CodeBlock({
   const endLine = rows?.at(-1)?.newLine ?? rows?.at(-1)?.oldLine ?? startLine + lineCount - 1;
   const gutterChars = String(endLine).length + 1;
 
+  function commentEditor(i: number) {
+    const row = rows?.[i];
+    const rowSide = row?.newLine === null ? "LEFT" : row ? "RIGHT" : side;
+    const rowPath = rowSide === "LEFT" ? (previousPath ?? path) : path;
+    const lineNumber = row?.newLine ?? row?.oldLine ?? startLine + i;
+    const rowRef: CodeRef | undefined =
+      patchsetId === undefined
+        ? undefined
+        : {
+            patchsetId,
+            path: rowPath,
+            side: rowSide === "LEFT" ? "base" : "head",
+            startLine: lineNumber,
+            endLine: lineNumber,
+          };
+    const existingThread = codeThreads.find(({ thread }) => {
+      const ref = thread.codeRef;
+      return (
+        ref !== undefined &&
+        ref.path === rowPath &&
+        ref.side === (rowSide === "LEFT" ? "base" : "head") &&
+        ref.startLine <= lineNumber &&
+        ref.endLine >= lineNumber
+      );
+    });
+    const hasComment =
+      existingThread !== undefined || (rowSide === "RIGHT" && comments?.[lineNumber] != null);
+    return (
+      <div
+        data-line-comment-editor
+        className="w-full border-y border-border bg-secondary/40 px-3 py-2.5 font-sans"
+      >
+        <LineCommentEditor
+          key={i}
+          lineLabel={`L${lineNumber}`}
+          initialText={existingThread?.thread.messages.at(-1)?.text ?? comments?.[lineNumber] ?? ""}
+          hasComment={hasComment}
+          onCancel={() => setOpenLine(null)}
+          onSave={(text) => {
+            if (existingThread) {
+              if (text === null) removeQuoteComment(existingThread.id);
+              else addQuoteReply(existingThread.id, "user", text);
+            } else if (text === null) clearCodeComment(path, lineNumber);
+            else if (rowRef)
+              addQuoteComment(`${rowPath}:${lineNumber}`, text, "comment", undefined, rowRef);
+            else setCodeComment(path, lineNumber, text);
+            setOpenLine(null);
+          }}
+          onRequestChanges={(text) => {
+            // A code line is a real diff position: the comment saves AND a
+            // request-change ask stages against `${path}:${line}` (R36).
+            if (!rowRef) setCodeComment(path, lineNumber, text);
+            const position = { path: rowPath, line: lineNumber, side: rowSide };
+            const codeRef: CodeRef | undefined = rowRef;
+            stageAsk({
+              id: codePositionKey(position),
+              anchor: `${rowPath}:${lineNumber}`,
+              type: "request-change",
+              body: text,
+              side: rowSide,
+              ...(codeRef === undefined ? {} : { codeRef }),
+            });
+            flight.signal(); // the staging act flies one bubble to the FAB
+            setOpenLine(null);
+          }}
+        />
+      </div>
+    );
+  }
+
   async function handleCopy() {
     // Silent no-op when the clipboard API is unavailable (insecure context, denied).
     if (!navigator.clipboard) return;
@@ -230,16 +300,6 @@ export function CodeBlock({
             const rowSide = row?.newLine === null ? "LEFT" : row ? "RIGHT" : side;
             const rowPath = rowSide === "LEFT" ? (previousPath ?? path) : path;
             const lineNumber = row?.newLine ?? row?.oldLine ?? startLine + i;
-            const rowRef: CodeRef | undefined =
-              patchsetId === undefined
-                ? undefined
-                : {
-                    patchsetId,
-                    path: rowPath,
-                    side: rowSide === "LEFT" ? "base" : "head",
-                    startLine: lineNumber,
-                    endLine: lineNumber,
-                  };
             const isHighlighted = highlightSet.has(lineNumber);
             const hasComment =
               (rowSide === "RIGHT" && comments?.[lineNumber] != null) ||
@@ -268,16 +328,6 @@ export function CodeBlock({
                   );
                 })
               : askLines.has(lineNumber);
-            const existingThread = codeThreads.find(({ thread }) => {
-              const ref = thread.codeRef;
-              return (
-                ref !== undefined &&
-                ref.path === rowPath &&
-                ref.side === (rowSide === "LEFT" ? "base" : "head") &&
-                ref.startLine <= lineNumber &&
-                ref.endLine >= lineNumber
-              );
-            });
             const isOpen = openLine === i;
             const state = hasAsk
               ? "ask"
@@ -295,7 +345,6 @@ export function CodeBlock({
                         position: "absolute",
                         top: i * rowHeight,
                         minWidth: "100%",
-                        zIndex: isOpen ? 10 : undefined,
                       }
                     : undefined
                 }
@@ -388,56 +437,12 @@ export function CodeBlock({
                         ))}
                   </span>
                 </div>
-                {isOpen && (
-                  <div className="sticky left-0 w-[100cqw] border-y border-border bg-secondary/40 px-3 py-2.5 font-sans">
-                    <LineCommentEditor
-                      lineLabel={`L${lineNumber}`}
-                      initialText={
-                        existingThread?.thread.messages.at(-1)?.text ?? comments?.[lineNumber] ?? ""
-                      }
-                      hasComment={hasComment}
-                      onCancel={() => setOpenLine(null)}
-                      onSave={(text) => {
-                        if (existingThread) {
-                          if (text === null) removeQuoteComment(existingThread.id);
-                          else addQuoteReply(existingThread.id, "user", text);
-                        } else if (text === null) clearCodeComment(path, lineNumber);
-                        else if (rowRef)
-                          addQuoteComment(
-                            `${rowPath}:${lineNumber}`,
-                            text,
-                            "comment",
-                            undefined,
-                            rowRef,
-                          );
-                        else setCodeComment(path, lineNumber, text);
-                        setOpenLine(null);
-                      }}
-                      onRequestChanges={(text) => {
-                        // A code line is a real diff position: the comment saves AND a
-                        // request-change ask stages against `${path}:${line}` (R36).
-                        if (!rowRef) setCodeComment(path, lineNumber, text);
-                        const position = { path: rowPath, line: lineNumber, side: rowSide };
-                        const codeRef: CodeRef | undefined = rowRef;
-                        stageAsk({
-                          id: codePositionKey(position),
-                          anchor: `${rowPath}:${lineNumber}`,
-                          type: "request-change",
-                          body: text,
-                          side: rowSide,
-                          ...(codeRef === undefined ? {} : { codeRef }),
-                        });
-                        flight.signal(); // the staging act flies one bubble to the FAB
-                        setOpenLine(null);
-                      }}
-                    />
-                  </div>
-                )}
               </div>
             );
           })}
         </div>
       </div>
+      {openLine !== null && commentEditor(openLine)}
       {codeThreads.length > 0 && (
         <div className="border-t border-border p-2">
           <QuoteThreadPopover inline threads={codeThreads} />

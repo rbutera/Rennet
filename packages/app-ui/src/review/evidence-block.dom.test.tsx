@@ -166,3 +166,30 @@ it("windows full-file evidence around its cited line and keeps exact identity wh
   );
   expect(view.container.querySelectorAll("[data-code-line]").length).toBeLessThan(40);
 });
+
+it("keeps a gutter comment editor outside virtual rows while its deleted line scrolls away", async () => {
+  useRennetStore.setState((state) => ({ review: { ...state.review, quoteThreads: {} } }));
+  const rows = Array.from({ length: 80 }, (_, index) => ({
+    type: "del" as const,
+    text: `removed_${index + 1}`,
+    oldLine: index + 1,
+    newLine: null,
+  }));
+  const view = mount(<CodeBlock code="" rows={rows} path={ref.path} patchsetId={ref.patchsetId} />);
+  await view.user.click(view.getByRole("button", { name: "Comment on line 20" }));
+  const editor = view.getByPlaceholderText("Leave a comment on this line…");
+  expect(editor.closest("[data-code-scroll]")).toBeNull();
+  await view.user.type(editor, "Keep this explanation");
+  const scroll = view.container.querySelector<HTMLElement>("[data-code-scroll]");
+  if (!scroll) throw new Error("missing code scroller");
+  act(() => {
+    scroll.scrollTop = 60 * 22;
+    scroll.dispatchEvent(new Event("scroll"));
+  });
+  expect(view.container.querySelector('[data-code-line="20"]')).toBeNull();
+  expect(view.getByPlaceholderText("Leave a comment on this line…")).toBe(editor);
+  await view.user.click(view.getByRole("button", { name: "Save" }));
+  const thread = Object.values(useRennetStore.getState().review.quoteThreads)[0];
+  expect(thread?.codeRef).toEqual({ ...ref, side: "base", startLine: 20, endLine: 20 });
+  expect(thread?.messages.at(-1)?.text).toBe("Keep this explanation");
+});
