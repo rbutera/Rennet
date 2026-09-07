@@ -321,6 +321,6 @@ function revealTab(tab: HTMLButtonElement): void {
   const viewport = scroller.getBoundingClientRect();
   scroller.scrollLeft +=
     bounds.left < viewport.left
-      ? bounds.left - viewport.left
-      : Math.max(0, bounds.right - viewport.right);
+      ? Math.floor(bounds.left - viewport.left)
+      : Math.max(0, Math.ceil(bounds.right - viewport.right));
 }
