@@ -325,7 +325,7 @@ test("a persisted board owns lens, generation, and captured-code navigation in t
       );
 
     const beforeDesign = await page.evaluate(() => history.length);
-    await rail.getByRole("tab", { name: /Design/ }).click();
+    await rail.getByRole("tab", { name: /^Design(?:,|$)/ }).click();
     expect(await page.evaluate(() => history.length)).toBe(beforeDesign);
     await expectQuery(page, { lens: "design" });
     await expect(board).toHaveAttribute("data-lens", "design");
@@ -428,7 +428,7 @@ test("a persisted board owns lens, generation, and captured-code navigation in t
       board.locator(`[data-kind="related-file-chip"][data-source-path="${BOARD_TEST_PATH}"]`),
     ).toBeVisible();
 
-    const sequenceTab = rail.getByRole("tab", { name: /Sequence/ });
+    const sequenceTab = rail.getByRole("tab", { name: /^Sequence(?:,|$)/ });
     const sequenceLabel = sequenceTab.locator("span").last();
     const containerThreshold = await page.evaluate(
       () => 46 * Number.parseFloat(getComputedStyle(document.documentElement).fontSize),
@@ -583,7 +583,9 @@ test("review activity and code evidence remain usable across navigation", async 
     const board = page.locator("article[data-lens]");
     const tabs = page.getByRole("tablist", { name: "Lens" });
     for (const name of ["Design", "Sequence", "Decisions", "Flagged", "Noise"]) {
-      await expect(tabs.getByRole("tab", { name: new RegExp(name) })).toContainText(name);
+      await expect(tabs.getByRole("tab", { name: new RegExp(`^${name}(?:,|$)`) })).toContainText(
+        name,
+      );
     }
     const noise = tabs.getByRole("tab", { name: /Noise/ });
     await expect(noise).toHaveAttribute("aria-disabled", "true");
@@ -593,7 +595,7 @@ test("review activity and code evidence remain usable across navigation", async 
     ).toBeVisible();
     const reviewing = page.getByRole("button", { name: "Reviewing the change", exact: true });
     await expect(reviewing).toBeDisabled();
-    await tabs.getByRole("tab", { name: /Sequence/ }).click();
+    await tabs.getByRole("tab", { name: /^Sequence(?:,|$)/ }).click();
     await expect(
       board.getByRole("heading", { level: 1, name: "Sequence", exact: true }),
     ).toBeVisible();
@@ -616,7 +618,7 @@ test("review activity and code evidence remain usable across navigation", async 
     await sessionRow.click();
     await expect(sessionRow.getByRole("status", { name: "Review ready" })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Continue", exact: true })).toBeEnabled();
-    await tabs.getByRole("tab", { name: /Design/ }).click();
+    await tabs.getByRole("tab", { name: /^Design(?:,|$)/ }).click();
     const section = board.locator('[data-kind="board-section"]').first();
     const toggle = section.getByRole("button", { name: "Toggle Widget value", exact: true });
     if ((await toggle.getAttribute("aria-expanded")) === "true") await toggle.click();
@@ -626,7 +628,7 @@ test("review activity and code evidence remain usable across navigation", async 
     await expect(
       section.getByRole("heading", { name: "Expose the reviewed widget value", exact: true }),
     ).toBeVisible();
-    await tabs.getByRole("tab", { name: /Sequence/ }).click();
+    await tabs.getByRole("tab", { name: /^Sequence(?:,|$)/ }).click();
     await openBoardSections(page);
     await page.getByRole("button", { name: "widget.ts:1", exact: true }).click();
     const evidence = page.locator(`[data-evidence-path="${BOARD_IMPLEMENTATION_PATH}"]`);
@@ -677,7 +679,9 @@ test("review activity and code evidence remain usable across navigation", async 
     await page.emulateMedia({ colorScheme: "light", reducedMotion: "reduce" });
     await page.setViewportSize({ width: 900, height: 800 });
     for (const name of ["Design", "Sequence", "Decisions", "Flagged", "Noise"]) {
-      await expect(tabs.getByRole("tab", { name: new RegExp(name) })).toContainText(name);
+      await expect(tabs.getByRole("tab", { name: new RegExp(`^${name}(?:,|$)`) })).toContainText(
+        name,
+      );
     }
     await page.screenshot({ path: test.info().outputPath("evidence-light.png") });
   } finally {
