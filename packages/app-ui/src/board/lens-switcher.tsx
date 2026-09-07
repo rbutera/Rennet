@@ -1,5 +1,5 @@
 import type { LensKind } from "@rennet/protocol";
-import { cn } from "@rennet/ui";
+import { cn, Tooltip, TooltipContent, TooltipTrigger } from "@rennet/ui";
 import {
   DraftingCompass,
   Flag,
@@ -8,7 +8,7 @@ import {
   type LucideIcon,
   VolumeX,
 } from "lucide-react";
-import { Fragment } from "react";
+import { Fragment, useId } from "react";
 import { useCoachAnchor } from "../coach/registry";
 import { Icon } from "../components/icon";
 import { ReviewActivity } from "../components/review-activity";
@@ -158,6 +158,7 @@ export function LensSwitcher({
   readonly className?: string;
   readonly reviewId?: string;
 }) {
+  const waitingExplanationId = useId();
   const viewed = useRennetStore((s) => s.viewedDelta.viewedDeltaSections);
   // The `lenses` coach mark anchors the switcher — registered inside the visible-guard so
   // the mark only elects when there is a switcher on screen (no lens boards ⇒ no anchor).
@@ -200,74 +201,86 @@ export function LensSwitcher({
                       ? ", changed this round"
                       : "";
         const active = lens === selected;
+        const noiseWaiting = lens === "noise" && seat.waitingOn.length > 0;
+        const tab = (
+          <button
+            type="button"
+            role="tab"
+            aria-selected={active}
+            aria-describedby={noiseWaiting ? waitingExplanationId : undefined}
+            aria-disabled={lens === "noise" && seat.waitingOn.length > 0}
+            aria-description={
+              lens === "noise" && seat.waitingOn.length > 0
+                ? "Noise reviews what remains once the other lenses have finished."
+                : undefined
+            }
+            aria-label={`${LENS_LABEL[lens]}${accessibleStatus}`}
+            title={
+              noiseWaiting
+                ? undefined
+                : seat.register === "waiting" && waiting
+                  ? `${LENS_LABEL[lens]} — ${waiting}`
+                  : LENS_LABEL[lens]
+            }
+            data-lens={lens}
+            data-lens-slot={lensSlot(lens)}
+            data-register={seat.register}
+            data-failed={failure === undefined ? undefined : "true"}
+            data-absent={absence === undefined ? undefined : absence}
+            {...(seat.waitingOn.length > 0 ? { "data-waiting-on": seat.waitingOn.join(",") } : {})}
+            onClick={() => {
+              if (lens !== "noise" || seat.waitingOn.length === 0) onSelect(lens);
+            }}
+            className={cn(
+              // The tab binds its lens's hue for its own subtree; the stop and the
+              // active glyph below paint in it without naming a lens.
+              "relative flex items-center gap-2 whitespace-nowrap rounded-md px-3.5 pt-2 pb-2.5 font-medium text-13 transition-colors",
+              lensTint(lens),
+              active
+                ? "bg-secondary text-foreground"
+                : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            <LensStop cut={seat.cut} active={active} />
+            <span className="relative flex shrink-0">
+              <Icon icon={LENS_ICON[lens]} className={cn("size-4", active && "text-lens")} />
+              {openCount > 0 ? (
+                <span
+                  data-testid="lens-open-count"
+                  aria-hidden="true"
+                  className="-right-2 -top-2 absolute flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-destructive px-0.5 font-semibold text-10 text-destructive-foreground leading-none"
+                >
+                  {openCount}
+                </span>
+              ) : unviewedDeltas > 0 ? (
+                <span
+                  data-testid="lens-delta-pip"
+                  data-delta-count={unviewedDeltas}
+                  aria-hidden="true"
+                  className="-right-1 -top-1 absolute size-1.5 rounded-full bg-primary"
+                />
+              ) : null}
+            </span>
+            <span>{LENS_LABEL[lens]}</span>
+            {lens === "noise" && seat.waitingOn.length > 0 ? (
+              <ReviewActivity label="Waiting for other lenses" className="size-3 text-lens" />
+            ) : (
+              <SeatIndicators register={seat.register} voices={seat.voices.length} />
+            )}
+          </button>
+        );
         return (
           <Fragment key={lens}>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={active}
-              aria-disabled={lens === "noise" && seat.waitingOn.length > 0}
-              aria-description={
-                lens === "noise" && seat.waitingOn.length > 0
-                  ? "Noise reviews what remains once the other lenses have finished."
-                  : undefined
-              }
-              aria-label={`${LENS_LABEL[lens]}${accessibleStatus}`}
-              title={
-                lens === "noise" && seat.waitingOn.length > 0
-                  ? "Noise reviews what remains once the other lenses have finished."
-                  : seat.register === "waiting" && waiting
-                    ? `${LENS_LABEL[lens]} — ${waiting}`
-                    : LENS_LABEL[lens]
-              }
-              data-lens={lens}
-              data-lens-slot={lensSlot(lens)}
-              data-register={seat.register}
-              data-failed={failure === undefined ? undefined : "true"}
-              data-absent={absence === undefined ? undefined : absence}
-              {...(seat.waitingOn.length > 0
-                ? { "data-waiting-on": seat.waitingOn.join(",") }
-                : {})}
-              onClick={() => {
-                if (lens !== "noise" || seat.waitingOn.length === 0) onSelect(lens);
-              }}
-              className={cn(
-                // The tab binds its lens's hue for its own subtree; the stop and the
-                // active glyph below paint in it without naming a lens.
-                "relative flex items-center gap-2 whitespace-nowrap rounded-md px-3.5 pt-2 pb-2.5 font-medium text-13 transition-colors",
-                lensTint(lens),
-                active
-                  ? "bg-secondary text-foreground"
-                  : "text-muted-foreground hover:text-foreground",
-              )}
-            >
-              <LensStop cut={seat.cut} active={active} />
-              <span className="relative flex shrink-0">
-                <Icon icon={LENS_ICON[lens]} className={cn("size-4", active && "text-lens")} />
-                {openCount > 0 ? (
-                  <span
-                    data-testid="lens-open-count"
-                    aria-hidden="true"
-                    className="-right-2 -top-2 absolute flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-destructive px-0.5 font-semibold text-10 text-destructive-foreground leading-none"
-                  >
-                    {openCount}
-                  </span>
-                ) : unviewedDeltas > 0 ? (
-                  <span
-                    data-testid="lens-delta-pip"
-                    data-delta-count={unviewedDeltas}
-                    aria-hidden="true"
-                    className="-right-1 -top-1 absolute size-1.5 rounded-full bg-primary"
-                  />
-                ) : null}
-              </span>
-              <span>{LENS_LABEL[lens]}</span>
-              {lens === "noise" && seat.waitingOn.length > 0 ? (
-                <ReviewActivity label="Waiting for other lenses" className="size-3 text-lens" />
-              ) : (
-                <SeatIndicators register={seat.register} voices={seat.voices.length} />
-              )}
-            </button>
+            {noiseWaiting ? (
+              <Tooltip>
+                <TooltipTrigger render={tab} />
+                <TooltipContent id={waitingExplanationId} role="tooltip" side="bottom">
+                  Noise reviews what remains once the other lenses have finished.
+                </TooltipContent>
+              </Tooltip>
+            ) : (
+              tab
+            )}
             {active && seat.seated ? (
               <LensActivity reviewId={reviewId} entry={{ lens, seat }} />
             ) : null}
