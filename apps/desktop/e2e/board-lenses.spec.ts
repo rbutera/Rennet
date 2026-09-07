@@ -619,11 +619,28 @@ test("review activity and code evidence remain usable across navigation", async 
     const sidebar = page.locator('[data-region="sidebar"]');
     const sessionRow = sidebar.getByRole("button", { name: /Review experience fixture/ });
     await expect(sessionRow.getByRole("status", { name: "Reviewing the change" })).toBeVisible();
+    await sessionRow.focus();
+    await page.keyboard.press("Shift+Tab");
+    await page.keyboard.press("Tab");
+    await expect(sessionRow).toBeFocused();
+    await expect(
+      page.getByRole("tooltip", { name: "Reviewing the change", exact: true }),
+    ).toBeVisible();
     await sidebar
       .getByRole("button", { name: "New Chat", exact: true })
       .and(sidebar.locator("button:not([aria-haspopup])"))
       .click();
     await expect(sessionRow.getByRole("status", { name: "Reviewing the change" })).toBeVisible();
+    await sessionRow.click();
+    await page.getByRole("button", { name: "Sequence activity", exact: true }).click();
+    await expect(
+      page.getByText("Reading the implementation and its tests", { exact: true }),
+    ).toBeVisible();
+    await page.getByRole("button", { name: "Close activity" }).click();
+    await sidebar
+      .getByRole("button", { name: "New Chat", exact: true })
+      .and(sidebar.locator("button:not([aria-haspopup])"))
+      .click();
     sessions.setPreparation(fixture.sessionId, undefined);
     await expect(sessionRow.getByRole("status", { name: "Review ready" })).toBeVisible({
       timeout: 15_000,
