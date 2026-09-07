@@ -174,6 +174,10 @@ export default defineConfig({
                     label: "Browse WSL via its own daemon",
                     link: "/adr/0003-browse-wsl-via-in-distro-daemon/",
                   },
+                  {
+                    label: "Project logo copied into its project dir",
+                    link: "/adr/0004-project-mark-copied-into-project-dir/",
+                  },
                 ],
               },
               {

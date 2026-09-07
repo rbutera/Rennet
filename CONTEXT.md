@@ -30,6 +30,11 @@ This file defines the terms shared by the product, documentation, and code. It c
   _Avoid_: Daemon (in interface copy), server
 - **Project scout**: the seat that inspects a newly added project — after a deterministic pass — to detect its per-project configuration (issue tracker, worktree convention, logo, default branch, gate command, seed guidance), each answer carrying provenance. Its results prefill the project questionnaire.
   _Avoid_: Onboarding agent, detector
+- **Project mark**: the visual that identifies one project everywhere the shell shows it. A mark is either a glyph or a logo, and it resolves through the settings ladder: the user's choice, else the scout's detected logo, else the builtin glyph.
+  _Avoid_: Icon, avatar, favicon
+- **Glyph**: a project mark drawn from Rennet's fixed vocabulary of named symbols.
+- **Logo**: a project mark that is an image, either detected in the project repo by the scout or supplied by the user.
+  _Avoid_: Custom icon, image
 
 ## GitHub account
 
@@ -131,7 +136,9 @@ This file defines the terms shared by the product, documentation, and code. It c
 - **First-run welcome**: the one-time setup experience for a new Rennet client. It introduces Rennet, applies appearance and harness choices, offers optional system access, then hands the user to Add Project and New Chat. It precedes the contextual onboarding tour and is not a recurring empty-project state.
 - **Coach mark**: one contextual teaching card anchored to a control when the user first reaches it. Coach marks appear one at a time and together form the replayable onboarding tour.
 - **System access**: operating-system access used to browse and read project files. On macOS, optional Full Disk Access can be opened from Add Project for protected locations. It remains distinct from GitHub scopes and coding-harness authority.
-- **Logo menu**: the menu opened from the top-left Rennet mark. It contains application destinations, version information, and the restart action when an update is ready.
+- **Rennet mark**: Rennet's own symbol at the top left of the shell, distinct from any project mark.
+  _Avoid_: Logo (for Rennet itself)
+- **Logo menu**: the menu opened from the Rennet mark. It contains application destinations, version information, and the restart action when an update is ready.
 - **Owned daemon**: the local daemon whose lifecycle belongs to this desktop application.
 - **Attached daemon**: a daemon that the application uses but does not own.
 - **Tray-resident**: the desktop application has no open window but remains available from the system tray with its daemon and streams intact.

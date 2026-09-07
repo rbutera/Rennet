@@ -49,8 +49,9 @@ reviews, and **Developing Rennet** for people who build Rennet.
   decision register
 - [ADRs](./adr/0001-tray-quit-owns-the-daemon.md): narrow architectural
   decisions, including the
-  [root documentation library](./adr/0002-root-docs-own-the-library.md) and
-  [browsing a WSL source via its own daemon](./adr/0003-browse-wsl-via-in-distro-daemon.md)
+  [root documentation library](./adr/0002-root-docs-own-the-library.md),
+  [browsing a WSL source via its own daemon](./adr/0003-browse-wsl-via-in-distro-daemon.md), and
+  [copying a project's logo into its project dir](./adr/0004-project-mark-copied-into-project-dir.md)
 - Reference: [documentation authority](./developing/reference/doc-architecture.md),
   [monorepo map](./developing/reference/monorepo-map.md),
   [dependency standard](./developing/reference/dependency-standard.md),
