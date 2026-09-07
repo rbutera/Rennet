@@ -140,9 +140,13 @@ finishes loading, and the progress names the repository being read rather than
 guessing a percentage. If the project's forge is unreachable, local work stays
 available. Until that first read answers, the list says it is **scanning** — a
 project on a network mount can take minutes, and an empty list mid-scan is not the
-same claim as a project with nothing open. The left rail filters by attention,
-ownership, local branches, or pull requests. **Created** and **Activity** are sortable column headers, and
-**Show merged PRs** adds faded historical rows to the same list.
+same claim as a project with nothing open. The filters (attention, ownership,
+local branches, pull requests) sit in a rail beside the list on a wide canvas
+and fold into a row above it on a narrow one. **Created** and **Activity** are
+sortable column headers. **Show merged PRs** adds faded historical rows to the
+same list; the open rows stay on screen while the merged pages load, with a line
+in the list saying so, because a repository with history takes several seconds
+to page through.
 
 Every row carries the same columns, whether it is a pull request or a local
 branch: the author with their forge avatar (your local branches wear your own),
@@ -156,6 +160,10 @@ so those cells read "—" rather than zero. A checked-out worktree also says
 nothing about it, because there is nothing to measure. Uncommitted edits are not
 counted in the lines; **dirty** is how the list says they exist. GitLab does not
 report line counts in its merge-request list, so GitLab rows show "—" there.
+**Review requested** and **Your PR** sit beside a pull request's title rather than
+in a column of their own. As the canvas narrows the list folds from the right:
+files and created go first, then CI and the author's name, leaving the change,
+the author's face, the lines, and the activity.
 The back arrow or Escape leaves New Chat for the surface you came from. When the
 filter contains text, the first Escape clears it and the next leaves.
 

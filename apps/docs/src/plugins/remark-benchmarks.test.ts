@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import remarkBenchmarks, {
   benchmarkData,
   invalidateBenchmarkRenders,
@@ -115,22 +115,28 @@ describe("the committed benchmark data", () => {
 });
 
 describe("the plugin is what the docs build runs", () => {
-  it("is registered in astro.config's remark pipeline", async () => {
-    // Not a claim in a comment: the config is imported and the registration inspected.
-    const config = (await import("../../astro.config.mjs")).default as {
-      markdown: { remarkPlugins: unknown[] };
-    };
+  // Not a claim in a comment: the config is imported and the registration inspected.
+  // The import is the whole Starlight plugin graph transformed through Vite, cold — a
+  // handful of seconds alone and past the 5 s per-test default when the rest of the
+  // gate is competing for the machine. It is paid once here, with its cost declared,
+  // rather than inside each test where the default timeout turned load into a failure.
+  let config: {
+    markdown: { remarkPlugins: unknown[] };
+    integrations: { name: string; hooks: Record<string, () => void> }[];
+  };
+  beforeAll(async () => {
+    config = (await import("../../astro.config.mjs")).default as typeof config;
+  }, 60_000);
+
+  it("is registered in astro.config's remark pipeline", () => {
     expect(config.markdown.remarkPlugins).toContain(remarkBenchmarks);
   });
 
-  it("verifies the data on every build through an integration, not only the transform", async () => {
+  it("verifies the data on every build through an integration, not only the transform", () => {
     // The remark plugin alone did NOT stop the build, and this is the assertion that
     // records why: Astro caches rendered Markdown, so an unchanged page never re-runs the
     // transform — a corrupted data file completed a full `astro build` with exit code 0.
     // `astro:config:setup` runs regardless of that cache.
-    const config = (await import("../../astro.config.mjs")).default as {
-      integrations: { name: string; hooks: Record<string, () => void> }[];
-    };
     const integration = config.integrations.find(
       (entry) => entry?.name === "rennet-benchmark-data",
     );

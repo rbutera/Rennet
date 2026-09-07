@@ -1,4 +1,4 @@
-import type { SmartListCi } from "@rennet/protocol";
+import type { ProjectDetail, SmartListCi } from "@rennet/protocol";
 import { cn, Switch, Toggle, ToggleGroup } from "@rennet/ui";
 import {
   ArrowDown,
@@ -121,16 +121,33 @@ export function NewChatView({ projectId }: { readonly projectId: string }) {
   const [starting, setStarting] = useState<string | null>(null);
   const mint = useNewChatMint(projectId);
   const claimed = useClaimedTargets(projectId);
-  // `pending` is the FIRST load of this project's branches and change requests, and it is
-  // load-bearing for the empty-state copy below (#872): `rows` is `[]` until `detail`
-  // arrives, and on a network clone that scan runs for minutes, during which the list read
-  // "no open branches or change requests yet" — honest-empty wording for a state that was
-  // actually still scanning. A refetch (the merged-PR toggle) keeps `data`, so it stays
-  // false and the rows already on screen are not replaced by a scanning line.
-  const { data: detail, pending: scanning } = useCommand("project.detail", {
+  const {
+    data: fetched,
+    pending,
+    error,
+  } = useCommand("project.detail", {
     projectId,
     prStates: showMerged ? ["open", "merged"] : ["open"],
   });
+  // The merged toggle is a DIFFERENT query (its own cache key), so `fetched` is empty
+  // while the merged pages load — ~2 s a page on GitHub, up to five pages, so ten seconds
+  // or more on a repository with history. Flipping the switch used to replace every row
+  // on screen with a scanning line for that long, which read as the toggle not working.
+  // The last detail that arrived for this project is held and stays on screen; the
+  // merged rows join it when they land, and the list says so meanwhile.
+  const [held, setHeld] = useState<{ projectId: string; detail: ProjectDetail }>();
+  useEffect(() => {
+    if (fetched) setHeld({ projectId, detail: fetched });
+  }, [fetched, projectId]);
+  const detail = fetched ?? (held?.projectId === projectId ? held.detail : undefined);
+  // `scanning` is the FIRST load of this project's branches and change requests, and it
+  // is load-bearing for the empty-state copy below (#872): `rows` is `[]` until `detail`
+  // arrives, and on a network clone that scan runs for minutes, during which the list
+  // read "no open branches or change requests yet" — honest-empty wording for a state
+  // that was actually still scanning.
+  const scanning = pending && detail === undefined;
+  const loadingMerged = pending && detail !== undefined && showMerged;
+  const errorMessage = error ? String((error as Error)?.message ?? error) : undefined;
 
   useEffect(() => {
     if (!mint.pending) setStarting(null);
@@ -199,9 +216,11 @@ export function NewChatView({ projectId }: { readonly projectId: string }) {
           esc
         </kbd>
       </header>
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto flex w-full max-w-[1380px] flex-col px-8 pt-[6vh] pb-10">
-          <h1 className="flex flex-wrap items-baseline justify-center gap-2.5 text-center font-display text-2xl font-semibold tracking-tight text-ink">
+      {/* The content region is the measure for every fold below (`@container`): the
+          canvas narrows with the sidebar and the chat column, not only with the window. */}
+      <div className="@container min-h-0 flex-1 overflow-y-auto">
+        <div className="mx-auto flex w-full max-w-[1380px] flex-col px-4 pt-[4vh] pb-10 @[48rem]:px-8 @[48rem]:pt-[6vh]">
+          <h1 className="flex flex-wrap items-baseline justify-center gap-2.5 text-center font-display text-xl font-semibold tracking-tight text-ink @[48rem]:text-2xl">
             What should we review in
             <ProjectPicker
               large
@@ -224,7 +243,19 @@ export function NewChatView({ projectId }: { readonly projectId: string }) {
               </span>
             </p>
           ))}
-          <label className="mt-8 flex h-10 items-center gap-2 rounded-lg border border-line bg-card/40 px-3 focus-within:border-accent-line">
+          {errorMessage ? (
+            <p
+              role="alert"
+              className="mt-5 flex items-center gap-2 rounded-chip border border-danger bg-danger-soft px-3.5 py-2.5 text-sm text-ink"
+            >
+              <Icon icon={TriangleAlert} className="size-3.5 shrink-0 text-danger" />
+              <span>
+                Could not load this project's change requests: {errorMessage}
+                {detail ? " The rows below are from the last read that answered." : ""}
+              </span>
+            </p>
+          ) : null}
+          <label className="mt-6 flex h-10 items-center gap-2 rounded-lg border border-line bg-card/40 px-3 focus-within:border-accent-line @[48rem]:mt-8">
             <Icon icon={Search} className="size-4 shrink-0 text-ink-faint" />
             <input
               value={query}
@@ -240,9 +271,11 @@ export function NewChatView({ projectId }: { readonly projectId: string }) {
               className="w-full bg-transparent text-sm text-ink placeholder:text-ink-faint focus-visible:outline-none"
             />
           </label>
-          <div className="mt-4 flex min-h-0 items-start gap-4">
-            <aside className="w-60 shrink-0 overflow-hidden rounded-lg border border-line bg-card/25">
-              <div className="flex items-center justify-between gap-3 border-b border-line px-3.5 py-3">
+          {/* Below 64rem the rail folds into a row above the table: the filters as a
+              tray, the merged switch beside it. */}
+          <div className="mt-4 flex min-h-0 flex-col items-stretch gap-3 @[64rem]:flex-row @[64rem]:items-start @[64rem]:gap-4">
+            <aside className="flex shrink-0 flex-col-reverse gap-2 @[64rem]:w-60 @[64rem]:flex-col @[64rem]:gap-0 @[64rem]:overflow-hidden @[64rem]:rounded-lg @[64rem]:border @[64rem]:border-line @[64rem]:bg-card/25">
+              <div className="flex items-center justify-end gap-3 px-1 @[64rem]:justify-between @[64rem]:border-b @[64rem]:border-line @[64rem]:px-3.5 @[64rem]:py-3">
                 <label htmlFor="show-merged" className="text-12-5 font-medium text-ink-soft">
                   Show merged PRs
                 </label>
@@ -258,16 +291,15 @@ export function NewChatView({ projectId }: { readonly projectId: string }) {
                 onValueChange={(next: string[]) => {
                   if (next[0]) setActiveFilter(next[0] as SmartFilter);
                 }}
-                orientation="vertical"
                 aria-label="Filter review targets"
-                className="flex w-full flex-col items-stretch gap-0 border-0 bg-transparent p-1.5"
+                className="flex w-full flex-row flex-wrap items-stretch gap-1 rounded-lg border border-line bg-card/25 p-1.5 @[64rem]:flex-col @[64rem]:gap-0 @[64rem]:rounded-none @[64rem]:border-0 @[64rem]:bg-transparent"
               >
                 {FILTERS.map(({ filter, label }) => (
                   <Toggle
                     key={filter}
                     value={filter}
                     size="sm"
-                    className="w-full justify-between border-0 border-l-2 border-l-transparent px-2.5 data-pressed:border-l-accent"
+                    className="justify-between gap-2 border-0 px-2.5 @[64rem]:w-full @[64rem]:border-l-2 @[64rem]:border-l-transparent @[64rem]:data-pressed:border-l-accent"
                   >
                     <span>{label}</span>
                     <span
@@ -284,33 +316,42 @@ export function NewChatView({ projectId }: { readonly projectId: string }) {
             </aside>
             <div
               ref={smartListRef}
-              className="min-w-0 flex-1 overflow-x-auto rounded-lg border border-line bg-card/20"
+              className="min-w-0 flex-1 rounded-lg border border-line bg-card/20"
             >
-              <div className="min-w-[940px]">
-                <ListHeader sortKey={sortKey} sortDirection={sortDirection} onSort={chooseSort} />
-                <div className="divide-y divide-border/70">
-                  {visible.map((row) => (
-                    <ItemRow
-                      key={row.id}
-                      row={row}
-                      pending={mint.pending}
-                      starting={mint.pending && starting === row.id}
-                      onStart={() => {
-                        setStarting(row.id);
-                        mint.start(row, "");
-                      }}
-                    />
-                  ))}
-                  {visible.length === 0 ? (
-                    <div className="px-4 py-12 text-center text-12-5 text-ink-faint">
-                      {scanning
-                        ? "scanning this project's branches and change requests…"
-                        : unclaimed.length === 0
-                          ? "no open branches or change requests yet"
-                          : "nothing matches"}
-                    </div>
-                  ) : null}
-                </div>
+              <ListHeader sortKey={sortKey} sortDirection={sortDirection} onSort={chooseSort} />
+              {loadingMerged ? (
+                <p
+                  role="status"
+                  className="flex items-center gap-2 border-b border-line px-4 py-2 text-12-5 text-ink-faint"
+                >
+                  <Icon icon={CircleDashed} className="size-3.5 animate-spin" />
+                  loading merged pull requests…
+                </p>
+              ) : null}
+              <div className="divide-y divide-border/70">
+                {visible.map((row) => (
+                  <ItemRow
+                    key={row.id}
+                    row={row}
+                    pending={mint.pending}
+                    starting={mint.pending && starting === row.id}
+                    onStart={() => {
+                      setStarting(row.id);
+                      mint.start(row, "");
+                    }}
+                  />
+                ))}
+                {visible.length === 0 ? (
+                  <div className="px-4 py-12 text-center text-12-5 text-ink-faint">
+                    {scanning
+                      ? "scanning this project's branches and change requests…"
+                      : unclaimed.length === 0
+                        ? errorMessage
+                          ? "nothing could be loaded"
+                          : "no open branches or change requests yet"
+                        : "nothing matches"}
+                  </div>
+                ) : null}
               </div>
             </div>
           </div>
@@ -325,8 +366,21 @@ export function NewChatView({ projectId }: { readonly projectId: string }) {
   );
 }
 
+/**
+ * The columns, in the order a reviewer picks: the change and its state, who made it,
+ * whether CI likes it, how big it is, how old it is, how recently it moved. The list
+ * folds from the right as the canvas narrows (`@container` on the content region):
+ *   ≥ 72rem   change · author · CI · +/− · files · created · activity
+ *   ≥ 54rem   change · author · CI · +/− · activity
+ *   below     change · author (face only) · +/− · activity
+ * Status is not a column: "Review requested" and "Your PR" sit beside the title, where the
+ * gold rail already points, so the badge never lands a screen's width from its change.
+ */
 const GRID =
-  "grid grid-cols-[minmax(19rem,1fr)_7rem_3.25rem_7rem_4rem_6.25rem_6.25rem_9rem_1.25rem] items-center gap-3";
+  "grid items-center gap-3 grid-cols-[minmax(0,1fr)_1.75rem_5.5rem_4.25rem_1.25rem] @[54rem]:grid-cols-[minmax(0,1fr)_7rem_2.5rem_6rem_4.75rem_1.25rem] @[72rem]:grid-cols-[minmax(0,1fr)_7rem_2.5rem_6.5rem_3.25rem_5.25rem_5.25rem_1.25rem]";
+/** Cells that exist only from a fold up. */
+const FROM_54 = "hidden @[54rem]:block";
+const FROM_72 = "hidden @[72rem]:block";
 
 function ListHeader({
   sortKey,
@@ -345,17 +399,20 @@ function ListHeader({
       )}
     >
       <span>Change</span>
-      <span>Author</span>
-      <span>CI</span>
+      <span className="hidden @[54rem]:block">Author</span>
+      <span className="@[54rem]:hidden" aria-hidden />
+      <span className={FROM_54}>CI</span>
       <span>+ / −</span>
-      <span>Files</span>
-      <SortHeader
-        label="Created"
-        value="created"
-        active={sortKey}
-        direction={sortDirection}
-        onSort={onSort}
-      />
+      <span className={FROM_72}>Files</span>
+      <span className={FROM_72}>
+        <SortHeader
+          label="Created"
+          value="created"
+          active={sortKey}
+          direction={sortDirection}
+          onSort={onSort}
+        />
+      </span>
       <SortHeader
         label="Activity"
         value="recent"
@@ -363,7 +420,6 @@ function ListHeader({
         direction={sortDirection}
         onSort={onSort}
       />
-      <span>Status</span>
       <span />
     </div>
   );
@@ -434,9 +490,11 @@ function ItemRow({
       <ChangeCell row={row} />
       <span className="flex min-w-0 items-center gap-1.5 text-xs text-ink-soft">
         <Avatar name={row.author} src={row.authorAvatarUrl} />
-        <span className="truncate">{row.author}</span>
+        <span className="hidden truncate @[54rem]:inline">{row.author}</span>
       </span>
-      <CiStatus ci={row.pr?.ci} />
+      <span className={FROM_54}>
+        <CiStatus ci={row.pr?.ci} />
+      </span>
       <span className="whitespace-nowrap text-xs tabular-nums">
         {row.additions === undefined || row.deletions === undefined ? (
           <span className="text-ink-faint">—</span>
@@ -447,7 +505,7 @@ function ItemRow({
           </>
         )}
       </span>
-      <span className="text-xs tabular-nums text-ink-soft">
+      <span className={cn(FROM_72, "text-xs tabular-nums text-ink-soft")}>
         {row.changedFiles === undefined ? (
           <span className="text-ink-faint">—</span>
         ) : (
@@ -456,7 +514,7 @@ function ItemRow({
       </span>
       <time
         dateTime={row.createdAt}
-        className="text-xs tabular-nums text-ink-soft"
+        className={cn(FROM_72, "text-xs tabular-nums text-ink-soft")}
         title={row.createdAt}
       >
         {formatDate(row.createdAt)}
@@ -468,7 +526,6 @@ function ItemRow({
       >
         {formatActivity(row.lastActivityAt)}
       </time>
-      <RowBadge row={row} />
       <Icon
         icon={Check}
         data-mark="start"
@@ -495,7 +552,7 @@ function ChangeCell({ row }: { readonly row: SmartRow }) {
         />
         <span className="min-w-0">
           <span className="flex min-w-0 items-baseline gap-2.5">
-            <span className="truncate font-mono text-sm font-medium text-ink">{row.branch}</span>
+            <span className="truncate text-sm font-medium text-ink">{row.branch}</span>
             {/* Clean/dirty is a measured fact only where there is a checkout to measure;
                 a bare branch says nothing. Dirty is copper (a flag to weigh), not gold. */}
             {local?.worktree ? (
@@ -534,9 +591,12 @@ function ChangeCell({ row }: { readonly row: SmartRow }) {
         )}
       />
       <span className="min-w-0">
-        <span className="block truncate text-sm font-medium text-ink">{row.title}</span>
+        <span className="flex min-w-0 items-center gap-2.5">
+          <span className="truncate text-sm font-medium text-ink">{row.title}</span>
+          <RowBadge row={row} />
+        </span>
         <span className="mt-0.5 flex min-w-0 items-center gap-2 text-2xs text-ink-faint">
-          <span className="shrink-0 font-mono">
+          <span className="shrink-0 tabular-nums">
             {requestPrefix(row.pr?.forgeRepository?.forge)}
             {row.pr?.number}
           </span>
@@ -545,7 +605,7 @@ function ChangeCell({ row }: { readonly row: SmartRow }) {
               <Icon icon={GitMerge} className="size-2.5" /> Merged
             </span>
           ) : null}
-          <span className="truncate font-mono">{row.branch}</span>
+          <span className="truncate">{row.branch}</span>
           {row.checkedOutLocally ? <span className="shrink-0">checked out locally</span> : null}
         </span>
       </span>
@@ -554,21 +614,21 @@ function ChangeCell({ row }: { readonly row: SmartRow }) {
 }
 
 function RowBadge({ row }: { readonly row: SmartRow }) {
-  if (row.kind === "local") return <span />;
-  if (row.state === "merged") return <span />;
+  if (row.kind === "local") return null;
+  if (row.state === "merged") return null;
   if (row.pr?.reviewRequested)
     return (
-      <span className="inline-flex w-fit items-center gap-1 rounded-full bg-accent-fill px-2 py-0.5 text-10 font-semibold text-accent-ink">
+      <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-accent-fill px-2 py-0.5 text-10 font-semibold text-accent-ink">
         <Icon icon={GitPullRequestArrow} className="size-2.5" /> Review requested
       </span>
     );
   if (row.mine)
     return (
-      <span className="inline-flex w-fit items-center gap-1 rounded-full border border-line-strong px-2 py-0.5 text-10 font-medium text-ink-soft">
+      <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-line-strong px-2 py-0.5 text-10 font-medium text-ink-soft">
         <Icon icon={GitPullRequest} className="size-2.5" /> Your PR
       </span>
     );
-  return <span />;
+  return null;
 }
 // CI is a coloured mark AND a named state (the aria-label): DESIGN.md never lets
 // colour stand alone. Green passes, red fails, copper is still running; a change
