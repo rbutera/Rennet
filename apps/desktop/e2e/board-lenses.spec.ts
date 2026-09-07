@@ -595,6 +595,16 @@ test("review activity and code evidence remain usable across navigation", async 
     ).toBeVisible();
     const reviewing = page.getByRole("button", { name: "Reviewing the change", exact: true });
     await expect(reviewing).toBeDisabled();
+    const orbit = reviewing.locator(".animate-spin");
+    await page.emulateMedia({ reducedMotion: "no-preference" });
+    await expect
+      .poll(() => orbit.evaluate((element) => getComputedStyle(element).animationName))
+      .not.toBe("none");
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await expect
+      .poll(() => orbit.evaluate((element) => getComputedStyle(element).animationName))
+      .toBe("none");
+    await page.emulateMedia({ reducedMotion: "no-preference" });
     await tabs.getByRole("tab", { name: /^Sequence(?:,|$)/ }).click();
     await expect(
       board.getByRole("heading", { level: 1, name: "Sequence", exact: true }),

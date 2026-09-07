@@ -1093,6 +1093,11 @@ ruling lines remain visible in the progress region but never count as completion
   reviewed-tree/head objects on demand. Later working-tree changes cannot alter
   those bytes. Captured hunks remain readable when additional context is
   unavailable, and the code surface names that limitation.
+- `patchset.readEvidence` returns the captured diff first. Full sources and the
+  cached test relationship index are separate requests. Selections carry the
+  patchset, file, side and line range into comments, explanations, change requests
+  and replies, including deleted lines. A selection spanning different files or
+  diff sides asks the reviewer to select a single source range.
 - Older daemons retain the existing `patchset.readSpan` response. Its single-side
   excerpt fallback reads captured lines and, for a truncated capture's tail, the
   recorded immutable object when available. Existing citations remain valid.
