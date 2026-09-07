@@ -1516,17 +1516,59 @@ describe("a board seat has one backend (review finding 1)", () => {
     // Frames as the reviewer sees them, each paired with what was already closed at the
     // moment it was published. ORDER is the assertion: "was stopped eventually" would be
     // satisfied by the old generation-wide teardown too.
-    const frames: { lanes: readonly LensLane[]; closed: readonly string[] }[] = [];
+    type Frame = { lanes: readonly LensLane[]; closed: readonly string[] };
+    const frames: Frame[] = [];
+    const waiters: { readonly match: (frame: Frame) => boolean; readonly hit: () => void }[] = [];
+    const record = (frame: Frame): void => {
+      frames.push(frame);
+      for (const waiter of waiters.filter((candidate) => candidate.match(frame))) {
+        waiters.splice(waiters.indexOf(waiter), 1);
+        waiter.hit();
+      }
+    };
+    /** Resolves at the first frame — already published, or still to come — that matches. */
+    const frameWhere = (match: (frame: Frame) => boolean): Promise<void> =>
+      frames.some(match)
+        ? Promise.resolve()
+        : new Promise<void>((resolve) => {
+            waiters.push({ match, hit: resolve });
+          });
+    const hasSettled = (lane: LensLane): boolean =>
+      lane.status !== "queued" && lane.status !== "running";
 
-    // Seats that settle at DIFFERENT times, so a lane really does finish while the others
-    // are still running. Same-time settlement could not tell per-lane teardown from the
-    // generation-wide one this replaces.
-    const SETTLE_DELAY_MS: Readonly<Record<string, number>> = {
-      design: 0,
-      sequence: 40,
-      decisions: 80,
-      "flagged-claude": 120,
-      noise: 160,
+    // Seats settle in the ORDER THE TEST RELEASES THEM, so a lane really does finish while
+    // the others are still running. This used to be a stagger of setTimeouts (0/40/80/120
+    // ms), which is a race, not an order: one event-loop stall longer than the widest gap
+    // (a GC pause, a descheduled vitest worker on a loaded CI runner) let every timer fire
+    // in one phase and the settlements land in the same millisecond, ordered by microtask
+    // depth — Design last, and the assertion below red once in a while. A gate per seat
+    // cannot lose that race: a seat whose gate is shut physically cannot settle.
+    const LANE_SEATS: ReadonlySet<string> = new Set([
+      "design",
+      "sequence",
+      "decisions",
+      "flagged-claude",
+      "flagged-codex",
+      "noise",
+    ]);
+    const gates = new Map<string, { readonly turn: Promise<void>; readonly release: () => void }>();
+    let releasedAll = false;
+    const gateFor = (seat: string) => {
+      const known = gates.get(seat);
+      if (known !== undefined) return known;
+      let release: () => void = () => undefined;
+      const turn = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const gate = { turn, release };
+      gates.set(seat, gate);
+      if (releasedAll) release();
+      return gate;
+    };
+    /** Let every remaining seat settle, including one that has not asked for its gate yet. */
+    const releaseTheRest = (): void => {
+      releasedAll = true;
+      for (const gate of gates.values()) gate.release();
     };
     const promptFor = new Map<string, string>();
     const seatOf = (threadId: string): string => threadId.replace(/^thread-/, "");
@@ -1541,11 +1583,12 @@ describe("a board seat has one backend (review finding 1)", () => {
         return "turn-1";
       },
       waitForTurnSettled: async (threadId: string) => {
-        const delay = SETTLE_DELAY_MS[seatOf(threadId)] ?? 0;
-        await new Promise((resolve) => setTimeout(resolve, delay));
-        // The board is written AFTER the delay, so the lanes still settle at the different
-        // times this test is about — the stagger is what separates per-lane teardown from
-        // the generation-wide one it replaced.
+        // A seat with no lane (the round report) is never gated: its arrival is what
+        // promotes the lanes to `running`, so gating it would deadlock the round.
+        if (LANE_SEATS.has(seatOf(threadId))) await gateFor(seatOf(threadId)).turn;
+        // The board is written AFTER the gate opens, so the lanes settle in the order the
+        // test releases them — that order is what separates per-lane teardown from the
+        // generation-wide one it replaced.
         const seat = seatOf(threadId) as SeatKind;
         const voice = seatVoiceOn(lanes, seat);
         const written = boardAnswer(promptFor.get(threadId) ?? "", (lens) =>
@@ -1603,10 +1646,23 @@ describe("a board seat has one backend (review finding 1)", () => {
         }),
         onProgress: (event) => {
           collected.push(event);
-          if (event.type === "lens") frames.push({ lanes: event.lanes, closed: [...stopped] });
+          if (event.type === "lens") record({ lanes: event.lanes, closed: [...stopped] });
         },
         ...assembleRoundCollation({ patchset: patchset(), dossier: [] }),
       });
+      // The premise, WAITED FOR rather than assumed: every core lane is running and none
+      // has settled, because no gate has been released. (Noise is host-derived and sits
+      // at `waiting` until the four core lanes settle, so it can never be the "other
+      // lane still running" — the window is bounded by the slowest core lane.)
+      await frameWhere((frame) =>
+        frame.lanes.every((lane) => lane.id === "noise" || lane.status === "running"),
+      );
+      // Only Design's turn may settle. The others physically cannot: their gates are shut.
+      gateFor("design").release();
+      await frameWhere((frame) =>
+        frame.lanes.some((lane) => lane.id === "design" && hasSettled(lane)),
+      );
+      releaseTheRest();
       await run.catch(() => undefined);
       return collected;
     })();
@@ -1619,9 +1675,7 @@ describe("a board seat has one backend (review finding 1)", () => {
     // Design's watch closed, AND at least one other lane still running — which is what
     // separates per-lane teardown from the generation-wide `finally` it replaces.
     const designSettled = frames.find((candidate) =>
-      candidate.lanes.some(
-        (lane) => lane.id === "design" && lane.status !== "queued" && lane.status !== "running",
-      ),
+      candidate.lanes.some((lane) => lane.id === "design" && hasSettled(lane)),
     );
     expect(designSettled, "Design never settled in any published frame").toBeDefined();
     expect(

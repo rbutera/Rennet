@@ -36,8 +36,16 @@ const DERIVED_ENTRIES = ["map/", "overlays/", "knowledge/"] as const;
  * `context/` is the session context directory (session-context-files): the files a turn
  * reads instead of being sent them inline. It belongs to one session and is purged when
  * that session is archived, so nothing under it is ever the reviewer's to stage.
+ *
+ * `.gitignore` is this file itself. Rennet writes it in the background, after a capture
+ * (the seat context sink's first write), so a file that did not ignore itself appeared in
+ * the working tree as a NEW untracked path — and the next freshness capture folded it into
+ * the reviewed tree, minted a different patchset id, and invalidated a review whose only
+ * "change" was Rennet's own scratch (the #729 harm through a second door; it surfaced as
+ * a CI-only flake in `freshness-app-owned.test.ts` because the write landed ~450 ms after
+ * the first daemon shut down, which a loaded runner does not outrun).
  */
-const ALWAYS_IGNORED = ["context/"] as const;
+const ALWAYS_IGNORED = [".gitignore", "context/"] as const;
 
 /** The managed block's entries for a visibility. `git-visible` still hides Rennet's scratch. */
 function managedEntriesFor(target: ProjectVisibility): readonly string[] {

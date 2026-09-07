@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { Review } from "@rennet/protocol";
@@ -20,6 +20,28 @@ function write(root: string, relativePath: string, contents: string): void {
   const target = join(root, relativePath);
   mkdirSync(dirname(target), { recursive: true });
   writeFileSync(target, contents);
+}
+
+/**
+ * Wait for Rennet's own background write into the repository after a capture: the
+ * seat context sink writes `.rennet/.gitignore` (its managed ignore block) before its
+ * first context file, on a fire-and-forget kick that `shutdown()` does not cancel.
+ * Measured at ~450 ms after shutdown returns. The journey below must run AFTER that
+ * write, or it is racing it: a fast machine restarts and re-captures first and the
+ * test passes without ever asking whether the file dirties the review (it did, until
+ * the file learned to ignore itself — a CI-only "invalid" for exactly that reason).
+ */
+async function waitForRennetIgnoreWrite(root: string): Promise<void> {
+  const target = join(root, ".rennet", ".gitignore");
+  const deadline = Date.now() + 30_000;
+  while (!existsSync(target)) {
+    if (Date.now() >= deadline) {
+      throw new Error(
+        `${target} never appeared: the capture's background context write did not run`,
+      );
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
 }
 
 /**
@@ -100,6 +122,8 @@ async function restartAndRecheck(mutate?: (root: string) => void): Promise<Revie
   } finally {
     first.shutdown();
   }
+  // Only now is the fixture complete: Rennet's scratch has landed in the tree.
+  await waitForRennetIgnoreWrite(root);
 
   const second = await createRennetServer({ dataDir, env: {} });
   try {

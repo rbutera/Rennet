@@ -29,15 +29,25 @@ import { composeGitHubTransport } from "./github-fetch";
 import { createGitHubTokenStore } from "./github-token-store";
 
 /** A transport that stalls forever but honors its abort signal, like real undici. */
-function stallingFetch(): { fetch: typeof globalThis.fetch; calls: () => number } {
+function stallingFetch(): {
+  fetch: typeof globalThis.fetch;
+  calls: () => number;
+  /** Resolves once a request has genuinely LEFT — so its credential read already happened. */
+  inFlight: Promise<void>;
+} {
   let count = 0;
+  let announce: () => void = () => undefined;
+  const inFlight = new Promise<void>((resolve) => {
+    announce = resolve;
+  });
   const impl: typeof globalThis.fetch = (_input, init) => {
     count += 1;
+    announce();
     return new Promise((_resolve, reject) => {
       init?.signal?.addEventListener("abort", () => reject(init.signal?.reason));
     });
   };
-  return { fetch: impl, calls: () => count };
+  return { fetch: impl, calls: () => count, inFlight };
 }
 
 /** What real egress throws when GitHub is unreachable: undici's coded connect error. */
@@ -349,6 +359,13 @@ describe("GitHub egress bounds (the lancelot hang)", () => {
     const statusInFlight = server.dispatch("github.status", {}) as Promise<{
       status: { state: string };
     }>;
+    // …is in flight only once its request has LEFT, which proves the credential read
+    // behind it already completed. Without this wait the test raced its own disconnect:
+    // the store read and the store rm are independent libuv jobs ~250 µs apart, and on
+    // a loaded runner the read lost, answered not-connected, and never touched the
+    // network — green on retry, and the egress bound below never exercised.
+    await stalling.inFlight;
+    expect(stalling.calls()).toBeGreaterThan(0);
     // …must not hold the account subsystem hostage: disconnect is a local store
     // write and completes promptly.
     const started = Date.now();
