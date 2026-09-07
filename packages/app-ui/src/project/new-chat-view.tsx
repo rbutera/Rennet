@@ -7,6 +7,8 @@ import {
   Check,
   ChevronRight,
   CircleCheck,
+  CircleDashed,
+  CircleX,
   GitBranch,
   GitMerge,
   GitPullRequest,
@@ -17,6 +19,7 @@ import {
 import { useEffect, useMemo, useState } from "react";
 import { useLocation } from "wouter";
 import { useCoachAnchor } from "../coach/registry";
+import { Avatar } from "../components/avatar";
 import { Icon } from "../components/icon";
 import { useCommand } from "../data";
 import { newChatPath } from "../routes/url";
@@ -149,8 +152,8 @@ export function NewChatView({ projectId }: { readonly projectId: string }) {
     if (sortDirection === "desc") return sorted;
     if (sortKey === "recent") return sorted.reverse();
     return sorted.sort((a, b) => {
-      const aCreated = a.pr?.createdAt;
-      const bCreated = b.pr?.createdAt;
+      const aCreated = a.createdAt;
+      const bCreated = b.createdAt;
       if (aCreated === undefined && bCreated === undefined)
         return a.lastActivityAt.localeCompare(b.lastActivityAt);
       if (aCreated === undefined) return 1;
@@ -423,29 +426,40 @@ function ItemRow({
         "relative w-full border-l-2 border-l-transparent px-3.5 py-3 text-left transition-colors hover:bg-raised/60 disabled:cursor-not-allowed disabled:opacity-60",
         reviewRequested && "border-l-accent",
         starting && "bg-secondary/60",
-        merged && "opacity-50 hover:opacity-75",
+        // Merged is done: it stays legible (the retrospective path reads it) but
+        // recedes behind the open work.
+        merged && "opacity-70 hover:opacity-100",
       )}
     >
       <ChangeCell row={row} />
-      <span className="truncate text-xs text-ink-soft">{row.author}</span>
+      <span className="flex min-w-0 items-center gap-1.5 text-xs text-ink-soft">
+        <Avatar name={row.author} src={row.authorAvatarUrl} />
+        <span className="truncate">{row.author}</span>
+      </span>
       <CiStatus ci={row.pr?.ci} />
       <span className="whitespace-nowrap text-xs tabular-nums">
-        {row.pr?.additions === undefined || row.pr.deletions === undefined ? (
+        {row.additions === undefined || row.deletions === undefined ? (
           <span className="text-ink-faint">—</span>
         ) : (
           <>
-            <span className="text-green">+{row.pr.additions.toLocaleString()}</span>{" "}
-            <span className="text-danger">−{row.pr.deletions.toLocaleString()}</span>
+            <span className="font-medium text-green">+{row.additions.toLocaleString()}</span>{" "}
+            <span className="font-medium text-danger">−{row.deletions.toLocaleString()}</span>
           </>
         )}
       </span>
-      <span className="text-xs tabular-nums text-ink-soft">{row.pr?.changedFiles ?? "—"}</span>
+      <span className="text-xs tabular-nums text-ink-soft">
+        {row.changedFiles === undefined ? (
+          <span className="text-ink-faint">—</span>
+        ) : (
+          row.changedFiles
+        )}
+      </span>
       <time
-        dateTime={row.pr?.createdAt}
+        dateTime={row.createdAt}
         className="text-xs tabular-nums text-ink-soft"
-        title={row.pr?.createdAt}
+        title={row.createdAt}
       >
-        {formatDate(row.pr?.createdAt)}
+        {formatDate(row.createdAt)}
       </time>
       <time
         dateTime={row.lastActivityAt}
@@ -469,35 +483,47 @@ function ItemRow({
 
 function ChangeCell({ row }: { readonly row: SmartRow }) {
   const merged = row.state === "merged";
-  if (row.kind === "local")
+  if (row.kind === "local") {
+    const local = row.local;
+    const ahead = local?.ahead !== null && local?.ahead !== undefined && local.ahead > 0;
+    const behind = local?.behind !== null && local?.behind !== undefined && local.behind > 0;
     return (
       <span className="flex min-w-0 items-start gap-2.5">
         <Icon
           icon={GitBranch}
-          className={cn(
-            "mt-0.5 size-3.5 shrink-0",
-            row.local?.dirty ? "text-accent" : "text-ink-faint",
-          )}
+          className={cn("mt-0.5 size-3.5 shrink-0", local?.dirty ? "text-warn" : "text-ink-faint")}
         />
         <span className="min-w-0">
-          <span className="block truncate font-mono text-sm font-medium text-ink">
-            {row.branch}
-          </span>
-          <span className="mt-0.5 flex gap-2 text-2xs text-ink-faint">
-            {row.local?.dirty ? <span className="font-medium text-accent">● dirty</span> : null}
-            <span>{row.local?.stage}</span>
-            {row.local?.ahead !== null && row.local?.ahead !== undefined && row.local.ahead > 0 ? (
-              <span>↑{row.local.ahead}</span>
+          <span className="flex min-w-0 items-baseline gap-2.5">
+            <span className="truncate font-mono text-sm font-medium text-ink">{row.branch}</span>
+            {/* Clean/dirty is a measured fact only where there is a checkout to measure;
+                a bare branch says nothing. Dirty is copper (a flag to weigh), not gold. */}
+            {local?.worktree ? (
+              <span
+                data-worktree={local.dirty ? "dirty" : "clean"}
+                className={cn(
+                  "flex shrink-0 items-center gap-1 text-2xs font-medium",
+                  local.dirty ? "text-warn" : "text-green",
+                )}
+              >
+                <span
+                  aria-hidden
+                  className={cn("size-1.5 rounded-full", local.dirty ? "bg-warn" : "bg-green")}
+                />
+                {local.dirty ? "dirty" : "clean"}
+              </span>
             ) : null}
-            {row.local?.behind !== null &&
-            row.local?.behind !== undefined &&
-            row.local.behind > 0 ? (
-              <span>↓{row.local.behind}</span>
-            ) : null}
           </span>
+          {ahead || behind ? (
+            <span className="mt-0.5 flex gap-2 text-2xs tabular-nums text-ink-faint">
+              {ahead ? <span>↑{local.ahead}</span> : null}
+              {behind ? <span>↓{local.behind}</span> : null}
+            </span>
+          ) : null}
         </span>
       </span>
     );
+  }
   return (
     <span className="flex min-w-0 items-start gap-2.5">
       <Icon
@@ -544,12 +570,15 @@ function RowBadge({ row }: { readonly row: SmartRow }) {
     );
   return <span />;
 }
+// CI is a coloured mark AND a named state (the aria-label): DESIGN.md never lets
+// colour stand alone. Green passes, red fails, copper is still running; a change
+// with no checks at all has nothing to say.
 function CiStatus({ ci }: { readonly ci: SmartListCi | undefined }) {
   if (ci === "passing")
     return <Icon icon={CircleCheck} aria-label="CI passing" className="size-4 text-green" />;
   if (ci === "failing")
-    return <Icon icon={TriangleAlert} aria-label="CI failing" className="size-4 text-danger" />;
+    return <Icon icon={CircleX} aria-label="CI failing" className="size-4 text-danger" />;
   if (ci === "pending")
-    return <span role="img" aria-label="CI pending" className="size-2 rounded-full bg-ink-faint" />;
+    return <Icon icon={CircleDashed} aria-label="CI pending" className="size-4 text-warn" />;
   return <span className="text-xs text-ink-faint">—</span>;
 }

@@ -2,9 +2,9 @@ import type {
   ForgeRepoIdentity,
   LocalWork,
   ProjectDetail,
+  ProjectViewer,
   PullRequest,
   SmartListCi,
-  SmartListStage,
 } from "@rennet/protocol";
 import { repositoryIdentitiesAgree } from "./forge-repository";
 
@@ -38,6 +38,8 @@ export interface SmartRow {
   title: string;
   branch: string;
   author: string;
+  /** The author's forge avatar; for local work, the viewer's own. Absent → initials. */
+  authorAvatarUrl?: string;
   /** Ownership: appearance + filter, not a wall. Local work is always yours. */
   mine: boolean;
   state: SmartRowState;
@@ -47,6 +49,15 @@ export interface SmartRow {
   readOnly: boolean;
   /** Recency of engagement (ISO), the HOT-sort key. */
   lastActivityAt: string;
+  /**
+   * The change's size and age, the same columns for both kinds of row: a PR's from
+   * the forge, a local branch's measured against the primary branch. Absent when
+   * the forge does not report them (GitLab line counts) or the branch is not ahead.
+   */
+  additions?: number;
+  deletions?: number;
+  changedFiles?: number;
+  createdAt?: string;
   /** Present on a pull-request row. */
   pr?: {
     number: number;
@@ -56,10 +67,6 @@ export interface SmartRow {
     forgeRepository?: ForgeRepoIdentity;
     ci: SmartListCi;
     reviewRequested: boolean;
-    additions?: number;
-    deletions?: number;
-    changedFiles?: number;
-    createdAt?: string;
   };
   /** Present on a local-work row. */
   local?: {
@@ -69,10 +76,11 @@ export interface SmartRow {
     /** Provider-qualified identity. Absent for local-only and legacy rows. */
     forgeRepository?: ForgeRepoIdentity;
     dirty: boolean;
+    /** A checkout on disk, so `dirty` was measured; a bare branch says nothing about it. */
+    worktree: boolean;
     /** `null` when the ahead/behind comparison could not be computed (base unresolvable). */
     ahead: number | null;
     behind: number | null;
-    stage: SmartListStage;
   };
   /**
    * The dedupe annotation: a local worktree checked out for the branch this PR row
@@ -127,7 +135,7 @@ export function buildSmartRows(detail: ProjectDetail): SmartRow[] {
   const prRows = detail.prs.map((pr) => prRow(pr, viewer, annotationByPrId.get(pr.id)));
   const localRows = detail.locals
     .filter((local) => !consumedLocalIds.has(local.id))
-    .map((local) => localRow(local, viewer));
+    .map((local) => localRow(local, detail.viewer));
 
   return [...prRows, ...localRows];
 }
@@ -152,21 +160,19 @@ function prRow(pr: PullRequest, viewer: string, checkout: LocalWork | undefined)
     title: pr.title,
     branch: pr.branch,
     author: pr.author,
+    ...(pr.authorAvatarUrl === undefined ? {} : { authorAvatarUrl: pr.authorAvatarUrl }),
     mine,
     state: pr.state,
     needsYou,
     readOnly,
     lastActivityAt,
+    ...changeSize(pr),
     pr: {
       number: pr.number,
       repository: pr.repository,
       ...(pr.forgeRepository === undefined ? {} : { forgeRepository: pr.forgeRepository }),
       ci: pr.ci,
       reviewRequested: pr.reviewRequestedFromViewer,
-      additions: pr.additions,
-      deletions: pr.deletions,
-      changedFiles: pr.changedFiles,
-      ...(pr.createdAt === undefined ? {} : { createdAt: pr.createdAt }),
     },
     ...(checkout
       ? {
@@ -184,26 +190,43 @@ function prRow(pr: PullRequest, viewer: string, checkout: LocalWork | undefined)
   };
 }
 
-function localRow(local: LocalWork, viewer: string): SmartRow {
+/** The size-and-age columns both row kinds share, copied only when the producer set them. */
+function changeSize(
+  change: Pick<PullRequest, "additions" | "deletions" | "changedFiles" | "createdAt">,
+): Pick<SmartRow, "additions" | "deletions" | "changedFiles" | "createdAt"> {
+  return {
+    ...(change.additions === undefined ? {} : { additions: change.additions }),
+    ...(change.deletions === undefined ? {} : { deletions: change.deletions }),
+    ...(change.changedFiles === undefined ? {} : { changedFiles: change.changedFiles }),
+    ...(change.createdAt === undefined ? {} : { createdAt: change.createdAt }),
+  };
+}
+
+function localRow(local: LocalWork, viewer: ProjectViewer): SmartRow {
   return {
     id: local.id,
     kind: "local",
     title: local.branch,
     branch: local.branch,
     author: local.author,
+    // Local work wears the viewer's own face: it is pinned to the viewer's login upstream.
+    ...(viewer.avatarUrl === undefined || local.author !== viewer.login
+      ? {}
+      : { authorAvatarUrl: viewer.avatarUrl }),
     // Local work is yours to turn into a PR; ownership matches the viewer.
-    mine: local.author === viewer,
+    mine: local.author === viewer.login,
     state: "local",
     needsYou: false,
     readOnly: false,
     lastActivityAt: local.lastActivityAt,
+    ...changeSize(local),
     local: {
       repository: local.repository,
       ...(local.forgeRepository === undefined ? {} : { forgeRepository: local.forgeRepository }),
       dirty: local.dirty,
+      worktree: local.worktree === true,
       ahead: local.ahead,
       behind: local.behind,
-      stage: local.stage,
     },
   };
 }
@@ -233,8 +256,8 @@ export function sortSmartRows(rows: readonly SmartRow[], sort: SmartSort): Smart
       return copy.sort(byRecency);
     case "created":
       return copy.sort((a, b) => {
-        const aCreated = a.pr?.createdAt;
-        const bCreated = b.pr?.createdAt;
+        const aCreated = a.createdAt;
+        const bCreated = b.createdAt;
         if (aCreated === undefined && bCreated === undefined) return byRecency(a, b);
         if (aCreated === undefined) return 1;
         if (bCreated === undefined) return -1;

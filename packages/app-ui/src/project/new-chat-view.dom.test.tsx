@@ -54,7 +54,7 @@ function project(id: string, name: string): Project {
 /** p1's substrate: one local, a mine-open PR, a teammate needs-you PR, a merged PR. */
 function detailP1(): ProjectDetail {
   return {
-    viewer: { login: "rai" },
+    viewer: { login: "rai", avatarUrl: "https://avatars.example/rai.png" },
     truncated: false,
     locals: [
       {
@@ -64,6 +64,11 @@ function detailP1(): ProjectDetail {
         forgeRepository: GITHUB_RENNET,
         author: "rai",
         dirty: true,
+        worktree: true,
+        additions: 7,
+        deletions: 3,
+        changedFiles: 2,
+        createdAt: "2026-08-22T08:00:00.000Z",
         ahead: 2,
         behind: 0,
         stage: "reviewed",
@@ -96,6 +101,7 @@ function detailP1(): ProjectDetail {
         repository: "rbutera/rennet",
         forgeRepository: GITHUB_RENNET,
         author: "emma",
+        authorAvatarUrl: "https://avatars.example/emma.png",
         state: "open",
         reviewRequestedFromViewer: true,
         ci: "failing",
@@ -466,9 +472,68 @@ describe("NewChatView", () => {
     fireEvent.click(await screen.findByRole("switch", { name: "Show merged PRs" }));
     await screen.findByText("Old merged work");
     const merged = rowButton(/Old merged work/);
-    expect(merged.className).toContain("opacity-50");
+    expect(merged.className).toContain("opacity-70"); // recedes, stays legible (Rai: slightly faded)
     // Single-repo workspace: the repo name is not rendered as a column.
     expect(within(merged).queryByText("rennet")).toBeNull();
+  });
+
+  // The columns are the same for every kind of row. A local worktree row fills
+  // +/−, Files and Created from its measured diff against the primary branch and
+  // says clean/dirty out loud; a bare branch — no checkout to measure — prints no
+  // cleanliness word at all (no self-explaining chrome), and a row the producer
+  // could not size still reads "—" rather than 0.
+  it("fills every column on a local row from its diffstat, and only a worktree says clean/dirty", async () => {
+    const detail = detailP1();
+    detail.locals.push({
+      id: "github:rbutera/rennet#feat/bare",
+      branch: "feat/bare",
+      repository: "rbutera/rennet",
+      forgeRepository: GITHUB_RENNET,
+      author: "rai",
+      dirty: false,
+      ahead: 0,
+      behind: 3,
+      stage: "captured",
+      lastActivityAt: "2026-08-21T09:00:00.000Z",
+    });
+    renderView("p1", { p1: detail });
+    await screen.findByText("feat/local-x");
+
+    const worktree = rowButton(/feat\/local-x/);
+    expect(within(worktree).getByText("+7")).toBeTruthy();
+    expect(within(worktree).getByText("−3")).toBeTruthy();
+    expect(within(worktree).getByText("2")).toBeTruthy(); // files
+    expect(worktree.querySelector("time[datetime='2026-08-22T08:00:00.000Z']")).not.toBeNull();
+    expect(worktree.querySelector("[data-worktree='dirty']")?.textContent).toBe("dirty");
+    expect(within(worktree).queryByText("reviewed")).toBeNull(); // the stage word is gone
+    expect(within(worktree).queryByText("captured")).toBeNull();
+
+    const bare = rowButton(/feat\/bare/);
+    expect(bare.querySelector("[data-worktree]")).toBeNull();
+    expect(within(bare).queryByText("clean")).toBeNull();
+    expect(within(bare).queryByText("captured")).toBeNull();
+    expect(within(bare).getAllByText("—").length).toBeGreaterThanOrEqual(3); // +/−, files, created
+    expect(within(bare).getByText("↓3")).toBeTruthy();
+  });
+
+  it("shows a forge avatar where the forge gave one, initials everywhere else", async () => {
+    renderView("p1", { p1: detailP1() });
+    await screen.findByText("Teammate span fix");
+    // emma's face came from GitHub.
+    const emma = rowButton(/Teammate span fix/).querySelector("[data-avatar]");
+    expect(emma?.getAttribute("data-avatar")).toBe("image");
+    expect(emma?.querySelector("img")?.getAttribute("src")).toBe(
+      "https://avatars.example/emma.png",
+    );
+    // A local branch is the viewer's own work and wears the viewer's face.
+    const local = rowButton(/feat\/local-x/).querySelector("[data-avatar]");
+    expect(local?.querySelector("img")?.getAttribute("src")).toBe(
+      "https://avatars.example/rai.png",
+    );
+    // A PR whose author has no avatar on the wire falls back to initials, never a broken image.
+    const mine = rowButton(/My open change/).querySelector("[data-avatar]");
+    expect(mine?.getAttribute("data-avatar")).toBe("initials");
+    expect(mine?.textContent).toBe("R");
   });
 
   it("state chips read the DERIVED target vocabulary, not just the bare kind", async () => {

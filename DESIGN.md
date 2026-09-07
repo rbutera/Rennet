@@ -280,4 +280,5 @@ The alias map lives in [`packages/theme/src/theme.css`](packages/theme/src/theme
 - Preserve the full review and all important claims at every breakpoint.
 - Do not use decorative gradients, neon, glass, or monospace as generic developer-tool styling. Functional progress and state graphics may use a gradient when the gradient encodes the state. Chrome floating over content in the full-bleed state may use a translucent, blurred ground — the one sanctioned exception (see Material, Rai 2026-08-28); opaque grounds remain the rule everywhere else.
 - Do not turn a page into a grid of equal feature cards.
+- No self-explaining chrome (Rai, 2026-09-06). A word on a surface names a fact about the object — a branch is dirty, a PR is merged, CI is failing — never Rennet's own machinery or a state the user cannot act on. The New Chat list printed "captured" on every local row: a pipeline stage that never ran, read as status. When a cell has nothing true to say, it is empty.
 - Do not average independent model outputs into one consensus.

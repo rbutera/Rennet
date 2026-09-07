@@ -143,6 +143,19 @@ project on a network mount can take minutes, and an empty list mid-scan is not t
 same claim as a project with nothing open. The left rail filters by attention,
 ownership, local branches, or pull requests. **Created** and **Activity** are sortable column headers, and
 **Show merged PRs** adds faded historical rows to the same list.
+
+Every row carries the same columns, whether it is a pull request or a local
+branch: the author with their forge avatar (your local branches wear your own),
+CI as a green check, red cross, or copper dashed ring, lines added and removed,
+files touched, and when the change was created. A pull request's numbers come
+from the forge. A local branch's are measured on your machine: its committed
+diff against the project's primary branch, and the date of its first commit past
+it. A branch that is not ahead of the primary branch has nothing to review yet,
+so those cells read "—" rather than zero. A checked-out worktree also says
+**clean** or **dirty** beside its name; a bare branch with no checkout says
+nothing about it, because there is nothing to measure. Uncommitted edits are not
+counted in the lines; **dirty** is how the list says they exist. GitLab does not
+report line counts in its merge-request list, so GitLab rows show "—" there.
 The back arrow or Escape leaves New Chat for the surface you came from. When the
 filter contains text, the first Escape clears it and the next leaves.
 

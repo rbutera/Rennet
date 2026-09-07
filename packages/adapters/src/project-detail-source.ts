@@ -5,11 +5,12 @@ import type {
   Project,
   ProjectDetail,
   ProjectDetailProgressEvent,
+  ProjectViewer,
   PullRequest,
   PullRequestState,
 } from "@rennet/protocol";
 import { forgeRepositorySlug } from "@rennet/protocol";
-import type { GitExec } from "./git-range-diff";
+import { type GitExec, parseCounts } from "./git-range-diff";
 import { isGitHubNetworkError } from "./github-fetch";
 import { defaultProjectDiscoveryDeps, discoverProject } from "./project-discovery";
 import { type ProjectPrSource, ProjectPrSourceUnavailable } from "./project-pr-source";
@@ -27,10 +28,11 @@ import {
  * command; the renderer derives every row/filter/sort from the raw shape
  * `ProjectDetail = { viewer, locals, prs, truncated }`. This module fills the LOCAL
  * half of that shape from real git — detected worktrees + local branches, with
- * `dirty` / `ahead` / `behind` / recency computed from the repo — replacing the
- * `projectDetailFixture()` local set. It issues ONLY read verbs (`worktree list`,
- * `for-each-ref`, `status --porcelain`, `rev-list`, `config`) and never mutates the
- * index or working tree.
+ * `dirty` / `ahead` / `behind` / recency / the committed diffstat against the
+ * primary branch computed from the repo — replacing the `projectDetailFixture()`
+ * local set. It issues ONLY read verbs (`worktree list`, `for-each-ref`,
+ * `status --porcelain`, `rev-list`, `diff --numstat`, `log`, `config`) and never
+ * mutates the index or working tree.
  *
  * SCOPE: the local half is always real git. The remote half is live — registered
  * provider sources fan out over the project's forge repos and fill `prs` +
@@ -187,6 +189,50 @@ function isoFromUnix(unix: number): string {
   return new Date(unix * 1000).toISOString();
 }
 
+/** The columns a local branch shares with a change request: its committed diff and first commit. */
+type BranchDiffstat = Pick<LocalWork, "additions" | "deletions" | "changedFiles" | "createdAt">;
+
+/**
+ * The branch's committed diff against `primary` (`primary...branch`, so only the
+ * branch's own commits count) and the author time of its first commit past the
+ * base. Only called for a branch that is ahead: a branch with nothing to review has
+ * nothing to measure, and an unresolvable base already reads as `ahead: null`.
+ * Binary files count towards `changedFiles` and contribute no lines.
+ */
+async function branchDiffstat(
+  git: GitExec,
+  root: string,
+  primary: string,
+  branch: string,
+): Promise<BranchDiffstat> {
+  const [numstat, log] = await Promise.all([
+    git(root, ["diff", "--numstat", "-z", `${primary}...${branch}`, "--"], { reject: false }),
+    // `%at` (author time) survives a rebase; committer time would move the branch's
+    // birthday every time it is rebased onto a newer primary.
+    git(root, ["log", "--format=%at", `${primary}..${branch}`], { reject: false }),
+  ]);
+  let additions = 0;
+  let deletions = 0;
+  let changedFiles = 0;
+  for (const counts of parseCounts(numstat).values()) {
+    changedFiles += 1;
+    additions += counts.additions ?? 0;
+    deletions += counts.deletions ?? 0;
+  }
+  // `log` lists newest first; the branch's first commit is the last line.
+  const stamps = log.split("\n").filter((line) => line.trim().length > 0);
+  const first = Number.parseInt(stamps[stamps.length - 1] ?? "", 10);
+  return {
+    additions,
+    deletions,
+    changedFiles,
+    ...(Number.isFinite(first) ? { createdAt: isoFromUnix(first) } : {}),
+  };
+}
+
+/** How many local branches are measured at once (each is a handful of short git reads). */
+const MAX_CONCURRENT_BRANCH_READS = 8;
+
 /** Enumerate one repo root's local work: its worktrees + branches, minus the primary. */
 async function loadRepoLocalWork(
   git: GitExec,
@@ -204,8 +250,20 @@ async function loadRepoLocalWork(
 
   // Key on the composite (repository, branch) so a checked-out worktree and its own
   // ref never double-count, while a branch name reused across repos stays distinct.
-  const byKey = new Map<string, LocalWork>();
-  const keyOf = (branch: string): string => `${repositoryKey(identity)}\n${branch}`;
+  // Worktrees first — they carry a real `dirty` signal and the clean-up target id —
+  // then any local branch not already represented by a worktree.
+  const seen = new Set<string>();
+  const candidates: { branch: string; worktreePath?: string }[] = [];
+  for (const worktree of worktrees) {
+    if (worktree.branch === primaryBranch || seen.has(worktree.branch)) continue;
+    seen.add(worktree.branch);
+    candidates.push({ branch: worktree.branch, worktreePath: worktree.path });
+  }
+  for (const branch of activity.keys()) {
+    if (branch === primaryBranch || seen.has(branch)) continue;
+    seen.add(branch);
+    candidates.push({ branch });
+  }
 
   const activityAt = async (branch: string): Promise<string> => {
     const unix = activity.get(branch);
@@ -218,51 +276,35 @@ async function loadRepoLocalWork(
     return isoFromUnix(Number.isFinite(parsed) ? parsed : 0);
   };
 
-  // Worktrees first — they carry a real `dirty` signal and the clean-up target id.
-  for (const worktree of worktrees) {
-    if (worktree.branch === primaryBranch) continue;
-    const key = keyOf(worktree.branch);
-    if (byKey.has(key)) continue;
-    const [{ ahead, behind }, dirty, lastActivityAt] = await Promise.all([
-      aheadBehind(git, root, primaryBranch, worktree.branch),
-      isDirty(git, worktree.path),
-      activityAt(worktree.branch),
-    ]);
-    byKey.set(key, {
-      id: worktree.path, // the clean-up target: `git worktree remove <path>`
-      repository,
-      ...(forgeRepository === undefined ? {} : { forgeRepository }),
-      branch: worktree.branch,
-      author: viewer,
-      dirty,
-      ahead,
-      behind,
-      stage: "captured",
-      lastActivityAt,
-    });
-  }
-
-  // Then any local branch not already represented by a worktree above.
-  for (const branch of activity.keys()) {
-    if (branch === primaryBranch) continue;
-    const key = keyOf(branch);
-    if (byKey.has(key)) continue;
-    const { ahead, behind } = await aheadBehind(git, root, primaryBranch, branch);
-    byKey.set(key, {
-      id: `${repositoryKey(identity)}#${branch}`, // no worktree on disk → a branch-delete target
-      repository,
-      ...(forgeRepository === undefined ? {} : { forgeRepository }),
-      branch,
-      author: viewer,
-      dirty: false,
-      ahead,
-      behind,
-      stage: "captured",
-      lastActivityAt: isoFromUnix(activity.get(branch) ?? 0),
-    });
-  }
-
-  return [...byKey.values()];
+  return mapLimit(
+    candidates,
+    MAX_CONCURRENT_BRANCH_READS,
+    async ({ branch, worktreePath }): Promise<LocalWork> => {
+      const [{ ahead, behind }, dirty, lastActivityAt] = await Promise.all([
+        aheadBehind(git, root, primaryBranch, branch),
+        worktreePath === undefined ? false : isDirty(git, worktreePath),
+        activityAt(branch),
+      ]);
+      const diffstat =
+        ahead !== null && ahead > 0 ? await branchDiffstat(git, root, primaryBranch, branch) : {};
+      return {
+        // A worktree's id is its path (the clean-up target: `git worktree remove <path>`);
+        // a bare branch has no path on disk, so its id is a branch-delete target.
+        id: worktreePath ?? `${repositoryKey(identity)}#${branch}`,
+        repository,
+        ...(forgeRepository === undefined ? {} : { forgeRepository }),
+        branch,
+        author: viewer,
+        dirty,
+        ...(worktreePath === undefined ? {} : { worktree: true }),
+        ...diffstat,
+        ahead,
+        behind,
+        stage: "captured",
+        lastActivityAt,
+      };
+    },
+  );
 }
 
 /** The viewer login from local git identity (`user.name`, else `user.email`, else `you`). */
@@ -326,7 +368,7 @@ export async function loadProjectDetail(
   onProgress?: (event: ProjectDetailProgressEvent) => void,
 ): Promise<ProjectDetail> {
   const roots = await deps.resolveRepoRoots(project);
-  const gitViewer = await resolveViewerLogin(deps.git, roots);
+  const gitViewer: ProjectViewer = { login: await resolveViewerLogin(deps.git, roots) };
 
   // The provider-qualified forge identities among the roots, deduped. A local-only repo has no
   // structured identity, and an unregistered provider never falls through to GitHub.
@@ -347,7 +389,7 @@ export async function loadProjectDetail(
     return source === undefined ? [] : [{ repository, source }];
   });
 
-  let viewer = gitViewer;
+  let viewer: ProjectViewer = gitViewer;
   let prs: PullRequest[] = [];
   let truncated = false;
   let authUnavailable: "network" | undefined;
@@ -424,10 +466,10 @@ export async function loadProjectDetail(
   }
 
   const perRepo = await Promise.all(
-    roots.map((root) => loadRepoLocalWork(deps.git, root, project.primaryBranch, viewer)),
+    roots.map((root) => loadRepoLocalWork(deps.git, root, project.primaryBranch, viewer.login)),
   );
   return {
-    viewer: { login: viewer },
+    viewer,
     locals: perRepo.flat(),
     prs,
     truncated,

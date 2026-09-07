@@ -29,7 +29,7 @@ function node(overrides: Record<string, unknown> = {}): Record<string, unknown> 
     deletions: 3,
     changedFiles: 5,
     headRefName: "feat/glass",
-    author: { login: "octocat" },
+    author: { login: "octocat", avatarUrl: "https://avatars.example/octocat.png" },
     reviewRequests: { nodes: [] },
     commits: { nodes: [{ commit: { statusCheckRollup: { state: "SUCCESS" } } }] },
     ...overrides,
@@ -60,7 +60,15 @@ function makeFetch(config: {
     // `includes("viewer")` would misroute it. "pullRequests" is unambiguous.
     if (!body.query.includes("pullRequests")) {
       return response({
-        data: { viewer: config.viewer === null ? null : { login: config.viewer ?? "octocat" } },
+        data: {
+          viewer:
+            config.viewer === null
+              ? null
+              : {
+                  login: config.viewer ?? "octocat",
+                  avatarUrl: "https://avatars.example/viewer.png",
+                },
+        },
       });
     }
     if (config.repositoryNull) return response({ data: { repository: null } });
@@ -107,11 +115,12 @@ describe("parseForgeRepository", () => {
 });
 
 describe("createGitHubProjectPrSource — resolveViewer", () => {
-  it("returns the login and memoizes (one network call for repeated reads)", async () => {
+  it("returns the login and avatar and memoizes (one network call for repeated reads)", async () => {
     const { fetch, calls } = makeFetch({ viewer: "octocat" });
     const source = sourceFor(fetch);
-    expect(await source.resolveViewer()).toBe("octocat");
-    expect(await source.resolveViewer()).toBe("octocat");
+    const viewer = { login: "octocat", avatarUrl: "https://avatars.example/viewer.png" };
+    expect(await source.resolveViewer()).toEqual(viewer);
+    expect(await source.resolveViewer()).toEqual(viewer);
     expect(calls()).toBe(1);
   });
   it("returns null when GitHub has no viewer (token without a user)", async () => {
@@ -136,6 +145,7 @@ describe("createGitHubProjectPrSource — listPullRequests", () => {
       forgeRepository: GITHUB_REPOSITORY,
       branch: "feat/glass",
       author: "octocat",
+      authorAvatarUrl: "https://avatars.example/octocat.png",
       viewerDidAuthor: true,
       state: "open",
       reviewRequestedFromViewer: false,
@@ -206,6 +216,7 @@ describe("createGitHubProjectPrSource — listPullRequests", () => {
     });
     const { prs } = await sourceFor(fetch).listPullRequests(GITHUB_REPOSITORY);
     expect(prs[0]?.author).toBe("ghost");
+    expect(prs[0]).not.toHaveProperty("authorAvatarUrl"); // a ghost has no face to show
     expect(prs[0]?.title).toBe("#12");
   });
 
