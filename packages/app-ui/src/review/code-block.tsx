@@ -113,17 +113,17 @@ export function CodeBlock({
   const viewportHeight = 440;
   const scrollElement = useRef<HTMLDivElement>(null);
   const [scrollTop, setScrollTop] = useState(0);
-  useLayoutEffect(() => {
-    if (!virtual || !focusRef) return;
-    const index =
-      rows?.findIndex(
+  const focusIndex = focusRef
+    ? (rows?.findIndex(
         (row) => (focusRef.side === "base" ? row.oldLine : row.newLine) === focusRef.startLine,
-      ) ?? -1;
-    if (index < 0) return;
-    const top = Math.max(0, index - 3) * rowHeight;
+      ) ?? -1)
+    : -1;
+  useLayoutEffect(() => {
+    if (!virtual || focusIndex < 0) return;
+    const top = Math.max(0, focusIndex - 3) * rowHeight;
     if (scrollElement.current) scrollElement.current.scrollTop = top;
     setScrollTop(top);
-  }, [rows, focusRef, virtual]);
+  }, [focusIndex, virtual]);
   const range = virtual
     ? windowRows({ total: lineCount, rowHeight, viewportHeight, scrollTop })
     : { start: 0, end: lineCount };

@@ -162,10 +162,11 @@ describe("a code citation, against the real daemon", () => {
       "return cheese + curd;",
     );
 
-    expect(cited.getAttribute("data-diff-kind")).toBe("add");
+    expect(cited.closest("[data-diff-kind]")?.getAttribute("data-diff-kind")).toBe("add");
     expect(
       container
         .querySelector('[data-code-line="3"][data-code-side="base"]')
+        ?.closest("[data-diff-kind]")
         ?.getAttribute("data-diff-kind"),
     ).toBe("del");
     expect(container.querySelector('[data-line-state="cited"]')).toBeNull();

@@ -1,6 +1,6 @@
 import { cn, Popover, PopoverContent, PopoverTrigger } from "@rennet/ui";
 import { Activity, Pin, X } from "lucide-react";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { type RefObject, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Icon } from "../components/icon";
 import { ReviewActivity } from "../components/review-activity";
 import { useRennetStore } from "../store";
@@ -18,8 +18,8 @@ export function LensActivity({
   readonly entry: Pick<LensBoardEntry, "lens" | "seat">;
 }) {
   const trigger = useRef<HTMLButtonElement>(null);
-  const [sideOffset, setSideOffset] = useState(12);
   const [open, setOpen] = useState(false);
+  const sideOffset = useActivityOffset(open, trigger);
   const [pinned, setPinned] = useState(false);
 
   const [now, setNow] = useState(Date.now);
@@ -37,51 +37,6 @@ export function LensActivity({
     const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
   }, [running]);
-  useLayoutEffect(() => {
-    if (!open) return;
-    const place = () => {
-      const heading = document.querySelector<HTMLElement>("[data-board-heading]");
-      setSideOffset(
-        Math.max(
-          12,
-          (heading?.getBoundingClientRect().bottom ?? 0) -
-            (trigger.current?.getBoundingClientRect().bottom ?? 0) +
-            12,
-        ),
-      );
-    };
-    const resize = new ResizeObserver(place);
-    let heading: HTMLElement | null = null;
-    const observeHeading = () => {
-      const next = document.querySelector<HTMLElement>("[data-board-heading]");
-      if (next !== heading) {
-        if (heading) {
-          resize.unobserve(heading);
-          if (heading.parentElement) resize.unobserve(heading.parentElement);
-        }
-        heading = next;
-        if (heading) {
-          resize.observe(heading);
-          if (heading.parentElement) resize.observe(heading.parentElement);
-        }
-      }
-      place();
-    };
-    const changes = new MutationObserver(observeHeading);
-    changes.observe(document.body, { childList: true, subtree: true });
-    if (trigger.current) resize.observe(trigger.current);
-    const toolbar = trigger.current?.closest("[data-slot=session-top-bar]");
-    if (toolbar) resize.observe(toolbar);
-    observeHeading();
-    window.addEventListener("resize", place);
-    window.addEventListener("scroll", place, true);
-    return () => {
-      resize.disconnect();
-      changes.disconnect();
-      window.removeEventListener("resize", place);
-      window.removeEventListener("scroll", place, true);
-    };
-  }, [open]);
   const seconds = Math.max(0, Math.floor((now - observedAt) / 1000));
   return (
     <Popover
@@ -181,4 +136,57 @@ export function LensActivity({
       </PopoverContent>
     </Popover>
   );
+}
+
+export function useActivityOffset(
+  open: boolean,
+  trigger: RefObject<HTMLButtonElement | null>,
+): number {
+  const [sideOffset, setSideOffset] = useState(12);
+  useLayoutEffect(() => {
+    if (!open) return;
+    const place = () => {
+      const heading = document.querySelector<HTMLElement>("[data-board-heading]");
+      setSideOffset(
+        Math.max(
+          12,
+          (heading?.getBoundingClientRect().bottom ?? 0) -
+            (trigger.current?.getBoundingClientRect().bottom ?? 0) +
+            12,
+        ),
+      );
+    };
+    const resize = new ResizeObserver(place);
+    let heading: HTMLElement | null = null;
+    const observeHeading = () => {
+      const next = document.querySelector<HTMLElement>("[data-board-heading]");
+      if (next !== heading) {
+        if (heading) {
+          resize.unobserve(heading);
+          if (heading.parentElement) resize.unobserve(heading.parentElement);
+        }
+        heading = next;
+        if (heading) {
+          resize.observe(heading);
+          if (heading.parentElement) resize.observe(heading.parentElement);
+        }
+      }
+      place();
+    };
+    const changes = new MutationObserver(observeHeading);
+    changes.observe(document.body, { childList: true, subtree: true });
+    if (trigger.current) resize.observe(trigger.current);
+    const toolbar = trigger.current?.closest("[data-slot=session-top-bar]");
+    if (toolbar) resize.observe(toolbar);
+    observeHeading();
+    window.addEventListener("resize", place);
+    window.addEventListener("scroll", place, true);
+    return () => {
+      resize.disconnect();
+      changes.disconnect();
+      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", place, true);
+    };
+  }, [open, trigger]);
+  return sideOffset;
 }

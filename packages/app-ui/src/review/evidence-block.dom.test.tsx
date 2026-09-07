@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import type { CodeRef } from "@rennet/protocol";
+import type { CodeRef, CommandOutput } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { BridgeProvider } from "../data";
 import { useRennetStore } from "../store";
@@ -192,4 +192,54 @@ it("keeps a gutter comment editor outside virtual rows while its deleted line sc
   const thread = Object.values(useRennetStore.getState().review.quoteThreads)[0];
   expect(thread?.codeRef).toEqual({ ...ref, side: "base", startLine: 20, endLine: 20 });
   expect(thread?.messages.at(-1)?.text).toBe("Keep this explanation");
+});
+
+it("restores full-file scroll after Back and keeps it when the reviewed source refresh completes", async () => {
+  const source = Array.from({ length: 80 }, (_, i) => `context_${i + 1}`).join("\n");
+  const original: CommandOutput<"patchset.readEvidence"> = {
+    path: ref.path,
+    patch: "@@ -1,2 +1,2 @@\n context_1\n-old\n+context_2\n",
+    base: source,
+    head: source,
+    counterparts: [],
+  };
+  let sourceReads = 0;
+  let release: ((value: typeof original) => void) | undefined;
+  const bridge = new MemoryBridge({
+    "patchset.readSpan": () => ({ lines: ["context_2"], contextBefore: [], contextAfter: [] }),
+    "patchset.readEvidence": ({ ref: input, includeSource, includeCounterparts }) => {
+      if (input.path !== ref.path)
+        return { path: input.path, patch: "", head: "reviewed_test", base: null, counterparts: [] };
+      if (includeCounterparts) return { ...original, counterparts: ["tests/cheese.test.ts"] };
+      if (!includeSource) return { path: ref.path, patch: original.patch, counterparts: [] };
+      sourceReads++;
+      if (sourceReads > 1)
+        return new Promise<typeof original>((resolve) => {
+          release = resolve;
+        });
+      return original;
+    },
+  });
+  const view = mount(
+    <BridgeProvider bridge={bridge}>
+      <CitationBlock citation={ref} />
+    </BridgeProvider>,
+  );
+  await view.user.click(await view.findByText("Full file"));
+  await waitFor(() => expect(sourceReads).toBe(1));
+  const scroller = view.container.querySelector<HTMLElement>("[data-code-scroll]");
+  if (!scroller) throw new Error("missing scroller");
+  act(() => {
+    scroller.scrollTop = 60 * 22;
+    scroller.dispatchEvent(new Event("scroll"));
+  });
+  expect(view.getByText("context_80")).toBeTruthy();
+  await view.user.click(view.getByText("View test"));
+  await view.findByText("reviewed_test");
+  await view.user.click(view.getByText("Back to review"));
+  await waitFor(() => expect(release).toBeDefined());
+  expect(view.getByText("context_80")).toBeTruthy();
+  await act(async () => release?.({ ...original }));
+  await waitFor(() => expect(view.getByText("context_80")).toBeTruthy());
+  expect(view.container.querySelector<HTMLElement>("[data-code-scroll]")?.scrollTop).toBe(60 * 22);
 });

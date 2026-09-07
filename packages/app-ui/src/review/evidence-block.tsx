@@ -97,6 +97,7 @@ export function EvidenceBlock({ citation, initial }: { citation: CodeRef; initia
   const counterparts = relationships?.counterparts ?? [];
   useLayoutEffect(() => {
     if (navigating || !restorePosition.current || !data) return;
+    if (context !== 0 && fetched === undefined && error === undefined) return;
     const scroller = container.current?.querySelector<HTMLElement>("[data-code-scroll]");
     if (scroller) {
       scroller.scrollLeft = origin.current.left;
@@ -105,7 +106,7 @@ export function EvidenceBlock({ citation, initial }: { citation: CodeRef; initia
     }
     if (origin.current.scrollParent) origin.current.scrollParent.scrollTop = origin.current.top;
     restorePosition.current = false;
-  }, [navigating, data]);
+  }, [navigating, data, context, fetched, error]);
   const back = () => {
     restorePosition.current = true;
     setDestination(citation);
