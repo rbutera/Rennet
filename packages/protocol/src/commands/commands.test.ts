@@ -91,9 +91,12 @@ const ABSORBED_IDS = [
   "patchset.readSpan",
   "project.cleanupWorktree",
   "project.detail",
+  "project.detectLogo",
   "project.discover",
+  "project.logos",
   "project.process",
   "project.rename",
+  "project.uploadLogo",
   "projects.add",
   "projects.list",
   "projects.remove",
@@ -184,7 +187,7 @@ const MENU_INVENTORY: readonly string[] = [];
 describe("command registry invariants (#465)", () => {
   it("matches the recorded command snapshot (settings.setRepoLocus demoted, #476)", () => {
     expect(Object.keys(commands).sort()).toEqual([...ABSORBED_IDS]);
-    expect(ABSORBED_IDS).toHaveLength(105);
+    expect(ABSORBED_IDS).toHaveLength(108);
   });
 
   it("every row carries label, exposure, and locus with today's uniform values", () => {
