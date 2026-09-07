@@ -721,12 +721,35 @@ test("review activity and code evidence remain usable across navigation", async 
       );
     await page.emulateMedia({ colorScheme: "light", reducedMotion: "reduce" });
     await page.setViewportSize({ width: 900, height: 800 });
+    const narrowHeader = page.locator('[data-slot="session-top-bar"]');
+    await expect
+      .poll(async () => {
+        const [header, rail, controls] = await Promise.all([
+          narrowHeader.boundingBox(),
+          narrowHeader.locator('[data-slot="lens-switcher"]').boundingBox(),
+          narrowHeader.getByRole("group", { name: "Session view" }).boundingBox(),
+        ]);
+        return (
+          header !== null &&
+          rail !== null &&
+          controls !== null &&
+          rail.y >= controls.y + controls.height - 1 &&
+          rail.width >= header.width - 25
+        );
+      })
+      .toBe(true);
     for (const name of ["Design", "Sequence", "Decisions", "Flagged", "Noise"]) {
       await expect(tabs.getByRole("tab", { name: new RegExp(`^${name}(?:,|$)`) })).toContainText(
         name,
       );
     }
     if (await skipTips.isVisible()) await skipTips.click();
+    for (const name of ["Design", "Sequence", "Decisions", "Flagged", "Noise"]) {
+      const tab = tabs.getByRole("tab", { name: new RegExp(`^${name}(?:,|$)`) });
+      await tab.focus();
+      await expect(tab).toBeInViewport({ ratio: 1 });
+    }
+    await tabs.getByRole("tab", { name: /^Sequence(?:,|$)/ }).focus();
     await page.screenshot({ path: test.info().outputPath("evidence-light.png") });
   } finally {
     await application.close();
