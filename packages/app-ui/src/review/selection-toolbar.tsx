@@ -1,3 +1,4 @@
+import { type CodeRef, codeRefSchema } from "@rennet/protocol";
 import { cn } from "@rennet/ui";
 import { GitPullRequestArrow, MessageSquare, Pencil, Sparkles, Trash2 } from "lucide-react";
 import type { ReactNode } from "react";
@@ -33,6 +34,30 @@ function scopeOfRange(range: Range): { target: string; generation: string } | un
   const target = el?.closest("[data-quote-target]")?.getAttribute("data-quote-target") ?? undefined;
   const generation = el?.closest("[data-generation]")?.getAttribute("data-generation") ?? undefined;
   return target === undefined || generation === undefined ? undefined : { target, generation };
+}
+
+export function codeRefOfRange(range: Range): CodeRef | undefined {
+  const element = (node: Node) => (node instanceof Element ? node : node.parentElement);
+  const first = element(range.startContainer)?.closest<HTMLElement>("[data-code-patchset]");
+  const last = element(range.endContainer)?.closest<HTMLElement>("[data-code-patchset]");
+  if (
+    !first ||
+    !last ||
+    first.dataset.codePatchset !== last.dataset.codePatchset ||
+    first.dataset.codePath !== last.dataset.codePath ||
+    first.dataset.codeSide !== last.dataset.codeSide
+  )
+    return undefined;
+  const start = Number(first.dataset.codeLine);
+  const end = Number(last.dataset.codeLine);
+  const parsed = codeRefSchema.safeParse({
+    patchsetId: first.dataset.codePatchset,
+    path: first.dataset.codePath,
+    side: first.dataset.codeSide,
+    startLine: Math.min(start, end),
+    endLine: Math.max(start, end),
+  });
+  return parsed.success ? parsed.data : undefined;
 }
 
 /** Resolve the displayed browser selection back to the renderer's exact markdown bytes. */
@@ -76,6 +101,8 @@ export function ProseSelectionLayer({
     top: number;
     left: number;
     quote: string;
+    codeRef?: CodeRef;
+    mixedCodeSelection?: boolean;
     placement: "above" | "below";
     /** The board-anchor identity of the selection (finding 2), if it landed in a board. */
     scope?: { readonly target: string; readonly generation: string };
@@ -124,7 +151,18 @@ export function ProseSelectionLayer({
         dismiss();
         return;
       }
-      const quote = rawQuoteOfRange(range, displayQuote);
+      const codeRef = codeRefOfRange(range);
+      const ancestor =
+        range.commonAncestorContainer instanceof Element
+          ? range.commonAncestorContainer
+          : range.commonAncestorContainer.parentElement;
+      const selectsCode =
+        ancestor?.closest("[data-code-patchset]") != null ||
+        [...(ancestor?.querySelectorAll("[data-code-patchset]") ?? [])].some((node) =>
+          range.intersectsNode(node),
+        );
+      const mixedCodeSelection = selectsCode && codeRef === undefined;
+      const quote = selectsCode ? displayQuote : rawQuoteOfRange(range, displayQuote);
       if (quote === null) {
         dismiss();
         return;
@@ -140,6 +178,8 @@ export function ProseSelectionLayer({
         top: (placement === "below" ? rect.bottom : rect.top) - wrapRect.top,
         left: rect.left - wrapRect.left + rect.width / 2,
         quote,
+        ...(codeRef === undefined ? {} : { codeRef }),
+        mixedCodeSelection,
         placement,
         ...(scope === undefined ? {} : { scope }),
       });
@@ -159,13 +199,14 @@ export function ProseSelectionLayer({
 
   function startThread(opener: string, kind: "comment" | "explain" = "comment") {
     if (!anchor) return;
-    const id = addQuoteComment(anchor.quote, opener, kind, anchor.scope);
+    const id = addQuoteComment(anchor.quote, opener, kind, anchor.scope, anchor.codeRef);
     setFocusedThread(id);
     if (kind === "explain") {
       void sendAnchoredAsk?.({
         threadId: id,
         question: opener,
         excerpt: anchor.quote,
+        ...(anchor.codeRef === undefined ? {} : { codeRef: anchor.codeRef }),
         ...(anchor.scope === undefined ? {} : anchor.scope),
       });
     }
@@ -185,10 +226,17 @@ export function ProseSelectionLayer({
     // Mint the thread, then stage an ask that keeps the quoted span as its source
     // provenance (`anchor`) AND names the thread it CLAIMS (`threadId`) — so the exit
     // tally counts the claimed thread once, without conflating source with claim.
-    const id = addQuoteComment(anchor.quote, text, "comment", anchor.scope);
+    const id = addQuoteComment(anchor.quote, text, "comment", anchor.scope, anchor.codeRef);
     // Identity is the minted thread id — unique per selection, so two request-changes on identical
     // prose (or the same span twice) stay separate asks instead of collapsing on the quote text.
-    stageAsk({ id, anchor: anchor.quote, type: "request-change", body: text, threadId: id });
+    stageAsk({
+      id,
+      anchor: anchor.quote,
+      type: "request-change",
+      body: text,
+      threadId: id,
+      ...(anchor.codeRef === undefined ? {} : { codeRef: anchor.codeRef }),
+    });
     flight.signal(); // the quote request-change stages one ask and flies one bubble (batched)
     setFocusedThread(id);
     window.getSelection()?.removeAllRanges();
@@ -240,7 +288,11 @@ export function ProseSelectionLayer({
         >
           {mode === "toolbar" ? (
             <div className="flex items-center gap-0.5 rounded-md border border-border bg-popover px-1 py-0.5 shadow-overlay">
-              {draftHandlers ? (
+              {anchor.mixedCodeSelection ? (
+                <span className="px-2 py-1 text-xs text-muted-foreground">
+                  Select lines within one file and one side of the diff.
+                </span>
+              ) : draftHandlers ? (
                 <>
                   <button
                     type="button"

@@ -28,7 +28,7 @@ describe("citations — pure helpers", () => {
     expect(refKey(base)).not.toBe(refKey(lineRef("ps", "a/b.ts", 5, 6, "head")));
   });
 
-  it("spanToBlock orders context around the cited lines, derives the start line, highlights the span", () => {
+  it("spanToBlock orders context around the cited lines, derives the start line, leaves selection to the reviewer", () => {
     const ref = lineRef("ps", "a/b.ts", 42, 44);
     const span: SpanRead = {
       lines: ["L42", "L43", "L44"],
@@ -40,7 +40,7 @@ describe("citations — pure helpers", () => {
     expect(block.code).toBe("L40\nL41\nL42\nL43\nL44\nL45");
     // Absolute start = the cited startLine minus the leading context (cannot drift).
     expect(block.startLine).toBe(40);
-    // Exactly the cited range is highlighted.
-    expect(block.highlightLines).toEqual([42, 43, 44]);
+    // A citation chooses a location, never a user selection.
+    expect(block.highlightLines).toEqual([]);
   });
 });

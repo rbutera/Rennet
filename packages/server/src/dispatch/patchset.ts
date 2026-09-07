@@ -2,6 +2,7 @@ import { buildHunkIndex, resolveCitation, sideLinesByFileLine } from "@rennet/co
 import type { AnchorSide, CodeRef, PatchFile, Patchset } from "@rennet/protocol";
 import { parseCommandInput, parseCommandOutput } from "@rennet/protocol";
 import { changedRegions } from "../runtime/round-collation";
+import { evidenceReader } from "./patchset-evidence";
 import type { CommandHandler, DispatchRuntime } from "./runtime";
 
 /** Lines of orientation offered either side of a cited span, when the capture has them. */
@@ -106,6 +107,7 @@ async function readFromTree(
  */
 export function patchsetHandlers(rt: DispatchRuntime) {
   return {
+    "patchset.readEvidence": evidenceReader(rt),
     "patchset.readSpan": async (rawInput) => {
       const name = "patchset.readSpan" as const;
       const ref = parseCommandInput(name, rawInput);

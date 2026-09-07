@@ -1,8 +1,10 @@
 import { cn } from "@rennet/ui";
 import { useState } from "react";
 import { basename } from "../canvas/symbol";
+import { useCommand } from "../data";
 import { type CodeRef, refKey, spanToBlock, useSpanRead } from "./citations";
 import { CodeBlock } from "./code-block";
+import { EvidenceBlock } from "./evidence-block";
 import { ReferenceChip } from "./reference-chip";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -15,7 +17,10 @@ import { ReferenceChip } from "./reference-chip";
  *  Shared by CodeTabs/AnchorReveal here and by rich-text's citation reveal. */
 export function CitationBlock({ citation }: { citation: CodeRef }) {
   const { data, error } = useSpanRead(citation);
+  const { data: evidence } = useCommand("patchset.readEvidence", { ref: citation });
   const label = `${basename(citation.path)}:${citation.startLine}`;
+  if (evidence)
+    return <EvidenceBlock key={refKey(citation)} citation={citation} initial={evidence} />;
   if (error) {
     // The daemon's own sentence, verbatim. `patchset.readSpan` distinguishes an unknown
     // patchset from an uncaptured file from a span outside the captured diff, and those
