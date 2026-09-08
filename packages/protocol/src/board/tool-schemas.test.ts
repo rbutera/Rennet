@@ -428,6 +428,7 @@ describe("host-owned fields appear on no tool input", () => {
       "children",
       "delta",
       "measure",
+      "proseRegister",
     ]);
     for (const target of BOARD_TARGETS) {
       for (const tool of buildBoardTools(target)) {
