@@ -639,6 +639,25 @@ export {
   type TurnMetric,
 } from "./turn-metrics";
 export { type DraftOp, WhiteboardClient } from "./whiteboard-client";
+// The workspace inventory (workspace-settings D6).
+export {
+  type ListWorkspacesOptions,
+  listWorkspaces,
+  measureWorkspaceSize,
+  parseWorktreeRecords,
+  type RemoveWorkspaceInput,
+  removeWorkspace,
+  SIBLING_BRANCH_PREFIX,
+  siblingIsCollectable,
+  WORKSPACE_SIZE_BUDGET_MS,
+  WORKSPACE_SIZE_TOTAL_BUDGET_MS,
+  type WorkspaceInventory,
+  type WorkspaceRow,
+  type WorkspaceSessionRef,
+  type WorktreeRecord,
+  windowsFoldsCase,
+  workspaceId,
+} from "./workspace-inventory";
 export {
   discoverWorktreeIdentities,
   forgeForRemoteHost,

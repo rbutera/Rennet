@@ -151,6 +151,10 @@ const ABSORBED_IDS = [
   "settings.setRepoVisibility",
   "settings.setRoleAssignment",
   "settings.setThemePack",
+  // The workspace inventory (workspace-settings D6): the per-repository list of every
+  // workspace Rennet knows, and the non-forcing removal of one idle Rennet-made row.
+  "worktrees.list",
+  "worktrees.remove",
 ] as const;
 
 // The #465 v1 agent inventory, mapped by inspection (the session.* reads exist but stay
@@ -188,7 +192,7 @@ const MENU_INVENTORY: readonly string[] = [];
 describe("command registry invariants (#465)", () => {
   it("matches the recorded command snapshot (settings.setRepoLocus demoted, #476)", () => {
     expect(Object.keys(commands).sort()).toEqual([...ABSORBED_IDS]);
-    expect(ABSORBED_IDS).toHaveLength(109);
+    expect(ABSORBED_IDS).toHaveLength(111);
   });
 
   it("every row carries label, exposure, and locus with today's uniform values", () => {

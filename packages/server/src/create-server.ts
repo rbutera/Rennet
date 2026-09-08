@@ -78,7 +78,9 @@ import {
   gitForRepoFactory,
   instrumentCodexExecutor,
   isGitHubNetworkError,
+  type ListWorkspacesOptions,
   listDir,
+  listWorkspaces,
   loadConventionCatalogue,
   loadProjectDetail,
   mapCouncilModel,
@@ -104,6 +106,7 @@ import {
   readTreeLineCounts,
   recordedVisibility,
   refreshGitHubCredential,
+  removeWorkspace,
   repoKeyForRoot,
   repoKeyOf,
   repositoryIdentity,
@@ -124,6 +127,7 @@ import {
   TranscriptStore,
   type TurnMetric,
   validateGitHubToken,
+  type WorkspaceSessionRef,
   type WorktreeRepoFacts,
   withRepoPref,
   wslDiscoveryDeps,
@@ -222,7 +226,12 @@ import {
 } from "./board/board-mcp-server";
 import { seatBoardServer } from "./board/seat-address";
 import { type BoardsRuntime, createBoardsRuntime } from "./boards/boards-runtime";
-import { comparablePath, decideBoundWorkspace, repinBoundWorkspace } from "./bound-workspace";
+import {
+  comparablePath,
+  decideBoundWorkspace,
+  inRepoSpelling,
+  repinBoundWorkspace,
+} from "./bound-workspace";
 import { attachCiSignal } from "./ci-signal";
 import {
   configureSessionContext,
@@ -2997,6 +3006,47 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         ...(session.reviewId === undefined ? [] : [index[session.reviewId]?.path ?? []].flat()),
       ]);
   };
+  /**
+   * The sessions the workspace inventory reads (workspace-settings D6): every session the
+   * store holds, with where it is bound and when its record was last written.
+   *
+   * Archived ones are handed over WITH their `archivedAt` rather than filtered out here,
+   * because "archived" is exactly what makes the reviewer's own checkout leave the list —
+   * the inventory needs to see the archive, not a silence it would have to interpret.
+   */
+  const workspaceSessionRefs = (): WorkspaceSessionRef[] =>
+    sessionStore.list().map((session) => ({
+      id: session.id,
+      ...(session.boundRoot === undefined ? {} : { boundRoot: session.boundRoot }),
+      ...(session.archivedAt === undefined ? {} : { archivedAt: session.archivedAt }),
+      ...(() => {
+        const lastActivityAt = sessionStore.lastWrittenAt(session.id);
+        return lastActivityAt === undefined ? {} : { lastActivityAt };
+      })(),
+    }));
+  /**
+   * What one repository's inventory read is given (workspace-settings D6): the root, the
+   * pull-request index, the sessions — and the re-speller that makes those sessions
+   * matchable at all.
+   *
+   * `spellPath` is the WSL arrangement, not a nicety (PR #789): a Windows daemon stores
+   * `\\wsl$\Ubuntu\home\u\repo\…` on every session's `boundRoot`, while the git it runs
+   * lives inside the distro and prints `/home/u/repo/…`. Without the re-spelling no bound
+   * workspace would ever match a path git named, and the card would show every one of them
+   * as idle and removable while a session was working in it.
+   *
+   * `root` stays the builtin here on purpose: threading the RESOLVED root through is group
+   * 2's work, and `ListWorkspacesOptions.root` is the seam it lands on.
+   */
+  const inventoryOptions = (repoPath: string): ListWorkspacesOptions => {
+    const locus = locusForRepo(repoPath);
+    return {
+      root: join(dataDir, "worktrees"),
+      prWorktreePaths: Object.values(readPrWorktreeIndex()).map((entry) => entry.path),
+      sessions: workspaceSessionRefs(),
+      spellPath: (gitPath) => inRepoSpelling(gitPath, repoPath, locus),
+    };
+  };
   // The daemon-start orphan sweep (session-context-files): a crash between a context write
   // and an archive leaves a directory nobody would ever purge, so the next start collects
   // every one THIS daemon wrote whose session the store no longer holds or already marks
@@ -5350,6 +5400,32 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         },
         { projectId, worktreeId },
       );
+    },
+    // The workspace inventory (workspace-settings D6): every workspace Rennet knows for
+    // ONE repository, and the removal of one idle Rennet-made row.
+    //
+    // Addressed by REPOSITORY PATH throughout — `gitForRepo(repoPath)` runs git in that
+    // repository's own locus, so a WSL project lists the worktrees the git inside its
+    // distro reports, and the two repositories of one workspace answer separately. A
+    // project id could not have said which of them a row belongs to.
+    //
+    // The reviewer's own checkout enters the list only through a LIVE session's recorded
+    // `boundRoot`, which is also why it leaves again when that session is archived.
+    worktrees: {
+      list: (repoPath) =>
+        listWorkspaces(gitForRepo(repoPath), repoPath, inventoryOptions(repoPath)),
+      remove: async ({ repoPath, id }) => {
+        // Re-listed HERE, at the moment of the removal, rather than trusted from the
+        // client: whether a row is the reviewer's own checkout, whether a session is
+        // working in it, and whether a sibling still holds unmerged work are all facts
+        // that can have changed since the card was rendered. Sizes are skipped — this
+        // read exists to address the row, and a `du` per row would pay for nothing.
+        const { rows } = await listWorkspaces(gitForRepo(repoPath), repoPath, {
+          ...inventoryOptions(repoPath),
+          measureSizes: false,
+        });
+        return removeWorkspace(gitForRepo(repoPath), repoPath, { id, rows });
+      },
     },
     // The Flagged lens (issue #138): the automated review layer's findings. This is
     // the LIVE finding-generation runner (#32) — a real model turn over the review's

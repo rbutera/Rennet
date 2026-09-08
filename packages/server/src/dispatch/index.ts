@@ -31,6 +31,7 @@ import {
 } from "./runtime";
 import { sessionHandlers } from "./session";
 import { settingsHandlers } from "./settings";
+import { worktreesHandlers } from "./worktrees";
 
 // Re-export the public router surface so `./dispatch` stays the single import site
 // for consumers (`create-server.ts`, the tests) after the switch became a directory.
@@ -97,6 +98,7 @@ export function buildDispatchTable(rt: DispatchRuntime) {
     ...roundHandlers(rt),
     ...sessionHandlers(rt),
     ...settingsHandlers(rt),
+    ...worktreesHandlers(rt),
   };
   // Compile-time exhaustiveness guard — the successor to the old `switch` default's `never`
   // assertion. If a registry command has no handler (or an id is renamed), `MissingCommand`
