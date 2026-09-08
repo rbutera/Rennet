@@ -1041,6 +1041,9 @@ describe("runRound emits the real regeneration progress (C15 3.1/3.3)", () => {
         persistBoardMeta: (_repo, meta) => metaStore.save(meta),
         persistGeneration: (gen) => genStore.save(gen),
         loadGeneration: (id) => genStore.load(id),
+        loadGenerationVersion: (id) => genStore.loadVersion(id),
+        persistGenerationIfRevision: (gen, revision) => genStore.saveIfRevision(gen, revision),
+        freezeGeneration: (id, revision) => genStore.freeze(id, revision),
       }),
     );
 
@@ -1186,6 +1189,9 @@ describe("runRound emits the real regeneration progress (C15 3.1/3.3)", () => {
           metaStore.listForGeneration(sessionId, generation),
         persistGeneration: (generation) => genStore.save(generation),
         loadGeneration: (id) => genStore.load(id),
+        loadGenerationVersion: (id) => genStore.loadVersion(id),
+        persistGenerationIfRevision: (gen, revision) => genStore.saveIfRevision(gen, revision),
+        freezeGeneration: (id, revision) => genStore.freeze(id, revision),
       }),
     );
     const outcomes: RoundOutcome[] = [];

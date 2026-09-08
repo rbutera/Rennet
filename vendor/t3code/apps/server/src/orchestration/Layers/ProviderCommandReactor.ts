@@ -1273,7 +1273,7 @@ const make = Effect.gen(function* () {
             tone: "info",
             kind: "turn.start-associated",
             summary: "Turn start associated",
-            payload: { startCommandId: event.commandId ?? event.eventId },
+            payload: { startCommandId: event.commandId ?? event.eventId, timelineBypass: true },
             turnId: started.turnId,
             createdAt: event.payload.createdAt,
           },

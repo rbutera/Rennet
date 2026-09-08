@@ -238,16 +238,6 @@ describe.skipIf(!bundle)("t3 client over the vendored sidecar", () => {
   }
 });
 
-// A provider stream that dies before its turn registers (drive 1.6, 2026-09-03). T3 stops
-// the session with `lastError` and emits no turn lifecycle, so the settle wait must read
-// the session, not just `latestTurn`. This gets its OWN sidecar: on the ubuntu CI runner
-// the sidecar's RPC socket closed with 1006 right after the dead stream and every later
-// test in the shared suite lost its connection (run 33744230481). That 1006 was the whole
-// sidecar dying on an unhandled `write EPIPE`: the SDK's transport writes the prompt to a
-// child stdin nobody listens to for errors. It is fixed in `ClaudeAdapter.ts` (ledger row
-// 6), so this runs on every platform again. A `claude` that merely EXITS cannot see it —
-// the SDK's own exit check wins that race, ten runs out of ten — so the stand-in below
-// closes its stdin and lives on, which is the shape that produces the write.
 describe.skipIf(!bundle)("round accepted-start recovery over the real sidecar", () => {
   it("reconnects after acceptance and replays the command without another worker", async () => {
     const root = mkdtempSync(join(tmpdir(), "rennet-start-association-"));
@@ -350,6 +340,16 @@ createInterface({ input: process.stdin }).on("line", (line) => {
   }, 60_000);
 });
 
+// A provider stream that dies before its turn registers (drive 1.6, 2026-09-03). T3 stops
+// the session with `lastError` and emits no turn lifecycle, so the settle wait must read
+// the session, not just `latestTurn`. This gets its OWN sidecar: on the ubuntu CI runner
+// the sidecar's RPC socket closed with 1006 right after the dead stream and every later
+// test in the shared suite lost its connection (run 33744230481). That 1006 was the whole
+// sidecar dying on an unhandled `write EPIPE`: the SDK's transport writes the prompt to a
+// child stdin nobody listens to for errors. It is fixed in `ClaudeAdapter.ts` (ledger row
+// 6), so this runs on every platform again. A `claude` that merely EXITS cannot see it —
+// the SDK's own exit check wins that race, ten runs out of ten — so the stand-in below
+// closes its stdin and lives on, which is the shape that produces the write.
 describe.skipIf(!bundle)("t3 client: a provider stream that dies before its turn registers", () => {
   let root: string;
   let running: RunningSidecar;
