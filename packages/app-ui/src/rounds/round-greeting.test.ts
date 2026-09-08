@@ -34,6 +34,14 @@ describe("usageNote", () => {
     );
   });
 
+  it("labels measured board calls without inventing a count for legacy records", () => {
+    expect(usageNote({ ...base, boardToolCalls: 9 })).toBe(
+      "Spent 12.3K tokens across 7 seat turns · 9 observed board tool calls",
+    );
+    expect(usageNote({ ...base, boardToolCalls: 0 })).toContain("0 observed board tool calls");
+    expect(usageNote(base)).not.toContain("tool calls");
+  });
+
   it("singularises one turn", () => {
     expect(usageNote({ ...base, turns: 1, totalTokens: 900 })).toBe(
       "Spent 900 tokens across 1 seat turn",

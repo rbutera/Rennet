@@ -3924,10 +3924,10 @@ describe("createDispatch — settings.* routing (the config ladder, wireframe #1
     expect(view.projects).toEqual([]);
     // HONEST-PRESENT (C16, #485): the council tables are static, so the review-role
     // mappings are readable with no settings dep at all. The Review section renders
-    // the real defaults rather than a blank — all eight roles, every cell `default`.
+    // the active defaults rather than a blank, every cell `default`.
     const roles = (view as unknown as { reviewRoles: ReviewRoleMapping[] }).reviewRoles;
     expect(roles).toEqual(reviewRoleMappings());
-    expect(roles).toHaveLength(6);
+    expect(roles.map((role) => role.id)).toEqual(["lens-workers", "second-seat"]);
     // The Flagged Second Seat does not run single-provider: an honest null, not a guess.
     const secondSeat = roles.find((role) => role.id === "second-seat");
     expect(secondSeat?.claudeOnly.value).toBeNull();
