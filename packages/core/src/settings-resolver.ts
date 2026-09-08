@@ -237,14 +237,20 @@ export const SETTINGS_REGISTRY = {
   trackerBaseUrl: stringSetting("trackerBaseUrl", CONFIG_ONLY),
   trackerTokenEnv: stringSetting("trackerTokenEnv", CONFIG_ONLY),
   // §4 non-tracker facts the ladder does not already resolve.
-  worktreeBaseDir: stringSetting("worktreeBaseDir", DETECTABLE),
+  // The worktree LOCATION (workspace-settings D1). `CONFIG_ONLY`, like the two patterns
+  // and `workspace`: the scout can see where a repository's own worktrees already live,
+  // but that is the repository's convention, not an instruction about where Rennet should
+  // place its own — and offering it moved placement under every repo that already had a
+  // sibling worktree, which the spec's "an untouched install places nothing differently"
+  // forbids. All four worktree keys resolve `builtin < global < repo`.
+  worktreeBaseDir: stringSetting("worktreeBaseDir", CONFIG_ONLY),
   gateCommand: stringSetting("gateCommand", DETECTABLE),
   // The per-project prefs the Projects surface edits (C18 group A). They ride the
   // SAME ladder as everything above — the repo rung is the project's own
   // `config.json`, so a per-project answer beats the host's global one and the
   // builtin "" reads as unset (the client then shows ITS default, never a value the
   // ladder did not resolve). `worktreeBaseDir` above is the location half of the
-  // worktree pair; the naming patterns have no detector, so they are config-only.
+  // worktree pair; nothing detects any of the four, so all of them are config-only.
   //
   // The two patterns' builtins are REAL values, not "": the binding reads them, so the
   // base of the ladder has to be the shape it places by. A snapshot has a number and no

@@ -1870,104 +1870,6 @@ describe("setProjectValue + setGuidance — the per-project repo rung (C18 group
   });
 });
 
-describe("createSettingsComposition — the worktree section's global rung (workspace-settings D1)", () => {
-  /** A composition over a MUTABLE daemon-settings file, so a write is read back off
-   *  the state it left rather than the request echoed. */
-  function daemonDeps(malformed = false): {
-    deps: SettingsCompositionDeps;
-    file: DaemonSettings;
-  } {
-    const file: DaemonSettings = { version: 1 };
-    const { deps } = statefulDeps();
-    return {
-      file,
-      deps: {
-        ...deps,
-        readDaemonSettings: () => file,
-        updateDaemon: (update) => {
-          // Rule 75: the real store REFUSES to overwrite bytes it could not parse.
-          if (malformed) throw new Error("refusing to overwrite a malformed daemon-settings file");
-          // REPLACES, as `FileConfigStore.update` does — it writes the returned object
-          // whole, so a dropped key is gone from the file. A merging fake would have
-          // reported an empty `worktrees: {}` section as absent and vice versa.
-          const next = update({ ...file });
-          for (const key of Object.keys(file)) delete (file as Record<string, unknown>)[key];
-          Object.assign(file, next);
-          return file;
-        },
-      },
-    };
-  }
-
-  it("a global write lands in daemon-settings and the next read resolves it", async () => {
-    const { deps, file } = daemonDeps();
-    const composition = createSettingsComposition(deps);
-    // A written LOCATION is expanded and made absolute AT THE WRITE (D1, spec delta):
-    // `~/trees` persisted verbatim means two different directories on two machines, and
-    // the row would show a string the daemon re-interprets on every read.
-    expect(composition.setWorktreeValue({ key: "root", value: "~/trees" })).toEqual({
-      root: join(homedir(), "trees"),
-    });
-    composition.setWorktreeValue({ key: "prPattern", value: "{owner}/{number}" });
-    composition.setWorktreeValue({ key: "workspace", value: "own" });
-    expect(file.worktrees).toEqual({
-      root: join(homedir(), "trees"),
-      prPattern: "{owner}/{number}",
-      workspace: "own",
-    });
-    const row = (await composition.get()).projects[0];
-    expect(row?.prefs?.worktreeRoot).toEqual({ value: join(homedir(), "trees"), layer: "global" });
-    expect(row?.prefs?.workspace).toEqual({ value: "own", layer: "global" });
-  });
-
-  it("a null RESETS the host rung: the entry is dropped and the value falls back", () => {
-    const { deps, file } = daemonDeps();
-    const composition = createSettingsComposition(deps);
-    composition.setWorktreeValue({ key: "pattern", value: "{name}/{branch}" });
-    expect(composition.setWorktreeValue({ key: "pattern", value: null })).toEqual({});
-    // The LAST key going takes the section with it: an empty `worktrees: {}` is a shape
-    // the reader has to translate back into "unset", and the file should just say nothing.
-    expect(file.worktrees).toBeUndefined();
-    expect(file).toEqual({ version: 1 });
-    // …and a section with something left in it stays.
-    composition.setWorktreeValue({ key: "pattern", value: "{name}/{branch}" });
-    composition.setWorktreeValue({ key: "workspace", value: "own" });
-    composition.setWorktreeValue({ key: "pattern", value: null });
-    expect(file.worktrees).toEqual({ workspace: "own" });
-  });
-
-  it("refuses `~someone/...` on the HOST rung too, and writes nothing", () => {
-    // The repo rung has this rule and a test for it; the host rung ran the same
-    // `expandWorktreeRootForWrite` and had neither. `~someone` names another user's home
-    // and needs a passwd lookup this process does not do — so it is refused with its
-    // reason rather than persisted as a literal `~someone` directory the daemon creates.
-    const { deps, file } = daemonDeps();
-    const composition = createSettingsComposition(deps);
-    composition.setWorktreeValue({ key: "root", value: "/trees" });
-    expect(() => composition.setWorktreeValue({ key: "root", value: "~someone/trees" })).toThrow(
-      /another user's home/,
-    );
-    // The refused write left the previously stored value exactly as it was.
-    expect(file.worktrees).toEqual({ root: "/trees" });
-  });
-
-  it("a value the registry rejects never reaches the file", () => {
-    const { deps, file } = daemonDeps();
-    expect(() =>
-      createSettingsComposition(deps).setWorktreeValue({ key: "workspace", value: "solo" }),
-    ).toThrow(/workspace/);
-    expect(file.worktrees).toBeUndefined();
-  });
-
-  it("a MALFORMED daemon-settings refuses the write (Rule 75)", () => {
-    const { deps, file } = daemonDeps(true);
-    expect(() =>
-      createSettingsComposition(deps).setWorktreeValue({ key: "root", value: "/trees" }),
-    ).toThrow(/malformed/);
-    expect(file).toEqual({ version: 1 });
-  });
-});
-
 describe("worktreePreview — the daemon's resolved placement example (workspace-settings D3)", () => {
   const write = (key: SettingsProjectValueKey, value: string | null) => ({
     projectId: "p1",
@@ -2078,25 +1980,6 @@ describe("worktreePreview — the daemon's resolved placement example (workspace
     ).rejects.toThrow(/unknown token/);
     expect(store.prWorktreePattern).toBeUndefined();
   });
-
-  it("REFUSES an escaping pattern on the HOST rung too, leaving daemon-settings untouched", () => {
-    const file: DaemonSettings = { version: 1 };
-    const { deps } = statefulDeps();
-    const composition = createSettingsComposition({
-      ...deps,
-      readDaemonSettings: () => file,
-      updateDaemon: (update) => {
-        const next = update({ ...file });
-        for (const key of Object.keys(file)) delete (file as Record<string, unknown>)[key];
-        Object.assign(file, next);
-        return file;
-      },
-    });
-    expect(() => composition.setWorktreeValue({ key: "pattern", value: "../{branch}" })).toThrow(
-      /outside the worktree root/,
-    );
-    expect(file.worktrees).toBeUndefined();
-  });
 });
 
 describe("worktree location: the builtin is a real path, and a written one is absolute", () => {
@@ -2112,6 +1995,37 @@ describe("worktree location: the builtin is a real path, and a written one is ab
     });
     // …and it is the root the preview places under, so the row and the example agree.
     expect(row?.worktreePreview?.branch.startsWith(join("/data", "worktrees"))).toBe(true);
+  });
+
+  // THE SCOUT DOES NOT MOVE THE ROOT (workspace-settings D1, review decision B). The scout
+  // records where a repository's OWN worktrees already live — an honest fact about the
+  // repository, still stored and still in the questionnaire. It is not an instruction about
+  // where Rennet should place ITS worktrees, and while the resolved root was read by
+  // nothing that distinction was invisible. It is not invisible now: this offer would have
+  // moved every worktree of every repository that happens to have one sibling checkout, on
+  // an install that had never written a setting.
+  //
+  // POSITIVE CONTROL RUN 2026-09-08: `worktreeBaseDir` was put back into
+  // `SCOUT_OFFER_KEYS` and the `detected` offer restored in `resolvePrefs`, and both
+  // assertions here reddened (`/repo/trees` won at layer `detected`, and the preview moved
+  // under it). Restored, green.
+  it("a SCOUTED worktree convention moves neither the resolved root nor the preview", async () => {
+    const { deps } = statefulDeps();
+    const composition = createSettingsComposition({
+      ...deps,
+      // The scout's stored facts as the resolver would see them, had this key been offered.
+      scoutOffers: () => ({ worktreeBaseDir: "/repo/trees", gateCommand: "pnpm check" }),
+    });
+    const row = (await composition.get()).projects[0];
+    // The builtin still wins: `<dataDir>/worktrees`, labelled `builtin`, not `detected`.
+    expect(row?.prefs?.worktreeRoot).toEqual({
+      value: join("/data", "worktrees"),
+      layer: "builtin",
+    });
+    // …and the daemon's own preview places under that same root, so the example the card
+    // shows and the directory the binding would create still agree.
+    expect(row?.worktreePreview?.branch.startsWith(join("/data", "worktrees"))).toBe(true);
+    expect(row?.worktreePreview?.branch.startsWith("/repo/trees")).toBe(false);
   });
 
   it("EXPANDS a repo-rung location at the write, and refuses another user's home", async () => {

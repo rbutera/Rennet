@@ -263,6 +263,25 @@ describe("issue-tracker section (#461, B7)", () => {
     expect(SETTINGS_REGISTRY.workspace.layers).not.toContain("detected");
   });
 
+  // ALL FOUR worktree keys are `builtin < global < repo` — the LOCATION included
+  // (workspace-settings D1, review decision B). The scout records where a repository's
+  // own worktrees already live, and that fact used to be offered here; with the root
+  // live, a repository that happened to have a sibling worktree would have had every
+  // Rennet worktree placed somewhere new the moment the binding started reading the
+  // ladder, which is precisely the "an untouched install places nothing differently"
+  // this change promises. So the layer list is the assertion, and a `detected` offer for
+  // the root is a programming error the resolver refuses.
+  it("no worktree key has a detected rung: all four are builtin < global < repo", () => {
+    const ladder = ["builtin", "global", "repo"];
+    expect(SETTINGS_REGISTRY.worktreeBaseDir.layers).toEqual(ladder);
+    expect(SETTINGS_REGISTRY.worktreePattern.layers).toEqual(ladder);
+    expect(SETTINGS_REGISTRY.prWorktreePattern.layers).toEqual(ladder);
+    expect(SETTINGS_REGISTRY.workspace.layers).toEqual(ladder);
+    expect(() =>
+      resolve(SETTINGS_REGISTRY.worktreeBaseDir, { detected: "/repo/trees" } as never),
+    ).toThrow(/detected/);
+  });
+
   it("detectable string rows accept a scout offer and render unset honestly", () => {
     const detected = resolve(SETTINGS_REGISTRY.gateCommand, { detected: "pnpm check" });
     expect(detected.value).toBe("pnpm check");

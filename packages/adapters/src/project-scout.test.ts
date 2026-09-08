@@ -478,6 +478,40 @@ describe("scout persistence (amendment 9)", () => {
     expect(offers.gateCommand).toBeUndefined();
   });
 
+  // WORKSPACE-SETTINGS D1, review decision B. The root is LIVE now — the binding places
+  // worktrees under whatever the ladder resolves — so an offer here decides where a
+  // repository's worktrees go. Where a repository's OWN worktrees already live is its
+  // convention, not an instruction to Rennet, and offering it moved placement for every
+  // repository that happens to have one sibling checkout. The fact stays recorded: it is
+  // honest, and the questionnaire has always shown it. It is simply not a ladder offer.
+  //
+  // POSITIVE CONTROL RUN 2026-09-08: `SCOUT_OFFER_KEYS` was given `worktreeBaseDir` back
+  // (dropping the second `filter` clause) and the last assertion here reddened, as did
+  // the server's "a scouted convention does not move the row" case.
+  it("a DETECTED worktree convention is stored and NOT offered to the ladder", async () => {
+    const base = tempRepo();
+    const store = new ProjectSnapshotStore(base);
+    const repo = tempRepo();
+    const result = await runProjectScout({
+      repoRoot: repo,
+      git: gitStub({
+        config: "https://github.com/o/r.git",
+        worktree: `worktree ${repo}\nworktree /work/trees/r-feat-x\n`,
+      }),
+    });
+    saveScoutFacts(store, "convention", result);
+    // The scout really did detect it — otherwise the absence below proves nothing.
+    expect(loadScoutFacts(store, "convention")?.facts.worktreeBaseDir).toMatchObject({
+      value: "/work/trees",
+      provenance: "detected",
+    });
+    // …and it is not a settings offer, so nothing on the ladder moves because of it.
+    expect(scoutSettingsOffers(store, "convention")).not.toHaveProperty("worktreeBaseDir");
+    // The other detected fact from the same record still IS one — the filter is keyed,
+    // not a blanket "offer nothing".
+    expect(scoutSettingsOffers(store, "convention").trackerKind).toBe("github");
+  });
+
   it("loads null for a project never scouted", () => {
     const store = new ProjectSnapshotStore(tempRepo());
     expect(loadScoutFacts(store, "missing")).toBeNull();

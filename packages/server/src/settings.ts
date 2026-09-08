@@ -454,22 +454,6 @@ export interface SettingsComposition {
     value: string | null;
   }): NonNullable<DaemonSettings["tracker"]>;
   /**
-   * Write one worktree value on the GLOBAL rung (workspace-settings D1) — this host's
-   * answer for where Rennet places worktrees, how it names them, and whether it works
-   * inside a checkout the reviewer already has out. It lives in `daemon-settings.json`
-   * rather than client settings because a filesystem path is a fact about the machine
-   * that binds, not about the viewer looking at it.
-   *
-   * `null` resets (the entry is dropped, so the value falls back to its builtin).
-   * Values validate through the same `SETTINGS_REGISTRY` declarations the resolver
-   * reads, and a malformed daemon-settings refuses the write (throws) exactly as
-   * `setTrackerValue`. Returns the stored worktree section after the write.
-   */
-  setWorktreeValue(input: {
-    key: "root" | "pattern" | "prPattern" | "workspace";
-    value: string | null;
-  }): NonNullable<DaemonSettings["worktrees"]>;
-  /**
    * Write ONE per-project preference on the REPO rung (C18 group A) — glyph, the
    * worktree pair, or this project's issue-tracker override. `value: null` resets
    * (the entry is dropped and the value falls back down the ladder). Values validate
@@ -901,11 +885,16 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
       // daemon would actually create, labelled `builtin` — an empty builtin left the row
       // saying nothing while placement used a path, which is the reader's problem to
       // translate and the surface's job to state.
+      //
+      // NO `detected` RUNG. The scout still records where a repository's own worktrees
+      // already live, but that is the repository's convention, not an instruction to
+      // Rennet: offering it here moved placement for every repo that happens to have a
+      // sibling worktree, which is exactly the "an untouched install places nothing
+      // differently" the spec promises. All four keys are `builtin < global < repo`.
       worktreeRoot: layered(
         resolve(
           { ...SETTINGS_REGISTRY.worktreeBaseDir, builtinDefault: join(deps.dataDir, "worktrees") },
           {
-            detected: offer(detected.worktreeBaseDir),
             global: offer(globalWorktrees.root),
             repo: offer(config?.worktreeBaseDir),
           },
@@ -1569,39 +1558,6 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
         return { ...current, tracker };
       });
       return written.tracker ?? {};
-    },
-
-    setWorktreeValue: (input): NonNullable<DaemonSettings["worktrees"]> => {
-      // The SAME declarations the resolver reads by, so the host rung cannot hold a
-      // value the ladder would refuse — and the same `null`-resets law as the tracker.
-      const declaration = {
-        root: SETTINGS_REGISTRY.worktreeBaseDir,
-        pattern: SETTINGS_REGISTRY.worktreePattern,
-        prPattern: SETTINGS_REGISTRY.prWorktreePattern,
-        workspace: SETTINGS_REGISTRY.workspace,
-      }[input.key];
-      const validated = input.value === null ? null : declaration.validate(input.value);
-      // The host rung's patterns render, and its root expands, on exactly the terms the
-      // repo rung's do — one law for both files (D1/D2).
-      let value = validated;
-      if (validated !== null && (input.key === "pattern" || input.key === "prPattern")) {
-        value = checkedPattern(input.key === "pattern" ? "branch" : "pull-request", validated);
-      } else if (validated !== null && input.key === "root") {
-        value = expandWorktreeRootForWrite(deps.dataDir, validated);
-      }
-      const written = deps.updateDaemon((current) => {
-        const worktrees = { ...current.worktrees };
-        if (value === null) delete worktrees[input.key];
-        else worktrees[input.key] = value as never;
-        // A reset of the LAST key takes the section with it: an empty `worktrees: {}` in
-        // `daemon-settings.json` is a shape the reader has to interpret as "unset", and
-        // the file should just say nothing about worktrees.
-        const next = { ...current };
-        if (Object.keys(worktrees).length === 0) delete next.worktrees;
-        else next.worktrees = worktrees;
-        return next;
-      });
-      return written.worktrees ?? {};
     },
 
     setProjectValue: async (input): Promise<SettingsProjectWriteOutcome> => {
