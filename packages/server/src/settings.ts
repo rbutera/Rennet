@@ -63,6 +63,7 @@ import type {
   ThemePack,
 } from "@rennet/protocol";
 import { benchmarkRecordingEnabled } from "@rennet/protocol";
+import type { ResolvedWorktreePlacement } from "./bound-workspace";
 
 /**
  * The settings surface's composition (wireframe #15), extracted from the Electron
@@ -280,8 +281,25 @@ interface RepoTarget {
   readonly repoRoot: string;
 }
 
+/** The four resolved placement values, declared beside the binding that consumes them. */
+export type { ResolvedWorktreePlacement };
+
 export interface SettingsComposition {
   get(): Promise<SettingsView>;
+  /**
+   * The placement the BINDING resolves by, for one repository root (workspace-settings D1).
+   *
+   * The same ladder `get()` projects onto a row — builtin < detected < global < repo — read
+   * without building the row: the binding needs four values and none of the preview, the
+   * provenance chips or the guidance catalogue that a row carries.
+   *
+   * Asked by REPOSITORY ROOT, never by project id: a workspace project holds many
+   * repositories under one identity and that mapping is not invertible, so two repos of one
+   * workspace resolve their own rungs and place their own worktrees (CLAUDE.md, 2026-08-28).
+   * A path that is not a git working tree still answers — with the ladder read against the
+   * key that path escapes to — because refusing here would refuse the bind.
+   */
+  resolveWorktreePlacement(repoRoot: string): Promise<ResolvedWorktreePlacement>;
   /**
    * Per-host daemon status (C17, #485) for exactly the hosts `get().daemonHosts` enumerates
    * — the SAME enumeration, so the surface can never show a card with no status or a status
@@ -643,6 +661,39 @@ function guidanceView(load: ConventionCatalogueLoad): SettingsGuidance {
     reason: null,
     dropped: load.dropped,
   };
+}
+
+/**
+ * How many settings rows resolve at once. Each row spawns git twice (the remote and the
+ * branch its preview samples), so this is the burst a single `settings.get` may put on the
+ * host — and on a WSL daemon, the number of simultaneous distro round trips.
+ */
+const ROW_CONCURRENCY = 4;
+
+/**
+ * Run `tasks` with at most `limit` in flight, results in the tasks' own order.
+ *
+ * A hand-rolled worker pool rather than a dependency: it is nine lines, and the
+ * alternative (`Promise.all` over every task) is what made a thirty-repository workspace
+ * spawn sixty gits at once. Rejections propagate exactly as `Promise.all`'s do — the first
+ * one rejects the whole read, because a settings view missing a row it could not explain
+ * is worse than one that failed out loud.
+ */
+async function mapWithConcurrency<T>(
+  tasks: readonly (() => Promise<T>)[],
+  limit: number,
+): Promise<T[]> {
+  const results = new Array<T>(tasks.length);
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    while (next < tasks.length) {
+      const index = next++;
+      // biome-ignore lint/style/noNonNullAssertion: `index` is bounded by `tasks.length`.
+      results[index] = await tasks[index]!();
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, tasks.length) }, worker));
+  return results;
 }
 
 /** A resolved tracker section → the wire's `{ value, layer }` cells. */
@@ -1130,12 +1181,15 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
       const scheme = resolveScheme(schemeState.config);
       const emittedRepoPaths = new Set<string>();
       const allProjects = deps.listProjects();
-      const rows: Promise<SettingsProject>[] = [];
-      // ONE facts reader for the whole view, and the rows resolve CONCURRENTLY. Each row
-      // costs a git subprocess for its remote and branch; awaited in the loop they
-      // serialised across every project × repo, and every settings mutation invalidates
-      // `settings.get` on the client — so flipping appearance on an 8-repo workspace paid
-      // 8 sequential spawns, and a WSL locus makes each of those a distro round trip.
+      const rows: (() => Promise<SettingsProject>)[] = [];
+      // ONE facts reader for the whole view, and the rows resolve CONCURRENTLY — but
+      // BOUNDED. Each row costs two git subprocesses for its remote and branch; awaited in
+      // the loop they serialised across every project × repo, and every settings mutation
+      // invalidates `settings.get` on the client, so flipping appearance on an 8-repo
+      // workspace paid 8 sequential spawns and a WSL locus makes each of those a distro
+      // round trip. Firing them ALL at once is the other failure: a reviewer with thirty
+      // repositories open spawned sixty gits in one breath, and on a WSL daemon sixty
+      // distro round trips. Four in flight keeps the win and bounds the burst.
       const readFacts = factsReader();
       for (const project of allProjects) {
         const targets = await targetsFor(project);
@@ -1144,11 +1198,11 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
         for (const target of targets) {
           if (emittedRepoPaths.has(target.repoPath)) continue;
           emittedRepoPaths.add(target.repoPath);
-          rows.push(resolveRow(project, target, multiRepo, repoKeys, readFacts));
+          rows.push(() => resolveRow(project, target, multiRepo, repoKeys, readFacts));
         }
       }
-      // `Promise.all` preserves the push order, so the view's row order is unchanged.
-      const projects: SettingsProject[] = await Promise.all(rows);
+      // Results land at their own index, so the view's row order is the push order still.
+      const projects: SettingsProject[] = await mapWithConcurrency(rows, ROW_CONCURRENCY);
       return {
         scheme: scheme.value,
         schemeProvenance: scheme.provenance,
@@ -1173,6 +1227,31 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
         // Benchmark recording (#731), RESOLVED — an absent slice is the default-on
         // install, and resolving here keeps that default in one place.
         benchmarkRecording: benchmarkRecordingEnabled(schemeState.config),
+      };
+    },
+
+    resolveWorktreePlacement: async (repoRoot: string): Promise<ResolvedWorktreePlacement> => {
+      // The row's own resolution, minus the row. `resolveRepoTarget` is what makes the repo
+      // rung readable at all: `.rennet/config.json` is keyed by `escapePath(gitTopLevel)`,
+      // and a session's `repositoryRoot` is that top level in every arrangement but a
+      // hand-built one — so an unresolvable path falls back to escaping what it was given
+      // rather than silently reading no repo rung and rather than throwing a bind away.
+      const target = (await resolveRepoTarget(repoRoot)) ?? {
+        repoPath: repoRoot,
+        repoKey: escapePath(repoRoot),
+        repoRoot,
+      };
+      const configState = deps.loadConfigState(target.repoKey);
+      // A MALFORMED config resolves as an absent one, exactly as `resolveRow` does: its
+      // unparseable values never reach the ladder, so a broken file places worktrees at the
+      // builtin rather than wherever a half-read object happened to say.
+      const config = configState.status === "ok" ? configState.config : null;
+      const prefs = resolvePrefs(target, config, [target.repoKey]);
+      return {
+        root: resolveWorktreeRoot(deps.dataDir, prefs.worktreeRoot.value),
+        pattern: prefs.worktreePattern.value,
+        prPattern: prefs.prWorktreePattern.value,
+        workspace: prefs.workspace.value as WorkspaceMode,
       };
     },
 

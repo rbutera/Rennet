@@ -216,17 +216,46 @@ export class SessionStore {
   }
 
   /**
-   * Record the workspace this session is bound to (session-bound-workspace D1). Written once,
-   * by whatever first decides the binding — the capture that mints the review, or the first
-   * use of a session minted before the wave. Idempotent: an unchanged root is not re-saved,
-   * and a session that ALREADY carries a bound root keeps it, because the binding is decided
-   * once and kept for the session's life. `undefined` if the session is absent.
+   * Record the workspace this session is bound to (session-bound-workspace D1) and the
+   * branch its work commits on (workspace-settings D4). Written once, by whatever first
+   * decides the binding — the capture that mints the review, or the first use of a session
+   * minted before the wave. Idempotent: a session that ALREADY carries a bound root keeps
+   * it, and its work branch with it, because the binding is decided once and kept for the
+   * session's life. `undefined` if the session is absent.
+   *
+   * `workBranch` is omitted when the work commits on the REVIEWED branch — every `share`
+   * bind, and every `own` bind that had no checkout to work beside. It is written only for
+   * the sibling, so a session that carries none says "the reviewed branch" rather than
+   * carrying a copy of a name the patchset already holds.
    */
-  setBoundRoot(sessionId: string, boundRoot: string): SessionModel | undefined {
+  setBoundRoot(
+    sessionId: string,
+    boundRoot: string,
+    workBranch?: string,
+  ): SessionModel | undefined {
     const session = this.load(sessionId);
     if (!session) return undefined;
     if (session.boundRoot !== undefined) return session;
-    const next = { ...session, boundRoot };
+    const next = { ...session, boundRoot, ...(workBranch === undefined ? {} : { workBranch }) };
+    this.save(next);
+    return next;
+  }
+
+  /**
+   * Stamp the moment this session's work branch reached the reviewed branch's name on the
+   * remote (workspace-settings D4). Written by the pull-request submission, and only when
+   * the two names differ: under `share` the push moves the branch the reviewer is standing
+   * on, and there is nothing about it to say.
+   *
+   * It is what lets the round card claim the local branch is behind its upstream — a claim
+   * about the REMOTE, which only a push that really happened makes true. `undefined` if the
+   * session is absent.
+   */
+  markWorkBranchPushed(sessionId: string, at: number): SessionModel | undefined {
+    const session = this.load(sessionId);
+    if (!session) return undefined;
+    if (session.workBranch === undefined) return session;
+    const next = { ...session, workBranchPushedAt: at };
     this.save(next);
     return next;
   }

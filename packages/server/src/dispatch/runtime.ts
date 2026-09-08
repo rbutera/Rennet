@@ -74,6 +74,7 @@ import {
 } from "@rennet/protocol";
 import { deepLinkFor, type RaisedAttention } from "../attention-planner";
 import type { ResolvedForgePullRequestDestination } from "../forge-submission";
+import type { LandWorkBranchOutcome } from "../land-work-branch";
 import {
   createReviewIntelligenceSessions,
   type ReviewIntelligenceSession,
@@ -289,6 +290,13 @@ export interface DispatchDeps {
     repoRoot: string;
     /** The head branch ref to push and open the PR against (#107). */
     headRef: string;
+    /**
+     * The review whose SESSION says which branch the work is on (workspace-settings D4).
+     * The host resolves it: only it holds the session store, and only the session knows
+     * whether this review's rounds committed on `headRef` or on a sibling beside it. The
+     * dispatch layer carries the id and decides nothing.
+     */
+    reviewId: string;
     submission: ForgePrSubmission;
     destination: ResolvedForgePullRequestDestination;
   }) => Promise<ForgePrSubmissionOutcome>;
@@ -664,6 +672,14 @@ export interface DispatchDeps {
       sessionId: string,
       archived: boolean,
     ): SidebarSession | undefined | Promise<SidebarSession | undefined>;
+    /**
+     * Fast-forward the checkout holding the reviewed branch onto this session's work branch
+     * (workspace-settings D4). The HOST owns it: it holds the session store, the per-repo
+     * git and the locus, and none of those cross this seam. What comes back is git's own
+     * answer — landed, or its refusal verbatim — or `unavailable` when there is simply
+     * nothing to land.
+     */
+    landWorkBranch(sessionId: string): Promise<LandWorkBranchOutcome>;
   };
   /**
    * The lens-board read for `board.read` (C05 cluster 8, bound in C18): the PERSISTED board

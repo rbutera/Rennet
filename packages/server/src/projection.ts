@@ -19,6 +19,22 @@ import { realpathSync, statSync } from "node:fs";
 import { basename, join, sep } from "node:path";
 import { escapePath } from "@rennet/core";
 import type { CommandName, ProjectProgressEvent, RepoReference } from "@rennet/protocol";
+import { WORKTREE_REFUSAL_CAP } from "@rennet/protocol";
+
+/**
+ * Re-cap a git refusal AFTER projection, with the same marker the host capped it with.
+ *
+ * Projection can GROW free text: a `/Users/rai/dev/rennet/worktrees/x` becomes a
+ * `<repo>/worktrees/x` display token or a `<path>` redaction, and either can be longer
+ * than what it replaced. The host caps at {@link WORKTREE_REFUSAL_CAP} and the wire schema
+ * admits `+ 16`, so a refusal that arrived at the cap and gained a few characters here
+ * failed to parse at the boundary — the payload the reviewer needed, refused for its size.
+ */
+function capRefusal(text: string): string {
+  return text.length > WORKTREE_REFUSAL_CAP
+    ? `${text.slice(0, WORKTREE_REFUSAL_CAP)}… (truncated)`
+    : text;
+}
 
 /** A repository the server may name outbound / accept inbound, in both path forms + its key. */
 interface RootEntry {
@@ -459,8 +475,18 @@ export function projectCommandOutput(
     // into a repo reference by the generic string-`path` branch above.
     if (command === "worktrees.remove") {
       for (const key of ["reason", "note"] as const) {
-        if (typeof o[key] === "string") o[key] = redactAbsolutePathsDeep(o[key], ctx);
+        if (typeof o[key] === "string") {
+          o[key] = capRefusal(String(redactAbsolutePathsDeep(o[key], ctx)));
+        }
       }
+    }
+    // The land action's refusal is git's own sentence too, and git names the worktree it
+    // refused in it: `error: Your local changes to 'x' would be overwritten…` /
+    // `fatal: Not possible to fast-forward` come with a `cwd` the daemon chose. Same
+    // treatment, same reason as `worktrees.remove` above. `branch`/`workBranch` are ref
+    // NAMES, not paths, and cross unchanged exactly as `claim.branch` does.
+    if (command === "session.landWorkBranch" && typeof o.reason === "string") {
+      o.reason = capRefusal(String(redactAbsolutePathsDeep(o.reason, ctx)));
     }
     projected = o;
   }

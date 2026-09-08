@@ -220,6 +220,7 @@ still goes through the one seam; only the label is hand-written.
 | `session.rename` | Needs the session and the new title. |
 | `session.setPinned` | Needs the session and the pin state. |
 | `session.archive` | Needs the session being archived or restored. |
+| `session.landWorkBranch` | Needs the session whose work branch is being landed; the action is offered on that session's round card, beside the branch it fast-forwards. |
 
 ### worktrees
 

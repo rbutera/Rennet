@@ -52,7 +52,9 @@ describe("desktop repo-facing git composition", () => {
     // PATH the command names, so a WSL repository lists and removes its worktrees through
     // the git inside its own distro. `worktrees.test.ts` drives that argv end to end; this
     // pins the composition that hands it the locus-aware runner.
-    expect(source).toContain("listWorkspaces(gitForRepo(repoPath), repoPath, inventoryOptions(");
+    expect(source).toContain(
+      "listWorkspaces(gitForRepo(repoPath), repoPath, await inventoryOptions(",
+    );
     expect(source).toContain("removeWorkspace(gitForRepo(repoPath), repoPath, { id, rows })");
     // And the same repository path decides the SPELLING git's answers are read in, so a
     // WSL repository's bound sessions still match the paths its distro's git printed.

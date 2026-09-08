@@ -11,6 +11,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
+import { defaultWorktreePlacement } from "@rennet/adapters";
 import { escapePath, HOST_LOCUS } from "@rennet/core";
 import type { Review } from "@rennet/protocol";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -18,6 +19,7 @@ import {
   type BoundWorkspaceDeps,
   decideBoundWorkspace,
   inRepoSpelling,
+  type ResolvedWorktreePlacement,
   repinBoundWorkspace,
 } from "./bound-workspace";
 
@@ -119,6 +121,15 @@ describe("decideBoundWorkspace (session-bound-workspace D1)", () => {
   let prIndex: Map<string, string>;
   let created: string[];
   let deps: BoundWorkspaceDeps;
+  /** What the settings ladder resolves for every repository this test asks about — the
+   *  BUILTIN placement unless a test writes another. Group 1 proved the ladder; this is the
+   *  binding reading whatever it resolved. */
+  let placement: ResolvedWorktreePlacement;
+  let placementAsked: string[];
+
+  /** The bound ROOT, for the assertions that are only about where a session landed. */
+  const bindRoot = async (review: Review): Promise<string> =>
+    (await decideBoundWorkspace(review, deps)).boundRoot;
 
   beforeEach(() => {
     // realpath: on macOS `/var` is a symlink to `/private/var`, and `git worktree list`
@@ -132,11 +143,16 @@ describe("decideBoundWorkspace (session-bound-workspace D1)", () => {
     gitCalls = [];
     facts = {};
     factsAsked = [];
+    placement = { ...defaultWorktreePlacement(dataDir), workspace: "share" };
+    placementAsked = [];
     deps = {
       gitFor: () => gitExec,
       locusOf: () => HOST_LOCUS,
       repoKeyForRoot: (repoRoot) => escapePath(repoRoot),
-      dataDir,
+      placementFor: async (repoRoot) => {
+        placementAsked.push(repoRoot);
+        return placement;
+      },
       // No remote resolves by default: the fixtures have none, so `{owner}` falls back to
       // `local` and `{name}` to the folder's basename, exactly as a local-only clone does.
       worktreeFacts: async (repoRoot) => {
@@ -189,7 +205,7 @@ describe("decideBoundWorkspace (session-bound-workspace D1)", () => {
       baseOid: headOid(repo, "main"),
     });
     // Verbatim: the string the review carries, not git's resolved one.
-    expect(await decideBoundWorkspace(review, deps)).toBe(viaSymlink);
+    expect(await bindRoot(review)).toBe(viaSymlink);
     expect(createdWorktrees()).toEqual([]);
   });
 
@@ -203,7 +219,7 @@ describe("decideBoundWorkspace (session-bound-workspace D1)", () => {
       headRef: "feature",
       baseOid: headOid(repo, "main"),
     });
-    expect(await decideBoundWorkspace(review, deps)).toBe(repo);
+    expect(await bindRoot(review)).toBe(repo);
     expect(createdWorktrees()).toEqual([]);
     expect(created).toEqual([]);
     // Executed, not reasoned: NO `worktree add` was attempted. Without this the test passes
@@ -222,7 +238,7 @@ describe("decideBoundWorkspace (session-bound-workspace D1)", () => {
       headRef: "feature",
       baseOid: headOid(repo, "main"),
     });
-    const bound = await decideBoundWorkspace(review, deps);
+    const bound = await bindRoot(review);
     expect(bound).toBe(join(dataDir, "worktrees", escapePath(repo), "feature"));
     expect(createdWorktrees()).toEqual([bound]);
     expect(created).toEqual([bound]);
@@ -231,7 +247,7 @@ describe("decideBoundWorkspace (session-bound-workspace D1)", () => {
     expect(git(bound, ["rev-parse", "--abbrev-ref", "HEAD"]).trim()).toBe("feature");
     // Bound once: the second ask returns the same path and creates nothing more.
     created = [];
-    expect(await decideBoundWorkspace(review, deps)).toBe(bound);
+    expect(await bindRoot(review)).toBe(bound);
     expect(created).toEqual([]);
   });
 
@@ -249,7 +265,7 @@ describe("decideBoundWorkspace (session-bound-workspace D1)", () => {
       baseOid: headOid(repo, "main"),
       pullRequest: true,
     });
-    const bound = await decideBoundWorkspace(review, deps);
+    const bound = await bindRoot(review);
     // The per-PULL-REQUEST path, never `worktrees/review/<id>`: that layout is the one the
     // startup sweep now retires, and re-creating it would make that half of the sweep a
     // no-op forever.
@@ -271,7 +287,7 @@ describe("decideBoundWorkspace (session-bound-workspace D1)", () => {
     });
     // A retrospective review carries no post target, so there is no pull-request path to
     // name and nothing to create; it binds to the repository, where its pinned reads resolve.
-    expect(await decideBoundWorkspace(review, deps)).toBe(repo);
+    expect(await bindRoot(review)).toBe(repo);
     expect(createdWorktrees()).toEqual([]);
   });
 
@@ -286,7 +302,7 @@ describe("decideBoundWorkspace (session-bound-workspace D1)", () => {
       baseOid: headOid(repo, "main"),
       pullRequest: true,
     });
-    expect(await decideBoundWorkspace(review, deps)).toBe(existing);
+    expect(await bindRoot(review)).toBe(existing);
     expect(createdWorktrees()).toEqual([existing]);
   });
 
@@ -298,7 +314,7 @@ describe("decideBoundWorkspace (session-bound-workspace D1)", () => {
       headOid: headOid(repo, "feature"),
       baseOid: headOid(repo, "main"),
     });
-    expect(await decideBoundWorkspace(review, deps)).toBe(repo);
+    expect(await bindRoot(review)).toBe(repo);
     expect(createdWorktrees()).toEqual([]);
   });
 
@@ -325,8 +341,8 @@ describe("decideBoundWorkspace (session-bound-workspace D1)", () => {
       baseOid: headOid(beta, "main"),
     });
 
-    const alphaBound = await decideBoundWorkspace(alphaReview, deps);
-    const betaBound = await decideBoundWorkspace(betaReview, deps);
+    const alphaBound = await bindRoot(alphaReview);
+    const betaBound = await bindRoot(betaReview);
 
     expect(alphaBound).toBe(alpha);
     expect(betaBound).toBe(join(dataDir, "worktrees", escapePath(beta), "feature"));
@@ -352,7 +368,7 @@ describe("decideBoundWorkspace (session-bound-workspace D1)", () => {
       headRef: "feature",
       baseOid: headOid(repo, "main"),
     });
-    expect(await decideBoundWorkspace(review, deps)).toBe(theirs);
+    expect(await bindRoot(review)).toBe(theirs);
     expect(createdWorktrees()).toEqual([]);
     expect(attemptedWorktreeAdd()).toBe(false);
   });
@@ -370,7 +386,7 @@ describe("decideBoundWorkspace (session-bound-workspace D1)", () => {
       baseOid: headOid(repo, "main"),
       pullRequest: true,
     });
-    const bound = await decideBoundWorkspace(review, deps);
+    const bound = await bindRoot(review);
     expect(git(bound, ["rev-parse", "HEAD"]).trim()).toBe(firstHead);
 
     // The branch moves, exactly as a round's commits move it.
@@ -404,7 +420,7 @@ describe("decideBoundWorkspace (session-bound-workspace D1)", () => {
       headRef: "feature",
       baseOid: headOid(repo, "main"),
     });
-    const bound = await decideBoundWorkspace(review, deps);
+    const bound = await bindRoot(review);
     gitCalls = [];
     expect(await repinBoundWorkspace(review, bound, deps)).toBe(bound);
     expect(gitCalls).toEqual([]);
@@ -424,7 +440,7 @@ describe("decideBoundWorkspace (session-bound-workspace D1)", () => {
       headRef: "feature",
       baseOid: headOid(repo, "main"),
     });
-    const bound = await decideBoundWorkspace(review, deps);
+    const bound = await bindRoot(review);
     // The builtin pattern is `{repo}/{branch}`, so the owner does not appear in the path —
     // what this pins is that the bind ASKED, by the repository the review names, and that
     // the placement it produced is the builtin's.
@@ -445,7 +461,7 @@ describe("decideBoundWorkspace (session-bound-workspace D1)", () => {
       baseOid: headOid(repo, "main"),
       pullRequest: true,
     });
-    const bound = await decideBoundWorkspace(review, deps);
+    const bound = await bindRoot(review);
     expect(bound).toBe(join(dataDir, "worktrees", "o", "n", "pr-7"));
     expect(basename(repo)).toBe("widget-local");
   });
@@ -466,7 +482,186 @@ describe("decideBoundWorkspace (session-bound-workspace D1)", () => {
     const blocked = join(dataDir, "worktrees", escapePath(repo));
     mkdirSync(join(blocked, ".."), { recursive: true });
     writeFileSync(blocked, "not a directory\n");
-    await expect(decideBoundWorkspace(review, deps)).rejects.toThrow();
+    await expect(bindRoot(review)).rejects.toThrow();
+  });
+
+  // ── `workspace: own`: the sibling arm (D4) ────────────────────────────────────────────
+  //
+  // The arrangement is the ONE git refuses: the reviewer's checkout already has the branch
+  // out, so `worktree add <path> feature` fails. Under `share` Rennet binds to that
+  // checkout; under `own` it takes a worktree of its own on `rennet/feature`.
+
+  /** Every byte of a checkout that must not move: HEAD, the index, the tracked files. */
+  function checkoutFingerprint(repo: string): string {
+    return [
+      git(repo, ["rev-parse", "HEAD"]).trim(),
+      git(repo, ["rev-parse", "--abbrev-ref", "HEAD"]).trim(),
+      git(repo, ["status", "--porcelain=v1", "-z"]),
+      git(repo, ["ls-files", "-s", "-z"]),
+    ].join("|");
+  }
+
+  it("binds `own` to a NEW worktree on `rennet/<branch>` and leaves the checkout untouched", async () => {
+    const repo = initRepo(root, "repo");
+    git(repo, ["checkout", "-q", "feature"]);
+    const before = checkoutFingerprint(repo);
+    placement = { ...placement, workspace: "own" };
+    const review = reviewFor({
+      id: "own-1",
+      repositoryRoot: repo,
+      headOid: headOid(repo, "feature"),
+      headRef: "feature",
+      baseOid: headOid(repo, "main"),
+    });
+
+    const bound = await decideBoundWorkspace(review, deps);
+
+    // A worktree of Rennet's own, at the resolved placement, ON the sibling branch.
+    expect(bound.boundRoot).toBe(join(dataDir, "worktrees", escapePath(repo), "feature"));
+    expect(bound.workBranch).toBe("rennet/feature");
+    expect(git(bound.boundRoot, ["rev-parse", "--abbrev-ref", "HEAD"]).trim()).toBe(
+      "rennet/feature",
+    );
+    // Forked from the branch's head — the same commit, not a fresh root.
+    expect(git(repo, ["rev-parse", "refs/heads/rennet/feature"]).trim()).toBe(
+      headOid(repo, "feature"),
+    );
+    expect(created).toEqual([bound.boundRoot]);
+    // …and the reviewer's checkout is byte-for-byte where it was. This is the whole promise
+    // of `own`: it is not "Rennet tries not to disturb you", it is "nothing in your tree
+    // moved". A `checkout`/`reset` in the wrong directory reddens exactly here.
+    expect(checkoutFingerprint(repo)).toBe(before);
+    // Executed, not reasoned: the reviewed branch's own ref did not move either.
+    expect(headOid(repo, "feature")).toBe(review.patchsets[0]?.repository.headOid);
+  });
+
+  it("binds the SAME fixture to the checkout under `share`, creating nothing", async () => {
+    // The control for the test above: identical repository, identical review, one setting
+    // different. If the sibling arm ran unconditionally this reddens.
+    const repo = initRepo(root, "repo");
+    git(repo, ["checkout", "-q", "feature"]);
+    const review = reviewFor({
+      id: "share-1",
+      repositoryRoot: repo,
+      headOid: headOid(repo, "feature"),
+      headRef: "feature",
+      baseOid: headOid(repo, "main"),
+    });
+
+    const bound = await decideBoundWorkspace(review, deps);
+
+    expect(bound.boundRoot).toBe(repo);
+    expect(bound.workBranch).toBeUndefined();
+    expect(createdWorktrees()).toEqual([]);
+    expect(attemptedWorktreeAdd()).toBe(false);
+    // No sibling branch was created either — under `share` the name does not exist.
+    expect(() => git(repo, ["rev-parse", "--verify", "refs/heads/rennet/feature"])).toThrow();
+  });
+
+  it("re-forks an existing sibling the branch has caught up with, and KEEPS one that is ahead", async () => {
+    const repo = initRepo(root, "repo");
+    git(repo, ["checkout", "-q", "feature"]);
+    placement = { ...placement, workspace: "own" };
+    const review = reviewFor({
+      id: "own-2",
+      repositoryRoot: repo,
+      headOid: headOid(repo, "feature"),
+      headRef: "feature",
+      baseOid: headOid(repo, "main"),
+    });
+    const first = await decideBoundWorkspace(review, deps);
+
+    // The reviewer commits on their own branch. The sibling is now BEHIND and holds nothing
+    // the branch does not, so the next bind re-forks it from the branch's new head.
+    writeFileSync(join(repo, "theirs.txt"), "theirs\n");
+    git(repo, ["add", "."]);
+    git(repo, ["commit", "-q", "-m", "theirs"]);
+    const advanced = headOid(repo, "feature");
+    await decideBoundWorkspace(review, deps);
+    expect(git(repo, ["rev-parse", "refs/heads/rennet/feature"]).trim()).toBe(advanced);
+
+    // Now the SIBLING gets a commit the branch does not have. A re-fork here would throw it
+    // away, so the bind leaves the sibling exactly as it stands.
+    writeFileSync(join(first.boundRoot, "round.txt"), "round\n");
+    git(first.boundRoot, ["add", "."]);
+    git(first.boundRoot, ["commit", "-q", "-m", "round one"]);
+    const ahead = git(repo, ["rev-parse", "refs/heads/rennet/feature"]).trim();
+    expect(ahead).not.toBe(advanced);
+
+    await decideBoundWorkspace(review, deps);
+    expect(git(repo, ["rev-parse", "refs/heads/rennet/feature"]).trim()).toBe(ahead);
+    expect(existsSync(join(first.boundRoot, "round.txt"))).toBe(true);
+  });
+
+  it("binds `own` to the branch itself when NOTHING has it out — there is no conflict to avoid", async () => {
+    const repo = initRepo(root, "repo"); // the checkout is on `main`
+    placement = { ...placement, workspace: "own" };
+    const review = reviewFor({
+      id: "own-3",
+      repositoryRoot: repo,
+      headOid: headOid(repo, "feature"),
+      headRef: "feature",
+      baseOid: headOid(repo, "main"),
+    });
+    const bound = await decideBoundWorkspace(review, deps);
+    expect(git(bound.boundRoot, ["rev-parse", "--abbrev-ref", "HEAD"]).trim()).toBe("feature");
+    expect(bound.workBranch).toBeUndefined();
+  });
+
+  // ── The fixture this change is not done without (task 2.8) ────────────────────────────
+  it("gives each repo of a two-repo workspace its OWN arm when both are on `feat/x`", async () => {
+    // ONE workspace project, TWO repositories, BOTH on `feat/x`, BOTH with that branch
+    // checked out in the reviewer's own worktree. One repository resolves `own`, the other
+    // `share`. A binding that answered from the project — or from the branch name — would
+    // hand one session the other repository's tree, silently, under the right label.
+    const alpha = initRepo(root, "alpha");
+    const beta = initRepo(root, "beta");
+    for (const repo of [alpha, beta]) {
+      git(repo, ["checkout", "-q", "-b", "feat/x", "feature"]);
+    }
+    const modes: Record<string, ResolvedWorktreePlacement["workspace"]> = {
+      [alpha]: "own",
+      [beta]: "share",
+    };
+    deps = {
+      ...deps,
+      placementFor: async (repoRoot) => {
+        placementAsked.push(repoRoot);
+        return { ...placement, workspace: modes[repoRoot] ?? "share" };
+      },
+    };
+    const reviewFo = (id: string, repo: string): Review =>
+      reviewFor({
+        id,
+        repositoryRoot: repo,
+        headOid: headOid(repo, "feat/x"),
+        headRef: "feat/x",
+        baseOid: headOid(repo, "main"),
+      });
+
+    const alphaBound = await decideBoundWorkspace(reviewFo("ws-a", alpha), deps);
+    const betaBound = await decideBoundWorkspace(reviewFo("ws-b", beta), deps);
+
+    // Alpha took a sibling of its own; beta bound to its own checkout.
+    expect(alphaBound.workBranch).toBe("rennet/feat/x");
+    expect(alphaBound.boundRoot).toBe(join(dataDir, "worktrees", escapePath(alpha), "feat", "x"));
+    expect(betaBound).toEqual({ boundRoot: beta });
+
+    // Each bound root is under ITS OWN repository, and neither is under the other's. This is
+    // the pair the swap below reddens: give the two rows each other's `repositoryRoot` and
+    // alpha's session binds under beta's key while beta's binds to alpha's checkout.
+    expect(git(alphaBound.boundRoot, ["rev-parse", "HEAD"]).trim()).toBe(headOid(alpha, "feat/x"));
+    expect(alphaBound.boundRoot.includes(escapePath(alpha))).toBe(true);
+    expect(alphaBound.boundRoot.includes(escapePath(beta))).toBe(false);
+    expect(betaBound.boundRoot).toBe(beta);
+    expect(betaBound.boundRoot.startsWith(alpha)).toBe(false);
+    // The settings were resolved PER REPOSITORY, by that repository's own root.
+    expect(placementAsked).toEqual([alpha, beta]);
+    // And alpha's sibling is alpha's: beta's `feat/x` head is a different commit entirely.
+    expect(git(alpha, ["rev-parse", "refs/heads/rennet/feat/x"]).trim()).not.toBe(
+      headOid(beta, "feat/x"),
+    );
+    expect(() => git(beta, ["rev-parse", "--verify", "refs/heads/rennet/feat/x"])).toThrow();
   });
 });
 

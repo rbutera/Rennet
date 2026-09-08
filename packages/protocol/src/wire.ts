@@ -2207,6 +2207,22 @@ export const sidebarSessionSchema = z
       .optional(),
     /** Durable New Chat capture/board progress, projected from the session record. */
     preparation: SessionPreparationSchema.optional(),
+    /**
+     * The branch this session's rounds commit on when it is NOT the reviewed branch
+     * (`SessionModel.workBranch`, workspace-settings D4) — the sibling `rennet/<branch>` a
+     * `workspace: own` bind works on beside a checkout that already has the branch out.
+     *
+     * A branch NAME, never a path, so it crosses the wire exactly as `claim.branch` does.
+     * Absent means the session commits on the reviewed branch itself, which is every
+     * session under `share` and every session written before this field.
+     */
+    workBranch: z.string().min(1).optional(),
+    /**
+     * True once this session's work branch has been pushed onto the reviewed branch's name
+     * on the remote. It is what lets the round card say the local branch is behind its
+     * upstream — a claim about the remote, which only a real push makes true.
+     */
+    workBranchPushed: z.boolean().optional(),
     /** When the session was minted (epoch ms) — the client renders the relative line. */
     createdAt: z.number(),
   })

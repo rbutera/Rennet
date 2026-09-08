@@ -1924,6 +1924,32 @@ export const SessionModelSchema = z
      */
     boundRoot: z.string().min(1).optional(),
     /**
+     * The branch this session's work COMMITS ON (workspace-settings D4), recorded beside
+     * `boundRoot` by the same one decision.
+     *
+     * It is the reviewed branch itself in every arrangement but one: a repository that
+     * resolves `workspace: own` whose reviewed branch some worktree already has out. Git
+     * refuses a second checkout of one branch, so Rennet works on a sibling
+     * `rennet/<branch>` forked from that branch's head and leaves the reviewer's checkout
+     * untouched. The push (`refs/heads/<workBranch>:refs/heads/<branch>`) and the land
+     * action (`merge --ff-only`) are the two places the sibling reaches the branch again.
+     *
+     * Additive-optional, and ABSENT READS AS THE REVIEWED BRANCH: every session written
+     * before this field, and every session under `share`, means exactly that.
+     */
+    workBranch: z.string().min(1).optional(),
+    /**
+     * When this session's work branch was last pushed onto the reviewed branch's name on
+     * the remote, epoch ms. Written only by the pull-request submission, and only when the
+     * two names differ — under `share` a push moves the branch the reviewer is standing on,
+     * so there is nothing to say about it.
+     *
+     * It exists because "your local branch is behind its upstream" is a claim about the
+     * remote, and only a push that really happened makes it true. Absent ⇒ the round's
+     * commits are on the sibling and nowhere else, which the card says instead.
+     */
+    workBranchPushedAt: z.number().optional(),
+    /**
      * The `owner/name` identity of the repo this session's target lives in (#580). NOT a path —
      * it is the same stable identity `LocalWork.repository`/`PullRequest.repository` carry (the
      * origin remote, else the durable common-dir alias), so it crosses the wire freely where

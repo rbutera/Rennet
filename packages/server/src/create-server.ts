@@ -16,7 +16,7 @@ import {
 import { access } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   AskLogStore,
@@ -264,6 +264,7 @@ import { composeGitHubTransport } from "./github-fetch";
 import { createGitHubTokenStore } from "./github-token-store";
 import { createLiveComposeBundle } from "./handoff-compose-live";
 import { InFlightReviews } from "./in-flight-reviews";
+import { landWorkBranch } from "./land-work-branch";
 import { sweepLegacyWorktrees } from "./legacy-worktrees";
 import { liveProbe, liveProbeMap } from "./live-detection";
 import { createDesktopReviewBackend, createDesktopReviewContextFeed } from "./live-review-backend";
@@ -337,6 +338,7 @@ import {
   SessionEntry,
 } from "./session/session-entry";
 import { createCouncilOverrideReader, createSettingsComposition } from "./settings";
+import { branchBehindSibling, collectSibling, orphanedSiblings } from "./sibling-cleanup";
 import { findHealthyDaemon } from "./supervise";
 import { createLiveSymbolLookup, reviewPinnedToHead } from "./symbol-lookup-live";
 import { modelSelection } from "./t3/client";
@@ -2252,7 +2254,11 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       gitFor: gitForRepo,
       locusOf: locusForRepo,
       repoKeyForRoot,
-      dataDir,
+      // The four values THIS repository resolves off the settings ladder (D1) — the same
+      // ladder the Worktrees card shows, read by repository root. `settingsComposition` is
+      // constructed further down this factory; a bind only ever happens on a dispatched
+      // command, long after construction, so the reference is live by the time it is read.
+      placementFor: (repoRoot: string) => settingsComposition.resolveWorktreePlacement(repoRoot),
       worktreeFacts: worktreeFactsFor,
       prWorktreeFor: (reviewId: string) => readPrWorktreeIndex()[reviewId]?.path,
       recordPrWorktree,
@@ -2265,9 +2271,12 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // A recorded binding is RE-PINNED, never re-decided: a landed round advances the reviewed
     // head, and a pull-request snapshot's workspace is a detached checkout at the old one.
     if (recorded !== undefined) return repinBoundWorkspace(review, recorded, workspaceDeps);
-    const root = await decideBoundWorkspace(review, workspaceDeps);
-    sessionStore.setBoundRoot(sessionId, root);
-    return root;
+    const bound = await decideBoundWorkspace(review, workspaceDeps);
+    // Both halves of the one decision, recorded together (D4). `workBranch` is absent
+    // whenever the work commits on the reviewed branch itself, which the readers treat as
+    // exactly that rather than as "unknown".
+    sessionStore.setBoundRoot(sessionId, bound.boundRoot, bound.workBranch);
+    return bound.boundRoot;
   }
 
   /**
@@ -2898,14 +2907,31 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   // The sign-click consumes the exact destination object resolved immediately beforehand.
   // Pushing your own branch is not publishing (AGENTS.md); the provider create remains the
   // only external publication and resolves credentials lazily inside that operation.
-  const submitPullRequest: NonNullable<DispatchDeps["submitPullRequest"]> = (input) => {
+  const submitPullRequest: NonNullable<DispatchDeps["submitPullRequest"]> = async (input) => {
     const locus = locusForRepo(input.repoRoot);
     const gitInLocus = options.forgeSubmissionGitForLocus?.(locus) ?? execaGitFor(locus);
-    return submitForgePullRequest({
+    // WHICH BRANCH THE WORK IS ON (workspace-settings D4). The session holds it, and only
+    // this side of the seam can read the session store. Absent — every `share` session,
+    // and every session written before the setting — means the reviewed branch, and
+    // `submitForgePullRequest` then pushes the byte-identical refspec it always has.
+    const review = service.reviewById(input.reviewId);
+    const sessionId = review === null ? undefined : sessionIdForReview(review);
+    const workBranch =
+      sessionId === undefined ? undefined : sessionStore.load(sessionId)?.workBranch;
+    const outcome = await submitForgePullRequest({
       registry: forgePrSubmissionResolvers,
       git: gitInLocus,
       ...input,
+      ...(workBranch === undefined ? {} : { workBranch }),
     });
+    // The push landed: the reviewed branch's name on the remote now holds the sibling's
+    // commits, so the reviewer's local branch really is behind its upstream and the round
+    // card may say so. Stamped only when a sibling was pushed — under `share` the push
+    // moved the branch the reviewer is standing on.
+    if (workBranch !== undefined && sessionId !== undefined) {
+      sessionStore.markWorkBranchPushed(sessionId, Date.now());
+    }
+    return outcome;
   };
   // B11: the durable ask-log store (~/.rennet/asks), sibling to the thread store.
   // Backs the `ask.*` write path (the sole writers) and the reload-survival read
@@ -2952,6 +2978,58 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     return session.reviewId === undefined
       ? undefined
       : service.reviewById(session.reviewId)?.repositoryRoot;
+  };
+  /**
+   * Which REPOSITORY a session's work is in — the root every git question about it is
+   * asked at, and never the bound root: under `own` the bound root is a linked worktree,
+   * and `git branch -d` run there refuses a branch the main checkout owns.
+   *
+   * Its own `repositoryRoot` first, the attached review's second. A project id is never
+   * consulted: a workspace project holds many repositories under one identity and that
+   * mapping is not invertible (CLAUDE.md, 2026-08-28).
+   */
+  const repositoryRootForSession = (session: SessionModel): string | undefined => {
+    if (session.repositoryRoot !== undefined) return session.repositoryRoot;
+    return session.reviewId === undefined
+      ? undefined
+      : service.reviewById(session.reviewId)?.repositoryRoot;
+  };
+  /**
+   * The branch a session's review is ABOUT — which under `own` is NOT the branch its work
+   * is on. The sibling's own name carries it (`rennet/<branch>` is forked from `<branch>`
+   * and nothing else), so that is read first; a session under `share` falls back to the
+   * reviewed patchset's head ref, then to the target it claimed at mint.
+   */
+  const reviewedBranchForSession = (session: SessionModel): string | undefined => {
+    const behindSibling = branchBehindSibling(session.workBranch);
+    if (behindSibling !== undefined) return behindSibling;
+    const review = session.reviewId === undefined ? null : service.reviewById(session.reviewId);
+    const headRef = review?.patchsets.find((entry) => entry.id === review.activePatchsetId)
+      ?.repository.headRef;
+    return headRef ?? session.claim?.branch;
+  };
+  /**
+   * D5's collection for ONE session's sibling, run as that session is archived.
+   *
+   * The rule is `collectSibling`'s and is not restated here: reachable ⇒ the worktree and
+   * the branch go; not reachable ⇒ BOTH stay and the inventory row says how far ahead it
+   * is. A session under `share` has no sibling and this is a no-op for it.
+   */
+  const collectSiblingForSession = async (sessionId: string): Promise<void> => {
+    const session = sessionStore.load(sessionId);
+    if (session === undefined) return;
+    const branch = branchBehindSibling(session.workBranch);
+    const repoRoot = repositoryRootForSession(session);
+    if (branch === undefined || repoRoot === undefined || session.workBranch === undefined) return;
+    await collectSibling({
+      git: gitForRepo(repoRoot),
+      repoRoot,
+      siblingBranch: session.workBranch,
+      branch,
+      // The worktree path is left to git deliberately: what the session recorded is the
+      // DAEMON's spelling of its bound root, which on a Windows daemon driving a WSL
+      // repository is a UNC path the git inside the distro does not own.
+    });
   };
   // Deferred while a round is in flight: `session.archive` awaits the session's
   // preparation, but nothing tracks a round, so an immediate purge deletes the directory
@@ -3035,13 +3113,16 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
    * workspace would ever match a path git named, and the card would show every one of them
    * as idle and removable while a session was working in it.
    *
-   * `root` stays the builtin here on purpose: threading the RESOLVED root through is group
-   * 2's work, and `ListWorkspacesOptions.root` is the seam it lands on.
+   * `root` is the root THIS REPOSITORY resolves (D1) — the same value the binding placed
+   * its worktrees under and the same one the card's Location field shows. Reading the
+   * builtin here instead would list nothing for a reviewer who moved their worktree root,
+   * under a card that says "Nothing yet".
    */
-  const inventoryOptions = (repoPath: string): ListWorkspacesOptions => {
+  const inventoryOptions = async (repoPath: string): Promise<ListWorkspacesOptions> => {
     const locus = locusForRepo(repoPath);
+    const placement = await settingsComposition.resolveWorktreePlacement(repoPath);
     return {
-      root: join(dataDir, "worktrees"),
+      root: placement.root,
       prWorktreePaths: Object.values(readPrWorktreeIndex()).map((entry) => entry.path),
       sessions: workspaceSessionRefs(),
       spellPath: (gitPath) => inRepoSpelling(gitPath, repoPath, locus),
@@ -3083,6 +3164,62 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     liveBoundRoots,
     gitFor: gitForRepo,
   }).catch(() => undefined);
+  /**
+   * The sibling sweep (workspace-settings D5): a `rennet/*` worktree whose session is gone —
+   * archived, or lost with the record a crash never wrote — is collected on the next start
+   * under exactly the rule the archive applies, and kept under exactly the same rule.
+   *
+   * A sibling is a candidate only when NO live session records its directory, and the
+   * comparison is deliberately forgiving on BOTH spellings a session can hold: a match
+   * missed here does not leave a stale directory, it deletes a workspace someone is
+   * working in. Fire and forget: a sweep must never delay or fail a daemon start.
+   */
+  const sweepOrphanedSiblings = async (): Promise<void> => {
+    const claimed = new Set(
+      sessionStore
+        .list()
+        .filter((session) => session.archivedAt === undefined && session.boundRoot !== undefined)
+        .flatMap((session) => {
+          const recorded = session.boundRoot as string;
+          return [recorded, comparablePath(recorded)];
+        }),
+    );
+    const repoRoots = new Set(
+      projectStore
+        .list()
+        .flatMap((project) => [project.openPath, ...(project.includedRepoPaths ?? [])]),
+    );
+    for (const repoRoot of repoRoots) {
+      const git = gitForRepo(repoRoot);
+      let placementRoot: string;
+      try {
+        placementRoot = (await settingsComposition.resolveWorktreePlacement(repoRoot)).root;
+      } catch {
+        continue; // a repository whose settings cannot be read places nothing to sweep
+      }
+      const under = (path: string): boolean => {
+        const base = comparablePath(placementRoot);
+        const candidate = comparablePath(path);
+        return candidate === base || candidate.startsWith(base.endsWith(sep) ? base : base + sep);
+      };
+      const orphans = await orphanedSiblings({
+        git,
+        repoRoot,
+        under,
+        claimed: (path) => claimed.has(path) || claimed.has(comparablePath(path)),
+      }).catch(() => []);
+      for (const orphan of orphans) {
+        await collectSibling({
+          git,
+          repoRoot,
+          siblingBranch: orphan.siblingBranch,
+          branch: orphan.branch,
+          worktreePath: orphan.path,
+        }).catch(() => undefined);
+      }
+    }
+  };
+  void sweepOrphanedSiblings().catch(() => undefined);
   const sessionPreparations = new Map<string, AbortController>();
   const sessionPreparationRuns = new Map<string, Promise<void>>();
   // The display-transcript store (issue-set B): the durable read-model behind
@@ -5101,10 +5238,33 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
           cancelSessionPreparation(sessionId);
           await sessionPreparationRuns.get(sessionId)?.catch(() => undefined);
         }
+        // D5's collection, BEFORE the record is archived: the rule reads the session's
+        // recorded work branch and its repository, and both are still on the live record
+        // here. Fire and forget — an archive must not fail or wait on a git call, and a
+        // sibling left behind is collected by the next start's sweep.
+        if (archived) void collectSiblingForSession(sessionId).catch(() => undefined);
         const session = archived
           ? sessionStore.archive(sessionId)
           : sessionStore.restore(sessionId);
         return session && sidebarSessionFor(session);
+      },
+      landWorkBranch: async (sessionId) => {
+        const session = sessionStore.load(sessionId);
+        if (session === undefined) {
+          return { status: "unavailable", reason: "this session is no longer here" };
+        }
+        const repoRoot = repositoryRootForSession(session);
+        const branch = reviewedBranchForSession(session);
+        if (repoRoot === undefined || branch === undefined) {
+          return { status: "unavailable", reason: "this session has claimed no branch" };
+        }
+        return landWorkBranch({
+          git: gitForRepo(repoRoot),
+          locus: locusForRepo(repoRoot),
+          repoRoot,
+          branch,
+          ...(session.workBranch === undefined ? {} : { workBranch: session.workBranch }),
+        });
       },
     },
     // The lens-board read for `board.read` (C05 cluster 8, C18): the board this review's
@@ -5412,8 +5572,8 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // The reviewer's own checkout enters the list only through a LIVE session's recorded
     // `boundRoot`, which is also why it leaves again when that session is archived.
     worktrees: {
-      list: (repoPath) =>
-        listWorkspaces(gitForRepo(repoPath), repoPath, inventoryOptions(repoPath)),
+      list: async (repoPath) =>
+        listWorkspaces(gitForRepo(repoPath), repoPath, await inventoryOptions(repoPath)),
       remove: async ({ repoPath, id }) => {
         // Re-listed HERE, at the moment of the removal, rather than trusted from the
         // client: whether a row is the reviewer's own checkout, whether a session is
@@ -5421,7 +5581,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         // that can have changed since the card was rendered. Sizes are skipped — this
         // read exists to address the row, and a `du` per row would pay for nothing.
         const { rows } = await listWorkspaces(gitForRepo(repoPath), repoPath, {
-          ...inventoryOptions(repoPath),
+          ...(await inventoryOptions(repoPath)),
           measureSizes: false,
         });
         return removeWorkspace(gitForRepo(repoPath), repoPath, { id, rows });

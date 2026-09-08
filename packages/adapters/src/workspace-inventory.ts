@@ -231,6 +231,21 @@ function defaultFoldsCase(path: string): boolean {
 }
 
 /**
+ * The UNC HEAD of a WSL path — `\\wsl$\Ubuntu`, `\\wsl.localhost\Ubuntu` — or nothing.
+ *
+ * Two segments and no more. The share name and the distro name are resolved by Windows,
+ * which is case-INSENSITIVE about both: `\\WSL$\ubuntu\home\u\wt` and
+ * `\\wsl$\Ubuntu\home\u\wt` are one directory. Everything after them lives on the distro's
+ * own filesystem, which is case-SENSITIVE, so `…\feat\ABC-1` and `…\feat\abc-1` are two.
+ * Folding the whole string collapses that pair (the bug `windowsFoldsCase` exists to stop);
+ * folding none of it splits ONE directory into two rows whenever a project was opened
+ * through a differently cased share or distro spelling. This folds exactly Windows' half.
+ */
+function wslUncHead(path: string): string | undefined {
+  return /^\\\\wsl(?:\$|\.localhost)\\[^\\]+/i.exec(path)?.[0];
+}
+
+/**
  * The two path comparisons the inventory makes, bound to one fold predicate.
  *
  * Each side folds by ITS OWN path, because the answer is a property of where that path
@@ -238,7 +253,13 @@ function defaultFoldsCase(path: string): boolean {
  * filesystems and cannot be the same directory either way.
  */
 function pathMatchers(foldsCase: (path: string) => boolean) {
-  const folded = (path: string): string => (foldsCase(path) ? path.toLowerCase() : path);
+  const folded = (path: string): string => {
+    // The UNC head folds whatever the predicate says: it is the half of a WSL path Windows
+    // resolves, and the distro path behind it stays exactly as it was spelled.
+    const head = wslUncHead(path);
+    if (head !== undefined) return head.toLowerCase() + path.slice(head.length);
+    return foldsCase(path) ? path.toLowerCase() : path;
+  };
   /** Same directory, through symlinks, and case-insensitively only where it is spelled twice. */
   const samePath = (a: string, b: string): boolean => {
     if (a === b) return true;
@@ -314,7 +335,7 @@ export async function measureWorkspaceSize(
 }
 
 /** Does `ref` resolve in this repository? Callers pass a FULLY QUALIFIED ref. */
-async function refExists(git: GitExec, repoRoot: string, ref: string): Promise<boolean> {
+export async function refExists(git: GitExec, repoRoot: string, ref: string): Promise<boolean> {
   try {
     await git(repoRoot, ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`]);
     return true;
@@ -344,8 +365,14 @@ async function upstreamOf(
   }
 }
 
-/** Is `ancestor` reachable from `descendant`? (`merge-base --is-ancestor`'s exit code.) */
-async function isAncestor(
+/**
+ * Is `ancestor` reachable from `descendant`? (`merge-base --is-ancestor`'s exit code.)
+ *
+ * Exported because the SIBLING BIND asks the same question with the same refs discipline —
+ * both arguments FULLY QUALIFIED, so a tag of the branch's name cannot answer for it — and
+ * a second spelling of this call is exactly how the two would drift apart.
+ */
+export async function isAncestor(
   git: GitExec,
   repoRoot: string,
   ancestor: string,
@@ -613,9 +640,15 @@ function boundReason(row: WorkspaceRow): string {
 }
 
 /**
- * Why a sibling branch outlived its worktree, in the outcome's own words — the SAME
- * sentence the row's `keepsBranch` marker carried, so the card's warning and the outcome
- * that follows it cannot say two different things.
+ * Why a sibling branch outlived its worktree, in the outcome's own words — from the SAME
+ * `siblingKeptReason` the row's `keepsBranch` marker is built from, so the card's warning
+ * and the outcome that follows it are the same sentence about the same repository.
+ *
+ * They can still differ in TWO ways, and both are honest rather than a drift: the row was
+ * read earlier, so a push or a commit since then changes git's answer; and the row's marker
+ * is capped at {@link WORKTREE_ROW_MARKER_CAP} while this one rides the removal's larger
+ * {@link WORKTREE_REFUSAL_CAP}, so a very long branch name is truncated on the row and
+ * whole here. Only the wording is shared; the cap is each surface's own.
  */
 async function keptSiblingNote(
   git: GitExec,
@@ -624,7 +657,7 @@ async function keptSiblingNote(
   branch: string,
 ): Promise<string> {
   const { reason } = await siblingKeptReason(git, repoRoot, siblingRef, branch);
-  return `${siblingRef} kept: ${reason}`;
+  return capText(`${siblingRef} kept: ${reason}`, WORKTREE_REFUSAL_CAP);
 }
 
 export interface RemoveWorkspaceInput {

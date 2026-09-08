@@ -134,6 +134,12 @@ export function sidebarSessionOf(
     // nothing has been captured for this session — honestly, there is no diff.
     ...(session.reviewId === undefined ? {} : { reviewId: session.reviewId }),
     ...(session.preparation === undefined ? {} : { preparation: session.preparation }),
+    // The sibling this session's rounds commit on (workspace-settings D4), and whether it
+    // has reached the reviewed branch's name on the remote. A branch NAME, never a path,
+    // exactly like `claim.branch`. Absent means the work is on the reviewed branch itself,
+    // which is every `share` session and every session written before the field.
+    ...(session.workBranch === undefined ? {} : { workBranch: session.workBranch }),
+    ...(session.workBranchPushedAt === undefined ? {} : { workBranchPushed: true }),
     ...(reviewActivity === undefined ? {} : { reviewActivity }),
     ...(completedRoundNumber === undefined
       ? {}
@@ -308,6 +314,17 @@ export function sessionHandlers(rt: DispatchRuntime) {
         await rt.deps.t3Sidecar?.forgetSession(ids);
       }
       return parseCommandOutput(name, { session });
+    },
+    "session.landWorkBranch": async (rawInput) => {
+      const name = "session.landWorkBranch" as const;
+      const input = parseCommandInput(name, rawInput);
+      // No seam wired ⇒ there is nothing to land, honestly. Not a throw: a composition
+      // without the host's git is a daemon that never bound a sibling in the first place.
+      const outcome = (await rt.deps.sessions?.landWorkBranch(input.sessionId)) ?? {
+        status: "unavailable" as const,
+        reason: "this daemon cannot land a work branch",
+      };
+      return parseCommandOutput(name, outcome);
     },
   } satisfies Record<string, CommandHandler>;
 }

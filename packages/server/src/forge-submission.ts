@@ -43,7 +43,17 @@ export async function submitForgePullRequest(input: {
   readonly registry: ForgeRegistry<ForgePrSubmissionResolver>;
   readonly git: GitExec;
   readonly repoRoot: string;
+  /** The branch the pull request is ABOUT — its head on the remote, and its name there. */
   readonly headRef: string;
+  /**
+   * The branch the work is ON (workspace-settings D4). Under `share` — and for every
+   * session written before the setting existed — it is `headRef`, and the refspec below is
+   * byte-identical to the one this function has always pushed. Under `own` beside a
+   * checkout that already had the branch out it is the sibling `rennet/<headRef>`, so the
+   * push sends the sibling's commits to the reviewed branch's NAME on the remote and the
+   * reviewer's local branch does not move.
+   */
+  readonly workBranch?: string;
   readonly submission: ForgePrSubmission;
   readonly destination: ResolvedForgePullRequestDestination;
 }): Promise<ForgePrSubmissionOutcome> {
@@ -55,10 +65,11 @@ export async function submitForgePullRequest(input: {
   }
 
   const submitter = await resolveSubmitter(input.repoRoot);
+  const source = input.workBranch ?? input.headRef;
   await input.git(input.repoRoot, [
     "push",
     input.destination.remoteName,
-    `refs/heads/${input.headRef}:refs/heads/${input.headRef}`,
+    `refs/heads/${source}:refs/heads/${input.headRef}`,
   ]);
   return submitter.submitPullRequest({
     target: input.destination.target,

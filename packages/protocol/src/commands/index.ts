@@ -82,7 +82,11 @@ import {
   t3SidecarStatusSchema,
   themePackSchema,
 } from "../wire";
-import { worktreeInventorySchema, worktreeRemoveOutcomeSchema } from "../worktrees";
+import {
+  WORKTREE_REFUSAL_CAP,
+  worktreeInventorySchema,
+  worktreeRemoveOutcomeSchema,
+} from "../worktrees";
 
 const commandIdSchema = z.uuid();
 const forgePrSubmissionTargetSchema = z.object({
@@ -1634,6 +1638,43 @@ const definitions = {
     // `archived: false` is RESTORE — un-archiving returns the session to the sidebar.
     input: z.object({ sessionId: z.string().min(1), archived: z.boolean() }),
     output: z.object({ session: sidebarSessionSchema.nullable() }),
+  },
+  // ── Land the work branch (workspace-settings D4) ────────────────────────────
+  // `git merge --ff-only refs/heads/<workBranch>`, run INSIDE the worktree that has the
+  // reviewed branch checked out — the reviewer's own. It is the one place `own` mode
+  // writes to that tree, and it does so only on the reviewer's click, only as a
+  // fast-forward, and only while git agrees the tree is clean.
+  //
+  // Nothing is forced and nothing is merged or rebased on the reviewer's behalf: an
+  // unclean tree and a diverged branch are GIT'S refusals, echoed back verbatim, and the
+  // action stays offered afterwards. There is no confirmation step (Rule Zero) — the click
+  // is the whole act, and what stops it is git.
+  "session.landWorkBranch": {
+    input: z.object({ sessionId: z.string().min(1) }),
+    output: z.discriminatedUnion("status", [
+      z.object({
+        status: z.literal("landed"),
+        /** The reviewed branch, now at the work branch's tip. */
+        branch: z.string().min(1),
+        workBranch: z.string().min(1),
+        /** Where the branch now points — the fast-forward's whole effect. */
+        headOid: z.string().min(1),
+      }),
+      z.object({
+        status: z.literal("refused"),
+        branch: z.string().min(1),
+        workBranch: z.string().min(1),
+        /** Git's own words, verbatim up to {@link WORKTREE_REFUSAL_CAP}. */
+        reason: z.string().max(WORKTREE_REFUSAL_CAP + 16),
+      }),
+      // There is nothing to land: the session commits on the reviewed branch itself, no
+      // worktree has that branch out any more, or the session is gone. A fact, not a
+      // failure — the surface simply offers no action.
+      z.object({
+        status: z.literal("unavailable"),
+        reason: z.string().max(WORKTREE_REFUSAL_CAP + 16),
+      }),
+    ]),
   },
   // ── Living-draft span rework (B11 cluster 5) ────────────────────────────────
   // The backend for the client's gated `reviseDraftSpan` seam (C9 binds the seam;

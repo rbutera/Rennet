@@ -381,6 +381,7 @@ export {
   defaultWorktreePlacement,
   ensureBranchWorktree,
   ensurePrWorktree,
+  ensureSiblingWorktree,
   expandWorktreeRootForWrite,
   LOCAL_OWNER,
   prTokens,
@@ -392,6 +393,7 @@ export {
   resolveWorktreeRoot,
   runPrWorktreeSetup,
   type SetupStatus,
+  siblingBranchFor,
   WORKTREE_PLACEHOLDERS,
   type WorktreePlacement,
   type WorktreeRepoFacts,
@@ -641,11 +643,13 @@ export {
 export { type DraftOp, WhiteboardClient } from "./whiteboard-client";
 // The workspace inventory (workspace-settings D6).
 export {
+  isAncestor,
   type ListWorkspacesOptions,
   listWorkspaces,
   measureWorkspaceSize,
   parseWorktreeRecords,
   type RemoveWorkspaceInput,
+  refExists,
   removeWorkspace,
   SIBLING_BRANCH_PREFIX,
   siblingIsCollectable,

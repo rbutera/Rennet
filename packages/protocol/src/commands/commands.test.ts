@@ -127,6 +127,10 @@ const ABSORBED_IDS = [
   "round.retry",
   "session.archive",
   "session.cancelPreparation",
+  // The land action (workspace-settings D4): a fast-forward-only merge of the session's
+  // work branch into the checkout that has the reviewed branch out, run on the reviewer's
+  // click. Git's refusal is the outcome when there is one.
+  "session.landWorkBranch",
   "session.list",
   "session.mint",
   "session.rename",
@@ -192,7 +196,7 @@ const MENU_INVENTORY: readonly string[] = [];
 describe("command registry invariants (#465)", () => {
   it("matches the recorded command snapshot (settings.setRepoLocus demoted, #476)", () => {
     expect(Object.keys(commands).sort()).toEqual([...ABSORBED_IDS]);
-    expect(ABSORBED_IDS).toHaveLength(111);
+    expect(ABSORBED_IDS).toHaveLength(112);
   });
 
   it("every row carries label, exposure, and locus with today's uniform values", () => {
