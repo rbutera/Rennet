@@ -159,7 +159,7 @@ describe("MappingsDialog — provenance chip + Reset-via-null (C16, #485)", () =
   // A cell whose LAYER says an override won. "Changed from default" is read off this
   // provenance, never off a comparison with a copied table.
   const changed: readonly ReviewRole[] = REVIEW_ROLE_DEFAULTS.map((role) =>
-    role.id === "orchestrator"
+    role.id === "lens-workers"
       ? // `gpt-5.5` appears in no council default, so a sighting of it is this override.
         { ...role, dual: { model: "gpt-5.5", effort: "low", layer: "override" as const } }
       : role,
@@ -241,7 +241,7 @@ describe("MappingsDialog — provenance chip + Reset-via-null (C16, #485)", () =
     await user.click(body().getByRole("button", { name: "Reset to default" }));
     // ONE write, on the ONE overridden column, clearing rather than re-writing a copy
     // of the default (per-scenario: `claudeOnly` / `codexOnly` were never touched).
-    expect(writes).toEqual([{ roleId: "orchestrator", scenario: "dual", assignment: null }]);
+    expect(writes).toEqual([{ roleId: "lens-workers", scenario: "dual", assignment: null }]);
     // Back to the council default — the chip and the control are both gone.
     expect(body().queryByText("Reset to default")).toBeNull();
     expect(body().queryByText("Overridden")).toBeNull();
@@ -268,11 +268,11 @@ describe("MappingsDialog — provenance chip + Reset-via-null (C16, #485)", () =
     );
     await user.click(getByRole("button", { name: "Edit Mappings" }));
     // Single = Claude-only, so the editable column is `claudeOnly`.
-    await user.click(body().getByRole("button", { name: "Orchestrator model" }));
+    await user.click(body().getByRole("button", { name: "Lens Drafters model" }));
     await user.click(body().getByRole("option", { name: "haiku" }));
     expect(writes).toEqual([
       {
-        roleId: "orchestrator",
+        roleId: "lens-workers",
         scenario: "claudeOnly",
         // Provenance is the resolver's verdict, never an input (#89: no harness either).
         assignment: { model: "haiku", effort: "high" },
@@ -288,7 +288,7 @@ describe("MappingsDialog — provenance chip + Reset-via-null (C16, #485)", () =
       ]),
     );
     await user.click(getByRole("button", { name: "Edit Mappings" }));
-    await user.click(body().getByRole("button", { name: "Orchestrator model" }));
+    await user.click(body().getByRole("button", { name: "Lens Drafters model" }));
 
     // The models are all on screen, so there is nothing to search: no input, and no
     // "no match" line for a filter that cannot run.
@@ -323,7 +323,7 @@ describe("MappingsDialog — provenance chip + Reset-via-null (C16, #485)", () =
       ),
     );
     await user.click(getByRole("button", { name: "Edit Mappings" }));
-    const trigger = body().getByRole("button", { name: "Orchestrator model" });
+    const trigger = body().getByRole("button", { name: "Lens Drafters model" });
     trigger.focus();
     await user.keyboard("{Enter}");
 
@@ -338,7 +338,7 @@ describe("MappingsDialog — provenance chip + Reset-via-null (C16, #485)", () =
     await user.keyboard("{ArrowDown}{Enter}");
     expect(writes).toEqual([
       {
-        roleId: "orchestrator",
+        roleId: "lens-workers",
         scenario: "claudeOnly",
         assignment: { model: "sonnet-5", effort: "high" },
       },

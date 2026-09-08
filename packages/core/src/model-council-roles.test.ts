@@ -19,18 +19,8 @@ function role(roles: ResolvedReviewRole[], id: string): ResolvedReviewRole {
 }
 
 describe("REVIEW_ROLE_CATALOGUE", () => {
-  it("names all six review roles", () => {
-    expect(REVIEW_ROLE_CATALOGUE).toHaveLength(6);
-    expect(REVIEW_ROLE_CATALOGUE.map((r) => r.id).sort()).toEqual(
-      [
-        "adjudication",
-        "confirmation",
-        "lens-workers",
-        "orchestrator",
-        "post-process",
-        "second-seat",
-      ].sort(),
-    );
+  it("offers only model roles with production work", () => {
+    expect(resolveReviewRoles(CTX).map((role) => role.id)).toEqual(["lens-workers", "second-seat"]);
   });
 
   // Positive control (must be able to fail): a role naming a job id absent from
@@ -46,7 +36,7 @@ describe("REVIEW_ROLE_CATALOGUE", () => {
 describe("resolveReviewRoles", () => {
   it("resolves every role in every scenario to an assignment or honest-null (never undefined, never a throw)", () => {
     const roles = resolveReviewRoles(CTX);
-    expect(roles).toHaveLength(6);
+    expect(roles).toHaveLength(2);
     for (const r of roles) {
       for (const cell of [r.dual, r.claudeOnly, r.codexOnly]) {
         // a cell is EITHER a real pick with a source, OR honest-null with null source.

@@ -1466,6 +1466,15 @@ it as a tool-call count, never as a round-trip count, and note that it excludes 
 calls (a seat with `Agent` sub-sessions reports 37 while 106 calls appear in its log). **The
 number of distinct assistant message ids is the round-trip count.**
 
+Generation usage stores the sum of observed `TurnMetric.toolCalls` as optional
+`boardToolCalls`, including refusals and turns with no token result. The review's
+usage line labels this **observed board tool calls**. It excludes the provider's
+other tools and does not measure provider round trips. Zero means an observed board counter
+reported zero; absence means no counter was available or a legacy record predates
+collection. If an earlier nonempty attempt lacks counts, the merged generation
+omits the total rather than presenting a partial sum as complete. An empty
+attempt preserves the other attempt's observed count.
+
 A refusal count is not a count of extra round trips. Several rejected calls can
 share one assistant message, and the next message can repair several together.
 Join each error result to its tool-use ID and classify the returned rule or error

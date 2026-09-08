@@ -118,6 +118,18 @@ describe("summarizeUsage (#737)", () => {
     });
   });
 
+  it("keeps observed board tool calls even when a failed turn has no token measurement", () => {
+    expect(
+      summarizeUsage([
+        metric({ toolCalls: 7 }),
+        metric({ attempt: 1, status: "failed", usage: null, toolCalls: 2 }),
+        metric({}),
+      ]),
+    ).toMatchObject({ boardToolCalls: 9, unmeasuredTurns: 1 });
+    expect(summarizeUsage([metric({ toolCalls: 0 })])).toHaveProperty("boardToolCalls", 0);
+    expect(summarizeUsage([metric({})])).not.toHaveProperty("boardToolCalls");
+  });
+
   it("reports no dollar figure when any turn ran on a subscription credential", () => {
     // Positive control above: the same two turns priced to 0.02 when both were metered.
     const usage = summarizeUsage([metric({}), metric({ apiKeySource: "none" })]);
@@ -174,6 +186,28 @@ describe("mergeGenerationUsage (#741 review)", () => {
     );
     expect(mergeGenerationUsage(usage({ reportedUsd: null }), usage())?.reportedUsd).toBeNull();
     expect(mergeGenerationUsage(usage(), usage({ reportedUsd: null }))?.reportedUsd).toBeNull();
+  });
+
+  it("adds board tool calls across attempts without turning missing legacy counts into zero", () => {
+    expect(
+      mergeGenerationUsage(usage({ boardToolCalls: 7 }), usage({ boardToolCalls: 2 })),
+    ).toHaveProperty("boardToolCalls", 9);
+    expect(mergeGenerationUsage(usage(), usage({ boardToolCalls: 2 }))).not.toHaveProperty(
+      "boardToolCalls",
+    );
+    expect(mergeGenerationUsage(usage({ boardToolCalls: 2 }), usage())).not.toHaveProperty(
+      "boardToolCalls",
+    );
+    expect(mergeGenerationUsage(undefined, usage({ boardToolCalls: 0 }))).toHaveProperty(
+      "boardToolCalls",
+      0,
+    );
+  });
+
+  it("keeps measured board calls when the other attempt has no turns", () => {
+    const measured = usage({ boardToolCalls: 7 });
+    expect(mergeGenerationUsage(summarizeUsage([]), measured)).toHaveProperty("boardToolCalls", 7);
+    expect(mergeGenerationUsage(measured, summarizeUsage([]))).toHaveProperty("boardToolCalls", 7);
   });
 
   it("passes a lone side through and yields nothing for two absences", () => {
