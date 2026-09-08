@@ -338,9 +338,9 @@ between the reviewer and their boards.
   the stop under each tab as a `data-cut` (`unstarted` / `open` / `clean` / `seamed` /
   `snapped` / `empty`), so it survives the colour being ignored — the hue says which lens
   this is, so a failed Design lane is a snapped blue stop and never a red one.
-- The **lens activity popover** (`board/lens-activity.tsx`) opens from an activity control
-  beside the selected tab, separate from selecting the lens, and anchors directly beneath
-  the tab bar so the board and its heading never move. It names the seat, how long this
+- The **lens activity popover** (`board/lens-activity.tsx`) opens automatically for the selected
+  running tab, or when a tab is hovered or focused, and anchors directly beneath
+  that tab so the board and its heading never move. It names the seat, how long this
   window has followed it, its `latest` line from `SessionPreparation` in the daemon's plain
   words, and a short rolling history of meaningful actions; raw tool calls stay in the
   transcript. Flagged lists both voices, each with its own transcript control. The board

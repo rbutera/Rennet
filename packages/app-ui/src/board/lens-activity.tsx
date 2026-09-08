@@ -35,6 +35,7 @@ export function LensActivity({
   readonly entry: Pick<LensBoardEntry, "lens" | "seat">;
 }) {
   const triggerId = useId();
+  const restoringFocus = useRef(false);
   const [dismissed, setDismissed] = useState(false);
   const [completing, setCompleting] = useState(false);
 
@@ -54,18 +55,22 @@ export function LensActivity({
     setCompleting(true);
     const timer = setTimeout(() => {
       setCompleting(false);
-      setInspected((current) => (current === lens ? null : current));
     }, 900);
     return () => clearTimeout(timer);
-  }, [running, lens, setInspected]);
+  }, [running]);
   useEffect(() => {
     if (active) setDismissed(false);
   }, [active]);
   const open =
     inspected !== null ? inspected === lens : active && !dismissed && (running || completing);
-  const close = () => {
+  const close = (restoreFocus = false) => {
     setDismissed(true);
     setInspected((current) => (current === lens ? null : current));
+    if (restoreFocus) {
+      restoringFocus.current = true;
+      document.getElementById(triggerId)?.focus();
+      restoringFocus.current = false;
+    }
   };
   const key = lensActivityKey(reviewId, generation, seat);
   const record = useLensActivityHistory((state) => state.byRun[key]);
@@ -89,7 +94,7 @@ export function LensActivity({
         } else if (event.reason === "trigger-press") {
           setInspected(lens);
         } else if (!next) {
-          if (event.reason === "escape-key" || event.reason === "close-press") close();
+          if (event.reason === "escape-key" || event.reason === "close-press") close(true);
           else setInspected((current) => (current === lens ? null : current));
         }
       }}
@@ -100,7 +105,10 @@ export function LensActivity({
         openOnHover
         delay={0}
         closeDelay={120}
-        onFocus={() => setInspected(lens)}
+        onMouseEnter={() => setInspected(lens)}
+        onFocus={() => {
+          if (!restoringFocus.current) setInspected(lens);
+        }}
       />
       <PopoverContent
         aria-label={`${seat.label} activity details`}
@@ -127,7 +135,7 @@ export function LensActivity({
             <ReviewActivity className="text-lens" />
           ) : null}
           <strong className="flex-1">{seat.label}</strong>
-          <button type="button" aria-label="Close activity" onClick={close}>
+          <button type="button" aria-label="Close activity" onClick={() => close(true)}>
             <Icon icon={X} className="size-4" />
           </button>
         </div>

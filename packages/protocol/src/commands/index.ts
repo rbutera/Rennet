@@ -1001,7 +1001,11 @@ const definitions = {
   // Read-only, deterministic, no model spend. Dispatch resolves the current review
   // ONCE and reads both from the same snapshot.
   "review.symbolLookup": {
-    input: z.object({ reviewId: z.string().min(1), name: z.string().min(1) }),
+    input: z.object({
+      reviewId: z.string().min(1),
+      name: z.string().min(1),
+      side: z.enum(["base", "head"]).optional(),
+    }),
     output: symbolInspectionSchema,
   },
   // ── The Spec angle's live OpenSpec change (wireframes #9) ───────────────────
