@@ -136,6 +136,7 @@ These versions come from the current workspace manifests:
 | Browser UI | `react`, `react-dom` | `19.2.8` |
 | UI transient state | `zustand` | `5.0.14` |
 | Renderer routing | `wouter` | `3.10.0` |
+| Renderer tables (sort, filter, facets) | `@tanstack/react-table` | `9.2.4` |
 | Renderer animation | `motion` | `13.1.1` |
 | Mobile | `expo`, `expo-router`, `react-native` | `~55.0.26`, `~55.0.16`, `0.83.6` |
 
