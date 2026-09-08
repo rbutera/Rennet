@@ -18,7 +18,9 @@ For the scoped repository, the Worktrees section SHALL list each workspace Renne
 
 ### Requirement: An idle Rennet-made workspace is removed on request, never forced
 
-A Rennet-made workspace with no live session SHALL carry a remove action that runs git's worktree removal without force and applies the sibling collection rule. A refusal git returns SHALL be shown verbatim on the row, with the directory left as it was. The action SHALL complete in one interaction with no confirmation step.
+A Rennet-made workspace with no live session SHALL carry a remove action that runs git's worktree removal without force. The sibling collection rule SHALL decide the sibling BRANCH only: a sibling whose tip is reachable from the reviewed branch or its remote-tracking ref SHALL have its branch deleted with its worktree, and a sibling holding commits the reviewed branch lacks SHALL keep its branch, which the outcome names. The removal SHALL address a row by an opaque identifier the list issued, never by a path, so a projected client can remove a workspace whose host path it has never been given. A refusal git returns SHALL be shown verbatim on the row, with the directory left as it was. The action SHALL complete in one interaction with no confirmation step.
+
+Only the AUTOMATIC collection — a session archived, or the startup sweep — keeps both the worktree and the branch of an unmerged sibling, because nobody asked it for anything. That rule lives with the sibling requirement in `session-bound-workspace`.
 
 #### Scenario: Clean removal
 - **WHEN** the reviewer removes an idle branch worktree with a clean tree
@@ -27,3 +29,7 @@ A Rennet-made workspace with no live session SHALL carry a remove action that ru
 #### Scenario: Refused removal
 - **WHEN** the reviewer removes an idle worktree holding uncommitted changes
 - **THEN** git's refusal is shown on the row and the directory is untouched
+
+#### Scenario: An ahead sibling loses its worktree and keeps its branch
+- **WHEN** the reviewer removes an idle sibling worktree whose branch holds commits the reviewed branch lacks
+- **THEN** the worktree is gone, the sibling branch still holds those commits, and the outcome names the branch it kept and how far ahead it is

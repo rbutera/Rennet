@@ -226,7 +226,7 @@ still goes through the one seam; only the label is hand-written.
 | Command | Rationale |
 |---|---|
 | `worktrees.list` | Read the Settings → Projects → Worktrees card drives; needs the repository path whose workspaces it lists. |
-| `worktrees.remove` | Needs the repository and the row being removed. A parameterless removal could only pick a workspace for the reviewer. |
+| `worktrees.remove` | Needs the repository and the opaque id of the row being removed, which only a `worktrees.list` answer carries. A parameterless removal could only pick a workspace for the reviewer. |
 
 ## Changing the inventory
 

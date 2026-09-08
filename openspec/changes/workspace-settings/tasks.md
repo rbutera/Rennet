@@ -23,7 +23,7 @@ Ships on its own: values resolve and preview correctly; the binding still ignore
 ## 3. The inventory (D6)
 
 - [x] 3.1 Adapters: `listWorkspaces(git, repoRoot, root, prIndex, sessions)` over `git worktree list --porcelain`, the PR index and the sessions' bound roots, producing D6's rows; `sizeBytes` bounded at 2 s per row. Controls: a row past the cap carries `undefined`; the reviewer's checkout appears as `own-checkout` only while a session is bound to it
-- [x] 3.2 Protocol + server: `worktrees.list` and `worktrees.remove`, both keyed by `repoPath`; remove runs `git worktree remove` without `--force`, applies D5 to a sibling, and returns git's refusal verbatim. Controls: a dirty worktree's removal is refused and the directory remains; an `own-checkout` row cannot be addressed by remove
+- [x] 3.2 Protocol + server: `worktrees.list` and `worktrees.remove`, both keyed by `repoPath`, the removal addressing a row by its opaque `id` so a projected client can round-trip one; remove runs `git worktree remove` without `--force`, applies D5 to the sibling BRANCH, and returns git's refusal verbatim. Controls: a dirty worktree's removal is refused and the directory remains; an `own-checkout` row cannot be addressed by remove
 - [x] 3.3 Registry: both commands join the command registry with the same locus handling as the other repo-scoped commands (a WSL repository lists its worktrees through its own locus)
 
 ## 4. The card (D7)
