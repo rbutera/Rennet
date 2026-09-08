@@ -3174,7 +3174,17 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
    * missed here does not leave a stale directory, it deletes a workspace someone is
    * working in. Fire and forget: a sweep must never delay or fail a daemon start.
    */
-  const sweepOrphanedSiblings = async (): Promise<void> => {
+  const sweepOrphanedSiblings = async (
+    /**
+     * How ONE repository's worktree root is resolved. A PARAMETER, not a closure over
+     * `settingsComposition`: taken from the closure, the loop's first read of that
+     * still-uninitialised `const` threw a ReferenceError INSIDE the try that skips an
+     * unreadable repository, so the sweep skipped every one of them and reported nothing.
+     * Passed in, the same mistake is a synchronous throw at the call site, where it cannot
+     * be mistaken for "this daemon had nothing to collect".
+     */
+    resolveRoot: (repoRoot: string) => Promise<string>,
+  ): Promise<void> => {
     const claimed = new Set(
       sessionStore
         .list()
@@ -3193,7 +3203,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       const git = gitForRepo(repoRoot);
       let placementRoot: string;
       try {
-        placementRoot = (await settingsComposition.resolveWorktreePlacement(repoRoot)).root;
+        placementRoot = await resolveRoot(repoRoot);
       } catch {
         continue; // a repository whose settings cannot be read places nothing to sweep
       }
@@ -3219,7 +3229,6 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       }
     }
   };
-  void sweepOrphanedSiblings().catch(() => undefined);
   const sessionPreparations = new Map<string, AbortController>();
   const sessionPreparationRuns = new Map<string, Promise<void>>();
   // The display-transcript store (issue-set B): the durable read-model behind
@@ -4937,6 +4946,15 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       });
     },
   });
+
+  // …and only NOW is the sibling sweep started. It resolves each repository's placement
+  // through `settingsComposition`, which is the `const` above: calling it any earlier ran
+  // the loop's first iteration into that binding's temporal dead zone, and the `catch` that
+  // skips an unreadable repository swallowed the ReferenceError and skipped EVERY one — a
+  // sweep that ran, logged nothing, and collected nothing.
+  void sweepOrphanedSiblings(
+    async (repoRoot) => (await settingsComposition.resolveWorktreePlacement(repoRoot)).root,
+  ).catch(() => undefined);
 
   dispatch = createDispatch({
     t3Sidecar,

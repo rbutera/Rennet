@@ -11,6 +11,7 @@ import {
   type SidebarSession,
 } from "@rennet/protocol";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { LandWorkBranchOutcome } from "../land-work-branch";
 import { SessionEntry } from "../session/session-entry";
 import type { ModelSelection, T3Client } from "../t3/client";
 import { bindThread, findBindingsForSessions, sweepIfArchived, sweepThreads } from "../t3/threads";
@@ -767,5 +768,90 @@ describe("a round that outlives an archive sweeps its own late seat bindings", (
     // Only the session's own thread was deleted: the archive reported a sweep that had
     // already passed the five threads the round went on to create.
     expect(deleted).toEqual(["thread-1"]);
+  });
+});
+
+describe("the sidebar row carries the work branch (workspace-settings D4)", () => {
+  it("projects the sibling and the push, and omits both for a `share` session", () => {
+    const share = sidebarSessionOf(seed("s1", "feat/x"));
+    expect(share.workBranch).toBeUndefined();
+    expect(share.workBranchPushed).toBeUndefined();
+
+    const own = sidebarSessionOf({ ...seed("s2", "feat/x"), workBranch: "rennet/feat/x" });
+    expect(own.workBranch).toBe("rennet/feat/x");
+    // Not pushed yet: the card must not claim an upstream is behind before one is.
+    expect(own.workBranchPushed).toBeUndefined();
+
+    const pushed = sidebarSessionOf({
+      ...seed("s3", "feat/x"),
+      workBranch: "rennet/feat/x",
+      workBranchPushedAt: 1_700_000_000_000,
+    });
+    expect(pushed.workBranchPushed).toBe(true);
+    // A branch NAME crosses the wire; the host paths the session also holds do not (R19).
+    expect(parseCommandOutput("session.list", { sessions: [pushed] }).sessions[0]).toEqual(pushed);
+  });
+});
+
+describe("session.landWorkBranch — the route (workspace-settings D4)", () => {
+  /** The dispatch surface over a `sessions` seam that records what it was asked. */
+  function landDispatch(seam?: {
+    landWorkBranch: (sessionId: string) => Promise<LandWorkBranchOutcome>;
+  }) {
+    const rt = createDispatchRuntime({
+      service: { reviewById: () => undefined },
+      ...(seam === undefined ? {} : { sessions: seam }),
+    } as unknown as DispatchDeps);
+    return sessionHandlers(rt);
+  }
+
+  it("hands the session id to the host seam and returns its outcome", async () => {
+    const asked: string[] = [];
+    const handlers = landDispatch({
+      landWorkBranch: async (sessionId) => {
+        asked.push(sessionId);
+        return {
+          status: "landed",
+          branch: "feat/x",
+          workBranch: "rennet/feat/x",
+          headOid: "abc1234",
+        };
+      },
+    });
+
+    // Through `parseCommandOutput`, so a shape the wire would refuse fails here.
+    expect(await handlers["session.landWorkBranch"]({ sessionId: "s1" })).toEqual({
+      status: "landed",
+      branch: "feat/x",
+      workBranch: "rennet/feat/x",
+      headOid: "abc1234",
+    });
+    expect(asked).toEqual(["s1"]);
+  });
+
+  it("carries a refusal through the wire VERBATIM, newlines and all", async () => {
+    const reason = "error: Your local changes would be overwritten by merge:\n\tfeature.txt";
+    const handlers = landDispatch({
+      landWorkBranch: async () => ({
+        status: "refused",
+        branch: "feat/x",
+        workBranch: "rennet/feat/x",
+        reason,
+      }),
+    });
+    const outcome = (await handlers["session.landWorkBranch"]({ sessionId: "s1" })) as {
+      reason: string;
+    };
+    expect(outcome.reason).toBe(reason);
+  });
+
+  it("answers `unavailable` when no session seam is wired — never a throw", async () => {
+    // A composition without the host's git and session store is a daemon that never bound
+    // a sibling; the honest answer is that there is nothing to land, not a stack trace.
+    const handlers = landDispatch();
+    expect(await handlers["session.landWorkBranch"]({ sessionId: "s1" })).toEqual({
+      status: "unavailable",
+      reason: "this daemon cannot land a work branch",
+    });
   });
 });
