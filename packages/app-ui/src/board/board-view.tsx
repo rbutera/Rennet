@@ -7,7 +7,7 @@ import type {
   SourceRef,
 } from "@rennet/protocol";
 import { cn } from "@rennet/ui";
-import { type RefCallback, useEffect, useMemo } from "react";
+import { type RefCallback, useEffect, useMemo, useRef } from "react";
 import { useCoachAnchor } from "../coach/registry";
 import { ReviewActivity } from "../components/review-activity";
 import { useRefreshCommand } from "../data";
@@ -236,7 +236,17 @@ export function LensBoardView({
   const followedSeat = followed?.seat;
   const followedEnvironment = followed?.thread?.environmentId;
   const followedThread = followed?.thread?.threadId;
+  // The effect acts on a CHANGE OF LENS, never on a change of transcript. Opening another
+  // lens's transcript from its tab (the popover's "Open transcript") stamps that lens on
+  // the drawer before the board has moved; keyed on the mismatch alone, this effect read
+  // that as "the lens moved away" and shut the drawer in the same frame — on the Design
+  // board, whose host-built seat has no thread, EVERY transcript closed as it opened
+  // (Rai, 2026-09-08: "unable to view the transcripts of any of the generating views").
+  const previousLens = useRef(effectiveLens);
   useEffect(() => {
+    const previous = previousLens.current;
+    previousLens.current = effectiveLens;
+    if (previous === effectiveLens) return;
     if (transcriptReview === undefined || transcriptReview !== reviewId) return;
     if (transcriptLens === effectiveLens) return;
     openSeatTranscript(

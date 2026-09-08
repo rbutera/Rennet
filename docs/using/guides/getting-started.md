@@ -234,7 +234,9 @@ focusing stays open until you leave or dismiss it. Hover or focus a tab to read 
 have been following that lens. Open transcript stays visible and becomes available
 once the agent thread starts. It shows the selected agent's full conversation in a drawer beside the
 board. Your own chat stays in place. Choosing another lens moves the board and
-open transcript together; opening Diff closes the transcript drawer.
+open transcript together, and opening a transcript from another lens's tab selects
+that lens, so the transcript always sits beside its own board; opening Diff closes
+the transcript drawer.
 
 While the change is being reviewed, the main action shows an animated reviewing
 indicator and cannot advance. It becomes Continue when the review is ready.

@@ -445,3 +445,34 @@ describe("the one chat toggle (C20 §4)", () => {
     expect(document.querySelectorAll('[aria-label="Close chat"]').length).toBe(1);
   });
 });
+
+describe("the bar's geometry", () => {
+  it("centres the lens rail in a three-column grid and leaves the slot around it draggable", () => {
+    const { container } = mountTopBar("/s/s2", undefined, lensHandlers);
+    const bar = container.querySelector('[data-slot="session-top-bar"]');
+    expect(bar?.className).toContain("grid-cols-[1fr_auto_1fr]");
+    // The bar is the dock header's height: 4px of padding inside a 56px minimum, not
+    // the 8px that pushed it past the dock's `h-14`.
+    expect(bar?.className).toContain("py-1");
+    expect(bar?.className).toContain("min-h-14");
+    const slot = container.querySelector('[data-slot="lens-switcher"]');
+    expect(slot?.className).not.toContain("app-region-no-drag");
+    const rail = slot?.querySelector('[data-kind="lens-switcher"]');
+    expect(rail?.className).toContain("app-region-no-drag");
+    expect(rail?.className).toContain("mx-auto");
+  });
+
+  it("folds the Diff and History labels at a narrower width while the chat dock is open", () => {
+    const { getByText, unmount } = mountTopBar("/s/s2", fixtureCompletedRoundsSource);
+    expect(getByText("Diff").className).toBe("hidden @[57rem]:inline");
+    expect(getByText("History").className).toBe("hidden @[61rem]:inline");
+    unmount();
+
+    act(() => {
+      useRennetStore.setState((s) => ({ ui: { ...s.ui, chatOpen: true } }));
+    });
+    const open = mountTopBar("/s/s2", fixtureCompletedRoundsSource);
+    expect(open.getByText("Diff").className).toBe("hidden @[44rem]:inline");
+    expect(open.getByText("History").className).toBe("hidden @[48rem]:inline");
+  });
+});

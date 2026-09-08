@@ -25,7 +25,13 @@ export function LensActivity({
   inspected,
   setInspected,
   tab,
+  onSelect,
 }: {
+  /** Select this lens's board. Opening a seat's transcript calls it first: the drawer
+   *  lives inside the board region and the board follows the transcript's lens, so a
+   *  transcript opened from another lens's tab lands beside its own board, not over the
+   *  one the reviewer happened to be reading. */
+  readonly onSelect?: (lens: LensKind) => void;
   readonly active: boolean;
   readonly inspected: LensKind | null;
   readonly setInspected: Dispatch<SetStateAction<LensKind | null>>;
@@ -183,8 +189,9 @@ export function LensActivity({
             className="self-start rounded px-2 py-1 text-sm text-primary hover:bg-secondary disabled:cursor-default disabled:opacity-50"
             onClick={() => {
               close();
-              if (voice.thread)
-                openTranscript({ reviewId, lens, seat: voice.seat, thread: voice.thread });
+              if (!voice.thread) return;
+              onSelect?.(lens);
+              openTranscript({ reviewId, lens, seat: voice.seat, thread: voice.thread });
             }}
           >
             {voice.name ? `Open ${voice.name} transcript` : "Open transcript"}

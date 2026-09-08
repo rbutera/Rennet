@@ -1104,8 +1104,13 @@ task counts read from those files. Each stat appears once. Header source chips l
 every rendered file exactly once in reading order, and their first named source
 regions preserve that order. Header chips jump to their rendered regions; section and
 requirement source chips open the repo-relative file in the project editor. A proposal
-renders source-grounded Why, tagged What Changes rows, and Impact; capabilities render
-as counted jump cards, and task groups keep their source's own `- [x]` / `- [ ]` marks.
+renders source-grounded Why as the document's intro, then its remaining headings in the
+file's own order: What Changes as one row per listed change (a row wears a tag only
+when its author gave it one), Impact beside it, and any other heading as a nested
+section whose deeper headings nest again. A fenced code block in a proposal is left out
+and its place stated with a fixed label, since code on a board is a `code_ref` and a
+proposal's fence is illustration. Capabilities render as counted jump cards, and task
+groups keep their source's own `- [x]` / `- [ ]` marks.
 Requirements preserve their normative text and source order, and every scenario and
 task remains its own canonical element so later dispositions can address it. A scenario
 is owned only through its requirement's `scenarios` list, never repeated in section
@@ -1122,9 +1127,13 @@ not authored fields: the tool surface carries no input for them (#889 is why the
 not gain seven), and a model seat runs only when the host found no parseable
 specification, so it has nothing to transcribe them from. The one projection a seat
 writes is `scenario_clauses`, split from a scenario's own WHEN/THEN words as the two
-flat inputs `scenario_condition` and `scenario_response` and rendered as a
-Trigger/Outcome pair; the assembler writes the same pair from the parser's split. A
-scenario that names neither still renders, as the prose it was written as. Every array
+flat inputs `scenario_condition` and `scenario_response`; the assembler writes the same
+pair from the parser's split. The surface reads the scenario's own text first: a
+`Scenario: <name>` prefix becomes the row's heading and each `- **WHEN**` / `**THEN**`
+/ `**AND**` / `**GIVEN**` item becomes one clause row under its own keyword, so a nine-
+scenario requirement reads as nine named cases. Text with no such rows renders the host's
+pair as Trigger/Outcome, and a scenario that names neither still renders, as the prose
+it was written as. Every array
 preserves source order, and the surface renders each projection once at its owner. A
 field whose shape does not match is not rendered. Stated decisions continue to use
 their canonical statement, rationale, alternatives, and evidence fields.

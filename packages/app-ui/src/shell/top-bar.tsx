@@ -62,13 +62,33 @@ const PILL: ReadonlyArray<{
   readonly view: Extract<ViewKind, "rounds" | "diff">;
   readonly label: string;
   readonly icon: LucideIcon;
-  /** The container width below which the label folds away, leaving the glyph. */
-  readonly foldBelow: string;
+  /**
+   * The container width below which the label folds away, leaving the glyph — one
+   * threshold per state of the left slot. With the chat dock OPEN the trail is in the
+   * dock's header and the left slot is a single 24px toggle, so the bar has ~12rem more
+   * room than it has with the dock shut, and folding Diff at the shut-dock width hid the
+   * label on a bar with plenty of space (Rai, 2026-09-08: "diff should also have the
+   * label when it's clearly got enough room"). The numbers are the measured sum of the
+   * five-lens rail (~33rem), the pills with both labels (~10rem), the paddings, and the
+   * left slot in each state (1.5rem open; ~14rem shut), each variant a literal so
+   * Tailwind can read it.
+   */
+  readonly foldBelow: { readonly chatOpen: string; readonly chatShut: string };
 }> = [
   // History folds EARLIER than Diff: it sits nearest the centred lens pill,
   // and the two look cramped the moment they touch.
-  { view: "rounds", label: "History", icon: History, foldBelow: "hidden @[66rem]:inline" },
-  { view: "diff", label: "Diff", icon: FileDiff, foldBelow: "hidden @[54rem]:inline" },
+  {
+    view: "rounds",
+    label: "History",
+    icon: History,
+    foldBelow: { chatOpen: "hidden @[48rem]:inline", chatShut: "hidden @[61rem]:inline" },
+  },
+  {
+    view: "diff",
+    label: "Diff",
+    icon: FileDiff,
+    foldBelow: { chatOpen: "hidden @[44rem]:inline", chatShut: "hidden @[57rem]:inline" },
+  },
 ];
 
 /** One kit `Toggle` wearing the prototype pill skin: round, outlined, 12px label.
@@ -77,9 +97,11 @@ const PILL: ReadonlyArray<{
  *  Repeating it as an `aria-label` only makes the control announce twice. */
 function PillToggle({
   entry,
+  chatOpen,
   className,
 }: {
   readonly entry: (typeof PILL)[number];
+  readonly chatOpen: boolean;
   readonly className?: string;
 }) {
   return (
@@ -92,7 +114,9 @@ function PillToggle({
       )}
     >
       <Icon icon={entry.icon} className="size-3.5 shrink-0" />
-      <span className={entry.foldBelow}>{entry.label}</span>
+      <span className={chatOpen ? entry.foldBelow.chatOpen : entry.foldBelow.chatShut}>
+        {entry.label}
+      </span>
     </Toggle>
   );
 }
@@ -255,7 +279,13 @@ export function TopBar() {
       data-slot="session-top-bar"
       data-floating={floating}
       className={cn(
-        "flex flex-wrap items-center gap-x-2 gap-y-0 px-3 py-2 @container",
+        // THREE COLUMNS, the middle sized to the rail and the sides sharing what is left,
+        // so the rail sits on the bar's centre line whenever both sides fit (a side that
+        // needs more takes it, and the rail shifts only then). Below 640px the rail drops
+        // to a second row across both columns. Vertical padding is 4px: the solid bar
+        // is exactly the dock header's 56px (`chat/chat-header.tsx`, `h-14`), so the two
+        // title bars meet at one rule across the window.
+        "grid grid-cols-[1fr_auto_1fr] items-center gap-x-2 gap-y-0 px-3 py-1 @container @max-[640px]:grid-cols-[1fr_auto]",
         floating
           ? "pointer-events-none absolute inset-x-0 top-0 z-30 min-h-11"
           : "min-h-14 shrink-0 border-b border-line",
@@ -315,10 +345,14 @@ export function TopBar() {
       </div>
 
       {/* CENTER slot: the available-lens projection for the selected generation. It remains
-          present on non-board views with no active segment; choosing one returns to its board. */}
+          present on non-board views with no active segment; choosing one returns to its board.
+          The SLOT drags the window: it is titlebar, and the empty run either side of the rail
+          is the widest grip the bar has. Only the rail itself opts out (`mx-auto`, not
+          `justify-center`, so an overflowing rail scrolls from its left edge instead of
+          clipping it). */}
       <div
         data-slot="lens-switcher"
-        className="app-region-no-drag flex min-w-0 grow items-center overflow-x-auto @max-[640px]:order-3 @max-[640px]:basis-full"
+        className="flex min-w-0 items-center overflow-x-auto @max-[640px]:col-span-2 @max-[640px]:row-start-2"
       >
         <LensSwitcher
           key={`${review?.id ?? slug}:${selectedGeneration}`}
@@ -328,7 +362,10 @@ export function TopBar() {
           selected={query.view === "board" ? effectiveLens : null}
           onSelect={onLens}
           flaggedOpenCount={flaggedOpenCount}
-          className={cn("shrink-0", floating && cn("pointer-events-auto", chip))}
+          className={cn(
+            "app-region-no-drag mx-auto shrink-0",
+            floating && cn("pointer-events-auto", chip),
+          )}
         />
       </div>
 
@@ -340,7 +377,9 @@ export function TopBar() {
           context, not by direct-child position, so nesting keeps arrow keys. */}
       <div
         className={cn(
-          "app-region-no-drag ml-auto flex min-w-0 items-center justify-end overflow-x-auto",
+          // No `min-w-0` here: the pills are the column's floor, so the rail's centring
+          // gives way before the pills are squeezed.
+          "app-region-no-drag flex items-center justify-end justify-self-end",
           floating && "pointer-events-auto",
         )}
       >
@@ -353,6 +392,7 @@ export function TopBar() {
           {historyEntry ? (
             <PillToggle
               entry={historyEntry}
+              chatOpen={chatOpen}
               className={cn("border border-border bg-card", floating && chip)}
             />
           ) : null}
@@ -369,6 +409,7 @@ export function TopBar() {
                     of the group. */}
                 <PillToggle
                   entry={entry}
+                  chatOpen={chatOpen}
                   className={index > 0 ? "rounded-l-none pl-2" : "rounded-r-none pr-2"}
                 />
               </Fragment>

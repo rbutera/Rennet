@@ -278,6 +278,7 @@ export function LensSwitcher({
             inspected={inspected}
             setInspected={setInspected}
             tab={tab}
+            onSelect={onSelect}
           />
         );
       })}

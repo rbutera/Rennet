@@ -221,9 +221,11 @@ function explicitDesignRole(element: HostElement): string | undefined {
   return typeof role === "string" ? normalizedLabel(role) : undefined;
 }
 
-function rowTag(element: HostElement): string {
+/** A change row's tag, when its author gave it one. An element id is not a tag: printing
+ *  it labelled every host-transcribed row with a string no reader can use. */
+function rowTag(element: HostElement): string | undefined {
   const tag = element.data.tag;
-  return typeof tag === "string" && tag.length > 0 ? tag : element.id;
+  return typeof tag === "string" && tag.length > 0 ? tag : undefined;
 }
 
 function ProposalSpine({
@@ -260,9 +262,11 @@ function ProposalSpine({
                 data-kind="design-change-row"
                 className="flex items-baseline gap-2.5 py-1.5"
               >
-                <span className="shrink-0 rounded border border-line px-1.5 py-0.5 font-mono text-2xs text-muted-foreground">
-                  {rowTag(element)}
-                </span>
+                {rowTag(element) !== undefined ? (
+                  <span className="shrink-0 rounded border border-line px-1.5 py-0.5 font-mono text-2xs text-muted-foreground">
+                    {rowTag(element)}
+                  </span>
+                ) : null}
                 <div className="min-w-0 flex-1">
                   <BoardElement element={element} />
                 </div>
@@ -511,13 +515,16 @@ export function DesignSectionBody({ section }: { readonly section: SectionElemen
     <>
       <DesignSectionMetadata taskManifest={section.data.task_manifest} />
       {taskGroups.length > 0 ? <TaskProgress groups={taskGroups} /> : null}
-      <BoardChildren ids={remaining} />
+      {/* The spine first: What Changes and Impact are the proposal's opening statement, and
+          whatever else it says (a Capabilities roll, an out-of-scope note) follows them in
+          the file, so it follows them here. */}
       <ProposalSpine
         changes={changes}
         impact={impact}
         whatChangesSource={whatChangesSection}
         impactSource={impactSection}
       />
+      <BoardChildren ids={remaining} />
     </>
   );
 }

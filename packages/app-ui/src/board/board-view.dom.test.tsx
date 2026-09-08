@@ -4,7 +4,7 @@ import { useState } from "react";
 import { beforeEach, describe, expect, it } from "vitest";
 import { BridgeProvider } from "../data";
 import { useRennetStore } from "../store";
-import { mount, waitFor } from "../test/dom";
+import { act, mount, waitFor } from "../test/dom";
 import { fixtureBoardRead } from "../test/fixtures/boards";
 import { MemoryBridge } from "../test/memory-bridge";
 import { useLensBoards } from "./board-data";
@@ -369,5 +369,38 @@ describe("LensBoardView — board document, switchers, drill-down", () => {
     expect(lensOf(container)).toBe("design");
     // Remounted, so the reused-ref section is folded again — not gen1's expanded state.
     expect(changeSection()?.getAttribute("data-open")).toBe("false");
+  });
+});
+
+describe("the seat transcript and the selected lens", () => {
+  const sequenceTranscript = {
+    reviewId: "rev-1",
+    lens: "sequence" as const,
+    seat: "lens:sequence",
+    thread: { environmentId: "env-1", threadId: "thread-seq" },
+  };
+
+  it("keeps a transcript opened for another lens while the board stays on Design", async () => {
+    // The Design board's host-built seat has no thread. Opening the Sequence seat's
+    // transcript from its tab stamps `lens: sequence` on the drawer while the board is
+    // still on Design; the follow effect must NOT read that as a lens change and shut it.
+    const view = await renderView("gen1", GENERATIONS, "design");
+    act(() => {
+      useRennetStore.getState().uiActions.openSeatTranscript(sequenceTranscript);
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(useRennetStore.getState().ui.seatTranscript).toEqual(sequenceTranscript);
+    view.unmount();
+  });
+
+  it("closes the transcript when the reviewer moves to a lens whose seat has no thread", async () => {
+    // The control for the guard above: the effect still acts on a real lens change.
+    const view = await renderView("gen1", GENERATIONS, "sequence");
+    act(() => {
+      useRennetStore.getState().uiActions.openSeatTranscript(sequenceTranscript);
+    });
+    await view.user.click(view.getByRole("tab", { name: /^Flagged/ }));
+    await waitFor(() => expect(useRennetStore.getState().ui.seatTranscript).toBeNull());
+    view.unmount();
   });
 });
