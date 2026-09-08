@@ -198,9 +198,11 @@ module.exports = {
         // RunAsNode is ENABLED (#379, design D4): the detached daemon runs the Electron
         // binary as Node via ELECTRON_RUN_AS_NODE, which this fuse gates. The daemon IS the
         // product's capability — Rule Zero forbids trading it away for hardening. The other
-        // fuses (OnlyLoadAppFromAsar, cookie encryption, etc.) stay locked down.
+        // fuses (OnlyLoadAppFromAsar, etc.) stay locked down.
         [FuseV1Options.RunAsNode]: true,
-        [FuseV1Options.EnableCookieEncryption]: true,
+        // macOS cookie encryption opens Keychain even without safeStorage calls. Auth is
+        // daemon/bearer-owned; main archives the old cookie store before opening a session.
+        [FuseV1Options.EnableCookieEncryption]: platform !== "darwin",
         [FuseV1Options.EnableNodeOptionsEnvironmentVariable]: false,
         [FuseV1Options.EnableNodeCliInspectArguments]: false,
         [FuseV1Options.EnableEmbeddedAsarIntegrityValidation]: true,

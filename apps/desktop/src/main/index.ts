@@ -26,6 +26,7 @@ import {
   startAutoUpdateOnce,
 } from "./auto-update";
 import { buildContextMenuTemplate } from "./context-menu";
+import { archiveEncryptedCookies } from "./cookie-store";
 import {
   ensureDaemon,
   ensureDaemonForProject,
@@ -356,6 +357,10 @@ const isPrimaryInstance = acquireSingleInstance({
   quit: () => app.quit(),
   onPrimary: () => app.on("second-instance", () => void ensureWindowShared()),
 });
+
+if (isPrimaryInstance && process.platform === "darwin") {
+  archiveEncryptedCookies(app.getPath("sessionData"));
+}
 
 /** Tray "Quit completely": stop the OWNED daemon (graceful), then exit. No prompt (spec). */
 async function quitCompletely(dataDir: string): Promise<void> {
