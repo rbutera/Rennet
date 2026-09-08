@@ -1,4 +1,5 @@
 import { type CodeRef, type CommandOutput, isTestPath } from "@rennet/protocol";
+import { Popover, PopoverContent, PopoverTrigger } from "@rennet/ui";
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { HUNK_HEADER_RE } from "../canvas/registrar";
 import { useCommand } from "../data";
@@ -118,8 +119,9 @@ export function EvidenceBlock({ citation, initial }: { citation: CodeRef; initia
     setDestination(citation);
     setContext(origin.current.context);
   };
+  // The same face as the card's own Copy control: these sit beside it in the header.
   const control =
-    "rounded px-2 py-1 text-xs text-muted-foreground hover:bg-secondary hover:text-foreground focus-visible:outline-ring";
+    "rounded-md px-1.5 py-1 text-2xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground focus-visible:outline-ring";
   const open = (path: string) => {
     if (path === citation.path && navigating) {
       back();
@@ -145,65 +147,75 @@ export function EvidenceBlock({ citation, initial }: { citation: CodeRef; initia
     () => (data ? evidenceRows(data, destination, context) : []),
     [data, destination, context],
   );
-  return (
-    <div ref={container} className="flex flex-col gap-1.5" data-evidence-path={destination.path}>
-      <div className="flex flex-wrap items-center gap-1">
-        {navigating && (
-          <button type="button" className={control} onClick={back}>
-            Back to review
-          </button>
-        )}
-        {counterparts.length === 1 && (
+  // The evidence controls live on the code card's header (Rai, 2026-09-08): expand, full
+  // file, the counterpart jump and Back act on the card, so they sit on it. While there is
+  // no card to carry them (loading, refused, outside the source) they stand on their own
+  // line, because Back must stay reachable from a failed navigation.
+  const actions = (
+    <>
+      {navigating && (
+        <button type="button" className={control} onClick={back}>
+          Back to review
+        </button>
+      )}
+      {counterparts.length === 1 && (
+        <button
+          type="button"
+          className={control}
+          onClick={() => {
+            const path = counterparts[0];
+            if (path) open(path);
+          }}
+        >
+          {atTest ? "View implementation" : "View test"}
+        </button>
+      )}
+      {counterparts.length > 1 && (
+        <Popover>
+          <PopoverTrigger render={<button type="button" className={control} />}>
+            {atTest ? "View implementation" : "View tests"}
+          </PopoverTrigger>
+          <PopoverContent align="end" className="w-auto min-w-64 max-w-md p-1">
+            {counterparts.map((path) => (
+              <button
+                type="button"
+                className={`${control} text-left`}
+                key={path}
+                onClick={() => open(path)}
+              >
+                {path}
+              </button>
+            ))}
+          </PopoverContent>
+        </Popover>
+      )}
+      {context !== "all" && (
+        <>
           <button
             type="button"
             className={control}
-            onClick={() => {
-              const path = counterparts[0];
-              if (path) open(path);
-            }}
+            onClick={() =>
+              setContext((current) => (typeof current === "number" ? current + 20 : current))
+            }
           >
-            {atTest ? "View implementation" : "View test"}
+            Expand context
           </button>
-        )}
-        {counterparts.length > 1 && (
-          <details className="relative">
-            <summary className={control}>{atTest ? "View implementation" : "View tests"}</summary>
-            <div className="absolute z-20 flex min-w-64 flex-col rounded border border-border bg-popover p-1 shadow-overlay">
-              {counterparts.map((path) => (
-                <button
-                  type="button"
-                  className={`${control} text-left`}
-                  key={path}
-                  onClick={() => open(path)}
-                >
-                  {path}
-                </button>
-              ))}
-            </div>
-          </details>
-        )}
-        {context !== "all" && (
-          <>
-            <button
-              type="button"
-              className={control}
-              onClick={() =>
-                setContext((current) => (typeof current === "number" ? current + 20 : current))
-              }
-            >
-              Expand context
-            </button>
-            <button type="button" className={control} onClick={() => setContext("all")}>
-              Full file
-            </button>
-          </>
-        )}
-        {context === "all" && !navigating && (
-          <button type="button" className={control} onClick={() => setContext(0)}>
-            Cited hunks
+          <button type="button" className={control} onClick={() => setContext("all")}>
+            Full file
           </button>
-        )}
-      </div>
+        </>
+      )}
+      {context === "all" && !navigating && (
+        <button type="button" className={control} onClick={() => setContext(0)}>
+          Cited hunks
+        </button>
+      )}
+    </>
+  );
+  const hasCard = data !== undefined && rows.length > 0;
+  return (
+    <div ref={container} className="flex flex-col gap-1.5" data-evidence-path={destination.path}>
+      {!hasCard && <div className="flex flex-wrap items-center gap-1">{actions}</div>}
       {error !== undefined && (
         <p className="text-xs text-muted-foreground">
           {error instanceof Error ? error.message : "The reviewed source could not be read."}
@@ -232,6 +244,7 @@ export function EvidenceBlock({ citation, initial }: { citation: CodeRef; initia
           previousPath={data.previousPath}
           patchsetId={destination.patchsetId}
           counterpart={null}
+          headerActions={actions}
         />
       )}
     </div>

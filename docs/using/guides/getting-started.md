@@ -154,11 +154,21 @@ available. Until that first read answers, the list says it is **scanning** — a
 project on a network mount can take minutes, and an empty list mid-scan is not the
 same claim as a project with nothing open. The filters (attention, ownership,
 local branches, pull requests) sit in a rail beside the list on a wide canvas
-and fold into a row above it on a narrow one. **Created** and **Activity** are
-sortable column headers. **Show merged PRs** adds faded historical rows to the
-same list; the open rows stay on screen while the merged pages load, with a line
-in the list saying so, because a repository with history takes several seconds
-to page through.
+and fold into a row above it on a narrow one. Above the list, the search box
+takes the width; beside it sit the facets and **Refresh**. A facet (**Author**,
+**CI**, **Repository**) is a multi-select over that column's values, drawn only
+when the list holds more than one, so a single-author project shows no author
+facet and a single-repository workspace shows no repository facet. **Author**,
+**Lines**, **Files**, **Created**, and **Activity** are sortable column headers;
+the sorted one carries its arrow. The rail, the facets, the search, and the sort
+compose into one list, and when any of them narrows it a line under the table
+says how many of the rows are showing, with **Clear filters** beside it.
+**Refresh** re-reads the project's branches and pull requests in the background;
+the rows stay on screen while it runs, and the button spins until the read
+answers. **Show merged PRs** adds faded historical rows to the same list; the
+open rows stay on screen while the merged pages load, with a line in the list
+saying so, because a repository with history takes several seconds to page
+through.
 
 Every row carries the same columns, whether it is a pull request or a local
 branch: the author with their forge avatar (your local branches wear your own),
@@ -167,8 +177,9 @@ files touched, and when the change was created. A pull request's numbers come
 from the forge. A local branch's are measured on your machine: its committed
 diff against the project's primary branch, and the date of its first commit past
 it. A branch that is not ahead of the primary branch has nothing to review yet,
-so those cells read "—" rather than zero. A checked-out worktree also says
-**clean** or **dirty** beside its name; a bare branch with no checkout says
+so those cells read "—" rather than zero. A local branch also shows how many
+commits it is ahead of and behind the primary branch. A checked-out worktree
+says **clean** or **dirty** beside its name; a bare branch with no checkout says
 nothing about it, because there is nothing to measure. Uncommitted edits are not
 counted in the lines; **dirty** is how the list says they exist. GitLab does not
 report line counts in its merge-request list, so GitLab rows show "—" there.
@@ -338,16 +349,25 @@ so you take the previews first and open what you want to read.
 Folded counts name review objects: findings, decisions, requirements, steps,
 outcomes, groups, files, and comments.
 
+Flagged is the one board whose sections do not fold. Each section is a heading
+over its findings, and each finding is its own fold: severity, the claim, and the
+concurrence pill read at a glance, and the row opens to the scenario, the fix, and
+the cited code. A title on any board renders code names in backticks as code and
+never shows markdown emphasis marks.
+
 Code is cited, never copied. A code block card carries the file path and the
 exact line range and hydrates the real lines from the captured patchset, so
-numbering cannot drift from the code under review. When that path belongs to the
-active captured patchset, clicking it opens Diff on the file and preserves the
-other session query state. A code card adds **View test** or **View
+numbering cannot drift from the code under review. Long lines wrap inside the
+card rather than scrolling sideways. When that path belongs to the active
+captured patchset, clicking it opens Diff on the file and preserves the other
+session query state. The card's header carries its controls: **Expand context**
+widens the excerpt, **Full file** shows the whole reviewed file and **Cited
+hunks** returns to the excerpt, and the card adds **View test** or **View
 implementation** when the reviewed tree relates the two files, by import or by
-name; an unchanged test opens inline from the reviewed revision, and several
-matches offer a chooser. In prose, a `path:line`
-citation is a chip: click it and the real lines unfold below the paragraph;
-click again and they fold away.
+name; an unchanged test opens inline from the reviewed revision with **Back to
+review** in the same header, and several matches offer a chooser. In prose, a
+`path:line` citation is a chip: click it and the real lines unfold below the
+paragraph; click again and they fold away.
 
 Click an identifier in the current diff or a code card to inspect its definition
 and references. Tab enters the code region; arrow keys move between identifiers,

@@ -124,6 +124,26 @@ function previewTree(children: string[], content: HostElement[]) {
   );
 }
 
+describe("Section without a fold", () => {
+  it("stands open with no toggle and no preview, and still names its title and counts", () => {
+    const elements: HostElement[] = [
+      { id: "root", kind: "section", data: { author, title: "Findings", children: ["intro"] } },
+      { id: "intro", kind: "prose", data: { author, markdown: "The one row." } },
+    ];
+    const view = mount(
+      <BoardElementsProvider elements={elements} boardId="flat-board">
+        <Section entry={previewEntry} foldable={false} />
+      </BoardElementsProvider>,
+    );
+    const section = view.container.querySelector("[data-kind=board-section]");
+    expect(section?.getAttribute("data-open")).toBe("true");
+    expect(section?.querySelector("button[aria-expanded]")).toBeNull();
+    expect(view.queryByRole("list", { name: "Findings contents" })).toBeNull();
+    expect(view.getByRole("heading", { level: 2 }).textContent).toContain("Findings");
+    expect(view.getByText("The one row.")).toBeTruthy();
+  });
+});
+
 describe("Section content previews", () => {
   it("lists nested headings and titled children in document order, then opens and focuses the chosen child", async () => {
     const scroll = vi

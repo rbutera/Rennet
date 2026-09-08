@@ -149,14 +149,12 @@ describe("LensBoardView — board document, switchers, drill-down", () => {
 
   it("uses h3 card titles and h4 in-card detail headings", async () => {
     const { container, user } = await renderView("gen1", GENERATIONS, "flagged");
-    // Both folds are closed on arrival now, and a closed `Collapse` mounts no children, so
-    // the headings are asserted along the reader's actual path: open the section, then open
-    // the finding. Skip either click and the query finds nothing, which is the whole point.
-    const section = container.querySelector<HTMLButtonElement>(
-      "[data-kind=board-section] button[aria-expanded]",
-    );
-    if (!section) throw new Error("no section toggle");
-    await user.click(section);
+    // A Flagged section stands open, so its finding rows are in the document from the
+    // first frame; the finding itself is the fold, and a closed `Collapse` mounts no
+    // children, so the h4 is asserted along the reader's path: open the finding.
+    expect(
+      container.querySelector("[data-kind=board-section] h2 button[aria-expanded]"),
+    ).toBeNull();
     const title = container.querySelector<HTMLButtonElement>('[data-kind="finding"] h3 > button');
     expect(title).toBeTruthy();
     if (!title) throw new Error("no finding title button");
@@ -263,21 +261,29 @@ describe("LensBoardView — board document, switchers, drill-down", () => {
     expect(failed?.textContent?.includes(promise)).toBe(saysAnotherAttempt);
   });
 
-  it("folds every section on every lens, Flagged included, and opens one on click", async () => {
+  it("stands every Flagged section open over its finding rows, and folds every other lens", async () => {
     const { container, user } = await renderView("gen1");
-    // Rai, 2026-09-04, retiring R44: the reader arrives at summaries on EVERY lens and
-    // opens what they want. Flagged used to be the exception and is no longer one.
+    // Rai, 2026-09-08: a Flagged section is a heading, not a fold. The folded FINDING
+    // (severity chip, claim, concurrence) is the summary, and a section fold on top of it
+    // hid those rows behind a list of bare titles that said less.
     expect(lensOf(container)).toBe("flagged");
     const flagged = [...container.querySelectorAll("[data-kind=board-section]")];
     expect(flagged.length).toBeGreaterThan(0);
-    expect(flagged.every((s) => s.getAttribute("data-open") === "false")).toBe(true);
-
-    // …and folded is a DEFAULT, not a lock: the first section opens on its own toggle.
-    // Without this the assertion above is satisfied by a section that can never open.
-    const toggle = flagged[0]?.querySelector<HTMLButtonElement>("button[aria-expanded]");
-    if (!toggle) throw new Error("no section toggle");
-    await user.click(toggle);
-    expect(flagged[0]?.getAttribute("data-open")).toBe("true");
+    expect(flagged.every((s) => s.getAttribute("data-open") === "true")).toBe(true);
+    expect(flagged.every((s) => s.querySelector("h2 button[aria-expanded]") === null)).toBe(true);
+    // The rows are there, folded, with their chips — the reading the section fold hid.
+    const findings = [...container.querySelectorAll('[data-kind="finding"]')];
+    expect(findings.length).toBeGreaterThan(0);
+    expect(
+      findings.every(
+        (f) => f.querySelector("button[aria-expanded]")?.getAttribute("aria-expanded") === "false",
+      ),
+    ).toBe(true);
+    expect(container.querySelector('[data-kind="finding-concurrence"]')).toBeTruthy();
+    // No section preview list either: the preview was the summary the rows now give.
+    expect(
+      container.querySelector("[data-kind=board-section] ul[aria-label$=contents]"),
+    ).toBeNull();
 
     const designTab = container.querySelector<HTMLButtonElement>("[data-lens=design]");
     if (!designTab) throw new Error("no design tab");
@@ -286,6 +292,12 @@ describe("LensBoardView — board document, switchers, drill-down", () => {
     const designSections = [...container.querySelectorAll("[data-kind=board-section]")];
     expect(designSections.length).toBeGreaterThan(0);
     expect(designSections.every((s) => s.getAttribute("data-open") === "false")).toBe(true);
+
+    // …and folded is a DEFAULT, not a lock: a Design section opens on its own toggle.
+    const toggle = designSections[0]?.querySelector<HTMLButtonElement>("button[aria-expanded]");
+    if (!toggle) throw new Error("no section toggle");
+    await user.click(toggle);
+    expect(designSections[0]?.getAttribute("data-open")).toBe("true");
   });
 
   it("rolls the section deltas up to a lens pip that clears as the sections are viewed", async () => {
@@ -296,6 +308,7 @@ describe("LensBoardView — board document, switchers, drill-down", () => {
     expect(pip()?.getAttribute("data-delta-count")).toBe("2");
 
     // Interacting with a delta section marks it viewed (store-driven) and drops the count.
+    // Flagged sections have no toggle, so the interaction is a click inside the section.
     await user.click(getByText("Still Open"));
     expect(pip()?.getAttribute("data-delta-count")).toBe("1");
     await user.click(getByText("Beyond the Asks"));

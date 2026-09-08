@@ -7,6 +7,7 @@ import { useFlightBatcher } from "../../handoff/exit-flight";
 import { useAnchoredAsk } from "../../review";
 import { useRennetStore } from "../../store";
 import { findingLifecycle } from "../finding-lifecycle";
+import { HeadingText, stripHeadingMarkup } from "../heading-text";
 import { QuoteHighlightLayer } from "../quote-highlight";
 import type { ElementOf } from "../registry";
 import { BoardAnchorReveal } from "./board-anchor-reveal";
@@ -17,6 +18,11 @@ import { useBoardGeneration, useBoardId, useBoardPatchsetId, useCodeRefs } from 
 // concurrence tally stay visible folded. A durable reviewer disposition overlays the
 // frozen board status without changing its bytes. The inline `**Fix:**` is lifted into
 // a callout when present; every finding keeps its actions even without that optional marker.
+//
+// The first line is the HEADER (`prompts/flagged.md`: "First line: the claim"), so it
+// renders as a heading — backticks as code, any `**bold**` a seat wrapped it in
+// unwrapped — and the body below it starts at the second paragraph, because a claim
+// printed in the header and again as the body's first line is the same sentence twice.
 
 const SEVERITY_CHIP: Record<"high" | "medium" | "low", string> = {
   high: "bg-destructive/15 text-destructive",
@@ -29,6 +35,20 @@ function splitFix(concern: string): { body: string; fix: string | null } {
   const [body = concern, ...rest] = concern.split(/\*\*Fix:\*\*/);
   if (rest.length === 0) return { body: concern.trim(), fix: null };
   return { body: body.trim(), fix: rest.join("**Fix:**").trim() };
+}
+
+/**
+ * The claim line and what follows it. A concern written to the prompt's shape — one
+ * claim line, a blank line, the scenario — splits there. A concern that is one paragraph
+ * (older boards, a seat that ignored the shape) keeps its whole text as the body, since
+ * the header can only show its first line and the rest would otherwise vanish.
+ */
+export function splitClaim(body: string): { claim: string; detail: string } {
+  const [firstLine = ""] = body.split("\n");
+  const claim = stripHeadingMarkup(firstLine);
+  const match = /^[^\n]*\n[ \t]*\n+([\s\S]*)$/.exec(body);
+  if (match === null) return { claim, detail: body };
+  return { claim, detail: (match[1] ?? "").trim() };
 }
 
 /** What the pill can actually claim, once the tallies AND the accord stamp are in. */
@@ -122,7 +142,7 @@ export function FindingElement({ element }: { readonly element: ElementOf<"findi
 
   const { body, fix } = splitFix(concern);
   const actionText = fix ?? body;
-  const summary = body.split("\n")[0];
+  const { claim: summary, detail } = splitClaim(body);
   const lifecycle = findingLifecycle(element, generation, boardId, {
     stagedAsks,
     findingDispositions,
@@ -198,7 +218,7 @@ export function FindingElement({ element }: { readonly element: ElementOf<"findi
             {severity}
           </span>
           <span className="min-w-0 flex-1 font-semibold text-base text-foreground leading-snug">
-            {summary}
+            <HeadingText text={summary} />
             {status !== "open" && <span className="sr-only">, {status}</span>}
           </span>
           <Concurrence tallies={concurrence} accord={accord} />
@@ -206,12 +226,14 @@ export function FindingElement({ element }: { readonly element: ElementOf<"findi
       </h3>
       <Collapse open={open}>
         <div className="flex flex-col gap-2 pt-1 pl-5">
-          <QuoteHighlightLayer
-            text={body}
-            elementId={element.id}
-            patchsetId={patchsetId}
-            paragraphClassName="text-foreground/90 text-sm leading-relaxed"
-          />
+          {detail.length > 0 && (
+            <QuoteHighlightLayer
+              text={detail}
+              elementId={element.id}
+              patchsetId={patchsetId}
+              paragraphClassName="text-foreground/90 text-sm leading-relaxed"
+            />
+          )}
           <div
             className={cn(
               "flex flex-col gap-1.5",

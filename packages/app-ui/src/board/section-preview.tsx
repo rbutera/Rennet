@@ -1,5 +1,5 @@
 import type { HostElement } from "@rennet/protocol";
-import { Fragment } from "react";
+import { HeadingText, stripHeadingMarkup } from "./heading-text";
 import type { ElementOf } from "./registry";
 
 export interface SectionPreviewEntry {
@@ -42,8 +42,10 @@ function elementHeading(element: HostElement): string | undefined {
       return decisionHeading(element.data);
     case "requirement":
       return element.data.name;
-    case "finding":
-      return element.data.concern.split(/\n/)[0]?.replace(/^#{1,6}\s+/, "");
+    case "finding": {
+      const first = element.data.concern.split(/\n/)[0];
+      return first === undefined ? undefined : stripHeadingMarkup(first);
+    }
     default:
       return undefined;
   }
@@ -127,24 +129,7 @@ export function sectionPreview(
   return { kind: "empty" };
 }
 
-/** Preview labels keep inline code readable without embedding citation buttons in a link. */
+/** Preview labels are headings: inline code stays readable, emphasis is unwrapped. */
 export function PreviewText({ text }: { readonly text: string }) {
-  return [...text.matchAll(/`[^`]+`|\*\*[^*]+\*\*|[^`*]+|[`*]/g)].map((match) => {
-    const part = match[0];
-    if (part.startsWith("`") && part.endsWith("`")) {
-      return (
-        <code key={match.index} className="font-mono text-inherit">
-          {part.slice(1, -1)}
-        </code>
-      );
-    }
-    if (part.startsWith("**") && part.endsWith("**")) {
-      return (
-        <strong key={match.index} className="font-medium">
-          <PreviewText text={part.slice(2, -2)} />
-        </strong>
-      );
-    }
-    return <Fragment key={match.index}>{part}</Fragment>;
-  });
+  return <HeadingText text={text} />;
 }

@@ -288,19 +288,25 @@ describe("board E2E — the full fixture set through the real LensBoardView", ()
     if (wrongGen.status === "invalid") expect(wrongGen.reason).toBe("identity");
   });
 
-  it("folds: EVERY lens folds every section to its gist + counts, Flagged included", async () => {
+  it("folds: every lens but Flagged folds every section to its gist + counts; Flagged stands open over folded findings", async () => {
     const { container, user } = await renderView("gen1");
-    // Rai, 2026-09-04, retiring R44's Flagged exception: every lens opens on summaries.
+    // Rai, 2026-09-08: Flagged sections are headings over finding rows. The FINDING is the
+    // fold there — its chip, claim and concurrence are the summary — so the rows are in
+    // the document from the first frame, each one closed.
     expect(lensOf(container)).toBe("flagged");
     expect(
       [...container.querySelectorAll("[data-kind=board-section]")].every(
-        (s) => s.getAttribute("data-open") === "false",
+        (s) => s.getAttribute("data-open") === "true",
       ),
     ).toBe(true);
-    // Folded means GONE on Flagged too — no finding body is mounted until one is opened.
-    expect(kindsIn(container).has("finding")).toBe(false);
-    await unfoldAll(container, user);
     expect(kindsIn(container).has("finding")).toBe(true);
+    expect(
+      [...container.querySelectorAll('[data-kind="finding"] button[aria-expanded]')].every(
+        (b) => b.getAttribute("aria-expanded") === "false",
+      ),
+    ).toBe(true);
+    // Folded finding means GONE body: no Fix callout is mounted until a row is opened.
+    expect(container.querySelector('[data-kind="finding"] h4')).toBeNull();
 
     const design = container.querySelector<HTMLButtonElement>("[data-lens=design]");
     if (!design) throw new Error("no design tab");
@@ -317,15 +323,14 @@ describe("board E2E — the full fixture set through the real LensBoardView", ()
     expect(kindsIn(container).has("requirement")).toBe(true);
   });
 
-  it("delta marks: gen2 Flagged folds its delta sections under a gold dot that clears on interaction", async () => {
+  it("delta marks: gen2 Flagged marks its delta sections with a gold dot that clears on interaction", async () => {
     const { container, getByText, user } = await renderView("gen2");
     expect(lensOf(container)).toBe("flagged");
     const deltaSections = container.querySelectorAll("[data-kind=board-section][data-delta]");
     expect(deltaSections.length).toBeGreaterThan(0);
-    // A delta section used to be the one thing that opened itself. It no longer is (Rai,
-    // 2026-09-04) — the DOT is what marks it new, and the dot is the part that had to
-    // survive the change, so it is asserted on the folded card.
-    expect([...deltaSections].every((s) => s.getAttribute("data-open") === "false")).toBe(true);
+    // The DOT is what marks a section new (Rai, 2026-09-04), and it survives the section
+    // losing its fold (2026-09-08): a Flagged section stands open and still wears it.
+    expect([...deltaSections].every((s) => s.getAttribute("data-open") === "true")).toBe(true);
     expect(container.querySelectorAll('[data-testid="delta-dot"]').length).toBe(
       deltaSections.length,
     );

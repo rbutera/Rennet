@@ -1,40 +1,42 @@
-import type { ProjectDetail, SmartListCi } from "@rennet/protocol";
-import { cn, Switch, Toggle, ToggleGroup } from "@rennet/ui";
+import type { ProjectDetail } from "@rennet/protocol";
+import { Button, cn, Kbd, Switch, Toggle, ToggleGroup } from "@rennet/ui";
 import {
-  ArrowDown,
   ArrowLeft,
-  ArrowUp,
-  Check,
   ChevronRight,
-  CircleCheck,
   CircleDashed,
-  CircleX,
-  GitBranch,
-  GitMerge,
-  GitPullRequest,
-  GitPullRequestArrow,
+  RefreshCw,
   Search,
   TriangleAlert,
+  X,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useLocation } from "wouter";
 import { useCoachAnchor } from "../coach/registry";
-import { Avatar } from "../components/avatar";
 import { Icon } from "../components/icon";
-import { useCommand } from "../data";
+import { useCommand, useRefreshCommand } from "../data";
 import { newChatPath } from "../routes/url";
 import { usePriorSurface } from "../settings/prior-surface";
 import { ProjectPicker } from "../settings/projects/project-picker";
 import { useSidebarTree } from "../shell/sidebar-data";
 import { hideClaimedRows, useClaimedTargets, useNewChatMint } from "./new-chat-mint";
 import {
-  buildSmartRows,
-  filterSmartRows,
-  type SmartFilter,
-  type SmartRow,
-  smartListCounts,
-  sortSmartRows,
-} from "./smart-list";
+  type ChangeFilters,
+  type ChangeSorting,
+  ChangeTable,
+  CI_LABELS,
+  ciOf,
+  DEFAULT_SORTING,
+  FacetFilter,
+  facetOptions,
+  facetValue,
+  forgeLabel,
+  repoOf,
+  scopeOf,
+  useChangeTable,
+  withFacet,
+  withScope,
+} from "./new-chat-table";
+import { buildSmartRows, type SmartFilter, smartListCounts } from "./smart-list";
 
 const FILTERS: readonly { readonly filter: SmartFilter; readonly label: string }[] = [
   { filter: "all", label: "All changes" },
@@ -43,68 +45,15 @@ const FILTERS: readonly { readonly filter: SmartFilter; readonly label: string }
   { filter: "local", label: "Local branches" },
   { filter: "prs", label: "Pull requests" },
 ];
-type SortKey = "created" | "recent";
-type SortDirection = "asc" | "desc";
 
-function repoOf(row: SmartRow): string {
-  return row.kind === "pr" ? (row.pr?.repository ?? "") : (row.local?.repository ?? "");
-}
-function forgeOf(row: SmartRow): string | undefined {
-  return row.kind === "pr" ? row.pr?.forgeRepository?.forge : row.local?.forgeRepository?.forge;
-}
-function forgeLabel(forge: string): string {
-  if (forge === "github") return "GitHub";
-  if (forge === "gitlab") return "GitLab";
-  if (forge === "bitbucket") return "Bitbucket";
-  return forge;
-}
-function requestPrefix(forge: string | undefined): "#" | "!" {
-  return forge === "gitlab" ? "!" : "#";
-}
-function repositoriesNeedingForge(rows: readonly SmartRow[]): ReadonlySet<string> {
-  const forgesByRepository = new Map<string, Set<string>>();
-  for (const row of rows) {
-    const forge = forgeOf(row);
-    if (!forge) continue;
-    const repository = repoOf(row);
-    const forges = forgesByRepository.get(repository) ?? new Set<string>();
-    forges.add(forge);
-    forgesByRepository.set(repository, forges);
-  }
-  return new Set(
-    [...forgesByRepository]
-      .filter(([, forges]) => forges.size > 1)
-      .map(([repository]) => repository),
+/** An Escape that a popup (a menu, the project picker) is already answering is not ours. */
+function insidePopup(target: EventTarget | null): boolean {
+  return (
+    target instanceof Element &&
+    target.closest(
+      '[role="menu"], [role="dialog"], [role="listbox"], [data-slot="popover-content"]',
+    ) !== null
   );
-}
-function matchesText(row: SmartRow, needle: string, ambiguous: ReadonlySet<string>): boolean {
-  if (!needle) return true;
-  const repository = repoOf(row);
-  const forge = forgeOf(row);
-  const qualified =
-    forge && ambiguous.has(repository) ? `${forgeLabel(forge)} ${repository}` : repository;
-  const haystack =
-    row.kind === "pr"
-      ? `${requestPrefix(forge)}${row.pr?.number} ${row.title} ${row.branch} ${qualified} ${row.author}`
-      : `${row.branch} ${qualified} ${row.author}`;
-  return haystack.toLowerCase().includes(needle);
-}
-function formatDate(value: string | undefined): string {
-  if (!value) return "—";
-  return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(
-    new Date(value),
-  );
-}
-function formatActivity(value: string): string {
-  const elapsed = Math.max(0, Date.now() - new Date(value).getTime());
-  const minute = 60_000;
-  const hour = 60 * minute;
-  const day = 24 * hour;
-  if (elapsed < minute) return "now";
-  if (elapsed < hour) return `${Math.floor(elapsed / minute)}m`;
-  if (elapsed < day) return `${Math.floor(elapsed / hour)}h`;
-  if (elapsed < day * 2) return "Yesterday";
-  return formatDate(value);
 }
 
 export function NewChatView({ projectId }: { readonly projectId: string }) {
@@ -113,17 +62,18 @@ export function NewChatView({ projectId }: { readonly projectId: string }) {
   const { data: projectsData } = useCommand("projects.list", {});
   const project = projectsData?.projects.find((candidate) => candidate.id === projectId);
   const { hosts } = useSidebarTree();
-  const [activeFilter, setActiveFilter] = useState<SmartFilter>("all");
   const [query, setQuery] = useState("");
   const [showMerged, setShowMerged] = useState(false);
-  const [sortKey, setSortKey] = useState<SortKey>("recent");
-  const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
+  const [sorting, setSorting] = useState<ChangeSorting>(DEFAULT_SORTING);
+  const [columnFilters, setColumnFilters] = useState<ChangeFilters>([]);
   const [starting, setStarting] = useState<string | null>(null);
   const mint = useNewChatMint(projectId);
   const claimed = useClaimedTargets(projectId);
+  const refresh = useRefreshCommand("project.detail");
   const {
     data: fetched,
     pending,
+    fetching,
     error,
   } = useCommand("project.detail", {
     projectId,
@@ -154,7 +104,8 @@ export function NewChatView({ projectId }: { readonly projectId: string }) {
   }, [mint.pending]);
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") navigate(priorSurface());
+      if (event.key !== "Escape" || event.defaultPrevented || insidePopup(event.target)) return;
+      navigate(priorSurface());
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
@@ -165,33 +116,36 @@ export function NewChatView({ projectId }: { readonly projectId: string }) {
     const visibleDetail = showMerged
       ? detail
       : { ...detail, prs: detail.prs.filter((pr) => pr.state !== "merged") };
-    const sorted = sortSmartRows(buildSmartRows(visibleDetail), sortKey);
-    if (sortDirection === "desc") return sorted;
-    if (sortKey === "recent") return sorted.reverse();
-    return sorted.sort((a, b) => {
-      const aCreated = a.createdAt;
-      const bCreated = b.createdAt;
-      if (aCreated === undefined && bCreated === undefined)
-        return a.lastActivityAt.localeCompare(b.lastActivityAt);
-      if (aCreated === undefined) return 1;
-      if (bCreated === undefined) return -1;
-      return aCreated.localeCompare(bCreated);
-    });
-  }, [detail, showMerged, sortDirection, sortKey]);
+    return buildSmartRows(visibleDetail);
+  }, [detail, showMerged]);
   const unclaimed = useMemo(() => hideClaimedRows(rows, claimed), [claimed, rows]);
   const counts = useMemo(() => smartListCounts(unclaimed), [unclaimed]);
-  const ambiguousRepositories = repositoriesNeedingForge(unclaimed);
-  const visible = filterSmartRows(unclaimed, activeFilter).filter((row) =>
-    matchesText(row, query.trim().toLowerCase(), ambiguousRepositories),
+  // The facets offer what the rows actually hold, counted before any filter applies, so
+  // a reviewer can see what else is there from inside a narrowed list.
+  const authorOptions = useMemo(() => facetOptions(unclaimed, (row) => row.author), [unclaimed]);
+  const ciOptions = useMemo(
+    () => facetOptions(unclaimed, ciOf, (value) => CI_LABELS[value as keyof typeof CI_LABELS]),
+    [unclaimed],
   );
-  const smartListRef = useCoachAnchor("smart-list");
-  const chooseSort = (next: SortKey) => {
-    if (sortKey === next) setSortDirection((current) => (current === "desc" ? "asc" : "desc"));
-    else {
-      setSortKey(next);
-      setSortDirection("desc");
-    }
+  const repoOptions = useMemo(() => facetOptions(unclaimed, repoOf), [unclaimed]);
+
+  const table = useChangeTable({
+    rows: unclaimed,
+    sorting,
+    onSortingChange: setSorting,
+    columnFilters,
+    onColumnFiltersChange: setColumnFilters,
+    query,
+    startingId: mint.pending ? starting : null,
+  });
+  const activeFilter = scopeOf(columnFilters);
+  const shown = table.getRowModel().rows.length;
+  const narrowed = shown !== unclaimed.length;
+  const clearFilters = () => {
+    setColumnFilters([]);
+    setQuery("");
   };
+  const smartListRef = useCoachAnchor("smart-list");
 
   return (
     <section
@@ -212,9 +166,7 @@ export function NewChatView({ projectId }: { readonly projectId: string }) {
           <Icon icon={ChevronRight} className="size-2.5 shrink-0 text-muted-foreground/50" />
           <span className="font-medium text-ink">New Chat</span>
         </span>
-        <kbd className="ml-auto rounded border border-line px-1 py-0.5 text-10 text-ink-faint">
-          esc
-        </kbd>
+        <Kbd className="ml-auto text-ink-faint">esc</Kbd>
       </header>
       {/* The content region is the measure for every fold below (`@container`): the
           canvas narrows with the sidebar and the chat column, not only with the window. */}
@@ -255,22 +207,71 @@ export function NewChatView({ projectId }: { readonly projectId: string }) {
               </span>
             </p>
           ) : null}
-          <label className="mt-6 flex h-10 items-center gap-2 rounded-lg border border-line bg-card/40 px-3 focus-within:border-accent-line @[48rem]:mt-8">
-            <Icon icon={Search} className="size-4 shrink-0 text-ink-faint" />
-            <input
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Escape" && query) {
-                  event.stopPropagation();
-                  setQuery("");
-                }
-              }}
-              placeholder="Search branches, PRs, authors…"
-              aria-label="Search branches, pull requests, and authors"
-              className="w-full bg-transparent text-sm text-ink placeholder:text-ink-faint focus-visible:outline-none"
-            />
-          </label>
+          {/* The toolbar: the search takes the width; the facets and the refresh sit at
+              its end. Below 48rem the facets wrap under the search. */}
+          <div className="mt-6 flex flex-wrap items-center gap-2 @[48rem]:mt-8">
+            <label className="flex h-9 min-w-0 flex-1 basis-64 items-center gap-2 rounded-lg border border-line bg-card/25 px-3 transition-colors focus-within:border-accent-line">
+              <Icon icon={Search} className="size-4 shrink-0 text-ink-faint" />
+              <input
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Escape" && query) {
+                    event.stopPropagation();
+                    setQuery("");
+                  }
+                }}
+                placeholder="Search branches, PRs, authors…"
+                aria-label="Search branches, pull requests, and authors"
+                className="w-full min-w-0 bg-transparent text-sm text-ink placeholder:text-ink-faint focus-visible:outline-none"
+              />
+              {query ? (
+                <button
+                  type="button"
+                  onClick={() => setQuery("")}
+                  aria-label="Clear search"
+                  className="flex size-5 shrink-0 items-center justify-center rounded-sm text-ink-faint hover:bg-raised hover:text-ink"
+                >
+                  <Icon icon={X} className="size-3.5" />
+                </button>
+              ) : null}
+            </label>
+            <div className="flex items-center gap-2">
+              <FacetFilter
+                label="Author"
+                options={authorOptions}
+                value={facetValue(columnFilters, "author")}
+                onChange={(next) => setColumnFilters(withFacet(columnFilters, "author", next))}
+              />
+              <FacetFilter
+                label="CI"
+                options={ciOptions}
+                value={facetValue(columnFilters, "ci")}
+                onChange={(next) => setColumnFilters(withFacet(columnFilters, "ci", next))}
+              />
+              <FacetFilter
+                label="Repository"
+                options={repoOptions}
+                value={facetValue(columnFilters, "repository")}
+                onChange={(next) => setColumnFilters(withFacet(columnFilters, "repository", next))}
+              />
+              <Button
+                variant="outline"
+                size="lg"
+                onClick={refresh}
+                disabled={fetching}
+                aria-label={fetching ? "Refreshing" : "Refresh branches and pull requests"}
+                data-refresh={fetching ? "refreshing" : "idle"}
+              >
+                <Icon
+                  icon={RefreshCw}
+                  data-icon="inline-start"
+                  className={cn("size-3.5", fetching && "animate-spin motion-reduce:animate-none")}
+                />
+                <span className="hidden @[48rem]:inline">Refresh</span>
+              </Button>
+            </div>
+          </div>
           {/* Below 64rem the rail folds into a row above the table: the filters as a
               tray, the merged switch beside it. */}
           <div className="mt-4 flex min-h-0 flex-col items-stretch gap-3 @[64rem]:flex-row @[64rem]:items-start @[64rem]:gap-4">
@@ -289,17 +290,17 @@ export function NewChatView({ projectId }: { readonly projectId: string }) {
               <ToggleGroup
                 value={[activeFilter]}
                 onValueChange={(next: string[]) => {
-                  if (next[0]) setActiveFilter(next[0] as SmartFilter);
+                  if (next[0]) setColumnFilters(withScope(columnFilters, next[0] as SmartFilter));
                 }}
                 aria-label="Filter review targets"
-                className="flex w-full flex-row flex-wrap items-stretch gap-1 rounded-lg border border-line bg-card/25 p-1.5 @[64rem]:flex-col @[64rem]:gap-0 @[64rem]:rounded-none @[64rem]:border-0 @[64rem]:bg-transparent"
+                className="flex w-full flex-row flex-wrap items-stretch gap-1 rounded-lg border border-line bg-card/25 p-1.5 @[64rem]:flex-col @[64rem]:gap-0.5 @[64rem]:rounded-none @[64rem]:border-0 @[64rem]:bg-transparent @[64rem]:p-2"
               >
                 {FILTERS.map(({ filter, label }) => (
                   <Toggle
                     key={filter}
                     value={filter}
                     size="sm"
-                    className="justify-between gap-2 border-0 px-2.5 @[64rem]:w-full @[64rem]:border-l-2 @[64rem]:border-l-transparent @[64rem]:data-pressed:border-l-accent"
+                    className="justify-between gap-2 px-2.5 @[64rem]:w-full"
                   >
                     <span>{label}</span>
                     <span
@@ -316,43 +317,56 @@ export function NewChatView({ projectId }: { readonly projectId: string }) {
             </aside>
             <div
               ref={smartListRef}
-              className="min-w-0 flex-1 rounded-lg border border-line bg-card/20"
+              aria-busy={fetching || undefined}
+              className="min-w-0 flex-1 overflow-clip rounded-lg border border-line bg-card/25"
             >
-              <ListHeader sortKey={sortKey} sortDirection={sortDirection} onSort={chooseSort} />
               {loadingMerged ? (
                 <p
                   role="status"
                   className="flex items-center gap-2 border-b border-line px-4 py-2 text-12-5 text-ink-faint"
                 >
-                  <Icon icon={CircleDashed} className="size-3.5 animate-spin" />
+                  <Icon
+                    icon={CircleDashed}
+                    className="size-3.5 animate-spin motion-reduce:animate-none"
+                  />
                   loading merged pull requests…
                 </p>
               ) : null}
-              <div className="divide-y divide-border/70">
-                {visible.map((row) => (
-                  <ItemRow
-                    key={row.id}
-                    row={row}
-                    pending={mint.pending}
-                    starting={mint.pending && starting === row.id}
-                    onStart={() => {
-                      setStarting(row.id);
-                      mint.start(row, "");
-                    }}
-                  />
-                ))}
-                {visible.length === 0 ? (
-                  <div className="px-4 py-12 text-center text-12-5 text-ink-faint">
-                    {scanning
-                      ? "scanning this project's branches and change requests…"
-                      : unclaimed.length === 0
-                        ? errorMessage
-                          ? "nothing could be loaded"
-                          : "no open branches or change requests yet"
-                        : "nothing matches"}
-                  </div>
-                ) : null}
-              </div>
+              <ChangeTable
+                table={table}
+                pending={mint.pending}
+                scanning={scanning}
+                onStart={(row) => {
+                  setStarting(row.id);
+                  mint.start(row, "");
+                }}
+                empty={
+                  scanning
+                    ? "scanning this project's branches and change requests…"
+                    : unclaimed.length === 0
+                      ? errorMessage
+                        ? "nothing could be loaded"
+                        : "no open branches or change requests yet"
+                      : "nothing matches"
+                }
+              />
+              {narrowed ? (
+                <p
+                  data-result-count
+                  className="flex items-center justify-between gap-3 border-t border-line px-4 py-2 text-12-5 text-ink-faint tabular-nums"
+                >
+                  <span>
+                    {shown} of {unclaimed.length}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={clearFilters}
+                    className="rounded-sm text-ink-soft underline-offset-4 hover:text-ink hover:underline"
+                  >
+                    Clear filters
+                  </button>
+                </p>
+              ) : null}
             </div>
           </div>
           {mint.error ? (
@@ -364,281 +378,4 @@ export function NewChatView({ projectId }: { readonly projectId: string }) {
       </div>
     </section>
   );
-}
-
-/**
- * The columns, in the order a reviewer picks: the change and its state, who made it,
- * whether CI likes it, how big it is, how old it is, how recently it moved. The list
- * folds from the right as the canvas narrows (`@container` on the content region):
- *   ≥ 72rem   change · author · CI · +/− · files · created · activity
- *   ≥ 54rem   change · author · CI · +/− · activity
- *   below     change · author (face only) · +/− · activity
- * Status is not a column: "Review requested" and "Your PR" sit beside the title, where the
- * gold rail already points, so the badge never lands a screen's width from its change.
- */
-const GRID =
-  "grid items-center gap-3 grid-cols-[minmax(0,1fr)_1.75rem_5.5rem_4.25rem_1.25rem] @[54rem]:grid-cols-[minmax(0,1fr)_7rem_2.5rem_6rem_4.75rem_1.25rem] @[72rem]:grid-cols-[minmax(0,1fr)_7rem_2.5rem_6.5rem_3.25rem_5.25rem_5.25rem_1.25rem]";
-/** Cells that exist only from a fold up. */
-const FROM_54 = "hidden @[54rem]:block";
-const FROM_72 = "hidden @[72rem]:block";
-
-function ListHeader({
-  sortKey,
-  sortDirection,
-  onSort,
-}: {
-  readonly sortKey: SortKey;
-  readonly sortDirection: SortDirection;
-  readonly onSort: (key: SortKey) => void;
-}) {
-  return (
-    <div
-      className={cn(
-        GRID,
-        "border-b border-line px-4 py-2.5 text-10 uppercase tracking-wide text-ink-faint",
-      )}
-    >
-      <span>Change</span>
-      <span className="hidden @[54rem]:block">Author</span>
-      <span className="@[54rem]:hidden" aria-hidden />
-      <span className={FROM_54}>CI</span>
-      <span>+ / −</span>
-      <span className={FROM_72}>Files</span>
-      <span className={FROM_72}>
-        <SortHeader
-          label="Created"
-          value="created"
-          active={sortKey}
-          direction={sortDirection}
-          onSort={onSort}
-        />
-      </span>
-      <SortHeader
-        label="Activity"
-        value="recent"
-        active={sortKey}
-        direction={sortDirection}
-        onSort={onSort}
-      />
-      <span />
-    </div>
-  );
-}
-function SortHeader({
-  label,
-  value,
-  active,
-  direction,
-  onSort,
-}: {
-  readonly label: string;
-  readonly value: SortKey;
-  readonly active: SortKey;
-  readonly direction: SortDirection;
-  readonly onSort: (value: SortKey) => void;
-}) {
-  const selected = active === value;
-  return (
-    <button
-      type="button"
-      onClick={() => onSort(value)}
-      aria-label={`Sort by ${label.toLowerCase()}`}
-      className={cn(
-        "flex w-fit items-center gap-1 rounded-control border border-line px-2 py-1 text-left uppercase tracking-wide hover:bg-raised hover:text-ink",
-        selected && "bg-raised font-semibold text-ink-soft",
-      )}
-    >
-      {label}
-      <Icon
-        icon={selected && direction === "asc" ? ArrowUp : ArrowDown}
-        className={cn("size-3", !selected && "opacity-0")}
-      />
-    </button>
-  );
-}
-
-function ItemRow({
-  row,
-  pending,
-  starting,
-  onStart,
-}: {
-  readonly row: SmartRow;
-  readonly pending: boolean;
-  readonly starting: boolean;
-  readonly onStart: () => void;
-}) {
-  const reviewRequested = row.kind === "pr" && row.pr?.reviewRequested && row.state === "open";
-  const merged = row.state === "merged";
-  return (
-    <button
-      type="button"
-      data-row="target"
-      data-starting={starting ? "true" : undefined}
-      onClick={onStart}
-      disabled={pending}
-      className={cn(
-        GRID,
-        "relative w-full border-l-2 border-l-transparent px-3.5 py-3 text-left transition-colors hover:bg-raised/60 disabled:cursor-not-allowed disabled:opacity-60",
-        reviewRequested && "border-l-accent",
-        starting && "bg-secondary/60",
-        // Merged is done: it stays legible (the retrospective path reads it) but
-        // recedes behind the open work.
-        merged && "opacity-70 hover:opacity-100",
-      )}
-    >
-      <ChangeCell row={row} />
-      <span className="flex min-w-0 items-center gap-1.5 text-xs text-ink-soft">
-        <Avatar name={row.author} src={row.authorAvatarUrl} />
-        <span className="hidden truncate @[54rem]:inline">{row.author}</span>
-      </span>
-      <span className={FROM_54}>
-        <CiStatus ci={row.pr?.ci} />
-      </span>
-      <span className="whitespace-nowrap text-xs tabular-nums">
-        {row.additions === undefined || row.deletions === undefined ? (
-          <span className="text-ink-faint">—</span>
-        ) : (
-          <>
-            <span className="font-medium text-green">+{row.additions.toLocaleString()}</span>{" "}
-            <span className="font-medium text-danger">−{row.deletions.toLocaleString()}</span>
-          </>
-        )}
-      </span>
-      <span className={cn(FROM_72, "text-xs tabular-nums text-ink-soft")}>
-        {row.changedFiles === undefined ? (
-          <span className="text-ink-faint">—</span>
-        ) : (
-          row.changedFiles
-        )}
-      </span>
-      <time
-        dateTime={row.createdAt}
-        className={cn(FROM_72, "text-xs tabular-nums text-ink-soft")}
-        title={row.createdAt}
-      >
-        {formatDate(row.createdAt)}
-      </time>
-      <time
-        dateTime={row.lastActivityAt}
-        className="text-xs tabular-nums text-ink-soft"
-        title={row.lastActivityAt}
-      >
-        {formatActivity(row.lastActivityAt)}
-      </time>
-      <Icon
-        icon={Check}
-        data-mark="start"
-        className={cn(
-          "size-4 text-accent transition-opacity",
-          starting ? "opacity-100" : "opacity-0",
-        )}
-      />
-    </button>
-  );
-}
-
-function ChangeCell({ row }: { readonly row: SmartRow }) {
-  const merged = row.state === "merged";
-  if (row.kind === "local") {
-    const local = row.local;
-    const ahead = local?.ahead !== null && local?.ahead !== undefined && local.ahead > 0;
-    const behind = local?.behind !== null && local?.behind !== undefined && local.behind > 0;
-    return (
-      <span className="flex min-w-0 items-start gap-2.5">
-        <Icon
-          icon={GitBranch}
-          className={cn("mt-0.5 size-3.5 shrink-0", local?.dirty ? "text-warn" : "text-ink-faint")}
-        />
-        <span className="min-w-0">
-          <span className="flex min-w-0 items-baseline gap-2.5">
-            <span className="truncate text-sm font-medium text-ink">{row.branch}</span>
-            {/* Clean/dirty is a measured fact only where there is a checkout to measure;
-                a bare branch says nothing. Dirty is copper (a flag to weigh), not gold. */}
-            {local?.worktree ? (
-              <span
-                data-worktree={local.dirty ? "dirty" : "clean"}
-                className={cn(
-                  "flex shrink-0 items-center gap-1 text-2xs font-medium",
-                  local.dirty ? "text-warn" : "text-green",
-                )}
-              >
-                <span
-                  aria-hidden
-                  className={cn("size-1.5 rounded-full", local.dirty ? "bg-warn" : "bg-green")}
-                />
-                {local.dirty ? "dirty" : "clean"}
-              </span>
-            ) : null}
-          </span>
-          {ahead || behind ? (
-            <span className="mt-0.5 flex gap-2 text-2xs tabular-nums text-ink-faint">
-              {ahead ? <span>↑{local.ahead}</span> : null}
-              {behind ? <span>↓{local.behind}</span> : null}
-            </span>
-          ) : null}
-        </span>
-      </span>
-    );
-  }
-  return (
-    <span className="flex min-w-0 items-start gap-2.5">
-      <Icon
-        icon={merged ? GitMerge : row.pr?.reviewRequested ? GitPullRequestArrow : GitPullRequest}
-        className={cn(
-          "mt-0.5 size-3.5 shrink-0",
-          row.pr?.reviewRequested && !merged ? "text-accent" : "text-ink-faint",
-        )}
-      />
-      <span className="min-w-0">
-        <span className="flex min-w-0 items-center gap-2.5">
-          <span className="truncate text-sm font-medium text-ink">{row.title}</span>
-          <RowBadge row={row} />
-        </span>
-        <span className="mt-0.5 flex min-w-0 items-center gap-2 text-2xs text-ink-faint">
-          <span className="shrink-0 tabular-nums">
-            {requestPrefix(row.pr?.forgeRepository?.forge)}
-            {row.pr?.number}
-          </span>
-          {merged ? (
-            <span className="flex shrink-0 items-center gap-1 text-ink-soft">
-              <Icon icon={GitMerge} className="size-2.5" /> Merged
-            </span>
-          ) : null}
-          <span className="truncate">{row.branch}</span>
-          {row.checkedOutLocally ? <span className="shrink-0">checked out locally</span> : null}
-        </span>
-      </span>
-    </span>
-  );
-}
-
-function RowBadge({ row }: { readonly row: SmartRow }) {
-  if (row.kind === "local") return null;
-  if (row.state === "merged") return null;
-  if (row.pr?.reviewRequested)
-    return (
-      <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-accent-fill px-2 py-0.5 text-10 font-semibold text-accent-ink">
-        <Icon icon={GitPullRequestArrow} className="size-2.5" /> Review requested
-      </span>
-    );
-  if (row.mine)
-    return (
-      <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-line-strong px-2 py-0.5 text-10 font-medium text-ink-soft">
-        <Icon icon={GitPullRequest} className="size-2.5" /> Your PR
-      </span>
-    );
-  return null;
-}
-// CI is a coloured mark AND a named state (the aria-label): DESIGN.md never lets
-// colour stand alone. Green passes, red fails, copper is still running; a change
-// with no checks at all has nothing to say.
-function CiStatus({ ci }: { readonly ci: SmartListCi | undefined }) {
-  if (ci === "passing")
-    return <Icon icon={CircleCheck} aria-label="CI passing" className="size-4 text-green" />;
-  if (ci === "failing")
-    return <Icon icon={CircleX} aria-label="CI failing" className="size-4 text-danger" />;
-  if (ci === "pending")
-    return <Icon icon={CircleDashed} aria-label="CI pending" className="size-4 text-warn" />;
-  return <span className="text-xs text-ink-faint">—</span>;
 }

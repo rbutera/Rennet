@@ -124,4 +124,65 @@ describe("CodeBlock — the one code surface", () => {
     await user.click(getByText("View test"));
     expect(onView).toHaveBeenCalledTimes(1);
   });
+
+  it("renders headerActions inside the card header, beside Copy", () => {
+    const { container, getByText } = mount(
+      <CodeBlock
+        code={CODE}
+        path={PATH}
+        headerActions={<button type="button">Expand context</button>}
+      />,
+    );
+    const action = getByText("Expand context");
+    const copy = getByText("Copy");
+    // Same header strip, same right-hand group, action first.
+    expect(action.parentElement).toBe(copy.closest("button")?.parentElement);
+    expect(action.compareDocumentPosition(copy) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(container.querySelector("[data-code-scroll]")?.contains(action)).toBe(false);
+  });
+
+  it("wraps long lines instead of scrolling them sideways", () => {
+    const { container } = mount(<CodeBlock code={CODE} path={PATH} />);
+    const cell = container.querySelector('[data-code-line="1"]');
+    expect(cell?.className).toContain("whitespace-pre-wrap");
+    expect(cell?.className).not.toMatch(/(?:^|\s)whitespace-pre(?:\s|$)/);
+    expect(container.querySelector("[data-code-scroll] > div")?.className).not.toContain(
+      "min-w-max",
+    );
+  });
+
+  it("virtual rows take the measured height of the rows above them, so a wrapped row pushes the next one down", async () => {
+    // happy-dom lays nothing out: offsetHeight is 0 everywhere, which the block treats as
+    // "unmeasured". Stand in for layout: row 5 wrapped to two lines, every other row one.
+    const descriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetHeight");
+    Object.defineProperty(HTMLElement.prototype, "offsetHeight", {
+      configurable: true,
+      get(this: HTMLElement) {
+        const index = this.dataset.virtualRow;
+        if (index === undefined) return 0;
+        return index === "5" ? 44 : 22;
+      },
+    });
+    try {
+      const rows = Array.from({ length: 60 }, (_, index) => ({
+        type: "context" as const,
+        text: `line_${index + 1}`,
+        oldLine: index + 1,
+        newLine: index + 1,
+      }));
+      const { container } = mount(<CodeBlock code="" rows={rows} path={PATH} />);
+      const top = (index: number) =>
+        container.querySelector<HTMLElement>(`[data-virtual-row="${index}"]`)?.style.top;
+      // The measurement lands in a layout effect after the first paint; flush it.
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(top(5)).toBe("110px");
+      expect(top(6)).toBe("154px");
+      expect(top(7)).toBe("176px");
+    } finally {
+      if (descriptor) Object.defineProperty(HTMLElement.prototype, "offsetHeight", descriptor);
+      else Reflect.deleteProperty(HTMLElement.prototype, "offsetHeight");
+    }
+  });
 });
