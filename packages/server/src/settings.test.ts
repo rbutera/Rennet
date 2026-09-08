@@ -1,4 +1,7 @@
-import { withRepoPref } from "@rennet/adapters";
+import { mkdtempSync, realpathSync, rmSync, symlinkSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { join } from "node:path";
+import { defaultWorktreePlacement, prWorktreePath, withRepoPref } from "@rennet/adapters";
 import { escapePath, reviewRoleMappings } from "@rennet/core";
 import type {
   ClientSettings,
@@ -10,7 +13,7 @@ import type {
   ReviewRoleScenario,
   SettingsProjectValueKey,
 } from "@rennet/protocol";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { z } from "zod";
 import { createSettingsComposition, type SettingsCompositionDeps } from "./settings";
 
@@ -49,6 +52,7 @@ function makeDeps(overrides: Partial<SettingsCompositionDeps> = {}): {
     updateGlobal: 0,
   };
   const deps: SettingsCompositionDeps = {
+    dataDir: "/data",
     listProjects: () => [project()],
     loadConfigState: (repoKey) => {
       calls.loadConfigState.push(repoKey);
@@ -98,6 +102,8 @@ type FakeRepoConfig = {
   mark?: string;
   worktreeBaseDir?: string;
   worktreePattern?: string;
+  prWorktreePattern?: string;
+  workspace?: string;
   tracker?: { kind?: string; projectKey?: string; baseUrl?: string; tokenEnv?: string };
 };
 
@@ -140,6 +146,7 @@ function statefulDeps(
     saved: 0,
   };
   const deps: SettingsCompositionDeps = {
+    dataDir: "/data",
     listProjects: () => [opts.project ?? project()],
     loadConfigState: () =>
       opts.malformed
@@ -175,6 +182,8 @@ function statefulDeps(
         "mark",
         "worktreeBaseDir",
         "worktreePattern",
+        "prWorktreePattern",
+        "workspace",
         "tracker",
       ] as const) {
         delete store[key];
@@ -1673,20 +1682,20 @@ describe("setProjectValue + setGuidance — the per-project repo rung (C18 group
   it("a worktree-pattern edit reads back after a RELOAD — a fresh composition over the same store", async () => {
     const { deps, store } = statefulDeps();
     const outcome = await createSettingsComposition(deps).setProjectValue(
-      write("worktreePattern", "{project}-{branch}"),
+      write("worktreePattern", "{name}/{branch}"),
     );
     expect(outcome.status).toBe("applied");
     // The value the write RESOLVED to, on the repo rung — not the request echoed back.
     expect(outcome.project?.prefs?.worktreePattern).toEqual({
-      value: "{project}-{branch}",
+      value: "{name}/{branch}",
       layer: "repo",
     });
-    expect(store.worktreePattern).toBe("{project}-{branch}");
+    expect(store.worktreePattern).toBe("{name}/{branch}");
 
     // Reload: a brand-new composition over the same backing config.
     const reloaded = (await createSettingsComposition(deps).get()).projects[0];
     expect(reloaded?.prefs?.worktreePattern).toEqual({
-      value: "{project}-{branch}",
+      value: "{name}/{branch}",
       layer: "repo",
     });
   });
@@ -1782,6 +1791,87 @@ describe("setProjectValue + setGuidance — the per-project repo rung (C18 group
     expect(store.glyph).toBeUndefined();
   });
 
+  it("the worktree keys resolve host rung under repo rung (workspace-settings D1/D2/D4)", async () => {
+    // The GLOBAL rung of all four is the daemon's own file: where this host puts
+    // checkouts is a fact about the host, not about the viewer.
+    const globalRung = {
+      readDaemonSettings: () => ({
+        version: 1 as const,
+        worktrees: {
+          root: "/host/trees",
+          pattern: "{owner}/{branch}",
+          prPattern: "{name}-{number}",
+          workspace: "own" as const,
+        },
+      }),
+    };
+    const { deps: untouched } = statefulDeps();
+    const host = (await createSettingsComposition({ ...untouched, ...globalRung }).get())
+      .projects[0];
+    expect(host?.prefs?.worktreeRoot).toEqual({ value: "/host/trees", layer: "global" });
+    expect(host?.prefs?.worktreePattern).toEqual({ value: "{owner}/{branch}", layer: "global" });
+    expect(host?.prefs?.prWorktreePattern).toEqual({ value: "{name}-{number}", layer: "global" });
+    expect(host?.prefs?.workspace).toEqual({ value: "own", layer: "global" });
+
+    // …and the repository's own config.json beats it, key by key.
+    const { deps } = statefulDeps({
+      worktreeBaseDir: "/repo/trees",
+      prWorktreePattern: "{repo}/pr/{number}",
+      workspace: "share",
+    });
+    const repoRow = (await createSettingsComposition({ ...deps, ...globalRung }).get()).projects[0];
+    expect(repoRow?.prefs?.worktreeRoot).toEqual({ value: "/repo/trees", layer: "repo" });
+    expect(repoRow?.prefs?.prWorktreePattern).toEqual({
+      value: "{repo}/pr/{number}",
+      layer: "repo",
+    });
+    expect(repoRow?.prefs?.workspace).toEqual({ value: "share", layer: "repo" });
+    // The key the repo did NOT set still comes from the host.
+    expect(repoRow?.prefs?.worktreePattern).toEqual({ value: "{owner}/{branch}", layer: "global" });
+  });
+
+  it("an untouched install resolves the builtin shapes the binding places by", async () => {
+    const { deps } = statefulDeps();
+    const row = (await createSettingsComposition(deps).get()).projects[0];
+    expect(row?.prefs?.worktreePattern).toEqual({ value: "{repo}/{branch}", layer: "builtin" });
+    expect(row?.prefs?.prWorktreePattern).toEqual({
+      value: "{owner}/{name}/pr-{number}",
+      layer: "builtin",
+    });
+    expect(row?.prefs?.workspace).toEqual({ value: "share", layer: "builtin" });
+  });
+
+  it("setProjectValue writes the two new keys on the repo rung and refuses a bad workspace", async () => {
+    const { deps, store } = statefulDeps();
+    const composition = createSettingsComposition(deps);
+    const pattern = await composition.setProjectValue(
+      write("prWorktreePattern", "{owner}/{name}/{number}"),
+    );
+    expect(pattern.status).toBe("applied");
+    expect(store.prWorktreePattern).toBe("{owner}/{name}/{number}");
+    const mode = await composition.setProjectValue(write("workspace", "own"));
+    expect(mode.project?.prefs?.workspace).toEqual({ value: "own", layer: "repo" });
+    expect(store.workspace).toBe("own");
+    // The closed vocabulary is enforced by the validator the BINDING resolves by, so a
+    // typo is refused at the write instead of resolving to `share` later.
+    await expect(composition.setProjectValue(write("workspace", "solo"))).rejects.toThrow(
+      /workspace/,
+    );
+    expect(store.workspace).toBe("own");
+  });
+
+  it("a MALFORMED config refuses a write of the new keys — the file is untouched", async () => {
+    const { deps, store } = statefulDeps({ workspace: "own" }, { malformed: true });
+    const composition = createSettingsComposition(deps);
+    for (const key of ["prWorktreePattern", "workspace"] as const) {
+      const outcome = await composition.setProjectValue(write(key, "share"));
+      expect(outcome.status).toBe("malformed");
+      expect(outcome.project).toBeNull();
+    }
+    // Byte-for-byte: the value the unparseable file already held is exactly what is there.
+    expect(store).toEqual({ version: 1, workspace: "own" });
+  });
+
   it("guidance rules are written to the repo's catalogue and read back on the next get()", async () => {
     const { deps, guidance } = statefulDeps();
     const composition = createSettingsComposition(deps);
@@ -1807,5 +1897,461 @@ describe("setProjectValue + setGuidance — the per-project repo rung (C18 group
     });
     expect(outcome.status).toBe("unresolved");
     expect(guidance.rules).toEqual([]);
+  });
+});
+
+describe("worktreePreview — the daemon's resolved placement example (workspace-settings D3)", () => {
+  const write = (key: SettingsProjectValueKey, value: string | null) => ({
+    projectId: "p1",
+    repoPath: "/orbital",
+    key,
+    value,
+  });
+
+  /** A workspace project of TWO repositories, both on `feat/x` — the fixture the
+   *  many-repos rule demands, because a preview keyed on the project would be identical
+   *  for both rows and nothing would say so. */
+  function twoRepoDeps() {
+    const workspace = project({
+      kind: "workspace",
+      path: "/work",
+      openPath: "/work/api",
+      includedRepoPaths: ["/work/api", "/work/web"],
+      repoCount: 2,
+    });
+    const { deps } = statefulDeps({}, { project: workspace });
+    return {
+      ...deps,
+      // Each repository answers for ITSELF: same branch name, different owners.
+      worktreeFacts: async (repoRoot: string) =>
+        repoRoot === "/work/api"
+          ? { owner: "acme", branch: "feat/x" }
+          : { owner: "globex", branch: "feat/x" },
+    };
+  }
+
+  it("previews each repository of a workspace from its OWN key and remote", async () => {
+    const rows = (await createSettingsComposition(twoRepoDeps()).get()).projects;
+    expect(rows).toHaveLength(2);
+    // The builtin placement, resolved for each row: the escaped realpath key of THAT
+    // repository, then the branch as folders — and the pull-request example under THAT
+    // repository's owner. Two repositories on one branch name do not collide.
+    expect(rows[0]?.worktreePreview).toEqual({
+      branch: join("/data/worktrees", escapePath("/work/api"), "feat", "x"),
+      pullRequest: join("/data/worktrees", "acme", "api", "pr-1"),
+    });
+    expect(rows[1]?.worktreePreview).toEqual({
+      branch: join("/data/worktrees", escapePath("/work/web"), "feat", "x"),
+      pullRequest: join("/data/worktrees", "globex", "web", "pr-1"),
+    });
+    expect(rows[0]?.worktreePreview?.branch).not.toBe(rows[1]?.worktreePreview?.branch);
+  });
+
+  it("falls back to `local` and `main` when the repository cannot answer, never to another repo's facts", async () => {
+    const { deps } = statefulDeps();
+    const row = (await createSettingsComposition(deps).get()).projects[0];
+    expect(row?.worktreePreview).toEqual({
+      branch: join("/data/worktrees", escapePath("/orbital"), "main"),
+      pullRequest: join("/data/worktrees", "local", "orbital", "pr-1"),
+    });
+  });
+
+  it("the preview follows the resolved values: a pattern edit moves it on the returned row", async () => {
+    const { deps } = statefulDeps();
+    const composition = createSettingsComposition({
+      ...deps,
+      worktreeFacts: async () => ({ owner: "acme", branch: "feat/x" }),
+    });
+    const before = (await composition.get()).projects[0];
+    expect(before?.worktreePreview?.branch).toBe(
+      join("/data/worktrees", escapePath("/orbital"), "feat", "x"),
+    );
+    const after = await composition.setProjectValue({
+      projectId: "p1",
+      repoPath: "/orbital",
+      key: "worktreePattern",
+      value: "{owner}/{name}/{branch}",
+    });
+    // The row the WRITE returns already carries the new placement — the resolver's own
+    // answer, not the request echoed.
+    expect(after.project?.worktreePreview?.branch).toBe(
+      join("/data/worktrees", "acme", "orbital", "feat", "x"),
+    );
+    // …and a root written on the repo rung moves both examples.
+    const rooted = await composition.setProjectValue({
+      projectId: "p1",
+      repoPath: "/orbital",
+      key: "worktreeRoot",
+      value: "/elsewhere",
+    });
+    expect(rooted.project?.worktreePreview).toEqual({
+      branch: join("/elsewhere", "acme", "orbital", "feat", "x"),
+      pullRequest: join("/elsewhere", "acme", "orbital", "pr-1"),
+    });
+  });
+
+  it("REFUSES a pattern that escapes the root, and the config file is untouched", async () => {
+    const { deps, store } = statefulDeps({ worktreePattern: "{repo}/{branch}" });
+    const composition = createSettingsComposition(deps);
+    for (const [value, reason] of [
+      ["../{branch}", /outside the worktree root/],
+      ["{nope}/{branch}", /unknown token/],
+      ["/abs/{branch}", /absolute/],
+    ] as const) {
+      await expect(composition.setProjectValue(write("worktreePattern", value))).rejects.toThrow(
+        reason,
+      );
+    }
+    // Byte-for-byte: the pattern that was there before every refusal is still there.
+    expect(store.worktreePattern).toBe("{repo}/{branch}");
+    // The pull-request grammar is checked on its own terms: `{branch}` is not one of it.
+    await expect(
+      composition.setProjectValue(write("prWorktreePattern", "{branch}/pr-{number}")),
+    ).rejects.toThrow(/unknown token/);
+    expect(store.prWorktreePattern).toBeUndefined();
+  });
+});
+
+describe("worktree location: the builtin is a real path, and a written one is absolute", () => {
+  it("an untouched repository's row shows `<dataDir>/worktrees`, labelled builtin", async () => {
+    // D1: the builtin is `join(dataDir, "worktrees")`, computed at resolution time. The
+    // row reported "" while placement used a path — an empty string the reader had to know
+    // to translate, next to a preview that named the real directory.
+    const { deps } = statefulDeps();
+    const row = (await createSettingsComposition(deps).get()).projects[0];
+    expect(row?.prefs?.worktreeRoot).toEqual({
+      value: join("/data", "worktrees"),
+      layer: "builtin",
+    });
+    // …and it is the root the preview places under, so the row and the example agree.
+    expect(row?.worktreePreview?.branch.startsWith(join("/data", "worktrees"))).toBe(true);
+  });
+
+  // THE SCOUT DOES NOT MOVE THE ROOT (workspace-settings D1, review decision B). The scout
+  // records where a repository's OWN worktrees already live — an honest fact about the
+  // repository, still stored and still in the questionnaire. It is not an instruction about
+  // where Rennet should place ITS worktrees, and while the resolved root was read by
+  // nothing that distinction was invisible. It is not invisible now: this offer would have
+  // moved every worktree of every repository that happens to have one sibling checkout, on
+  // an install that had never written a setting.
+  //
+  // POSITIVE CONTROL RUN 2026-09-08: `worktreeBaseDir` was put back into
+  // `SCOUT_OFFER_KEYS` and the `detected` offer restored in `resolvePrefs`, and both
+  // assertions here reddened (`/repo/trees` won at layer `detected`, and the preview moved
+  // under it). Restored, green.
+  it("a SCOUTED worktree convention moves neither the resolved root nor the preview", async () => {
+    const { deps } = statefulDeps();
+    const composition = createSettingsComposition({
+      ...deps,
+      // The scout's stored facts as the resolver would see them, had this key been offered.
+      scoutOffers: () => ({ worktreeBaseDir: "/repo/trees", gateCommand: "pnpm check" }),
+    });
+    const row = (await composition.get()).projects[0];
+    // The builtin still wins: `<dataDir>/worktrees`, labelled `builtin`, not `detected`.
+    expect(row?.prefs?.worktreeRoot).toEqual({
+      value: join("/data", "worktrees"),
+      layer: "builtin",
+    });
+    // …and the daemon's own preview places under that same root, so the example the card
+    // shows and the directory the binding would create still agree.
+    expect(row?.worktreePreview?.branch.startsWith(join("/data", "worktrees"))).toBe(true);
+    expect(row?.worktreePreview?.branch.startsWith("/repo/trees")).toBe(false);
+  });
+
+  it("EXPANDS a repo-rung location at the write, and refuses another user's home", async () => {
+    const { deps, store } = statefulDeps();
+    const composition = createSettingsComposition(deps);
+    const write = (value: string) => ({
+      projectId: "p1",
+      repoPath: "/orbital",
+      key: "worktreeRoot" as const,
+      value,
+    });
+    await composition.setProjectValue(write("~/trees"));
+    expect(store.worktreeBaseDir).toBe(join(homedir(), "trees"));
+    // A relative value resolves against the DATA DIR, never the daemon's cwd.
+    await composition.setProjectValue(write("trees/here"));
+    expect(store.worktreeBaseDir).toBe(join("/data", "trees", "here"));
+    // `~someone` needs a passwd lookup this process does not do: refused with its reason,
+    // rather than persisted as a literal `~someone` directory the daemon would create.
+    await expect(composition.setProjectValue(write("~someone/trees"))).rejects.toThrow(
+      /another user's home/,
+    );
+    expect(store.worktreeBaseDir).toBe(join("/data", "trees", "here"));
+    // The row then reads back exactly what was stored — no re-interpretation at the read.
+    const row = (await composition.get()).projects[0];
+    expect(row?.prefs?.worktreeRoot).toEqual({
+      value: join("/data", "trees", "here"),
+      layer: "repo",
+    });
+  });
+
+  it("previews the PR snapshot under the REMOTE's name when the folder differs", async () => {
+    // Cloning `acme/widget` into `/work/widget-local`. `{name}` is the REMOTE's repository
+    // name, so the preview must read `acme/widget/pr-1`; it used the folder's basename and
+    // promised `acme/widget-local/pr-1`, which is a path no bind would ever create.
+    //
+    // The counterpart is `bound-workspace.test.ts`'s "places a PR snapshot under the
+    // REMOTE's name", which pins the same RULE on the BIND side. It is a different fixture
+    // and asserts a different path (`o/n/pr-7`, off that review's own post target), so
+    // neither test reproduces the other's string — what they share is the rule that made
+    // the two disagree in the first place.
+    const { deps } = statefulDeps(
+      {},
+      { project: project({ path: "/work/widget-local", openPath: "/work/widget-local" }) },
+    );
+    const row = (
+      await createSettingsComposition({
+        ...deps,
+        worktreeFacts: async () => ({ owner: "acme", remoteName: "widget", branch: "feat/x" }),
+      }).get()
+    ).projects[0];
+    expect(row?.worktreePreview?.pullRequest).toBe(
+      join("/data", "worktrees", "acme", "widget", "pr-1"),
+    );
+  });
+});
+
+describe("settings.get() reads every repository's placement facts CONCURRENTLY", () => {
+  /** Two single-repo projects, and a `worktreeFacts` that parks until released — so
+   *  "did the second call start before the first finished?" is a fact, not an inference. */
+  function gatedDeps(projects: Project[]) {
+    const started: string[] = [];
+    let release = (): void => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const { deps } = statefulDeps();
+    return {
+      started,
+      release,
+      deps: {
+        ...deps,
+        listProjects: () => projects,
+        worktreeFacts: async (repoRoot: string) => {
+          started.push(repoRoot);
+          await gate;
+          return {};
+        },
+      } satisfies SettingsCompositionDeps,
+    };
+  }
+
+  it("dispatches every row's facts read before any of them resolves", async () => {
+    // Each read is a git subprocess. Awaited row-by-row they serialised across every
+    // project × repo, and every settings mutation invalidates `settings.get` on the
+    // client — so flipping appearance on an 8-repo workspace paid 8 sequential spawns.
+    const { deps, started, release } = gatedDeps([
+      project({ id: "p1", name: "a", path: "/a", openPath: "/a" }),
+      project({ id: "p2", name: "b", path: "/b", openPath: "/b" }),
+    ]);
+    const view = createSettingsComposition(deps).get();
+    // Both calls are in flight while NEITHER has resolved — the gate is still shut.
+    for (let tick = 0; tick < 50 && started.length < 2; tick += 1) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    expect(started).toEqual(["/a", "/b"]);
+    release();
+    // …and the row ORDER is the projects' order, unchanged by the concurrency.
+    expect((await view).projects.map((row) => row.repoPath)).toEqual(["/a", "/b"]);
+  });
+
+  it("holds the burst to four rows in flight, and still answers every one", async () => {
+    // The other half of the bound. Firing EVERY row at once is a burst of two git spawns
+    // per repository — and on a WSL daemon, two distro round trips each — so a reviewer
+    // with a dozen repositories open paid twenty-four simultaneous processes for one
+    // `settings.get`, which every settings mutation re-issues.
+    const projects = Array.from({ length: 9 }, (_unused, index) =>
+      project({
+        id: `p${index}`,
+        name: `r${index}`,
+        path: `/r${index}`,
+        openPath: `/r${index}`,
+      }),
+    );
+    const { deps, started, release } = gatedDeps(projects);
+    const view = createSettingsComposition(deps).get();
+    // Settle every microtask the pool could possibly use; the gate is shut, so nothing
+    // finishes and nothing frees a slot.
+    for (let tick = 0; tick < 200; tick += 1) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    expect(started).toEqual(["/r0", "/r1", "/r2", "/r3"]);
+    release();
+    // …and the cap costs nothing in completeness or order: all nine rows, in project order.
+    expect((await view).projects.map((row) => row.repoPath)).toEqual(
+      projects.map((entry) => entry.openPath),
+    );
+    expect(started).toHaveLength(9);
+  });
+
+  it("asks ONE repository's facts once per operation, however many times its row resolves", async () => {
+    // `pinRepoValue` resolves the same row twice (before and after applying the value).
+    // One repository, one remote, one operation — one subprocess.
+    const asked: string[] = [];
+    const { deps } = statefulDeps();
+    const composition = createSettingsComposition({
+      ...deps,
+      worktreeFacts: async (repoRoot: string) => {
+        asked.push(repoRoot);
+        return {};
+      },
+    });
+    const outcome = await composition.pinRepoValue({
+      projectId: "p1",
+      repoPath: "/orbital",
+      key: "visibility",
+    });
+    expect(outcome.status).toBe("applied");
+    expect(asked).toEqual(["/orbital"]);
+  });
+});
+
+describe("worktreePreview spells `{repo}` through the SAME route the binding does", () => {
+  const scratch: string[] = [];
+  afterEach(() => {
+    for (const dir of scratch.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("uses escapePath(realpath(root)), not escapePath(gitTopLevel)", async () => {
+    // A project opened through a symlink — the arrangement macOS puts everyone in, where
+    // `/var` is a symlink to `/private/var`. `RepoTarget.repoKey` is the snapshot-store
+    // key and skips the realpath; `repoKeyForRoot` (what `create-server` hands the
+    // binding) does not. Two different directories under one label is #812.
+    const real = mkdtempSync(join(tmpdir(), "rennet-preview-"));
+    scratch.push(real);
+    const link = `${real}-link`;
+    symlinkSync(real, link);
+    scratch.push(link);
+    const { deps } = statefulDeps({}, { project: project({ path: link, openPath: link }) });
+    const row = (await createSettingsComposition(deps).get()).projects[0];
+    expect(escapePath(realpathSync(link))).not.toBe(escapePath(link));
+    expect(row?.worktreePreview?.branch).toBe(
+      join("/data", "worktrees", escapePath(realpathSync(link)), "main"),
+    );
+  });
+});
+
+describe("resolveWorktreePlacement — what the BINDING reads (workspace-settings D1)", () => {
+  /** Two repositories of one workspace, each with its OWN `.rennet/config.json` — the
+   *  arrangement a project id cannot answer for (CLAUDE.md, 2026-08-28). */
+  function twoRepoDeps(configs: Record<string, Partial<FakeRepoConfig>>) {
+    const { deps } = statefulDeps();
+    const asked: string[] = [];
+    return {
+      asked,
+      deps: {
+        ...deps,
+        listProjects: () => [
+          project({
+            id: "p1",
+            name: "workspace",
+            kind: "workspace",
+            path: "/work",
+            openPath: "/work/api",
+            includedRepoPaths: ["/work/api", "/work/web"],
+          }),
+        ],
+        discoverWorkspaceRepos: async () => ["/work/api", "/work/web"],
+        loadConfigState: (repoKey: string) => {
+          asked.push(repoKey);
+          return {
+            status: "ok" as const,
+            config: { version: 1, ...(configs[repoKey] ?? {}) },
+          };
+        },
+      } satisfies SettingsCompositionDeps,
+    };
+  }
+
+  it("resolves each repository's OWN rung, and a project id is never consulted", async () => {
+    // `api` opts into `own` and a layout of its own; `web` has written nothing. Swap the
+    // two roots below and both assertions redden — which is the whole point of a per-repo
+    // resolution rather than a per-project one.
+    const { deps, asked } = twoRepoDeps({
+      [escapePath("/work/api")]: { workspace: "own", worktreePattern: "{name}/{branch}" },
+    });
+    const composition = createSettingsComposition(deps);
+
+    const api = await composition.resolveWorktreePlacement("/work/api");
+    const web = await composition.resolveWorktreePlacement("/work/web");
+
+    expect(api).toEqual({
+      root: join("/data", "worktrees"),
+      pattern: "{name}/{branch}",
+      prPattern: "{owner}/{name}/pr-{number}",
+      workspace: "own",
+    });
+    // The second repository resolves the BUILTINS — it wrote nothing, and its sibling's
+    // file is not its file.
+    expect(web).toEqual({
+      root: join("/data", "worktrees"),
+      pattern: "{repo}/{branch}",
+      prPattern: "{owner}/{name}/pr-{number}",
+      workspace: "share",
+    });
+    // Each read asked for THAT repository's config key, by its own path.
+    expect(asked).toEqual([escapePath("/work/api"), escapePath("/work/web")]);
+  });
+
+  it("reads the HOST rung when the repository has written nothing", async () => {
+    const file: DaemonSettings = {
+      version: 1,
+      worktrees: { root: "/srv/trees", workspace: "own" },
+    };
+    const { deps } = twoRepoDeps({});
+    const placement = await createSettingsComposition({
+      ...deps,
+      readDaemonSettings: () => file,
+    }).resolveWorktreePlacement("/work/api");
+    expect(placement.root).toBe("/srv/trees");
+    expect(placement.workspace).toBe("own");
+  });
+
+  it("places a PULL REQUEST at the RESOLVED root and pattern, where the row previews it", async () => {
+    // REVIEW FINDING W5. The pull-request front door computed its worktree from
+    // `defaultWorktreePlacement(dataDir)` and INDEXED that path before any binding ran, so
+    // `decideBoundWorkspace` reused it: a repository with a configured root previewed one
+    // location on its Worktrees card and got the builtin on disk, and the binding never had
+    // a chance to place it. One placement read, both callers — this is the value they read.
+    const { deps } = twoRepoDeps({
+      [escapePath("/work/api")]: {
+        worktreeBaseDir: "/srv/trees",
+        prWorktreePattern: "{name}/pr/{number}",
+      },
+    });
+    const identity = {
+      repoKey: escapePath("/work/api"),
+      repoRoot: "/work/api",
+      owner: "acme",
+      remoteName: "widget",
+    };
+
+    const placement = await createSettingsComposition(deps).resolveWorktreePlacement("/work/api");
+
+    expect(prWorktreePath(placement.root, placement.prPattern, identity, 7)).toBe(
+      join("/srv/trees", "widget", "pr", "7"),
+    );
+    // …and it is NOT where the hardcoded builtin the front door used to read puts it. This
+    // is the pair: a test that only asserted the resolved path would pass unchanged against
+    // the defect whenever the two happened to agree.
+    const builtin = defaultWorktreePlacement("/data");
+    expect(prWorktreePath(builtin.root, builtin.prPattern, identity, 7)).toBe(
+      join("/data", "worktrees", "acme", "widget", "pr-7"),
+    );
+  });
+
+  it("resolves the BUILTIN placement for a MALFORMED config rather than half a file", async () => {
+    // Rule 75, applied where it matters most: a broken `config.json` must not decide where
+    // a worktree is created. The row already refuses to leak its unparseable values; the
+    // binding reads the same way, so a hand-broken file places at the builtin.
+    const { deps } = statefulDeps({ workspace: "own" }, { malformed: true });
+    const placement = await createSettingsComposition(deps).resolveWorktreePlacement("/orbital");
+    expect(placement).toEqual({
+      root: join("/data", "worktrees"),
+      pattern: "{repo}/{branch}",
+      prPattern: "{owner}/{name}/pr-{number}",
+      workspace: "share",
+    });
   });
 });

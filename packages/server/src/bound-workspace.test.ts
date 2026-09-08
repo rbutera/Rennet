@@ -4,22 +4,27 @@ import {
   mkdirSync,
   mkdtempSync,
   readdirSync,
+  readFileSync,
   realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
+import { defaultWorktreePlacement } from "@rennet/adapters";
 import { escapePath, HOST_LOCUS } from "@rennet/core";
 import type { Review } from "@rennet/protocol";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   type BoundWorkspaceDeps,
+  comparablePath,
   decideBoundWorkspace,
   inRepoSpelling,
+  type ResolvedWorktreePlacement,
   repinBoundWorkspace,
 } from "./bound-workspace";
+import { type ClaimingSession, worktreeClaimsIn } from "./worktree-claims";
 
 // Real git repositories, because every interesting answer here comes from git: which worktree
 // already has a branch out, whether `worktree add` will accept a path, whether a detached
@@ -41,6 +46,11 @@ function git(cwd: string, args: readonly string[]): string {
 
 /** Every git argv the module issued this test, so a control-flow claim can be executed. */
 let gitCalls: string[][] = [];
+/** What the binding's `worktreeFacts` answers this test, and which repositories it was
+ *  asked about — the tokens `{owner}`/`{name}` come from here at the bind and from the
+ *  SAME function at the settings preview. */
+let facts: { owner?: string; remoteName?: string } = {};
+let factsAsked: string[] = [];
 
 const gitExec = async (cwd: string, args: string[], options?: { reject?: boolean }) => {
   gitCalls.push([...args]);
@@ -114,6 +124,19 @@ describe("decideBoundWorkspace (session-bound-workspace D1)", () => {
   let prIndex: Map<string, string>;
   let created: string[];
   let deps: BoundWorkspaceDeps;
+  /** What the settings ladder resolves for every repository this test asks about — the
+   *  BUILTIN placement unless a test writes another. Group 1 proved the ladder; this is the
+   *  binding reading whatever it resolved. */
+  let placement: ResolvedWorktreePlacement;
+  let placementAsked: string[];
+  /** The LIVE sessions the claim oracle sees, and the repository it answers for. Empty by
+   *  default: most fixtures have no other session, which is the "nobody claims it" world. */
+  let liveSessions: ClaimingSession[];
+  let claimRepoRoot: string;
+
+  /** The bound ROOT, for the assertions that are only about where a session landed. */
+  const bindRoot = async (review: Review): Promise<string> =>
+    (await decideBoundWorkspace(review, deps)).boundRoot;
 
   beforeEach(() => {
     // realpath: on macOS `/var` is a symlink to `/private/var`, and `git worktree list`
@@ -125,12 +148,43 @@ describe("decideBoundWorkspace (session-bound-workspace D1)", () => {
     prIndex = new Map();
     created = [];
     gitCalls = [];
+    facts = {};
+    factsAsked = [];
+    placement = { ...defaultWorktreePlacement(dataDir), workspace: "share" };
+    placementAsked = [];
+    liveSessions = [];
+    claimRepoRoot = root;
     deps = {
       gitFor: () => gitExec,
       locusOf: () => HOST_LOCUS,
       repoKeyForRoot: (repoRoot) => escapePath(repoRoot),
-      dataDir,
+      placementFor: async (repoRoot) => {
+        placementAsked.push(repoRoot);
+        return placement;
+      },
+      // No remote resolves by default: the fixtures have none, so `{owner}` falls back to
+      // `local` and `{name}` to the folder's basename, exactly as a local-only clone does.
+      worktreeFacts: async (repoRoot) => {
+        factsAsked.push(repoRoot);
+        return facts;
+      },
+      // THE REAL FACTORY, not a stub: this is the same `worktreeClaimsIn` the daemon's sweep
+      // and its prune guard ask, so a test here is a test of the predicate the daemon runs.
+      // `liveSessions` is mutable, because archiving is what releases a claim.
+      registrationClaimed: (record) =>
+        worktreeClaimsIn({
+          sessions: liveSessions,
+          repoRoot: claimRepoRoot,
+          locus: HOST_LOCUS,
+          repositoryRootOf: () => claimRepoRoot,
+        })(record),
       prWorktreeFor: (reviewId) => prIndex.get(reviewId),
+      // BY PATH, over the whole index — the one definition of `recordedSnapshot`, the same
+      // scan the daemon's helper makes. Asking only whether THIS review has an entry was
+      // the second definition, and it answered `false` for the successor case the in-place
+      // replacement exists for.
+      snapshotRecordedAt: (path) =>
+        [...prIndex.values()].some((entry) => comparablePath(entry) === comparablePath(path)),
       recordPrWorktree: (reviewId, path) => void prIndex.set(reviewId, path),
       onWorktreeCreated: (path) => void created.push(path),
     };
@@ -176,7 +230,7 @@ describe("decideBoundWorkspace (session-bound-workspace D1)", () => {
       baseOid: headOid(repo, "main"),
     });
     // Verbatim: the string the review carries, not git's resolved one.
-    expect(await decideBoundWorkspace(review, deps)).toBe(viaSymlink);
+    expect(await bindRoot(review)).toBe(viaSymlink);
     expect(createdWorktrees()).toEqual([]);
   });
 
@@ -190,7 +244,7 @@ describe("decideBoundWorkspace (session-bound-workspace D1)", () => {
       headRef: "feature",
       baseOid: headOid(repo, "main"),
     });
-    expect(await decideBoundWorkspace(review, deps)).toBe(repo);
+    expect(await bindRoot(review)).toBe(repo);
     expect(createdWorktrees()).toEqual([]);
     expect(created).toEqual([]);
     // Executed, not reasoned: NO `worktree add` was attempted. Without this the test passes
@@ -209,7 +263,7 @@ describe("decideBoundWorkspace (session-bound-workspace D1)", () => {
       headRef: "feature",
       baseOid: headOid(repo, "main"),
     });
-    const bound = await decideBoundWorkspace(review, deps);
+    const bound = await bindRoot(review);
     expect(bound).toBe(join(dataDir, "worktrees", escapePath(repo), "feature"));
     expect(createdWorktrees()).toEqual([bound]);
     expect(created).toEqual([bound]);
@@ -218,7 +272,7 @@ describe("decideBoundWorkspace (session-bound-workspace D1)", () => {
     expect(git(bound, ["rev-parse", "--abbrev-ref", "HEAD"]).trim()).toBe("feature");
     // Bound once: the second ask returns the same path and creates nothing more.
     created = [];
-    expect(await decideBoundWorkspace(review, deps)).toBe(bound);
+    expect(await bindRoot(review)).toBe(bound);
     expect(created).toEqual([]);
   });
 
@@ -236,7 +290,7 @@ describe("decideBoundWorkspace (session-bound-workspace D1)", () => {
       baseOid: headOid(repo, "main"),
       pullRequest: true,
     });
-    const bound = await decideBoundWorkspace(review, deps);
+    const bound = await bindRoot(review);
     // The per-PULL-REQUEST path, never `worktrees/review/<id>`: that layout is the one the
     // startup sweep now retires, and re-creating it would make that half of the sweep a
     // no-op forever.
@@ -258,7 +312,7 @@ describe("decideBoundWorkspace (session-bound-workspace D1)", () => {
     });
     // A retrospective review carries no post target, so there is no pull-request path to
     // name and nothing to create; it binds to the repository, where its pinned reads resolve.
-    expect(await decideBoundWorkspace(review, deps)).toBe(repo);
+    expect(await bindRoot(review)).toBe(repo);
     expect(createdWorktrees()).toEqual([]);
   });
 
@@ -273,7 +327,7 @@ describe("decideBoundWorkspace (session-bound-workspace D1)", () => {
       baseOid: headOid(repo, "main"),
       pullRequest: true,
     });
-    expect(await decideBoundWorkspace(review, deps)).toBe(existing);
+    expect(await bindRoot(review)).toBe(existing);
     expect(createdWorktrees()).toEqual([existing]);
   });
 
@@ -285,7 +339,7 @@ describe("decideBoundWorkspace (session-bound-workspace D1)", () => {
       headOid: headOid(repo, "feature"),
       baseOid: headOid(repo, "main"),
     });
-    expect(await decideBoundWorkspace(review, deps)).toBe(repo);
+    expect(await bindRoot(review)).toBe(repo);
     expect(createdWorktrees()).toEqual([]);
   });
 
@@ -312,8 +366,8 @@ describe("decideBoundWorkspace (session-bound-workspace D1)", () => {
       baseOid: headOid(beta, "main"),
     });
 
-    const alphaBound = await decideBoundWorkspace(alphaReview, deps);
-    const betaBound = await decideBoundWorkspace(betaReview, deps);
+    const alphaBound = await bindRoot(alphaReview);
+    const betaBound = await bindRoot(betaReview);
 
     expect(alphaBound).toBe(alpha);
     expect(betaBound).toBe(join(dataDir, "worktrees", escapePath(beta), "feature"));
@@ -339,7 +393,7 @@ describe("decideBoundWorkspace (session-bound-workspace D1)", () => {
       headRef: "feature",
       baseOid: headOid(repo, "main"),
     });
-    expect(await decideBoundWorkspace(review, deps)).toBe(theirs);
+    expect(await bindRoot(review)).toBe(theirs);
     expect(createdWorktrees()).toEqual([]);
     expect(attemptedWorktreeAdd()).toBe(false);
   });
@@ -357,7 +411,7 @@ describe("decideBoundWorkspace (session-bound-workspace D1)", () => {
       baseOid: headOid(repo, "main"),
       pullRequest: true,
     });
-    const bound = await decideBoundWorkspace(review, deps);
+    const bound = await bindRoot(review);
     expect(git(bound, ["rev-parse", "HEAD"]).trim()).toBe(firstHead);
 
     // The branch moves, exactly as a round's commits move it.
@@ -391,10 +445,57 @@ describe("decideBoundWorkspace (session-bound-workspace D1)", () => {
       headRef: "feature",
       baseOid: headOid(repo, "main"),
     });
-    const bound = await decideBoundWorkspace(review, deps);
+    const bound = await bindRoot(review);
     gitCalls = [];
     expect(await repinBoundWorkspace(review, bound, deps)).toBe(bound);
     expect(gitCalls).toEqual([]);
+  });
+
+  it("fills `{owner}` and `{name}` at the BIND from the repository the review named", async () => {
+    // The bug: `PLACEHOLDERS` blessed `{owner}` for a branch pattern while this call site
+    // supplied `{repo,name,branch}` and no owner at all, so a stored `{owner}/{branch}`
+    // previewed fine and threw the moment a session bound. The facts now come from the
+    // same function the settings preview reads, asked by REPOSITORY ROOT.
+    const repo = initRepo(root, "repo");
+    facts = { owner: "acme", remoteName: "orbital" };
+    const review = reviewFor({
+      id: "r11",
+      repositoryRoot: repo,
+      headOid: headOid(repo, "feature"),
+      headRef: "feature",
+      baseOid: headOid(repo, "main"),
+    });
+    const bound = await bindRoot(review);
+    // The builtin pattern is `{repo}/{branch}`, so the owner does not appear in the path —
+    // what this pins is that the bind ASKED, by the repository the review names, and that
+    // the placement it produced is the builtin's.
+    expect(factsAsked).toEqual([repo]);
+    expect(bound).toBe(join(dataDir, "worktrees", escapePath(repo), "feature"));
+  });
+
+  it("places a PR snapshot under the REMOTE's name, not the clone folder's", async () => {
+    // Cloning a forge repository into a folder called `widget-local`. `{name}` means the
+    // REMOTE's repository name, never the folder's, so the snapshot goes under the forge
+    // identity — here `o/n`, which is what the review's own `postTarget` carries, and the
+    // folder name appears nowhere in the path.
+    //
+    // NOT the same path as `settings.test.ts`'s "previews the PR snapshot under the
+    // REMOTE's name": that test is a different fixture (`acme`/`widget`, pull request 1,
+    // resolved from `worktreeFacts`) and asserts `acme/widget/pr-1`. What the two SHARE is
+    // the rule — `{name}` is the remote's name — and the bug they were written for, where
+    // the preview spelled the folder (`acme/widget-local/pr-1`) and the bind spelled the
+    // remote. Each pins its own half; neither reproduces the other's path.
+    const repo = initRepo(root, "widget-local");
+    const review = reviewFor({
+      id: "r12",
+      repositoryRoot: repo,
+      headOid: headOid(repo, "feature"),
+      baseOid: headOid(repo, "main"),
+      pullRequest: true,
+    });
+    const bound = await bindRoot(review);
+    expect(bound).toBe(join(dataDir, "worktrees", "o", "n", "pr-7"));
+    expect(basename(repo)).toBe("widget-local");
   });
 
   it("THROWS rather than binding the session to the clone when a worktree cannot be made", async () => {
@@ -413,7 +514,462 @@ describe("decideBoundWorkspace (session-bound-workspace D1)", () => {
     const blocked = join(dataDir, "worktrees", escapePath(repo));
     mkdirSync(join(blocked, ".."), { recursive: true });
     writeFileSync(blocked, "not a directory\n");
-    await expect(decideBoundWorkspace(review, deps)).rejects.toThrow();
+    await expect(bindRoot(review)).rejects.toThrow();
+  });
+
+  // ── `workspace: own`: the sibling arm (D4) ────────────────────────────────────────────
+  //
+  // The arrangement is the ONE git refuses: the reviewer's checkout already has the branch
+  // out, so `worktree add <path> feature` fails. Under `share` Rennet binds to that
+  // checkout; under `own` it takes a worktree of its own on `rennet/feature`.
+
+  /** Every byte of a checkout that must not move: HEAD, the index, the tracked files. */
+  function checkoutFingerprint(repo: string): string {
+    return [
+      git(repo, ["rev-parse", "HEAD"]).trim(),
+      git(repo, ["rev-parse", "--abbrev-ref", "HEAD"]).trim(),
+      git(repo, ["status", "--porcelain=v1", "-z"]),
+      git(repo, ["ls-files", "-s", "-z"]),
+    ].join("|");
+  }
+
+  it("binds `own` to a NEW worktree on `rennet/<branch>` and leaves the checkout untouched", async () => {
+    const repo = initRepo(root, "repo");
+    git(repo, ["checkout", "-q", "feature"]);
+    const before = checkoutFingerprint(repo);
+    placement = { ...placement, workspace: "own" };
+    const review = reviewFor({
+      id: "own-1",
+      repositoryRoot: repo,
+      headOid: headOid(repo, "feature"),
+      headRef: "feature",
+      baseOid: headOid(repo, "main"),
+    });
+
+    const bound = await decideBoundWorkspace(review, deps);
+
+    // A worktree of Rennet's own, at the SIBLING's own placement — the branch pattern
+    // applied to `rennet/feature`, never to `feature`. The first draft put it at the
+    // branch's path, which is where a Rennet BRANCH worktree of the same repository lives.
+    expect(bound.boundRoot).toBe(join(dataDir, "worktrees", escapePath(repo), "rennet", "feature"));
+    expect(bound.workBranch).toBe("rennet/feature");
+    expect(git(bound.boundRoot, ["rev-parse", "--abbrev-ref", "HEAD"]).trim()).toBe(
+      "rennet/feature",
+    );
+    // Forked from the branch's head — the same commit, not a fresh root.
+    expect(git(repo, ["rev-parse", "refs/heads/rennet/feature"]).trim()).toBe(
+      headOid(repo, "feature"),
+    );
+    expect(created).toEqual([bound.boundRoot]);
+    // …and the reviewer's checkout is byte-for-byte where it was. This is the whole promise
+    // of `own`: it is not "Rennet tries not to disturb you", it is "nothing in your tree
+    // moved". A `checkout`/`reset` in the wrong directory reddens exactly here.
+    expect(checkoutFingerprint(repo)).toBe(before);
+    // Executed, not reasoned: the reviewed branch's own ref did not move either.
+    expect(headOid(repo, "feature")).toBe(review.patchsets[0]?.repository.headOid);
+  });
+
+  it("binds the SAME fixture to the checkout under `share`, creating nothing", async () => {
+    // The control for the test above: identical repository, identical review, one setting
+    // different. If the sibling arm ran unconditionally this reddens.
+    const repo = initRepo(root, "repo");
+    git(repo, ["checkout", "-q", "feature"]);
+    const review = reviewFor({
+      id: "share-1",
+      repositoryRoot: repo,
+      headOid: headOid(repo, "feature"),
+      headRef: "feature",
+      baseOid: headOid(repo, "main"),
+    });
+
+    const bound = await decideBoundWorkspace(review, deps);
+
+    expect(bound.boundRoot).toBe(repo);
+    expect(bound.workBranch).toBeUndefined();
+    expect(createdWorktrees()).toEqual([]);
+    expect(attemptedWorktreeAdd()).toBe(false);
+    // No sibling branch was created either — under `share` the name does not exist.
+    expect(() => git(repo, ["rev-parse", "--verify", "refs/heads/rennet/feature"])).toThrow();
+  });
+
+  it("binds a SECOND session to the existing sibling AS IT IS — no reset, no checkout", async () => {
+    // THE REVIEW FINDING. Sessions share a sibling exactly as they share a checkout: one
+    // sibling worktree per (repository, branch). The first draft re-forked on every bind,
+    // so a second session's bind ran `reset --hard` over whatever the first one had in its
+    // tree and index. Nothing here is destructive, and the edit below proves it.
+    const repo = initRepo(root, "repo");
+    git(repo, ["checkout", "-q", "feature"]);
+    placement = { ...placement, workspace: "own" };
+    const review = reviewFor({
+      id: "own-2",
+      repositoryRoot: repo,
+      headOid: headOid(repo, "feature"),
+      headRef: "feature",
+      baseOid: headOid(repo, "main"),
+    });
+    const first = await decideBoundWorkspace(review, deps);
+    // A round's uncommitted work in the shared sibling, plus a commit of its own.
+    writeFileSync(join(first.boundRoot, "round.txt"), "round\n");
+    git(first.boundRoot, ["add", "."]);
+    git(first.boundRoot, ["commit", "-q", "-m", "round one"]);
+    const tip = git(repo, ["rev-parse", "refs/heads/rennet/feature"]).trim();
+    writeFileSync(join(first.boundRoot, "feature.txt"), "half-written\n");
+    // …and the reviewer moves their own branch on, so the sibling is now BEHIND `feature`
+    // as well as ahead of it. Neither fact licenses a reset.
+    writeFileSync(join(repo, "theirs.txt"), "theirs\n");
+    git(repo, ["add", "."]);
+    git(repo, ["commit", "-q", "-m", "theirs"]);
+
+    const second = await decideBoundWorkspace(review, deps);
+
+    expect(second.boundRoot).toBe(first.boundRoot);
+    expect(second.workBranch).toBe("rennet/feature");
+    // The sibling's tip did not move, the commit is still there, and the half-written file
+    // is still half-written. A `reset --hard` reddens on every one of these.
+    expect(git(repo, ["rev-parse", "refs/heads/rennet/feature"]).trim()).toBe(tip);
+    expect(existsSync(join(first.boundRoot, "round.txt"))).toBe(true);
+    expect(git(first.boundRoot, ["status", "--porcelain=v1"])).toBe(" M feature.txt\n");
+    // Executed, not reasoned: no reset and no checkout was issued at all this bind.
+    expect(gitCalls.some((argv) => argv[0] === "reset")).toBe(false);
+    expect(gitCalls.some((argv) => argv[0] === "checkout")).toBe(false);
+  });
+
+  it("re-forks a sibling BRANCH whose worktree is gone and whose commits are reachable", async () => {
+    // The one re-fork D5 leaves: no worktree, and the branch already holds everything the
+    // sibling does — so a fresh session starts from the branch's CURRENT head rather than
+    // from where a removed worktree left it. Nothing that exists nowhere else is discarded.
+    const repo = initRepo(root, "repo");
+    git(repo, ["checkout", "-q", "feature"]);
+    placement = { ...placement, workspace: "own" };
+    const review = reviewFor({
+      id: "own-refork",
+      repositoryRoot: repo,
+      headOid: headOid(repo, "feature"),
+      headRef: "feature",
+      baseOid: headOid(repo, "main"),
+    });
+    const first = await decideBoundWorkspace(review, deps);
+    git(repo, ["worktree", "remove", first.boundRoot]);
+    // The branch moves on; the orphaned sibling branch holds nothing it does not.
+    writeFileSync(join(repo, "theirs.txt"), "theirs\n");
+    git(repo, ["add", "."]);
+    git(repo, ["commit", "-q", "-m", "theirs"]);
+    const advanced = headOid(repo, "feature");
+
+    const second = await decideBoundWorkspace(review, deps);
+
+    expect(second.boundRoot).toBe(first.boundRoot);
+    expect(git(repo, ["rev-parse", "refs/heads/rennet/feature"]).trim()).toBe(advanced);
+  });
+
+  it("KEEPS an orphaned sibling BRANCH that is ahead, checking it out where it stands", async () => {
+    // The control for the re-fork above: the sibling holds a commit `feature` does not, so
+    // those commits exist on no other ref and deleting the branch would lose them.
+    const repo = initRepo(root, "repo");
+    git(repo, ["checkout", "-q", "feature"]);
+    placement = { ...placement, workspace: "own" };
+    const review = reviewFor({
+      id: "own-ahead",
+      repositoryRoot: repo,
+      headOid: headOid(repo, "feature"),
+      headRef: "feature",
+      baseOid: headOid(repo, "main"),
+    });
+    const first = await decideBoundWorkspace(review, deps);
+    writeFileSync(join(first.boundRoot, "round.txt"), "round\n");
+    git(first.boundRoot, ["add", "."]);
+    git(first.boundRoot, ["commit", "-q", "-m", "round one"]);
+    const ahead = git(repo, ["rev-parse", "refs/heads/rennet/feature"]).trim();
+    git(repo, ["worktree", "remove", "--force", first.boundRoot]);
+
+    const second = await decideBoundWorkspace(review, deps);
+
+    expect(second.boundRoot).toBe(first.boundRoot);
+    expect(git(repo, ["rev-parse", "refs/heads/rennet/feature"]).trim()).toBe(ahead);
+    expect(existsSync(join(second.boundRoot, "round.txt"))).toBe(true);
+  });
+
+  it("THROWS rather than working inside a worktree at the sibling's path that is not the sibling", async () => {
+    // A foreign worktree — the reviewer's own second checkout, here on `main` — sits exactly
+    // where the sibling would go. Checking out in it is the destructive act the first draft
+    // performed; the honest answer is a refusal that names the path and the ref, with the
+    // directory untouched.
+    const repo = initRepo(root, "repo");
+    git(repo, ["checkout", "-q", "feature"]);
+    placement = { ...placement, workspace: "own" };
+    const squatter = join(dataDir, "worktrees", escapePath(repo), "rennet", "feature");
+    git(repo, ["worktree", "add", "-b", "theirs", squatter, "refs/heads/main"]);
+    const before = checkoutFingerprint(squatter);
+    const review = reviewFor({
+      id: "own-squat",
+      repositoryRoot: repo,
+      headOid: headOid(repo, "feature"),
+      headRef: "feature",
+      baseOid: headOid(repo, "main"),
+    });
+
+    await expect(decideBoundWorkspace(review, deps)).rejects.toThrow(/already a worktree/);
+
+    // Untouched: same HEAD, same branch, same index, same tree — and no sibling branch was
+    // created either, so nothing was half-done before the refusal.
+    expect(checkoutFingerprint(squatter)).toBe(before);
+    expect(git(squatter, ["rev-parse", "--abbrev-ref", "HEAD"]).trim()).toBe("theirs");
+    expect(() => git(repo, ["rev-parse", "--verify", "refs/heads/rennet/feature"])).toThrow();
+  });
+
+  it("binds to RENNET'S OWN branch worktree under `own`, exactly as `share` would", async () => {
+    // Nothing had `feature` out when the first session bound, so Rennet placed a worktree ON
+    // the branch. A second session under `own` finds "some worktree already has the branch
+    // out" — but it is Rennet's, not the reviewer's, so there is no tree to work beside and
+    // taking a sibling would fork a second workspace away from the one the first session is
+    // committing in. The first draft switched that worktree onto the sibling underneath it.
+    const repo = initRepo(root, "repo"); // the checkout stays on `main`
+    placement = { ...placement, workspace: "own" };
+    const review = reviewFor({
+      id: "own-rennet",
+      repositoryRoot: repo,
+      headOid: headOid(repo, "feature"),
+      headRef: "feature",
+      baseOid: headOid(repo, "main"),
+    });
+    const first = await decideBoundWorkspace(review, deps);
+    expect(git(first.boundRoot, ["rev-parse", "--abbrev-ref", "HEAD"]).trim()).toBe("feature");
+
+    const second = await decideBoundWorkspace(review, deps);
+
+    expect(second).toEqual({ boundRoot: first.boundRoot });
+    // Still on the branch, and no sibling branch was ever created.
+    expect(git(first.boundRoot, ["rev-parse", "--abbrev-ref", "HEAD"]).trim()).toBe("feature");
+    expect(() => git(repo, ["rev-parse", "--verify", "refs/heads/rennet/feature"])).toThrow();
+  });
+
+  it("THROWS when the resolved placement lands the sibling ON the reviewer's checkout", async () => {
+    // A pattern with no `{branch}` token computes ONE path for every branch — and with the
+    // root set to the fixture directory, that path IS the reviewer's repository. Rennet must
+    // not decide that a checkout it did not place is its own, and must not check anything
+    // out inside it. (`{name}` with no remote resolving falls back to the folder basename.)
+    const repo = initRepo(root, "repo");
+    git(repo, ["checkout", "-q", "feature"]);
+    placement = { ...placement, root, pattern: "{name}", workspace: "own" };
+    const before = checkoutFingerprint(repo);
+    const review = reviewFor({
+      id: "own-onto-checkout",
+      repositoryRoot: repo,
+      headOid: headOid(repo, "feature"),
+      headRef: "feature",
+      baseOid: headOid(repo, "main"),
+    });
+
+    await expect(decideBoundWorkspace(review, deps)).rejects.toThrow(/already a worktree/);
+
+    expect(checkoutFingerprint(repo)).toBe(before);
+    expect(() => git(repo, ["rev-parse", "--verify", "refs/heads/rennet/feature"])).toThrow();
+    expect(gitCalls.some((argv) => argv[0] === "reset")).toBe(false);
+  });
+
+  it("records the DAEMON's spelling of an existing sibling, never GIT's", async () => {
+    // THE REVIEW FINDING (B1). `git worktree list` prints paths in the spelling of the git
+    // that answered — which on a Windows daemon driving a WSL repository is `/home/u/…`
+    // while the daemon addresses that very directory as `\\wsl$\…`. The `share` arm below
+    // already normalises; the sibling arm returned git's answer verbatim, so the recorded
+    // `boundRoot` was a string the daemon cannot `existsSync`, cannot detect a locus for,
+    // and cannot match against its own worktree root. Downstream that reads as "this
+    // session moved to another workspace".
+    //
+    // The two spellings here are a real directory and a symlinked alias for it: one
+    // directory, two names, which is the whole shape of the failure.
+    const repo = initRepo(root, "repo");
+    git(repo, ["checkout", "-q", "feature"]);
+    placement = { ...placement, workspace: "own" };
+    const review = reviewFor({
+      id: "own-spelling",
+      repositoryRoot: repo,
+      headOid: headOid(repo, "feature"),
+      headRef: "feature",
+      baseOid: headOid(repo, "main"),
+    });
+    const first = await decideBoundWorkspace(review, deps);
+    const real = join(dataDir, "worktrees");
+    const alias = join(root, "worktrees-alias");
+    symlinkSync(real, alias);
+    const gitSpelling = first.boundRoot.replace(real, alias);
+    expect(gitSpelling).not.toBe(first.boundRoot);
+    // A git that answers in the OTHER spelling, exactly as the distro's git would.
+    deps = {
+      ...deps,
+      gitFor: () => async (cwd: string, args: string[], options?: { reject?: boolean }) => {
+        const out = await gitExec(cwd, args, options);
+        return args[0] === "worktree" && args[1] === "list" ? out.split(real).join(alias) : out;
+      },
+    };
+
+    const second = await decideBoundWorkspace(review, deps);
+
+    // The computed placement — the name Rennet already owns for this directory — and not
+    // the one git printed. Returning `sibling.path` raw reddens on the first assertion.
+    expect(second.boundRoot).toBe(first.boundRoot);
+    expect(second.boundRoot).not.toBe(gitSpelling);
+    expect(second.workBranch).toBe("rennet/feature");
+    // …and it is one directory, which is why re-spelling it is safe rather than a guess.
+    expect(realpathSync(gitSpelling)).toBe(realpathSync(second.boundRoot));
+  });
+
+  it("binds `own` to the branch itself when NOTHING has it out — there is no conflict to avoid", async () => {
+    const repo = initRepo(root, "repo"); // the checkout is on `main`
+    placement = { ...placement, workspace: "own" };
+    const review = reviewFor({
+      id: "own-3",
+      repositoryRoot: repo,
+      headOid: headOid(repo, "feature"),
+      headRef: "feature",
+      baseOid: headOid(repo, "main"),
+    });
+    const bound = await decideBoundWorkspace(review, deps);
+    expect(git(bound.boundRoot, ["rev-parse", "--abbrev-ref", "HEAD"]).trim()).toBe("feature");
+    expect(bound.workBranch).toBeUndefined();
+  });
+
+  // ── The fixture this change is not done without (task 2.8) ────────────────────────────
+  it("gives each repo of a two-repo workspace its OWN arm when both are on `feat/x`", async () => {
+    // ONE workspace project, TWO repositories, BOTH on `feat/x`, BOTH with that branch
+    // checked out in the reviewer's own worktree. One repository resolves `own`, the other
+    // `share`. A binding that answered from the project — or from the branch name — would
+    // hand one session the other repository's tree, silently, under the right label.
+    const alpha = initRepo(root, "alpha");
+    const beta = initRepo(root, "beta");
+    for (const repo of [alpha, beta]) {
+      git(repo, ["checkout", "-q", "-b", "feat/x", "feature"]);
+    }
+    const modes: Record<string, ResolvedWorktreePlacement["workspace"]> = {
+      [alpha]: "own",
+      [beta]: "share",
+    };
+    deps = {
+      ...deps,
+      placementFor: async (repoRoot) => {
+        placementAsked.push(repoRoot);
+        return { ...placement, workspace: modes[repoRoot] ?? "share" };
+      },
+    };
+    const reviewFo = (id: string, repo: string): Review =>
+      reviewFor({
+        id,
+        repositoryRoot: repo,
+        headOid: headOid(repo, "feat/x"),
+        headRef: "feat/x",
+        baseOid: headOid(repo, "main"),
+      });
+
+    const alphaBound = await decideBoundWorkspace(reviewFo("ws-a", alpha), deps);
+    const betaBound = await decideBoundWorkspace(reviewFo("ws-b", beta), deps);
+
+    // Alpha took a sibling of its own; beta bound to its own checkout.
+    expect(alphaBound.workBranch).toBe("rennet/feat/x");
+    expect(alphaBound.boundRoot).toBe(
+      join(dataDir, "worktrees", escapePath(alpha), "rennet", "feat", "x"),
+    );
+    expect(betaBound).toEqual({ boundRoot: beta });
+
+    // Each bound root is under ITS OWN repository, and neither is under the other's. This is
+    // the pair the swap below reddens: give the two rows each other's `repositoryRoot` and
+    // alpha's session binds under beta's key while beta's binds to alpha's checkout.
+    expect(git(alphaBound.boundRoot, ["rev-parse", "HEAD"]).trim()).toBe(headOid(alpha, "feat/x"));
+    expect(alphaBound.boundRoot.includes(escapePath(alpha))).toBe(true);
+    expect(alphaBound.boundRoot.includes(escapePath(beta))).toBe(false);
+    expect(betaBound.boundRoot).toBe(beta);
+    expect(betaBound.boundRoot.startsWith(alpha)).toBe(false);
+    // The settings were resolved PER REPOSITORY, by that repository's own root.
+    expect(placementAsked).toEqual([alpha, beta]);
+    // And alpha's sibling is alpha's: beta's `feat/x` head is a different commit entirely.
+    expect(git(alpha, ["rev-parse", "refs/heads/rennet/feat/x"]).trim()).not.toBe(
+      headOid(beta, "feat/x"),
+    );
+    expect(() => git(beta, ["rev-parse", "--verify", "refs/heads/rennet/feat/x"])).toThrow();
+  });
+
+  // ── ONE DIRECTORY FOR EVERY BRANCH: THE CLAIM DECIDES WHO MAY CHECK OUT IN IT ────────
+  //
+  // A `{name}` layout — one the write blesses — computes the SAME directory for every branch
+  // of a repository, so the second branch review of a repository always lands on a worktree
+  // of it that is on some other ref. Whether that is a refusal or a repair is not a question
+  // about the path: it is whether a live session is working there.
+  it("REFUSES a second session the workspace the first is bound to, and NAMES that session", async () => {
+    const repo = initRepo(root, "repo"); // the reviewer's own checkout stays on `main`
+    git(repo, ["branch", "feat/y", "main"]);
+    claimRepoRoot = repo;
+    placement = { ...placement, pattern: "{name}" };
+    const reviewOf = (id: string, branch: string): Review =>
+      reviewFor({
+        id,
+        repositoryRoot: repo,
+        headOid: headOid(repo, branch),
+        headRef: branch,
+        baseOid: headOid(repo, "main"),
+      });
+
+    // Session A binds first and takes the one computed directory, on `feature`.
+    const first = await decideBoundWorkspace(reviewOf("r-a", "feature"), deps);
+    expect(first.boundRoot).toBe(join(dataDir, "worktrees", basename(repo)));
+    liveSessions.push({ id: "sess-a", boundRoot: first.boundRoot });
+
+    // Session B reviews `feat/y`, whose computed path is that same directory.
+    await expect(decideBoundWorkspace(reviewOf("r-b", "feat/y"), deps)).rejects.toThrow(
+      /is already a worktree of this repository on feature, so Rennet will not check feat\/y out in it\. Session sess-a is working there\./,
+    );
+    // Session A's workspace is untouched: same ref, same head, nothing added beside it.
+    expect(git(first.boundRoot, ["rev-parse", "--abbrev-ref", "HEAD"]).trim()).toBe("feature");
+    expect(createdWorktrees()).toEqual([first.boundRoot]);
+
+    // ARCHIVE A — which is the only thing that changes — and the same bind now repairs the
+    // directory Rennet placed and nobody is in.
+    liveSessions.length = 0;
+    created = [];
+    const second = await decideBoundWorkspace(reviewOf("r-b", "feat/y"), deps);
+    expect(second.boundRoot).toBe(first.boundRoot);
+    expect(git(second.boundRoot, ["rev-parse", "--abbrev-ref", "HEAD"]).trim()).toBe("feat/y");
+    // One directory still, and no `.rennet/setup` re-run: the worktree was not CREATED, it
+    // was put back on the branch under review.
+    expect(createdWorktrees()).toEqual([first.boundRoot]);
+    expect(created).toEqual([]);
+  });
+
+  it("lets GIT refuse the repair when the drifted tree would lose work, and says so verbatim", async () => {
+    // NOT A RENNET GATE. The repair is a plain `git checkout`, so the one thing that stops it
+    // is git's own refusal on a file the checkout would overwrite — surfaced as git wrote it,
+    // with the tree exactly as the reviewer left it.
+    const repo = initRepo(root, "repo"); // the reviewer's checkout stays on `main`
+    git(repo, ["branch", "feat/y", "main"]);
+    claimRepoRoot = repo;
+    placement = { ...placement, pattern: "{name}" };
+    const bound = await bindRoot(
+      reviewFor({
+        id: "r-a",
+        repositoryRoot: repo,
+        headOid: headOid(repo, "feature"),
+        headRef: "feature",
+        baseOid: headOid(repo, "main"),
+      }),
+    );
+    // `feature.txt` exists on `feature` and not on `feat/y`, so checking `feat/y` out here
+    // has to remove it — and an uncommitted edit to it is what git refuses over. No session
+    // claims this directory, so the refusal can only be git's.
+    writeFileSync(join(bound, "feature.txt"), "work in flight\n");
+
+    await expect(
+      decideBoundWorkspace(
+        reviewFor({
+          id: "r-b",
+          repositoryRoot: repo,
+          headOid: headOid(repo, "feat/y"),
+          headRef: "feat/y",
+          baseOid: headOid(repo, "main"),
+        }),
+        deps,
+      ),
+    ).rejects.toThrow(/feature\.txt/);
+    // The tree and its ref are as they were, and the edit is still there.
+    expect(git(bound, ["rev-parse", "--abbrev-ref", "HEAD"]).trim()).toBe("feature");
+    expect(readFileSync(join(bound, "feature.txt"), "utf8")).toBe("work in flight\n");
   });
 });
 

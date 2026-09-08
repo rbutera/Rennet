@@ -10,19 +10,52 @@
 // out, a pull request whose head branch does not exist locally — and none of those are
 // reachable through a composition root.
 
-import { realpathSync } from "node:fs";
 import {
   branchWorktreePath,
+  comparablePath,
   ensureBranchWorktree,
   ensurePrWorktree,
+  ensureSiblingWorktree,
   prWorktreePath,
+  siblingBranchFor,
+  type WorktreeClaim,
+  type WorktreePlacement,
+  type WorktreeRecord,
+  type WorktreeRepoFacts,
   worktreeForBranch,
 } from "@rennet/adapters";
-import { type Locus, toWindowsView } from "@rennet/core";
+import { type Locus, toWindowsView, type WorkspaceMode } from "@rennet/core";
 import type { Review } from "@rennet/protocol";
 
 /** `git(cwd, args)` — the locus-aware exec the daemon builds per repository. */
 type GitExec = (cwd: string, args: string[], options?: { reject?: boolean }) => Promise<string>;
+
+/**
+ * Where Rennet puts a worktree for ONE repository, and whether it may work inside a
+ * checkout the reviewer already has out (workspace-settings D1/D2/D4) — the four values
+ * resolved off the settings ladder for `review.repositoryRoot`.
+ *
+ * Declared HERE, beside the only thing that acts on them, and re-exported by the settings
+ * composition that resolves them: two structurally identical declarations are how a
+ * builtin the ladder resolves and a builtin the binding assumes drift apart.
+ */
+export interface ResolvedWorktreePlacement extends WorktreePlacement {
+  /** `share` (the builtin) or `own`. */
+  readonly workspace: WorkspaceMode;
+}
+
+/**
+ * What a session binds to: the ONE workspace root, and the branch its work commits on.
+ *
+ * `workBranch` is ABSENT when that is the reviewed branch itself — which is every
+ * arrangement but a `workspace: own` bind beside a checkout that already has the branch
+ * out. Absent is not "unknown": it is the reviewed branch, said once rather than copied
+ * onto every session so that a later read cannot disagree with the patchset it came from.
+ */
+export interface BoundWorkspace {
+  readonly boundRoot: string;
+  readonly workBranch?: string;
+}
 
 export interface BoundWorkspaceDeps {
   /** The daemon's git for a path, so a WSL project resolves through its own locus. */
@@ -31,14 +64,88 @@ export interface BoundWorkspaceDeps {
   readonly locusOf: (root: string) => Locus;
   /** `escapePath(realpath(root))` — the per-repository directory a branch worktree hangs under. */
   readonly repoKeyForRoot: (root: string) => string;
-  /** The data dir a Rennet-created worktree lives under. */
-  readonly dataDir: string;
+  /**
+   * The location, layout and workspace mode resolved off the settings ladder FOR THIS
+   * REPOSITORY (D1) — the same ladder, and the same four values, the Worktrees card shows.
+   *
+   * Asked by repository root, never by project: two repositories of one workspace project
+   * resolve their own repo rungs and place their own worktrees, and a project id could not
+   * say which of them a bind meant (CLAUDE.md, 2026-08-28).
+   */
+  readonly placementFor: (repoRoot: string) => Promise<ResolvedWorktreePlacement>;
+  /**
+   * What git can tell us about ONE repository's remote — the SAME function the settings
+   * row's placement preview reads through (`create-server.ts` builds it once and hands it
+   * to both). Every token the write blesses has to have a value at the bind, and `{owner}`
+   * / `{name}` are the two only git can answer: without this, a stored `{owner}/{branch}`
+   * previewed fine and threw here.
+   *
+   * Asked by REPOSITORY ROOT, never by project: a workspace maps many repos to one identity.
+   * A repository git cannot answer for falls back to `local` and the folder's basename,
+   * inside the token builders, so the preview and the binding fall back identically.
+   */
+  readonly worktreeFacts: (repoRoot: string) => Promise<WorktreeRepoFacts>;
+  /**
+   * Whether a LIVE SESSION is working in a worktree registration of this repository — the
+   * SAME `isClaimed` the daemon-start sweep's prune guard and the sibling collection ask,
+   * built once per repository by `worktreeClaimsIn` (D4/D5).
+   *
+   * One predicate for all three callers, because they decide three different destructive
+   * acts on one fact: whether to prune a registration, whether to delete a sibling branch,
+   * and whether a worktree on the wrong ref is Rennet's to put back. Three copies of "is
+   * anybody using this" is three chances to disagree about somebody's working tree — the
+   * sweep and the collection had exactly that disagreement (review finding F3), and the
+   * collection deleted a branch the prune two lines up had just spared.
+   */
+  readonly registrationClaimed: (record: WorktreeRecord) => WorktreeClaim;
   /** The worktree already indexed for this review's pull request, when there is one. */
   readonly prWorktreeFor: (reviewId: string) => string | undefined;
+  /**
+   * Whether Rennet's pull-request index records a snapshot AT THIS PATH — for any review,
+   * not only this one.
+   *
+   * The ONE definition of `recordedSnapshot`, shared with the pull-request front door
+   * (`create-server.ts` builds it once and hands it to both). There were two, and they
+   * disagreed on the case the flag exists for: this module asked only whether THIS review
+   * had an index entry, while the front door scanned the whole index BY PATH. A successor
+   * review of the same pull request has a fresh review id and inherits nothing, so the
+   * narrow reading refused to replace Rennet's own superseded snapshot — the same path,
+   * placed by Rennet, one review earlier — and the bind threw where the front door would
+   * happily have re-pinned. By path, in both.
+   */
+  readonly snapshotRecordedAt: (worktreePath: string) => boolean;
   /** Where a newly created pull-request worktree is recorded. */
   readonly recordPrWorktree: (reviewId: string, path: string) => void;
   /** Fired for a worktree this call CREATED, so its `.rennet/setup` can run. */
   readonly onWorktreeCreated?: (worktreePath: string) => void;
+  // No `siblingPush`. There was one, and it could not be reached: a session records
+  // `workBranchPush` only after a submission, which needs a `workBranch`, which needs a
+  // bind — and this function runs only when the session has no `boundRoot` at all, which
+  // `clearBoundWorkspace` drops together with both of the others. So the re-fork question
+  // is always asked the way the sweep asks it: of EVERY remote-tracking ref of the branch,
+  // which is a superset of the one remote a push would have named.
+}
+
+/**
+ * The comparable form of a path — `realpath` where it exists, the deepest existing ancestor
+ * plus the literal tail where it does not.
+ *
+ * DEFINED IN `@rennet/adapters` and re-exported here, so the daemon's sweep and the two
+ * binds ask one question one way. This module was its only home while the sweep was its
+ * only caller; the binds match registrations the same way now (review finding F4), and
+ * `adapters` is the package both sides may import.
+ */
+export { comparablePath };
+
+/**
+ * Whether two paths name the SAME directory: resolved through symlinks, so `/var/x` and
+ * `/private/var/x` are one, and compared case-insensitively on the UNC forms where Windows is.
+ * An unresolvable path keeps its literal form, which still compares equal to itself.
+ */
+export function sameDirectory(a: string, b: string): boolean {
+  if (a === b) return true;
+  const [left, right] = [comparablePath(a), comparablePath(b)];
+  return left === right || left.toLowerCase() === right.toLowerCase();
 }
 
 /**
@@ -53,25 +160,6 @@ export interface BoundWorkspaceDeps {
  * Only that arrangement is rewritten. A daemon running INSIDE the distro already addresses the
  * repository the way git does, and a host-locus repository never had two spellings.
  */
-export function comparablePath(path: string): string {
-  try {
-    return realpathSync(path);
-  } catch {
-    return path;
-  }
-}
-
-/**
- * Whether two paths name the SAME directory: resolved through symlinks, so `/var/x` and
- * `/private/var/x` are one, and compared case-insensitively on the UNC forms where Windows is.
- * An unresolvable path keeps its literal form, which still compares equal to itself.
- */
-export function sameDirectory(a: string, b: string): boolean {
-  if (a === b) return true;
-  const [left, right] = [comparablePath(a), comparablePath(b)];
-  return left === right || left.toLowerCase() === right.toLowerCase();
-}
-
 export function inRepoSpelling(gitPath: string, repositoryRoot: string, locus: Locus): string {
   if (locus.kind !== "wsl") return gitPath;
   // The daemon is inside the distro when it addresses the repository distro-natively; then git's
@@ -85,14 +173,22 @@ export function inRepoSpelling(gitPath: string, repositoryRoot: string, locus: L
  * Which workspace this review's session binds to.
  *
  *   • Branch review, and some worktree of the repository already has that branch checked out
- *     (usually the reviewer's own) → THAT checkout, and no worktree is created. Asked of git
- *     rather than assumed: git refuses `worktree add` for a branch checked out elsewhere, so
- *     binding blind would fail on exactly the tree we should have bound to.
- *   • Branch review of a branch nothing has out → a Rennet-created worktree at
- *     `<dataDir>/worktrees/<repoKey>/<branch>`, with the branch CHECKED OUT, because a round
- *     commits on the session's branch there and a detached head cannot.
+ *     (usually the reviewer's own). Asked of git rather than assumed: git refuses
+ *     `worktree add` for a branch checked out elsewhere, so binding blind would fail on
+ *     exactly the tree we should have bound to. What happens next is the repository's
+ *     resolved `workspace` setting (D4):
+ *       – `share` (the builtin) → THAT checkout, and no worktree is created.
+ *       – `own` → a Rennet-created worktree at the resolved placement, on a SIBLING branch
+ *         `rennet/<branch>` forked from the branch's head, with that checkout untouched.
+ *         The session's work branch is the sibling; the reviewed branch's own ref does not
+ *         move until a push or the land action moves it.
+ *   • Branch review of a branch nothing has out → a Rennet-created worktree at the resolved
+ *     placement (builtin `<dataDir>/worktrees/<repoKey>/<branch>`), with the branch CHECKED
+ *     OUT, because a round commits on the session's branch there and a detached head cannot.
+ *     Under either setting: there is no conflict for a sibling to avoid.
  *   • Pull-request snapshot → the detached worktree at the reviewed head, the one the pull
- *     request front door already ensures and indexes, re-pinned in place when the head moves.
+ *     request front door already ensures and indexes, re-pinned in place when the head
+ *     moves. Under either setting: a snapshot has no branch checked out to collide with.
  *
  * A working-tree capture is the degenerate branch case: its evidence IS the live checkout the
  * capture froze, and that checkout is on the branch, so it binds there without a worktree.
@@ -111,30 +207,100 @@ export function inRepoSpelling(gitPath: string, repositoryRoot: string, locus: L
 export async function decideBoundWorkspace(
   review: Review,
   deps: BoundWorkspaceDeps,
-): Promise<string> {
+): Promise<BoundWorkspace> {
   const patchset = review.patchsets.find((entry) => entry.id === review.activePatchsetId);
   // Nothing pinned: there is no reviewed tree to bind to and nothing to create, so the
   // repository itself is the only honest answer.
-  if (patchset === undefined) return review.repositoryRoot;
+  if (patchset === undefined) return { boundRoot: review.repositoryRoot };
   const git = deps.gitFor(review.repositoryRoot);
   const locus = deps.locusOf(review.repositoryRoot);
+  // The location, layout and workspace mode this REPOSITORY resolves (D1). Read once per
+  // bind, before any arm branches, so the pull-request arm and the branch arms cannot
+  // disagree about which root they place under.
+  const placement = await deps.placementFor(review.repositoryRoot);
   // Both halves of "opened from a pull request" are tested POSITIVELY: `postTarget` is present
   // exactly on a postable PR review, and `retrospective` marks the read-only PR review that
   // deliberately has none. A branch review is neither — and a PR's head branch may not exist
   // locally at all (a fork), so there is nothing to check out.
   if (review.postTarget !== undefined || review.retrospective === true) {
-    return ensurePrSnapshotWorkspace(review, patchset.repository.headOid, git, deps);
+    return {
+      boundRoot: await ensurePrSnapshotWorkspace(
+        review,
+        patchset.repository.headOid,
+        git,
+        placement,
+        deps,
+      ),
+    };
   }
   const branch = patchset.repository.headRef;
   // A detached HEAD has no branch ref, so there is no branch to bind a worktree to.
-  if (branch === undefined || branch.length === 0) return review.repositoryRoot;
-  const worktree = branchWorktreePath(
-    deps.dataDir,
-    deps.repoKeyForRoot(review.repositoryRoot),
-    branch,
-  );
+  if (branch === undefined || branch.length === 0) return { boundRoot: review.repositoryRoot };
+  const identity = {
+    repoKey: deps.repoKeyForRoot(review.repositoryRoot),
+    repoRoot: review.repositoryRoot,
+    ...(await branchFacts(deps, review.repositoryRoot, placement.pattern)),
+  };
+  const worktree = branchWorktreePath(placement.root, placement.pattern, identity, branch);
   const existing = await worktreeForBranch(git, review.repositoryRoot, branch);
   if (existing !== undefined) {
+    // SOME WORKTREE ALREADY HAS THE BRANCH OUT — usually the reviewer's own checkout. Which
+    // of the two answers this is, is the whole of D4:
+    //
+    //   • `share` (the builtin): bind to that checkout. Rennet works where the reviewer
+    //     works, which is what makes a round's commits land on the branch they are looking
+    //     at, and it creates nothing.
+    //   • `own`: git refuses a second checkout of one branch, so Rennet takes its own
+    //     worktree on a SIBLING branch `rennet/<branch>` forked from the branch's head and
+    //     leaves that checkout byte-for-byte as it stands.
+    //
+    // …but `own` first asks WHOSE checkout it is. When the worktree holding the branch is
+    // RENNET's own branch worktree — the one at the branch's computed placement, which a
+    // session created because nothing had the branch out then — there is no reviewer's tree
+    // to work beside, and taking a sibling would fork a second workspace away from the one
+    // this session's predecessors are committing in. So that case binds exactly as `share`
+    // does. Only a checkout Rennet did not place runs the sibling arm.
+    // WHOSE checkout is it? Rennet's own branch worktree sits under the resolved root at
+    // the branch's computed path — and is never the repository root, which is the
+    // reviewer's own checkout by definition. Both halves are load-bearing: a pattern with
+    // no `{branch}` token (`{name}`, say) computes the SAME path for every branch, so the
+    // repository root itself can resolve there, and without the first test that arrangement
+    // would read as "Rennet placed this" and bind to the reviewer's tree under `own`.
+    const rennetPlacedIt =
+      !sameDirectory(existing, review.repositoryRoot) && sameDirectory(existing, worktree);
+    if (placement.workspace === "own" && !rennetPlacedIt) {
+      // THE SIBLING GETS ITS OWN PATH — the branch pattern applied to the SIBLING's name,
+      // never the branch's own. The first draft of D4 placed it at `branchWorktreePath(…,
+      // branch)`, which is the path a Rennet BRANCH worktree of the same repository already
+      // occupies, so the bind checked another workspace out onto the sibling underneath
+      // whoever was using it. One path per ref, and `ensureSiblingWorktree` throws rather
+      // than working inside a directory that belongs to a worktree on anything else.
+      const siblingWorktree = branchWorktreePath(
+        placement.root,
+        placement.pattern,
+        identity,
+        siblingBranchFor(branch),
+      );
+      const sibling = await ensureSiblingWorktree(
+        git,
+        review.repositoryRoot,
+        siblingWorktree,
+        branch,
+      );
+      if (sibling.created) deps.onWorktreeCreated?.(sibling.path);
+      // GIT'S SPELLING NEVER BECOMES `boundRoot`. `ensureSiblingWorktree` returns the
+      // registration's own path when a sibling worktree already exists, and git prints a
+      // realpath inside its own locus: on a Windows daemon driving a WSL repository that is
+      // `/home/u/…` while the daemon addresses the same directory as `\\wsl$\…`. Recorded
+      // raw it would make `existsSync` refuse the binding, `detectLocus` read the path as
+      // the host's, and the un-archive clear delete a live binding. Same normalisation the
+      // `share` arm below makes, for the same reason: the computed spelling when it is the
+      // same directory, the daemon's re-spelling otherwise.
+      const boundRoot = sameDirectory(sibling.path, siblingWorktree)
+        ? siblingWorktree
+        : inRepoSpelling(sibling.path, review.repositoryRoot, locus);
+      return { boundRoot, workBranch: sibling.workBranch };
+    }
     // PREFER A SPELLING RENNET ALREADY OWNS. `git worktree list` prints a realpath, and on WSL
     // the UNC form it maps back to is `\\\\wsl.localhost\\…` while a project may be opened as
     // `\\\\wsl$\\…`. Either would make `boundRoot` differ from the name Rennet already has for
@@ -142,15 +308,57 @@ export async function decideBoundWorkspace(
     // SPELLING ALONE. Downstream that reads as "this session moved to another workspace": it
     // retires the session's thread rows and re-keys the new ones on the alternate name. Same
     // directory, same string, whichever of the two owns it.
-    if (sameDirectory(existing, review.repositoryRoot)) return review.repositoryRoot;
-    if (sameDirectory(existing, worktree)) return worktree;
+    if (sameDirectory(existing, review.repositoryRoot)) {
+      return { boundRoot: review.repositoryRoot };
+    }
+    if (sameDirectory(existing, worktree)) return { boundRoot: worktree };
     // A worktree the reviewer made themselves: git's spelling is all there is, re-spelled into
     // the locus the daemon addresses the repository by.
-    return inRepoSpelling(existing, review.repositoryRoot, locus);
+    return { boundRoot: inRepoSpelling(existing, review.repositoryRoot, locus) };
   }
-  const { created } = await ensureBranchWorktree(git, review.repositoryRoot, worktree, branch);
+  // NOTHING has the branch out, under either setting: Rennet's worktree is on the branch
+  // itself, because there is no conflict for a sibling to avoid (D4).
+  //
+  // The claim oracle travels with the bind: a worktree Rennet placed here that has drifted
+  // onto another ref — a round's own agent running `git checkout other` inside it is how it
+  // happens — is Rennet's to put back when NO live session is bound there, and somebody's
+  // live workspace when one is. Without it `ensureBranchWorktree` refuses, which is the
+  // conservative default and was the permanent lockout.
+  const { created } = await ensureBranchWorktree(git, review.repositoryRoot, worktree, branch, {
+    claimed: deps.registrationClaimed,
+  });
   if (created) deps.onWorktreeCreated?.(worktree);
-  return worktree;
+  return { boundRoot: worktree };
+}
+
+/**
+ * The repository facts a BRANCH placement substitutes — and what a failure to read them
+ * means, which depends entirely on the pattern in hand.
+ *
+ * `worktreeFacts` runs git. Git can fail transiently: an unreachable WSL distro, a locked
+ * index, a repository mid-clone. The builtin pattern `{repo}/{branch}` does not use either
+ * fact, so failing a bind over them would refuse a workspace the answer could not have
+ * changed. A pattern that DOES name `{owner}` or `{name}` is the opposite case: the token
+ * builders fall back to `local` and the folder's basename, so a swallowed failure places
+ * the worktree at a path the resolved settings do not describe — and the session records
+ * that path for its whole life. D4's rule stands: a workspace that cannot be placed THROWS,
+ * with the reason, and the next use retries.
+ */
+async function branchFacts(
+  deps: BoundWorkspaceDeps,
+  repoRoot: string,
+  pattern: string,
+): Promise<WorktreeRepoFacts> {
+  try {
+    return await deps.worktreeFacts(repoRoot);
+  } catch (error) {
+    if (!/\{(?:owner|name)\}/.test(pattern)) return {};
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `worktree placement: pattern "${pattern}" needs this repository's remote, which git could not read — ${reason}`,
+      { cause: error },
+    );
+  }
 }
 
 /**
@@ -167,7 +375,7 @@ export async function decideBoundWorkspace(
 export async function repinBoundWorkspace(
   review: Review,
   recorded: string,
-  deps: Pick<BoundWorkspaceDeps, "gitFor">,
+  deps: Pick<BoundWorkspaceDeps, "gitFor" | "snapshotRecordedAt">,
 ): Promise<string> {
   if (review.postTarget === undefined && review.retrospective !== true) return recorded;
   const patchset = review.patchsets.find((entry) => entry.id === review.activePatchsetId);
@@ -179,6 +387,13 @@ export async function repinBoundWorkspace(
     review.repositoryRoot,
     recorded,
     patchset.repository.headOid,
+    // THE SAME by-path question the first bind and the front door ask, not a `true` this
+    // call assumed from the fact that a session is bound here. The session's binding is
+    // Rennet's own record — but it is a SECOND record, and a second record is a second
+    // definition: a session bound to a path the pull-request index no longer names is a
+    // session whose snapshot Rennet has already let go of, and re-pinning it forcibly is
+    // the deletion `ensurePrWorktree` refuses everywhere else.
+    { recordedSnapshot: deps.snapshotRecordedAt(recorded) },
   );
   return recorded;
 }
@@ -200,6 +415,7 @@ async function ensurePrSnapshotWorkspace(
   review: Review,
   headOid: string,
   git: GitExec,
+  placement: ResolvedWorktreePlacement,
   deps: BoundWorkspaceDeps,
 ): Promise<string> {
   const indexed = deps.prWorktreeFor(review.id);
@@ -207,9 +423,28 @@ async function ensurePrSnapshotWorkspace(
     indexed ??
     (review.postTarget === undefined
       ? undefined
-      : prWorktreePath(deps.dataDir, review.postTarget.repo, review.postTarget.number));
+      : // The PR's own forge identity IS this repository's resolved remote for the review
+        // in hand, so it fills `{owner}`/`{name}` directly; `{repo}` is the same escaped
+        // realpath key the branch arm and the preview spell.
+        prWorktreePath(
+          placement.root,
+          placement.prPattern,
+          {
+            repoKey: deps.repoKeyForRoot(review.repositoryRoot),
+            repoRoot: review.repositoryRoot,
+            owner: review.postTarget.repo.owner,
+            remoteName: review.postTarget.repo.name,
+          },
+          review.postTarget.number,
+        ));
   if (target === undefined) return review.repositoryRoot;
-  const { created } = await ensurePrWorktree(git, review.repositoryRoot, target, headOid);
+  const { created } = await ensurePrWorktree(git, review.repositoryRoot, target, headOid, {
+    // Rennet's index names this exact PATH — for this review or an earlier one of the same
+    // pull request, which is the successor case the replacement exists for. That is the
+    // only evidence Rennet placed the snapshot there; a computed path with no index entry
+    // has none, and whatever occupies it is somebody else's.
+    recordedSnapshot: deps.snapshotRecordedAt(target),
+  });
   if (indexed === undefined) deps.recordPrWorktree(review.id, target);
   if (created) deps.onWorktreeCreated?.(target);
   return target;

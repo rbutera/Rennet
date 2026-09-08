@@ -399,6 +399,7 @@ export function publishHandlers(rt: DispatchRuntime) {
       const outcome = await deps.submitPullRequest({
         repoRoot: patchset.repository.root,
         headRef,
+        reviewId: current.id,
         submission: input.submission,
         destination,
       });

@@ -8,7 +8,7 @@ import type { Layered } from "./provenance";
 // ─────────────────────────────────────────────────────────────────────────────
 // The settings PROJECTION seam (C10 §2.1, reconciliations 5 & 8) — the shapes every
 // settings page reads environments, source-control / agent detection, model mappings,
-// project glyphs, worktree patterns, guidance and issue trackers through, instead of a
+// project glyphs, guidance and issue trackers through, instead of a
 // protocol command per page.
 //
 // The context was NOT deleted when the engine landed (the plan said it would be). The
@@ -112,12 +112,6 @@ export interface ReviewRole {
 
 // ── Projects (§8) ──────────────────────────────────────────────────────────────
 
-/** The worktree location + naming pattern for one project (each a layered value). */
-export interface WorktreeSettings {
-  readonly root: Layered<string>;
-  readonly pattern: Layered<string>;
-}
-
 /** A repo rule the review agents read, with the severity chip it carries (claim 669). */
 export type GuidanceSeverity = "high" | "medium" | "low";
 export interface GuidanceRule {
@@ -179,13 +173,11 @@ export interface SettingsProjection {
   readonly logosByProject: Readonly<
     Record<string, { readonly detected?: ProjectLogo; readonly upload?: ProjectLogo }>
   >;
-  /** The worktree settings per project id. */
-  readonly worktreeByProject: Readonly<Record<string, WorktreeSettings>>;
   /** The issue-tracker settings per project id. */
   readonly trackerByProject: Readonly<Record<string, IssueTrackerSettings>>;
   /** The guidance rules the review agents read, per project id. */
   readonly guidanceByProject: Readonly<Record<string, readonly GuidanceRule[]>>;
-  /** Whether the per-project editors (name, glyph, worktree, tracker, guidance) have a
+  /** Whether the per-project editors (name, glyph, tracker, guidance) have a
    *  served WRITE store, asked of the SURFACE as a whole. The live projection leaves this
    *  FALSE and answers per project through {@link prefsBackedByProject} instead — it can
    *  only address a project whose row it holds. With no store, a fully enabled control
@@ -209,7 +201,7 @@ export interface SettingsProjection {
    * Whether the project NAME field has a served write store. Separate from
    * {@link SettingsProjection.projectEditsPersist} because they are two different
    * stores: the name writes through `project.rename` (C18, the projects store) while
-   * the glyph, worktree, tracker and guidance editors write the repo rung through
+   * the glyph, tracker and guidance editors write the repo rung through
    * `settings.setProjectValue` / `settings.setGuidance` and are answered per project by
    * {@link prefsBackedByProject}. One flag for both would tell the wrong truth about
    * one of them whenever a daemon serves one store and not the other.
@@ -261,10 +253,6 @@ export interface SettingsProjection {
   detectProjectLogo(
     projectId: string,
   ): Promise<{ readonly found: boolean; readonly source: string | null }>;
-  /** Set a project's worktree location directory. */
-  setWorktreeRoot(projectId: string, root: string): void;
-  /** Set a project's worktree naming pattern. */
-  setWorktreePattern(projectId: string, pattern: string): void;
   /** Set a project's issue-tracker config. */
   setTracker(projectId: string, tracker: IssueTrackerSettings): void;
   /** Set a project's guidance rules (the review agents read them). */
@@ -284,7 +272,6 @@ export const EMPTY_SETTINGS_PROJECTION: SettingsProjection = {
   glyphByProject: {},
   markByProject: {},
   logosByProject: {},
-  worktreeByProject: {},
   trackerByProject: {},
   guidanceByProject: {},
   projectEditsPersist: false,
@@ -304,8 +291,6 @@ export const EMPTY_SETTINGS_PROJECTION: SettingsProjection = {
   uploadProjectLogo: () => undefined,
   // No backend to detect with, so the honest outcome is a detection that found nothing.
   detectProjectLogo: async () => ({ found: false, source: null }),
-  setWorktreeRoot: () => undefined,
-  setWorktreePattern: () => undefined,
   setTracker: () => undefined,
   setGuidance: () => undefined,
 };

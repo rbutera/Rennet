@@ -11,6 +11,7 @@ import { useBridgeContext } from "../data/bridge";
 import { reviewIdOf, useSlugResolution } from "../routes/slug";
 import { ROUTES } from "../routes/url";
 import { advance, initialRoundState, mergeRoundEvents, type RoundState } from "./round-machine";
+import { roundSettled } from "./worktree-freshness";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The rounds-data seam (C09 §1.2) — the SINGLE point every rounds surface resolves its
@@ -325,18 +326,27 @@ export function useLiveRoundsSource(): RoundsSource {
         event.snapshot.state.result.kind === "changed"
           ? event.snapshot.state.result.report.generation
           : undefined;
-      const changedReviewCommitted = changedSuccessorGeneration !== undefined;
-      const durableTerminal =
-        event.type === "operation" &&
-        (event.snapshot.state.phase === "failed" || changedReviewCommitted);
-      if (
-        durableTerminal ||
-        event.type === "composed" ||
-        event.type === "unchanged" ||
-        event.type === "failed"
-      ) {
+      // The SAME predicate `WorktreeInventoryFreshness` subscribes on, imported rather
+      // than restated: two copies of "the round is over" are two chances to disagree about
+      // which receipts stale which reads.
+      if (roundSettled(event)) {
         cache.invalidate(commandKey("session.rounds", { reviewId: reviewId ?? "" }));
         cache.invalidate(commandKey("session.list", {}));
+        // …AND the work-branch strip. Its whole content is a read of refs, and a settled
+        // round is the event that moves them: under `own` the turn's commits land on
+        // `rennet/<branch>`, so a sibling that read `landed` when the workspace mounted is
+        // ahead the moment the round finishes. Nothing else re-asks it — the strip is
+        // mounted on the workspace, not on the round card, so it can sit through a whole
+        // round without re-rendering — and a cached "landed" hides the line entirely.
+        // Invalidated by NAME (every key of the command, whatever session it addresses),
+        // because the reader here is the review's rounds hook and the strip is somebody
+        // else's subtree.
+        cache.invalidate("session.workBranchState");
+        // The WORKSPACE INVENTORY is staled by `WorktreeInventoryFreshness`, not here
+        // (workspace-settings D6). This subscription is keyed to the review THE ROUTE IS
+        // ON, and the only screen that renders the inventory is Settings — which is not a
+        // session route, so this fold does not run while the card is open, which is the
+        // one moment the staling had to happen.
       }
       // Boards carry their successor generation on round progress, but Diff and Handoff read
       // `Review.activePatchsetId`. Refresh the one mounted review only when the daemon has

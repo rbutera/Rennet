@@ -127,6 +127,10 @@ const ABSORBED_IDS = [
   "round.retry",
   "session.archive",
   "session.cancelPreparation",
+  // The land action (workspace-settings D4): a fast-forward-only merge of the session's
+  // work branch into the checkout that has the reviewed branch out, run on the reviewer's
+  // click. Git's refusal is the outcome when there is one.
+  "session.landWorkBranch",
   "session.list",
   "session.mint",
   "session.rename",
@@ -135,6 +139,12 @@ const ABSORBED_IDS = [
   "session.rounds",
   "session.setPinned",
   "session.transcript",
+  // Where the work branch has got to (workspace-settings D4): `aheadOfBranch`,
+  // `behindRemote`, `pushed`, `landed` and the `remoteRef` they were decided against —
+  // computed from git at request time rather than stamped on the session record. The two
+  // counts are separate fields because they are two ranges; one number for both was the
+  // first draft, and it rendered the sibling's count under a sentence about the remote.
+  "session.workBranchState",
   "settings.completeWelcome",
   "settings.get",
   "settings.guidance",
@@ -151,6 +161,10 @@ const ABSORBED_IDS = [
   "settings.setRepoVisibility",
   "settings.setRoleAssignment",
   "settings.setThemePack",
+  // The workspace inventory (workspace-settings D6): the per-repository list of every
+  // workspace Rennet knows, and the non-forcing removal of one idle Rennet-made row.
+  "worktrees.list",
+  "worktrees.remove",
 ] as const;
 
 // The #465 v1 agent inventory, mapped by inspection (the session.* reads exist but stay
@@ -177,7 +191,7 @@ const AGENT_INVENTORY = [
 ] as const;
 
 // The ⌘K command-menu inventory (#477, C11 exposure pass). Mirrors MENU_EXPOSED in
-// index.ts so a menu exposure edit is deliberate; the row-by-row walk of all 104 commands
+// index.ts so a menu exposure edit is deliberate; the row-by-row walk of all 113 commands
 // lives in `docs/developing/reference/command-menu-exposure.md`. The menu invokes with no
 // input and shows no result, so a row qualifies only if `{}` satisfies its schema, it is
 // an action rather than a UI-driven read, its output is not the point, and it does not
@@ -188,7 +202,7 @@ const MENU_INVENTORY: readonly string[] = [];
 describe("command registry invariants (#465)", () => {
   it("matches the recorded command snapshot (settings.setRepoLocus demoted, #476)", () => {
     expect(Object.keys(commands).sort()).toEqual([...ABSORBED_IDS]);
-    expect(ABSORBED_IDS).toHaveLength(109);
+    expect(ABSORBED_IDS).toHaveLength(113);
   });
 
   it("every row carries label, exposure, and locus with today's uniform values", () => {

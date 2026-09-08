@@ -19,6 +19,22 @@ import { realpathSync, statSync } from "node:fs";
 import { basename, join, sep } from "node:path";
 import { escapePath } from "@rennet/core";
 import type { CommandName, ProjectProgressEvent, RepoReference } from "@rennet/protocol";
+import { WORKTREE_REFUSAL_CAP } from "@rennet/protocol";
+
+/**
+ * Re-cap a git refusal AFTER projection, with the same marker the host capped it with.
+ *
+ * Projection can GROW free text: a `/Users/rai/dev/rennet/worktrees/x` becomes a
+ * `<repo>/worktrees/x` display token or a `<path>` redaction, and either can be longer
+ * than what it replaced. The host caps at {@link WORKTREE_REFUSAL_CAP} and the wire schema
+ * admits `+ 16`, so a refusal that arrived at the cap and gained a few characters here
+ * failed to parse at the boundary — the payload the reviewer needed, refused for its size.
+ */
+function capRefusal(text: string): string {
+  return text.length > WORKTREE_REFUSAL_CAP
+    ? `${text.slice(0, WORKTREE_REFUSAL_CAP)}… (truncated)`
+    : text;
+}
 
 /** A repository the server may name outbound / accept inbound, in both path forms + its key. */
 interface RootEntry {
@@ -437,6 +453,47 @@ export function projectCommandOutput(
     // alone would let a `/var/…` or `C:\…` outside every known root cross to a phone.
     if (command === "session.transcript" && Array.isArray(o.rows))
       o.rows = (o.rows as unknown[]).map((row) => redactAbsolutePathsDeep(row, ctx));
+    // The workspace inventory (workspace-settings D6). Each row's `path` is a HOST
+    // directory, so it becomes a repo reference exactly as a review's `repositoryRoot`
+    // does. The row's `id` is deliberately left alone: it is the address `worktrees.remove`
+    // takes, and it is what lets a projected client round-trip a row it can only ever see
+    // the scrubbed spelling of. (`worktrees.remove`'s own top-level `path` is handled by
+    // the generic string-`path` branch above, which is the same rewrite.)
+    if (command === "worktrees.list" && Array.isArray(o.rows)) {
+      o.rows = (o.rows as Record<string, unknown>[]).map((row) => ({
+        ...row,
+        path: toRepoReference(String(row.path), ctx),
+      }));
+    }
+    // A removal's FREE TEXT is git's own sentence, and git names absolute paths in it:
+    // `fatal: '/srv/rennet/worktrees/repo/feat/x' contains modified or untracked files`.
+    // The blanket scrub below rewrites known roots and the home dir and nothing else, so a
+    // data directory outside both — which is exactly where a configured `worktree.location`
+    // can put one — shipped the host spelling to a paired phone. Same shape as
+    // `session.transcript` above, same answer: substitute what is known, then redact what
+    // is left. Only `reason` and `note` are free text; `path` is structural and is rewritten
+    // into a repo reference by the generic string-`path` branch above.
+    if (command === "worktrees.remove") {
+      for (const key of ["reason", "note"] as const) {
+        if (typeof o[key] === "string") {
+          o[key] = capRefusal(String(redactAbsolutePathsDeep(o[key], ctx)));
+        }
+      }
+    }
+    // The land action's refusal is git's own sentence too, and git names the worktree it
+    // refused in it: `error: Your local changes to 'x' would be overwritten…` /
+    // `fatal: Not possible to fast-forward` come with a `cwd` the daemon chose. Same
+    // treatment, same reason as `worktrees.remove` above. `branch`/`workBranch` are ref
+    // NAMES, not paths, and cross unchanged exactly as `claim.branch` does.
+    if (command === "session.landWorkBranch" && typeof o.reason === "string") {
+      o.reason = capRefusal(String(redactAbsolutePathsDeep(o.reason, ctx)));
+    }
+    // `session.workBranchState` is classified HERE, by having no branch of its own: every
+    // field it carries is a ref NAME (`feat/x`, `rennet/feat/x`, `refs/remotes/origin/
+    // feat/x`) or a number or a boolean. Ref names cross a projected connection unchanged,
+    // exactly as `claim.branch` and the sidebar row's `workBranch` do, and there is no free
+    // text for git to have named a host path inside. Stated rather than left silent, so the
+    // next field added to that read is a deliberate decision rather than a default.
     projected = o;
   }
   return scrubProjectedValue(projected, ctx);
@@ -495,6 +552,13 @@ export const INBOUND_HOST_PATH_FIELDS: Readonly<Record<string, readonly string[]
   "settings.pinRepoValue": ["repoPath"],
   "settings.setProjectValue": ["repoPath"],
   "settings.setGuidance": ["repoPath"],
+  // The workspace inventory names its repository the same way every other repo-scoped
+  // command does. `worktrees.remove` carries no path at all inbound: it addresses a ROW by
+  // its opaque `id`, which the host recomputes from a fresh inventory — the same treatment
+  // `project.cleanupWorktree`'s `worktreeId` gets, and the reason a projected client can
+  // remove a workspace whose host spelling it has never been told.
+  "worktrees.list": ["repoPath"],
+  "worktrees.remove": ["repoPath"],
 };
 
 /**

@@ -1,0 +1,73 @@
+import type { RoundEvent } from "@rennet/protocol";
+import { useEffect } from "react";
+import { useCommand } from "../data";
+import { useBridgeContext } from "../data/bridge";
+
+/**
+ * The app-level subscriber that keeps the WORKSPACE INVENTORY fresh across a route change
+ * (workspace-settings D6).
+ *
+ * A settled round changes what a repository's worktrees hold — sizes grow, `lastUsedAt`
+ * moves, a sibling stops being collectable — so `worktrees.list` is stale the moment one
+ * finishes. That invalidation used to live in the round stream's own fold, inside
+ * `useLiveRoundsSource`, which subscribes to the review THE ROUTE IS ON. Off a session
+ * route there is no review id, so there is no subscription, so nothing invalidated — and
+ * the one screen that renders the inventory, Settings, is exactly a screen you are on
+ * while NOT on a session route. The card sat there describing the tree as it stood before
+ * the round for as long as it was open.
+ *
+ * So it subscribes here instead, above the route switch, and to EVERY session's review
+ * rather than to one — the same shape (and the same reason) as `BackgroundNarration`,
+ * which moved the proactive-rehydration subscription up here when a failure was visible
+ * only to a reader who happened to be watching the indexing screen. Subscription is local
+ * fan-out over frames the daemon already pushes (`ws-bridge` keys its round listeners by
+ * review id and dispatches every frame it receives), so N subscriptions cost N map
+ * entries, not N requests.
+ *
+ * It invalidates by NAME — every key of `worktrees.list`, whichever repository — because
+ * a round does not say which repositories its workspace belongs to and the card is
+ * somebody else's subtree. Renders nothing.
+ */
+export function WorktreeInventoryFreshness() {
+  const { bridge, cache } = useBridgeContext();
+  const { data } = useCommand("session.list", {});
+  // The review ids the daemon has attached to sessions (#587: `session.list` carries
+  // `reviewId`). A session without one has no round to settle.
+  const reviewIds = [
+    ...new Set((data?.sessions ?? []).flatMap((row) => (row.reviewId ? [row.reviewId] : []))),
+  ].join(",");
+
+  useEffect(() => {
+    if (!bridge.onRoundProgress || reviewIds === "") return;
+    const unsubscribes = reviewIds.split(",").map((reviewId) =>
+      bridge.onRoundProgress?.(reviewId, (event: RoundEvent) => {
+        if (roundSettled(event)) cache.invalidate("worktrees.list");
+      }),
+    );
+    return () => {
+      for (const unsubscribe of unsubscribes) unsubscribe?.();
+    };
+  }, [bridge, cache, reviewIds]);
+
+  return null;
+}
+
+/**
+ * A round receipt that means the round is OVER and the tree it ran in has moved: a
+ * durable terminal snapshot (failed, or completed with a committed changed successor),
+ * or one of the three terminal event types. The same predicate the rounds source folds
+ * its own ledger invalidations on — kept here, and imported there, so the two cannot
+ * drift into disagreeing about what "settled" is.
+ */
+export function roundSettled(event: RoundEvent): boolean {
+  if (event.type === "composed" || event.type === "unchanged" || event.type === "failed") {
+    return true;
+  }
+  if (event.type !== "operation") return false;
+  if (event.snapshot.state.phase === "failed") return true;
+  return (
+    event.snapshot.state.phase === "completed" &&
+    event.snapshot.draining !== true &&
+    event.snapshot.state.result.kind === "changed"
+  );
+}

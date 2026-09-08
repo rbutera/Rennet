@@ -102,7 +102,14 @@ export function useHandoffExits(review: Review, recapture?: () => Promise<void>)
   const { mutate: postReview } = useMutation("publish.review", {
     invalidates: ["publish.receipt"],
   });
-  const { mutate: submitPr } = useMutation("publish.submitPr");
+  // The submission PUSHES, which is the other event that moves the refs the work-branch
+  // strip reads: `refs/remotes/<remote>/<branch>` advances to the sibling's tip, so the
+  // strip's sentence turns from "the round's commits are on `rennet/feat/x`" into
+  // "`feat/x` is behind `origin/feat/x` by N". Without this the strip kept the pre-push
+  // sentence until the workspace remounted.
+  const { mutate: submitPr } = useMutation("publish.submitPr", {
+    invalidates: ["session.workBranchState"],
+  });
   const refreshCompose = useRefreshCommand("publish.compose");
   // The verdict flip (#435): a WRITE against the durable ask log, so it stales the composed
   // preview — invalidate `publish.compose` and the lane recomposes with the flipped verdict.

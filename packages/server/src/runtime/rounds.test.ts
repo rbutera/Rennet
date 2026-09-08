@@ -3965,6 +3965,7 @@ function recordingSeats(
 function settingsOver(dir: string) {
   const store = createClientSettingsStore(join(dir, "client-settings.json"));
   const settings = createSettingsComposition({
+    dataDir: "/data",
     listProjects: () => [],
     loadConfigState: () => ({ status: "absent", config: null }),
     readGlobalState: () => store.readState(),

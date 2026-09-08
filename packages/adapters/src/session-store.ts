@@ -6,6 +6,7 @@ import {
   readdirSync,
   readFileSync,
   renameSync,
+  statSync,
   writeSync,
 } from "node:fs";
 import { homedir } from "node:os";
@@ -215,17 +216,76 @@ export class SessionStore {
   }
 
   /**
-   * Record the workspace this session is bound to (session-bound-workspace D1). Written once,
-   * by whatever first decides the binding — the capture that mints the review, or the first
-   * use of a session minted before the wave. Idempotent: an unchanged root is not re-saved,
-   * and a session that ALREADY carries a bound root keeps it, because the binding is decided
-   * once and kept for the session's life. `undefined` if the session is absent.
+   * Record the workspace this session is bound to (session-bound-workspace D1) and the
+   * branch its work commits on (workspace-settings D4). Written once, by whatever first
+   * decides the binding — the capture that mints the review, or the first use of a session
+   * minted before the wave. Idempotent: a session that ALREADY carries a bound root keeps
+   * it, and its work branch with it, because the binding is decided once and kept for the
+   * session's life. `undefined` if the session is absent.
+   *
+   * `workBranch` is omitted when the work commits on the REVIEWED branch — every `share`
+   * bind, and every `own` bind that had no checkout to work beside. It is written only for
+   * the sibling, so a session that carries none says "the reviewed branch" rather than
+   * carrying a copy of a name the patchset already holds.
    */
-  setBoundRoot(sessionId: string, boundRoot: string): SessionModel | undefined {
+  setBoundRoot(
+    sessionId: string,
+    boundRoot: string,
+    workBranch?: string,
+  ): SessionModel | undefined {
     const session = this.load(sessionId);
     if (!session) return undefined;
     if (session.boundRoot !== undefined) return session;
-    const next = { ...session, boundRoot };
+    const next = { ...session, boundRoot, ...(workBranch === undefined ? {} : { workBranch }) };
+    this.save(next);
+    return next;
+  }
+
+  /**
+   * Record WHERE this session's work branch was pushed (workspace-settings D4): the remote
+   * it went to and the branch name it landed under. Written by the pull-request submission,
+   * and only when the two names differ — under `share` the push moves the branch the
+   * reviewer is standing on, and there is nothing about it to say.
+   *
+   * A destination, not a stamp. It names the ref every later question is asked of
+   * (`refs/remotes/<remote>/<branch>`): whether the sibling is reachable, whether the local
+   * branch is behind. A "pushed at" answered none of those — it said a push once happened,
+   * which stays recorded after a landing, a force-push, or a deleted remote branch has made
+   * every claim built on it false. `undefined` if the session is absent.
+   */
+  recordWorkBranchPush(
+    sessionId: string,
+    push: { remote: string; branch: string },
+  ): SessionModel | undefined {
+    const session = this.load(sessionId);
+    if (!session) return undefined;
+    if (session.workBranch === undefined) return session;
+    const next = { ...session, workBranchPush: { ...push } };
+    this.save(next);
+    return next;
+  }
+
+  /**
+   * Forget this session's recorded workspace — its bound root and its work branch.
+   *
+   * The ONE case a session re-binds (workspace-settings D5): its sibling was COLLECTED
+   * while it was archived, so the directory the record names is gone. Leaving the record
+   * would point every read of an un-archived session at a workspace that no longer exists;
+   * clearing it lets `decideBoundWorkspace` run again on the next use and record a fresh
+   * binding, which is exactly what a session minted before the binding wave does.
+   *
+   * Deliberately NOT reachable from anything but collection. `setBoundRoot` refuses to
+   * overwrite a recorded root for the same reason this exists as its own narrow call: a
+   * session that re-decides its workspace mid-life reads, drafts and commits somewhere
+   * else under the same label.
+   */
+  clearBoundWorkspace(sessionId: string): SessionModel | undefined {
+    const session = this.load(sessionId);
+    if (!session) return undefined;
+    const next = { ...session };
+    delete next.boundRoot;
+    delete next.workBranch;
+    delete next.workBranchPush;
     this.save(next);
     return next;
   }
@@ -289,5 +349,24 @@ export class SessionStore {
     const next = addThread(session, thread);
     this.save(next);
     return next;
+  }
+
+  /**
+   * When this session's record was last WRITTEN, epoch ms — the closest thing the store
+   * holds to "when was this session last used".
+   *
+   * The record has a `createdAt` and an `archivedAt` and nothing in between, while every
+   * durable act of a session — binding its workspace, attaching its review, adding a
+   * thread, pinning a harness, renaming it — rewrites this file. So the mtime is the
+   * activity, and it is named for what it actually measures rather than for what a
+   * caller might wish it meant. `undefined` when the file cannot be stat'd, which the
+   * workspace inventory shows as an unknown "last used" rather than a guess.
+   */
+  lastWrittenAt(sessionId: string): number | undefined {
+    try {
+      return statSync(this.pathFor(sessionId)).mtimeMs;
+    } catch {
+      return undefined;
+    }
   }
 }

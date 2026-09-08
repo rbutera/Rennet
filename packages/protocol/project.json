@@ -10,6 +10,16 @@
       "command": "pnpm exec eslint packages/protocol/src --max-warnings=0 && pnpm exec biome check packages/protocol/src"
     },
     "typecheck": { "command": "pnpm exec tsc -p packages/protocol/tsconfig.json" },
-    "test": { "command": "pnpm exec vitest run packages/protocol/src" }
+    "test": {
+      "command": "pnpm exec vitest run packages/protocol/src",
+      "inputs": [
+        "default",
+        "^production",
+        {
+          "comment": "The public-schema fixture guard READS this variable and, when it is set, REWRITES every fixture instead of comparing against them. A run with it set and a run without it are two different tasks, and without this input the cache answered the second with the first — which is how a fixture regeneration ended up needing --skip-nx-cache. Named specifically (CLAUDE.md: a target that reads an environment variable names only the load-bearing ones).",
+          "env": "UPDATE_PUBLIC_SCHEMA"
+        }
+      ]
+    }
   }
 }

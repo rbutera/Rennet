@@ -307,6 +307,12 @@ export function RoundGreeting({
       className="mx-auto flex w-full max-w-[820px] flex-col gap-6 p-6"
     >
       {receipt !== undefined && <RunReceiptSummary {...receipt} />}
+      {/* The work-branch note is NOT here any more (workspace-settings D4). Where the
+          round's commits went is true from the round that made them until the reviewer
+          lands or pulls, and mounting it on the greeting made it visible only on the one
+          card that happened to be showing a fresh report — the reviewer who navigated to
+          the diff, or reloaded, saw nothing. The workspace mounts it beside the session's
+          branch instead, on every view. */}
       <RoundReportBoard board={board} />
       {regenerating && (
         <RegenerationProgress

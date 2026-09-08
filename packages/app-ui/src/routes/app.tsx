@@ -13,6 +13,7 @@ import { IndexingView } from "../project/indexing/indexing-view";
 import { NewChatView } from "../project/new-chat-view";
 import { RoundsSourceProvider, useLiveRoundsSource } from "../rounds/rounds-data";
 import { RunRoute } from "../rounds/run-route";
+import { WorktreeInventoryFreshness } from "../rounds/worktree-freshness";
 import {
   LiveSettingsProjectionProvider,
   PriorSurfaceTracker,
@@ -394,6 +395,10 @@ export function RennetRouterApp({ bridge, history }: RennetRouterAppProps) {
           pass that fails while the reader is elsewhere is still there when the
           indexing screen opens (#592). Renders nothing. */}
       <BackgroundNarration />
+      {/* …and the workspace inventory is kept fresh from here for the same reason: a
+          round settles while the reader is on Settings, which is not a session route, so
+          the round stream keyed to the current route is not subscribed. Renders nothing. */}
+      <WorktreeInventoryFreshness />
       <ThemePrefProvider>
         <Router hook={history?.hook} searchHook={history?.searchHook}>
           <StartupGate>

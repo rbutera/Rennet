@@ -11,9 +11,11 @@ import {
   type SidebarSession,
 } from "@rennet/protocol";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { LandWorkBranchOutcome } from "../land-work-branch";
 import { SessionEntry } from "../session/session-entry";
 import type { ModelSelection, T3Client } from "../t3/client";
 import { bindThread, findBindingsForSessions, sweepIfArchived, sweepThreads } from "../t3/threads";
+import type { WorkBranchState } from "../work-branch-state";
 import { projectHandlers } from "./project";
 import { createDispatchRuntime, type DispatchDeps } from "./runtime";
 import { sessionHandlers, sidebarSessionOf } from "./session";
@@ -767,5 +769,147 @@ describe("a round that outlives an archive sweeps its own late seat bindings", (
     // Only the session's own thread was deleted: the archive reported a sweep that had
     // already passed the five threads the round went on to create.
     expect(deleted).toEqual(["thread-1"]);
+  });
+});
+
+describe("the sidebar row carries the work branch (workspace-settings D4)", () => {
+  it("projects the sibling, and carries NO push state — that is a ref read, not a row field", () => {
+    const share = sidebarSessionOf(seed("s1", "feat/x"));
+    expect(share.workBranch).toBeUndefined();
+
+    const own = sidebarSessionOf({ ...seed("s2", "feat/x"), workBranch: "rennet/feat/x" });
+    expect(own.workBranch).toBe("rennet/feat/x");
+    // A branch NAME crosses the wire; the host paths the session also holds do not (R19).
+    expect(parseCommandOutput("session.list", { sessions: [own] }).sessions[0]).toEqual(own);
+
+    // THE REVIEW FINDING, PINNED. A session that HAS pushed still projects no "pushed"
+    // flag: the row is a projection of a durable record, and "pushed" is true or false
+    // about a ref right now. The old `workBranchPushed: true` stayed on the row after a
+    // landing, a force-push or a deleted remote branch had made it false, and the card
+    // went on saying "behind its upstream" over a branch that had caught up.
+    const pushed = sidebarSessionOf({
+      ...seed("s3", "feat/x"),
+      workBranch: "rennet/feat/x",
+      workBranchPush: { remote: "origin", branch: "feat/x" },
+    });
+    expect(Object.keys(pushed)).not.toContain("workBranchPushed");
+    expect(Object.keys(pushed)).not.toContain("workBranchPush");
+    expect(pushed.workBranch).toBe("rennet/feat/x");
+  });
+});
+
+describe("session.workBranchState — the route (workspace-settings D4)", () => {
+  function stateDispatch(seam?: {
+    workBranchState: (sessionId: string) => Promise<WorkBranchState>;
+  }) {
+    const rt = createDispatchRuntime({
+      service: { reviewById: () => undefined },
+      ...(seam === undefined ? {} : { sessions: seam }),
+    } as unknown as DispatchDeps);
+    return sessionHandlers(rt);
+  }
+
+  it("hands the session id to the host seam and returns its state through the wire", async () => {
+    const asked: string[] = [];
+    const handlers = stateDispatch({
+      workBranchState: async (sessionId) => {
+        asked.push(sessionId);
+        return {
+          branch: "feat/x",
+          workBranch: "rennet/feat/x",
+          aheadOfBranch: 2,
+          behindRemote: 3,
+          pushed: true,
+          landed: false,
+          remoteRef: "refs/remotes/origin/feat/x",
+        };
+      },
+    });
+
+    expect(await handlers["session.workBranchState"]({ sessionId: "s1" })).toEqual({
+      branch: "feat/x",
+      workBranch: "rennet/feat/x",
+      // The two counts travel SEPARATELY and differ here on purpose: a route that dropped
+      // one, or copied the other over it, would pass with a single number.
+      aheadOfBranch: 2,
+      behindRemote: 3,
+      pushed: true,
+      landed: false,
+      remoteRef: "refs/remotes/origin/feat/x",
+    });
+    expect(asked).toEqual(["s1"]);
+  });
+
+  it("answers a quiet state when no session seam is wired — never a throw", async () => {
+    const handlers = stateDispatch();
+    expect(await handlers["session.workBranchState"]({ sessionId: "s1" })).toEqual({
+      aheadOfBranch: 0,
+      behindRemote: 0,
+      pushed: false,
+      landed: false,
+    });
+  });
+});
+
+describe("session.landWorkBranch — the route (workspace-settings D4)", () => {
+  /** The dispatch surface over a `sessions` seam that records what it was asked. */
+  function landDispatch(seam?: {
+    landWorkBranch: (sessionId: string) => Promise<LandWorkBranchOutcome>;
+  }) {
+    const rt = createDispatchRuntime({
+      service: { reviewById: () => undefined },
+      ...(seam === undefined ? {} : { sessions: seam }),
+    } as unknown as DispatchDeps);
+    return sessionHandlers(rt);
+  }
+
+  it("hands the session id to the host seam and returns its outcome", async () => {
+    const asked: string[] = [];
+    const handlers = landDispatch({
+      landWorkBranch: async (sessionId) => {
+        asked.push(sessionId);
+        return {
+          status: "landed",
+          branch: "feat/x",
+          workBranch: "rennet/feat/x",
+          headOid: "abc1234",
+        };
+      },
+    });
+
+    // Through `parseCommandOutput`, so a shape the wire would refuse fails here.
+    expect(await handlers["session.landWorkBranch"]({ sessionId: "s1" })).toEqual({
+      status: "landed",
+      branch: "feat/x",
+      workBranch: "rennet/feat/x",
+      headOid: "abc1234",
+    });
+    expect(asked).toEqual(["s1"]);
+  });
+
+  it("carries a refusal through the wire VERBATIM, newlines and all", async () => {
+    const reason = "error: Your local changes would be overwritten by merge:\n\tfeature.txt";
+    const handlers = landDispatch({
+      landWorkBranch: async () => ({
+        status: "refused",
+        branch: "feat/x",
+        workBranch: "rennet/feat/x",
+        reason,
+      }),
+    });
+    const outcome = (await handlers["session.landWorkBranch"]({ sessionId: "s1" })) as {
+      reason: string;
+    };
+    expect(outcome.reason).toBe(reason);
+  });
+
+  it("answers `unavailable` when no session seam is wired — never a throw", async () => {
+    // A composition without the host's git and session store is a daemon that never bound
+    // a sibling; the honest answer is that there is nothing to land, not a stack trace.
+    const handlers = landDispatch();
+    expect(await handlers["session.landWorkBranch"]({ sessionId: "s1" })).toEqual({
+      status: "unavailable",
+      reason: "this daemon cannot land a work branch",
+    });
   });
 });

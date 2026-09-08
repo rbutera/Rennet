@@ -113,6 +113,7 @@ export {
   defaultCodexTransportEffects,
   deriveCodexImplementedEvidence,
 } from "./codex-turn-transport";
+export { comparablePath } from "./comparable-path";
 export {
   assembleContextForComposition,
   DEFAULT_CONTEXT_BYTE_BUDGET,
@@ -375,14 +376,32 @@ export {
   selectedOpenSpecChangeName,
 } from "./openspec-change-reader";
 export {
+  assertWorktreePattern,
+  branchTokens,
   branchWorktreePath,
+  defaultWorktreePlacement,
+  type EnsureBranchWorktreeOptions,
   ensureBranchWorktree,
   ensurePrWorktree,
+  ensureSiblingWorktree,
+  expandWorktreeRootForWrite,
+  LOCAL_OWNER,
+  prTokens,
   prWorktreePath,
   readSetupLogTail,
   readSetupStatus,
+  renderWorktreePattern,
+  repoKeyForRoot,
+  resolveWorktreeRoot,
   runPrWorktreeSetup,
   type SetupStatus,
+  siblingBranchFor,
+  WORKTREE_PLACEHOLDERS,
+  type WorktreeClaim,
+  type WorktreePlacement,
+  type WorktreeRepoFacts,
+  type WorktreeRepoIdentity,
+  type WorktreeTokens,
   worktreeForBranch,
 } from "./pr-worktree";
 export {
@@ -625,6 +644,27 @@ export {
   type TurnMetric,
 } from "./turn-metrics";
 export { type DraftOp, WhiteboardClient } from "./whiteboard-client";
+// The workspace inventory (workspace-settings D6).
+export {
+  isAncestor,
+  type ListWorkspacesOptions,
+  listWorkspaces,
+  measureWorkspaceSize,
+  parseWorktreeRecords,
+  type RemoveWorkspaceInput,
+  refExists,
+  removeWorkspace,
+  SIBLING_BRANCH_PREFIX,
+  siblingIsCollectable,
+  WORKSPACE_SIZE_BUDGET_MS,
+  WORKSPACE_SIZE_TOTAL_BUDGET_MS,
+  type WorkspaceInventory,
+  type WorkspaceRow,
+  type WorkspaceSessionRef,
+  type WorktreeRecord,
+  windowsFoldsCase,
+  workspaceId,
+} from "./workspace-inventory";
 export {
   discoverWorktreeIdentities,
   forgeForRemoteHost,

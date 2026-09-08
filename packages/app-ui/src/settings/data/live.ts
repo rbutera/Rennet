@@ -1,5 +1,19 @@
-import type { BenchmarkRun, ProjectLogo, SettingsGuidance, SettingsView } from "@rennet/protocol";
-import { type CommandResult, type MutationResult, useCommand, useMutation } from "../../data";
+import type {
+  BenchmarkRun,
+  CommandInput,
+  ProjectLogo,
+  SettingsGuidance,
+  SettingsView,
+  WorktreeInventory,
+} from "@rennet/protocol";
+import { useCallback } from "react";
+import {
+  type CommandResult,
+  type MutationResult,
+  useCommand,
+  useMutation,
+  useRefreshCommand,
+} from "../../data";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The LIVE settings commands (C10 §2.1). The eight `settings.*` commands that
@@ -74,10 +88,59 @@ export function usePinRepoValue(): MutationResult<"settings.pinRepoValue"> {
   return useMutation("settings.pinRepoValue", { invalidates: ["settings.get"] });
 }
 
-/** Write one per-project preference on the repo rung — glyph, worktree pair, tracker
- *  (C18 group A). Stales `settings.get`, which carries the resolved prefs it changed. */
+/** The four keys whose value decides WHERE the next workspace is placed (or whether one is
+ *  made at all), so a write to one of them stales the inventory as well as the view. Every
+ *  other key this command carries — the glyph, the mark, the tracker fields — changes
+ *  nothing the inventory reports. */
+const WORKTREE_PLACEMENT_KEYS: ReadonlySet<string> = new Set([
+  "worktreeRoot",
+  "worktreePattern",
+  "prWorktreePattern",
+  "workspace",
+]);
+
+/** Write one per-project preference on the repo rung — glyph, the worktree four, tracker
+ *  (C18 group A). Always stales `settings.get`, which carries the resolved prefs it
+ *  changed; stales `worktrees.list` only for the four placement keys, because that read
+ *  MEASURES (a bounded `du` per row, host-side, on every call). Invalidating it on every
+ *  key meant picking a glyph swept the repository's worktrees twice — once for the glyph
+ *  write and once for the mark write that follows it — for a list nothing had changed. */
 export function useSetProjectValue(): MutationResult<"settings.setProjectValue"> {
-  return useMutation("settings.setProjectValue", { invalidates: ["settings.get"] });
+  const write = useMutation("settings.setProjectValue", { invalidates: ["settings.get"] });
+  const refreshInventory = useRefreshCommand("worktrees.list");
+  const { mutate: send, pending, error } = write;
+  const mutate = useCallback(
+    async (input: CommandInput<"settings.setProjectValue">) => {
+      const outcome = await send(input);
+      if (WORKTREE_PLACEMENT_KEYS.has(input.key)) refreshInventory();
+      return outcome;
+    },
+    [send, refreshInventory],
+  );
+  return { mutate, pending, error };
+}
+
+/** Every workspace Rennet knows for ONE repository (workspace-settings D6). Keyed by
+ *  `repoPath`, never by a project id: a workspace project maps many repositories onto one
+ *  identity and that mapping is not invertible, so the two repos of one workspace list
+ *  separately. Sizes are measured host-side on every call, so this is asked only where the
+ *  Worktrees card is mounted — one read per repo row of the SCOPED project, the same
+ *  scoping `settings.guidance` uses. */
+export function useWorktreeInventory(
+  repoPath: string,
+  options?: { readonly enabled?: boolean },
+): CommandResult<WorktreeInventory> {
+  return useCommand("worktrees.list", { repoPath }, options);
+}
+
+/** Remove one workspace by its row id — `git worktree remove` without `--force`, on the
+ *  first click (Rule Zero). Stales the inventory it changed AND `session.workBranchState`:
+ *  removing a sibling's worktree is one of the events that moves the refs that read is
+ *  computed from, and the work-branch strip is somebody else's subtree. */
+export function useRemoveWorktree(): MutationResult<"worktrees.remove"> {
+  return useMutation("worktrees.remove", {
+    invalidates: ["worktrees.list", "session.workBranchState"],
+  });
 }
 
 // ── The project mark (#900) ───────────────────────────────────────────────────

@@ -12,14 +12,17 @@ export {
   useGuidance,
   usePinRepoValue,
   useProjectLogos,
+  useRemoveWorktree,
   useResetRepoValue,
   useResetWelcome,
   useSetAppearance,
   useSetBenchmarkRecording,
   useSetKeybinding,
+  useSetProjectValue,
   useSetRepoVisibility,
   useSettingsView,
   useUploadProjectLogo,
+  useWorktreeInventory,
 } from "./live";
 export { LiveSettingsProjectionProvider } from "./live-projection";
 export {
@@ -39,6 +42,5 @@ export {
   type ToolStatus,
   type TrackerKind,
   useSettingsProjection,
-  type WorktreeSettings,
 } from "./projections";
 export type { Layered } from "./provenance";

@@ -20,6 +20,12 @@ import { MAX_UI_SCREENSHOTS_PER_RUN } from "./domain";
 import { forgeRepoIdentitySchema, forgeRepositoryMatchesLegacy } from "./forge";
 import type { AskProjection, AttentionEventFrame, LensDraftEvent, RoundEvent } from "./session";
 import { SessionPreparationSchema } from "./session/model";
+import {
+  WORKTREE_ROWS_CAP,
+  worktreeInventorySchema,
+  worktreeRemoveOutcomeSchema,
+  worktreeRowSchema,
+} from "./worktrees";
 
 const repositoryProvenanceSchema = z.object({
   id: z.string().min(1),
@@ -1871,6 +1877,27 @@ export const daemonSettingsSchema = z.object({
     })
     .optional(),
   /**
+   * The worktree section's GLOBAL rung (workspace-settings D1/D2/D4). A filesystem path
+   * is a fact about the daemon's HOST — the same argument that put `tracker` here rather
+   * than in client settings — so where this host places Rennet's worktrees, how it names
+   * them, and whether it works inside a checkout the reviewer already has out all live
+   * beside it. Every field absent ⇒ the ladder falls to its builtins, which are the
+   * shapes the previous release hardcoded.
+   */
+  worktrees: z
+    .object({
+      /** The directory Rennet's worktrees hang under. Relative resolves against the
+       *  data dir; `~` is expanded by the daemon. Absent ⇒ `<dataDir>/worktrees`. */
+      root: z.string().optional(),
+      /** The branch-worktree pattern (`{repo}` / `{name}` / `{owner}` / `{branch}`). */
+      pattern: z.string().optional(),
+      /** The pull-request snapshot pattern (`{owner}` / `{name}` / `{repo}` / `{number}`). */
+      prPattern: z.string().optional(),
+      /** `share` (bind to a checkout that has the branch out) or `own` (work beside it). */
+      workspace: z.enum(["share", "own"]).optional(),
+    })
+    .optional(),
+  /**
    * Per-host daemon memory (C17), keyed by the host's `source`. Two independent facts, each
    * additive-optional, so an entry may carry either or both:
    *
@@ -1980,7 +2007,16 @@ export const settingsProjectPrefsSchema = z.object({
    *  off the ladder. `glyph` names WHICH glyph; this says whether a glyph shows at all. */
   mark: layeredStringSchema,
   worktreeRoot: layeredStringSchema,
+  /** Where a BRANCH worktree is placed under the resolved root — a pattern over
+   *  `{repo}` / `{name}` / `{owner}` / `{branch}` (builtin `{repo}/{branch}`). */
   worktreePattern: layeredStringSchema,
+  /** Where a PULL-REQUEST snapshot is placed under the resolved root — a pattern over
+   *  `{owner}` / `{name}` / `{repo}` / `{number}` (builtin `{owner}/{name}/pr-{number}`).
+   *  A snapshot has a number and no branch, which is why it is its own pattern. */
+  prWorktreePattern: layeredStringSchema,
+  /** Whether a review of a branch some checkout ALREADY has out binds to that checkout
+   *  (`share`, the builtin) or to a worktree Rennet makes beside it (`own`). */
+  workspace: layeredStringSchema,
   tracker: z.object({
     kind: layeredStringSchema,
     projectKey: layeredStringSchema,
@@ -2046,6 +2082,17 @@ export const settingsProjectSchema = z
      * the client keeps its honest empty state rather than inventing values.
      */
     prefs: settingsProjectPrefsSchema.optional(),
+    /**
+     * The example paths this row's resolved root and patterns produce FOR THIS
+     * REPOSITORY — one branch worktree (its current branch, else `main`), one
+     * pull-request snapshot (number `1`). Computed by the daemon through the same
+     * functions the binding uses, because the client has neither the data directory
+     * nor the escaped repo key and every attempt to derive one was wrong (#812).
+     *
+     * Additive-optional: a row from an engine that does not serve it simply carries
+     * no preview, and the client shows none rather than inventing a path.
+     */
+    worktreePreview: z.object({ branch: z.string(), pullRequest: z.string() }).optional(),
   })
   .transform((project) => {
     const value = project.locus.kind === "host" ? "host" : `WSL · ${project.locus.distro}`;
@@ -2160,6 +2207,21 @@ export const sidebarSessionSchema = z
       .optional(),
     /** Durable New Chat capture/board progress, projected from the session record. */
     preparation: SessionPreparationSchema.optional(),
+    /**
+     * The branch this session's rounds commit on when it is NOT the reviewed branch
+     * (`SessionModel.workBranch`, workspace-settings D4) — the sibling `rennet/<branch>` a
+     * `workspace: own` bind works on beside a checkout that already has the branch out.
+     *
+     * A branch NAME, never a path, so it crosses the wire exactly as `claim.branch` does.
+     * Absent means the session commits on the reviewed branch itself, which is every
+     * session under `share` and every session written before this field.
+     *
+     * WHAT THE ROW DOES NOT CARRY is where those commits have got to. "Pushed" and "behind"
+     * are questions about refs, and a row is a projection of a durable record; the row said
+     * `workBranchPushed: true` forever once a push had happened, which stopped being true
+     * the moment anything moved. `session.workBranchState` is the read that asks git.
+     */
+    workBranch: z.string().min(1).optional(),
     /** When the session was minted (epoch ms) — the client renders the relative line. */
     createdAt: z.number(),
   })
@@ -2389,6 +2451,8 @@ export const settingsProjectValueKeySchema = z.enum([
   "mark",
   "worktreeRoot",
   "worktreePattern",
+  "prWorktreePattern",
+  "workspace",
   "trackerKind",
   "trackerProjectKey",
   "trackerBaseUrl",
@@ -3067,6 +3131,30 @@ export const projectedRepositoryChooseOutputSchema = z.object({
 });
 
 /**
+ * Projected workspace inventory (workspace-settings D6): every row's host `path` becomes
+ * a repo reference, exactly as a review's `repositoryRoot` does.
+ *
+ * The row's `id` is untouched, and that is the point of it existing: a projected client
+ * still holds an address it can hand back to `worktrees.remove`, without ever holding the
+ * host spelling of the directory. A projection that only rewrote the path would have left
+ * the removal unaddressable from a phone.
+ */
+export const projectedWorktreeRowSchema = worktreeRowSchema.extend({
+  path: repoReferenceSchema,
+});
+
+export const projectedWorktreeInventorySchema = worktreeInventorySchema.extend({
+  rows: z.array(projectedWorktreeRowSchema).max(WORKTREE_ROWS_CAP),
+});
+
+/** Projected `worktrees.remove` outcome: the display `path` on each arm becomes a reference. */
+export const projectedWorktreeRemoveOutcomeSchema = z.discriminatedUnion("status", [
+  worktreeRemoveOutcomeSchema.options[0].extend({ path: repoReferenceSchema }),
+  worktreeRemoveOutcomeSchema.options[1].extend({ path: repoReferenceSchema }),
+  worktreeRemoveOutcomeSchema.options[2].extend({ path: repoReferenceSchema.optional() }),
+]);
+
+/**
  * The named public-projection schema set, keyed by fixture name. The fixtures
  * generator and its drift test iterate this map, so adding a projected shape here
  * is the ONLY edit needed to grow the checked-in public contract.
@@ -3079,6 +3167,8 @@ export const publicProjectionSchemas = {
   "projected-discovery-result": projectedDiscoveryResultSchema,
   "projected-processed-repo-summary": projectedProcessedRepoSummarySchema,
   "projected-repository-choose-output": projectedRepositoryChooseOutputSchema,
+  "projected-worktree-inventory": projectedWorktreeInventorySchema,
+  "projected-worktree-remove-outcome": projectedWorktreeRemoveOutcomeSchema,
 } as const;
 export type PublicProjectionName = keyof typeof publicProjectionSchemas;
 

@@ -82,6 +82,12 @@ import {
   t3SidecarStatusSchema,
   themePackSchema,
 } from "../wire";
+import {
+  WORKTREE_REF_NAME_CAP,
+  WORKTREE_REFUSAL_CAP,
+  worktreeInventorySchema,
+  worktreeRemoveOutcomeSchema,
+} from "../worktrees";
 
 const commandIdSchema = z.uuid();
 const forgePrSubmissionTargetSchema = z.object({
@@ -1634,6 +1640,89 @@ const definitions = {
     input: z.object({ sessionId: z.string().min(1), archived: z.boolean() }),
     output: z.object({ session: sidebarSessionSchema.nullable() }),
   },
+  // ── Land the work branch (workspace-settings D4) ────────────────────────────
+  // `git merge --ff-only refs/heads/<workBranch>`, run INSIDE the worktree that has the
+  // reviewed branch checked out — the reviewer's own. It is the one place `own` mode
+  // writes to that tree, and it does so only on the reviewer's click and only as a
+  // fast-forward.
+  //
+  // RENNET ADDS NO REFUSAL OF ITS OWN. Uncommitted work in that tree is not one: git's
+  // `merge --ff-only` carries unrelated uncommitted changes across, and refuses only a
+  // merge that would overwrite a file the reviewer has edits in — or a branch that has
+  // diverged. Those are GIT'S refusals, echoed back verbatim, with the action still
+  // offered afterwards, because the reviewer's next move makes the same click succeed.
+  // Nothing is merged or rebased on their behalf and there is no confirmation step (Rule
+  // Zero) — the click is the whole act, and what stops it is git.
+  "session.landWorkBranch": {
+    input: z.object({ sessionId: z.string().min(1) }),
+    output: z.discriminatedUnion("status", [
+      z.object({
+        status: z.literal("landed"),
+        /** The reviewed branch, now at the work branch's tip. */
+        branch: z.string().min(1),
+        workBranch: z.string().min(1),
+        /** Where the branch now points — the fast-forward's whole effect. */
+        headOid: z.string().min(1),
+      }),
+      z.object({
+        status: z.literal("refused"),
+        branch: z.string().min(1),
+        workBranch: z.string().min(1),
+        /** Git's own words, verbatim up to {@link WORKTREE_REFUSAL_CAP}. */
+        reason: z.string().max(WORKTREE_REFUSAL_CAP + 16),
+      }),
+      // There is nothing to land: the session commits on the reviewed branch itself, no
+      // worktree has that branch out any more, or the session is gone. A fact, not a
+      // failure — the surface simply offers no action.
+      z.object({
+        status: z.literal("unavailable"),
+        reason: z.string().max(WORKTREE_REFUSAL_CAP + 16),
+      }),
+    ]),
+  },
+  // ── Where the work branch has got to (workspace-settings D4/D6) ─────────────
+  // A READ, computed from git at request time, and the reason `workBranchPushed` is gone
+  // from the sidebar row: "pushed" was a durable flag stamped by a push that once
+  // succeeded, and it went on claiming the branch was behind after a landing, a
+  // force-push, or a deleted remote branch made that false. Every field below is a ref
+  // question, so every field below is asked of refs when it is asked at all.
+  //
+  // TWO COUNTS, because the surface writes two sentences about two different ranges and a
+  // single number made one of them a guess. `aheadOfBranch` counts the commits the SIBLING
+  // holds that the reviewed branch does not — `rev-list --count
+  // refs/heads/<branch>..refs/heads/<workBranch>` — and carries "the round's commits are on
+  // `rennet/feat/x`". `behindRemote` counts what the recorded push destination's ref holds
+  // that the reviewed branch does not — `refs/heads/<branch>..refs/remotes/<remote>/
+  // <branch>` — and carries "`feat/x` is behind `origin/feat/x` by N". Anyone can move that
+  // remote ref, so the two numbers differ the moment anybody else pushes.
+  //
+  // `pushed` is reachability of the sibling's tip from `refs/remotes/<remote>/<branch>` for
+  // the remote the session's push recorded, never a stamp. `landed` is ANCESTRY, not equal
+  // tips: the branch already contains the work branch's tip, which stays true after the
+  // reviewer commits or pulls on top of a landing.
+  "session.workBranchState": {
+    input: z.object({ sessionId: z.string().min(1) }),
+    output: z.object({
+      /** The reviewed branch, when the session knows one. */
+      branch: z.string().min(1).max(WORKTREE_REF_NAME_CAP).optional(),
+      /** The branch the work commits on. Absent, or equal to `branch`, ⇒ nothing to say. */
+      workBranch: z.string().min(1).max(WORKTREE_REF_NAME_CAP).optional(),
+      /** Commits the work branch holds that the reviewed branch does not. */
+      aheadOfBranch: z.number().int().nonnegative(),
+      /** Commits the recorded push destination's ref holds that the reviewed branch does not. */
+      behindRemote: z.number().int().nonnegative(),
+      /** The work branch's tip is reachable from the recorded push destination's ref. */
+      pushed: z.boolean(),
+      /** The reviewed branch already CONTAINS the work branch's tip. */
+      landed: z.boolean(),
+      /**
+       * The remote-tracking ref `pushed` was decided against, named so the surface can say
+       * "`feat/x` is behind `origin/feat/x`" rather than "behind its upstream" — a fact
+       * about the reviewer's repository, not about Rennet's machinery.
+       */
+      remoteRef: z.string().min(1).max(WORKTREE_REF_NAME_CAP).optional(),
+    }),
+  },
   // ── Living-draft span rework (B11 cluster 5) ────────────────────────────────
   // The backend for the client's gated `reviseDraftSpan` seam (C9 binds the seam;
   // this is its host command). A one-shot worker (a FRESH model turn, never the
@@ -1670,6 +1759,31 @@ const definitions = {
       z.object({ status: z.literal("unavailable"), reason: z.string() }),
     ]),
   },
+  // ── The workspace inventory (workspace-settings D6) ─────────────────────────
+  // Every workspace Rennet knows for ONE repository, read on request from `git worktree
+  // list`, the pull-request index and the sessions bound there. Keyed by `repoPath`, never
+  // by a project id: a workspace project maps many repositories onto one identity and that
+  // mapping is not invertible, so a project id cannot say WHICH repository's worktrees these
+  // are — the two repositories of one workspace list separately. A read; nothing is created.
+  "worktrees.list": {
+    input: z.object({ repoPath: z.string().min(1) }),
+    output: worktreeInventorySchema,
+  },
+  // ── Remove one workspace (workspace-settings D6) ────────────────────────────
+  // `git worktree remove` WITHOUT `--force`, so git's own refusal is the only thing that
+  // stops it and uncommitted work is never swept; the refusal comes back verbatim on the
+  // row. A sibling's branch is deleted with its worktree only under D5's reachability rule;
+  // an unmerged sibling loses its worktree and KEEPS its branch, which the outcome names.
+  // One interaction, no confirmation step (Rule Zero). `id` addresses a row of THIS
+  // repository's list — an opaque digest the host recomputes on a fresh inventory, so an
+  // id that names no workspace of `repoPath`, the reviewer's own checkout, and a workspace
+  // a live session is bound to are all answered `not-removable` rather than acted on. It is
+  // an id and not a path because a PROJECTED client is handed a repo reference and a
+  // scrubbed tail for display, and could never echo back bytes the host would match.
+  "worktrees.remove": {
+    input: z.object({ repoPath: z.string().min(1), id: z.string().min(1) }),
+    output: worktreeRemoveOutcomeSchema,
+  },
 } as const;
 
 /** The #465 v1 agent inventory — the only rows the orchestrator's app tools expose
@@ -1701,7 +1815,7 @@ const AGENT_EXPOSED = new Set<string>([
 
 /**
  * The ⌘K command-menu inventory (#477, C11 exposure pass) — decided PER ROW by walking
- * all 107 commands, never derived from a blanket rule. The full row-by-row table with a
+ * all 113 commands, never derived from a blanket rule. The full row-by-row table with a
  * rationale for every command lives in
  * `docs/developing/reference/command-menu-exposure.md`.
  *
@@ -1710,7 +1824,7 @@ const AGENT_EXPOSED = new Set<string>([
  * has no result surface. So a row earns `true` only when all four hold:
  *
  * 1. Its input schema is satisfied by `{}` — nothing required the menu cannot supply
- *    (19 of 105 pass; the rest need a review/session/project/span id or a host path).
+ *    (19 of 113 pass; the rest need a review/session/project/span id or a host path).
  * 2. It is an ACTION, not a read the UI already drives for itself (`settings.get`,
  *    `session.list`, `board.read`, `harness.hosts`, `daemon.status`, … all stay false:
  *    running them from the menu changes nothing a reader would see).

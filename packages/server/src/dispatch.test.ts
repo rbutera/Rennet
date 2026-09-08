@@ -1780,6 +1780,9 @@ describe("createDispatch — publish.submitPr (own-branch submission, issue #257
     expect(submitPullRequest).toHaveBeenCalledWith({
       repoRoot: REPO,
       headRef: "feat/reviewed",
+      // The review whose SESSION says which branch the work is on (workspace-settings D4).
+      // The dispatch layer carries the id and decides nothing; the host resolves it.
+      reviewId: review.id,
       submission: SUBMISSION,
       destination: DEFAULT_PR_DESTINATION,
     });
@@ -2047,6 +2050,7 @@ describe("createDispatch — publish.compose + publish-ready + handoff-completed
     expect(submitPullRequest).toHaveBeenCalledWith({
       repoRoot: REPO,
       headRef: "feat/reviewed",
+      reviewId: review.id,
       submission: composed.submission,
       destination: GITLAB_PR_DESTINATION,
     });
@@ -3703,6 +3707,14 @@ describe("createDispatch — settings.* routing (the config ladder, wireframe #1
       reviewRoles: vi.fn(() => reviewRoleMappings()),
       setRoleAssignment: vi.fn(() => reviewRoleMappings()),
       setBenchmarkRecording: vi.fn((enabled: boolean) => enabled),
+      // The placement the BINDING reads (workspace-settings D1). The stub answers the
+      // builtin shape; nothing in this route test binds a workspace.
+      resolveWorktreePlacement: vi.fn(async () => ({
+        root: "/data/worktrees",
+        pattern: "{repo}/{branch}",
+        prPattern: "{owner}/{name}/pr-{number}",
+        workspace: "share" as const,
+      })),
     };
     const { dispatch } = harness(undefined, { settings });
 

@@ -56,6 +56,21 @@ export interface LegacyWorktreeSweepInput {
  * directory. A directory git will not own (its repository is gone, the `.git` link is broken)
  * is removed outright — leaving it would keep the zoo alive forever for no benefit.
  *
+ * ⚠️ AND IT DOES NOT PRUNE. It used to follow the removal with `git worktree prune`, to
+ * clear an entry left by a directory somebody had deleted by hand — a repo-wide verb, run
+ * against a repository this sweep does not even know the root of, with no idea what else
+ * was registered there. `prune` drops every registration git cannot reach RIGHT NOW, and an
+ * unmounted volume reads exactly like a deleted directory: the reviewer's own worktree on
+ * that volume went with ours. There is now ONE prune site in the daemon, the start-up
+ * sweep in `create-server.ts`, which prunes only registrations Rennet placed, only when no
+ * live session claims one, and only when every unreachable registration in the repository
+ * passes both tests.
+ *
+ * Nothing is lost by not pruning here. `worktree remove` drops the registration it owns,
+ * which is this sweep's ordinary path; a stale entry left by a hand-deleted directory has
+ * nothing that would ever re-`add` there (nothing recreates the zoo), and the guarded sweep
+ * answers for it on this start or the next.
+ *
  * Never throws: a sweep is not allowed to stop a daemon from starting.
  */
 export async function sweepLegacyWorktrees(input: LegacyWorktreeSweepInput): Promise<number> {
@@ -68,10 +83,9 @@ export async function sweepLegacyWorktrees(input: LegacyWorktreeSweepInput): Pro
     if (bound.has(comparablePath(dir))) continue;
     const git = input.gitFor(dir);
     try {
+      // `remove` drops the admin entry it owns, and only that one. No `prune` follows it:
+      // see the header — `prune` is repo-wide and belongs to the guarded start-up sweep.
       await git(dir, ["worktree", "remove", "--force", dir], { reject: false });
-      // `remove` prunes the admin entry it owns; `prune` clears one left by a directory
-      // someone deleted by hand, which is what makes `worktree add` accept the path again.
-      await git(dir, ["worktree", "prune"], { reject: false });
     } catch {
       // git could not speak for this directory; the filesystem removal below still stands.
     }

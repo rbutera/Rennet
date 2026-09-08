@@ -1927,6 +1927,35 @@ export const SessionModelSchema = z
      */
     boundRoot: z.string().min(1).optional(),
     /**
+     * The branch this session's work COMMITS ON (workspace-settings D4), recorded beside
+     * `boundRoot` by the same one decision.
+     *
+     * It is the reviewed branch itself in every arrangement but one: a repository that
+     * resolves `workspace: own` whose reviewed branch some worktree already has out. Git
+     * refuses a second checkout of one branch, so Rennet works on a sibling
+     * `rennet/<branch>` forked from that branch's head and leaves the reviewer's checkout
+     * untouched. The push (`refs/heads/<workBranch>:refs/heads/<branch>`) and the land
+     * action (`merge --ff-only`) are the two places the sibling reaches the branch again.
+     *
+     * Additive-optional, and ABSENT READS AS THE REVIEWED BRANCH: every session written
+     * before this field, and every session under `share`, means exactly that.
+     */
+    workBranch: z.string().min(1).optional(),
+    /**
+     * WHERE this session's work branch was pushed: the remote it went to and the branch
+     * name it landed under. Written by the pull-request submission, and only when the work
+     * branch differs from the reviewed branch — under `share` a push moves the branch the
+     * reviewer is standing on, so there is nothing to record about it.
+     *
+     * A DESTINATION, not a timestamp. This replaced `workBranchPushedAt`, which was the
+     * review finding: a stamp says a push once succeeded, and every question actually asked
+     * of it — is the sibling reachable, is the branch behind — is a question about what the
+     * refs hold NOW. So this names the ref to read (`refs/remotes/<remote>/<branch>`) and
+     * git answers at request time; a force-push or a deleted remote branch changes the
+     * answer, where a stamp would have kept claiming the old one.
+     */
+    workBranchPush: z.object({ remote: z.string().min(1), branch: z.string().min(1) }).optional(),
+    /**
      * The `owner/name` identity of the repo this session's target lives in (#580). NOT a path —
      * it is the same stable identity `LocalWork.repository`/`PullRequest.repository` carry (the
      * origin remote, else the durable common-dir alias), so it crosses the wire freely where

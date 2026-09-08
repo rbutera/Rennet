@@ -779,13 +779,23 @@ export function loadScoutFacts(
 }
 
 /**
- * The keys whose detected value is a LADDER offer. `logoPath` is deliberately absent
- * (#900): the mark does not resolve off the detected path, it resolves off the copy in the
- * project dir (ADR 0004), so offering the path here was a row nothing read — a dead offer.
- * The fact itself is still stored and still shown in the questionnaire; it is the SOURCE the
- * copy is made from, not a settings value.
+ * The keys whose detected value is a LADDER offer. Two are deliberately absent, and both
+ * are still SCOUTED and still STORED — they are honest facts about the repository; they
+ * are simply not instructions to Rennet:
+ *
+ *   • `logoPath` (#900): the mark resolves off the copy in the project dir (ADR 0004), not
+ *     off the detected path, so offering the path here was a row nothing read.
+ *   • `worktreeBaseDir` (workspace-settings D1): where a repository's own worktrees
+ *     already live is that repository's convention. The offer was harmless while nothing
+ *     read the resolved root; with the binding reading it, this offer would move where
+ *     Rennet places every worktree for any repository that happens to have one sibling
+ *     checkout — an install that touched no setting, placing things somewhere new. All
+ *     four worktree keys are `builtin < global < repo`, and the resolver refuses a
+ *     `detected` offer for them.
  */
-const SCOUT_OFFER_KEYS = SCOUT_FACT_KEYS.filter((key) => key !== "logoPath");
+const SCOUT_OFFER_KEYS = SCOUT_FACT_KEYS.filter(
+  (key) => key !== "logoPath" && key !== "worktreeBaseDir",
+);
 
 /**
  * The stored scout facts as `detected`-layer offers for core's settings
@@ -796,7 +806,9 @@ const SCOUT_OFFER_KEYS = SCOUT_FACT_KEYS.filter((key) => key !== "logoPath");
 export function scoutSettingsOffers(
   store: ProjectSnapshotStore,
   repoKey: string,
-): Partial<Record<Exclude<(typeof SCOUT_FACT_KEYS)[number], "logoPath">, string>> & {
+): Partial<
+  Record<Exclude<(typeof SCOUT_FACT_KEYS)[number], "logoPath" | "worktreeBaseDir">, string>
+> & {
   trackerKind?: TrackerKind;
 } {
   const stored = loadScoutFacts(store, repoKey);

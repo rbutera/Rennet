@@ -48,6 +48,8 @@ import type {
   SidebarSession,
   SuccessorAccount,
   SymbolInspection,
+  WorktreeInventory,
+  WorktreeRemoveOutcome,
 } from "@rennet/protocol";
 import {
   type CommandOutput,
@@ -72,12 +74,14 @@ import {
 } from "@rennet/protocol";
 import { deepLinkFor, type RaisedAttention } from "../attention-planner";
 import type { ResolvedForgePullRequestDestination } from "../forge-submission";
+import type { LandWorkBranchOutcome } from "../land-work-branch";
 import {
   createReviewIntelligenceSessions,
   type ReviewIntelligenceSession,
 } from "../review-intelligence-session";
 import type { SettingsComposition } from "../settings";
 import type { T3SidecarSupervisor } from "../t3/supervisor";
+import type { WorkBranchState } from "../work-branch-state";
 
 /**
  * The command router (issue #54), extracted from the electron main so it can be
@@ -287,6 +291,13 @@ export interface DispatchDeps {
     repoRoot: string;
     /** The head branch ref to push and open the PR against (#107). */
     headRef: string;
+    /**
+     * The review whose SESSION says which branch the work is on (workspace-settings D4).
+     * The host resolves it: only it holds the session store, and only the session knows
+     * whether this review's rounds committed on `headRef` or on a sibling beside it. The
+     * dispatch layer carries the id and decides nothing.
+     */
+    reviewId: string;
     submission: ForgePrSubmission;
     destination: ResolvedForgePullRequestDestination;
   }) => Promise<ForgePrSubmissionOutcome>;
@@ -662,6 +673,21 @@ export interface DispatchDeps {
       sessionId: string,
       archived: boolean,
     ): SidebarSession | undefined | Promise<SidebarSession | undefined>;
+    /**
+     * Fast-forward the checkout holding the reviewed branch onto this session's work branch
+     * (workspace-settings D4). The HOST owns it: it holds the session store, the per-repo
+     * git and the locus, and none of those cross this seam. What comes back is git's own
+     * answer — landed, or its refusal verbatim — or `unavailable` when there is simply
+     * nothing to land.
+     */
+    landWorkBranch(sessionId: string): Promise<LandWorkBranchOutcome>;
+    /**
+     * Where this session's work branch has got to (workspace-settings D4), read from git at
+     * request time — ahead / pushed / landed. The HOST owns it for the same reason it owns
+     * the landing: the session store, the per-repo git and the recorded push destination
+     * are all on this side and none of them crosses this seam.
+     */
+    workBranchState(sessionId: string): Promise<WorkBranchState>;
   };
   /**
    * The lens-board read for `board.read` (C05 cluster 8, bound in C18): the PERSISTED board
@@ -729,6 +755,20 @@ export interface DispatchDeps {
     instruction: string;
     path?: string;
   }) => Promise<RefinementResult>;
+  /**
+   * The workspace inventory (workspace-settings D6): every workspace Rennet knows for ONE
+   * repository, and the non-forcing removal of one of them. Keyed by the repository's
+   * PATH — a project id maps many repositories onto one identity and cannot say which of
+   * them a row belongs to — and resolved through that repository's own git locus.
+   *
+   * Optional so a composition without a data dir still constructs: `worktrees.list` then
+   * answers an honestly empty list and `worktrees.remove` reports that it addressed
+   * nothing, rather than throwing or claiming a removal that never ran.
+   */
+  readonly worktrees?: {
+    list(repoPath: string): Promise<WorktreeInventory>;
+    remove(input: { repoPath: string; id: string }): Promise<WorktreeRemoveOutcome>;
+  };
 }
 
 /**
