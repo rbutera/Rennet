@@ -523,17 +523,23 @@ Three things follow from the thread being persistent.
 
   Nothing supplies a server yet — the field is carried, and the daemon's own board server
   is the next change.
-- **Spend is per turn, and it is a delta read off the thread.** Claude's SDK reports usage
-  cumulatively over a streaming session's turns, so the seat leg records each turn's own
-  usage as the difference against the previous settled turn's total — which
-  `waitForTurnSettled` reads from the thread's own earlier `turn.settled` activity, so a
-  runner recreated for the thread (a whole-board restart) or a daemon restarted under it
-  subtracts the same as one that watched every turn. Each Claude query runtime stamps its
-  settlements with a usage epoch. Subtraction requires matching epochs; a recovered runtime
-  gets a new epoch even when it resumes the same provider session, so its entire counter
-  counts even when it exceeds the old runtime's total. A first total without a prior usage
-  baseline remains measured. When a prior total exists but either epoch is missing, as in
-  legacy records, the uncertain delta is unmeasured. Missing usage is still unmeasured.
+- **Spend is per turn, and its source matters.** Claude's SDK `usage` is already
+  per-turn and covers the main agent loop. Its `modelUsage` and `total_cost_usd`
+  accumulate across the query runtime, including subagent, sidechain and other query-pipeline
+  model calls. The sidecar preserves both sources on `turn.settled`. The seat leg sums
+  `modelUsage` across models and subtracts the preceding model totals only within the
+  same known usage epoch. The epoch combines a fresh query identity with the SDK session
+  identity, covering both recovery under the same provider session and `/clear` within
+  a running query. A new 20,000-token counter following an old
+  10,000-token counter contributes all 20,000 tokens. Epochs and totals survive restart.
+  When complete totals or a comparable baseline are unavailable, the known per-turn
+  main-loop `usage` remains measured; it does not include unreported subagent work.
+  Cost is attributed separately: a fresh known epoch uses its total, a matching epoch
+  uses the cost delta, and an unknown epoch or counter reset leaves cost unavailable.
+  An intervening settlement without counters makes the baseline unknown; its spend is
+  never assigned to the next turn. Empty `modelUsage` is an explicit zero baseline, as
+  reported by `/clear`. Missing usage stays unmeasured. These provider
+  figures are estimates, not a billing statement; subscription turns show no dollar price.
   Codex's `context-window.updated` keeps the last request's context figures. Its separate
   cumulative breakdown is stamped with the provider thread and turn. The sidecar saves
   the counter baseline when a turn starts and carries that baseline plus the final

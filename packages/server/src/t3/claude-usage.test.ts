@@ -38,11 +38,12 @@ it.skipIf(!bundle)(
         claude,
         `#!/usr/bin/env node
 import { createInterface } from "node:readline";
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 if (process.argv.includes("--version")) { console.log("2.1.0 (Claude Code)"); process.exit(0); }
 const marker = ${JSON.stringify(join(root, "runtime-started"))};
 let recovered;
+let cleared = false;
 const send = (value) => process.stdout.write(JSON.stringify(value) + "\\n");
 let turns = 0;
 createInterface({ input: process.stdin }).on("line", (line) => {
@@ -50,12 +51,19 @@ createInterface({ input: process.stdin }).on("line", (line) => {
   if (message.type === "control_request") {
     send({ type: "control_response", response: { subtype: "success", request_id: message.request_id, response: { commands: [], agents: [], models: [], account: {} } } });
   } else if (message.type === "user") {
-    if (recovered === undefined) { recovered = existsSync(marker); writeFileSync(marker, "started"); }
+    if (recovered === undefined) { recovered = existsSync(marker); cleared = recovered && readFileSync(marker, "utf8") === "cleared-provider-session"; }
+    const reset = JSON.stringify(message).includes("/clear");
+    if (reset) cleared = true;
+    const sessionId = cleared ? "cleared-provider-session" : "same-provider-session";
+    writeFileSync(marker, sessionId);
     turns += 1;
-    send({ type: "system", subtype: "init", session_id: "same-provider-session", tools: [], model: "claude-sonnet-5" });
-    send({ type: "assistant", uuid: randomUUID(), session_id: "same-provider-session", parent_tool_use_id: null, message: { id: randomUUID(), role: "assistant", content: [{ type: "text", text: "Done." }] } });
-    const usage = recovered ? { input_tokens: 18000, output_tokens: 2000 } : { input_tokens: turns === 1 ? 9000 : 11000, output_tokens: 1000 };
-    send({ type: "result", subtype: "success", is_error: false, result: "Done.", session_id: "same-provider-session", uuid: randomUUID(), usage, total_cost_usd: recovered ? 2 : turns === 1 ? 1 : 1.2 });
+    send({ type: "system", subtype: "init", session_id: sessionId, tools: [], model: "claude-sonnet-5" });
+    send({ type: "assistant", uuid: randomUUID(), session_id: sessionId, parent_tool_use_id: null, message: { id: randomUUID(), role: "assistant", content: [{ type: "text", text: "Done." }] } });
+    const usage = reset ? { input_tokens: 0, output_tokens: 0 } : recovered ? { input_tokens: 56000, output_tokens: 4000 } : cleared ? { input_tokens: 36000, output_tokens: 4000 } : turns === 3 ? { input_tokens: 18000, output_tokens: 2000 } : { input_tokens: turns === 1 ? 9000 : 1000, output_tokens: 1000 };
+    const counters = (inputTokens, outputTokens, costUSD) => ({ inputTokens, outputTokens, cacheReadInputTokens: 0, cacheCreationInputTokens: 0, costUSD, webSearchRequests: 0, contextWindow: 200000, maxOutputTokens: 64000 });
+    const modelUsage = reset ? {} : { sonnet: recovered ? counters(56000, 4000, 6) : cleared ? counters(36000, 4000, 4) : turns === 1 ? counters(9000, 1000, 1) : turns === 2 ? counters(10000, 2000, 1.2) : counters(28000, 4000, 3.2) };
+    if (!reset && (recovered || cleared || turns === 3)) modelUsage.haiku = recovered || cleared ? counters(2000, 1000, 0.3) : counters(500, 500, 0.1);
+    send({ type: "result", subtype: "success", is_error: false, result: "Done.", session_id: sessionId, uuid: randomUUID(), usage, modelUsage, total_cost_usd: reset ? 0 : recovered ? 6.3 : cleared ? 4.3 : turns === 1 ? 1 : turns === 2 ? 1.2 : 3.3 });
   }
 });
 `,
@@ -89,20 +97,36 @@ createInterface({ input: process.stdin }).on("line", (line) => {
       const secondResult = await client.waitForTurnSettled(threadId, { after: second });
       expect(settledTurnUsage(secondResult)?.totalTokens).toBe(2_000);
       expect(secondResult.usageEpoch).toBe(firstResult.usageEpoch);
+      const larger = await client.startTurn({ threadId, text: "larger" });
+      const largerResult = await client.waitForTurnSettled(threadId, { after: larger });
+      expect(largerResult.usageEpoch).toBe(firstResult.usageEpoch);
+      expect(settledTurnUsage(largerResult)?.totalTokens).toBe(21_000);
+      expect(settledTurnUsage(largerResult)?.reportedUsd).toBeCloseTo(2.1);
+      const clear = await client.startTurn({ threadId, text: "/clear" });
+      const clearResult = await client.waitForTurnSettled(threadId, { after: clear });
+      expect(clearResult.usageEpoch).not.toBe(largerResult.usageEpoch);
+      expect(settledTurnUsage(clearResult)).toMatchObject({ totalTokens: 0, reportedUsd: 0 });
+      const afterClear = await client.startTurn({ threadId, text: "after clear" });
+      const afterClearResult = await client.waitForTurnSettled(threadId, { after: afterClear });
+      expect(afterClearResult.usageEpoch).toBe(clearResult.usageEpoch);
+      expect(settledTurnUsage(afterClearResult)).toMatchObject({
+        totalTokens: 43_000,
+        reportedUsd: 4.3,
+      });
       await client.close();
       await stopSidecar(dataDir);
       running?.child?.kill("SIGKILL");
       client = await connect();
-      const restored = await client.waitForTurnSettled(threadId, { after: second });
-      expect(settledTurnUsage(restored)?.totalTokens).toBe(2_000);
+      const restored = await client.waitForTurnSettled(threadId, { after: afterClear });
+      expect(settledTurnUsage(restored)?.totalTokens).toBe(43_000);
       const recovered = await client.startTurn({ threadId, text: "recovered" });
       const recoveredResult = await client.waitForTurnSettled(threadId, { after: recovered });
       expect(recoveredResult.state).toBe("completed");
       expect(recoveredResult.usageEpoch).toBeTypeOf("string");
-      expect(recoveredResult.usageEpoch).not.toBe(secondResult.usageEpoch);
+      expect(recoveredResult.usageEpoch).not.toBe(afterClearResult.usageEpoch);
       expect(settledTurnUsage(recoveredResult)).toMatchObject({
-        totalTokens: 20_000,
-        reportedUsd: 2,
+        totalTokens: 63_000,
+        reportedUsd: 6.3,
       });
     } finally {
       await client?.close();
