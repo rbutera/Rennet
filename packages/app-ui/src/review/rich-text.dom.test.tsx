@@ -77,6 +77,43 @@ describe("RichText — R45 markdown subset (base tier)", () => {
     expect(container.querySelectorAll("li")).toHaveLength(3);
   });
 
+  it("renders a lead-in and wrapped bullets with working citations and highlights", async () => {
+    const text =
+      "What changes:\n- **Expired invites** stop working.\n  Check `expiry` in packages/core/x.ts:42.\n* Existing members stay.\n+ New invites still work.\nThat is all.";
+    const start = text.indexOf("Existing members");
+    const { container, getByRole, getByText, user } = mount(
+      withBridge(
+        spanBridge(),
+        <RichText
+          text={text}
+          patchsetId={PS}
+          decorations={[
+            {
+              start,
+              end: start + "Existing members".length,
+              render: (children) => <mark>{children}</mark>,
+            },
+          ]}
+        />,
+      ),
+    );
+    expect(container.querySelectorAll("ul")).toHaveLength(1);
+    expect(container.querySelectorAll("li")).toHaveLength(3);
+    expect([...container.querySelectorAll("p")].map((p) => p.textContent)).toEqual([
+      "What changes:",
+      "That is all.",
+    ]);
+    expect(container.querySelector("li strong")?.textContent).toBe("Expired invites");
+    expect(container.querySelector("li code")?.textContent).toBe("expiry");
+    expect(container.querySelector("li mark")?.textContent).toBe("Existing members");
+    expect(displayToRawRange(text, "Existing members")).toEqual({
+      start,
+      end: start + "Existing members".length,
+    });
+    await user.click(getByRole("button", { name: "x.ts:42" }));
+    await waitFor(() => expect(getByText("L42")).toBeTruthy());
+  });
+
   it("renders a single `- item` paragraph as a one-item bulleted list", () => {
     const { container } = mount(
       withBridge(spanBridge(), <RichText text={"- only one"} patchsetId={PS} />),

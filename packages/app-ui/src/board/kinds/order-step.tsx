@@ -16,8 +16,8 @@ export function OrderStepElement({ element }: { readonly element: ElementOf<"ord
       <h3 className="font-semibold text-base text-foreground leading-snug">
         <InlineQuoteHighlight text={title} elementId={element.id} />
       </h3>
-      {spanRef && <BoardAnchorReveal citations={[spanRef]} />}
       {children.length > 0 && <BoardChildren ids={children} />}
+      {spanRef && <BoardAnchorReveal citations={[spanRef]} />}
     </div>
   );
 }

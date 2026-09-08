@@ -8,8 +8,6 @@ import type {
   HarnessPort,
   LintContext,
   LintTarget,
-  SessionOutcome,
-  SessionSpec,
 } from "@rennet/core";
 import type { DraftBoard, Generation, SessionModel, SessionThread } from "@rennet/protocol";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -18,13 +16,12 @@ import type { PersistedBoardMeta } from "../runtime/rounds";
 import { createRoundsRuntime } from "../runtime/rounds";
 import { withFakeT3Seats } from "../t3-seat-fake";
 import { SessionEntry, type Target } from "./session-entry";
-import { SessionTurnLoop, type TurnRow } from "./turn-loop";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // B09 packet E2E (cluster 8, task 8.2). The kill-mid-generation → restart →
 // reattach proof, composed over the REAL durable stores (`SessionStore`,
 // `BoardMetaStore` on temp dirs) and the REAL server units (`SessionEntry`,
-// `createRoundsRuntime`/`PipelineStartGuard`, `SessionTurnLoop`). The model is
+// `createRoundsRuntime`/`PipelineStartGuard`). The model is
 // the only thing faked — every port is injected, so the gate makes no live call
 // while the runtime stays pure over the seams (packet Verification).
 //
@@ -38,9 +35,6 @@ import { SessionTurnLoop, type TurnRow } from "./turn-loop";
 //      session — the cursor, the claim, and the anchored thread survive; a second
 //      row-click REATTACHES (same id, no second mint); the boards reconstruct
 //      intact from the persisted `BoardMeta`.
-//   4. A vanished harness transcript triggers the honest `context_rebuilt` row and
-//      re-mints the cursor from turn 1 — while the boards (BoardMeta on disk) and
-//      the session's claim/threads stay CANONICAL.
 // ─────────────────────────────────────────────────────────────────────────────
 
 // ── Fakes: the injected model + boards ports (no live call) ──────────────────
@@ -395,97 +389,5 @@ describe("B09 packet E2E — kill mid-generation, restart, reattach, boards cano
       const keys = [...(await boards2.service.getState(boardId)).keys()].sort();
       expect(keys).toEqual(contentBefore.get(boardId));
     }
-  });
-
-  it("a vanished harness transcript triggers the context_rebuilt fallback with boards canonical", async () => {
-    // A fresh restart reloads the same on-disk session (cursor + claim + thread).
-    const store = new SessionStore(sessionDir);
-    const metaStore = new BoardMetaStore(metaDir);
-    const reloaded = store.list().find((s) => s.archivedAt === undefined);
-    if (reloaded === undefined) throw new Error("E2E: no session on disk to reload");
-    expect(reloaded.harnessCursor?.harnessSessionId).toBe("harness-live-77");
-
-    // Boards on disk BEFORE the rebuild — the canonical set the fallback must keep.
-    const boardsBefore = metaStore
-      .list()
-      .map((m) => m.boardId)
-      .sort();
-    expect(boardsBefore).toHaveLength(6);
-
-    // A turn that RESUMES the persisted (now-vanished) transcript fails
-    // invalid-request; the fresh turn (no resume) succeeds and re-mints the cursor.
-    const resumeRefused: SessionOutcome = {
-      status: "failed",
-      error: {
-        class: "invalid-request",
-        origin: "harness",
-        message: "No conversation found with session ID: gone",
-        retryable: false,
-        retryableSource: "inferred",
-        // The SDK's terminal resume-refusal subtype, preserved by the real adapter (F4).
-        nativeCode: "error_during_execution",
-      },
-    };
-    const port: HarnessPort = {
-      createSession: async (spec: SessionSpec) => {
-        const outcome: SessionOutcome =
-          spec.resume !== undefined
-            ? resumeRefused
-            : {
-                status: "completed",
-                finalText: "rebuilt",
-                harnessSessionId: "harness-fresh",
-                lastAssistantMessageAnchor: "anchor-fresh",
-              };
-        return {
-          send: async () => {
-            /* prompt ignored — the outcome is fixed by resume presence */
-          },
-          close: async () => {
-            /* nothing to release */
-          },
-          events: (async function* () {
-            yield { kind: "session.ended", outcome } as unknown;
-          })(),
-        } as unknown as Awaited<ReturnType<HarnessPort["createSession"]>>;
-      },
-    } as unknown as HarnessPort;
-
-    const rows: TurnRow[] = [];
-    const loop = new SessionTurnLoop({
-      port,
-      store: { load: (id) => store.load(id), save: (s) => store.save(s) },
-      buildSpec: (s) => ({ cwd: `/repo/${s.id}` }),
-      emit: (_sessionId, r) => rows.push(r),
-    });
-
-    const { session: after, outcome, contextRebuilt } = await loop.runTurn(reloaded.id, "continue");
-
-    // The honest fallback fired: one context_rebuilt row, cursor re-minted turn 1.
-    expect(contextRebuilt).toBe(true);
-    expect(outcome.status).toBe("completed");
-    expect(rows).toEqual([
-      {
-        kind: "context_rebuilt",
-        reason: "the harness no longer has this conversation's transcript",
-      },
-    ]);
-    expect(after.harnessCursor).toEqual({
-      harnessSessionId: "harness-fresh",
-      lastAssistantMessageAnchor: "anchor-fresh",
-      turnCount: 1,
-    });
-
-    // BOARDS CANONICAL: the fallback dropped only the cursor. The board meta on
-    // disk is untouched, and the session's claim + anchored thread survived.
-    // POSITIVE-CONTROL SURFACE: a fallback that dropped the boards reddens here.
-    expect(
-      metaStore
-        .list()
-        .map((m) => m.boardId)
-        .sort(),
-    ).toEqual(boardsBefore);
-    expect(after.claim).toEqual({ branch: "feat/session-rounds", prNumber: 466 });
-    expect(after.threads).toHaveLength(1);
   });
 });

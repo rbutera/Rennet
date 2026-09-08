@@ -4,6 +4,7 @@ import { useLocation, useRoute, useSearch } from "wouter";
 import { useSlugResolution } from "../routes/slug";
 import { ROUTES, readSessionQuery, type SessionQuery, sessionPath } from "../routes/url";
 import { activePatchsetFiles } from "./diff-source";
+import { SymbolInspectionProvider } from "./symbol-inspection";
 
 interface CodeDestinationSource {
   readonly capturedPaths: ReadonlySet<string>;
@@ -67,7 +68,11 @@ export function CodeDestinationProvider({ children }: { readonly children: React
   );
 
   return (
-    <CodeDestinationContext.Provider value={value}>{children}</CodeDestinationContext.Provider>
+    <CodeDestinationContext.Provider value={value}>
+      <SymbolInspectionProvider reviewId={review?.id} patchsetId={review?.activePatchsetId}>
+        {children}
+      </SymbolInspectionProvider>
+    </CodeDestinationContext.Provider>
   );
 }
 

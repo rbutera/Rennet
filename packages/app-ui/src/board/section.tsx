@@ -44,7 +44,7 @@ const SINGULAR: Readonly<Record<DomainCountKind, string>> = {
   requirements: "requirement",
   steps: "step",
   outcomes: "outcome",
-  groups: "group",
+  groups: "region",
   files: "file",
   comments: "comment",
 };
@@ -61,7 +61,9 @@ export function sectionCountText(counts: LensSection["counts"]): string {
   return DOMAIN_COUNT_KINDS.flatMap((domain) => {
     const count = totals.get(domain);
     if (count === undefined) return [];
-    return [`${count} ${count === 1 ? SINGULAR[domain] : domain}`];
+    return [
+      `${count} ${count === 1 ? SINGULAR[domain] : domain === "groups" ? "regions" : domain}`,
+    ];
   }).join(" · ");
 }
 

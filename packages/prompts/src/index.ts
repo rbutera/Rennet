@@ -64,6 +64,7 @@ export const WRITE_WITH_TOOLS_MARKER = "{{write-with-tools}}";
 
 /** Marker → the partial file whose text replaces it. The manifest test reads this. */
 export const PROMPT_PARTIALS: Readonly<Record<string, string>> = {
+  "{{reader-voice}}": "prompts/reader-voice.md",
   [PROMPT_PARTIAL_MARKER]: INVESTIGATE_PARTIAL_FILE,
   [WRITE_WITH_TOOLS_MARKER]: WRITE_WITH_TOOLS_PARTIAL_FILE,
 };

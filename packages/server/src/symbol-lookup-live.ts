@@ -171,7 +171,7 @@ export function lookupSymbol(
 
 export interface LiveSymbolLookupDeps {
   /** Compose (or reuse) the review's live symbolic backend. */
-  buildBackend(review: Review): Promise<SymbolLookupBackend>;
+  buildBackend(review: Review, side: "base" | "head"): Promise<SymbolLookupBackend>;
   /** Reference-site display cap; defaults to {@link DEFAULT_REFERENCE_CAP}. */
   readonly referenceCap?: number;
 }
@@ -183,9 +183,9 @@ export interface LiveSymbolLookupDeps {
  */
 export function createLiveSymbolLookup(
   deps: LiveSymbolLookupDeps,
-): (input: { review: Review; name: string }) => Promise<SymbolInspection> {
-  return async ({ review, name }) => {
-    const backend = await deps.buildBackend(review);
+): (input: { review: Review; name: string; side?: "base" | "head" }) => Promise<SymbolInspection> {
+  return async ({ review, name, side = "head" }) => {
+    const backend = await deps.buildBackend(review, side);
     return lookupSymbol(backend, name, deps.referenceCap);
   };
 }
