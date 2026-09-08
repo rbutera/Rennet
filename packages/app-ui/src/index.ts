@@ -13,33 +13,7 @@ export {
   type LensBoardViewProps,
   LensSwitcher,
 } from "./board";
-// The collation draft (issue #101 / R40): the ordered, id-keyed editable draft — the
-// forming destination. Reorder / merge / split need a list, not #17's path-keyed map.
-// `collationItems` / `collationPayload` are the ordered outbound artifact the paper
-// previews + signs. Now self-contained (B2, #489): the disposition shapes it once
-// pulled from the deleted `authoring`/`logic` modules live here.
-export type {
-  CollationDraft,
-  CollationItem,
-  DispositionBatch,
-  DispositionType,
-  DispositionWrite,
-} from "./canvas/collation";
-export {
-  collationItems,
-  collationPayload,
-  draftFromBatch,
-  effectiveBody,
-  ingestWrites,
-  mergeItems,
-  moveItem,
-  retypeItem,
-  rewordItem,
-  splitItem,
-  withdrawItem,
-  withdrawPath,
-} from "./canvas/collation";
-// The inhabited CodeView (issue #77): the anchor↔row registrar (real file lines,
+// The diff anchor↔row registrar (real file lines,
 // sides, occurrence identity, span→row resolution) and L3 mark placement.
 export type {
   BuildRegistryInput,
@@ -97,7 +71,6 @@ export { ContextManifestPanel } from "./components/context-manifest-panel";
 // The in-app directory browser (source-aware project selection, task 5): fed by
 // `fs.listDir` so browsing works over a remote/WSL source with no native dialog.
 export { DirectoryBrowser } from "./components/directory-browser";
-export { FrontDoor } from "./components/front-door";
 // The data seam's provider. A host mounts app-ui surfaces inside it and every read in
 // the tree resolves through that one bridge; it is exported so a host outside this
 // package (the desktop app, and its integration tests) can supply a real bridge to a

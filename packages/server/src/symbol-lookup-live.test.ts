@@ -302,30 +302,36 @@ describe("reviewPinnedToHead", () => {
 });
 
 describe("createLiveSymbolLookup", () => {
-  it("builds the backend for the resolved review, then looks the name up", async () => {
-    let builtFor = "";
-    const backend = {
-      symbolDefinition: () =>
-        ({
-          ok: true,
-          definitions: { name: "n", sites: [] },
-        }) satisfies ProjectSymbolDefinitionResult,
-      references: () =>
-        ({ ok: true, references: { name: "n", sites: [] } }) satisfies ProjectReferenceResult,
-    } as unknown as SymbolLookupBackend;
-    const lookup = createLiveSymbolLookup({
-      buildBackend: async (review) => {
-        builtFor = review.id;
-        return backend;
-      },
-    });
-    const review = { id: "rev-1" } as Parameters<typeof lookup>[0]["review"];
-    const inspection = await lookup({ review, name: "n" });
-    expect(builtFor).toBe("rev-1");
-    expect(inspection).toEqual({
-      name: "n",
-      definition: { status: "ok", sites: [] },
-      references: { status: "ok", sites: [], truncated: false },
-    });
-  });
+  it.each([undefined, "base", "head"] as const)(
+    "builds the backend for revision side %s",
+    async (side) => {
+      let builtFor = "";
+      let builtSide = "";
+      const backend = {
+        symbolDefinition: () =>
+          ({
+            ok: true,
+            definitions: { name: "n", sites: [] },
+          }) satisfies ProjectSymbolDefinitionResult,
+        references: () =>
+          ({ ok: true, references: { name: "n", sites: [] } }) satisfies ProjectReferenceResult,
+      } as unknown as SymbolLookupBackend;
+      const lookup = createLiveSymbolLookup({
+        buildBackend: async (review, requestedSide) => {
+          builtFor = review.id;
+          builtSide = requestedSide;
+          return backend;
+        },
+      });
+      const review = { id: "rev-1" } as Parameters<typeof lookup>[0]["review"];
+      const inspection = await lookup({ review, name: "n", side });
+      expect(builtFor).toBe("rev-1");
+      expect(builtSide).toBe(side ?? "head");
+      expect(inspection).toEqual({
+        name: "n",
+        definition: { status: "ok", sites: [] },
+        references: { status: "ok", sites: [], truncated: false },
+      });
+    },
+  );
 });

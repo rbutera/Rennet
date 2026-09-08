@@ -43,16 +43,13 @@ import {
 } from "@rennet/core";
 import {
   expandPromptPartials,
-  INVESTIGATE_PARTIAL_FILE,
   LENS_PROMPT_FILES,
-  PROMPT_PARTIAL_MARKER,
+  PROMPT_PARTIALS,
   REVIEW_DRAFT_VOICE_FILE,
   ROUND_REPORT_FILE,
   renderBoardRepairTurn,
   renderLayer,
   renderRepairTurn,
-  WRITE_WITH_TOOLS_MARKER,
-  WRITE_WITH_TOOLS_PARTIAL_FILE,
 } from "@rennet/prompts";
 import {
   type BoardDocument,
@@ -3432,12 +3429,16 @@ async function draftLensBoard(
   // is what is left once the seat is known to be runnable.
   const lane = deps.boards?.lane(lens);
 
-  // Both shared partials, keyed by their markers (3.6): the investigate section and the
-  // tool vocabulary that replaced each prompt's "return a board in the supplied schema".
-  const promptText = expandPromptPartials(await deps.readPrompt(LENS_PROMPT_FILES[lens]), {
-    [PROMPT_PARTIAL_MARKER]: await deps.readPrompt(INVESTIGATE_PARTIAL_FILE),
-    [WRITE_WITH_TOOLS_MARKER]: await deps.readPrompt(WRITE_WITH_TOOLS_PARTIAL_FILE),
-  });
+  const partials = await Promise.all(
+    Object.entries(PROMPT_PARTIALS).map(async ([marker, file]) => [
+      marker,
+      await deps.readPrompt(file),
+    ]),
+  );
+  const promptText = expandPromptPartials(
+    await deps.readPrompt(LENS_PROMPT_FILES[lens]),
+    Object.fromEntries(partials),
+  );
   const basePrompt = renderDrafterPrompt(promptText, deps.deltaPacket, context);
 
   // #725 D4 — this lane's repair budget for this whole-board attempt.
