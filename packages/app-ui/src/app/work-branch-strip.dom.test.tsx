@@ -298,6 +298,14 @@ afterEach(() => {
   });
 });
 
+// ONE settled state per step, and each one waited for by a `findBy*` that resolves on the
+// DOM the step produces — never a chain of `waitFor`s over counters. Nx recorded this file
+// flaky on an unchanged hash: three sequential `waitFor`s (each on the 1 s default) over a
+// whole-app mount is three chances to lose a race with a machine under load, and a counter
+// crossing a threshold is not the state the assertion after it depends on. The mount and
+// the settle are the only two states this test has, so it waits for exactly two things.
+const SETTLE_TIMEOUT_MS = 10_000;
+
 describe("the work-branch strip after a round settles (review finding S1)", () => {
   it("re-reads the state and shows the gap a settled round opened", async () => {
     // The sibling had been landed: the strip renders nothing, and that answer is cached.
@@ -309,11 +317,15 @@ describe("the work-branch strip after a round settles (review finding S1)", () =
       pushed: false,
       landed: true,
     });
-    await waitFor(() => {
-      expect(journey.reads()).toBeGreaterThan(0);
+    // STEP 1's settled state is the strip's WRAPPER: the route mounts it whenever the
+    // session works on another branch, so its presence proves the read has resolved and the
+    // route has rendered its answer. The LINE is what a landed sibling withholds, and that
+    // is the assertion — checked once the wrapper says the render happened, not on a
+    // counter that can cross before React commits.
+    await journey.findByTestId("workspace-work-branch", undefined, {
+      timeout: SETTLE_TIMEOUT_MS,
     });
-    // The note itself, not the route's wrapper: the route mounts the strip whenever the
-    // session works on another branch, and the LINE is what a landed sibling withholds.
+    expect(journey.reads()).toBeGreaterThan(0);
     expect(note(journey.container)).toBeNull();
 
     // The round commits on the sibling. THE REFS MOVE WHETHER THE CLIENT ASKS OR NOT — that
@@ -330,12 +342,14 @@ describe("the work-branch strip after a round settles (review finding S1)", () =
     const readsBefore = journey.reads();
     journey.settle();
 
-    await waitFor(() => {
-      expect(journey.reads()).toBeGreaterThan(readsBefore);
+    // STEP 2's settled state is the note appearing at all — which only a re-read can
+    // produce, since the client's cached answer said `landed`. Waiting for the note rather
+    // than for the read counter is what makes this one wait instead of two.
+    const line = await journey.findByTestId("round-work-branch", undefined, {
+      timeout: SETTLE_TIMEOUT_MS,
     });
-    await waitFor(() => {
-      expect(note(journey.container)?.textContent).toContain("The round's commits are on");
-    });
-    expect(note(journey.container)?.textContent).toContain("feat/x has not moved");
+    expect(journey.reads()).toBeGreaterThan(readsBefore);
+    expect(line.textContent).toContain("The round's commits are on");
+    expect(line.textContent).toContain("feat/x has not moved");
   });
 });

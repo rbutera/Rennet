@@ -139,8 +139,11 @@ const ABSORBED_IDS = [
   "session.rounds",
   "session.setPinned",
   "session.transcript",
-  // Where the work branch has got to (workspace-settings D4): ahead / pushed / landed,
-  // computed from git at request time rather than stamped on the session record.
+  // Where the work branch has got to (workspace-settings D4): `aheadOfBranch`,
+  // `behindRemote`, `pushed`, `landed` and the `remoteRef` they were decided against —
+  // computed from git at request time rather than stamped on the session record. The two
+  // counts are separate fields because they are two ranges; one number for both was the
+  // first draft, and it rendered the sibling's count under a sentence about the remote.
   "session.workBranchState",
   "settings.completeWelcome",
   "settings.get",
