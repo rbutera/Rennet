@@ -211,6 +211,21 @@ export function ReviewWorkspace({ review }: { review: Review }) {
     armGreeting(true);
   }, [armGreeting, greetingArmed, liveReportPhase]);
   const showRoundGreeting = inReportPhase && !reportAcknowledged;
+  // Where this round's commits are, when that is not the branch the reviewer has out
+  // (workspace-settings D4). BOTH halves come from facts: the sibling off the session row
+  // the daemon projected, and the reviewed branch off the review's own active patchset —
+  // never the claim, which a workspace project's other repository can share a name with.
+  const reviewedBranch = review.patchsets.find((entry) => entry.id === review.activePatchsetId)
+    ?.repository.headRef;
+  const workBranchNote =
+    session?.workBranch === undefined || reviewedBranch === undefined
+      ? undefined
+      : {
+          sessionId: session.id,
+          branch: reviewedBranch,
+          workBranch: session.workBranch,
+          ...(session.workBranchPushed === true ? { pushed: true } : {}),
+        };
   const consumeRoundReport = useCallback(() => {
     acknowledgeRoundReport(reportBoardId);
     setAcknowledgedReportBoardId(reportBoardId);
@@ -372,6 +387,7 @@ export function ReviewWorkspace({ review }: { review: Review }) {
                   state={roundState}
                   onReveal={consumeRoundReport}
                   {...(greetingReceipt === undefined ? {} : { receipt: greetingReceipt })}
+                  {...(workBranchNote === undefined ? {} : { workBranch: workBranchNote })}
                 />
               ) : (
                 <ReportUnavailable status={report.status} />
