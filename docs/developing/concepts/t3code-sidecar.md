@@ -669,11 +669,12 @@ raised an unhandled `write EPIPE` that killed the whole server process and every
 seat's thread with it. The Claude adapter now spawns the child through the SDK's
 `spawnClaudeCodeProcess` hook and handles that error, terminating a child whose transport
 is broken so the failure arrives on the query stream, where the session settles the turn
-as failed like any other runtime failure. One thing that crash was hiding is still open:
-when the write loses that race against a `claude` that exits immediately, the turn can be
-left unsettled instead — about one run in ten against a stand-in that exits at once. The
-sidecar now survives it, so the blast radius is one thread rather than every seat, but a
-turn that never settles is its own defect and is not fixed here.
+as failed like any other runtime failure. SDK control requests also race against that
+query's child exit or explicit close. A child that exits before answering a model or
+permission control fails the affected turn promptly, even if stdout remains open or
+the SDK has already swept its pending requests during cleanup. This uses the process
+lifecycle rather than a retry or an additional timeout; sibling threads keep running.
+
 
 ## The board server
 

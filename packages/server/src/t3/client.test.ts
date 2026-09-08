@@ -422,7 +422,7 @@ describe.skipIf(!bundle)("t3 client: a provider stream that dies before its turn
     // Either face of the same dead provider: the session's stream failure, or the
     // `provider.turn.start.failed` refusal (`turn/setPermissionMode failed`) that the
     // reactor records first on a Linux runner, where the wait reads it before the session
-    // error lands (#772 is the residual race in that ordering).
+    // error lands.
     expect(outcome.errorMessage).toMatch(/stream failed|Claude|setPermissionMode failed/i);
     // A dead provider registers no turn at all, so the wait names the session, and the
     // failure it names was recorded after this start, not before it.
@@ -539,6 +539,119 @@ describe.skipIf(!bundle)("t3 client: a turn the sidecar refuses after accepting 
     expect(outcome.thread.latestTurn).toBeNull();
     expect(running.child?.exitCode).toBeNull();
   }, 45_000);
+});
+
+describe.skipIf(!bundle)("Claude child exit during a control request", () => {
+  it("fails the dead thread promptly while a sibling still completes", async () => {
+    const root = mkdtempSync(join(tmpdir(), "rennet-child-exit-"));
+    const holderFile = join(root, "stdout-holder.pid");
+    const executable = join(root, "claude-fixture.mjs");
+    const dataDir = join(root, "data");
+    let running: RunningSidecar | undefined;
+    let client: T3Client | undefined;
+    try {
+      for (const name of ["dead", "healthy"]) {
+        const repo = join(root, name);
+        mkdirSync(repo);
+        execFileSync("git", ["init", "-q", "-b", "main", repo]);
+        execFileSync("git", [
+          "-C",
+          repo,
+          "-c",
+          "user.name=t",
+          "-c",
+          "user.email=t@example.com",
+          "commit",
+          "--allow-empty",
+          "-qm",
+          "fixture",
+        ]);
+      }
+      writeFileSync(
+        executable,
+        `#!/usr/bin/env node
+import { spawn } from "node:child_process";
+import { writeFileSync } from "node:fs";
+import { createInterface } from "node:readline";
+import { randomUUID } from "node:crypto";
+if (process.cwd().endsWith("/dead")) {
+  // Retain the pipe after the actual provider exits: stream EOF cannot rescue its pending control.
+  const holder = spawn(process.execPath, ["-e", "setTimeout(() => {}, 30000)"], { stdio: ["ignore", 1, "ignore"] });
+  writeFileSync(${JSON.stringify(holderFile)}, String(holder.pid));
+  holder.unref();
+  process.exit(1);
+}
+const send = value => process.stdout.write(JSON.stringify(value) + "\\n");
+createInterface({ input: process.stdin }).on("line", line => {
+  const message = JSON.parse(line);
+  if (message.type === "control_request") send({ type: "control_response", response: { subtype: "success", request_id: message.request_id, response: { commands: [], agents: [], models: [], account: {} } } });
+  if (message.type === "user") {
+    send({ type: "system", subtype: "init", session_id: "healthy", tools: [], model: "claude-sonnet-5" });
+    send({ type: "assistant", uuid: randomUUID(), session_id: "healthy", parent_tool_use_id: null, message: { id: randomUUID(), role: "assistant", content: [{ type: "text", text: "Sibling completed." }] } });
+    send({ type: "result", subtype: "success", is_error: false, result: "Sibling completed.", session_id: "healthy", uuid: randomUUID(), usage: { input_tokens: 1, output_tokens: 1 } });
+  }
+});
+`,
+        { mode: 0o755 },
+      );
+      running = await spawnSidecar({
+        dataDir,
+        bundlePath: bundle as string,
+        upstreamCommit: "test",
+        env: { ...process.env, HOME: join(root, "home") },
+        binaries: { claude: executable },
+        readyTimeoutMs: 30_000,
+      });
+      client = await connectT3({
+        wsUrl: `${running.origin.replace(/^http/, "ws")}/ws`,
+        accessToken: running.credentials.accessToken,
+      });
+      const threads: string[] = [];
+      for (const name of ["healthy", "dead"]) {
+        const projectId = await client.ensureProject(join(root, name), name);
+        threads.push(
+          await client.createThread({
+            projectId,
+            title: name,
+            modelSelection: modelSelection("claudeAgent", "claude-sonnet-5"),
+          }),
+        );
+      }
+      const [healthy, dead] = threads;
+      if (!healthy || !dead) throw new Error("missing fixture threads");
+      const healthyStart = await client.startTurn({ threadId: healthy, text: "first" });
+      expect(
+        (await client.waitForTurnSettled(healthy, { after: healthyStart, startTimeoutMs: 5_000 }))
+          .state,
+      ).toBe("completed");
+      const deadStart = await client.startTurn({
+        threadId: dead,
+        text: "fail",
+        startCommandId: "dead-start",
+      });
+      const failure = await client.waitForTurnSettled(dead, {
+        after: deadStart,
+        startTimeoutMs: 5_000,
+      });
+      expect(failure.state).toBe("error");
+      expect(failure.errorMessage).toBe("turn/setPermissionMode failed");
+      expect(running.child?.exitCode).toBeNull();
+      const next = await client.startTurn({ threadId: healthy, text: "still working" });
+      expect(
+        (await client.waitForTurnSettled(healthy, { after: next, startTimeoutMs: 5_000 })).state,
+      ).toBe("completed");
+    } finally {
+      await client?.close();
+      await stopSidecar(dataDir);
+      running?.child?.kill("SIGKILL");
+      try {
+        process.kill(Number(readFileSync(holderFile, "utf8")), "SIGKILL");
+      } catch (error) {
+        expect(error).toMatchObject({ code: expect.stringMatching(/^(ENOENT|ESRCH)$/) });
+      }
+      rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    }
+  }, 60_000);
 });
 
 describe("modelSelection", () => {
