@@ -347,15 +347,25 @@ work inside a checkout the reviewer already has open.
 | Workspace | `workspace` | `worktrees.workspace` | `workspace` | `share` |
 
 All four resolve on the ordinary ladder — builtin, then the global rung, then the
-repository's own. None of the four has a producer on the `detected` rung. The
-section's caption
-names the two files it writes: the host's `~/.rennet/daemon-settings.json` for the
-global rung, and
-`~/.rennet/projects/<escaped-absolute-path>/config.json` for the repository rung.
-A filesystem path is a fact about the machine that binds, which is why the global
-rung is the daemon's file rather than the viewer's. Both layout builtins are the
-shapes the previous release hardcoded, so an install that has never written a rung
-places nothing differently.
+repository's own. None of the four has a producer on the `detected` rung.
+
+**The four controls write the repository rung**, addressed by the row's own
+repository path:
+`~/.rennet/projects/<escaped-absolute-path>/config.json`, the same file the glyph,
+the mark and the issue-tracker fields write. That is what the section's caption
+names, and it is why every row's provenance chip, Pin and Reset speak about one
+entry in one file — a setting written there reads back as `repo`, and Reset drops it
+so the value falls back to the host's answer or the builtin. Each of the four is a
+decision about **one repository**: the binding is per repository and so are its
+siblings, so the two repositories of a workspace project can differ.
+
+A **host-wide default** for the same four keys lives in the daemon's own
+`~/.rennet/daemon-settings.json` under `worktrees`, and it is edited there, by hand.
+Rennet reads it — it is the `global` rung of these keys, and a value coming from it
+shows as `global` on the row — but no screen writes it, exactly as no screen writes
+the issue tracker's global rung. Both layout builtins are the shapes the previous
+release hardcoded, so an install that has never written a rung places nothing
+differently.
 
 **Location** takes a directory. The daemon expands `~` and makes the value
 absolute at the write, so the stored bytes name the same directory on every read;

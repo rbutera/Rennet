@@ -28,7 +28,7 @@ The underlying question — where does Rennet work, and does it ever work inside
 ## Impact
 
 - `packages/protocol/src/wire.ts`, `commands/index.ts`: `prWorktreePattern` and `workspace` join `settingsProjectValueKeySchema` and `settingsProjectPrefsSchema`; `worktreePreview` and `workBranch` are additive-optional on the row and the session; `worktrees.list` / `worktrees.remove` / `session.landWorkBranch` are new commands.
-- `packages/core/src/settings-resolver.ts`: the two new keys; `worktreeBaseDir` stays declared `DETECTABLE` with no detector (the scout's hint was retired by `project-process-journal.ts`).
+- `packages/core/src/settings-resolver.ts`: the two new keys; `worktreeBaseDir` becomes `CONFIG_ONLY`, so all four worktree keys resolve `builtin < global < repo`. The scout still records where a repository's own worktrees live, and stops offering it: that fact is the repository's convention, and offering it to a root the binding now reads would move placement on an install that touched no setting.
 - `packages/server/src/settings.ts`: the global rung for `worktrees.{root,pattern,prPattern,workspace}` in `daemonSettingsSchema`; the preview computed per row.
 - `packages/server/src/bound-workspace.ts`, `create-server.ts`: `decideBoundWorkspace` takes the resolved settings; the sibling arm; `workBranch` recorded beside `boundRoot`; the round's successor patchset captured with `headRef` = the reviewed branch and the commits read from the work branch; the sweep on archive.
 - `packages/adapters/src/pr-worktree.ts`: `branchWorktreePath` / `prWorktreePath` take a root and a pattern; `ensureSiblingWorktree`; the inventory reader over `git worktree list` plus the PR index.
