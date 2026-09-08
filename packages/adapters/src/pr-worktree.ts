@@ -1,8 +1,8 @@
-import { appendFileSync, existsSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, realpathSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { isAbsolute, join, resolve, sep } from "node:path";
-import { BUILTIN_PR_WORKTREE_PATTERN, BUILTIN_WORKTREE_PATTERN } from "@rennet/core";
+import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { BUILTIN_PR_WORKTREE_PATTERN, BUILTIN_WORKTREE_PATTERN, escapePath } from "@rennet/core";
 import { execa } from "execa";
 import type { GitExec } from "./git-range-diff";
 import { parseWorktrees } from "./worktree-discovery";
@@ -57,11 +57,55 @@ export function defaultWorktreePlacement(dataDir: string): WorktreePlacement {
 export function resolveWorktreeRoot(dataDir: string, value: string | undefined): string {
   const trimmed = value?.trim() ?? "";
   if (trimmed === "") return join(dataDir, "worktrees");
-  const expanded =
-    trimmed === "~" || trimmed.startsWith(`~${sep}`) || trimmed.startsWith("~/")
-      ? join(homedir(), trimmed.slice(1))
-      : trimmed;
+  const expanded = ownHome(trimmed) ? join(homedir(), trimmed.slice(1)) : trimmed;
   return isAbsolute(expanded) ? expanded : resolve(dataDir, expanded);
+}
+
+/** `~`, `~/x` (and `~\x` on Windows) — the ONLY tilde form there is an expansion for.
+ *  `~someone/x` names another user's home, which needs a passwd lookup this process does
+ *  not do; the write refuses it rather than creating a literal `~someone` directory. */
+function ownHome(value: string): boolean {
+  return value === "~" || value.startsWith("~/") || value.startsWith(`~${sep}`);
+}
+
+/**
+ * The root to PERSIST for a location the reviewer just wrote (D1, and the spec delta's
+ * "A written location SHALL be expanded and made absolute by the daemon").
+ *
+ * Storing `~/trees` verbatim makes the stored bytes mean different directories on
+ * different machines and different users, and the row would then show a string the
+ * daemon has to re-interpret on every read. Expansion happens ONCE, here, at the write.
+ * `resolveWorktreeRoot` stays tolerant at the read for a file someone edited by hand.
+ *
+ * An empty write is a reset and stays empty — dropping the entry is the caller's job.
+ * `~user/...` THROWS with its reason: no guess, no literal `~user` directory.
+ */
+export function expandWorktreeRootForWrite(dataDir: string, value: string): string {
+  const trimmed = value.trim();
+  if (trimmed === "") return "";
+  if (trimmed.startsWith("~") && !ownHome(trimmed)) {
+    throw new Error(
+      `worktree root: "${trimmed}" names another user's home — write the absolute path instead`,
+    );
+  }
+  return resolveWorktreeRoot(dataDir, trimmed);
+}
+
+/**
+ * The ProjectSnapshot store key for a repository root: `escapePath(realpath(root))`.
+ *
+ * One function, every caller — the daemon's binding and the settings row's placement
+ * preview both spell `{repo}` through THIS, because a preview computed from an
+ * unresolved path is a different directory the moment a symlink is involved (`/var` →
+ * `/private/var` on macOS), and #812 is the bug where the preview and the binding
+ * disagreed. An unresolvable path keeps its literal spelling.
+ */
+export function repoKeyForRoot(repoRoot: string): string {
+  try {
+    return escapePath(realpathSync(repoRoot));
+  } catch {
+    return escapePath(repoRoot);
+  }
 }
 
 /** The token values one placement can substitute. A token the caller does not carry is
@@ -95,7 +139,10 @@ export function renderWorktreePattern(
     .map((name) => `{${name}}`)
     .join(", ");
   const rendered = trimmed.replace(TOKEN, (_match, name: string) => {
-    if (!(name in tokens)) {
+    // OWN properties only. `name in tokens` walks the prototype chain, so `{constructor}`,
+    // `{toString}` and `{__proto__}` all passed as "known" tokens and rendered a function
+    // into a filesystem path.
+    if (!Object.hasOwn(tokens, name)) {
       throw new Error(`worktree pattern: unknown token {${name}} — this pattern takes ${known}`);
     }
     const value = tokens[name];
@@ -109,9 +156,19 @@ export function renderWorktreePattern(
       `worktree pattern: "${rendered}" is absolute — a pattern is relative to the worktree root`,
     );
   }
+  // Containment asked of `relative`, not of a string prefix: `base + sep` doubles the
+  // separator when the root IS a separator (`/`, `C:\`), so `/` refused every legal
+  // descendant it has. An empty relative path means the pattern rendered to the root
+  // itself, which is a different mistake from escaping it and says so.
   const base = resolve(root);
   const target = resolve(root, rendered);
-  if (target === base || !target.startsWith(base + sep)) {
+  const step = relative(base, target);
+  if (step === "") {
+    throw new Error(
+      `worktree pattern: "${rendered}" renders to the worktree root itself — a pattern names a directory under it`,
+    );
+  }
+  if (step === ".." || step.startsWith(`..${sep}`) || isAbsolute(step)) {
     throw new Error(`worktree pattern: "${rendered}" resolves outside the worktree root`);
   }
   // `join`, not `resolve`: a relative root stays relative, so a caller's own spelling of
@@ -121,11 +178,96 @@ export function renderWorktreePattern(
 
 /** Placeholder token values for VALIDATING a pattern before it is stored — every token
  *  the grammar has, each a plain segment, so the only thing that can refuse the write is
- *  the pattern itself. */
-const PLACEHOLDERS = {
+ *  the pattern itself.
+ *
+ *  This object IS the grammar the write blesses, and `branchTokens`/`prTokens` are what
+ *  every bind site supplies. Two declarations, so one test can assert they carry the same
+ *  keys (`pr-worktree.test.ts`) — a pattern the write accepts and the binding then throws
+ *  on is the failure that test exists to catch. */
+export const WORKTREE_PLACEHOLDERS = {
   branch: { repo: "repo", name: "name", owner: "owner", branch: "branch" },
   "pull-request": { owner: "owner", name: "name", repo: "repo", number: "1" },
 } as const;
+
+/** The `{owner}` a repository whose remote resolves to no forge gets (D2). Named once,
+ *  because the preview and the binding have to agree on it. */
+export const LOCAL_OWNER = "local";
+
+/**
+ * What one REPOSITORY contributes to a placement's tokens. The two facts git answers —
+ * the forge owner and the remote's repository name — are optional, because git may not
+ * answer; the token builders below carry the fallback, in one place, so the preview and
+ * the binding cannot disagree about what an unanswered fact renders as.
+ */
+export interface WorktreeRepoFacts {
+  /** The forge owner of the resolved remote; absent ⇒ `{owner}` renders `local`. */
+  readonly owner?: string;
+  /** The resolved remote's repository NAME; absent ⇒ `{name}` renders the directory's
+   *  basename. `{name}` means the remote's name first: a clone of `acme/widget` into
+   *  `/work/widget-local` places under `widget`, and the preview says so. */
+  readonly remoteName?: string;
+  /** The repository's current branch — the preview's sample, never used by a binding. */
+  readonly branch?: string;
+}
+
+/** One repository, addressed the way a placement needs it: its store key, its own
+ *  directory (the `{name}` fallback), and whatever git could tell us about its remote. */
+export interface WorktreeRepoIdentity extends WorktreeRepoFacts {
+  /** `escapePath(realpath(root))` — `{repo}`. */
+  readonly repoKey: string;
+  /** The repository's directory, for the `{name}` basename fallback. */
+  readonly repoRoot: string;
+}
+
+/** `{name}`: the remote's repository name when one resolved, else this checkout's own
+ *  folder. Both grammars share it, which is the whole point of it being a function. */
+function placementName(repo: WorktreeRepoIdentity): string {
+  return repo.remoteName ?? basename(repo.repoRoot);
+}
+
+/**
+ * The BRANCH grammar's tokens for one repository and branch — every token
+ * `WORKTREE_PLACEHOLDERS.branch` blesses, none of them optional.
+ *
+ * Every bind site and the settings preview build their tokens HERE. A site that assembled
+ * its own record could omit one, and a stored `{owner}/{branch}` would then preview fine
+ * and throw at bind — which is exactly what it did.
+ */
+export function branchTokens(
+  repo: WorktreeRepoIdentity,
+  branch: string,
+): {
+  readonly repo: string;
+  readonly name: string;
+  readonly owner: string;
+  readonly branch: string;
+} {
+  return {
+    repo: repo.repoKey,
+    name: placementName(repo),
+    owner: repo.owner ?? LOCAL_OWNER,
+    branch,
+  };
+}
+
+/** The PULL-REQUEST grammar's tokens — `WORKTREE_PLACEHOLDERS["pull-request"]`'s set,
+ *  built in one place for the same reason `branchTokens` is. */
+export function prTokens(
+  repo: WorktreeRepoIdentity,
+  number: number,
+): {
+  readonly owner: string;
+  readonly name: string;
+  readonly repo: string;
+  readonly number: string;
+} {
+  return {
+    owner: repo.owner ?? LOCAL_OWNER,
+    name: placementName(repo),
+    repo: repo.repoKey,
+    number: String(number),
+  };
+}
 
 /**
  * Refuse a pattern the reviewer is about to store, with the reason, BEFORE it is
@@ -135,7 +277,11 @@ const PLACEHOLDERS = {
  * (`git check-ref-format`), and the repo key is an escaped path.
  */
 export function assertWorktreePattern(kind: "branch" | "pull-request", pattern: string): void {
-  renderWorktreePattern(sep === "\\" ? "C:\\rennet" : "/rennet", pattern, PLACEHOLDERS[kind]);
+  renderWorktreePattern(
+    sep === "\\" ? "C:\\rennet" : "/rennet",
+    pattern,
+    WORKTREE_PLACEHOLDERS[kind],
+  );
 }
 
 /**
@@ -146,20 +292,10 @@ export function assertWorktreePattern(kind: "branch" | "pull-request", pattern: 
 export function prWorktreePath(
   root: string,
   pattern: string,
-  tokens: {
-    readonly owner?: string;
-    readonly name?: string;
-    /** The escaped realpath key, for a reviewer who files snapshots beside branches. */
-    readonly repo?: string;
-    readonly number: number;
-  },
+  repo: WorktreeRepoIdentity,
+  number: number,
 ): string {
-  return renderWorktreePattern(root, pattern, {
-    owner: tokens.owner,
-    name: tokens.name,
-    repo: tokens.repo,
-    number: String(tokens.number),
-  });
+  return renderWorktreePattern(root, pattern, prTokens(repo, number));
 }
 
 /**
@@ -177,22 +313,10 @@ export function prWorktreePath(
 export function branchWorktreePath(
   root: string,
   pattern: string,
-  tokens: {
-    /** The escaped realpath key — today's middle segment. */
-    readonly repo?: string;
-    /** The repository directory's basename. */
-    readonly name?: string;
-    /** The forge owner when a remote resolves, else `local`. */
-    readonly owner?: string;
-    readonly branch: string;
-  },
+  repo: WorktreeRepoIdentity,
+  branch: string,
 ): string {
-  return renderWorktreePattern(root, pattern, {
-    repo: tokens.repo,
-    name: tokens.name,
-    owner: tokens.owner,
-    branch: tokens.branch,
-  });
+  return renderWorktreePattern(root, pattern, branchTokens(repo, branch));
 }
 
 /**

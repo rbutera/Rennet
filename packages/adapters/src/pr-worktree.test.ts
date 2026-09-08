@@ -1,20 +1,35 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
+import { escapePath } from "@rennet/core";
 import { afterEach, describe, expect, it } from "vitest";
 import { execaGit } from "./git-range-diff";
 import {
   assertWorktreePattern,
+  branchTokens,
   branchWorktreePath,
   defaultWorktreePlacement,
   ensurePrWorktree,
+  expandWorktreeRootForWrite,
+  LOCAL_OWNER,
+  prTokens,
   prWorktreePath,
   readSetupLogTail,
   readSetupStatus,
   renderWorktreePattern,
+  repoKeyForRoot,
   resolveWorktreeRoot,
   runPrWorktreeSetup,
+  WORKTREE_PLACEHOLDERS,
 } from "./pr-worktree";
 
 const scratch: string[] = [];
@@ -50,11 +65,12 @@ describe("ensurePrWorktree", () => {
   it("creates a detached worktree at the head OID, and a re-open reuses it", async () => {
     const { root, dataDir, firstOid } = repo();
     const placement = defaultWorktreePlacement(dataDir);
-    const path = prWorktreePath(placement.root, placement.prPattern, {
-      owner: "acme",
-      name: "widget",
-      number: 7,
-    });
+    const path = prWorktreePath(
+      placement.root,
+      placement.prPattern,
+      { repoKey: "-repo", repoRoot: root, owner: "acme", remoteName: "widget" },
+      7,
+    );
     const first = await ensurePrWorktree(execaGit, root, path, firstOid);
     expect(first).toEqual({ path, created: true });
     expect(readFileSync(join(path, "a.txt"), "utf8")).toBe("one\n");
@@ -65,11 +81,12 @@ describe("ensurePrWorktree", () => {
   it("replaces the checkout when the reviewed head is superseded", async () => {
     const { root, dataDir, firstOid, secondOid } = repo();
     const placement = defaultWorktreePlacement(dataDir);
-    const path = prWorktreePath(placement.root, placement.prPattern, {
-      owner: "acme",
-      name: "widget",
-      number: 7,
-    });
+    const path = prWorktreePath(
+      placement.root,
+      placement.prPattern,
+      { repoKey: "-repo", repoRoot: root, owner: "acme", remoteName: "widget" },
+      7,
+    );
     await ensurePrWorktree(execaGit, root, path, firstOid);
     const replaced = await ensurePrWorktree(execaGit, root, path, secondOid);
     expect(replaced.created).toBe(true);
@@ -114,46 +131,102 @@ describe("runPrWorktreeSetup", () => {
 describe("worktree placement (workspace-settings D1/D2)", () => {
   const dataDir = "/data";
   const placement = defaultWorktreePlacement(dataDir);
+  /** One repository, as every placement addresses it: a store key, its own directory,
+   *  and whatever git could say about its remote. */
+  const orbital = {
+    repoKey: "-Users-rai-orbital",
+    repoRoot: "/Users/rai/orbital",
+    owner: "acme",
+    remoteName: "orbital",
+  };
 
   it("the two builtin patterns reproduce the previous release's paths BYTE-FOR-BYTE", () => {
-    // The literals on the right are the shapes the old signatures hardcoded:
+    // The expected paths are LITERALS — the shapes the old signatures hardcoded,
     // `join(dataDir, "worktrees", repoKey, ...branch.split("/"))` and
-    // `join(dataDir, "worktrees", owner, name, `pr-${n}`)`. An install that has never
-    // touched a rung must place nothing differently, so these are written out rather
-    // than recomputed from the same helper that produces them.
+    // `join(dataDir, "worktrees", owner, name, `pr-${n}`)` — so an install that has never
+    // touched a rung places nothing differently. The patterns on the left do come from
+    // `defaultWorktreePlacement`, so what this pins is the pair: those builtins, rendered,
+    // are those paths. It does not independently check what the builtins say.
+    expect(branchWorktreePath(placement.root, placement.pattern, orbital, "feat/thing")).toBe(
+      join(dataDir, "worktrees", "-Users-rai-orbital", "feat", "thing"),
+    );
     expect(
-      branchWorktreePath(placement.root, placement.pattern, {
-        repo: "-Users-rai-orbital",
-        name: "orbital",
-        branch: "feat/thing",
-      }),
-    ).toBe(join(dataDir, "worktrees", "-Users-rai-orbital", "feat", "thing"));
-    expect(
-      prWorktreePath(placement.root, placement.prPattern, {
-        owner: "acme",
-        name: "widget",
-        number: 7,
-      }),
+      prWorktreePath(
+        placement.root,
+        placement.prPattern,
+        { repoKey: "-k", repoRoot: "/w/widget", owner: "acme", remoteName: "widget" },
+        7,
+      ),
     ).toBe(join(dataDir, "worktrees", "acme", "widget", "pr-7"));
     // The branch keeps its slashes as SEPARATORS, so `feat/a-b` and `feat-a-b` stay two
     // directories — the mapping is injective, exactly as before.
     expect(
-      branchWorktreePath(placement.root, placement.pattern, { repo: "k", branch: "feat-a-b" }),
+      branchWorktreePath(
+        placement.root,
+        placement.pattern,
+        { repoKey: "k", repoRoot: "/w/k" },
+        "feat-a-b",
+      ),
     ).toBe(join(dataDir, "worktrees", "k", "feat-a-b"));
   });
 
   it("a custom pattern places by its own tokens", () => {
+    expect(branchWorktreePath("/trees", "{owner}/{name}/{branch}", orbital, "feat/x")).toBe(
+      join("/trees", "acme", "orbital", "feat", "x"),
+    );
     expect(
-      branchWorktreePath("/trees", "{owner}/{name}/{branch}", {
-        repo: "-Users-rai-orbital",
-        name: "orbital",
-        owner: "acme",
-        branch: "feat/x",
-      }),
-    ).toBe(join("/trees", "acme", "orbital", "feat", "x"));
-    expect(
-      prWorktreePath("/trees", "{repo}/pr-{number}", { repo: "-r", name: "orbital", number: 12 }),
+      prWorktreePath("/trees", "{repo}/pr-{number}", { repoKey: "-r", repoRoot: "/w/o" }, 12),
     ).toBe(join("/trees", "-r", "pr-12"));
+  });
+
+  it("the token set the WRITE blesses is the token set every BIND SITE supplies", () => {
+    // The bug this pins: `PLACEHOLDERS` validated a branch pattern against
+    // `{repo,name,owner,branch}` while the bind site handed over `{repo,name,branch}`, so
+    // a stored `{owner}/{branch}` previewed fine and threw the moment a session bound.
+    // Two declarations, one assertion — the grammar and the builders cannot drift apart
+    // without this reddening.
+    expect(Object.keys(branchTokens(orbital, "feat/x")).sort()).toEqual(
+      Object.keys(WORKTREE_PLACEHOLDERS.branch).sort(),
+    );
+    expect(Object.keys(prTokens(orbital, 1)).sort()).toEqual(
+      Object.keys(WORKTREE_PLACEHOLDERS["pull-request"]).sort(),
+    );
+    // …and every blessed token therefore HAS a value: a pattern using all of them renders.
+    for (const [kind, pattern] of [
+      ["branch", "{repo}/{name}/{owner}/{branch}"],
+      ["pull-request", "{owner}/{name}/{repo}/{number}"],
+    ] as const) {
+      expect(() => assertWorktreePattern(kind, pattern)).not.toThrow();
+    }
+    expect(branchWorktreePath("/trees", "{repo}/{name}/{owner}/{branch}", orbital, "x")).toBe(
+      join("/trees", "-Users-rai-orbital", "orbital", "acme", "x"),
+    );
+    expect(prWorktreePath("/trees", "{owner}/{name}/{repo}/{number}", orbital, 3)).toBe(
+      join("/trees", "acme", "orbital", "-Users-rai-orbital", "3"),
+    );
+  });
+
+  it("`{name}` is the REMOTE's repository name, and the folder's basename only when none resolves", () => {
+    // Cloning `acme/widget` into `/work/widget-local`: the PR bind fills `{name}` from the
+    // forge identity, so a `{name}` that meant the basename made the preview promise
+    // `acme/widget-local/pr-1` while the bind created `acme/widget/pr-1`.
+    const cloned = {
+      repoKey: "-work-widget-local",
+      repoRoot: "/work/widget-local",
+      owner: "acme",
+      remoteName: "widget",
+    };
+    expect(prWorktreePath("/trees", "{owner}/{name}/pr-{number}", cloned, 1)).toBe(
+      join("/trees", "acme", "widget", "pr-1"),
+    );
+    expect(branchWorktreePath("/trees", "{owner}/{name}/{branch}", cloned, "feat/x")).toBe(
+      join("/trees", "acme", "widget", "feat", "x"),
+    );
+    // No remote resolved: the folder answers for itself, and `{owner}` is `local`.
+    const bare = { repoKey: "-work-widget-local", repoRoot: "/work/widget-local" };
+    expect(branchWorktreePath("/trees", "{owner}/{name}/{branch}", bare, "feat/x")).toBe(
+      join("/trees", LOCAL_OWNER, "widget-local", "feat", "x"),
+    );
   });
 
   it("REFUSES an escape, an unknown token and an absolute pattern, each with its reason", () => {
@@ -169,21 +242,43 @@ describe("worktree placement (workspace-settings D1/D2)", () => {
       /unknown token \{nope\}/,
     );
     expect(() => renderWorktreePattern("/trees", "/abs/{branch}", tokens)).toThrow(/absolute/);
-    // The root ITSELF is not a worktree path: a pattern that renders to nothing under it
-    // would put every repository's checkout in one directory.
-    expect(() => renderWorktreePattern("/trees", ".", tokens)).toThrow(/outside the worktree root/);
     expect(() => renderWorktreePattern("/trees", "   ", tokens)).toThrow(/names no path/);
   });
 
-  it("REFUSES a token this placement does not carry, rather than guessing a value", () => {
-    // `{number}` is a pull-request token; a branch has none. And a caller that could not
-    // resolve a forge remote does not silently get `local` — the pattern is refused.
-    expect(() =>
-      branchWorktreePath("/trees", "{branch}-{number}", { repo: "k", branch: "x" }),
-    ).toThrow(/unknown token \{number\}/);
-    expect(() =>
-      branchWorktreePath("/trees", "{owner}/{branch}", { repo: "k", branch: "x" }),
-    ).toThrow(/\{owner\} has no value/);
+  it("a name INHERITED from Object.prototype is not a token", () => {
+    // `name in tokens` walked the prototype chain, so `{constructor}` rendered a function
+    // into a path and `{__proto__}`/`{toString}` were "known" too.
+    const tokens = { repo: "k", name: "orbital", owner: "acme", branch: "feat/x" };
+    for (const inherited of ["constructor", "toString", "hasOwnProperty", "valueOf"]) {
+      expect(() => renderWorktreePattern("/trees", `{${inherited}}/{branch}`, tokens)).toThrow(
+        new RegExp(`unknown token \\{${inherited}\\}`),
+      );
+    }
+    expect(() => assertWorktreePattern("branch", "{constructor}/{branch}")).toThrow(
+      /unknown token \{constructor\}/,
+    );
+  });
+
+  it("separates 'renders to the root itself' from 'escapes the root', and a root of `/` still works", () => {
+    const tokens = { repo: "k", name: "orbital", owner: "acme", branch: "feat/x" };
+    // The root ITSELF is not a worktree path: a pattern that renders to nothing under it
+    // would put every repository's checkout in one directory. That is a DIFFERENT mistake
+    // from escaping, and the message the reviewer reads says which one they made.
+    expect(() => renderWorktreePattern("/trees", ".", tokens)).toThrow(
+      /renders to the worktree root itself/,
+    );
+    expect(() => renderWorktreePattern("/trees", "{repo}/..", tokens)).toThrow(
+      /renders to the worktree root itself/,
+    );
+    // A root that IS a separator refused every legal descendant, because containment was
+    // a `base + sep` prefix test and `/` + `/` is `//`.
+    expect(renderWorktreePattern("/", "{repo}/{branch}", tokens)).toBe(join("/", "k", "feat", "x"));
+    // `/` has no parent, so a `..` there normalises back INTO the root rather than out of
+    // it — the escape refusal is still exercised on a root that has an outside, above.
+    expect(renderWorktreePattern("/", "../{branch}", tokens)).toBe(join("/", "feat", "x"));
+    expect(() => renderWorktreePattern("/", ".", tokens)).toThrow(
+      /renders to the worktree root itself/,
+    );
   });
 
   it("assertWorktreePattern validates a pattern before it is stored, per grammar", () => {
@@ -203,5 +298,31 @@ describe("worktree placement (workspace-settings D1/D2)", () => {
     expect(resolveWorktreeRoot(dataDir, "~/trees")).toBe(join(homedir(), "trees"));
     // A relative value resolves against the DATA DIR, never the daemon's cwd.
     expect(resolveWorktreeRoot("/data", "trees")).toBe(join("/data", "trees"));
+    // Tolerant at the READ, for a file someone edited by hand: a literal `~user` stays a
+    // literal `~user` directory rather than throwing the whole settings read away.
+    expect(resolveWorktreeRoot("/data", "~someone/trees")).toBe(join("/data", "~someone", "trees"));
+  });
+
+  it("EXPANDS a written root at the write, and refuses another user's home", () => {
+    expect(expandWorktreeRootForWrite(dataDir, "~/trees")).toBe(join(homedir(), "trees"));
+    expect(expandWorktreeRootForWrite(dataDir, "  trees  ")).toBe(join(dataDir, "trees"));
+    expect(expandWorktreeRootForWrite(dataDir, "/elsewhere")).toBe("/elsewhere");
+    // An empty write is a reset; dropping the entry is the caller's job.
+    expect(expandWorktreeRootForWrite(dataDir, "   ")).toBe("");
+    // `~someone` needs a passwd lookup this process does not do. Refused with its reason,
+    // rather than persisted as a literal `~someone` directory the daemon would create.
+    expect(() => expandWorktreeRootForWrite(dataDir, "~someone/trees")).toThrow(
+      /another user's home/,
+    );
+  });
+
+  it("repoKeyForRoot spells `{repo}` through the realpath, as the binding does", () => {
+    const dir = mkdtempSync(join(tmpdir(), "rennet-key-"));
+    scratch.push(dir);
+    // On macOS `/var` is a symlink to `/private/var`, so an unresolved tmpdir path and its
+    // realpath are two different keys — the preview and the bind must pick the same one.
+    expect(repoKeyForRoot(dir)).toBe(escapePath(realpathSync(dir)));
+    // An unresolvable path keeps its literal spelling rather than throwing.
+    expect(repoKeyForRoot("/nope/does-not-exist")).toBe(escapePath("/nope/does-not-exist"));
   });
 });
