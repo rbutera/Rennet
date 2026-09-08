@@ -49,6 +49,7 @@ import {
   defaultGlobalConfigPath,
   defaultProjectDetailSourceDeps,
   defaultProjectDiscoveryDeps,
+  defaultWorktreePlacement,
   deriveProjectDraft,
   detectedLogoExists,
   discoverClaude,
@@ -2318,7 +2319,12 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // agent to run tests in). A superseded head replaces the old checkout. Failure
     // here never blocks the review — the diff and conversation need no checkout.
     try {
-      const worktree = prWorktreePath(dataDir, prRef.repo, prRef.number);
+      const placement = defaultWorktreePlacement(dataDir);
+      const worktree = prWorktreePath(placement.root, placement.prPattern, {
+        owner: prRef.repo.owner,
+        name: prRef.repo.name,
+        number: prRef.number,
+      });
       const { created } = await ensurePrWorktree(gitInLocus, root, worktree, pr.headOid);
       recordPrWorktree(review.id, worktree);
       if (created) {

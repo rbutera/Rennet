@@ -11,8 +11,10 @@
 // reachable through a composition root.
 
 import { realpathSync } from "node:fs";
+import { basename } from "node:path";
 import {
   branchWorktreePath,
+  defaultWorktreePlacement,
   ensureBranchWorktree,
   ensurePrWorktree,
   prWorktreePath,
@@ -128,11 +130,15 @@ export async function decideBoundWorkspace(
   const branch = patchset.repository.headRef;
   // A detached HEAD has no branch ref, so there is no branch to bind a worktree to.
   if (branch === undefined || branch.length === 0) return review.repositoryRoot;
-  const worktree = branchWorktreePath(
-    deps.dataDir,
-    deps.repoKeyForRoot(review.repositoryRoot),
+  // The BUILTIN placement — `<dataDir>/worktrees` with `{repo}/{branch}`, byte-for-byte
+  // where the previous release put it. The resolved ladder values reach here in group 2;
+  // this call site is already the shape that takes them.
+  const placement = defaultWorktreePlacement(deps.dataDir);
+  const worktree = branchWorktreePath(placement.root, placement.pattern, {
+    repo: deps.repoKeyForRoot(review.repositoryRoot),
+    name: basename(review.repositoryRoot),
     branch,
-  );
+  });
   const existing = await worktreeForBranch(git, review.repositoryRoot, branch);
   if (existing !== undefined) {
     // PREFER A SPELLING RENNET ALREADY OWNS. `git worktree list` prints a realpath, and on WSL
@@ -203,11 +209,16 @@ async function ensurePrSnapshotWorkspace(
   deps: BoundWorkspaceDeps,
 ): Promise<string> {
   const indexed = deps.prWorktreeFor(review.id);
+  const placement = defaultWorktreePlacement(deps.dataDir);
   const target =
     indexed ??
     (review.postTarget === undefined
       ? undefined
-      : prWorktreePath(deps.dataDir, review.postTarget.repo, review.postTarget.number));
+      : prWorktreePath(placement.root, placement.prPattern, {
+          owner: review.postTarget.repo.owner,
+          name: review.postTarget.repo.name,
+          number: review.postTarget.number,
+        }));
   if (target === undefined) return review.repositoryRoot;
   const { created } = await ensurePrWorktree(git, review.repositoryRoot, target, headOid);
   if (indexed === undefined) deps.recordPrWorktree(review.id, target);

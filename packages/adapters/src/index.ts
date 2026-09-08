@@ -375,14 +375,20 @@ export {
   selectedOpenSpecChangeName,
 } from "./openspec-change-reader";
 export {
+  assertWorktreePattern,
   branchWorktreePath,
+  defaultWorktreePlacement,
   ensureBranchWorktree,
   ensurePrWorktree,
   prWorktreePath,
   readSetupLogTail,
   readSetupStatus,
+  renderWorktreePattern,
+  resolveWorktreeRoot,
   runPrWorktreeSetup,
   type SetupStatus,
+  type WorktreePlacement,
+  type WorktreeTokens,
   worktreeForBranch,
 } from "./pr-worktree";
 export {
