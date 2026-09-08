@@ -5,7 +5,12 @@ import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { BUILTIN_PR_WORKTREE_PATTERN, BUILTIN_WORKTREE_PATTERN, escapePath } from "@rennet/core";
 import { execa } from "execa";
 import type { GitExec } from "./git-range-diff";
-import { isAncestor, refExists, SIBLING_BRANCH_PREFIX } from "./workspace-inventory";
+import {
+  parseWorktreeRecords,
+  refExists,
+  SIBLING_BRANCH_PREFIX,
+  siblingIsCollectable,
+} from "./workspace-inventory";
 import { parseWorktrees } from "./worktree-discovery";
 
 /**
@@ -379,74 +384,132 @@ export function siblingBranchFor(branch: string): string {
 }
 
 /**
- * Ensure Rennet's own worktree at `worktreePath`, on the SIBLING branch `rennet/<branch>`
- * forked from `branch`'s head (workspace-settings D4, `workspace: own`).
+ * Ensure Rennet's own worktree on the SIBLING branch `rennet/<branch>`, forked from
+ * `branch`'s head (workspace-settings D4, `workspace: own`).
  *
  * This exists because git refuses a second checkout of one branch. Under `own` the
  * reviewer keeps their checkout of `feat/x` exactly as it is — this call must not touch it
  * — and the round commits here instead, on a branch the reviewer can see in `git branch`
  * and recover from (which a detached HEAD is not: `worktree prune` and `gc` can reach it).
  *
- * Three arms, all of them git's own answers:
- *   • No worktree here yet and no sibling branch: `worktree add -b rennet/<branch> … <branch>`.
- *   • No worktree here but the sibling branch survives (its worktree was removed by hand):
- *     it is checked out again, and re-forked only if the branch already contains it.
- *   • A worktree here already: re-forked when the branch already contains its tip — which
- *     is what makes a second round start from the branch's CURRENT head rather than from
- *     where the last one left it — and left exactly as it stands when it does not.
+ * ⚠️ THIS IS A ONE-WORKTREE-PER-(REPO, BRANCH) LIFECYCLE, AND IT IS NEVER DESTRUCTIVE.
+ * The first draft of D4 got this wrong in two ways that a second session found:
  *
- * The re-fork asks whether `refs/heads/rennet/<branch>` is reachable from
- * `refs/heads/<branch>`, and NOT the wider `siblingIsCollectable` question D5's cleanup
- * asks. They differ on one arrangement, deliberately: a sibling that was pushed but whose
- * local branch has not moved is reachable from the branch's REMOTE-tracking ref and not
- * from the branch. Collecting it then is safe (the commits are on the remote); resetting
- * it here would take those commits off the only local ref that holds them, so this arm
- * keeps the sibling as it stands and the round continues on top of it.
+ *   • It re-forked (`reset --hard`) an EXISTING sibling worktree on every bind. Sessions
+ *     share a sibling exactly as they share a checkout, so the second session's bind
+ *     threw away whatever the first one had in its tree and index. A shared workspace is
+ *     bound to AS IT IS.
+ *   • It ran `checkout` in whatever directory sat at the computed path. Under the first
+ *     draft that path was the BRANCH's own worktree path, so a Rennet branch worktree
+ *     already on `feat/x` was switched onto the sibling underneath a live session — and a
+ *     reviewer's own checkout that happened to resolve there would have been switched too.
  *
- * EVERY ref is fully qualified. A tag called `rennet/feat/x` resolves before
- * `refs/heads/rennet/feat/x` in a revision walk, and would otherwise answer the
- * reachability question for a branch it has nothing to do with.
+ * So, in order, and every arm a read before it is a write:
+ *
+ *   1. A worktree of this repository is ALREADY on the sibling: that is the workspace.
+ *      Returned as it stands — no reset, no checkout, nothing that touches its tree or
+ *      index — wherever it sits, which is also what keeps one sibling per (repo, branch)
+ *      after a pattern change moved the computed path.
+ *   2. A worktree of this repository sits AT the computed path on something else — the
+ *      reviewer's checkout, a Rennet branch worktree, anything: it is not ours, so this
+ *      THROWS naming both the path and the ref. Checking out in it is the destructive act
+ *      the second finding above describes.
+ *   3. The sibling BRANCH exists with NO worktree (its worktree was removed by hand, or a
+ *      previous session's was collected). This is the only re-fork: if the sibling is
+ *      reachable — from the branch, or from any remote-tracking ref of the branch, which
+ *      is what a push under `own` makes true — the stale branch is deleted and recreated
+ *      at the branch's head, so a fresh session starts from the branch's CURRENT tip. If
+ *      it is ahead, `worktree add` at the sibling as it is: those commits exist on no
+ *      other ref.
+ *   4. Nothing here at all: `worktree add -b rennet/<branch> <path> refs/heads/<branch>`.
+ *
+ * `refs/heads/…` on every ancestry and fork question. A tag called `rennet/feat/x`
+ * resolves before `refs/heads/rennet/feat/x` in a revision walk and would otherwise answer
+ * the reachability question for a branch it has nothing to do with. `worktree add`,
+ * `checkout` and `rev-parse --abbrev-ref HEAD` take SHORT names because git gives them a
+ * branch-only namespace — `worktree add <path> <name>` creates a checkout of the branch
+ * `<name>` and `git branch -D` deletes branches and only branches — so a tag cannot stand
+ * in for a branch there.
  */
 export async function ensureSiblingWorktree(
   git: GitExec,
   cloneRoot: string,
   worktreePath: string,
   branch: string,
+  /** The remote a session's push named, when one is recorded — D5's reachability question. */
+  push?: { readonly remote: string },
 ): Promise<{ path: string; created: boolean; workBranch: string }> {
   const workBranch = siblingBranchFor(branch);
   const siblingRef = `refs/heads/${workBranch}`;
   const branchRef = `refs/heads/${branch}`;
-  /** Re-fork from the branch's head, but only when the branch already holds everything
-   *  the sibling does — so nothing that exists nowhere else is discarded. */
-  const refork = async (): Promise<void> => {
-    if (await isAncestor(git, cloneRoot, siblingRef, branchRef)) {
-      await git(worktreePath, ["reset", "--hard", branchRef]);
-    }
-  };
-  if (existsSync(join(worktreePath, ".git"))) {
-    const current = (
-      await git(worktreePath, ["rev-parse", "--abbrev-ref", "HEAD"], { reject: false })
-    ).trim();
-    if (current !== workBranch) {
-      // Drifted (or was created under `share` on the branch itself and the setting changed):
-      // put it back on the sibling, creating the sibling if this is the first time.
-      if (await refExists(git, cloneRoot, siblingRef))
-        await git(worktreePath, ["checkout", workBranch]);
-      else await git(worktreePath, ["checkout", "-b", workBranch, branchRef]);
-      return { path: worktreePath, created: false, workBranch };
-    }
-    await refork();
-    return { path: worktreePath, created: false, workBranch };
-  }
-  await mkdir(join(worktreePath, ".."), { recursive: true });
+  // A stale admin entry (a directory removed by hand) is what makes `worktree add` refuse a
+  // path that is empty on disk, AND what would make the occupancy read below claim a
+  // worktree that is not there. Pruned before either question is asked; prune removes
+  // records of directories that are already gone and touches nothing that exists.
   await git(cloneRoot, ["worktree", "prune"], { reject: false });
-  if (await refExists(git, cloneRoot, siblingRef)) {
-    await git(cloneRoot, ["worktree", "add", worktreePath, workBranch]);
-    await refork();
-  } else {
-    await git(cloneRoot, ["worktree", "add", "-b", workBranch, worktreePath, branchRef]);
+
+  // 1. The sibling already has a worktree: THAT is this repository's sibling workspace,
+  //    shared by every session on this branch, and it is bound to exactly as it stands.
+  const existing = await worktreeForBranch(git, cloneRoot, workBranch);
+  if (existing !== undefined) return { path: existing, created: false, workBranch };
+
+  // 2. Somebody else's worktree is at the path we would have used. Never check out in it.
+  const occupant = await worktreeAt(git, cloneRoot, worktreePath);
+  if (occupant !== undefined) {
+    throw new Error(
+      `worktree placement: ${worktreePath} is already a worktree of this repository on ${occupant}, so Rennet will not create ${workBranch} there. Move it, or change this repository's worktree location or layout.`,
+    );
   }
+
+  await mkdir(join(worktreePath, ".."), { recursive: true });
+  // 3. The sibling BRANCH survives with no worktree. Re-forked only when its commits are
+  //    provably elsewhere; otherwise checked out where it stands, ahead and intact.
+  if (await refExists(git, cloneRoot, siblingRef)) {
+    if (await siblingIsCollectable(git, cloneRoot, workBranch, branch, push)) {
+      await git(cloneRoot, ["branch", "-D", workBranch]);
+      await git(cloneRoot, ["worktree", "add", "-b", workBranch, worktreePath, branchRef]);
+    } else {
+      await git(cloneRoot, ["worktree", "add", worktreePath, workBranch]);
+    }
+    return { path: worktreePath, created: true, workBranch };
+  }
+  // 4. Nothing here: fork the sibling from the branch's head.
+  await git(cloneRoot, ["worktree", "add", "-b", workBranch, worktreePath, branchRef]);
   return { path: worktreePath, created: true, workBranch };
+}
+
+/**
+ * The ref a worktree of this repository has out AT `path`, or nothing when git lists no
+ * worktree there. Compared through `realpath` on both sides: git prints resolved paths and
+ * a computed placement carries whatever the settings ladder produced, so `/var/…` and
+ * `/private/var/…` are one directory on macOS and must compare equal.
+ *
+ * `parseWorktreeRecords`, not `parseWorktrees`: the latter drops DETACHED entries, and a
+ * detached pull-request snapshot sitting at the computed path is exactly a worktree Rennet
+ * must not check the sibling out inside of.
+ */
+async function worktreeAt(
+  git: GitExec,
+  cloneRoot: string,
+  path: string,
+): Promise<string | undefined> {
+  const wanted = resolvedPath(path);
+  const listed = await git(cloneRoot, ["worktree", "list", "--porcelain", "-z"], {
+    reject: false,
+  }).catch(() => "");
+  const record = parseWorktreeRecords(listed).find((entry) => resolvedPath(entry.path) === wanted);
+  if (record === undefined) return undefined;
+  return record.branch ?? record.head ?? "a detached head";
+}
+
+/** `realpath` where the path exists, its literal form where it does not (which still
+ *  compares equal to itself). */
+function resolvedPath(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return path;
+  }
 }
 
 export type SetupStatus =

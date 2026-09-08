@@ -17,6 +17,7 @@ import {
   ensurePrWorktree,
   ensureSiblingWorktree,
   prWorktreePath,
+  siblingBranchFor,
   type WorktreePlacement,
   type WorktreeRepoFacts,
   worktreeForBranch,
@@ -88,6 +89,17 @@ export interface BoundWorkspaceDeps {
   readonly recordPrWorktree: (reviewId: string, path: string) => void;
   /** Fired for a worktree this call CREATED, so its `.rennet/setup` can run. */
   readonly onWorktreeCreated?: (worktreePath: string) => void;
+  /**
+   * Where this session's work branch was last PUSHED, when the session records one
+   * (workspace-settings D4/D5). It decides one thing and only one: whether a surviving
+   * sibling branch with no worktree may be re-forked from the reviewed branch's head, which
+   * is a reachability question, and a sibling whose commits reached `refs/remotes/<remote>/
+   * <branch>` is reachable while the local branch alone still says otherwise.
+   *
+   * Absent ⇒ every remote-tracking ref of the branch is consulted instead, because the
+   * alternative is refusing to look and keeping a stale sibling forever.
+   */
+  readonly siblingPush?: { readonly remote: string };
 }
 
 /**
@@ -197,16 +209,12 @@ export async function decideBoundWorkspace(
   const branch = patchset.repository.headRef;
   // A detached HEAD has no branch ref, so there is no branch to bind a worktree to.
   if (branch === undefined || branch.length === 0) return { boundRoot: review.repositoryRoot };
-  const worktree = branchWorktreePath(
-    placement.root,
-    placement.pattern,
-    {
-      repoKey: deps.repoKeyForRoot(review.repositoryRoot),
-      repoRoot: review.repositoryRoot,
-      ...(await branchFacts(deps, review.repositoryRoot, placement.pattern)),
-    },
-    branch,
-  );
+  const identity = {
+    repoKey: deps.repoKeyForRoot(review.repositoryRoot),
+    repoRoot: review.repositoryRoot,
+    ...(await branchFacts(deps, review.repositoryRoot, placement.pattern)),
+  };
+  const worktree = branchWorktreePath(placement.root, placement.pattern, identity, branch);
   const existing = await worktreeForBranch(git, review.repositoryRoot, branch);
   if (existing !== undefined) {
     // SOME WORKTREE ALREADY HAS THE BRANCH OUT — usually the reviewer's own checkout. Which
@@ -218,10 +226,43 @@ export async function decideBoundWorkspace(
     //   • `own`: git refuses a second checkout of one branch, so Rennet takes its own
     //     worktree on a SIBLING branch `rennet/<branch>` forked from the branch's head and
     //     leaves that checkout byte-for-byte as it stands.
-    if (placement.workspace === "own") {
-      const sibling = await ensureSiblingWorktree(git, review.repositoryRoot, worktree, branch);
-      if (sibling.created) deps.onWorktreeCreated?.(worktree);
-      return { boundRoot: worktree, workBranch: sibling.workBranch };
+    //
+    // …but `own` first asks WHOSE checkout it is. When the worktree holding the branch is
+    // RENNET's own branch worktree — the one at the branch's computed placement, which a
+    // session created because nothing had the branch out then — there is no reviewer's tree
+    // to work beside, and taking a sibling would fork a second workspace away from the one
+    // this session's predecessors are committing in. So that case binds exactly as `share`
+    // does. Only a checkout Rennet did not place runs the sibling arm.
+    // WHOSE checkout is it? Rennet's own branch worktree sits under the resolved root at
+    // the branch's computed path — and is never the repository root, which is the
+    // reviewer's own checkout by definition. Both halves are load-bearing: a pattern with
+    // no `{branch}` token (`{name}`, say) computes the SAME path for every branch, so the
+    // repository root itself can resolve there, and without the first test that arrangement
+    // would read as "Rennet placed this" and bind to the reviewer's tree under `own`.
+    const rennetPlacedIt =
+      !sameDirectory(existing, review.repositoryRoot) && sameDirectory(existing, worktree);
+    if (placement.workspace === "own" && !rennetPlacedIt) {
+      // THE SIBLING GETS ITS OWN PATH — the branch pattern applied to the SIBLING's name,
+      // never the branch's own. The first draft of D4 placed it at `branchWorktreePath(…,
+      // branch)`, which is the path a Rennet BRANCH worktree of the same repository already
+      // occupies, so the bind checked another workspace out onto the sibling underneath
+      // whoever was using it. One path per ref, and `ensureSiblingWorktree` throws rather
+      // than working inside a directory that belongs to a worktree on anything else.
+      const siblingWorktree = branchWorktreePath(
+        placement.root,
+        placement.pattern,
+        identity,
+        siblingBranchFor(branch),
+      );
+      const sibling = await ensureSiblingWorktree(
+        git,
+        review.repositoryRoot,
+        siblingWorktree,
+        branch,
+        deps.siblingPush,
+      );
+      if (sibling.created) deps.onWorktreeCreated?.(sibling.path);
+      return { boundRoot: sibling.path, workBranch: sibling.workBranch };
     }
     // PREFER A SPELLING RENNET ALREADY OWNS. `git worktree list` prints a realpath, and on WSL
     // the UNC form it maps back to is `\\\\wsl.localhost\\…` while a project may be opened as

@@ -29,7 +29,11 @@ export interface SiblingCollection {
   readonly worktreeRemoved: boolean;
   /** Whether the sibling BRANCH was deleted with it (D5's rule held). */
   readonly branchDeleted: boolean;
-  /** Why, in one sentence — for the daemon log, never for a dialog. */
+  /**
+   * Why, in one sentence — for the daemon log, never for a dialog. Both callers LOG it:
+   * a collection that says nothing cannot be told apart from a collection that did not run,
+   * which is the failure the sweep's own TDZ bug wore for a release.
+   */
   readonly reason: string;
 }
 
@@ -69,12 +73,19 @@ export async function collectSibling(input: {
    * sibling would never be collected on exactly the arrangement that most needs it.
    */
   readonly worktreePath?: string;
+  /**
+   * Where the session's push went, when the session recorded one (D4). Given, only that
+   * remote's tracking ref answers the reachability question; absent (the sweep, which has
+   * no session to ask), every remote's does. It is never a timestamp: `siblingIsCollectable`
+   * reads refs, so a force-push or a deleted remote branch changes the answer.
+   */
+  readonly push?: { readonly remote: string };
 }): Promise<SiblingCollection> {
   const { git, repoRoot, siblingBranch, branch } = input;
   if (!(await refExists(git, repoRoot, `refs/heads/${siblingBranch}`))) {
     return { worktreeRemoved: false, branchDeleted: false, reason: `${siblingBranch} is gone` };
   }
-  if (!(await siblingIsCollectable(git, repoRoot, siblingBranch, branch))) {
+  if (!(await siblingIsCollectable(git, repoRoot, siblingBranch, branch, input.push))) {
     return {
       worktreeRemoved: false,
       branchDeleted: false,
@@ -139,6 +150,14 @@ export interface OrphanedSibling {
 /**
  * Every `rennet/*` worktree of `repoRoot` that sits under `root` and that NO live session
  * claims — the sweep's candidates.
+ *
+ * The candidate rule is a PREFIX on the branch name and nothing more: any worktree whose
+ * ref starts `rennet/` counts. That is deliberate and it is stated rather than tightened —
+ * the prefix is Rennet's namespace, the reviewed branch it was forked from is whatever
+ * follows it, and a repository where a human made their own `rennet/…` branch and gave it
+ * a worktree under Rennet's own worktree root has already opted into this. What protects
+ * that worktree is not the candidate rule but `collectSibling`'s: an unreachable sibling
+ * keeps its worktree AND its branch.
  *
  * `claimedPaths` is compared as git spells it, because that is what this list is built from
  * and what the removal is handed. A path a live session records under another spelling is

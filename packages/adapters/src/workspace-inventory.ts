@@ -345,24 +345,44 @@ export async function refExists(git: GitExec, repoRoot: string, ref: string): Pr
 }
 
 /**
- * The branch's remote-tracking ref FULLY QUALIFIED (`refs/remotes/origin/feat/x`), or
- * undefined when it has no upstream. `@{upstream}` only ever resolves a branch, so the
- * short name is safe on the left of it; the answer is taken long so the ancestry check
- * that consumes it cannot be shadowed by a tag of the same name.
+ * EVERY remote-tracking ref of `branch`, fully qualified: `refs/remotes/<remote>/<branch>`
+ * for every remote this repository has one under.
+ *
+ * This replaced `<branch>@{upstream}`, which was the review finding W4: `@{upstream}` reads
+ * the CONFIGURED upstream (`branch.<name>.merge`), and Rennet's own push sets no upstream —
+ * `submitForgePullRequest` pushes an explicit refspec with no `-u`, deliberately, because
+ * writing branch config into the reviewer's repository is not this action's business. So the
+ * configured upstream was absent on exactly the repositories this question is asked about,
+ * `siblingIsCollectable` answered false forever, and the "pushed then archived" scenario only
+ * passed because its test had manufactured a `-u` push of its own.
+ *
+ * What the push DOES update is the remote-tracking ref for the remote it pushed to, which is
+ * a fact on disk rather than a configuration, so that is what is read. The caller who KNOWS
+ * the remote (the session recorded it at the push) names it and only it is consulted; the
+ * sweep, which has no session to ask, consults every remote's.
+ *
+ * A remote whose NAME contains a slash is not matched — git allows it and nothing Rennet
+ * writes creates one, and the alternative is a suffix match that cannot tell
+ * `refs/remotes/origin/feat/x` from `refs/remotes/a/b/feat/x`.
  */
-async function upstreamOf(
+async function remoteTrackingRefs(
   git: GitExec,
   repoRoot: string,
   branch: string,
-): Promise<string | undefined> {
-  try {
-    const ref = (
-      await git(repoRoot, ["rev-parse", "--symbolic-full-name", `${branch}@{upstream}`])
-    ).trim();
-    return ref.length > 0 ? ref : undefined;
-  } catch {
-    return undefined;
-  }
+): Promise<string[]> {
+  const listed = await git(repoRoot, ["for-each-ref", "--format=%(refname)", "refs/remotes/"], {
+    reject: false,
+  }).catch(() => "");
+  const prefix = "refs/remotes/";
+  return listed
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((ref) => {
+      if (!ref.startsWith(prefix)) return false;
+      const rest = ref.slice(prefix.length);
+      const slash = rest.indexOf("/");
+      return slash > 0 && rest.slice(slash + 1) === branch;
+    });
 }
 
 /**
@@ -386,11 +406,28 @@ export async function isAncestor(
   }
 }
 
+/** Where a session's work branch was actually pushed (workspace-settings D4/D5). */
+export interface SiblingPushDestination {
+  /** The remote the push named — `origin`, or whatever `resolveForgeRemote` answered. */
+  readonly remote: string;
+}
+
 /**
  * D5's rule, asked of git: a sibling is collected only when its tip is an ancestor of the
- * local branch OR of that branch's remote-tracking ref (the push under `own` makes the
- * latter true). Neither ⇒ the sibling holds work the branch does not, its branch is kept,
- * and the row says how far ahead it is instead.
+ * local branch OR of one of that branch's remote-tracking refs (the push under `own` makes
+ * the latter true). Neither ⇒ the sibling holds work the branch does not, its branch is
+ * kept, and the row says how far ahead it is instead.
+ *
+ * `push` names the remote the session RECORDED at its push, and when it is given only that
+ * remote's tracking ref is consulted — the push destination is a fact the session holds and
+ * a repository with several remotes should not be able to answer for a push that went
+ * somewhere else. Without it (the sweep, which has no session), every remote's is consulted,
+ * because "some remote has these commits" is still reachability and refusing to look would
+ * keep every swept sibling forever.
+ *
+ * READ FROM GIT, never from a timestamp. A recorded "pushed at" says a push once succeeded;
+ * it cannot say the ref still holds the sibling's tip, and a force-push or a deleted branch
+ * makes it a lie that deletes commits.
  *
  * EVERY ref is spelled `refs/heads/…` / `refs/remotes/…`. A short name is not a ref, it is
  * a search: git resolves `rennet/feat/x` through `refs/tags/` BEFORE `refs/heads/`, so a
@@ -404,15 +441,20 @@ export async function siblingIsCollectable(
   repoRoot: string,
   siblingBranch: string,
   branch: string,
+  push?: SiblingPushDestination,
 ): Promise<boolean> {
   const siblingRef = `refs/heads/${siblingBranch}`;
   const branchRef = `refs/heads/${branch}`;
   if (await refExists(git, repoRoot, branchRef)) {
     if (await isAncestor(git, repoRoot, siblingRef, branchRef)) return true;
   }
-  const upstream = await upstreamOf(git, repoRoot, branch);
-  if (upstream !== undefined && (await refExists(git, repoRoot, upstream))) {
-    return isAncestor(git, repoRoot, siblingRef, upstream);
+  const tracking =
+    push === undefined
+      ? await remoteTrackingRefs(git, repoRoot, branch)
+      : [`refs/remotes/${push.remote}/${branch}`];
+  for (const ref of tracking) {
+    if (!(await refExists(git, repoRoot, ref))) continue;
+    if (await isAncestor(git, repoRoot, siblingRef, ref)) return true;
   }
   return false;
 }
