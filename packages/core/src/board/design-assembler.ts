@@ -200,7 +200,7 @@ export function assembleDesignBoard(
   // either the change's own text shipped verbatim or a fixed label ("Proposal", "Design",
   // "Tasks", "OpenSpec"), so the voice screens have no writer to address and refusing on
   // one throws away a free board to buy a model seat that renders the same quoted text.
-  // The integrity screens — citations, references, code bytes, the whole finish tier —
+  // The integrity screens — explicit references, code bytes, the whole finish tier —
   // still run, and still throw. See `BoardRegister` in `lint.ts` for the whole reasoning.
   const writer = new BoardWriter({ target: "design", lint, author, register: "transcribed" });
   const must = (result: BoardToolResult, what: string): BoardToolOutcome => {
@@ -228,10 +228,8 @@ export function assembleDesignBoard(
     stamps.set(id, { ...(stamps.get(id) ?? {}), ...fields });
   };
 
-  // ponytail: the intro prose ships verbatim; an intro that trips an INTEGRITY rule (a
-  // code fence, an unresolvable citation) throws rather than being sanitized. Machinery
-  // words no longer bite — the register answers those. Ceiling: Why / Introduction
-  // sections are plain English. Upgrade path: strip offending spans if it bites.
+  // ponytail: fenced source code still falls back to the seat. Rendering quoted code
+  // blocks belongs to a separate change; illustrative file references remain prose.
   const introSpec = INTRO_HEADING[format];
   const introSource =
     introSpec === undefined ? undefined : sources.find((source) => source.role === introSpec.role);
@@ -444,9 +442,11 @@ export function assembleDesignBoard(
     throw new Error(`design-assembler: board did not settle — ${detail}`);
   }
   const board = writer.board();
-  if (stamps.size === 0) return board;
   return {
     ...board,
+    ...(board.document === undefined
+      ? {}
+      : { document: { ...board.document, proseRegister: "transcribed" } }),
     elements: board.elements.map((element) => {
       const fields = stamps.get(element.id);
       if (fields === undefined) return element;

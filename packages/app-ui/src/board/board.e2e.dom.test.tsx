@@ -1,11 +1,12 @@
 // @vitest-environment happy-dom
-import { LENS_KINDS, type LensKind } from "@rennet/protocol";
+import { LENS_KINDS, LensBoardSchema, type LensKind } from "@rennet/protocol";
 import { useState } from "react";
 import { beforeEach, describe, expect, it } from "vitest";
 import { BridgeProvider } from "../data";
+import { rawQuoteOfRange } from "../review/selection-toolbar";
 import { useRennetStore } from "../store";
 import { mount, waitFor } from "../test/dom";
-import { FIXTURE_BOARDS, fixtureBoardRead } from "../test/fixtures/boards";
+import { designBoard, FIXTURE_BOARDS, fixtureBoardRead } from "../test/fixtures/boards";
 import { MemoryBridge, refusesSpanRead, SPAN_OUTSIDE_CAPTURE } from "../test/memory-bridge";
 import { resolveBoard, useLensBoards } from "./board-data";
 import { LensBoardView } from "./board-view";
@@ -130,6 +131,76 @@ beforeEach(() => {
 });
 
 describe("board E2E — the full fixture set through the real LensBoardView", () => {
+  it("reopens transcribed examples as text while explicit references still read immutable code", async () => {
+    const text = "Keep `example/file.ts:42` and sample.ts:99 as **examples**.";
+    const saved = JSON.stringify({
+      ...designBoard,
+      document: { ...designBoard.document, introMarkdown: text, proseRegister: "transcribed" },
+      elements: designBoard.elements.map((element) => {
+        if (element.id === "change-why")
+          return { ...element, data: { ...element.data, markdown: text } };
+        if (element.id === "d-logger") return { ...element, data: { ...element.data, why: text } };
+        return element;
+      }),
+    });
+    const board = LensBoardSchema.parse(JSON.parse(saved));
+    const reads: unknown[] = [];
+    const bridge = new MemoryBridge({
+      "board.read": ({ lens }) => ({ board: lens === "design" ? board : null }),
+      "patchset.readSpan": (input) => {
+        reads.push(input);
+        return { lines: ["const recorded = true;"], contextBefore: [], contextAfter: [] };
+      },
+    });
+    const { container, user } = mount(
+      <BridgeProvider bridge={bridge}>
+        <BoardHarness generation="gen1" generations={["gen1"]} initialLens="design" />
+      </BridgeProvider>,
+    );
+    await settled(container);
+    await unfoldAll(container, user);
+    const examples = container.querySelectorAll<HTMLElement>("[data-rich-text-raw]");
+    const quoted = [...examples].filter((node) => node.dataset.richTextRaw === text);
+    expect(quoted).toHaveLength(3);
+    for (const node of quoted) {
+      expect(node.querySelector("button")).toBeNull();
+      expect(node.textContent).toBe("Keep example/file.ts:42 and sample.ts:99 as examples.");
+      const code = node.querySelector("code");
+      expect(code?.textContent).toBe("example/file.ts:42");
+      if (!code) throw new Error("missing inline example");
+      const range = document.createRange();
+      range.selectNodeContents(code);
+      expect(rawQuoteOfRange(range, "example/file.ts:42")).toBe("`example/file.ts:42`");
+    }
+    await waitFor(() => expect(reads).toHaveLength(3));
+    expect(reads).toContainEqual({
+      patchsetId: "ps-438",
+      path: "packages/adapters/src/github-auth.ts",
+      side: "head",
+      startLine: 431,
+      endLine: 431,
+    });
+    expect(reads).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ path: "packages/adapters/src/github-auth.ts" }),
+        expect.objectContaining({ path: "packages/adapters/src/github-auth.test.ts" }),
+      ]),
+    );
+    expect(container.textContent).toContain("const recorded = true;");
+    useRennetStore
+      .getState()
+      .reviewActions.addQuoteComment("example/file.ts:42", "Keep the example", "comment", {
+        target: "change-why",
+        generation: "gen1",
+      });
+    await waitFor(() =>
+      expect(container.querySelector("[data-quote-highlight]")?.textContent).toBe(
+        "example/file.ts:42",
+      ),
+    );
+    expect(reads).toHaveLength(3);
+  });
+
   it("renders every registered content kind across the fixture lenses (real surface, not the pool)", async () => {
     // gen1 carries all five lenses; visiting each mounts its board through the real
     // Section/registry pipeline. A folded section renders no children, so each lens is

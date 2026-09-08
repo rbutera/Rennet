@@ -116,7 +116,7 @@ const UNIVERSAL_HOST_OWNED: readonly string[] = ["author"];
 const HOST_MAINTAINED_FIELDS: readonly string[] = ["children"];
 
 /** Document fields the host owns: `resolveBoardDocument` forces the target's measure. */
-const HOST_OWNED_DOCUMENT_FIELDS: readonly string[] = ["measure"];
+const HOST_OWNED_DOCUMENT_FIELDS: readonly string[] = ["measure", "proseRegister"];
 
 // ── Renames and flattenings ──────────────────────────────────────────────────
 
