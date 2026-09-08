@@ -18,7 +18,9 @@ import {
   ensureSiblingWorktree,
   prWorktreePath,
   siblingBranchFor,
+  type WorktreeClaim,
   type WorktreePlacement,
+  type WorktreeRecord,
   type WorktreeRepoFacts,
   worktreeForBranch,
 } from "@rennet/adapters";
@@ -83,6 +85,19 @@ export interface BoundWorkspaceDeps {
    * inside the token builders, so the preview and the binding fall back identically.
    */
   readonly worktreeFacts: (repoRoot: string) => Promise<WorktreeRepoFacts>;
+  /**
+   * Whether a LIVE SESSION is working in a worktree registration of this repository — the
+   * SAME `isClaimed` the daemon-start sweep's prune guard and the sibling collection ask,
+   * built once per repository by `worktreeClaimsIn` (D4/D5).
+   *
+   * One predicate for all three callers, because they decide three different destructive
+   * acts on one fact: whether to prune a registration, whether to delete a sibling branch,
+   * and whether a worktree on the wrong ref is Rennet's to put back. Three copies of "is
+   * anybody using this" is three chances to disagree about somebody's working tree — the
+   * sweep and the collection had exactly that disagreement (review finding F3), and the
+   * collection deleted a branch the prune two lines up had just spared.
+   */
+  readonly registrationClaimed: (record: WorktreeRecord) => WorktreeClaim;
   /** The worktree already indexed for this review's pull request, when there is one. */
   readonly prWorktreeFor: (reviewId: string) => string | undefined;
   /**
@@ -303,7 +318,15 @@ export async function decideBoundWorkspace(
   }
   // NOTHING has the branch out, under either setting: Rennet's worktree is on the branch
   // itself, because there is no conflict for a sibling to avoid (D4).
-  const { created } = await ensureBranchWorktree(git, review.repositoryRoot, worktree, branch);
+  //
+  // The claim oracle travels with the bind: a worktree Rennet placed here that has drifted
+  // onto another ref — a round's own agent running `git checkout other` inside it is how it
+  // happens — is Rennet's to put back when NO live session is bound there, and somebody's
+  // live workspace when one is. Without it `ensureBranchWorktree` refuses, which is the
+  // conservative default and was the permanent lockout.
+  const { created } = await ensureBranchWorktree(git, review.repositoryRoot, worktree, branch, {
+    claimed: deps.registrationClaimed,
+  });
   if (created) deps.onWorktreeCreated?.(worktree);
   return { boundRoot: worktree };
 }

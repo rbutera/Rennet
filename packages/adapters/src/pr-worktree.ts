@@ -348,6 +348,31 @@ export async function worktreeForBranch(
 }
 
 /**
+ * Whether a LIVE SESSION is working in a worktree registration — the one question that
+ * decides whether a directory on the wrong ref is Rennet's to repair or somebody's
+ * workspace to leave alone (workspace-settings D4).
+ *
+ * `false` is the only answer that unlocks the repair, and it is a POSITIVE statement that
+ * no session claims this registration. `true` is "claimed, and I cannot name who";
+ * `{ sessionId }` is "claimed, by this session", which is what puts a name in the refusal.
+ * Silence never reads as unclaimed — see `ensureBranchWorktree`'s conservative default.
+ */
+export type WorktreeClaim = boolean | { readonly sessionId: string };
+
+export interface EnsureBranchWorktreeOptions {
+  /** The claim oracle. Absent ⇒ `() => true`, which refuses. */
+  readonly claimed?: (record: WorktreeRecord) => WorktreeClaim;
+}
+
+/** What a worktree has out, as a person would say it. `rev-parse --abbrev-ref HEAD` prints
+ *  the literal string `HEAD` for a DETACHED head, which read back verbatim made a refusal
+ *  say "on HEAD" — a sentence with no referent — where the truth is "on a detached HEAD". */
+function headDescription(abbrevRef: string): string {
+  if (abbrevRef === "") return "a reference git would not name";
+  return abbrevRef === "HEAD" ? "a detached HEAD" : abbrevRef;
+}
+
+/**
  * Ensure a worktree of `cloneRoot` with `branch` CHECKED OUT (not detached) exists at
  * `worktreePath` — the session's workspace for a branch review of a branch the reviewer's
  * own checkout is not on. Checked out rather than detached because a round commits on the
@@ -369,19 +394,44 @@ export async function worktreeForBranch(
  *     workspace path for its whole life;
  *   • registered and NOT reachable → THROWS, naming the path and git's own reason, with
  *     nothing pruned, nothing added and nothing checked out;
- *   • registered and NOT OURS — the clone root, or a worktree on any other reference →
- *     THROWS, naming the path and that reference, creating and checking out nothing;
+ *   • registered and NOT OURS — the clone root, or a worktree on another reference that a
+ *     LIVE SESSION CLAIMS → THROWS, naming the path, that reference and the claimant,
+ *     creating and checking out nothing;
+ *   • registered, Rennet's own placement, on another reference and CLAIMED BY NOBODY →
+ *     `git checkout <branch>` in it, returned as a repair. See below.
  *   • not registered → `worktree add`.
  *
- * ⚠️ THE THIRD ANSWER IS THE ONE THIS ARM WAS MISSING (review finding F1). It matched the
- * registration BY PATH ALONE and then ran `git checkout <branch>` in whatever it found, and
- * `git worktree list` includes THE MAIN WORKTREE. So a branch pattern that names no
+ * ⚠️ THE CLONE-ROOT ANSWER IS THE ONE THIS ARM WAS MISSING (review finding F1). It matched
+ * the registration BY PATH ALONE and then ran `git checkout <branch>` in whatever it found,
+ * and `git worktree list` includes THE MAIN WORKTREE. So a branch pattern that names no
  * `{branch}` — `{name}` is enough — computes a path that can be the repository root itself,
  * and reviewing a branch nothing has out switched THE REVIEWER'S OWN CHECKOUT onto it. The
- * sibling arm has refused this since B4 for the same reason, in the same words: checking out
- * inside a worktree that is not ours is the destructive act, and the spec already says a bind
- * whose computed path is a worktree of the repository on any other reference fails with that
- * path and that reference named.
+ * sibling arm has refused this since B4 for the same reason: checking out inside a worktree
+ * that is not ours is the destructive act.
+ *
+ * ⚠️ BUT "NOT OURS" IS THE LIVE-SESSION CLAIM, NOT THE PLACEMENT ROOT — and refusing on the
+ * ref alone was a lockout. Two facts settle where the line goes, and they point opposite
+ * ways for the same directory:
+ *
+ *   • Refusing is RIGHT while a session is bound there. Under a `{branch}`-less pattern
+ *     every branch computes ONE directory, so checking the wanted branch out would silently
+ *     move another session's workspace onto a different branch. Git cannot see that — the
+ *     directory is a perfectly ordinary worktree of this repository — and only Rennet can.
+ *   • Refusing is a LOCKOUT when nobody is bound there. A round's own agent ran `git
+ *     checkout other` inside a worktree RENNET placed and nothing has used since; every
+ *     later bind on that branch then threw forever, telling the reviewer to change a
+ *     setting that would not have helped, about a directory that was Rennet's to fix.
+ *
+ * So the discriminator is `options.claimed`, and the repair is the plainest thing there is:
+ * `git checkout <branch>` in Rennet's own drifted worktree. NOTHING IS FORCED — git's own
+ * refusal on a conflicting dirty tree is the safety, and it surfaces verbatim. The branch is
+ * named SHORT for the same reason the sibling arm names it short: `checkout <name>` resolves
+ * in git's branch-only namespace, so a tag of that name cannot stand in for the branch.
+ *
+ * ⚠️ WITHOUT A CLAIM ORACLE THIS FUNCTION STAYS CONSERVATIVE AND REFUSES. `options.claimed`
+ * defaults to `() => true` — "assume a live session is working there" — because a caller
+ * that cannot answer the question must not have the repair chosen on its behalf. Only the
+ * daemon knows its sessions; the default is what a test or a script gets.
  *
  * A registration only the daemon-start sweep may prune, and only under D5's rule: Rennet's
  * own placement, unreachable, and claimed by no live session.
@@ -391,7 +441,8 @@ export async function ensureBranchWorktree(
   cloneRoot: string,
   worktreePath: string,
   branch: string,
-): Promise<{ path: string; created: boolean }> {
+  options: EnsureBranchWorktreeOptions = {},
+): Promise<{ path: string; created: boolean; repaired?: boolean }> {
   const records = await listWorktreeRecords(git, cloneRoot);
   const registered = records.find(
     (record) => comparablePath(record.path) === comparablePath(worktreePath),
@@ -416,8 +467,18 @@ export async function ensureBranchWorktree(
       await git(registered.path, ["rev-parse", "--abbrev-ref", "HEAD"], { reject: false })
     ).trim();
     if (current === branch) return { path: worktreePath, created: false };
+    // WHO IS USING IT. Rennet's own worktree, drifted onto another ref with no live session
+    // bound to it, is Rennet's to put back — that is the lockout above. Anything a session
+    // claims is somebody's live workspace, whatever it has out.
+    const claim = options.claimed?.(registered) ?? true;
+    if (claim === false) {
+      await git(registered.path, ["checkout", branch]);
+      return { path: worktreePath, created: false, repaired: true };
+    }
     throw new Error(
-      `worktree placement: ${registered.path} is already a worktree of this repository on ${current === "" ? "a reference git would not name" : current}, so Rennet will not check ${branch} out in it. Move it, or change this repository's worktree location or layout.`,
+      `worktree placement: ${registered.path} is already a worktree of this repository on ${headDescription(current)}, so Rennet will not check ${branch} out in it.${
+        typeof claim === "object" ? ` Session ${claim.sessionId} is working there.` : ""
+      } Run \`git checkout ${branch}\` in that directory once nothing is working in it, or remove that worktree from this repository's Worktrees card.`,
     );
   }
   await mkdir(join(worktreePath, ".."), { recursive: true });
@@ -544,9 +605,20 @@ export function siblingBranchFor(branch: string): string {
  *      after a pattern change moved the computed path. A registration whose directory is
  *      NOT REACHABLE is the one arm that THROWS instead: see below.
  *   2. A worktree of this repository sits AT the computed path on something else — the
- *      reviewer's checkout, a Rennet branch worktree, anything: it is not ours, so this
- *      THROWS naming both the path and the ref. Checking out in it is the destructive act
- *      the second finding above describes.
+ *      reviewer's checkout, a Rennet branch worktree, a detached pull-request snapshot,
+ *      anything: it is not ours, so this THROWS naming both the path and the ref. Checking
+ *      out in it is the destructive act the second finding above describes.
+ *
+ *      ⚠️ AND THIS ARM DOES NOT TAKE THE BRANCH ARM'S UNCLAIMED-DRIFT REPAIR, which is a
+ *      deliberate asymmetry rather than an oversight. The branch arm can repair because it
+ *      has already ruled the clone root out and the ref it would check out CERTAINLY EXISTS
+ *      — it is the branch under review, so the repair is one `git checkout <branch>` whose
+ *      only failure is git's own. Neither holds here. This arm has no clone-root test, so
+ *      its occupant may be the reviewer's own checkout or a detached snapshot Rennet's
+ *      pull-request index owns, and `rennet/<branch>` may not exist at all: creating or
+ *      re-forking it is arms 3 and 4's job, and doing that inside a directory somebody else
+ *      registered is a different, larger act than putting a drifted worktree back. A drifted
+ *      SIBLING therefore still refuses, and the reviewer's remedy is the same one command.
  *   3. The sibling BRANCH exists with NO worktree (its worktree was removed by hand, or a
  *      previous session's was collected). This is the only re-fork: if the sibling is
  *      reachable — from the branch, or from ANY remote-tracking ref of the branch, which
@@ -573,8 +645,10 @@ export function siblingBranchFor(branch: string): string {
  *     probe on a git too old to print one — → THROWS, naming the path and git's own
  *     reason, with nothing created, nothing checked out and nothing pruned.
  *
- * `ensureBranchWorktree` answers the same three ways, for the same reason: it used to test
- * `existsSync` and prune, which is the same defect one arm over.
+ * `ensureBranchWorktree` reads its registration the same way and refuses an unreachable one
+ * in the same words, for the same reason: it used to test `existsSync` and prune, which is
+ * the same defect one arm over. (It answers one MORE way than this arm does — see arm 2 on
+ * why the unclaimed-drift repair is its and not ours.)
  *
  * The one place a registration is pruned is the daemon-start sweep, which prunes only
  * registrations RENNET PLACED (under the repository's resolved placement root, or on a

@@ -4,6 +4,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readdirSync,
+  readFileSync,
   realpathSync,
   rmSync,
   symlinkSync,
@@ -23,6 +24,7 @@ import {
   type ResolvedWorktreePlacement,
   repinBoundWorkspace,
 } from "./bound-workspace";
+import { type ClaimingSession, worktreeClaimsIn } from "./worktree-claims";
 
 // Real git repositories, because every interesting answer here comes from git: which worktree
 // already has a branch out, whether `worktree add` will accept a path, whether a detached
@@ -127,6 +129,10 @@ describe("decideBoundWorkspace (session-bound-workspace D1)", () => {
    *  binding reading whatever it resolved. */
   let placement: ResolvedWorktreePlacement;
   let placementAsked: string[];
+  /** The LIVE sessions the claim oracle sees, and the repository it answers for. Empty by
+   *  default: most fixtures have no other session, which is the "nobody claims it" world. */
+  let liveSessions: ClaimingSession[];
+  let claimRepoRoot: string;
 
   /** The bound ROOT, for the assertions that are only about where a session landed. */
   const bindRoot = async (review: Review): Promise<string> =>
@@ -146,6 +152,8 @@ describe("decideBoundWorkspace (session-bound-workspace D1)", () => {
     factsAsked = [];
     placement = { ...defaultWorktreePlacement(dataDir), workspace: "share" };
     placementAsked = [];
+    liveSessions = [];
+    claimRepoRoot = root;
     deps = {
       gitFor: () => gitExec,
       locusOf: () => HOST_LOCUS,
@@ -160,6 +168,16 @@ describe("decideBoundWorkspace (session-bound-workspace D1)", () => {
         factsAsked.push(repoRoot);
         return facts;
       },
+      // THE REAL FACTORY, not a stub: this is the same `worktreeClaimsIn` the daemon's sweep
+      // and its prune guard ask, so a test here is a test of the predicate the daemon runs.
+      // `liveSessions` is mutable, because archiving is what releases a claim.
+      registrationClaimed: (record) =>
+        worktreeClaimsIn({
+          sessions: liveSessions,
+          repoRoot: claimRepoRoot,
+          locus: HOST_LOCUS,
+          repositoryRootOf: () => claimRepoRoot,
+        })(record),
       prWorktreeFor: (reviewId) => prIndex.get(reviewId),
       // BY PATH, over the whole index — the one definition of `recordedSnapshot`, the same
       // scan the daemon's helper makes. Asking only whether THIS review has an entry was
@@ -867,6 +885,91 @@ describe("decideBoundWorkspace (session-bound-workspace D1)", () => {
       headOid(beta, "feat/x"),
     );
     expect(() => git(beta, ["rev-parse", "--verify", "refs/heads/rennet/feat/x"])).toThrow();
+  });
+
+  // ── ONE DIRECTORY FOR EVERY BRANCH: THE CLAIM DECIDES WHO MAY CHECK OUT IN IT ────────
+  //
+  // A `{name}` layout — one the write blesses — computes the SAME directory for every branch
+  // of a repository, so the second branch review of a repository always lands on a worktree
+  // of it that is on some other ref. Whether that is a refusal or a repair is not a question
+  // about the path: it is whether a live session is working there.
+  it("REFUSES a second session the workspace the first is bound to, and NAMES that session", async () => {
+    const repo = initRepo(root, "repo"); // the reviewer's own checkout stays on `main`
+    git(repo, ["branch", "feat/y", "main"]);
+    claimRepoRoot = repo;
+    placement = { ...placement, pattern: "{name}" };
+    const reviewOf = (id: string, branch: string): Review =>
+      reviewFor({
+        id,
+        repositoryRoot: repo,
+        headOid: headOid(repo, branch),
+        headRef: branch,
+        baseOid: headOid(repo, "main"),
+      });
+
+    // Session A binds first and takes the one computed directory, on `feature`.
+    const first = await decideBoundWorkspace(reviewOf("r-a", "feature"), deps);
+    expect(first.boundRoot).toBe(join(dataDir, "worktrees", basename(repo)));
+    liveSessions.push({ id: "sess-a", boundRoot: first.boundRoot });
+
+    // Session B reviews `feat/y`, whose computed path is that same directory.
+    await expect(decideBoundWorkspace(reviewOf("r-b", "feat/y"), deps)).rejects.toThrow(
+      /is already a worktree of this repository on feature, so Rennet will not check feat\/y out in it\. Session sess-a is working there\./,
+    );
+    // Session A's workspace is untouched: same ref, same head, nothing added beside it.
+    expect(git(first.boundRoot, ["rev-parse", "--abbrev-ref", "HEAD"]).trim()).toBe("feature");
+    expect(createdWorktrees()).toEqual([first.boundRoot]);
+
+    // ARCHIVE A — which is the only thing that changes — and the same bind now repairs the
+    // directory Rennet placed and nobody is in.
+    liveSessions.length = 0;
+    created = [];
+    const second = await decideBoundWorkspace(reviewOf("r-b", "feat/y"), deps);
+    expect(second.boundRoot).toBe(first.boundRoot);
+    expect(git(second.boundRoot, ["rev-parse", "--abbrev-ref", "HEAD"]).trim()).toBe("feat/y");
+    // One directory still, and no `.rennet/setup` re-run: the worktree was not CREATED, it
+    // was put back on the branch under review.
+    expect(createdWorktrees()).toEqual([first.boundRoot]);
+    expect(created).toEqual([]);
+  });
+
+  it("lets GIT refuse the repair when the drifted tree would lose work, and says so verbatim", async () => {
+    // NOT A RENNET GATE. The repair is a plain `git checkout`, so the one thing that stops it
+    // is git's own refusal on a file the checkout would overwrite — surfaced as git wrote it,
+    // with the tree exactly as the reviewer left it.
+    const repo = initRepo(root, "repo"); // the reviewer's checkout stays on `main`
+    git(repo, ["branch", "feat/y", "main"]);
+    claimRepoRoot = repo;
+    placement = { ...placement, pattern: "{name}" };
+    const bound = await bindRoot(
+      reviewFor({
+        id: "r-a",
+        repositoryRoot: repo,
+        headOid: headOid(repo, "feature"),
+        headRef: "feature",
+        baseOid: headOid(repo, "main"),
+      }),
+    );
+    // `feature.txt` exists on `feature` and not on `feat/y`, so checking `feat/y` out here
+    // has to remove it — and an uncommitted edit to it is what git refuses over. No session
+    // claims this directory, so the refusal can only be git's.
+    writeFileSync(join(bound, "feature.txt"), "work in flight\n");
+
+    await expect(
+      decideBoundWorkspace(
+        reviewFor({
+          id: "r-b",
+          repositoryRoot: repo,
+          headOid: headOid(repo, "feat/y"),
+          headRef: "feat/y",
+          baseOid: headOid(repo, "main"),
+        }),
+        deps,
+      ),
+    ).rejects.toThrow(/feature\.txt/);
+    // The tree and its ref are as they were, and the edit is still there.
+    expect(git(bound, ["rev-parse", "--abbrev-ref", "HEAD"]).trim()).toBe("feature");
+    expect(readFileSync(join(bound, "feature.txt"), "utf8")).toBe("work in flight\n");
   });
 });
 

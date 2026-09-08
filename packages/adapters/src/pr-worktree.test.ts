@@ -633,11 +633,12 @@ describe("ensureBranchWorktree and an unreachable registration (P1)", () => {
     expect(calls.some((argv) => argv.includes("prune"))).toBe(false);
   });
 
-  it("THROWS on a worktree at the computed path that is on ANOTHER ref (F1)", async () => {
-    // The second half of the same guard, and the sentence the spec already carried: "a bind
-    // whose computed path is already a worktree of the repository on any other reference
-    // SHALL fail with that path and that reference named". The sibling arm has refused this
-    // since B4; this arm switched the tree instead.
+  it("THROWS on another ref when NO CLAIM ORACLE IS SUPPLIED (the conservative default)", async () => {
+    // The default is `() => true` — "assume a live session is working there" — because a
+    // caller that cannot answer the question must not have the repair chosen on its behalf.
+    // This pins the default itself: the very same fixture with an oracle that says "nobody"
+    // is repaired two tests down, so the difference between them is the argument and
+    // nothing else.
     const { git, calls } = fakeGit(
       listing([
         `worktree ${WORKTREE}`,
@@ -673,6 +674,145 @@ describe("ensureBranchWorktree and an unreachable registration (P1)", () => {
       ["worktree", "list", "--porcelain", "-z"],
       ["worktree", "add", target, "feat/x"],
     ]);
+  });
+});
+
+// ── THE DRIFTED WORKTREE: THE CLAIM DECIDES, NOT THE PLACEMENT ROOT ───────────────────
+//
+// Refusing every worktree on another ref was right for one of the two directories it caught
+// and a permanent lockout for the other, and git cannot tell them apart — both are ordinary
+// worktrees of this repository on some ref:
+//
+//   • A live session is bound there. Under a `{branch}`-less pattern every branch computes
+//     ONE directory, so checking the wanted branch out moves that session's workspace onto
+//     another branch, silently. Only Rennet knows this; it must refuse.
+//   • NOBODY is bound there. A round's own agent ran `git checkout other` inside a worktree
+//     Rennet placed, and every later bind on that branch threw forever, naming a setting
+//     change that would not have helped.
+//
+// So these four tests are one fixture and four oracles.
+describe("ensureBranchWorktree and a worktree that has drifted onto another ref", () => {
+  const WORKTREE = "/data/worktrees/repo/feat/x";
+  /** Rennet's own worktree at the computed path, checked out on something else. */
+  const drifted = (ref = "some/other") =>
+    fakeGit(
+      listing([
+        `worktree ${WORKTREE}`,
+        "HEAD 1111111111111111111111111111111111111111",
+        `branch refs/heads/${ref}`,
+      ]),
+      { answers: { "rev-parse --abbrev-ref HEAD": `${ref}\n` } },
+    );
+
+  it("CHECKS THE BRANCH OUT when no live session claims it, and adds and prunes nothing", async () => {
+    const { git, calls } = drifted();
+
+    expect(
+      await ensureBranchWorktree(git, "/repo", WORKTREE, "feat/x", { claimed: () => false }),
+    ).toEqual({ path: WORKTREE, created: false, repaired: true });
+
+    // Executed, not reasoned: the argv trace is the reads, then ONE plain checkout. Not
+    // `--force`, not a `reset`, not a `worktree add` over the top — git's own refusal on a
+    // conflicting dirty tree is the safety, and it only exists if the checkout is plain.
+    expect(calls).toEqual([
+      ["worktree", "list", "--porcelain", "-z"],
+      ...IDENTITY_PROBES,
+      ["rev-parse", "--abbrev-ref", "HEAD"],
+      ["checkout", "feat/x"],
+    ]);
+  });
+
+  it("THROWS naming the path, the ref AND THE SESSION when one claims it", async () => {
+    const { git, calls } = drifted();
+
+    await expect(
+      ensureBranchWorktree(git, "/repo", WORKTREE, "feat/x", {
+        claimed: () => ({ sessionId: "sess-7" }),
+      }),
+    ).rejects.toThrow(
+      /\/data\/worktrees\/repo\/feat\/x is already a worktree of this repository on some\/other, so Rennet will not check feat\/x out in it\. Session sess-7 is working there\./,
+    );
+    expect(calls.some((argv) => argv[0] === "checkout")).toBe(false);
+    expect(calls.some((argv) => argv[0] === "worktree" && argv[1] === "add")).toBe(false);
+  });
+
+  it("names the ONE-COMMAND REMEDY, not a settings change that would not help", async () => {
+    // The refusal used to say "Move it, or change this repository's worktree location or
+    // layout" — advice that does nothing about a directory sitting on the wrong ref. What
+    // fixes it is one command in that directory.
+    const { git } = drifted();
+
+    await expect(
+      ensureBranchWorktree(git, "/repo", WORKTREE, "feat/x", { claimed: () => true }),
+    ).rejects.toThrow(
+      /Run `git checkout feat\/x` in that directory once nothing is working in it, or remove that worktree from this repository's Worktrees card\./,
+    );
+  });
+
+  it("says A DETACHED HEAD rather than `on HEAD` for a detached occupant", async () => {
+    // `rev-parse --abbrev-ref HEAD` prints the literal string `HEAD` when the worktree is
+    // detached — a pull-request snapshot at a colliding computed path is exactly that — and
+    // read back verbatim the refusal said "is already a worktree of this repository on HEAD",
+    // a sentence with no referent.
+    const { git } = fakeGit(
+      listing([
+        `worktree ${WORKTREE}`,
+        "HEAD 1111111111111111111111111111111111111111",
+        "detached",
+      ]),
+      { answers: { "rev-parse --abbrev-ref HEAD": "HEAD\n" } },
+    );
+
+    await expect(
+      ensureBranchWorktree(git, "/repo", WORKTREE, "feat/x", { claimed: () => true }),
+    ).rejects.toThrow(/is already a worktree of this repository on a detached HEAD/);
+  });
+
+  it("REFUSES THE CLONE ROOT even when the oracle says nobody claims it", async () => {
+    // The control for the discriminator: the clone root is never Rennet's to check anything
+    // out in, whatever the sessions say, so the oracle that unlocks the repair one test up
+    // changes nothing here. Without this, "unclaimed ⇒ repair" would read as the whole rule
+    // and the F1 bug — `git checkout feat/x` in the reviewer's own tree — would be back the
+    // first time a reviewer had no live sessions.
+    const { git, calls } = fakeGit(
+      listing([
+        "worktree /repo",
+        "HEAD 1111111111111111111111111111111111111111",
+        "branch refs/heads/main",
+      ]),
+      { answers: { "rev-parse --abbrev-ref HEAD": "main\n" } },
+    );
+
+    await expect(
+      ensureBranchWorktree(git, "/repo", "/repo", "feat/x", { claimed: () => false }),
+    ).rejects.toThrow(/\/repo is this repository's own checkout, not a worktree Rennet placed/);
+    expect(calls.some((argv) => argv[0] === "checkout")).toBe(false);
+  });
+
+  it("still binds a worktree ALREADY ON THE BRANCH without asking the oracle at all", async () => {
+    // The pair for all five refusals, and it proves the claim is asked only where it decides
+    // something: a worktree on the branch under review is the session's workspace whoever
+    // else is in it, so an oracle that claims everything must not turn that into a throw.
+    const onBranch = fakeGit(
+      listing([
+        `worktree ${WORKTREE}`,
+        "HEAD 1111111111111111111111111111111111111111",
+        "branch refs/heads/feat/x",
+      ]),
+      { answers: { "rev-parse --abbrev-ref HEAD": "feat/x\n" } },
+    );
+    let asked = 0;
+
+    expect(
+      await ensureBranchWorktree(onBranch.git, "/repo", WORKTREE, "feat/x", {
+        claimed: () => {
+          asked += 1;
+          return { sessionId: "sess-9" };
+        },
+      }),
+    ).toEqual({ path: WORKTREE, created: false });
+    expect(asked).toBe(0);
+    expect(onBranch.calls.some((argv) => argv[0] === "checkout")).toBe(false);
   });
 });
 

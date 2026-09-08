@@ -130,6 +130,7 @@ import {
   type TurnMetric,
   validateGitHubToken,
   type WorkspaceSessionRef,
+  type WorktreeClaim,
   type WorktreeRecord,
   type WorktreeRepoFacts,
   withRepoPref,
@@ -357,6 +358,7 @@ import { type SeatThreadWatch, watchSeatThread } from "./t3/seat-progress";
 import { createT3SidecarSupervisor } from "./t3/supervisor";
 import { roundThreadTitle, type SeatKind, seatThreadTitle, sweepIfArchived } from "./t3/threads";
 import { QUIET_WORK_BRANCH_STATE, readWorkBranchState } from "./work-branch-state";
+import { worktreeClaimsIn } from "./worktree-claims";
 import { startWsListener, type WsListener } from "./ws-listener";
 import { createWslRunner } from "./wsl-daemon";
 import { ensureWslDaemon, probeWslDaemon } from "./wsl-supervisor";
@@ -2349,6 +2351,11 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   }
 
   async function resolveBoundWorkspace(review: Review, sessionId: string): Promise<string> {
+    // WHO IS WORKING IN THIS REPOSITORY'S WORKTREES, from the same factory the daemon-start
+    // sweep and the sibling collection ask (D4/D5). Built LAZILY and at most once per bind:
+    // it walks the filesystem through `comparablePath` for every live session's bound root,
+    // and a re-pin — which is most calls — never asks the question at all.
+    let claimsHere: ((record: WorktreeRecord) => WorktreeClaim) | undefined;
     const workspaceDeps = {
       gitFor: gitForRepo,
       locusOf: locusForRepo,
@@ -2359,6 +2366,18 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       // command, long after construction, so the reference is live by the time it is read.
       placementFor: (repoRoot: string) => settingsComposition.resolveWorktreePlacement(repoRoot),
       worktreeFacts: worktreeFactsFor,
+      // The claim, asked of the sessions that are live AT THE BIND — not at daemon start.
+      // A session archived a minute ago has released its workspace, and the whole point of
+      // the repair arm is that a directory nobody is in is Rennet's to put back.
+      registrationClaimed: (record: WorktreeRecord): WorktreeClaim => {
+        claimsHere ??= worktreeClaimsIn({
+          sessions: sessionStore.list().filter((entry) => entry.archivedAt === undefined),
+          repoRoot: review.repositoryRoot,
+          locus: locusForRepo(review.repositoryRoot),
+          repositoryRootOf: repositoryRootForSession,
+        });
+        return claimsHere(record);
+      },
       prWorktreeFor: (reviewId: string) => readPrWorktreeIndex()[reviewId]?.path,
       snapshotRecordedAt,
       recordPrWorktree,
@@ -3469,13 +3488,6 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     let collected = 0;
     let kept = 0;
     const liveSessions = sessionStore.list().filter((session) => session.archivedAt === undefined);
-    const claimed = new Set(
-      liveSessions.flatMap((session) =>
-        session.boundRoot === undefined
-          ? []
-          : [session.boundRoot, comparablePath(session.boundRoot)],
-      ),
-    );
     const repoRoots = new Set(
       projectStore
         .list()
@@ -3507,45 +3519,20 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         );
       };
       /**
-       * The work branches LIVE SESSIONS OF THIS REPOSITORY are committing on.
-       *
-       * The second half of a claim, and the half that survives a session whose recorded
-       * spelling does not match git's at all. Asked per repository because a workspace maps
-       * many repos to one identity and `rennet/main` can exist in two of them (CLAUDE.md,
-       * 2026-08-28) — and asymmetric in the direction the sweep needs: a session whose
-       * repository is unknown counts as a claimant everywhere, because what silence costs
-       * here is somebody's registration, not a row.
+       * Whether a live session claims this registration — by WORK BRANCH in this repository
+       * and by PATH in both spellings, either sufficient, from the ONE factory the bind asks
+       * through too (`worktree-claims.ts`). The sweep's prune guard, the sibling collection
+       * below, and `ensureBranchWorktree`'s unclaimed-drift repair all decide something
+       * destructive from this answer, and three copies of it is three chances to disagree
+       * about somebody's working tree.
        */
-      const claimedBranches = new Set(
-        liveSessions.flatMap((session) => {
-          if (session.workBranch === undefined) return [];
-          const sessionRoot = repositoryRootForSession(session);
-          if (sessionRoot !== undefined && comparablePath(sessionRoot) !== comparablePath(repoRoot))
-            return [];
-          return [session.workBranch];
-        }),
-      );
-      /**
-       * Whether a live session claims this registration — asked TWO ways, either sufficient.
-       *
-       * By WORK BRANCH, in this repository: the session record's own statement of what it is
-       * committing on, which needs no path at all.
-       *
-       * By PATH, in BOTH spellings — git's (the record's own) and the daemon's, through
-       * `inRepoSpelling`, which is the WSL arrangement where the two genuinely differ. And
-       * `comparablePath` on each, which for a MISSING directory — and an unreachable
-       * registration is exactly that — resolves the deepest ancestor that still exists and
-       * re-attaches the tail. That last part is not a nicety: Codex reproduced the prune of
-       * a claimed registration on macOS, where git prints `/private/var/…` and the daemon
-       * records the `/var/…` symlink, and plain `realpath` refuses both because the
-       * directory is gone.
-       */
-      const isClaimed = (record: WorktreeRecord): boolean => {
-        if (record.branch !== undefined && claimedBranches.has(record.branch)) return true;
-        return [record.path, inRepoSpelling(record.path, repoRoot, locus)].some(
-          (path) => claimed.has(path) || claimed.has(comparablePath(path)),
-        );
-      };
+      const claimOf = worktreeClaimsIn({
+        sessions: liveSessions,
+        repoRoot,
+        locus,
+        repositoryRootOf: repositoryRootForSession,
+      });
+      const isClaimed = (record: WorktreeRecord): boolean => claimOf(record) !== false;
       /**
        * Whether RENNET placed this registration: under this repository's resolved placement
        * root, or on a `rennet/*` sibling branch wherever it sits (a pattern change moves the
