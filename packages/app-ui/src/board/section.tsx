@@ -239,29 +239,39 @@ export const Section = memo(function Section({
         <SourceChips sources={designMeta ? (sources ?? []) : []} />
       </div>
       <Collapse open={foldable && !open}>
+        {/* The fold is an INDEX: each row is the heading of something inside, and
+            pressing it opens the section on that thing. It reads in the body's own ink
+            and lights on hover, because a run of muted lines under a heading read as
+            a dimmed excerpt — text to skim past — not as a list you can take (Rai,
+            2026-09-08: "the collapsed sections are unreadable / unusable"). */}
         {preview.kind === "headings" ? (
-          <ul aria-label={`${title} contents`} className="flex flex-col gap-1 pl-5">
-            {preview.entries.map(({ id, text }) => (
-              <li key={id}>
+          <ol
+            aria-label={`${title} contents`}
+            data-kind="section-index"
+            className="flex flex-col pl-5"
+          >
+            {preview.entries.map(({ id, text, delta }) => (
+              <li key={id} className="border-line/60 border-b last:border-b-0">
                 <button
                   type="button"
                   onClick={() => locate(id)}
-                  className="block w-full rounded-sm text-left text-muted-foreground text-sm leading-relaxed transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  className="-mx-2 flex w-[calc(100%+1rem)] items-baseline gap-2 rounded-sm px-2 py-1.5 text-left text-foreground/80 text-sm leading-snug transition-colors hover:bg-secondary/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
                   {/* A heading that runs long (a finding's first line, an over-written
                       title) is clamped like the paragraph preview, not left to fill the fold. */}
-                  <span className="line-clamp-2">
+                  <span className="line-clamp-2 min-w-0 flex-1">
                     <PreviewText text={text} />
                   </span>
+                  {delta ? <SpecDeltaBadge delta={delta} /> : null}
                 </button>
               </li>
             ))}
-          </ul>
+          </ol>
         ) : preview.kind === "paragraph" ? (
           <button
             type="button"
             onClick={() => locate(preview.entry.id)}
-            className="w-full rounded-sm pl-5 text-left text-muted-foreground text-sm leading-relaxed transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="w-full rounded-sm pl-5 text-left text-foreground/80 text-sm leading-relaxed transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             <span data-kind="section-paragraph-preview" className="line-clamp-2">
               <PreviewText text={preview.entry.text} />

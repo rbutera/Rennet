@@ -3,6 +3,7 @@ import { z } from "zod";
 import {
   BOARD_TARGETS,
   type BoardTarget,
+  HOST_CHANGE_ABSENCES,
   HOST_DERIVED_MEMBER_KIND,
   hostDerivedMemberKind,
   hostSettlesAbsenceFor,
@@ -394,6 +395,24 @@ describe("the settle-absent reason is derived, and refuses to guess", () => {
     // settles it now — so Design has one LIVE absence even though the table lists two.
     expect(LENS_ADMISSIBLE_ABSENCES.design).toEqual(["no-material", "no-spec"]);
     expect(LEGACY_LENS_ABSENCES).toContain("no-material");
+  });
+
+  it("the host's spec-only absence is admissible on four lanes and offered by no verb", () => {
+    // `spec-only` is the host's statement that every changed path is a specification
+    // artifact. It must pass the write boundary on every lane the host settles with it,
+    // and it must reach no seat: Decisions and Flagged keep their ONE seat absence rather
+    // than throwing on two, Sequence still gets no verb, and no description names it.
+    expect(HOST_CHANGE_ABSENCES).toEqual(["spec-only"]);
+    for (const lens of ["sequence", "decisions", "flagged", "noise"] as const) {
+      expect(LENS_ADMISSIBLE_ABSENCES[lens], `${lens} admits spec-only`).toContain("spec-only");
+    }
+    expect(settleAbsentReasonFor("decisions")).toBe("no-decisions");
+    expect(settleAbsentReasonFor("flagged")).toBe("no-findings");
+    expect(settleAbsentReasonFor("sequence")).toBeUndefined();
+    for (const target of BOARD_TARGETS) {
+      const verb = boardToolsByName(target).get("settle_absent");
+      expect(verb?.description ?? "", `${target} settle_absent`).not.toContain("spec-only");
+    }
   });
 
   it("two live absences throw rather than silently removing the verb", () => {

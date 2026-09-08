@@ -154,11 +154,21 @@ available. Until that first read answers, the list says it is **scanning** — a
 project on a network mount can take minutes, and an empty list mid-scan is not the
 same claim as a project with nothing open. The filters (attention, ownership,
 local branches, pull requests) sit in a rail beside the list on a wide canvas
-and fold into a row above it on a narrow one. **Created** and **Activity** are
-sortable column headers. **Show merged PRs** adds faded historical rows to the
-same list; the open rows stay on screen while the merged pages load, with a line
-in the list saying so, because a repository with history takes several seconds
-to page through.
+and fold into a row above it on a narrow one. Above the list, the search box
+takes the width; beside it sit the facets and **Refresh**. A facet (**Author**,
+**CI**, **Repository**) is a multi-select over that column's values, drawn only
+when the list holds more than one, so a single-author project shows no author
+facet and a single-repository workspace shows no repository facet. **Author**,
+**Lines**, **Files**, **Created**, and **Activity** are sortable column headers;
+the sorted one carries its arrow. The rail, the facets, the search, and the sort
+compose into one list, and when any of them narrows it a line under the table
+says how many of the rows are showing, with **Clear filters** beside it.
+**Refresh** re-reads the project's branches and pull requests in the background;
+the rows stay on screen while it runs, and the button spins until the read
+answers. **Show merged PRs** adds faded historical rows to the same list; the
+open rows stay on screen while the merged pages load, with a line in the list
+saying so, because a repository with history takes several seconds to page
+through.
 
 Every row carries the same columns, whether it is a pull request or a local
 branch: the author with their forge avatar (your local branches wear your own),
@@ -167,8 +177,9 @@ files touched, and when the change was created. A pull request's numbers come
 from the forge. A local branch's are measured on your machine: its committed
 diff against the project's primary branch, and the date of its first commit past
 it. A branch that is not ahead of the primary branch has nothing to review yet,
-so those cells read "—" rather than zero. A checked-out worktree also says
-**clean** or **dirty** beside its name; a bare branch with no checkout says
+so those cells read "—" rather than zero. A local branch also shows how many
+commits it is ahead of and behind the primary branch. A checked-out worktree
+says **clean** or **dirty** beside its name; a bare branch with no checkout says
 nothing about it, because there is nothing to measure. Uncommitted edits are not
 counted in the lines; **dirty** is how the list says they exist. GitLab does not
 report line counts in its merge-request list, so GitLab rows show "—" there.
@@ -223,7 +234,9 @@ focusing stays open until you leave or dismiss it. Hover or focus a tab to read 
 have been following that lens. Open transcript stays visible and becomes available
 once the agent thread starts. It shows the selected agent's full conversation in a drawer beside the
 board. Your own chat stays in place. Choosing another lens moves the board and
-open transcript together; opening Diff closes the transcript drawer.
+open transcript together, and opening a transcript from another lens's tab selects
+that lens, so the transcript always sits beside its own board; opening Diff closes
+the transcript drawer.
 
 While the change is being reviewed, the main action shows an animated reviewing
 indicator and cannot advance. It becomes Continue when the review is ready.

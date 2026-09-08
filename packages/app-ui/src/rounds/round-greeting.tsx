@@ -189,7 +189,11 @@ export function usageNote(usage: GenerationUsage): string {
       ? ""
       : ` \u00b7 $${usage.reportedUsd.toFixed(usage.reportedUsd < 1 ? 3 : 2)}`;
   const unmeasured = usage.unmeasuredTurns === 0 ? "" : ` (${usage.unmeasuredTurns} unmeasured)`;
-  return `Spent ${tokens} tokens across ${usage.turns} seat turn${usage.turns === 1 ? "" : "s"}${unmeasured}${price}`;
+  const tools =
+    usage.boardToolCalls === undefined
+      ? ""
+      : ` · ${usage.boardToolCalls} observed board tool call${usage.boardToolCalls === 1 ? "" : "s"}`;
+  return `Spent ${tokens} tokens across ${usage.turns} seat turn${usage.turns === 1 ? "" : "s"}${unmeasured}${tools}${price}`;
 }
 
 /** The lens drafters reworking beneath the report — rows from the machine's `composing`

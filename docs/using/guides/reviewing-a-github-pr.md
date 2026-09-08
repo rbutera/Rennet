@@ -167,7 +167,9 @@ over the new patchset; the earlier generation stays readable.
 The list shows open pull requests by default. Turn on **Show merged PRs** to mix
 merged work into the same list; merged rows are faded and carry a quiet merge
 decoration. Click **Created** or **Activity** in the header to sort the list by
-that timestamp.
+that timestamp; **Author**, **Lines**, and **Files** sort the same way. The
+**CI** facet above the list narrows it to passing, failing, or pending checks,
+and **Refresh** re-reads the pull requests without leaving the list.
 
 Opening a merged or closed pull request gives a **retrospective review**. It
 reads the frozen change exactly as any other review does, and it offers no

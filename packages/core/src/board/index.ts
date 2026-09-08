@@ -9,6 +9,7 @@ export * from "./board-writer";
 export * from "./compose";
 export * from "./design-assembler";
 export * from "./design-obligations";
+export * from "./design-sources-file";
 export * from "./finding-round";
 export * from "./lint";
 export * from "./noise-complement";

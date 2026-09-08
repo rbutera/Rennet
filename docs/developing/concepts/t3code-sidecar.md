@@ -523,13 +523,23 @@ Three things follow from the thread being persistent.
 
   Nothing supplies a server yet — the field is carried, and the daemon's own board server
   is the next change.
-- **Spend is per turn, and it is a delta read off the thread.** Claude's SDK reports usage
-  cumulatively over a streaming session's turns, so the seat leg records each turn's own
-  usage as the difference against the previous settled turn's total — which
-  `waitForTurnSettled` reads from the thread's own earlier `turn.settled` activity, so a
-  runner recreated for the thread (a whole-board restart) or a daemon restarted under it
-  subtracts the same as one that watched every turn. A total below the previous one means
-  the session restarted and its counter began again, and the whole figure is the turn's.
+- **Spend is per turn, and its source matters.** Claude's SDK `usage` is already
+  per-turn and covers the main agent loop. Its `modelUsage` and `total_cost_usd`
+  accumulate across the query runtime, including subagent, sidechain and other query-pipeline
+  model calls. The sidecar preserves both sources on `turn.settled`. The seat leg sums
+  `modelUsage` across models and subtracts the preceding model totals only within the
+  same known usage epoch. The epoch combines a fresh query identity with the SDK session
+  identity, covering both recovery under the same provider session and `/clear` within
+  a running query. A new 20,000-token counter following an old
+  10,000-token counter contributes all 20,000 tokens. Epochs and totals survive restart.
+  When complete totals or a comparable baseline are unavailable, the known per-turn
+  main-loop `usage` remains measured; it does not include unreported subagent work.
+  Cost is attributed separately: a fresh known epoch uses its total, a matching epoch
+  uses the cost delta, and an unknown epoch or counter reset leaves cost unavailable.
+  An intervening settlement without counters makes the baseline unknown; its spend is
+  never assigned to the next turn. Empty `modelUsage` is an explicit zero baseline, as
+  reported by `/clear`. Missing usage stays unmeasured. These provider
+  figures are estimates, not a billing statement; subscription turns show no dollar price.
   Codex's `context-window.updated` keeps the last request's context figures. Its separate
   cumulative breakdown is stamped with the provider thread and turn. The sidecar saves
   the counter baseline when a turn starts and carries that baseline plus the final
@@ -669,11 +679,12 @@ raised an unhandled `write EPIPE` that killed the whole server process and every
 seat's thread with it. The Claude adapter now spawns the child through the SDK's
 `spawnClaudeCodeProcess` hook and handles that error, terminating a child whose transport
 is broken so the failure arrives on the query stream, where the session settles the turn
-as failed like any other runtime failure. One thing that crash was hiding is still open:
-when the write loses that race against a `claude` that exits immediately, the turn can be
-left unsettled instead — about one run in ten against a stand-in that exits at once. The
-sidecar now survives it, so the blast radius is one thread rather than every seat, but a
-turn that never settles is its own defect and is not fixed here.
+as failed like any other runtime failure. SDK control requests also race against that
+query's child exit or explicit close. A child that exits before answering a model or
+permission control fails the affected turn promptly, even if stdout remains open or
+the SDK has already swept its pending requests during cleanup. This uses the process
+lifecycle rather than a retry or an additional timeout; sibling threads keep running.
+
 
 ## The board server
 
@@ -1473,6 +1484,23 @@ to batching by construction — a seat that made 60 calls in 19 messages still r
 it as a tool-call count, never as a round-trip count, and note that it excludes sub-agent
 calls (a seat with `Agent` sub-sessions reports 37 while 106 calls appear in its log). **The
 number of distinct assistant message ids is the round-trip count.**
+
+Generation usage stores the sum of observed `TurnMetric.toolCalls` as optional
+`boardToolCalls`, including refusals and turns with no token result. The review's
+usage line labels this **observed board tool calls**. It excludes the provider's
+other tools and does not measure provider round trips. Zero means an observed board counter
+reported zero; absence means no counter was available or a legacy record predates
+collection. If an earlier nonempty attempt lacks counts, the merged generation
+omits the total rather than presenting a partial sum as complete. An empty
+attempt preserves the other attempt's observed count.
+
+A refusal count is not a count of extra round trips. Several rejected calls can
+share one assistant message, and the next message can repair several together.
+Join each error result to its tool-use ID and classify the returned rule or error
+before changing the prompt. A citation-range refusal does not establish that a
+consumer ran before its citation; a prose-lint refusal does not establish a
+batching error. Compare distinct message IDs, total tokens, and time to the first
+useful board when evaluating a change to call ordering.
 
 Timings on the 95-file branch, from the drafting kickoff: **time to first element 339.8 s**,
 **time to first core board 555.7 s** (Sequence). Against the v0.7.0 figure of 360 s to first

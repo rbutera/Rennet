@@ -92,6 +92,21 @@ describe("selectedOpenSpecChangeName", () => {
   it("returns null when no changed path is under openspec/changes/", () => {
     expect(selectedOpenSpecChangeName(["src/a.ts", "README.md"])).toBeNull();
   });
+
+  it("ignores a FILE directly under openspec/changes/ — the README index is not a change (PR #918)", () => {
+    // The sighting: `README.md` sorts before `workspace-settings`, so the reader selected a
+    // phantom change, read nothing under it, and the Design seat went hunting for a spec the
+    // packet had already named.
+    expect(
+      selectedOpenSpecChangeName([
+        "openspec/changes/README.md",
+        "openspec/changes/workspace-settings/proposal.md",
+        "openspec/changes/workspace-settings/tasks.md",
+      ]),
+    ).toBe("workspace-settings");
+    // Alone, the index selects nothing at all.
+    expect(selectedOpenSpecChangeName(["openspec/changes/README.md"])).toBeNull();
+  });
 });
 
 describe("readOpenSpecChange — working-tree review (reads the captured tree)", () => {

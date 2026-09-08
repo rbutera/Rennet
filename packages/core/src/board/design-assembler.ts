@@ -114,6 +114,103 @@ function headingProse(source: CandidateDesignSource, heading: RegExp): string | 
   return text.length === 0 ? undefined : text;
 }
 
+/** One heading-bounded slice of a markdown file: the heading's own title, its level, and
+ *  the lines beneath it up to the next heading of the same or a higher level. */
+interface MarkdownSlice {
+  readonly level: number;
+  readonly title: string;
+  readonly lines: readonly string[];
+}
+
+/** Split `lines` into the slices headed at `level`, dropping anything before the first
+ *  such heading. A slice keeps its deeper headings inside its own lines, so a caller can
+ *  slice again one level down. */
+function markdownSlices(lines: readonly string[], level: number): MarkdownSlice[] {
+  const opens = new RegExp(`^#{${level}}\\s+(.+?)\\s*$`);
+  const closes = new RegExp(`^#{1,${level}}\\s+`);
+  const slices: MarkdownSlice[] = [];
+  let current: { title: string; lines: string[] } | undefined;
+  for (const line of lines) {
+    const heading = opens.exec(line)?.[1];
+    if (heading !== undefined) {
+      if (current !== undefined) slices.push({ level, ...current });
+      current = { title: heading, lines: [] };
+      continue;
+    }
+    if (current === undefined) continue;
+    if (closes.test(line)) {
+      slices.push({ level, ...current });
+      current = undefined;
+      continue;
+    }
+    current.lines.push(line);
+  }
+  if (current !== undefined) slices.push({ level, ...current });
+  return slices;
+}
+
+/** The lines of `slice` before its first deeper heading. */
+function leadingLines(slice: MarkdownSlice): string[] {
+  const end = slice.lines.findIndex((line) => /^#{1,6}\s+/.test(line));
+  return [...(end === -1 ? slice.lines : slice.lines.slice(0, end))];
+}
+
+/** The top-level list items of a markdown body, each with its continuation lines joined
+ *  and its marker removed. The same reading `design-artifact-anatomy` applies to the
+ *  proposal's What Changes rows, so the rows this ships are the rows that lint expects. */
+function topLevelListItems(lines: readonly string[]): string[] {
+  const items: string[] = [];
+  let current: string[] | undefined;
+  for (const line of lines) {
+    const item = /^[-*]\s+(.+?)\s*$/.exec(line)?.[1];
+    if (item !== undefined) {
+      if (current !== undefined) items.push(current.join(" "));
+      current = [item];
+      continue;
+    }
+    if (current !== undefined && line.trim().length > 0 && !/^#{1,6}\s+/.test(line)) {
+      current.push(line.trim());
+    }
+  }
+  if (current !== undefined) items.push(current.join(" "));
+  return items.map((item) => item.replace(/\s+/g, " ").trim());
+}
+
+/** A proposal heading whose prose is a list of rows, one per top-level item: the reader
+ *  sees each change as its own line, the way the proposal states it, and the client's
+ *  What Changes spine renders each row on its own. Every other heading ships its prose
+ *  verbatim in one block. */
+const PROPOSAL_ROW_HEADINGS: ReadonlySet<string> = new Set(["what changes"]);
+
+/** The fixed label that stands where a proposal's fenced code block was. Code on a board
+ *  is a `code_ref`, never bytes in prose (`no-code-bytes`), and a proposal's fence is
+ *  illustration rather than a patchset region to cite, so the block is left out and its
+ *  absence is stated, rather than the whole change losing its free board over it. */
+const OMITTED_CODE_BLOCK = "*(A code block here is not shown; read it in the file.)*";
+
+/** Proposal prose as the board carries it: fenced blocks replaced by the label above, and
+ *  a nested list's four-space indent halved so a two-line nested item does not read as an
+ *  indented code block. Whitespace is the only thing that changes. */
+function proposalProse(lines: readonly string[]): string {
+  const kept: string[] = [];
+  let fenced = false;
+  for (const line of lines) {
+    if (/^\s*```/.test(line)) {
+      fenced = !fenced;
+      if (!fenced) kept.push(OMITTED_CODE_BLOCK);
+      continue;
+    }
+    if (fenced) continue;
+    kept.push(
+      line.replace(/^(?: {4}|\t)+/, (indent) =>
+        "  ".repeat(indent.replace(/\t/g, "    ").length / 4),
+      ),
+    );
+  }
+  if (fenced) kept.push(OMITTED_CODE_BLOCK);
+  return kept.join("\n").trim();
+}
+
 /** The format every source shares; a mixed set has no single format and is not ours. */
 function formatOfSources(
   sources: readonly CandidateDesignSource[],
@@ -260,6 +357,38 @@ export function assembleDesignBoard(
       title: sectionTitle(source, format, sources),
       source_paths: [source.path],
     });
+
+    // An OpenSpec proposal yields no obligation of its own — its `## Why` opens the
+    // document and nothing else it says is a requirement, a decision or a task — so
+    // without this the Proposal section shipped EMPTY (Rai, 2026-09-08: "proposal is
+    // empty no matter if i collapse or expand"). Its remaining headings are the change's
+    // own words about itself: What Changes as one row per listed change (the shape the
+    // client's proposal spine and `design-artifact-anatomy` both read), Impact and the
+    // rest verbatim, and a deeper heading as a nested section, since the prose renderer
+    // has no heading of its own. The heading that became the intro is not repeated.
+    if (format === "openspec" && source.role === "proposal") {
+      const introHeading =
+        introSpec !== undefined && intro !== undefined ? introSpec.heading : undefined;
+      const lines = source.text.replace(/\r\n?/g, "\n").split("\n");
+      const placeProse = (slice: MarkdownSlice, parentId: string): void => {
+        const body = leadingLines(slice);
+        const rows = PROPOSAL_ROW_HEADINGS.has(slice.title.trim().toLowerCase())
+          ? topLevelListItems(proposalProse(body).split("\n"))
+          : [proposalProse(body)].filter((text) => text.length > 0);
+        for (const markdown of rows) addElement("add_prose", { markdown, parent_id: parentId });
+        for (const nested of markdownSlices(slice.lines, slice.level + 1)) {
+          if (nested.lines.every((line) => line.trim().length === 0)) continue;
+          const nestedId = addElement("add_section", { title: nested.title, parent_id: parentId });
+          placeProse(nested, nestedId);
+        }
+      };
+      for (const slice of markdownSlices(lines, 2)) {
+        if (introHeading?.test(`## ${slice.title}`) === true) continue;
+        if (slice.lines.every((line) => line.trim().length === 0)) continue;
+        const headingId = addElement("add_section", { title: slice.title, parent_id: sectionId });
+        placeProse(slice, headingId);
+      }
+    }
 
     const scenariosByParent = new Map<string, DesignSourceObligation[]>();
     for (const obligation of obligations) {

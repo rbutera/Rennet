@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   type Generation,
+  type GenerationUsage,
   ROUND_NO_REGEN,
   type RoundRecord,
   type RoundRunReceipt,
@@ -124,6 +125,33 @@ describe("GenerationStore", () => {
     expect(reloaded?.status).toBe("frozen");
     expect(reloaded?.lensBoards).toEqual({ design: "board:d", decisions: "board:x" });
     expect(reloaded?.absentLenses).toEqual({ noise: "no-material" });
+  });
+
+  it("reloads board tool-call measurements while legacy usage remains unknown", () => {
+    const directory = dir();
+    const usage: GenerationUsage = {
+      turns: 2,
+      unmeasuredTurns: 1,
+      inputTokens: 10,
+      outputTokens: 2,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
+      totalTokens: 12,
+      reportedUsd: null,
+    };
+    const store = new GenerationStore(directory);
+    store.save({ ...frozenGen("measured"), usage: { ...usage, boardToolCalls: 9 } });
+    store.save({ ...frozenGen("zero"), usage: { ...usage, boardToolCalls: 0 } });
+    store.save({ ...frozenGen("legacy"), usage });
+    store.close();
+    const reloaded = new GenerationStore(directory);
+    try {
+      expect(reloaded.load("measured")?.usage).toHaveProperty("boardToolCalls", 9);
+      expect(reloaded.load("zero")?.usage).toHaveProperty("boardToolCalls", 0);
+      expect(reloaded.load("legacy")?.usage).not.toHaveProperty("boardToolCalls");
+    } finally {
+      reloaded.close();
+    }
   });
 
   it("returns undefined for a generation never persisted (honest absence, not fabricated)", () => {

@@ -200,9 +200,12 @@ reason. Step rows never use `drafted` or `absent`.
 
 The same successful absence is durable. A generation may record a lens in
 `absentLenses`: Design uses `no-spec`, Decisions uses `no-decisions`, Flagged
-uses `no-findings`, and Noise uses `no-noise`. Design's `no-material` predates
-the spec respec and stays in the reason enum so generations recorded before it
-keep parsing; nothing settles it now. `board.read` then returns
+uses `no-findings`, and Noise uses `no-noise`. One reason is the host's rather
+than a seat's: `spec-only`, recorded on Sequence, Decisions, Flagged and Noise
+together when every changed path is a specification artifact, so that Design is
+the whole review. Design's `no-material` predates the spec respec and stays in
+the reason enum so generations recorded before it keep parsing; nothing settles
+it now. `board.read` then returns
 `board: null` plus that optional absence code. Older generations and older
 daemons omit the field, which remains the ordinary missing-board answer rather
 than being reclassified as successful absence. The client polls missing boards

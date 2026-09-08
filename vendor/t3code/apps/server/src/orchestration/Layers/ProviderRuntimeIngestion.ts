@@ -775,6 +775,8 @@ export function runtimeEventToActivities(
       // a reader intact.
       const settled = {
         state: event.payload.state,
+        ...(event.payload.modelUsage !== undefined ? { modelUsage: event.payload.modelUsage } : {}),
+        ...(event.payload.usageEpoch !== undefined ? { usageEpoch: event.payload.usageEpoch } : {}),
         ...(event.payload.structuredOutput !== undefined
           ? { structuredOutput: event.payload.structuredOutput }
           : {}),

@@ -290,6 +290,7 @@ interface ClaudeSessionContext {
   session: ProviderSession;
   readonly promptQueue: Queue.Queue<PromptQueueItem>;
   readonly query: ClaudeQueryRuntime;
+  readonly queryId: string;
   streamFiber: Fiber.Fiber<void, Error> | undefined;
   readonly startedAt: string;
   readonly basePermissionMode: PermissionMode | undefined;
@@ -370,7 +371,7 @@ export interface ClaudeAdapterLiveOptions {
  * dead transport, so terminate the child: the SDK reports the exit on the query
  * stream, where the session already settles the turn as failed.
  */
-function spawnClaudeCodeProcess(spawnOptions: ClaudeSpawnOptions): SpawnedProcess {
+function spawnClaudeCodeProcess(spawnOptions: ClaudeSpawnOptions, onExit: (cause: Error) => void): SpawnedProcess {
   const child = spawn(spawnOptions.command, spawnOptions.args, {
     ...(spawnOptions.cwd !== undefined ? { cwd: spawnOptions.cwd } : {}),
     env: spawnOptions.env,
@@ -380,6 +381,8 @@ function spawnClaudeCodeProcess(spawnOptions: ClaudeSpawnOptions): SpawnedProces
     stdio: ["pipe", "pipe", spawnOptions.env.DEBUG_CLAUDE_AGENT_SDK ? "inherit" : "ignore"],
     windowsHide: true,
   });
+  child.once("exit", (code, signal) => onExit(new Error(`Claude Code process exited (${signal ?? code}).`)));
+  child.once("error", onExit);
   const { stdin, stdout } = child;
   if (!stdin || !stdout) {
     throw new Error("Claude Code process was spawned without stdio pipes.");
@@ -2496,6 +2499,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       payload: {
         state: status,
         ...(result?.stop_reason !== undefined ? { stopReason: result.stop_reason } : {}),
+        usageEpoch: `${context.queryId}:${result?.session_id ?? context.resumeSessionId ?? ""}`,
         ...(result?.usage ? { usage: result.usage } : {}),
         ...(result?.modelUsage ? { modelUsage: result.modelUsage } : {}),
         ...(typeof result?.total_cost_usd === "number"
@@ -4505,6 +4509,13 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
             [sidecarBearerTokenEnvVar]: mcpSession.authorizationHeader.replace(/^Bearer\s+/, ""),
           }
         : claudeEnvironment;
+      let processFailure: Error | undefined;
+      const pendingControls = new Set<(cause: Error) => void>();
+      const onProcessExit = (cause: Error): void => {
+        processFailure ??= cause;
+        for (const reject of pendingControls) reject(processFailure);
+        pendingControls.clear();
+      };
       const queryOptions: ClaudeQueryOptions = {
         ...(input.cwd ? { cwd: input.cwd } : {}),
         ...(apiModelId ? { model: apiModelId } : {}),
@@ -4529,7 +4540,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           ? { outputFormat: { type: "json_schema" as const, schema: sessionOutputSchema } }
           : {}),
         includePartialMessages: true,
-        spawnClaudeCodeProcess,
+        spawnClaudeCodeProcess: (spawnOptions) => spawnClaudeCodeProcess(spawnOptions, onProcessExit),
         canUseTool,
         onUserDialog,
         supportedDialogKinds: ["resume_return"],
@@ -4565,11 +4576,31 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       });
 
       const queryRuntime = yield* Effect.try({
-        try: () =>
-          createQuery({
-            prompt,
-            options: queryOptions,
-          }),
+        try: () => {
+          const runtime = createQuery({ prompt, options: queryOptions });
+          // SDK request() can enqueue after cleanup and silently drop its write to ended stdin.
+          // Bound every control to this child, not to the SDK's stdout/cleanup ordering.
+          const control = async (request: () => Promise<void>): Promise<void> => {
+            if (processFailure) throw processFailure;
+            const exited = Promise.withResolvers<never>();
+            pendingControls.add(exited.reject);
+            try {
+              await Promise.race([request(), exited.promise]);
+            } finally {
+              pendingControls.delete(exited.reject);
+            }
+          };
+          return {
+            setModel: (model?: string) => control(() => runtime.setModel(model)),
+            setPermissionMode: (mode: PermissionMode) => control(() => runtime.setPermissionMode(mode)),
+            setMaxThinkingTokens: (tokens: number | null) => control(() => runtime.setMaxThinkingTokens(tokens)),
+            close: () => {
+              onProcessExit(new Error("Claude runtime closed."));
+              runtime.close();
+            },
+            [Symbol.asyncIterator]: () => runtime[Symbol.asyncIterator](),
+          };
+        },
         catch: (cause) =>
           new ProviderAdapterProcessError({
             provider: PROVIDER,
@@ -4602,6 +4633,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         session,
         promptQueue,
         query: queryRuntime,
+        queryId: yield* randomUUIDv4,
         streamFiber: undefined,
         startedAt,
         basePermissionMode: permissionMode,

@@ -4059,9 +4059,17 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
                   kind: "lens-agent",
                   id: "design-seat",
                 });
+        // The located specification's PATHS travel to the Design seat as `design-sources.md`
+        // (format, role, path — never the text), so a seat that runs because the assembler
+        // declined opens on the files the host already found rather than searching for them.
+        const designSourcePaths =
+          designSources === null
+            ? undefined
+            : designSources.map(({ format, role, path }) => ({ format, role, path }));
         return await roundsRuntime.runRound({
           ...input,
           ...(prPaper === undefined ? {} : { prPaper }),
+          ...(designSourcePaths === undefined ? {} : { designSources: designSourcePaths }),
           ...(assembleDesignBoardFor === undefined
             ? {}
             : { assembleDesignBoard: assembleDesignBoardFor }),

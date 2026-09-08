@@ -2,7 +2,7 @@
  * The review-role catalogue + all-scenario resolver (C16, #485).
  *
  * The Model Council (`model-council.ts`) routes every job. This module gives the
- * Environments → Review settings surface a READABLE view of the six
+ * Environments → Review settings surface a READABLE view of the active
  * user-legible review roles → their backing council jobs, resolved across all
  * three availability scenarios (`both` / `claude-only` / `codex-only`) with
  * `{ value, source }` provenance per cell.
@@ -33,14 +33,8 @@ import type {
 import { DEFAULT_CODEX_SECOND_SEAT_EFFORT, DEFAULT_CODEX_SECOND_SEAT_MODEL } from "./dual-seat";
 import { JOB_CATALOGUE, resolveAssignment, scenarioFor } from "./model-council";
 
-/** The six user-legible review roles (the copy the surface lists). */
-export type ReviewRoleId =
-  | "orchestrator"
-  | "confirmation"
-  | "lens-workers"
-  | "second-seat"
-  | "adjudication"
-  | "post-process";
+/** The active review roles (the copy the surface lists). */
+export type ReviewRoleId = "lens-workers" | "second-seat";
 
 /** One catalogue entry: a role, its surface copy, and its backing council job. */
 export interface ReviewRoleDef {
@@ -64,18 +58,6 @@ export interface ReviewRoleDef {
  */
 export const REVIEW_ROLE_CATALOGUE: readonly ReviewRoleDef[] = [
   {
-    id: "orchestrator",
-    label: "Orchestrator",
-    hint: "The review seat that drives the diff chat and orchestrates the round.",
-    jobId: "orchestrator-chat",
-  },
-  {
-    id: "confirmation",
-    label: "Confirmation Worker",
-    hint: "The self-consistency pass that re-runs on divergence to confirm findings.",
-    jobId: "self-consistency",
-  },
-  {
     id: "lens-workers",
     label: "Lens Drafters",
     hint: "The heavy seat that drafts the review lens — the reading surface.",
@@ -87,18 +69,6 @@ export const REVIEW_ROLE_CATALOGUE: readonly ReviewRoleDef[] = [
     hint: "The Codex second opinion paired against the Claude drafter on flagged lenses. Dual-provider only.",
     jobId: "lens-draft-flagged",
     dualOnly: true,
-  },
-  {
-    id: "adjudication",
-    label: "Adjudication",
-    hint: "The second-opinion seat that adjudicates disagreement between seats.",
-    jobId: "adjudication",
-  },
-  {
-    id: "post-process",
-    label: "Post-Process",
-    hint: "The light editor that cleans the board's prose after drafting.",
-    jobId: "board-post-process",
   },
 ];
 
@@ -255,7 +225,7 @@ function resolveSecondSeatDual(
  * Resolve every review role across all three scenarios. Pure and deterministic:
  * the caller's `overrides`/`harnessDefault` are the only inputs; the scenarios
  * are resolved unconditionally (honest-present — the tables are always
- * available), so the surface renders the six roles even with no override set.
+ * available), so the surface renders the active roles even with no override set.
  * A role that does not run in a scenario resolves to a `null` cell, never a guess.
  */
 export function resolveReviewRoles(ctx: ReviewRoleResolveContext): ResolvedReviewRole[] {

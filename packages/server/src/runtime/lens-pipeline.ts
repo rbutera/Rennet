@@ -18,6 +18,7 @@ import {
   DEFAULT_SEAT_LABELS,
   type DeltaPacket,
   deriveNoiseMembers,
+  designSourcesContextFile,
   type ElementReference,
   elementReferences,
   type FindingResolution,
@@ -25,8 +26,10 @@ import {
   HOST_COMPOSER_AUTHOR_ID,
   HOST_ROUND_HISTORY_PREFIX,
   isCarriedForward,
+  isSpecOnlyChange,
   type LintContext,
   type LintTarget,
+  type LocatedDesignSource,
   lint,
   lintReviewDraft,
   NO_CONCERN_ANSWER,
@@ -69,6 +72,7 @@ import {
   type FindingElement,
   type GenerationPhaseTiming,
   generationIdForPatchset,
+  HOST_CHANGE_ABSENCES,
   hostDerivedMemberKind,
   LENS_ADMISSIBLE_ABSENCES,
   LENS_KINDS,
@@ -1388,6 +1392,14 @@ export interface LensPipelineDeps {
    * (PR #802). A branch review has no PR, writes no `pr.md`, and names none.
    */
   readonly prPaper?: SessionContextFile;
+  /**
+   * The specification the host located for this branch — format, role and path per
+   * artifact, never the text — when the Design readers selected one from the packet's
+   * paths. Written as `design-sources.md` and named in the DESIGN seat's prompt only, so a
+   * seat that runs because the assembler declined starts from the files the host already
+   * found rather than searching for them. Absent ⇒ the seat's own investigation.
+   */
+  readonly designSources?: readonly LocatedDesignSource[];
   /** The PR worktree the drafter sessions are rooted at (D1). */
   readonly repoRoot: string;
   /**
@@ -1913,15 +1925,19 @@ const EMPTY_BOARD_PROVES_NO_ABSENCE: ReadonlySet<LensKind> = new Set(["design"])
 /**
  * The absence a parsed, zero-element board settles as, per lens — DERIVED from the
  * protocol's `LENS_ADMISSIBLE_ABSENCES` rather than restating its rows (#549 finding d).
- * A lens that admits exactly one absence gets it; a lens that admits none (Sequence)
- * gets none, so an empty Sequence board stays a failure; Design is excluded above.
- * Adding an absence to a lens in the protocol table therefore cannot leave this map
- * silently disagreeing with it.
+ * A lens that admits exactly one SEAT absence gets it; a lens that admits none (Sequence)
+ * gets none, so an empty Sequence board stays a failure; Design is excluded above. The
+ * host's own change absences (`spec-only`) are subtracted first: they are settled from the
+ * packet before any seat runs, never read off an empty board, and counting them here would
+ * hand Decisions two candidates and silently drop its `no-decisions`. Adding a seat absence
+ * to a lens in the protocol table therefore cannot leave this map silently disagreeing with it.
  */
 const EMPTY_LENS_ABSENCE: Partial<Record<LensKind, LensAbsenceReason>> = Object.fromEntries(
   LENS_KINDS.flatMap((lens) => {
     if (EMPTY_BOARD_PROVES_NO_ABSENCE.has(lens)) return [];
-    const admissible = LENS_ADMISSIBLE_ABSENCES[lens];
+    const admissible = LENS_ADMISSIBLE_ABSENCES[lens].filter(
+      (reason) => !HOST_CHANGE_ABSENCES.includes(reason),
+    );
     // More than one admissible absence would make "which one does empty mean?" a real
     // question this map cannot answer; none means the lens has no clean empty settlement.
     return admissible.length === 1 && admissible[0] !== undefined ? [[lens, admissible[0]]] : [];
@@ -2298,15 +2314,25 @@ export async function runLensPipeline(deps: LensPipelineDeps): Promise<LensPipel
   // the review was opened from — and NAMED to the Design seat alone (PR #802). It is the
   // clue to which spec this branch implements; no other lens has a use for it, and a line
   // in every prompt would be four seats paying for one seat's evidence.
-  const contextDir = context.add(
-    deps.prPaper === undefined ? seatFiles : [...seatFiles, deps.prPaper],
-  );
+  //
+  // `design-sources.md` travels the same way: the paths of the specification the host
+  // already located, named to Design alone. It is written whether or not the Design seat
+  // ends up running — the assembler decides that later, inside the lane, and the file is a
+  // few hundred bytes the session purge sweeps — so that when the seat DOES run it opens on
+  // the specification instead of on a search for it.
+  const designSourcesFile =
+    deps.designSources === undefined ? undefined : designSourcesContextFile(deps.designSources);
+  const designOnlyFiles = [
+    ...(deps.prPaper === undefined ? [] : [deps.prPaper]),
+    ...(designSourcesFile === undefined ? [] : [designSourcesFile]),
+  ];
+  const contextDir = context.add([...seatFiles, ...designOnlyFiles]);
   const seatContext: DrafterContextRef | undefined =
     contextDir === undefined ? undefined : { dir: contextDir, files: seatFiles };
   const designContext: DrafterContextRef | undefined =
-    contextDir === undefined || deps.prPaper === undefined
+    contextDir === undefined || designOnlyFiles.length === 0
       ? seatContext
-      : { dir: contextDir, files: [...seatFiles, deps.prPaper] };
+      : { dir: contextDir, files: [...seatFiles, ...designOnlyFiles] };
 
   // Every lens board exists BEFORE any seat thread does (`board-tool-authoring`): empty,
   // `drafting`, addressable. Two things follow, and both are the point. A lane that writes
@@ -2468,10 +2494,41 @@ export async function runLensPipeline(deps: LensPipelineDeps): Promise<LensPipel
     return outcome;
   };
 
+  /**
+   * A lane the HOST settles from what it already knows, with no seat dispatched: the lane
+   * is closed and its address revoked exactly as `runLane` does after a seat, the absence
+   * is published as the lane's terminal fact, and the reveal clock moves because an
+   * absence is something the reviewer sees. The cheapest turn in the change, twice over.
+   */
+  const settleLaneWithoutSeat = async (
+    lens: LensKind,
+    absence: LensAbsenceReason,
+  ): Promise<LensBoardOutcome> => {
+    deps.boards?.settleLane(lens);
+    deps.onBoardDraft?.closed(lens);
+    await publish(() => deps.onLensAbsence?.(lens, absence));
+    lastRevealAt = clock();
+    return { lens, omissions: [], blemishes: [], immutability: [], absence };
+  };
+
+  // ── A specification-only change dispatches Design alone ─────────────────────────
+  // Decided ONCE, from the packet's file rows, before any lane opens: when every changed
+  // path is a specification artifact (an OpenSpec change proposed ahead of its code, a
+  // Kiro feature, an ADR), there is no code to read in order, no engineering decision a
+  // diff could show, nothing to flag and nothing mechanical to file. Sequence, Decisions,
+  // Flagged and Noise settle `spec-only` with no seat, and Design — which renders the
+  // specification on the host when the assembler reads its format — is the review.
+  // Deterministic and path-shaped (`isSpecOnlyChange`): the same packet always answers
+  // the same way, and no model is asked whether the change it is about to read has code.
+  const specOnly = isSpecOnlyChange(deps.deltaPacket.patchset.files);
   const coreLenses: readonly LensKind[] = LENS_KINDS.filter((lens) => lens !== "noise");
   // `(lens) => runLane(lens)`, never `map(runLane)`: `Array.map` passes the INDEX as the
   // second argument, which `runLane` now reads as the derived members a lane is handed.
-  const settledCoreOutcomes = await Promise.allSettled(coreLenses.map((lens) => runLane(lens)));
+  const settledCoreOutcomes = await Promise.allSettled(
+    coreLenses.map((lens) =>
+      specOnly && lens !== "design" ? settleLaneWithoutSeat(lens, "spec-only") : runLane(lens),
+    ),
+  );
   // Noise starts on the four settlements, and only on them. A core lane whose DRAFT threw
   // — an infrastructure failure before any outcome existed, not a recorded failure —
   // leaves `settledCore` without its row, which reads as a lane whose citations are
@@ -2480,6 +2537,11 @@ export async function runLensPipeline(deps: LensPipelineDeps): Promise<LensPipel
   // case; see `runLane`.
   const noiseOutcome = await Promise.allSettled([
     (async (): Promise<LensBoardOutcome> => {
+      // Not derived on a specification-only change: the three host-settled siblings made
+      // no citation statement, and a complement over "unknown" would be a failure while
+      // one over "nothing" would file the whole specification as noise. Neither is what
+      // happened; there is no code here, and that is the lane's fact.
+      if (specOnly) return settleLaneWithoutSeat("noise", "spec-only");
       const membership = deriveNoiseMembers({
         regions: deps.lintContextFor("noise").regions,
         siblings: coreLenses.map((lens) => siblingCitations(lens, settledCore.get(lens))),
@@ -2518,17 +2580,7 @@ export async function runLensPipeline(deps: LensPipelineDeps): Promise<LensPipel
         // D16e — the four lanes between them cited every changed region. The host knows
         // this BEFORE any turn, so the lane settles with no seat at all, which is also
         // the cheapest turn in the change.
-        deps.boards?.settleLane("noise");
-        deps.onBoardDraft?.closed("noise");
-        await publish(() => deps.onLensAbsence?.("noise", "no-noise"));
-        lastRevealAt = clock();
-        return {
-          lens: "noise",
-          omissions: [],
-          blemishes: [],
-          immutability: [],
-          absence: "no-noise",
-        };
+        return settleLaneWithoutSeat("noise", "no-noise");
       }
       // The complement travels to the lane, which places it on the board before the seat's
       // first turn (D16, task 3.8). The seat is handed its members and groups them; it has

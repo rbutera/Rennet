@@ -6,6 +6,7 @@ import {
   GenerationPhaseTimingSchema,
   GenerationSchema,
   HarnessCursorSchema,
+  HOST_CHANGE_ABSENCES,
   isRoundOperationTerminal,
   LaneRowSchema,
   LENS_ADMISSIBLE_ABSENCES,
@@ -315,11 +316,21 @@ describe("session/ durable shapes (#466/#457)", () => {
   });
 
   it("declares which absence each lens may settle with (#549)", () => {
-    // Sequence admits NONE: no order board means nothing to read, so an absent
-    // Sequence is a failure and never a clean settlement.
-    expect(LENS_ADMISSIBLE_ABSENCES.sequence).toEqual([]);
+    // Sequence admits NO seat absence: no order board means nothing to read, so an
+    // absent Sequence is a failure and never a clean settlement. The one absence on its
+    // row is the host's `spec-only`, which no seat can declare.
+    expect(LENS_ADMISSIBLE_ABSENCES.sequence).toEqual(["spec-only"]);
     expect(lensAdmitsAbsence("sequence", "no-material")).toBe(false);
     expect(lensAdmitsAbsence("sequence", "no-findings")).toBe(false);
+
+    // `spec-only` is one fact about the CHANGE (every changed path is a specification
+    // artifact), so every lane the host settles on it admits it — and Design, the lane
+    // that runs, does not.
+    for (const lens of ["sequence", "decisions", "flagged", "noise"] as const) {
+      expect(lensAdmitsAbsence(lens, "spec-only"), `${lens} admits spec-only`).toBe(true);
+    }
+    expect(lensAdmitsAbsence("design", "spec-only")).toBe(false);
+    expect(HOST_CHANGE_ABSENCES).toEqual(["spec-only"]);
 
     // Noise's no-noise is a first-class SUCCESS, admitted by Noise alone.
     expect(lensAdmitsAbsence("noise", "no-noise")).toBe(true);
@@ -343,11 +354,22 @@ describe("session/ durable shapes (#466/#457)", () => {
         expect(LensAbsenceReasonSchema.safeParse(reason).success).toBe(true);
       }
     }
-    // ...and every persistable reason is admitted by exactly one lens.
+    // ...and every persistable SEAT reason is admitted by exactly one lens. A host change
+    // absence is the exception by construction: it is one statement about the change,
+    // admitted by every lane the host settles on it and by nothing else.
     for (const reason of LensAbsenceReasonSchema.options) {
       const admitting = Object.entries(LENS_ADMISSIBLE_ABSENCES).filter(([, reasons]) =>
         reasons.includes(reason),
       );
+      if (HOST_CHANGE_ABSENCES.includes(reason)) {
+        expect(admitting.map(([lens]) => lens)).toEqual([
+          "sequence",
+          "decisions",
+          "flagged",
+          "noise",
+        ]);
+        continue;
+      }
       expect(admitting.map(([lens]) => lens)).toHaveLength(1);
     }
   });

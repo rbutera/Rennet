@@ -125,6 +125,7 @@ export type SessionThread = z.infer<typeof SessionThreadSchema>;
 // absence that verb declares) and `protocol/board` cannot import `protocol/session`.
 // Re-exported here so every existing importer keeps its path.
 export {
+  HOST_CHANGE_ABSENCES,
   LENS_ADMISSIBLE_ABSENCES,
   type LensAbsenceReason,
   LensAbsenceReasonSchema,
@@ -271,14 +272,16 @@ export type GenerationTimings = z.infer<typeof GenerationTimingsSchema>;
 
 /**
  * What one generation's provider turns cost (#737). Summed over every seat turn the
- * lens pipeline ran for this generation, retries included — a retry is a new cold
- * session that re-bills its whole prompt, so it counts in full. `reportedUsd` is the
+ * lens pipeline ran for this generation, repair turns included. `reportedUsd` is the
  * provider's own figure summed, and it is `null` unless EVERY turn ran on a metered
  * credential and reported one: a subscription session pays no per-token price, so the
  * round shows tokens and no invented dollar amount. Cumulative while the generation
  * runs (it rides the `lens` frame beside the lanes), final on the durable record.
  */
 export const GenerationUsageSchema = z.object({
+  /** Observed board tool invocations, including refusals. Not provider round trips.
+   * Absent for legacy records or when no board counter was available. */
+  boardToolCalls: z.number().int().nonnegative().optional(),
   /** Every recorded seat turn, measured or not. */
   turns: z.number().int().nonnegative(),
   /** Turns that produced no usage record (no result frame, or a harness that reports

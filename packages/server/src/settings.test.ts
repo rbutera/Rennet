@@ -598,8 +598,8 @@ describe("createSettingsComposition — write outcomes + provenance", () => {
 describe("createSettingsComposition — council review-role mappings (C16, #485)", () => {
   // A STATEFUL fake client-settings store: a write must be re-readable, because the
   // whole point of the override is that it survives a reload.
-  const statefulDeps = () => {
-    let stored: ClientSettings = { version: 1 };
+  const statefulDeps = (initial: ClientSettings = { version: 1 }) => {
+    let stored: ClientSettings = initial;
     const { deps } = makeDeps({
       readGlobalState: () => ({ status: "ok", config: stored }),
       updateGlobal: (update) => {
@@ -616,8 +616,7 @@ describe("createSettingsComposition — council review-role mappings (C16, #485)
   it("reads the council defaults with no override stored — honest-present, never empty", async () => {
     const composition = createSettingsComposition(statefulDeps().deps);
     const roles = composition.reviewRoles();
-    // The tables are static, so a fresh install still sees all eight roles.
-    expect(roles).toHaveLength(6);
+    expect(roles.map((role) => role.id)).toEqual(["lens-workers", "second-seat"]);
     expect(roles).toEqual(reviewRoleMappings());
     // The Flagged Second Seat is a DUAL-only construct: honest-null single-provider.
     expect(cell(roles, "second-seat", "dual")?.value).not.toBeNull();
@@ -625,6 +624,37 @@ describe("createSettingsComposition — council review-role mappings (C16, #485)
     expect(cell(roles, "second-seat", "codexOnly")).toEqual({ value: null, layer: "default" });
     // The same mappings ride `settings.get` (the READ needs no second command).
     expect((await composition.get()).reviewRoles).toEqual(roles);
+  });
+
+  it("keeps legacy inactive overrides readable while offering only working controls", async () => {
+    const legacy: ClientSettings = {
+      version: 1,
+      routing: {
+        task: {
+          "orchestrator-chat": { dual: { model: "haiku", effort: "low" } },
+          "self-consistency": { dual: { model: "haiku", effort: "low" } },
+          adjudication: { dual: { model: "haiku", effort: "low" } },
+          "board-post-process": { dual: { model: "haiku", effort: "low" } },
+        },
+      },
+    };
+    const { deps, read } = statefulDeps(legacy);
+    const composition = createSettingsComposition(deps);
+    composition.setRoleAssignment({
+      roleId: "lens-workers",
+      scenario: "dual",
+      assignment: { model: "sonnet-5", effort: "low" },
+    });
+    const reopened = createSettingsComposition(deps);
+    expect((await reopened.get()).reviewRoles?.map((role) => role.id)).toEqual([
+      "lens-workers",
+      "second-seat",
+    ]);
+    expect(cell(reopened.reviewRoles(), "lens-workers", "dual")?.value).toEqual({
+      model: "sonnet-5",
+      effort: "low",
+    });
+    expect(read().routing?.task).toMatchObject(legacy.routing?.task ?? {});
   });
 
   it("setRoleAssignment persists an override, and null clears it back to the table default", () => {
@@ -667,7 +697,7 @@ describe("createSettingsComposition — council review-role mappings (C16, #485)
       cell(defaults, "lens-workers", "claudeOnly"),
     );
     // Untouched roles keep their table defaults — the write is not a broadcast.
-    expect(cell(written, "adjudication", "dual")).toEqual(cell(defaults, "adjudication", "dual"));
+    expect(cell(written, "second-seat", "dual")).toEqual(cell(defaults, "second-seat", "dual"));
 
     // RESET (`null`) clears THAT CELL, so it falls back to the EXACT table default
     // — the flip that proves the override was real, not decorative.

@@ -4,11 +4,15 @@ Rennet's own source is licensed under FSL-1.1-MIT (see [`LICENSE`](./LICENSE)).
 The production dependencies below ship under their own permissive licences,
 reproduced here to satisfy their attribution and notice requirements.
 
-Generated from the resolved production graph: 787 packages across 18 licence buckets. Regenerate with `pnpm notices`.
+Generated from the resolved production graph: 944 packages across 22 licence buckets. Regenerate with `pnpm notices`.
 
 ## (BSD-3-Clause OR GPL-2.0)
 
 - **node-forge** 1.4.0 — https://github.com/digitalbazaar/forge
+
+## (MIT AND Zlib)
+
+- **pako** 1.0.11 — https://github.com/nodeca/pako
 
 ## (MIT OR Apache-2.0)
 
@@ -18,25 +22,40 @@ Generated from the resolved production graph: 787 packages across 18 licence buc
 
 - **type-fest** 0.7.1, 0.21.3, 5.8.0 — https://github.com/sindresorhus/type-fest#readme
 
+## (MIT OR GPL-3.0-or-later)
+
+- **jszip** 3.10.1 — https://github.com/Stuk/jszip#readme
+
 ## 0BSD
 
 - **jsc-safe-url** 0.2.4 — https://github.com/robhogan/jsc-safe-url#readme
 - **tslib** 2.8.1 — https://www.typescriptlang.org/
 
+## apache-2.0
+
+- **@pierre/diffs** 1.3.0-beta.10
+- **@pierre/theming** 0.0.2
+- **@pierre/trees** 1.0.0-beta.4
+
 ## Apache-2.0
 
+- **@swc/helpers** 0.5.21 — https://swc.rs
 - **baseline-browser-mapping** 2.11.7 — https://github.com/web-platform-dx/baseline-browser-mapping#readme
 - **before-after-hook** 4.0.0 — https://github.com/gr2m/before-after-hook#readme
 - **bser** 2.1.1 — https://facebook.github.io/watchman/docs/bser.html
 - **chrome-launcher** 0.15.2 — https://github.com/GoogleChrome/chrome-launcher#readme
 - **chromium-edge-launcher** 0.2.0 — https://github.com/cezaraugusto/chromium-edge-launcher#readme
 - **class-variance-authority** 0.7.1 — https://github.com/joe-bell/cva#readme
+- **cluster-key-slot** 1.1.1 — https://github.com/Salakar/cluster-key-slot#readme
+- **denque** 2.1.0 — https://docs.page/invertase/denque
 - **detect-libc** 2.1.2 — https://github.com/lovell/detect-libc#readme
 - **exponential-backoff** 3.1.3 — https://github.com/coveooss/exponential-backoff#readme
 - **fb-watchman** 2.0.2 — https://facebook.github.io/watchman/
 - **human-signals** 8.0.1 — https://www.github.com/ehmicky/human-signals
+- **kubernetes-types** 1.30.0 — https://github.com/silverlyra/kubernetes-types#readme
 - **lighthouse-logger** 1.4.2
 - **marky** 1.3.0 — https://github.com/nolanlawson/marky#readme
+- **sumchecker** 3.0.1 — https://github.com/malept/sumchecker#readme
 - **typescript** 5.4.5 — https://www.typescriptlang.org/
 - **walker** 1.0.8 — https://github.com/daaku/nodejs-walker
 - **xcode** 3.0.1 — https://github.com/apache/cordova-node-xcode#readme
@@ -52,8 +71,11 @@ Generated from the resolved production graph: 787 packages across 18 licence buc
 
 ## BSD-2-Clause
 
+- **@electron-internal/extract-zip** 1.0.5 — https://github.com/electron/extract-zip#readme
+- **entities** 6.0.1 — https://github.com/fb55/entities#readme
 - **esprima** 4.0.1 — http://esprima.org
 - **fontfaceobserver** 2.3.0 — https://fontfaceobserver.com/
+- **glob-to-regexp** 0.4.1 — https://github.com/fitzgen/glob-to-regexp#readme
 - **json-schema-typed** 8.0.2 — https://github.com/RemyRylan/json-schema-typed/tree/main/dist/node
 - **regjsparser** 0.13.2 — https://github.com/jviereck/regjsparser
 - **terser** 5.49.0 — https://terser.org
@@ -65,6 +87,7 @@ Generated from the resolved production graph: 787 packages across 18 licence buc
 - **@sinonjs/commons** 3.0.1 — https://github.com/sinonjs/commons#readme
 - **@sinonjs/fake-timers** 10.3.0 — https://github.com/sinonjs/fake-timers
 - **babel-plugin-istanbul** 6.1.1 — https://github.com/istanbuljs/babel-plugin-istanbul#readme
+- **diff** 9.0.0 — https://github.com/kpdecker/jsdiff#readme
 - **fast-uri** 3.1.5 — https://github.com/fastify/fast-uri
 - **istanbul-lib-coverage** 3.2.2 — https://istanbul.js.org/
 - **istanbul-lib-instrument** 5.2.1 — https://istanbul.js.org/
@@ -94,9 +117,10 @@ Generated from the resolved production graph: 787 packages across 18 licence buc
 - **hosted-git-info** 7.0.2 — https://github.com/npm/hosted-git-info
 - **inflight** 1.0.6 — https://github.com/isaacs/inflight
 - **inherits** 2.0.4 — https://github.com/isaacs/inherits#readme
+- **ini** 7.0.0 — https://github.com/npm/ini#readme
 - **isexe** 2.0.0 — https://github.com/isaacs/isexe#readme
 - **lru-cache** 5.1.1, 10.4.3 — https://github.com/isaacs/node-lru-cache#readme
-- **lucide-react** 1.31.0 — https://lucide.dev
+- **lucide-react** 0.564.0, 1.31.0 — https://lucide.dev
 - **minimatch** 3.1.5 — https://github.com/isaacs/minimatch#readme
 - **npm-package-arg** 11.0.3 — https://github.com/npm/npm-package-arg
 - **once** 1.4.0 — https://github.com/isaacs/once#readme
@@ -117,6 +141,10 @@ Generated from the resolved production graph: 787 packages across 18 licence buc
 - **yaml** 2.9.0 — https://eemeli.org/yaml/
 - **yargs-parser** 21.1.1 — https://github.com/yargs/yargs-parser#readme
 - **zod-to-json-schema** 3.25.2 — https://github.com/StefanTerdell/zod-to-json-schema#readme
+
+## LGPL-3.0
+
+- **heic-to** 1.5.2 — https://github.com/hoppergee/heic-to
 
 ## MIT
 
@@ -215,6 +243,21 @@ Generated from the resolved production graph: 787 packages across 18 licence buc
 - **@babel/types** 7.29.7 — https://babel.dev/docs/en/next/babel-types
 - **@base-ui/react** 1.7.0 — https://base-ui.com
 - **@base-ui/utils** 0.3.2 — https://github.com/mui/base-ui#readme
+- **@clerk/clerk-js** 6.30.1 — https://clerk.com/
+- **@clerk/electron** 0.0.37 — https://clerk.com/
+- **@clerk/react** 6.14.7 — https://clerk.com/
+- **@clerk/shared** 4.30.1 — https://github.com/clerk/javascript#readme
+- **@dnd-kit/accessibility** 3.1.1 — https://github.com/clauderic/dnd-kit#readme
+- **@dnd-kit/core** 6.3.1 — https://github.com/clauderic/dnd-kit#readme
+- **@dnd-kit/modifiers** 9.0.0 — https://github.com/clauderic/dnd-kit#readme
+- **@dnd-kit/sortable** 10.0.0 — https://github.com/clauderic/dnd-kit#readme
+- **@dnd-kit/utilities** 3.2.2 — https://github.com/clauderic/dnd-kit#readme
+- **@effect/atom-react** 4.0.0-beta.103 — https://effect.website
+- **@effect/platform-bun** 4.0.0-beta.103 — https://effect.website
+- **@effect/platform-node** 4.0.0-beta.103 — https://effect.website
+- **@effect/platform-node-shared** 4.0.0-rc.112 — https://effect.website
+- **@effect/sql-sqlite-bun** 4.0.0-beta.103 — https://effect.website
+- **@electron/get** 5.1.0 — https://github.com/electron/get#readme
 - **@expo/cli** 55.0.34 — https://github.com/expo/expo/tree/main/packages/@expo/cli
 - **@expo/code-signing-certificates** 0.0.6 — https://github.com/expo/code-signing-certificates/tree/main#readme
 - **@expo/config** 55.0.19 — https://github.com/expo/expo/tree/main/packages/@expo/config#readme
@@ -244,11 +287,16 @@ Generated from the resolved production graph: 787 packages across 18 licence buc
 - **@expo/sudo-prompt** 9.3.2 — https://github.com/expo/sudo-prompt
 - **@expo/vector-icons** 15.1.1 — https://expo.github.io/vector-icons
 - **@expo/ws-tunnel** 1.0.6
+- **@ff-labs/fff-bin-darwin-arm64** 0.9.4 — https://github.com/dmtrKovalenko/fff#readme
+- **@ff-labs/fff-node** 0.9.4 — https://github.com/dmtrKovalenko/fff#readme
 - **@floating-ui/core** 1.8.0 — https://floating-ui.com
 - **@floating-ui/dom** 1.8.0 — https://floating-ui.com
+- **@floating-ui/react** 0.27.20 — https://floating-ui.com/docs/react
 - **@floating-ui/react-dom** 2.1.9 — https://floating-ui.com/docs/react-dom
 - **@floating-ui/utils** 0.2.12 — https://floating-ui.com
+- **@formkit/auto-animate** 0.9.0 — https://github.com/formkit/auto-animate#readme
 - **@hono/node-server** 2.0.12 — https://github.com/honojs/node-server
+- **@ioredis/commands** 1.10.0 — https://github.com/ioredis/commands
 - **@istanbuljs/schema** 0.1.6 — https://github.com/istanbuljs/schema#readme
 - **@jest/create-cache-key-function** 29.7.0 — https://github.com/jestjs/jest#readme
 - **@jest/environment** 29.7.0 — https://github.com/jestjs/jest#readme
@@ -262,7 +310,33 @@ Generated from the resolved production graph: 787 packages across 18 licence buc
 - **@jridgewell/source-map** 0.3.11 — https://github.com/jridgewell/sourcemaps/tree/main/packages/source-map
 - **@jridgewell/sourcemap-codec** 1.5.5 — https://github.com/jridgewell/sourcemaps/tree/main/packages/sourcemap-codec
 - **@jridgewell/trace-mapping** 0.3.31 — https://github.com/jridgewell/sourcemaps/tree/main/packages/trace-mapping
+- **@legendapp/list** 3.3.5 — https://github.com/LegendApp/legend-list#readme
+- **@lexical/clipboard** 0.41.0 — https://github.com/facebook/lexical#readme
+- **@lexical/code** 0.41.0 — https://github.com/facebook/lexical#readme
+- **@lexical/devtools-core** 0.41.0 — https://github.com/facebook/lexical#readme
+- **@lexical/dragon** 0.41.0 — https://github.com/facebook/lexical#readme
+- **@lexical/extension** 0.41.0 — https://github.com/facebook/lexical#readme
+- **@lexical/hashtag** 0.41.0 — https://github.com/facebook/lexical#readme
+- **@lexical/history** 0.41.0 — https://github.com/facebook/lexical#readme
+- **@lexical/html** 0.41.0 — https://github.com/facebook/lexical#readme
+- **@lexical/link** 0.41.0 — https://github.com/facebook/lexical#readme
+- **@lexical/list** 0.41.0 — https://github.com/facebook/lexical#readme
+- **@lexical/mark** 0.41.0 — https://github.com/facebook/lexical#readme
+- **@lexical/markdown** 0.41.0 — https://github.com/facebook/lexical#readme
+- **@lexical/offset** 0.41.0 — https://github.com/facebook/lexical#readme
+- **@lexical/overflow** 0.41.0 — https://github.com/facebook/lexical#readme
+- **@lexical/plain-text** 0.41.0 — https://github.com/facebook/lexical#readme
+- **@lexical/react** 0.41.0 — https://github.com/facebook/lexical#readme
+- **@lexical/rich-text** 0.41.0 — https://github.com/facebook/lexical#readme
+- **@lexical/selection** 0.41.0 — https://github.com/facebook/lexical#readme
+- **@lexical/table** 0.41.0 — https://github.com/facebook/lexical#readme
+- **@lexical/text** 0.41.0 — https://github.com/facebook/lexical#readme
+- **@lexical/utils** 0.41.0 — https://github.com/facebook/lexical#readme
+- **@lexical/yjs** 0.41.0 — https://github.com/facebook/lexical#readme
 - **@modelcontextprotocol/sdk** 1.30.0 — https://modelcontextprotocol.io
+- **@msgpackr-extract/msgpackr-extract-darwin-arm64** 3.0.4 — https://github.com/kriszyp/msgpackr-extract#readme
+- **@noble/curves** 1.9.1 — https://paulmillr.com/noble/
+- **@noble/hashes** 1.8.0 — https://paulmillr.com/noble/
 - **@octokit/auth-token** 6.0.0 — https://github.com/octokit/auth-token.js#readme
 - **@octokit/core** 7.0.7 — https://github.com/octokit/core.js#readme
 - **@octokit/endpoint** 11.0.4 — https://github.com/octokit/endpoint.js#readme
@@ -271,6 +345,9 @@ Generated from the resolved production graph: 787 packages across 18 licence buc
 - **@octokit/request** 10.0.13 — https://github.com/octokit/request.js#readme
 - **@octokit/request-error** 7.1.1 — https://github.com/octokit/request-error.js#readme
 - **@octokit/types** 17.0.0 — https://github.com/octokit/types.ts#readme
+- **@opencode-ai/sdk** 1.18.23
+- **@pierre/theme** 1.1.0 — https://github.com/pierrecomputer/pierre/tree/main/packages/theme
+- **@preact/signals-core** 1.14.4 — https://preactjs.com
 - **@radix-ui/primitive** 1.1.7 — https://radix-ui.com/primitives
 - **@radix-ui/react-collection** 1.1.15 — https://radix-ui.com/primitives
 - **@radix-ui/react-compose-refs** 1.1.5 — https://radix-ui.com/primitives
@@ -317,11 +394,25 @@ Generated from the resolved production graph: 787 packages across 18 licence buc
 - **@shikijs/langs** 4.4.3 — https://github.com/shikijs/shiki#readme
 - **@shikijs/primitive** 4.4.3 — https://github.com/shikijs/shiki#readme
 - **@shikijs/themes** 4.4.3 — https://github.com/shikijs/shiki#readme
+- **@shikijs/transformers** 4.4.3 — https://github.com/shikijs/shiki#readme
 - **@shikijs/types** 4.4.3 — https://github.com/shikijs/shiki#readme
 - **@shikijs/vscode-textmate** 10.0.2 — https://github.com/shikijs/vscode-textmate#readme
 - **@sinclair/typebox** 0.27.12 — https://github.com/sinclairzx81/sinclair-typebox#readme
 - **@sindresorhus/merge-streams** 4.0.0 — https://github.com/sindresorhus/merge-streams#readme
 - **@stablelib/base64** 1.0.1 — https://github.com/StableLib/stablelib/tree/master/packages/base64
+- **@standard-schema/spec** 1.1.0 — https://standardschema.dev
+- **@stripe/stripe-js** 5.6.0 — https://stripe.com/docs/js
+- **@tanstack/devtools-event-client** 0.4.4 — https://tanstack.com/devtools
+- **@tanstack/history** 1.162.0 — https://tanstack.com/router
+- **@tanstack/pacer** 0.18.0 — https://tanstack.com/pacer
+- **@tanstack/query-core** 5.102.6 — https://tanstack.com/query
+- **@tanstack/react-pacer** 0.19.4 — https://tanstack.com/pacer
+- **@tanstack/react-router** 1.170.10 — https://tanstack.com/router
+- **@tanstack/react-store** 0.8.1, 0.9.3, 0.11.1 — https://tanstack.com/store
+- **@tanstack/react-table** 9.2.4 — https://tanstack.com/table
+- **@tanstack/router-core** 1.171.8 — https://tanstack.com/router
+- **@tanstack/store** 0.8.1, 0.9.3, 0.11.1 — https://tanstack.com/store
+- **@tanstack/table-core** 9.2.4 — https://tanstack.com/table
 - **@types/babel__core** 7.20.5 — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/babel__core
 - **@types/babel__generator** 7.27.0 — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/babel__generator
 - **@types/babel__template** 7.4.4 — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/babel__template
@@ -337,22 +428,27 @@ Generated from the resolved production graph: 787 packages across 18 licence buc
 - **@types/istanbul-reports** 3.0.4 — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/istanbul-reports
 - **@types/mdast** 4.0.4 — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/mdast
 - **@types/ms** 2.1.0 — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/ms
-- **@types/node** 24.12.0 — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/node
+- **@types/node** 24.12.0, 24.13.3 — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/node
 - **@types/react** 19.2.14 — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/react
 - **@types/react-dom** 19.2.3 — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/react-dom
 - **@types/stack-utils** 2.0.3 — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/stack-utils
 - **@types/unist** 2.0.11, 3.0.3 — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/unist
+- **@types/ws** 8.18.1 — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/ws
 - **@types/yargs** 17.0.35 — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/yargs
 - **@types/yargs-parser** 21.0.3 — https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/yargs-parser
 - **@wboard/core** 0.1.0-alpha.2 — https://github.com/rbutera/whiteboard#readme
 - **@wboard/server** 0.1.0-alpha.2 — https://github.com/rbutera/whiteboard#readme
 - **@xmldom/xmldom** 0.8.13, 0.9.10 — https://github.com/xmldom/xmldom
+- **@yuuang/ffi-rs-darwin-arm64** 1.3.7
+- **@zxcvbn-ts/core** 3.0.4 — https://github.com/zxcvbn-ts/zxcvbn
+- **@zxcvbn-ts/language-common** 3.0.4 — https://github.com/zxcvbn-ts/zxcvbn
 - **abort-controller** 3.0.0 — https://github.com/mysticatea/abort-controller#readme
 - **accepts** 1.3.8, 2.0.0 — https://github.com/jshttp/accepts#readme
 - **acorn** 8.18.0 — https://github.com/acornjs/acorn
 - **agent-base** 7.1.4 — https://github.com/TooTallNate/proxy-agents#readme
 - **ajv** 8.20.0 — https://ajv.js.org
 - **ajv-formats** 3.0.1 — https://github.com/ajv-validator/ajv-formats#readme
+- **alien-signals** 2.0.6 — https://github.com/johnsoncodehk/signals#readme
 - **anser** 1.4.10 — https://github.com/IonicaBizau/anser#readme
 - **ansi-escapes** 4.3.2 — https://github.com/sindresorhus/ansi-escapes#readme
 - **ansi-regex** 4.1.1, 5.0.1 — https://github.com/chalk/ansi-regex#readme
@@ -384,8 +480,10 @@ Generated from the resolved production graph: 787 packages across 18 licence buc
 - **bplist-parser** 0.3.1, 0.3.2 — https://github.com/nearinfinity/node-bplist-parser
 - **brace-expansion** 5.0.9 — https://github.com/juliangruber/brace-expansion#readme
 - **braces** 3.0.3 — https://github.com/micromatch/braces
+- **browser-tabs-lock** 1.3.0 — https://github.com/supertokens/browser-tabs-lock#readme
 - **browserslist** 4.28.7 — https://github.com/browserslist/browserslist#readme
 - **buffer-from** 1.1.2 — https://github.com/LinusU/buffer-from#readme
+- **bufferutil** 4.1.0 — https://github.com/websockets/bufferutil
 - **bytes** 3.1.2 — https://github.com/visionmedia/bytes.js#readme
 - **call-bind-apply-helpers** 1.0.2 — https://github.com/ljharb/call-bind-apply-helpers#readme
 - **call-bound** 1.0.4 — https://github.com/ljharb/call-bound#readme
@@ -417,11 +515,16 @@ Generated from the resolved production graph: 787 packages across 18 licence buc
 - **content-type** 1.0.5, 2.0.0 — https://github.com/jshttp/content-type#readme
 - **convert-source-map** 2.0.0 — https://github.com/thlorenz/convert-source-map
 - **cookie** 0.7.2 — https://github.com/jshttp/cookie#readme
+- **cookie-es** 3.1.1 — https://github.com/unjs/cookie-es#readme
 - **cookie-signature** 1.2.2 — https://github.com/visionmedia/node-cookie-signature#readme
+- **core-js** 3.47.0 — https://core-js.io
 - **core-js-compat** 3.49.0 — https://core-js.io
+- **core-util-is** 1.0.3 — https://github.com/isaacs/core-util-is#readme
 - **cors** 2.8.6 — https://github.com/expressjs/cors#readme
 - **cross-spawn** 7.0.6 — https://github.com/moxystudio/node-cross-spawn
+- **crypto-js** 4.2.0 — http://github.com/brix/crypto-js
 - **csstype** 3.2.3 — https://github.com/frenic/csstype#readme
+- **culori** 4.0.2 — https://github.com/Evercoder/culori#readme
 - **debug** 2.6.9, 3.2.7, 4.4.3 — https://github.com/debug-js/debug#readme
 - **decode-named-character-reference** 1.3.0 — https://github.com/wooorm/decode-named-character-reference#readme
 - **decode-uri-component** 0.2.2 — https://github.com/SamVerschueren/decode-uri-component#readme
@@ -436,19 +539,21 @@ Generated from the resolved production graph: 787 packages across 18 licence buc
 - **dnssd-advertise** 1.1.6 — https://github.com/kitten/dnssd-advertise#readme
 - **dunder-proto** 1.0.1 — https://github.com/es-shims/dunder-proto#readme
 - **ee-first** 1.1.1 — https://github.com/jonathanong/ee-first#readme
+- **effect** 4.0.0-beta.103 — https://effect.website
+- **electron** 43.4.1 — https://github.com/electron/electron#readme
 - **emoji-regex** 8.0.0 — https://mths.be/emoji-regex
 - **encodeurl** 1.0.2, 2.0.0 — https://github.com/pillarjs/encodeurl#readme
+- **env-paths** 3.0.0 — https://github.com/sindresorhus/env-paths#readme
 - **error-stack-parser** 2.1.4 — https://www.stacktracejs.com
 - **es-define-property** 1.0.1 — https://github.com/ljharb/es-define-property#readme
 - **es-errors** 1.3.0 — https://github.com/ljharb/es-errors#readme
 - **es-object-atoms** 1.1.1 — https://github.com/ljharb/es-object-atoms#readme
 - **escalade** 3.2.0 — https://github.com/lukeed/escalade#readme
 - **escape-html** 1.0.3 — https://github.com/component/escape-html#readme
-- **escape-string-regexp** 1.0.5, 2.0.0, 4.0.0 — https://github.com/sindresorhus/escape-string-regexp#readme
+- **escape-string-regexp** 1.0.5, 2.0.0, 4.0.0, 5.0.0 — https://github.com/sindresorhus/escape-string-regexp#readme
 - **estree-util-is-identifier-name** 3.0.0 — https://github.com/syntax-tree/estree-util-is-identifier-name#readme
 - **etag** 1.8.1 — https://github.com/jshttp/etag#readme
 - **event-target-shim** 5.0.1 — https://github.com/mysticatea/event-target-shim
-- **events** 3.3.0 — https://github.com/Gozala/events#readme
 - **eventsource** 3.0.7 — https://github.com/EventSource/eventsource#readme
 - **eventsource-parser** 3.1.0 — https://github.com/rexxars/eventsource-parser#readme
 - **execa** 10.0.0 — https://github.com/sindresorhus/execa#readme
@@ -477,13 +582,17 @@ Generated from the resolved production graph: 787 packages across 18 licence buc
 - **express** 5.2.1 — https://expressjs.com/
 - **express-rate-limit** 8.6.1 — https://github.com/express-rate-limit/express-rate-limit
 - **extend** 3.0.2 — https://github.com/justmoon/node-extend#readme
+- **fast-check** 4.9.0 — https://fast-check.dev/
 - **fast-deep-equal** 3.1.3 — https://github.com/epoberezkin/fast-deep-equal#readme
 - **fast-json-stable-stringify** 2.1.0 — https://github.com/epoberezkin/fast-json-stable-stringify
+- **fastest-levenshtein** 1.0.16 — https://github.com/ka-weihe/fastest-levenshtein#README
 - **fetch-nodeshim** 0.4.10 — https://github.com/kitten/fetch-nodeshim#readme
+- **ffi-rs** 1.3.7 — https://github.com/zhangyuang/node-ffi-rs#readme
 - **figures** 6.1.0 — https://github.com/sindresorhus/figures#readme
 - **fill-range** 7.1.1 — https://github.com/jonschlinkert/fill-range
 - **filter-obj** 1.1.0 — https://github.com/sindresorhus/filter-obj#readme
 - **finalhandler** 1.1.2, 2.1.1 — https://github.com/pillarjs/finalhandler#readme
+- **find-my-way-ts** 0.1.6 — https://github.com/tim-smart/find-my-way-ts#readme
 - **find-up** 4.1.0 — https://github.com/sindresorhus/find-up#readme
 - **flow-enums-runtime** 0.0.6 — https://github.com/facebook/flow#readme
 - **forwarded** 0.2.0 — https://github.com/jshttp/forwarded#readme
@@ -499,17 +608,18 @@ Generated from the resolved production graph: 787 packages across 18 licence buc
 - **get-stream** 9.0.1 — https://github.com/sindresorhus/get-stream#readme
 - **getenv** 2.0.0 — https://github.com/ctavan/node-getenv
 - **gopd** 1.2.0 — https://github.com/ljharb/gopd#readme
-- **graphology** 0.26.0 — https://github.com/graphology/graphology#readme
-- **graphology-communities-louvain** 2.0.2 — https://github.com/graphology/graphology#readme
-- **graphology-indices** 0.17.0 — https://github.com/graphology/graphology#readme
-- **graphology-types** 0.24.8 — https://github.com/graphology/graphology#readme
-- **graphology-utils** 2.5.2 — https://github.com/graphology/graphology#readme
 - **has-flag** 3.0.0, 4.0.0 — https://github.com/sindresorhus/has-flag#readme
 - **has-symbols** 1.1.0 — https://github.com/ljharb/has-symbols#readme
 - **hasown** 2.0.4 — https://github.com/inspect-js/hasOwn#readme
+- **hast-util-from-parse5** 8.0.3 — https://github.com/syntax-tree/hast-util-from-parse5#readme
+- **hast-util-parse-selector** 4.0.0 — https://github.com/syntax-tree/hast-util-parse-selector#readme
+- **hast-util-raw** 9.1.0 — https://github.com/syntax-tree/hast-util-raw#readme
+- **hast-util-sanitize** 5.0.2 — https://github.com/syntax-tree/hast-util-sanitize#readme
 - **hast-util-to-html** 9.0.5 — https://github.com/syntax-tree/hast-util-to-html#readme
 - **hast-util-to-jsx-runtime** 2.3.6 — https://github.com/syntax-tree/hast-util-to-jsx-runtime#readme
+- **hast-util-to-parse5** 8.0.1 — https://github.com/syntax-tree/hast-util-to-parse5#readme
 - **hast-util-whitespace** 3.0.0 — https://github.com/syntax-tree/hast-util-whitespace#readme
+- **hastscript** 9.0.1 — https://github.com/syntax-tree/hastscript#readme
 - **hermes-compiler** 0.14.1 — https://github.com/facebook/hermes#readme
 - **hermes-estree** 0.32.0, 0.32.1, 0.35.0 — https://github.com/facebook/hermes#readme
 - **hermes-parser** 0.32.0, 0.32.1, 0.35.0 — https://github.com/facebook/hermes#readme
@@ -521,9 +631,11 @@ Generated from the resolved production graph: 787 packages across 18 licence buc
 - **iconv-lite** 0.7.3 — https://github.com/pillarjs/iconv-lite
 - **ignore** 5.3.2 — https://github.com/kaelzhang/node-ignore#readme
 - **image-size** 1.2.1 — https://github.com/image-size/image-size#readme
+- **immediate** 3.0.6 — https://github.com/calvinmetcalf/immediate#readme
 - **imurmurhash** 0.1.4 — https://github.com/jensyt/imurmurhash-js
 - **inline-style-parser** 0.2.7 — https://github.com/remarkablemark/inline-style-parser#readme
 - **invariant** 2.2.4 — https://github.com/zertosh/invariant#readme
+- **ioredis** 5.11.1 — https://github.com/luin/ioredis#readme
 - **ip-address** 10.3.1 — https://github.com/beaugunderson/ip-address#readme
 - **ipaddr.js** 1.9.1 — https://github.com/whitequark/ipaddr.js#readme
 - **is-alphabetical** 2.0.1 — https://github.com/wooorm/is-alphabetical#readme
@@ -540,6 +652,8 @@ Generated from the resolved production graph: 787 packages across 18 licence buc
 - **is-stream** 4.0.1 — https://github.com/sindresorhus/is-stream#readme
 - **is-unicode-supported** 2.1.0 — https://github.com/sindresorhus/is-unicode-supported#readme
 - **is-wsl** 2.2.0 — https://github.com/sindresorhus/is-wsl#readme
+- **isarray** 1.0.0 — https://github.com/juliangruber/isarray
+- **isomorphic.js** 0.2.5 — https://github.com/dmonad/isomorphic.js#readme
 - **jest-environment-node** 29.7.0 — https://github.com/jestjs/jest#readme
 - **jest-get-type** 29.6.3 — https://github.com/jestjs/jest#readme
 - **jest-haste-map** 29.7.0 — https://github.com/jestjs/jest#readme
@@ -550,7 +664,8 @@ Generated from the resolved production graph: 787 packages across 18 licence buc
 - **jest-validate** 29.7.0 — https://github.com/jestjs/jest#readme
 - **jest-worker** 29.7.0 — https://github.com/jestjs/jest#readme
 - **jimp-compact** 0.16.1 — https://github.com/nuxt-community/jimp-compact#readme
-- **jose** 6.2.5 — https://github.com/panva/jose
+- **jose** 6.2.2, 6.2.5 — https://github.com/panva/jose
+- **js-cookie** 3.0.7 — https://github.com/js-cookie/js-cookie#readme
 - **js-tokens** 4.0.0 — https://github.com/lydell/js-tokens#readme
 - **js-yaml** 3.15.1, 4.3.0 — https://github.com/nodeca/js-yaml#readme
 - **jsesc** 3.1.0 — https://mths.be/jsesc
@@ -558,20 +673,36 @@ Generated from the resolved production graph: 787 packages across 18 licence buc
 - **json-schema-traverse** 1.0.0 — https://github.com/epoberezkin/json-schema-traverse#readme
 - **json-with-bigint** 3.5.10 — https://github.com/Ivan-Korolenko/json-with-bigint#readme
 - **json5** 2.2.3 — http://json5.org/
+- **jsonc-parser** 3.3.1 — https://github.com/microsoft/node-jsonc-parser#readme
 - **kleur** 3.0.3 — https://github.com/lukeed/kleur#readme
 - **lan-network** 0.2.1 — https://github.com/kitten/lan-network#readme
 - **leven** 3.1.0 — https://github.com/sindresorhus/leven#readme
+- **lexical** 0.41.0 — https://github.com/facebook/lexical#readme
+- **lib0** 0.2.117 — https://github.com/dmonad/lib0#readme
+- **lie** 3.3.0 — https://github.com/calvinmetcalf/lie#readme
 - **locate-path** 5.0.0 — https://github.com/sindresorhus/locate-path#readme
+- **lodash** 4.18.1 — https://lodash.com/
 - **lodash.debounce** 4.0.8 — https://lodash.com/
 - **lodash.throttle** 4.1.1 — https://lodash.com/
 - **log-symbols** 2.2.0 — https://github.com/sindresorhus/log-symbols#readme
 - **longest-streak** 3.1.0 — https://github.com/wooorm/longest-streak#readme
 - **loose-envify** 1.4.0 — https://github.com/zertosh/loose-envify
+- **lru_map** 0.4.1 — https://github.com/rsms/js-lru#readme
+- **markdown-table** 3.0.4 — https://github.com/wooorm/markdown-table#readme
 - **math-intrinsics** 1.1.0 — https://github.com/es-shims/math-intrinsics#readme
+- **mdast-util-directive** 3.1.0 — https://github.com/syntax-tree/mdast-util-directive#readme
+- **mdast-util-find-and-replace** 3.0.2 — https://github.com/syntax-tree/mdast-util-find-and-replace#readme
 - **mdast-util-from-markdown** 2.0.3 — https://github.com/syntax-tree/mdast-util-from-markdown#readme
+- **mdast-util-gfm** 3.1.0 — https://github.com/syntax-tree/mdast-util-gfm#readme
+- **mdast-util-gfm-autolink-literal** 2.0.1 — https://github.com/syntax-tree/mdast-util-gfm-autolink-literal#readme
+- **mdast-util-gfm-footnote** 2.1.0 — https://github.com/syntax-tree/mdast-util-gfm-footnote#readme
+- **mdast-util-gfm-strikethrough** 2.0.0 — https://github.com/syntax-tree/mdast-util-gfm-strikethrough#readme
+- **mdast-util-gfm-table** 2.0.0 — https://github.com/syntax-tree/mdast-util-gfm-table#readme
+- **mdast-util-gfm-task-list-item** 2.0.0 — https://github.com/syntax-tree/mdast-util-gfm-task-list-item#readme
 - **mdast-util-mdx-expression** 2.0.1 — https://github.com/syntax-tree/mdast-util-mdx-expression#readme
 - **mdast-util-mdx-jsx** 3.2.0 — https://github.com/syntax-tree/mdast-util-mdx-jsx#readme
 - **mdast-util-mdxjs-esm** 2.0.1 — https://github.com/syntax-tree/mdast-util-mdxjs-esm#readme
+- **mdast-util-newline-to-break** 2.0.0 — https://github.com/syntax-tree/mdast-util-newline-to-break#readme
 - **mdast-util-phrasing** 4.1.0 — https://github.com/syntax-tree/mdast-util-phrasing#readme
 - **mdast-util-to-hast** 13.2.1 — https://github.com/syntax-tree/mdast-util-to-hast#readme
 - **mdast-util-to-markdown** 2.1.2 — https://github.com/syntax-tree/mdast-util-to-markdown#readme
@@ -597,6 +728,14 @@ Generated from the resolved production graph: 787 packages across 18 licence buc
 - **metro-transform-worker** 0.83.7 — https://github.com/facebook/metro#readme
 - **micromark** 4.0.2 — https://github.com/micromark/micromark/tree/main#readme
 - **micromark-core-commonmark** 2.0.3 — https://github.com/micromark/micromark/tree/main#readme
+- **micromark-extension-directive** 4.0.0 — https://github.com/micromark/micromark-extension-directive#readme
+- **micromark-extension-gfm** 3.0.0 — https://github.com/micromark/micromark-extension-gfm#readme
+- **micromark-extension-gfm-autolink-literal** 2.1.0 — https://github.com/micromark/micromark-extension-gfm-autolink-literal#readme
+- **micromark-extension-gfm-footnote** 2.1.0 — https://github.com/micromark/micromark-extension-gfm-footnote#readme
+- **micromark-extension-gfm-strikethrough** 2.1.0 — https://github.com/micromark/micromark-extension-gfm-strikethrough#readme
+- **micromark-extension-gfm-table** 2.1.1 — https://github.com/micromark/micromark-extension-gfm-table#readme
+- **micromark-extension-gfm-tagfilter** 2.0.0 — https://github.com/micromark/micromark-extension-gfm-tagfilter#readme
+- **micromark-extension-gfm-task-list-item** 2.1.0 — https://github.com/micromark/micromark-extension-gfm-task-list-item#readme
 - **micromark-factory-destination** 2.0.1 — https://github.com/micromark/micromark/tree/main#readme
 - **micromark-factory-label** 2.0.1 — https://github.com/micromark/micromark/tree/main#readme
 - **micromark-factory-space** 2.0.1 — https://github.com/micromark/micromark/tree/main#readme
@@ -617,21 +756,27 @@ Generated from the resolved production graph: 787 packages across 18 licence buc
 - **micromark-util-symbol** 2.0.1 — https://github.com/micromark/micromark/tree/main#readme
 - **micromark-util-types** 2.0.2 — https://github.com/micromark/micromark/tree/main#readme
 - **micromatch** 4.0.8 — https://github.com/micromatch/micromatch
-- **mime** 1.6.0 — https://github.com/broofa/node-mime#readme
+- **mime** 1.6.0, 4.1.0 — https://github.com/broofa/mime#readme
 - **mime-db** 1.52.0, 1.54.0 — https://github.com/jshttp/mime-db#readme
 - **mime-types** 2.1.35, 3.0.2 — https://github.com/jshttp/mime-types#readme
 - **mimic-fn** 1.2.0 — https://github.com/sindresorhus/mimic-fn#readme
 - **mitt** 3.0.1 — https://github.com/developit/mitt
 - **mkdirp** 1.0.4 — https://github.com/isaacs/node-mkdirp#readme
-- **mnemonist** 0.39.8 — https://github.com/yomguithereal/mnemonist#readme
 - **motion** 13.1.1 — https://github.com/motiondivision/motion#readme
 - **motion-dom** 13.1.1 — https://github.com/motiondivision/motion#readme
 - **motion-utils** 13.0.0 — https://github.com/motiondivision/motion#readme
 - **ms** 2.0.0, 2.1.3 — https://github.com/vercel/ms#readme
+- **msgpackr** 2.0.6 — https://github.com/kriszyp/msgpackr#readme
+- **msgpackr-extract** 3.0.4 — https://github.com/kriszyp/msgpackr-extract#readme
+- **multipasta** 0.2.8 — https://github.com/tim-smart/multipasta#readme
 - **multitars** 1.0.1 — https://github.com/expo/multitars#readme
 - **nanoid** 3.3.16 — https://github.com/ai/nanoid#readme
 - **negotiator** 0.6.3, 0.6.4, 1.0.0 — https://github.com/jshttp/negotiator#readme
+- **node-addon-api** 7.1.1 — https://github.com/nodejs/node-addon-api
+- **node-gyp-build** 4.8.4 — https://github.com/prebuild/node-gyp-build
+- **node-gyp-build-optional-packages** 5.2.2 — https://github.com/prebuild/node-gyp-build
 - **node-int64** 0.4.0 — https://github.com/broofa/node-int64#readme
+- **node-pty** 1.1.0 — https://github.com/microsoft/node-pty
 - **node-releases** 2.0.51 — https://github.com/chicoxyzzy/node-releases#readme
 - **normalize-path** 3.0.0 — https://github.com/jonschlinkert/normalize-path
 - **npm-run-path** 6.0.0 — https://github.com/sindresorhus/npm-run-path#readme
@@ -639,7 +784,6 @@ Generated from the resolved production graph: 787 packages across 18 licence buc
 - **ob1** 0.83.7 — https://github.com/facebook/metro#readme
 - **object-assign** 4.1.1 — https://github.com/sindresorhus/object-assign#readme
 - **object-inspect** 1.13.4 — https://github.com/inspect-js/object-inspect
-- **obliterator** 2.0.5 — https://github.com/yomguithereal/obliterator#readme
 - **on-finished** 2.3.0, 2.4.1 — https://github.com/jshttp/on-finished#readme
 - **on-headers** 1.1.0 — https://github.com/jshttp/on-headers#readme
 - **onetime** 2.0.1 — https://github.com/sindresorhus/onetime#readme
@@ -650,10 +794,10 @@ Generated from the resolved production graph: 787 packages across 18 licence buc
 - **p-limit** 2.3.0 — https://github.com/sindresorhus/p-limit#readme
 - **p-locate** 4.1.0 — https://github.com/sindresorhus/p-locate#readme
 - **p-try** 2.2.0 — https://github.com/sindresorhus/p-try#readme
-- **pandemonium** 2.4.1 — https://github.com/yomguithereal/pandemonium#readme
 - **parse-entities** 4.0.2 — https://github.com/wooorm/parse-entities#readme
 - **parse-ms** 4.0.0 — https://github.com/sindresorhus/parse-ms#readme
 - **parse-png** 2.1.0 — https://github.com/kevva/parse-png#readme
+- **parse5** 7.3.0 — https://parse5.js.org
 - **parseurl** 1.3.3 — https://github.com/pillarjs/parseurl#readme
 - **path-exists** 4.0.0 — https://github.com/sindresorhus/path-exists#readme
 - **path-is-absolute** 1.0.1 — https://github.com/sindresorhus/path-is-absolute#readme
@@ -666,13 +810,18 @@ Generated from the resolved production graph: 787 packages across 18 licence buc
 - **plist** 3.1.1 — https://github.com/TooTallNate/node-plist#readme
 - **pngjs** 3.4.0 — https://github.com/lukeapage/pngjs
 - **postcss** 8.5.25 — https://postcss.org/
+- **preact** 11.0.0-beta.0 — https://preactjs.com
+- **preact-render-to-string** 6.6.5 — https://github.com/preactjs/preact-render-to-string
 - **pretty-format** 29.7.0 — https://github.com/jestjs/jest#readme
 - **pretty-ms** 9.3.0 — https://github.com/sindresorhus/pretty-ms#readme
+- **prismjs** 1.30.0 — https://github.com/PrismJS/prism#readme
+- **process-nextick-args** 2.0.1 — https://github.com/calvinmetcalf/process-nextick-args
 - **progress** 2.0.3 — https://github.com/visionmedia/node-progress#readme
 - **promise** 8.3.0 — https://github.com/then/promise#readme
 - **prompts** 2.4.2 — https://github.com/terkelg/prompts#readme
 - **property-information** 7.2.0 — https://github.com/wooorm/property-information#readme
 - **proxy-addr** 2.0.7 — https://github.com/jshttp/proxy-addr#readme
+- **pure-rand** 8.4.2 — https://github.com/dubzzz/pure-rand#readme
 - **query-string** 7.1.3 — https://github.com/sindresorhus/query-string#readme
 - **queue** 6.0.2 — https://github.com/jessetane/queue#readme
 - **range-parser** 1.2.1 — https://github.com/jshttp/range-parser#readme
@@ -693,7 +842,10 @@ Generated from the resolved production graph: 787 packages across 18 licence buc
 - **react-remove-scroll** 2.7.2 — https://github.com/theKashey/react-remove-scroll#readme
 - **react-remove-scroll-bar** 2.3.8 — https://github.com/theKashey/react-remove-scroll-bar#readme
 - **react-style-singleton** 2.2.3 — https://github.com/theKashey/react-style-singleton#readme
+- **readable-stream** 2.3.8 — https://github.com/nodejs/readable-stream#readme
 - **readdirp** 5.0.0 — https://github.com/paulmillr/readdirp
+- **redis-errors** 1.2.0 — https://github.com/NodeRedis/redis-errors#readme
+- **redis-parser** 3.0.0 — https://github.com/NodeRedis/node-redis-parser#readme
 - **regenerate** 1.4.2 — https://mths.be/regenerate
 - **regenerate-unicode-properties** 10.2.2 — https://github.com/mathiasbynens/regenerate-unicode-properties
 - **regenerator-runtime** 0.13.11 — https://github.com/facebook/regenerator/tree/main#readme
@@ -703,8 +855,13 @@ Generated from the resolved production graph: 787 packages across 18 licence buc
 - **regexparam** 3.0.0 — https://github.com/lukeed/regexparam#readme
 - **regexpu-core** 6.4.0 — https://mths.be/regexpu
 - **regjsgen** 0.8.0 — https://github.com/bnjmnt4n/regjsgen
+- **rehype-raw** 7.0.0 — https://github.com/rehypejs/rehype-raw#readme
+- **rehype-sanitize** 6.0.0 — https://github.com/rehypejs/rehype-sanitize#readme
+- **remark-breaks** 4.0.0 — https://github.com/remarkjs/remark-breaks#readme
+- **remark-gfm** 4.0.1 — https://github.com/remarkjs/remark-gfm#readme
 - **remark-parse** 11.0.0 — https://remark.js.org
 - **remark-rehype** 11.1.2 — https://github.com/remarkjs/remark-rehype#readme
+- **remark-stringify** 11.0.0 — https://remark.js.org
 - **require-directory** 2.1.1 — https://github.com/troygoode/node-require-directory/
 - **require-from-string** 2.0.2 — https://github.com/floatdrop/require-from-string#readme
 - **reselect** 5.2.0 — https://github.com/reduxjs/reselect#readme
@@ -713,13 +870,16 @@ Generated from the resolved production graph: 787 packages across 18 licence buc
 - **resolve-workspace-root** 2.0.1 — https://github.com/byCedric/resolve-workspace-root#readme
 - **restore-cursor** 2.0.0 — https://github.com/sindresorhus/restore-cursor#readme
 - **router** 2.2.0 — https://github.com/pillarjs/router#readme
-- **safe-buffer** 5.2.1 — https://github.com/feross/safe-buffer
+- **safe-buffer** 5.1.2, 5.2.1 — https://github.com/feross/safe-buffer
 - **safer-buffer** 2.1.2 — https://github.com/ChALkeR/safer-buffer#readme
 - **scheduler** 0.27.0 — https://react.dev/
 - **send** 0.19.2, 1.2.1 — https://github.com/pillarjs/send#readme
 - **serialize-error** 2.1.0 — https://github.com/sindresorhus/serialize-error#readme
+- **seroval** 1.6.4 — https://github.com/lxsmnsyc/seroval/tree/main/packages/seroval
+- **seroval-plugins** 1.6.4 — https://github.com/lxsmnsyc/seroval/tree/main/packages/plugins
 - **serve-static** 1.16.3, 2.2.1 — https://github.com/expressjs/serve-static#readme
 - **server-only** 0.0.1 — https://reactjs.org/
+- **setimmediate** 1.0.5 — https://github.com/YuzuJS/setImmediate#readme
 - **sf-symbols-typescript** 2.2.0 — https://github.com/nandorojo/typescript-sf-symbols#readme
 - **shallowequal** 1.1.0 — https://github.com/dashed/shallowequal#readme
 - **shebang-command** 2.0.0 — https://github.com/kevva/shebang-command#readme
@@ -741,10 +901,12 @@ Generated from the resolved production graph: 787 packages across 18 licence buc
 - **stack-utils** 2.0.6 — https://github.com/tapjs/stack-utils#readme
 - **stackframe** 1.3.4 — https://www.stacktracejs.com
 - **stacktrace-parser** 0.1.11 — https://github.com/errwischt/stacktrace-parser
+- **standard-as-callback** 2.1.0 — https://github.com/luin/asCallback#readme
 - **standard-navigation** 0.0.8 — https://github.com/react-navigation/standard-navigation#readme
 - **standardwebhooks** 1.0.0 — https://github.com/standard-webhooks/standard-webhooks/tree/main/libraries/javascript
 - **statuses** 1.5.0, 2.0.2 — https://github.com/jshttp/statuses#readme
 - **strict-uri-encode** 2.0.0 — https://github.com/kevva/strict-uri-encode#readme
+- **string_decoder** 1.1.1 — https://github.com/nodejs/string_decoder
 - **string-width** 4.2.3 — https://github.com/sindresorhus/string-width#readme
 - **stringify-entities** 4.0.4 — https://github.com/wooorm/stringify-entities#readme
 - **strip-ansi** 5.2.0, 6.0.1 — https://github.com/chalk/strip-ansi#readme
@@ -755,12 +917,14 @@ Generated from the resolved production graph: 787 packages across 18 licence buc
 - **supports-color** 5.5.0, 7.2.0, 8.1.1 — https://github.com/chalk/supports-color#readme
 - **supports-hyperlinks** 2.3.0 — https://github.com/jamestalmage/supports-hyperlinks#readme
 - **supports-preserve-symlinks-flag** 1.0.0 — https://github.com/inspect-js/node-supports-preserve-symlinks-flag#readme
+- **tabbable** 6.5.0 — https://github.com/focus-trap/tabbable#readme
 - **tagged-tag** 1.0.0 — https://github.com/sindresorhus/tagged-tag#readme
 - **tailwind-merge** 3.6.0 — https://github.com/dcastil/tailwind-merge
 - **terminal-link** 2.1.1 — https://github.com/sindresorhus/terminal-link#readme
 - **throat** 5.0.0 — https://github.com/ForbesLindesay/throat#readme
 - **to-regex-range** 5.0.1 — https://github.com/micromatch/to-regex-range
 - **toidentifier** 1.0.1 — https://github.com/component/toidentifier#readme
+- **toml** 4.3.0 — https://github.com/BinaryMuse/toml-node#readme
 - **toqr** 0.1.1 — https://github.com/kitten/toqr#readme
 - **trim-lines** 3.0.1 — https://github.com/wooorm/trim-lines#readme
 - **trough** 2.2.0 — https://github.com/wooorm/trough#readme
@@ -768,7 +932,8 @@ Generated from the resolved production graph: 787 packages across 18 licence buc
 - **tw-animate-css** 1.4.0 — https://github.com/Wombosvideo/tw-animate-css#readme
 - **type-detect** 4.0.8 — https://github.com/chaijs/type-detect#readme
 - **type-is** 2.1.0 — https://github.com/jshttp/type-is#readme
-- **undici-types** 7.16.0 — https://undici.nodejs.org
+- **undici** 7.29.0, 8.10.0 — https://undici.nodejs.org
+- **undici-types** 7.16.0, 7.18.2 — https://undici.nodejs.org
 - **unicode-canonical-property-names-ecmascript** 2.0.1 — https://github.com/mathiasbynens/unicode-canonical-property-names-ecmascript
 - **unicode-match-property-ecmascript** 2.0.0 — https://github.com/mathiasbynens/unicode-match-property-ecmascript
 - **unicode-match-property-value-ecmascript** 2.2.1 — https://github.com/mathiasbynens/unicode-match-property-value-ecmascript
@@ -787,23 +952,28 @@ Generated from the resolved production graph: 787 packages across 18 licence buc
 - **use-latest-callback** 0.2.6 — https://github.com/satya164/use-latest-callback#readme
 - **use-sidecar** 1.1.3 — https://github.com/theKashey/use-sidecar
 - **use-sync-external-store** 1.6.0 — https://github.com/facebook/react#readme
+- **utf-8-validate** 6.0.6 — https://github.com/websockets/utf-8-validate
+- **util-deprecate** 1.0.2 — https://github.com/TooTallNate/util-deprecate
 - **utils-merge** 1.0.1 — https://github.com/jaredhanson/utils-merge#readme
 - **uuid** 7.0.3, 14.0.1 — https://github.com/uuidjs/uuid#readme
 - **vary** 1.1.2 — https://github.com/jshttp/vary#readme
 - **vaul** 1.1.2 — https://vaul.emilkowal.ski/
 - **vfile** 6.0.3 — https://github.com/vfile/vfile#readme
+- **vfile-location** 5.0.3 — https://github.com/vfile/vfile-location#readme
 - **vfile-message** 4.0.3 — https://github.com/vfile/vfile-message#readme
 - **vlq** 1.0.1 — https://github.com/Rich-Harris/vlq#readme
 - **warn-once** 0.1.1 — https://github.com/satya164/warn-once#readme
 - **wcwidth** 1.0.1 — https://github.com/timoxley/wcwidth#readme
+- **web-namespaces** 2.0.1 — https://github.com/wooorm/web-namespaces#readme
 - **whatwg-fetch** 3.6.20 — https://github.com/github/fetch#readme
 - **whatwg-url-minimum** 0.1.2 — https://github.com/kitten/whatwg-url-minimum#readme
 - **which-command** 0.1.0 — https://github.com/sindresorhus/which-command#readme
 - **wrap-ansi** 7.0.0 — https://github.com/chalk/wrap-ansi#readme
-- **ws** 7.5.13, 8.21.1 — https://github.com/websockets/ws
+- **ws** 7.5.13, 8.21.1, 8.21.3 — https://github.com/websockets/ws
 - **xml2js** 0.6.0 — https://github.com/Leonidas-from-XIV/node-xml2js
 - **xmlbuilder** 11.0.1, 15.1.1 — http://github.com/oozcitak/xmlbuilder-js
 - **yargs** 17.7.2 — https://yargs.js.org/
+- **yjs** 13.6.32 — https://docs.yjs.dev
 - **yoctocolors** 2.2.0 — https://github.com/sindresorhus/yoctocolors#readme
 - **zod** 3.25.76, 4.4.3 — https://zod.dev
 - **zustand** 5.0.14 — https://github.com/pmndrs/zustand
@@ -826,10 +996,8 @@ Generated from the resolved production graph: 787 packages across 18 licence buc
 
 ## OFL-1.1
 
-- **@fontsource-variable/fraunces** 5.3.0 — https://fontsource.org/fonts/fraunces
 - **@fontsource-variable/geist** 5.3.0 — https://fontsource.org/fonts/geist
 - **@fontsource-variable/geist-mono** 5.3.0 — https://fontsource.org/fonts/geist-mono
-- **@fontsource-variable/newsreader** 5.3.0 — https://fontsource.org/fonts/newsreader
 
 ## Python-2.0
 
@@ -837,12 +1005,13 @@ Generated from the resolved production graph: 787 packages across 18 licence buc
 
 ## Unknown
 
-- **@anthropic-ai/claude-agent-sdk** 0.3.223 — https://github.com/anthropics/claude-agent-sdk-typescript
-- **@anthropic-ai/claude-agent-sdk-darwin-arm64** 0.3.223
+- **@anthropic-ai/claude-agent-sdk** 0.3.170, 0.3.223 — https://github.com/anthropics/claude-agent-sdk-typescript
+- **@anthropic-ai/claude-agent-sdk-darwin-arm64** 0.3.170, 0.3.223
 
 ## Unlicense
 
 - **big-integer** 1.6.52 — https://github.com/peterolson/BigInteger.js#readme
 - **fast-sha256** 1.3.0 — https://github.com/dchest/fast-sha256-js#readme
+- **isbot** 5.2.1 — https://isbot.js.org
 - **stream-buffers** 2.2.0 — https://github.com/samcday/node-stream-buffer#readme
 - **wouter** 3.10.0 — https://github.com/molefrog/wouter#readme

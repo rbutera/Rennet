@@ -1,6 +1,6 @@
 {
   "name": "@rennet/app-ui",
-  "version": "0.9.8",
+  "version": "0.10.2",
   "private": true,
   "type": "module",
   "exports": "./src/index.ts",
@@ -9,6 +9,7 @@
     "@rennet/theme": "workspace:*",
     "@rennet/ui": "workspace:*",
     "@shikijs/langs": "4.4.3",
+    "@tanstack/react-table": "9.2.4",
     "lucide-react": "1.31.0",
     "motion": "13.1.1",
     "react": "19.2.8",

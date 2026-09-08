@@ -124,6 +124,8 @@ export interface TurnSettlement {
   readonly durationMs?: number;
   /** The provider's raw usage record (Claude's SDK `usage`), unparsed. */
   readonly usage?: unknown;
+  readonly modelUsage?: unknown;
+  readonly usageEpoch?: string;
   readonly totalCostUsd?: number;
   readonly errorMessage?: string;
   /**
@@ -132,13 +134,11 @@ export interface TurnSettlement {
   readonly tokenUsage?: unknown;
   /** Codex turn totals derived from durable counters with exact provider turn identity. */
   readonly aggregateUsage?: unknown;
-  /**
-   * The nearest earlier settled turn's usage on this thread. Claude's counter is
-   * cumulative over the session, so a turn's own spend is the difference — read off the
-   * thread itself, so a wait that starts fresh (a recreated runner, a restarted daemon)
-   * subtracts the same as one that watched every turn.
-   */
-  readonly previousUsage?: { readonly usage: unknown; readonly totalCostUsd?: number };
+  /** Earlier main-loop usage and cumulative model totals, with the query epoch for attribution. */
+  readonly previousUsage?: Pick<
+    TurnSettlement,
+    "usage" | "modelUsage" | "usageEpoch" | "totalCostUsd"
+  >;
 }
 
 export interface TurnOutcome extends TurnSettlement {
@@ -778,17 +778,17 @@ export function readTurnSettlement(
     const activity = activities[i];
     return activity?.kind === "turn.settled" && activity.turnId !== turnId ? activity : undefined;
   };
-  // The nearest earlier settlement that carried usage; the nearest one at all bounds
-  // this turn's span from below.
+  // An unmeasured settlement still bounds this turn; skipping it would attribute its spend to this turn.
   let previousUsage: TurnSettlement["previousUsage"];
   let spanStart = -1;
   for (let i = settledAt - 1; i >= 0; i -= 1) {
     const earlier = asRecord(otherSettlement(i)?.payload);
     if (earlier === null) continue;
     if (spanStart === -1) spanStart = i;
-    if (earlier.usage === undefined) continue;
     previousUsage = {
-      usage: earlier.usage,
+      ...(earlier.usage === undefined ? {} : { usage: earlier.usage }),
+      ...(earlier.modelUsage === undefined ? {} : { modelUsage: earlier.modelUsage }),
+      ...(typeof earlier.usageEpoch === "string" ? { usageEpoch: earlier.usageEpoch } : {}),
       ...(typeof earlier.totalCostUsd === "number" ? { totalCostUsd: earlier.totalCostUsd } : {}),
     };
     break;
@@ -816,6 +816,8 @@ export function readTurnSettlement(
     ...(record.structuredOutput === undefined ? {} : { structuredOutput: record.structuredOutput }),
     ...(durationMs === undefined ? {} : { durationMs }),
     ...(record.usage === undefined ? {} : { usage: record.usage }),
+    ...(record.modelUsage === undefined ? {} : { modelUsage: record.modelUsage }),
+    ...(typeof record.usageEpoch === "string" ? { usageEpoch: record.usageEpoch } : {}),
     ...(totalCostUsd === undefined ? {} : { totalCostUsd }),
     ...(errorMessage === undefined ? {} : { errorMessage }),
     ...(tokenUsage === undefined ? {} : { tokenUsage }),

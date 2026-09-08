@@ -5,10 +5,19 @@ answer for the change without having written it. Find the specification this
 branch was written against, if the repository holds one, and render it as a
 readable document that keeps its language and its link to the reviewed change.
 
-Nothing is handed to you. The specification is a set of files in the checkout
-you are standing in, and you find them the same way you find the code.
+Nothing is handed to you inline. The specification is a set of files in the
+checkout you are standing in, and you read them the same way you read the code.
 
 {{investigate-before-you-draft}}
+
+## When the host has already located the specification
+
+If your context directory lists `design-sources.md`, the host has located this
+branch's specification from the change's own paths and read it at the reviewed
+tree: that file names the format and every artifact path. Those files are the
+specification. Read them and render them. Do not search for another, do not
+prefer a neighbouring document, and do not settle absent. The rest of this
+section applies only when no such file is listed.
 
 ## Find the specification for this branch
 
