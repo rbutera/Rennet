@@ -1,12 +1,16 @@
-import { basename } from "node:path";
+import { basename, join } from "node:path";
 import {
   assertWorktreePattern,
   branchWorktreePath,
   type ConventionCatalogueLoad,
   compareVersions,
+  expandWorktreeRootForWrite,
   prWorktreePath,
   type RepoPrefField,
+  repoKeyForRoot,
   resolveWorktreeRoot,
+  type WorktreeRepoFacts,
+  type WorktreeRepoIdentity,
 } from "@rennet/adapters";
 import {
   type CouncilOverrideReader,
@@ -71,16 +75,13 @@ import { benchmarkRecordingEnabled } from "@rennet/protocol";
 
 /**
  * The repository facts a placement preview substitutes (workspace-settings D3) — read
- * per REPOSITORY, by its own path. Both are honestly absent when git cannot answer, and
- * the preview then falls back to what the binding itself would: `local` for an owner no
- * remote resolves, `main` for a branch nothing reports.
+ * per REPOSITORY, by its own path, and DEFINED IN ADAPTERS beside the token builders that
+ * consume them, because the binding reads the same shape from the same function. Every
+ * field is honestly absent when git cannot answer, and the fallback then lives in one
+ * place (`branchTokens` / `prTokens`): `local` for an owner no remote resolves, the
+ * folder's own basename for a name, `main` for a branch nothing reports.
  */
-export interface WorktreeRepoFacts {
-  /** The forge owner of the repository's resolved remote, when one resolves. */
-  readonly owner?: string;
-  /** The repository's current branch. */
-  readonly branch?: string;
-}
+export type { WorktreeRepoFacts };
 
 /** The minimal on-disk config states this composition reads, from the two stores. */
 export interface SettingsCompositionDeps {
@@ -574,13 +575,28 @@ const NUMERIC_VERSION = /^\d+(\.\d+)*$/;
  */
 const PROJECT_PREF: Record<
   SettingsProjectValueKey,
-  { readonly field: RepoPrefField; readonly validate: (value: string) => string }
+  {
+    readonly field: RepoPrefField;
+    readonly validate: (value: string) => string;
+    /** A filesystem LOCATION: expanded and made absolute against the data dir before it
+     *  is persisted, which the caller does because only it holds the data dir. */
+    readonly expandsRoot?: boolean;
+  }
 > = {
   glyph: { field: "glyph", validate: SETTINGS_REGISTRY.projectGlyph.validate },
   // The mark vocabulary is enforced by the SAME validator the resolver reads by, so
   // `mark: "photo"` is refused at the write rather than resolving to nothing later.
   mark: { field: "mark", validate: SETTINGS_REGISTRY.projectMark.validate },
-  worktreeRoot: { field: "worktreeBaseDir", validate: SETTINGS_REGISTRY.worktreeBaseDir.validate },
+  // A written location is EXPANDED AND MADE ABSOLUTE here, at the write (D1 and the
+  // spec delta). Storing `~/trees` verbatim makes the same bytes mean two directories on
+  // two machines, and the row would then show a string the daemon re-interprets on every
+  // read. `expandsRoot` is the flag that says "this key needs the data dir", which the
+  // module-level table cannot reach — `setProjectValue` supplies it.
+  worktreeRoot: {
+    field: "worktreeBaseDir",
+    validate: SETTINGS_REGISTRY.worktreeBaseDir.validate,
+    expandsRoot: true,
+  },
   // A pattern is RENDERED with placeholder tokens before it is persisted, so a pattern
   // that would place a worktree outside the root — or name a token its grammar does not
   // have — is refused with git-level honesty about which, and the file is never touched.
@@ -825,12 +841,20 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
       // checkouts, how it names them, and whether it works inside a tree the reviewer
       // has open are facts about the machine that binds — the same argument that put
       // `tracker` there. The repo rung is the project's own `config.json`.
+      // The BUILTIN is the real directory, not "" (D1: `join(dataDir, "worktrees")`,
+      // computed at resolution time). An untouched repository's row shows the path the
+      // daemon would actually create, labelled `builtin` — an empty builtin left the row
+      // saying nothing while placement used a path, which is the reader's problem to
+      // translate and the surface's job to state.
       worktreeRoot: layered(
-        resolve(SETTINGS_REGISTRY.worktreeBaseDir, {
-          detected: offer(detected.worktreeBaseDir),
-          global: offer(globalWorktrees.root),
-          repo: offer(config?.worktreeBaseDir),
-        }),
+        resolve(
+          { ...SETTINGS_REGISTRY.worktreeBaseDir, builtinDefault: join(deps.dataDir, "worktrees") },
+          {
+            detected: offer(detected.worktreeBaseDir),
+            global: offer(globalWorktrees.root),
+            repo: offer(config?.worktreeBaseDir),
+          },
+        ),
       ),
       worktreePattern: layered(
         resolve(SETTINGS_REGISTRY.worktreePattern, {
@@ -903,28 +927,52 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
     facts: WorktreeRepoFacts | undefined,
   ): SettingsProject["worktreePreview"] => {
     const root = resolveWorktreeRoot(deps.dataDir, prefs.worktreeRoot.value);
-    const owner = facts?.owner ?? "local";
-    const name = basename(target.repoPath);
+    // `{repo}` through the SAME route the binding spells it — `escapePath(realpath(root))`,
+    // not `escapePath(gitTopLevel)`. `RepoTarget.repoKey` is the snapshot-store key and
+    // skips the realpath, which is a different directory the moment a symlink is in the
+    // path (`/var` → `/private/var`), and a preview that names a different directory from
+    // the bind is #812 again.
+    const identity: WorktreeRepoIdentity = {
+      repoKey: repoKeyForRoot(target.repoPath),
+      repoRoot: target.repoPath,
+      ...facts,
+    };
     try {
       return {
-        branch: branchWorktreePath(root, prefs.worktreePattern.value, {
-          repo: target.repoKey,
-          name,
-          owner,
-          // The repository's own current branch is the honest sample; `main` is what a
-          // repository with no readable branch (a fresh clone, an unreachable locus) gets.
-          branch: facts?.branch ?? "main",
-        }),
-        pullRequest: prWorktreePath(root, prefs.prWorktreePattern.value, {
-          owner,
-          name,
-          repo: target.repoKey,
-          number: 1,
-        }),
+        // The repository's own current branch is the honest sample; `main` is what a
+        // repository with no readable branch (a fresh clone, an unreachable locus) gets.
+        branch: branchWorktreePath(
+          root,
+          prefs.worktreePattern.value,
+          identity,
+          facts?.branch ?? "main",
+        ),
+        pullRequest: prWorktreePath(root, prefs.prWorktreePattern.value, identity, 1),
       };
     } catch {
       return undefined;
     }
+  };
+
+  /**
+   * A per-OPERATION reader of `worktreeFacts` (memoised, one `Map` per call of the
+   * factory — never module-level, because a repository's remote can change while the
+   * daemon runs and a long-lived cache would preview a stale one).
+   *
+   * `settings.get()` resolves every row through ONE of these, and so does each write
+   * that re-resolves a row twice (`pinRepoValue`). The facts are a git subprocess per
+   * repository: sequential, per-row spawns made every settings mutation — and every
+   * mutation invalidates `settings.get` on the client — cost one round trip per repo.
+   */
+  const factsReader = (): ((repoPath: string) => Promise<WorktreeRepoFacts | undefined>) => {
+    const inFlight = new Map<string, Promise<WorktreeRepoFacts | undefined>>();
+    return (repoPath) => {
+      const cached = inFlight.get(repoPath);
+      if (cached !== undefined) return cached;
+      const pending = Promise.resolve(deps.worktreeFacts?.(repoPath)).catch(() => undefined);
+      inFlight.set(repoPath, pending);
+      return pending;
+    };
   };
 
   const resolveRow = async (
@@ -935,6 +983,9 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
      *  (the mark's `detected` rung). Defaults to this row's own, which is the whole set
      *  for a single-repo project. */
     projectRepoKeys: readonly string[] = [target.repoKey],
+    /** The operation's facts reader. Defaults to a fresh one, which is exactly right for
+     *  a single-row resolution and shares nothing across operations. */
+    readFacts: (repoPath: string) => Promise<WorktreeRepoFacts | undefined> = factsReader(),
   ): Promise<SettingsProject> => {
     const configState = deps.loadConfigState(target.repoKey);
     const configMalformed = configState.status === "malformed";
@@ -948,7 +999,7 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
     const prefs = resolvePrefs(target, config, projectRepoKeys);
     // THIS repository's facts, asked for by its own path — the row named the repo, so
     // the repo answers. A project id could not: it maps to many.
-    const preview = worktreePreview(target, prefs, await deps.worktreeFacts?.(target.repoPath));
+    const preview = worktreePreview(target, prefs, await readFacts(target.repoPath));
     return {
       projectId: project.id,
       name: multiRepo ? `${project.name} · ${basename(target.repoPath)}` : project.name,
@@ -1077,9 +1128,15 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
     get: async (): Promise<SettingsView> => {
       const schemeState = deps.readGlobalState();
       const scheme = resolveScheme(schemeState.config);
-      const projects: SettingsProject[] = [];
       const emittedRepoPaths = new Set<string>();
       const allProjects = deps.listProjects();
+      const rows: Promise<SettingsProject>[] = [];
+      // ONE facts reader for the whole view, and the rows resolve CONCURRENTLY. Each row
+      // costs a git subprocess for its remote and branch; awaited in the loop they
+      // serialised across every project × repo, and every settings mutation invalidates
+      // `settings.get` on the client — so flipping appearance on an 8-repo workspace paid
+      // 8 sequential spawns, and a WSL locus makes each of those a distro round trip.
+      const readFacts = factsReader();
       for (const project of allProjects) {
         const targets = await targetsFor(project);
         const multiRepo = targets.length > 1;
@@ -1087,9 +1144,11 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
         for (const target of targets) {
           if (emittedRepoPaths.has(target.repoPath)) continue;
           emittedRepoPaths.add(target.repoPath);
-          projects.push(await resolveRow(project, target, multiRepo, repoKeys));
+          rows.push(resolveRow(project, target, multiRepo, repoKeys, readFacts));
         }
       }
+      // `Promise.all` preserves the push order, so the view's row order is unchanged.
+      const projects: SettingsProject[] = await Promise.all(rows);
       return {
         scheme: scheme.value,
         schemeProvenance: scheme.provenance,
@@ -1439,16 +1498,25 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
         workspace: SETTINGS_REGISTRY.workspace,
       }[input.key];
       const validated = input.value === null ? null : declaration.validate(input.value);
-      // The host rung's patterns render on exactly the terms the repo rung's do.
-      const value =
-        validated !== null && (input.key === "pattern" || input.key === "prPattern")
-          ? checkedPattern(input.key === "pattern" ? "branch" : "pull-request", validated)
-          : validated;
+      // The host rung's patterns render, and its root expands, on exactly the terms the
+      // repo rung's do — one law for both files (D1/D2).
+      let value = validated;
+      if (validated !== null && (input.key === "pattern" || input.key === "prPattern")) {
+        value = checkedPattern(input.key === "pattern" ? "branch" : "pull-request", validated);
+      } else if (validated !== null && input.key === "root") {
+        value = expandWorktreeRootForWrite(deps.dataDir, validated);
+      }
       const written = deps.updateDaemon((current) => {
         const worktrees = { ...current.worktrees };
         if (value === null) delete worktrees[input.key];
         else worktrees[input.key] = value as never;
-        return { ...current, worktrees };
+        // A reset of the LAST key takes the section with it: an empty `worktrees: {}` in
+        // `daemon-settings.json` is a shape the reader has to interpret as "unset", and
+        // the file should just say nothing about worktrees.
+        const next = { ...current };
+        if (Object.keys(worktrees).length === 0) delete next.worktrees;
+        else next.worktrees = worktrees;
+        return next;
       });
       return written.worktrees ?? {};
     },
@@ -1468,8 +1536,15 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
       // things depending on the key. Everything else validates through the registry
       // declaration the RESOLVER reads by, so the write and the read cannot disagree about
       // what a legal value is.
-      const validated =
+      const checked =
         input.value === null || input.value === "" ? null : pref.validate(input.value);
+      // A location is stored EXPANDED AND ABSOLUTE (D1): `~/trees` becomes this user's
+      // home, a relative value resolves against the data dir, and `~someone/…` is refused
+      // with its reason rather than persisted as a literal `~someone` directory.
+      const validated =
+        checked !== null && pref.expandsRoot
+          ? expandWorktreeRootForWrite(deps.dataDir, checked)
+          : checked;
       deps.writeRepoValue({
         repoKey: live.target.repoKey,
         field: pref.field,
@@ -1591,7 +1666,16 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
       }
       // Resolve the value at command time (not the renderer's snapshot), then write
       // it at the repo layer through the setter that owns that key's side effects.
-      const current = await resolveRow(live.project, live.target, live.multiRepo, live.repoKeys);
+      // Both resolutions share ONE facts reader: this is the same repository twice in
+      // one operation, and its remote is not going to change between the two reads.
+      const readFacts = factsReader();
+      const current = await resolveRow(
+        live.project,
+        live.target,
+        live.multiRepo,
+        live.repoKeys,
+        readFacts,
+      );
       await deps.applyVisibility({
         repoKey: live.target.repoKey,
         repoRoot: live.target.repoRoot,
@@ -1600,7 +1684,13 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
       return {
         status: "applied",
         key: input.key,
-        project: await resolveRow(live.project, live.target, live.multiRepo, live.repoKeys),
+        project: await resolveRow(
+          live.project,
+          live.target,
+          live.multiRepo,
+          live.repoKeys,
+          readFacts,
+        ),
       };
     },
   };

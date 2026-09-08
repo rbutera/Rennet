@@ -104,6 +104,7 @@ import {
   readTreeLineCounts,
   recordedVisibility,
   refreshGitHubCredential,
+  repoKeyForRoot,
   repoKeyOf,
   repositoryIdentity,
   resolveForgeRemote,
@@ -123,6 +124,7 @@ import {
   TranscriptStore,
   type TurnMetric,
   validateGitHubToken,
+  type WorktreeRepoFacts,
   withRepoPref,
   wslDiscoveryDeps,
   wslForgeDetectionDeps,
@@ -142,7 +144,6 @@ import {
   DEFAULT_REVIEW_INTELLIGENCE_BUDGET,
   decompose,
   detectLocus,
-  escapePath,
   type ForgePort,
   type ForgePullRequestRef,
   findingDispositionMigrationEvents,
@@ -1320,13 +1321,35 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
 
   const gitForRepo = gitForRepoFactory(locusForRepo);
 
-  /** The ProjectSnapshot store key for a repo root: `escapePath(realpath(top-level))` (design §1.1). */
-  function repoKeyForRoot(repoRoot: string): string {
-    try {
-      return escapePath(realpathSync(repoRoot));
-    } catch {
-      return escapePath(repoRoot);
-    }
+  /**
+   * ONE repository's placement facts — the forge owner and remote name its `{owner}` /
+   * `{name}` tokens render as, and its current branch for the preview's sample
+   * (workspace-settings D1/D2/D3).
+   *
+   * One function, two callers: the settings row's preview and the session binding. They
+   * were two, and they disagreed — the preview blessed `{owner}` while the bind site
+   * supplied no owner at all, so a stored `{owner}/{branch}` previewed a path the
+   * binding would have thrown on. Asked by REPOSITORY ROOT, never by project id: a
+   * workspace maps many repos to one identity and that mapping is not invertible.
+   *
+   * Degrades honestly and identically on both sides — an unreadable remote or branch is
+   * simply absent, and the token builders supply `local` / the folder basename / `main`.
+   */
+  async function worktreeFactsFor(repoRoot: string): Promise<WorktreeRepoFacts> {
+    const git = gitForRepo(repoRoot);
+    const remote = await resolveForgeRemote(git, repoRoot, {
+      supportsForge: (forge) => forgePrSubmissionResolvers.has(forge),
+    }).catch(() => undefined);
+    const branch = await git(repoRoot, ["branch", "--show-current"], { reject: false })
+      .then((value) => value.trim() || undefined)
+      .catch(() => undefined);
+    const owner = remote?.identity.owner;
+    const remoteName = remote?.identity.name;
+    return {
+      ...(owner ? { owner } : {}),
+      ...(remoteName ? { remoteName } : {}),
+      ...(branch ? { branch } : {}),
+    };
   }
 
   const capture = new GitCaptureAdapter(
@@ -2221,6 +2244,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       locusOf: locusForRepo,
       repoKeyForRoot,
       dataDir,
+      worktreeFacts: worktreeFactsFor,
       prWorktreeFor: (reviewId: string) => readPrWorktreeIndex()[reviewId]?.path,
       recordPrWorktree,
       // Fire and forget, exactly as the pull-request front door runs it: a slow install
@@ -2321,11 +2345,17 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // here never blocks the review — the diff and conversation need no checkout.
     try {
       const placement = defaultWorktreePlacement(dataDir);
-      const worktree = prWorktreePath(placement.root, placement.prPattern, {
-        owner: prRef.repo.owner,
-        name: prRef.repo.name,
-        number: prRef.number,
-      });
+      const worktree = prWorktreePath(
+        placement.root,
+        placement.prPattern,
+        {
+          repoKey: repoKeyForRoot(root),
+          repoRoot: root,
+          owner: prRef.repo.owner,
+          remoteName: prRef.repo.name,
+        },
+        prRef.number,
+      );
       const { created } = await ensurePrWorktree(gitInLocus, root, worktree, pr.headOid);
       recordPrWorktree(review.id, worktree);
       if (created) {
@@ -4682,21 +4712,9 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       return result.repos.map((repo) => repo.path);
     },
     // ONE repository's placement facts for the preview (workspace-settings D3), asked
-    // for by the ROW's own repo path — the same remote resolution submission uses, and
-    // the repository's own current branch. Both degrade honestly: a repo with no forge
-    // remote previews `local`, one with no readable branch previews `main`.
-    worktreeFacts: async (repoRoot) => {
-      const git = gitForRepo(repoRoot);
-      const owner = await resolveForgeRemote(git, repoRoot, {
-        supportsForge: (forge) => forgePrSubmissionResolvers.has(forge),
-      })
-        .then((remote) => remote?.identity.owner)
-        .catch(() => undefined);
-      const branch = await git(repoRoot, ["branch", "--show-current"], { reject: false })
-        .then((value) => value.trim() || undefined)
-        .catch(() => undefined);
-      return { ...(owner ? { owner } : {}), ...(branch ? { branch } : {}) };
-    },
+    // for by the ROW's own repo path — the SAME function the session binding reads
+    // through, so the preview cannot promise a placement the bind would not make.
+    worktreeFacts: worktreeFactsFor,
     loadGuidance: (repoRoot) => loadConventionCatalogue(repoRoot),
     applyVisibility: async ({ repoKey, repoRoot, target }) => {
       const preview = await applyVisibilitySwitch(

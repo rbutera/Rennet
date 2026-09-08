@@ -11,13 +11,13 @@
 // reachable through a composition root.
 
 import { realpathSync } from "node:fs";
-import { basename } from "node:path";
 import {
   branchWorktreePath,
   defaultWorktreePlacement,
   ensureBranchWorktree,
   ensurePrWorktree,
   prWorktreePath,
+  type WorktreeRepoFacts,
   worktreeForBranch,
 } from "@rennet/adapters";
 import { type Locus, toWindowsView } from "@rennet/core";
@@ -35,6 +35,18 @@ export interface BoundWorkspaceDeps {
   readonly repoKeyForRoot: (root: string) => string;
   /** The data dir a Rennet-created worktree lives under. */
   readonly dataDir: string;
+  /**
+   * What git can tell us about ONE repository's remote — the SAME function the settings
+   * row's placement preview reads through (`create-server.ts` builds it once and hands it
+   * to both). Every token the write blesses has to have a value at the bind, and `{owner}`
+   * / `{name}` are the two only git can answer: without this, a stored `{owner}/{branch}`
+   * previewed fine and threw here.
+   *
+   * Asked by REPOSITORY ROOT, never by project: a workspace maps many repos to one identity.
+   * A repository git cannot answer for falls back to `local` and the folder's basename,
+   * inside the token builders, so the preview and the binding fall back identically.
+   */
+  readonly worktreeFacts: (repoRoot: string) => Promise<WorktreeRepoFacts>;
   /** The worktree already indexed for this review's pull request, when there is one. */
   readonly prWorktreeFor: (reviewId: string) => string | undefined;
   /** Where a newly created pull-request worktree is recorded. */
@@ -134,11 +146,16 @@ export async function decideBoundWorkspace(
   // where the previous release put it. The resolved ladder values reach here in group 2;
   // this call site is already the shape that takes them.
   const placement = defaultWorktreePlacement(deps.dataDir);
-  const worktree = branchWorktreePath(placement.root, placement.pattern, {
-    repo: deps.repoKeyForRoot(review.repositoryRoot),
-    name: basename(review.repositoryRoot),
+  const worktree = branchWorktreePath(
+    placement.root,
+    placement.pattern,
+    {
+      repoKey: deps.repoKeyForRoot(review.repositoryRoot),
+      repoRoot: review.repositoryRoot,
+      ...(await deps.worktreeFacts(review.repositoryRoot)),
+    },
     branch,
-  });
+  );
   const existing = await worktreeForBranch(git, review.repositoryRoot, branch);
   if (existing !== undefined) {
     // PREFER A SPELLING RENNET ALREADY OWNS. `git worktree list` prints a realpath, and on WSL
@@ -214,11 +231,20 @@ async function ensurePrSnapshotWorkspace(
     indexed ??
     (review.postTarget === undefined
       ? undefined
-      : prWorktreePath(placement.root, placement.prPattern, {
-          owner: review.postTarget.repo.owner,
-          name: review.postTarget.repo.name,
-          number: review.postTarget.number,
-        }));
+      : // The PR's own forge identity IS this repository's resolved remote for the review
+        // in hand, so it fills `{owner}`/`{name}` directly; `{repo}` is the same escaped
+        // realpath key the branch arm and the preview spell.
+        prWorktreePath(
+          placement.root,
+          placement.prPattern,
+          {
+            repoKey: deps.repoKeyForRoot(review.repositoryRoot),
+            repoRoot: review.repositoryRoot,
+            owner: review.postTarget.repo.owner,
+            remoteName: review.postTarget.repo.name,
+          },
+          review.postTarget.number,
+        ));
   if (target === undefined) return review.repositoryRoot;
   const { created } = await ensurePrWorktree(git, review.repositoryRoot, target, headOid);
   if (indexed === undefined) deps.recordPrWorktree(review.id, target);

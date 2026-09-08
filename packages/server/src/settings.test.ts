@@ -1,3 +1,5 @@
+import { mkdtempSync, realpathSync, rmSync, symlinkSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { withRepoPref } from "@rennet/adapters";
 import { escapePath, reviewRoleMappings } from "@rennet/core";
@@ -11,7 +13,7 @@ import type {
   ReviewRoleScenario,
   SettingsProjectValueKey,
 } from "@rennet/protocol";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { z } from "zod";
 import { createSettingsComposition, type SettingsCompositionDeps } from "./settings";
 
@@ -1885,7 +1887,12 @@ describe("createSettingsComposition — the worktree section's global rung (work
         updateDaemon: (update) => {
           // Rule 75: the real store REFUSES to overwrite bytes it could not parse.
           if (malformed) throw new Error("refusing to overwrite a malformed daemon-settings file");
-          Object.assign(file, update({ ...file }));
+          // REPLACES, as `FileConfigStore.update` does — it writes the returned object
+          // whole, so a dropped key is gone from the file. A merging fake would have
+          // reported an empty `worktrees: {}` section as absent and vice versa.
+          const next = update({ ...file });
+          for (const key of Object.keys(file)) delete (file as Record<string, unknown>)[key];
+          Object.assign(file, next);
           return file;
         },
       },
@@ -1895,18 +1902,21 @@ describe("createSettingsComposition — the worktree section's global rung (work
   it("a global write lands in daemon-settings and the next read resolves it", async () => {
     const { deps, file } = daemonDeps();
     const composition = createSettingsComposition(deps);
+    // A written LOCATION is expanded and made absolute AT THE WRITE (D1, spec delta):
+    // `~/trees` persisted verbatim means two different directories on two machines, and
+    // the row would show a string the daemon re-interprets on every read.
     expect(composition.setWorktreeValue({ key: "root", value: "~/trees" })).toEqual({
-      root: "~/trees",
+      root: join(homedir(), "trees"),
     });
     composition.setWorktreeValue({ key: "prPattern", value: "{owner}/{number}" });
     composition.setWorktreeValue({ key: "workspace", value: "own" });
     expect(file.worktrees).toEqual({
-      root: "~/trees",
+      root: join(homedir(), "trees"),
       prPattern: "{owner}/{number}",
       workspace: "own",
     });
     const row = (await composition.get()).projects[0];
-    expect(row?.prefs?.worktreeRoot).toEqual({ value: "~/trees", layer: "global" });
+    expect(row?.prefs?.worktreeRoot).toEqual({ value: join(homedir(), "trees"), layer: "global" });
     expect(row?.prefs?.workspace).toEqual({ value: "own", layer: "global" });
   });
 
@@ -1915,7 +1925,15 @@ describe("createSettingsComposition — the worktree section's global rung (work
     const composition = createSettingsComposition(deps);
     composition.setWorktreeValue({ key: "pattern", value: "{name}/{branch}" });
     expect(composition.setWorktreeValue({ key: "pattern", value: null })).toEqual({});
-    expect(file.worktrees).toEqual({});
+    // The LAST key going takes the section with it: an empty `worktrees: {}` is a shape
+    // the reader has to translate back into "unset", and the file should just say nothing.
+    expect(file.worktrees).toBeUndefined();
+    expect(file).toEqual({ version: 1 });
+    // …and a section with something left in it stays.
+    composition.setWorktreeValue({ key: "pattern", value: "{name}/{branch}" });
+    composition.setWorktreeValue({ key: "workspace", value: "own" });
+    composition.setWorktreeValue({ key: "pattern", value: null });
+    expect(file.worktrees).toEqual({ workspace: "own" });
   });
 
   it("a value the registry rejects never reaches the file", () => {
@@ -2053,7 +2071,9 @@ describe("worktreePreview — the daemon's resolved placement example (workspace
       ...deps,
       readDaemonSettings: () => file,
       updateDaemon: (update) => {
-        Object.assign(file, update({ ...file }));
+        const next = update({ ...file });
+        for (const key of Object.keys(file)) delete (file as Record<string, unknown>)[key];
+        Object.assign(file, next);
         return file;
       },
     });
@@ -2061,5 +2081,160 @@ describe("worktreePreview — the daemon's resolved placement example (workspace
       /outside the worktree root/,
     );
     expect(file.worktrees).toBeUndefined();
+  });
+});
+
+describe("worktree location: the builtin is a real path, and a written one is absolute", () => {
+  it("an untouched repository's row shows `<dataDir>/worktrees`, labelled builtin", async () => {
+    // D1: the builtin is `join(dataDir, "worktrees")`, computed at resolution time. The
+    // row reported "" while placement used a path — an empty string the reader had to know
+    // to translate, next to a preview that named the real directory.
+    const { deps } = statefulDeps();
+    const row = (await createSettingsComposition(deps).get()).projects[0];
+    expect(row?.prefs?.worktreeRoot).toEqual({
+      value: join("/data", "worktrees"),
+      layer: "builtin",
+    });
+    // …and it is the root the preview places under, so the row and the example agree.
+    expect(row?.worktreePreview?.branch.startsWith(join("/data", "worktrees"))).toBe(true);
+  });
+
+  it("EXPANDS a repo-rung location at the write, and refuses another user's home", async () => {
+    const { deps, store } = statefulDeps();
+    const composition = createSettingsComposition(deps);
+    const write = (value: string) => ({
+      projectId: "p1",
+      repoPath: "/orbital",
+      key: "worktreeRoot" as const,
+      value,
+    });
+    await composition.setProjectValue(write("~/trees"));
+    expect(store.worktreeBaseDir).toBe(join(homedir(), "trees"));
+    // A relative value resolves against the DATA DIR, never the daemon's cwd.
+    await composition.setProjectValue(write("trees/here"));
+    expect(store.worktreeBaseDir).toBe(join("/data", "trees", "here"));
+    // `~someone` needs a passwd lookup this process does not do: refused with its reason,
+    // rather than persisted as a literal `~someone` directory the daemon would create.
+    await expect(composition.setProjectValue(write("~someone/trees"))).rejects.toThrow(
+      /another user's home/,
+    );
+    expect(store.worktreeBaseDir).toBe(join("/data", "trees", "here"));
+    // The row then reads back exactly what was stored — no re-interpretation at the read.
+    const row = (await composition.get()).projects[0];
+    expect(row?.prefs?.worktreeRoot).toEqual({
+      value: join("/data", "trees", "here"),
+      layer: "repo",
+    });
+  });
+
+  it("previews the PR snapshot under the REMOTE's name when the folder differs", async () => {
+    // Cloning `acme/widget` into `/work/widget-local`. `{name}` is the remote's repository
+    // name, so this must be `acme/widget/pr-1` — the path `bound-workspace.test.ts`
+    // ("places a PR snapshot under the REMOTE's name") asserts the BIND creates. The
+    // preview used the folder's basename and promised `acme/widget-local/pr-1`.
+    const { deps } = statefulDeps(
+      {},
+      { project: project({ path: "/work/widget-local", openPath: "/work/widget-local" }) },
+    );
+    const row = (
+      await createSettingsComposition({
+        ...deps,
+        worktreeFacts: async () => ({ owner: "acme", remoteName: "widget", branch: "feat/x" }),
+      }).get()
+    ).projects[0];
+    expect(row?.worktreePreview?.pullRequest).toBe(
+      join("/data", "worktrees", "acme", "widget", "pr-1"),
+    );
+  });
+});
+
+describe("settings.get() reads every repository's placement facts CONCURRENTLY", () => {
+  /** Two single-repo projects, and a `worktreeFacts` that parks until released — so
+   *  "did the second call start before the first finished?" is a fact, not an inference. */
+  function gatedDeps(projects: Project[]) {
+    const started: string[] = [];
+    let release = (): void => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const { deps } = statefulDeps();
+    return {
+      started,
+      release,
+      deps: {
+        ...deps,
+        listProjects: () => projects,
+        worktreeFacts: async (repoRoot: string) => {
+          started.push(repoRoot);
+          await gate;
+          return {};
+        },
+      } satisfies SettingsCompositionDeps,
+    };
+  }
+
+  it("dispatches every row's facts read before any of them resolves", async () => {
+    // Each read is a git subprocess. Awaited row-by-row they serialised across every
+    // project × repo, and every settings mutation invalidates `settings.get` on the
+    // client — so flipping appearance on an 8-repo workspace paid 8 sequential spawns.
+    const { deps, started, release } = gatedDeps([
+      project({ id: "p1", name: "a", path: "/a", openPath: "/a" }),
+      project({ id: "p2", name: "b", path: "/b", openPath: "/b" }),
+    ]);
+    const view = createSettingsComposition(deps).get();
+    // Both calls are in flight while NEITHER has resolved — the gate is still shut.
+    for (let tick = 0; tick < 50 && started.length < 2; tick += 1) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    expect(started).toEqual(["/a", "/b"]);
+    release();
+    // …and the row ORDER is the projects' order, unchanged by the concurrency.
+    expect((await view).projects.map((row) => row.repoPath)).toEqual(["/a", "/b"]);
+  });
+
+  it("asks ONE repository's facts once per operation, however many times its row resolves", async () => {
+    // `pinRepoValue` resolves the same row twice (before and after applying the value).
+    // One repository, one remote, one operation — one subprocess.
+    const asked: string[] = [];
+    const { deps } = statefulDeps();
+    const composition = createSettingsComposition({
+      ...deps,
+      worktreeFacts: async (repoRoot: string) => {
+        asked.push(repoRoot);
+        return {};
+      },
+    });
+    const outcome = await composition.pinRepoValue({
+      projectId: "p1",
+      repoPath: "/orbital",
+      key: "visibility",
+    });
+    expect(outcome.status).toBe("applied");
+    expect(asked).toEqual(["/orbital"]);
+  });
+});
+
+describe("worktreePreview spells `{repo}` through the SAME route the binding does", () => {
+  const scratch: string[] = [];
+  afterEach(() => {
+    for (const dir of scratch.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("uses escapePath(realpath(root)), not escapePath(gitTopLevel)", async () => {
+    // A project opened through a symlink — the arrangement macOS puts everyone in, where
+    // `/var` is a symlink to `/private/var`. `RepoTarget.repoKey` is the snapshot-store
+    // key and skips the realpath; `repoKeyForRoot` (what `create-server` hands the
+    // binding) does not. Two different directories under one label is #812.
+    const real = mkdtempSync(join(tmpdir(), "rennet-preview-"));
+    scratch.push(real);
+    const link = `${real}-link`;
+    symlinkSync(real, link);
+    scratch.push(link);
+    const { deps } = statefulDeps({}, { project: project({ path: link, openPath: link }) });
+    const row = (await createSettingsComposition(deps).get()).projects[0];
+    expect(escapePath(realpathSync(link))).not.toBe(escapePath(link));
+    expect(row?.worktreePreview?.branch).toBe(
+      join("/data", "worktrees", escapePath(realpathSync(link)), "main"),
+    );
   });
 });

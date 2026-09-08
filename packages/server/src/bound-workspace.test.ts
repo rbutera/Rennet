@@ -10,7 +10,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { escapePath, HOST_LOCUS } from "@rennet/core";
 import type { Review } from "@rennet/protocol";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -41,6 +41,11 @@ function git(cwd: string, args: readonly string[]): string {
 
 /** Every git argv the module issued this test, so a control-flow claim can be executed. */
 let gitCalls: string[][] = [];
+/** What the binding's `worktreeFacts` answers this test, and which repositories it was
+ *  asked about — the tokens `{owner}`/`{name}` come from here at the bind and from the
+ *  SAME function at the settings preview. */
+let facts: { owner?: string; remoteName?: string } = {};
+let factsAsked: string[] = [];
 
 const gitExec = async (cwd: string, args: string[], options?: { reject?: boolean }) => {
   gitCalls.push([...args]);
@@ -125,11 +130,19 @@ describe("decideBoundWorkspace (session-bound-workspace D1)", () => {
     prIndex = new Map();
     created = [];
     gitCalls = [];
+    facts = {};
+    factsAsked = [];
     deps = {
       gitFor: () => gitExec,
       locusOf: () => HOST_LOCUS,
       repoKeyForRoot: (repoRoot) => escapePath(repoRoot),
       dataDir,
+      // No remote resolves by default: the fixtures have none, so `{owner}` falls back to
+      // `local` and `{name}` to the folder's basename, exactly as a local-only clone does.
+      worktreeFacts: async (repoRoot) => {
+        factsAsked.push(repoRoot);
+        return facts;
+      },
       prWorktreeFor: (reviewId) => prIndex.get(reviewId),
       recordPrWorktree: (reviewId, path) => void prIndex.set(reviewId, path),
       onWorktreeCreated: (path) => void created.push(path),
@@ -395,6 +408,46 @@ describe("decideBoundWorkspace (session-bound-workspace D1)", () => {
     gitCalls = [];
     expect(await repinBoundWorkspace(review, bound, deps)).toBe(bound);
     expect(gitCalls).toEqual([]);
+  });
+
+  it("fills `{owner}` and `{name}` at the BIND from the repository the review named", async () => {
+    // The bug: `PLACEHOLDERS` blessed `{owner}` for a branch pattern while this call site
+    // supplied `{repo,name,branch}` and no owner at all, so a stored `{owner}/{branch}`
+    // previewed fine and threw the moment a session bound. The facts now come from the
+    // same function the settings preview reads, asked by REPOSITORY ROOT.
+    const repo = initRepo(root, "repo");
+    facts = { owner: "acme", remoteName: "orbital" };
+    const review = reviewFor({
+      id: "r11",
+      repositoryRoot: repo,
+      headOid: headOid(repo, "feature"),
+      headRef: "feature",
+      baseOid: headOid(repo, "main"),
+    });
+    const bound = await decideBoundWorkspace(review, deps);
+    // The builtin pattern is `{repo}/{branch}`, so the owner does not appear in the path —
+    // what this pins is that the bind ASKED, by the repository the review names, and that
+    // the placement it produced is the builtin's.
+    expect(factsAsked).toEqual([repo]);
+    expect(bound).toBe(join(dataDir, "worktrees", escapePath(repo), "feature"));
+  });
+
+  it("places a PR snapshot under the REMOTE's name, not the clone folder's", async () => {
+    // Cloning `acme/widget` into a folder called `widget-local`: `{name}` means the
+    // remote's repository name, so the bind puts the snapshot under `acme/widget/pr-7`.
+    // `settings.test.ts` asserts the row's preview is that same path — the two were
+    // computed differently and disagreed (the preview said `acme/widget-local/pr-1`).
+    const repo = initRepo(root, "widget-local");
+    const review = reviewFor({
+      id: "r12",
+      repositoryRoot: repo,
+      headOid: headOid(repo, "feature"),
+      baseOid: headOid(repo, "main"),
+      pullRequest: true,
+    });
+    const bound = await decideBoundWorkspace(review, deps);
+    expect(bound).toBe(join(dataDir, "worktrees", "o", "n", "pr-7"));
+    expect(basename(repo)).toBe("widget-local");
   });
 
   it("THROWS rather than binding the session to the clone when a worktree cannot be made", async () => {
