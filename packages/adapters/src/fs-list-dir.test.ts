@@ -25,6 +25,17 @@ describe("listDir", () => {
     expect(r.entries.find((e) => e.name === ".config")?.isRepo).toBe(false);
   });
 
+  it("drops a trailing separator from the requested path, keeping the root's", async () => {
+    // The browser's path bar shows `/home/rai/`, so that is what a typed path arrives as;
+    // the echoed path (which the flow submits as the project root) must be canonical.
+    const r = await listDir({ path: "/home/rai/" }, deps);
+    expect(r.path).toBe("/home/rai");
+    expect(r.parent).toBe("/home");
+    expect(r.entries.map((e) => e.path)).toEqual(["/home/rai/.config", "/home/rai/dev"]);
+    const root = await listDir({ path: "/" }, { ...deps, readEntries: async () => [] });
+    expect(root.path).toBe("/");
+  });
+
   it("returns null parent at filesystem root", async () => {
     const r = await listDir({ path: "/" }, { ...deps, readEntries: async () => [] });
     expect(r.parent).toBeNull();

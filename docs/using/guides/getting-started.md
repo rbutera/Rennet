@@ -64,11 +64,20 @@ an **Add Environment** escape into pairing. Switching source reloads the browser
 against that machine's own filesystem, so browsing a distro or a paired machine
 works exactly like browsing locally.
 
-The browser is the picker. There is no OS file dialog and no recents list.
-Click a row to descend, use **Up** or Backspace to ascend, or type an absolute
-path and press Enter to jump there. Arrow keys move between rows. A folder
-holding a repository wears a **repo** badge; a folder Rennet cannot read is
-dimmed and cannot be entered. **Add** stays inert until you select a folder.
+The browser is the picker, and the welcome flow's Project step uses the same
+one. Click a row to descend, use **Up** or Backspace to ascend, or type an
+absolute path and press Enter to jump there. The path bar shows the current
+folder with a trailing slash, so appending the next folder name is one keystroke
+away. Arrow keys move between rows. A folder holding a repository wears a
+**repo** badge; a folder Rennet cannot read is dimmed and cannot be entered.
+**Add** stays inert until you select a folder.
+
+Hidden folders (names starting with a dot) are out of the list by default. The
+eye button in the toolbar shows them, and the choice sticks across dialogs. On
+this machine the desktop app also offers **Browse…**, which opens the system
+folder dialog and jumps the browser to whatever you choose there. It does not
+appear while browsing a WSL distro or a paired environment, because the system
+dialog can only see this machine's files. There is no recents list.
 
 On macOS, the welcome also offers **Grant Full Disk Access** beside Add Project.
 It opens **System Settings → Privacy & Security → Full Disk Access**. This is

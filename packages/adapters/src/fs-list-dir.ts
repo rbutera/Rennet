@@ -38,7 +38,10 @@ export async function listDir(
   deps: FsListDirDeps,
 ): Promise<FsListDirResult> {
   const home = deps.homedir();
-  const path = input.path && input.path.length > 0 ? input.path : home;
+  // The browser's path bar shows a directory WITH a trailing separator, so a typed path
+  // usually arrives with one. Drop it here so the echoed `path` (which the flow submits as
+  // the project root) is canonical whichever client typed it.
+  const path = input.path && input.path.length > 0 ? stripTrailingSeparator(input.path) : home;
   // A failure to read the TARGET dir (nonexistent / permission-denied path) is a real
   // fault, not an empty directory — let it propagate so the RPC rejects and the browser
   // shows an inline error with Continue DISABLED (SPEC: invalid typed path), instead of
@@ -61,4 +64,10 @@ export async function listDir(
   );
   const parent = dirname(path);
   return { path, home, parent: parent === path ? null : parent, entries };
+}
+
+/** `/Users/rai/` → `/Users/rai` (and `C:\dev\` → `C:\dev`); a bare root keeps its separator. */
+function stripTrailingSeparator(path: string): string {
+  const stripped = path.replace(/[/\\]+$/, "");
+  return stripped.length === 0 || /^[A-Za-z]:$/.test(stripped) ? path : stripped;
 }
