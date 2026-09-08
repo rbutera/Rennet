@@ -82,6 +82,7 @@ import {
   t3SidecarStatusSchema,
   themePackSchema,
 } from "../wire";
+import { worktreeInventorySchema, worktreeRemoveOutcomeSchema } from "../worktrees";
 
 const commandIdSchema = z.uuid();
 const forgePrSubmissionTargetSchema = z.object({
@@ -1669,6 +1670,28 @@ const definitions = {
       z.object({ status: z.literal("no-change"), reason: z.string() }),
       z.object({ status: z.literal("unavailable"), reason: z.string() }),
     ]),
+  },
+  // ── The workspace inventory (workspace-settings D6) ─────────────────────────
+  // Every workspace Rennet knows for ONE repository, read on request from `git worktree
+  // list`, the pull-request index and the sessions bound there. Keyed by `repoPath`, never
+  // by a project id: a workspace project maps many repositories onto one identity and that
+  // mapping is not invertible, so a project id cannot say WHICH repository's worktrees these
+  // are — the two repositories of one workspace list separately. A read; nothing is created.
+  "worktrees.list": {
+    input: z.object({ repoPath: z.string().min(1) }),
+    output: worktreeInventorySchema,
+  },
+  // ── Remove one workspace (workspace-settings D6) ────────────────────────────
+  // `git worktree remove` WITHOUT `--force`, so git's own refusal is the only thing that
+  // stops it and uncommitted work is never swept; the refusal comes back verbatim on the
+  // row. A sibling's branch is deleted with its worktree only under D5's reachability rule.
+  // One interaction, no confirmation step (Rule Zero). `path` addresses a row of THIS
+  // repository's list — the host matches it against a fresh inventory, so a path that is
+  // not a workspace of `repoPath`, the reviewer's own checkout, and a workspace a live
+  // session is bound to are all answered `not-removable` rather than acted on.
+  "worktrees.remove": {
+    input: z.object({ repoPath: z.string().min(1), path: z.string().min(1) }),
+    output: worktreeRemoveOutcomeSchema,
   },
 } as const;
 

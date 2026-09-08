@@ -6,6 +6,7 @@ import {
   readdirSync,
   readFileSync,
   renameSync,
+  statSync,
   writeSync,
 } from "node:fs";
 import { homedir } from "node:os";
@@ -289,5 +290,24 @@ export class SessionStore {
     const next = addThread(session, thread);
     this.save(next);
     return next;
+  }
+
+  /**
+   * When this session's record was last WRITTEN, epoch ms — the closest thing the store
+   * holds to "when was this session last used".
+   *
+   * The record has a `createdAt` and an `archivedAt` and nothing in between, while every
+   * durable act of a session — binding its workspace, attaching its review, adding a
+   * thread, pinning a harness, renaming it — rewrites this file. So the mtime is the
+   * activity, and it is named for what it actually measures rather than for what a
+   * caller might wish it meant. `undefined` when the file cannot be stat'd, which the
+   * workspace inventory shows as an unknown "last used" rather than a guess.
+   */
+  lastWrittenAt(sessionId: string): number | undefined {
+    try {
+      return statSync(this.pathFor(sessionId)).mtimeMs;
+    } catch {
+      return undefined;
+    }
   }
 }

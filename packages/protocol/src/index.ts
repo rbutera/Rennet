@@ -23,3 +23,4 @@ export * from "./round-evidence";
 export * from "./session";
 export * from "./sha256";
 export * from "./wire";
+export * from "./worktrees";
