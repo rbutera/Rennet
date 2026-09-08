@@ -61,15 +61,15 @@ function synthetic(): Patchset {
 const bigPacket = buildDeltaPacket(synthetic(), []);
 
 // Full prompts on this fixture, including the task layer but no context directory:
-// design 14,924 B; sequence 9,934 B; decisions 9,847 B; flagged 10,183 B; noise 10,431 B.
+// design 14,936 B; sequence 9,946 B; decisions 9,859 B; flagged 10,195 B; noise 10,443 B.
 // Budgets leave 10% headroom. The context-reference layer has its own bounded test.
 // These are bytes sent, not measured provider tokens or total conversation cost.
 const BUDGET: Record<(typeof LENS_KINDS)[number], number> = {
-  design: 16_416,
-  sequence: 10_927,
-  decisions: 10_831,
-  flagged: 11_201,
-  noise: 11_474,
+  design: 16_429,
+  sequence: 10_940,
+  decisions: 10_844,
+  flagged: 11_214,
+  noise: 11_487,
 };
 
 describe("drafter prompt byte budget (tripwire, #737)", () => {

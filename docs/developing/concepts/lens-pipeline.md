@@ -802,6 +802,8 @@ Decisions uses `no-decisions`, Flagged uses `no-findings`, and Noise uses
 absence — only the seat's own `no-spec` declaration is. For the three core review lenses, material follows the topology the
 client serves, not the flat element pool. Sequence needs a reachable
 `order_step`, Decisions a reachable `decision`, and Flagged a reachable `finding`.
+Their `finish` checks name detached elements while the drafting turn can still
+attach them, so a successful settlement does not become a failed review later.
 Prose-only boards, empty sections, and detached typed elements do not satisfy
 those core lenses. Flagged persists any round finding-resolution migration before settling
 that typed absence. The client treats the absence as settled, keeps its segment

@@ -4,7 +4,7 @@ The board already exists. Write it through tools as you work; readers see each
 addition. Prose in your reply does not reach it. Tool definitions carry the inputs.
 
 1. Open with `set_document`. Calling it again replaces the opening.
-2. Create sections with `add_section`. Attach children to their parent's returned id.
+2. Create sections with `add_section`. Set each child's `parent_id` to its section's returned id.
 3. Use `cite` for changed code ranges. Attach its returned citation to the element
    it supports. Use the corrected range from a refusal only if it supports the claim.
 4. Write explanations with `add_prose`, `add_callout`, or `add_annotation`, and
