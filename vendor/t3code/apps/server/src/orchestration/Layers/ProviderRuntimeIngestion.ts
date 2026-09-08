@@ -2,6 +2,7 @@ import {
   ApprovalRequestId,
   type AssistantDeliveryMode,
   CommandId,
+  CodexCumulativeTokenUsage,
   MessageId,
   type OrchestrationEvent,
   type OrchestrationMessage,
@@ -26,7 +27,9 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Predicate from "effect/Predicate";
 import * as Stream from "effect/Stream";
+import * as Schema from "effect/Schema";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
@@ -45,6 +48,21 @@ import { projectActivityPayload } from "../ActivityPayloadProjection.ts";
 import { forkParked } from "../../serverActivation.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { canReplaceThreadTitle } from "../threadTitles.ts";
+
+const activityPayload = (value: unknown): Record<string, unknown> => Predicate.isObject(value) ? value : {};
+
+function latestCodexUsage(activities: ReadonlyArray<OrchestrationThreadActivity> = [], providerThreadId?: string) {
+  let total: CodexCumulativeTokenUsage | undefined;
+  for (const activity of activities) {
+    const value = activityPayload(activity.payload).codexCumulativeUsage;
+    if (!Schema.is(CodexCumulativeTokenUsage)(value)) continue;
+    if (providerThreadId !== undefined && value.providerThreadId !== providerThreadId) continue;
+    if (!total || value.providerThreadId !== total.providerThreadId || value.totalTokens > total.totalTokens) {
+      total = value;
+    }
+  }
+  return total;
+}
 
 const providerTurnKey = (threadId: ThreadId, turnId: TurnId) => `${threadId}:${turnId}`;
 const providerTaskKey = (threadId: ThreadId, taskId: string) => `${threadId}:${taskId}`;
@@ -251,7 +269,7 @@ function assistantSegmentMessageId(baseKey: string, segmentIndex: number): Messa
 function buildContextWindowActivityPayload(
   event: ProviderRuntimeEvent,
 ): ThreadTokenUsageSnapshot | undefined {
-  if (event.type !== "thread.token-usage.updated" || event.payload.usage.usedTokens <= 0) {
+  if (event.type !== "thread.token-usage.updated" || event.payload.usage.usedTokens <= 0 && !event.payload.usage.codexCumulativeUsage) {
     return undefined;
   }
   return event.payload.usage;
@@ -2080,7 +2098,40 @@ const make = Effect.gen(function* () {
         }
       }
 
-      const activities = runtimeEventToActivities(event, taskTitle);
+      let activities = runtimeEventToActivities(event, taskTitle);
+      if (event.provider === "codex" && event.turnId && event.type === "turn.started") {
+        const previous = yield* resolveThreadDetail(thread.id, ["context-window.updated", "turn.settled", "turn.usage-baseline"]);
+        const existing = previous?.activities.findLast((activity) =>
+          activity.kind === "turn.usage-baseline" && activity.turnId === event.turnId);
+        if (!existing) {
+          const providerThreadId = activityPayload(event.raw?.payload).threadId;
+          const predecessor = previous?.activities.findLast((activity) => activity.kind === "turn.settled");
+          const baseline = typeof providerThreadId === "string"
+            ? latestCodexUsage(previous?.activities, providerThreadId) ?? activityPayload(predecessor?.payload).codexCumulativeUsage
+            : undefined;
+          const empty = typeof providerThreadId === "string" && !previous?.activities.some((activity) => activity.kind === "turn.settled" || activity.kind === "context-window.updated");
+          activities = [{
+            id: event.eventId, createdAt: event.createdAt, tone: "info",
+            kind: "turn.usage-baseline", summary: "Turn usage baseline", turnId: event.turnId,
+            payload: { timelineBypass: true, ...(baseline !== undefined ? { codexUsageBaseline: baseline } : empty ? { codexUsageBaseline: null } : {}) },
+          }];
+        }
+      }
+      if (event.provider === "codex" && event.turnId && event.type === "turn.completed") {
+        // Read the baseline separately: a long turn can evict it from the 500-activity detail window.
+        const baselines = yield* resolveThreadDetail(thread.id, ["turn.usage-baseline"]);
+        const baseline = activityPayload(baselines?.activities.findLast((activity) => activity.turnId === event.turnId)?.payload);
+        const snapshots = yield* resolveThreadDetail(thread.id, ["context-window.updated"]);
+        const total = latestCodexUsage(snapshots?.activities.filter((activity) => activity.turnId === event.turnId));
+        activities = activities.map((activity) => ({
+          ...activity,
+          payload: {
+            ...activityPayload(activity.payload),
+            ...(baseline?.codexUsageBaseline !== undefined ? { codexUsageBaseline: baseline.codexUsageBaseline } : {}),
+            ...(total !== undefined ? { codexCumulativeUsage: total } : {}),
+          },
+        }));
+      }
       yield* Effect.forEach(activities, (activity) =>
         providerCommandId(event, "thread-activity-append").pipe(
           Effect.flatMap((commandId) =>
