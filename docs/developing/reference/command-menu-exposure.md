@@ -221,7 +221,7 @@ still goes through the one seam; only the label is hand-written.
 | `session.setPinned` | Needs the session and the pin state. |
 | `session.archive` | Needs the session being archived or restored. |
 | `session.landWorkBranch` | Needs the session whose work branch is being landed; the action is offered on that session's round card, beside the branch it fast-forwards. |
-| `session.workBranchState` | Read the review workspace drives beside the session's branch; needs the session whose work branch is being measured. It answers ahead / pushed / landed from git at request time, so running it from the menu would change nothing a reader would see. |
+| `session.workBranchState` | Read the review workspace drives beside the session's branch; needs the session whose work branch is being measured. It answers how far the sibling is ahead of the branch, how far the branch is behind the remote-tracking ref a push updated, and whether the branch already contains the work — all read from git at request time, so running it from the menu would change nothing a reader would see. |
 
 ### worktrees
 
