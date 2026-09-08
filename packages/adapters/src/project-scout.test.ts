@@ -482,8 +482,9 @@ describe("scout persistence (amendment 9)", () => {
   // worktrees under whatever the ladder resolves — so an offer here decides where a
   // repository's worktrees go. Where a repository's OWN worktrees already live is its
   // convention, not an instruction to Rennet, and offering it moved placement for every
-  // repository that happens to have one sibling checkout. The fact stays recorded: it is
-  // honest, and the questionnaire has always shown it. It is simply not a ladder offer.
+  // repository that happens to have one sibling checkout. The fact stays recorded as an
+  // honest repository fact; the questionnaire stopped asking about it in #812 and the
+  // journal strips it from persisted answers. It is simply not a ladder offer.
   //
   // POSITIVE CONTROL RUN 2026-09-08: `SCOUT_OFFER_KEYS` was given `worktreeBaseDir` back
   // (dropping the second `filter` clause) and the last assertion here reddened, as did

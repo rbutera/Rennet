@@ -151,7 +151,6 @@ still goes through the one seam; only the label is hand-written.
 | `flagged.adjudication` | Needs the flagged item being adjudicated. |
 | `noise.review` | Needs the review it scores. |
 | `openspec.change` | Needs the change id, and its content must be displayed. |
-| `openspec.coverage` | Needs the review and change being compared. |
 
 ### settings
 

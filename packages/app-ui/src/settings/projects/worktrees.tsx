@@ -434,14 +434,17 @@ function Workspaces({ repoPath, label }: { readonly repoPath: string; readonly l
   /** WHICH row is being removed. `remove.pending` is one flag for the whole hook, so it
    *  disabled every row's button at once — a fact about the mutation, rendered as a fact
    *  about four workspaces nothing is happening to. */
-  const [removing, setRemoving] = useState<string | undefined>();
+  // One entry per in-flight removal, keyed by row: two rows removed back to back must not
+  // share a flag, or the second click re-enables the first row and whichever answer lands
+  // first clears both.
+  const [removing, setRemoving] = useState<ReadonlySet<string>>(() => new Set());
 
   const rows = data?.rows ?? [];
   const orphaned = outcome !== undefined && !rows.some((row) => row.id === outcome.id);
 
   async function removeRow(row: WorktreeRow) {
     setOutcome(undefined);
-    setRemoving(row.id);
+    setRemoving((held) => new Set([...held, row.id]));
     try {
       const answer = await remove.mutate({ repoPath, id: row.id });
       setOutcome({
@@ -452,7 +455,11 @@ function Workspaces({ repoPath, label }: { readonly repoPath: string; readonly l
     } catch (reason) {
       setOutcome({ id: row.id, text: failureText(reason) });
     } finally {
-      setRemoving(undefined);
+      setRemoving((held) => {
+        const next = new Set(held);
+        next.delete(row.id);
+        return next;
+      });
     }
   }
 
@@ -493,7 +500,7 @@ function Workspaces({ repoPath, label }: { readonly repoPath: string; readonly l
             key={row.id}
             row={row}
             label={label}
-            busy={removing === row.id}
+            busy={removing.has(row.id)}
             outcome={outcome?.id === row.id ? outcome.text : undefined}
             onRemove={() => void removeRow(row)}
           />
