@@ -34,6 +34,7 @@ function boot(dir: string) {
   const settings = createSettingsComposition({
     // The council mappings ride the CLIENT-SETTINGS rung only; the project/repo
     // ladder is not on this path, so its effects are inert here.
+    dataDir: dir,
     listProjects: () => [],
     loadConfigState: () => ({ status: "absent", config: null }),
     readGlobalState: () => store.readState(),

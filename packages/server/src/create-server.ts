@@ -106,6 +106,7 @@ import {
   refreshGitHubCredential,
   repoKeyOf,
   repositoryIdentity,
+  resolveForgeRemote,
   resolveGitHubAuth,
   resolveTrackerConfig,
   detectForges as runForgeDetection,
@@ -4614,6 +4615,9 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   // mark's upload verb writes its `mark` pref through this exact composition's
   // `setProjectValue` — one write path for a user's pick and for an upload's implied one.
   const settingsComposition = createSettingsComposition({
+    // The base of the worktree location's builtin — this daemon's real data directory,
+    // so the placement preview names the path this daemon would actually create.
+    dataDir,
     listProjects: () => projectStore.list(),
     loadConfigState: (repoKey) => snapshotStore.loadConfigState(repoKey),
     readGlobalState: () => clientSettingsStore.readState(),
@@ -4676,6 +4680,22 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         "workspace",
       );
       return result.repos.map((repo) => repo.path);
+    },
+    // ONE repository's placement facts for the preview (workspace-settings D3), asked
+    // for by the ROW's own repo path — the same remote resolution submission uses, and
+    // the repository's own current branch. Both degrade honestly: a repo with no forge
+    // remote previews `local`, one with no readable branch previews `main`.
+    worktreeFacts: async (repoRoot) => {
+      const git = gitForRepo(repoRoot);
+      const owner = await resolveForgeRemote(git, repoRoot, {
+        supportsForge: (forge) => forgePrSubmissionResolvers.has(forge),
+      })
+        .then((remote) => remote?.identity.owner)
+        .catch(() => undefined);
+      const branch = await git(repoRoot, ["branch", "--show-current"], { reject: false })
+        .then((value) => value.trim() || undefined)
+        .catch(() => undefined);
+      return { ...(owner ? { owner } : {}), ...(branch ? { branch } : {}) };
     },
     loadGuidance: (repoRoot) => loadConventionCatalogue(repoRoot),
     applyVisibility: async ({ repoKey, repoRoot, target }) => {

@@ -1,8 +1,12 @@
 import { basename } from "node:path";
 import {
+  assertWorktreePattern,
+  branchWorktreePath,
   type ConventionCatalogueLoad,
   compareVersions,
+  prWorktreePath,
   type RepoPrefField,
+  resolveWorktreeRoot,
 } from "@rennet/adapters";
 import {
   type CouncilOverrideReader,
@@ -65,10 +69,35 @@ import { benchmarkRecordingEnabled } from "@rennet/protocol";
  * except through the injected effects.
  */
 
+/**
+ * The repository facts a placement preview substitutes (workspace-settings D3) — read
+ * per REPOSITORY, by its own path. Both are honestly absent when git cannot answer, and
+ * the preview then falls back to what the binding itself would: `local` for an owner no
+ * remote resolves, `main` for a branch nothing reports.
+ */
+export interface WorktreeRepoFacts {
+  /** The forge owner of the repository's resolved remote, when one resolves. */
+  readonly owner?: string;
+  /** The repository's current branch. */
+  readonly branch?: string;
+}
+
 /** The minimal on-disk config states this composition reads, from the two stores. */
 export interface SettingsCompositionDeps {
   /** Clock for durable client timestamps. */
   now?: () => Date;
+  /**
+   * The daemon's data directory — the base of the worktree location's BUILTIN
+   * (`<dataDir>/worktrees`), resolved at read time so the preview and the binding agree
+   * with whatever `--data-dir` / `RENNET_USER_DATA` produced.
+   */
+  dataDir: string;
+  /**
+   * One repository's placement facts for the preview (D3). Absent dep ⇒ no facts, which
+   * reads exactly as a repository whose remote and branch could not be resolved — never
+   * another repository's values.
+   */
+  worktreeFacts?(repoRoot: string): Promise<WorktreeRepoFacts>;
   /** The persisted projects (newest first). */
   listProjects(): Project[];
   /**
@@ -552,13 +581,18 @@ const PROJECT_PREF: Record<
   // `mark: "photo"` is refused at the write rather than resolving to nothing later.
   mark: { field: "mark", validate: SETTINGS_REGISTRY.projectMark.validate },
   worktreeRoot: { field: "worktreeBaseDir", validate: SETTINGS_REGISTRY.worktreeBaseDir.validate },
+  // A pattern is RENDERED with placeholder tokens before it is persisted, so a pattern
+  // that would place a worktree outside the root — or name a token its grammar does not
+  // have — is refused with git-level honesty about which, and the file is never touched.
   worktreePattern: {
     field: "worktreePattern",
-    validate: SETTINGS_REGISTRY.worktreePattern.validate,
+    validate: (value) =>
+      checkedPattern("branch", SETTINGS_REGISTRY.worktreePattern.validate(value)),
   },
   prWorktreePattern: {
     field: "prWorktreePattern",
-    validate: SETTINGS_REGISTRY.prWorktreePattern.validate,
+    validate: (value) =>
+      checkedPattern("pull-request", SETTINGS_REGISTRY.prWorktreePattern.validate(value)),
   },
   // The workspace vocabulary is enforced by the SAME validator the binding resolves by,
   // so `workspace: "solo"` is refused at the write instead of silently reading `share`.
@@ -617,6 +651,13 @@ function trackerKindOffer(value: string | undefined): TrackerKind | undefined {
   return value === "none" || value === "github" || value === "jira" || value === "linear"
     ? value
     : undefined;
+}
+
+/** Validate a pattern the way the BINDING will render it, and return it unchanged — the
+ *  one place the write path and the placement share a definition of "legal pattern". */
+function checkedPattern(kind: "branch" | "pull-request", pattern: string): string {
+  assertWorktreePattern(kind, pattern);
+  return pattern;
 }
 
 /** A STORED workspace mode as a ladder offer, on the same terms as the two above: a
@@ -842,7 +883,51 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
     };
   };
 
-  const resolveRow = (
+  /**
+   * The example paths this row's resolved placement produces FOR THIS REPOSITORY (D3),
+   * through the SAME functions the binding places by — which is the whole answer to why
+   * #812's client-side preview lied: app-ui has neither the data directory nor the
+   * escaped repo key, and a preview computed without them is a promise nothing keeps.
+   *
+   * Per ROW, never per project: the repo key, the remote and the branch all come from
+   * `target`/`facts` for this repository, so two repositories of one workspace preview
+   * differently (CLAUDE.md — a workspace maps many repos to one identity).
+   *
+   * A pattern that cannot render for this repository yields NO preview rather than a
+   * path the binding would not produce; the write path refuses such a pattern, so the
+   * only way to reach it is a hand-edited file.
+   */
+  const worktreePreview = (
+    target: RepoTarget,
+    prefs: SettingsProjectPrefs,
+    facts: WorktreeRepoFacts | undefined,
+  ): SettingsProject["worktreePreview"] => {
+    const root = resolveWorktreeRoot(deps.dataDir, prefs.worktreeRoot.value);
+    const owner = facts?.owner ?? "local";
+    const name = basename(target.repoPath);
+    try {
+      return {
+        branch: branchWorktreePath(root, prefs.worktreePattern.value, {
+          repo: target.repoKey,
+          name,
+          owner,
+          // The repository's own current branch is the honest sample; `main` is what a
+          // repository with no readable branch (a fresh clone, an unreachable locus) gets.
+          branch: facts?.branch ?? "main",
+        }),
+        pullRequest: prWorktreePath(root, prefs.prWorktreePattern.value, {
+          owner,
+          name,
+          repo: target.repoKey,
+          number: 1,
+        }),
+      };
+    } catch {
+      return undefined;
+    }
+  };
+
+  const resolveRow = async (
     project: Project,
     target: RepoTarget,
     multiRepo: boolean,
@@ -850,7 +935,7 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
      *  (the mark's `detected` rung). Defaults to this row's own, which is the whole set
      *  for a single-repo project. */
     projectRepoKeys: readonly string[] = [target.repoKey],
-  ): SettingsProject => {
+  ): Promise<SettingsProject> => {
     const configState = deps.loadConfigState(target.repoKey);
     const configMalformed = configState.status === "malformed";
     const config = configState.status === "ok" ? configState.config : null;
@@ -860,6 +945,10 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
     // straight off the repo path, not a stored/overridable ladder value.
     const locus = detectLocus(target.repoPath);
     const locusValue = locus.kind === "host" ? "host" : `WSL · ${locus.distro}`;
+    const prefs = resolvePrefs(target, config, projectRepoKeys);
+    // THIS repository's facts, asked for by its own path — the row named the repo, so
+    // the repo answers. A project id could not: it maps to many.
+    const preview = worktreePreview(target, prefs, await deps.worktreeFacts?.(target.repoPath));
     return {
       projectId: project.id,
       name: multiRepo ? `${project.name} · ${basename(target.repoPath)}` : project.name,
@@ -877,7 +966,8 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
       // A malformed config contributes NO repo offers (`config` is null), so the row
       // shows the lower layers' answers and its edits are refused — the same rule the
       // rest of the row already follows.
-      prefs: resolvePrefs(target, config, projectRepoKeys),
+      prefs,
+      ...(preview ? { worktreePreview: preview } : {}),
     };
   };
 
@@ -997,7 +1087,7 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
         for (const target of targets) {
           if (emittedRepoPaths.has(target.repoPath)) continue;
           emittedRepoPaths.add(target.repoPath);
-          projects.push(resolveRow(project, target, multiRepo, repoKeys));
+          projects.push(await resolveRow(project, target, multiRepo, repoKeys));
         }
       }
       return {
@@ -1348,7 +1438,12 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
         prPattern: SETTINGS_REGISTRY.prWorktreePattern,
         workspace: SETTINGS_REGISTRY.workspace,
       }[input.key];
-      const value = input.value === null ? null : declaration.validate(input.value);
+      const validated = input.value === null ? null : declaration.validate(input.value);
+      // The host rung's patterns render on exactly the terms the repo rung's do.
+      const value =
+        validated !== null && (input.key === "pattern" || input.key === "prPattern")
+          ? checkedPattern(input.key === "pattern" ? "branch" : "pull-request", validated)
+          : validated;
       const written = deps.updateDaemon((current) => {
         const worktrees = { ...current.worktrees };
         if (value === null) delete worktrees[input.key];
@@ -1384,7 +1479,7 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
       return {
         status: "applied",
         key: input.key,
-        project: resolveRow(live.project, live.target, live.multiRepo, live.repoKeys),
+        project: await resolveRow(live.project, live.target, live.multiRepo, live.repoKeys),
       };
     },
 
@@ -1476,7 +1571,7 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
       return {
         status: "applied",
         key: input.key,
-        project: resolveRow(live.project, live.target, live.multiRepo, live.repoKeys),
+        project: await resolveRow(live.project, live.target, live.multiRepo, live.repoKeys),
       };
     },
 
@@ -1496,7 +1591,7 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
       }
       // Resolve the value at command time (not the renderer's snapshot), then write
       // it at the repo layer through the setter that owns that key's side effects.
-      const current = resolveRow(live.project, live.target, live.multiRepo, live.repoKeys);
+      const current = await resolveRow(live.project, live.target, live.multiRepo, live.repoKeys);
       await deps.applyVisibility({
         repoKey: live.target.repoKey,
         repoRoot: live.target.repoRoot,
@@ -1505,7 +1600,7 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
       return {
         status: "applied",
         key: input.key,
-        project: resolveRow(live.project, live.target, live.multiRepo, live.repoKeys),
+        project: await resolveRow(live.project, live.target, live.multiRepo, live.repoKeys),
       };
     },
   };

@@ -2,12 +2,12 @@
 
 Ships on its own: values resolve and preview correctly; the binding still ignores them until group 2.
 
-- [ ] 1.1 Protocol: add `prWorktreePattern` and `workspace` to `settingsProjectValueKeySchema` and `settingsProjectPrefsSchema`; add additive-optional `worktreePreview` to `settingsProjectSchema`; add `worktrees: { root?, pattern?, prPattern?, workspace? }` to `daemonSettingsSchema`. A row without `worktreePreview` still parses
-- [ ] 1.2 Registry: `prWorktreePattern` (`CONFIG_ONLY`, builtin `{owner}/{name}/pr-{number}`), `workspace` (enum `share`|`own`, builtin `share`, global+repo), `worktreePattern` builtin becomes `{repo}/{branch}` (was `""`). Control: the "every live setting is registered" assertion enumerates the four keys
-- [ ] 1.3 Server: the global rung for the four keys reads from `daemonSettings.worktrees`; the repo rung from `config.json`; `settings.setProjectValue` accepts the two new keys; a global write lands in `daemon-settings.json` and a malformed file refuses byte-for-byte (existing rule, new keys)
-- [ ] 1.4 Adapters: `branchWorktreePath(root, pattern, tokens)` and `prWorktreePath(root, pattern, tokens)` with the D2 token set; `renderWorktreePattern` refuses an unknown token, an absolute result, or a result outside the root. Controls: `../` escapes, `{nope}`, and a `/abs` pattern each refuse; the two defaults reproduce today's paths byte-for-byte on the existing fixtures
-- [ ] 1.5 Server: the write path validates a pattern through `renderWorktreePattern` with placeholder tokens before persisting, and refuses with the reason. Control: a refused write leaves `config.json` unchanged
-- [ ] 1.6 Server: compute `worktreePreview` per row (D3) from the row's real repo key, resolved remote, current branch and `1`; no path string is derived in app-ui. Control: a two-repo workspace fixture yields two different previews for one project
+- [x] 1.1 Protocol: add `prWorktreePattern` and `workspace` to `settingsProjectValueKeySchema` and `settingsProjectPrefsSchema`; add additive-optional `worktreePreview` to `settingsProjectSchema`; add `worktrees: { root?, pattern?, prPattern?, workspace? }` to `daemonSettingsSchema`. A row without `worktreePreview` still parses
+- [x] 1.2 Registry: `prWorktreePattern` (`CONFIG_ONLY`, builtin `{owner}/{name}/pr-{number}`), `workspace` (enum `share`|`own`, builtin `share`, global+repo), `worktreePattern` builtin becomes `{repo}/{branch}` (was `""`). Control: the "every live setting is registered" assertion enumerates the four keys
+- [x] 1.3 Server: the global rung for the four keys reads from `daemonSettings.worktrees`; the repo rung from `config.json`; `settings.setProjectValue` accepts the two new keys; a global write lands in `daemon-settings.json` and a malformed file refuses byte-for-byte (existing rule, new keys)
+- [x] 1.4 Adapters: `branchWorktreePath(root, pattern, tokens)` and `prWorktreePath(root, pattern, tokens)` with the D2 token set; `renderWorktreePattern` refuses an unknown token, an absolute result, or a result outside the root. Controls: `../` escapes, `{nope}`, and a `/abs` pattern each refuse; the two defaults reproduce today's paths byte-for-byte on the existing fixtures
+- [x] 1.5 Server: the write path validates a pattern through `renderWorktreePattern` with placeholder tokens before persisting, and refuses with the reason. Control: a refused write leaves `config.json` unchanged
+- [x] 1.6 Server: compute `worktreePreview` per row (D3) from the row's real repo key, resolved remote, current branch and `1`; no path string is derived in app-ui. Control: a two-repo workspace fixture yields two different previews for one project
 
 ## 2. The binding reads the settings; `own` mode; the work branch (D1, D4, D5)
 
