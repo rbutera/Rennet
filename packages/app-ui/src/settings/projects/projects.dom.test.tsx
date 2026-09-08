@@ -277,10 +277,13 @@ describe("ProjectsPage — dual-source settings", () => {
     expect(within(card as HTMLElement).getByText("Pull-request layout")).toBeTruthy();
     expect(within(card as HTMLElement).getByText("Workspace")).toBeTruthy();
     expect(within(card as HTMLElement).getByText("Workspaces")).toBeTruthy();
-    // The caption names BOTH files the section writes (the global rung and the repo rung).
+    // The caption names the ONE file the section writes. All four controls land on the
+    // repo rung; the host rung (`daemon-settings.json` → `worktrees`) is READ by the
+    // ladder and edited by hand, exactly as the tracker's global rung is, so naming it
+    // here would point the reader at a file this card never touches.
     const caption = card?.querySelector('[data-slot="backing-file"]')?.textContent ?? "";
-    expect(caption).toContain("daemon-settings.json");
-    expect(caption).toContain("config.json");
+    expect(caption).toBe("projects/<repo>/config.json");
+    expect(caption).not.toContain("daemon-settings.json");
     // This page serves no settings row for p1's PROJECT (`settings.get` carries P1_ROW with
     // no prefs), so the editors exist but nothing is resolved into them.
     expect(queryByLabelText("Location for acme/checkout")).toBeTruthy();
@@ -591,6 +594,10 @@ interface ServedLogos {
   readonly second?: SettingsProject;
   /** What `worktrees.list` answers for p1's repo (D6). */
   readonly workspaces?: readonly WorktreeRow[];
+  /** …and for the SECOND repo. A workspace maps many repositories onto one identity and
+   *  that mapping is not invertible, so a fixture where both repos list the same rows
+   *  cannot see a card that asks the wrong repo's inventory (CLAUDE.md, 2026-08-28). */
+  readonly secondWorkspaces?: readonly WorktreeRow[];
   /** What `worktrees.remove` answers — git's refusal, or the removal it made. */
   readonly removal?: WorktreeRemoveOutcome;
 }
@@ -656,6 +663,19 @@ const DIRTY_SIBLING: WorktreeRow = {
   removable: true,
 };
 
+/** The SECOND repository's own sibling, on the SAME branch name as p1's. A card that asked
+ *  the wrong repo's inventory would render a plausible row under the right heading, which is
+ *  exactly what a single-repo fixture cannot see (CLAUDE.md, 2026-08-28). */
+const LEDGER_SIBLING: WorktreeRow = {
+  id: "w-ledger-sib",
+  path: "/home/dev/trees/ledger/rennet/feat/x",
+  kind: "sibling",
+  ref: "rennet/feat/x",
+  sessionIds: [],
+  aheadOf: { branch: "feat/x", commits: 1 },
+  removable: true,
+};
+
 function mountServedPrefsWith(
   prefs: NonNullable<SettingsProject["prefs"]>,
   held: ServedLogos = {},
@@ -678,6 +698,9 @@ function mountServedPrefsWith(
   }[];
   detections: string[];
   removals: { repoPath: string; id: string }[];
+  /** Every `worktrees.list` call's `repoPath`, in order — the read is per repository, and
+   *  a card that asked once for a two-repo project asked the wrong question. */
+  listed: string[];
   view: ReturnType<typeof mount>;
 } {
   const writes: {
@@ -698,8 +721,17 @@ function mountServedPrefsWith(
   }[] = [];
   const detections: string[] = [];
   const removals: { repoPath: string; id: string }[] = [];
-  const rowsFor = (repoPath: string): readonly WorktreeRow[] =>
-    repoPath === P1_ROW.repoPath ? (held.workspaces ?? []) : [];
+  const listed: string[] = [];
+  // MUTABLE, like the host: a removal that succeeded takes its row out of the next list.
+  // A static fixture would have left the removed row on screen, and the "the note survives
+  // an emptied list" case would then have passed without the list ever emptying.
+  const inventory = new Map<string, WorktreeRow[]>([
+    [P1_ROW.repoPath, [...(held.workspaces ?? [])]],
+    ...(held.second
+      ? ([[held.second.repoPath, [...(held.secondWorkspaces ?? [])]]] as [string, WorktreeRow[]][])
+      : []),
+  ]);
+  const rowsFor = (repoPath: string): readonly WorktreeRow[] => inventory.get(repoPath) ?? [];
   const served = new MemoryBridge(
     {
       "projects.list": () => ({ projects: [...PROJECTS] }),
@@ -733,16 +765,24 @@ function mountServedPrefsWith(
         guidanceWrites.push(input as (typeof guidanceWrites)[number]);
         return { status: "applied", guidance: { rules: [], reason: "empty", dropped: 0 } };
       },
-      "worktrees.list": ({ repoPath }) => ({ rows: [...rowsFor(repoPath)], truncated: false }),
+      "worktrees.list": ({ repoPath }) => {
+        listed.push(repoPath);
+        return { rows: [...rowsFor(repoPath)], truncated: false };
+      },
       "worktrees.remove": (input) => {
         removals.push({ ...input });
-        return (
-          held.removal ?? {
-            status: "removed" as const,
-            id: input.id,
-            path: rowsFor(input.repoPath).find((row) => row.id === input.id)?.path ?? input.id,
-          }
-        );
+        const outcome = held.removal ?? {
+          status: "removed" as const,
+          id: input.id,
+          path: rowsFor(input.repoPath).find((row) => row.id === input.id)?.path ?? input.id,
+        };
+        if (outcome.status === "removed") {
+          inventory.set(
+            input.repoPath,
+            rowsFor(input.repoPath).filter((row) => row.id !== input.id),
+          );
+        }
+        return outcome;
       },
     },
     { platform: "darwin", version: "1.0.1" },
@@ -754,6 +794,7 @@ function mountServedPrefsWith(
     uploads,
     detections,
     removals,
+    listed,
     view: mount(
       <BridgeProvider bridge={served}>
         <Router hook={history.hook} searchHook={history.searchHook}>
@@ -929,6 +970,12 @@ describe("ProjectsPage — the served per-project rung (C18 group A)", () => {
     });
     await view.findByText("/elsewhere/tree");
     expect(view.queryByText("/home/dev/trees/widget/feat/x")).toBeNull();
+    // BOTH previews follow the row, not just the branch one. Asserting only the branch
+    // string left the pull-request preview free to be a hardcoded constant that happened
+    // to match the default fixture — a literal `{owner}/{name}/pr-{number}` render, or the
+    // other row's answer, would have gone unseen.
+    expect(view.getByText("/elsewhere/pr-1")).toBeTruthy();
+    expect(view.queryByText("/home/dev/trees/acme/widget/pr-1")).toBeNull();
     cleanup();
   });
 
@@ -944,9 +991,12 @@ describe("ProjectsPage — the served per-project rung (C18 group A)", () => {
   // and only warns), which is why the control is the collapse and not the key.
   it("worktrees: a two-repo project renders both repos, and a workspace click writes THAT row's repoPath", async () => {
     const { writes, view } = mountServedPrefsWith(P1_PREFS, { second: SECOND_REPO });
-    // Both repos' previews are on screen, and they are different paths.
+    // Both repos' previews are on screen, and they are different paths — both PAIRS, so
+    // a pull-request preview shared between the two rows is visible too.
     await view.findByText("/home/dev/trees/widget/feat/x");
     expect(view.getByText("/home/dev/trees/ledger/feat/x")).toBeTruthy();
+    expect(view.getByText("/home/dev/trees/acme/widget/pr-1")).toBeTruthy();
+    expect(view.getByText("/home/dev/trees/acme/ledger/pr-1")).toBeTruthy();
     // The SECOND repo's workspace control — addressed by its own label, so the click
     // cannot land on the first row by position.
     const own = view.getByLabelText("Workspace for acme/ledger");
@@ -955,6 +1005,176 @@ describe("ProjectsPage — the served per-project rung (C18 group A)", () => {
     expect(writes).toEqual([
       { projectId: "p1", repoPath: SECOND_REPO.repoPath, key: "workspace", value: "own" },
     ]);
+    cleanup();
+  });
+
+  // The THREE TEXT FIELDS write the REPO rung too, addressed by the row that owns them —
+  // not the host's `daemon-settings.json`. Typed on the SECOND repository, because a card
+  // that wrote the first row's `repoPath` for every field is the exact defect the many-repos
+  // rule names, and a single-repo fixture cannot tell the two apart.
+  //
+  // POSITIVE CONTROL RUN 2026-09-08: the two `field(...)` commits were pointed back at a
+  // host-rung write (`setWorktreeValue`, no repoPath at all) and both assertions here
+  // reddened — `writes` stayed empty, because that write never reaches
+  // `settings.setProjectValue`.
+  it("worktrees: typing a location and a layout writes THAT row's repoPath on the repo rung", async () => {
+    const { writes, view } = mountServedPrefsWith(P1_PREFS, { second: SECOND_REPO });
+    const location = await view.findByLabelText("Location for acme/ledger");
+    fireEvent.change(location, { target: { value: "/ledger/trees" } });
+    fireEvent.blur(location);
+    await waitFor(() => expect(writes.length).toBe(1));
+    expect(writes[0]).toEqual({
+      projectId: "p1",
+      repoPath: SECOND_REPO.repoPath,
+      key: "worktreeRoot",
+      value: "/ledger/trees",
+    });
+
+    const layout = view.getByLabelText("Branch layout for acme/ledger");
+    fireEvent.change(layout, { target: { value: "{owner}/{branch}" } });
+    fireEvent.blur(layout);
+    await waitFor(() => expect(writes.length).toBe(2));
+    expect(writes[1]).toEqual({
+      projectId: "p1",
+      repoPath: SECOND_REPO.repoPath,
+      key: "worktreePattern",
+      value: "{owner}/{branch}",
+    });
+    // The FIRST repository's fields were never touched — the two rows are two addresses.
+    expect(writes.every((write) => write.repoPath === SECOND_REPO.repoPath)).toBe(true);
+    cleanup();
+  });
+
+  // Pin and Reset are the SAME repo-rung write as the field above them, which is the whole
+  // reason the card can offer them: Pin freezes the currently effective value at the repo,
+  // Reset drops that entry so the value falls back down the ladder. `prWorktreePattern`
+  // resolves `builtin` in P1_PREFS, so its button says Pin; `worktreePattern` resolves
+  // `repo`, so its button says Reset. The pair is the test — one alone cannot tell a button
+  // that always writes the value from one that always writes null.
+  it("worktrees: Pin stores the effective value at the repo rung, Reset drops the entry", async () => {
+    const { writes, view } = mountServedPrefs();
+    const pin = await view.findByLabelText("Pin pull-request layout for acme/checkout at the repo");
+    fireEvent.click(pin);
+    await waitFor(() => expect(writes.length).toBe(1));
+    expect(writes[0]).toEqual({
+      projectId: "p1",
+      repoPath: P1_ROW.repoPath,
+      key: "prWorktreePattern",
+      value: "{owner}/{name}/pr-{number}",
+    });
+
+    fireEvent.click(view.getByLabelText("Reset branch layout for acme/checkout to inherit"));
+    await waitFor(() => expect(writes.length).toBe(2));
+    expect(writes[1]).toEqual({
+      projectId: "p1",
+      repoPath: P1_ROW.repoPath,
+      key: "worktreePattern",
+      value: null,
+    });
+    cleanup();
+  });
+
+  // A REFUSED pattern (one that escapes the root) rejects at the write, and the daemon's own
+  // sentence lands under the field that sent it — no dialog, nothing softened, and the field
+  // keeps showing what is STORED because the refusal never changed it.
+  it("worktrees: a refused pattern prints the daemon's reason under its own field", async () => {
+    const refusal =
+      "worktreePattern `../{branch}` resolves outside the worktree root — refused, nothing written";
+    const history = memoryHistory("/settings/projects?project=p1");
+    const served = new MemoryBridge(
+      {
+        "projects.list": () => ({ projects: [...PROJECTS] }),
+        "project.logos": () => ({ logos: [] }),
+        "settings.get": () => ({
+          scheme: "system",
+          schemeProvenance: {
+            layer: "builtin",
+            contributions: [{ layer: "builtin", value: "system", effective: true }],
+          },
+          appearanceMalformed: false,
+          projects: [{ ...P1_ROW, prefs: P1_PREFS, worktreePreview: P1_PREVIEW }],
+        }),
+        "settings.setProjectValue": () => {
+          throw new Error(refusal);
+        },
+        "worktrees.list": () => ({ rows: [], truncated: false }),
+      },
+      { platform: "darwin", version: "1.0.1" },
+    );
+    const view = mount(
+      <BridgeProvider bridge={served}>
+        <Router hook={history.hook} searchHook={history.searchHook}>
+          <LiveSettingsProjectionProvider>
+            <ProjectsPage />
+          </LiveSettingsProjectionProvider>
+        </Router>
+      </BridgeProvider>,
+    );
+    const layout = await view.findByLabelText("Branch layout for acme/checkout");
+    fireEvent.change(layout, { target: { value: "../{branch}" } });
+    fireEvent.blur(layout);
+    const shown = await view.findByText(refusal);
+    expect(shown.getAttribute("data-slot")).toBe("worktree-refusal");
+    // Under the BRANCH LAYOUT row (the stacked Row is the refusal's own parent), not
+    // floating at the top of the card where it would name no field at all.
+    expect(shown.parentElement?.textContent).toContain("Branch layout");
+    // The field still shows what is STORED: a refused write changed nothing.
+    expect((view.getByLabelText("Branch layout for acme/checkout") as HTMLInputElement).value).toBe(
+      "{name}/{branch}",
+    );
+    cleanup();
+  });
+
+  // The INVENTORY is per repository too, and the fixture makes the two repos share a branch
+  // name (`rennet/feat/x`) so a card that asked the wrong repo would render a row that looks
+  // right. Both the read and the removal carry the row's own `repoPath`.
+  it("worktrees: each repo lists and removes its OWN workspaces, on a shared branch name", async () => {
+    const { removals, listed, view } = mountServedPrefsWith(P1_PREFS, {
+      second: SECOND_REPO,
+      workspaces: [DIRTY_SIBLING],
+      secondWorkspaces: [LEDGER_SIBLING],
+    });
+    // TWO reads, one per repository — the same repoPath twice would be one repo answering
+    // for both.
+    await view.findByText(LEDGER_SIBLING.path);
+    await waitFor(() => expect(new Set(listed).size).toBe(2));
+    expect(new Set(listed)).toEqual(new Set([P1_ROW.repoPath, SECOND_REPO.repoPath]));
+    // Each repository shows ITS row, and neither shows the other's.
+    expect(view.getByText(DIRTY_SIBLING.path)).toBeTruthy();
+
+    // A remove on the SECOND repo's row addresses the SECOND repo — by its own label, so
+    // the click cannot land on the first row by position.
+    fireEvent.click(view.getByLabelText(`Remove workspace ${LEDGER_SIBLING.path} in acme/ledger`));
+    await waitFor(() => expect(removals.length).toBe(1));
+    expect(removals).toEqual([{ repoPath: SECOND_REPO.repoPath, id: LEDGER_SIBLING.id }]);
+    cleanup();
+  });
+
+  // Removing the LAST row empties the list, and the note saying what was deliberately KEPT
+  // must survive that: it is the only place the reviewer learns `rennet/feat/x` still holds
+  // commits. It used to render inside the `rows.length > 0` branch, so the one removal whose
+  // sentence matters most said nothing at all.
+  //
+  // POSITIVE CONTROL RUN 2026-09-08: the outcome note was put back inside the non-empty
+  // branch and this test reddened on `findByText(note)` while the empty-state assertion
+  // stayed green — the list really had emptied; the sentence really had gone with it.
+  it("worktrees: removing the last row still prints what the removal KEPT", async () => {
+    const note = "Removed the worktree and kept rennet/feat/x: it is ahead of feat/x by 2 commits.";
+    const { view } = mountServedPrefsWith(P1_PREFS, {
+      workspaces: [DIRTY_SIBLING],
+      removal: { status: "removed", id: DIRTY_SIBLING.id, path: DIRTY_SIBLING.path, note },
+    });
+    fireEvent.click(
+      await view.findByLabelText(`Remove workspace ${DIRTY_SIBLING.path} in acme/checkout`),
+    );
+    const shown = await view.findByText(note);
+    expect(shown.getAttribute("data-slot")).toBe("worktree-outcome");
+    // …and the list really is EMPTY, which is what makes the assertion above load-bearing:
+    // the note is not riding on a row that survived.
+    expect(view.container.querySelector('[data-slot="worktree-empty"]')?.textContent).toContain(
+      "Nothing yet.",
+    );
+    expect(view.queryByText(DIRTY_SIBLING.path)).toBeNull();
     cleanup();
   });
 

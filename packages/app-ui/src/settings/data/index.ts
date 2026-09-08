@@ -21,7 +21,6 @@ export {
   useSetProjectValue,
   useSetRepoVisibility,
   useSettingsView,
-  useSetWorktreeValue,
   useUploadProjectLogo,
   useWorktreeInventory,
 } from "./live";

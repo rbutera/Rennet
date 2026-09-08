@@ -3686,7 +3686,6 @@ describe("createDispatch — settings.* routing (the config ladder, wireframe #1
       resetWelcome: vi.fn(() => "2026-08-29T09:30:00.000Z"),
       setLastProject: vi.fn((input) => input),
       setTrackerValue: vi.fn(() => ({})),
-      setWorktreeValue: vi.fn(() => ({})),
       setProjectValue: vi.fn(async (input: { key: string }) => ({
         status: "applied" as const,
         key: input.key as "worktreePattern",
@@ -3773,25 +3772,6 @@ describe("createDispatch — settings.* routing (the config ladder, wireframe #1
       }),
     ).rejects.toThrow();
     expect(settings.setProjectValue).toHaveBeenCalledTimes(1);
-
-    // setWorktreeValue threads the HOST-rung write through (workspace-settings D1) —
-    // `daemon-settings.json`, not the repo config, so it carries no repoPath at all.
-    const host = (await dispatch("settings.setWorktreeValue", {
-      key: "root",
-      value: "~/trees",
-    })) as { status: string; key: string };
-    expect(settings.setWorktreeValue).toHaveBeenCalledWith({ key: "root", value: "~/trees" });
-    expect(host).toEqual({ status: "applied", key: "root" });
-    // `null` is the RESET, and it reaches the dep as one rather than as an empty string.
-    await dispatch("settings.setWorktreeValue", { key: "workspace", value: null });
-    expect(settings.setWorktreeValue).toHaveBeenLastCalledWith({ key: "workspace", value: null });
-    // A key the section does not have is REJECTED at the boundary — the composition never
-    // sees a write with no declaration to validate it. This is the control that makes the
-    // two assertions above mean something: the route parses, it does not forward blindly.
-    await expect(
-      dispatch("settings.setWorktreeValue", { key: "worktreeRoot", value: "/trees" }),
-    ).rejects.toThrow();
-    expect(settings.setWorktreeValue).toHaveBeenCalledTimes(2);
 
     // setGuidance threads the rules through and returns what the FILE now holds.
     const saved = (await dispatch("settings.setGuidance", {

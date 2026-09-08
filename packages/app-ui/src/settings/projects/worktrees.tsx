@@ -7,7 +7,6 @@ import {
   useRemoveWorktree,
   useSetProjectValue,
   useSettingsView,
-  useSetWorktreeValue,
   useWorktreeInventory,
 } from "../data";
 import { ProvenanceChip } from "../provenance-chip";
@@ -33,20 +32,22 @@ import { UnbackedNote } from "./unbacked-note";
 // the data directory nor the escaped repo key, and every past attempt to derive one was
 // wrong. The inventory's paths are the rows' own. app-ui prints what it was handed.
 //
-// TWO FILES, TWO RUNGS, and the caption names both — decided per control, by what the
-// value is a fact ABOUT:
+// ONE FILE, ONE RUNG. All four controls write the REPO rung — the project's own
+// `config.json`, addressed by THIS row's `repoPath`, exactly as the identity and tracker
+// rows are. Each of the four is a decision about ONE repository: the binding is per
+// repository and so are its siblings (D4), so a workspace's two repos can differ, and a
+// host-wide write from here would answer for a repository the reviewer was not looking at.
 //
-//   • The LOCATION and the two LAYOUT patterns write the GLOBAL rung
-//     (`daemon-settings.json` → `worktrees`). Where a machine keeps its checkouts and how
-//     it names them is a fact about that machine, which is D1's own argument and the same
-//     one that put `tracker` there rather than in client settings.
-//   • The WORKSPACE mode writes the REPO rung (the project's `config.json`), addressed by
-//     THIS row's `repoPath`. It is a decision about one repository: the binding is per
-//     repository and so are its siblings (D4), so a workspace's two repos can differ, and
-//     a global write here would answer for a repository the reviewer was not looking at.
-//   • `Pin` writes the current effective value at the repo rung so a later host change
-//     stops moving it; `Reset` drops that entry so the value falls back down the ladder.
-//     Both are offered on all four, exactly as the Repository section offers them.
+// The HOST rung (`daemon-settings.json` → `worktrees.*`) is READ — it is the `global` layer
+// of these four keys and the chip names it when it wins — and it is edited by hand, exactly
+// as the tracker's global rung is. No surface in Rennet edits a host rung today, and one
+// would be its own feature rather than a corner of this card.
+//
+// That single rung is what makes provenance, Reset and Pin COHERENT here: a write lands on
+// `layer: "repo"`, so the chip says `repo` and the button becomes Reset; Reset drops that
+// entry and the chip falls back to whatever the ladder answers underneath (the host rung, or
+// the builtin). A control that wrote the host rung and offered a repo-rung Reset was three
+// facts about three different files under one button.
 //
 // The chip says which rung answered, and it says it from the RESOLVER's re-read — every
 // write stales `settings.get`, so the row settles on what is stored, never on the click.
@@ -57,23 +58,19 @@ import { UnbackedNote } from "./unbacked-note";
 // reason lands under the field — no dialog, no are-you-sure.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** The two files this section writes, named for the reader who wants to go open them. */
-const BACKING_FILES = "~/.rennet/daemon-settings.json · projects/<repo>/config.json";
+/** The ONE file this section writes, named for the reader who wants to go open it. */
+const BACKING_FILE = "projects/<repo>/config.json";
 
-/** The section's four editable values: the global-rung key, and the repo-rung key that
- *  pins or resets the same value. ONE table, so a control cannot pin a different setting
- *  from the one it edits. */
+/** The section's four editable values, each named by the repo-rung key it reads AND
+ *  writes. ONE table, so a control cannot pin a different setting from the one it edits. */
 const KEYS = {
-  root: { host: "root", repo: "worktreeRoot" },
-  pattern: { host: "pattern", repo: "worktreePattern" },
-  prPattern: { host: "prPattern", repo: "prWorktreePattern" },
-  workspace: { host: "workspace", repo: "workspace" },
+  root: "worktreeRoot",
+  pattern: "worktreePattern",
+  prPattern: "prWorktreePattern",
+  workspace: "workspace",
 } as const satisfies Record<
   string,
-  {
-    readonly host: "root" | "pattern" | "prPattern" | "workspace";
-    readonly repo: "worktreeRoot" | "worktreePattern" | "prWorktreePattern" | "workspace";
-  }
+  "worktreeRoot" | "worktreePattern" | "prWorktreePattern" | "workspace"
 >;
 
 type FieldKey = keyof typeof KEYS;
@@ -159,7 +156,7 @@ export function WorktreeSection({ project }: { readonly project: SidebarProject 
   }
 
   return (
-    <Section title="Worktrees" caption={BACKING_FILES}>
+    <Section title="Worktrees" caption={BACKING_FILE}>
       {body}
     </Section>
   );
@@ -188,7 +185,6 @@ function RepoWorktrees({
   readonly row: SettingsProject;
   readonly showRepoLabel: boolean;
 }) {
-  const setHostValue = useSetWorktreeValue();
   const setRepoValue = useSetProjectValue();
   // A daemon that does not serve the rung claims nothing: the editors sit disabled and
   // the gap is disclosed, rather than an enabled field over a write with nowhere to go.
@@ -199,32 +195,23 @@ function RepoWorktrees({
   /** The answer to the LAST write on THIS repo, keyed by the field it came from — a
    *  refused pattern names which rule it broke, and the newest answer replaces the old. */
   const [notice, setNotice] = useState<{ key: FieldKey; text: string } | undefined>();
-  const busy = setHostValue.pending || setRepoValue.pending;
+  const busy = setRepoValue.pending;
 
-  /** A LOCATION or a LAYOUT edit lands on the HOST rung: where this machine keeps its
-   *  checkouts and how it names them is a fact about the machine, which is the same
-   *  argument that put `tracker` in `daemon-settings.json` (D1). `""` resets the entry. */
-  async function writeHost(key: "root" | "pattern" | "prPattern", value: string) {
-    setNotice(undefined);
-    try {
-      await setHostValue.mutate({ key: KEYS[key].host, value: value.trim() === "" ? null : value });
-    } catch (reason) {
-      // A refused pattern arrives here with git-level honesty about WHICH rule it broke.
-      // Printed as it came: the reason is the instruction.
-      setNotice({ key, text: failureText(reason) });
-    }
-  }
-
-  /** A REPO-rung write, addressed by THIS row's own `repoPath`. Two callers: the
-   *  workspace mode, which is a decision about this repository — the binding is per
-   *  repository and so are its siblings (D4) — and Pin/Reset on every row. */
+  /** THE write of this section: the repo rung, addressed by THIS row's own `repoPath`.
+   *  Every control goes through it — the three text fields on commit, the workspace
+   *  segments, and Pin/Reset on all four — so one write reaches one file and the chip
+   *  above it reports the rung that write actually landed on.
+   *
+   *  A REFUSED value (a pattern with an unknown token, or one that escapes the root)
+   *  arrives here as a rejection carrying git-level honesty about WHICH rule it broke.
+   *  Printed as it came: the reason is the instruction. */
   async function writeRepo(key: FieldKey, value: string | null) {
     setNotice(undefined);
     try {
       const outcome = await setRepoValue.mutate({
         projectId: row.projectId,
         repoPath: row.repoPath,
-        key: KEYS[key].repo,
+        key: KEYS[key],
         value,
       });
       if (outcome.status !== "applied") {
@@ -244,10 +231,14 @@ function RepoWorktrees({
     key: Exclude<FieldKey, "workspace">,
     rowLabel: string,
     hint: string,
+    /** The grammar a LAYOUT field takes, shown only while the field is empty. Location has
+     *  none: its builtin is a real resolved directory the daemon serves on the row, and the
+     *  literal `~/.rennet/worktrees` that used to sit here was the #812 path — a folder
+     *  Rennet never created, printed as if it were the answer. */
     placeholder: string,
     preview?: string,
   ) => {
-    const value = prefs?.[KEYS[key].repo] ?? { value: "", layer: "builtin" as const };
+    const value = prefs?.[KEYS[key]] ?? { value: "", layer: "builtin" as const };
     return (
       <Row label={rowLabel} hint={hint} stacked>
         <div className="flex flex-wrap items-center gap-2">
@@ -256,7 +247,7 @@ function RepoWorktrees({
             value={value.value}
             placeholder={placeholder}
             disabled={!editable || busy}
-            onCommit={(next) => void writeHost(key, next)}
+            onCommit={(next) => void writeRepo(key, next.trim() === "" ? null : next)}
           />
           {/* The rung the RESOLVER reported. The wire's per-project prefs carry the
               effective layer and no contribution list, so the chip shows the summary and
@@ -308,7 +299,7 @@ function RepoWorktrees({
         "Location",
         // D1's one line: a session binds once, so a move reaches the next one.
         "the directory Rennet's worktrees hang under; a change reaches sessions started after it",
-        "~/.rennet/worktrees",
+        "",
       )}
       {field(
         "pattern",
@@ -354,8 +345,8 @@ function RepoWorktrees({
           share — the review works in that checkout, and the round commits on your branch.
         </span>
         <span className="text-xs text-ink-soft">
-          own — Rennet checks out <code className="font-mono">rennet/&lt;branch&gt;</code> beside
-          it; your branch does not move until you fast-forward it.
+          own — your checkout is left alone; the round&rsquo;s commits go on{" "}
+          <code className="font-mono">rennet/&lt;branch&gt;</code> until you fast-forward.
         </span>
         {notice?.key === "workspace" ? (
           <span
@@ -440,12 +431,17 @@ function Workspaces({ repoPath, label }: { readonly repoPath: string; readonly l
    *  because a successful removal takes its row out of the next list and its note — what
    *  was deliberately KEPT — would go with it. */
   const [outcome, setOutcome] = useState<{ id: string; text: string } | undefined>();
+  /** WHICH row is being removed. `remove.pending` is one flag for the whole hook, so it
+   *  disabled every row's button at once — a fact about the mutation, rendered as a fact
+   *  about four workspaces nothing is happening to. */
+  const [removing, setRemoving] = useState<string | undefined>();
 
   const rows = data?.rows ?? [];
   const orphaned = outcome !== undefined && !rows.some((row) => row.id === outcome.id);
 
   async function removeRow(row: WorktreeRow) {
     setOutcome(undefined);
+    setRemoving(row.id);
     try {
       const answer = await remove.mutate({ repoPath, id: row.id });
       setOutcome({
@@ -455,8 +451,26 @@ function Workspaces({ repoPath, label }: { readonly repoPath: string; readonly l
       });
     } catch (reason) {
       setOutcome({ id: row.id, text: failureText(reason) });
+    } finally {
+      setRemoving(undefined);
     }
   }
+
+  /** The last removal's answer when its row is GONE from the list — the successful case,
+   *  where the note (what was deliberately KEPT: `rennet/<branch>` and why) would otherwise
+   *  leave with the row it named. Rendered beside the list rather than inside it, because
+   *  removing the LAST row empties the list and the empty branch used to swallow the note
+   *  entirely: the one removal whose sentence matters most said nothing at all. */
+  const orphanNote =
+    orphaned && outcome ? (
+      <span
+        data-slot="worktree-outcome"
+        role="status"
+        className="whitespace-pre-wrap text-2xs text-ink-soft"
+      >
+        {outcome.text}
+      </span>
+    ) : null;
 
   let body: ReactNode;
   if (pending) {
@@ -479,7 +493,7 @@ function Workspaces({ repoPath, label }: { readonly repoPath: string; readonly l
             key={row.id}
             row={row}
             label={label}
-            busy={remove.pending}
+            busy={removing === row.id}
             outcome={outcome?.id === row.id ? outcome.text : undefined}
             onRemove={() => void removeRow(row)}
           />
@@ -489,15 +503,6 @@ function Workspaces({ repoPath, label }: { readonly repoPath: string; readonly l
             This repository has more workspaces than this list carries.
           </span>
         ) : null}
-        {orphaned && outcome ? (
-          <span
-            data-slot="worktree-outcome"
-            role="status"
-            className="whitespace-pre-wrap text-2xs text-ink-soft"
-          >
-            {outcome.text}
-          </span>
-        ) : null}
       </div>
     );
   }
@@ -505,6 +510,7 @@ function Workspaces({ repoPath, label }: { readonly repoPath: string; readonly l
   return (
     <Row label="Workspaces" hint="every workspace Rennet knows for this repository" stacked>
       {body}
+      {orphanNote}
     </Row>
   );
 }

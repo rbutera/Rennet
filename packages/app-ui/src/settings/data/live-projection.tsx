@@ -111,7 +111,7 @@ import {
 // same rung `resolveTrackerConfig` folds, so a per-project tracker actually reaches
 // retrieval. The WORKTREE four are not here: their card is keyed by the repo ROW
 // (`repoPath`), not by the project, so it reads `settings.get` and writes
-// `settings.setProjectValue` / `settings.setWorktreeValue` directly — a workspace's two
+// `settings.setProjectValue` on THAT row's `repoPath` directly — a workspace's two
 // repositories place their worktrees under two different answers, and one entry per
 // project could only ever carry one of them (workspace-settings D7). Each write invalidates the read it changed, so the surface settles on what is
 // STORED rather than on an optimistic guess; a refused write (a malformed repo config,

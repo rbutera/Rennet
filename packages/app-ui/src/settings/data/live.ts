@@ -1,11 +1,19 @@
 import type {
   BenchmarkRun,
+  CommandInput,
   ProjectLogo,
   SettingsGuidance,
   SettingsView,
   WorktreeInventory,
 } from "@rennet/protocol";
-import { type CommandResult, type MutationResult, useCommand, useMutation } from "../../data";
+import { useCallback } from "react";
+import {
+  type CommandResult,
+  type MutationResult,
+  useCommand,
+  useMutation,
+  useRefreshCommand,
+} from "../../data";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The LIVE settings commands (C10 §2.1). The eight `settings.*` commands that
@@ -80,25 +88,36 @@ export function usePinRepoValue(): MutationResult<"settings.pinRepoValue"> {
   return useMutation("settings.pinRepoValue", { invalidates: ["settings.get"] });
 }
 
-/** Write one per-project preference on the repo rung — glyph, the worktree four, tracker
- *  (C18 group A). Stales `settings.get`, which carries the resolved prefs it changed, AND
- *  `worktrees.list`: the root and the two patterns decide where the NEXT workspace is
- *  placed, so the inventory's rows-under-the-root membership is a function of them
- *  (workspace-settings D6). A key that is not a worktree key stales a read that has not
- *  changed, which costs one re-read and can never show a stale list. */
-export function useSetProjectValue(): MutationResult<"settings.setProjectValue"> {
-  return useMutation("settings.setProjectValue", {
-    invalidates: ["settings.get", "worktrees.list"],
-  });
-}
+/** The four keys whose value decides WHERE the next workspace is placed (or whether one is
+ *  made at all), so a write to one of them stales the inventory as well as the view. Every
+ *  other key this command carries — the glyph, the mark, the tracker fields — changes
+ *  nothing the inventory reports. */
+const WORKTREE_PLACEMENT_KEYS: ReadonlySet<string> = new Set([
+  "worktreeRoot",
+  "worktreePattern",
+  "prWorktreePattern",
+  "workspace",
+]);
 
-/** Write one worktree value on the GLOBAL rung — this host's `daemon-settings.json`
- *  (workspace-settings D1). The repo rung of the same four values goes through
- *  {@link useSetProjectValue}; both stale the same two reads, for the same reason. */
-export function useSetWorktreeValue(): MutationResult<"settings.setWorktreeValue"> {
-  return useMutation("settings.setWorktreeValue", {
-    invalidates: ["settings.get", "worktrees.list"],
-  });
+/** Write one per-project preference on the repo rung — glyph, the worktree four, tracker
+ *  (C18 group A). Always stales `settings.get`, which carries the resolved prefs it
+ *  changed; stales `worktrees.list` only for the four placement keys, because that read
+ *  MEASURES (a bounded `du` per row, host-side, on every call). Invalidating it on every
+ *  key meant picking a glyph swept the repository's worktrees twice — once for the glyph
+ *  write and once for the mark write that follows it — for a list nothing had changed. */
+export function useSetProjectValue(): MutationResult<"settings.setProjectValue"> {
+  const write = useMutation("settings.setProjectValue", { invalidates: ["settings.get"] });
+  const refreshInventory = useRefreshCommand("worktrees.list");
+  const { mutate: send, pending, error } = write;
+  const mutate = useCallback(
+    async (input: CommandInput<"settings.setProjectValue">) => {
+      const outcome = await send(input);
+      if (WORKTREE_PLACEMENT_KEYS.has(input.key)) refreshInventory();
+      return outcome;
+    },
+    [send, refreshInventory],
+  );
+  return { mutate, pending, error };
 }
 
 /** Every workspace Rennet knows for ONE repository (workspace-settings D6). Keyed by
