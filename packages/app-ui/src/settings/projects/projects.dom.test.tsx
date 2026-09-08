@@ -598,8 +598,11 @@ interface ServedLogos {
    *  that mapping is not invertible, so a fixture where both repos list the same rows
    *  cannot see a card that asks the wrong repo's inventory (CLAUDE.md, 2026-08-28). */
   readonly secondWorkspaces?: readonly WorktreeRow[];
-  /** What `worktrees.remove` answers — git's refusal, or the removal it made. */
-  readonly removal?: WorktreeRemoveOutcome;
+  /** What `worktrees.remove` answers — git's refusal, or the removal it made. A function
+   *  answers per call, so a case can hold two removals in flight at once. */
+  readonly removal?:
+    | WorktreeRemoveOutcome
+    | ((input: { repoPath: string; id: string }) => Promise<WorktreeRemoveOutcome>);
 }
 
 /** The daemon's resolved example paths for p1, unless a case supplies its own. */
@@ -769,13 +772,16 @@ function mountServedPrefsWith(
         listed.push(repoPath);
         return { rows: [...rowsFor(repoPath)], truncated: false };
       },
-      "worktrees.remove": (input) => {
+      "worktrees.remove": async (input) => {
         removals.push({ ...input });
-        const outcome = held.removal ?? {
-          status: "removed" as const,
-          id: input.id,
-          path: rowsFor(input.repoPath).find((row) => row.id === input.id)?.path ?? input.id,
-        };
+        const outcome =
+          typeof held.removal === "function"
+            ? await held.removal(input)
+            : (held.removal ?? {
+                status: "removed" as const,
+                id: input.id,
+                path: rowsFor(input.repoPath).find((row) => row.id === input.id)?.path ?? input.id,
+              });
         if (outcome.status === "removed") {
           inventory.set(
             input.repoPath,
@@ -1176,6 +1182,48 @@ describe("ProjectsPage — the served per-project rung (C18 group A)", () => {
     );
     expect(view.queryByText(DIRTY_SIBLING.path)).toBeNull();
     cleanup();
+  });
+
+  it("worktrees: two removals in flight keep their own busy state and their own answer", async () => {
+    // Each removal resolves only when the case says so, so both are in flight together.
+    const pending = new Map<string, (outcome: WorktreeRemoveOutcome) => void>();
+    const { view } = mountServedPrefsWith(P1_PREFS, {
+      workspaces: [DIRTY_SIBLING, IDLE_BRANCH],
+      removal: (input) => new Promise((resolve) => pending.set(input.id, resolve)),
+    });
+    const first = await view.findByLabelText(
+      `Remove workspace ${DIRTY_SIBLING.path} in acme/checkout`,
+    );
+    const second = await view.findByLabelText(
+      `Remove workspace ${IDLE_BRANCH.path} in acme/checkout`,
+    );
+    fireEvent.click(first);
+    fireEvent.click(second);
+    await waitFor(() => expect(pending.size).toBe(2));
+    // Both rows are busy, each on its own account.
+    expect((first as HTMLButtonElement).disabled).toBe(true);
+    expect((second as HTMLButtonElement).disabled).toBe(true);
+    // The first answer lands: git refused. The second is still in flight and stays busy.
+    pending.get(DIRTY_SIBLING.id)?.({
+      status: "refused",
+      id: DIRTY_SIBLING.id,
+      path: DIRTY_SIBLING.path,
+      reason: "fatal: contains modified or untracked files",
+    });
+    await view.findByText(/contains modified or untracked files/);
+    expect((second as HTMLButtonElement).disabled).toBe(true);
+    expect((first as HTMLButtonElement).disabled).toBe(false);
+    // The second answer lands: removed, with a note. The first row's refusal is STILL on
+    // screen — a single answer slot would have wiped it — and the second's note shows
+    // beside the list its row has left.
+    pending.get(IDLE_BRANCH.id)?.({
+      status: "removed",
+      id: IDLE_BRANCH.id,
+      path: IDLE_BRANCH.path,
+      note: "rennet/feat/y kept: ahead of feat/y by 1 commit",
+    });
+    await view.findByText(/rennet\/feat\/y kept/);
+    expect(view.getByText(/contains modified or untracked files/)).toBeTruthy();
   });
 
   it("worktrees: a remove click dispatches the ROW's id, and a refused removal prints git's text", async () => {

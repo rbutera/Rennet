@@ -427,10 +427,14 @@ function LocationField({
 function Workspaces({ repoPath, label }: { readonly repoPath: string; readonly label: string }) {
   const { data, pending, error } = useWorktreeInventory(repoPath);
   const remove = useRemoveWorktree();
-  /** The last removal's answer, addressed to the row it named. Kept here, not on the row,
-   *  because a successful removal takes its row out of the next list and its note — what
-   *  was deliberately KEPT — would go with it. */
-  const [outcome, setOutcome] = useState<{ id: string; text: string } | undefined>();
+  /** Each removal's answer, keyed by the row it named. Kept here, not on the row, because
+   *  a successful removal takes its row out of the next list and its note — what was
+   *  deliberately KEPT — would go with it. One entry per row, not one slot: two removals
+   *  in flight must not wipe each other's answer, and git's refusal of the first must
+   *  still be on screen when the second lands. */
+  const [outcomes, setOutcomes] = useState<ReadonlyMap<string, string>>(() => new Map());
+  const answer = (id: string, text: string) =>
+    setOutcomes((held) => new Map([...held, [id, text]]));
   /** WHICH row is being removed. `remove.pending` is one flag for the whole hook, so it
    *  disabled every row's button at once — a fact about the mutation, rendered as a fact
    *  about four workspaces nothing is happening to. */
@@ -440,20 +444,24 @@ function Workspaces({ repoPath, label }: { readonly repoPath: string; readonly l
   const [removing, setRemoving] = useState<ReadonlySet<string>>(() => new Set());
 
   const rows = data?.rows ?? [];
-  const orphaned = outcome !== undefined && !rows.some((row) => row.id === outcome.id);
+  /** Answers whose row is GONE from the list — the successful case. */
+  const orphaned = [...outcomes].filter(([id]) => !rows.some((row) => row.id === id));
 
   async function removeRow(row: WorktreeRow) {
-    setOutcome(undefined);
+    setOutcomes((held) => {
+      const next = new Map(held);
+      next.delete(row.id);
+      return next;
+    });
     setRemoving((held) => new Set([...held, row.id]));
     try {
-      const answer = await remove.mutate({ repoPath, id: row.id });
-      setOutcome({
-        id: answer.id,
-        text:
-          answer.status === "removed" ? (answer.note ?? `Removed ${answer.path}`) : answer.reason,
-      });
+      const reply = await remove.mutate({ repoPath, id: row.id });
+      answer(
+        reply.id,
+        reply.status === "removed" ? (reply.note ?? `Removed ${reply.path}`) : reply.reason,
+      );
     } catch (reason) {
-      setOutcome({ id: row.id, text: failureText(reason) });
+      answer(row.id, failureText(reason));
     } finally {
       setRemoving((held) => {
         const next = new Set(held);
@@ -469,15 +477,18 @@ function Workspaces({ repoPath, label }: { readonly repoPath: string; readonly l
    *  removing the LAST row empties the list and the empty branch used to swallow the note
    *  entirely: the one removal whose sentence matters most said nothing at all. */
   const orphanNote =
-    orphaned && outcome ? (
-      <span
-        data-slot="worktree-outcome"
-        role="status"
-        className="whitespace-pre-wrap text-2xs text-ink-soft"
-      >
-        {outcome.text}
-      </span>
-    ) : null;
+    orphaned.length > 0
+      ? orphaned.map(([id, text]) => (
+          <span
+            key={id}
+            data-slot="worktree-outcome"
+            role="status"
+            className="whitespace-pre-wrap text-2xs text-ink-soft"
+          >
+            {text}
+          </span>
+        ))
+      : null;
 
   let body: ReactNode;
   if (pending) {
@@ -501,7 +512,7 @@ function Workspaces({ repoPath, label }: { readonly repoPath: string; readonly l
             row={row}
             label={label}
             busy={removing.has(row.id)}
-            outcome={outcome?.id === row.id ? outcome.text : undefined}
+            outcome={outcomes.get(row.id)}
             onRemove={() => void removeRow(row)}
           />
         ))}
