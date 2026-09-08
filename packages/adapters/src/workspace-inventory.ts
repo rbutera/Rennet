@@ -12,16 +12,20 @@
 // a worktree of THIS repository — so a session of a sibling repository can never colour a
 // row here, and a session that records nothing is simply absent rather than assumed.
 //
-// Every KIND is decided positively too. `own-checkout` is git's own main-worktree record,
-// not "whatever was left over": deciding it by exclusion would relabel every Rennet
-// worktree under a root the reviewer has since changed as the reviewer's own checkout, and
-// permanently refuse to remove it.
+// Every KIND is decided positively too. `own-checkout` is the repository root this list was
+// asked for — the reviewer's own checkout by definition — not "whatever was left over":
+// deciding it by exclusion would relabel every Rennet worktree under a root the reviewer has
+// since changed as the reviewer's own checkout, and permanently refuse to remove it. And not
+// git's first (main) worktree record either: a project rooted at a LINKED worktree would then
+// show two rows both saying "your own checkout".
 
 import { createHash } from "node:crypto";
 import { realpathSync, statSync } from "node:fs";
 import { join, sep } from "node:path";
+import { detectLocus } from "@rennet/core";
 import {
   WORKTREE_REFUSAL_CAP,
+  WORKTREE_ROW_MARKER_CAP,
   WORKTREE_ROWS_CAP,
   WORKTREE_SESSION_IDS_CAP,
   type WorktreeKind,
@@ -147,6 +151,16 @@ export interface ListWorkspacesOptions {
    * is server-side and adapters may not import server (CLAUDE.md, package boundaries).
    */
   readonly spellPath?: (gitPath: string) => string;
+  /**
+   * Does this path's filesystem spell one directory two ways? Defaults to the daemon's
+   * platform — `false` everywhere off Windows, and {@link windowsFoldsCase} on it, which
+   * exempts a WSL UNC path because the distro behind it is case-sensitive.
+   *
+   * Injectable because the arrangement it decides (a Windows daemon driving a WSL
+   * repository) cannot be built on the machine the tests run on, and `process.platform` is
+   * not a thing a test may honestly rewrite.
+   */
+  readonly foldsCase?: (path: string) => boolean;
   /** The wire's row cap. Defaults to the protocol's {@link WORKTREE_ROWS_CAP}. */
   readonly maxRows?: number;
   /** Measure sizes at all. A removal re-lists for addressing only, and skips them. */
@@ -187,33 +201,59 @@ function resolved(path: string): string {
 }
 
 /**
- * Windows spells one directory two ways; POSIX does not.
+ * Whether THIS PATH names a filesystem that spells one directory two ways — asked per path,
+ * never per platform.
  *
  * Folding case unconditionally would make `<root>/repo/feat/ABC-1` and
  * `<root>/repo/feat/abc-1` — two REAL worktrees on Linux, because git branch names are
  * case-sensitive — compare equal, so a removal addressed at one could be answered by the
- * other and take the wrong `rennet/*` branch with it. So the fold is platform-gated.
+ * other and take the wrong `rennet/*` branch with it.
+ *
+ * But a Windows DAEMON is not a Windows FILESYSTEM. A WSL-locus repository is addressed
+ * from Windows as `\\wsl$\Ubuntu\…` / `\\wsl.localhost\Ubuntu\…` while its files live on
+ * the distro's case-SENSITIVE filesystem, so folding a Windows daemon's every path collapses
+ * exactly the pair above and lands the lower-case worktree's sessions on the upper-case row.
+ * `detectLocus` is the same UNC prefix test the rest of Rennet routes WSL work with, so
+ * there is one definition of "this path is inside a distro", not two.
  */
-const FOLDS_CASE = process.platform === "win32";
-
-function folded(path: string): string {
-  return FOLDS_CASE ? path.toLowerCase() : path;
+export function windowsFoldsCase(path: string): boolean {
+  return detectLocus(path).kind !== "wsl";
 }
 
-/** Same directory, through symlinks, and case-insensitively only where Windows spells it twice. */
-function samePath(a: string, b: string): boolean {
-  if (a === b) return true;
-  const [left, right] = [resolved(a), resolved(b)];
-  return folded(left) === folded(right);
+/** Nothing folds: the POSIX default, and the shape a non-Windows daemon runs with. */
+function neverFoldsCase(): boolean {
+  return false;
 }
 
-/** `path` is `root` or sits under it, compared the same forgiving way. */
-function underPath(root: string, path: string): boolean {
-  if (samePath(root, path)) return true;
-  const base = folded(resolved(root));
-  const candidate = folded(resolved(path));
-  const prefix = base.endsWith(sep) ? base : base + sep;
-  return candidate.startsWith(prefix);
+/** The predicate a daemon uses when the caller names none — read at CALL time, not at load. */
+function defaultFoldsCase(path: string): boolean {
+  return process.platform === "win32" ? windowsFoldsCase(path) : neverFoldsCase();
+}
+
+/**
+ * The two path comparisons the inventory makes, bound to one fold predicate.
+ *
+ * Each side folds by ITS OWN path, because the answer is a property of where that path
+ * lives. A mixed pair (a `C:\` path against a `\\wsl$\` one) names two different
+ * filesystems and cannot be the same directory either way.
+ */
+function pathMatchers(foldsCase: (path: string) => boolean) {
+  const folded = (path: string): string => (foldsCase(path) ? path.toLowerCase() : path);
+  /** Same directory, through symlinks, and case-insensitively only where it is spelled twice. */
+  const samePath = (a: string, b: string): boolean => {
+    if (a === b) return true;
+    const [left, right] = [resolved(a), resolved(b)];
+    return folded(left) === folded(right);
+  };
+  /** `path` is `root` or sits under it, compared the same forgiving way. */
+  const underPath = (root: string, path: string): boolean => {
+    if (samePath(root, path)) return true;
+    const base = folded(resolved(root));
+    const candidate = folded(resolved(path));
+    const prefix = base.endsWith(sep) ? base : base + sep;
+    return candidate.startsWith(prefix);
+  };
+  return { samePath, underPath };
 }
 
 /**
@@ -374,6 +414,33 @@ async function commitsAhead(
   }
 }
 
+/**
+ * Why a sibling's BRANCH outlives its worktree — one sentence, and the count when there is
+ * one. Asked of git, in the one vocabulary both the row's marker and the removal's note use,
+ * so the card's "this keeps `rennet/feat/x`" and the outcome's "kept: …" cannot drift apart.
+ *
+ * The branch-is-gone arm is the reason this exists as a marker at all: there is no count to
+ * report, so a row that carried only `aheadOf` said nothing and read as collectable.
+ */
+async function siblingKeptReason(
+  git: GitExec,
+  repoRoot: string,
+  siblingRef: string,
+  branch: string,
+): Promise<{ reason: string; commits?: number }> {
+  if (!(await refExists(git, repoRoot, `refs/heads/${branch}`))) {
+    return { reason: `${branch} no longer exists` };
+  }
+  const commits = await commitsAhead(git, repoRoot, siblingRef, branch);
+  if (commits !== undefined && commits > 0) {
+    return {
+      reason: `ahead of ${branch} by ${commits} commit${commits === 1 ? "" : "s"}`,
+      commits,
+    };
+  }
+  return { reason: `it holds commits ${branch} does not` };
+}
+
 /** The order the card reads in: the reviewer's own checkout, then Rennet's, then by path. */
 const KIND_ORDER: Record<WorktreeKind, number> = {
   "own-checkout": 0,
@@ -406,14 +473,10 @@ export async function listWorkspaces(
 ): Promise<WorkspaceInventory> {
   const listed = await git(repoRoot, ["worktree", "list", "--porcelain", "-z"]);
   const spell = options.spellPath ?? ((gitPath: string) => gitPath);
-  const parsed = parseWorktreeRecords(listed);
-  // Git prints the MAIN worktree first, always. That record — not "the one nothing else
-  // explains" — is what makes a row `own-checkout`.
-  const mainPath = parsed[0]?.path;
-  const records = parsed
+  const { samePath, underPath } = pathMatchers(options.foldsCase ?? defaultFoldsCase);
+  const records = parseWorktreeRecords(listed)
     .filter((record) => !record.bare)
     .map((record) => ({ ...record, gitPath: record.path, path: spell(record.path) }));
-  const spelledMain = mainPath === undefined ? undefined : spell(mainPath);
   const prPaths = options.prWorktreePaths ?? [];
   const sessions = (options.sessions ?? []).filter(
     (session) => session.archivedAt === undefined && session.boundRoot !== undefined,
@@ -432,14 +495,18 @@ export async function listWorkspaces(
     const activity = bound
       .map((session) => session.lastActivityAt)
       .filter((value): value is number => value !== undefined);
-    // POSITIVE discrimination, in this order: git's own main-worktree record, then the
-    // pull-request index, then the ref's own shape. Nothing is `own-checkout` merely
-    // because the other three did not claim it — a Rennet worktree under a root the
+    // POSITIVE discrimination, in this order: the repository root this list was asked for,
+    // then the pull-request index, then the ref's own shape. Nothing is `own-checkout`
+    // merely because the other three did not claim it — a Rennet worktree under a root the
     // reviewer has since changed is still a Rennet worktree, and still removable.
-    const isMain =
-      (spelledMain !== undefined && samePath(spelledMain, record.path)) ||
-      samePath(repoRoot, record.path);
-    const kind: WorktreeKind = isMain
+    //
+    // `repoRoot` and ONLY `repoRoot`: git's first record is the repository's main worktree,
+    // which is a different question. When the project is rooted at a linked worktree the
+    // two differ, and honouring both produced two rows both reading "your own checkout" —
+    // one of them a directory the reviewer never opened. Git's main worktree is then a
+    // `branch` row, listed at all only when a session is bound to it, and unremovable for
+    // that reason rather than by label.
+    const kind: WorktreeKind = samePath(repoRoot, record.path)
       ? "own-checkout"
       : prPaths.some((prPath) => samePath(prPath, record.path))
         ? "pull-request"
@@ -450,12 +517,21 @@ export async function listWorkspaces(
     // row carries the count that says why. Asked per sibling row, never assumed from the
     // count alone: a sibling can be ahead of the local branch and still fully merged into
     // that branch's remote-tracking ref, which the push under `own` is exactly what makes true.
+    //
+    // `keepsBranch` rides beside it and is the honest half for the case `aheadOf` cannot
+    // express: when the reviewed branch has been DELETED there is no count, so a row
+    // carrying only `aheadOf` looked exactly like a collectable sibling while the removal
+    // quietly kept `rennet/<branch>`. The marker says what the removal will do.
     let aheadOf: WorktreeRow["aheadOf"];
+    let keepsBranch: string | undefined;
     if (kind === "sibling" && record.branch !== undefined) {
       const branch = record.branch.slice(SIBLING_BRANCH_PREFIX.length);
       if (!(await siblingIsCollectable(git, repoRoot, record.branch, branch))) {
-        const commits = await commitsAhead(git, repoRoot, record.branch, branch);
-        if (commits !== undefined && commits > 0) aheadOf = { branch, commits };
+        const kept = await siblingKeptReason(git, repoRoot, record.branch, branch);
+        keepsBranch = capText(kept.reason, WORKTREE_ROW_MARKER_CAP);
+        if (kept.commits !== undefined && kept.commits > 0) {
+          aheadOf = { branch, commits: kept.commits };
+        }
       }
     }
     const createdAt = createdAtOf(record.path);
@@ -476,6 +552,7 @@ export async function listWorkspaces(
       ...(createdAt === undefined ? {} : { createdAt }),
       ...(lastUsedAt === undefined ? {} : { lastUsedAt }),
       ...(aheadOf === undefined ? {} : { aheadOf }),
+      ...(keepsBranch === undefined ? {} : { keepsBranch }),
       // An ahead sibling IS removable: its worktree goes and its branch stays, so the
       // commits remain on a ref the reviewer can see. Only the main checkout and a
       // workspace someone is working in cannot be addressed at all.
@@ -510,6 +587,11 @@ export async function listWorkspaces(
   return { rows: sized, truncated };
 }
 
+/** A declared byte bound with an honest truncation marker (CLAUDE.md, byte discipline). */
+function capText(text: string, cap: number): string {
+  return text.length > cap ? `${text.slice(0, cap)}… (truncated)` : text;
+}
+
 /** Git's own words for a failure, capped with an honest marker (byte discipline). */
 function refusalText(error: unknown): string {
   const stderr = (error as { stderr?: unknown } | null)?.stderr;
@@ -519,9 +601,7 @@ function refusalText(error: unknown): string {
       : error instanceof Error
         ? error.message
         : String(error);
-  return message.length > WORKTREE_REFUSAL_CAP
-    ? `${message.slice(0, WORKTREE_REFUSAL_CAP)}… (truncated)`
-    : message;
+  return capText(message, WORKTREE_REFUSAL_CAP);
 }
 
 /** Who is working here, named — a fact about the row, not a scolding. */
@@ -532,20 +612,19 @@ function boundReason(row: WorkspaceRow): string {
     : `bound to ${row.sessionIds.length} sessions`;
 }
 
-/** Why a sibling branch outlived its worktree, in the outcome's own words. */
+/**
+ * Why a sibling branch outlived its worktree, in the outcome's own words — the SAME
+ * sentence the row's `keepsBranch` marker carried, so the card's warning and the outcome
+ * that follows it cannot say two different things.
+ */
 async function keptSiblingNote(
   git: GitExec,
   repoRoot: string,
   siblingRef: string,
   branch: string,
 ): Promise<string> {
-  if (!(await refExists(git, repoRoot, `refs/heads/${branch}`))) {
-    return `${siblingRef} kept: ${branch} no longer exists`;
-  }
-  const commits = await commitsAhead(git, repoRoot, siblingRef, branch);
-  return commits !== undefined && commits > 0
-    ? `${siblingRef} kept: ahead of ${branch} by ${commits} commit${commits === 1 ? "" : "s"}`
-    : `${siblingRef} kept: it holds commits ${branch} does not`;
+  const { reason } = await siblingKeptReason(git, repoRoot, siblingRef, branch);
+  return `${siblingRef} kept: ${reason}`;
 }
 
 export interface RemoveWorkspaceInput {

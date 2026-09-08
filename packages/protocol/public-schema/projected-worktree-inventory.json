@@ -85,6 +85,11 @@
             ],
             "additionalProperties": false
           },
+          "keepsBranch": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 216
+          },
           "removable": {
             "type": "boolean"
           }

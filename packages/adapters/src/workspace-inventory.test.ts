@@ -19,6 +19,7 @@ import {
   siblingIsCollectable,
   type WorkspaceRow,
   type WorkspaceSessionRef,
+  windowsFoldsCase,
 } from "./workspace-inventory";
 import { parseWorktrees } from "./worktree-discovery";
 
@@ -180,7 +181,7 @@ describe("listWorkspaces", () => {
     expect(archived.rows.map((row) => row.kind)).toEqual(["branch"]);
   });
 
-  it("names git's MAIN worktree own-checkout and a second reviewer checkout by its ref", async () => {
+  it("names the QUERIED repository root own-checkout and a second reviewer checkout by its ref", async () => {
     const { root, worktreeRoot, headOid } = fixture();
     const reviewerSecond = mkdtempSync(join(tmpdir(), "rennet-wsinv-own-"));
     scratch.push(reviewerSecond);
@@ -201,9 +202,9 @@ describe("listWorkspaces", () => {
     });
 
     const byKind = Object.fromEntries(inventory.rows.map((row) => [row.kind, row]));
-    // `own-checkout` is git's main-worktree record and nothing else. The second checkout
-    // is a linked worktree on a branch, so it is named for what it IS, and it is not
-    // removable because someone is working in it — not because the label said so.
+    // `own-checkout` is the root this list was ASKED FOR and nothing else. The second
+    // checkout is a linked worktree on a branch, so it is named for what it IS, and it is
+    // not removable because someone is working in it — not because the label said so.
     expect(byKind["own-checkout"]?.ref).toBe("feat/x");
     expect(byKind["own-checkout"]?.sessionIds).toEqual(["s-own"]);
     expect(byKind.branch?.ref).toBe("feat/theirs");
@@ -211,6 +212,42 @@ describe("listWorkspaces", () => {
     expect(byKind.branch?.removable).toBe(false);
     expect(byKind["pull-request"]?.ref).toBe(headOid);
     expect(byKind["pull-request"]?.removable).toBe(true);
+  });
+
+  it("gives a project rooted at a LINKED worktree exactly one own-checkout row", async () => {
+    // The defect: `own-checkout` was git's first (main) record OR the queried root, so a
+    // project whose root IS a linked worktree produced TWO rows both reading "your own
+    // checkout" — one of them a directory the reviewer never opened, and permanently
+    // unremovable for a reason the card could not explain. The reviewer's own checkout is
+    // the root the list was asked for; that is what the word means.
+    const { root, worktreeRoot, headOid } = fixture();
+    const linked = join(worktreeRoot, "repo-key", "feat", "y");
+    addBranchWorktree(root, linked, "feat/y", headOid);
+
+    const inventory = await listWorkspaces(execaGit, linked, {
+      root: worktreeRoot,
+      measureSizes: false,
+    });
+
+    expect(inventory.rows.map((row) => row.kind)).toEqual(["own-checkout"]);
+    expect(inventory.rows[0]?.ref).toBe("feat/y");
+    expect(inventory.rows[0]?.removable).toBe(false);
+    // Git's main worktree is not under the resolved root and nothing is bound to it, so it
+    // is not a candidate at all (D6's rule) — not a second "your own checkout".
+    expect(inventory.rows.map((row) => row.ref)).not.toContain("feat/x");
+
+    // Bind a session to it and it enters the list for THAT reason — as a branch worktree
+    // someone is working in, unremovable because it is busy, not because of its label.
+    const bound = await listWorkspaces(execaGit, linked, {
+      root: worktreeRoot,
+      measureSizes: false,
+      sessions: [{ id: "s-main", boundRoot: root }],
+    });
+    const mainRow = bound.rows.find((row) => row.ref === "feat/x");
+    expect(mainRow?.kind).toBe("branch");
+    expect(mainRow?.sessionIds).toEqual(["s-main"]);
+    expect(mainRow?.removable).toBe(false);
+    expect(bound.rows.filter((row) => row.kind === "own-checkout")).toHaveLength(1);
   });
 
   it("still names a Rennet worktree under a FORMER root by its ref, not the reviewer's checkout", async () => {
@@ -249,6 +286,8 @@ describe("listWorkspaces", () => {
     });
     expect(merged.rows[0]?.kind).toBe("sibling");
     expect(merged.rows[0]?.aheadOf).toBeUndefined();
+    // Collectable ⇒ removing this row takes the branch too, so there is nothing to keep.
+    expect(merged.rows[0]?.keepsBranch).toBeUndefined();
     expect(merged.rows[0]?.removable).toBe(true);
 
     commitIn(sibling, "b.txt", "sibling work\n", "round work");
@@ -257,8 +296,33 @@ describe("listWorkspaces", () => {
       measureSizes: false,
     });
     expect(ahead.rows[0]?.aheadOf).toEqual({ branch: "feat/x", commits: 1 });
+    // The same sentence the removal's own note will carry, so the card cannot promise one
+    // thing and the outcome report another.
+    expect(ahead.rows[0]?.keepsBranch).toBe("ahead of feat/x by 1 commit");
     // Still removable: D5 gates the BRANCH, and the worktree can go without losing a commit.
     expect(ahead.rows[0]?.removable).toBe(true);
+  });
+
+  it("says a sibling keeps its branch when the reviewed branch no longer exists", async () => {
+    // `aheadOf` needs a branch to count against, so a DELETED `feat/x` leaves it absent and
+    // the row read exactly like a collectable sibling — while the removal quietly kept
+    // `rennet/feat/x`. The marker is the row's half of what the outcome already said.
+    const { root, worktreeRoot, headOid } = fixture();
+    const sibling = join(worktreeRoot, "repo-key", "rennet", "feat", "x");
+    addBranchWorktree(root, sibling, "rennet/feat/x", headOid);
+    commitIn(sibling, "b.txt", "sibling work\n", "round work");
+    git(root, "checkout", "-q", "--detach", "feat/x");
+    git(root, "branch", "-D", "feat/x");
+
+    const { rows } = await listWorkspaces(execaGit, root, {
+      root: worktreeRoot,
+      measureSizes: false,
+    });
+    const row = rows.find((candidate) => candidate.kind === "sibling");
+
+    expect(row?.aheadOf).toBeUndefined();
+    expect(row?.keepsBranch).toBe("feat/x no longer exists");
+    expect(row?.removable).toBe(true);
   });
 
   it("collects a sibling reachable from the branch's REMOTE-tracking ref (D5's second arm)", async () => {
@@ -435,6 +499,58 @@ describe("listWorkspaces", () => {
       expect(inventory.rows.find((row) => row.path === upper)?.removable).toBe(true);
     },
   );
+
+  it("folds a Windows daemon's own paths but never a WSL repository's", async () => {
+    // `process.platform === "win32"` folded EVERY path, so a Windows daemon driving a
+    // WSL-locus repository folded `\\wsl$\…\feat\ABC-1` onto `\\wsl$\…\feat\abc-1` — two
+    // real worktrees, because the distro's filesystem is case-sensitive — and the session
+    // bound to the lower-case one landed on the upper-case row as well.
+    //
+    // The predicate is INJECTED rather than the platform monkeypatched: `windowsFoldsCase`
+    // is the exact function a Windows daemon runs, and neither arrangement below can be
+    // built on the machine this suite runs on, so the runner is canned. Both pairs are
+    // candidates only through their bound session — `underPath` compares with the HOST's
+    // separator, which is not the one in these paths.
+    const wslLower = "\\\\wsl$\\Ubuntu\\home\\u\\wt\\feat\\abc-1";
+    const wslUpper = "\\\\wsl$\\Ubuntu\\home\\u\\wt\\feat\\ABC-1";
+    const wsl = await listWorkspaces(
+      cannedGit(
+        `${record("\\\\wsl$\\Ubuntu\\home\\u\\repo", "feat/x")}` +
+          `${record(wslLower, "feat/abc-1")}${record(wslUpper, "feat/ABC-1")}`,
+      ),
+      "\\\\wsl$\\Ubuntu\\home\\u\\repo",
+      {
+        root: "\\\\wsl$\\Ubuntu\\home\\u\\nothing-here",
+        measureSizes: false,
+        foldsCase: windowsFoldsCase,
+        sessions: [{ id: "s-lower", boundRoot: wslLower }],
+      },
+    );
+
+    expect(wsl.rows.map((row) => row.path)).toEqual([wslLower]);
+    expect(wsl.rows[0]?.sessionIds).toEqual(["s-lower"]);
+
+    // The same daemon, a path that really is on Windows: `C:\work\Feat\x` and
+    // `C:\work\feat\x` ARE one directory there, so the fold still applies.
+    const winLower = "C:\\work\\feat\\x";
+    const winUpper = "C:\\work\\Feat\\x";
+    const win = await listWorkspaces(
+      cannedGit(
+        `${record("C:\\work\\repo", "feat/x")}` +
+          `${record(winLower, "feat/x")}${record(winUpper, "feat/x")}`,
+      ),
+      "C:\\work\\repo",
+      {
+        root: "C:\\nothing-here",
+        measureSizes: false,
+        foldsCase: windowsFoldsCase,
+        sessions: [{ id: "s-win", boundRoot: winLower }],
+      },
+    );
+
+    expect(win.rows.map((row) => row.path).sort()).toEqual([winLower, winUpper].sort());
+    expect(win.rows.every((row) => row.sessionIds[0] === "s-win")).toBe(true);
+  });
 
   it.skipIf(!CASE_SENSITIVE_SCRATCH)(
     "removes exactly the case-differing worktree it was asked for",

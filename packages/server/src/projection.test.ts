@@ -595,6 +595,48 @@ describe("inbound resolution", () => {
     expect(parsed.status === "removed" && parsed.note).toContain("ahead of feat/x by 2");
   });
 
+  it("redacts a host path outside every root from a removal's free text", () => {
+    // Git's refusal quotes the directory it refused, and `worktree.location` can put that
+    // directory OUTSIDE the home dir and outside every known root — a shared data volume,
+    // say. The blanket root/home scrub then leaves the absolute path untouched and it ships
+    // to a paired phone. `session.transcript` already answers this shape; so does this.
+    const outside = "/srv/rennet/worktrees/repo/feat/x";
+    const refused = projectCommandOutput(
+      "worktrees.remove",
+      {
+        status: "refused",
+        id: "a1b2c3d4e5f60718",
+        path: outside,
+        reason: `fatal: '${outside}' contains modified or untracked files, use --force to delete it`,
+      },
+      ctx,
+    );
+
+    const parsed = projectedWorktreeRemoveOutcomeSchema.parse(refused);
+    expect(parsed.status === "refused" && parsed.reason).toContain(
+      "contains modified or untracked files",
+    );
+    expect(parsed.status === "refused" && parsed.reason).toContain("<path>");
+    expect(JSON.stringify(parsed)).not.toContain("/srv/rennet");
+
+    // The `removed` arm's `note` is free text of the same family: a failed `branch -d`
+    // puts git's stderr in it, and git names paths there too.
+    const kept = projectCommandOutput(
+      "worktrees.remove",
+      {
+        status: "removed",
+        id: "a1b2c3d4e5f60718",
+        path: outside,
+        siblingBranchDeleted: false,
+        note: `rennet/feat/x kept: error: cannot lock ref at ${outside}/.git/refs/heads/x`,
+      },
+      ctx,
+    );
+    expect(JSON.stringify(projectedWorktreeRemoveOutcomeSchema.parse(kept))).not.toContain(
+      "/srv/rennet",
+    );
+  });
+
   it.each(["settings.resetRepoValue", "settings.pinRepoValue"] as const)(
     "projects the SettingsProject row returned by %s",
     (command) => {

@@ -449,6 +449,19 @@ export function projectCommandOutput(
         path: toRepoReference(String(row.path), ctx),
       }));
     }
+    // A removal's FREE TEXT is git's own sentence, and git names absolute paths in it:
+    // `fatal: '/srv/rennet/worktrees/repo/feat/x' contains modified or untracked files`.
+    // The blanket scrub below rewrites known roots and the home dir and nothing else, so a
+    // data directory outside both — which is exactly where a configured `worktree.location`
+    // can put one — shipped the host spelling to a paired phone. Same shape as
+    // `session.transcript` above, same answer: substitute what is known, then redact what
+    // is left. Only `reason` and `note` are free text; `path` is structural and is rewritten
+    // into a repo reference by the generic string-`path` branch above.
+    if (command === "worktrees.remove") {
+      for (const key of ["reason", "note"] as const) {
+        if (typeof o[key] === "string") o[key] = redactAbsolutePathsDeep(o[key], ctx);
+      }
+    }
     projected = o;
   }
   return scrubProjectedValue(projected, ctx);

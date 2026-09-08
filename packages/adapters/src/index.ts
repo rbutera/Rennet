@@ -641,6 +641,7 @@ export {
   type WorkspaceRow,
   type WorkspaceSessionRef,
   type WorktreeRecord,
+  windowsFoldsCase,
   workspaceId,
 } from "./workspace-inventory";
 export {

@@ -41,17 +41,30 @@ export const WORKTREE_SESSION_IDS_CAP = 20;
 export const WORKTREE_REFUSAL_CAP = 2000;
 
 /**
+ * The longest per-row marker sentence, in characters — a branch name is unbounded, and a
+ * row's marker is one short sentence, not a refusal transcript.
+ */
+export const WORKTREE_ROW_MARKER_CAP = 200;
+
+/**
  * What a workspace IS, which decides what the surface may offer for it:
- *   • `own-checkout` — the repository's MAIN worktree, the checkout git itself records
- *     first; listed only while a session is bound to it, and never removable by Rennet.
+ *   • `own-checkout` — THE REPOSITORY ROOT THE LIST WAS ASKED FOR: the reviewer's own
+ *     checkout, by definition, since that is the directory the card is about. Listed only
+ *     while a session is bound to it, and never removable by Rennet.
  *   • `branch` — a worktree with a branch checked out.
  *   • `sibling` — a worktree on `rennet/<branch>` (workspace `own`).
  *   • `pull-request` — the detached snapshot at a reviewed pull request's head.
  *
- * Decided POSITIVELY, from git's main-worktree record and the row's own ref/index facts —
- * never "everything left over is the reviewer's checkout". A worktree that is not the main
- * one is named for what it is even when it sits outside the currently resolved root, which
- * is exactly what a root the reviewer has since changed produces.
+ * Decided POSITIVELY, from the queried repository root and the row's own ref/index facts —
+ * never "everything left over is the reviewer's checkout". A worktree that is not the
+ * queried root is named for what it is even when it sits outside the currently resolved
+ * root, which is exactly what a root the reviewer has since changed produces.
+ *
+ * NOT git's first (main) worktree record. A project rooted at a LINKED worktree — which
+ * `worktree.location` makes ordinary — would otherwise produce TWO rows both labelled
+ * "your own checkout": git's main one and the one the reviewer actually has open. Git's
+ * main worktree, when it is not the queried root, is a `branch` row like any other, and it
+ * is listed at all only when a live session is bound to it.
  */
 export const worktreeKindSchema = z.enum(["own-checkout", "branch", "sibling", "pull-request"]);
 export type WorktreeKind = z.infer<typeof worktreeKindSchema>;
@@ -93,6 +106,21 @@ export const worktreeRowSchema = z.object({
    * row takes the worktree and KEEPS the branch, and the row says how far ahead it is.
    */
   aheadOf: z.object({ branch: z.string().min(1), commits: z.number().int().positive() }).optional(),
+  /**
+   * Present on a sibling whose branch will OUTLIVE its worktree if this row is removed
+   * (D5), saying why in one sentence: "ahead of `feat/x` by 2 commits", or "`feat/x` no
+   * longer exists". `aheadOf` carries the count only when there is one to carry — a sibling
+   * whose reviewed branch has been DELETED has no count, and without this marker that row
+   * read exactly like a collectable one while the removal quietly kept its branch.
+   *
+   * Absent ⇒ removing this row takes the sibling branch with it, or the row is not a
+   * sibling at all.
+   */
+  keepsBranch: z
+    .string()
+    .min(1)
+    .max(WORKTREE_ROW_MARKER_CAP + 16)
+    .optional(),
   /**
    * Whether a removal can address this row at all: false for the repository's main
    * checkout and for a workspace a live session is bound to. An ahead sibling IS
