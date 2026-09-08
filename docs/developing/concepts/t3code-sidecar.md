@@ -568,10 +568,10 @@ Three things follow from the thread being persistent.
   its cap, a message it cannot find, an adapter that will not take the request — is
   recorded as a `provider.turn.start.failed` activity with no turn id, beside a session
   `error` that the session start it had just kicked off overwrites with `ready` a moment
-  later. So the dispatch resolves, the session reads healthy with no `lastError`, and no
-  turn row ever appears (the Design seat, drive 1.6, both runs). The wait reads the
-  activity: one stamped at or after its request settles the turn as failed, carrying the
-  sidecar's own message with its stack frames dropped, instead of the two-minute timeout.
+  later. No turn row appears. Correlated starts read the activity matching their exact
+  request ID; interactive starts can also observe the transient session error or an
+  activity stamped at or after their request. Both error sources carry the sidecar's
+  message and schema path with stack frames removed, instead of a two-minute timeout.
 - **The prompt fits the transport.** T3 caps a turn's input at
   `PROVIDER_SEND_TURN_MAX_INPUT_CHARS` (120,000 characters), exported through the seam as
   `T3_TURN_INPUT_MAX_CHARS`. On the drive of 2026-09-03 the Design prompt was 241,848
@@ -1091,7 +1091,7 @@ Where each number below was read, so a later reader can take the same measuremen
 | Figure | Read from |
 | --- | --- |
 | Prompt bytes | `projection_thread_messages` in the sidecar's projection database, `<dataDir>/t3/userdata/state.sqlite` — the user-role row of each seat thread, `length(cast(text as blob))` |
-| Draft and repair timings | `timings.phases` on the generation record, `<dataDir>/generations/<generationId>.json` |
+| Draft and repair timings | `timings.phases` in the `document` column of `generations`, keyed by `id`, in `<dataDir>/generations/generations.sqlite` |
 | Token usage | the `usage` block on that same generation record |
 | Wall clock | the `startedAtMs`/`durationMs` span of those phases, against the clock times of the branch pick and the reveal |
 | Bound roots and binding rows | `boundRoot` on the session records under `<dataDir>/sessions/`, and every row of `<dataDir>/t3/thread-bindings.json` |

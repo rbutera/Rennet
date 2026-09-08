@@ -371,6 +371,7 @@ export const OrchestrationCheckpointStatus = Schema.Literals(["ready", "missing"
 export type OrchestrationCheckpointStatus = typeof OrchestrationCheckpointStatus.Type;
 
 export const OrchestrationCheckpointSummary = Schema.Struct({
+  startCommandId: Schema.optional(CommandId),
   turnId: TurnId,
   checkpointTurnCount: NonNegativeInt,
   checkpointRef: CheckpointRef,

@@ -35,6 +35,7 @@
 // behavior. This runtime only wires the seams.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { isDeepStrictEqual } from "node:util";
 import {
   createMetricsCollector,
   mergeGenerationUsage,
@@ -827,6 +828,11 @@ export interface RoundsRuntimeDeps {
    *  generations are process-lived only; present ⇒ the frozen prior survives a restart as
    *  a drill-down the ledger's switcher can open by id ({@link RoundsRuntime.generation}). */
   readonly persistGeneration?: (gen: Generation) => void | Promise<void>;
+  readonly persistGenerationIfRevision?: (gen: Generation, revision: number) => boolean;
+  readonly loadGenerationVersion?: (
+    id: string,
+  ) => { generation: Generation; revision: number } | undefined;
+  readonly freezeGeneration?: (id: string, revision: number) => Generation | undefined;
   /** Persist a round record to the durable ledger (C15 2.2), reconciling to ONE record per
    *  round — the real-generation record supersedes the dispatch placeholder for the same
    *  round. Called by BOTH the dispatch and the regeneration paths; absent ⇒ in-memory only. */
@@ -931,6 +937,19 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
   // pattern). The stored tail swallows rejection so a failed round never wedges the
   // queue; the returned promise carries the real outcome.
   const tails = new Map<string, Promise<unknown>>();
+
+  async function persistAttempt(gen: Generation, owner: Generation): Promise<boolean> {
+    if (deps.persistGeneration === undefined) return true;
+    if (deps.persistGenerationIfRevision !== undefined) {
+      const version = deps.loadGenerationVersion?.(owner.id);
+      if (version === undefined || !sameDraftingAttempt(version.generation, owner)) return false;
+      return deps.persistGenerationIfRevision(gen, version.revision);
+    }
+    const durable = deps.loadGeneration?.(owner.id);
+    if (durable !== undefined && !sameDraftingAttempt(durable, owner)) return false;
+    await deps.persistGeneration(gen);
+    return true;
+  }
 
   /** Run `task` serialized behind the session's current round — the ONE per-session lock
    *  both `runRound` and `dispatchRound` share (no second lock, B11 cluster 4). */
@@ -1323,54 +1342,32 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
      *  Membership, NOT the lane's status: a settlement the ownership check refused leaves
      *  the lane untouched and must still count as attempted, or the backstop re-runs it. */
     const settledFailures = new Set<LensKind>();
-    /**
-     * Write the reveal state durably, unless a LATER attempt (or the settle that dropped
-     * this attempt's slots) already owns the generation. Rejecting here rather than at the
-     * store means one check covers every reveal write — settlements and timings
-     * all route through it, so none of them can be the one that folds a superseded
-     * attempt's result into the current generation.
-     *
-     * Returns whether the write was ACCEPTED, and every caller gates its broadcast on it.
-     * A rejection that returned nothing still let the arrival sink and the lane snapshot
-     * run, so a superseded attempt was refused the disk and granted the screen — connected
-     * clients saw a dead attempt's boards announced over the live generation's, which is
-     * the same wrong-content publish the durable check exists to prevent.
-     */
+    // A refused write also suppresses its arrival and progress broadcasts.
     const persistReveal = async (): Promise<boolean> => {
-      const persist = deps.persistGeneration;
-      if (persist === undefined) return true;
-      const durable = deps.loadGeneration?.(attemptGeneration.id);
-      if (durable !== undefined && !sameDraftingAttempt(durable, attemptGeneration)) {
-        // Latched at the ONE place the rejection is decided, and returned to `runOnce` —
-        // which is the door this gate did not cover. `persistReveal` only ever guarded
-        // reveal writes; the attempt's TERMINAL writes (`withLensBoards`, the frozen
-        // predecessor, the round record) went through `deps.persistGeneration` directly,
-        // and `GenerationStore.save` overwrites by generation id. So a slow dead attempt
-        // could still replace a newer attempt's finished result under the right label —
-        // refused the disk hunk by hunk and then handed the whole file at the end.
-        superseded = true;
-        return false;
-      }
-      await persist({
-        ...attemptGeneration,
-        lensBoards: { ...reveal.lensBoards },
-        ...(Object.keys(reveal.absentLenses).length === 0
-          ? {}
-          : { absentLenses: { ...reveal.absentLenses } }),
-        ...(Object.keys(reveal.failedLenses).length === 0
-          ? {}
-          : {
-              failedLenses: { ...reveal.failedLenses },
-              failedLensAccounts: { ...reveal.failedLensAccounts },
-            }),
-        ...(reveal.timings.length === 0
-          ? {}
-          : {
-              timings: { version: GENERATION_TIMINGS_VERSION, phases: [...reveal.timings] },
-            }),
-        ...usageSoFar(),
-      });
-      return true;
+      const accepted = await persistAttempt(
+        {
+          ...attemptGeneration,
+          lensBoards: { ...reveal.lensBoards },
+          ...(Object.keys(reveal.absentLenses).length === 0
+            ? {}
+            : { absentLenses: { ...reveal.absentLenses } }),
+          ...(Object.keys(reveal.failedLenses).length === 0
+            ? {}
+            : {
+                failedLenses: { ...reveal.failedLenses },
+                failedLensAccounts: { ...reveal.failedLensAccounts },
+              }),
+          ...(reveal.timings.length === 0
+            ? {}
+            : {
+                timings: { version: GENERATION_TIMINGS_VERSION, phases: [...reveal.timings] },
+              }),
+          ...usageSoFar(),
+        },
+        attemptGeneration,
+      );
+      if (!accepted) superseded = true;
+      return accepted;
     };
     const lanes =
       onProgress === undefined
@@ -1933,24 +1930,10 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
     if (restoredOrDrafted.superseded) {
       throw new GenerationSupersededError(boardGeneration.id);
     }
-    // Write a generation ONLY while this attempt still owns it, re-read at the write itself.
-    // `GenerationStore.save` overwrites by id, and the terminal writes below strip this
-    // attempt's drafting slots (`withLensBoards`) — so a stale attempt reaching this far,
-    // whose competitor claimed the id during an intervening await, would otherwise clobber
-    // the live result under the right label. Every write to THIS generation id routes here;
-    // a competitor is a durable record for our id that no longer describes our attempt (a
-    // positive contradiction, per the workspace rule — not mere silence). The frozen
-    // predecessor write is a DIFFERENT id and does not pass through here: it is reached only
-    // after `persistOwned` accepted the successor, and rechecking it against our id would
-    // false-positive on the slots our own successor write just dropped.
     const persistOwned = async (gen: Generation): Promise<void> => {
-      const persist = deps.persistGeneration;
-      if (persist === undefined) return;
-      const durable = deps.loadGeneration?.(boardGeneration.id);
-      if (durable !== undefined && !sameDraftingAttempt(durable, restoredOrDrafted.generation)) {
+      if (!(await persistAttempt(gen, restoredOrDrafted.generation))) {
         throw new GenerationSupersededError(boardGeneration.id);
       }
-      await persist(gen);
     };
 
     // Durable BoardMeta is keyed only by generation, so evidence for an existing
@@ -2014,24 +1997,16 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
       }
       throw error;
     }
-    // The frozen predecessor (C15 2.2, un-parks C09 F3): when the code moved AND a real prior
-    // generation exists, its id is the earlier generation the ledger's switcher drills back to.
-    // gen:<patchset> is GLOBAL across sessions/reviews on one patchset (`generationIdForPatchset`),
-    // so another session may have re-drafted this patchset into a fresh LIVE generation after
-    // this round read its predecessor. Freezing our stale copy would overwrite that session's
-    // live boards (#816 re-review P3). So claim the predecessor ONLY while the durable copy is
-    // still the generation we superseded — same lens-board slots, since a redraft mints new
-    // ones. Otherwise leave it be and drop BOTH the frozen write below and the record's
-    // `frozenPredecessor` pointer: a drill-back must not land on boards another attempt owns.
+    // Capture the expected predecessor revision before the successor write awaits.
+    // Reserved drafting slots matter even when neither attempt has produced a board.
     const predecessor = landed ? input.previousGeneration : undefined;
     const durablePredecessor =
-      predecessor === undefined ? undefined : deps.loadGeneration?.(predecessor.id);
+      predecessor === undefined ? undefined : deps.loadGenerationVersion?.(predecessor.id);
     const predecessorStillOurs =
       predecessor !== undefined &&
-      (durablePredecessor === undefined ||
-        LENS_KINDS.every(
-          (lens) => durablePredecessor.lensBoards[lens] === predecessor.lensBoards[lens],
-        ));
+      (deps.persistGeneration === undefined ||
+        (durablePredecessor !== undefined &&
+          isDeepStrictEqual(durablePredecessor.generation, predecessor)));
     // The REPORT-DERIVED rework count (C15 finding 10): what the round's own report says
     // it did, persisted here so the ledger reads a number instead of inferring one from
     // how many asks went out.
@@ -2047,9 +2022,6 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
       boardGeneration: boardGeneration.id,
       reportBoard,
       ...(reworkCount === undefined ? {} : { reworkCount }),
-      ...(predecessorStillOurs && predecessor !== undefined
-        ? { frozenPredecessor: predecessor.id }
-        : {}),
     };
     // WRITE ORDER, and it is load-bearing: the successor generation goes down FIRST, through
     // `persistOwned` — the one ownership-checked writer of this id — then the ledger record
@@ -2065,14 +2037,15 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
     // export as a clean round. The `catch` above already timed a real failure or an abort; a
     // supersession is timed as neither.
     archiveBenchmark?.("complete");
-    // Freeze the predecessor ONLY while this round still owns it (see the predecessor note
-    // above): a redraft by another session on this global patchset id makes the durable copy a
-    // different live generation, and overwriting it with our frozen copy would erase it. The
-    // successor record and `composed` below still fire regardless — we own `liveSuccessor`
-    // (just written, settled; a later attempt on it reads dropped slots and supersedes ITSELF).
+    // The store compares the revision and freezes in one statement. A lost race leaves
+    // the replacement untouched and publishes neither a pointer nor a transition.
     const frozenPrevious =
-      predecessorStillOurs && predecessor !== undefined ? freezeGeneration(predecessor) : undefined;
-    if (frozenPrevious !== undefined) await deps.persistGeneration?.(frozenPrevious);
+      predecessorStillOurs && predecessor !== undefined
+        ? durablePredecessor === undefined
+          ? freezeGeneration(predecessor)
+          : deps.freezeGeneration?.(predecessor.id, durablePredecessor.revision)
+        : undefined;
+    if (frozenPrevious !== undefined) record.frozenPredecessor = frozenPrevious.id;
     if (frozenPrevious !== undefined && input.session.reviewId !== undefined) {
       await deps.onGenerationTransition?.({
         repoRoot: input.repoRoot,

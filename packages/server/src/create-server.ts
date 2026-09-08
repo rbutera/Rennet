@@ -430,6 +430,7 @@ export interface HandoffTurnInput {
  * is the bound root — a thread's cwd is fixed at creation and there is no second chance.
  */
 export interface RoundTurnInput extends HandoffTurnInput {
+  readonly startCommandId?: string;
   readonly sessionId: string;
   readonly operationId: string;
   readonly title: string;
@@ -845,6 +846,7 @@ export function createRoundWorkerPort(input: {
       throw new Error("Round worker started outside its durable running phase.");
     }
     const outcome = await input.runRoundTurn({
+      ...(attempt.startCommandId === undefined ? {} : { startCommandId: attempt.startCommandId }),
       repoRoot: operation.state.workspace.root,
       prompt: operation.workOrderPrompt,
       reviewId: operation.reviewId,
@@ -869,24 +871,14 @@ export function createRoundWorkerPort(input: {
   };
 }
 
-/**
- * Restart recovery, now that the round is a turn on a thread the SIDECAR owns.
- *
- * The daemon can die mid-turn; T3 cannot be asked "did execution <id> finish", so the
- * checkpoint is the only durable evidence. A checkpoint completed at or after this
- * worker attempt started is that turn's, and the round settles from it. Nothing at or
- * after it means the turn left no checkpoint, and the round fails NAMING THE BOUND ROOT,
- * because that is where any partial edits are — in the reviewer's own checkout, where
- * they can see them. Never a stale checkpoint from an earlier attempt on the same thread:
- * the `startedAt` comparison is a positive contradiction, not a "take the last one".
- */
+/** Recover only the checkpoint durably associated with this attempt's start command. */
 export function createRoundWorkerRecoveryPort(input: {
   readonly readCheckpoint: (turn: {
     readonly repoRoot: string;
     readonly sessionId: string;
     readonly operationId: string;
     readonly title: string;
-    readonly since: number;
+    readonly startCommandId?: string;
     readonly worktreePath?: string;
     readonly branch?: string;
   }) => Promise<RoundWorkerTurnCheckpoint | undefined>;
@@ -904,21 +896,25 @@ export function createRoundWorkerRecoveryPort(input: {
     let found: RoundWorkerTurnCheckpoint | undefined;
     let unreadable: string | undefined;
     try {
-      found = await input.readCheckpoint({
-        repoRoot: root,
-        worktreePath: root,
-        since: attempt.startedAt,
-        ...roundTurnIdentity(operation),
-      });
+      if (attempt.startCommandId !== undefined) {
+        found = await input.readCheckpoint({
+          repoRoot: root,
+          worktreePath: root,
+          startCommandId: attempt.startCommandId,
+          ...roundTurnIdentity(operation),
+        });
+      }
     } catch (error) {
       unreadable = error instanceof Error ? error.message : String(error);
     }
     const completedAt = (input.now ?? Date.now)();
     if (found === undefined) {
       const what =
-        unreadable === undefined
-          ? "the turn left no checkpoint"
-          : `its checkpoint could not be read (${unreadable})`;
+        attempt.startCommandId === undefined
+          ? "this legacy attempt has no recorded start association"
+          : unreadable === undefined
+            ? "the turn left no checkpoint"
+            : `its checkpoint could not be read (${unreadable})`;
       return {
         ...attempt,
         completedAt,
@@ -3280,6 +3276,9 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       boardMetaStore.listForGeneration(sessionId, generation),
     removeBoardMeta: (_repoRoot: string, boardId: string) => boardMetaStore.remove(boardId),
     persistGeneration: (gen) => generationStore.save(gen),
+    persistGenerationIfRevision: (gen, revision) => generationStore.saveIfRevision(gen, revision),
+    loadGenerationVersion: (id) => generationStore.loadVersion(id),
+    freezeGeneration: (id, revision) => generationStore.freeze(id, revision),
     recordRound: (sessionId, record) => roundRecordStore.record(sessionId, record),
     readRounds: (sessionId) => roundRecordStore.read(sessionId),
     loadGeneration: (id) => generationStore.load(id),
@@ -3806,7 +3805,10 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       planWorkspace: planRoundWorkspace,
       observeCommits: async (workspace) =>
         (await readGit(workspace.root, ["rev-parse", "HEAD"])) ?? workspace.sourceHead,
-      planWorker: () => ({ executionId: randomUUID(), startedAt: Date.now() }),
+      planWorker: () => {
+        const executionId = randomUUID();
+        return { executionId, startCommandId: executionId, startedAt: Date.now() };
+      },
       runWorker: runRoundWorker,
       observeWorker: recoverRoundWorker,
       planCommit: (operation) => {
@@ -5571,6 +5573,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     store?.close();
     pushTokenStore.close();
     roundOperationStore.close();
+    generationStore.close();
     void boardMcpServer
       ?.then((server) => server.close())
       .catch(() => {

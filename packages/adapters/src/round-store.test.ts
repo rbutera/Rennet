@@ -1,6 +1,8 @@
+import { execFileSync } from "node:child_process";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   type Generation,
   ROUND_NO_REGEN,
@@ -21,6 +23,98 @@ const frozenGen = (id: string): Generation => ({
 });
 
 describe("GenerationStore", () => {
+  it.skipIf(process.env.RENNET_ROUND_STORE_RACE_ROLE !== "generation-save")(
+    "generation process writer",
+    () => {
+      const directory = process.env.RENNET_ROUND_STORE_RACE_DIR;
+      if (directory === undefined) throw new Error("missing race directory");
+      const store = new GenerationStore(directory);
+      store.save({
+        ...frozenGen("gen:process"),
+        status: "live",
+        draftingReportBoardId: "child-attempt",
+      });
+      store.close();
+    },
+  );
+
+  it("rejects the revision observed before another process replaced the generation", () => {
+    const directory = dir();
+    const store = new GenerationStore(directory);
+    store.save({ ...frozenGen("gen:process"), status: "live" });
+    const observed = store.loadVersion("gen:process");
+    if (observed === undefined) throw new Error("missing generation");
+    const root = fileURLToPath(new URL("../../../", import.meta.url));
+    execFileSync(
+      process.execPath,
+      [
+        join(root, "node_modules/vitest/vitest.mjs"),
+        "run",
+        fileURLToPath(import.meta.url),
+        "-t",
+        "generation process writer",
+      ],
+      {
+        cwd: root,
+        env: {
+          ...process.env,
+          RENNET_ROUND_STORE_RACE_ROLE: "generation-save",
+          RENNET_ROUND_STORE_RACE_DIR: directory,
+        },
+        timeout: 20_000,
+      },
+    );
+    expect(store.saveIfRevision(observed.generation, observed.revision)).toBe(false);
+    expect(store.freeze("gen:process", observed.revision)).toBeUndefined();
+    expect(store.load("gen:process")?.draftingReportBoardId).toBe("child-attempt");
+    expect(store.load("gen:process")?.status).toBe("live");
+    store.close();
+  }, 25_000);
+
+  it("conditionally freezes the observed revision across independent store instances", () => {
+    const d = dir();
+    const first = new GenerationStore(d);
+    const second = new GenerationStore(d);
+    const live: Generation = { ...frozenGen("gen:race"), status: "live" };
+    first.save(live);
+    const observed = first.loadVersion(live.id);
+    expect(observed).toBeDefined();
+    if (observed === undefined) throw new Error("missing saved generation");
+    second.save({ ...live, draftingReportBoardId: "new-attempt" });
+    expect(first.saveIfRevision({ ...live, status: "frozen" }, observed.revision)).toBe(false);
+    expect(first.freeze(live.id, observed.revision)).toBeUndefined();
+    expect(first.load(live.id)).toEqual({ ...live, draftingReportBoardId: "new-attempt" });
+    const current = second.loadVersion(live.id);
+    if (current === undefined) throw new Error("missing replacement generation");
+    expect(second.freeze(live.id, current.revision)?.status).toBe("frozen");
+    expect(first.load(live.id)?.status).toBe("frozen");
+    expect(first.freeze(live.id, current.revision)).toBeUndefined();
+    const frozen = first.loadVersion(live.id);
+    if (frozen === undefined) throw new Error("missing frozen generation");
+    expect(
+      first.saveIfRevision({ ...frozen.generation, compositionBoardId: "report" }, frozen.revision),
+    ).toBe(true);
+    expect(second.load(live.id)?.compositionBoardId).toBe("report");
+    expect(second.loadVersion(live.id)?.revision).toBe(frozen.revision + 1);
+    first.close();
+    second.close();
+  });
+
+  it("promotes legacy JSON without losing its contents or accepting a stale revision", () => {
+    const d = dir();
+    const gen = frozenGen("gen:legacy");
+    writeFileSync(join(d, `${encodeURIComponent(gen.id)}.json`), JSON.stringify(gen));
+    const first = new GenerationStore(d);
+    const observed = first.loadVersion(gen.id);
+    expect(observed?.generation).toEqual(gen);
+    const second = new GenerationStore(d);
+    second.save({ ...gen, status: "live" });
+    expect(first.freeze(gen.id, observed?.revision ?? -1)).toBeUndefined();
+    expect(first.load(gen.id)?.status).toBe("live");
+    first.close();
+    second.close();
+  });
+
   it("persists a minted generation that survives a fresh-store reload (restart sim)", () => {
     const d = dir();
     new GenerationStore(d).save(frozenGen("gen:ps-1"));
@@ -96,6 +190,17 @@ const regenRecord = (dispatchId: string | null = "dispatch-1"): RoundRecord => (
 });
 
 describe("RoundRecordStore", () => {
+  it("keeps one completed dispatch when its completion or placeholder is replayed", () => {
+    const store = new RoundRecordStore(dir());
+    store.record("replay", dispatchPlaceholder());
+    store.record("replay", regenRecord());
+    store.record("replay", regenRecord());
+    store.record("replay", dispatchPlaceholder());
+    expect(store.read("replay")).toHaveLength(1);
+    expect(store.read("replay")[0]?.boardGeneration).toBe("gen:H1");
+    expect(store.read("replay")[0]?.diff).toBe("--- a\n+++ b");
+  });
+
   it("reconciles the dispatch placeholder + the regeneration record into ONE durable record", () => {
     const store = new RoundRecordStore(dir());
     store.record("s1", dispatchPlaceholder());

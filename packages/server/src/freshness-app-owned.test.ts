@@ -25,9 +25,9 @@ function write(root: string, relativePath: string, contents: string): void {
 /**
  * Wait for Rennet's own background write into the repository after a capture: the
  * seat context sink writes `.rennet/.gitignore` (its managed ignore block) before its
- * first context file, on a fire-and-forget kick that `shutdown()` does not cancel.
- * Measured at ~450 ms after shutdown returns. The journey below must run AFTER that
- * write, or it is racing it: a fast machine restarts and re-captures first and the
+ * first context file, on a fire-and-forget kick. Let that write finish before closing
+ * the daemon's stores. The restart journey must run AFTER that write, or it is racing
+ * it: a fast machine restarts and re-captures first and the
  * test passes without ever asking whether the file dirties the review (it did, until
  * the file learned to ignore itself — a CI-only "invalid" for exactly that reason).
  */
@@ -119,11 +119,10 @@ async function restartAndRecheck(mutate?: (root: string) => void): Promise<Revie
     git(root, "add", "-A");
 
     mutate?.(root);
+    await waitForRennetIgnoreWrite(root);
   } finally {
     first.shutdown();
   }
-  // Only now is the fixture complete: Rennet's scratch has landed in the tree.
-  await waitForRennetIgnoreWrite(root);
 
   const second = await createRennetServer({ dataDir, env: {} });
   try {
