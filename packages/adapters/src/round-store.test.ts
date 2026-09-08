@@ -80,6 +80,7 @@ describe("GenerationStore", () => {
     expect(observed).toBeDefined();
     if (observed === undefined) throw new Error("missing saved generation");
     second.save({ ...live, draftingReportBoardId: "new-attempt" });
+    expect(first.saveIfRevision({ ...live, status: "frozen" }, observed.revision)).toBe(false);
     expect(first.freeze(live.id, observed.revision)).toBeUndefined();
     expect(first.load(live.id)).toEqual({ ...live, draftingReportBoardId: "new-attempt" });
     const current = second.loadVersion(live.id);
@@ -87,6 +88,13 @@ describe("GenerationStore", () => {
     expect(second.freeze(live.id, current.revision)?.status).toBe("frozen");
     expect(first.load(live.id)?.status).toBe("frozen");
     expect(first.freeze(live.id, current.revision)).toBeUndefined();
+    const frozen = first.loadVersion(live.id);
+    if (frozen === undefined) throw new Error("missing frozen generation");
+    expect(
+      first.saveIfRevision({ ...frozen.generation, compositionBoardId: "report" }, frozen.revision),
+    ).toBe(true);
+    expect(second.load(live.id)?.compositionBoardId).toBe("report");
+    expect(second.loadVersion(live.id)?.revision).toBe(frozen.revision + 1);
     first.close();
     second.close();
   });

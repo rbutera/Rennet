@@ -131,6 +131,18 @@ export class GenerationStore {
       .run(validated.id, JSON.stringify(validated));
   }
 
+  saveIfRevision(gen: Generation, expectedRevision: number): boolean {
+    const validated = GenerationSchema.parse(gen);
+    return (
+      this.database
+        .prepare(`
+      UPDATE generations SET document = ?, revision = revision + 1
+      WHERE id = ? AND revision = ?
+    `)
+        .run(JSON.stringify(validated), validated.id, expectedRevision).changes === 1
+    );
+  }
+
   /** Load one generation by id. Absent (never persisted) ⇒ `undefined`; corrupt ⇒ THROW. */
   load(id: string): Generation | undefined {
     return this.loadVersion(id)?.generation;
