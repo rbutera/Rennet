@@ -232,6 +232,16 @@ Electron built-ins own native desktop facilities such as `utilityProcess`,
 external links, and crash dumps. Vite builds the renderer. Forge owns package,
 make, signing, notarization, and publishing targets.
 
+The macOS desktop disables Electron cookie encryption to avoid a Keychain
+password prompt during startup. GitHub credentials belong to the daemon and
+the embedded T3 connection uses bearer authentication, not browser cookies.
+Before opening its first Electron session, the primary process moves the old
+`Cookies` database and SQLite companion files into `encrypted-cookies-backup`
+under the session data directory. A completion marker makes the move resumable
+and prevents later launches from archiving newly created cookies. Local storage,
+preferences, and daemon data stay in place. New macOS cookies are unencrypted
+on disk; Windows retains cookie encryption.
+
 The public RSP contract is JSON-Schema-first. Private commands, events, and IPC
 use Zod. Do not define the same public wire shape independently in JSON Schema
 and Zod.
