@@ -75,51 +75,61 @@ export function WorkBranchNote({ sessionId }: { readonly sessionId: string }) {
   // longer exists is the sentence this whole module was rewritten to stop printing.
   if (behind === undefined && aheadOfBranch === 0) return null;
   return (
-    <div data-testid="round-work-branch" className="flex flex-col gap-1.5">
-      <p className="text-muted-foreground text-sm">
-        {behind !== undefined ? (
-          <>
-            <code>{branch}</code> is behind <code>{shortRef(behind)}</code> by {behindRemote}{" "}
-            {behindRemote === 1 ? "commit" : "commits"}.
-          </>
-        ) : (
-          <>
-            The round's commits are on <code>{workBranch}</code>. <code>{branch}</code> has not
-            moved.
-          </>
-        )}
-      </p>
-      <div className="flex items-center gap-3">
-        <Button
-          type="button"
-          data-testid="land-work-branch"
-          variant="outline"
-          size="sm"
-          disabled={pending}
-          onClick={async () => {
-            const answer = await mutate({ sessionId });
-            setOutcome(
-              answer.status === "landed"
-                ? { kind: "landed", headOid: answer.headOid }
-                : { kind: "message", text: answer.reason },
-            );
-          }}
-          className="self-start"
-        >
-          Fast-forward {branch}
-        </Button>
-        {outcome !== undefined && (
-          // Git's own words, or where the branch landed. Never rewritten, never softened:
-          // the refusal is the instruction.
-          <span
-            data-testid="land-work-branch-outcome"
-            className="whitespace-pre-wrap text-muted-foreground text-xs"
+    // THE NOTE OWNS ITS CHROME (review finding W-strip). The bordered, padded strip used
+    // to be the route's, wrapped around this component whether or not it had anything to
+    // say — so a landed sibling drew an empty band across the top of the workspace. Only
+    // this component knows whether there is a sentence, because the answer is the git read
+    // above; every `return null` before this point now renders nothing at all.
+    <div
+      data-testid="workspace-work-branch"
+      className="flex shrink-0 flex-col border-line border-b bg-surface px-6 py-2"
+    >
+      <div data-testid="round-work-branch" className="flex flex-col gap-1.5">
+        <p className="text-muted-foreground text-sm">
+          {behind !== undefined ? (
+            <>
+              <code>{branch}</code> is behind <code>{shortRef(behind)}</code> by {behindRemote}{" "}
+              {behindRemote === 1 ? "commit" : "commits"}.
+            </>
+          ) : (
+            <>
+              The round's commits are on <code>{workBranch}</code>. <code>{branch}</code> has not
+              moved.
+            </>
+          )}
+        </p>
+        <div className="flex items-center gap-3">
+          <Button
+            type="button"
+            data-testid="land-work-branch"
+            variant="outline"
+            size="sm"
+            disabled={pending}
+            onClick={async () => {
+              const answer = await mutate({ sessionId });
+              setOutcome(
+                answer.status === "landed"
+                  ? { kind: "landed", headOid: answer.headOid }
+                  : { kind: "message", text: answer.reason },
+              );
+            }}
+            className="self-start"
           >
-            {outcome.kind === "landed"
-              ? `${branch} is at ${outcome.headOid.slice(0, 7)}`
-              : outcome.text}
-          </span>
-        )}
+            Fast-forward {branch}
+          </Button>
+          {outcome !== undefined && (
+            // Git's own words, or where the branch landed. Never rewritten, never softened:
+            // the refusal is the instruction.
+            <span
+              data-testid="land-work-branch-outcome"
+              className="whitespace-pre-wrap text-muted-foreground text-xs"
+            >
+              {outcome.kind === "landed"
+                ? `${branch} is at ${outcome.headOid.slice(0, 7)}`
+                : outcome.text}
+            </span>
+          )}
+        </div>
       </div>
     </div>
   );

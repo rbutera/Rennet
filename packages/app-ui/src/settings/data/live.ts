@@ -1,4 +1,10 @@
-import type { BenchmarkRun, ProjectLogo, SettingsGuidance, SettingsView } from "@rennet/protocol";
+import type {
+  BenchmarkRun,
+  ProjectLogo,
+  SettingsGuidance,
+  SettingsView,
+  WorktreeInventory,
+} from "@rennet/protocol";
 import { type CommandResult, type MutationResult, useCommand, useMutation } from "../../data";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -74,10 +80,48 @@ export function usePinRepoValue(): MutationResult<"settings.pinRepoValue"> {
   return useMutation("settings.pinRepoValue", { invalidates: ["settings.get"] });
 }
 
-/** Write one per-project preference on the repo rung — glyph, worktree pair, tracker
- *  (C18 group A). Stales `settings.get`, which carries the resolved prefs it changed. */
+/** Write one per-project preference on the repo rung — glyph, the worktree four, tracker
+ *  (C18 group A). Stales `settings.get`, which carries the resolved prefs it changed, AND
+ *  `worktrees.list`: the root and the two patterns decide where the NEXT workspace is
+ *  placed, so the inventory's rows-under-the-root membership is a function of them
+ *  (workspace-settings D6). A key that is not a worktree key stales a read that has not
+ *  changed, which costs one re-read and can never show a stale list. */
 export function useSetProjectValue(): MutationResult<"settings.setProjectValue"> {
-  return useMutation("settings.setProjectValue", { invalidates: ["settings.get"] });
+  return useMutation("settings.setProjectValue", {
+    invalidates: ["settings.get", "worktrees.list"],
+  });
+}
+
+/** Write one worktree value on the GLOBAL rung — this host's `daemon-settings.json`
+ *  (workspace-settings D1). The repo rung of the same four values goes through
+ *  {@link useSetProjectValue}; both stale the same two reads, for the same reason. */
+export function useSetWorktreeValue(): MutationResult<"settings.setWorktreeValue"> {
+  return useMutation("settings.setWorktreeValue", {
+    invalidates: ["settings.get", "worktrees.list"],
+  });
+}
+
+/** Every workspace Rennet knows for ONE repository (workspace-settings D6). Keyed by
+ *  `repoPath`, never by a project id: a workspace project maps many repositories onto one
+ *  identity and that mapping is not invertible, so the two repos of one workspace list
+ *  separately. Sizes are measured host-side on every call, so this is asked only where the
+ *  Worktrees card is mounted — one read per repo row of the SCOPED project, the same
+ *  scoping `settings.guidance` uses. */
+export function useWorktreeInventory(
+  repoPath: string,
+  options?: { readonly enabled?: boolean },
+): CommandResult<WorktreeInventory> {
+  return useCommand("worktrees.list", { repoPath }, options);
+}
+
+/** Remove one workspace by its row id — `git worktree remove` without `--force`, on the
+ *  first click (Rule Zero). Stales the inventory it changed AND `session.workBranchState`:
+ *  removing a sibling's worktree is one of the events that moves the refs that read is
+ *  computed from, and the work-branch strip is somebody else's subtree. */
+export function useRemoveWorktree(): MutationResult<"worktrees.remove"> {
+  return useMutation("worktrees.remove", {
+    invalidates: ["worktrees.list", "session.workBranchState"],
+  });
 }
 
 // ── The project mark (#900) ───────────────────────────────────────────────────

@@ -132,8 +132,11 @@ export function useSidebarSessionProjection(): SidebarSessionProjection {
   const { mutate: setPinned } = useMutation("session.setPinned", {
     invalidates: ["session.list"],
   });
+  // Archiving a session runs D5's cleanup on its sibling — a merged one loses its worktree
+  // and its branch — so the workspace inventory the Settings card shows is stale the moment
+  // this lands (workspace-settings D5/D6).
   const { mutate: setArchived } = useMutation("session.archive", {
-    invalidates: ["session.list"],
+    invalidates: ["session.list", "worktrees.list"],
   });
   const { mutate: renameProjectCommand } = useMutation("project.rename", {
     invalidates: ["projects.list"],

@@ -100,6 +100,10 @@ const OWN_SESSION = {
   createdAt: 0,
 };
 
+/** The strip: the bordered band above the view region. The NOTE owns it now — the route
+ *  used to wrap the note in it whether or not the note had a sentence, so a landed sibling
+ *  drew an empty band across the workspace. Its presence therefore means both "the route
+ *  mounted the note" and "the note had something to say". */
 const strip = (container: Element | Document) =>
   container.querySelector('[data-testid="workspace-work-branch"]');
 
@@ -317,16 +321,21 @@ describe("the work-branch strip after a round settles (review finding S1)", () =
       pushed: false,
       landed: true,
     });
-    // STEP 1's settled state is the strip's WRAPPER: the route mounts it whenever the
-    // session works on another branch, so its presence proves the read has resolved and the
-    // route has rendered its answer. The LINE is what a landed sibling withholds, and that
-    // is the assertion — checked once the wrapper says the render happened, not on a
-    // counter that can cross before React commits.
-    await journey.findByTestId("workspace-work-branch", undefined, {
+    // STEP 1 cannot wait on the strip any more, and that is the point: a landed sibling
+    // now renders NO WRAPPER AT ALL. The wrapper used to be the route's and appeared
+    // whatever the note answered, which is exactly the empty bordered band the chrome move
+    // deleted. So this waits on the read having happened — the one thing that has to be
+    // true before "the note chose to say nothing" means anything — and then asserts BOTH
+    // that the line is absent and that no band was drawn around its absence.
+    //
+    // POSITIVE CONTROL RUN, 2026-09-08: `review-workspace-route.tsx` restored to wrapping
+    // `<WorkBranchNote>` in the bordered strip → the `strip(...)` assertion below failed
+    // with the empty band present. Restored, green.
+    await waitFor(() => expect(journey.reads()).toBeGreaterThan(0), {
       timeout: SETTLE_TIMEOUT_MS,
     });
-    expect(journey.reads()).toBeGreaterThan(0);
     expect(note(journey.container)).toBeNull();
+    expect(strip(journey.container)).toBeNull();
 
     // The round commits on the sibling. THE REFS MOVE WHETHER THE CLIENT ASKS OR NOT — that
     // is why the daemon's answer changes before the event arrives, and why only a re-read

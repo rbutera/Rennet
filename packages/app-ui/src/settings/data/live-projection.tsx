@@ -20,7 +20,6 @@ import {
   type ProjectIconName,
 } from "../assets/project-icon";
 import { logoMark, type ProjectMarkView } from "../assets/project-mark";
-import { DEFAULT_WORKTREE_PATTERN, DEFAULT_WORKTREE_ROOT } from "../assets/worktree";
 import { useDetectProjectLogo, useProjectLogos, useUploadProjectLogo } from "./live";
 import {
   type DaemonInfo,
@@ -34,9 +33,7 @@ import {
   type SettingsProjection,
   SettingsProjectionProvider,
   type TrackerKind,
-  type WorktreeSettings,
 } from "./projections";
-import type { Layered } from "./provenance";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The LIVE settings projection (C10 §10.1, the fold wiring). This seam is the one
@@ -108,11 +105,15 @@ import type { Layered } from "./provenance";
 // `projects.list` after `project.rename`, so a second copy here would be the stale one.
 // `renameHost` and `removeHost` also keep the default no-op: no command backs either.
 //
-// The per-project PREFS are served now (C18 group A): glyphByProject / worktreeByProject /
-// trackerByProject / guidanceByProject read `settings.get`'s resolved `prefs`, and their
+// The per-project PREFS are served now (C18 group A): glyphByProject / trackerByProject /
+// guidanceByProject read `settings.get`'s resolved `prefs`, and their
 // setters write `settings.setProjectValue` / `settings.setGuidance` on the repo rung — the
 // same rung `resolveTrackerConfig` folds, so a per-project tracker actually reaches
-// retrieval. Each write invalidates the read it changed, so the surface settles on what is
+// retrieval. The WORKTREE four are not here: their card is keyed by the repo ROW
+// (`repoPath`), not by the project, so it reads `settings.get` and writes
+// `settings.setProjectValue` / `settings.setWorktreeValue` directly — a workspace's two
+// repositories place their worktrees under two different answers, and one entry per
+// project could only ever carry one of them (workspace-settings D7). Each write invalidates the read it changed, so the surface settles on what is
 // STORED rather than on an optimistic guess; a refused write (a malformed repo config,
 // Rule 75) leaves the control where the served read put it. The project NAME rides its own
 // command — `project.rename`, read back off `projects.list` — so `nameEditsPersist` and
@@ -185,8 +186,6 @@ function forgeRow(forge: DetectedForge, disabled: ReadonlySet<string>): Detected
 type ProjectPrefKey =
   | "glyph"
   | "mark"
-  | "worktreeRoot"
-  | "worktreePattern"
   | "trackerKind"
   | "trackerProjectKey"
   | "trackerBaseUrl"
@@ -198,12 +197,6 @@ const TRACKER_PREF_KEY = {
   baseUrl: "trackerBaseUrl",
   tokenEnv: "trackerTokenEnv",
 } as const satisfies Record<string, ProjectPrefKey>;
-
-/** A resolved value, or the client's own default when the ladder resolved none. The
- *  LAYER is the resolver's, never invented — an unset value still reads `builtin`. */
-function layeredOr(resolved: { value: string; layer: Layered<string>["layer"] }, fallback: string) {
-  return resolved.value === "" ? { value: fallback, layer: resolved.layer } : resolved;
-}
 
 /** A served glyph name the icon set actually has; anything else is ignored rather than
  *  rendered as a missing glyph. */
@@ -428,7 +421,6 @@ export function LiveSettingsProjectionProvider({ children }: { readonly children
 
     const glyphByProject: Record<string, ProjectIconName> = {};
     const markByProject: Record<string, ProjectMarkView> = {};
-    const worktreeByProject: Record<string, WorktreeSettings> = {};
     const trackerByProject: Record<string, IssueTrackerSettings> = {};
     const guidanceByProject: Record<string, readonly GuidanceRule[]> = {};
     for (const [projectId, row] of rowByProject) {
@@ -452,12 +444,6 @@ export function LiveSettingsProjectionProvider({ children }: { readonly children
             kind: "glyph",
             icon: isProjectIconName(prefs.glyph.value) ? prefs.glyph.value : DEFAULT_PROJECT_ICON,
           };
-      worktreeByProject[projectId] = {
-        // An empty resolved value IS "nobody has set this", so the client's own default
-        // shows — carrying the layer the resolver reported, not a fabricated one.
-        root: layeredOr(prefs.worktreeRoot, DEFAULT_WORKTREE_ROOT),
-        pattern: layeredOr(prefs.worktreePattern, DEFAULT_WORKTREE_PATTERN),
-      };
       const kind = trackerKind(prefs.tracker.kind.value);
       const rest = kind === "jira" || kind === "linear";
       trackerByProject[projectId] = {
@@ -492,7 +478,7 @@ export function LiveSettingsProjectionProvider({ children }: { readonly children
     return {
       ...EMPTY_SETTINGS_PROJECTION,
       // Both stores are served now: the NAME through `project.rename` (the projects
-      // store), and the glyph / worktree / tracker / guidance editors through the repo
+      // store), and the glyph / tracker / guidance editors through the repo
       // rung (C18 group A). Two flags because they are two stores — a daemon that serves
       // one and not the other still tells the truth about which controls persist.
       nameEditsPersist: true,
@@ -519,7 +505,6 @@ export function LiveSettingsProjectionProvider({ children }: { readonly children
       glyphByProject,
       markByProject,
       logosByProject,
-      worktreeByProject,
       trackerByProject,
       guidanceByProject,
       // Picking a glyph names WHICH glyph and says a glyph shows at all — two keys, because
@@ -552,8 +537,6 @@ export function LiveSettingsProjectionProvider({ children }: { readonly children
           return { found: false, source: null };
         }
       },
-      setWorktreeRoot: (projectId, root) => writePref(projectId, "worktreeRoot", root),
-      setWorktreePattern: (projectId, pattern) => writePref(projectId, "worktreePattern", pattern),
       setTracker: (projectId, tracker) => {
         // The surface hands back the whole section; only the CHANGED keys are written,
         // so switching the kind does not rewrite three endpoint fields that did not move.

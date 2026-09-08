@@ -347,6 +347,13 @@ export function useLiveRoundsSource(): RoundsSource {
         // because the reader here is the review's rounds hook and the strip is somebody
         // else's subtree.
         cache.invalidate("session.workBranchState");
+        // …AND the workspace inventory (workspace-settings D6). A settled round is one of
+        // the events that changes what a repository's worktrees hold: sizes grow, a
+        // sibling stops being collectable, `lastUsedAt` moves. Invalidated by NAME for the
+        // same reason as the line above — the Settings card is somebody else's subtree,
+        // and it is a read, so a stale answer is a card describing the tree before the
+        // round rather than the one on disk.
+        cache.invalidate("worktrees.list");
       }
       // Boards carry their successor generation on round progress, but Diff and Handoff read
       // `Review.activePatchsetId`. Refresh the one mounted review only when the daemon has

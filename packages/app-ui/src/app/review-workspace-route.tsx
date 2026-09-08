@@ -361,15 +361,14 @@ export function ReviewWorkspace({ review }: { review: Review }) {
       {/* The session's work branch, beside the branch the workspace is about — one strip,
           above every view, offering the fast-forward (workspace-settings D4). It renders
           nothing at all under `share`, and nothing once the branch is at the work branch's
-          tip; what it says in between is read from git, not from a flag. */}
-      {showWorkBranch && session !== undefined ? (
-        <div
-          data-testid="workspace-work-branch"
-          className="flex shrink-0 flex-col border-line border-b bg-surface px-6 py-2"
-        >
-          <WorkBranchNote sessionId={session.id} />
-        </div>
-      ) : null}
+          tip; what it says in between is read from git, not from a flag.
+
+          THE NOTE OWNS ITS CHROME. This route used to wrap it in the bordered, padded
+          strip, which meant a landed or collected sibling drew a full-width bordered
+          band around nothing — the route cannot know whether the note has a sentence,
+          because that answer is a git read the note makes. So the border and the padding
+          moved inside it, and an empty answer now renders nothing at all. */}
+      {showWorkBranch && session !== undefined ? <WorkBranchNote sessionId={session.id} /> : null}
       {view === "handoff" ? (
         <HandoffMount key={slug} review={review} slug={slug} navigate={navigate} />
       ) : view === "diff" ? (

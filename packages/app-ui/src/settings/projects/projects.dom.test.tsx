@@ -14,6 +14,8 @@ import {
   type SettingsProject,
   type SettingsProjectValueKey,
   settingsProjectValueKeySchema,
+  type WorktreeRemoveOutcome,
+  type WorktreeRow,
 } from "@rennet/protocol";
 import { useState } from "react";
 import { describe, expect, it } from "vitest";
@@ -29,7 +31,6 @@ import {
   LiveSettingsProjectionProvider,
   type SettingsProjection,
   SettingsProjectionProvider,
-  type WorktreeSettings,
 } from "../data";
 import { ProjectsPage } from "./projects-page";
 
@@ -81,6 +82,9 @@ const P1_ROW: SettingsProject = {
 function bridge(): MemoryBridge {
   return new MemoryBridge({
     "projects.list": () => ({ projects: [...PROJECTS] }),
+    // The Worktrees card asks per repo row; this fixture is about the other sections, so
+    // the repository honestly has no workspaces yet.
+    "worktrees.list": () => ({ rows: [], truncated: false }),
     "settings.get": () => ({
       scheme: "system",
       schemeProvenance: {
@@ -107,9 +111,6 @@ function StatefulProjects({
   >({
     ...(seed?.glyphByProject ?? {}),
   });
-  const [worktrees, setWorktrees] = useState<Record<string, WorktreeSettings>>({
-    ...(seed?.worktreeByProject ?? {}),
-  });
   const [trackers, setTrackers] = useState<Record<string, IssueTrackerSettings>>({
     ...(seed?.trackerByProject ?? {}),
   });
@@ -131,29 +132,12 @@ function StatefulProjects({
     nameEditsPersist: true,
     nameByProject: names,
     glyphByProject: glyphs,
-    worktreeByProject: worktrees,
     trackerByProject: trackers,
     guidanceByProject: guidance,
     // A seeded setter WINS, so a test can count the writes the field actually makes.
     setProjectName:
       seed?.setProjectName ?? ((id, name) => setNames((prev) => ({ ...prev, [id]: name }))),
     setProjectGlyph: (id, icon) => setGlyphs((prev) => ({ ...prev, [id]: icon })),
-    setWorktreeRoot: (id, root) =>
-      setWorktrees((prev) => ({
-        ...prev,
-        [id]: {
-          root: { value: root, layer: "global" },
-          pattern: prev[id]?.pattern ?? { value: "{project}-{branch}", layer: "builtin" },
-        },
-      })),
-    setWorktreePattern: (id, pattern) =>
-      setWorktrees((prev) => ({
-        ...prev,
-        [id]: {
-          root: prev[id]?.root ?? { value: "~/.rennet/worktrees", layer: "builtin" },
-          pattern: { value: pattern, layer: "global" },
-        },
-      })),
     setTracker: (id, tracker) => setTrackers((prev) => ({ ...prev, [id]: tracker })),
     setGuidance: (id, rules) => setGuidanceState((prev) => ({ ...prev, [id]: rules })),
   };
@@ -269,42 +253,48 @@ describe("ProjectsPage — dual-source settings", () => {
     cleanup();
   });
 
-  // #812 — the card used to offer a location and a `{project}-{branch}` pattern with a
-  // live preview, and neither reached the code that places a worktree. It names the four
-  // cases the binding really has instead.
+  // workspace-settings D7 — the card is CONTROLS again, because the binding reads the
+  // settings now. Two claims here, both about the STATEFUL page (which serves no repo
+  // row): the four prose rows are gone, and the card reads a repo row rather than a
+  // project. The served-rung block further down proves what the controls write.
   //
-  // The title says "in words" on purpose (#816 review): the card deliberately prints NO
-  // copyable path. `branchWorktreePath` resolves against the daemon's data directory,
-  // which is `~/.rennet` only by default, and its middle segment is the repository's whole
-  // escaped absolute path rather than its name — so any concrete path here would be a
-  // third wrong one. The absence of a path is therefore asserted, not just its wording.
-  //
-  // POSITIVE CONTROL RUN, 2026-09-04: `worktrees.tsx` + `projects-page.tsx` +
-  // `assets/worktree.ts` reverted to origin/main → this test failed on the case-label
-  // query, and again on `queryByLabelText("Worktree location")` finding an input.
-  // Restored, green.
-  it("worktrees: the card names the four binding cases in words, with no path and no pattern", async () => {
-    const { findByText, getByText, queryByLabelText, queryByText } = mount(<StatefulProjects />);
+  // POSITIVE CONTROL RUN, 2026-09-08: `worktrees.tsx` restored to its four-prose-row
+  // version (the whole file, from HEAD) → this test reddened, and so did the other six
+  // worktree cases. Restored, green.
+  it("worktrees: the four prose rows are gone and the card offers the D7 controls", async () => {
+    const { findByText, getByText, queryByText, queryByLabelText } = mount(<StatefulProjects />);
+    await findByText("Worktrees");
+    // The four cases the card used to STATE are gone — the binding reads settings now.
+    expect(queryByText("A branch you already have out")).toBeNull();
+    expect(queryByText("A branch nothing has out")).toBeNull();
+    expect(queryByText("A pull request")).toBeNull();
+    expect(queryByText("the session's workspace")).toBeNull();
+    // D7's four rows are here instead.
+    const card = getByText("Worktrees").closest('[data-slot="settings-section"]');
+    expect(card).toBeTruthy();
+    expect(within(card as HTMLElement).getByText("Location")).toBeTruthy();
+    expect(within(card as HTMLElement).getByText("Branch layout")).toBeTruthy();
+    expect(within(card as HTMLElement).getByText("Pull-request layout")).toBeTruthy();
+    expect(within(card as HTMLElement).getByText("Workspace")).toBeTruthy();
+    expect(within(card as HTMLElement).getByText("Workspaces")).toBeTruthy();
+    // The caption names BOTH files the section writes (the global rung and the repo rung).
+    const caption = card?.querySelector('[data-slot="backing-file"]')?.textContent ?? "";
+    expect(caption).toContain("daemon-settings.json");
+    expect(caption).toContain("config.json");
+    // This page serves no settings row for p1's PROJECT (`settings.get` carries P1_ROW with
+    // no prefs), so the editors exist but nothing is resolved into them.
+    expect(queryByLabelText("Location for acme/checkout")).toBeTruthy();
+    cleanup();
+  });
 
-    // The four cases, each said as what it IS rather than as a path.
-    await findByText("A branch you already have out");
-    expect(getByText("your own checkout")).toBeTruthy();
-    expect(getByText("A branch nothing has out")).toBeTruthy();
-    expect(getByText("A pull request")).toBeTruthy();
-    // A round is a turn in that workspace — it creates nothing (session-bound-workspace).
-    expect(getByText("the session's workspace")).toBeTruthy();
-
-    // No path a reader could copy, and nothing pretending to configure one. `~/.rennet` is
-    // the specific wrong answer this card gave twice, so it is named — scoped to THIS
-    // section, because Identity legitimately names `~/.rennet/projects/<repo>/config.json`
-    // as its own backing file and a document-wide query would pass or fail on that.
-    const worktreeCard = getByText("Worktrees").closest('[data-slot="settings-section"]');
-    expect(worktreeCard).toBeTruthy();
-    expect(worktreeCard?.textContent).not.toContain("~/.rennet");
-    expect(worktreeCard?.textContent).not.toContain("/worktrees/");
-    expect(queryByLabelText("Worktree location")).toBeNull();
-    expect(queryByLabelText("Worktree naming pattern")).toBeNull();
-    expect(queryByText("{branch}")).toBeNull();
+  // D6's empty state is ONE sentence, and it is the row's own fact — never a sentence
+  // about Rennet's machinery or an explanation of an empty cell.
+  it("worktrees: an empty inventory says one sentence", async () => {
+    const { findByText, getByText } = mount(<StatefulProjects />);
+    await findByText("Workspaces");
+    expect(
+      getByText("Nothing yet. Rennet\u2019s worktrees for this repository appear here."),
+    ).toBeTruthy();
     cleanup();
   });
 
@@ -435,6 +425,7 @@ function liveBridge(): MemoryBridge {
         appearanceMalformed: false,
         projects: [P1_ROW],
       }),
+      "worktrees.list": () => ({ rows: [], truncated: false }),
       // The one served field post-fold; empty here — irrelevant to the Projects editors.
       "harness.detect": () => ({ detected: [] }),
     },
@@ -466,6 +457,7 @@ function mountLiveRenamableProject() {
         appearanceMalformed: false,
         projects: [P1_ROW],
       }),
+      "worktrees.list": () => ({ rows: [], truncated: false }),
       "harness.detect": () => ({ detected: [] }),
     },
     { platform: "darwin", version: "1.0.1" },
@@ -517,14 +509,17 @@ describe("ProjectsPage — stable route identity", () => {
 
 describe("ProjectsPage — live projection is honest about the unserved write store", () => {
   it("disables every unbacked editor and discloses the gap (no silent no-op controls)", async () => {
-    const { findByLabelText, getByRole } = mountLiveProjects();
+    const { findByLabelText, getByLabelText, getByRole } = mountLiveProjects();
 
     // Identity: the name field is LIVE — `project.rename` is served (C18), so it is the one
     // project editor that is not disabled here.
     expect((await findByLabelText("Project name")).hasAttribute("disabled")).toBe(false);
     // Identity: the glyph choices are locked (the group disables its members).
     expect(getByRole("button", { name: "rocket" }).hasAttribute("disabled")).toBe(true);
-    // Worktrees carries no editor at all any more (#812) — it states the binding.
+    // Worktrees: every editor is locked too — the row this daemon serves carries no
+    // `prefs`, so there is nothing resolved to put in them and nowhere to write.
+    expect(getByLabelText("Location for acme/checkout").hasAttribute("disabled")).toBe(true);
+    expect(getByRole("button", { name: "own" }).hasAttribute("disabled")).toBe(true);
     // Issue tracker: the segmented picker is locked.
     expect(getByRole("button", { name: "jira" }).hasAttribute("disabled")).toBe(true);
     // Guidance: Add Rule is locked, so no editor can open to discard a rule.
@@ -534,8 +529,9 @@ describe("ProjectsPage — live projection is honest about the unserved write st
     const notes = [...document.querySelectorAll('[data-slot="unbacked-note"]')].map(
       (n) => n.textContent ?? "",
     );
-    expect(notes.length).toBe(3);
+    expect(notes.length).toBe(4);
     expect(notes.some((t) => /Marks aren/.test(t))).toBe(true);
+    expect(notes.some((t) => /Worktree settings/.test(t))).toBe(true);
     expect(notes.some((t) => /Issue-tracker config/.test(t))).toBe(true);
     expect(notes.some((t) => /Guidance rules/.test(t))).toBe(true);
     cleanup();
@@ -564,8 +560,8 @@ const P1_PREFS: NonNullable<SettingsProject["prefs"]> = {
   // The mark says WHETHER a glyph shows at all (#900); `glyph` here means it does, so the
   // grid's lit cell is still the resolved answer rather than a guess about one.
   mark: { value: "glyph", layer: "builtin" },
-  worktreeRoot: { value: "", layer: "builtin" },
-  worktreePattern: { value: "{project}-{branch}", layer: "repo" },
+  worktreeRoot: { value: "/home/dev/trees", layer: "global" },
+  worktreePattern: { value: "{name}/{branch}", layer: "repo" },
   prWorktreePattern: { value: "{owner}/{name}/pr-{number}", layer: "builtin" },
   workspace: { value: "share", layer: "builtin" },
   tracker: {
@@ -581,12 +577,84 @@ function mountServedPrefs() {
   return mountServedPrefsWith(P1_PREFS);
 }
 
-/** The logo files the served host holds for p1 (#900), and what the two logo WRITES did. */
+/** The logo files the served host holds for p1 (#900), and what the two logo WRITES did —
+ *  plus, for the Worktrees card, what the daemon RESOLVED for this repository and what it
+ *  holds under it (workspace-settings D3/D6). */
 interface ServedLogos {
   readonly logos?: readonly ProjectLogo[];
   /** What `project.detectLogo` answers — a host that found something, or one that did not. */
   readonly detection?: { readonly found: boolean; readonly source: string | null };
+  /** The two example paths the DAEMON resolved for p1's repo row (D3). */
+  readonly preview?: SettingsProject["worktreePreview"];
+  /** A SECOND repository under the same project — the workspace fixture the 2026-08-28
+   *  rule demands of anything that turns a project into a repository. */
+  readonly second?: SettingsProject;
+  /** What `worktrees.list` answers for p1's repo (D6). */
+  readonly workspaces?: readonly WorktreeRow[];
+  /** What `worktrees.remove` answers — git's refusal, or the removal it made. */
+  readonly removal?: WorktreeRemoveOutcome;
 }
+
+/** The daemon's resolved example paths for p1, unless a case supplies its own. */
+const P1_PREVIEW = {
+  branch: "/home/dev/trees/widget/feat/x",
+  pullRequest: "/home/dev/trees/acme/widget/pr-1",
+} as const;
+
+/** p1's SECOND repository. Same project, its own `repoPath`, its own resolved preview —
+ *  a card keyed by the project id can render only one of the two. */
+const SECOND_REPO: SettingsProject = {
+  ...P1_ROW,
+  name: "ledger",
+  repoPath: "/repos/acme/ledger",
+  worktreePreview: {
+    branch: "/home/dev/trees/ledger/feat/x",
+    pullRequest: "/home/dev/trees/acme/ledger/pr-1",
+  },
+};
+
+/** The reviewer's own checkout, listed because a session is bound to it. Never removable. */
+const OWN_CHECKOUT: WorktreeRow = {
+  id: "w-own",
+  path: "/repos/acme/checkout",
+  kind: "own-checkout",
+  ref: "feat/x",
+  sessionIds: ["s-7"],
+  removable: false,
+};
+
+/** A Rennet branch worktree a LIVE session is bound to — shown, with no remove. */
+const BOUND_BRANCH: WorktreeRow = {
+  id: "w-bound",
+  path: "/home/dev/trees/widget/feat/y",
+  kind: "branch",
+  ref: "feat/y",
+  sessionIds: ["s-42"],
+  sizeBytes: 2048,
+  removable: false,
+};
+
+/** An idle Rennet branch worktree whose size did not measure inside its bound. */
+const IDLE_BRANCH: WorktreeRow = {
+  id: "w-idle",
+  path: "/home/dev/trees/widget/feat/z",
+  kind: "branch",
+  ref: "feat/z",
+  sessionIds: [],
+  removable: true,
+};
+
+/** A sibling holding work the branch does not, in a worktree git will refuse to remove. */
+const DIRTY_SIBLING: WorktreeRow = {
+  id: "w-sib",
+  path: "/home/dev/trees/widget/rennet/feat/x",
+  kind: "sibling",
+  ref: "rennet/feat/x",
+  sessionIds: [],
+  aheadOf: { branch: "feat/x", commits: 2 },
+  keepsBranch: "Removing this keeps rennet/feat/x: it is ahead of feat/x by 2 commits.",
+  removable: true,
+};
 
 function mountServedPrefsWith(
   prefs: NonNullable<SettingsProject["prefs"]>,
@@ -609,6 +677,7 @@ function mountServedPrefsWith(
     fileName: string;
   }[];
   detections: string[];
+  removals: { repoPath: string; id: string }[];
   view: ReturnType<typeof mount>;
 } {
   const writes: {
@@ -628,6 +697,9 @@ function mountServedPrefsWith(
     fileName: string;
   }[] = [];
   const detections: string[] = [];
+  const removals: { repoPath: string; id: string }[] = [];
+  const rowsFor = (repoPath: string): readonly WorktreeRow[] =>
+    repoPath === P1_ROW.repoPath ? (held.workspaces ?? []) : [];
   const served = new MemoryBridge(
     {
       "projects.list": () => ({ projects: [...PROJECTS] }),
@@ -647,7 +719,10 @@ function mountServedPrefsWith(
           contributions: [{ layer: "builtin", value: "system", effective: true }],
         },
         appearanceMalformed: false,
-        projects: [{ ...P1_ROW, prefs }],
+        projects: [
+          { ...P1_ROW, prefs, worktreePreview: held.preview ?? P1_PREVIEW },
+          ...(held.second ? [{ ...held.second, prefs }] : []),
+        ],
       }),
       "settings.setProjectValue": (input) => {
         const write = input as (typeof writes)[number];
@@ -658,6 +733,17 @@ function mountServedPrefsWith(
         guidanceWrites.push(input as (typeof guidanceWrites)[number]);
         return { status: "applied", guidance: { rules: [], reason: "empty", dropped: 0 } };
       },
+      "worktrees.list": ({ repoPath }) => ({ rows: [...rowsFor(repoPath)], truncated: false }),
+      "worktrees.remove": (input) => {
+        removals.push({ ...input });
+        return (
+          held.removal ?? {
+            status: "removed" as const,
+            id: input.id,
+            path: rowsFor(input.repoPath).find((row) => row.id === input.id)?.path ?? input.id,
+          }
+        );
+      },
     },
     { platform: "darwin", version: "1.0.1" },
   );
@@ -667,6 +753,7 @@ function mountServedPrefsWith(
     guidanceWrites,
     uploads,
     detections,
+    removals,
     view: mount(
       <BridgeProvider bridge={served}>
         <Router hook={history.hook} searchHook={history.searchHook}>
@@ -756,6 +843,7 @@ describe("ProjectsPage — the served per-project rung (C18 group A)", () => {
           appearanceMalformed: false,
           projects: [{ ...P1_ROW, prefs: P1_PREFS }],
         }),
+        "worktrees.list": () => ({ rows: [], truncated: false }),
       },
       { platform: "darwin", version: "1.0.1" },
     );
@@ -795,6 +883,125 @@ describe("ProjectsPage — the served per-project rung (C18 group A)", () => {
     expect(guidanceWrites[0]?.rules).toEqual([
       { id: "arch-boundary", rule: "file I/O belongs in adapters only", severity: "high" },
     ]);
+    cleanup();
+  });
+
+  // ── The Worktrees card over the served rung (workspace-settings D7) ──────────
+  // The four tests of task 4.2, plus the two-repo discrimination the 2026-08-28 rule
+  // demands of anything that turns a project into a repository.
+
+  // D3's whole point: the preview is a string the DAEMON resolved through the same
+  // functions the binding calls. The client has neither the data directory nor the escaped
+  // repo key, and #812 is what happened when it tried to derive one anyway.
+  //
+  // THE PAIR IS THE TEST, AND ONLY THE PAIR. This one alone cannot tell the row's string
+  // from a constant that happens to equal it, which is measured, not assumed: POSITIVE
+  // CONTROL RUN 2026-09-08 — the two `field(...)` calls in `worktrees.tsx` were given
+  // literal preview strings instead of `row.worktreePreview`, and THIS test stayed green
+  // while the next one (and the two-repo case) reddened. So the claim "renders the row's
+  // string" is carried by the case below, and what this one adds is the other direction:
+  // the field holds `{name}/{branch}` while the preview holds a resolved path, which no
+  // client-side render of that pattern could have produced.
+  it("worktrees: the preview renders the ROW's string, not one computed here", async () => {
+    const { view } = mountServedPrefsWith(P1_PREFS, {
+      preview: {
+        branch: "/home/dev/trees/widget/feat/x",
+        pullRequest: "/home/dev/trees/acme/widget/pr-1",
+      },
+    });
+    const branch = await view.findByText("/home/dev/trees/widget/feat/x");
+    expect(branch.getAttribute("data-slot")).toBe("worktree-preview");
+    expect(view.getByText("/home/dev/trees/acme/widget/pr-1")).toBeTruthy();
+    // The field holds the PATTERN; the preview holds the resolved path. A surface that
+    // rendered the pattern would show `{name}/{branch}` in both places.
+    expect((view.getByLabelText("Branch layout for acme/checkout") as HTMLInputElement).value).toBe(
+      "{name}/{branch}",
+    );
+    cleanup();
+  });
+
+  // The control for the one above, run as a TEST rather than described: the same page, a
+  // different row string, and the render follows it. "Reads the row" is a claim about where
+  // the bytes came from, and this is the only assertion in the suite that can see it.
+  it("worktrees: a different row string renders a different preview", async () => {
+    const { view } = mountServedPrefsWith(P1_PREFS, {
+      preview: { branch: "/elsewhere/tree", pullRequest: "/elsewhere/pr-1" },
+    });
+    await view.findByText("/elsewhere/tree");
+    expect(view.queryByText("/home/dev/trees/widget/feat/x")).toBeNull();
+    cleanup();
+  });
+
+  // A WORKSPACE PROJECT MAPS MANY REPOS ONTO ONE IDENTITY, and that mapping is not
+  // invertible. Two repos of one project, each with its own resolved answer: the card
+  // renders BOTH, their previews differ, and a click on the second one's control writes
+  // THAT row's `repoPath`.
+  //
+  // POSITIVE CONTROL RUN, 2026-09-08: `WorktreeSection` was given back the shape the
+  // review found — one entry per PROJECT (`new Map(rows.map(r => [r.projectId, r]))`),
+  // which is what `live-projection.tsx` did — and this test reddened on the second repo's
+  // preview. A duplicate React `key` alone does NOT reproduce it (React renders both rows
+  // and only warns), which is why the control is the collapse and not the key.
+  it("worktrees: a two-repo project renders both repos, and a workspace click writes THAT row's repoPath", async () => {
+    const { writes, view } = mountServedPrefsWith(P1_PREFS, { second: SECOND_REPO });
+    // Both repos' previews are on screen, and they are different paths.
+    await view.findByText("/home/dev/trees/widget/feat/x");
+    expect(view.getByText("/home/dev/trees/ledger/feat/x")).toBeTruthy();
+    // The SECOND repo's workspace control — addressed by its own label, so the click
+    // cannot land on the first row by position.
+    const own = view.getByLabelText("Workspace for acme/ledger");
+    fireEvent.click(within(own).getByRole("button", { name: "own" }));
+    await waitFor(() => expect(writes.length).toBe(1));
+    expect(writes).toEqual([
+      { projectId: "p1", repoPath: SECOND_REPO.repoPath, key: "workspace", value: "own" },
+    ]);
+    cleanup();
+  });
+
+  it("worktrees: a remove click dispatches the ROW's id, and a refused removal prints git's text", async () => {
+    const { removals, view } = mountServedPrefsWith(P1_PREFS, {
+      workspaces: [DIRTY_SIBLING, IDLE_BRANCH],
+      removal: {
+        status: "refused",
+        id: DIRTY_SIBLING.id,
+        path: DIRTY_SIBLING.path,
+        reason:
+          "fatal: '/home/dev/trees/widget/rennet/feat/x' contains modified or untracked files, use --force to delete it",
+      },
+    });
+    const remove = await view.findByLabelText(
+      `Remove workspace ${DIRTY_SIBLING.path} in acme/checkout`,
+    );
+    fireEvent.click(remove);
+    // ONE click, no confirmation step in between (Rule Zero), addressing the row by ITS id.
+    await waitFor(() => expect(removals.length).toBe(1));
+    expect(removals).toEqual([{ repoPath: P1_ROW.repoPath, id: DIRTY_SIBLING.id }]);
+    // Git's own sentence, verbatim, on the row it refused.
+    const outcome = await view.findByText(/contains modified or untracked files/);
+    expect(outcome.textContent).toBe(
+      "fatal: '/home/dev/trees/widget/rennet/feat/x' contains modified or untracked files, use --force to delete it",
+    );
+    cleanup();
+  });
+
+  // The rows a removal cannot address carry no button at all — a fact about the row, not
+  // a permission prompt. `own-checkout` is one by definition; a row a live session is
+  // bound to is the other, and it shows the session instead.
+  it("worktrees: an own-checkout row and a bound row carry no remove", async () => {
+    const { view } = mountServedPrefsWith(P1_PREFS, {
+      workspaces: [OWN_CHECKOUT, BOUND_BRANCH, IDLE_BRANCH],
+    });
+    await view.findByLabelText(`Remove workspace ${IDLE_BRANCH.path} in acme/checkout`);
+    expect(
+      view.queryByLabelText(`Remove workspace ${OWN_CHECKOUT.path} in acme/checkout`),
+    ).toBeNull();
+    expect(
+      view.queryByLabelText(`Remove workspace ${BOUND_BRANCH.path} in acme/checkout`),
+    ).toBeNull();
+    // The bound row says WHOSE it is, and the unmeasured one says its size is unknown.
+    expect(view.getByText("s-42")).toBeTruthy();
+    const idle = view.getByText(IDLE_BRANCH.path).closest('[data-slot="worktree-row"]');
+    expect(idle?.textContent).toContain("—");
     cleanup();
   });
 
@@ -1092,8 +1299,12 @@ describe("Repository — multi-repo rows, write outcomes, and ladder controls", 
         throw new Error("daemon down");
       },
     });
-    const { findByText } = mountRepo(bridge);
-    expect(await findByText(/Couldn’t read settings: daemon down/)).toBeTruthy();
+    const { findAllByText } = mountRepo(bridge);
+    // BOTH live-reading sections say it: Repository and Worktrees each read
+    // `settings.get` for their rows, so a failed read is disclosed where each of them
+    // would have shown a value — never masked as the "not yet scanned" empty.
+    const said = await findAllByText(/Couldn’t read settings: daemon down/);
+    expect(said.length).toBe(2);
     cleanup();
   });
 
