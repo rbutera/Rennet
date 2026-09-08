@@ -11,6 +11,7 @@ import { useBridgeContext } from "../data/bridge";
 import { reviewIdOf, useSlugResolution } from "../routes/slug";
 import { ROUTES } from "../routes/url";
 import { advance, initialRoundState, mergeRoundEvents, type RoundState } from "./round-machine";
+import { roundSettled } from "./worktree-freshness";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The rounds-data seam (C09 §1.2) — the SINGLE point every rounds surface resolves its
@@ -325,16 +326,10 @@ export function useLiveRoundsSource(): RoundsSource {
         event.snapshot.state.result.kind === "changed"
           ? event.snapshot.state.result.report.generation
           : undefined;
-      const changedReviewCommitted = changedSuccessorGeneration !== undefined;
-      const durableTerminal =
-        event.type === "operation" &&
-        (event.snapshot.state.phase === "failed" || changedReviewCommitted);
-      if (
-        durableTerminal ||
-        event.type === "composed" ||
-        event.type === "unchanged" ||
-        event.type === "failed"
-      ) {
+      // The SAME predicate `WorktreeInventoryFreshness` subscribes on, imported rather
+      // than restated: two copies of "the round is over" are two chances to disagree about
+      // which receipts stale which reads.
+      if (roundSettled(event)) {
         cache.invalidate(commandKey("session.rounds", { reviewId: reviewId ?? "" }));
         cache.invalidate(commandKey("session.list", {}));
         // …AND the work-branch strip. Its whole content is a read of refs, and a settled
@@ -347,13 +342,11 @@ export function useLiveRoundsSource(): RoundsSource {
         // because the reader here is the review's rounds hook and the strip is somebody
         // else's subtree.
         cache.invalidate("session.workBranchState");
-        // …AND the workspace inventory (workspace-settings D6). A settled round is one of
-        // the events that changes what a repository's worktrees hold: sizes grow, a
-        // sibling stops being collectable, `lastUsedAt` moves. Invalidated by NAME for the
-        // same reason as the line above — the Settings card is somebody else's subtree,
-        // and it is a read, so a stale answer is a card describing the tree before the
-        // round rather than the one on disk.
-        cache.invalidate("worktrees.list");
+        // The WORKSPACE INVENTORY is staled by `WorktreeInventoryFreshness`, not here
+        // (workspace-settings D6). This subscription is keyed to the review THE ROUTE IS
+        // ON, and the only screen that renders the inventory is Settings — which is not a
+        // session route, so this fold does not run while the card is open, which is the
+        // one moment the staling had to happen.
       }
       // Boards carry their successor generation on round progress, but Diff and Handoff read
       // `Review.activePatchsetId`. Refresh the one mounted review only when the daemon has
