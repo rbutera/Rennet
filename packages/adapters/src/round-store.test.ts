@@ -64,6 +64,7 @@ describe("GenerationStore", () => {
         timeout: 20_000,
       },
     );
+    expect(store.saveIfRevision(observed.generation, observed.revision)).toBe(false);
     expect(store.freeze("gen:process", observed.revision)).toBeUndefined();
     expect(store.load("gen:process")?.draftingReportBoardId).toBe("child-attempt");
     expect(store.load("gen:process")?.status).toBe("live");

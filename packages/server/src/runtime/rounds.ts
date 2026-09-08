@@ -828,6 +828,7 @@ export interface RoundsRuntimeDeps {
    *  generations are process-lived only; present ⇒ the frozen prior survives a restart as
    *  a drill-down the ledger's switcher can open by id ({@link RoundsRuntime.generation}). */
   readonly persistGeneration?: (gen: Generation) => void | Promise<void>;
+  readonly persistGenerationIfRevision?: (gen: Generation, revision: number) => boolean;
   readonly loadGenerationVersion?: (
     id: string,
   ) => { generation: Generation; revision: number } | undefined;
@@ -936,6 +937,19 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
   // pattern). The stored tail swallows rejection so a failed round never wedges the
   // queue; the returned promise carries the real outcome.
   const tails = new Map<string, Promise<unknown>>();
+
+  async function persistAttempt(gen: Generation, owner: Generation): Promise<boolean> {
+    if (deps.persistGeneration === undefined) return true;
+    if (deps.persistGenerationIfRevision !== undefined) {
+      const version = deps.loadGenerationVersion?.(owner.id);
+      if (version === undefined || !sameDraftingAttempt(version.generation, owner)) return false;
+      return deps.persistGenerationIfRevision(gen, version.revision);
+    }
+    const durable = deps.loadGeneration?.(owner.id);
+    if (durable !== undefined && !sameDraftingAttempt(durable, owner)) return false;
+    await deps.persistGeneration(gen);
+    return true;
+  }
 
   /** Run `task` serialized behind the session's current round — the ONE per-session lock
    *  both `runRound` and `dispatchRound` share (no second lock, B11 cluster 4). */
@@ -1328,54 +1342,32 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
      *  Membership, NOT the lane's status: a settlement the ownership check refused leaves
      *  the lane untouched and must still count as attempted, or the backstop re-runs it. */
     const settledFailures = new Set<LensKind>();
-    /**
-     * Write the reveal state durably, unless a LATER attempt (or the settle that dropped
-     * this attempt's slots) already owns the generation. Rejecting here rather than at the
-     * store means one check covers every reveal write — settlements and timings
-     * all route through it, so none of them can be the one that folds a superseded
-     * attempt's result into the current generation.
-     *
-     * Returns whether the write was ACCEPTED, and every caller gates its broadcast on it.
-     * A rejection that returned nothing still let the arrival sink and the lane snapshot
-     * run, so a superseded attempt was refused the disk and granted the screen — connected
-     * clients saw a dead attempt's boards announced over the live generation's, which is
-     * the same wrong-content publish the durable check exists to prevent.
-     */
+    // A refused write also suppresses its arrival and progress broadcasts.
     const persistReveal = async (): Promise<boolean> => {
-      const persist = deps.persistGeneration;
-      if (persist === undefined) return true;
-      const durable = deps.loadGeneration?.(attemptGeneration.id);
-      if (durable !== undefined && !sameDraftingAttempt(durable, attemptGeneration)) {
-        // Latched at the ONE place the rejection is decided, and returned to `runOnce` —
-        // which is the door this gate did not cover. `persistReveal` only ever guarded
-        // reveal writes; the attempt's TERMINAL writes (`withLensBoards`, the frozen
-        // predecessor, the round record) went through `deps.persistGeneration` directly,
-        // and `GenerationStore.save` overwrites by generation id. So a slow dead attempt
-        // could still replace a newer attempt's finished result under the right label —
-        // refused the disk hunk by hunk and then handed the whole file at the end.
-        superseded = true;
-        return false;
-      }
-      await persist({
-        ...attemptGeneration,
-        lensBoards: { ...reveal.lensBoards },
-        ...(Object.keys(reveal.absentLenses).length === 0
-          ? {}
-          : { absentLenses: { ...reveal.absentLenses } }),
-        ...(Object.keys(reveal.failedLenses).length === 0
-          ? {}
-          : {
-              failedLenses: { ...reveal.failedLenses },
-              failedLensAccounts: { ...reveal.failedLensAccounts },
-            }),
-        ...(reveal.timings.length === 0
-          ? {}
-          : {
-              timings: { version: GENERATION_TIMINGS_VERSION, phases: [...reveal.timings] },
-            }),
-        ...usageSoFar(),
-      });
-      return true;
+      const accepted = await persistAttempt(
+        {
+          ...attemptGeneration,
+          lensBoards: { ...reveal.lensBoards },
+          ...(Object.keys(reveal.absentLenses).length === 0
+            ? {}
+            : { absentLenses: { ...reveal.absentLenses } }),
+          ...(Object.keys(reveal.failedLenses).length === 0
+            ? {}
+            : {
+                failedLenses: { ...reveal.failedLenses },
+                failedLensAccounts: { ...reveal.failedLensAccounts },
+              }),
+          ...(reveal.timings.length === 0
+            ? {}
+            : {
+                timings: { version: GENERATION_TIMINGS_VERSION, phases: [...reveal.timings] },
+              }),
+          ...usageSoFar(),
+        },
+        attemptGeneration,
+      );
+      if (!accepted) superseded = true;
+      return accepted;
     };
     const lanes =
       onProgress === undefined
@@ -1938,24 +1930,10 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
     if (restoredOrDrafted.superseded) {
       throw new GenerationSupersededError(boardGeneration.id);
     }
-    // Write a generation ONLY while this attempt still owns it, re-read at the write itself.
-    // `GenerationStore.save` overwrites by id, and the terminal writes below strip this
-    // attempt's drafting slots (`withLensBoards`) — so a stale attempt reaching this far,
-    // whose competitor claimed the id during an intervening await, would otherwise clobber
-    // the live result under the right label. Every write to THIS generation id routes here;
-    // a competitor is a durable record for our id that no longer describes our attempt (a
-    // positive contradiction, per the workspace rule — not mere silence). The frozen
-    // predecessor write is a DIFFERENT id and does not pass through here: it is reached only
-    // after `persistOwned` accepted the successor, and rechecking it against our id would
-    // false-positive on the slots our own successor write just dropped.
     const persistOwned = async (gen: Generation): Promise<void> => {
-      const persist = deps.persistGeneration;
-      if (persist === undefined) return;
-      const durable = deps.loadGeneration?.(boardGeneration.id);
-      if (durable !== undefined && !sameDraftingAttempt(durable, restoredOrDrafted.generation)) {
+      if (!(await persistAttempt(gen, restoredOrDrafted.generation))) {
         throw new GenerationSupersededError(boardGeneration.id);
       }
-      await persist(gen);
     };
 
     // Durable BoardMeta is keyed only by generation, so evidence for an existing

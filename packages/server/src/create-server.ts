@@ -3276,6 +3276,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       boardMetaStore.listForGeneration(sessionId, generation),
     removeBoardMeta: (_repoRoot: string, boardId: string) => boardMetaStore.remove(boardId),
     persistGeneration: (gen) => generationStore.save(gen),
+    persistGenerationIfRevision: (gen, revision) => generationStore.saveIfRevision(gen, revision),
     loadGenerationVersion: (id) => generationStore.loadVersion(id),
     freezeGeneration: (id, revision) => generationStore.freeze(id, revision),
     recordRound: (sessionId, record) => roundRecordStore.record(sessionId, record),

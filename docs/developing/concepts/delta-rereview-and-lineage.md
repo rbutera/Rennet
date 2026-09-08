@@ -47,7 +47,11 @@ without that parameter the client reads the live generation. The drill-down is
 therefore reloadable and directly addressable, not local switcher state.
 
 Generation documents live in `<dataDir>/generations/generations.sqlite`. Every
-replacement increments the durable revision. A round observes its predecessor
+replacement increments the durable revision. Reveal and terminal writes verify the
+attempt identity and condition their update on that observed revision in the same
+SQLite write. A competing claim between the read and write leaves the newer attempt
+intact and suppresses the stale attempt’s progress and completion events. A round
+observes its predecessor
 before saving the successor, then freezes only that exact revision with one
 conditional database update. A competing write leaves the newer generation
 intact; the losing round records no frozen-predecessor pointer and emits no

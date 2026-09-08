@@ -3346,6 +3346,71 @@ describe("createRoundsRuntime", () => {
     expect(stolen.failedEvents).toEqual([]);
   });
 
+  it.each(["reveal", "terminal"])(
+    "refuses a %s write when another store claims after ownership observation",
+    async (stage) => {
+      const directory = mkdtempSync(join(tmpdir(), "round-owned-cas-"));
+      const store = new GenerationStore(directory);
+      const other = new GenerationStore(directory);
+      let armed = false;
+      let replacement: Generation | undefined;
+      const staleEvents: string[] = [];
+      const observe = (id: string) => {
+        const version = store.loadVersion(id);
+        if (armed && replacement === undefined && version !== undefined && id !== PREV_GEN.id) {
+          replacement = { ...version.generation, draftingReportBoardId: "other-attempt" };
+          other.save(replacement);
+        }
+        return version;
+      };
+      const runtime = createRoundsRuntime(
+        withFakeT3Seats(
+          baseDeps({
+            persistGeneration: (generation) => {
+              store.save(generation);
+              if (stage === "reveal") armed = true;
+            },
+            loadGeneration: (id) => observe(id)?.generation,
+            loadGenerationVersion: observe,
+            persistGenerationIfRevision: (generation, revision) =>
+              store.saveIfRevision(generation, revision),
+            onBoardArrival: () => {
+              if (replacement !== undefined) staleEvents.push("arrival");
+            },
+            recordRound: () => {
+              if (replacement !== undefined) staleEvents.push("record");
+            },
+          }),
+        ),
+      );
+      try {
+        await expect(
+          runtime.runRound(
+            roundInput({
+              verifyDraftedReport: () => {
+                if (stage === "terminal") armed = true;
+              },
+              onProgress: (event) => {
+                if (
+                  replacement !== undefined &&
+                  (event.type === "composed" || event.type === "failed")
+                )
+                  staleEvents.push(event.type);
+              },
+            }),
+          ),
+        ).rejects.toThrow(/superseded/);
+        expect(replacement).toBeDefined();
+        if (replacement === undefined) throw new Error("replacement was not exercised");
+        expect(store.load(replacement.id)).toEqual(replacement);
+        expect(staleEvents).toEqual([]);
+      } finally {
+        store.close();
+        other.close();
+      }
+    },
+  );
+
   it("keeps a predecessor replaced after observation and publishes only successful freezes", async () => {
     const prior: Generation = {
       id: "gen:ps-0",
