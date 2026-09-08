@@ -16,6 +16,12 @@ import { useBoardElementIndex, useBoardPatchsetId, useCodeRefs } from "./element
 // the commit glyph and the box are what separate one weighed judgement from the next
 // when several sit in a column. The reasoning, the roads not taken and the evidence
 // sit beneath a concise heading; the complete statement remains readable in the body.
+//
+// Inside the card the type has three steps, and every one is a ramp step (Rai,
+// 2026-09-08, after a card whose title, labels and body all read at the same weight as a
+// wall): the heading at 16 semibold, the block labels ("Rationale", "Not taken",
+// "Evidence") at 14 semibold in the foreground colour, and the prose at the 15 reading
+// size with the block gaps opened up so each block is a paragraph, not a line.
 
 /**
  * The text to print for one `alternatives` entry.
@@ -57,14 +63,11 @@ export function DecisionElement({ element }: { readonly element: ElementOf<"deci
     <div
       data-kind="decision"
       data-element-id={element.id}
-      className="flex flex-col gap-1.5 rounded-md border border-border px-3 py-2.5"
+      className="flex flex-col gap-3 rounded-xl border border-border px-4 py-3.5"
     >
       <div className="flex items-start gap-2">
-        <Icon
-          icon={GitCommitHorizontal}
-          className="mt-0.5 size-3.5 shrink-0 text-muted-foreground"
-        />
-        <h3 className="min-w-0 flex-1 font-medium text-13 text-foreground leading-snug">
+        <Icon icon={GitCommitHorizontal} className="mt-1 size-4 shrink-0 text-muted-foreground" />
+        <h3 className="min-w-0 flex-1 font-semibold text-base text-foreground leading-snug">
           <InlineQuoteHighlight text={heading} elementId={element.id} />
         </h3>
         {inferred === true && (
@@ -74,7 +77,7 @@ export function DecisionElement({ element }: { readonly element: ElementOf<"deci
           // stamp and never to its absence.
           <span
             data-kind="decision-inferred"
-            className="shrink-0 rounded border border-border px-1.5 py-0.5 text-10 text-muted-foreground"
+            className="mt-0.5 shrink-0 rounded border border-border px-1.5 py-0.5 text-10 text-muted-foreground"
           >
             inferred
           </span>
@@ -85,25 +88,25 @@ export function DecisionElement({ element }: { readonly element: ElementOf<"deci
           text={statement}
           elementId={element.id}
           patchsetId={patchsetId}
-          className="pl-5"
-          paragraphClassName="text-foreground/90 text-sm leading-relaxed"
+          className="pl-6"
+          paragraphClassName="font-prose text-15 text-foreground leading-relaxed"
         />
       )}
       {why.trim().length > 0 && (
-        <div className="flex flex-col gap-1 pl-5">
-          <h4 className="font-medium text-muted-foreground text-xs">Rationale</h4>
+        <div className="flex flex-col gap-1.5 pl-6">
+          <h4 className="font-semibold text-foreground text-sm">Rationale</h4>
           <QuoteHighlightLayer
             text={why}
             elementId={element.id}
             patchsetId={patchsetId}
-            paragraphClassName="text-foreground/85 text-13 leading-relaxed"
+            paragraphClassName="font-prose text-15 text-foreground/85 leading-relaxed"
           />
         </div>
       )}
       {alternatives.length > 0 && (
-        <div data-kind="decision-alternatives" className="flex flex-col gap-1 pl-5">
-          <h4 className="font-medium text-muted-foreground text-xs">Not taken</h4>
-          <ul className="list-disc space-y-1 pl-4 text-12-5 text-muted-foreground leading-relaxed">
+        <div data-kind="decision-alternatives" className="flex flex-col gap-1.5 pl-6">
+          <h4 className="font-semibold text-foreground text-sm">Not taken</h4>
+          <ul className="list-disc space-y-1.5 pl-4 text-muted-foreground text-sm leading-relaxed">
             {roadsNotTaken.map((alternative) => (
               <li key={alternative}>
                 <InlineQuoteHighlight text={alternative} elementId={element.id} />
@@ -113,8 +116,8 @@ export function DecisionElement({ element }: { readonly element: ElementOf<"deci
         </div>
       )}
       {citations.length > 0 && (
-        <div className="flex flex-col gap-1 pl-5">
-          <h4 className="font-medium text-muted-foreground text-xs">Evidence</h4>
+        <div className="flex flex-col gap-1.5 pl-6">
+          <h4 className="font-semibold text-foreground text-sm">Evidence</h4>
           <CodeTabs citations={citations} />
         </div>
       )}

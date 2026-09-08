@@ -72,11 +72,18 @@ export function sectionCountText(counts: LensSection["counts"]): string {
  * section element (`entry.ref`) is resolved through the board pool for its title and
  * children.
  *
- * EVERY section arrives folded, on every lens, including a delta section (Rai, 2026-09-04:
- * "each foldable should be folded by default.. so you only read the summaries to begin
- * with and you can expand to read the full detail"). A delta section keeps its dot, which
- * is what marks it as new — the fold is the reading grammar, not the marker. `defaultOpen`
- * is the escape hatch for a caller that genuinely needs one open; nothing passes it today.
+ * EVERY section arrives folded, on every lens but one (Rai, 2026-09-04: "each foldable
+ * should be folded by default.. so you only read the summaries to begin with and you can
+ * expand to read the full detail"). A delta section keeps its dot, which is what marks it
+ * as new — the fold is the reading grammar, not the marker. `defaultOpen` is the escape
+ * hatch for a caller that genuinely needs one open; nothing passes it today.
+ *
+ * The exception is `foldable={false}` (Rai, 2026-09-08): a Flagged section is a plain
+ * heading over its findings, never a fold. Its children are findings, and a folded finding
+ * — severity chip, claim, concurrence — already IS the summary; folding the section on top
+ * of that replaced three chips with a list of bare titles, which said less at a glance
+ * than the rows it hid. A non-foldable section has no chevron, no preview and no toggle;
+ * it is open, and `data-open` says so.
  *
  * `memo`'d: on a big board the sections are the render units, and their props (`entry`
  * comes straight out of the resolved board) are stable for as long as the board is, so a
@@ -86,10 +93,12 @@ export const Section = memo(function Section({
   entry,
   lens,
   defaultOpen,
+  foldable = true,
 }: {
   readonly entry: LensSection;
   readonly lens?: LensKind;
   readonly defaultOpen?: boolean;
+  readonly foldable?: boolean;
 }) {
   const boardId = useBoardId();
   const index = useBoardElementIndex();
@@ -98,7 +107,8 @@ export const Section = memo(function Section({
   const el = useElement(entry.ref);
   const viewed = useRennetStore(selectDeltaViewed(boardId, entry.ref));
   const markViewed = useRennetStore((s) => s.viewedDeltaActions.markDeltaViewed);
-  const [open, setOpen] = useState(defaultOpen ?? false);
+  const [unfolded, setOpen] = useState(defaultOpen ?? false);
+  const open = !foldable || unfolded;
   const [target, setTarget] = useState<string | null>(null);
   const preview = useMemo(
     () => (el?.kind === "section" ? sectionPreview(el, index) : { kind: "empty" as const }),
@@ -148,6 +158,17 @@ export const Section = memo(function Section({
     if (entry.delta !== undefined) markViewed(boardId, entry.ref);
   };
 
+  // A section with no toggle has no single act of opening to mark it viewed, so any
+  // interaction inside it — a finding opened, a title clicked — is the reading.
+  const viewedOnInteraction =
+    !foldable && entry.delta !== undefined
+      ? {
+          onClickCapture: () => markViewed(boardId, entry.ref),
+          onKeyDownCapture: (event: { key: string }) => {
+            if (event.key === "Enter" || event.key === " ") markViewed(boardId, entry.ref);
+          },
+        }
+      : {};
   return (
     <section
       ref={root}
@@ -156,41 +177,58 @@ export const Section = memo(function Section({
       data-section-id={entry.ref}
       {...(entry.delta ? { "data-delta": entry.delta } : {})}
       {...(specDelta ? { "data-spec-delta": specDelta } : {})}
+      {...viewedOnInteraction}
       data-open={open}
       className="flex scroll-mt-6 flex-col gap-3"
     >
       <div className="flex flex-wrap items-center gap-2">
         <h2 className="flex min-w-0 flex-1 items-center gap-2">
-          <button
-            type="button"
-            onClick={interact}
-            aria-expanded={open}
-            aria-label={`Toggle ${title}`}
-            className="flex shrink-0 items-center gap-2 text-left"
-          >
-            <Icon
-              icon={ChevronDown}
-              className={cn(
-                "size-3.5 shrink-0 text-muted-foreground transition-transform",
-                !open && "-rotate-90",
-              )}
-            />
-            {showDot ? (
-              <span
-                data-testid="delta-dot"
-                aria-hidden="true"
-                className="size-1.5 shrink-0 rounded-full bg-primary"
+          {foldable ? (
+            <button
+              type="button"
+              onClick={interact}
+              aria-expanded={open}
+              aria-label={`Toggle ${title}`}
+              className="flex shrink-0 items-center gap-2 text-left"
+            >
+              <Icon
+                icon={ChevronDown}
+                className={cn(
+                  "size-3.5 shrink-0 text-muted-foreground transition-transform",
+                  !open && "-rotate-90",
+                )}
               />
-            ) : null}
-          </button>
-          <InlineQuoteHighlight
-            text={title}
-            elementId={entry.ref}
-            onActivate={interact}
-            ariaLabel={headingLabel}
-            ariaExpanded={open}
-            className="min-w-0 flex-1 cursor-pointer font-medium text-foreground text-lg"
-          />
+              {showDot ? (
+                <span
+                  data-testid="delta-dot"
+                  aria-hidden="true"
+                  className="size-1.5 shrink-0 rounded-full bg-primary"
+                />
+              ) : null}
+            </button>
+          ) : showDot ? (
+            <span
+              data-testid="delta-dot"
+              aria-hidden="true"
+              className="size-1.5 shrink-0 rounded-full bg-primary"
+            />
+          ) : null}
+          {foldable ? (
+            <InlineQuoteHighlight
+              text={title}
+              elementId={entry.ref}
+              onActivate={interact}
+              ariaLabel={headingLabel}
+              ariaExpanded={open}
+              className="min-w-0 flex-1 cursor-pointer font-medium text-foreground text-lg"
+            />
+          ) : (
+            <InlineQuoteHighlight
+              text={title}
+              elementId={entry.ref}
+              className="min-w-0 flex-1 font-medium text-foreground text-lg"
+            />
+          )}
           {specDelta ? <SpecDeltaBadge delta={specDelta} /> : null}
         </h2>
         {countText ? (
@@ -200,7 +238,7 @@ export const Section = memo(function Section({
         ) : null}
         <SourceChips sources={designMeta ? (sources ?? []) : []} />
       </div>
-      <Collapse open={!open}>
+      <Collapse open={foldable && !open}>
         {preview.kind === "headings" ? (
           <ul aria-label={`${title} contents`} className="flex flex-col gap-1 pl-5">
             {preview.entries.map(({ id, text }) => (
