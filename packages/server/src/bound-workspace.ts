@@ -11,6 +11,7 @@
 // reachable through a composition root.
 
 import { realpathSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import {
   branchWorktreePath,
   ensureBranchWorktree,
@@ -85,6 +86,20 @@ export interface BoundWorkspaceDeps {
   readonly worktreeFacts: (repoRoot: string) => Promise<WorktreeRepoFacts>;
   /** The worktree already indexed for this review's pull request, when there is one. */
   readonly prWorktreeFor: (reviewId: string) => string | undefined;
+  /**
+   * Whether Rennet's pull-request index records a snapshot AT THIS PATH — for any review,
+   * not only this one.
+   *
+   * The ONE definition of `recordedSnapshot`, shared with the pull-request front door
+   * (`create-server.ts` builds it once and hands it to both). There were two, and they
+   * disagreed on the case the flag exists for: this module asked only whether THIS review
+   * had an index entry, while the front door scanned the whole index BY PATH. A successor
+   * review of the same pull request has a fresh review id and inherits nothing, so the
+   * narrow reading refused to replace Rennet's own superseded snapshot — the same path,
+   * placed by Rennet, one review earlier — and the bind threw where the front door would
+   * happily have re-pinned. By path, in both.
+   */
+  readonly snapshotRecordedAt: (worktreePath: string) => boolean;
   /** Where a newly created pull-request worktree is recorded. */
   readonly recordPrWorktree: (reviewId: string, path: string) => void;
   /** Fired for a worktree this call CREATED, so its `.rennet/setup` can run. */
@@ -113,7 +128,40 @@ export function comparablePath(path: string): string {
   try {
     return realpathSync(path);
   } catch {
-    return path;
+    return resolveThroughExistingAncestor(path);
+  }
+}
+
+/**
+ * The comparable form of a path that DOES NOT EXIST: the deepest ancestor that does exist,
+ * resolved, with the remaining segments re-attached literally.
+ *
+ * `realpathSync` throws on a missing directory, and the paths this module compares hardest
+ * are exactly the missing ones — an UNREACHABLE worktree registration is a directory that
+ * is gone, and the question asked of it is whether a live session's recorded `boundRoot`
+ * names it. Returning both sides literally answers "no" for a pair that differs only in a
+ * symlinked ancestor, which on macOS is every path under `/var` (`/private/var`) and every
+ * default `TMPDIR`. Codex reproduced the consequence: the sweep pruned a registration a
+ * live session was bound to, because git had printed the resolved spelling and the session
+ * had recorded the daemon's.
+ *
+ * NOTE what is and is not resolved. The missing directory itself is never `realpath`ed —
+ * it cannot be. Only an ancestor that exists is, which is an exact operation, so this never
+ * makes two different directories compare equal. A path with no existing ancestor at all
+ * (an unreachable UNC root) comes back literal, and still compares equal to itself.
+ */
+function resolveThroughExistingAncestor(path: string): string {
+  const tail: string[] = [];
+  let current = path;
+  for (;;) {
+    const parent = dirname(current);
+    if (parent === current) return path; // reached the root without finding anything
+    tail.unshift(basename(current));
+    try {
+      return join(realpathSync(parent), ...tail);
+    } catch {
+      current = parent;
+    }
   }
 }
 
@@ -335,7 +383,7 @@ async function branchFacts(
 export async function repinBoundWorkspace(
   review: Review,
   recorded: string,
-  deps: Pick<BoundWorkspaceDeps, "gitFor">,
+  deps: Pick<BoundWorkspaceDeps, "gitFor" | "snapshotRecordedAt">,
 ): Promise<string> {
   if (review.postTarget === undefined && review.retrospective !== true) return recorded;
   const patchset = review.patchsets.find((entry) => entry.id === review.activePatchsetId);
@@ -347,10 +395,13 @@ export async function repinBoundWorkspace(
     review.repositoryRoot,
     recorded,
     patchset.repository.headOid,
-    // The session BOUND this path as its pull-request snapshot, which is Rennet's own
-    // record that it placed one there. A worktree that has since been checked out onto a
-    // branch is still refused by `ensurePrWorktree`'s other half.
-    { recordedSnapshot: true },
+    // THE SAME by-path question the first bind and the front door ask, not a `true` this
+    // call assumed from the fact that a session is bound here. The session's binding is
+    // Rennet's own record — but it is a SECOND record, and a second record is a second
+    // definition: a session bound to a path the pull-request index no longer names is a
+    // session whose snapshot Rennet has already let go of, and re-pinning it forcibly is
+    // the deletion `ensurePrWorktree` refuses everywhere else.
+    { recordedSnapshot: deps.snapshotRecordedAt(recorded) },
   );
   return recorded;
 }
@@ -396,10 +447,11 @@ async function ensurePrSnapshotWorkspace(
         ));
   if (target === undefined) return review.repositoryRoot;
   const { created } = await ensurePrWorktree(git, review.repositoryRoot, target, headOid, {
-    // Rennet's index names this exact path for this review: it placed the snapshot there,
-    // so a superseded one may be replaced. A computed path with no index entry has no such
-    // evidence, and whatever occupies it is somebody else's.
-    recordedSnapshot: indexed !== undefined,
+    // Rennet's index names this exact PATH — for this review or an earlier one of the same
+    // pull request, which is the successor case the replacement exists for. That is the
+    // only evidence Rennet placed the snapshot there; a computed path with no index entry
+    // has none, and whatever occupies it is somebody else's.
+    recordedSnapshot: deps.snapshotRecordedAt(target),
   });
   if (indexed === undefined) deps.recordPrWorktree(review.id, target);
   if (created) deps.onWorktreeCreated?.(target);

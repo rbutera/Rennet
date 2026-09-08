@@ -119,6 +119,7 @@ import {
   runPrWorktreeSetup,
   runRelatedContextRetrieval,
   SessionStore,
+  SIBLING_BRANCH_PREFIX,
   SnapshotOverlayReader,
   SnapshotOverlayStore,
   SqliteReviewStore,
@@ -129,6 +130,7 @@ import {
   type TurnMetric,
   validateGitHubToken,
   type WorkspaceSessionRef,
+  type WorktreeRecord,
   type WorktreeRepoFacts,
   withRepoPref,
   wslDiscoveryDeps,
@@ -675,6 +677,13 @@ export async function captureLandedBranchPatchset(input: {
 function detectedLocusForRepo(repoRoot: string): Locus {
   return resolveLocus(detectLocus(repoRoot)).value;
 }
+
+/**
+ * How many held registration paths the sweep's "pruned nothing" line names before it
+ * counts the rest. The reviewer needs a directory to act on, not a tally — and a
+ * pathological repository must not write a novel to the daemon log.
+ */
+const HELD_REGISTRATION_SAMPLE = 5;
 
 export interface GitLabPrSubmissionResolverDeps {
   readonly locusForRepo: (repoRoot: string) => Locus;
@@ -1284,11 +1293,16 @@ export interface RennetServerOptions {
     readonly run: GitLabPrSubmissionCommandRunner;
   };
   /**
-   * Where the sibling collection's sentences go (workspace-settings D5). Defaults to
+   * Where the WORKSPACE LIFECYCLE's sentences go (workspace-settings D5). Defaults to
    * `console.info`, which is the daemon log. `SiblingCollection.reason` is documented as
    * being for this log, and the archive and the sweep both write it: without it, "collected
    * nothing" and "failed on every repository" are the same silence — which is exactly the
    * shape the sweep's own temporal-dead-zone bug wore for a release. Tests read it.
+   *
+   * The sweep's prune decisions and the pull-request front door's placement REFUSAL go here
+   * too. The front door's was a bare `catch {}`: a colliding branch/pull-request layout
+   * opened a review with no checkout and the reason existed for the length of one stack
+   * frame. Same family as the silence above, one door over.
    */
   readonly siblingCollectionLog?: (message: string) => void;
   /** Hermetic seam for GitLab read, CI, and review-publication commands. */
@@ -2272,6 +2286,23 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     writeFileSync(prWorktreeIndexPath, JSON.stringify(index));
   }
   /**
+   * Whether Rennet's pull-request index records a snapshot at THIS PATH — the ONE
+   * definition of `ensurePrWorktree`'s `recordedSnapshot`, read by the pull-request front
+   * door, the first bind and the re-pin alike.
+   *
+   * BY PATH, and over the whole index, because the question the flag answers is "did Rennet
+   * put a snapshot here", not "does this review have an entry". A successor review of the
+   * same pull request is a fresh review id with no entry of its own, and it is exactly the
+   * case the in-place replacement exists for. There were two readings of this and they
+   * disagreed on that case; one reading, one helper.
+   */
+  function snapshotRecordedAt(worktreePath: string): boolean {
+    const wanted = comparablePath(worktreePath);
+    return Object.values(readPrWorktreeIndex()).some(
+      (entry) => comparablePath(entry.path) === wanted,
+    );
+  }
+  /**
    * The ONE workspace a session is bound to (session-bound-workspace D1), decided once from
    * the review target and then only re-pinned:
    *
@@ -2323,6 +2354,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       placementFor: (repoRoot: string) => settingsComposition.resolveWorktreePlacement(repoRoot),
       worktreeFacts: worktreeFactsFor,
       prWorktreeFor: (reviewId: string) => readPrWorktreeIndex()[reviewId]?.path,
+      snapshotRecordedAt,
       recordPrWorktree,
       // Fire and forget, exactly as the pull-request front door runs it: a slow install
       // must never delay the capture, and a failed one is honest status rather than a wall.
@@ -2456,12 +2488,10 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       // this review or any earlier one of the same pull request, which is the successor
       // case this replacement exists for. It is the only evidence that the checkout there
       // is Rennet's to replace; without it `ensurePrWorktree` refuses rather than deleting
-      // whatever the reviewer has at a path two patterns happened to collide on.
-      const recordedSnapshot = Object.values(readPrWorktreeIndex()).some(
-        (entry) => comparablePath(entry.path) === comparablePath(worktree),
-      );
+      // whatever the reviewer has at a path two patterns happened to collide on. The
+      // shared helper, so this reading and the binding's cannot drift apart.
       const { created } = await ensurePrWorktree(gitInLocus, root, worktree, pr.headOid, {
-        recordedSnapshot,
+        recordedSnapshot: snapshotRecordedAt(worktree),
       });
       recordPrWorktree(review.id, worktree);
       if (created) {
@@ -2469,8 +2499,16 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         // unexpected crash must not become an unhandled rejection.
         void runPrWorktreeSetup(worktree).catch(() => undefined);
       }
-    } catch {
-      // No worktree: `review.prWorktree` honestly returns null.
+    } catch (error) {
+      // No worktree: `review.prWorktree` honestly returns null — AND THE REASON REACHES
+      // THE LOG. A colliding branch/pull-request layout makes `ensurePrWorktree` refuse by
+      // design, and this catch used to be bare: the review opened with no checkout, the
+      // agent could run nothing in it, and the sentence naming the occupied path existed
+      // for the length of one stack frame. A swallowed reason is spend the reviewer cannot
+      // see, which is the "lie in the UI" family.
+      siblingLog(
+        `rennet: no pull-request worktree for ${prRef.repo.owner}/${prRef.repo.name}#${prRef.number} — ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
     return review;
   }
@@ -3339,19 +3377,39 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     gitFor: gitForRepo,
   }).catch(() => undefined);
   /**
-   * Drop ONE repository's unreachable worktree registrations — and only when no live
-   * session is bound to any of them.
+   * Drop ONE repository's unreachable worktree registrations — **only the ones RENNET
+   * PLACED, and only when the repository holds no other unreachable registration at all.**
    *
-   * `prunable` is GIT'S verdict, read from `worktree list --porcelain` rather than from an
-   * `existsSync` on this side: on a Windows daemon driving a WSL repository the daemon and
-   * the git inside the distro spell the same directory two ways, and `existsSync` on git's
-   * spelling would call every live worktree missing. Whichever spelling a session recorded,
-   * `isClaimed` is asked both ways, as the sweep's candidate rule already is.
+   * This is the only site in the daemon that runs `git worktree prune`, and the rule it
+   * enforces is D5's, in three parts. All three must hold, per registration:
+   *
+   *   1. GIT reports it unreachable. `prunable` is git's own verdict, read from `worktree
+   *      list --porcelain` rather than from an `existsSync` on this side: on a Windows
+   *      daemon driving a WSL repository the daemon and the git inside the distro spell the
+   *      same directory two ways, and `existsSync` on git's spelling calls every live
+   *      worktree missing. A git too old to print the annotation says nothing, and silence
+   *      here reads as PRESENT — the cheap direction, since the mistake this guard exists to
+   *      prevent is a prune.
+   *   2. IT IS RENNET'S OWN: its path is under this repository's resolved placement root,
+   *      or its branch is a `rennet/*` sibling. A registration Rennet did not place is never
+   *      pruned by Rennet, reachable or not. The reviewer's own worktree on an unmounted
+   *      volume is theirs, and `git worktree repair` is their tool for it, not ours.
+   *   3. NO LIVE SESSION CLAIMS IT (`isClaimed`, which asks by work branch and by both path
+   *      spellings — see the sweep's own comment).
+   *
+   * ⚠️ AND THE GUARD IS ALL-OR-NOTHING OVER **EVERY** UNREACHABLE REGISTRATION, RENNET'S OR
+   * NOT. `git worktree prune` takes no path: it is repo-wide, and there is no scoped verb
+   * for a registration whose directory is missing (`worktree remove` wants the directory).
+   * So a repository holding ONE unreachable registration that fails 2 or 3 gets no prune at
+   * all this pass, and the log names the paths that held it. The previous version guarded
+   * only on 3, and only against Rennet sessions' paths, which meant one reviewer's
+   * unmounted worktree was dropped as collateral for pruning one of ours.
    */
   const pruneUnclaimedRegistrations = async (
     git: ReturnType<typeof gitForRepo>,
     repoRoot: string,
-    isClaimed: (path: string) => boolean,
+    rennetOwns: (record: WorktreeRecord) => boolean,
+    isClaimed: (record: WorktreeRecord) => boolean,
   ): Promise<void> => {
     const listed = await git(repoRoot, ["worktree", "list", "--porcelain", "-z"], {
       reject: false,
@@ -3360,10 +3418,16 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       (record) => record.prunable !== undefined,
     );
     if (unreachable.length === 0) return;
-    const held = unreachable.filter((record) => isClaimed(record.path));
+    const held = unreachable.filter((record) => !rennetOwns(record) || isClaimed(record));
     if (held.length > 0) {
+      // THE PATHS, not just the count: "something held it" is a sentence the reviewer can
+      // do nothing with, and the whole reason they are reading this line is to find out
+      // which directory to reconnect or remove. Capped, with the total, because a
+      // pathological repository must not write a novel to the daemon log.
+      const sample = held.slice(0, HELD_REGISTRATION_SAMPLE).map((record) => record.path);
+      const more = held.length - sample.length;
       siblingLog(
-        `rennet: sibling sweep pruned nothing in ${repoRoot} — ${held.length} unreachable worktree registration(s) are still claimed by a live session`,
+        `rennet: sibling sweep pruned nothing in ${repoRoot} — ${held.length} unreachable worktree registration(s) are not Rennet's to prune, or are still claimed by a live session: ${sample.join(", ")}${more > 0 ? ` (+${more} more)` : ""}`,
       );
       return;
     }
@@ -3398,14 +3462,13 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   ): Promise<void> => {
     let collected = 0;
     let kept = 0;
+    const liveSessions = sessionStore.list().filter((session) => session.archivedAt === undefined);
     const claimed = new Set(
-      sessionStore
-        .list()
-        .filter((session) => session.archivedAt === undefined && session.boundRoot !== undefined)
-        .flatMap((session) => {
-          const recorded = session.boundRoot as string;
-          return [recorded, comparablePath(recorded)];
-        }),
+      liveSessions.flatMap((session) =>
+        session.boundRoot === undefined
+          ? []
+          : [session.boundRoot, comparablePath(session.boundRoot)],
+      ),
     );
     const repoRoots = new Set(
       projectStore
@@ -3426,31 +3489,82 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         );
         continue;
       }
+      const locus = locusForRepo(repoRoot);
       const under = (path: string): boolean => {
         const base = comparablePath(placementRoot);
         const candidate = comparablePath(path);
         return candidate === base || candidate.startsWith(base.endsWith(sep) ? base : base + sep);
       };
-      const isClaimed = (path: string): boolean =>
-        claimed.has(path) || claimed.has(comparablePath(path));
+      /**
+       * The work branches LIVE SESSIONS OF THIS REPOSITORY are committing on.
+       *
+       * The second half of a claim, and the half that survives a session whose recorded
+       * spelling does not match git's at all. Asked per repository because a workspace maps
+       * many repos to one identity and `rennet/main` can exist in two of them (CLAUDE.md,
+       * 2026-08-28) — and asymmetric in the direction the sweep needs: a session whose
+       * repository is unknown counts as a claimant everywhere, because what silence costs
+       * here is somebody's registration, not a row.
+       */
+      const claimedBranches = new Set(
+        liveSessions.flatMap((session) => {
+          if (session.workBranch === undefined) return [];
+          const sessionRoot = repositoryRootForSession(session);
+          if (sessionRoot !== undefined && comparablePath(sessionRoot) !== comparablePath(repoRoot))
+            return [];
+          return [session.workBranch];
+        }),
+      );
+      /**
+       * Whether a live session claims this registration — asked TWO ways, either sufficient.
+       *
+       * By WORK BRANCH, in this repository: the session record's own statement of what it is
+       * committing on, which needs no path at all.
+       *
+       * By PATH, in BOTH spellings — git's (the record's own) and the daemon's, through
+       * `inRepoSpelling`, which is the WSL arrangement where the two genuinely differ. And
+       * `comparablePath` on each, which for a MISSING directory — and an unreachable
+       * registration is exactly that — resolves the deepest ancestor that still exists and
+       * re-attaches the tail. That last part is not a nicety: Codex reproduced the prune of
+       * a claimed registration on macOS, where git prints `/private/var/…` and the daemon
+       * records the `/var/…` symlink, and plain `realpath` refuses both because the
+       * directory is gone.
+       */
+      const isClaimed = (record: WorktreeRecord): boolean => {
+        if (record.branch !== undefined && claimedBranches.has(record.branch)) return true;
+        return [record.path, inRepoSpelling(record.path, repoRoot, locus)].some(
+          (path) => claimed.has(path) || claimed.has(comparablePath(path)),
+        );
+      };
+      /**
+       * Whether RENNET placed this registration: under this repository's resolved placement
+       * root, or on a `rennet/*` sibling branch wherever it sits (a pattern change moves the
+       * root out from under a sibling Rennet still owns).
+       *
+       * Everything else is the reviewer's, and Rennet does not prune the reviewer's
+       * registrations — an unmounted volume is not a deleted worktree, and `git worktree
+       * repair` is their tool for it.
+       */
+      const rennetOwns = (record: WorktreeRecord): boolean =>
+        under(record.path) || record.branch?.startsWith(SIBLING_BRANCH_PREFIX) === true;
       // THE ONLY PLACE A WORKTREE REGISTRATION IS PRUNED (workspace-settings D5).
       //
       // `git worktree prune` drops every registration whose gitdir points somewhere git
       // cannot reach RIGHT NOW — an unmounted volume, a network share that is down, a
       // distro that is not running — and none of those means the directory is gone. The
-      // bind used to run it before creating a sibling, so a temporarily unreachable
-      // workspace lost its registration and was re-forked underneath the staged work
-      // waiting in it. The bind now reads and refuses; this is where the repair lives,
-      // because this is the only caller that first asks whether anybody is using it.
+      // binds used to run it before creating a worktree, so a temporarily unreachable
+      // workspace lost its registration and was re-forked or checked out over underneath
+      // the staged work waiting in it. Both binds now read and refuse; this is where the
+      // repair lives, because this is the only caller that first asks whose it is and
+      // whether anybody is using it.
       //
-      // The guard is all-or-nothing on purpose: `prune` takes no path, so ONE claimed
-      // unreachable registration means the whole repository is left alone this pass.
-      await pruneUnclaimedRegistrations(git, repoRoot, isClaimed);
+      // The guard is all-or-nothing on purpose: `prune` takes no path, so ONE unreachable
+      // registration that is claimed OR not Rennet's leaves the whole repository alone.
+      await pruneUnclaimedRegistrations(git, repoRoot, rennetOwns, isClaimed);
       const orphans = await orphanedSiblings({
         git,
         repoRoot,
         under,
-        claimed: isClaimed,
+        claimed: (path: string) => claimed.has(path) || claimed.has(comparablePath(path)),
       }).catch(() => []);
       for (const orphan of orphans) {
         // No `push`: the sweep has no session to ask where a push went, so reachability is

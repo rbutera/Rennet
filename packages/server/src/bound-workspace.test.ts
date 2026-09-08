@@ -17,6 +17,7 @@ import type { Review } from "@rennet/protocol";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   type BoundWorkspaceDeps,
+  comparablePath,
   decideBoundWorkspace,
   inRepoSpelling,
   type ResolvedWorktreePlacement,
@@ -160,6 +161,12 @@ describe("decideBoundWorkspace (session-bound-workspace D1)", () => {
         return facts;
       },
       prWorktreeFor: (reviewId) => prIndex.get(reviewId),
+      // BY PATH, over the whole index — the one definition of `recordedSnapshot`, the same
+      // scan the daemon's helper makes. Asking only whether THIS review has an entry was
+      // the second definition, and it answered `false` for the successor case the in-place
+      // replacement exists for.
+      snapshotRecordedAt: (path) =>
+        [...prIndex.values()].some((entry) => comparablePath(entry) === comparablePath(path)),
       recordPrWorktree: (reviewId, path) => void prIndex.set(reviewId, path),
       onWorktreeCreated: (path) => void created.push(path),
     };

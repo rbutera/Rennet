@@ -1,7 +1,15 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { SessionStore } from "@rennet/adapters";
 import type { SessionModel } from "@rennet/protocol";
 import { afterEach, describe, expect, it } from "vitest";
@@ -265,5 +273,220 @@ describe("the archive's own collection (workspace-settings D5, review finding W3
     const after = store.load("s-1");
     expect(after?.boundRoot).toBeUndefined();
     expect(after?.workBranch).toBeUndefined();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PRUNING REGISTRATIONS (workspace-settings D5, review findings Opus #2 / Codex P1).
+//
+// `git worktree prune` is REPO-WIDE. It takes no path, and there is no scoped verb for a
+// registration whose directory is missing (`worktree remove` wants the directory to be
+// there). So a guard that decides per registration and then issues one repo-wide prune is
+// not a guard at all: the previous version asked only "does a Rennet session's recorded
+// path name this?", and dropped a reviewer's own worktree — registered against an unmounted
+// volume, nothing to do with Rennet — as collateral for pruning one of ours.
+//
+// The rule these cases pin, three parts, all of which must hold PER REGISTRATION, and the
+// prune runs only when EVERY unreachable registration in the repository passes:
+//
+//   1. git reports it unreachable (`prunable`);
+//   2. it is RENNET'S OWN — under the repository's resolved placement root, or on a
+//      `rennet/*` branch;
+//   3. no live session claims it, by work branch in this repository or by path in either
+//      spelling.
+//
+// A stranded directory (deleted behind git's back) is how a test produces the `prunable`
+// annotation: it is the same annotation an unmounted volume produces, and git cannot tell
+// the difference — which is the entire reason this guard exists.
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface PruneFixture {
+  readonly root: string;
+  readonly dataDir: string;
+  readonly repo: string;
+  /** The builtin placement root — what "Rennet's own, by path" means for this repository. */
+  readonly worktreeRoot: string;
+  /** Register a worktree of the repository on a new branch. */
+  readonly register: (path: string, branch: string) => void;
+  /** Delete a registered worktree's DIRECTORY behind git's back ⇒ git marks it prunable. */
+  readonly strand: (path: string) => void;
+  /** Every path `git worktree list` still registers. */
+  readonly registrations: () => string[];
+}
+
+function pruneFixture(): PruneFixture {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "rennet-prune-sweep-")));
+  scratch.push(root);
+  const dataDir = join(root, "data");
+  const repo = join(root, "repo");
+  mkdirSync(dataDir, { recursive: true });
+  mkdirSync(repo, { recursive: true });
+  git(repo, ["init", "-q", "-b", "main"]);
+  commit(repo, "README.md", "repo\n");
+  writeFileSync(
+    join(dataDir, "projects.json"),
+    JSON.stringify({
+      projects: [
+        {
+          id: "p-1",
+          name: "repo",
+          path: repo,
+          kind: "repo",
+          repoCount: 1,
+          branchCount: 1,
+          primaryBranch: "main",
+          openPath: repo,
+          includedRepoPaths: [repo],
+          addedAt: "2026-01-01T00:00:00.000Z",
+          source: "local",
+        },
+      ],
+    }),
+  );
+  return {
+    root,
+    dataDir,
+    repo,
+    worktreeRoot: join(dataDir, "worktrees"),
+    register: (path, branch) => {
+      mkdirSync(dirname(path), { recursive: true });
+      git(repo, ["worktree", "add", "-q", "-b", branch, path, "refs/heads/main"]);
+    },
+    strand: (path) => rmSync(path, { recursive: true, force: true }),
+    registrations: () =>
+      git(repo, ["worktree", "list", "--porcelain"])
+        .split("\n")
+        .filter((line) => line.startsWith("worktree "))
+        .map((line) => line.slice("worktree ".length)),
+  };
+}
+
+describe("what the sweep may prune (workspace-settings D5)", () => {
+  it("leaves the WHOLE repository alone when the unreachable registration is the reviewer's own", {
+    timeout: 60_000,
+  }, async () => {
+    // (a) OPUS #2. Outside the placement root, not on a `rennet/*` branch: this is the
+    // reviewer's worktree, and an unreachable one is a disconnected volume far more often
+    // than a deleted directory. `git worktree repair` is their tool; Rennet does not get to
+    // decide their registration is garbage.
+    const fx = pruneFixture();
+    const mine = join(fx.root, "mine");
+    fx.register(mine, "mine");
+    fx.strand(mine);
+
+    const log = await startAndSweep(fx.dataDir);
+
+    expect(fx.registrations()).toContain(mine);
+    // S4: the LINE NAMES THE PATH. "Something held it" is a sentence the reviewer can do
+    // nothing with; the whole reason to read this line is to learn which directory to
+    // reconnect or remove.
+    expect(log.some((line) => line.includes("pruned nothing") && line.includes(mine))).toBe(true);
+  });
+
+  it("leaves a Rennet worktree a live session claims under ANOTHER SPELLING of its path", {
+    timeout: 60_000,
+  }, async () => {
+    // (b) CODEX P1, reproduced on macOS. Git prints the RESOLVED path; a session records
+    // whatever spelling the daemon addressed the directory by, and on macOS every default
+    // TMPDIR is a symlink. A raw string compare misses the pair — and so does `realpath`,
+    // because the directory is GONE, which is the only state this question is ever asked
+    // in. The claim here is a PATH claim and nothing else: the session records no
+    // `workBranch`, so the branch matcher cannot rescue it and the path comparison is what
+    // is under test.
+    const fx = pruneFixture();
+    const sibling = join(fx.worktreeRoot, "sibling", "rennet", "feat", "x");
+    fx.register(sibling, "rennet/feat/x");
+    fx.strand(sibling);
+    // The same directory, spelled through a symlink to the fixture root.
+    const link = join(dirname(fx.root), `${basename(fx.root)}-link`);
+    symlinkSync(fx.root, link);
+    scratch.push(link);
+    seedSession(fx.dataDir, {
+      id: "s-live",
+      projectId: "p-1",
+      threads: [],
+      createdAt: 1,
+      repositoryRoot: fx.repo,
+      boundRoot: sibling.replace(fx.root, link),
+    });
+
+    const log = await startAndSweep(fx.dataDir);
+
+    expect(fx.registrations()).toContain(sibling);
+    expect(log.some((line) => line.includes("pruned nothing") && line.includes(sibling))).toBe(
+      true,
+    );
+  });
+
+  it("leaves a Rennet worktree a live session claims by WORK BRANCH, with no path at all", {
+    timeout: 60_000,
+  }, async () => {
+    // The other matcher, on its own: a session that records a work branch and no bound root
+    // (a crash between the branch write and the binding write) still claims the sibling its
+    // work is on. Matched within THIS repository, because `rennet/main` can exist in two
+    // repositories of one workspace project.
+    const fx = pruneFixture();
+    const sibling = join(fx.worktreeRoot, "sibling", "rennet", "feat", "y");
+    fx.register(sibling, "rennet/feat/y");
+    fx.strand(sibling);
+    seedSession(fx.dataDir, {
+      id: "s-branch",
+      projectId: "p-1",
+      threads: [],
+      createdAt: 1,
+      repositoryRoot: fx.repo,
+      workBranch: "rennet/feat/y",
+    });
+
+    const log = await startAndSweep(fx.dataDir);
+
+    expect(fx.registrations()).toContain(sibling);
+    expect(log.some((line) => line.includes("pruned nothing") && line.includes(sibling))).toBe(
+      true,
+    );
+  });
+
+  it("PRUNES a Rennet worktree nothing claims, when it is the only unreachable one", {
+    timeout: 60_000,
+  }, async () => {
+    // (c) THE CONTROL FOR ALL THREE ABOVE. Same shape, same stranding — the only differences
+    // are that nothing claims it and nothing else in the repository is unreachable. Without
+    // this the three refusals pass for a sweep that never prunes anything.
+    //
+    // And it is `feat/z`, not a `rennet/*` branch, deliberately: this is the "under the
+    // resolved placement root" half of "Rennet's own", which the sibling cases do not reach.
+    const fx = pruneFixture();
+    const branchWorktree = join(fx.worktreeRoot, "repo-key", "feat", "z");
+    fx.register(branchWorktree, "feat/z");
+    fx.strand(branchWorktree);
+
+    const log = await startAndSweep(fx.dataDir);
+
+    expect(fx.registrations()).not.toContain(branchWorktree);
+    expect(log.some((line) => line.includes("pruned 1 unreachable worktree registration(s)"))).toBe(
+      true,
+    );
+  });
+
+  it("prunes NOTHING when one prunable registration is Rennet's and another is not", {
+    timeout: 60_000,
+  }, async () => {
+    // ALL-OR-NOTHING, which is the half a per-registration guard cannot express. Rennet's
+    // own stranded sibling is prunable under the rule; the reviewer's is not; `prune` cannot
+    // be told to take one and leave the other, so it is not run at all — and the log names
+    // the one that held it, not the one it would have taken.
+    const fx = pruneFixture();
+    const sibling = join(fx.worktreeRoot, "sibling", "rennet", "feat", "x");
+    const mine = join(fx.root, "mine");
+    fx.register(sibling, "rennet/feat/x");
+    fx.register(mine, "mine");
+    fx.strand(sibling);
+    fx.strand(mine);
+
+    const log = await startAndSweep(fx.dataDir);
+
+    expect(fx.registrations()).toContain(sibling);
+    expect(fx.registrations()).toContain(mine);
+    expect(log.some((line) => line.includes("pruned nothing") && line.includes(mine))).toBe(true);
   });
 });
