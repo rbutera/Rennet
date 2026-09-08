@@ -196,7 +196,12 @@ describe("lens prompt manifest", () => {
     const text = readFileSync(join(srcDir, LENS_PROMPT_FILES.design), "utf8");
     const normalized = text.replace(/\s+/g, " ");
 
-    // Where to look, and what makes a document THIS branch's spec.
+    // When the host already located the specification, the search is off: the seat
+    // renders the files `design-sources.md` names and settles nothing absent.
+    expect(normalized).toContain("If your context directory lists `design-sources.md`");
+    expect(normalized).toContain("Those files are the specification");
+    expect(normalized).toContain("do not settle absent");
+    // Where to look otherwise, and what makes a document THIS branch's spec.
     expect(normalized).toContain("openspec/changes/**");
     expect(normalized).toContain("`.kiro/**`");
     expect(normalized).toContain("`.bmad/**`");

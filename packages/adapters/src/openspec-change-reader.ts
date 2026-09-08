@@ -29,14 +29,21 @@ const byName = (left: string, right: string): number => (left < right ? -1 : lef
  * `<name>` under `openspec/changes/<name>/` that the changed paths touch, or `null`
  * when none do. Sorting makes the pick deterministic when a patchset touches more
  * than one change.
+ *
+ * A name is a DIRECTORY: the path must continue past it. A file that sits directly under
+ * `openspec/changes/` — the `README.md` index that OpenSpec keeps there — is not a change,
+ * and reading it as one was a sighted defect (PR #918, 2026-09-08): `README.md` sorted
+ * before `workspace-settings`, every artifact read under the phantom change came back
+ * empty, the deterministic assembler had nothing to render, and the Design seat was
+ * dispatched to hunt for a specification the packet had already located.
  */
 export function selectedOpenSpecChangeName(changedFilePaths: readonly string[]): string | null {
   const names = new Set<string>();
   for (const path of changedFilePaths) {
     const normalised = path.replace(/\\/g, "/");
     if (!normalised.startsWith(CHANGES_PREFIX)) continue;
-    const name = normalised.slice(CHANGES_PREFIX.length).split("/")[0];
-    if (name && name.length > 0) names.add(name);
+    const [name, ...rest] = normalised.slice(CHANGES_PREFIX.length).split("/");
+    if (name && name.length > 0 && rest.length > 0) names.add(name);
   }
   return [...names].sort(byName)[0] ?? null;
 }

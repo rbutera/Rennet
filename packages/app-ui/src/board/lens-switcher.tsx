@@ -297,6 +297,8 @@ function absenceAccessibleStatus(reason: NonNullable<LensBoardEntry["absence"]>)
       return "no review findings found";
     case "no-noise":
       return "every region is on another board";
+    case "spec-only":
+      return "specification-only change";
   }
 }
 

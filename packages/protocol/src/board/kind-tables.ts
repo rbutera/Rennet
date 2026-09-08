@@ -90,6 +90,7 @@ export const LensAbsenceReasonSchema = z.enum([
   "no-decisions",
   "no-findings",
   "no-noise",
+  "spec-only",
 ]);
 export type LensAbsenceReason = z.infer<typeof LensAbsenceReasonSchema>;
 
@@ -111,17 +112,37 @@ export type LensAbsenceReason = z.infer<typeof LensAbsenceReasonSchema>;
  * admissible so generations persisted before the respec keep reading; nothing settles it now
  * ({@link LEGACY_LENS_ABSENCES}).
  *
+ * `spec-only` is the HOST's statement about the change, not any seat's about its board: every
+ * changed path is a specification artifact (an OpenSpec change, a Kiro feature, a BMAD
+ * document, a Superpowers plan, an ADR), so there is no code to order, decide on, flag, or
+ * file as noise. The host settles it on the four non-Design lanes before any seat runs — a
+ * seat dispatched to read a diff with no code in it is a paid turn to be told so — and
+ * Design runs alone. It is the one absence more than one lens admits, because it is one
+ * fact about the change and not four facts about four boards ({@link HOST_CHANGE_ABSENCES}).
+ * Sequence, which admits no SEAT absence, admits this one: an order board over no code is
+ * not a failed reading, it is a reading with nothing to order.
+ *
  * It lives here, beside the kind tables, because a seat's tool set is derived from both:
  * the kinds decide its authoring verbs and this decides whether it gets a settle-absent
  * verb at all.
  */
 export const LENS_ADMISSIBLE_ABSENCES: Readonly<Record<LensKind, readonly LensAbsenceReason[]>> = {
   design: ["no-material", "no-spec"],
-  sequence: [],
-  decisions: ["no-decisions"],
-  flagged: ["no-findings"],
-  noise: ["no-noise"],
+  sequence: ["spec-only"],
+  decisions: ["no-decisions", "spec-only"],
+  flagged: ["no-findings", "spec-only"],
+  noise: ["no-noise", "spec-only"],
 };
+
+/**
+ * Absences the HOST settles from the shape of the change, before any seat runs, and that
+ * no seat can declare. Admissible on every lane they name (the write boundary must accept
+ * them) and offered by no verb — the same filter {@link LEGACY_LENS_ABSENCES} applies to a
+ * reason nothing settles any more, applied here to a reason no SEAT settles. Any reader that
+ * derives "the one absence this seat may declare" from the admissibility table subtracts
+ * both lists.
+ */
+export const HOST_CHANGE_ABSENCES: readonly LensAbsenceReason[] = ["spec-only"];
 
 /** True when `reason` is an absence `lens` may settle with as a success. */
 export function lensAdmitsAbsence(lens: LensKind, reason: LensAbsenceReason): boolean {
@@ -138,8 +159,9 @@ export const LEGACY_LENS_ABSENCES: readonly LensAbsenceReason[] = ["no-material"
 /**
  * The one absence a target's settle-absent verb declares, or `undefined` when the target
  * admits none and therefore gets no such verb. DERIVED from
- * {@link LENS_ADMISSIBLE_ABSENCES} minus {@link LEGACY_LENS_ABSENCES}: Design settles
- * `no-spec`, Sequence settles nothing, and the report seat is not a lens and admits none.
+ * {@link LENS_ADMISSIBLE_ABSENCES} minus {@link LEGACY_LENS_ABSENCES} minus
+ * {@link HOST_CHANGE_ABSENCES}: Design settles `no-spec`, Sequence settles nothing (its
+ * only admissible absence is the host's), and the report seat is not a lens and admits none.
  *
  * The verb carries a note and no reason field, so a seat cannot name an absence its lens
  * does not admit — there is nowhere to name it. Which is exactly why TWO live absences
@@ -152,7 +174,7 @@ export const LEGACY_LENS_ABSENCES: readonly LensAbsenceReason[] = ["no-material"
 export function settleAbsentReasonFor(target: BoardTarget): LensAbsenceReason | undefined {
   if (target === "report") return undefined;
   const live = LENS_ADMISSIBLE_ABSENCES[target].filter(
-    (reason) => !LEGACY_LENS_ABSENCES.includes(reason),
+    (reason) => !LEGACY_LENS_ABSENCES.includes(reason) && !HOST_CHANGE_ABSENCES.includes(reason),
   );
   if (live.length > 1) {
     throw new Error(

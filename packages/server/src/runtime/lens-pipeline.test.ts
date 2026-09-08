@@ -2570,6 +2570,116 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     ).toHaveLength(0);
   });
 
+  /**
+   * PR #918's inventory (`spec/workspace-settings`, 2026-09-08): an OpenSpec change proposed
+   * ahead of its code, with the `openspec/changes/README.md` index beside it. The branch on
+   * which every non-Design seat was dispatched to review a diff with no code in it.
+   */
+  const SPEC_ONLY_ROWS = [
+    { path: "openspec/changes/README.md", status: "modified" },
+    { path: "openspec/changes/workspace-settings/proposal.md", status: "added" },
+    { path: "openspec/changes/workspace-settings/tasks.md", status: "added" },
+    {
+      path: "openspec/changes/workspace-settings/specs/settings-resolution/spec.md",
+      status: "added",
+    },
+  ];
+  // A packet that names files gains a `change-index.md`, and the index states the reviewed
+  // range — so unlike the shared file-less `PACKET`, this one has to carry a repository.
+  const packetWithFiles = (files: readonly { path: string; status: string }[]): DeltaPacket =>
+    ({
+      ...PACKET,
+      patchset: {
+        ...PACKET.patchset,
+        repository: { baseRef: "main", baseOid: "base-oid", headOid: "head-oid" },
+        files,
+      },
+    }) as unknown as DeltaPacket;
+  const NON_DESIGN_SEATS = ["sequence", "decisions", "flagged-claude", "flagged-codex", "noise"];
+
+  it("dispatches Design ALONE on a specification-only change; the other four lanes settle spec-only with no seat", async () => {
+    // The host decides this from the packet's file rows before any lane opens, and the
+    // decision is path-shaped and deterministic (`isSpecOnlyChange`): no model is asked
+    // whether the change it is about to read has code in it.
+    const seatTurns: SeatCapture[] = [];
+    const result = await runLensPipeline({
+      ...boardSeats(seatTurns, (prompt, label) => cleanBody(lensFromPrompt(prompt, label))),
+      repoRoot: "/pr-worktree",
+      deltaPacket: packetWithFiles(SPEC_ONLY_ROWS),
+      lintContextFor,
+      readPrompt,
+      whiteboard: fakeWhiteboard([]),
+      boardIdFor: (lens) => `board:${lens}`,
+    });
+
+    // All five lanes settle, in canonical order, and none fails: a host-settled lane is a
+    // clean result, never a failure painted over a seat that did not run.
+    expect(result.boards.map(({ lens }) => lens)).toEqual([
+      "design",
+      "sequence",
+      "decisions",
+      "flagged",
+      "noise",
+    ]);
+    for (const outcome of result.boards) {
+      expect(outcome.failure, `${outcome.lens} failed`).toBeUndefined();
+    }
+    // Design ran its seat and drafted a board (no assembler is wired in this fixture).
+    const design = result.boards.find(({ lens }) => lens === "design");
+    expect(design?.boardId).toBeDefined();
+    expect(design?.absence).toBeUndefined();
+    // The other four carry the host's absence and wrote no board.
+    for (const lens of ["sequence", "decisions", "flagged", "noise"] as const) {
+      const outcome = result.boards.find((board) => board.lens === lens);
+      expect(outcome?.absence, `${lens} settled spec-only`).toBe("spec-only");
+      expect(outcome?.boardId, `${lens} wrote no board`).toBeUndefined();
+    }
+    // The load-bearing half: NO seat for any of them. An absence assertion alone passes
+    // over a pipeline that dispatches the seat and then discards its board.
+    const lensesDispatched = seatTurns.map(({ prompt, seat }) =>
+      lensFromPrompt(prompt ?? "", seat),
+    );
+    expect(lensesDispatched, "Design ran").toContain("design");
+    expect(
+      lensesDispatched.filter((lens) => lens !== "design"),
+      "no lens seat but Design was dispatched",
+    ).toEqual([]);
+    expect(
+      seatTurns.map(({ seat }) => seat).filter((seat) => NON_DESIGN_SEATS.includes(seat)),
+      "no thread was opened for any other lens seat either",
+    ).toEqual([]);
+  });
+
+  it("keeps every seat on a change that mixes a specification with code (the control)", async () => {
+    // The same OpenSpec rows plus ONE source file. Without this the test above would pass
+    // over a pipeline that settled `spec-only` on every change it saw.
+    const seatTurns: SeatCapture[] = [];
+    const result = await runLensPipeline({
+      ...boardSeats(seatTurns, (prompt, label) => cleanBody(lensFromPrompt(prompt, label))),
+      repoRoot: "/pr-worktree",
+      deltaPacket: packetWithFiles([
+        ...SPEC_ONLY_ROWS,
+        { path: "packages/core/src/settings.ts", status: "modified" },
+      ]),
+      lintContextFor,
+      readPrompt,
+      whiteboard: fakeWhiteboard([]),
+      boardIdFor: (lens) => `board:${lens}`,
+    });
+
+    for (const outcome of result.boards) {
+      expect(outcome.absence, `${outcome.lens} was host-settled on a code change`).not.toBe(
+        "spec-only",
+      );
+    }
+    const lensesDispatched = new Set(
+      seatTurns.map(({ prompt, seat }) => lensFromPrompt(prompt ?? "", seat)),
+    );
+    for (const lens of ["design", "sequence", "decisions", "flagged", "noise"]) {
+      expect(lensesDispatched.has(lens), `${lens} seat ran`).toBe(true);
+    }
+  });
+
   it("classifies a lane that never settles across its ladder as TERMINAL", async () => {
     const result = await runLensPipeline({
       ...boardSeats([], (prompt, label) => {
@@ -5675,6 +5785,66 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     });
     expect(written.map(({ name }) => name)).not.toContain("pr.md");
     for (const turn of turns) expect(turn.prompt, turn.seat).not.toContain("pr.md");
+  });
+
+  it("names `design-sources.md` to the DESIGN seat when the host located a spec the assembler declined", async () => {
+    // The host's readers found the specification from the packet's paths; the assembler
+    // then declined (a RENAMED block, no obligations, a refusal). The seat that runs in its
+    // place must open on those paths, not on a search for them — the paths ride as a
+    // context file, never the artifact text.
+    const turns: SeatCapture[] = [];
+    const written: SessionContextFile[] = [];
+    const located = [
+      { format: "openspec" as const, role: "proposal", path: "openspec/changes/ws/proposal.md" },
+      { format: "openspec" as const, role: "tasks", path: "openspec/changes/ws/tasks.md" },
+    ];
+    await runLensPipeline({
+      ...boardSeats(turns, (prompt, seat) => cleanBody(lensFromPrompt(prompt, seat))),
+      designSources: located,
+      assembleDesignBoard: () => undefined,
+      repoRoot: "/pr-worktree",
+      deltaPacket: PACKET,
+      lintContextFor,
+      readPrompt,
+      whiteboard: fakeWhiteboard([]),
+      boardIdFor: (lens) => `board:${lens}`,
+      writeContext: (files) => {
+        written.push(...files);
+        return ".rennet/context/s1";
+      },
+    });
+    const file = written.find(({ name }) => name === "design-sources.md");
+    expect(file?.body).toContain("`openspec/changes/ws/proposal.md`");
+    expect(file?.body).toContain("`openspec/changes/ws/tasks.md`");
+    const promptFor = (seat: string): string =>
+      turns.find((turn) => turn.seat === seat)?.prompt ?? "";
+    expect(promptFor("design")).toContain("`.rennet/context/s1/design-sources.md`");
+    expect(promptFor("design")).toContain(file?.readWhen ?? "READ-WHEN-MISSING");
+    // The paths ride the file, not the prompt.
+    expect(promptFor("design")).not.toContain("openspec/changes/ws/proposal.md");
+    for (const seat of ["sequence", "decisions", "flagged-claude", "noise"]) {
+      expect(promptFor(seat), seat).not.toContain("design-sources.md");
+    }
+  });
+
+  it("names no `design-sources.md` when the host located nothing (the control)", async () => {
+    const turns: SeatCapture[] = [];
+    const written: SessionContextFile[] = [];
+    await runLensPipeline({
+      ...boardSeats(turns, (prompt, seat) => cleanBody(lensFromPrompt(prompt, seat))),
+      repoRoot: "/pr-worktree",
+      deltaPacket: PACKET,
+      lintContextFor,
+      readPrompt,
+      whiteboard: fakeWhiteboard([]),
+      boardIdFor: (lens) => `board:${lens}`,
+      writeContext: (files) => {
+        written.push(...files);
+        return ".rennet/context/s1";
+      },
+    });
+    expect(written.map(({ name }) => name)).not.toContain("design-sources.md");
+    for (const turn of turns) expect(turn.prompt, turn.seat).not.toContain("design-sources.md");
   });
 
   // #867: 25 of 26 measured seat turns opened by re-deriving the change's shape with

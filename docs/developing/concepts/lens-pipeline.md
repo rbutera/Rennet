@@ -116,8 +116,11 @@ and calls board regeneration through this runtime.
    the board or comes back with a pointer list the seat answers with further calls in the
    same turn; or the one settle-absent verb its lens admits, whose reason is fixed by the
    lens and carries no field to name it with. Sequence has no such verb, because Sequence
-   admits no absence, and neither does Noise, because the host settles a Noise lane's
-   absence from the derivation before any seat runs.
+   admits no seat absence, and neither does Noise, because the host settles a Noise lane's
+   absence from the derivation before any seat runs. One absence belongs to the host on
+   every lane but Design: `spec-only`, settled from the packet's file rows before any lane
+   opens when the change is made of specification artifacts and nothing else (see *A
+   specification-only change dispatches Design alone* below).
 
    **The Noise seat also has `write_board`, which writes its whole board in one call**, and
    it is the only seat that does. The payload is a JSON string carrying a list of that
@@ -161,8 +164,13 @@ and calls board regeneration through this runtime.
    A specification it cannot settle falls back to the seat, which renders the same
    specification — and the daemon log carries a `[seat]` line naming the rule that
    refused it, so a Design seat the host could have avoided is visible as it runs rather
-   than inferred afterwards from a round's wall clock. A branch with no specification in
-   any of those formats runs the seat, which searches the checkout for itself.
+   than inferred afterwards from a round's wall clock. That fallback seat does not start
+   from nothing: the paths the host located travel to it as `design-sources.md` in the
+   session's context directory — the format and one line per artifact, never the text —
+   named in the Design prompt alone, and the prompt tells the seat those files are the
+   specification, so it renders them rather than searching for them. A branch with no
+   specification in any of those formats writes no such file and runs the seat, which
+   searches the checkout for itself.
 
    A verified report arrives before any lens turn starts and
    opens that boundary, after which all five lens lanes run
@@ -784,6 +792,27 @@ reader-facing wording changed with the meaning: `no-noise` used to say that noth
 was safely skippable, and now says that every changed region is on another board, which
 is a different and much rarer claim.
 
+**A specification-only change dispatches Design alone.** Before any lane opens, the
+pipeline asks the packet's file rows one deterministic question: is every changed path a
+specification artifact? The roots are the ones the Design readers select on —
+`openspec/**`, `.kiro/**`, `.bmad/**` and `.bmad-core/**`, `docs/superpowers/**` and
+`.superpowers/**`, a Markdown ADR under any `docs/adr/` or `docs/decisions/`, and a
+`CONTEXT.md` or `CONTEXT-MAP.md` — and a rename's old side counts too, so a file moved out
+of a spec directory is a code change. When the answer is yes, Sequence, Decisions, Flagged
+and Noise settle `spec-only` with no seat dispatched, the lanes close and their addresses
+are revoked exactly as after a seat, and Design runs alone: on a format the assembler
+reads it renders the specification on the host with no model turn at all, so the whole
+review of an OpenSpec change proposed ahead of its code costs nothing. `spec-only` is the
+one absence more than one lens admits, because it is one fact about the change rather than
+four facts about four boards; no seat's settle-absent verb offers it, and an empty board
+never derives it. A docs-only or README-only branch is not spec-only — the Design lens
+does not read that prose — and neither is an empty inventory.
+
+The OpenSpec reader that feeds the assembler selects a change by directory, and a
+directory only: a file that sits directly under `openspec/changes/` — the `README.md`
+index OpenSpec keeps there — selects nothing, so a spec-only branch that touches the index
+beside its change still assembles on the host rather than falling through to the seat.
+
 **The seat makes no judgement of any kind.** A member's `verdict` and its `judge` mark are
 host-stamped constants — `noise` and `deterministic` — and appear on no tool input, because
 each has exactly one admissible value once membership is derived, and a one-valued field
@@ -807,7 +836,9 @@ one path count as one file, and structural prose does not inflate the count. A
 pair with no persisted board answers `null`. A successful empty result is typed
 instead of persisted as a zero-element board: Design uses `no-spec`,
 Decisions uses `no-decisions`, Flagged uses `no-findings`, and Noise uses
-`no-noise` — which the host settles, not the seat. An empty Design board is never an
+`no-noise` — which the host settles, not the seat. Sequence, Decisions, Flagged and
+Noise all record `spec-only` when the host settles them together on a
+specification-only change. An empty Design board is never an
 absence — only the seat's own `no-spec` declaration is. For the three core review lenses, material follows the topology the
 client serves, not the flat element pool. Sequence needs a reachable
 `order_step`, Decisions a reachable `decision`, and Flagged a reachable `finding`.
