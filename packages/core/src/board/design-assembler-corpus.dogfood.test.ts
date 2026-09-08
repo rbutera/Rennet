@@ -11,19 +11,8 @@
  * Uncacheable by construction — it reads the live checkout, both for the artifacts and for
  * the citation inventory — so it is a `dogfood-test`, not a `test`.
  *
- * TWO THINGS THIS TEST CANNOT SEE, both worth knowing before trusting the number:
- *
- * 1. It resolves the citations of HISTORICAL changes against TODAY's tree. An archived
- *    change citing a file that has since been deleted or shortened fails `citation-resolves`
- *    here and would not have failed at its own review commit. Those are marked in the
- *    expected list; they are an artefact of the corpus being historical, not a property of
- *    the assembler. The `citation-well-formed` and `no-code-bytes` entries are NOT
- *    artefacts — those rules read only the artifact text and would fail identically at any
- *    commit.
- * 2. It asserts that a board came back, not that the board is good. `assembled` counts
- *    boards, and an assembler that emitted a document and nothing else would still count.
- *    The second test is the answer to that: it reads the rendered text of one specific
- *    change back and matches it against the artifact on disk.
+ * The count measures acceptance, not rendering fidelity. The second test reads the
+ * rendered text of one specific change back against its original artifact.
  */
 
 import { execFileSync } from "node:child_process";
@@ -40,79 +29,18 @@ import type { LintContext } from "./lint";
 const ROOT = join(fileURLToPath(import.meta.url), "../../../../..");
 const ARCHIVE = join(ROOT, "openspec/changes/archive");
 
-/**
- * How many archived changes the assembler renders to a settled board.
- *
- * A LITERAL, deliberately. Deriving it from the assembler would make the assertion
- * tautological — an assembler that rendered nothing would satisfy a derived expectation —
- * and the whole value of this test is that the number is a fact someone measured.
- *
- * Before #877 it was 65, and #877's register took it to 91: the 26 it gained are the
- * changes whose only obstacle was a rule addressed to a writer's voice, run over prose the
- * assembler was quoting rather than writing (`VOICE_RULES` in `lint.ts`). Each of those was
- * a Design seat that ran, and billed, for a board the host already had: one measured drive
- * spent 882.9 s and 144 provider round trips on exactly one of them.
- *
- * #883 took it to 93, and those two are a different kind of gain — not a rule pointed at
- * the wrong party, but a rule reading prose wrong. `citation-well-formed` saw `127.0.0.1:0`
- * as the file `127.0.0.1` at line 0; it now asks for a plausible file extension before a
- * `<token>:<digits>` counts as a citation at all. Nothing was silenced to move the number:
- * every other entry below is unchanged, and the 14 bare-basename refusals still refuse.
- *
- * When a new OpenSpec change is archived this number moves, and moving it is the correct
- * response — it is a coverage figure, not a constant.
- */
-const ASSEMBLED = 93;
+/** Measured against the 118 archived changes: 18 more than before prose citations
+ *  stopped being inferred from transcribed text. Keep the expected count literal. */
+const ASSEMBLED = 111;
 
-/**
- * Every archived change the fast path does NOT render, and why. Sorted, so the failure
- * diff reads as a list rather than a count.
- *
- * `declined` is a clean `undefined` — the assembler looked and had nothing to render, the
- * seat takes it, and nothing was lost. Every other entry is the rule that refused, and each
- * is a Design seat that runs where it need not:
- *
- * - `citation-well-formed` — the author cited a bare basename (`app.tsx:551`). Kept in
- *   force for a transcription on purpose: a citation a reader cannot resolve is a broken
- *   board whoever wrote it. Every remaining entry under this rule is a real bare basename:
- *   the two that were NOT (`add-remote-surface`, `add-ws-transport`, refused for prose
- *   containing `127.0.0.1:0`) assemble since #883 taught the rule that a token has to end
- *   in a plausible file extension before it counts as a citation at all.
- * - `citation-resolves` — the cited file has moved or shrunk since the change was archived.
- *   See the header: an artefact of resolving old citations against today's tree.
- * - `no-code-bytes` — a fenced or indented code block in the artifact prose. Genuinely
- *   unrenderable: code on a board is a `code_ref`, not bytes, and the seat is right to
- *   take it.
- */
+/** Fenced code still needs the seat; declined sources contain no renderable obligations. */
 const NOT_ASSEMBLED: readonly string[] = [
-  "2026-08-12-isolated-fixes — citation-resolves",
   "2026-08-12-own-branch-submission — no-code-bytes",
-  "2026-08-12-renderer-polish — citation-resolves",
-  "2026-08-15-deixis-pointing — citation-resolves",
-  "2026-08-16-add-windows-support — citation-well-formed",
-  "2026-08-17-add-command-registry-v1 — citation-resolves",
-  // Both rules bite this change. It read `citation-well-formed` while a task group was
-  // one prose element (the joined checklist tripped that rule first); since #898 each
-  // task is its own prose, and the first task line lint reaches carries a citation that
-  // no longer resolves. Same outcome, same seat, earlier line.
-  "2026-08-17-polish-sweep — citation-resolves",
-  "2026-08-17-product-debt-sweep — citation-well-formed",
-  "2026-08-19-mobile-app-m2 — citation-well-formed",
   "2026-08-20-rennet-docsite — no-code-bytes",
-  "2026-09-01-b02-canvas-deletion-cutover — citation-well-formed",
-  "2026-09-01-b04-boards-runtime — citation-well-formed",
-  "2026-09-01-b06-context-map-swarm — citation-well-formed",
-  "2026-09-01-b08-lens-pipeline — citation-well-formed",
-  "2026-09-01-c08-exits — citation-well-formed",
   "2026-09-01-c09-rounds — no-code-bytes",
-  "2026-09-01-c10-settings-help — citation-well-formed",
-  "2026-09-01-c13-onboarding — citation-resolves",
   "2026-09-01-c14-conformance-sweep — declined",
-  "2026-09-01-c14-release-blockers — citation-well-formed",
-  "2026-09-01-c15-board-regen — citation-well-formed",
   "2026-09-01-c18-wiring-commands — declined",
   "2026-09-01-c19-direct-post — declined",
-  "2026-09-01-desktop-styling-convergence — citation-well-formed",
   "2026-09-01-f1-chat-orchestrator — no-code-bytes",
 ];
 
@@ -184,7 +112,7 @@ describe("assembleDesignBoard over openspec/changes/archive", () => {
   const assemble = (dir: string) =>
     assembleDesignBoard(openSpecChangeSourceToDesignSources(readChange(dir)), lint, AUTHOR);
 
-  it("renders 93 of the 118 archived changes, and names every one it cannot", () => {
+  it("renders 111 of the 118 archived changes, and names every one it cannot", () => {
     const dirs = readdirSync(ARCHIVE).sort();
     let assembled = 0;
     const notAssembled: string[] = [];

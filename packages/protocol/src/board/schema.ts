@@ -359,6 +359,8 @@ export const BOARD_MEASURES = ["reading", "structured"] as const;
 export const BoardDocumentSchema = z.object({
   title: z.string().min(1),
   introMarkdown: z.string(),
+  /** Host transcription provenance; absent on boards saved before this distinction. */
+  proseRegister: z.enum(["authored", "transcribed"]).optional(),
   measure: z.enum(BOARD_MEASURES),
   sources: z.array(SourceRefSchema).optional(),
   stats: z

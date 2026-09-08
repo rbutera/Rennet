@@ -480,6 +480,7 @@ export function LensBoardDocument({
         generation={board.generation}
         boardId={board.boardId}
         lens={board.lens}
+        proseRegister={board.document.proseRegister}
       >
         <ProseSelectionLayer>
           {/* Key the document subtree by boardId (finding 5): gen0/gen1 reuse section

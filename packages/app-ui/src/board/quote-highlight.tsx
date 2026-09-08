@@ -4,6 +4,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
+  useContext,
   useEffect,
   useMemo,
   useRef,
@@ -11,6 +12,7 @@ import {
 } from "react";
 import { type KeyedThread, QuoteThreadPopover } from "../review/quote-thread-popover";
 import {
+  CitationAutolinkContext,
   displayToRawRange,
   type RawTextRange,
   RichText,
@@ -121,8 +123,8 @@ function uniqueRawRange(rawText: string, rawQuote: string): RawTextRange | null 
   return { start, end: start + rawQuote.length };
 }
 
-function anchorRange(rawText: string, anchor: string): RawTextRange | null {
-  return displayToRawRange(rawText, anchor) ?? uniqueRawRange(rawText, anchor);
+function anchorRange(rawText: string, anchor: string, autolink = true): RawTextRange | null {
+  return displayToRawRange(rawText, anchor, autolink) ?? uniqueRawRange(rawText, anchor);
 }
 
 type AnchorLocator = (text: string, anchor: string) => RawTextRange | null;
@@ -307,7 +309,12 @@ export function QuoteHighlightLayer({
   paragraphClassName,
   keywords,
 }: QuoteHighlightLayerProps) {
-  const matches = useRangedThreads(text, elementId, anchorRange);
+  const autolink = useContext(CitationAutolinkContext);
+  const locate = useMemo(
+    () => (raw: string, anchor: string) => anchorRange(raw, anchor, autolink),
+    [autolink],
+  );
+  const matches = useRangedThreads(text, elementId, locate);
   // Stable while the scope is: `RichText` memoizes its whole segmentation on this array.
   const decorations = useMemo(() => decorationsFor(matches), [matches]);
   return (

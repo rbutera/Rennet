@@ -68,7 +68,11 @@ export function rawQuoteOfRange(range: Range, displayQuote: string): string | nu
   if (!richText) return displayQuote;
   const rawText = richText.dataset.richTextRaw;
   if (rawText === undefined) return null;
-  const rawRange = displayToRawRange(rawText, displayQuote);
+  const rawRange = displayToRawRange(
+    rawText,
+    displayQuote,
+    richText.dataset.citationAutolink !== "false",
+  );
   return rawRange === null ? null : rawText.slice(rawRange.start, rawRange.end);
 }
 
