@@ -688,8 +688,12 @@ async function mapWithConcurrency<T>(
   const worker = async (): Promise<void> => {
     while (next < tasks.length) {
       const index = next++;
-      // biome-ignore lint/style/noNonNullAssertion: `index` is bounded by `tasks.length`.
-      results[index] = await tasks[index]!();
+      // `index < tasks.length` by the loop condition, so this is always a task; the
+      // guard is here because the checker cannot see that and a non-null assertion is
+      // forbidden — a missing entry would be a bug in this pool, not a row to invent.
+      const task = tasks[index];
+      if (task === undefined) continue;
+      results[index] = await task();
     }
   };
   await Promise.all(Array.from({ length: Math.min(limit, tasks.length) }, worker));

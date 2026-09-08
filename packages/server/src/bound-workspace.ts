@@ -270,6 +270,7 @@ async function branchFacts(
     const reason = error instanceof Error ? error.message : String(error);
     throw new Error(
       `worktree placement: pattern "${pattern}" needs this repository's remote, which git could not read — ${reason}`,
+      { cause: error },
     );
   }
 }

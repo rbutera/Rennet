@@ -215,8 +215,14 @@ export function ReviewWorkspace({ review }: { review: Review }) {
   // (workspace-settings D4). BOTH halves come from facts: the sibling off the session row
   // the daemon projected, and the reviewed branch off the review's own active patchset —
   // never the claim, which a workspace project's other repository can share a name with.
-  const reviewedBranch = review.patchsets.find((entry) => entry.id === review.activePatchsetId)
-    ?.repository.headRef;
+  // Every step optional, including `patchsets` itself. The type says it is there; the
+  // reviews this route is really handed do not always agree — a dispatch fixture carries a
+  // review with no patchset list at all, and a freshness one a patchset with no repository
+  // block. Throwing on either takes the WHOLE workspace down for a decorative line, which
+  // is what an unguarded read here did (37 suites, one `.find` on undefined).
+  const reviewedBranch = (review.patchsets ?? []).find(
+    (entry) => entry.id === review.activePatchsetId,
+  )?.repository?.headRef;
   const workBranchNote =
     session?.workBranch === undefined || reviewedBranch === undefined
       ? undefined
