@@ -7,6 +7,7 @@ const harness = vi.hoisted(() => ({
   sent: [] as Array<{ channel: string; payload?: unknown }>,
   invokeResults: new Map<string, unknown>(),
   invokeErrors: new Map<string, Error>(),
+  invoked: [] as Array<{ channel: string; args: unknown[] }>,
 }));
 
 vi.mock("electron", () => ({
@@ -30,7 +31,8 @@ vi.mock("electron", () => ({
       );
     },
     send: (channel: string, payload?: unknown) => harness.sent.push({ channel, payload }),
-    invoke: (channel: string) => {
+    invoke: (channel: string, ...args: unknown[]) => {
+      harness.invoked.push({ channel, args });
       const error = harness.invokeErrors.get(channel);
       return error
         ? Promise.reject(error)
@@ -46,6 +48,7 @@ const UPDATE_READY_CHANNEL = "rennet:update-ready";
 const UPDATE_APPLY_CHANNEL = "rennet:update-apply";
 const OPEN_FULL_DISK_ACCESS_CHANNEL = "rennet:open-full-disk-access";
 const WS_PORT_CHANNEL = "rennet:ws-port";
+const PICK_DIRECTORY_CHANNEL = "rennet:pick-directory";
 
 function preload(): RennetPreload {
   return harness.exposed as RennetPreload;
@@ -63,6 +66,7 @@ beforeEach(async () => {
   harness.sent.length = 0;
   harness.invokeResults.clear();
   harness.invokeErrors.clear();
+  harness.invoked.length = 0;
   vi.resetModules();
   await import("./index");
 });
@@ -140,6 +144,23 @@ describe("preload update surface", () => {
   it("applyUpdate sends the one-way apply channel", () => {
     preload().applyUpdate();
     expect(harness.sent).toEqual([{ channel: UPDATE_APPLY_CHANNEL, payload: undefined }]);
+  });
+
+  it("forwards the folder dialog with its default path and relays a cancel as null", async () => {
+    harness.invokeResults.set(PICK_DIRECTORY_CHANNEL, "/Users/rai/dev");
+    await expect(preload().pickDirectory({ defaultPath: "/Users/rai" })).resolves.toBe(
+      "/Users/rai/dev",
+    );
+    expect(harness.invoked.at(-1)).toEqual({
+      channel: PICK_DIRECTORY_CHANNEL,
+      args: ["/Users/rai"],
+    });
+    // No default path travels as null (the channel takes one positional argument).
+    await preload().pickDirectory({});
+    expect(harness.invoked.at(-1)?.args).toEqual([null]);
+    // A cancelled dialog answers null from MAIN; the preload passes it through untouched.
+    harness.invokeResults.set(PICK_DIRECTORY_CHANNEL, null);
+    await expect(preload().pickDirectory({})).resolves.toBeNull();
   });
 
   it("forwards the Full Disk Access settings action through its narrow channel", async () => {

@@ -51,9 +51,10 @@ The Electron main process owns windows, the static application menu, the
 `app://` protocol, auto-update, tray behavior, and daemon supervision. Its
 preload exposes only the small set of native facts and effects the renderer
 needs: platform, version, WebSocket port, installed WSL distros, daemon
-resolution for a chosen path, update readiness, and update application.
-Project browsing runs entirely over the `fs.listDir` daemon RPC, so no native
-directory-picker surface is exposed to the renderer.
+resolution for a chosen path, the native folder dialog, update readiness, and
+update application. Project browsing runs over the `fs.listDir` daemon RPC; the
+native folder dialog is only a shortcut that jumps the in-app browser to the
+chosen folder, and the browser offers it solely while listing this machine.
 
 The daemon serves the browser client as well as the WebSocket protocol. It binds
 to loopback by default. A non-loopback bind is an explicit remote-access setup;

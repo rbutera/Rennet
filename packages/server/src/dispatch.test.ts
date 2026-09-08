@@ -3495,29 +3495,37 @@ describe("createDispatch — the project mark's three verbs (#900)", () => {
 });
 
 describe("createDispatch — review.symbolLookup (the symbol inspector, wireframes #8)", () => {
-  it("resolves the review ONCE and threads it to the symbolLookup port", async () => {
-    const symbolLookup = vi.fn(async ({ name }: { review: Review; name: string }) => ({
-      name,
-      definition: {
-        status: "ok" as const,
-        sites: [{ path: "src/x.ts", line: 3, kind: "function", scope: null }],
-      },
-      references: { status: "ok" as const, sites: [{ path: "src/y.ts", line: 9, scope: null }] },
-    }));
-    const h = harness(undefined, { symbolLookup });
-    const review = await capturedReview(h.dispatch);
+  it.each([undefined, "base", "head"] as const)(
+    "threads revision side %s to symbol lookup",
+    async (side) => {
+      const symbolLookup = vi.fn(async ({ name }: { review: Review; name: string }) => ({
+        name,
+        definition: {
+          status: "ok" as const,
+          sites: [{ path: "src/x.ts", line: 3, kind: "function", scope: null }],
+        },
+        references: { status: "ok" as const, sites: [{ path: "src/y.ts", line: 9, scope: null }] },
+      }));
+      const h = harness(undefined, { symbolLookup });
+      const review = await capturedReview(h.dispatch);
 
-    const out = (await h.dispatch("review.symbolLookup", {
-      reviewId: review.id,
-      name: "makeThing",
-    })) as { name: string; definition: { status: string }; references: { status: string } };
+      const out = (await h.dispatch("review.symbolLookup", {
+        reviewId: review.id,
+        name: "makeThing",
+        side,
+      })) as { name: string; definition: { status: string }; references: { status: string } };
 
-    expect(symbolLookup).toHaveBeenCalledTimes(1);
-    expect(symbolLookup).toHaveBeenCalledWith({ review, name: "makeThing" });
-    expect(out.name).toBe("makeThing");
-    expect(out.definition.status).toBe("ok");
-    expect(out.references.status).toBe("ok");
-  });
+      expect(symbolLookup).toHaveBeenCalledTimes(1);
+      expect(symbolLookup).toHaveBeenCalledWith({
+        review,
+        name: "makeThing",
+        side: side ?? "head",
+      });
+      expect(out.name).toBe("makeThing");
+      expect(out.definition.status).toBe("ok");
+      expect(out.references.status).toBe("ok");
+    },
+  );
 
   it("carries the tier + neighbours ACROSS the command boundary (parseCommandOutput must not strip them)", async () => {
     // The boundary that made #11 dark once: dispatch runs the lookup result through

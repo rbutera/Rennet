@@ -491,7 +491,11 @@ export interface DispatchDeps {
    * composition without a symbolic backend still constructs — dispatch then answers
    * with an honest `unavailable` for both sections rather than throwing.
    */
-  readonly symbolLookup?: (input: { review: Review; name: string }) => Promise<SymbolInspection>;
+  readonly symbolLookup?: (input: {
+    review: Review;
+    name: string;
+    side?: "base" | "head";
+  }) => Promise<SymbolInspection>;
   /**
    * The Spec angle's live OpenSpec change (wireframes #9): parse-on-open of the
    * change the reviewed patchset selected, read from the review's checked-out root.

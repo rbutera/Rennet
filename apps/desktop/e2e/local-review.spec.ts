@@ -65,6 +65,7 @@ test("captures a repository in a hardened renderer and invalidates safely", asyn
       "logWslConnect",
       "onUpdateReady",
       "openFullDiskAccessSettings",
+      "pickDirectory",
       "platform",
       "resolveDaemonForPath",
       "version",

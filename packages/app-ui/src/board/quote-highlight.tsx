@@ -4,6 +4,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
+  useContext,
   useEffect,
   useMemo,
   useRef,
@@ -11,12 +12,14 @@ import {
 } from "react";
 import { type KeyedThread, QuoteThreadPopover } from "../review/quote-thread-popover";
 import {
+  CitationAutolinkContext,
   displayToRawRange,
   type RawTextRange,
   RichText,
   type RichTextDecoration,
 } from "../review/rich-text";
 import { useRennetStore } from "../store";
+import { headingNodes } from "./heading-text";
 import { useBoardGeneration } from "./kinds/element-context";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -121,8 +124,15 @@ function uniqueRawRange(rawText: string, rawQuote: string): RawTextRange | null 
   return { start, end: start + rawQuote.length };
 }
 
-function anchorRange(rawText: string, anchor: string): RawTextRange | null {
-  return displayToRawRange(rawText, anchor) ?? uniqueRawRange(rawText, anchor);
+function anchorRange(rawText: string, anchor: string, autolink = true): RawTextRange | null {
+  return displayToRawRange(rawText, anchor, autolink) ?? uniqueRawRange(rawText, anchor);
+}
+
+/** An inline field paints backticks as code and unwraps bold, so a quote selected from it
+ *  is DISPLAY text; locate it through the same display→raw map prose uses, without the
+ *  citation autolink (a heading's `path:line` is a name, never a chip). */
+function inlineAnchorRange(rawText: string, anchor: string): RawTextRange | null {
+  return anchorRange(rawText, anchor, false);
 }
 
 type AnchorLocator = (text: string, anchor: string) => RawTextRange | null;
@@ -202,6 +212,10 @@ function decorationsFor(ranges: readonly RangedThread[]): RichTextDecoration[] {
   return decorations;
 }
 
+/** Paint an inline field between its decorations. Each slice renders as a heading
+ *  (`headingNodes`): backticks become code and bold is unwrapped, so a title never shows
+ *  its own markup. A decoration edge that lands inside a backtick pair leaves that pair's
+ *  halves as literal characters — the highlight wins, the code chip does not. */
 function decoratedPlainText(text: string, decorations: readonly RichTextDecoration[]): ReactNode {
   const nodes: ReactNode[] = [];
   let cursor = 0;
@@ -209,19 +223,25 @@ function decoratedPlainText(text: string, decorations: readonly RichTextDecorati
     if (decoration.start > cursor) {
       nodes.push(
         <Fragment key={`plain-${cursor}-${decoration.start}`}>
-          {text.slice(cursor, decoration.start)}
+          {headingNodes(text.slice(cursor, decoration.start), `p${cursor}-`)}
         </Fragment>,
       );
     }
     nodes.push(
       <Fragment key={`quote-${decoration.start}-${decoration.end}`}>
-        {decoration.render(text.slice(decoration.start, decoration.end))}
+        {decoration.render(
+          headingNodes(text.slice(decoration.start, decoration.end), `q${decoration.start}-`),
+        )}
       </Fragment>,
     );
     cursor = decoration.end;
   }
   if (cursor < text.length) {
-    nodes.push(<Fragment key={`plain-${cursor}-${text.length}`}>{text.slice(cursor)}</Fragment>);
+    nodes.push(
+      <Fragment key={`plain-${cursor}-${text.length}`}>
+        {headingNodes(text.slice(cursor), `p${cursor}-`)}
+      </Fragment>,
+    );
   }
   return nodes;
 }
@@ -244,7 +264,7 @@ export function InlineQuoteHighlight({
   ariaLabel,
   ariaExpanded,
 }: InlineQuoteHighlightProps) {
-  const matches = useRangedThreads(text, elementId, uniqueRawRange);
+  const matches = useRangedThreads(text, elementId, inlineAnchorRange);
   const decorations = useMemo(() => decorationsFor(matches), [matches]);
   const interactive = onActivate !== undefined;
   return (
@@ -271,7 +291,7 @@ export function InlineQuoteHighlight({
           }
         : {})}
     >
-      {matches.length === 0 ? text : decoratedPlainText(text, decorations)}
+      {matches.length === 0 ? headingNodes(text) : decoratedPlainText(text, decorations)}
     </span>
   );
 }
@@ -307,7 +327,12 @@ export function QuoteHighlightLayer({
   paragraphClassName,
   keywords,
 }: QuoteHighlightLayerProps) {
-  const matches = useRangedThreads(text, elementId, anchorRange);
+  const autolink = useContext(CitationAutolinkContext);
+  const locate = useMemo(
+    () => (raw: string, anchor: string) => anchorRange(raw, anchor, autolink),
+    [autolink],
+  );
+  const matches = useRangedThreads(text, elementId, locate);
   // Stable while the scope is: `RichText` memoizes its whole segmentation on this array.
   const decorations = useMemo(() => decorationsFor(matches), [matches]);
   return (

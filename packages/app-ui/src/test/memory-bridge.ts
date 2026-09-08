@@ -85,6 +85,8 @@ export class MemoryBridge implements RennetBridge {
   /** The host app version, settable per instance (mirrors {@link RennetBridge.version}). */
   version?: string;
   openFullDiskAccessSettings?: () => Promise<boolean>;
+  /** The host's native folder dialog, settable per instance (mirrors {@link RennetBridge.pickDirectory}). */
+  pickDirectory?: (options: { defaultPath?: string }) => Promise<string | null>;
 
   readonly #handlers: MemoryBridgeHandlers;
   readonly #progress = new KeyedEmitter<ProjectProcessEvent>();

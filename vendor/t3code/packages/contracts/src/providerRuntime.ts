@@ -308,7 +308,18 @@ const ThreadMetadataUpdatedPayload = Schema.Struct({
 });
 export type ThreadMetadataUpdatedPayload = typeof ThreadMetadataUpdatedPayload.Type;
 
+export const CodexCumulativeTokenUsage = Schema.Struct({
+  providerThreadId: TrimmedNonEmptyStringSchema,
+  totalTokens: NonNegativeInt,
+  inputTokens: NonNegativeInt,
+  cachedInputTokens: NonNegativeInt,
+  outputTokens: NonNegativeInt,
+  reasoningOutputTokens: NonNegativeInt,
+});
+export type CodexCumulativeTokenUsage = typeof CodexCumulativeTokenUsage.Type;
+
 export const ThreadTokenUsageSnapshot = Schema.Struct({
+  codexCumulativeUsage: Schema.optional(CodexCumulativeTokenUsage),
   usedTokens: NonNegativeInt,
   totalProcessedTokens: Schema.optional(NonNegativeInt),
   maxTokens: Schema.optional(PositiveInt),

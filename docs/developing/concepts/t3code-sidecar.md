@@ -151,6 +151,35 @@ one credential that travels by environment, because a caller-supplied MCP server
 environment variable and the harness child reads the value out of the environment it
 inherited from here. It is on no argument list.
 
+## Native Claude tool search
+
+Claude seats inherit `ENABLE_TOOL_SEARCH` through the existing environment and
+user, project and local settings. Rennet leaves that choice to the installed
+Claude runtime; it adds no tool registry, settings override or capability filter.
+Authentication routing and ambient MCP servers use the same inherited settings.
+
+Claude supports `true` for deferred MCP schemas, `auto` (or `auto:N`) for a native
+threshold, and `false` for eager schemas. See Claude's
+[tool-search configuration](https://code.claude.com/docs/en/mcp#configure-tool-search)
+for current defaults and provider support. A custom provider route must support
+native tool references before forcing deferral. An existing explicit choice takes
+precedence over any assumption based on the CLI version.
+
+For an isolated comparison, set the value in the experiment checkout's
+`.claude/settings.local.json`, preserving any existing fields:
+
+```json
+{"env":{"ENABLE_TOOL_SEARCH":"false"}}
+```
+
+Restore the file after the experiment and use a fresh provider session per mode.
+A shell environment override alone may lose to an inherited settings value.
+Inspect `ToolSearch` activity and actual usage; the initialization tool count does
+not tell you which schemas reached the model. Include a tool result the task needs,
+a settled board, and a follow-up on the same thread. A full review comparison also
+holds the patchset, model, effort and tool inventory fixed and separates request
+identities, fresh input, cached input, output and provider-reported cost.
+
 ## Claim and adoption
 
 `<dataDir>/t3-sidecar.json` records the sidecar's pid, port, base directory, the daemon
@@ -309,9 +338,9 @@ between the reviewer and their boards.
   the stop under each tab as a `data-cut` (`unstarted` / `open` / `clean` / `seamed` /
   `snapped` / `empty`), so it survives the colour being ignored — the hue says which lens
   this is, so a failed Design lane is a snapped blue stop and never a red one.
-- The **lens activity popover** (`board/lens-activity.tsx`) opens from an activity control
-  beside the selected tab, separate from selecting the lens, and anchors directly beneath
-  the tab bar so the board and its heading never move. It names the seat, how long this
+- The **lens activity popover** (`board/lens-activity.tsx`) opens automatically for the selected
+  running tab, or when a tab is hovered or focused, and anchors directly beneath
+  that tab so the board and its heading never move. It names the seat, how long this
   window has followed it, its `latest` line from `SessionPreparation` in the daemon's plain
   words, and a short rolling history of meaningful actions; raw tool calls stay in the
   transcript. Flagged lists both voices, each with its own transcript control. The board
@@ -501,9 +530,17 @@ Three things follow from the thread being persistent.
   runner recreated for the thread (a whole-board restart) or a daemon restarted under it
   subtracts the same as one that watched every turn. A total below the previous one means
   the session restarted and its counter began again, and the whole figure is the turn's.
-  Codex reports nothing on its settlement: its tokens ride T3's `context-window.updated`
-  snapshot for the turn, which is the last request's own figures (a turn with several
-  tool round-trips under-reports until T3 projects the running total's breakdown). One
+  Codex's `context-window.updated` keeps the last request's context figures. Its separate
+  cumulative breakdown is stamped with the provider thread and turn. The sidecar saves
+  the counter baseline when a turn starts and carries that baseline plus the final
+  counter on `turn.settled`; a long turn cannot evict its baseline from the 500-activity
+  display window. Settlement subtracts the baseline within the same provider thread.
+  A new provider thread starts a new counter epoch, while resuming the same thread keeps
+  its baseline. Duplicate usage notifications do not add spend. Cached input is part of
+  Codex's inclusive input count, and reasoning is already included in output.
+  Missing aggregate or baseline data, including older settlements, contributes an
+  `unmeasuredTurns` entry rather than a fabricated zero. Codex dollar cost stays unavailable.
+  One
   `TurnMetric` per turn reaches the generation's collector, labelled `board.<jobId>`, with
   the provider's own duration when it reported one; a repair therefore never bills the
   drafting turn twice.
@@ -531,10 +568,10 @@ Three things follow from the thread being persistent.
   its cap, a message it cannot find, an adapter that will not take the request — is
   recorded as a `provider.turn.start.failed` activity with no turn id, beside a session
   `error` that the session start it had just kicked off overwrites with `ready` a moment
-  later. So the dispatch resolves, the session reads healthy with no `lastError`, and no
-  turn row ever appears (the Design seat, drive 1.6, both runs). The wait reads the
-  activity: one stamped at or after its request settles the turn as failed, carrying the
-  sidecar's own message with its stack frames dropped, instead of the two-minute timeout.
+  later. No turn row appears. Correlated starts read the activity matching their exact
+  request ID; interactive starts can also observe the transient session error or an
+  activity stamped at or after their request. Both error sources carry the sidecar's
+  message and schema path with stack frames removed, instead of a two-minute timeout.
 - **The prompt fits the transport.** T3 caps a turn's input at
   `PROVIDER_SEND_TURN_MAX_INPUT_CHARS` (120,000 characters), exported through the seam as
   `T3_TURN_INPUT_MAX_CHARS`. On the drive of 2026-09-03 the Design prompt was 241,848
@@ -1054,7 +1091,7 @@ Where each number below was read, so a later reader can take the same measuremen
 | Figure | Read from |
 | --- | --- |
 | Prompt bytes | `projection_thread_messages` in the sidecar's projection database, `<dataDir>/t3/userdata/state.sqlite` — the user-role row of each seat thread, `length(cast(text as blob))` |
-| Draft and repair timings | `timings.phases` on the generation record, `<dataDir>/generations/<generationId>.json` |
+| Draft and repair timings | `timings.phases` in the `document` column of `generations`, keyed by `id`, in `<dataDir>/generations/generations.sqlite` |
 | Token usage | the `usage` block on that same generation record |
 | Wall clock | the `startedAtMs`/`durationMs` span of those phases, against the clock times of the branch pick and the reveal |
 | Bound roots and binding rows | `boundRoot` on the session records under `<dataDir>/sessions/`, and every row of `<dataDir>/t3/thread-bindings.json` |

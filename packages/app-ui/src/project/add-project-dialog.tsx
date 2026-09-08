@@ -272,6 +272,11 @@ export function AddProjectFlow({
         reloadKey={source}
         onPathChange={setSelectedPath}
         onPathInvalid={() => setSelectedPath(null)}
+        // The host's native dialog picks HOST paths, so it is only a valid shortcut while the
+        // browser lists this machine; a WSL distro or a paired remote keeps the in-app browser
+        // alone. The desktop merges the preload's picker onto every target's bridge, which is
+        // why the gate is the source, not the bridge.
+        pickDirectory={sourceIsLocal(source) ? bridge.pickDirectory : undefined}
       />
 
       {error ? (

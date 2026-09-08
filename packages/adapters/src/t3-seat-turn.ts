@@ -57,8 +57,10 @@ export interface T3SettledTurn {
   readonly usage?: unknown;
   readonly totalCostUsd?: number;
   readonly errorMessage?: string;
-  /** T3's context-window snapshot for the turn: where Codex reports its tokens. */
+  /** T3's last-request context-window snapshot, separate from turn spend. */
   readonly tokenUsage?: unknown;
+  /** Exact per-turn Codex totals, separate from the context-window snapshot. */
+  readonly aggregateUsage?: unknown;
   /** The nearest earlier settled turn's usage on the thread, off the thread itself. */
   readonly previousUsage?: { readonly usage: unknown; readonly totalCostUsd?: number };
   readonly thread: {
@@ -201,26 +203,30 @@ function cumulativeUsage(usage: unknown, totalCostUsd: number | undefined): Clau
   };
 }
 
-/**
- * Codex under T3 reports on the context-window snapshot, whose `inputTokens` includes
- * the cached share (the same reconciliation `mapTokenUsageBreakdown` does for the
- * ephemeral leg). No dollar figure: T3 carries none for Codex.
- */
-// ponytail: the snapshot is the LAST request's figures, not the turn's sum, so a turn
-// with several tool round-trips under-reports; exact per-turn needs T3 to project
-// `total`'s breakdown onto the snapshot (upstream), and then this reads that instead.
-function snapshotUsage(snapshot: unknown): ClaudeTurnUsage | null {
-  const record = asRecord(snapshot);
-  if (!record || typeof record.usedTokens !== "number") return null;
-  const cacheReadTokens = numberField(record, "cachedInputTokens");
-  const inputTokens = Math.max(0, numberField(record, "inputTokens") - cacheReadTokens);
-  const outputTokens = numberField(record, "outputTokens");
+/** Codex input includes cache hits; reasoning is already included in output. */
+function aggregateUsage(usage: unknown): ClaudeTurnUsage | null {
+  const record = asRecord(usage);
+  if (!record) return null;
+  const { inputTokens, cachedInputTokens, outputTokens } = record;
+  if (
+    typeof inputTokens !== "number" ||
+    !Number.isSafeInteger(inputTokens) ||
+    inputTokens < 0 ||
+    typeof cachedInputTokens !== "number" ||
+    !Number.isSafeInteger(cachedInputTokens) ||
+    cachedInputTokens < 0 ||
+    cachedInputTokens > inputTokens ||
+    typeof outputTokens !== "number" ||
+    !Number.isSafeInteger(outputTokens) ||
+    outputTokens < 0
+  )
+    return null;
   return {
-    inputTokens,
+    inputTokens: inputTokens - cachedInputTokens,
     outputTokens,
-    cacheReadTokens,
+    cacheReadTokens: cachedInputTokens,
     cacheCreationTokens: 0,
-    totalTokens: inputTokens + outputTokens + cacheReadTokens,
+    totalTokens: inputTokens + outputTokens,
     reportedUsd: null,
   };
 }
@@ -261,12 +267,15 @@ function subtractUsage(
  * the thread — which the settlement carries from the thread itself, so a runner
  * recreated for the thread (a whole-board restart re-resolves the seat) or a daemon
  * restarted under it subtracts exactly what one that watched every turn would. Codex
- * reports nothing on the settlement and its tokens on the context-window snapshot.
+ * uses the exact turn aggregate derived from durable, turn-stamped provider counters.
  */
 export function settledTurnUsage(
-  settled: Pick<T3SettledTurn, "usage" | "totalCostUsd" | "tokenUsage" | "previousUsage">,
+  settled: Pick<
+    T3SettledTurn,
+    "usage" | "totalCostUsd" | "tokenUsage" | "aggregateUsage" | "previousUsage"
+  >,
 ): ClaudeTurnUsage | null {
-  if (settled.usage === undefined) return snapshotUsage(settled.tokenUsage);
+  if (settled.usage === undefined) return aggregateUsage(settled.aggregateUsage);
   const previous = settled.previousUsage;
   return subtractUsage(
     cumulativeUsage(settled.usage, settled.totalCostUsd),

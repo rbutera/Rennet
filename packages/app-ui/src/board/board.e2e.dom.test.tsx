@@ -1,11 +1,12 @@
 // @vitest-environment happy-dom
-import { LENS_KINDS, type LensKind } from "@rennet/protocol";
+import { LENS_KINDS, LensBoardSchema, type LensKind } from "@rennet/protocol";
 import { useState } from "react";
 import { beforeEach, describe, expect, it } from "vitest";
 import { BridgeProvider } from "../data";
+import { rawQuoteOfRange } from "../review/selection-toolbar";
 import { useRennetStore } from "../store";
 import { mount, waitFor } from "../test/dom";
-import { FIXTURE_BOARDS, fixtureBoardRead } from "../test/fixtures/boards";
+import { designBoard, FIXTURE_BOARDS, fixtureBoardRead } from "../test/fixtures/boards";
 import { MemoryBridge, refusesSpanRead, SPAN_OUTSIDE_CAPTURE } from "../test/memory-bridge";
 import { resolveBoard, useLensBoards } from "./board-data";
 import { LensBoardView } from "./board-view";
@@ -130,6 +131,76 @@ beforeEach(() => {
 });
 
 describe("board E2E — the full fixture set through the real LensBoardView", () => {
+  it("reopens transcribed examples as text while explicit references still read immutable code", async () => {
+    const text = "Keep `example/file.ts:42` and sample.ts:99 as **examples**.";
+    const saved = JSON.stringify({
+      ...designBoard,
+      document: { ...designBoard.document, introMarkdown: text, proseRegister: "transcribed" },
+      elements: designBoard.elements.map((element) => {
+        if (element.id === "change-why")
+          return { ...element, data: { ...element.data, markdown: text } };
+        if (element.id === "d-logger") return { ...element, data: { ...element.data, why: text } };
+        return element;
+      }),
+    });
+    const board = LensBoardSchema.parse(JSON.parse(saved));
+    const reads: unknown[] = [];
+    const bridge = new MemoryBridge({
+      "board.read": ({ lens }) => ({ board: lens === "design" ? board : null }),
+      "patchset.readSpan": (input) => {
+        reads.push(input);
+        return { lines: ["const recorded = true;"], contextBefore: [], contextAfter: [] };
+      },
+    });
+    const { container, user } = mount(
+      <BridgeProvider bridge={bridge}>
+        <BoardHarness generation="gen1" generations={["gen1"]} initialLens="design" />
+      </BridgeProvider>,
+    );
+    await settled(container);
+    await unfoldAll(container, user);
+    const examples = container.querySelectorAll<HTMLElement>("[data-rich-text-raw]");
+    const quoted = [...examples].filter((node) => node.dataset.richTextRaw === text);
+    expect(quoted).toHaveLength(3);
+    for (const node of quoted) {
+      expect(node.querySelector("button")).toBeNull();
+      expect(node.textContent).toBe("Keep example/file.ts:42 and sample.ts:99 as examples.");
+      const code = node.querySelector("code");
+      expect(code?.textContent).toBe("example/file.ts:42");
+      if (!code) throw new Error("missing inline example");
+      const range = document.createRange();
+      range.selectNodeContents(code);
+      expect(rawQuoteOfRange(range, "example/file.ts:42")).toBe("`example/file.ts:42`");
+    }
+    await waitFor(() => expect(reads).toHaveLength(3));
+    expect(reads).toContainEqual({
+      patchsetId: "ps-438",
+      path: "packages/adapters/src/github-auth.ts",
+      side: "head",
+      startLine: 431,
+      endLine: 431,
+    });
+    expect(reads).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ path: "packages/adapters/src/github-auth.ts" }),
+        expect.objectContaining({ path: "packages/adapters/src/github-auth.test.ts" }),
+      ]),
+    );
+    expect(container.textContent).toContain("const recorded = true;");
+    useRennetStore
+      .getState()
+      .reviewActions.addQuoteComment("example/file.ts:42", "Keep the example", "comment", {
+        target: "change-why",
+        generation: "gen1",
+      });
+    await waitFor(() =>
+      expect(container.querySelector("[data-quote-highlight]")?.textContent).toBe(
+        "example/file.ts:42",
+      ),
+    );
+    expect(reads).toHaveLength(3);
+  });
+
   it("renders every registered content kind across the fixture lenses (real surface, not the pool)", async () => {
     // gen1 carries all five lenses; visiting each mounts its board through the real
     // Section/registry pipeline. A folded section renders no children, so each lens is
@@ -217,19 +288,25 @@ describe("board E2E — the full fixture set through the real LensBoardView", ()
     if (wrongGen.status === "invalid") expect(wrongGen.reason).toBe("identity");
   });
 
-  it("folds: EVERY lens folds every section to its gist + counts, Flagged included", async () => {
+  it("folds: every lens but Flagged folds every section to its gist + counts; Flagged stands open over folded findings", async () => {
     const { container, user } = await renderView("gen1");
-    // Rai, 2026-09-04, retiring R44's Flagged exception: every lens opens on summaries.
+    // Rai, 2026-09-08: Flagged sections are headings over finding rows. The FINDING is the
+    // fold there — its chip, claim and concurrence are the summary — so the rows are in
+    // the document from the first frame, each one closed.
     expect(lensOf(container)).toBe("flagged");
     expect(
       [...container.querySelectorAll("[data-kind=board-section]")].every(
-        (s) => s.getAttribute("data-open") === "false",
+        (s) => s.getAttribute("data-open") === "true",
       ),
     ).toBe(true);
-    // Folded means GONE on Flagged too — no finding body is mounted until one is opened.
-    expect(kindsIn(container).has("finding")).toBe(false);
-    await unfoldAll(container, user);
     expect(kindsIn(container).has("finding")).toBe(true);
+    expect(
+      [...container.querySelectorAll('[data-kind="finding"] button[aria-expanded]')].every(
+        (b) => b.getAttribute("aria-expanded") === "false",
+      ),
+    ).toBe(true);
+    // Folded finding means GONE body: no Fix callout is mounted until a row is opened.
+    expect(container.querySelector('[data-kind="finding"] h4')).toBeNull();
 
     const design = container.querySelector<HTMLButtonElement>("[data-lens=design]");
     if (!design) throw new Error("no design tab");
@@ -246,15 +323,14 @@ describe("board E2E — the full fixture set through the real LensBoardView", ()
     expect(kindsIn(container).has("requirement")).toBe(true);
   });
 
-  it("delta marks: gen2 Flagged folds its delta sections under a gold dot that clears on interaction", async () => {
+  it("delta marks: gen2 Flagged marks its delta sections with a gold dot that clears on interaction", async () => {
     const { container, getByText, user } = await renderView("gen2");
     expect(lensOf(container)).toBe("flagged");
     const deltaSections = container.querySelectorAll("[data-kind=board-section][data-delta]");
     expect(deltaSections.length).toBeGreaterThan(0);
-    // A delta section used to be the one thing that opened itself. It no longer is (Rai,
-    // 2026-09-04) — the DOT is what marks it new, and the dot is the part that had to
-    // survive the change, so it is asserted on the folded card.
-    expect([...deltaSections].every((s) => s.getAttribute("data-open") === "false")).toBe(true);
+    // The DOT is what marks a section new (Rai, 2026-09-04), and it survives the section
+    // losing its fold (2026-09-08): a Flagged section stands open and still wears it.
+    expect([...deltaSections].every((s) => s.getAttribute("data-open") === "true")).toBe(true);
     expect(container.querySelectorAll('[data-testid="delta-dot"]').length).toBe(
       deltaSections.length,
     );

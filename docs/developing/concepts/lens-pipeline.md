@@ -38,10 +38,11 @@ by a screen in front of them. Failure, cancellation, and daemon interruption rem
 explicit, retryable session states.
 
 The prompts live in `packages/prompts` (`@rennet/prompts`), one markdown file
-per lens plus the reviewer-voice file, the round-report classifier prompt, and
-one shared partial: the "Investigate before you draft" section every lens file
-carries at a `{{investigate-before-you-draft}}` marker line, spliced in when
-the pipeline reads the prompt so five files cannot drift apart on it.
+per lens, the reviewer-voice file, the round-report classifier prompt, and three
+shared partials. The reader voice teaches explanation for someone with little
+time, product familiarity, and no prior reading of the changed code. Investigation requires reading the
+pinned change before making claims. Tool guidance covers writing, batching, and
+settlement. The pipeline expands all three from the prompt manifest.
 The package exports a typed manifest. Noise has two instruction sets on
 purpose: `noise.md` drives the Noise lens board seat, and the `NOISE_CONTRACT`
 prompt contract drives the RSP noise-document runner behind the noise index;
@@ -216,9 +217,15 @@ and calls board regeneration through this runtime.
    board is **transcribed**: the host is quoting the project's own artifacts, and a rule
    that tells a writer to choose different words has no subject. So the transcribed
    register drops exactly the voice rules — `process-vocabulary`, `no-dialogue`,
-   `no-remainder-narration` — and runs every other rule of both tiers unchanged. A
-   transcription is still refused for a citation a reader cannot resolve, for code carried
-   as bytes instead of a `code_ref`, and for anything `finish` finds over the whole board.
+   `no-remainder-narration`. Citation rules treat path-shaped strings in transcribed
+   prose as text, preserving the original wording and inline formatting without creating
+   source-navigation controls. Explicit `code_ref` elements still validate their immutable
+   patchset, side and range. Authored prose keeps automatic citation validation and links.
+   The host stamps `proseRegister` on the board document so saved boards retain this
+   distinction in introductions, prose, decisions and quote highlighting. Model tools
+   cannot set that field; older boards without it keep their existing behavior.
+   Code carried as bytes instead of a `code_ref`, and other integrity or finish failures,
+   still take the existing fallback path.
 
    The distinction is load-bearing rather than tidy. `process-vocabulary` exists to stop a
    model writing about the review machinery instead of the change under review; run over a
@@ -751,9 +758,12 @@ target's member-creating verb away, so which lens waits is one fact read where i
 rather than a second list.
 
 The client keeps Noise unselectable while its siblings run, with a spinner and
-an explanation available on hover or keyboard focus. Its activity control is
-separate from tab selection. Detailed lane activity lives in a dismissible popover
-anchored directly beneath the selected lens in the tab bar. Its transcript actions
+an explanation available on hover or keyboard focus. The tab itself anchors its activity popover, with no separate activity control.
+The active generating lens opens automatically; hovering or focusing another tab
+temporarily replaces it. Completion shows a brief status animation and dismisses
+the automatic popover after 900 ms. A panel the reader is hovering or focusing
+stays open until they leave or dismiss it. Close and Escape return focus to the
+trigger tab without reopening the panel. Hovering a settled tab keeps its transcript accessible. Its transcript actions
 remain visible and are disabled only until their agent threads exist. The
 observed history and elapsed time stay with the review, generation and seat thread
 across navigation and reconnection. A new generation or thread starts a fresh
@@ -791,7 +801,8 @@ noise — to a visible one a reviewer can see, name and route.
 
 Fold counts are reader-facing domain objects, not raw element-kind tallies. The
 projection emits findings, decisions, requirements, steps, outcomes, groups,
-files, and comments from each section's direct children. Repeated code refs for
+files, and comments from each section's direct children. The stored `groups` count
+counts Noise members, so the UI labels it as changed regions within that group. Repeated code refs for
 one path count as one file, and structural prose does not inflate the count. A
 pair with no persisted board answers `null`. A successful empty result is typed
 instead of persisted as a zero-element board: Design uses `no-spec`,
@@ -800,6 +811,8 @@ Decisions uses `no-decisions`, Flagged uses `no-findings`, and Noise uses
 absence — only the seat's own `no-spec` declaration is. For the three core review lenses, material follows the topology the
 client serves, not the flat element pool. Sequence needs a reachable
 `order_step`, Decisions a reachable `decision`, and Flagged a reachable `finding`.
+Their `finish` checks name detached elements while the drafting turn can still
+attach them, so a successful settlement does not become a failed review later.
 Prose-only boards, empty sections, and detached typed elements do not satisfy
 those core lenses. Flagged persists any round finding-resolution migration before settling
 that typed absence. The client treats the absence as settled, keeps its segment
@@ -980,6 +993,42 @@ absent from this board. Boards never carry remainder essays about what is not
 on them.
 
 ## Voice rules
+
+Authored explanations lead with what happens and why it matters. They introduce
+components by their job before naming code and explain essential technical terms
+where they appear. Titles are concise labels. Every section needs a distinct folded preview: authors
+supply descriptive child subheadings or a self-contained opening paragraph. The
+host displays those subheadings, otherwise truncates the opening paragraph to two
+lines, and calculates counts. Expanded text adds the cause or example.
+Each card should make sense on
+its own, with citations available for checking the claim.
+
+Openings state the user-visible change in two short sentences, about 35 words.
+They explain the change without an itinerary for reading the board. Sequence
+sections supply shared context in one short sentence; their steps trace the
+state or data through the code to its outcome. The explanation precedes the
+step citation; code excerpts remain expanded.
+Step citations are displayed through the step's span, without also attaching the
+same code excerpt to the parent section.
+Independent changes stay separate; their presence in one diff is not a causal link.
+Decisions carry a viable alternative rather than padding the list with broken choices.
+
+Readers may know the product without having traced its code. Explanations cover
+the technical mechanism in plain language, naming relevant state, functions, or
+data flow and connecting each to its effect. Citations support that explanation.
+
+Distinct mechanisms, effects, cases, or choices use short, flat bullet lists with one
+point per item. A single explanation stays in prose. Review text renders `-`,
+`*`, and `+` bullets with hanging indentation and space between items, including
+a list immediately after a lead-in and indented continuation lines. Inline code,
+citations, and reviewer highlights retain their behavior inside list items.
+
+The target is about 40 words per explanation, including a decision's statement
+and rationale together. The rationale explains the benefit or tradeoff rather
+than restating the implementation. There is room for the
+trigger, consequence, and evidence. This is drafting guidance, not a word-count
+validator. Design retains its verbatim source obligations and quotations. Its
+deterministic rendering does not pass through these authoring instructions.
 
 - Boards narrate in third person about the change, never as its author.
 - Board prose never names lenses, boards, agents, or the review process;

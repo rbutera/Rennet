@@ -1,4 +1,8 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import { GenerationStore } from "./round-store";
 import {
   createT3SeatTurn,
   outputSchemaFor,
@@ -7,7 +11,7 @@ import {
   type T3SeatThread,
   type T3SettledTurn,
 } from "./t3-seat-turn";
-import { createMetricsCollector } from "./turn-metrics";
+import { createMetricsCollector, summarizeUsage } from "./turn-metrics";
 
 // The seat leg maps a settled T3 turn onto the harness turn result the drafting ladder
 // already consumes. Driven with a stub client so the mapping is the thing under test.
@@ -256,12 +260,18 @@ describe("createT3SeatTurn", () => {
     });
   });
 
-  it("records a Codex turn's tokens off T3's context-window snapshot, since its settlement carries none", async () => {
+  it("records complete Codex turn usage without counting cached input or reasoning twice", async () => {
     const collector = createMetricsCollector();
     const { seam } = stubs([
       settled({
         structuredOutput: { elements: [] },
-        // T3's snapshot: `inputTokens` includes the cached share, as Codex reports it.
+        aggregateUsage: {
+          inputTokens: 10_000,
+          cachedInputTokens: 3_000,
+          outputTokens: 2_000,
+          reasoningOutputTokens: 800,
+        },
+        // The final request is much smaller than the whole turn.
         tokenUsage: {
           usedTokens: 1_200,
           inputTokens: 1_000,
@@ -272,13 +282,72 @@ describe("createT3SeatTurn", () => {
     ]);
     await createT3SeatTurn(seam, { ...options, collector, provider: "codex" })("P", 0);
     expect(collector.metrics[0]?.usage).toEqual({
-      inputTokens: 700,
-      outputTokens: 200,
-      cacheReadTokens: 300,
+      inputTokens: 7_000,
+      outputTokens: 2_000,
+      cacheReadTokens: 3_000,
       cacheCreationTokens: 0,
-      totalTokens: 1_200,
+      totalTokens: 12_000,
       reportedUsd: null,
     });
+    expect(summarizeUsage(collector.metrics)).toMatchObject({
+      totalTokens: 12_000,
+      unmeasuredTurns: 0,
+    });
+  });
+
+  it("persists both Codex turns and distinguishes reported zero from unavailable legacy usage", async () => {
+    const collector = createMetricsCollector();
+    const { seam } = stubs([
+      settled({
+        structuredOutput: {},
+        aggregateUsage: { inputTokens: 10_000, cachedInputTokens: 3_000, outputTokens: 2_000 },
+      }),
+      settled({
+        structuredOutput: {},
+        turnId: "turn-2",
+        aggregateUsage: { inputTokens: 1_000, cachedInputTokens: 300, outputTokens: 200 },
+      }),
+      settled({
+        structuredOutput: {},
+        turnId: "turn-3",
+        aggregateUsage: { inputTokens: 0, cachedInputTokens: 0, outputTokens: 0 },
+      }),
+      settled({ turnId: "turn-4", tokenUsage: { usedTokens: 500, inputTokens: 500 } }),
+      settled({
+        structuredOutput: {},
+        turnId: "turn-5",
+        state: "interrupted",
+        aggregateUsage: { inputTokens: 100, cachedInputTokens: 0, outputTokens: 0 },
+      }),
+    ]);
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      await createT3SeatTurn(seam, { ...options, collector, provider: "codex" })("P", attempt);
+    }
+    expect(collector.metrics[2]?.usage?.totalTokens).toBe(0);
+    expect(collector.metrics[3]?.usage).toBeNull();
+    expect(collector.metrics[4]).toMatchObject({ status: "failed", usage: { totalTokens: 100 } });
+    const directory = mkdtempSync(join(tmpdir(), "rennet-codex-turn-usage-"));
+    try {
+      new GenerationStore(directory).save({
+        id: "generation",
+        patchsetId: "patchset",
+        lensBoards: {},
+        status: "live",
+        usage: summarizeUsage(collector.metrics),
+      });
+      expect(new GenerationStore(directory).load("generation")?.usage).toEqual({
+        turns: 5,
+        unmeasuredTurns: 1,
+        inputTokens: 7_800,
+        outputTokens: 2_200,
+        cacheReadTokens: 3_300,
+        cacheCreationTokens: 0,
+        totalTokens: 13_300,
+        reportedUsd: null,
+      });
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
   });
 
   it("reports a failed turn with T3's own reason, and records the metric anyway", async () => {

@@ -5,7 +5,7 @@ description: How Rennet normalizes installed coding harnesses into sessions, eve
 
 Rennet runs the coding harnesses already installed for the repository's
 execution locus. The adapter boundary gives core review code one session model
-for Claude Code, Codex, and omp without copying provider credentials or bundling
+for Claude Code and Codex without copying provider credentials or bundling
 a Rennet harness executable.
 
 ## Ownership
@@ -17,10 +17,8 @@ flowchart LR
   server --> adapters[@rennet/adapters]
   adapters --> claude[Installed claude]
   adapters --> codex[Installed codex]
-  adapters --> omp[Installed omp through Bun]
   claude --> provider[Harness provider]
   codex --> provider
-  omp --> provider
 ```
 
 `HarnessPort` and its event types live in `packages/core/src/harness.ts`. The
@@ -103,7 +101,7 @@ Every event carries the same envelope:
 ```ts
 interface HarnessEventBase {
   seq: number
-  harness: "claude-code" | "codex" | "omp"
+  harness: "claude-code" | "codex"
   sessionId: string
   turnId: string | null
   receivedAt: number
@@ -136,77 +134,16 @@ envelope, then emitted null fields are removed. Board jobs still parse the resul
 through their original schema in core, so this normalization cannot weaken an
 accepted board.
 
-## Cursor-resume and the turn loop
+## Threads and utility turns
 
-Interactive turns run **fresh process per turn plus resume**, the pattern the
-harness CLIs are built for: the CLI owns the transcript, the compaction, and the
-prompt cache; Rennet persists only a pointer into that transcript — the
-`HarnessCursor` (`harnessSessionId` plus the last-assistant anchor and a turn
-count) — and re-passes it on the next turn through `SessionSpec.resume`. Rennet
-owns the turn loop (`packages/server/src/session/turn-loop.ts`) and holds two
-rules over it: **serialize turns per harness id** — one turn in flight per
-session at a time, a second queues rather than racing the same transcript — and
-**re-pass the options every turn**, because each turn is a fresh process and
-nothing (model, tools, cwd, system prompt) is sticky across it. After each turn
-the loop persists the updated cursor to the `SessionStore`.
+Interactive chat, board seats, and coding rounds run on persistent threads in
+Rennet's [T3 Code sidecar](./t3code-sidecar.md). The sidecar owns provider
+conversation state and turn execution. A coding round gets its own thread in
+the session's bound workspace and returns the sidecar's checkpoint.
 
-The loop is instantiated in the composition root (`packages/server/src/
-create-server.ts`), one per repository root and selected harness. The first coding
-round resolves one enabled installed harness on the repository's execution host,
-preferring Claude when both are enabled, and pins that harness and version to the
-session before the worker starts. Later rounds resolve that exact provider or fail
-plainly; they never switch providers because one disappeared. Claude rounds resume
-the conversation the previous round left off at, while Codex rounds start a fresh
-Codex thread because its resume capability remains unverified. Both paths capture
-normalized events for the display transcript. The loop does not add
-serialization — the rounds runtime already enqueues each dispatch per session,
-including the checkpoint bracket, so the loop's own per-session queue is a
-redundant inner lock on this path. The issue-#18 checkpoint bracket is unchanged
-around it: pre-checkpoint, turn, post-checkpoint, diff.
-
-The loop is where the **display transcript** is captured because it is the single
-reader of every harness event. Its `recordTranscript` sink projects those events
-onto the transcript rows the chat dock renders (`harnessEventsToRows`) and
-appends them to the durable `TranscriptStore` that `session.transcript` reads.
-Each row preserves the harness event order as typed blocks — prose, thought,
-action, code, and lifecycle markers — instead of flattening activity into a
-preface string. Thought duration is derived only from harness `receivedAt`
-boundaries and remains absent when no honest end boundary exists. A caller may
-supply a stable public turn id; retries keep that id for the successful public
-turn while a failed resume attempt receives a distinct id, so durable merge and
-reload cannot collapse two attempts. The rows are a display read-model, additive
-to the cursor: the CLI still owns the conversation. A session whose turns have
-not run reads back empty because it genuinely has no rows, and a transcript log
-that cannot be written never fails the coding turn that produced it.
-
-The rows are stored **verbatim**, host paths and all. R19 is a rule about what
-crosses the wire to a *remote* client, and the daemon applies it at that
-boundary: a projected connection's `session.transcript` response has known roots
-and the home directory replaced with display tokens and any remaining absolute
-path redacted, while a loopback connection reads the row exactly as it was
-stored. Scrubbing at write time instead would destroy the reviewer's own paths on
-the reviewer's own disk and buy nothing, since every read already crosses that
-boundary.
-
-The `context_rebuilt` marker takes the loop's other sink, `emit`, because it is
-not a harness event — the loop synthesizes it when a resume vanishes, so no
-projection of the event stream can produce it. It is filed on the session it
-happened to, between the lost turn and the rebuilt one. Dropping it would leave
-the transcript reading as one unbroken conversation across a context loss, which
-is a surface claiming something it cannot know. Compaction rows do **not** go
-through `emit`: those are real harness events, so the projector already emits
-them and a second append would double every compaction.
-
-Resume is a Claude capability, honestly. The Claude adapter implements it end to
-end: `SessionSpec.resume` maps to the SDK's resume option, and a completed turn
-surfaces the harness session id so the durable session persists a real cursor —
-so the Claude adapter advertises the `resume` capability. The **Codex adapter
-does not**. Its app-server thread-resume path and returned cursor cannot be
-verified against the live binary offline, and wiring a durable Codex cursor by
-guess would be a broken path, not a capability. So Codex leaves `resume`
-unimplemented (capability flag `false`): a resume spec against Codex simply
-never surfaces a cursor, the loop never builds one for it, and each Codex turn
-starts fresh — the honest degrade, no fabricated cursor.
+The round runtime serializes work per session and pins the selected provider.
+A later round uses that provider or reports why it cannot run; it does not
+silently switch providers.
 
 Rennet's own **utility** turns do not resume either, by construction rather than
 by omission: the project scout, the repo map, the delta digest and their kind run
@@ -235,13 +172,6 @@ is the next turn on the thread that already holds the base prompt and the failin
 draft, so it carries only the lint pointers and the frozen ids. There is no
 ephemeral board leg to fall back to — a generation with no sidecar drafts no board
 and says why. See [the T3 Code sidecar](./t3code-sidecar.md).
-
-When a persisted cursor points at a harness session the CLI no longer has (the
-transcript is gone), the loop does not fail and does not pretend. It surfaces a
-**`context_rebuilt`** turn-stream row, starts a fresh harness session, and keeps
-the **boards canonical** — the reconstructed session re-reads them from the
-event log and never drops or re-drafts them. The transcript is the harness's to
-lose; the boards are Rennet's, and they survive.
 
 ## Compaction, surfaced not estimated
 
@@ -316,23 +246,6 @@ method mapping and discovery candidates. The
 [Windows and WSL guide](../../using/guides/windows-and-wsl.md) covers the
 user-facing setup.
 
-## omp
-
-The omp adapter runs the `omp` binary from `@oh-my-pi/pi-coding-agent` through a
-proven Bun runtime. Its transport uses `omp --mode rpc --auto-approve
---no-session` and sends the prompt as an RPC command on standard input.
-
-Rennet gives omp a temporary extension directory containing its loopback MCP
-configuration, then removes the directory when the turn ends. The decoder bounds
-frames and captured standard error. Malformed, oversized, rejected, or unfinished
-RPC frames end the session as a protocol failure even if the child exits with
-status zero.
-
-The adapter and hermetic transport tests are present. No real omp conformance run
-has recorded a tested version range, so discovery reports it as untested and its
-capability evidence stops at `implementedByAdapter`. The orchestrator uses omp
-only when neither Claude nor Codex supplies the seat.
-
 ## Discovery follows the project locus
 
 A graphical app may inherit a different `PATH` from an interactive shell, and a
@@ -343,7 +256,6 @@ binary and health result.
 
 Codex discovery includes the executable bundled in ChatGPT on macOS after
 user-installed candidates. WSL discovery searches inside the selected distro.
-omp discovery verifies both its script and the Bun runtime that will execute it.
 `RENNET_DISABLE_HARNESS=1` disables discovery for hermetic tests.
 
 Discovery proves that a candidate can start and answer its probe. It does not
@@ -401,7 +313,6 @@ reaches the provider used by the selected harness.
 | Binary discovery | `packages/adapters/src/harness-discovery.ts` |
 | Claude adapter and query integration | `packages/adapters/src/claude-adapter.ts`, `packages/adapters/src/claude-query.ts` |
 | Codex adapter and app-server transport | `packages/adapters/src/codex-adapter.ts`, `packages/adapters/src/codex-app-server.ts` |
-| omp adapter and RPC transport | `packages/adapters/src/omp-adapter.ts`, `packages/adapters/src/omp-turn-transport.ts` |
 | Per-project harness composition | `packages/server/src/create-server.ts` |
 | Client-to-daemon connection | `packages/client/src/ws-bridge.ts` |
 

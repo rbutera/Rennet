@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { archiveEncryptedCookies } from "./cookie-store";
 
 // The boot path's ORDER (perf audit §2 H1 / §6 H1). `whenReady` used to `await
 // ensureDaemon(dataDir)` before `new BrowserWindow`, so a cold start showed nothing until a
@@ -76,6 +77,7 @@ vi.mock("electron", () => {
       },
       getVersion: () => "9.9.9",
       getAppPath: () => "/tmp/app.asar",
+      getPath: () => "/tmp/rennet-boot-order",
       isPackaged: false,
       setPath: () => undefined,
       setAppUserModelId: () => undefined,
@@ -114,6 +116,8 @@ vi.mock("@rennet/core", () => ({
   detectLocus: () => ({ kind: "host" }),
   listWslDistros: async () => [],
 }));
+
+vi.mock("./cookie-store", () => ({ archiveEncryptedCookies: vi.fn() }));
 
 vi.mock("@rennet/server", () => ({ defaultDataDir: () => "/tmp/rennet-boot-order" }));
 
@@ -197,6 +201,10 @@ async function boot(): Promise<void> {
     harness.ready.resolve = resolve;
   });
   await import("./index");
+  if (process.platform === "darwin") {
+    expect(archiveEncryptedCookies).toHaveBeenCalledWith("/tmp/rennet-boot-order");
+    expect(harness.windowOptions).toHaveLength(0);
+  }
   harness.ready.resolve();
   await settle();
 }
@@ -204,6 +212,7 @@ async function boot(): Promise<void> {
 let savedUserData: string | undefined;
 
 beforeEach(() => {
+  vi.mocked(archiveEncryptedCookies).mockClear();
   harness.order.length = 0;
   harness.windowOptions.length = 0;
   harness.ipcHandlers.clear();

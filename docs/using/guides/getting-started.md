@@ -64,11 +64,20 @@ an **Add Environment** escape into pairing. Switching source reloads the browser
 against that machine's own filesystem, so browsing a distro or a paired machine
 works exactly like browsing locally.
 
-The browser is the picker. There is no OS file dialog and no recents list.
-Click a row to descend, use **Up** or Backspace to ascend, or type an absolute
-path and press Enter to jump there. Arrow keys move between rows. A folder
-holding a repository wears a **repo** badge; a folder Rennet cannot read is
-dimmed and cannot be entered. **Add** stays inert until you select a folder.
+The browser is the picker, and the welcome flow's Project step uses the same
+one. Click a row to descend, use **Up** or Backspace to ascend, or type an
+absolute path and press Enter to jump there. The path bar shows the current
+folder with a trailing slash, so appending the next folder name is one keystroke
+away. Arrow keys move between rows. A folder holding a repository wears a
+**repo** badge; a folder Rennet cannot read is dimmed and cannot be entered.
+**Add** stays inert until you select a folder.
+
+Hidden folders (names starting with a dot) are out of the list by default. The
+eye button in the toolbar shows them, and the choice sticks across dialogs. On
+this machine the desktop app also offers **Browse…**, which opens the system
+folder dialog and jumps the browser to whatever you choose there. It does not
+appear while browsing a WSL distro or a paired environment, because the system
+dialog can only see this machine's files. There is no recents list.
 
 On macOS, the welcome also offers **Grant Full Disk Access** beside Add Project.
 It opens **System Settings → Privacy & Security → Full Disk Access**. This is
@@ -206,8 +215,11 @@ generated title beneath it. Animated rings on the tab and heading show work in
 progress without interrupting the document. Changes since the previous round
 remain hidden until the board settles.
 
-Open the activity button beside the selected tab to follow the review in a
-popover anchored directly beneath the tab bar. It shows a concise current action, recent activity and how long you
+While the selected lens is generating, its activity popover appears automatically
+under that tab. Hovering another tab temporarily shows that lens's activity; leaving
+it returns to the active generating lens. On completion, a brief status animation
+plays and the automatic popover fades away. A popover you are hovering or
+focusing stays open until you leave or dismiss it. Hover or focus a tab to read its activity again. It shows a concise current action, recent activity and how long you
 have been following that lens. Open transcript stays visible and becomes available
 once the agent thread starts. It shows the selected agent's full conversation in a drawer beside the
 board. Your own chat stays in place. Choosing another lens moves the board and
@@ -326,16 +338,32 @@ so you take the previews first and open what you want to read.
 Folded counts name review objects: findings, decisions, requirements, steps,
 outcomes, groups, files, and comments.
 
+Flagged is the one board whose sections do not fold. Each section is a heading
+over its findings, and each finding is its own fold: severity, the claim, and the
+concurrence pill read at a glance, and the row opens to the scenario, the fix, and
+the cited code. A title on any board renders code names in backticks as code and
+never shows markdown emphasis marks.
+
 Code is cited, never copied. A code block card carries the file path and the
 exact line range and hydrates the real lines from the captured patchset, so
-numbering cannot drift from the code under review. When that path belongs to the
-active captured patchset, clicking it opens Diff on the file and preserves the
-other session query state. A code card adds **View test** or **View
+numbering cannot drift from the code under review. Long lines wrap inside the
+card rather than scrolling sideways. When that path belongs to the active
+captured patchset, clicking it opens Diff on the file and preserves the other
+session query state. The card's header carries its controls: **Expand context**
+widens the excerpt, **Full file** shows the whole reviewed file and **Cited
+hunks** returns to the excerpt, and the card adds **View test** or **View
 implementation** when the reviewed tree relates the two files, by import or by
-name; an unchanged test opens inline from the reviewed revision, and several
-matches offer a chooser. In prose, a `path:line`
-citation is a chip: click it and the real lines unfold below the paragraph;
-click again and they fold away.
+name; an unchanged test opens inline from the reviewed revision with **Back to
+review** in the same header, and several matches offer a chooser. In prose, a
+`path:line` citation is a chip: click it and the real lines unfold below the
+paragraph; click again and they fold away.
+
+Click an identifier in the current diff or a code card to inspect its definition
+and references. Tab enters the code region; arrow keys move between identifiers,
+and Enter opens one. Each location can open in your editor; Escape returns focus to
+the identifier. The inspector labels structural matches and textual guesses.
+Deleted rows use the base revision; added and context rows use the reviewed
+revision. Uncommitted edits and historical patchsets are not indexed by this lookup.
 
 A finding reads as flowing document text, not a boxed card: a severity chip, the
 claim as its title, a concurrence badge, then the body and the proposed fix as

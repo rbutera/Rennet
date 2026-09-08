@@ -609,7 +609,7 @@ function checkProcessVocab(
 
 // ── The rules (each: pure, over one draft + ctx) ─────────────────────────────
 
-type Rule = (draft: DraftBoard, ctx: LintContext) => Violation[];
+type Rule = (draft: DraftBoard, ctx: LintContext, register?: BoardRegister) => Violation[];
 
 const FENCE = /```/;
 // ponytail: a run of ≥2 four-space-indented lines. A markdown list/paragraph
@@ -656,8 +656,8 @@ const noDialogue: Rule = (draft) =>
   });
 
 /** L3 — prose citations are full repo-relative `path:line`, never absolute/GitHub/basename. */
-const citationWellFormed: Rule = (draft) =>
-  allProseFields(draft).flatMap(({ elementId, field, text }) =>
+const citationWellFormed: Rule = (draft, _ctx, register) =>
+  (register === "transcribed" ? [] : allProseFields(draft)).flatMap(({ elementId, field, text }) =>
     checkCitationWellFormed(text, ref(elementId, field)),
   );
 
@@ -749,11 +749,13 @@ const elementReferencesResolve: Rule = (draft) => {
  * patchset (S2), and must not invert their line span (S8). A `noise_verdict`'s
  * `hunk` element reference (L12) must point at a real `code_ref` on this board.
  */
-const citationResolves: Rule = (draft, ctx) => {
+const citationResolves: Rule = (draft, ctx, register) => {
   const out: Violation[] = [];
   const byId = new Map(draft.elements.map((el) => [el.id, el]));
   // Prose path:line mentions — HEAD side. The document's intro is prose too.
-  for (const { elementId, field, text } of allProseFields(draft)) {
+  for (const { elementId, field, text } of register === "transcribed"
+    ? []
+    : allProseFields(draft)) {
     out.push(...checkCitationResolves(text, ctx.files, ref(elementId, field)));
   }
   for (const el of draft.elements) {
@@ -2813,22 +2815,22 @@ function reachableOfKind(
   return matches;
 }
 
-/**
- * D5 — every step is reachable from a top-level section. A step the reading order
- * cannot reach is a step the reviewer never sees, which is why this was a lane
- * failure in `lens-pipeline.ts` and is now a pointer the seat can act on: it names
- * the step, and re-parenting it is one call.
- */
-const sequenceStepsReachable: Rule = (draft, ctx) => {
-  if (ctx.lens !== "sequence") return [];
-  const reachable = new Set(reachableOfKind(draft.elements, "order_step").map(({ id }) => id));
+/** Detached material must be repairable before the runtime rejects the settled board. */
+const lensMaterialReachable: Rule = (draft, ctx) => {
+  const kind = MATERIAL_KIND[ctx.lens];
+  if (kind === undefined) return [];
+  const reachable = new Set(reachableOfKind(draft.elements, kind).map(({ id }) => id));
+  if (ctx.lens !== "sequence" && reachable.size > 0) return [];
   return draft.elements.flatMap((element) =>
-    element.kind === "order_step" && !reachable.has(element.id)
+    element.kind === kind && !reachable.has(element.id)
       ? [
           {
-            ruleId: "sequence-step-reachable",
+            ruleId:
+              ctx.lens === "sequence"
+                ? "sequence-step-reachable"
+                : `${ctx.lens}-material-reachable`,
             elementRef: ref(element.id),
-            message: `Step \`${element.id}\` hangs off no top-level section, so the reading order never reaches it. Give it a parent.`,
+            message: `The ${kind} \`${element.id}\` is not reachable from a section. Recreate it with add_${kind === "order_step" ? "step" : kind} and a section's id as parent_id, then remove this detached element.`,
           },
         ]
       : [],
@@ -2857,12 +2859,7 @@ const MATERIAL_KIND: Readonly<Partial<Record<LintTarget, DraftElement["kind"]>>>
  * double-reported: a Sequence board holding one orphaned step got a reachability
  * pointer naming the step AND an emptiness pointer naming `/elements`, which reads
  * as "you wrote nothing" over a board with a step on it. One question per rule:
- * {@link sequenceStepsReachable} owns reachability and names the step to re-parent.
- *
- * The gap that leaves is real and named: Decisions and Flagged have no reachability
- * rule, so `finish` accepts an unreachable `decision` or `finding` where
- * `hasLensMaterial` in `lens-pipeline.ts` would not. That check is still in the
- * runtime and still runs; wiring the two together is group 3's.
+ * {@link lensMaterialReachable} owns reachability and names the detached element.
  */
 const boardHasMaterial: Rule = (draft, ctx) => {
   const kind = MATERIAL_KIND[ctx.lens];
@@ -2986,7 +2983,7 @@ export const LENS_RULES: readonly Rule[] = [
   requirementScenariosNarrative,
   requirementVerbatim,
   requirementOrder,
-  sequenceStepsReachable,
+  lensMaterialReachable,
   boardHasMaterial,
   derivedMembersGrouped,
 ];
@@ -3073,7 +3070,7 @@ export const FINISH_RULES: readonly Rule[] = [
   designArtifactContentComplete,
   designHeaderComplete,
   designIncompletenessVisible,
-  sequenceStepsReachable,
+  lensMaterialReachable,
   boardHasMaterial,
   // D16's grouping rule. Whole-board by nature: "exactly one group" is a question about
   // every section at once, and it is the only thing a derived board's seat can get wrong.
@@ -3111,7 +3108,7 @@ export const FINISH_RULES: readonly Rule[] = [
  * for the document path. Nothing sits outside the registry unasserted.
  */
 export const SETTLEMENT_RULES: readonly Rule[] = [
-  sequenceStepsReachable,
+  lensMaterialReachable,
   boardHasMaterial,
   // D16's grouping rule joins them for the same reason, and it is worth stating rather
   // than leaving to the reader: on a DERIVED board the members are placed by the host
@@ -3162,15 +3159,11 @@ export const DRAFT_LINT_RULES: readonly Rule[] = LENS_RULES.filter(
  * `openspec/changes/archive/`, it was the single largest cause of a deterministic
  * board being thrown away and re-bought as an ~880-second model seat.
  *
- * The line is INTEGRITY vs VOICE, and only the voice half is dropped:
- *
- * - A rule that protects a READER from a broken board runs in both registers, always
- *   — citations well-formed and resolving, references resolving, code bytes, kind
- *   allowlist, scaffold lane, grounding, the source and requirement screens, and
- *   every whole-board finish rule. A transcription can still produce a board a reader
- *   cannot follow, and it is refused for it exactly as a seat's board would be.
- * - A rule that polices a WRITER's choices has no subject when nobody chose. Those
- *   are {@link VOICE_RULES}, and they are skipped for `transcribed` alone.
+ * Voice rules address the writer and are skipped for transcribed prose. Citation
+ * rules still validate explicit code_ref elements, but path-shaped source text is
+ * not a citation claim. The renderer preserves those tokens as text using the host's
+ * durable proseRegister stamp. Authored prose keeps automatic citation validation.
+ * Every other integrity and finish rule applies in both registers.
  *
  * This is deliberately NOT an allowlist widening. Adding "session", "workspace",
  * … to `PROCESS_VOCAB`'s exemptions treats the symptom and needs widening again for
@@ -3197,8 +3190,8 @@ export type BoardRegister = "authored" | "transcribed";
  * `no-code-bytes` is deliberately NOT here, though a fenced block in a quoted `## Why`
  * is also the author's. A board that carries code as bytes instead of a `code_ref` is
  * broken for the reader whatever produced it, so it stays in both registers and the
- * change routes to the seat. Same for the citation screens: a bare-basename citation
- * quoted verbatim is still a citation a reader cannot resolve.
+ * change routes to the seat. Citation rules remain registered too, but distinguish
+ * explicit code references from path-shaped text in a transcription.
  */
 export const VOICE_RULES: readonly Rule[] = [processVocabulary, noDialogue, noRemainderNarration];
 
@@ -3248,7 +3241,8 @@ export function rulesForTier(
  * tool boundary and `finish` differ in WHEN they ask, never in what they know.
  *
  * `register` is WHO wrote the prose ({@link BoardRegister}); a transcription skips the
- * {@link VOICE_RULES} and answers every other rule exactly as an authored board does.
+ * {@link VOICE_RULES}; citation rules receive the register to distinguish prose
+ * examples from explicit code references. The model cannot supply this argument.
  */
 export function lintTier(
   draft: DraftBoard,
@@ -3256,7 +3250,7 @@ export function lintTier(
   tier: LintTier,
   register: BoardRegister = "authored",
 ): Violation[] {
-  return rulesForTier(ctx.lens, tier, register).flatMap((rule) => rule(draft, ctx));
+  return rulesForTier(ctx.lens, tier, register).flatMap((rule) => rule(draft, ctx, register));
 }
 
 /**

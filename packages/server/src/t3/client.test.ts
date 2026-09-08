@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
@@ -238,6 +238,108 @@ describe.skipIf(!bundle)("t3 client over the vendored sidecar", () => {
   }
 });
 
+describe.skipIf(!bundle)("round accepted-start recovery over the real sidecar", () => {
+  it("reconnects after acceptance and replays the command without another worker", async () => {
+    const root = mkdtempSync(join(tmpdir(), "rennet-start-association-"));
+    const repo = join(root, "repo");
+    mkdirSync(repo);
+    execFileSync("git", ["init", "-q", "-b", "main", repo]);
+    writeFileSync(join(repo, "README.md"), "fixture\n");
+    execFileSync("git", ["-C", repo, "add", "."]);
+    execFileSync("git", [
+      "-C",
+      repo,
+      "-c",
+      "user.name=t",
+      "-c",
+      "user.email=t@example.com",
+      "commit",
+      "-qm",
+      "fixture",
+    ]);
+    const starts = join(root, "starts.txt");
+    const claude = join(root, "claude-fixture.mjs");
+    writeFileSync(
+      claude,
+      `#!/usr/bin/env node
+import { createInterface } from "node:readline";
+import { appendFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+const send = (value) => process.stdout.write(JSON.stringify(value) + "\\n");
+createInterface({ input: process.stdin }).on("line", (line) => {
+  const message = JSON.parse(line);
+  if (message.type === "control_request") {
+    send({ type: "control_response", response: { subtype: "success", request_id: message.request_id, response: { commands: [], agents: [], models: [], account: {} } } });
+  } else if (message.type === "user") {
+    if (JSON.stringify(message).includes("round-worker-fixture")) appendFileSync(${JSON.stringify(starts)}, "started\\n");
+    send({ type: "system", subtype: "init", session_id: "fixture-session", tools: [], model: "claude-sonnet-5" });
+    send({ type: "assistant", uuid: randomUUID(), session_id: "fixture-session", parent_tool_use_id: null, message: { id: randomUUID(), role: "assistant", content: [{ type: "text", text: "Done." }] } });
+    send({ type: "result", subtype: "success", is_error: false, result: "Done.", session_id: "fixture-session", uuid: randomUUID(), usage: { input_tokens: 1, output_tokens: 1 } });
+  }
+});
+`,
+      { mode: 0o755 },
+    );
+    const dataDir = join(root, "data");
+    const running = await spawnSidecar({
+      dataDir,
+      bundlePath: bundle as string,
+      upstreamCommit: "test",
+      env: { ...process.env, HOME: join(root, "home") },
+      binaries: { claude },
+      readyTimeoutMs: 30_000,
+    });
+    const connect = () =>
+      connectT3({
+        wsUrl: `${running.origin.replace(/^http/, "ws")}/ws`,
+        accessToken: running.credentials.accessToken,
+      });
+    let client = await connect();
+    try {
+      const projectId = await client.ensureProject(repo, "fixture");
+      const threadId = await client.createThread({
+        projectId,
+        title: "round fixture",
+        modelSelection: modelSelection("claudeAgent", "claude-sonnet-5"),
+      });
+      const input = {
+        threadId,
+        text: "round-worker-fixture",
+        startCommandId: "durable-worker-start",
+      };
+      await client.startTurn(input);
+      await client.close();
+      client = await connect();
+      const replay = await client.startTurn(input);
+      const outcome = await client.waitForTurnSettled(threadId, {
+        after: replay,
+        startTimeoutMs: 15_000,
+      });
+      expect(outcome.state).toBe("completed");
+      await expect
+        .poll(
+          async () =>
+            (await client.readThread(threadId)).checkpoints.find(
+              (entry) => entry.startCommandId === input.startCommandId,
+            ),
+          { timeout: 15_000 },
+        )
+        .toMatchObject({ turnId: outcome.turnId });
+      expect(
+        (await client.readThread(threadId)).messages.filter(
+          (message) => message.role === "user" && message.text === input.text,
+        ),
+      ).toHaveLength(1);
+      expect(readFileSync(starts, "utf8")).toBe("started\n");
+    } finally {
+      await client.close();
+      await stopSidecar(dataDir);
+      running.child?.kill("SIGKILL");
+      rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    }
+  }, 60_000);
+});
+
 // A provider stream that dies before its turn registers (drive 1.6, 2026-09-03). T3 stops
 // the session with `lastError` and emits no turn lifecycle, so the settle wait must read
 // the session, not just `latestTurn`. This gets its OWN sidecar: on the ubuntu CI runner
@@ -433,9 +535,8 @@ describe.skipIf(!bundle)("t3 client: a turn the sidecar refuses after accepting 
     // The sidecar's own words, cap included — not the wait's "never started" guess.
     expect(outcome.errorMessage).toContain(String(T3_TURN_INPUT_MAX_CHARS));
     expect(outcome.errorMessage).not.toMatch(/\n\s+at file:/);
-    // No turn was ever minted for it, and the session is NOT where the failure shows.
+    // The refusal can arrive through the session before its failure activity.
     expect(outcome.thread.latestTurn).toBeNull();
-    expect(outcome.thread.session?.lastError ?? null).toBeNull();
     expect(running.child?.exitCode).toBeNull();
   }, 45_000);
 });
@@ -496,6 +597,113 @@ describe("readTurnSettlement", () => {
       tokenUsage: { usedTokens: 10 },
     });
     expect(readTurnSettlement(t, "turn-9")).toBeUndefined();
+  });
+
+  it("derives each Codex turn's total from stamped durable counters, independent of event arrival order", () => {
+    const snapshot = (inputTokens: number, cachedInputTokens: number, outputTokens: number) => ({
+      usedTokens: 1_200,
+      inputTokens: 1_000,
+      cachedInputTokens: 300,
+      outputTokens: 200,
+      codexCumulativeUsage: {
+        providerThreadId: "provider-1",
+        totalTokens: inputTokens + outputTokens,
+        inputTokens,
+        cachedInputTokens,
+        outputTokens,
+        reasoningOutputTokens: 100,
+      },
+    });
+    const t = thread([
+      activity("context-window.updated", "turn-1", snapshot(8_000, 2_000, 1_000)),
+      activity("turn.settled", "turn-1", {
+        codexUsageBaseline: null,
+        codexCumulativeUsage: snapshot(10_000, 3_000, 2_000).codexCumulativeUsage,
+      }),
+      activity("context-window.updated", "turn-2", snapshot(11_000, 3_300, 2_200)),
+      activity("turn.settled", "turn-2", {
+        codexUsageBaseline: snapshot(10_000, 3_000, 2_000).codexCumulativeUsage,
+        codexCumulativeUsage: snapshot(11_000, 3_300, 2_200).codexCumulativeUsage,
+      }),
+      // Delayed final usage and duplicates are still attributed to turn 1.
+      activity("context-window.updated", "turn-1", snapshot(10_000, 3_000, 2_000)),
+      activity("context-window.updated", "turn-1", snapshot(10_000, 3_000, 2_000)),
+    ]);
+    expect(readTurnSettlement(t, "turn-1")?.aggregateUsage).toEqual({
+      inputTokens: 10_000,
+      cachedInputTokens: 3_000,
+      outputTokens: 2_000,
+    });
+    expect(readTurnSettlement(t, "turn-2")?.aggregateUsage).toEqual({
+      inputTokens: 1_000,
+      cachedInputTokens: 300,
+      outputTokens: 200,
+    });
+    expect(readTurnSettlement(t, "turn-2")?.tokenUsage).toMatchObject({ usedTokens: 1_200 });
+    const onlySettlements = thread(
+      t.activities.filter((activity) => activity.kind === "turn.settled"),
+    );
+    expect(readTurnSettlement(onlySettlements, "turn-2")?.aggregateUsage).toEqual({
+      inputTokens: 1_000,
+      cachedInputTokens: 300,
+      outputTokens: 200,
+    });
+    expect(readTurnSettlement(JSON.parse(JSON.stringify(t)), "turn-2")).toEqual(
+      readTurnSettlement(t, "turn-2"),
+    );
+  });
+
+  it("keeps missing baselines unavailable and restarts counters only for a different provider thread", () => {
+    const snapshot = (providerThreadId: string, inputTokens: number) => ({
+      usedTokens: inputTokens,
+      codexCumulativeUsage: {
+        providerThreadId,
+        totalTokens: inputTokens,
+        inputTokens,
+        cachedInputTokens: 0,
+        outputTokens: 0,
+        reasoningOutputTokens: 0,
+      },
+    });
+    const activities = [
+      activity("context-window.updated", "first", snapshot("provider-1", 10_000)),
+      activity("turn.settled", "first", { codexUsageBaseline: null }),
+      activity("context-window.updated", "reset", snapshot("provider-2", 12_000)),
+      activity("turn.settled", "reset", {
+        codexUsageBaseline: snapshot("provider-1", 10_000).codexCumulativeUsage,
+      }),
+      activity("context-window.updated", "zero", snapshot("provider-2", 12_000)),
+      activity("turn.settled", "zero", {
+        codexUsageBaseline: snapshot("provider-2", 12_000).codexCumulativeUsage,
+      }),
+    ];
+    expect(readTurnSettlement(thread(activities), "reset")?.aggregateUsage).toMatchObject({
+      inputTokens: 12_000,
+    });
+    expect(readTurnSettlement(thread(activities), "zero")?.aggregateUsage).toMatchObject({
+      inputTokens: 0,
+    });
+    expect(
+      readTurnSettlement(
+        thread([
+          activity("context-window.updated", "legacy", snapshot("provider-1", 100)),
+          activity("turn.settled", "legacy", {}),
+        ]),
+        "legacy",
+      )?.aggregateUsage,
+    ).toBeUndefined();
+    const decreased = [
+      ...activities,
+      activity("context-window.updated", "bad", snapshot("provider-2", 1)),
+      activity("turn.settled", "bad", {
+        codexUsageBaseline: snapshot("provider-2", 12_000).codexCumulativeUsage,
+      }),
+    ];
+    expect(readTurnSettlement(thread(decreased), "bad")?.aggregateUsage).toBeUndefined();
+    expect(
+      readTurnSettlement(thread([activity("turn.settled", "legacy", {})]), "legacy")
+        ?.aggregateUsage,
+    ).toBeUndefined();
   });
 
   it("skips an earlier settlement that carried no usage and finds the one before it", () => {
@@ -603,6 +811,25 @@ describe("awaitTurnSettled", () => {
     };
   }
 
+  it("replays an accepted start by exact identity even after its turn has already settled", async () => {
+    const p = projection(
+      fakeThread({
+        latestTurn: { turnId: "turn-older", state: "completed" },
+        checkpoints: [{ turnId: "turn-mine", startCommandId: "start-mine", status: "ready" }],
+        activities: [settledActivity("turn-mine", { structuredOutput: { mine: true } })],
+      }),
+    );
+    await expect(
+      awaitTurnSettled("t", p.deps, {
+        after: { previousTurnId: "turn-mine", requestedAt: T0, startCommandId: "start-mine" },
+      }),
+    ).resolves.toMatchObject({
+      turnId: "turn-mine",
+      state: "completed",
+      structuredOutput: { mine: true },
+    });
+  });
+
   it("waits for ITS turn: the settlement already on the thread is the previous turn's", async () => {
     const drafted = fakeThread({
       latestTurn: { turnId: "turn-1", state: "completed" },
@@ -673,6 +900,27 @@ describe("awaitTurnSettled", () => {
       state: "error",
       errorMessage: "new stream failed",
     });
+  });
+
+  it("keeps the refusal message when the session error arrives before its activity", async () => {
+    const message =
+      'ProviderValidationError: Expected a value with a length of at most 120000\n  at ["input"]';
+    const p = projection(
+      fakeThread({
+        session: {
+          status: "error",
+          activeTurnId: null,
+          lastError: `${message}\n    at file:///app/bin.mjs:1:1\n    at sendTurn (file:///app/bin.mjs:2:1)`,
+          updatedAt: T0,
+        },
+        activities: [],
+      }),
+    );
+    await expect(
+      awaitTurnSettled("t", p.deps, {
+        after: { previousTurnId: null, requestedAt: T0 },
+      }),
+    ).resolves.toMatchObject({ state: "error", errorMessage: message });
   });
 
   it("settles a start the sidecar refused after accepting it, off the failure activity", async () => {

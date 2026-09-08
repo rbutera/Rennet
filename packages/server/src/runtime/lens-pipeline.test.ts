@@ -9,6 +9,7 @@ import {
   WhiteboardClient,
 } from "@rennet/adapters";
 import {
+  assembleDesignBoard,
   type BoardVoiceWriter,
   buildDeltaPacket,
   CHANGE_INDEX_FILE,
@@ -482,7 +483,7 @@ const readPrompt = (file: string): string =>
   file === INVESTIGATE_PARTIAL_FILE
     ? PARTIAL_BODY
     : Object.values(LENS_PROMPT_FILES).includes(file)
-      ? `PROMPT_FILE:${file}\n${PROMPT_PARTIAL_MARKER}`
+      ? `PROMPT_FILE:${file}\n${PROMPT_PARTIAL_MARKER}\n{{reader-voice}}`
       : `PROMPT_FILE:${file}`;
 
 /**
@@ -1770,6 +1771,49 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     expect(captures.some(({ prompt }) => lensFromPrompt(prompt ?? "") === "design")).toBe(false);
   });
 
+  it("transcribes illustrative spec paths without starting a Design model turn", async () => {
+    const captures: SeatCapture[] = [];
+    const intro = "Examples use `example/file.ts:42` and sample.ts:99.";
+    const result = await runLensPipeline({
+      ...boardSeats(captures, (prompt, label) => cleanBody(lensFromPrompt(prompt, label))),
+      repoRoot: "/pr-worktree",
+      deltaPacket: PACKET,
+      lintContextFor,
+      readPrompt,
+      whiteboard: fakeWhiteboard([]),
+      boardIdFor: (lens) => `board:${lens}`,
+      assembleDesignBoard: (ctx) =>
+        assembleDesignBoard(
+          [
+            {
+              format: "openspec",
+              candidate: "examples",
+              role: "proposal",
+              path: "openspec/changes/examples/proposal.md",
+              text: `## Why\n${intro}`,
+            },
+            {
+              format: "openspec",
+              candidate: "examples",
+              role: "tasks",
+              path: "openspec/changes/examples/tasks.md",
+              text: "## 1. Examples\n- [ ] Preserve `example/file.ts:42` verbatim",
+            },
+          ],
+          ctx,
+          { kind: "lens-agent", id: "design-seat" },
+        ),
+    });
+    expect(captures.filter(({ prompt }) => lensFromPrompt(prompt ?? "") === "design")).toHaveLength(
+      0,
+    );
+    const design = result.boards.find((board) => board.lens === "design");
+    expect(design?.failure).toBeUndefined();
+    expect(design?.board?.document?.introMarkdown).toBe(intro);
+    expect(design?.board?.document?.proseRegister).toBe("transcribed");
+    expect(JSON.stringify(design?.board)).toContain("Preserve `example/file.ts:42` verbatim");
+  });
+
   it("refuses a dangling Sequence or Decisions reference where it is made, and the board still lands", async () => {
     // WAS: "repairs dangling Sequence and Decisions references before the real board
     // service write". That test drove a seat that RETURNED a board naming an element it did
@@ -2548,31 +2592,19 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     expect(noise?.failureAccount?.attempt).toBeGreaterThan(0);
   });
 
-  // The "hidden decision root" row is DELETED with this change rather than repaired: it
-  // parented a section under a PROSE element, which the tool surface refuses at the call
-  // (`a parent is a section or a step`). A board with that shape can no longer be written,
-  // so a test asserting how the pipeline handles one is asserting about a state that does
-  // not occur. The remaining rows keep their subject and gain the fact the tool path makes
-  // visible — how much a shape costs, and which tier caught it.
-  //
-  // The two shapes cost different things, and that IS the two-tier split (D5). A board with
-  // NO material of the lens's kind is refused by `finish` (`board-has-material`), so the
-  // turn ends unsettled and spends the lane's one attempt: two turns. A board with material
-  // that no served root REACHES is settled by `finish` — Decisions and Flagged have no
-  // reachability rule — and fails afterwards, in the pipeline, on one turn.
+  // Empty and wholly detached material now get a repair turn before the lane fails.
   it.each([
-    ["decisions", "prose-only", 2, () => proseOnlyBody("decisions", "No choices found.")],
-    ["decisions", "orphan decision", 1, () => withoutRootSections(meaningfulDecisionBody())],
-    ["flagged", "prose-only", 2, () => proseOnlyBody("flagged", "No defect found.")],
+    ["decisions", "prose-only", () => proseOnlyBody("decisions", "No choices found.")],
+    ["decisions", "orphan decision", () => withoutRootSections(meaningfulDecisionBody())],
+    ["flagged", "prose-only", () => proseOnlyBody("flagged", "No defect found.")],
     [
       "flagged",
       "orphan finding",
-      1,
       () => mkBoard([mkFinding("detached-finding", "A detached finding is not served.", [])]),
     ],
   ] as const)(
     "records a non-empty %s %s result as a precise failure, on one base prompt",
-    async (malformedLens, _shape, expectedTurns, malformedBody) => {
+    async (malformedLens, _shape, malformedBody) => {
       let malformedLensTurns = 0;
       const captures: SeatCapture[] = [];
       const applied: Applied[] = [];
@@ -2607,18 +2639,12 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       // What is asserted about NOT restarting the drafter is the count below — the base
       // prompt travels once, on the thread's first turn, and the repair carries the verdict
       // alone.
-      expect(malformedLensTurns).toBe(expectedTurns);
+      expect(malformedLensTurns).toBe(2);
       expect(
         captures.filter(({ prompt }) => prompt?.includes(`prompts/${malformedLens}.md`)),
       ).toHaveLength(1);
       expect(outcome?.absence).toBeUndefined();
-      expect(outcome?.failure).toContain(
-        expectedTurns === 1
-          ? malformedLens === "decisions"
-            ? "no reachable `decision` in the emitted board"
-            : "no reachable `finding` in the emitted board"
-          : "did not finish its board",
-      );
+      expect(outcome?.failure).toContain("did not finish its board");
       expect(applied.map(({ boardId }) => boardId)).not.toContain(`board:${malformedLens}`);
       expect(arrivals.map(({ lens }) => lens)).not.toContain(malformedLens);
     },
@@ -3240,6 +3266,8 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     // the marker is not. Delete the `expandPromptPartials` call in `runLensPipeline` and this
     // reddens (the marker would ride raw and the body would be absent).
     expect(designTurn).toContain(PARTIAL_BODY);
+    expect(designTurn).toContain("PROMPT_FILE:prompts/reader-voice.md");
+    expect(designTurn).not.toContain("{{reader-voice}}");
     expect(designTurn).not.toContain(PROMPT_PARTIAL_MARKER);
   });
 

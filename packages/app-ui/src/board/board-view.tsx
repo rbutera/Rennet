@@ -480,6 +480,7 @@ export function LensBoardDocument({
         generation={board.generation}
         boardId={board.boardId}
         lens={board.lens}
+        proseRegister={board.document.proseRegister}
       >
         <ProseSelectionLayer>
           {/* Key the document subtree by boardId (finding 5): gen0/gen1 reuse section
@@ -497,7 +498,15 @@ export function LensBoardDocument({
             {board.lens === "design" ? <DesignCapabilityGrid board={board} /> : null}
             <div className="flex flex-col gap-8">
               {sections.map((entry) => (
-                <Section key={entry.ref} entry={entry} lens={board.lens} defaultOpen={forceOpen} />
+                <Section
+                  key={entry.ref}
+                  entry={entry}
+                  lens={board.lens}
+                  defaultOpen={forceOpen}
+                  // A Flagged section is a heading over finding rows, not a fold: the folded
+                  // finding is the summary (see `Section`).
+                  foldable={board.lens !== "flagged"}
+                />
               ))}
             </div>
           </article>

@@ -4945,10 +4945,14 @@ describe("the transcribed register drops the voice rules and nothing else", () =
     expect(transcribed(codeBytes)).toContain("no-code-bytes");
 
     const basename = board([el("p2", "prose", { markdown: "See app.tsx:551." })]);
-    expect(transcribed(basename)).toContain("citation-well-formed");
+    expect(transcribed(basename)).not.toContain("citation-well-formed");
+    expect(rulesHit(lintTier(basename, ctx(), "boundary"))).toContain("citation-well-formed");
 
     const unresolved = board([el("p3", "prose", { markdown: "See `src/auth.ts:900`." })]);
-    expect(transcribed(unresolved)).toContain("citation-resolves");
+    expect(transcribed(unresolved)).not.toContain("citation-resolves");
+    expect(rulesHit(lintTier(unresolved, ctx(), "boundary"))).toContain("citation-resolves");
+    const invalidReference = board([codeRef("invalid", "missing/file.ts", 1, 2)]);
+    expect(transcribed(invalidReference)).toContain("citation-resolves");
 
     const outside = board([codeRef("c1", "src/auth.ts", 180, 190)]);
     expect(transcribed(outside)).toContain("unresolvable-citation");

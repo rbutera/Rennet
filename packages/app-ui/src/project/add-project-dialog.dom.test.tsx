@@ -221,7 +221,7 @@ describe("AddProjectDialog", () => {
     await user.click(await screen.findByText("dev"));
     await waitFor(() =>
       expect((screen.getByLabelText("Directory path") as HTMLInputElement).value).toBe(
-        "/home/rai/dev",
+        "/home/rai/dev/",
       ),
     );
 
@@ -229,7 +229,61 @@ describe("AddProjectDialog", () => {
     act(() => useRennetStore.getState().uiActions.closeDialog("add-project"));
     open();
     await waitFor(() =>
-      expect((screen.getByLabelText("Directory path") as HTMLInputElement).value).toBe("/home/rai"),
+      expect((screen.getByLabelText("Directory path") as HTMLInputElement).value).toBe(
+        "/home/rai/",
+      ),
     );
+  });
+
+  it("offers the host's folder dialog only while browsing THIS machine", async () => {
+    // Same two-daemon mount as the source-switch test. Both bridges carry the desktop's
+    // picker (the preload residue rides every target), and only the Local browse may show
+    // it: the dialog picks HOST paths, which mean nothing on lancelot's filesystem.
+    globalThis.localStorage.setItem(
+      "rennet.daemons",
+      JSON.stringify({
+        daemons: [
+          { id: "daemon:d1", label: "lancelot", host: "100.1.2.3", port: 7411, deviceToken: "tok" },
+        ],
+      }),
+    );
+    const { user, bridgeFor } = mountApp((target) => ({
+      "fs.listDir": ({ path }: CommandInput<"fs.listDir">) => ({
+        result: target.id === "daemon:d1" ? LANCELOT : path === "/home/rai/dev" ? DEV : HOME,
+      }),
+    }));
+    const picks: { defaultPath?: string }[] = [];
+    for (const target of [
+      { id: "local", label: "This machine", host: "127.0.0.1" },
+      { id: "daemon:d1", label: "lancelot", host: "100.1.2.3", port: 7411, deviceToken: "tok" },
+    ]) {
+      bridgeFor(target).pickDirectory = async (options) => {
+        picks.push(options);
+        return "/home/rai/dev";
+      };
+    }
+
+    open();
+    await screen.findByText("dev");
+    // Local: the shortcut is offered, opens at the browsed directory, and its answer becomes
+    // the browsed (and therefore selected) directory.
+    await user.click(screen.getByRole("button", { name: "Browse…" }));
+    await screen.findByText("acme");
+    expect(picks).toEqual([{ defaultPath: "/home/rai" }]);
+    expect((screen.getByLabelText("Directory path") as HTMLInputElement).value).toBe(
+      "/home/rai/dev/",
+    );
+
+    await user.click(screen.getByRole("button", { name: /^Source:/ }));
+    await user.click(await screen.findByText("lancelot"));
+    await screen.findByText("services");
+    expect(screen.queryByRole("button", { name: "Browse…" })).toBeNull();
+  });
+
+  it("renders no Browse button when the bridge omits pickDirectory", async () => {
+    open();
+    renderDialog({ "fs.listDir": () => ({ result: HOME }) });
+    await screen.findByText("dev");
+    expect(screen.queryByRole("button", { name: "Browse…" })).toBeNull();
   });
 });

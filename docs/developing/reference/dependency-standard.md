@@ -134,7 +134,7 @@ These versions come from the current workspace manifests:
 | Processes and file watching | `execa`, `chokidar` | `10.0.0`, `5.0.0` |
 | Durable IDs | `uuid` | `14.0.1` |
 | Browser UI | `react`, `react-dom` | `19.2.8` |
-| UI failures and transient state | `react-error-boundary`, `zustand` | `6.1.2`, `5.0.14` |
+| UI transient state | `zustand` | `5.0.14` |
 | Renderer routing | `wouter` | `3.10.0` |
 | Renderer animation | `motion` | `13.1.1` |
 | Mobile | `expo`, `expo-router`, `react-native` | `~55.0.26`, `~55.0.16`, `0.83.6` |
@@ -231,6 +231,16 @@ Electron built-ins own native desktop facilities such as `utilityProcess`,
 `MessageChannelMain`, `safeStorage`, `nativeTheme`, notifications, deep links,
 external links, and crash dumps. Vite builds the renderer. Forge owns package,
 make, signing, notarization, and publishing targets.
+
+The macOS desktop disables Electron cookie encryption to avoid a Keychain
+password prompt during startup. GitHub credentials belong to the daemon and
+the embedded T3 connection uses bearer authentication, not browser cookies.
+Before opening its first Electron session, the primary process moves the old
+`Cookies` database and SQLite companion files into `encrypted-cookies-backup`
+under the session data directory. A completion marker makes the move resumable
+and prevents later launches from archiving newly created cookies. Local storage,
+preferences, and daemon data stay in place. New macOS cookies are unencrypted
+on disk; Windows retains cookie encryption.
 
 The public RSP contract is JSON-Schema-first. Private commands, events, and IPC
 use Zod. Do not define the same public wire shape independently in JSON Schema

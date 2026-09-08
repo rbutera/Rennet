@@ -17,6 +17,7 @@ import { randomUUID } from "node:crypto";
 import {
   ApprovalRequestId,
   type ClientOrchestrationCommand,
+  CodexCumulativeTokenUsage,
   CommandId,
   MessageId,
   type ModelSelection,
@@ -37,6 +38,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { RpcClient, RpcSerialization } from "effect/unstable/rpc";
@@ -74,6 +76,7 @@ export interface CreateThreadInput {
 }
 
 export interface StartTurnInput {
+  readonly startCommandId?: string;
   readonly threadId: string;
   readonly text: string;
   readonly modelSelection?: ModelSelection;
@@ -124,11 +127,11 @@ export interface TurnSettlement {
   readonly totalCostUsd?: number;
   readonly errorMessage?: string;
   /**
-   * T3's latest `context-window.updated` snapshot for the turn, unparsed. Codex reports
-   * its tokens here and nothing on the settlement; the snapshot is the last request's
-   * own figures. Absent when no snapshot landed for the turn.
+   * T3's latest `context-window.updated` snapshot for the turn, unparsed. The snapshot describes the last request's context; spend comes from aggregateUsage. Absent when no snapshot landed for the turn.
    */
   readonly tokenUsage?: unknown;
+  /** Codex turn totals derived from durable counters with exact provider turn identity. */
+  readonly aggregateUsage?: unknown;
   /**
    * The nearest earlier settled turn's usage on this thread. Claude's counter is
    * cumulative over the session, so a turn's own spend is the difference — read off the
@@ -146,6 +149,7 @@ export interface TurnOutcome extends TurnSettlement {
 
 /** What `startTurn` saw before it dispatched, so the wait can tell the new turn from the last one. */
 export interface TurnStart {
+  readonly startCommandId?: string;
   /** The thread's latest turn when this one was requested; `null` on a fresh thread. */
   readonly previousTurnId: string | null;
   /** The start command's own stamp. A session error recorded before it is an earlier turn's. */
@@ -396,7 +400,12 @@ export async function connectT3(options: T3ClientOptions): Promise<T3Client> {
       const previousTurnId =
         (await bounded(() => readThread(input.threadId), "could not be read before the turn start"))
           .latestTurn?.turnId ?? null;
-      const stamped = stamp();
+      const stamped = {
+        ...stamp(),
+        ...(input.startCommandId === undefined
+          ? {}
+          : { commandId: CommandId.make(input.startCommandId) }),
+      };
       await bounded(
         () =>
           dispatch({
@@ -404,7 +413,7 @@ export async function connectT3(options: T3ClientOptions): Promise<T3Client> {
             ...stamped,
             threadId: ThreadId.make(input.threadId),
             message: {
-              messageId: MessageId.make(randomUUID()),
+              messageId: MessageId.make(input.startCommandId ?? randomUUID()),
               role: "user",
               text: input.text,
               attachments: [],
@@ -417,7 +426,11 @@ export async function connectT3(options: T3ClientOptions): Promise<T3Client> {
           }),
         "did not accept the turn start",
       );
-      return { previousTurnId, requestedAt: stamped.createdAt };
+      return {
+        previousTurnId,
+        requestedAt: stamped.createdAt,
+        ...(input.startCommandId === undefined ? {} : { startCommandId: input.startCommandId }),
+      };
     },
     interruptTurn: async (threadId) => {
       await dispatch({
@@ -544,9 +557,38 @@ export async function awaitTurnSettled(
   /** The turn this wait is for: the latest one, unless it is the one already there at the start. */
   const currentTurn = (thread: OrchestrationThread | undefined) => {
     const latest = thread?.latestTurn;
+    if (after?.startCommandId !== undefined && thread !== undefined) {
+      const checkpoint = thread.checkpoints.find(
+        (entry) => entry.startCommandId === after.startCommandId,
+      );
+      const associated = thread.activities.find(
+        (entry) =>
+          entry.kind === "turn.start-associated" &&
+          typeof entry.payload === "object" &&
+          entry.payload !== null &&
+          "startCommandId" in entry.payload &&
+          entry.payload.startCommandId === after.startCommandId,
+      );
+      const turnId = checkpoint?.turnId ?? associated?.turnId;
+      if (latest != null && latest.turnId === turnId) return latest;
+      if (checkpoint !== undefined)
+        return {
+          turnId: checkpoint.turnId,
+          state:
+            checkpoint.status === "ready"
+              ? ("completed" as const)
+              : checkpoint.status === "error"
+                ? ("error" as const)
+                : ("interrupted" as const),
+        };
+      return undefined;
+    }
     return latest && latest.turnId !== after?.previousTurnId ? latest : undefined;
   };
+  // Preserve the schema path but omit the provider's stack, whichever failure arrives first.
+  const failureMessage = (detail: string): string => detail.split("\n    at ")[0] ?? detail;
   const sessionFailure = (thread: OrchestrationThread | undefined): string | undefined => {
+    if (after?.startCommandId !== undefined) return undefined;
     const session = thread?.session;
     if (!session || session.activeTurnId !== null) return undefined;
     if (session.status !== "stopped" && session.status !== "error") return undefined;
@@ -554,7 +596,7 @@ export async function awaitTurnSettled(
     if (after !== undefined && Date.parse(session.updatedAt) < Date.parse(after.requestedAt)) {
       return undefined;
     }
-    return session.lastError ?? undefined;
+    return session.lastError == null ? undefined : failureMessage(session.lastError);
   };
   /**
    * The sidecar accepted `thread.turn.start` and refused it afterwards, on the reactor's
@@ -564,20 +606,24 @@ export async function awaitTurnSettled(
    * `provider.turn.start.failed` activity with no turn id, and marks the session `error`
    * — which the session start it had just kicked off overwrites with `ready` a moment
    * later. So the session reads healthy, no turn row ever appears, and the activity is
-   * the only durable trace. One stamped at or after this request is this turn's refusal.
+   * the only durable trace. Correlated round starts match the exact request ID; older
+   * interactive callers retain their request-time fallback.
    */
   const startFailure = (thread: OrchestrationThread | undefined): string | undefined => {
     const refusal = thread?.activities.findLast(
       (activity) =>
         activity.kind === "provider.turn.start.failed" &&
         activity.turnId === null &&
-        (after === undefined || Date.parse(activity.createdAt) >= Date.parse(after.requestedAt)),
+        (after?.startCommandId !== undefined
+          ? typeof activity.payload === "object" &&
+            activity.payload !== null &&
+            "requestId" in activity.payload &&
+            activity.payload.requestId === after.startCommandId
+          : after === undefined || Date.parse(activity.createdAt) >= Date.parse(after.requestedAt)),
     );
     if (refusal === undefined) return undefined;
     const detail = asRecord(refusal.payload)?.detail;
-    // The detail is the failure's message followed by its stack frames (four-space
-    // `at file://…` lines); the message, schema path included, is the part worth carrying.
-    return typeof detail === "string" ? (detail.split("\n    at ")[0] ?? detail) : refusal.summary;
+    return typeof detail === "string" ? failureMessage(detail) : refusal.summary;
   };
   const settledOutcome = (
     thread: OrchestrationThread,
@@ -773,8 +819,44 @@ export function readTurnSettlement(
     ...(totalCostUsd === undefined ? {} : { totalCostUsd }),
     ...(errorMessage === undefined ? {} : { errorMessage }),
     ...(tokenUsage === undefined ? {} : { tokenUsage }),
+    ...readCodexTurnUsage(activities, turnId, settledAt),
     ...(previousUsage === undefined ? {} : { previousUsage }),
   };
+}
+
+/** Counter totals survive Codex resume; a new provider thread starts a new counter epoch. */
+function readCodexTurnUsage(
+  activities: OrchestrationThread["activities"],
+  turnId: string,
+  settledAt: number,
+): Pick<TurnSettlement, "aggregateUsage"> {
+  const saved = asRecord(activities[settledAt]?.payload)?.codexCumulativeUsage;
+  let total = Schema.is(CodexCumulativeTokenUsage)(saved) ? saved : undefined;
+  for (const activity of activities) {
+    if (activity.kind !== "context-window.updated" || activity.turnId !== turnId) continue;
+    const value = asRecord(activity.payload)?.codexCumulativeUsage;
+    if (!Schema.is(CodexCumulativeTokenUsage)(value)) continue;
+    // A duplicate or delayed earlier notification cannot replace a newer total.
+    if (!total || value.totalTokens >= total.totalTokens) total = value;
+  }
+  if (!total) return {};
+  const settlement = asRecord(activities[settledAt]?.payload);
+  const baselineValue = settlement?.codexUsageBaseline;
+  if (baselineValue !== null && !Schema.is(CodexCumulativeTokenUsage)(baselineValue)) return {};
+  const baseline =
+    baselineValue?.providerThreadId === total.providerThreadId ? baselineValue : undefined;
+  const inputTokens = total.inputTokens - (baseline?.inputTokens ?? 0);
+  const cachedInputTokens = total.cachedInputTokens - (baseline?.cachedInputTokens ?? 0);
+  const outputTokens = total.outputTokens - (baseline?.outputTokens ?? 0);
+  if (
+    inputTokens < 0 ||
+    cachedInputTokens < 0 ||
+    outputTokens < 0 ||
+    cachedInputTokens > inputTokens ||
+    total.totalTokens - (baseline?.totalTokens ?? 0) !== inputTokens + outputTokens
+  )
+    return {};
+  return { aggregateUsage: { inputTokens, cachedInputTokens, outputTokens } };
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {

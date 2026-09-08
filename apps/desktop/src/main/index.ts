@@ -26,6 +26,7 @@ import {
   startAutoUpdateOnce,
 } from "./auto-update";
 import { buildContextMenuTemplate } from "./context-menu";
+import { archiveEncryptedCookies } from "./cookie-store";
 import {
   ensureDaemon,
   ensureDaemonForProject,
@@ -54,8 +55,9 @@ if (squirrelStartup) {
 }
 
 // The source-aware project picker's WSL branch: the renderer asks MAIN which distros
-// are installed, so it can list them instead of the user typing a distro name. The native
-// directory picker (#379) is retired — the in-app directory browser supplies the path now.
+// are installed, so it can list them instead of the user typing a distro name. The in-app
+// directory browser supplies the path; the native dialog (PICK_DIRECTORY_CHANNEL) is only a
+// shortcut into it.
 const LIST_WSL_DISTROS_CHANNEL = "rennet:list-wsl-distros";
 // The renderer asks MAIN to ensure the daemon for a project PATH and hand back its ws port —
 // a host path resolves the host daemon, a `\\wsl.localhost\<distro>\…` path spawns (or
@@ -69,6 +71,10 @@ const RESOLVE_DAEMON_FOR_PATH_CHANNEL = "rennet:resolve-daemon-for-path";
 const WSL_CONNECT_LOG_CHANNEL = "rennet:wsl-connect-log";
 const WSL_CONNECT_LOG_FILE = "wsl-connect.log";
 const OPEN_FULL_DISK_ACCESS_CHANNEL = "rennet:open-full-disk-access";
+// The native folder dialog is back as a SHORTCUT into the in-app directory browser (the
+// browser stays the path's source of truth; the renderer jumps it to whatever the dialog
+// returned). Offered only while the browser lists this machine.
+const PICK_DIRECTORY_CHANNEL = "rennet:pick-directory";
 const APP_ORIGIN = "app://rennet";
 // The renderer asks for the daemon's WS port here instead of reading it from argv. It CANNOT
 // be an argv constant any more: the window is created before the daemon is healthy (perf audit
@@ -128,6 +134,23 @@ function registerListWslDistrosHandler(): void {
       const { stdout } = await execFileAsync(cmd, args, { encoding: "utf16le" });
       return stdout;
     });
+  });
+}
+
+function registerPickDirectoryHandler(): void {
+  ipcMain.handle(PICK_DIRECTORY_CHANNEL, async (event, defaultPath: unknown) => {
+    if (!event.senderFrame || !isTrustedAppUrl(event.senderFrame.url)) return null;
+    const owner = BrowserWindow.fromWebContents(event.sender);
+    const options = {
+      title: "Choose a folder",
+      properties: ["openDirectory", "createDirectory"] as ("openDirectory" | "createDirectory")[],
+      ...(typeof defaultPath === "string" && defaultPath.length > 0 ? { defaultPath } : {}),
+    };
+    const result = owner
+      ? await dialog.showOpenDialog(owner, options)
+      : await dialog.showOpenDialog(options);
+    if (result.canceled) return null;
+    return result.filePaths[0] ?? null;
   });
 }
 
@@ -357,6 +380,10 @@ const isPrimaryInstance = acquireSingleInstance({
   onPrimary: () => app.on("second-instance", () => void ensureWindowShared()),
 });
 
+if (isPrimaryInstance && process.platform === "darwin") {
+  archiveEncryptedCookies(app.getPath("sessionData"));
+}
+
 /** Tray "Quit completely": stop the OWNED daemon (graceful), then exit. No prompt (spec). */
 async function quitCompletely(dataDir: string): Promise<void> {
   // Before the stop, not after: the renderer reconnects while the SIGTERM lands.
@@ -426,6 +453,7 @@ app.whenReady().then(async () => {
   registerAppProtocol();
   registerListWslDistrosHandler();
   registerFullDiskAccessHandler();
+  registerPickDirectoryHandler();
   registerDaemonForPathResolver(dataDir);
   registerWsPortHandler();
   await createWindow();

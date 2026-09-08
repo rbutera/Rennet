@@ -273,7 +273,7 @@ export async function smokePackagedApp(appPathInput) {
   for (const expected of [
     // RunAsNode is ENABLED (#379): the detached daemon runs the Electron binary as Node.
     "RunAsNode is Enabled",
-    "EnableCookieEncryption is Enabled",
+    "EnableCookieEncryption is Disabled",
     "EnableNodeOptionsEnvironmentVariable is Disabled",
     "EnableNodeCliInspectArguments is Disabled",
     "EnableEmbeddedAsarIntegrityValidation is Enabled",

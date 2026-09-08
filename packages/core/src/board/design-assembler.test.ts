@@ -166,16 +166,11 @@ describe("assembleDesignBoard", () => {
     expect(statements).toEqual(["The Design lens drafts from the spec"]);
   });
 
-  // The other half, and the one that keeps `transcribed` from meaning "lint off": the
-  // register drops the VOICE screens and nothing else. A citation the reader cannot
-  // resolve is still a broken board, whoever wrote the sentence, so it still throws — and
-  // it throws naming `citation-well-formed`, not some generic mapping error.
-  it("still refuses quoted prose that carries a citation a reader cannot resolve", () => {
-    const badCitation: OpenSpecChangeSource = {
-      ...CHANGE,
-      proposalMd: ["## Why", "The restart path is wrong; see app.tsx:551."].join("\n"),
-    };
-    expect(() => assemble(badCitation)).toThrow(/citation-well-formed/);
+  it("preserves an illustrative basename as transcribed prose", () => {
+    const text = "The restart example uses app.tsx:551.";
+    const board = assemble({ ...CHANGE, proposalMd: `## Why\n${text}` });
+    expect(board?.document?.introMarkdown).toBe(text);
+    expect(board?.document?.proseRegister).toBe("transcribed");
   });
 
   // POSITIVE CONTROL: the assembled board goes through the SAME lint every seat board
@@ -224,7 +219,7 @@ describe("assembleDesignBoard on the other formats", () => {
           "# Requirements Document",
           "",
           "## Introduction",
-          "Reviewers lose their place when the app restarts.",
+          "Reviewers lose their place when the app restarts. Example: `example/file.ts:42` and sample.ts:99.",
           "",
           "### Requirement 1",
           "",
@@ -259,7 +254,9 @@ describe("assembleDesignBoard on the other formats", () => {
 
     expect(board.document?.title).toBe("session-restore");
     // The `## Introduction` prose is the document's own opening, verbatim.
-    expect(board.document?.introMarkdown).toBe("Reviewers lose their place when the app restarts.");
+    expect(board.document?.introMarkdown).toBe(
+      "Reviewers lose their place when the app restarts. Example: `example/file.ts:42` and sample.ts:99.",
+    );
     expect(board.document?.stats).toEqual([
       { label: "Format", value: "Kiro" },
       { label: "Capabilities", value: "1" },
@@ -325,7 +322,7 @@ describe("assembleDesignBoard on the other formats", () => {
           "",
           "### Functional",
           "",
-          "1. FR1: The application restores the last session.",
+          "1. FR1: The application restores the last session. Example: `example/file.ts:42` and sample.ts:99.",
           "",
           "## Technical Assumptions",
           "- **Repository Structure:** Monorepo",
@@ -390,7 +387,7 @@ describe("assembleDesignBoard on the other formats", () => {
     const requirements = board.elements.filter((el) => el.kind === "requirement");
     expect(requirements.map((el) => (el.data as { shall?: string }).shall)).toEqual([
       // The parser lifts the `FR1:` label off the registry row and carries it as `name`.
-      "The application restores the last session.",
+      "The application restores the last session. Example: `example/file.ts:42` and sample.ts:99.",
       "**As a** reviewer, **I want** my session restored, **so that** I can resume work.",
     ]);
     // The tech-stack row states its rationale, so it lands as a decision. The Technical
@@ -425,7 +422,7 @@ describe("assembleDesignBoard on the other formats", () => {
               "## Decisions",
               "",
               "### Keep session state local",
-              "It preserves atomic writes and offline recovery.",
+              "It preserves atomic writes and offline recovery. Example: `example/file.ts:42` and sample.ts:99.",
             ].join("\n"),
           },
         ],
@@ -486,7 +483,7 @@ describe("assembleDesignBoard on the other formats", () => {
     const decision = board.elements.find((el) => el.kind === "decision");
     expect(decision?.data).toMatchObject({
       statement: "Keep session state local",
-      why: "It preserves atomic writes and offline recovery.",
+      why: "It preserves atomic writes and offline recovery. Example: `example/file.ts:42` and sample.ts:99.",
       inferred: false,
     });
     expect(proseOf(board)).toContain("Task 1: complete (all steps green)");
@@ -518,7 +515,7 @@ describe("assembleDesignBoard on the other formats", () => {
         adrs: [
           {
             path: "docs/adr/0003-keep-an-event-store.md",
-            md: "# Keep an event store\n\nIt preserves review history.\n",
+            md: "# Keep an event store\n\nIt preserves review history. Example: `example/file.ts:42` and sample.ts:99.\n",
           },
         ],
         contextDocs: [
@@ -547,7 +544,7 @@ describe("assembleDesignBoard on the other formats", () => {
     const decision = board.elements.find((el) => el.kind === "decision");
     expect(decision?.data).toMatchObject({
       statement: "Keep an event store",
-      why: "It preserves review history.",
+      why: "It preserves review history. Example: `example/file.ts:42` and sample.ts:99.",
     });
     // A glossary entry is its source lines through the `_Avoid_` line, on one line.
     const entry = board.elements.find((el) =>

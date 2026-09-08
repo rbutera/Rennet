@@ -1,6 +1,6 @@
 import { readdir } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, sep } from "node:path";
 import type { FsEntry, FsListDirResult } from "@rennet/protocol";
 
 export interface FsListDirDeps {
@@ -38,7 +38,10 @@ export async function listDir(
   deps: FsListDirDeps,
 ): Promise<FsListDirResult> {
   const home = deps.homedir();
-  const path = input.path && input.path.length > 0 ? input.path : home;
+  // The browser's path bar shows a directory WITH a trailing separator, so a typed path
+  // usually arrives with one. Drop it here so the echoed `path` (which the flow submits as
+  // the project root) is canonical whichever client typed it.
+  const path = input.path && input.path.length > 0 ? stripTrailingSeparator(input.path) : home;
   // A failure to read the TARGET dir (nonexistent / permission-denied path) is a real
   // fault, not an empty directory — let it propagate so the RPC rejects and the browser
   // shows an inline error with Continue DISABLED (SPEC: invalid typed path), instead of
@@ -61,4 +64,17 @@ export async function listDir(
   );
   const parent = dirname(path);
   return { path, home, parent: parent === path ? null : parent, entries };
+}
+
+/**
+ * `/Users/rai/` → `/Users/rai`; on a Windows daemon `C:\dev\` and `C:/dev/` → `C:\dev` / `C:/dev`.
+ * Only the daemon's OWN separators count: a POSIX folder can legitimately be named `repo\`.
+ * A bare root keeps its separator (`/`, and `C:\`, since `C:` alone means the drive's current
+ * directory). `separator` is injectable so the Windows branch is testable off Windows.
+ */
+export function stripTrailingSeparator(path: string, separator: string = sep): string {
+  const trailing = separator === "\\" ? /[\\/]+$/ : /\/+$/;
+  const stripped = path.replace(trailing, "");
+  const bareRoot = stripped.length === 0 || (separator === "\\" && /^[A-Za-z]:$/.test(stripped));
+  return bareRoot ? path : stripped;
 }

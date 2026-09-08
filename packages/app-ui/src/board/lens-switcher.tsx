@@ -1,5 +1,5 @@
 import type { LensKind } from "@rennet/protocol";
-import { cn, Tooltip, TooltipContent, TooltipTrigger } from "@rennet/ui";
+import { cn } from "@rennet/ui";
 import {
   DraftingCompass,
   Flag,
@@ -8,7 +8,7 @@ import {
   type LucideIcon,
   VolumeX,
 } from "lucide-react";
-import { Fragment, useId, useLayoutEffect, useRef } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { useCoachAnchor } from "../coach/registry";
 import { Icon } from "../components/icon";
 import { ReviewActivity } from "../components/review-activity";
@@ -160,7 +160,7 @@ export function LensSwitcher({
   readonly reviewId?: string;
   readonly generation?: string;
 }) {
-  const waitingExplanationId = useId();
+  const [inspected, setInspected] = useState<LensKind | null>(null);
   const selectedTab = useRef<HTMLButtonElement>(null);
   useLayoutEffect(() => {
     if (selected && selectedTab.current) revealTab(selectedTab.current);
@@ -207,7 +207,6 @@ export function LensSwitcher({
                       ? ", changed this round"
                       : "";
         const active = lens === selected;
-        const noiseWaiting = lens === "noise" && seat.waitingOn.length > 0;
         const tab = (
           <button
             type="button"
@@ -215,7 +214,6 @@ export function LensSwitcher({
             onFocus={(event) => revealTab(event.currentTarget)}
             role="tab"
             aria-selected={active}
-            aria-describedby={noiseWaiting ? waitingExplanationId : undefined}
             aria-disabled={lens === "noise" && seat.waitingOn.length > 0}
             aria-description={
               lens === "noise" && seat.waitingOn.length > 0
@@ -223,13 +221,6 @@ export function LensSwitcher({
                 : undefined
             }
             aria-label={`${LENS_LABEL[lens]}${accessibleStatus}`}
-            title={
-              noiseWaiting
-                ? undefined
-                : seat.register === "waiting" && waiting
-                  ? `${LENS_LABEL[lens]} — ${waiting}`
-                  : LENS_LABEL[lens]
-            }
             data-lens={lens}
             data-lens-slot={lensSlot(lens)}
             data-register={seat.register}
@@ -278,21 +269,16 @@ export function LensSwitcher({
           </button>
         );
         return (
-          <Fragment key={lens}>
-            {noiseWaiting ? (
-              <Tooltip>
-                <TooltipTrigger render={tab} />
-                <TooltipContent id={waitingExplanationId} role="tooltip" side="bottom">
-                  Noise reviews what remains once the other lenses have finished.
-                </TooltipContent>
-              </Tooltip>
-            ) : (
-              tab
-            )}
-            {active && seat.seated ? (
-              <LensActivity reviewId={reviewId} generation={generation} entry={{ lens, seat }} />
-            ) : null}
-          </Fragment>
+          <LensActivity
+            key={`${reviewId}:${generation}:${lens}`}
+            reviewId={reviewId}
+            generation={generation}
+            entry={{ lens, seat }}
+            active={active}
+            inspected={inspected}
+            setInspected={setInspected}
+            tab={tab}
+          />
         );
       })}
     </div>

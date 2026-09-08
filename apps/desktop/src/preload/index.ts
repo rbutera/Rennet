@@ -3,8 +3,8 @@ import { contextBridge, type IpcRendererEvent, ipcRenderer } from "electron";
 // The preload no longer forwards commands or filters push streams — those moved to the
 // loopback WS transport (#378), which the renderer reaches through @rennet/client's
 // WsRennetBridge. What remains is the Electron-native residue the renderer merges with
-// that bridge: the host platform, the WS port to dial, the directory picker, and the
-// host-app updater channels.
+// that bridge: the host platform, the WS port to dial, the native folder dialog (a shortcut
+// into the in-app directory browser), and the host-app updater channels.
 // The source-aware project picker's WSL branch: lists installed distros so the
 // renderer offers them instead of the user typing a distro name.
 const LIST_WSL_DISTROS_CHANNEL = "rennet:list-wsl-distros";
@@ -16,6 +16,10 @@ const WSL_CONNECT_LOG_CHANNEL = "rennet:wsl-connect-log";
 const UPDATE_READY_CHANNEL = "rennet:update-ready";
 const UPDATE_APPLY_CHANNEL = "rennet:update-apply";
 const OPEN_FULL_DISK_ACCESS_CHANNEL = "rennet:open-full-disk-access";
+// The native folder dialog, as a shortcut into the in-app directory browser (which stays the
+// path's source of truth, so remote/WSL sources browse identically). Only offered while the
+// browser lists THIS machine.
+const PICK_DIRECTORY_CHANNEL = "rennet:pick-directory";
 // The daemon's WS port used to ride the renderer argv as a boot-time constant. It cannot: MAIN
 // creates the window BEFORE the daemon is healthy now (perf audit §2/§6 H1), so the port is an
 // answer that arrives later, over this channel.
@@ -90,6 +94,11 @@ export interface RennetPreload {
   applyUpdate(): void;
   /** Open macOS System Settings at Privacy & Security → Full Disk Access. */
   openFullDiskAccessSettings(): Promise<boolean>;
+  /**
+   * Show the OS folder dialog, opened at `defaultPath` when given. Resolves to the chosen
+   * absolute path, or null when the user cancelled (or the caller is untrusted).
+   */
+  pickDirectory(options: { defaultPath?: string }): Promise<string | null>;
 }
 
 // The app version IS a boot-time constant injected via webPreferences.additionalArguments;
@@ -127,6 +136,10 @@ const preload: RennetPreload = {
   applyUpdate: () => ipcRenderer.send(UPDATE_APPLY_CHANNEL),
   openFullDiskAccessSettings: () =>
     ipcRenderer.invoke(OPEN_FULL_DISK_ACCESS_CHANNEL) as Promise<boolean>,
+  pickDirectory: (options) =>
+    ipcRenderer.invoke(PICK_DIRECTORY_CHANNEL, options?.defaultPath ?? null) as Promise<
+      string | null
+    >,
 };
 
 contextBridge.exposeInMainWorld("rennet", preload);

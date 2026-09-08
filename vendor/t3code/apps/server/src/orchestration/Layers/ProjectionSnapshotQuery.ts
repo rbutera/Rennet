@@ -1,4 +1,5 @@
 import {
+  CommandId,
   ChatAttachment,
   CheckpointRef,
   IsoDateTime,
@@ -112,6 +113,7 @@ const ProjectionThreadSessionDbRowSchema = ProjectionThreadSession;
 const ProjectionCheckpointDbRowSchema = ProjectionCheckpoint.mapFields(
   Struct.assign({
     files: Schema.fromJsonString(Schema.Array(OrchestrationCheckpointFile)),
+    startCommandId: Schema.NullOr(Schema.String),
   }),
 );
 const ProjectionLatestTurnDbRowSchema = Schema.Struct({
@@ -714,7 +716,12 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           checkpoint_status AS "status",
           checkpoint_files_json AS "files",
           assistant_message_id AS "assistantMessageId",
-          completed_at AS "completedAt"
+          completed_at AS "completedAt",
+          (SELECT json_extract(activity.payload_json, '$.startCommandId')
+           FROM projection_thread_activities AS activity
+           WHERE activity.activity_id = 'turn-start:' || projection_turns.thread_id || ':' || projection_turns.turn_id
+             AND activity.kind = 'turn.start-associated'
+           LIMIT 1) AS "startCommandId"
         FROM projection_turns
         WHERE checkpoint_turn_count IS NOT NULL
         ORDER BY thread_id ASC, checkpoint_turn_count ASC
@@ -1247,7 +1254,12 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           checkpoint_status AS "status",
           checkpoint_files_json AS "files",
           assistant_message_id AS "assistantMessageId",
-          completed_at AS "completedAt"
+          completed_at AS "completedAt",
+          (SELECT json_extract(activity.payload_json, '$.startCommandId')
+           FROM projection_thread_activities AS activity
+           WHERE activity.activity_id = 'turn-start:' || projection_turns.thread_id || ':' || projection_turns.turn_id
+             AND activity.kind = 'turn.start-associated'
+           LIMIT 1) AS "startCommandId"
         FROM projection_turns
         WHERE thread_id = ${threadId}
           AND checkpoint_turn_count IS NOT NULL
@@ -1805,6 +1817,7 @@ pending_approval_requests AS (
                 threadCheckpoints.push({
                   turnId: row.turnId,
                   checkpointTurnCount: row.checkpointTurnCount,
+                  ...(row.startCommandId === null ? {} : { startCommandId: CommandId.make(row.startCommandId) }),
                   checkpointRef: row.checkpointRef,
                   status: row.status,
                   files: row.files,
@@ -2612,6 +2625,7 @@ pending_approval_requests AS (
           (row): OrchestrationCheckpointSummary => ({
             turnId: row.turnId,
             checkpointTurnCount: row.checkpointTurnCount,
+                  ...(row.startCommandId === null ? {} : { startCommandId: CommandId.make(row.startCommandId) }),
             checkpointRef: row.checkpointRef,
             status: row.status,
             files: row.files,
@@ -2967,6 +2981,7 @@ pending_approval_requests AS (
         checkpoints: checkpointRows.map((row) => ({
           turnId: row.turnId,
           checkpointTurnCount: row.checkpointTurnCount,
+                  ...(row.startCommandId === null ? {} : { startCommandId: CommandId.make(row.startCommandId) }),
           checkpointRef: row.checkpointRef,
           status: row.status,
           files: row.files,

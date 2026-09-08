@@ -47,6 +47,11 @@ describe("Section fold grammar", () => {
     expect(container.querySelector("[data-testid=delta-dot]")).toBeNull();
   });
 
+  it("names Noise members as regions rather than extra groups", () => {
+    expect(sectionCountText({ groups: 24 })).toBe("24 regions");
+    expect(sectionCountText({ noise_verdict: 1 })).toBe("1 region");
+  });
+
   it("normalizes legacy raw kinds to ordered domain-object counts", () => {
     expect(
       sectionCountText({
@@ -118,6 +123,26 @@ function previewTree(children: string[], content: HostElement[]) {
     </BoardElementsProvider>
   );
 }
+
+describe("Section without a fold", () => {
+  it("stands open with no toggle and no preview, and still names its title and counts", () => {
+    const elements: HostElement[] = [
+      { id: "root", kind: "section", data: { author, title: "Findings", children: ["intro"] } },
+      { id: "intro", kind: "prose", data: { author, markdown: "The one row." } },
+    ];
+    const view = mount(
+      <BoardElementsProvider elements={elements} boardId="flat-board">
+        <Section entry={previewEntry} foldable={false} />
+      </BoardElementsProvider>,
+    );
+    const section = view.container.querySelector("[data-kind=board-section]");
+    expect(section?.getAttribute("data-open")).toBe("true");
+    expect(section?.querySelector("button[aria-expanded]")).toBeNull();
+    expect(view.queryByRole("list", { name: "Findings contents" })).toBeNull();
+    expect(view.getByRole("heading", { level: 2 }).textContent).toContain("Findings");
+    expect(view.getByText("The one row.")).toBeTruthy();
+  });
+});
 
 describe("Section content previews", () => {
   it("lists nested headings and titled children in document order, then opens and focuses the chosen child", async () => {
