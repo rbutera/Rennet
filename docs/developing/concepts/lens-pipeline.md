@@ -793,7 +793,8 @@ noise — to a visible one a reviewer can see, name and route.
 
 Fold counts are reader-facing domain objects, not raw element-kind tallies. The
 projection emits findings, decisions, requirements, steps, outcomes, groups,
-files, and comments from each section's direct children. Repeated code refs for
+files, and comments from each section's direct children. The stored `groups` count
+counts Noise members, so the UI labels it as changed regions within that group. Repeated code refs for
 one path count as one file, and structural prose does not inflate the count. A
 pair with no persisted board answers `null`. A successful empty result is typed
 instead of persisted as a zero-element board: Design uses `no-spec`,
