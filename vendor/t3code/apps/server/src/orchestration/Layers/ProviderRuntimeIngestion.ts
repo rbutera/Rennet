@@ -51,11 +51,12 @@ import { canReplaceThreadTitle } from "../threadTitles.ts";
 
 const activityPayload = (value: unknown): Record<string, unknown> => Predicate.isObject(value) ? value : {};
 
-function latestCodexUsage(activities: ReadonlyArray<OrchestrationThreadActivity> = []) {
+function latestCodexUsage(activities: ReadonlyArray<OrchestrationThreadActivity> = [], providerThreadId?: string) {
   let total: CodexCumulativeTokenUsage | undefined;
   for (const activity of activities) {
     const value = activityPayload(activity.payload).codexCumulativeUsage;
     if (!Schema.is(CodexCumulativeTokenUsage)(value)) continue;
+    if (providerThreadId !== undefined && value.providerThreadId !== providerThreadId) continue;
     if (!total || value.providerThreadId !== total.providerThreadId || value.totalTokens > total.totalTokens) {
       total = value;
     }
@@ -2103,8 +2104,12 @@ const make = Effect.gen(function* () {
         const existing = previous?.activities.findLast((activity) =>
           activity.kind === "turn.usage-baseline" && activity.turnId === event.turnId);
         if (!existing) {
-          const baseline = latestCodexUsage(previous?.activities);
-          const empty = !previous?.activities.some((activity) => activity.kind === "turn.settled" || activity.kind === "context-window.updated");
+          const providerThreadId = activityPayload(event.raw?.payload).threadId;
+          const predecessor = previous?.activities.findLast((activity) => activity.kind === "turn.settled");
+          const baseline = typeof providerThreadId === "string"
+            ? latestCodexUsage(previous?.activities, providerThreadId) ?? activityPayload(predecessor?.payload).codexCumulativeUsage
+            : undefined;
+          const empty = typeof providerThreadId === "string" && !previous?.activities.some((activity) => activity.kind === "turn.settled" || activity.kind === "context-window.updated");
           activities = [{
             id: event.eventId, createdAt: event.createdAt, tone: "info",
             kind: "turn.usage-baseline", summary: "Turn usage baseline", turnId: event.turnId,

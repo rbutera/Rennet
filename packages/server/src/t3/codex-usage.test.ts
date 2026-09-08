@@ -2,10 +2,17 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { settledTurnUsage } from "@rennet/adapters";
 import { expect, it } from "vitest";
 import { connectT3, modelSelection, type T3Client } from "./client";
-import { type RunningSidecar, resolveSidecarBundle, spawnSidecar, stopSidecar } from "./sidecar";
+import {
+  type RunningSidecar,
+  resolveSidecarBundle,
+  sidecarBaseDir,
+  spawnSidecar,
+  stopSidecar,
+} from "./sidecar";
 
 const bundle = resolveSidecarBundle({});
 
@@ -97,6 +104,39 @@ createInterface({ input: process.stdin }).on('line', (line) => {
       });
       const results = [];
       for (let turn = 0; turn < 2; turn += 1) {
+        if (turn === 1) {
+          // A queued old runtime event lands after the replacement provider settled.
+          // Seed the persisted activity because the new runtime filters foreign wire events.
+          const database = new DatabaseSync(
+            join(sidecarBaseDir(dataDir), "userdata", "state.sqlite"),
+          );
+          try {
+            database
+              .prepare(`INSERT INTO projection_thread_activities
+              (activity_id, thread_id, turn_id, tone, kind, summary, payload_json, created_at, sequence)
+              VALUES (?, ?, ?, 'info', 'context-window.updated', 'Context window updated', ?, ?,
+                (SELECT COALESCE(MAX(sequence), 0) + 1 FROM projection_thread_activities))`)
+              .run(
+                "late-old-provider",
+                threadId,
+                "old-turn",
+                JSON.stringify({
+                  usedTokens: 1_200,
+                  codexCumulativeUsage: {
+                    providerThreadId: "old-provider",
+                    inputTokens: 9_000,
+                    cachedInputTokens: 2_000,
+                    outputTokens: 1_000,
+                    reasoningOutputTokens: 100,
+                    totalTokens: 10_000,
+                  },
+                }),
+                new Date().toISOString(),
+              );
+          } finally {
+            database.close();
+          }
+        }
         const start = await client.startTurn({ threadId, text: "fixture" });
         results.push(
           await client.waitForTurnSettled(threadId, { after: start, startTimeoutMs: 15_000 }),
