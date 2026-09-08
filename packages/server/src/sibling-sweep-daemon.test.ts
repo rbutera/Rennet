@@ -446,6 +446,48 @@ describe("what the sweep may prune (workspace-settings D5)", () => {
     );
   });
 
+  it("does not COLLECT the sibling a work-branch-only claim protects from the prune (F3)", {
+    timeout: 60_000,
+  }, async () => {
+    // CODEX'S REPRODUCTION. The prune guard and the orphan collection asked two different
+    // questions about the same word. `pruneUnclaimedRegistrations` matched a claim by work
+    // branch OR by either path spelling; `orphanedSiblings` matched by PATH ONLY. So a
+    // session that recorded `workBranch` and no `boundRoot` — a crash between the branch
+    // write and the binding write, which is exactly the state the sweep exists for — kept
+    // its registration and lost its BRANCH AND ITS WORKTREE ten lines later. Collection is
+    // the stronger act of the two; it was asking the weaker question.
+    //
+    // The fixture is the work-branch-claim one above PLUS the two facts collection needs to
+    // actually fire: the reviewed branch exists, and the sibling is reachable from it (both
+    // sit at `main`), so `collectSibling` would remove the worktree and delete the branch.
+    // Without those the case is invisible — collection bails at "rennet/feat/y is gone".
+    const fx = pruneFixture();
+    git(fx.repo, ["branch", "feat/y", "refs/heads/main"]);
+    const sibling = join(fx.worktreeRoot, "sibling", "rennet", "feat", "y");
+    fx.register(sibling, "rennet/feat/y");
+    seedSession(fx.dataDir, {
+      id: "s-branch-only",
+      projectId: "p-1",
+      threads: [],
+      createdAt: 1,
+      repositoryRoot: fx.repo,
+      workBranch: "rennet/feat/y",
+    });
+
+    const log = await startAndSweep(fx.dataDir);
+
+    // The registration, the directory AND the branch: all three are what collection takes.
+    expect(fx.registrations()).toContain(sibling);
+    expect(existsSync(sibling)).toBe(true);
+    expect(git(fx.repo, ["rev-parse", "refs/heads/rennet/feat/y"]).trim().length).toBeGreaterThan(
+      0,
+    );
+    // And it was SKIPPED, not merely kept: `collectSibling` logs a reason for every sibling
+    // it decides about, so a run that reached it would say so about this branch.
+    expect(log.some((line) => line.includes("rennet/feat/y"))).toBe(false);
+    expect(log.some((line) => line.includes("sibling sweep collected 0, kept 0"))).toBe(true);
+  });
+
   it("PRUNES a Rennet worktree nothing claims, when it is the only unreachable one", {
     timeout: 60_000,
   }, async () => {

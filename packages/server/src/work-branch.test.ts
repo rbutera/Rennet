@@ -647,7 +647,7 @@ describe("sibling collection (D5, task 2.6)", () => {
       git: gitExec,
       repoRoot: repo,
       under: (path) => path.startsWith(worktrees),
-      claimed: (path) => path === other,
+      claimed: (record) => record.path === other,
     });
 
     expect(found).toEqual([{ path: sibling, siblingBranch: "rennet/feat/x", branch: "feat/x" }]);

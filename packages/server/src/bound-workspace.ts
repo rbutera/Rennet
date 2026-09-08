@@ -10,10 +10,9 @@
 // out, a pull request whose head branch does not exist locally — and none of those are
 // reachable through a composition root.
 
-import { realpathSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
 import {
   branchWorktreePath,
+  comparablePath,
   ensureBranchWorktree,
   ensurePrWorktree,
   ensureSiblingWorktree,
@@ -113,57 +112,15 @@ export interface BoundWorkspaceDeps {
 }
 
 /**
- * Re-spell a path GIT printed into the spelling the DAEMON uses for this repository.
+ * The comparable form of a path — `realpath` where it exists, the deepest existing ancestor
+ * plus the literal tail where it does not.
  *
- * They differ in exactly one arrangement, and it is a live one (task 5.2, PR #789): a daemon on
- * Windows driving a WSL-locus project addresses the repository as `\\wsl$\Ubuntu\home\u\repo`,
- * while the git it runs lives inside the distro and answers `/home/u/repo`. Storing git's answer
- * as `boundRoot` would make `existsSync` refuse every thread, `detectLocus` read the path as the
- * HOST, and the context writer mkdir `C:\home\u\…`.
- *
- * Only that arrangement is rewritten. A daemon running INSIDE the distro already addresses the
- * repository the way git does, and a host-locus repository never had two spellings.
+ * DEFINED IN `@rennet/adapters` and re-exported here, so the daemon's sweep and the two
+ * binds ask one question one way. This module was its only home while the sweep was its
+ * only caller; the binds match registrations the same way now (review finding F4), and
+ * `adapters` is the package both sides may import.
  */
-export function comparablePath(path: string): string {
-  try {
-    return realpathSync(path);
-  } catch {
-    return resolveThroughExistingAncestor(path);
-  }
-}
-
-/**
- * The comparable form of a path that DOES NOT EXIST: the deepest ancestor that does exist,
- * resolved, with the remaining segments re-attached literally.
- *
- * `realpathSync` throws on a missing directory, and the paths this module compares hardest
- * are exactly the missing ones — an UNREACHABLE worktree registration is a directory that
- * is gone, and the question asked of it is whether a live session's recorded `boundRoot`
- * names it. Returning both sides literally answers "no" for a pair that differs only in a
- * symlinked ancestor, which on macOS is every path under `/var` (`/private/var`) and every
- * default `TMPDIR`. Codex reproduced the consequence: the sweep pruned a registration a
- * live session was bound to, because git had printed the resolved spelling and the session
- * had recorded the daemon's.
- *
- * NOTE what is and is not resolved. The missing directory itself is never `realpath`ed —
- * it cannot be. Only an ancestor that exists is, which is an exact operation, so this never
- * makes two different directories compare equal. A path with no existing ancestor at all
- * (an unreachable UNC root) comes back literal, and still compares equal to itself.
- */
-function resolveThroughExistingAncestor(path: string): string {
-  const tail: string[] = [];
-  let current = path;
-  for (;;) {
-    const parent = dirname(current);
-    if (parent === current) return path; // reached the root without finding anything
-    tail.unshift(basename(current));
-    try {
-      return join(realpathSync(parent), ...tail);
-    } catch {
-      current = parent;
-    }
-  }
-}
+export { comparablePath };
 
 /**
  * Whether two paths name the SAME directory: resolved through symlinks, so `/var/x` and
@@ -176,6 +133,18 @@ export function sameDirectory(a: string, b: string): boolean {
   return left === right || left.toLowerCase() === right.toLowerCase();
 }
 
+/**
+ * Re-spell a path GIT printed into the spelling the DAEMON uses for this repository.
+ *
+ * They differ in exactly one arrangement, and it is a live one (task 5.2, PR #789): a daemon on
+ * Windows driving a WSL-locus project addresses the repository as `\\wsl$\Ubuntu\home\u\repo`,
+ * while the git it runs lives inside the distro and answers `/home/u/repo`. Storing git's answer
+ * as `boundRoot` would make `existsSync` refuse every thread, `detectLocus` read the path as the
+ * HOST, and the context writer mkdir `C:\home\u\…`.
+ *
+ * Only that arrangement is rewritten. A daemon running INSIDE the distro already addresses the
+ * repository the way git does, and a host-locus repository never had two spellings.
+ */
 export function inRepoSpelling(gitPath: string, repositoryRoot: string, locus: Locus): string {
   if (locus.kind !== "wsl") return gitPath;
   // The daemon is inside the distro when it addresses the repository distro-natively; then git's

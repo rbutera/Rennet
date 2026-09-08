@@ -19,6 +19,7 @@ import {
   refExists,
   SIBLING_BRANCH_PREFIX,
   siblingIsCollectable,
+  type WorktreeRecord,
 } from "@rennet/adapters";
 
 /** `git(cwd, args)` — the locus-aware exec the daemon builds per repository. */
@@ -159,17 +160,21 @@ export interface OrphanedSibling {
  * that worktree is not the candidate rule but `collectSibling`'s: an unreachable sibling
  * keeps its worktree AND its branch.
  *
- * `claimedPaths` is compared as git spells it, because that is what this list is built from
- * and what the removal is handed. A path a live session records under another spelling is
- * the WSL arrangement, and the caller passes both spellings for exactly that reason: a
- * missed match here does not leave a stale directory, it DELETES a workspace someone is
- * working in.
+ * `claimed` IS HANDED THE WHOLE RECORD, not just its path, and the caller passes the SAME
+ * `isClaimed` the prune guard uses (review finding F3). It took a path alone, and a path is
+ * the weaker half of a claim: a session that recorded a work branch and no bound root — a
+ * crash between the branch write and the binding write — claimed its sibling well enough for
+ * the prune to refuse it and not well enough for collection to skip it, so the sweep KEPT the
+ * registration and then removed the worktree and deleted the branch ten lines later. Whatever
+ * a claim means, it has to mean the same thing to the arm that leaves a registration alone
+ * and to the arm that deletes a branch. A missed match here does not leave a stale directory:
+ * it DELETES a workspace someone is working in.
  */
 export async function orphanedSiblings(input: {
   readonly git: GitExec;
   readonly repoRoot: string;
   readonly under: (path: string) => boolean;
-  readonly claimed: (path: string) => boolean;
+  readonly claimed: (record: WorktreeRecord) => boolean;
 }): Promise<OrphanedSibling[]> {
   const listed = await input
     .git(input.repoRoot, ["worktree", "list", "--porcelain", "-z"], { reject: false })
@@ -178,7 +183,7 @@ export async function orphanedSiblings(input: {
   for (const record of parseWorktreeRecords(listed)) {
     if (record.bare || record.branch === undefined) continue;
     if (!record.branch.startsWith(SIBLING_BRANCH_PREFIX)) continue;
-    if (!input.under(record.path) || input.claimed(record.path)) continue;
+    if (!input.under(record.path) || input.claimed(record)) continue;
     const branch = record.branch.slice(SIBLING_BRANCH_PREFIX.length);
     if (branch.length === 0) continue;
     found.push({ path: record.path, siblingBranch: record.branch, branch });

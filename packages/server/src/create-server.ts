@@ -2295,6 +2295,12 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
    * same pull request is a fresh review id with no entry of its own, and it is exactly the
    * case the in-place replacement exists for. There were two readings of this and they
    * disagreed on that case; one reading, one helper.
+   *
+   * COST, stated rather than left to be discovered: this `realpath`s EVERY ENTRY in the
+   * pull-request index on every call, and it is called per bind and per front-door open. The
+   * index holds one entry per reviewed pull request, so it is small by construction; if it
+   * ever stops being small, cache the resolved index and invalidate it on `recordPrWorktree`
+   * — never make the comparison weaker.
    */
   function snapshotRecordedAt(worktreePath: string): boolean {
     const wanted = comparablePath(worktreePath);
@@ -3490,10 +3496,15 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         continue;
       }
       const locus = locusForRepo(repoRoot);
+      // Resolved ONCE per repository, not once per registration: `comparablePath` walks the
+      // filesystem, and the placement root does not change while this loop runs.
+      const placementBase = comparablePath(placementRoot);
       const under = (path: string): boolean => {
-        const base = comparablePath(placementRoot);
         const candidate = comparablePath(path);
-        return candidate === base || candidate.startsWith(base.endsWith(sep) ? base : base + sep);
+        return (
+          candidate === placementBase ||
+          candidate.startsWith(placementBase.endsWith(sep) ? placementBase : placementBase + sep)
+        );
       };
       /**
        * The work branches LIVE SESSIONS OF THIS REPOSITORY are committing on.
@@ -3560,12 +3571,14 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       // The guard is all-or-nothing on purpose: `prune` takes no path, so ONE unreachable
       // registration that is claimed OR not Rennet's leaves the whole repository alone.
       await pruneUnclaimedRegistrations(git, repoRoot, rennetOwns, isClaimed);
-      const orphans = await orphanedSiblings({
-        git,
-        repoRoot,
-        under,
-        claimed: (path: string) => claimed.has(path) || claimed.has(comparablePath(path)),
-      }).catch(() => []);
+      // THE SAME `isClaimed` THE PRUNE GUARD USES (review finding F3). Collection is the
+      // stronger act of the two — it removes a worktree AND deletes a branch — and it was
+      // asking the weaker question: by path only, so a session claiming its sibling by WORK
+      // BRANCH alone (no bound root recorded) had its registration spared by the prune two
+      // lines up and its branch deleted here.
+      const orphans = await orphanedSiblings({ git, repoRoot, under, claimed: isClaimed }).catch(
+        () => [],
+      );
       for (const orphan of orphans) {
         // No `push`: the sweep has no session to ask where a push went, so reachability is
         // asked of EVERY remote-tracking ref of the branch. Refusing to look would keep
