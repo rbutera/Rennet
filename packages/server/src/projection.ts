@@ -495,6 +495,12 @@ export const INBOUND_HOST_PATH_FIELDS: Readonly<Record<string, readonly string[]
   "settings.pinRepoValue": ["repoPath"],
   "settings.setProjectValue": ["repoPath"],
   "settings.setGuidance": ["repoPath"],
+  // The workspace inventory names its repository the same way every other repo-scoped
+  // command does. `worktrees.remove`'s `path` is NOT resolved here: it addresses a ROW of
+  // that repository's list, and the host matches it against a fresh inventory rather than
+  // dereferencing it — the same treatment `project.cleanupWorktree`'s `worktreeId` gets.
+  "worktrees.list": ["repoPath"],
+  "worktrees.remove": ["repoPath"],
 };
 
 /**

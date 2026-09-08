@@ -713,6 +713,12 @@ const PATH_FIELD_CLASSIFICATIONS: Readonly<Record<string, PathClassification>> =
     "fs.listDir.input.path",
     "fs.listDir.output.result.path",
     "fs.listDir.output.result.entries.path",
+    // The workspace inventory (workspace-settings D6): the repository it lists, and the
+    // host-absolute directory of every workspace it found under the daemon's own root.
+    "worktrees.list.input.repoPath",
+    "worktrees.list.output.rows.path",
+    "worktrees.remove.input.repoPath",
+    "worktrees.remove.output.path",
   ]),
   ...classified("repo-relative", [
     "progressEvent.report.elements.data.path",
@@ -864,6 +870,11 @@ const PATH_FIELD_CLASSIFICATIONS: Readonly<Record<string, PathClassification>> =
     "project.detail.output.locals.id",
     "project.detail.output.prs.id",
     "project.cleanupWorktree.input.worktreeId",
+    // `worktrees.remove` addresses a ROW of the repository's own list, exactly as
+    // `cleanupWorktree` addresses a `LocalWork.id`. The host matches it against a fresh
+    // inventory of `repoPath` and refuses anything that is not a row, so it is never
+    // dereferenced as a path on the way in.
+    "worktrees.remove.input.path",
   ]),
 };
 

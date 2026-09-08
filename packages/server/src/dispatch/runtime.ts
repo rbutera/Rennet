@@ -48,6 +48,8 @@ import type {
   SidebarSession,
   SuccessorAccount,
   SymbolInspection,
+  WorktreeInventory,
+  WorktreeRemoveOutcome,
 } from "@rennet/protocol";
 import {
   type CommandOutput,
@@ -729,6 +731,20 @@ export interface DispatchDeps {
     instruction: string;
     path?: string;
   }) => Promise<RefinementResult>;
+  /**
+   * The workspace inventory (workspace-settings D6): every workspace Rennet knows for ONE
+   * repository, and the non-forcing removal of one of them. Keyed by the repository's
+   * PATH — a project id maps many repositories onto one identity and cannot say which of
+   * them a row belongs to — and resolved through that repository's own git locus.
+   *
+   * Optional so a composition without a data dir still constructs: `worktrees.list` then
+   * answers an honestly empty list and `worktrees.remove` reports that it addressed
+   * nothing, rather than throwing or claiming a removal that never ran.
+   */
+  readonly worktrees?: {
+    list(repoPath: string): Promise<WorktreeInventory>;
+    remove(input: { repoPath: string; path: string }): Promise<WorktreeRemoveOutcome>;
+  };
 }
 
 /**
