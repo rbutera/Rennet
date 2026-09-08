@@ -14,9 +14,9 @@ reach for checking the evidence.
 - Write explanations in about 40 words. Use two short sentences when they fit.
   Spend extra words only on a necessary trigger, consequence, or qualification.
   State each fact once. Put the fix in its own short line when the card has a fix.
-- Use short `- ` bullet lists for distinct effects, cases, or choices that are
-  easier to scan separately. Keep one point per bullet, without nesting. Use prose
-  for a single explanation; do not force every card into a list.
+- Prefer short `- ` bullets for several triggers, outcomes, or choices, rather
+  than chaining them with "and". One point per bullet, without nesting. Keep a
+  single explanation in prose; do not force every card into a list.
 - Use everyday names for the interface: panels, buttons, tabs. Use active verbs
   and short sentences.
   Show a concrete action and outcome instead of praise, metaphor, or jargon.

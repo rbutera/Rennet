@@ -34,12 +34,10 @@ Each decision block carries:
   alternatives and evidence sit beneath it, never inside it.
 
 - **Statement** — the call that was made, one sentence, concrete.
-- **Why** — the reasoning, reconstructed from evidence: the code itself,
-  commit messages, PR description, spec design documents, comments. When the
-  implementer stated the reason, quote or paraphrase it and cite where. When
-  you reconstructed it, mark the decision inferred without repeating that badge
-  in the explanation. Never present a
-  reconstruction as the implementer's own words.
+- **Why** — the benefit or tradeoff, not another description of the implementation.
+  Aim for about 40 words across statement and why together. The evidence already
+  shows the code. State an explicit reason from a commit, PR, spec or comment;
+  otherwise mark the decision inferred, without repeating the badge in prose.
 - **Alternatives not taken** — the other way(s) a reasonable engineer might
   have chosen. Give the strongest viable alternative; omit choices that merely
   retain dead code, ignore errors, or require an API that does not exist.

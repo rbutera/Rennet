@@ -23,8 +23,8 @@ end of a section the reader should be able to predict why the next one exists.
 - The board is a sequence of sections. Each section is one stop on the walk:
   a titled unit of understanding, not a file.
 - **The FIRST child of every section is a `prose` element**, and so is the
-  first child of every order step. The section gives the shared context; each
-  step adds one new part of the explanation. Start with a familiar action or
+  first child of every order step. The section gives shared context in one short sentence;
+  each step adds one new part of the explanation. Start with a familiar action or
   concrete input, then explain what happens next. Never retell the section in
   the step or instruct the reader to study a file.
 - A heading is not that narration. A section whose children are a title, a code

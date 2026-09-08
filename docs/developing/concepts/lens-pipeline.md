@@ -997,7 +997,8 @@ its own, with citations available for checking the claim.
 
 Openings state the user-visible change in two short sentences, about 35 words.
 They explain the change without an itinerary for reading the board. Sequence
-sections supply shared context, and their steps add detail without repeating it.
+sections supply shared context in one short sentence; their steps add detail
+without repeating it.
 Step citations are displayed through the step's span, without also attaching the
 same code excerpt to the parent section.
 Independent changes stay separate; their presence in one diff is not a causal link.
@@ -1009,7 +1010,9 @@ point per item. A single explanation stays in prose. Review text renders `-`,
 a list immediately after a lead-in and indented continuation lines. Inline code,
 citations, and reviewer highlights retain their behavior inside list items.
 
-The target is about 40 words per explanation, with room for the
+The target is about 40 words per explanation, including a decision's statement
+and rationale together. The rationale explains the benefit or tradeoff rather
+than restating the implementation. There is room for the
 trigger, consequence, and evidence. This is drafting guidance, not a word-count
 validator. Design retains its verbatim source obligations and quotations. Its
 deterministic rendering does not pass through these authoring instructions.
