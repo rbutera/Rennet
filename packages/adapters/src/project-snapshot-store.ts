@@ -138,6 +138,11 @@ export interface ProjectConfig {
   readonly mark?: string;
   readonly worktreeBaseDir?: string;
   readonly worktreePattern?: string;
+  /** The pull-request snapshot pattern's repo rung (workspace-settings D2). */
+  readonly prWorktreePattern?: string;
+  /** `share` | `own` — whether a review of a branch this repo's checkout already has
+   *  out binds to that checkout or to a worktree Rennet makes beside it (D4). */
+  readonly workspace?: string;
   readonly tracker?: {
     readonly kind?: string;
     readonly projectKey?: string;
@@ -153,6 +158,8 @@ export const REPO_PREF_FIELDS = [
   "mark",
   "worktreeBaseDir",
   "worktreePattern",
+  "prWorktreePattern",
+  "workspace",
   "trackerKind",
   "trackerProjectKey",
   "trackerBaseUrl",
@@ -191,7 +198,13 @@ export function withRepoPref(
     else next.tracker = tracker;
     return next;
   }
-  const topLevel = field as "glyph" | "mark" | "worktreeBaseDir" | "worktreePattern";
+  const topLevel = field as
+    | "glyph"
+    | "mark"
+    | "worktreeBaseDir"
+    | "worktreePattern"
+    | "prWorktreePattern"
+    | "workspace";
   if (value === null) delete next[topLevel];
   else next[topLevel] = value;
   return next;
@@ -235,7 +248,14 @@ function isValidProjectConfig(value: unknown): value is ProjectConfig {
   // The repo-rung prefs (C18 group A) are validated on the SAME terms as the rest:
   // present-but-wrong-typed is MALFORMED, so a hand-edited `glyph: 7` refuses the
   // next write rather than leaking a number into the settings resolver.
-  for (const key of ["glyph", "mark", "worktreeBaseDir", "worktreePattern"] as const) {
+  for (const key of [
+    "glyph",
+    "mark",
+    "worktreeBaseDir",
+    "worktreePattern",
+    "prWorktreePattern",
+    "workspace",
+  ] as const) {
     if (record[key] !== undefined && typeof record[key] !== "string") return false;
   }
   if (record.tracker !== undefined) {

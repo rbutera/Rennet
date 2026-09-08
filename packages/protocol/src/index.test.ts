@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   commands,
   daemonHostStatusSchema,
+  daemonSettingsSchema,
   dispositionSchema,
   forgeHostDetectionSchema,
   gitHubAuthStatusSchema,
@@ -395,6 +396,62 @@ describe("settings v1 — registry ladder wire shapes (#28)", () => {
         parseCommandInput(command, { projectId: "p1", repoPath: "/o", key: "scheme" }),
       ).toThrow();
     }
+  });
+
+  it("the worktree preview is additive-optional and carries both example paths", () => {
+    // A row from an engine that does not serve a preview still parses — the field is
+    // absent, and the client shows no path rather than inventing one.
+    expect(settingsProjectSchema.parse(project).worktreePreview).toBeUndefined();
+    const previewed = settingsProjectSchema.parse({
+      ...project,
+      worktreePreview: {
+        branch: "/data/worktrees/-Users-rai-orbital/feat/x",
+        pullRequest: "/data/worktrees/acme/orbital/pr-1",
+      },
+    });
+    expect(previewed.worktreePreview).toEqual({
+      branch: "/data/worktrees/-Users-rai-orbital/feat/x",
+      pullRequest: "/data/worktrees/acme/orbital/pr-1",
+    });
+  });
+
+  it("setProjectValue addresses the two new worktree keys (workspace-settings 1.1)", () => {
+    for (const key of ["prWorktreePattern", "workspace"] as const) {
+      expect(
+        parseCommandInput("settings.setProjectValue", {
+          projectId: "p1",
+          repoPath: "/o",
+          key,
+          value: "own",
+        }).key,
+      ).toBe(key);
+    }
+    // Still a closed vocabulary: an unregistered key is refused at the wire.
+    expect(() =>
+      parseCommandInput("settings.setProjectValue", {
+        projectId: "p1",
+        repoPath: "/o",
+        key: "worktreeSiblings",
+        value: "x",
+      }),
+    ).toThrow();
+  });
+
+  it("daemon settings carry the worktree section's global rung, every field optional", () => {
+    const parsed = daemonSettingsSchema.parse({
+      version: 1,
+      worktrees: { root: "~/trees", pattern: "{name}/{branch}", workspace: "own" },
+    });
+    expect(parsed.worktrees).toEqual({
+      root: "~/trees",
+      pattern: "{name}/{branch}",
+      workspace: "own",
+    });
+    // Absent section ⇒ the ladder falls to its builtins; an unknown workspace value is refused.
+    expect(daemonSettingsSchema.parse({ version: 1 }).worktrees).toBeUndefined();
+    expect(() =>
+      daemonSettingsSchema.parse({ version: 1, worktrees: { workspace: "solo" } }),
+    ).toThrow();
   });
 
   it("reset/pin outcome parses with the re-resolved row", () => {

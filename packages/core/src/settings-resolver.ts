@@ -141,17 +141,21 @@ const trackerKind = (value: unknown): TrackerKind => {
   throw new Error(`trackerKind must be none|github|jira|linear, got ${JSON.stringify(value)}`);
 };
 
-/** A plain string setting; empty builtin default reads as "unset". */
+/** A plain string setting; the default empty builtin reads as "unset". A key whose
+ *  builtin is a REAL value (the worktree patterns) passes it instead, so the ladder's
+ *  base is the shape the binding actually uses rather than a blank the reader must
+ *  know to translate. */
 const stringSetting = (
   key: string,
   layers: readonly SettingsLayer[],
+  builtinDefault = "",
 ): SettingDeclaration<string> => ({
   key,
   validate: (value) => {
     if (typeof value !== "string") throw new Error(`${key} must be a string`);
     return value.trim();
   },
-  builtinDefault: "",
+  builtinDefault,
   layers,
   merge: "replace",
   render: (value) => (value === "" ? "(unset)" : value),
@@ -171,6 +175,38 @@ const CONFIG_ONLY: readonly SettingsLayer[] = ["builtin", "global", "repo"];
 /** No producer above the repo rung: nothing detects a glyph, and no global default
  *  exists for one — so the only offers are the builtin (unset) and the project's own. */
 const REPO_ONLY: readonly SettingsLayer[] = ["builtin", "repo"];
+
+/**
+ * The worktree placement builtins (workspace-settings D2). These are EXACTLY the shapes
+ * the previous release hardcoded — `join(dataDir, "worktrees", repoKey, ...branch)` and
+ * `join(dataDir, "worktrees", owner, name, "pr-N")` — expressed as patterns, so an
+ * install that never touches a rung places every worktree where it always did.
+ */
+export const BUILTIN_WORKTREE_PATTERN = "{repo}/{branch}";
+export const BUILTIN_PR_WORKTREE_PATTERN = "{owner}/{name}/pr-{number}";
+
+/**
+ * Whether a review of a branch a checkout ALREADY has out binds to that checkout
+ * (`share`) or to a worktree Rennet makes beside it on a sibling branch (`own`).
+ * Builtin `share`: the agent's work lands where the reviewer is looking, which is the
+ * right default; `own` is the reviewer's answer when that tree is theirs to keep.
+ */
+export type WorkspaceMode = "share" | "own";
+export const BUILTIN_WORKSPACE: WorkspaceMode = "share";
+
+const WORKSPACE_SETTING: SettingDeclaration<WorkspaceMode> = {
+  key: "workspace",
+  validate: (value) => {
+    if (value === "share" || value === "own") return value;
+    throw new Error(`workspace must be share|own, got ${JSON.stringify(value)}`);
+  },
+  builtinDefault: BUILTIN_WORKSPACE,
+  // No detector: whether Rennet may work inside the reviewer's own checkout is a
+  // decision about their tree, never a guess made from it.
+  layers: CONFIG_ONLY,
+  merge: "replace",
+  render: identity,
+};
 
 /**
  * Which project mark a project shows (#900): the builtin is `glyph`, the `detected` rung is
@@ -208,8 +244,14 @@ export const SETTINGS_REGISTRY = {
   // `config.json`, so a per-project answer beats the host's global one and the
   // builtin "" reads as unset (the client then shows ITS default, never a value the
   // ladder did not resolve). `worktreeBaseDir` above is the location half of the
-  // worktree pair; the naming pattern has no detector, so it is config-only.
-  worktreePattern: stringSetting("worktreePattern", CONFIG_ONLY),
+  // worktree pair; the naming patterns have no detector, so they are config-only.
+  //
+  // The two patterns' builtins are REAL values, not "": the binding reads them, so the
+  // base of the ladder has to be the shape it places by. A snapshot has a number and no
+  // branch and a branch has no number, which is why one grammar could not serve both.
+  worktreePattern: stringSetting("worktreePattern", CONFIG_ONLY, BUILTIN_WORKTREE_PATTERN),
+  prWorktreePattern: stringSetting("prWorktreePattern", CONFIG_ONLY, BUILTIN_PR_WORKTREE_PATTERN),
+  workspace: WORKSPACE_SETTING,
   projectGlyph: stringSetting("projectGlyph", REPO_ONLY),
   projectMark: PROJECT_MARK_SETTING,
 } as const;

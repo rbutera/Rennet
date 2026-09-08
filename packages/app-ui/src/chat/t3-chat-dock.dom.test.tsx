@@ -54,7 +54,9 @@ function projectRow(): SettingsProject {
       glyph: layered(""),
       mark: layered("glyph"),
       worktreeRoot: layered(""),
-      worktreePattern: layered(""),
+      worktreePattern: layered("{repo}/{branch}"),
+      prWorktreePattern: layered("{owner}/{name}/pr-{number}"),
+      workspace: layered("share"),
       tracker: {
         kind: layered("none"),
         projectKey: layered(""),

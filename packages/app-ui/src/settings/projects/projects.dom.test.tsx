@@ -566,6 +566,8 @@ const P1_PREFS: NonNullable<SettingsProject["prefs"]> = {
   mark: { value: "glyph", layer: "builtin" },
   worktreeRoot: { value: "", layer: "builtin" },
   worktreePattern: { value: "{project}-{branch}", layer: "repo" },
+  prWorktreePattern: { value: "{owner}/{name}/pr-{number}", layer: "builtin" },
+  workspace: { value: "share", layer: "builtin" },
   tracker: {
     kind: { value: "none", layer: "builtin" },
     projectKey: { value: "", layer: "builtin" },

@@ -98,6 +98,8 @@ type FakeRepoConfig = {
   mark?: string;
   worktreeBaseDir?: string;
   worktreePattern?: string;
+  prWorktreePattern?: string;
+  workspace?: string;
   tracker?: { kind?: string; projectKey?: string; baseUrl?: string; tokenEnv?: string };
 };
 
@@ -175,6 +177,8 @@ function statefulDeps(
         "mark",
         "worktreeBaseDir",
         "worktreePattern",
+        "prWorktreePattern",
+        "workspace",
         "tracker",
       ] as const) {
         delete store[key];
@@ -1752,6 +1756,87 @@ describe("setProjectValue + setGuidance — the per-project repo rung (C18 group
     expect(store.glyph).toBeUndefined();
   });
 
+  it("the worktree keys resolve host rung under repo rung (workspace-settings D1/D2/D4)", async () => {
+    // The GLOBAL rung of all four is the daemon's own file: where this host puts
+    // checkouts is a fact about the host, not about the viewer.
+    const globalRung = {
+      readDaemonSettings: () => ({
+        version: 1 as const,
+        worktrees: {
+          root: "/host/trees",
+          pattern: "{owner}/{branch}",
+          prPattern: "{name}-{number}",
+          workspace: "own" as const,
+        },
+      }),
+    };
+    const { deps: untouched } = statefulDeps();
+    const host = (await createSettingsComposition({ ...untouched, ...globalRung }).get())
+      .projects[0];
+    expect(host?.prefs?.worktreeRoot).toEqual({ value: "/host/trees", layer: "global" });
+    expect(host?.prefs?.worktreePattern).toEqual({ value: "{owner}/{branch}", layer: "global" });
+    expect(host?.prefs?.prWorktreePattern).toEqual({ value: "{name}-{number}", layer: "global" });
+    expect(host?.prefs?.workspace).toEqual({ value: "own", layer: "global" });
+
+    // …and the repository's own config.json beats it, key by key.
+    const { deps } = statefulDeps({
+      worktreeBaseDir: "/repo/trees",
+      prWorktreePattern: "{repo}/pr/{number}",
+      workspace: "share",
+    });
+    const repoRow = (await createSettingsComposition({ ...deps, ...globalRung }).get()).projects[0];
+    expect(repoRow?.prefs?.worktreeRoot).toEqual({ value: "/repo/trees", layer: "repo" });
+    expect(repoRow?.prefs?.prWorktreePattern).toEqual({
+      value: "{repo}/pr/{number}",
+      layer: "repo",
+    });
+    expect(repoRow?.prefs?.workspace).toEqual({ value: "share", layer: "repo" });
+    // The key the repo did NOT set still comes from the host.
+    expect(repoRow?.prefs?.worktreePattern).toEqual({ value: "{owner}/{branch}", layer: "global" });
+  });
+
+  it("an untouched install resolves the builtin shapes the binding places by", async () => {
+    const { deps } = statefulDeps();
+    const row = (await createSettingsComposition(deps).get()).projects[0];
+    expect(row?.prefs?.worktreePattern).toEqual({ value: "{repo}/{branch}", layer: "builtin" });
+    expect(row?.prefs?.prWorktreePattern).toEqual({
+      value: "{owner}/{name}/pr-{number}",
+      layer: "builtin",
+    });
+    expect(row?.prefs?.workspace).toEqual({ value: "share", layer: "builtin" });
+  });
+
+  it("setProjectValue writes the two new keys on the repo rung and refuses a bad workspace", async () => {
+    const { deps, store } = statefulDeps();
+    const composition = createSettingsComposition(deps);
+    const pattern = await composition.setProjectValue(
+      write("prWorktreePattern", "{owner}/{name}/{number}"),
+    );
+    expect(pattern.status).toBe("applied");
+    expect(store.prWorktreePattern).toBe("{owner}/{name}/{number}");
+    const mode = await composition.setProjectValue(write("workspace", "own"));
+    expect(mode.project?.prefs?.workspace).toEqual({ value: "own", layer: "repo" });
+    expect(store.workspace).toBe("own");
+    // The closed vocabulary is enforced by the validator the BINDING resolves by, so a
+    // typo is refused at the write instead of resolving to `share` later.
+    await expect(composition.setProjectValue(write("workspace", "solo"))).rejects.toThrow(
+      /workspace/,
+    );
+    expect(store.workspace).toBe("own");
+  });
+
+  it("a MALFORMED config refuses a write of the new keys — the file is untouched", async () => {
+    const { deps, store } = statefulDeps({ workspace: "own" }, { malformed: true });
+    const composition = createSettingsComposition(deps);
+    for (const key of ["prWorktreePattern", "workspace"] as const) {
+      const outcome = await composition.setProjectValue(write(key, "share"));
+      expect(outcome.status).toBe("malformed");
+      expect(outcome.project).toBeNull();
+    }
+    // Byte-for-byte: the value the unparseable file already held is exactly what is there.
+    expect(store).toEqual({ version: 1, workspace: "own" });
+  });
+
   it("guidance rules are written to the repo's catalogue and read back on the next get()", async () => {
     const { deps, guidance } = statefulDeps();
     const composition = createSettingsComposition(deps);
@@ -1777,5 +1862,72 @@ describe("setProjectValue + setGuidance — the per-project repo rung (C18 group
     });
     expect(outcome.status).toBe("unresolved");
     expect(guidance.rules).toEqual([]);
+  });
+});
+
+describe("createSettingsComposition — the worktree section's global rung (workspace-settings D1)", () => {
+  /** A composition over a MUTABLE daemon-settings file, so a write is read back off
+   *  the state it left rather than the request echoed. */
+  function daemonDeps(malformed = false): {
+    deps: SettingsCompositionDeps;
+    file: DaemonSettings;
+  } {
+    const file: DaemonSettings = { version: 1 };
+    const { deps } = statefulDeps();
+    return {
+      file,
+      deps: {
+        ...deps,
+        readDaemonSettings: () => file,
+        updateDaemon: (update) => {
+          // Rule 75: the real store REFUSES to overwrite bytes it could not parse.
+          if (malformed) throw new Error("refusing to overwrite a malformed daemon-settings file");
+          Object.assign(file, update({ ...file }));
+          return file;
+        },
+      },
+    };
+  }
+
+  it("a global write lands in daemon-settings and the next read resolves it", async () => {
+    const { deps, file } = daemonDeps();
+    const composition = createSettingsComposition(deps);
+    expect(composition.setWorktreeValue({ key: "root", value: "~/trees" })).toEqual({
+      root: "~/trees",
+    });
+    composition.setWorktreeValue({ key: "prPattern", value: "{owner}/{number}" });
+    composition.setWorktreeValue({ key: "workspace", value: "own" });
+    expect(file.worktrees).toEqual({
+      root: "~/trees",
+      prPattern: "{owner}/{number}",
+      workspace: "own",
+    });
+    const row = (await composition.get()).projects[0];
+    expect(row?.prefs?.worktreeRoot).toEqual({ value: "~/trees", layer: "global" });
+    expect(row?.prefs?.workspace).toEqual({ value: "own", layer: "global" });
+  });
+
+  it("a null RESETS the host rung: the entry is dropped and the value falls back", () => {
+    const { deps, file } = daemonDeps();
+    const composition = createSettingsComposition(deps);
+    composition.setWorktreeValue({ key: "pattern", value: "{name}/{branch}" });
+    expect(composition.setWorktreeValue({ key: "pattern", value: null })).toEqual({});
+    expect(file.worktrees).toEqual({});
+  });
+
+  it("a value the registry rejects never reaches the file", () => {
+    const { deps, file } = daemonDeps();
+    expect(() =>
+      createSettingsComposition(deps).setWorktreeValue({ key: "workspace", value: "solo" }),
+    ).toThrow(/workspace/);
+    expect(file.worktrees).toBeUndefined();
+  });
+
+  it("a MALFORMED daemon-settings refuses the write (Rule 75)", () => {
+    const { deps, file } = daemonDeps(true);
+    expect(() =>
+      createSettingsComposition(deps).setWorktreeValue({ key: "root", value: "/trees" }),
+    ).toThrow(/malformed/);
+    expect(file).toEqual({ version: 1 });
   });
 });

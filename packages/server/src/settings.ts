@@ -21,6 +21,7 @@ import {
   SETTINGS_REGISTRY,
   type TrackerKind,
   taskOverridesFor,
+  type WorkspaceMode,
 } from "@rennet/core";
 import type {
   ClientSettings,
@@ -89,6 +90,8 @@ export interface SettingsCompositionDeps {
           mark?: string;
           worktreeBaseDir?: string;
           worktreePattern?: string;
+          prWorktreePattern?: string;
+          workspace?: string;
           tracker?: {
             kind?: string;
             projectKey?: string;
@@ -403,6 +406,22 @@ export interface SettingsComposition {
     value: string | null;
   }): NonNullable<DaemonSettings["tracker"]>;
   /**
+   * Write one worktree value on the GLOBAL rung (workspace-settings D1) — this host's
+   * answer for where Rennet places worktrees, how it names them, and whether it works
+   * inside a checkout the reviewer already has out. It lives in `daemon-settings.json`
+   * rather than client settings because a filesystem path is a fact about the machine
+   * that binds, not about the viewer looking at it.
+   *
+   * `null` resets (the entry is dropped, so the value falls back to its builtin).
+   * Values validate through the same `SETTINGS_REGISTRY` declarations the resolver
+   * reads, and a malformed daemon-settings refuses the write (throws) exactly as
+   * `setTrackerValue`. Returns the stored worktree section after the write.
+   */
+  setWorktreeValue(input: {
+    key: "root" | "pattern" | "prPattern" | "workspace";
+    value: string | null;
+  }): NonNullable<DaemonSettings["worktrees"]>;
+  /**
    * Write ONE per-project preference on the REPO rung (C18 group A) — glyph, the
    * worktree pair, or this project's issue-tracker override. `value: null` resets
    * (the entry is dropped and the value falls back down the ladder). Values validate
@@ -537,6 +556,13 @@ const PROJECT_PREF: Record<
     field: "worktreePattern",
     validate: SETTINGS_REGISTRY.worktreePattern.validate,
   },
+  prWorktreePattern: {
+    field: "prWorktreePattern",
+    validate: SETTINGS_REGISTRY.prWorktreePattern.validate,
+  },
+  // The workspace vocabulary is enforced by the SAME validator the binding resolves by,
+  // so `workspace: "solo"` is refused at the write instead of silently reading `share`.
+  workspace: { field: "workspace", validate: SETTINGS_REGISTRY.workspace.validate },
   // The tracker vocabulary is enforced by the SAME validator retrieval resolves through,
   // so `kind: "jra"` is refused at the write instead of resolving to nothing later.
   trackerKind: { field: "trackerKind", validate: SETTINGS_REGISTRY.trackerKind.validate },
@@ -591,6 +617,13 @@ function trackerKindOffer(value: string | undefined): TrackerKind | undefined {
   return value === "none" || value === "github" || value === "jira" || value === "linear"
     ? value
     : undefined;
+}
+
+/** A STORED workspace mode as a ladder offer, on the same terms as the two above: a
+ *  hand-edited `workspace: "solo"` is DROPPED rather than thrown into resolution, so a
+ *  garbage value falls back to `share` instead of failing the whole settings read. */
+function workspaceOffer(value: string | undefined): WorkspaceMode | undefined {
+  return value === "share" || value === "own" ? value : undefined;
 }
 
 /** The update attempt for a composition with NO update effect wired: it says so and changes
@@ -711,6 +744,8 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
       mark?: string;
       worktreeBaseDir?: string;
       worktreePattern?: string;
+      prWorktreePattern?: string;
+      workspace?: string;
       tracker?: { kind?: string; projectKey?: string; baseUrl?: string; tokenEnv?: string };
     } | null,
     /**
@@ -722,7 +757,9 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
     projectRepoKeys: readonly string[],
   ): SettingsProjectPrefs => {
     const detected = deps.scoutOffers?.(target.repoKey) ?? {};
-    const globalTracker = deps.readDaemonSettings().tracker ?? {};
+    const daemonSettings = deps.readDaemonSettings();
+    const globalTracker = daemonSettings.tracker ?? {};
+    const globalWorktrees = daemonSettings.worktrees ?? {};
     const repoTracker = config?.tracker ?? {};
     const layered = <T extends string>(resolved: { value: T; layer: SettingsLayer }) => ({
       value: resolved.value as string,
@@ -742,14 +779,35 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
           repo: markOffer(config?.mark),
         }),
       ),
+      // The worktree section (workspace-settings D1/D2/D4). Its GLOBAL rung is the
+      // daemon's own `daemon-settings.json`, not client settings: where this host puts
+      // checkouts, how it names them, and whether it works inside a tree the reviewer
+      // has open are facts about the machine that binds — the same argument that put
+      // `tracker` there. The repo rung is the project's own `config.json`.
       worktreeRoot: layered(
         resolve(SETTINGS_REGISTRY.worktreeBaseDir, {
           detected: offer(detected.worktreeBaseDir),
+          global: offer(globalWorktrees.root),
           repo: offer(config?.worktreeBaseDir),
         }),
       ),
       worktreePattern: layered(
-        resolve(SETTINGS_REGISTRY.worktreePattern, { repo: offer(config?.worktreePattern) }),
+        resolve(SETTINGS_REGISTRY.worktreePattern, {
+          global: offer(globalWorktrees.pattern),
+          repo: offer(config?.worktreePattern),
+        }),
+      ),
+      prWorktreePattern: layered(
+        resolve(SETTINGS_REGISTRY.prWorktreePattern, {
+          global: offer(globalWorktrees.prPattern),
+          repo: offer(config?.prWorktreePattern),
+        }),
+      ),
+      workspace: layered(
+        resolve<WorkspaceMode>(SETTINGS_REGISTRY.workspace, {
+          global: workspaceOffer(globalWorktrees.workspace),
+          repo: workspaceOffer(config?.workspace),
+        }),
       ),
       // ONE law for the whole section, the SAME one retrieval resolves through
       // (`resolveTracker`): an endpoint field offered below the layer that set the
@@ -1279,6 +1337,25 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
         return { ...current, tracker };
       });
       return written.tracker ?? {};
+    },
+
+    setWorktreeValue: (input): NonNullable<DaemonSettings["worktrees"]> => {
+      // The SAME declarations the resolver reads by, so the host rung cannot hold a
+      // value the ladder would refuse — and the same `null`-resets law as the tracker.
+      const declaration = {
+        root: SETTINGS_REGISTRY.worktreeBaseDir,
+        pattern: SETTINGS_REGISTRY.worktreePattern,
+        prPattern: SETTINGS_REGISTRY.prWorktreePattern,
+        workspace: SETTINGS_REGISTRY.workspace,
+      }[input.key];
+      const value = input.value === null ? null : declaration.validate(input.value);
+      const written = deps.updateDaemon((current) => {
+        const worktrees = { ...current.worktrees };
+        if (value === null) delete worktrees[input.key];
+        else worktrees[input.key] = value as never;
+        return { ...current, worktrees };
+      });
+      return written.worktrees ?? {};
     },
 
     setProjectValue: async (input): Promise<SettingsProjectWriteOutcome> => {

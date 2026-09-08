@@ -3682,6 +3682,7 @@ describe("createDispatch — settings.* routing (the config ladder, wireframe #1
       resetWelcome: vi.fn(() => "2026-08-29T09:30:00.000Z"),
       setLastProject: vi.fn((input) => input),
       setTrackerValue: vi.fn(() => ({})),
+      setWorktreeValue: vi.fn(() => ({})),
       setProjectValue: vi.fn(async (input: { key: string }) => ({
         status: "applied" as const,
         key: input.key as "worktreePattern",

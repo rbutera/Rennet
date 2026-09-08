@@ -1,8 +1,11 @@
 import type { ClientSettings, Locus, ProjectVisibility } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import {
+  BUILTIN_PR_WORKTREE_PATTERN,
   BUILTIN_SCHEME,
   BUILTIN_VISIBILITY,
+  BUILTIN_WORKSPACE,
+  BUILTIN_WORKTREE_PATTERN,
   LAYER_ORDER,
   resolve,
   resolveLocus,
@@ -11,6 +14,7 @@ import {
   resolveVisibility,
   SETTINGS_REGISTRY,
   type TrackerKind,
+  type WorkspaceMode,
 } from "./settings-resolver";
 
 describe("resolveScheme", () => {
@@ -107,6 +111,7 @@ describe("settings registry + generic resolve (#28)", () => {
     expect(keys).toEqual([
       "gateCommand",
       "locus",
+      "prWorktreePattern",
       "projectGlyph",
       "projectMark",
       "promoted",
@@ -116,6 +121,7 @@ describe("settings registry + generic resolve (#28)", () => {
       "trackerProjectKey",
       "trackerTokenEnv",
       "visibility",
+      "workspace",
       "worktreeBaseDir",
       "worktreePattern",
     ]);
@@ -221,6 +227,40 @@ describe("issue-tracker section (#461, B7)", () => {
     expect(() =>
       resolve(SETTINGS_REGISTRY.trackerTokenEnv, { detected: "JIRA_TOKEN" } as never),
     ).toThrow(/detected/);
+  });
+
+  it("the worktree placement keys carry the shapes the binding places by (workspace-settings D2)", () => {
+    // The builtins ARE the previous release's hardcoded shapes — not "", which would
+    // have meant the base of the ladder placed nothing.
+    const pattern = resolve(SETTINGS_REGISTRY.worktreePattern, {});
+    expect(pattern.value).toBe("{repo}/{branch}");
+    expect(pattern.layer).toBe("builtin");
+    const prPattern = resolve(SETTINGS_REGISTRY.prWorktreePattern, {});
+    expect(prPattern.value).toBe("{owner}/{name}/pr-{number}");
+    expect(BUILTIN_WORKTREE_PATTERN).toBe("{repo}/{branch}");
+    expect(BUILTIN_PR_WORKTREE_PATTERN).toBe("{owner}/{name}/pr-{number}");
+    // Both are config-only: nothing detects a naming pattern.
+    expect(SETTINGS_REGISTRY.worktreePattern.layers).toEqual(["builtin", "global", "repo"]);
+    expect(SETTINGS_REGISTRY.prWorktreePattern.layers).toEqual(["builtin", "global", "repo"]);
+    expect(() => resolve(SETTINGS_REGISTRY.prWorktreePattern, { detected: "x" } as never)).toThrow(
+      /detected/,
+    );
+  });
+
+  it("workspace is a two-valued setting the repo rung wins (workspace-settings D4)", () => {
+    expect(resolve(SETTINGS_REGISTRY.workspace, {}).value).toBe("share");
+    expect(BUILTIN_WORKSPACE).toBe("share");
+    const overridden = resolve<WorkspaceMode>(SETTINGS_REGISTRY.workspace, {
+      global: "own",
+      repo: "share",
+    });
+    expect(overridden.value).toBe("share");
+    expect(overridden.layer).toBe("repo");
+    // A closed vocabulary, enforced by the same validator the write reads by.
+    expect(() => SETTINGS_REGISTRY.workspace.validate("solo")).toThrow(/workspace/);
+    expect(SETTINGS_REGISTRY.workspace.validate("own")).toBe("own");
+    // No detector: whether Rennet works inside the reviewer's tree is never guessed.
+    expect(SETTINGS_REGISTRY.workspace.layers).not.toContain("detected");
   });
 
   it("detectable string rows accept a scout offer and render unset honestly", () => {
