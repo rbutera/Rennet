@@ -2,7 +2,7 @@
 
 ### Requirement: A session binds to exactly one workspace at creation
 
-A session SHALL bind to exactly one workspace root when it is created and SHALL keep that binding for its whole life. Where a Rennet-created worktree is placed SHALL be the location and layout resolved off the settings ladder for the reviewed repository: a root whose builtin is the data directory's `worktrees/`, a branch pattern whose builtin is `{repo}/{branch}`, and a pull-request pattern whose builtin is `{owner}/{name}/pr-{number}`. A pull-request snapshot review SHALL bind to a detached worktree at the reviewed head. A branch review of a branch no worktree has out SHALL bind to a worktree Rennet creates on that branch. A branch review of a branch some worktree already has out SHALL bind according to the repository's resolved `workspace` setting: under `share` (the builtin) to that checkout, creating nothing; under `own` to a worktree Rennet creates on a sibling branch `rennet/<branch>` forked from the branch's head, leaving the existing checkout untouched. The session SHALL record its bound root and its work branch — the branch itself, or the sibling — and both SHALL be visible wherever the session names its branch.
+A session SHALL bind to exactly one workspace root when it is created and SHALL keep that binding for its whole life. Where a Rennet-created worktree is placed SHALL be the location and layout resolved off the settings ladder for the reviewed repository: a root whose builtin is the data directory's `worktrees/`, a branch pattern whose builtin is `{repo}/{branch}`, and a pull-request pattern whose builtin is `{owner}/{name}/pr-{number}`. A pull-request snapshot review SHALL bind to a detached worktree at the reviewed head. A branch review of a branch no worktree has out SHALL bind to a worktree Rennet creates on that branch. A branch review of a branch some worktree already has out SHALL bind according to the repository's resolved `workspace` setting: under `share` (the builtin) to that checkout, creating nothing; under `own` to a worktree Rennet creates on a sibling branch `rennet/<branch>` forked from the branch's head, at the resolved branch pattern applied to the SIBLING's name, leaving the existing checkout untouched. Under `own`, a worktree that is Rennet's own placement for the branch SHALL be bound to as under `share`, because it is not a checkout the reviewer is working in. A repository SHALL have at most one sibling worktree per branch: a session binding where one already exists SHALL bind to it as it stands, changing neither its working tree nor its index. A surviving sibling BRANCH with no worktree SHALL be re-forked from the reviewed branch's head only when its tip is reachable from that branch or from a remote-tracking ref of it, and SHALL otherwise be checked out as it stands. A bind whose computed path is already a worktree of the repository on any other reference SHALL fail with that path and that reference named, creating and checking out nothing. The session SHALL record its bound root and its work branch — the branch itself, or the sibling — and both SHALL be visible wherever the session names its branch.
 
 #### Scenario: Branch review on the current checkout
 - **WHEN** a reviewer whose repository resolves `workspace: share` starts a review of the branch their checkout is on
@@ -11,6 +11,18 @@ A session SHALL bind to exactly one workspace root when it is created and SHALL 
 #### Scenario: Branch review on the current checkout under own
 - **WHEN** a reviewer whose repository resolves `workspace: own` starts a review of the branch their checkout is on
 - **THEN** the session binds to a Rennet-created worktree on `rennet/<branch>` forked from the branch's head, records that sibling as its work branch, and the reviewer's checkout is byte-for-byte unchanged
+
+#### Scenario: A second session on the same sibling
+- **WHEN** a session under `own` binds to a branch whose sibling worktree already exists and holds uncommitted work
+- **THEN** it binds to that worktree as it stands, and the uncommitted work and the sibling's tip are unchanged
+
+#### Scenario: The branch is out in Rennet's own worktree
+- **WHEN** a session under `own` reviews a branch that is checked out in the worktree Rennet placed for it, and in nothing else
+- **THEN** the session binds to that worktree and no sibling branch is created
+
+#### Scenario: The sibling's path belongs to another worktree
+- **WHEN** the resolved placement puts a session's sibling where a worktree of the repository is already checked out on another reference
+- **THEN** the bind fails naming that path and that reference, and that worktree's branch, index and working tree are unchanged
 
 #### Scenario: Branch review of another branch
 - **WHEN** a reviewer starts a review of a branch no worktree has out, under either setting
@@ -40,6 +52,10 @@ A coding round SHALL execute as one turn on its OWN sidecar thread, created for 
 - **WHEN** a round's worker completes with commits on a session whose work branch is `rennet/<branch>`
 - **THEN** those commits are on the sibling, the reviewed branch's own ref has not moved, and the review's new patchset names the reviewed branch with the sibling's tip as its head commit
 
+#### Scenario: The round runs where the session is bound, or nowhere
+- **WHEN** a round is dispatched on a session whose bound workspace is not on its work branch
+- **THEN** the round fails naming that workspace and that branch, and no other workspace of the repository is used
+
 #### Scenario: No worktree per round
 - **WHEN** three rounds run on one session
 - **THEN** no round worktree exists under the resolved root and the session's bound root is the only workspace touched
@@ -56,11 +72,19 @@ A coding round SHALL execute as one turn on its OWN sidecar thread, created for 
 
 ### Requirement: The work branch reaches the reviewed branch by push or by landing
 
-Submitting a pull request SHALL push the session's work branch onto the reviewed branch's name on the remote, `refs/heads/<workBranch>:refs/heads/<branch>`, so a pull request opened from a sibling carries the reviewed branch as its head. The session SHALL offer a land action that fast-forwards the checkout holding the reviewed branch to the work branch, run inside that checkout with git's fast-forward-only merge. Rennet SHALL NOT force, merge or rebase on the reviewer's behalf: a refusal git returns — an unclean tree, a diverged branch — SHALL be shown verbatim beside the branch name, with no dialog and with the action still offered.
+Submitting a pull request SHALL push the session's work branch onto the reviewed branch's name on the remote, `refs/heads/<workBranch>:refs/heads/<branch>`, so a pull request opened from a sibling carries the reviewed branch as its head. It SHALL refuse to push a work branch that is neither the reviewed branch nor exactly its sibling, naming both. It SHALL record the push's destination — the remote and the branch name it landed under — on the session.
+
+Where the work branch has got to SHALL be READ FROM GIT when it is asked for, never stamped on the session: how far the work branch is ahead of the reviewed branch, whether its tip is reachable from the recorded destination's remote-tracking ref, and whether the reviewed branch is already at its tip. That state SHALL be shown wherever the review workspace names the session's branch, and SHALL name the remote-tracking ref it was decided against rather than calling it an upstream.
+
+The session SHALL offer a land action that fast-forwards the checkout holding the reviewed branch to the work branch, run inside that checkout with git's fast-forward-only merge. Rennet SHALL NOT force, merge or rebase on the reviewer's behalf, and SHALL NOT add a refusal of its own to the one git makes: a refusal git returns — a diverged branch, a merge that would overwrite uncommitted edits — SHALL be shown verbatim beside the branch name, with no dialog and with the action still offered.
 
 #### Scenario: Push from a sibling
 - **WHEN** a pull request is submitted from a session whose work branch is `rennet/feat/x`
-- **THEN** the remote's `feat/x` advances to the sibling's tip, the pull request's head is `feat/x`, the local `feat/x` does not move, and the round card says the local branch is behind its upstream
+- **THEN** the remote's `feat/x` advances to the sibling's tip, the pull request's head is `feat/x`, the local `feat/x` does not move, and the workspace says `feat/x` is behind `origin/feat/x` by the commits the sibling holds
+
+#### Scenario: The branch catches up
+- **WHEN** the reviewed branch reaches the work branch's tip, by landing or by a pull
+- **THEN** the workspace says nothing about the work branch, because the state is read from the refs rather than from a record of the push
 
 #### Scenario: Push under share is unchanged
 - **WHEN** a pull request is submitted from a session whose work branch is the reviewed branch
@@ -70,17 +94,27 @@ Submitting a pull request SHALL push the session's work branch onto the reviewed
 - **WHEN** the reviewer lands a sibling onto a checkout with a clean tree that has not diverged
 - **THEN** the checkout's branch fast-forwards to the sibling's tip and its index and working tree carry only that change
 
+#### Scenario: Landing carries unrelated uncommitted work across
+- **WHEN** the reviewer lands a sibling onto a checkout holding uncommitted changes the fast-forward does not touch
+- **THEN** the branch fast-forwards, those changes are still uncommitted in the tree, and Rennet refuses nothing
+
 #### Scenario: Landing is refused by git
-- **WHEN** the reviewer lands a sibling onto a checkout with uncommitted changes, or one that has commits the sibling lacks
+- **WHEN** the reviewer lands a sibling onto a checkout that has commits the sibling lacks, or whose uncommitted edits the fast-forward would overwrite
 - **THEN** nothing in the checkout changes, git's refusal is shown beside the sibling's name, and the action remains available
 
 ### Requirement: A sibling is collected when its work is reachable, and kept otherwise
 
-When a session bound on a sibling is archived, and when the startup sweep finds a sibling whose session is gone, the sibling and its worktree SHALL be removed only when the sibling's tip is reachable from the reviewed branch, locally or through its remote-tracking ref. A sibling with commits the reviewed branch does not have SHALL be kept with its worktree, and the workspace inventory SHALL say it is ahead and by how many commits.
+When a session bound on a sibling is archived, and when the startup sweep finds a sibling whose session is gone, the sibling and its worktree SHALL be removed only when the sibling's tip is reachable from the reviewed branch, locally or through a remote-tracking ref of it — the ref the session's recorded push destination names, or, with no session to ask, any remote's. A sibling with commits the reviewed branch does not have SHALL be kept with its worktree, and the workspace inventory SHALL say it is ahead and by how many commits.
+
+A sibling SHALL NOT be collected while any unarchived session is bound to it. When a sibling IS collected for an archived session, that session's recorded workspace SHALL be cleared, so that un-archiving it binds again rather than resolving to a directory that no longer exists; un-archiving a session whose recorded workspace is missing SHALL clear it for the same reason. Each collection decision SHALL be written to the daemon log, and the startup sweep SHALL report how many siblings it collected and how many it kept.
 
 #### Scenario: Pushed then archived
 - **WHEN** a session on a sibling submitted a pull request and is then archived
-- **THEN** the sibling's tip is reachable from the branch's remote-tracking ref, and the sibling and its worktree are removed
+- **THEN** the sibling's tip is reachable from the remote-tracking ref that push updated — with no upstream configured for the branch — and the sibling, its worktree and the session's recorded workspace are removed
+
+#### Scenario: Archived while another session works there
+- **WHEN** a session bound on a sibling is archived while another unarchived session is bound to the same sibling
+- **THEN** the sibling and its worktree are kept, the daemon log says another session is bound to it, and the archived session's recorded workspace is unchanged
 
 #### Scenario: Ahead then archived
 - **WHEN** a session on a sibling with two unpushed round commits is archived
