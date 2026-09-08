@@ -437,6 +437,18 @@ export function projectCommandOutput(
     // alone would let a `/var/…` or `C:\…` outside every known root cross to a phone.
     if (command === "session.transcript" && Array.isArray(o.rows))
       o.rows = (o.rows as unknown[]).map((row) => redactAbsolutePathsDeep(row, ctx));
+    // The workspace inventory (workspace-settings D6). Each row's `path` is a HOST
+    // directory, so it becomes a repo reference exactly as a review's `repositoryRoot`
+    // does. The row's `id` is deliberately left alone: it is the address `worktrees.remove`
+    // takes, and it is what lets a projected client round-trip a row it can only ever see
+    // the scrubbed spelling of. (`worktrees.remove`'s own top-level `path` is handled by
+    // the generic string-`path` branch above, which is the same rewrite.)
+    if (command === "worktrees.list" && Array.isArray(o.rows)) {
+      o.rows = (o.rows as Record<string, unknown>[]).map((row) => ({
+        ...row,
+        path: toRepoReference(String(row.path), ctx),
+      }));
+    }
     projected = o;
   }
   return scrubProjectedValue(projected, ctx);
@@ -496,9 +508,10 @@ export const INBOUND_HOST_PATH_FIELDS: Readonly<Record<string, readonly string[]
   "settings.setProjectValue": ["repoPath"],
   "settings.setGuidance": ["repoPath"],
   // The workspace inventory names its repository the same way every other repo-scoped
-  // command does. `worktrees.remove`'s `path` is NOT resolved here: it addresses a ROW of
-  // that repository's list, and the host matches it against a fresh inventory rather than
-  // dereferencing it — the same treatment `project.cleanupWorktree`'s `worktreeId` gets.
+  // command does. `worktrees.remove` carries no path at all inbound: it addresses a ROW by
+  // its opaque `id`, which the host recomputes from a fresh inventory — the same treatment
+  // `project.cleanupWorktree`'s `worktreeId` gets, and the reason a projected client can
+  // remove a workspace whose host spelling it has never been told.
   "worktrees.list": ["repoPath"],
   "worktrees.remove": ["repoPath"],
 };

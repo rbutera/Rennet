@@ -60,16 +60,28 @@ function deps(
     worktrees: {
       list: (repoPath: string) =>
         listWorkspaces(gitFor(repoPath), repoPath, { root: worktreeRoot, sessions }),
-      remove: async ({ repoPath, path }: { repoPath: string; path: string }) => {
+      remove: async ({ repoPath, id }: { repoPath: string; id: string }) => {
         const { rows } = await listWorkspaces(gitFor(repoPath), repoPath, {
           root: worktreeRoot,
           sessions,
           measureSizes: false,
         });
-        return removeWorkspace(gitFor(repoPath), repoPath, { path, rows });
+        return removeWorkspace(gitFor(repoPath), repoPath, { id, rows });
       },
     },
   } as unknown as DispatchDeps;
+}
+
+/** The row a removal will address, taken from the list exactly as a client would. */
+async function rowId(
+  dispatch: ReturnType<typeof createDispatch>,
+  repoPath: string,
+  match: (row: WorktreeInventory["rows"][number]) => boolean,
+): Promise<string> {
+  const inventory = (await dispatch("worktrees.list", { repoPath })) as WorktreeInventory;
+  const row = inventory.rows.find(match);
+  if (row === undefined) throw new Error("no row matched");
+  return row.id;
 }
 
 describe("worktrees.list", () => {
@@ -135,10 +147,11 @@ describe("worktrees.remove", () => {
   it("removes an idle Rennet worktree on the first call, with no confirmation step", async () => {
     const { root, worktreeRoot, branchWorktree } = fixture();
     const dispatch = createDispatch(deps(worktreeRoot));
+    const id = await rowId(dispatch, root, (row) => row.kind === "branch");
 
     const outcome = (await dispatch("worktrees.remove", {
       repoPath: root,
-      path: branchWorktree,
+      id,
     })) as WorktreeRemoveOutcome;
 
     expect(outcome.status).toBe("removed");
@@ -149,10 +162,11 @@ describe("worktrees.remove", () => {
     const { root, worktreeRoot, branchWorktree } = fixture();
     writeFileSync(join(branchWorktree, "a.txt"), "uncommitted\n");
     const dispatch = createDispatch(deps(worktreeRoot));
+    const id = await rowId(dispatch, root, (row) => row.kind === "branch");
 
     const outcome = (await dispatch("worktrees.remove", {
       repoPath: root,
-      path: branchWorktree,
+      id,
     })) as WorktreeRemoveOutcome;
 
     expect(outcome.status).toBe("refused");
@@ -165,13 +179,31 @@ describe("worktrees.remove", () => {
   it("cannot address the reviewer's own checkout", async () => {
     const { root, worktreeRoot } = fixture();
     const dispatch = createDispatch(deps(worktreeRoot, [{ id: "s1", boundRoot: root }]));
+    const id = await rowId(dispatch, root, (row) => row.kind === "own-checkout");
 
     const outcome = (await dispatch("worktrees.remove", {
       repoPath: root,
-      path: root,
+      id,
     })) as WorktreeRemoveOutcome;
 
     expect(outcome).toMatchObject({ status: "not-removable", reason: "your own checkout" });
     expect(existsSync(join(root, "a.txt"))).toBe(true);
+  });
+
+  it("reports that an id naming no row of this repository addressed nothing", async () => {
+    const { root, worktreeRoot, branchWorktree } = fixture();
+    const dispatch = createDispatch(deps(worktreeRoot));
+
+    const outcome = (await dispatch("worktrees.remove", {
+      repoPath: root,
+      id: "0123456789abcdef",
+    })) as WorktreeRemoveOutcome;
+
+    expect(outcome).toEqual({
+      status: "not-removable",
+      id: "0123456789abcdef",
+      reason: "not a workspace Rennet knows for this repository",
+    });
+    expect(existsSync(branchWorktree)).toBe(true);
   });
 });

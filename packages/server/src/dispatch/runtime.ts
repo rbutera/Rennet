@@ -743,7 +743,7 @@ export interface DispatchDeps {
    */
   readonly worktrees?: {
     list(repoPath: string): Promise<WorktreeInventory>;
-    remove(input: { repoPath: string; path: string }): Promise<WorktreeRemoveOutcome>;
+    remove(input: { repoPath: string; id: string }): Promise<WorktreeRemoveOutcome>;
   };
 }
 

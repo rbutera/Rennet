@@ -31,13 +31,13 @@ export function worktreesHandlers(rt: DispatchRuntime) {
       if (!deps.worktrees) {
         return parseCommandOutput(name, {
           status: "not-removable",
-          path: input.path,
+          id: input.id,
           reason: "not a workspace Rennet knows for this repository",
         });
       }
       return parseCommandOutput(
         name,
-        await deps.worktrees.remove({ repoPath: input.repoPath, path: input.path }),
+        await deps.worktrees.remove({ repoPath: input.repoPath, id: input.id }),
       );
     },
   } satisfies Record<string, CommandHandler>;

@@ -1,7 +1,13 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { commands, projectProcessEventSchema, RoundEventSchema } from "@rennet/protocol";
+import {
+  commands,
+  projectedWorktreeInventorySchema,
+  projectedWorktreeRemoveOutcomeSchema,
+  projectProcessEventSchema,
+  RoundEventSchema,
+} from "@rennet/protocol";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { z } from "zod";
 import {
@@ -532,6 +538,63 @@ describe("inbound resolution", () => {
     expect(resolved.repoPath).toBe(REPO);
   });
 
+  it("round-trips a projected worktree row back into worktrees.remove", () => {
+    // The defect this pins: a projected client saw a row whose `path` had been rewritten
+    // into a repo reference and its tail scrubbed, and `worktrees.remove` took a `path`.
+    // Nothing it could echo back would ever match a host inventory, so the removal was
+    // unaddressable from a paired device and the reason it gave named the wrong cause.
+    const workspace = `${REPO}/../.rennet/worktrees/rennet/feat/x`;
+    const projected = projectCommandOutput(
+      "worktrees.list",
+      {
+        rows: [
+          {
+            id: "a1b2c3d4e5f60718",
+            path: workspace,
+            kind: "sibling",
+            ref: "rennet/feat/x",
+            sessionIds: [],
+            removable: true,
+          },
+        ],
+        truncated: false,
+      },
+      ctx,
+    ) as { rows: { id: string; path: unknown }[] };
+
+    // The host path is gone from the wire; the address survives it.
+    expect(projectedWorktreeInventorySchema.parse(projected).rows[0]?.path).toBeDefined();
+    expect(JSON.stringify(projected)).not.toContain(HOME);
+    expect(projected.rows[0]?.id).toBe("a1b2c3d4e5f60718");
+
+    const resolved = resolveCommandInput(
+      "worktrees.remove",
+      { repoPath: toRepoReference(REPO, ctx), id: projected.rows[0]?.id },
+      ctx,
+    ) as { repoPath: string; id: string };
+    expect(resolved.repoPath).toBe(REPO);
+    expect(resolved.id).toBe("a1b2c3d4e5f60718");
+  });
+
+  it("projects a remove outcome into its own schema instead of violating the raw one", () => {
+    const outcome = projectCommandOutput(
+      "worktrees.remove",
+      {
+        status: "removed",
+        id: "a1b2c3d4e5f60718",
+        path: `${REPO}/nested`,
+        siblingBranchDeleted: false,
+        note: "rennet/feat/x kept: ahead of feat/x by 2 commits",
+      },
+      ctx,
+    );
+
+    const parsed = projectedWorktreeRemoveOutcomeSchema.parse(outcome);
+    expect(parsed.status).toBe("removed");
+    expect(parsed.path).toEqual(toRepoReference(`${REPO}/nested`, ctx));
+    expect(parsed.status === "removed" && parsed.note).toContain("ahead of feat/x by 2");
+  });
+
   it.each(["settings.resetRepoValue", "settings.pinRepoValue"] as const)(
     "projects the SettingsProject row returned by %s",
     (command) => {
@@ -870,11 +933,12 @@ const PATH_FIELD_CLASSIFICATIONS: Readonly<Record<string, PathClassification>> =
     "project.detail.output.locals.id",
     "project.detail.output.prs.id",
     "project.cleanupWorktree.input.worktreeId",
-    // `worktrees.remove` addresses a ROW of the repository's own list, exactly as
-    // `cleanupWorktree` addresses a `LocalWork.id`. The host matches it against a fresh
-    // inventory of `repoPath` and refuses anything that is not a row, so it is never
-    // dereferenced as a path on the way in.
-    "worktrees.remove.input.path",
+    // `worktrees.remove` addresses a ROW of the repository's own list by an opaque digest,
+    // exactly as `cleanupWorktree` addresses a `LocalWork.id`. The host matches it against
+    // a fresh inventory of `repoPath`, so no path is ever dereferenced on the way in.
+    "worktrees.remove.input.id",
+    "worktrees.list.output.rows.id",
+    "worktrees.remove.output.id",
   ]),
 };
 
