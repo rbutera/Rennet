@@ -449,10 +449,17 @@ describe("decideBoundWorkspace (session-bound-workspace D1)", () => {
   });
 
   it("places a PR snapshot under the REMOTE's name, not the clone folder's", async () => {
-    // Cloning `acme/widget` into a folder called `widget-local`: `{name}` means the
-    // remote's repository name, so the bind puts the snapshot under `acme/widget/pr-7`.
-    // `settings.test.ts` asserts the row's preview is that same path — the two were
-    // computed differently and disagreed (the preview said `acme/widget-local/pr-1`).
+    // Cloning a forge repository into a folder called `widget-local`. `{name}` means the
+    // REMOTE's repository name, never the folder's, so the snapshot goes under the forge
+    // identity — here `o/n`, which is what the review's own `postTarget` carries, and the
+    // folder name appears nowhere in the path.
+    //
+    // NOT the same path as `settings.test.ts`'s "previews the PR snapshot under the
+    // REMOTE's name": that test is a different fixture (`acme`/`widget`, pull request 1,
+    // resolved from `worktreeFacts`) and asserts `acme/widget/pr-1`. What the two SHARE is
+    // the rule — `{name}` is the remote's name — and the bug they were written for, where
+    // the preview spelled the folder (`acme/widget-local/pr-1`) and the bind spelled the
+    // remote. Each pins its own half; neither reproduces the other's path.
     const repo = initRepo(root, "widget-local");
     const review = reviewFor({
       id: "r12",

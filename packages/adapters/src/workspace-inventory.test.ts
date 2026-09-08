@@ -552,6 +552,38 @@ describe("listWorkspaces", () => {
     expect(win.rows.every((row) => row.sessionIds[0] === "s-win")).toBe(true);
   });
 
+  it("folds a WSL path's UNC HEAD but not the distro path behind it", async () => {
+    // Windows resolves the share name and the distro name case-INSENSITIVELY, so
+    // `\\WSL$\ubuntu\home\u\wt` and `\\wsl$\Ubuntu\home\u\wt` are ONE directory — and a
+    // project opened through one spelling with a session bound through the other showed
+    // the workspace as idle and removable while a session was working in it. Behind the
+    // head is the distro's own case-SENSITIVE filesystem, which must NOT fold.
+    const gitSpelling = "\\\\wsl$\\Ubuntu\\home\\u\\wt\\feat\\abc-1";
+    const sessionSpelling = "\\\\WSL$\\ubuntu\\home\\u\\wt\\feat\\abc-1";
+    const upperTail = "\\\\wsl$\\Ubuntu\\home\\u\\wt\\feat\\ABC-1";
+    const inventory = await listWorkspaces(
+      cannedGit(
+        `${record("\\\\wsl$\\Ubuntu\\home\\u\\repo", "feat/x")}` +
+          `${record(gitSpelling, "feat/abc-1")}${record(upperTail, "feat/ABC-1")}`,
+      ),
+      "\\\\wsl$\\Ubuntu\\home\\u\\repo",
+      {
+        root: "\\\\wsl$\\Ubuntu\\home\\u\\nothing-here",
+        measureSizes: false,
+        foldsCase: windowsFoldsCase,
+        sessions: [{ id: "s-wsl", boundRoot: sessionSpelling }],
+      },
+    );
+
+    // The HEAD folded: the differently spelled session matched its own directory.
+    expect(inventory.rows.map((row) => row.path)).toEqual([gitSpelling]);
+    expect(inventory.rows[0]?.sessionIds).toEqual(["s-wsl"]);
+    // …and the TAIL did not. `…\feat\ABC-1` is a different directory on the distro's
+    // case-sensitive filesystem, nothing claims it, and it is absent rather than folded
+    // onto the row above and dragging that session's id with it.
+    expect(inventory.rows).toHaveLength(1);
+  });
+
   it.skipIf(!CASE_SENSITIVE_SCRATCH)(
     "removes exactly the case-differing worktree it was asked for",
     async () => {
