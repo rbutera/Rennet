@@ -585,6 +585,8 @@ export async function awaitTurnSettled(
     }
     return latest && latest.turnId !== after?.previousTurnId ? latest : undefined;
   };
+  // Preserve the schema path but omit the provider's stack, whichever failure arrives first.
+  const failureMessage = (detail: string): string => detail.split("\n    at ")[0] ?? detail;
   const sessionFailure = (thread: OrchestrationThread | undefined): string | undefined => {
     if (after?.startCommandId !== undefined) return undefined;
     const session = thread?.session;
@@ -594,7 +596,7 @@ export async function awaitTurnSettled(
     if (after !== undefined && Date.parse(session.updatedAt) < Date.parse(after.requestedAt)) {
       return undefined;
     }
-    return session.lastError ?? undefined;
+    return session.lastError == null ? undefined : failureMessage(session.lastError);
   };
   /**
    * The sidecar accepted `thread.turn.start` and refused it afterwards, on the reactor's
@@ -621,9 +623,7 @@ export async function awaitTurnSettled(
     );
     if (refusal === undefined) return undefined;
     const detail = asRecord(refusal.payload)?.detail;
-    // The detail is the failure's message followed by its stack frames (four-space
-    // `at file://…` lines); the message, schema path included, is the part worth carrying.
-    return typeof detail === "string" ? (detail.split("\n    at ")[0] ?? detail) : refusal.summary;
+    return typeof detail === "string" ? failureMessage(detail) : refusal.summary;
   };
   const settledOutcome = (
     thread: OrchestrationThread,

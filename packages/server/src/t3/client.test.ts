@@ -535,9 +535,8 @@ describe.skipIf(!bundle)("t3 client: a turn the sidecar refuses after accepting 
     // The sidecar's own words, cap included — not the wait's "never started" guess.
     expect(outcome.errorMessage).toContain(String(T3_TURN_INPUT_MAX_CHARS));
     expect(outcome.errorMessage).not.toMatch(/\n\s+at file:/);
-    // No turn was ever minted for it, and the session is NOT where the failure shows.
+    // The refusal can arrive through the session before its failure activity.
     expect(outcome.thread.latestTurn).toBeNull();
-    expect(outcome.thread.session?.lastError ?? null).toBeNull();
     expect(running.child?.exitCode).toBeNull();
   }, 45_000);
 });
@@ -901,6 +900,27 @@ describe("awaitTurnSettled", () => {
       state: "error",
       errorMessage: "new stream failed",
     });
+  });
+
+  it("keeps the refusal message when the session error arrives before its activity", async () => {
+    const message =
+      'ProviderValidationError: Expected a value with a length of at most 120000\n  at ["input"]';
+    const p = projection(
+      fakeThread({
+        session: {
+          status: "error",
+          activeTurnId: null,
+          lastError: `${message}\n    at file:///app/bin.mjs:1:1\n    at sendTurn (file:///app/bin.mjs:2:1)`,
+          updatedAt: T0,
+        },
+        activities: [],
+      }),
+    );
+    await expect(
+      awaitTurnSettled("t", p.deps, {
+        after: { previousTurnId: null, requestedAt: T0 },
+      }),
+    ).resolves.toMatchObject({ state: "error", errorMessage: message });
   });
 
   it("settles a start the sidecar refused after accepting it, off the failure activity", async () => {
