@@ -600,6 +600,113 @@ describe("readTurnSettlement", () => {
     expect(readTurnSettlement(t, "turn-9")).toBeUndefined();
   });
 
+  it("derives each Codex turn's total from stamped durable counters, independent of event arrival order", () => {
+    const snapshot = (inputTokens: number, cachedInputTokens: number, outputTokens: number) => ({
+      usedTokens: 1_200,
+      inputTokens: 1_000,
+      cachedInputTokens: 300,
+      outputTokens: 200,
+      codexCumulativeUsage: {
+        providerThreadId: "provider-1",
+        totalTokens: inputTokens + outputTokens,
+        inputTokens,
+        cachedInputTokens,
+        outputTokens,
+        reasoningOutputTokens: 100,
+      },
+    });
+    const t = thread([
+      activity("context-window.updated", "turn-1", snapshot(8_000, 2_000, 1_000)),
+      activity("turn.settled", "turn-1", {
+        codexUsageBaseline: null,
+        codexCumulativeUsage: snapshot(10_000, 3_000, 2_000).codexCumulativeUsage,
+      }),
+      activity("context-window.updated", "turn-2", snapshot(11_000, 3_300, 2_200)),
+      activity("turn.settled", "turn-2", {
+        codexUsageBaseline: snapshot(10_000, 3_000, 2_000).codexCumulativeUsage,
+        codexCumulativeUsage: snapshot(11_000, 3_300, 2_200).codexCumulativeUsage,
+      }),
+      // Delayed final usage and duplicates are still attributed to turn 1.
+      activity("context-window.updated", "turn-1", snapshot(10_000, 3_000, 2_000)),
+      activity("context-window.updated", "turn-1", snapshot(10_000, 3_000, 2_000)),
+    ]);
+    expect(readTurnSettlement(t, "turn-1")?.aggregateUsage).toEqual({
+      inputTokens: 10_000,
+      cachedInputTokens: 3_000,
+      outputTokens: 2_000,
+    });
+    expect(readTurnSettlement(t, "turn-2")?.aggregateUsage).toEqual({
+      inputTokens: 1_000,
+      cachedInputTokens: 300,
+      outputTokens: 200,
+    });
+    expect(readTurnSettlement(t, "turn-2")?.tokenUsage).toMatchObject({ usedTokens: 1_200 });
+    const onlySettlements = thread(
+      t.activities.filter((activity) => activity.kind === "turn.settled"),
+    );
+    expect(readTurnSettlement(onlySettlements, "turn-2")?.aggregateUsage).toEqual({
+      inputTokens: 1_000,
+      cachedInputTokens: 300,
+      outputTokens: 200,
+    });
+    expect(readTurnSettlement(JSON.parse(JSON.stringify(t)), "turn-2")).toEqual(
+      readTurnSettlement(t, "turn-2"),
+    );
+  });
+
+  it("keeps missing baselines unavailable and restarts counters only for a different provider thread", () => {
+    const snapshot = (providerThreadId: string, inputTokens: number) => ({
+      usedTokens: inputTokens,
+      codexCumulativeUsage: {
+        providerThreadId,
+        totalTokens: inputTokens,
+        inputTokens,
+        cachedInputTokens: 0,
+        outputTokens: 0,
+        reasoningOutputTokens: 0,
+      },
+    });
+    const activities = [
+      activity("context-window.updated", "first", snapshot("provider-1", 10_000)),
+      activity("turn.settled", "first", { codexUsageBaseline: null }),
+      activity("context-window.updated", "reset", snapshot("provider-2", 12_000)),
+      activity("turn.settled", "reset", {
+        codexUsageBaseline: snapshot("provider-1", 10_000).codexCumulativeUsage,
+      }),
+      activity("context-window.updated", "zero", snapshot("provider-2", 12_000)),
+      activity("turn.settled", "zero", {
+        codexUsageBaseline: snapshot("provider-2", 12_000).codexCumulativeUsage,
+      }),
+    ];
+    expect(readTurnSettlement(thread(activities), "reset")?.aggregateUsage).toMatchObject({
+      inputTokens: 12_000,
+    });
+    expect(readTurnSettlement(thread(activities), "zero")?.aggregateUsage).toMatchObject({
+      inputTokens: 0,
+    });
+    expect(
+      readTurnSettlement(
+        thread([
+          activity("context-window.updated", "legacy", snapshot("provider-1", 100)),
+          activity("turn.settled", "legacy", {}),
+        ]),
+        "legacy",
+      )?.aggregateUsage,
+    ).toBeUndefined();
+    const decreased = [
+      ...activities,
+      activity("context-window.updated", "bad", snapshot("provider-2", 1)),
+      activity("turn.settled", "bad", {
+        codexUsageBaseline: snapshot("provider-2", 12_000).codexCumulativeUsage,
+      }),
+    ];
+    expect(readTurnSettlement(thread(decreased), "bad")?.aggregateUsage).toBeUndefined();
+    expect(
+      readTurnSettlement(thread([activity("turn.settled", "legacy", {})]), "legacy")
+        ?.aggregateUsage,
+    ).toBeUndefined();
+  });
+
   it("skips an earlier settlement that carried no usage and finds the one before it", () => {
     const t = thread([
       activity("turn.settled", "turn-1", { usage: { input_tokens: 5 } }),

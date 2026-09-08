@@ -17,6 +17,7 @@ import { randomUUID } from "node:crypto";
 import {
   ApprovalRequestId,
   type ClientOrchestrationCommand,
+  CodexCumulativeTokenUsage,
   CommandId,
   MessageId,
   type ModelSelection,
@@ -37,6 +38,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { RpcClient, RpcSerialization } from "effect/unstable/rpc";
@@ -125,11 +127,11 @@ export interface TurnSettlement {
   readonly totalCostUsd?: number;
   readonly errorMessage?: string;
   /**
-   * T3's latest `context-window.updated` snapshot for the turn, unparsed. Codex reports
-   * its tokens here and nothing on the settlement; the snapshot is the last request's
-   * own figures. Absent when no snapshot landed for the turn.
+   * T3's latest `context-window.updated` snapshot for the turn, unparsed. The snapshot describes the last request's context; spend comes from aggregateUsage. Absent when no snapshot landed for the turn.
    */
   readonly tokenUsage?: unknown;
+  /** Codex turn totals derived from durable counters with exact provider turn identity. */
+  readonly aggregateUsage?: unknown;
   /**
    * The nearest earlier settled turn's usage on this thread. Claude's counter is
    * cumulative over the session, so a turn's own spend is the difference — read off the
@@ -817,8 +819,44 @@ export function readTurnSettlement(
     ...(totalCostUsd === undefined ? {} : { totalCostUsd }),
     ...(errorMessage === undefined ? {} : { errorMessage }),
     ...(tokenUsage === undefined ? {} : { tokenUsage }),
+    ...readCodexTurnUsage(activities, turnId, settledAt),
     ...(previousUsage === undefined ? {} : { previousUsage }),
   };
+}
+
+/** Counter totals survive Codex resume; a new provider thread starts a new counter epoch. */
+function readCodexTurnUsage(
+  activities: OrchestrationThread["activities"],
+  turnId: string,
+  settledAt: number,
+): Pick<TurnSettlement, "aggregateUsage"> {
+  const saved = asRecord(activities[settledAt]?.payload)?.codexCumulativeUsage;
+  let total = Schema.is(CodexCumulativeTokenUsage)(saved) ? saved : undefined;
+  for (const activity of activities) {
+    if (activity.kind !== "context-window.updated" || activity.turnId !== turnId) continue;
+    const value = asRecord(activity.payload)?.codexCumulativeUsage;
+    if (!Schema.is(CodexCumulativeTokenUsage)(value)) continue;
+    // A duplicate or delayed earlier notification cannot replace a newer total.
+    if (!total || value.totalTokens >= total.totalTokens) total = value;
+  }
+  if (!total) return {};
+  const settlement = asRecord(activities[settledAt]?.payload);
+  const baselineValue = settlement?.codexUsageBaseline;
+  if (baselineValue !== null && !Schema.is(CodexCumulativeTokenUsage)(baselineValue)) return {};
+  const baseline =
+    baselineValue?.providerThreadId === total.providerThreadId ? baselineValue : undefined;
+  const inputTokens = total.inputTokens - (baseline?.inputTokens ?? 0);
+  const cachedInputTokens = total.cachedInputTokens - (baseline?.cachedInputTokens ?? 0);
+  const outputTokens = total.outputTokens - (baseline?.outputTokens ?? 0);
+  if (
+    inputTokens < 0 ||
+    cachedInputTokens < 0 ||
+    outputTokens < 0 ||
+    cachedInputTokens > inputTokens ||
+    total.totalTokens - (baseline?.totalTokens ?? 0) !== inputTokens + outputTokens
+  )
+    return {};
+  return { aggregateUsage: { inputTokens, cachedInputTokens, outputTokens } };
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {

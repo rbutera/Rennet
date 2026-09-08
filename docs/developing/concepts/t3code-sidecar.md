@@ -530,9 +530,17 @@ Three things follow from the thread being persistent.
   runner recreated for the thread (a whole-board restart) or a daemon restarted under it
   subtracts the same as one that watched every turn. A total below the previous one means
   the session restarted and its counter began again, and the whole figure is the turn's.
-  Codex reports nothing on its settlement: its tokens ride T3's `context-window.updated`
-  snapshot for the turn, which is the last request's own figures (a turn with several
-  tool round-trips under-reports until T3 projects the running total's breakdown). One
+  Codex's `context-window.updated` keeps the last request's context figures. Its separate
+  cumulative breakdown is stamped with the provider thread and turn. The sidecar saves
+  the counter baseline when a turn starts and carries that baseline plus the final
+  counter on `turn.settled`; a long turn cannot evict its baseline from the 500-activity
+  display window. Settlement subtracts the baseline within the same provider thread.
+  A new provider thread starts a new counter epoch, while resuming the same thread keeps
+  its baseline. Duplicate usage notifications do not add spend. Cached input is part of
+  Codex's inclusive input count, and reasoning is already included in output.
+  Missing aggregate or baseline data, including older settlements, contributes an
+  `unmeasuredTurns` entry rather than a fabricated zero. Codex dollar cost stays unavailable.
+  One
   `TurnMetric` per turn reaches the generation's collector, labelled `board.<jobId>`, with
   the provider's own duration when it reported one; a repair therefore never bills the
   drafting turn twice.
