@@ -742,6 +742,53 @@ describe("decideBoundWorkspace (session-bound-workspace D1)", () => {
     expect(gitCalls.some((argv) => argv[0] === "reset")).toBe(false);
   });
 
+  it("records the DAEMON's spelling of an existing sibling, never GIT's", async () => {
+    // THE REVIEW FINDING (B1). `git worktree list` prints paths in the spelling of the git
+    // that answered — which on a Windows daemon driving a WSL repository is `/home/u/…`
+    // while the daemon addresses that very directory as `\\wsl$\…`. The `share` arm below
+    // already normalises; the sibling arm returned git's answer verbatim, so the recorded
+    // `boundRoot` was a string the daemon cannot `existsSync`, cannot detect a locus for,
+    // and cannot match against its own worktree root. Downstream that reads as "this
+    // session moved to another workspace".
+    //
+    // The two spellings here are a real directory and a symlinked alias for it: one
+    // directory, two names, which is the whole shape of the failure.
+    const repo = initRepo(root, "repo");
+    git(repo, ["checkout", "-q", "feature"]);
+    placement = { ...placement, workspace: "own" };
+    const review = reviewFor({
+      id: "own-spelling",
+      repositoryRoot: repo,
+      headOid: headOid(repo, "feature"),
+      headRef: "feature",
+      baseOid: headOid(repo, "main"),
+    });
+    const first = await decideBoundWorkspace(review, deps);
+    const real = join(dataDir, "worktrees");
+    const alias = join(root, "worktrees-alias");
+    symlinkSync(real, alias);
+    const gitSpelling = first.boundRoot.replace(real, alias);
+    expect(gitSpelling).not.toBe(first.boundRoot);
+    // A git that answers in the OTHER spelling, exactly as the distro's git would.
+    deps = {
+      ...deps,
+      gitFor: () => async (cwd: string, args: string[], options?: { reject?: boolean }) => {
+        const out = await gitExec(cwd, args, options);
+        return args[0] === "worktree" && args[1] === "list" ? out.split(real).join(alias) : out;
+      },
+    };
+
+    const second = await decideBoundWorkspace(review, deps);
+
+    // The computed placement — the name Rennet already owns for this directory — and not
+    // the one git printed. Returning `sibling.path` raw reddens on the first assertion.
+    expect(second.boundRoot).toBe(first.boundRoot);
+    expect(second.boundRoot).not.toBe(gitSpelling);
+    expect(second.workBranch).toBe("rennet/feature");
+    // …and it is one directory, which is why re-spelling it is safe rather than a guess.
+    expect(realpathSync(gitSpelling)).toBe(realpathSync(second.boundRoot));
+  });
+
   it("binds `own` to the branch itself when NOTHING has it out — there is no conflict to avoid", async () => {
     const repo = initRepo(root, "repo"); // the checkout is on `main`
     placement = { ...placement, workspace: "own" };

@@ -15,6 +15,7 @@ import {
 import { landWorkBranch } from "./land-work-branch";
 import { createForgeRegistry } from "./project-forge-registry";
 import { collectSibling, orphanedSiblings } from "./sibling-cleanup";
+import { readWorkBranchState } from "./work-branch-state";
 
 // What `workspace: own` costs and what it buys, driven against REAL git repositories.
 //
@@ -100,7 +101,12 @@ describe("the round's WORKSPACE under `own` (review finding W1)", () => {
   // capture was never wrong: it was handed the wrong root.
 
   /** The planner as `create-server` composes it, over REAL git in this fixture. */
-  function planner(input: { boundRoot?: string; workBranch?: string }) {
+  function planner(input: {
+    boundRoot?: string;
+    workBranch?: string;
+    /** The fallback list, when the case is about the SEARCH rather than about a binding. */
+    candidates?: readonly string[];
+  }) {
     const readGit = async (root: string, args: readonly string[]): Promise<string | undefined> => {
       try {
         const out = (await gitExec(root, [...args], { reject: false })).trim();
@@ -113,8 +119,14 @@ describe("the round's WORKSPACE under `own` (review finding W1)", () => {
       ...(input.boundRoot === undefined ? {} : { boundRoot: () => input.boundRoot }),
       ...(input.workBranch === undefined ? {} : { workBranch: () => input.workBranch }),
       // Both roots are offered, in the order `create-server` offers them: the session's
-      // binding first, the review's repository second.
-      candidateRoots: () => [input.boundRoot, repo].filter((v): v is string => v !== undefined),
+      // binding first, the review's repository second. A case that is about the SEARCH
+      // says which roots are on offer, because a session with no binding still has a
+      // sibling worktree in the list `create-server` builds — dropping it there is what
+      // made the control below unfalsifiable.
+      candidateRoots: () =>
+        input.candidates !== undefined
+          ? [...input.candidates]
+          : [input.boundRoot, repo].filter((v): v is string => v !== undefined),
       reviewedHead: () => oid(repo, "refs/heads/feat/x"),
       headOf: (root) => readGit(root, ["rev-parse", "HEAD"]),
       branchOf: (root) => readGit(root, ["symbolic-ref", "--quiet", "--short", "HEAD"]),
@@ -170,9 +182,20 @@ describe("the round's WORKSPACE under `own` (review finding W1)", () => {
     // The planner as it was: no work branch, no bound root — so `feat/x` is matched, the
     // sibling (on `rennet/feat/x`) is skipped, and the search reaches the reviewer's
     // checkout. This is the exact composition the finding describes.
+    //
+    // THE SIBLING IS OFFERED FIRST, and it is offered EXPLICITLY. The earlier version of
+    // this control let the helper derive the candidate list from `boundRoot`, which it did
+    // not pass — so the list was `[repo]`, the sibling was never a candidate at all, and
+    // the assertion below held under any matching rule whatsoever, including no rule. A
+    // control that cannot fail is not a control. Now the sibling is first in line and the
+    // BRANCH MATCH is the only thing that skips it: delete that comparison in
+    // `createRoundWorkspacePlanner` and this plans the sibling instead.
     const sibling = await bindSibling();
 
-    const plan = await planner({})({ ...operation, repoRoot: repo } as never);
+    const plan = await planner({ candidates: [sibling, repo] })({
+      ...operation,
+      repoRoot: repo,
+    } as never);
 
     expect(plan.root).toBe(repo);
     expect(plan.root).not.toBe(sibling);
@@ -630,5 +653,95 @@ describe("sibling collection (D5, task 2.6)", () => {
     expect(found).toEqual([{ path: sibling, siblingBranch: "rennet/feat/x", branch: "feat/x" }]);
     // The reviewer's own checkout is not in the list either: it is not a `rennet/*` worktree.
     expect(found.some((entry) => entry.path === repo)).toBe(false);
+  });
+});
+
+describe("session.workBranchState — what the strip is told (review findings S2, S3)", () => {
+  /** The read as the daemon composes it, over this fixture's real git. */
+  const stateOf = (push?: { remote: string; branch: string }) =>
+    readWorkBranchState({
+      git: gitExec,
+      repoRoot: repo,
+      branch: "feat/x",
+      workBranch: "rennet/feat/x",
+      ...(push === undefined ? {} : { push }),
+    });
+
+  it("counts the REMOTE's range for `behindRemote`, not the sibling's", async () => {
+    // S2. The strip rendered "`feat/x` is behind `origin/feat/x` by N" out of the SIBLING's
+    // count, which is the same number only while nobody else has pushed. Here the sibling
+    // holds one commit `feat/x` does not, and `origin/feat/x` holds two — a teammate pushed
+    // on top of Rennet's submission — so the two numbers differ and only one of them
+    // belongs in that sentence. A fixture where they agreed could not see this at all.
+    const sibling = await bindSibling();
+    const bare = join(root, "remote.git");
+    git(root, ["init", "-q", "--bare", bare]);
+    git(repo, ["remote", "add", "origin", bare]);
+    git(repo, ["push", "-q", "origin", "refs/heads/feat/x:refs/heads/feat/x"]);
+    // Rennet's round, and Rennet's push: `refs/remotes/origin/feat/x` now has ONE commit
+    // `feat/x` does not, and so does the sibling.
+    commit(sibling, "round.txt", "the round's work\n");
+    git(repo, ["push", "-q", "origin", "refs/heads/rennet/feat/x:refs/heads/feat/x"]);
+    // …and then a teammate pushes a second one, through their own clone of the remote.
+    const theirs = join(root, "theirs");
+    git(root, ["clone", "-q", "--branch", "feat/x", bare, theirs]);
+    commit(theirs, "theirs.txt", "theirs\n");
+    git(theirs, ["push", "-q", "origin", "HEAD:refs/heads/feat/x"]);
+    git(repo, ["fetch", "-q", "origin"]);
+
+    const state = await stateOf({ remote: "origin", branch: "feat/x" });
+
+    // TWO different numbers, each read from its own range. Rendering `aheadOfBranch` under
+    // the remote's sentence — which is what the single `ahead` did — says "by 1" here.
+    expect(state.aheadOfBranch).toBe(1);
+    expect(state.behindRemote).toBe(2);
+    expect(state.pushed).toBe(true);
+    expect(state.landed).toBe(false);
+    expect(state.remoteRef).toBe("refs/remotes/origin/feat/x");
+  });
+
+  it("reports `behindRemote: 0` with no recorded push — nothing has been sent anywhere", async () => {
+    const sibling = await bindSibling();
+    commit(sibling, "round.txt", "the round's work\n");
+
+    const state = await stateOf();
+
+    expect(state.aheadOfBranch).toBe(1);
+    expect(state.behindRemote).toBe(0);
+    expect(state.pushed).toBe(false);
+    expect(state.remoteRef).toBeUndefined();
+  });
+
+  it("calls the work LANDED once the branch CONTAINS it, not only while the tips are equal", async () => {
+    // S3. `landed` was `rev-parse <branch> === rev-parse <workBranch>`, which stops holding
+    // the moment the reviewer does anything after the fast-forward. Pull one commit, or
+    // commit one line, and the strip went back to saying "the round's commits are on
+    // `rennet/feat/x`; `feat/x` has not moved" over a branch that was carrying them.
+    const sibling = await bindSibling();
+    const landed = commit(sibling, "round.txt", "the round's work\n");
+    // The reviewer lands it, exactly as the action does…
+    git(repo, ["merge", "--ff-only", "refs/heads/rennet/feat/x"]);
+    expect(await stateOf().then((state) => state.landed)).toBe(true);
+    // …and then carries on working on their branch, which moves its tip past the sibling.
+    commit(repo, "after.txt", "after\n");
+    expect(oid(repo, "refs/heads/feat/x")).not.toBe(landed);
+
+    const state = await stateOf();
+
+    // The equality test answers FALSE here; ancestry answers what the sentence is about.
+    expect(state.landed).toBe(true);
+    expect(state.aheadOfBranch).toBe(0);
+  });
+
+  it("does NOT call it landed while the sibling holds a commit the branch does not", async () => {
+    // The pair that keeps ancestry from being a rubber stamp: the branch is an ancestor of
+    // the sibling here, and the question is the other way round.
+    const sibling = await bindSibling();
+    commit(sibling, "round.txt", "the round's work\n");
+
+    const state = await stateOf();
+
+    expect(state.landed).toBe(false);
+    expect(state.aheadOfBranch).toBe(1);
   });
 });

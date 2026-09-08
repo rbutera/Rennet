@@ -58,6 +58,21 @@ export interface WorktreeRecord {
   readonly head?: string;
   readonly detached: boolean;
   readonly bare: boolean;
+  /**
+   * GIT'S OWN reason this registration would be dropped by `git worktree prune`, when git
+   * says there is one (`prunable <reason>` in the porcelain output).
+   *
+   * Read from git rather than from an `existsSync` on the daemon's side, because the two
+   * disagree on exactly the arrangement that matters: a Windows daemon driving a WSL
+   * repository gets `/home/u/…` from the git inside the distro, and `existsSync` on that
+   * string is false for a directory that is perfectly present. Git answers inside the
+   * locus that owns the path.
+   *
+   * Absent means git did not say — either the registration is live, or the git in hand is
+   * older than the annotation. Both read the same way here, and both are the safe reading:
+   * the callers treat an unannotated registration as PRESENT and change nothing.
+   */
+  readonly prunable?: string;
 }
 
 /**
@@ -78,6 +93,7 @@ export function parseWorktreeRecords(output: string | undefined): WorktreeRecord
   let head: string | undefined;
   let detached = false;
   let bare = false;
+  let prunable: string | undefined;
   const flush = (): void => {
     if (path !== undefined && path.length > 0) {
       records.push({
@@ -86,6 +102,7 @@ export function parseWorktreeRecords(output: string | undefined): WorktreeRecord
         ...(head === undefined ? {} : { head }),
         detached,
         bare,
+        ...(prunable === undefined ? {} : { prunable }),
       });
     }
     path = undefined;
@@ -93,6 +110,7 @@ export function parseWorktreeRecords(output: string | undefined): WorktreeRecord
     head = undefined;
     detached = false;
     bare = false;
+    prunable = undefined;
   };
   // `?? ""` because a runner that answers with no stdout at all is a real arrangement
   // (a stubbed GitExec, a locus shim); an empty inventory is the right reading of it,
@@ -114,6 +132,11 @@ export function parseWorktreeRecords(output: string | undefined): WorktreeRecord
       detached = true;
     } else if (token === "bare") {
       bare = true;
+    } else if (token === "prunable" || token.startsWith("prunable ")) {
+      // `prunable` alone is possible; `prunable <reason>` is what git prints for a gitdir
+      // whose directory has gone. Either way the flag is git's verdict, and the reason is
+      // kept so a refusal can quote it rather than invent one.
+      prunable = token === "prunable" ? "prunable" : token.slice("prunable ".length);
     }
   }
   flush();

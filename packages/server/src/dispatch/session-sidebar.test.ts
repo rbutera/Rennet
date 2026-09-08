@@ -817,7 +817,8 @@ describe("session.workBranchState — the route (workspace-settings D4)", () => 
         return {
           branch: "feat/x",
           workBranch: "rennet/feat/x",
-          ahead: 2,
+          aheadOfBranch: 2,
+          behindRemote: 3,
           pushed: true,
           landed: false,
           remoteRef: "refs/remotes/origin/feat/x",
@@ -828,7 +829,10 @@ describe("session.workBranchState — the route (workspace-settings D4)", () => 
     expect(await handlers["session.workBranchState"]({ sessionId: "s1" })).toEqual({
       branch: "feat/x",
       workBranch: "rennet/feat/x",
-      ahead: 2,
+      // The two counts travel SEPARATELY and differ here on purpose: a route that dropped
+      // one, or copied the other over it, would pass with a single number.
+      aheadOfBranch: 2,
+      behindRemote: 3,
       pushed: true,
       landed: false,
       remoteRef: "refs/remotes/origin/feat/x",
@@ -839,7 +843,8 @@ describe("session.workBranchState — the route (workspace-settings D4)", () => 
   it("answers a quiet state when no session seam is wired — never a throw", async () => {
     const handlers = stateDispatch();
     expect(await handlers["session.workBranchState"]({ sessionId: "s1" })).toEqual({
-      ahead: 0,
+      aheadOfBranch: 0,
+      behindRemote: 0,
       pushed: false,
       landed: false,
     });

@@ -89,17 +89,12 @@ export interface BoundWorkspaceDeps {
   readonly recordPrWorktree: (reviewId: string, path: string) => void;
   /** Fired for a worktree this call CREATED, so its `.rennet/setup` can run. */
   readonly onWorktreeCreated?: (worktreePath: string) => void;
-  /**
-   * Where this session's work branch was last PUSHED, when the session records one
-   * (workspace-settings D4/D5). It decides one thing and only one: whether a surviving
-   * sibling branch with no worktree may be re-forked from the reviewed branch's head, which
-   * is a reachability question, and a sibling whose commits reached `refs/remotes/<remote>/
-   * <branch>` is reachable while the local branch alone still says otherwise.
-   *
-   * Absent ⇒ every remote-tracking ref of the branch is consulted instead, because the
-   * alternative is refusing to look and keeping a stale sibling forever.
-   */
-  readonly siblingPush?: { readonly remote: string };
+  // No `siblingPush`. There was one, and it could not be reached: a session records
+  // `workBranchPush` only after a submission, which needs a `workBranch`, which needs a
+  // bind — and this function runs only when the session has no `boundRoot` at all, which
+  // `clearBoundWorkspace` drops together with both of the others. So the re-fork question
+  // is always asked the way the sweep asks it: of EVERY remote-tracking ref of the branch,
+  // which is a superset of the one remote a push would have named.
 }
 
 /**
@@ -259,10 +254,20 @@ export async function decideBoundWorkspace(
         review.repositoryRoot,
         siblingWorktree,
         branch,
-        deps.siblingPush,
       );
       if (sibling.created) deps.onWorktreeCreated?.(sibling.path);
-      return { boundRoot: sibling.path, workBranch: sibling.workBranch };
+      // GIT'S SPELLING NEVER BECOMES `boundRoot`. `ensureSiblingWorktree` returns the
+      // registration's own path when a sibling worktree already exists, and git prints a
+      // realpath inside its own locus: on a Windows daemon driving a WSL repository that is
+      // `/home/u/…` while the daemon addresses the same directory as `\\wsl$\…`. Recorded
+      // raw it would make `existsSync` refuse the binding, `detectLocus` read the path as
+      // the host's, and the un-archive clear delete a live binding. Same normalisation the
+      // `share` arm below makes, for the same reason: the computed spelling when it is the
+      // same directory, the daemon's re-spelling otherwise.
+      const boundRoot = sameDirectory(sibling.path, siblingWorktree)
+        ? siblingWorktree
+        : inRepoSpelling(sibling.path, review.repositoryRoot, locus);
+      return { boundRoot, workBranch: sibling.workBranch };
     }
     // PREFER A SPELLING RENNET ALREADY OWNS. `git worktree list` prints a realpath, and on WSL
     // the UNC form it maps back to is `\\\\wsl.localhost\\…` while a project may be opened as
@@ -342,6 +347,10 @@ export async function repinBoundWorkspace(
     review.repositoryRoot,
     recorded,
     patchset.repository.headOid,
+    // The session BOUND this path as its pull-request snapshot, which is Rennet's own
+    // record that it placed one there. A worktree that has since been checked out onto a
+    // branch is still refused by `ensurePrWorktree`'s other half.
+    { recordedSnapshot: true },
   );
   return recorded;
 }
@@ -386,7 +395,12 @@ async function ensurePrSnapshotWorkspace(
           review.postTarget.number,
         ));
   if (target === undefined) return review.repositoryRoot;
-  const { created } = await ensurePrWorktree(git, review.repositoryRoot, target, headOid);
+  const { created } = await ensurePrWorktree(git, review.repositoryRoot, target, headOid, {
+    // Rennet's index names this exact path for this review: it placed the snapshot there,
+    // so a superseded one may be replaced. A computed path with no index entry has no such
+    // evidence, and whatever occupies it is somebody else's.
+    recordedSnapshot: indexed !== undefined,
+  });
   if (indexed === undefined) deps.recordPrWorktree(review.id, target);
   if (created) deps.onWorktreeCreated?.(target);
   return target;

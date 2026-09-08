@@ -337,6 +337,16 @@ export function useLiveRoundsSource(): RoundsSource {
       ) {
         cache.invalidate(commandKey("session.rounds", { reviewId: reviewId ?? "" }));
         cache.invalidate(commandKey("session.list", {}));
+        // …AND the work-branch strip. Its whole content is a read of refs, and a settled
+        // round is the event that moves them: under `own` the turn's commits land on
+        // `rennet/<branch>`, so a sibling that read `landed` when the workspace mounted is
+        // ahead the moment the round finishes. Nothing else re-asks it — the strip is
+        // mounted on the workspace, not on the round card, so it can sit through a whole
+        // round without re-rendering — and a cached "landed" hides the line entirely.
+        // Invalidated by NAME (every key of the command, whatever session it addresses),
+        // because the reader here is the review's rounds hook and the strip is somebody
+        // else's subtree.
+        cache.invalidate("session.workBranchState");
       }
       // Boards carry their successor generation on round progress, but Diff and Handoff read
       // `Review.activePatchsetId`. Refresh the one mounted review only when the daemon has

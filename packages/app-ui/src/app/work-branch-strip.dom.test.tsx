@@ -18,13 +18,22 @@
 // The second is tested by DISCRIMINATION, not by presence: each case carries two patchsets
 // whose head refs are swapped, so a derivation that read `patchsets[0]` instead of the
 // active one would flip both verdicts rather than passing one of them by luck.
-import type { Review } from "@rennet/protocol";
-import { describe, expect, it } from "vitest";
+import {
+  type CommandOutput,
+  type Review,
+  type RoundEvent,
+  RoundEventSchema,
+  reviewSchema,
+} from "@rennet/protocol";
+import { afterEach, describe, expect, it } from "vitest";
 import { Route, Router, Switch } from "wouter";
 import { BridgeProvider } from "../data";
+import { RennetRouterApp } from "../routes/app";
 import { memoryHistory } from "../routes/history";
-import { ROUTES } from "../routes/url";
-import { mount, waitFor } from "../test/dom";
+import { ROUTES, sessionPath } from "../routes/url";
+import { useRennetStore } from "../store";
+import { act, mount, waitFor } from "../test/dom";
+import { frontDoorHandlers } from "../test/fixtures/front-door";
 import { MemoryBridge } from "../test/memory-bridge";
 import { ReviewWorkspace } from "./review-workspace-route";
 
@@ -59,7 +68,8 @@ function mountWorkspace(review: Review, session: Record<string, unknown>) {
       return {
         branch: "feat/x",
         workBranch: "rennet/feat/x",
-        ahead: 1,
+        aheadOfBranch: 1,
+        behindRemote: 0,
         pushed: false,
         landed: false,
       };
@@ -92,6 +102,10 @@ const OWN_SESSION = {
 
 const strip = (container: Element | Document) =>
   container.querySelector('[data-testid="workspace-work-branch"]');
+
+/** The LINE inside the strip — the note's own output, which is what goes stale. */
+const note = (container: Element | Document) =>
+  container.querySelector('[data-testid="round-work-branch"]');
 
 describe("the work-branch strip (workspace-settings D4)", () => {
   it("mounts beside the workspace when the ACTIVE patchset's branch is not the work branch", async () => {
@@ -143,5 +157,185 @@ describe("the work-branch strip (workspace-settings D4)", () => {
     expect(strip(r.container)).toBeNull();
     // The read is not even made: there is no work branch to ask about.
     expect(r.asked).toEqual([]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE STRIP GOES STALE (review finding S1).
+//
+// `session.workBranchState` is a READ, and a read is cached. The strip is mounted on the
+// workspace — above every view, deliberately, so the gap stays visible — which means it
+// can sit through an entire round without re-rendering. Nothing invalidated it: the round
+// stream re-asked `session.rounds` and `session.list`, and the strip's own read was
+// untouched. So a session whose sibling had already been landed once kept the cached
+// `landed: true` and rendered NOTHING while a fresh round put commits back on it.
+//
+// This mounts the WHOLE app, because the invalidation is in the round stream's fold
+// (`useLiveRoundsSource`), which is bound above the route switch and does not exist when
+// `ReviewWorkspace` is mounted on its own. Driving the component would prove nothing about
+// the wiring, which is the entire finding.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const ROUND_SESSION = "s-round";
+const ROUND_REVIEW = "rv-round";
+
+/** A review whose ACTIVE patchset is on `feat/x` — what the strip is measured against. */
+const ROUND_REVIEW_DOC = reviewSchema.parse({
+  id: ROUND_REVIEW,
+  repositoryRoot: REPO,
+  status: "current",
+  activePatchsetId: "ps-1",
+  dispositions: [],
+  patchsets: [
+    {
+      id: "ps-1",
+      createdAt: "2026-09-08T00:00:00.000Z",
+      source: "local-branch",
+      repository: {
+        id: "widget",
+        root: REPO,
+        commonDir: `${REPO}/.git`,
+        baseRef: "main",
+        baseOid: "base-1",
+        headOid: "head-1",
+        headRef: "feat/x",
+      },
+      files: [],
+      rawDiff: "",
+      byteLength: 0,
+      truncated: false,
+    },
+  ],
+});
+
+/** The terminal receipt of a round that CHANGED something — the event the fold acts on. */
+function settledRound(): RoundEvent {
+  return RoundEventSchema.parse({
+    type: "operation",
+    snapshot: {
+      operationId: "op-1",
+      revision: 2,
+      draining: false,
+      createdAt: 1,
+      roundNumber: 1,
+      sourceTarget: { kind: "branch", branch: "feat/x" },
+      askCount: 1,
+      state: {
+        phase: "completed",
+        workspace: { status: "done" },
+        worker: { status: "done", fileCount: 1 },
+        commits: { status: "done", count: 1 },
+        result: {
+          kind: "changed",
+          report: { status: "verified", reportBoardId: "report-1", generation: "generation-b" },
+        },
+      },
+    },
+  });
+}
+
+/** The app, mounted on one session's workspace, over a work-branch state the test moves. */
+function mountRoundJourney(initial: CommandOutput<"session.workBranchState">) {
+  let state = initial;
+  let reads = 0;
+  const events: RoundEvent[] = [];
+  const bridge = new MemoryBridge({
+    ...frontDoorHandlers(),
+    "session.list": () => ({
+      sessions: [
+        {
+          id: ROUND_SESSION,
+          projectId: "p-1",
+          title: "Sibling session",
+          target: "your-branch",
+          reviewId: ROUND_REVIEW,
+          workBranch: "rennet/feat/x",
+          createdAt: 0,
+        },
+      ],
+    }),
+    "review.load": () => ({ review: ROUND_REVIEW_DOC, repositoryPresent: true }),
+    "session.workBranchState": () => {
+      reads += 1;
+      return state;
+    },
+    "session.roundEvents": () => ({ events: [...events] }),
+    "session.rounds": () => ({ records: [] }),
+    "board.read": () => ({ board: null }),
+    "ask.read": () => ({
+      projection: {
+        stagedAsks: {},
+        findingDispositions: {},
+        lineComments: {},
+        quoteThreads: {},
+        retired: {},
+        verdictOverride: null,
+      },
+    }),
+    "session.transcript": () => ({ trail: { title: "Sibling session" }, rows: [] }),
+  } as never);
+  const history = memoryHistory(sessionPath(ROUND_SESSION, { view: "diff" }));
+  const view = mount(<RennetRouterApp bridge={bridge} history={history} />);
+  return {
+    ...view,
+    reads: () => reads,
+    /** What the daemon would answer NEXT — the refs moved, whether anybody re-asks or not. */
+    setState: (next: CommandOutput<"session.workBranchState">) => {
+      state = next;
+    },
+    settle: () => {
+      const event = settledRound();
+      events.push(event);
+      act(() => bridge.emitRoundProgress(ROUND_REVIEW, event));
+    },
+  };
+}
+
+afterEach(() => {
+  act(() => {
+    useRennetStore.getState().reviewActions.resetReview();
+    useRennetStore.getState().runActions.resetRun();
+  });
+});
+
+describe("the work-branch strip after a round settles (review finding S1)", () => {
+  it("re-reads the state and shows the gap a settled round opened", async () => {
+    // The sibling had been landed: the strip renders nothing, and that answer is cached.
+    const journey = mountRoundJourney({
+      branch: "feat/x",
+      workBranch: "rennet/feat/x",
+      aheadOfBranch: 0,
+      behindRemote: 0,
+      pushed: false,
+      landed: true,
+    });
+    await waitFor(() => {
+      expect(journey.reads()).toBeGreaterThan(0);
+    });
+    // The note itself, not the route's wrapper: the route mounts the strip whenever the
+    // session works on another branch, and the LINE is what a landed sibling withholds.
+    expect(note(journey.container)).toBeNull();
+
+    // The round commits on the sibling. THE REFS MOVE WHETHER THE CLIENT ASKS OR NOT — that
+    // is why the daemon's answer changes before the event arrives, and why only a re-read
+    // can find out.
+    journey.setState({
+      branch: "feat/x",
+      workBranch: "rennet/feat/x",
+      aheadOfBranch: 2,
+      behindRemote: 0,
+      pushed: false,
+      landed: false,
+    });
+    const readsBefore = journey.reads();
+    journey.settle();
+
+    await waitFor(() => {
+      expect(journey.reads()).toBeGreaterThan(readsBefore);
+    });
+    await waitFor(() => {
+      expect(note(journey.container)?.textContent).toContain("The round's commits are on");
+    });
+    expect(note(journey.container)?.textContent).toContain("feat/x has not moved");
   });
 });

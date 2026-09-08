@@ -36,7 +36,8 @@ function render(handlers: MemoryBridgeHandlers) {
 const ON_SIBLING = {
   branch: "feat/x",
   workBranch: "rennet/feat/x",
-  ahead: 1,
+  aheadOfBranch: 1,
+  behindRemote: 0,
   pushed: false,
   landed: false,
 };
@@ -49,7 +50,12 @@ describe("WorkBranchNote", () => {
     const { container } = render(
       stateOf({
         ...ON_SIBLING,
-        ahead: 2,
+        // THE TWO COUNTS DISAGREE, which is the whole point of the pair: the sibling holds
+        // one commit `feat/x` does not, and `origin/feat/x` holds two — a teammate pushed
+        // as well. The sentence is about the REMOTE, so it must say two. Rendering
+        // `aheadOfBranch` here (the old single `ahead`) prints "by 1".
+        aheadOfBranch: 1,
+        behindRemote: 2,
         pushed: true,
         remoteRef: "refs/remotes/origin/feat/x",
       }),
@@ -98,7 +104,14 @@ describe("WorkBranchNote", () => {
     // Every session under `share`. A line saying "the commits are on feat/x, feat/x has not
     // moved" would be a contradiction on the card of every ordinary round.
     const { container } = render(
-      stateOf({ branch: "feat/x", workBranch: "feat/x", ahead: 0, pushed: false, landed: false }),
+      stateOf({
+        branch: "feat/x",
+        workBranch: "feat/x",
+        aheadOfBranch: 0,
+        behindRemote: 0,
+        pushed: false,
+        landed: false,
+      }),
     );
     await waitFor(() => {
       expect(line(container)).toBeNull();
@@ -113,7 +126,8 @@ describe("WorkBranchNote", () => {
     const { container } = render(
       stateOf({
         ...ON_SIBLING,
-        ahead: 0,
+        aheadOfBranch: 0,
+        behindRemote: 0,
         pushed: true,
         landed: true,
         remoteRef: "refs/remotes/origin/feat/x",

@@ -94,6 +94,7 @@ import {
   PublishCompositionStore,
   PublishReceiptStore,
   parseGitHubPrRef,
+  parseWorktreeRecords,
   prWorktreePath,
   RepoWatcher,
   RoundOperationConflictError,
@@ -353,7 +354,7 @@ import { resolveProviderBinaries } from "./t3/resolve-provider-binaries";
 import { type SeatThreadWatch, watchSeatThread } from "./t3/seat-progress";
 import { createT3SidecarSupervisor } from "./t3/supervisor";
 import { roundThreadTitle, type SeatKind, seatThreadTitle, sweepIfArchived } from "./t3/threads";
-import { readWorkBranchState } from "./work-branch-state";
+import { QUIET_WORK_BRANCH_STATE, readWorkBranchState } from "./work-branch-state";
 import { startWsListener, type WsListener } from "./ws-listener";
 import { createWslRunner } from "./wsl-daemon";
 import { ensureWslDaemon, probeWslDaemon } from "./wsl-supervisor";
@@ -2327,18 +2328,13 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       // must never delay the capture, and a failed one is honest status rather than a wall.
       onWorktreeCreated: (worktree: string) =>
         void runPrWorktreeSetup(worktree).catch(() => undefined),
-      // Where this session last pushed, when it did. The only thing it decides is whether a
-      // SURVIVING sibling branch with no worktree may be re-forked from the branch's head —
-      // a reachability question, and a sibling whose commits are on `refs/remotes/<remote>/
-      // <branch>` is reachable while the local branch alone still says otherwise.
-      ...(sessionStore.load(sessionId)?.workBranchPush === undefined
-        ? {}
-        : {
-            siblingPush: {
-              remote: (sessionStore.load(sessionId) as SessionModel).workBranchPush
-                ?.remote as string,
-            },
-          }),
+      // No `siblingPush` is passed, and none is accepted any more. It was meant to narrow
+      // the re-fork's reachability question to the remote a session had pushed to, and it
+      // could never arrive: `workBranchPush` is written by a submission, a submission needs
+      // a `workBranch`, a `workBranch` comes from a bind, and `decideBoundWorkspace` runs
+      // only for a session with no `boundRoot` — which `clearBoundWorkspace` erases along
+      // with both of the others. The re-fork therefore asks every remote-tracking ref of
+      // the branch, which is a superset of the one a push would have named.
     };
     const recorded = sessionStore.load(sessionId)?.boundRoot;
     // A recorded binding is RE-PINNED, never re-decided: a landed round advances the reviewed
@@ -2456,7 +2452,17 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         },
         prRef.number,
       );
-      const { created } = await ensurePrWorktree(gitInLocus, root, worktree, pr.headOid);
+      // Whether RENNET'S OWN index already records a snapshot at this exact path — for
+      // this review or any earlier one of the same pull request, which is the successor
+      // case this replacement exists for. It is the only evidence that the checkout there
+      // is Rennet's to replace; without it `ensurePrWorktree` refuses rather than deleting
+      // whatever the reviewer has at a path two patterns happened to collide on.
+      const recordedSnapshot = Object.values(readPrWorktreeIndex()).some(
+        (entry) => comparablePath(entry.path) === comparablePath(worktree),
+      );
+      const { created } = await ensurePrWorktree(gitInLocus, root, worktree, pr.headOid, {
+        recordedSnapshot,
+      });
       recordPrWorktree(review.id, worktree);
       if (created) {
         // Fire-and-forget; the runner itself records a failed verdict, and an
@@ -3333,6 +3339,40 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     gitFor: gitForRepo,
   }).catch(() => undefined);
   /**
+   * Drop ONE repository's unreachable worktree registrations — and only when no live
+   * session is bound to any of them.
+   *
+   * `prunable` is GIT'S verdict, read from `worktree list --porcelain` rather than from an
+   * `existsSync` on this side: on a Windows daemon driving a WSL repository the daemon and
+   * the git inside the distro spell the same directory two ways, and `existsSync` on git's
+   * spelling would call every live worktree missing. Whichever spelling a session recorded,
+   * `isClaimed` is asked both ways, as the sweep's candidate rule already is.
+   */
+  const pruneUnclaimedRegistrations = async (
+    git: ReturnType<typeof gitForRepo>,
+    repoRoot: string,
+    isClaimed: (path: string) => boolean,
+  ): Promise<void> => {
+    const listed = await git(repoRoot, ["worktree", "list", "--porcelain", "-z"], {
+      reject: false,
+    }).catch(() => "");
+    const unreachable = parseWorktreeRecords(listed).filter(
+      (record) => record.prunable !== undefined,
+    );
+    if (unreachable.length === 0) return;
+    const held = unreachable.filter((record) => isClaimed(record.path));
+    if (held.length > 0) {
+      siblingLog(
+        `rennet: sibling sweep pruned nothing in ${repoRoot} — ${held.length} unreachable worktree registration(s) are still claimed by a live session`,
+      );
+      return;
+    }
+    await git(repoRoot, ["worktree", "prune"], { reject: false }).catch(() => "");
+    siblingLog(
+      `rennet: sibling sweep pruned ${unreachable.length} unreachable worktree registration(s) in ${repoRoot}`,
+    );
+  };
+  /**
    * The sibling sweep (workspace-settings D5): a `rennet/*` worktree whose session is gone —
    * archived, or lost with the record a crash never wrote — is collected on the next start
    * under exactly the rule the archive applies, and kept under exactly the same rule.
@@ -3391,11 +3431,26 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         const candidate = comparablePath(path);
         return candidate === base || candidate.startsWith(base.endsWith(sep) ? base : base + sep);
       };
+      const isClaimed = (path: string): boolean =>
+        claimed.has(path) || claimed.has(comparablePath(path));
+      // THE ONLY PLACE A WORKTREE REGISTRATION IS PRUNED (workspace-settings D5).
+      //
+      // `git worktree prune` drops every registration whose gitdir points somewhere git
+      // cannot reach RIGHT NOW — an unmounted volume, a network share that is down, a
+      // distro that is not running — and none of those means the directory is gone. The
+      // bind used to run it before creating a sibling, so a temporarily unreachable
+      // workspace lost its registration and was re-forked underneath the staged work
+      // waiting in it. The bind now reads and refuses; this is where the repair lives,
+      // because this is the only caller that first asks whether anybody is using it.
+      //
+      // The guard is all-or-nothing on purpose: `prune` takes no path, so ONE claimed
+      // unreachable registration means the whole repository is left alone this pass.
+      await pruneUnclaimedRegistrations(git, repoRoot, isClaimed);
       const orphans = await orphanedSiblings({
         git,
         repoRoot,
         under,
-        claimed: (path) => claimed.has(path) || claimed.has(comparablePath(path)),
+        claimed: isClaimed,
       }).catch(() => []);
       for (const orphan of orphans) {
         // No `push`: the sweep has no session to ask where a push went, so reachability is
@@ -5471,6 +5526,11 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         // wave takes. Only a MISSING directory: a root that is still there is still the
         // session's workspace, and re-deciding a live binding is what D1 forbids.
         if (!archived) {
+          // `existsSync` is asked of the DAEMON's spelling, which is what a recorded
+          // `boundRoot` always is: every arm of `decideBoundWorkspace` re-spells a path git
+          // printed before recording it (B1). A raw git spelling here would be a path this
+          // process cannot stat on a Windows-daemon/WSL-repository pair, and the clear
+          // would drop a binding whose directory is perfectly present.
           const recorded = sessionStore.load(sessionId)?.boundRoot;
           if (recorded !== undefined && !existsSync(recorded)) {
             sessionStore.clearBoundWorkspace(sessionId);
@@ -5505,9 +5565,9 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       // stops being true when the reviewer pulls, lands, or pushes something else.
       workBranchState: async (sessionId) => {
         const session = sessionStore.load(sessionId);
-        if (session === undefined) return { ahead: 0, pushed: false, landed: false };
+        if (session === undefined) return QUIET_WORK_BRANCH_STATE;
         const repoRoot = repositoryRootForSession(session);
-        if (repoRoot === undefined) return { ahead: 0, pushed: false, landed: false };
+        if (repoRoot === undefined) return QUIET_WORK_BRANCH_STATE;
         return readWorkBranchState({
           git: gitForRepo(repoRoot),
           repoRoot,

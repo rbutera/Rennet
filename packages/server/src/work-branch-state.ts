@@ -10,8 +10,8 @@
 //   • "The round's commits are on `rennet/feat/x`" stops being true the moment they land.
 //
 // The stamp could not stop being true, so the card went on saying "behind its upstream"
-// over a branch that had caught up — the "lie in the UI" family. Four ref reads answer all
-// of it, they cost nothing, and they cannot be stale.
+// over a branch that had caught up — the "lie in the UI" family. A handful of ref reads
+// answer all of it, they cost nothing, and they cannot be stale.
 //
 // Every ref is FULLY QUALIFIED. `rev-parse rennet/feat/x` resolves `refs/tags/` before
 // `refs/heads/`, so a tag of that name would answer the ahead/pushed/landed questions for a
@@ -23,24 +23,54 @@ import { isAncestor, refExists } from "@rennet/adapters";
 /** `git(cwd, args)` — the locus-aware exec the daemon builds per repository. */
 type GitExec = (cwd: string, args: string[], options?: { reject?: boolean }) => Promise<string>;
 
-/** What the surface renders beside the session's branch. Every field a ref question. */
+/**
+ * What the surface renders beside the session's branch. Every field a ref question.
+ *
+ * TWO COUNTS, BECAUSE THEY ANSWER TWO QUESTIONS AND THEY DIFFER. There was one, `ahead`,
+ * and the strip spent it on both sentences: it counted `<branch>..<workBranch>` and then
+ * rendered "`feat/x` is behind `origin/feat/x` by N" with it. Those are the same number
+ * only while the remote holds exactly the sibling's commits and nothing else — and the
+ * remote is the one ref anybody else can move. A teammate's push, a second session's
+ * submission, or a landing that advanced the remote past the sibling each make the local
+ * branch further behind than the sibling is ahead, and the strip said the sibling's number
+ * under the remote's sentence. So each sentence now reads the range it is actually about.
+ */
 export interface WorkBranchState {
   /** The reviewed branch, when the session knows one. */
   readonly branch?: string;
   /** The branch the work commits on. Absent, or equal to `branch`, ⇒ nothing to say. */
   readonly workBranch?: string;
-  /** Commits the work branch holds that the reviewed branch does not. */
-  readonly ahead: number;
+  /**
+   * Commits the WORK BRANCH holds that the reviewed branch does not —
+   * `refs/heads/<branch>..refs/heads/<workBranch>`. This is what "the round's commits are
+   * on `rennet/feat/x`, `feat/x` has not moved" is about, and it says nothing about a
+   * remote.
+   */
+  readonly aheadOfBranch: number;
+  /**
+   * Commits the recorded push destination's ref holds that the REVIEWED BRANCH does not —
+   * `refs/heads/<branch>..refs/remotes/<remote>/<branch>`. This is the only honest number
+   * for "`feat/x` is behind `origin/feat/x` by N", and it is 0 with no recorded push,
+   * because nothing has been sent anywhere to be behind.
+   */
+  readonly behindRemote: number;
   /** The work branch's tip is reachable from the recorded push destination's ref. */
   readonly pushed: boolean;
-  /** The reviewed branch is already AT the work branch's tip. */
+  /** The reviewed branch already CONTAINS the work branch's tip. */
   readonly landed: boolean;
   /** The remote-tracking ref `pushed` was decided against — named, never called "upstream". */
   readonly remoteRef?: string;
 }
 
 /** Nothing to say: no work branch, no session, or the work is on the reviewed branch. */
-const QUIET = { ahead: 0, pushed: false, landed: false } as const;
+const QUIET = { aheadOfBranch: 0, behindRemote: 0, pushed: false, landed: false } as const;
+
+/**
+ * The same silence, for a caller that has no repository to ask — a session that is gone,
+ * or one whose repository root cannot be resolved. Exported so the daemon's binding cannot
+ * spell its own version of "nothing to say" and drift from this one.
+ */
+export const QUIET_WORK_BRANCH_STATE: WorkBranchState = QUIET;
 
 /**
  * Read one session's work-branch state.
@@ -77,47 +107,48 @@ export async function readWorkBranchState(input: {
   // is gone, and reporting it as "not landed, not pushed, 0 ahead" would read as a live
   // sibling holding nothing.
   if (!(await refExists(git, repoRoot, workRef))) return { ...base, ...QUIET };
+  // LANDED IS ANCESTRY, NOT EQUAL TIPS. It was `rev-parse <branch> === rev-parse
+  // <workBranch>`, which stops holding the instant the reviewer does anything AFTER the
+  // fast-forward — pull one commit, commit one line — and the strip went back to saying
+  // "the round's commits are on `rennet/feat/x`; `feat/x` has not moved" over a branch that
+  // had already carried them. What the sentence is really about is whether the branch
+  // CONTAINS the work, and `merge-base --is-ancestor` answers exactly that (equal tips
+  // included, since a commit is its own ancestor).
   const landed =
     (await refExists(git, repoRoot, branchRef)) &&
-    (await oidOf(git, repoRoot, branchRef)) === (await oidOf(git, repoRoot, workRef));
-  const ahead = await countAhead(git, repoRoot, branchRef, workRef);
+    (await isAncestor(git, repoRoot, workRef, branchRef));
+  const aheadOfBranch = await countRange(git, repoRoot, branchRef, workRef);
   const remoteRef =
     input.push === undefined ? undefined : `refs/remotes/${input.push.remote}/${input.push.branch}`;
-  const pushed =
-    remoteRef !== undefined &&
-    (await refExists(git, repoRoot, remoteRef)) &&
-    (await isAncestor(git, repoRoot, workRef, remoteRef));
+  let pushed = false;
+  // The REMOTE's own range, never the sibling's: how far the reviewed branch is behind the
+  // ref the push actually updated. Anyone can move that ref, so it is asked of that ref.
+  let behindRemote = 0;
+  if (remoteRef !== undefined && (await refExists(git, repoRoot, remoteRef))) {
+    pushed = await isAncestor(git, repoRoot, workRef, remoteRef);
+    behindRemote = await countRange(git, repoRoot, branchRef, remoteRef);
+  }
   return {
     ...base,
-    ahead,
+    aheadOfBranch,
+    behindRemote,
     pushed,
     landed,
     ...(remoteRef === undefined ? {} : { remoteRef }),
   };
 }
 
-/** One ref's commit, or nothing. Fully qualified in, so a tag cannot answer. */
-async function oidOf(git: GitExec, repoRoot: string, ref: string): Promise<string | undefined> {
-  try {
-    const oid = (
-      await git(repoRoot, ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`])
-    ).trim();
-    return oid.length > 0 ? oid : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-/** `rev-list --count <branch>..<workBranch>` — 0 when either ref cannot answer. */
-async function countAhead(
+/** `rev-list --count <from>..<to>` — commits `to` holds that `from` does not, 0 when
+ *  either ref cannot answer. Both refs fully qualified in, so a tag cannot stand in. */
+async function countRange(
   git: GitExec,
   repoRoot: string,
-  branchRef: string,
-  workRef: string,
+  fromRef: string,
+  toRef: string,
 ): Promise<number> {
   try {
     const count = Number.parseInt(
-      (await git(repoRoot, ["rev-list", "--count", `${branchRef}..${workRef}`])).trim(),
+      (await git(repoRoot, ["rev-list", "--count", `${fromRef}..${toRef}`])).trim(),
       10,
     );
     return Number.isFinite(count) && count > 0 ? count : 0;

@@ -61,14 +61,26 @@ export function WorkBranchNote({ sessionId }: { readonly sessionId: string }) {
   // work branch's tip: there is nothing to report in either case.
   if (branch === undefined || workBranch === undefined || workBranch === branch) return null;
   if (data?.landed === true) return null;
-  const behind = data?.pushed === true && (data.ahead ?? 0) > 0 ? data.remoteRef : undefined;
+  // TWO SENTENCES, TWO NUMBERS. The remote sentence counts what `origin/feat/x` holds that
+  // `feat/x` does not (`behindRemote`); the local one counts what the sibling holds that
+  // the branch does not (`aheadOfBranch`). They were one number, `ahead`, and the remote
+  // sentence rendered the sibling's count — right only while nobody else had pushed, and
+  // silently wrong the moment a teammate or a second session moved that ref.
+  const behindRemote = data?.behindRemote ?? 0;
+  const aheadOfBranch = data?.aheadOfBranch ?? 0;
+  const behind = data?.pushed === true && behindRemote > 0 ? data.remoteRef : undefined;
+  // A sibling holding nothing the branch does not have leaves no gap to report. It is the
+  // shape a collected sibling wears — the ref is gone, so every count reads 0 and `landed`
+  // reads false — and "the round's commits are on `rennet/feat/x`" over a branch that no
+  // longer exists is the sentence this whole module was rewritten to stop printing.
+  if (behind === undefined && aheadOfBranch === 0) return null;
   return (
     <div data-testid="round-work-branch" className="flex flex-col gap-1.5">
       <p className="text-muted-foreground text-sm">
         {behind !== undefined ? (
           <>
-            <code>{branch}</code> is behind <code>{shortRef(behind)}</code> by {data?.ahead}{" "}
-            {data?.ahead === 1 ? "commit" : "commits"}.
+            <code>{branch}</code> is behind <code>{shortRef(behind)}</code> by {behindRemote}{" "}
+            {behindRemote === 1 ? "commit" : "commits"}.
           </>
         ) : (
           <>

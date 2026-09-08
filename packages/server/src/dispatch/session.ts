@@ -333,7 +333,8 @@ export function sessionHandlers(rt: DispatchRuntime) {
       // Every field is a fact about refs, and the honest answer with no git is "none of
       // this is true here" rather than a throw the surface would have to render.
       const state = (await rt.deps.sessions?.workBranchState(input.sessionId)) ?? {
-        ahead: 0,
+        aheadOfBranch: 0,
+        behindRemote: 0,
         pushed: false,
         landed: false,
       };

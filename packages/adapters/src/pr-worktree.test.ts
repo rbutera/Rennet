@@ -19,6 +19,7 @@ import {
   branchWorktreePath,
   defaultWorktreePlacement,
   ensurePrWorktree,
+  ensureSiblingWorktree,
   expandWorktreeRootForWrite,
   LOCAL_OWNER,
   prTokens,
@@ -61,16 +62,42 @@ function repo(): { root: string; dataDir: string; firstOid: string; secondOid: s
   return { root, dataDir, firstOid, secondOid };
 }
 
+/** The path the builtin pull-request pattern computes for PR 7 of this fixture. */
+function prPath(dataDir: string, root: string): string {
+  const placement = defaultWorktreePlacement(dataDir);
+  return prWorktreePath(
+    placement.root,
+    placement.prPattern,
+    { repoKey: "-repo", repoRoot: root, owner: "acme", remoteName: "widget" },
+    7,
+  );
+}
+
+/** What a worktree IS, as one string: its head, its branch, and its working tree's state.
+ *  Any of the three moving is what "it was replaced" would look like. */
+function fingerprint(root: string, path: string): string {
+  const head = git(path, "rev-parse", "HEAD");
+  // A detached HEAD exits 1 here, which is an ANSWER ("no branch"), not a failure.
+  const branch = ((): string => {
+    try {
+      return execFileSync("git", ["symbolic-ref", "--quiet", "--short", "HEAD"], {
+        cwd: path,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+      }).trim();
+    } catch {
+      return "(detached)";
+    }
+  })();
+  const porcelain = git(path, "status", "--porcelain=v1");
+  const registered = git(root, "worktree", "list", "--porcelain");
+  return [head, branch, porcelain, registered].join("\n");
+}
+
 describe("ensurePrWorktree", () => {
   it("creates a detached worktree at the head OID, and a re-open reuses it", async () => {
     const { root, dataDir, firstOid } = repo();
-    const placement = defaultWorktreePlacement(dataDir);
-    const path = prWorktreePath(
-      placement.root,
-      placement.prPattern,
-      { repoKey: "-repo", repoRoot: root, owner: "acme", remoteName: "widget" },
-      7,
-    );
+    const path = prPath(dataDir, root);
     const first = await ensurePrWorktree(execaGit, root, path, firstOid);
     expect(first).toEqual({ path, created: true });
     expect(readFileSync(join(path, "a.txt"), "utf8")).toBe("one\n");
@@ -80,17 +107,57 @@ describe("ensurePrWorktree", () => {
 
   it("replaces the checkout when the reviewed head is superseded", async () => {
     const { root, dataDir, firstOid, secondOid } = repo();
-    const placement = defaultWorktreePlacement(dataDir);
-    const path = prWorktreePath(
-      placement.root,
-      placement.prPattern,
-      { repoKey: "-repo", repoRoot: root, owner: "acme", remoteName: "widget" },
-      7,
-    );
+    const path = prPath(dataDir, root);
     await ensurePrWorktree(execaGit, root, path, firstOid);
-    const replaced = await ensurePrWorktree(execaGit, root, path, secondOid);
+    // Rennet's index records this path — the successor case this replacement exists for.
+    const replaced = await ensurePrWorktree(execaGit, root, path, secondOid, {
+      recordedSnapshot: true,
+    });
     expect(replaced.created).toBe(true);
     expect(readFileSync(join(path, "a.txt"), "utf8")).toBe("two\n");
+  });
+
+  // ── It will not force-replace a worktree it did not place (review finding B3) ──────────
+  //
+  // `worktreePattern` and `prWorktreePattern` are BOTH the reviewer's to set and both
+  // resolve under one root. Set them to shapes that collide — `{name}` and `{name}`, or any
+  // pattern with no `{number}` — and a pull request's computed path IS a session's branch
+  // worktree. This used to run `worktree remove --force` plus `rm -rf` on whatever sat
+  // there whose HEAD was not the reviewed head, so opening a PR deleted a reviewer's
+  // uncommitted edits. Both halves of the identification are pinned below, separately.
+
+  it("THROWS rather than replacing a BRANCH worktree that occupies the PR's path", async () => {
+    const { root, dataDir, firstOid, secondOid } = repo();
+    const path = prPath(dataDir, root);
+    // A branch worktree of this repository at exactly the path the PR pattern computes,
+    // with work in progress in it.
+    git(root, "worktree", "add", "-q", "-b", "mine", path, firstOid);
+    writeFileSync(join(path, "wip.txt"), "half-written\n");
+    const before = fingerprint(root, path);
+
+    await expect(
+      ensurePrWorktree(execaGit, root, path, secondOid, { recordedSnapshot: true }),
+    ).rejects.toThrow(/is a worktree of this repository on mine/);
+
+    // Nothing moved: same HEAD, same branch, same porcelain, and the edits are still there.
+    expect(fingerprint(root, path)).toBe(before);
+    expect(readFileSync(join(path, "wip.txt"), "utf8")).toBe("half-written\n");
+    expect(readFileSync(join(path, "a.txt"), "utf8")).toBe("one\n");
+  });
+
+  it("THROWS on a DETACHED worktree Rennet's index does not record", async () => {
+    // The second half. Detached alone is not evidence Rennet placed it — a reviewer's own
+    // `git worktree add --detach` is detached too — so the index has to say so.
+    const { root, dataDir, firstOid, secondOid } = repo();
+    const path = prPath(dataDir, root);
+    git(root, "worktree", "add", "-q", "--detach", path, firstOid);
+    const before = fingerprint(root, path);
+
+    await expect(ensurePrWorktree(execaGit, root, path, secondOid)).rejects.toThrow(
+      /not Rennet's snapshot of this pull request/,
+    );
+
+    expect(fingerprint(root, path)).toBe(before);
   });
 });
 
@@ -324,5 +391,78 @@ describe("worktree placement (workspace-settings D1/D2)", () => {
     expect(repoKeyForRoot(dir)).toBe(escapePath(realpathSync(dir)));
     // An unresolvable path keeps its literal spelling rather than throwing.
     expect(repoKeyForRoot("/nope/does-not-exist")).toBe(escapePath("/nope/does-not-exist"));
+  });
+});
+
+// ── The bind never prunes a registration (review finding B4) ──────────────────────────
+//
+// `git worktree prune` drops every registration whose gitdir points somewhere git cannot
+// reach RIGHT NOW. "Unreachable" is not "gone": an unmounted volume, a network share that
+// is down, a distro that is not running all read the same to git. `ensureSiblingWorktree`
+// ran it first, under a comment claiming prune "touches nothing that exists" — so a
+// temporarily unavailable sibling lost its registration and the very next lines re-forked
+// or recreated it, and the staged-only work waiting in that directory belonged to no
+// worktree when the volume came back.
+//
+// A FAKE git, deliberately: the claim is about the ARGV this function issues, and a real
+// git cannot be made to report an unreachable directory without unmounting something.
+describe("ensureSiblingWorktree and an unreachable registration (B4)", () => {
+  /** `git worktree list --porcelain -z` output for one record, NUL-delimited. */
+  function listing(lines: readonly string[]): string {
+    return `${lines.join("\0")}\0\0`;
+  }
+
+  function fakeGit(listed: string) {
+    const calls: string[][] = [];
+    const git = async (_cwd: string, args: string[]): Promise<string> => {
+      calls.push([...args]);
+      return args[0] === "worktree" && args[1] === "list" ? listed : "";
+    };
+    return { git, calls };
+  }
+
+  it("THROWS, and issues no prune, no add and no branch write", async () => {
+    const { git, calls } = fakeGit(
+      listing([
+        "worktree /volumes/scratch/rennet/feat/x",
+        "HEAD 1111111111111111111111111111111111111111",
+        "branch refs/heads/rennet/feat/x",
+        "prunable gitdir file points to non-existent location",
+      ]),
+    );
+
+    await expect(
+      ensureSiblingWorktree(git, "/repo", "/data/worktrees/rennet/feat/x", "feat/x"),
+    ).rejects.toThrow(
+      /worktree for rennet\/feat\/x is registered at \/volumes\/scratch\/rennet\/feat\/x but that directory is not reachable/,
+    );
+
+    // Executed, not reasoned: the whole argv trace is one read.
+    expect(calls).toEqual([["worktree", "list", "--porcelain", "-z"]]);
+    expect(calls.some((argv) => argv.includes("prune"))).toBe(false);
+    expect(calls.some((argv) => argv[0] === "worktree" && argv[1] === "add")).toBe(false);
+    expect(calls.some((argv) => argv[0] === "branch")).toBe(false);
+  });
+
+  it("binds a REACHABLE registration as it stands, wherever git says it is", async () => {
+    // The pair: the same read, with git making no prunable claim, still takes arm 1 — and
+    // still writes nothing. Without this the throw above passes for a function that refuses
+    // every sibling.
+    const { git, calls } = fakeGit(
+      listing([
+        "worktree /volumes/scratch/rennet/feat/x",
+        "HEAD 1111111111111111111111111111111111111111",
+        "branch refs/heads/rennet/feat/x",
+      ]),
+    );
+
+    expect(
+      await ensureSiblingWorktree(git, "/repo", "/data/worktrees/rennet/feat/x", "feat/x"),
+    ).toEqual({
+      path: "/volumes/scratch/rennet/feat/x",
+      created: false,
+      workBranch: "rennet/feat/x",
+    });
+    expect(calls).toEqual([["worktree", "list", "--porcelain", "-z"]]);
   });
 });

@@ -1643,13 +1643,16 @@ const definitions = {
   // ── Land the work branch (workspace-settings D4) ────────────────────────────
   // `git merge --ff-only refs/heads/<workBranch>`, run INSIDE the worktree that has the
   // reviewed branch checked out — the reviewer's own. It is the one place `own` mode
-  // writes to that tree, and it does so only on the reviewer's click, only as a
-  // fast-forward, and only while git agrees the tree is clean.
+  // writes to that tree, and it does so only on the reviewer's click and only as a
+  // fast-forward.
   //
-  // Nothing is forced and nothing is merged or rebased on the reviewer's behalf: an
-  // unclean tree and a diverged branch are GIT'S refusals, echoed back verbatim, and the
-  // action stays offered afterwards. There is no confirmation step (Rule Zero) — the click
-  // is the whole act, and what stops it is git.
+  // RENNET ADDS NO REFUSAL OF ITS OWN. Uncommitted work in that tree is not one: git's
+  // `merge --ff-only` carries unrelated uncommitted changes across, and refuses only a
+  // merge that would overwrite a file the reviewer has edits in — or a branch that has
+  // diverged. Those are GIT'S refusals, echoed back verbatim, with the action still
+  // offered afterwards, because the reviewer's next move makes the same click succeed.
+  // Nothing is merged or rebased on their behalf and there is no confirmation step (Rule
+  // Zero) — the click is the whole act, and what stops it is git.
   "session.landWorkBranch": {
     input: z.object({ sessionId: z.string().min(1) }),
     output: z.discriminatedUnion("status", [
@@ -1684,11 +1687,19 @@ const definitions = {
   // force-push, or a deleted remote branch made that false. Every field below is a ref
   // question, so every field below is asked of refs when it is asked at all.
   //
-  // `ahead` counts the commits the SIBLING holds that the reviewed branch does not —
-  // `rev-list --count refs/heads/<branch>..refs/heads/<workBranch>`. `pushed` is
-  // reachability of the sibling's tip from `refs/remotes/<remote>/<branch>` for the remote
-  // the session's push recorded, never a stamp. `landed` is the plain equality that makes
-  // the note disappear: the branch is already at the work branch's tip.
+  // TWO COUNTS, because the surface writes two sentences about two different ranges and a
+  // single number made one of them a guess. `aheadOfBranch` counts the commits the SIBLING
+  // holds that the reviewed branch does not — `rev-list --count
+  // refs/heads/<branch>..refs/heads/<workBranch>` — and carries "the round's commits are on
+  // `rennet/feat/x`". `behindRemote` counts what the recorded push destination's ref holds
+  // that the reviewed branch does not — `refs/heads/<branch>..refs/remotes/<remote>/
+  // <branch>` — and carries "`feat/x` is behind `origin/feat/x` by N". Anyone can move that
+  // remote ref, so the two numbers differ the moment anybody else pushes.
+  //
+  // `pushed` is reachability of the sibling's tip from `refs/remotes/<remote>/<branch>` for
+  // the remote the session's push recorded, never a stamp. `landed` is ANCESTRY, not equal
+  // tips: the branch already contains the work branch's tip, which stays true after the
+  // reviewer commits or pulls on top of a landing.
   "session.workBranchState": {
     input: z.object({ sessionId: z.string().min(1) }),
     output: z.object({
@@ -1697,10 +1708,12 @@ const definitions = {
       /** The branch the work commits on. Absent, or equal to `branch`, ⇒ nothing to say. */
       workBranch: z.string().min(1).max(WORKTREE_REF_NAME_CAP).optional(),
       /** Commits the work branch holds that the reviewed branch does not. */
-      ahead: z.number().int().nonnegative(),
+      aheadOfBranch: z.number().int().nonnegative(),
+      /** Commits the recorded push destination's ref holds that the reviewed branch does not. */
+      behindRemote: z.number().int().nonnegative(),
       /** The work branch's tip is reachable from the recorded push destination's ref. */
       pushed: z.boolean(),
-      /** The reviewed branch is already AT the work branch's tip. */
+      /** The reviewed branch already CONTAINS the work branch's tip. */
       landed: z.boolean(),
       /**
        * The remote-tracking ref `pushed` was decided against, named so the surface can say

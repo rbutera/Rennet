@@ -10,6 +10,7 @@ import {
   refExists,
   SIBLING_BRANCH_PREFIX,
   siblingIsCollectable,
+  type WorktreeRecord,
 } from "./workspace-inventory";
 import { parseWorktrees } from "./worktree-discovery";
 
@@ -409,19 +410,40 @@ export function siblingBranchFor(branch: string): string {
  *   1. A worktree of this repository is ALREADY on the sibling: that is the workspace.
  *      Returned as it stands — no reset, no checkout, nothing that touches its tree or
  *      index — wherever it sits, which is also what keeps one sibling per (repo, branch)
- *      after a pattern change moved the computed path.
+ *      after a pattern change moved the computed path. A registration git marks PRUNABLE
+ *      — the directory is not reachable — is the one arm that THROWS instead: see below.
  *   2. A worktree of this repository sits AT the computed path on something else — the
  *      reviewer's checkout, a Rennet branch worktree, anything: it is not ours, so this
  *      THROWS naming both the path and the ref. Checking out in it is the destructive act
  *      the second finding above describes.
  *   3. The sibling BRANCH exists with NO worktree (its worktree was removed by hand, or a
  *      previous session's was collected). This is the only re-fork: if the sibling is
- *      reachable — from the branch, or from any remote-tracking ref of the branch, which
+ *      reachable — from the branch, or from ANY remote-tracking ref of the branch, which
  *      is what a push under `own` makes true — the stale branch is deleted and recreated
  *      at the branch's head, so a fresh session starts from the branch's CURRENT tip. If
  *      it is ahead, `worktree add` at the sibling as it is: those commits exist on no
- *      other ref.
+ *      other ref. Every remote is consulted, and there is no narrower mode: this runs only
+ *      for a session with no bound root, which is a session with no recorded push either
+ *      (`clearBoundWorkspace` drops all three together), so the one remote a push would
+ *      have named could never be here to narrow it.
  *   4. Nothing here at all: `worktree add -b rennet/<branch> <path> refs/heads/<branch>`.
+ *
+ * ⚠️ THIS CALL NEVER PRUNES. It used to run `git worktree prune` first, under a comment
+ * claiming prune "removes records of directories that are already gone and touches nothing
+ * that exists". That is not what git does. Git drops a registration whose gitdir file
+ * points at a location it cannot reach RIGHT NOW — an unmounted volume, a network share
+ * that is down, a distro that is not running — and none of those means the worktree is
+ * gone. Pruned, the very next line here re-forks or recreates the sibling, and when the
+ * volume comes back the staged-and-uncommitted work in the old directory belongs to no
+ * registration at all. So the registration is READ, never repaired:
+ *
+ *   • registered and reachable → arm 1, bound as it stands;
+ *   • registered and git says PRUNABLE → THROWS, naming the path and git's own reason,
+ *     with nothing created, nothing checked out and nothing pruned.
+ *
+ * The one place a registration is pruned is the daemon's sibling sweep, which asks first
+ * whether any live session claims the directory. Reconnecting the volume makes this bind
+ * succeed with the work intact, which is the outcome the prune took away.
  *
  * `refs/heads/…` on every ancestry and fork question. A tag called `rennet/feat/x`
  * resolves before `refs/heads/rennet/feat/x` in a revision walk and would otherwise answer
@@ -436,28 +458,35 @@ export async function ensureSiblingWorktree(
   cloneRoot: string,
   worktreePath: string,
   branch: string,
-  /** The remote a session's push named, when one is recorded — D5's reachability question. */
-  push?: { readonly remote: string },
 ): Promise<{ path: string; created: boolean; workBranch: string }> {
   const workBranch = siblingBranchFor(branch);
   const siblingRef = `refs/heads/${workBranch}`;
   const branchRef = `refs/heads/${branch}`;
-  // A stale admin entry (a directory removed by hand) is what makes `worktree add` refuse a
-  // path that is empty on disk, AND what would make the occupancy read below claim a
-  // worktree that is not there. Pruned before either question is asked; prune removes
-  // records of directories that are already gone and touches nothing that exists.
-  await git(cloneRoot, ["worktree", "prune"], { reject: false });
+  // ONE read of the registrations answers both questions below, and no write precedes it.
+  const records = await listWorktreeRecords(git, cloneRoot);
 
   // 1. The sibling already has a worktree: THAT is this repository's sibling workspace,
   //    shared by every session on this branch, and it is bound to exactly as it stands.
-  const existing = await worktreeForBranch(git, cloneRoot, workBranch);
-  if (existing !== undefined) return { path: existing, created: false, workBranch };
+  const registered = records.find((record) => record.branch === workBranch);
+  if (registered !== undefined) {
+    if (registered.prunable !== undefined) {
+      throw new Error(
+        `worktree placement: the worktree for ${workBranch} is registered at ${registered.path} but that directory is not reachable (git: ${registered.prunable}). Nothing was changed. Reconnect it and dispatch again, or remove the registration yourself once you are sure it is gone.`,
+      );
+    }
+    return { path: registered.path, created: false, workBranch };
+  }
 
   // 2. Somebody else's worktree is at the path we would have used. Never check out in it.
-  const occupant = await worktreeAt(git, cloneRoot, worktreePath);
+  const occupant = records.find(
+    (record) => resolvedPath(record.path) === resolvedPath(worktreePath),
+  );
   if (occupant !== undefined) {
+    const ref = occupant.branch ?? occupant.head ?? "a detached head";
     throw new Error(
-      `worktree placement: ${worktreePath} is already a worktree of this repository on ${occupant}, so Rennet will not create ${workBranch} there. Move it, or change this repository's worktree location or layout.`,
+      occupant.prunable === undefined
+        ? `worktree placement: ${worktreePath} is already a worktree of this repository on ${ref}, so Rennet will not create ${workBranch} there. Move it, or change this repository's worktree location or layout.`
+        : `worktree placement: ${worktreePath} is registered as a worktree of this repository on ${ref} but that directory is not reachable (git: ${occupant.prunable}). Nothing was changed. Reconnect it, or change this repository's worktree location or layout.`,
     );
   }
 
@@ -465,7 +494,7 @@ export async function ensureSiblingWorktree(
   // 3. The sibling BRANCH survives with no worktree. Re-forked only when its commits are
   //    provably elsewhere; otherwise checked out where it stands, ahead and intact.
   if (await refExists(git, cloneRoot, siblingRef)) {
-    if (await siblingIsCollectable(git, cloneRoot, workBranch, branch, push)) {
+    if (await siblingIsCollectable(git, cloneRoot, workBranch, branch)) {
       await git(cloneRoot, ["branch", "-D", workBranch]);
       await git(cloneRoot, ["worktree", "add", "-b", workBranch, worktreePath, branchRef]);
     } else {
@@ -479,27 +508,22 @@ export async function ensureSiblingWorktree(
 }
 
 /**
- * The ref a worktree of this repository has out AT `path`, or nothing when git lists no
- * worktree there. Compared through `realpath` on both sides: git prints resolved paths and
- * a computed placement carries whatever the settings ladder produced, so `/var/…` and
- * `/private/var/…` are one directory on macOS and must compare equal.
+ * Every worktree this repository has REGISTERED, git's own annotations included.
  *
  * `parseWorktreeRecords`, not `parseWorktrees`: the latter drops DETACHED entries, and a
- * detached pull-request snapshot sitting at the computed path is exactly a worktree Rennet
- * must not check the sibling out inside of.
+ * detached pull-request snapshot sitting at a computed sibling path is exactly a worktree
+ * Rennet must not check anything out inside of. Paths are compared through `realpath` by
+ * the callers, because git prints resolved paths and a computed placement carries whatever
+ * the settings ladder produced — `/var/…` and `/private/var/…` are one directory on macOS.
  */
-async function worktreeAt(
+async function listWorktreeRecords(
   git: GitExec,
   cloneRoot: string,
-  path: string,
-): Promise<string | undefined> {
-  const wanted = resolvedPath(path);
+): Promise<readonly WorktreeRecord[]> {
   const listed = await git(cloneRoot, ["worktree", "list", "--porcelain", "-z"], {
     reject: false,
   }).catch(() => "");
-  const record = parseWorktreeRecords(listed).find((entry) => resolvedPath(entry.path) === wanted);
-  if (record === undefined) return undefined;
-  return record.branch ?? record.head ?? "a detached head";
+  return parseWorktreeRecords(listed);
 }
 
 /** `realpath` where the path exists, its literal form where it does not (which still
@@ -522,18 +546,53 @@ export type SetupStatus =
  * Ensure a detached worktree for the PR exists at `headOid`, replacing a stale one
  * (a superseded head) in place. Returns whether the worktree was (re)created —
  * setup only re-runs on a fresh checkout, never on a plain re-open.
+ *
+ * ⚠️ IT REPLACES ONLY A WORKTREE IT CAN IDENTIFY AS THAT SNAPSHOT. The branch pattern and
+ * the pull-request pattern are both the reviewer's to set, and both resolve under one root:
+ * set them to the same shape — `{name}` and `{name}`, say — and a pull request's computed
+ * path IS some session's branch worktree. This used to run `worktree remove --force` plus
+ * `rm -rf` on whatever sat there whose HEAD was not the reviewed head, and a reviewer's
+ * uncommitted edits in that tree went with it, on the ordinary act of opening a PR.
+ *
+ * So the replacement asks two questions, and both must answer yes:
+ *
+ *   • is it DETACHED? A worktree on a branch is somebody's branch workspace — Rennet's own
+ *     sibling or branch worktree, or the reviewer's — and never a snapshot.
+ *   • does Rennet's pull-request index RECORD a snapshot at this path (`recordedSnapshot`)?
+ *     That is the only positive evidence Rennet put it there. Absent, a detached worktree
+ *     at the path is the reviewer's own detached checkout as far as anything here knows.
+ *
+ * Anything else THROWS, naming the path and what occupies it. That is a fact reported, not
+ * a gate: the reviewer changes `prWorktreePattern` (or moves the worktree) and opens again,
+ * and the caller that swallows it opens the review with no checkout, exactly as it does for
+ * every other placement failure.
  */
 export async function ensurePrWorktree(
   git: GitExec,
   cloneRoot: string,
   worktreePath: string,
   headOid: string,
+  options?: {
+    /** Rennet's pull-request index records a snapshot at this exact path. */
+    readonly recordedSnapshot?: boolean;
+  },
 ): Promise<{ path: string; created: boolean }> {
   if (existsSync(join(worktreePath, ".git"))) {
     const current = (await git(worktreePath, ["rev-parse", "HEAD"], { reject: false })).trim();
     if (current === headOid) return { path: worktreePath, created: false };
-    // Superseded head: the old checkout is replaced, forcibly — it is a managed
-    // detached checkout, never the user's own working tree.
+    // WHOSE tree is this? `symbolic-ref` answers with the branch and only the branch: it is
+    // empty on a detached HEAD, which is the shape a snapshot has and the shape a branch
+    // workspace never has.
+    const onBranch = (
+      await git(worktreePath, ["symbolic-ref", "--quiet", "--short", "HEAD"], { reject: false })
+    ).trim();
+    if (onBranch.length > 0 || options?.recordedSnapshot !== true) {
+      throw new Error(
+        `worktree placement: ${worktreePath} is a worktree of this repository on ${onBranch.length > 0 ? onBranch : `a detached head at ${current || "an unknown commit"}`}, not Rennet's snapshot of this pull request, so it will not be replaced. Move it, or change this repository's pull-request layout.`,
+      );
+    }
+    // Superseded head, and Rennet's own detached snapshot: replaced forcibly in place — it
+    // is a managed detached checkout, never the user's own working tree.
     await git(cloneRoot, ["worktree", "remove", "--force", worktreePath], { reject: false });
     await rm(worktreePath, { recursive: true, force: true });
   }
