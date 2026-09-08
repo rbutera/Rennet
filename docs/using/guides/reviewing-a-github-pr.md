@@ -62,7 +62,10 @@ have an executable copy of the pull request. That worktree is the session's
 own checkout, so reviewing a pull request does not move the branch you are standing
 on. The chat header names the path beside the branch. When the pull request's head
 moves, the same worktree is re-checked-out at the new commit, so the workspace path
-does not change under a review you already have open.
+does not change under a review you already have open. Where that worktree goes is
+yours to set, in **Settings → Projects → Worktrees**, which also lists every
+workspace Rennet holds for the repository — see
+[Settings](./getting-started.md#settings).
 
 A repository can carry `.rennet/setup` with one shell command per line; lines
 starting with `#` are comments. Rennet runs those commands after checkout and

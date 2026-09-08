@@ -34,7 +34,7 @@ Ships on its own: values resolve and preview correctly; the binding still ignore
 
 ## 5. Documentation and the cost sentence
 
-- [ ] 5.1 `docs/developing/guides/settings-and-setup.md`: replace the "statement, not a setting" paragraph with the four controls and the inventory; name the two files and the rung of each key
-- [ ] 5.2 `docs/developing/concepts/handoff-and-exits.md`: the binding under `share` and `own`, the work branch, where a round's commits land in each, the push refspec, the land action, and D5's cleanup rule; the `~/.rennet/worktrees/<repoKey>/<branch>` sentence becomes "the resolved root and layout, `<root>/{repo}/{branch}` by default"
-- [ ] 5.3 `docs/using/guides/getting-started.md`: the Worktrees bullet says what a reviewer can set and what they will see listed
-- [ ] 5.4 PR description states: no prompt, interpolation, tool surface or settings surface a session SENDS changes; the settings surface the VIEWER sees grows by four controls and a list
+- [x] 5.1 `docs/developing/guides/settings-and-setup.md`: replace the "statement, not a setting" paragraph with the four controls and the inventory; name the two files and the rung of each key
+- [x] 5.2 `docs/developing/concepts/handoff-and-exits.md`: the binding under `share` and `own`, the work branch, where a round's commits land in each, the push refspec, the land action, and D5's cleanup rule; the `~/.rennet/worktrees/<repoKey>/<branch>` sentence becomes "the resolved root and layout, `<root>/{repo}/{branch}` by default"
+- [x] 5.3 `docs/using/guides/getting-started.md`: the Worktrees bullet says what a reviewer can set and what they will see listed
+- [x] 5.4 The cost paragraph is delivered in the PR description by the orchestrator, not in a doc page: no prompt, interpolation, tool surface or settings surface a session SENDS changes; the settings surface the VIEWER sees grows by four controls and a list

@@ -92,13 +92,62 @@ because a session the store does not hold is a session no surface can read back.
 
 ### One workspace per session
 
-Beside the repository, a session records the one **workspace** it is bound to, and every
-turn it spawns runs there: the six lens seats, the chat thread, the handoff thread and every
-cold utility turn. The binding is decided once, from the review target — the reviewer's own
-checkout when some worktree of the repository already has the reviewed branch out, a
-Rennet-created worktree at `~/.rennet/worktrees/<repoKey>/<branch>` when nothing does, the
-detached worktree at the reviewed head for a pull-request snapshot — and recorded as
-`boundRoot`. A workspace that cannot be created fails the bind and records nothing rather
+Beside the repository, a session records the one **workspace** it is bound to and — only
+when its commits land somewhere other than the reviewed branch — the **work branch** they
+land on; an absent work branch is the reviewed branch, said once rather than copied onto
+every session. Every turn the session spawns runs in that workspace: the six lens seats,
+the chat thread, the handoff thread and every cold utility turn. The binding
+is decided once, from the review target, and recorded as `boundRoot`. Where a Rennet-made
+worktree goes is the location and layout resolved off the settings ladder for the reviewed
+repository — the resolved root and layout, `<root>/{repo}/{branch}` by default, with the
+root's builtin the data directory's `worktrees/` and a pull-request snapshot at
+`{owner}/{name}/pr-{number}`. The four keys and their rungs are in
+[Settings and setup](../guides/settings-and-setup.md#worktrees).
+
+```mermaid
+flowchart TD
+  target{Review target} -->|Pull-request snapshot| pr[Detached worktree at the reviewed head]
+  target -->|Branch| out{Some worktree already has the branch out?}
+  out -->|No| fresh[Rennet worktree on the branch itself]
+  out -->|Yes| mode{The repository's workspace setting}
+  mode -->|share| checkout[That checkout; nothing is created]
+  mode -->|own| whose{Whose checkout is it?}
+  whose -->|Rennet's own placement| checkout
+  whose -->|One Rennet did not place| sibling[Rennet worktree on the sibling branch]
+```
+
+`own` is not the same question as "is there a sibling". It asks a second one first —
+**whose** checkout has the branch out — and only a checkout Rennet did not place sends the
+bind down the sibling arm. Rennet's own branch worktree is not a tree the reviewer is
+working in, so `own` binds there exactly as `share` does rather than forking a second
+workspace away from the one this session's predecessors commit in. The sibling is forked
+from the branch's head and placed at the branch pattern applied to the sibling's own name,
+never the branch's; the two arms that end at a checkout create nothing.
+
+Sessions **share** a sibling exactly as they share a checkout: one per repository and branch,
+and a second bind takes it as it stands, touching neither its working tree nor its index. A
+bind reads the repository's worktree registrations rather than probing the filesystem, and it
+prunes nothing.
+
+The two helpers that place a Rennet worktree — the branch worktree and the sibling — refuse
+the same way. A registration git cannot reach fails the bind, naming the path and git's own
+reason. A registration that is already a worktree on another reference fails the bind too,
+naming the path, the reference and — where Rennet can identify it — the session working
+there. The branch helper answers one more way: the repository's own clone root is refused
+outright, whatever it has out and the requested branch included, because it is the
+reviewer's tree and only a `share` bind ever binds there. The arm that binds to a checkout
+already holding the branch asks neither question — it takes the registration git reported,
+as it stands.
+
+The drift repair is the **branch** bind's alone: a worktree Rennet itself placed that has
+drifted onto another branch with no live session bound to it is checked back out, with git's
+own refusal the only thing that can stop it. The sibling bind refuses an occupied placement
+whatever is on it, and that asymmetry is deliberate — it runs no clone-root test, so its
+occupant may be the reviewer's own checkout or a detached pull-request snapshot, and
+`rennet/<branch>` may not exist to check out at all. The reviewer's remedy there is the same
+single command.
+
+A workspace that cannot be created fails the bind and records nothing rather
 than falling back to the clone, which sits on another branch. Nothing re-decides a binding
 afterwards, though a pull-request binding is re-pinned when a landed round advances the
 reviewed head. A session with no recorded binding — created before the binding existed, or
@@ -108,8 +157,12 @@ turn takes. None of them answers the clone while the field is empty, because a t
 is fixed when it is created.
 
 The coding round runs there with the rest of them: its worker is a turn in the bound
-workspace and commits on the session's branch in that tree. No worktree is created per round,
-and no result is replayed onto the branch afterwards.
+workspace and commits on the session's **work branch** in that tree — the reviewed branch
+itself, or the sibling when the session binds to a sibling. Either way the review's
+successor patchset names the reviewed branch as its head reference, with the work branch's
+tip as its head commit, so what the review is about does not change with where the commits
+sit. No worktree
+is created per round, and no result is replayed onto the branch afterwards.
 
 The workspace is where the session's `.rennet/context/<sessionId>/` directory lives, which
 is what makes the relative paths in every prompt resolve: a turn's cwd and the root its
@@ -122,6 +175,80 @@ the reviewer's own tree says so. Full detail:
 Anchored threads keep their content in the session transcript; the boards and
 the diff hold only anchor→thread references, so a code-line comment, a
 prose-quote thread, and Explain all ride one mechanism.
+
+### The work branch reaches the branch
+
+Unless the session binds to a sibling, the work branch **is** the reviewed branch and there
+is nothing further to say. When it does — `workspace: own`, beside a checkout Rennet did not
+place — the round's commits are on `rennet/<branch>` and the reviewer's own branch has not
+moved, so two things carry them back.
+
+**A pull request pushes them.** `refs/heads/<workBranch>:refs/heads/<branch>` — the sibling's
+commits go to the reviewed branch's name on the remote, so the pull request's head is the
+branch the review is about, and the local branch still does not move. Under `share` the two
+names are equal and the refspec is byte-identical to the one Rennet has always pushed. The
+session records the push's **destination**, the remote and the branch name it landed under,
+because every later question is about what a ref holds now. It is recorded only when the work
+branch differs from the reviewed branch: under `share` the push moved the branch the
+reviewer is already standing on, so there is no second ref to ask about. Rennet sets no
+upstream: writing branch configuration into the reviewer's repository is not this action's
+business.
+
+**A land action fast-forwards them.** `session.landWorkBranch` runs `git merge --ff-only`
+inside the worktree that has the reviewed branch out — found by asking git, never assumed to
+be the repository root. Git decides what happens and Rennet adds no refusal of its own: a
+diverged branch is refused, and so is a merge that would overwrite a file the reviewer has
+edits in, while unrelated uncommitted work rides along as `merge --ff-only` allows. A refusal
+comes back verbatim — capped, with an honest truncation marker — nothing has changed, and the
+action stays offered.
+
+Beside the session's branch, the review workspace shows one line, read from git at the moment
+it is asked rather than stamped on the session:
+
+- "`feat/x` is behind `origin/feat/x` by *N* commits." — "commit" when *N* is 1 — shown once
+  the sibling's tip has reached the recorded push destination and the branch is behind that
+  ref, counting what the ref holds and the branch does not. The ref is **named**, because
+  `origin/feat/x` is something you can `git log` where "its upstream" is a concept.
+- "The round's commits are on `rennet/feat/x`. `feat/x` has not moved." — shown whenever the
+  sibling's tip is not yet an ancestor of that destination, counting what the sibling holds
+  and the branch does not. Before a push that is always so, and a later round's commits bring
+  the line back after one.
+- Nothing at all, once the branch **contains** the work branch's tip. Containment rather than
+  equal tips, so committing or pulling on top of a landing does not bring the line back.
+
+### Collecting a sibling
+
+When a session bound on a sibling is archived, and when the daemon's start sweep finds a
+sibling whose session is gone, the sibling and its worktree are removed **only** when the
+sibling's tip is reachable from the reviewed branch — locally, or through a remote-tracking
+ref of it, which is what the push under `own` makes true. A sibling holding commits the
+branch does not have keeps its worktree and its branch, and its inventory row says how far
+ahead it is. Neither path forces a worktree removal: `git worktree remove` runs without
+`--force`, and a directory git refuses to remove keeps its branch too. The branch deletion
+tries `-d` and falls back to `-D`, but only after the reachability above has been proven —
+`-d` measures against whatever HEAD the clone happens to have out, which is a weaker question
+than this one. Neither path collects a sibling any unarchived session is still bound to.
+
+The archive's own collection clears that session's recorded workspace as soon as the worktree
+is removed, so un-archiving binds again rather than resolving to a directory that is gone. The
+start sweep clears nothing — it has no session record in hand — so a session whose workspace
+it collected is repaired on the way back instead: un-archiving stats the recorded root and
+clears it when it is no longer there.
+
+Rennet prunes worktree **registrations** only from the daemon-start sweep, never from a bind,
+and only when all three hold: git reports the registration unreachable, it is Rennet's own
+(under the repository's resolved placement root, or on a `rennet/*` branch), and no live
+session claims it — by work branch in that repository, or by path in both the daemon's
+spelling and git's. `git worktree prune` takes no path, so a repository holding any
+unreachable registration that fails those tests gets no prune at all that pass, and the
+daemon log names the paths that held it. A registration that is not Rennet's is never pruned
+by Rennet; `git worktree repair` is the reviewer's tool for their own.
+
+The **Workspaces** list in Settings → Projects → Worktrees is the same facts, per repository:
+every workspace Rennet knows, with its path, ref, sessions, size and ahead-by count, and a
+remove action on the Rennet-made idle ones. An explicit removal takes the worktree and keeps
+an unmerged sibling's branch, which the outcome names; only the automatic collection keeps
+both.
 
 ## Asks
 
@@ -396,10 +523,14 @@ The exits themselves:
   session** (one round in flight; the second dispatch of the same asks coalesces
   onto the first rather than racing a second). A failed kick is evicted so an
   identical re-dispatch retries. A branch round runs as one turn in the session's
-  bound workspace and its worker commits there, on the branch the New-chat row
-  selected — never whichever branch happens to be checked out somewhere else, and
-  never through a per-round worktree whose result is replayed. A bound workspace
-  that is not on that branch refuses the round and names both. A restart settles the
+  bound workspace and its worker commits there, on the session's work branch — the
+  branch the New-chat row selected, or its `rennet/` sibling when the session bound
+  under `workspace: own` beside a checkout that already had the branch out. Never
+  whichever branch happens to be checked out somewhere else, and
+  never through a per-round worktree whose result is replayed. The round's workspace
+  planner matches its candidate root on the work branch, and a session that has a bound
+  workspace does not search at all: a bound workspace that is not on the work branch
+  refuses the round and names both. A restart settles the
   round from the turn's sidecar checkpoint, and a no-op round does not invent a
   commit. When the worker committed rather than left a dirty tree, the receipt waits
   for the checkpoint to materialize and then reconciles: a clean checkpoint whose
@@ -445,7 +576,13 @@ its provider and repository beside the branch range. The composition binding
 covers that exact target. On sign, the server verifies the previewed head against
 the active patchset, resolves the destination again, and refuses any provider or
 repository drift before mutation. The one resolved object then supplies both the
-named remote to push and the repository passed to the forge adapter. GitHub opens
+named remote to push and the repository passed to the forge adapter. The push
+sends the session's [work branch](#the-work-branch-reaches-the-branch) to the
+reviewed branch's name — `refs/heads/<workBranch>:refs/heads/<branch>` — so a
+session that worked on a `rennet/` sibling still opens the change request on the
+branch under review, and a session working on the branch itself pushes the
+refspec it always has. A work branch that is neither the reviewed branch nor
+exactly its sibling refuses the push, naming both. GitHub opens
 a pull request through its registered adapter; GitLab.com opens a merge request
 through `glab` in the repository's own host or WSL environment. The UI follows
 each provider's vocabulary and number marker: **Pull Request #42** or **Merge
