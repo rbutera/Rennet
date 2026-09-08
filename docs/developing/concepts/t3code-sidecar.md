@@ -1470,6 +1470,14 @@ it as a tool-call count, never as a round-trip count, and note that it excludes 
 calls (a seat with `Agent` sub-sessions reports 37 while 106 calls appear in its log). **The
 number of distinct assistant message ids is the round-trip count.**
 
+A refusal count is not a count of extra round trips. Several rejected calls can
+share one assistant message, and the next message can repair several together.
+Join each error result to its tool-use ID and classify the returned rule or error
+before changing the prompt. A citation-range refusal does not establish that a
+consumer ran before its citation; a prose-lint refusal does not establish a
+batching error. Compare distinct message IDs, total tokens, and time to the first
+useful board when evaluating a change to call ordering.
+
 Timings on the 95-file branch, from the drafting kickoff: **time to first element 339.8 s**,
 **time to first core board 555.7 s** (Sequence). Against the v0.7.0 figure of 360 s to first
 core board, the reader now sees the first *element* at about the moment they used to see the
