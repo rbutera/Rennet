@@ -125,6 +125,7 @@ export type SessionThread = z.infer<typeof SessionThreadSchema>;
 // absence that verb declares) and `protocol/board` cannot import `protocol/session`.
 // Re-exported here so every existing importer keeps its path.
 export {
+  HOST_CHANGE_ABSENCES,
   LENS_ADMISSIBLE_ABSENCES,
   type LensAbsenceReason,
   LensAbsenceReasonSchema,

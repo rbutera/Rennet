@@ -51,6 +51,7 @@ import type {
   HarnessPort,
   LintContext,
   LintTarget,
+  LocatedDesignSource,
   RegisterLintContext,
 } from "@rennet/core";
 import { councilContextFor, sessionContextRelativeDir } from "@rennet/core";
@@ -378,6 +379,10 @@ function lensAbsenceMessage(reason: LensAbsenceReason): string {
       // seat's claim that nothing here was skip-safe; it is now the host's observation
       // that the complement is empty, which is a different and much rarer statement.
       return "Every changed region is on another board.";
+    case "spec-only":
+      // The host's statement about the CHANGE, settled on four lanes at once before any
+      // seat ran: every changed path is a specification artifact, so Design is the review.
+      return "This change is specification only.";
   }
 }
 
@@ -636,6 +641,10 @@ export interface RoundInput {
    *  Written into the session's context directory and named in the Design seat's prompt
    *  (PR #802); a branch review has none and names none. */
   readonly prPaper?: SessionContextFile;
+  /** The specification the host located (format, role, path per artifact — never text),
+   *  written as `design-sources.md` and named to the Design seat so a seat that runs
+   *  because the assembler declined opens on the files rather than on a search for them. */
+  readonly designSources?: readonly LocatedDesignSource[];
   readonly lintContextFor: (lens: LintTarget) => LintContext;
   /** The deterministic Design fast path, when this review's branch carries an OpenSpec
    *  change: a host-side board build with no model turn. Absent ⇒ the Design seat runs. */
@@ -1555,6 +1564,7 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
     const pipelineInput = {
       council: councilContextFor(installed, deps.councilOverrides),
       ...(input.prPaper === undefined ? {} : { prPaper: input.prPaper }),
+      ...(input.designSources === undefined ? {} : { designSources: input.designSources }),
       ...(t3Seam === undefined ? {} : { t3: t3Seam }),
       // This generation's lanes on the daemon's loopback board server. Without it the
       // pipeline's lane-opening loop is unreachable in production — the guard reads

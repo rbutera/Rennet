@@ -12,4 +12,5 @@ export { buildHunkIndex, type HunkIndex, type IndexedHunk } from "./hunk-index";
 export * from "./kiro-spec";
 export * from "./noise-preclass";
 export * from "./openspec-change";
+export * from "./spec-only";
 export * from "./superpowers-spec";

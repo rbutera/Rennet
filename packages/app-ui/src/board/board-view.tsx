@@ -553,6 +553,14 @@ function absenceCopy(reason: LensAbsenceReason): {
         title: "Every changed region is on another board.",
         detail: "Design, Sequence, Decisions and Flagged cited the whole change between them.",
       };
+    case "spec-only":
+      // Settled by the host from the change's file rows, on all four non-Design lanes at
+      // once and before any seat ran, so the copy names the change and not a seat's search.
+      return {
+        title: "This change is specification only.",
+        detail:
+          "Every changed path is a specification artifact, so there is no code to order, decide on, flag, or file as noise. The Design board renders the specification.",
+      };
   }
 }
 
