@@ -9,6 +9,12 @@
 // Every call names a REPOSITORY PATH, never a project id: a workspace project maps many
 // repositories onto one identity and that mapping is not invertible, so a project id
 // cannot answer "which repository's worktrees" (CLAUDE.md, the 2026-08-28 rule).
+//
+// A row is ADDRESSED BY `id`, never by its path. The path on a row is display copy: a
+// projected client receives it as a repo reference and a scrubbed tail, so the bytes it
+// could echo back are not the bytes the host would have to match. The id is an opaque
+// server-side digest of the workspace's resolved path, identical in the list that showed
+// the row and in the fresh list the removal addresses, and it survives projection intact.
 
 import { z } from "zod";
 
@@ -21,30 +27,58 @@ import { z } from "zod";
  */
 export const WORKTREE_ROWS_CAP = 200;
 
+/**
+ * The most session ids ONE row carries — its own cap, not the row cap borrowed.
+ *
+ * A row's session list is a second collection nested inside the capped one, so it needs
+ * its own bound or 200 rows x 200 ids is the real payload. Twenty is the same order as
+ * every other per-result sample cap in the codebase (`heldIds()` at 20), and a row past
+ * it sets `sessionsTruncated` rather than showing a silent prefix.
+ */
+export const WORKTREE_SESSION_IDS_CAP = 20;
+
 /** The longest git refusal a removal echoes back, in characters. */
 export const WORKTREE_REFUSAL_CAP = 2000;
 
 /**
  * What a workspace IS, which decides what the surface may offer for it:
- *   • `own-checkout` — a checkout the reviewer made; listed only while a session is bound
- *     to it, and never removable by Rennet.
- *   • `branch` — a Rennet-created worktree with the reviewed branch checked out.
- *   • `sibling` — a Rennet-created worktree on `rennet/<branch>` (workspace `own`).
+ *   • `own-checkout` — the repository's MAIN worktree, the checkout git itself records
+ *     first; listed only while a session is bound to it, and never removable by Rennet.
+ *   • `branch` — a worktree with a branch checked out.
+ *   • `sibling` — a worktree on `rennet/<branch>` (workspace `own`).
  *   • `pull-request` — the detached snapshot at a reviewed pull request's head.
+ *
+ * Decided POSITIVELY, from git's main-worktree record and the row's own ref/index facts —
+ * never "everything left over is the reviewer's checkout". A worktree that is not the main
+ * one is named for what it is even when it sits outside the currently resolved root, which
+ * is exactly what a root the reviewer has since changed produces.
  */
 export const worktreeKindSchema = z.enum(["own-checkout", "branch", "sibling", "pull-request"]);
 export type WorktreeKind = z.infer<typeof worktreeKindSchema>;
 
 /** One workspace Rennet knows for a repository (D6). */
 export const worktreeRowSchema = z.object({
-  /** The workspace directory, as git spells it. It also ADDRESSES the row for removal. */
+  /**
+   * The row's address, opaque and stable: a digest of the workspace's resolved path,
+   * computed on the host. `worktrees.remove` names THIS, never a path — a projected
+   * client never holds the host spelling it would otherwise have to echo back.
+   */
+  id: z.string().min(1),
+  /** The workspace directory, as the daemon spells it. DISPLAY ONLY — see `id`. */
   path: z.string().min(1),
   kind: worktreeKindSchema,
   /** The branch checked out here, or the detached head's OID for a snapshot. */
   ref: z.string().min(1).optional(),
   /** The LIVE sessions bound to this workspace. Empty ⇒ idle. */
-  sessionIds: z.array(z.string().min(1)).max(WORKTREE_ROWS_CAP),
-  /** When the workspace was made — its `.git` file's mtime, epoch ms. */
+  sessionIds: z.array(z.string().min(1)).max(WORKTREE_SESSION_IDS_CAP),
+  /** True when more sessions are bound here than {@link WORKTREE_SESSION_IDS_CAP} carries. */
+  sessionsTruncated: z.boolean().optional(),
+  /**
+   * When the workspace was made, epoch ms — a linked worktree's `.git` FILE mtime (written
+   * once, when git made it), or the main checkout's `.git` birth time. Absent when neither
+   * is knowable, and the cell reads "—": a directory mtime advances on every commit, so
+   * reporting one here would be a creation date that is not one.
+   */
   createdAt: z.number().optional(),
   /** The latest bound session's activity, epoch ms. Absent ⇒ no session is bound. */
   lastUsedAt: z.number().optional(),
@@ -55,13 +89,14 @@ export const worktreeRowSchema = z.object({
   sizeBytes: z.number().nonnegative().optional(),
   /**
    * Present on a sibling whose tip is reachable from NEITHER its branch nor that branch's
-   * remote-tracking ref (D5): the sibling holds work the branch does not, so neither the
-   * worktree nor the branch is collected and the row says why.
+   * remote-tracking ref (D5): the sibling holds work the branch does not, so removing this
+   * row takes the worktree and KEEPS the branch, and the row says how far ahead it is.
    */
   aheadOf: z.object({ branch: z.string().min(1), commits: z.number().int().positive() }).optional(),
   /**
-   * Whether a removal can address this row at all: false for the reviewer's own checkout,
-   * for a workspace a live session is bound to, and for a sibling holding unmerged work.
+   * Whether a removal can address this row at all: false for the repository's main
+   * checkout and for a workspace a live session is bound to. An ahead sibling IS
+   * removable — its worktree goes and its branch stays, which loses nothing.
    * A fact about the row, not a permission prompt — the removal itself asks nothing.
    */
   removable: z.boolean(),
@@ -80,23 +115,38 @@ export type WorktreeInventory = z.infer<typeof worktreeInventorySchema>;
  * What a removal did. `refused` carries GIT'S OWN TEXT (capped, with an honest marker) —
  * a dirty worktree, a locked one, a path git does not own. `not-removable` is Rennet's
  * own answer for a row a removal cannot address, and its reason names the fact.
+ *
+ * Every arm echoes the `id` that was addressed. `path` rides along for display and is
+ * absent on the one outcome that has no row to name.
  */
 export const worktreeRemoveOutcomeSchema = z.discriminatedUnion("status", [
   z.object({
     status: z.literal("removed"),
+    id: z.string().min(1),
     path: z.string().min(1),
     /** True when the sibling branch was deleted with its worktree (D5's rule held). */
     siblingBranchDeleted: z.boolean().optional(),
+    /**
+     * What was deliberately KEPT, when anything was: the sibling branch and why it
+     * outlived its worktree. Absent when the removal took everything it named.
+     */
+    note: z
+      .string()
+      .max(WORKTREE_REFUSAL_CAP + 16)
+      .optional(),
   }),
   z.object({
     status: z.literal("refused"),
+    id: z.string().min(1),
     path: z.string().min(1),
     /** Git's refusal, verbatim up to {@link WORKTREE_REFUSAL_CAP}. */
     reason: z.string().max(WORKTREE_REFUSAL_CAP + 16),
   }),
   z.object({
     status: z.literal("not-removable"),
-    path: z.string().min(1),
+    id: z.string().min(1),
+    /** Absent when the id addressed no row of this repository — there is no path to name. */
+    path: z.string().min(1).optional(),
     reason: z.string().max(WORKTREE_REFUSAL_CAP + 16),
   }),
 ]);

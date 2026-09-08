@@ -1,0 +1,140 @@
+{
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string",
+          "const": "removed"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "path": {
+          "type": "object",
+          "properties": {
+            "repoKey": {
+              "type": "string",
+              "minLength": 1
+            },
+            "displayName": {
+              "type": "string",
+              "minLength": 1
+            },
+            "relativePath": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "repoKey",
+            "displayName"
+          ],
+          "additionalProperties": false
+        },
+        "siblingBranchDeleted": {
+          "type": "boolean"
+        },
+        "note": {
+          "type": "string",
+          "maxLength": 2016
+        }
+      },
+      "required": [
+        "status",
+        "id",
+        "path"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string",
+          "const": "refused"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "path": {
+          "type": "object",
+          "properties": {
+            "repoKey": {
+              "type": "string",
+              "minLength": 1
+            },
+            "displayName": {
+              "type": "string",
+              "minLength": 1
+            },
+            "relativePath": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "repoKey",
+            "displayName"
+          ],
+          "additionalProperties": false
+        },
+        "reason": {
+          "type": "string",
+          "maxLength": 2016
+        }
+      },
+      "required": [
+        "status",
+        "id",
+        "path",
+        "reason"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string",
+          "const": "not-removable"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "path": {
+          "type": "object",
+          "properties": {
+            "repoKey": {
+              "type": "string",
+              "minLength": 1
+            },
+            "displayName": {
+              "type": "string",
+              "minLength": 1
+            },
+            "relativePath": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "repoKey",
+            "displayName"
+          ],
+          "additionalProperties": false
+        },
+        "reason": {
+          "type": "string",
+          "maxLength": 2016
+        }
+      },
+      "required": [
+        "status",
+        "id",
+        "reason"
+      ],
+      "additionalProperties": false
+    }
+  ]
+}

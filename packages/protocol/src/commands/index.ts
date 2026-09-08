@@ -1684,13 +1684,16 @@ const definitions = {
   // ── Remove one workspace (workspace-settings D6) ────────────────────────────
   // `git worktree remove` WITHOUT `--force`, so git's own refusal is the only thing that
   // stops it and uncommitted work is never swept; the refusal comes back verbatim on the
-  // row. A sibling's branch is deleted with its worktree only under D5's reachability rule.
-  // One interaction, no confirmation step (Rule Zero). `path` addresses a row of THIS
-  // repository's list — the host matches it against a fresh inventory, so a path that is
-  // not a workspace of `repoPath`, the reviewer's own checkout, and a workspace a live
-  // session is bound to are all answered `not-removable` rather than acted on.
+  // row. A sibling's branch is deleted with its worktree only under D5's reachability rule;
+  // an unmerged sibling loses its worktree and KEEPS its branch, which the outcome names.
+  // One interaction, no confirmation step (Rule Zero). `id` addresses a row of THIS
+  // repository's list — an opaque digest the host recomputes on a fresh inventory, so an
+  // id that names no workspace of `repoPath`, the reviewer's own checkout, and a workspace
+  // a live session is bound to are all answered `not-removable` rather than acted on. It is
+  // an id and not a path because a PROJECTED client is handed a repo reference and a
+  // scrubbed tail for display, and could never echo back bytes the host would match.
   "worktrees.remove": {
-    input: z.object({ repoPath: z.string().min(1), path: z.string().min(1) }),
+    input: z.object({ repoPath: z.string().min(1), id: z.string().min(1) }),
     output: worktreeRemoveOutcomeSchema,
   },
 } as const;

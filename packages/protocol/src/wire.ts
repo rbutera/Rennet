@@ -20,6 +20,12 @@ import { MAX_UI_SCREENSHOTS_PER_RUN } from "./domain";
 import { forgeRepoIdentitySchema, forgeRepositoryMatchesLegacy } from "./forge";
 import type { AskProjection, AttentionEventFrame, LensDraftEvent, RoundEvent } from "./session";
 import { SessionPreparationSchema } from "./session/model";
+import {
+  WORKTREE_ROWS_CAP,
+  worktreeInventorySchema,
+  worktreeRemoveOutcomeSchema,
+  worktreeRowSchema,
+} from "./worktrees";
 
 const repositoryProvenanceSchema = z.object({
   id: z.string().min(1),
@@ -3067,6 +3073,30 @@ export const projectedRepositoryChooseOutputSchema = z.object({
 });
 
 /**
+ * Projected workspace inventory (workspace-settings D6): every row's host `path` becomes
+ * a repo reference, exactly as a review's `repositoryRoot` does.
+ *
+ * The row's `id` is untouched, and that is the point of it existing: a projected client
+ * still holds an address it can hand back to `worktrees.remove`, without ever holding the
+ * host spelling of the directory. A projection that only rewrote the path would have left
+ * the removal unaddressable from a phone.
+ */
+export const projectedWorktreeRowSchema = worktreeRowSchema.extend({
+  path: repoReferenceSchema,
+});
+
+export const projectedWorktreeInventorySchema = worktreeInventorySchema.extend({
+  rows: z.array(projectedWorktreeRowSchema).max(WORKTREE_ROWS_CAP),
+});
+
+/** Projected `worktrees.remove` outcome: the display `path` on each arm becomes a reference. */
+export const projectedWorktreeRemoveOutcomeSchema = z.discriminatedUnion("status", [
+  worktreeRemoveOutcomeSchema.options[0].extend({ path: repoReferenceSchema }),
+  worktreeRemoveOutcomeSchema.options[1].extend({ path: repoReferenceSchema }),
+  worktreeRemoveOutcomeSchema.options[2].extend({ path: repoReferenceSchema.optional() }),
+]);
+
+/**
  * The named public-projection schema set, keyed by fixture name. The fixtures
  * generator and its drift test iterate this map, so adding a projected shape here
  * is the ONLY edit needed to grow the checked-in public contract.
@@ -3079,6 +3109,8 @@ export const publicProjectionSchemas = {
   "projected-discovery-result": projectedDiscoveryResultSchema,
   "projected-processed-repo-summary": projectedProcessedRepoSummarySchema,
   "projected-repository-choose-output": projectedRepositoryChooseOutputSchema,
+  "projected-worktree-inventory": projectedWorktreeInventorySchema,
+  "projected-worktree-remove-outcome": projectedWorktreeRemoveOutcomeSchema,
 } as const;
 export type PublicProjectionName = keyof typeof publicProjectionSchemas;
 

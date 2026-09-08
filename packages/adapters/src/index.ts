@@ -637,8 +637,11 @@ export {
   siblingIsCollectable,
   WORKSPACE_SIZE_BUDGET_MS,
   WORKSPACE_SIZE_TOTAL_BUDGET_MS,
+  type WorkspaceInventory,
+  type WorkspaceRow,
   type WorkspaceSessionRef,
   type WorktreeRecord,
+  workspaceId,
 } from "./workspace-inventory";
 export {
   discoverWorktreeIdentities,

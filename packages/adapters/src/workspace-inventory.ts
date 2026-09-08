@@ -11,13 +11,19 @@
 // match below is a POSITIVE one — a bound root that names a directory git itself listed as
 // a worktree of THIS repository — so a session of a sibling repository can never colour a
 // row here, and a session that records nothing is simply absent rather than assumed.
+//
+// Every KIND is decided positively too. `own-checkout` is git's own main-worktree record,
+// not "whatever was left over": deciding it by exclusion would relabel every Rennet
+// worktree under a root the reviewer has since changed as the reviewer's own checkout, and
+// permanently refuse to remove it.
 
+import { createHash } from "node:crypto";
 import { realpathSync, statSync } from "node:fs";
 import { join, sep } from "node:path";
 import {
   WORKTREE_REFUSAL_CAP,
   WORKTREE_ROWS_CAP,
-  type WorktreeInventory,
+  WORKTREE_SESSION_IDS_CAP,
   type WorktreeKind,
   type WorktreeRemoveOutcome,
   type WorktreeRow,
@@ -61,7 +67,7 @@ export interface WorktreeRecord {
  * The `-z` form is NUL-delimited (attributes by `\0`, records by `\0\0`), so a path
  * containing a newline survives intact where a line split would corrupt it.
  */
-export function parseWorktreeRecords(output: string): WorktreeRecord[] {
+export function parseWorktreeRecords(output: string | undefined): WorktreeRecord[] {
   const records: WorktreeRecord[] = [];
   let path: string | undefined;
   let branch: string | undefined;
@@ -84,7 +90,10 @@ export function parseWorktreeRecords(output: string): WorktreeRecord[] {
     detached = false;
     bare = false;
   };
-  for (const token of output.split("\0")) {
+  // `?? ""` because a runner that answers with no stdout at all is a real arrangement
+  // (a stubbed GitExec, a locus shim); an empty inventory is the right reading of it,
+  // a `TypeError` on `.split` is not.
+  for (const token of (output ?? "").split("\0")) {
     if (token.length === 0) {
       flush(); // the double-NUL record separator yields an empty token
       continue;
@@ -125,6 +134,19 @@ export interface ListWorkspacesOptions {
   readonly prWorktreePaths?: readonly string[];
   /** Every session the store holds; archived ones are ignored. */
   readonly sessions?: readonly WorkspaceSessionRef[];
+  /**
+   * Re-spell a path GIT printed into the spelling the DAEMON uses for this repository.
+   *
+   * One live arrangement needs it (`inRepoSpelling`, PR #789): a daemon on Windows driving
+   * a WSL-locus repository addresses it as `\\wsl$\Ubuntu\home\u\repo` and stores that on
+   * every session's `boundRoot`, while the git it runs lives inside the distro and answers
+   * `/home/u/repo`. Without this every bound workspace would silently drop out of the list,
+   * because no session's root would ever match a path git named.
+   *
+   * It lives here as a function rather than as an imported helper because `inRepoSpelling`
+   * is server-side and adapters may not import server (CLAUDE.md, package boundaries).
+   */
+  readonly spellPath?: (gitPath: string) => string;
   /** The wire's row cap. Defaults to the protocol's {@link WORKTREE_ROWS_CAP}. */
   readonly maxRows?: number;
   /** Measure sizes at all. A removal re-lists for addressing only, and skips them. */
@@ -137,6 +159,25 @@ export interface ListWorkspacesOptions {
   readonly now?: () => number;
 }
 
+/**
+ * A row plus the spelling GIT uses for it.
+ *
+ * `WorktreeRow.path` is the DAEMON's spelling — what the card shows and what a session's
+ * `boundRoot` is compared against. `gitPath` is what a git command must be handed, and on
+ * a Windows daemon driving a WSL repository the two differ. A removal that passed the
+ * daemon's UNC spelling to `git worktree remove` inside the distro would be refused for a
+ * path git does not own, so the pair travels together server-side and only the row crosses
+ * the wire.
+ */
+export interface WorkspaceRow extends WorktreeRow {
+  readonly gitPath: string;
+}
+
+export interface WorkspaceInventory {
+  readonly rows: WorkspaceRow[];
+  readonly truncated: boolean;
+}
+
 function resolved(path: string): string {
   try {
     return realpathSync(path);
@@ -145,25 +186,63 @@ function resolved(path: string): string {
   }
 }
 
-/** Same directory, through symlinks, and case-insensitively where Windows spells it twice. */
+/**
+ * Windows spells one directory two ways; POSIX does not.
+ *
+ * Folding case unconditionally would make `<root>/repo/feat/ABC-1` and
+ * `<root>/repo/feat/abc-1` — two REAL worktrees on Linux, because git branch names are
+ * case-sensitive — compare equal, so a removal addressed at one could be answered by the
+ * other and take the wrong `rennet/*` branch with it. So the fold is platform-gated.
+ */
+const FOLDS_CASE = process.platform === "win32";
+
+function folded(path: string): string {
+  return FOLDS_CASE ? path.toLowerCase() : path;
+}
+
+/** Same directory, through symlinks, and case-insensitively only where Windows spells it twice. */
 function samePath(a: string, b: string): boolean {
   if (a === b) return true;
   const [left, right] = [resolved(a), resolved(b)];
-  return left === right || left.toLowerCase() === right.toLowerCase();
+  return folded(left) === folded(right);
 }
 
 /** `path` is `root` or sits under it, compared the same forgiving way. */
 function underPath(root: string, path: string): boolean {
   if (samePath(root, path)) return true;
-  const [base, candidate] = [resolved(root), resolved(path)];
+  const base = folded(resolved(root));
+  const candidate = folded(resolved(path));
   const prefix = base.endsWith(sep) ? base : base + sep;
-  return candidate.startsWith(prefix) || candidate.toLowerCase().startsWith(prefix.toLowerCase());
+  return candidate.startsWith(prefix);
 }
 
-/** The `.git` file's mtime — when git made this workspace (D6). Unreadable ⇒ unknown. */
+/**
+ * The row's ADDRESS: an opaque digest of the workspace's resolved path.
+ *
+ * Never a path, and never reversible into one. A projected client is handed a repo
+ * reference and a scrubbed tail for display, so it could not echo a host path back for the
+ * removal to match; the digest is the same on both sides of that boundary because both
+ * sides of it are the host.
+ */
+export function workspaceId(path: string): string {
+  return createHash("sha256").update(resolved(path)).digest("hex").slice(0, 16);
+}
+
+/**
+ * When git made this workspace (D6), epoch ms — or nothing.
+ *
+ * A LINKED worktree's `.git` is a FILE git writes once, at creation, and never rewrites,
+ * so its mtime is the creation time. The MAIN checkout's `.git` is a directory whose mtime
+ * advances on every commit, fetch and ref update, so it answers a different question
+ * entirely; its birth time answers the right one where the filesystem records one. Where
+ * neither is available the row carries no `createdAt` and the cell reads "—", because a
+ * plausible wrong date is worse than an honest blank.
+ */
 function createdAtOf(path: string): number | undefined {
   try {
-    return statSync(join(path, ".git")).mtimeMs;
+    const stats = statSync(join(path, ".git"));
+    if (!stats.isDirectory()) return stats.mtimeMs;
+    return stats.birthtimeMs > 0 ? stats.birthtimeMs : undefined;
   } catch {
     return undefined;
   }
@@ -173,9 +252,13 @@ function createdAtOf(path: string): number | undefined {
  * A bounded `du -sk`, in bytes. Past `budgetMs` the process is killed and the answer is
  * UNKNOWN — the caller renders "—" rather than a zero it would have to defend.
  *
- * `-sk` because it is the portable spelling: BSD `du` has no `--bytes`. A locus whose
- * shell has no `du` at all (a WSL project addressed from Windows) simply answers unknown,
- * which is the honest cell for a measurement that did not happen.
+ * `-sk` because it is the portable spelling: BSD `du` has no `--bytes`.
+ *
+ * NOTE, documented rather than fixed: this runs on the DAEMON HOST, not in the
+ * repository's locus. A Windows daemon measuring a WSL repository's worktree spawns
+ * `du` on Windows, where there is none, so every size on that card reads "—". Routing it
+ * through `locusCommand` would fix it and belongs with the card work; an unknown size is
+ * the honest cell for a measurement that did not happen, so nothing here lies meanwhile.
  */
 export async function measureWorkspaceSize(
   path: string,
@@ -190,7 +273,7 @@ export async function measureWorkspaceSize(
   }
 }
 
-/** Does `ref` resolve in this repository? */
+/** Does `ref` resolve in this repository? Callers pass a FULLY QUALIFIED ref. */
 async function refExists(git: GitExec, repoRoot: string, ref: string): Promise<boolean> {
   try {
     await git(repoRoot, ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`]);
@@ -200,7 +283,12 @@ async function refExists(git: GitExec, repoRoot: string, ref: string): Promise<b
   }
 }
 
-/** The branch's remote-tracking ref, or undefined when it has no upstream. */
+/**
+ * The branch's remote-tracking ref FULLY QUALIFIED (`refs/remotes/origin/feat/x`), or
+ * undefined when it has no upstream. `@{upstream}` only ever resolves a branch, so the
+ * short name is safe on the left of it; the answer is taken long so the ancestry check
+ * that consumes it cannot be shadowed by a tag of the same name.
+ */
 async function upstreamOf(
   git: GitExec,
   repoRoot: string,
@@ -208,12 +296,7 @@ async function upstreamOf(
 ): Promise<string | undefined> {
   try {
     const ref = (
-      await git(repoRoot, [
-        "rev-parse",
-        "--abbrev-ref",
-        "--symbolic-full-name",
-        `${branch}@{upstream}`,
-      ])
+      await git(repoRoot, ["rev-parse", "--symbolic-full-name", `${branch}@{upstream}`])
     ).trim();
     return ref.length > 0 ? ref : undefined;
   } catch {
@@ -239,8 +322,15 @@ async function isAncestor(
 /**
  * D5's rule, asked of git: a sibling is collected only when its tip is an ancestor of the
  * local branch OR of that branch's remote-tracking ref (the push under `own` makes the
- * latter true). Neither ⇒ the sibling holds work the branch does not, and nothing is
- * removed or deleted; the row says how far ahead it is instead.
+ * latter true). Neither ⇒ the sibling holds work the branch does not, its branch is kept,
+ * and the row says how far ahead it is instead.
+ *
+ * EVERY ref is spelled `refs/heads/…` / `refs/remotes/…`. A short name is not a ref, it is
+ * a search: git resolves `rennet/feat/x` through `refs/tags/` BEFORE `refs/heads/`, so a
+ * tag of that name — which `git tag rennet/feat/x` on a merged commit creates by accident
+ * as easily as on purpose — silently answers this question for the branch, and the caller
+ * then deletes unmerged commits believing they were reachable. Reproduced against real git
+ * before this was written, and pinned by a test.
  */
 export async function siblingIsCollectable(
   git: GitExec,
@@ -248,12 +338,14 @@ export async function siblingIsCollectable(
   siblingBranch: string,
   branch: string,
 ): Promise<boolean> {
-  if (await refExists(git, repoRoot, branch)) {
-    if (await isAncestor(git, repoRoot, siblingBranch, branch)) return true;
+  const siblingRef = `refs/heads/${siblingBranch}`;
+  const branchRef = `refs/heads/${branch}`;
+  if (await refExists(git, repoRoot, branchRef)) {
+    if (await isAncestor(git, repoRoot, siblingRef, branchRef)) return true;
   }
   const upstream = await upstreamOf(git, repoRoot, branch);
   if (upstream !== undefined && (await refExists(git, repoRoot, upstream))) {
-    return isAncestor(git, repoRoot, siblingBranch, upstream);
+    return isAncestor(git, repoRoot, siblingRef, upstream);
   }
   return false;
 }
@@ -267,7 +359,13 @@ async function commitsAhead(
 ): Promise<number | undefined> {
   try {
     const count = Number.parseInt(
-      (await git(repoRoot, ["rev-list", "--count", `${branch}..${siblingBranch}`])).trim(),
+      (
+        await git(repoRoot, [
+          "rev-list",
+          "--count",
+          `refs/heads/${branch}..refs/heads/${siblingBranch}`,
+        ])
+      ).trim(),
       10,
     );
     return Number.isFinite(count) ? count : undefined;
@@ -295,16 +393,27 @@ const KIND_ORDER: Record<WorktreeKind, number> = {
  *
  * A worktree the reviewer made and nothing is bound to is NOT listed: Rennet did not place
  * it and has nothing to say about it.
+ *
+ * A git failure THROWS. `git worktree list` failing means "not a repository", "git is not
+ * installed", or a locus that could not be reached, and every one of those is a different
+ * thing from "this repository has no workspaces" — which is exactly what an empty list
+ * would tell the reviewer, under a card that reads "Nothing yet".
  */
 export async function listWorkspaces(
   git: GitExec,
   repoRoot: string,
   options: ListWorkspacesOptions,
-): Promise<WorktreeInventory> {
-  const listed = await git(repoRoot, ["worktree", "list", "--porcelain", "-z"], {
-    reject: false,
-  }).catch(() => "");
-  const records = parseWorktreeRecords(listed).filter((record) => !record.bare);
+): Promise<WorkspaceInventory> {
+  const listed = await git(repoRoot, ["worktree", "list", "--porcelain", "-z"]);
+  const spell = options.spellPath ?? ((gitPath: string) => gitPath);
+  const parsed = parseWorktreeRecords(listed);
+  // Git prints the MAIN worktree first, always. That record — not "the one nothing else
+  // explains" — is what makes a row `own-checkout`.
+  const mainPath = parsed[0]?.path;
+  const records = parsed
+    .filter((record) => !record.bare)
+    .map((record) => ({ ...record, gitPath: record.path, path: spell(record.path) }));
+  const spelledMain = mainPath === undefined ? undefined : spell(mainPath);
   const prPaths = options.prWorktreePaths ?? [];
   const sessions = (options.sessions ?? []).filter(
     (session) => session.archivedAt === undefined && session.boundRoot !== undefined,
@@ -317,49 +426,60 @@ export async function listWorkspaces(
       sessions.some((session) => samePath(session.boundRoot as string, record.path)),
   );
 
-  const rows: WorktreeRow[] = [];
+  const rows: WorkspaceRow[] = [];
   for (const record of candidates) {
     const bound = sessions.filter((session) => samePath(session.boundRoot as string, record.path));
     const activity = bound
       .map((session) => session.lastActivityAt)
       .filter((value): value is number => value !== undefined);
-    const isSibling = record.branch?.startsWith(SIBLING_BRANCH_PREFIX) === true;
-    const kind: WorktreeKind = prPaths.some((prPath) => samePath(prPath, record.path))
-      ? "pull-request"
-      : isSibling
-        ? "sibling"
-        : underPath(options.root, record.path)
-          ? "branch"
-          : "own-checkout";
-    // A sibling that D5 will not collect keeps BOTH its worktree and its branch, and the
+    // POSITIVE discrimination, in this order: git's own main-worktree record, then the
+    // pull-request index, then the ref's own shape. Nothing is `own-checkout` merely
+    // because the other three did not claim it — a Rennet worktree under a root the
+    // reviewer has since changed is still a Rennet worktree, and still removable.
+    const isMain =
+      (spelledMain !== undefined && samePath(spelledMain, record.path)) ||
+      samePath(repoRoot, record.path);
+    const kind: WorktreeKind = isMain
+      ? "own-checkout"
+      : prPaths.some((prPath) => samePath(prPath, record.path))
+        ? "pull-request"
+        : record.branch?.startsWith(SIBLING_BRANCH_PREFIX) === true
+          ? "sibling"
+          : "branch";
+    // A sibling D5 will not collect keeps its BRANCH when its worktree is removed, and the
     // row carries the count that says why. Asked per sibling row, never assumed from the
     // count alone: a sibling can be ahead of the local branch and still fully merged into
     // that branch's remote-tracking ref, which the push under `own` is exactly what makes true.
     let aheadOf: WorktreeRow["aheadOf"];
-    let collectable = true;
     if (kind === "sibling" && record.branch !== undefined) {
       const branch = record.branch.slice(SIBLING_BRANCH_PREFIX.length);
-      collectable = await siblingIsCollectable(git, repoRoot, record.branch, branch);
-      if (!collectable) {
+      if (!(await siblingIsCollectable(git, repoRoot, record.branch, branch))) {
         const commits = await commitsAhead(git, repoRoot, record.branch, branch);
         if (commits !== undefined && commits > 0) aheadOf = { branch, commits };
       }
     }
     const createdAt = createdAtOf(record.path);
     const lastUsedAt = activity.length > 0 ? Math.max(...activity) : undefined;
+    const sessionIds = bound.map((session) => session.id);
     rows.push({
+      id: workspaceId(record.path),
       path: record.path,
+      gitPath: record.gitPath,
       kind,
       ...(record.branch !== undefined
         ? { ref: record.branch }
         : record.head !== undefined
           ? { ref: record.head }
           : {}),
-      sessionIds: bound.map((session) => session.id).slice(0, WORKTREE_ROWS_CAP),
+      sessionIds: sessionIds.slice(0, WORKTREE_SESSION_IDS_CAP),
+      ...(sessionIds.length > WORKTREE_SESSION_IDS_CAP ? { sessionsTruncated: true } : {}),
       ...(createdAt === undefined ? {} : { createdAt }),
       ...(lastUsedAt === undefined ? {} : { lastUsedAt }),
       ...(aheadOf === undefined ? {} : { aheadOf }),
-      removable: kind !== "own-checkout" && bound.length === 0 && collectable,
+      // An ahead sibling IS removable: its worktree goes and its branch stays, so the
+      // commits remain on a ref the reviewer can see. Only the main checkout and a
+      // workspace someone is working in cannot be addressed at all.
+      removable: kind !== "own-checkout" && bound.length === 0,
     });
   }
 
@@ -377,7 +497,7 @@ export async function listWorkspaces(
   const perRow = options.sizeBudgetMs ?? WORKSPACE_SIZE_BUDGET_MS;
   const total = options.totalSizeBudgetMs ?? WORKSPACE_SIZE_TOTAL_BUDGET_MS;
   const startedAt = now();
-  const sized: WorktreeRow[] = [];
+  const sized: WorkspaceRow[] = [];
   for (const row of kept) {
     const remaining = total - (now() - startedAt);
     if (remaining <= 0) {
@@ -404,11 +524,35 @@ function refusalText(error: unknown): string {
     : message;
 }
 
+/** Who is working here, named — a fact about the row, not a scolding. */
+function boundReason(row: WorkspaceRow): string {
+  const [first] = row.sessionIds;
+  return row.sessionIds.length === 1 && first !== undefined
+    ? `bound to session ${first}`
+    : `bound to ${row.sessionIds.length} sessions`;
+}
+
+/** Why a sibling branch outlived its worktree, in the outcome's own words. */
+async function keptSiblingNote(
+  git: GitExec,
+  repoRoot: string,
+  siblingRef: string,
+  branch: string,
+): Promise<string> {
+  if (!(await refExists(git, repoRoot, `refs/heads/${branch}`))) {
+    return `${siblingRef} kept: ${branch} no longer exists`;
+  }
+  const commits = await commitsAhead(git, repoRoot, siblingRef, branch);
+  return commits !== undefined && commits > 0
+    ? `${siblingRef} kept: ahead of ${branch} by ${commits} commit${commits === 1 ? "" : "s"}`
+    : `${siblingRef} kept: it holds commits ${branch} does not`;
+}
+
 export interface RemoveWorkspaceInput {
-  /** The row's path, as the list reported it. */
-  readonly path: string;
+  /** The row's opaque id, as the list reported it. */
+  readonly id: string;
   /** A FRESH inventory of the same repository — what the removal is addressed against. */
-  readonly rows: readonly WorktreeRow[];
+  readonly rows: readonly WorkspaceRow[];
 }
 
 /**
@@ -418,9 +562,16 @@ export interface RemoveWorkspaceInput {
  *
  * The row is addressed out of a fresh inventory rather than trusted from the caller, which
  * is what makes "the reviewer's own checkout cannot be removed" a fact about the repository
- * rather than a client-side omission. A path that is not a workspace of this repository, the
- * reviewer's own checkout, a workspace a live session is bound to, and a sibling holding
- * work its branch does not, all answer `not-removable` and NOTHING runs.
+ * rather than a client-side omission. An id that names no workspace of this repository, the
+ * repository's main checkout, and a workspace a live session is bound to answer
+ * `not-removable`, and NOTHING runs.
+ *
+ * An ahead sibling is NOT one of those. D5 gates the deletion of a BRANCH, and removing a
+ * worktree loses nothing: the commits stay on `rennet/<branch>`, a ref the reviewer can
+ * see and check out. Refusing the removal would be Rennet inventing a "no" where git would
+ * have said yes — a gate (Rule Zero). So the worktree goes, the branch stays, and the
+ * outcome's note says which happened. The automatic archive/sweep path (D5) is the one
+ * that keeps both, because nobody asked it for anything.
  *
  * No confirmation, no ceremony: one call does it (Rule Zero).
  */
@@ -429,61 +580,68 @@ export async function removeWorkspace(
   repoRoot: string,
   input: RemoveWorkspaceInput,
 ): Promise<WorktreeRemoveOutcome> {
-  const row = input.rows.find((candidate) => samePath(candidate.path, input.path));
+  const row = input.rows.find((candidate) => candidate.id === input.id);
   if (row === undefined) {
     return {
       status: "not-removable",
-      path: input.path,
+      id: input.id,
       reason: "not a workspace Rennet knows for this repository",
     };
   }
   if (row.kind === "own-checkout") {
-    return { status: "not-removable", path: row.path, reason: "your own checkout" };
+    return { status: "not-removable", id: row.id, path: row.path, reason: "your own checkout" };
   }
   if (row.sessionIds.length > 0) {
-    return {
-      status: "not-removable",
-      path: row.path,
-      reason: `a session is working here (${row.sessionIds.length})`,
-    };
-  }
-  if (!row.removable) {
-    return {
-      status: "not-removable",
-      path: row.path,
-      reason:
-        row.aheadOf === undefined
-          ? `${row.ref ?? row.path} holds commits its branch does not`
-          : `ahead of ${row.aheadOf.branch} by ${row.aheadOf.commits} commit${row.aheadOf.commits === 1 ? "" : "s"}`,
-    };
+    return { status: "not-removable", id: row.id, path: row.path, reason: boundReason(row) };
   }
   try {
-    await git(repoRoot, ["worktree", "remove", row.path], { reject: true });
+    // GIT's spelling of the path, not the daemon's: inside a WSL distro the UNC form
+    // names nothing git owns.
+    await git(repoRoot, ["worktree", "remove", row.gitPath], { reject: true });
   } catch (error) {
-    return { status: "refused", path: row.path, reason: refusalText(error) };
+    return { status: "refused", id: row.id, path: row.path, reason: refusalText(error) };
   }
   if (row.kind !== "sibling" || row.ref === undefined) {
-    return { status: "removed", path: row.path };
+    return { status: "removed", id: row.id, path: row.path };
+  }
+  const branch = row.ref.slice(SIBLING_BRANCH_PREFIX.length);
+  if (!(await refExists(git, repoRoot, `refs/heads/${row.ref}`))) {
+    return { status: "removed", id: row.id, path: row.path }; // no branch left to decide about
   }
   // The sibling's branch goes with its worktree, but only after D5's rule is asked AGAIN
-  // at the moment of deletion — the list that decided `removable` was a read, and a push
-  // or a commit could have landed since. `-d` first; `-D` only once ancestry is proven,
-  // because `-d` measures merged-into-HEAD (whatever the clone happens to have out) while
-  // D5 measures merged-into-the-branch-or-its-remote, which is the stronger question and
-  // the one that decides whether a commit can be lost. Nothing is forced past a "no".
-  const branch = row.ref.slice(SIBLING_BRANCH_PREFIX.length);
+  // at the moment of deletion — the list that decided the row was a read, and a push or a
+  // commit could have landed since. `-d` first; `-D` only once ancestry is proven, because
+  // `-d` measures merged-into-HEAD (whatever the clone happens to have out) while D5
+  // measures merged-into-the-branch-or-its-remote, which is the stronger question and the
+  // one that decides whether a commit can be lost. Nothing is forced past a "no".
+  //
+  // `git branch` is given the SHORT name deliberately: it deletes branches and only
+  // branches, so the tag that can shadow `rennet/feat/x` in a revision walk cannot be
+  // deleted by it, and git rejects a `refs/heads/…` argument here outright.
   if (!(await siblingIsCollectable(git, repoRoot, row.ref, branch))) {
-    return { status: "removed", path: row.path, siblingBranchDeleted: false };
+    return {
+      status: "removed",
+      id: row.id,
+      path: row.path,
+      siblingBranchDeleted: false,
+      note: await keptSiblingNote(git, repoRoot, row.ref, branch),
+    };
   }
   try {
     await git(repoRoot, ["branch", "-d", row.ref], { reject: true });
-    return { status: "removed", path: row.path, siblingBranchDeleted: true };
+    return { status: "removed", id: row.id, path: row.path, siblingBranchDeleted: true };
   } catch {
     try {
       await git(repoRoot, ["branch", "-D", row.ref], { reject: true });
-      return { status: "removed", path: row.path, siblingBranchDeleted: true };
-    } catch {
-      return { status: "removed", path: row.path, siblingBranchDeleted: false };
+      return { status: "removed", id: row.id, path: row.path, siblingBranchDeleted: true };
+    } catch (error) {
+      return {
+        status: "removed",
+        id: row.id,
+        path: row.path,
+        siblingBranchDeleted: false,
+        note: `${row.ref} kept: ${refusalText(error)}`,
+      };
     }
   }
 }
