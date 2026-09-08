@@ -68,9 +68,19 @@ export interface WorktreeRecord {
    * string is false for a directory that is perfectly present. Git answers inside the
    * locus that owns the path.
    *
-   * Absent means git did not say — either the registration is live, or the git in hand is
-   * older than the annotation. Both read the same way here, and both are the safe reading:
-   * the callers treat an unannotated registration as PRESENT and change nothing.
+   * ⚠️ ABSENT IS NOT "REACHABLE". The annotation landed in GIT 2.36; an older git prints
+   * no `prunable` token for a registration it would happily prune, so the two cases — the
+   * registration is live, and this git cannot say — arrive here as the same silence. What
+   * the callers do about that is theirs to decide, and they do NOT all decide the same
+   * thing:
+   *
+   *   • the BIND (`ensureBranchWorktree`, `ensureSiblingWorktree`) probes, because reading
+   *     silence as "reachable" records a directory that is gone as a session's workspace
+   *     for its whole life: `rev-parse --show-toplevel` at the record's own path, inside
+   *     the locus that owns it;
+   *   • the daemon-start SWEEP does not, and treats an unannotated registration as present
+   *     and unprunable. Its mistake would be a prune, so silence there costs an admin entry
+   *     that lingers until a git that can answer runs — which is the cheap direction.
    */
   readonly prunable?: string;
 }

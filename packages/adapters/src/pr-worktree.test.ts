@@ -18,6 +18,7 @@ import {
   branchTokens,
   branchWorktreePath,
   defaultWorktreePlacement,
+  ensureBranchWorktree,
   ensurePrWorktree,
   ensureSiblingWorktree,
   expandWorktreeRootForWrite,
@@ -394,7 +395,7 @@ describe("worktree placement (workspace-settings D1/D2)", () => {
   });
 });
 
-// ── The bind never prunes a registration (review finding B4) ──────────────────────────
+// ── NEITHER BIND PRUNES A REGISTRATION (review finding B4, and P1 one arm over) ────────
 //
 // `git worktree prune` drops every registration whose gitdir points somewhere git cannot
 // reach RIGHT NOW. "Unreachable" is not "gone": an unmounted volume, a network share that
@@ -404,23 +405,48 @@ describe("worktree placement (workspace-settings D1/D2)", () => {
 // or recreated it, and the staged-only work waiting in that directory belonged to no
 // worktree when the volume came back.
 //
-// A FAKE git, deliberately: the claim is about the ARGV this function issues, and a real
+// `ensureBranchWorktree` HAD THE SAME DEFECT AND SURVIVED THAT FIX, because it wore a
+// different disguise: it tested `existsSync(<worktree>/.git)` rather than reading the
+// registrations, and `existsSync` is FALSE for exactly the directory that is present but
+// unreachable from this side. So the unmounted-volume case fell straight through to
+// `worktree prune` and then `worktree add` OVER THE MOUNT POINT. Both arms now read.
+//
+// A FAKE git, deliberately: the claim is about the ARGV these functions issue, and a real
 // git cannot be made to report an unreachable directory without unmounting something.
+
+/** `git worktree list --porcelain -z` output, NUL-delimited (a blank line ends a record). */
+function listing(lines: readonly string[]): string {
+  return `${lines.join("\0")}\0\0`;
+}
+
+/**
+ * A git that answers the registration read with `listed` and records every argv.
+ *
+ * `failFrom` is the set of cwds whose commands REJECT — which is how the reachability probe
+ * (`rev-parse --show-toplevel`, run at the record's own path) is made to fail without
+ * unmounting anything.
+ */
+function fakeGit(
+  listed: string,
+  options: {
+    /** cwds whose commands REJECT — how the probe is failed without unmounting anything. */
+    readonly failFrom?: readonly string[];
+    /** Canned stdout per `argv.join(" ")`, for the reads whose ANSWER decides a branch. */
+    readonly answers?: Readonly<Record<string, string>>;
+  } = {},
+) {
+  const calls: string[][] = [];
+  const git = async (cwd: string, args: string[]): Promise<string> => {
+    calls.push([...args]);
+    if (options.failFrom?.includes(cwd) === true)
+      throw new Error(`cd to '${cwd}' failed: No such file or directory`);
+    if (args[0] === "worktree" && args[1] === "list") return listed;
+    return options.answers?.[args.join(" ")] ?? "";
+  };
+  return { git, calls };
+}
+
 describe("ensureSiblingWorktree and an unreachable registration (B4)", () => {
-  /** `git worktree list --porcelain -z` output for one record, NUL-delimited. */
-  function listing(lines: readonly string[]): string {
-    return `${lines.join("\0")}\0\0`;
-  }
-
-  function fakeGit(listed: string) {
-    const calls: string[][] = [];
-    const git = async (_cwd: string, args: string[]): Promise<string> => {
-      calls.push([...args]);
-      return args[0] === "worktree" && args[1] === "list" ? listed : "";
-    };
-    return { git, calls };
-  }
-
   it("THROWS, and issues no prune, no add and no branch write", async () => {
     const { git, calls } = fakeGit(
       listing([
@@ -445,9 +471,9 @@ describe("ensureSiblingWorktree and an unreachable registration (B4)", () => {
   });
 
   it("binds a REACHABLE registration as it stands, wherever git says it is", async () => {
-    // The pair: the same read, with git making no prunable claim, still takes arm 1 — and
-    // still writes nothing. Without this the throw above passes for a function that refuses
-    // every sibling.
+    // The pair: the same read, with git making no prunable claim AND the probe succeeding,
+    // still takes arm 1 — and still writes nothing. Without this the throw above passes for
+    // a function that refuses every sibling.
     const { git, calls } = fakeGit(
       listing([
         "worktree /volumes/scratch/rennet/feat/x",
@@ -463,6 +489,126 @@ describe("ensureSiblingWorktree and an unreachable registration (B4)", () => {
       created: false,
       workBranch: "rennet/feat/x",
     });
+    // The read, then the probe, and nothing else. Both are reads.
+    expect(calls).toEqual([
+      ["worktree", "list", "--porcelain", "-z"],
+      ["rev-parse", "--show-toplevel"],
+    ]);
+  });
+
+  it("treats an UNANNOTATED registration whose probe fails as unreachable (S1)", async () => {
+    // `prunable` landed in GIT 2.36. An older git prints no annotation for a registration it
+    // would happily prune, and reading that silence as "reachable" is how arm 1 records a
+    // DEAD DIRECTORY as this session's `boundRoot` for its whole life — a worse outcome than
+    // either honest answer, and invisible to every fixture that pastes a `prunable` line in.
+    //
+    // The probe runs AT THE RECORD'S OWN PATH, which is what makes it locus-aware: it asks
+    // the git that owns the directory, unlike an `existsSync` on the daemon's side (the WSL
+    // arrangement where `/home/u/…` is perfectly present and `existsSync` says otherwise).
+    const { git, calls } = fakeGit(
+      listing([
+        "worktree /volumes/scratch/rennet/feat/x",
+        "HEAD 1111111111111111111111111111111111111111",
+        "branch refs/heads/rennet/feat/x",
+      ]),
+      { failFrom: ["/volumes/scratch/rennet/feat/x"] },
+    );
+
+    await expect(
+      ensureSiblingWorktree(git, "/repo", "/data/worktrees/rennet/feat/x", "feat/x"),
+    ).rejects.toThrow(
+      /worktree for rennet\/feat\/x is registered at \/volumes\/scratch\/rennet\/feat\/x but that directory is not reachable/,
+    );
+    expect(calls).toEqual([
+      ["worktree", "list", "--porcelain", "-z"],
+      ["rev-parse", "--show-toplevel"],
+    ]);
+  });
+});
+
+// ── P1: the branch bind, which is where the same defect was still live ─────────────────
+describe("ensureBranchWorktree and an unreachable registration (P1)", () => {
+  const WORKTREE = "/data/worktrees/repo/feat/x";
+
+  it("THROWS on a registered-but-unreachable path, and issues no prune and no add", async () => {
+    // THE UNMOUNTED-VOLUME CASE, which is precisely where `existsSync(<worktree>/.git)`
+    // answered false: the old body pruned the registration and then checked a second copy
+    // of the branch out over the mount point.
+    const { git, calls } = fakeGit(
+      listing([
+        `worktree ${WORKTREE}`,
+        "HEAD 1111111111111111111111111111111111111111",
+        "branch refs/heads/feat/x",
+        "prunable gitdir file points to non-existent location",
+      ]),
+    );
+
+    await expect(ensureBranchWorktree(git, "/repo", WORKTREE, "feat/x")).rejects.toThrow(
+      /worktree for feat\/x is registered at \/data\/worktrees\/repo\/feat\/x but that directory is not reachable/,
+    );
+
+    // Executed, not reasoned: the whole argv trace is one read.
     expect(calls).toEqual([["worktree", "list", "--porcelain", "-z"]]);
+    expect(calls.some((argv) => argv.includes("prune"))).toBe(false);
+    expect(calls.some((argv) => argv[0] === "worktree" && argv[1] === "add")).toBe(false);
+    expect(calls.some((argv) => argv[0] === "checkout")).toBe(false);
+  });
+
+  it("uses a REACHABLE registration, checking the branch out only when it has drifted", async () => {
+    // The pair, in both of its halves — without them the throw above passes for a function
+    // that refuses every branch worktree. The two halves differ ONLY in what HEAD answers,
+    // which is the fact the arm is supposed to turn on.
+    const registered = listing([
+      `worktree ${WORKTREE}`,
+      "HEAD 1111111111111111111111111111111111111111",
+      "branch refs/heads/feat/x",
+    ]);
+
+    const onBranch = fakeGit(registered, {
+      answers: { "rev-parse --abbrev-ref HEAD": "feat/x\n" },
+    });
+    expect(await ensureBranchWorktree(onBranch.git, "/repo", WORKTREE, "feat/x")).toEqual({
+      path: WORKTREE,
+      created: false,
+    });
+    // Read, probe, read. Nothing is written in the directory a session is already using.
+    expect(onBranch.calls).toEqual([
+      ["worktree", "list", "--porcelain", "-z"],
+      ["rev-parse", "--show-toplevel"],
+      ["rev-parse", "--abbrev-ref", "HEAD"],
+    ]);
+
+    const drifted = fakeGit(registered, {
+      answers: { "rev-parse --abbrev-ref HEAD": "some/other\n" },
+    });
+    await ensureBranchWorktree(drifted.git, "/repo", WORKTREE, "feat/x");
+    expect(drifted.calls).toEqual([
+      ["worktree", "list", "--porcelain", "-z"],
+      ["rev-parse", "--show-toplevel"],
+      ["rev-parse", "--abbrev-ref", "HEAD"],
+      ["checkout", "feat/x"],
+    ]);
+    expect(drifted.calls.some((argv) => argv.includes("prune"))).toBe(false);
+  });
+
+  it("ADDS when nothing is registered at the path, with no prune first", async () => {
+    // The third answer, and the one the prune was nominally there for. `worktree add`
+    // refuses a path a stale admin entry still claims — which is now a THROW above rather
+    // than a repo-wide prune issued blind from a bind.
+    //
+    // A real scratch path, because this arm `mkdir`s the parent for real before it adds.
+    const scratchRoot = mkdtempSync(join(tmpdir(), "rennet-branch-bind-"));
+    scratch.push(scratchRoot);
+    const target = join(scratchRoot, "worktrees", "repo", "feat", "x");
+    const { git, calls } = fakeGit(listing(["worktree /repo", "branch refs/heads/main"]));
+
+    expect(await ensureBranchWorktree(git, "/repo", target, "feat/x")).toEqual({
+      path: target,
+      created: true,
+    });
+    expect(calls).toEqual([
+      ["worktree", "list", "--porcelain", "-z"],
+      ["worktree", "add", target, "feat/x"],
+    ]);
   });
 });

@@ -352,10 +352,26 @@ export async function worktreeForBranch(
  * own checkout is not on. Checked out rather than detached because a round commits on the
  * session's branch here, which a detached head cannot do.
  *
- * Idempotent: an existing worktree already on the branch is returned untouched; one that
- * has drifted onto another ref is switched in place, so a session keeps its workspace path
- * for its whole life. A path with a stale admin entry (a directory removed by hand) is
- * pruned before the add, which is the only thing that makes `worktree add` accept it again.
+ * ⚠️ THIS CALL NEVER PRUNES either, for the reason `ensureSiblingWorktree` does not. It
+ * used to test `existsSync(<worktree>/.git)` and, finding nothing, run `git worktree prune`
+ * and then `worktree add` over the same path. That is EXACTLY the unmounted-volume case:
+ * `existsSync` is false for a directory that is present but unreachable from this side, the
+ * prune dropped its registration, and the add checked a second copy of the branch out over
+ * the mount point — so the staged-and-uncommitted work in the old directory belonged to no
+ * registration when the volume came back.
+ *
+ * So the registration is READ, from the same `worktree list --porcelain -z` the sibling arm
+ * reads, and the three answers are:
+ *
+ *   • registered and reachable → that IS the workspace: returned as it stands when it is
+ *     already on the branch, switched in place with `checkout` when it has drifted onto
+ *     another ref, so a session keeps its workspace path for its whole life;
+ *   • registered and NOT reachable → THROWS, naming the path and git's own reason, with
+ *     nothing pruned, nothing added and nothing checked out;
+ *   • not registered → `worktree add`.
+ *
+ * A registration only the daemon-start sweep may prune, and only under D5's rule: Rennet's
+ * own placement, unreachable, and claimed by no live session.
  */
 export async function ensureBranchWorktree(
   git: GitExec,
@@ -363,19 +379,66 @@ export async function ensureBranchWorktree(
   worktreePath: string,
   branch: string,
 ): Promise<{ path: string; created: boolean }> {
-  if (existsSync(join(worktreePath, ".git"))) {
+  const records = await listWorktreeRecords(git, cloneRoot);
+  const registered = records.find(
+    (record) => resolvedPath(record.path) === resolvedPath(worktreePath),
+  );
+  if (registered !== undefined) {
+    const unreachable = await unreachableReason(git, registered);
+    if (unreachable !== undefined) {
+      throw new Error(
+        `worktree placement: the worktree for ${branch} is registered at ${registered.path} but that directory is not reachable (git: ${unreachable}). Nothing was changed. Reconnect it and dispatch again, or remove the registration yourself once you are sure it is gone.`,
+      );
+    }
     const current = (
-      await git(worktreePath, ["rev-parse", "--abbrev-ref", "HEAD"], { reject: false })
+      await git(registered.path, ["rev-parse", "--abbrev-ref", "HEAD"], { reject: false })
     ).trim();
     if (current === branch) return { path: worktreePath, created: false };
-    await git(worktreePath, ["checkout", branch]);
+    await git(registered.path, ["checkout", branch]);
     return { path: worktreePath, created: false };
   }
   await mkdir(join(worktreePath, ".."), { recursive: true });
-  await git(cloneRoot, ["worktree", "prune"], { reject: false });
   await git(cloneRoot, ["worktree", "add", worktreePath, branch]);
   return { path: worktreePath, created: true };
 }
+
+/**
+ * Git's own reason this registration cannot be reached, or `undefined` when it can be.
+ *
+ * `prunable` is the answer when git gives one — read inside the locus that owns the path,
+ * which is why it is preferred over an `existsSync` here (a Windows daemon driving a WSL
+ * repository gets `/home/u/…` from the git inside the distro, and `existsSync` on that
+ * string is false for a directory that is perfectly present).
+ *
+ * ⚠️ BUT THE ANNOTATION NEEDS GIT ≥ 2.36. An older git prints no `prunable` token at all,
+ * so "absent" is NOT "reachable" — and reading it that way binds a session to a directory
+ * that is gone, which is worse than either honest answer. The fallback asks the same
+ * question the same way git would: `rev-parse --show-toplevel` RUN AT THE RECORD'S OWN
+ * PATH. It runs inside the repository's locus (unlike `existsSync`), and it fails exactly
+ * when the directory cannot be entered — a missing directory, an unmounted volume, a distro
+ * that is not running. One extra git call, on the one arm that would otherwise record a
+ * dead directory as a session's workspace for its whole life.
+ */
+async function unreachableReason(
+  git: GitExec,
+  record: WorktreeRecord,
+): Promise<string | undefined> {
+  if (record.prunable !== undefined) return record.prunable;
+  try {
+    await git(record.path, ["rev-parse", "--show-toplevel"]);
+    return undefined;
+  } catch (error) {
+    const reason = error instanceof Error ? error.message.split("\n")[0] : String(error);
+    // Capped: an execa failure carries the whole command line and its stderr, and this
+    // string goes into a message a person reads.
+    return reason === undefined || reason.length === 0
+      ? "the directory could not be entered"
+      : reason.slice(0, UNREACHABLE_REASON_CAP);
+  }
+}
+
+/** How much of git's own failure the unreachable-registration message quotes. */
+const UNREACHABLE_REASON_CAP = 200;
 
 /** The branch a `workspace: own` bind works on beside a checkout that already has
  *  `branch` out (workspace-settings D4). One spelling, so the bind, the inventory's
@@ -410,8 +473,8 @@ export function siblingBranchFor(branch: string): string {
  *   1. A worktree of this repository is ALREADY on the sibling: that is the workspace.
  *      Returned as it stands — no reset, no checkout, nothing that touches its tree or
  *      index — wherever it sits, which is also what keeps one sibling per (repo, branch)
- *      after a pattern change moved the computed path. A registration git marks PRUNABLE
- *      — the directory is not reachable — is the one arm that THROWS instead: see below.
+ *      after a pattern change moved the computed path. A registration whose directory is
+ *      NOT REACHABLE is the one arm that THROWS instead: see below.
  *   2. A worktree of this repository sits AT the computed path on something else — the
  *      reviewer's checkout, a Rennet branch worktree, anything: it is not ours, so this
  *      THROWS naming both the path and the ref. Checking out in it is the destructive act
@@ -438,12 +501,19 @@ export function siblingBranchFor(branch: string): string {
  * registration at all. So the registration is READ, never repaired:
  *
  *   • registered and reachable → arm 1, bound as it stands;
- *   • registered and git says PRUNABLE → THROWS, naming the path and git's own reason,
- *     with nothing created, nothing checked out and nothing pruned.
+ *   • registered and UNREACHABLE — git's `prunable`, or the `rev-parse --show-toplevel`
+ *     probe on a git too old to print one — → THROWS, naming the path and git's own
+ *     reason, with nothing created, nothing checked out and nothing pruned.
  *
- * The one place a registration is pruned is the daemon's sibling sweep, which asks first
- * whether any live session claims the directory. Reconnecting the volume makes this bind
- * succeed with the work intact, which is the outcome the prune took away.
+ * `ensureBranchWorktree` answers the same three ways, for the same reason: it used to test
+ * `existsSync` and prune, which is the same defect one arm over.
+ *
+ * The one place a registration is pruned is the daemon-start sweep, which prunes only
+ * registrations RENNET PLACED (under the repository's resolved placement root, or on a
+ * `rennet/*` branch), only when no live session claims one, and only when every unreachable
+ * registration in the repository passes that test — `git worktree prune` is repo-wide and
+ * takes no path, so the guard has to be all-or-nothing. Reconnecting the volume makes this
+ * bind succeed with the work intact, which is the outcome the prune took away.
  *
  * `refs/heads/…` on every ancestry and fork question. A tag called `rennet/feat/x`
  * resolves before `refs/heads/rennet/feat/x` in a revision walk and would otherwise answer
@@ -469,9 +539,13 @@ export async function ensureSiblingWorktree(
   //    shared by every session on this branch, and it is bound to exactly as it stands.
   const registered = records.find((record) => record.branch === workBranch);
   if (registered !== undefined) {
-    if (registered.prunable !== undefined) {
+    // Git's `prunable` when this git prints one, and a locus-aware probe when it does not:
+    // the annotation landed in git 2.36, and an absent annotation on an older git would
+    // otherwise record a directory that is GONE as this session's workspace for its life.
+    const unreachable = await unreachableReason(git, registered);
+    if (unreachable !== undefined) {
       throw new Error(
-        `worktree placement: the worktree for ${workBranch} is registered at ${registered.path} but that directory is not reachable (git: ${registered.prunable}). Nothing was changed. Reconnect it and dispatch again, or remove the registration yourself once you are sure it is gone.`,
+        `worktree placement: the worktree for ${workBranch} is registered at ${registered.path} but that directory is not reachable (git: ${unreachable}). Nothing was changed. Reconnect it and dispatch again, or remove the registration yourself once you are sure it is gone.`,
       );
     }
     return { path: registered.path, created: false, workBranch };
