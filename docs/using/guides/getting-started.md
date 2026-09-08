@@ -663,15 +663,18 @@ pages:
   `org/repo` identity. **Worktrees** decides where a review works. You set four
   things: a **location** — the folder Rennet puts its worktrees in, `worktrees/`
   under its data directory unless you change it; a **layout** for a branch worktree
-  and another for a pull-request snapshot, written as patterns over `{repo}`,
-  `{owner}`, `{name}`, `{branch}` and `{number}`, each showing the path it resolves
-  to for this repository; and a **workspace** choice. `Share`, the default, lets a
+  and another for a pull-request snapshot. Both are written over `{repo}`, `{owner}`
+  and `{name}`; `{branch}` belongs to the branch pattern and `{number}` to the
+  pull-request one, because a snapshot has a number and no branch — two grammars
+  rather than one. Each shows the path it resolves to for this repository. And a
+  **workspace** choice. `Share`, the default, lets a
   review of a branch you already have checked out work in that checkout. `Own` keeps
   Rennet out of it: it works in a worktree of its own, on a `rennet/<branch>` branch
   forked from yours, and the round's commits land there — your checkout is left
   exactly as it is, and a **Fast-forward** action beside the branch carries the
-  commits over when you want them. A pattern that would put a worktree outside the
-  location is refused before it is saved. Below the controls, **Workspaces** lists
+  commits over when you want them. A pattern naming a token its grammar does not have,
+  or one that would put a worktree outside the location, is refused before it is
+  saved, and the refusal names the token or the escape. Below the controls, **Workspaces** lists
   every workspace Rennet has for this repository — its path, its branch, the sessions
   using it, when it was made and last used, and how big it is — and each idle one
   Rennet made has a Remove button. If git refuses a removal, you see git's own words

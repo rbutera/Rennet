@@ -915,7 +915,7 @@ life. Which one is decided from the review target, once:
 
 | Review target | Bound workspace |
 | --- | --- |
-| A branch some worktree of the repository already has checked out (usually the reviewer's own) | under `workspace: share`, that checkout — nothing is created. Under `own`, a Rennet-created worktree on the sibling branch `rennet/<branch>`, forked from the branch's head, leaving that checkout untouched |
+| A branch some worktree of the repository already has checked out (usually the reviewer's own) | under `workspace: share`, that checkout — nothing is created. Under `own`, when the worktree holding the branch is one Rennet did not place, a Rennet-created worktree on the sibling branch `rennet/<branch>`, forked from the branch's head, leaving that checkout untouched; when the worktree holding it is Rennet's own placement, `own` binds there exactly as `share` does |
 | A branch nothing has checked out | a Rennet-created worktree at the resolved root and layout, `<root>/{repo}/{branch}` by default, with the branch checked out |
 | A pull-request snapshot | the detached worktree at the reviewed head, at the resolved pull-request layout (`{owner}/{name}/pr-{number}` by default) — the one the pull-request front door already indexes |
 
@@ -937,8 +937,9 @@ would run every later turn of the session against a tree the review is not about
 recorded, and the next use retries.
 
 The decision is recorded as `boundRoot` on the session record, beside the `workBranch` the
-session's commits land on — the reviewed branch itself, or the sibling — and every later read
-is those fields. A session with none — minted before the binding existed, or one whose first bind threw —
+session's commits land on — recorded **only when that is not the reviewed branch**, which is
+only a sibling bind. An absent `workBranch` is not "unknown": it is the reviewed branch, said
+once, and every later read is the recorded work branch or, failing it, the reviewed branch. A session with none — minted before the binding existed, or one whose first bind threw —
 **binds on the next use and records it**: `holdingReviewContext`, which every review-scoped turn
 already passes through, and the review-keyed read the chat and handoff threads are created from
 both bind before they answer. That is what makes "the next use retries" real rather than a
@@ -1231,9 +1232,9 @@ mark said a round runs "in a detached worktree", the scout recorded `worktreeBas
 hint "coding rounds create worktrees here", and Settings → Projects → Worktrees previewed
 `~/.rennet/worktrees/{project}-{branch}`, which is not the path anything bound to
 ([#812](https://github.com/rbutera/Rennet/issues/812), fixed in
-[#816](https://github.com/rbutera/Rennet/pull/816): the mark names the session's workspace,
-the scout's hint names the repository's own convention and the answer left the questionnaire,
-and the Worktrees card states the binding instead of previewing a path).
+[#816](https://github.com/rbutera/Rennet/pull/816): the mark named the session's workspace,
+the scout's hint named the repository's own convention and the answer left the questionnaire,
+and the Worktrees card stated the binding at the time instead of previewing a path).
 
 ### What the drive found that the tests could not
 

@@ -346,10 +346,9 @@ work inside a checkout the reviewer already has open.
 | Layout — pull-request snapshot | `prWorktreePattern` | `worktrees.prPattern` | `prWorktreePattern` | `{owner}/{name}/pr-{number}` |
 | Workspace | `workspace` | `worktrees.workspace` | `workspace` | `share` |
 
-All four resolve on the ordinary ladder. Location adds a `detected` rung between
-the builtin and the global one — the scout's reading of where this repository's own
-worktrees already live; the other three have no detector and resolve builtin,
-global, repo. The section's caption
+All four resolve on the ordinary ladder — builtin, then the global rung, then the
+repository's own. None of the four has a producer on the `detected` rung. The
+section's caption
 names the two files it writes: the host's `~/.rennet/daemon-settings.json` for the
 global rung, and
 `~/.rennet/projects/<escaped-absolute-path>/config.json` for the repository rung.
@@ -406,15 +405,21 @@ sibling, each pull-request snapshot — with its path, its ref, the sessions bou
 it, when it was made, when it was last used, and its size. A size that cannot be
 measured inside the time bound reads `—` rather than zero. A Rennet-made row with
 no live session carries a remove action: one click, no confirmation, and a refusal
-git returns is shown verbatim on the row with the directory left as it was.
-Removing a sibling that holds commits the reviewed branch lacks takes the worktree
-and **keeps** `rennet/<branch>`, and the outcome says so — the commits stay
-on a ref you can check out. The list is keyed by repository path, never by project
+git returns is shown verbatim — capped, with an honest truncation marker — on the
+row, with the directory left as it was. Removing a sibling whose commits reach
+neither the reviewed branch nor any remote-tracking ref of it takes the worktree and
+**keeps** `rennet/<branch>`, and the outcome says so — the commits stay on a ref you
+can check out. A push puts those commits on the remote-tracking ref, so after one the
+branch goes with the worktree. The list is keyed by repository path, never by project
 id, so a workspace project's repositories list separately.
 
 A session binds once and keeps its recorded workspace for its whole life, so a
-changed location or layout applies to sessions created after the change. Both the
-old and the new workspaces appear in the list; nothing is relocated.
+changed location or layout applies to sessions created after the change. Nothing is
+relocated, and the old workspace stays on disk. It appears in this list only while a
+live session is still bound to it, or while the pull-request index holds it; once that
+session is archived, a worktree outside the resolved location is listed nowhere, and
+the daemon's start sweep — which reaches only what sits under the resolved location —
+leaves it alone.
 
 ### The project mark
 
@@ -460,16 +465,14 @@ repo`, where the builtin is the glyph, the `detected` rung is offered once the
 project holds a copied repository logo, and the reviewer's own choice sits on the
 repository rung — so a freshly added project wears its repository's logo with no
 click, and an explicitly chosen glyph beats a later detection. There is no global
-rung for a mark: it is a fact about one project. The issue-tracker keys and the
-four worktree keys are `builtin < detected < global < repo` — both sections have a
-host-wide global rung in `daemon-settings.json`, the tracker because a token
-environment is a host fact and the worktree keys because a filesystem path is one.
-`worktreeRoot` is the only worktree key with a producer on the `detected` rung: the
-project scout reads where the repository's own worktrees already live off
-`git worktree list` and offers that as a detected fact, below the host's value and
-the repository's own. The questionnaire stopped asking about it, because it is the
-repository's convention rather than an instruction to Rennet. The three other keys
-resolve builtin, global, repo.
+rung for a mark: it is a fact about one project. The issue-tracker keys are
+`builtin < detected < global < repo`, and all four worktree keys are
+`builtin < global < repo` — both sections have a host-wide global rung in
+`daemon-settings.json`, the tracker because a token environment is a host fact and
+the worktree keys because a filesystem path is one. No worktree key has a producer
+on the `detected` rung: where a repository's own worktrees already live is that
+repository's convention rather than an instruction to Rennet, so nothing offers it
+and the questionnaire does not ask.
 
 The tracker section resolves as a **unit**, not key by key. The layer that
 supplies the effective *kind* is the floor for that tracker's project key, base
