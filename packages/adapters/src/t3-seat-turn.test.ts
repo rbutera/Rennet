@@ -7,6 +7,7 @@ import {
   createT3SeatTurn,
   outputSchemaFor,
   parseFinalMessageJson,
+  settledTurnUsage,
   type T3SeatSeam,
   type T3SeatThread,
   type T3SettledTurn,
@@ -137,7 +138,8 @@ describe("createT3SeatTurn", () => {
         usage: { input_tokens: 51_000, output_tokens: 1_400 },
         totalCostUsd: 1.5,
         durationMs: 2_500,
-        previousUsage: { usage: drafting, totalCostUsd: 1 },
+        usageEpoch: "same-runtime",
+        previousUsage: { usage: drafting, totalCostUsd: 1, usageEpoch: "same-runtime" },
       }),
     ]);
     await createT3SeatTurn(seam, { ...options, collector })("BASE", 0);
@@ -204,6 +206,48 @@ describe("createT3SeatTurn", () => {
     expect("toolCalls" in (collector.metrics[0] ?? {})).toBe(false);
   });
 
+  it("counts the whole recovered runtime even when it exceeds the old counter", () => {
+    const current = {
+      usage: { input_tokens: 18_000, output_tokens: 2_000 },
+      totalCostUsd: 2,
+      usageEpoch: "new-runtime",
+      previousUsage: {
+        usage: { input_tokens: 9_000, output_tokens: 1_000 },
+        totalCostUsd: 1,
+        usageEpoch: "old-runtime",
+      },
+    };
+    expect(settledTurnUsage(current)).toMatchObject({ totalTokens: 20_000, reportedUsd: 2 });
+  });
+
+  it.each([
+    { currentEpoch: undefined, previousEpoch: "known" },
+    { currentEpoch: "known", previousEpoch: undefined },
+    { currentEpoch: undefined, previousEpoch: undefined },
+  ])(
+    "leaves a delta unmeasured when either runtime epoch is unknown: %j",
+    ({ currentEpoch, previousEpoch }) => {
+      expect(
+        settledTurnUsage({
+          usage: { input_tokens: 20_000 },
+          usageEpoch: currentEpoch,
+          previousUsage: { usage: { input_tokens: 10_000 }, usageEpoch: previousEpoch },
+        }),
+      ).toBeNull();
+    },
+  );
+
+  it("preserves a first total without a baseline and a measured zero within an epoch", () => {
+    expect(settledTurnUsage({ usage: { input_tokens: 10_000 } })?.totalTokens).toBe(10_000);
+    expect(
+      settledTurnUsage({
+        usage: { input_tokens: 10_000 },
+        usageEpoch: "runtime",
+        previousUsage: { usage: { input_tokens: 10_000 }, usageEpoch: "runtime" },
+      })?.totalTokens,
+    ).toBe(0);
+  });
+
   it("takes the whole figure when the session counter restarted below the previous turn", async () => {
     // T3 restarting the Claude session between draft and repair begins a new cumulative
     // counter; subtracting the old watermark would clamp the repair to zero spend.
@@ -212,7 +256,11 @@ describe("createT3SeatTurn", () => {
       settled({
         structuredOutput: {},
         usage: { input_tokens: 3_000, output_tokens: 200 },
-        previousUsage: { usage: { input_tokens: 50_000, output_tokens: 1_000 } },
+        usageEpoch: "new-runtime",
+        previousUsage: {
+          usage: { input_tokens: 50_000, output_tokens: 1_000 },
+          usageEpoch: "old-runtime",
+        },
       }),
     ]);
     await createT3SeatTurn(seam, { ...options, collector })("REPAIR", 1);

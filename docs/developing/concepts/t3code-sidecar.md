@@ -528,8 +528,12 @@ Three things follow from the thread being persistent.
   usage as the difference against the previous settled turn's total — which
   `waitForTurnSettled` reads from the thread's own earlier `turn.settled` activity, so a
   runner recreated for the thread (a whole-board restart) or a daemon restarted under it
-  subtracts the same as one that watched every turn. A total below the previous one means
-  the session restarted and its counter began again, and the whole figure is the turn's.
+  subtracts the same as one that watched every turn. Each Claude query runtime stamps its
+  settlements with a usage epoch. Subtraction requires matching epochs; a recovered runtime
+  gets a new epoch even when it resumes the same provider session, so its entire counter
+  counts even when it exceeds the old runtime's total. A first total without a prior usage
+  baseline remains measured. When a prior total exists but either epoch is missing, as in
+  legacy records, the uncertain delta is unmeasured. Missing usage is still unmeasured.
   Codex's `context-window.updated` keeps the last request's context figures. Its separate
   cumulative breakdown is stamped with the provider thread and turn. The sidecar saves
   the counter baseline when a turn starts and carries that baseline plus the final

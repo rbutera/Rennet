@@ -128,7 +128,11 @@ describe("runHandoffTurn", () => {
       thread: thread("completed"),
       // Cumulative over the session; the previous handoff on this thread is subtracted.
       usage: { input_tokens: 12_000, output_tokens: 900, cache_read_input_tokens: 4_000 },
-      previousUsage: { usage: { input_tokens: 10_000, output_tokens: 500 } },
+      usageEpoch: "handoff-runtime",
+      previousUsage: {
+        usage: { input_tokens: 10_000, output_tokens: 500 },
+        usageEpoch: "handoff-runtime",
+      },
     });
     const outcome = await runHandoffTurn(
       { repoRoot: "/repos/a", prompt: "x", reviewId: "rv-1" },

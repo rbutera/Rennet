@@ -55,6 +55,7 @@ export interface T3SettledTurn {
   readonly durationMs?: number;
   /** The provider's raw usage record, cumulative over the session on the Claude path. */
   readonly usage?: unknown;
+  readonly usageEpoch?: string;
   readonly totalCostUsd?: number;
   readonly errorMessage?: string;
   /** T3's last-request context-window snapshot, separate from turn spend. */
@@ -62,7 +63,11 @@ export interface T3SettledTurn {
   /** Exact per-turn Codex totals, separate from the context-window snapshot. */
   readonly aggregateUsage?: unknown;
   /** The nearest earlier settled turn's usage on the thread, off the thread itself. */
-  readonly previousUsage?: { readonly usage: unknown; readonly totalCostUsd?: number };
+  readonly previousUsage?: {
+    readonly usage: unknown;
+    readonly totalCostUsd?: number;
+    readonly usageEpoch?: string;
+  };
   readonly thread: {
     readonly messages: readonly { readonly role: string; readonly text: string }[];
     readonly session: { readonly lastError: string | null } | null;
@@ -234,15 +239,15 @@ function aggregateUsage(usage: unknown): ClaudeTurnUsage | null {
 /**
  * This turn's own spend, as the difference against what the session had already reported.
  * Recording the raw cumulative figure on a repair turn would bill the drafting turn twice.
- * A total BELOW the previous one means the session was restarted between the turns and
- * its counter began again, so the total is the turn's own and nothing is subtracted.
+ * Callers establish a shared runtime epoch before subtracting cumulative counters.
  */
 function subtractUsage(
   total: ClaudeTurnUsage | null,
   previous: ClaudeTurnUsage | null,
 ): ClaudeTurnUsage | null {
   if (total === null) return null;
-  if (previous === null || total.totalTokens < previous.totalTokens) return total;
+  if (previous === null) return total;
+  if (total.totalTokens < previous.totalTokens) return null;
   const at = (a: number, b: number) => Math.max(0, a - b);
   const inputTokens = at(total.inputTokens, previous.inputTokens);
   const outputTokens = at(total.outputTokens, previous.outputTokens);
@@ -272,15 +277,16 @@ function subtractUsage(
 export function settledTurnUsage(
   settled: Pick<
     T3SettledTurn,
-    "usage" | "totalCostUsd" | "tokenUsage" | "aggregateUsage" | "previousUsage"
+    "usage" | "usageEpoch" | "totalCostUsd" | "tokenUsage" | "aggregateUsage" | "previousUsage"
   >,
 ): ClaudeTurnUsage | null {
   if (settled.usage === undefined) return aggregateUsage(settled.aggregateUsage);
+  const total = cumulativeUsage(settled.usage, settled.totalCostUsd);
   const previous = settled.previousUsage;
-  return subtractUsage(
-    cumulativeUsage(settled.usage, settled.totalCostUsd),
-    previous === undefined ? null : cumulativeUsage(previous.usage, previous.totalCostUsd),
-  );
+  if (previous === undefined) return total;
+  if (settled.usageEpoch === undefined || previous.usageEpoch === undefined) return null;
+  if (settled.usageEpoch !== previous.usageEpoch) return total;
+  return subtractUsage(total, cumulativeUsage(previous.usage, previous.totalCostUsd));
 }
 
 /** The last assistant message of a thread, or an empty string. */

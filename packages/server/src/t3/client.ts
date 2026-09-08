@@ -124,6 +124,7 @@ export interface TurnSettlement {
   readonly durationMs?: number;
   /** The provider's raw usage record (Claude's SDK `usage`), unparsed. */
   readonly usage?: unknown;
+  readonly usageEpoch?: string;
   readonly totalCostUsd?: number;
   readonly errorMessage?: string;
   /**
@@ -138,7 +139,11 @@ export interface TurnSettlement {
    * thread itself, so a wait that starts fresh (a recreated runner, a restarted daemon)
    * subtracts the same as one that watched every turn.
    */
-  readonly previousUsage?: { readonly usage: unknown; readonly totalCostUsd?: number };
+  readonly previousUsage?: {
+    readonly usage: unknown;
+    readonly totalCostUsd?: number;
+    readonly usageEpoch?: string;
+  };
 }
 
 export interface TurnOutcome extends TurnSettlement {
@@ -789,6 +794,7 @@ export function readTurnSettlement(
     if (earlier.usage === undefined) continue;
     previousUsage = {
       usage: earlier.usage,
+      ...(typeof earlier.usageEpoch === "string" ? { usageEpoch: earlier.usageEpoch } : {}),
       ...(typeof earlier.totalCostUsd === "number" ? { totalCostUsd: earlier.totalCostUsd } : {}),
     };
     break;
@@ -816,6 +822,7 @@ export function readTurnSettlement(
     ...(record.structuredOutput === undefined ? {} : { structuredOutput: record.structuredOutput }),
     ...(durationMs === undefined ? {} : { durationMs }),
     ...(record.usage === undefined ? {} : { usage: record.usage }),
+    ...(typeof record.usageEpoch === "string" ? { usageEpoch: record.usageEpoch } : {}),
     ...(totalCostUsd === undefined ? {} : { totalCostUsd }),
     ...(errorMessage === undefined ? {} : { errorMessage }),
     ...(tokenUsage === undefined ? {} : { tokenUsage }),
