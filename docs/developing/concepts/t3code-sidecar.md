@@ -151,6 +151,35 @@ one credential that travels by environment, because a caller-supplied MCP server
 environment variable and the harness child reads the value out of the environment it
 inherited from here. It is on no argument list.
 
+## Native Claude tool search
+
+Claude seats inherit `ENABLE_TOOL_SEARCH` through the existing environment and
+user, project and local settings. Rennet leaves that choice to the installed
+Claude runtime; it adds no tool registry, settings override or capability filter.
+Authentication routing and ambient MCP servers use the same inherited settings.
+
+Claude supports `true` for deferred MCP schemas, `auto` (or `auto:N`) for a native
+threshold, and `false` for eager schemas. See Claude's
+[tool-search configuration](https://code.claude.com/docs/en/mcp#configure-tool-search)
+for current defaults and provider support. A custom provider route must support
+native tool references before forcing deferral. An existing explicit choice takes
+precedence over any assumption based on the CLI version.
+
+For an isolated comparison, set the value in the experiment checkout's
+`.claude/settings.local.json`, preserving any existing fields:
+
+```json
+{"env":{"ENABLE_TOOL_SEARCH":"false"}}
+```
+
+Restore the file after the experiment and use a fresh provider session per mode.
+A shell environment override alone may lose to an inherited settings value.
+Inspect `ToolSearch` activity and actual usage; the initialization tool count does
+not tell you which schemas reached the model. Include a tool result the task needs,
+a settled board, and a follow-up on the same thread. A full review comparison also
+holds the patchset, model, effort and tool inventory fixed and separates request
+identities, fresh input, cached input, output and provider-reported cost.
+
 ## Claim and adoption
 
 `<dataDir>/t3-sidecar.json` records the sidecar's pid, port, base directory, the daemon
