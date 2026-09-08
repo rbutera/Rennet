@@ -660,14 +660,23 @@ pages:
 - **Projects** — scoped to one project: its name and mark, review context, issue
   tracker, and the guidance rules the review agents read. The name is live —
   renaming here renames the sidebar row, and emptying it restores the project's
-  `org/repo` identity. **Worktrees** is a statement, not a setting: it names where a
-  review binds — your own checkout when it already has the reviewed branch out;
-  otherwise a worktree Rennet makes under its data directory, in `worktrees/`, filed
-  by repository and then by branch; and for a pull request a detached checkout in the
-  same place, filed by owner and repository as `pr-<number>`. It also says that a
-  coding round is a turn in that workspace rather than a worktree of its own. Editors
-  the daemon has no store for render disabled and say so, rather than accepting edits
-  that would vanish.
+  `org/repo` identity. **Worktrees** decides where a review works. You set four
+  things: a **location** — the folder Rennet puts its worktrees in, `worktrees/`
+  under its data directory unless you change it; a **layout** for a branch worktree
+  and another for a pull-request snapshot, written as patterns over `{repo}`,
+  `{owner}`, `{name}`, `{branch}` and `{number}`, each showing the path it resolves
+  to for this repository; and a **workspace** choice. `Share`, the default, lets a
+  review of a branch you already have checked out work in that checkout. `Own` keeps
+  Rennet out of it: it works in a worktree of its own, on a `rennet/<branch>` branch
+  forked from yours, and the round's commits land there — your checkout is left
+  exactly as it is, and a **Fast-forward** action beside the branch carries the
+  commits over when you want them. A pattern that would put a worktree outside the
+  location is refused before it is saved. Below the controls, **Workspaces** lists
+  every workspace Rennet has for this repository — its path, its branch, the sessions
+  using it, when it was made and last used, and how big it is — and each idle one
+  Rennet made has a Remove button. If git refuses a removal, you see git's own words
+  and nothing is deleted. Editors the daemon has no store for render disabled and say
+  so, rather than accepting edits that would vanish.
 
 Every layered value shows a chip naming where it resolved from — builtin,
 detected, global, or repo — and every section states the file behind it.

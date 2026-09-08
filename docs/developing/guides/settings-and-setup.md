@@ -93,6 +93,7 @@ Global settings live in two machine-local files, split by who owns the value:
 | `~/.rennet/client-settings.json` | | Council routing | `routing.task[jobId][scenario]` to model and effort | Overrides one [Model Council](../concepts/model-council.md) job's assignment in one availability scenario. Written by the Environments Review section; absent until you change a mapping. |
 | `~/.rennet/client-settings.json` | | Benchmark recording | `{ record: boolean }` | Whether measured pipelines archive their per-stage timings to `~/.rennet/benchmarks.jsonl`. **Default-on**: an untouched install has no slice and records. Written by **Settings → Benchmarks**; observability configuration, never a gate on a review. See [Benchmarks](../reference/benchmarks.md). |
 | `~/.rennet/daemon-settings.json` | The global ladder rung as it exists **on this host** | Daemon listener | host and optional port | Allows a configured non-loopback listener for remote clients. |
+| `~/.rennet/daemon-settings.json` | | Worktrees | `{ root?, pattern?, prPattern?, workspace? }` | This host's worktree location, the two placement patterns, and whether Rennet works inside a checkout you already have open. Any repository can override each of them on its own rung. See [Worktrees](#worktrees). |
 
 Appearance and keybindings are personal, app-side choices — never a repo fact,
 never written into a working tree — so they sit outside the ladder in
@@ -299,17 +300,6 @@ global one, and an emptied field drops the entry and falls back down the ladder.
 Guidance rules write through `settings.setGuidance` into the repository's own
 `.rennet/conventions.json`, the file the review runners read.
 
-The page's **Worktrees** card is a statement, not a setting. It offered a
-worktree location and a `{project}-{branch}` naming pattern, both of which
-persisted on the repository rung and neither of which reached the code that
-places a worktree, so the card's live preview named a folder Rennet never
-creates. It now says where a review actually binds: the checkout that already
-has the reviewed branch out when one exists, otherwise a worktree Rennet makes
-under its data directory in `worktrees/`, filed by repository and then by
-branch; a pull request gets a detached checkout in the same place, filed by
-owner and repository as `pr-<number>`. A coding round is a turn in that
-workspace and creates nothing of its own.
-
 Project-scoped routes resolve a `?project=` token by exact stable id first, then
 by an exact display name only when that name identifies one project. A duplicate
 display name is ambiguous and falls through to the remembered real project;
@@ -341,6 +331,90 @@ a setting: there is no override to choose the host or a distribution.
 Malformed repository config resolves to defaults and disables writes for that
 row. Invalid entries in `.rennet/conventions.json` are dropped individually and
 reported in Settings; valid rules remain available to review runners.
+
+### Worktrees
+
+The **Worktrees** section decides where a review works. It carries four controls
+and one list, and each control writes a registered key the binding reads — the
+location and layout a Rennet-made worktree is placed at, and whether Rennet may
+work inside a checkout the reviewer already has open.
+
+| Control | Key | Global rung, in `daemon-settings.json` | Repository rung, in the project's `config.json` | Builtin |
+|---|---|---|---|---|
+| Location | `worktreeRoot` | `worktrees.root` | `worktreeBaseDir` | the data directory's `worktrees/` |
+| Layout — branch worktree | `worktreePattern` | `worktrees.pattern` | `worktreePattern` | `{repo}/{branch}` |
+| Layout — pull-request snapshot | `prWorktreePattern` | `worktrees.prPattern` | `prWorktreePattern` | `{owner}/{name}/pr-{number}` |
+| Workspace | `workspace` | `worktrees.workspace` | `workspace` | `share` |
+
+All four resolve on the ordinary ladder. Location adds a `detected` rung between
+the builtin and the global one — the scout's reading of where this repository's own
+worktrees already live; the other three have no detector and resolve builtin,
+global, repo. The section's caption
+names the two files it writes: the host's `~/.rennet/daemon-settings.json` for the
+global rung, and
+`~/.rennet/projects/<escaped-absolute-path>/config.json` for the repository rung.
+A filesystem path is a fact about the machine that binds, which is why the global
+rung is the daemon's file rather than the viewer's. Both layout builtins are the
+shapes the previous release hardcoded, so an install that has never written a rung
+places nothing differently.
+
+**Location** takes a directory. The daemon expands `~` and makes the value
+absolute at the write, so the stored bytes name the same directory on every read;
+a relative value resolves against the data directory rather than against whatever
+directory the daemon was launched from. `~someone/trees` is refused, because
+expanding another user's home needs a lookup the daemon does not do.
+
+**Layout** takes two patterns, both relative to the location.
+
+- The branch pattern substitutes `{repo}` (the repository's real absolute path,
+  escaped — the same key the project store files it under), `{name}` (the resolved
+  remote's repository name, falling back to the checkout's own folder name only
+  when no remote resolves), `{owner}` (the forge owner, or `local`), and
+  `{branch}` (the branch, with its `/` kept as path separators).
+- The pull-request pattern substitutes `{owner}`, `{name}`, `{repo}`, and
+  `{number}`. A snapshot has a number and no branch, which is why the two patterns
+  are two grammars rather than one.
+
+A pattern is refused at the write, with the file left byte-for-byte unchanged,
+when it carries an unknown token, renders to an absolute path, renders to the
+location itself, or can render outside the location. The refusal names the token
+or the escape rather than saying "invalid".
+
+Each pattern shows the path it resolves to **for this repository**, computed by
+the daemon from the same functions the binding calls: the repository's own escaped
+key and resolved remote, its current branch as the sample, and `1` as the sample
+pull-request number. The client renders those two strings and derives no path of
+its own — a preview computed client-side is what made the old card name a folder
+Rennet never created.
+
+**Workspace** is two segments.
+
+- `share`, the builtin: a review of a branch some worktree already has out binds
+  to that checkout, and Rennet creates nothing.
+- `own`: Rennet works in a folder it made. A branch nothing has out and a pull
+  request are placed exactly as under `share` — there is no conflict to avoid. A
+  branch the reviewer already has out gets a Rennet worktree on a **sibling
+  branch**, `rennet/<branch>`, forked from the branch's head and placed at the
+  branch pattern applied to the sibling's own name. The reviewer's checkout is
+  left byte-for-byte as it stands, and the round's commits land on the sibling.
+  See [One workspace per session](../concepts/handoff-and-exits.md#one-workspace-per-session)
+  for what that means for the round, the push, and the land action.
+
+**Workspaces** lists every workspace Rennet knows for the scoped repository — the
+reviewer's own checkout while a session is bound to it, each branch worktree, each
+sibling, each pull-request snapshot — with its path, its ref, the sessions bound to
+it, when it was made, when it was last used, and its size. A size that cannot be
+measured inside the time bound reads `—` rather than zero. A Rennet-made row with
+no live session carries a remove action: one click, no confirmation, and a refusal
+git returns is shown verbatim on the row with the directory left as it was.
+Removing a sibling that holds commits the reviewed branch lacks takes the worktree
+and **keeps** `rennet/<branch>`, and the outcome says so — the commits stay
+on a ref you can check out. The list is keyed by repository path, never by project
+id, so a workspace project's repositories list separately.
+
+A session binds once and keeps its recorded workspace for its whole life, so a
+changed location or layout applies to sessions created after the change. Both the
+old and the new workspaces appear in the list; nothing is relocated.
 
 ### The project mark
 
@@ -386,10 +460,16 @@ repo`, where the builtin is the glyph, the `detected` rung is offered once the
 project holds a copied repository logo, and the reviewer's own choice sits on the
 repository rung — so a freshly added project wears its repository's logo with no
 click, and an explicitly chosen glyph beats a later detection. There is no global
-rung for a mark: it is a fact about one project. The issue-tracker keys are
-`builtin < detected < global < repo` — the tracker is the one section with a
-host-wide global rung, in `daemon-settings.json`. The worktree location and naming pattern
-are not listed: they steer nothing, so they are not settings the page offers.
+rung for a mark: it is a fact about one project. The issue-tracker keys and the
+four worktree keys are `builtin < detected < global < repo` — both sections have a
+host-wide global rung in `daemon-settings.json`, the tracker because a token
+environment is a host fact and the worktree keys because a filesystem path is one.
+`worktreeRoot` is the only worktree key with a producer on the `detected` rung: the
+project scout reads where the repository's own worktrees already live off
+`git worktree list` and offers that as a detected fact, below the host's value and
+the repository's own. The questionnaire stopped asking about it, because it is the
+repository's convention rather than an instruction to Rennet. The three other keys
+resolve builtin, global, repo.
 
 The tracker section resolves as a **unit**, not key by key. The layer that
 supplies the effective *kind* is the floor for that tracker's project key, base
@@ -441,6 +521,7 @@ every platform, and `RENNET_USER_DATA` or `--data-dir` moves the whole of it.
 ├── rounds/
 ├── generations/
 ├── board-meta/
+├── worktrees/                    # the builtin worktree location
 └── projects/
     └── <escaped-absolute-path>/
         ├── config.json
