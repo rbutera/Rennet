@@ -625,6 +625,7 @@ test("review activity and code evidence remain usable across navigation", async 
     await expect(page.getByRole("dialog", { name: "Sequence activity details" })).toBeHidden();
     await page.mouse.move(400, 500);
     await expect(page.getByRole("dialog", { name: "Sequence activity details" })).toBeVisible();
+    await tabs.getByRole("tab", { name: /^Sequence(?:,|$)/ }).hover();
     const preparation = sessions.load(fixture.sessionId)?.preparation;
     if (preparation?.status !== "drafting") throw new Error("fixture stopped drafting");
     sessions.setPreparation(fixture.sessionId, {
@@ -637,13 +638,21 @@ test("review activity and code evidence remain usable across navigation", async 
     });
     await expect(page.getByText("Review complete", { exact: true })).toBeVisible();
     await page.screenshot({ path: test.info().outputPath("activity-complete.png") });
-    await expect(page.getByRole("dialog", { name: "Sequence activity details" })).toBeHidden();
+    const completedActivity = page.getByRole("dialog", { name: "Sequence activity details" });
+    await expect(completedActivity).not.toHaveAttribute("data-completing", "true");
+    await expect(completedActivity).toHaveAttribute("data-open", "");
+    await expect(completedActivity).toBeVisible();
+    await page.mouse.move(400, 500);
+    await expect(completedActivity).toBeHidden();
     await tabs.getByRole("tab", { name: /^Sequence(?:,|$)/ }).hover();
     await expect(page.getByRole("dialog", { name: "Sequence activity details" })).toBeVisible();
     await page
       .getByRole("dialog", { name: "Sequence activity details" })
       .getByRole("button", { name: "Close activity" })
-      .click();
+      .focus();
+    await page.keyboard.press("Enter");
+    await expect(tabs.getByRole("tab", { name: /^Sequence(?:,|$)/ })).toBeFocused();
+    await expect(page.getByRole("dialog", { name: "Sequence activity details" })).toBeHidden();
     const sidebar = page.locator('[data-region="sidebar"]');
     const sessionRow = sidebar.getByRole("button", { name: /Review experience fixture/ });
     await expect(sessionRow.getByRole("status", { name: "Reviewing the change" })).toBeVisible();
@@ -667,7 +676,10 @@ test("review activity and code evidence remain usable across navigation", async 
     await page
       .getByRole("dialog", { name: "Sequence activity details" })
       .getByRole("button", { name: "Close activity" })
-      .click();
+      .focus();
+    await page.keyboard.press("Enter");
+    await expect(tabs.getByRole("tab", { name: /^Sequence(?:,|$)/ })).toBeFocused();
+    await expect(page.getByRole("dialog", { name: "Sequence activity details" })).toBeHidden();
     await sidebar
       .getByRole("button", { name: "New Chat", exact: true })
       .and(sidebar.locator("button:not([aria-haspopup])"))

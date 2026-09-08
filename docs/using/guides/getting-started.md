@@ -209,7 +209,8 @@ remain hidden until the board settles.
 While the selected lens is generating, its activity popover appears automatically
 under that tab. Hovering another tab temporarily shows that lens's activity; leaving
 it returns to the active generating lens. On completion, a brief status animation
-plays and the popover fades away. Hover or focus a tab to read its activity again. It shows a concise current action, recent activity and how long you
+plays and the automatic popover fades away. A popover you are hovering or
+focusing stays open until you leave or dismiss it. Hover or focus a tab to read its activity again. It shows a concise current action, recent activity and how long you
 have been following that lens. Open transcript stays visible and becomes available
 once the agent thread starts. It shows the selected agent's full conversation in a drawer beside the
 board. Your own chat stays in place. Choosing another lens moves the board and
@@ -340,10 +341,11 @@ citation is a chip: click it and the real lines unfold below the paragraph;
 click again and they fold away.
 
 Click an identifier in the current diff or a code card to inspect its definition
-and references. Each location can open in your editor; Escape returns focus to
+and references. Tab enters the code region; arrow keys move between identifiers,
+and Enter opens one. Each location can open in your editor; Escape returns focus to
 the identifier. The inspector labels structural matches and textual guesses.
-Its index covers the reviewed commit, so uncommitted edits and historical
-patchsets are not indexed by this lookup.
+Deleted rows use the base revision; added and context rows use the reviewed
+revision. Uncommitted edits and historical patchsets are not indexed by this lookup.
 
 A finding reads as flowing document text, not a boxed card: a severity chip, the
 claim as its title, a concurrence badge, then the body and the proposed fix as

@@ -755,7 +755,9 @@ The client keeps Noise unselectable while its siblings run, with a spinner and
 an explanation available on hover or keyboard focus. The tab itself anchors its activity popover, with no separate activity control.
 The active generating lens opens automatically; hovering or focusing another tab
 temporarily replaces it. Completion shows a brief status animation and dismisses
-the automatic popover. Hovering a settled tab keeps its transcript accessible. Its transcript actions
+the automatic popover after 900 ms. A panel the reader is hovering or focusing
+stays open until they leave or dismiss it. Close and Escape return focus to the
+trigger tab without reopening the panel. Hovering a settled tab keeps its transcript accessible. Its transcript actions
 remain visible and are disabled only until their agent threads exist. The
 observed history and elapsed time stay with the review, generation and seat thread
 across navigation and reconnection. A new generation or thread starts a fresh

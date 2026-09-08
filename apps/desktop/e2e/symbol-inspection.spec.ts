@@ -1,11 +1,21 @@
 import { rmSync } from "node:fs";
 import { expect, test } from "@playwright/test";
 import { WsRennetBridge } from "@rennet/client";
-import { completeWelcome, launchRennet, makeTempDir, seedReviewRepo } from "./harness";
+import {
+  completeWelcome,
+  git,
+  launchRennet,
+  makeTempDir,
+  seedReviewRepo,
+  writeRepoFile,
+} from "./harness";
 
 test("inspects a diff symbol through the daemon's committed index", async () => {
   test.setTimeout(120_000);
   const repository = seedReviewRepo("rennet-e2e-symbol-");
+  writeRepoFile(repository, "src/widget.ts", "export const renamed = 2;\n");
+  git(repository, "add", "src/widget.ts");
+  git(repository, "commit", "-qm", "Rename widget");
   const userData = makeTempDir("rennet-e2e-symbol-state-");
   const home = makeTempDir("rennet-e2e-symbol-home-");
   const { application } = await launchRennet({ repository, userData, home });
@@ -26,11 +36,24 @@ test("inspects a diff symbol through the daemon's committed index", async () => 
       location.hash = `#/s/${id}?view=diff`;
     }, review.id);
     const token = page.locator('[data-line-state="add"]').getByRole("button", {
-      name: "Inspect widget",
+      name: "Inspect renamed",
       exact: true,
     });
+    const code = page.getByRole("group", { name: "Code, use arrow keys to inspect symbols" });
+    await code.focus();
+    await page.keyboard.press("ArrowRight");
+    await expect(code.locator("button[data-symbol]").first()).toBeFocused();
+    expect(
+      await code
+        .locator("button[data-symbol]")
+        .evaluateAll(
+          (buttons) =>
+            buttons.filter((button) => button instanceof HTMLButtonElement && button.tabIndex >= 0)
+              .length,
+        ),
+    ).toBe(0);
     await token.click();
-    const inspector = page.getByRole("complementary", { name: "Symbol: widget" });
+    const inspector = page.getByRole("complementary", { name: "Symbol: renamed" });
     await expect(inspector).toBeVisible();
     await expect(inspector.getByRole("button", { name: "widget.ts:1" }).first()).toBeVisible();
     await expect(
@@ -39,6 +62,15 @@ test("inspects a diff symbol through the daemon's committed index", async () => 
     await page.keyboard.press("Escape");
     await expect(inspector).toHaveCount(0);
     await expect(token).toBeFocused();
+    await page
+      .locator('[data-line-state="del"]')
+      .getByRole("button", { name: "Inspect widget", exact: true })
+      .click();
+    const deleted = page.getByRole("complementary", { name: "Symbol: widget" });
+    await expect(deleted.getByRole("button", { name: "widget.ts:1" }).first()).toBeVisible();
+    await expect(
+      page.getByText("Indexed at the base commit; local edits are not indexed."),
+    ).toBeVisible();
   } finally {
     bridge?.close();
     await application.close();

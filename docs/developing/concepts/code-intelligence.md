@@ -1,6 +1,6 @@
 ---
 title: Code intelligence
-description: How Rennet resolves structural definitions, textual references, and import edges at the reviewed head OID.
+description: How Rennet resolves structural definitions, textual references, and import edges at the selected review revision.
 ---
 
 Rennet's live code-intelligence path answers three review questions: where an
@@ -16,7 +16,7 @@ identity.
 
 ```mermaid
 flowchart LR
-  tree["Reviewed head tree"]
+  tree["Selected base or head tree"]
   extract["Repo Map extraction"]
   symbols["Structural symbol shards"]
   refs["Textual reference shards"]
@@ -35,7 +35,7 @@ flowchart LR
 ```
 
 `packages/server/src/symbol-lookup-live.ts` builds the lookup backend for the
-active review and pins it to the patchset's reviewed head OID. The result does not
+active review and pins it to the base OID for deleted rows, or the head OID otherwise. The result does not
 include later uncommitted working-tree edits. `packages/server/src/dispatch.ts`
 routes the protocol commands.
 
@@ -123,8 +123,8 @@ and can miss a relationship that does not preserve the identifier text.
 ## Review integration
 
 Click an identifier in the current diff or a board's code snippet to open the
-symbol inspector. Keyboard users can focus an identifier and press Enter or
-Space. The inspector shows definition candidates and references, labels their
+symbol inspector. Each code region has one Tab entry; arrow keys move between
+visible identifiers, and Enter or Space opens the focused symbol. The inspector shows definition candidates and references, labels their
 structural or textual confidence, and offers an editor jump for each location.
 Escape or the close button dismisses the inspector and returns focus to the
 identifier. Selecting code text still works without opening an inspector.
@@ -135,7 +135,7 @@ appears in the inspector; reopening the symbol retries it. The lookup is scoped
 to the current review. Historical diffs and snippets from another patchset do
 not open a lookup against the current index.
 
-The pinned head tree covers committed code in the reviewed patchset. Diff tools
+The pinned base and head trees cover committed code in the reviewed patchset. Diff tools
 remain the authority for staged, unstaged, and untracked changes captured on top
 of that tree.
 

@@ -211,7 +211,7 @@ describe("symbol inspection through the live layout", () => {
     const token = await findByRole("button", { name: "Inspect parser" });
     token.focus();
     await user.keyboard("{Enter}");
-    expect(lookup).toHaveBeenCalledWith({ reviewId: REVIEW.id, name: "parser" });
+    expect(lookup).toHaveBeenCalledWith({ reviewId: REVIEW.id, name: "parser", side: "head" });
     await findByRole("complementary", { name: "Symbol: parser" });
     await user.click(await findByRole("button", { name: "parser.ts:4" }));
     expect(openEditor).toHaveBeenCalledWith({

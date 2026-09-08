@@ -149,8 +149,10 @@ describe("a code citation, against the real daemon", () => {
     // daemon read the captured patch, and the row's `data-line` proves the block was
     // numbered from the ref rather than from the top of the returned excerpt.
     const cited = await waitFor(() => {
-      const row = container.querySelector('[data-code-line="3"][data-code-side="head"]');
-      if (!row) throw new Error("the cited line never rendered");
+      const row = container.querySelector(
+        '[data-diff-kind="add"] [data-code-line="3"][data-code-side="head"]',
+      );
+      if (!row) throw new Error("the cited diff evidence never rendered");
       return row;
     });
     expect(cited.textContent).toContain("const curd = 42; // the cited line");

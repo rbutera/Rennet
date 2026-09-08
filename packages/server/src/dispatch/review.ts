@@ -492,7 +492,10 @@ export function reviewHandlers(rt: DispatchRuntime) {
           },
         });
       }
-      return parseCommandOutput(name, await deps.symbolLookup({ review, name: input.name }));
+      return parseCommandOutput(
+        name,
+        await deps.symbolLookup({ review, name: input.name, side: input.side ?? "head" }),
+      );
     },
     "review.openInEditor": async (rawInput) => {
       const name = "review.openInEditor" as const;
