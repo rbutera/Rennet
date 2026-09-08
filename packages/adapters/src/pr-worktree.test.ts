@@ -6,10 +6,11 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { escapePath } from "@rennet/core";
 import { afterEach, describe, expect, it } from "vitest";
 import { execaGit } from "./git-range-diff";
@@ -425,6 +426,13 @@ function listing(lines: readonly string[]): string {
  * `failFrom` is the set of cwds whose commands REJECT — which is how the reachability probe
  * (`rev-parse --show-toplevel`, run at the record's own path) is made to fail without
  * unmounting anything.
+ *
+ * The DEFAULTS model a HEALTHY repository, so that a test which says nothing about the
+ * identity probes is testing the arm it names rather than accidentally testing F2: every
+ * `rev-parse --show-toplevel` answers with its own cwd, and every `--git-common-dir` answers
+ * with `<clone>/.git`. A test that wants a foreign or unreadable answer overrides it through
+ * `answersAt`, which is keyed BY CWD because the whole point of these probes is that the
+ * same argv asked in two directories must be allowed to disagree.
  */
 function fakeGit(
   listed: string,
@@ -433,18 +441,39 @@ function fakeGit(
     readonly failFrom?: readonly string[];
     /** Canned stdout per `argv.join(" ")`, for the reads whose ANSWER decides a branch. */
     readonly answers?: Readonly<Record<string, string>>;
+    /** Canned stdout per cwd, then per `argv.join(" ")` — the identity probes' seam. */
+    readonly answersAt?: Readonly<Record<string, Readonly<Record<string, string>>>>;
+    /** The clone this fake's worktrees all belong to. */
+    readonly cloneRoot?: string;
   } = {},
 ) {
   const calls: string[][] = [];
+  const cloneRoot = options.cloneRoot ?? "/repo";
   const git = async (cwd: string, args: string[]): Promise<string> => {
     calls.push([...args]);
     if (options.failFrom?.includes(cwd) === true)
       throw new Error(`cd to '${cwd}' failed: No such file or directory`);
     if (args[0] === "worktree" && args[1] === "list") return listed;
-    return options.answers?.[args.join(" ")] ?? "";
+    const argv = args.join(" ");
+    const at = options.answersAt?.[cwd]?.[argv];
+    if (at !== undefined) return at;
+    const canned = options.answers?.[argv];
+    if (canned !== undefined) return canned;
+    // A healthy worktree: it answers for ITSELF, out of the clone's object store.
+    if (argv === "rev-parse --show-toplevel") return `${cwd}\n`;
+    if (argv === "rev-parse --path-format=absolute --git-common-dir") return `${cloneRoot}/.git\n`;
+    return "";
   };
   return { git, calls };
 }
+
+/** The two identity probes every reachable registration now issues, in order — spelled once
+ *  so an argv assertion below reads as "the reads, and then the arm's own". */
+const IDENTITY_PROBES = [
+  ["rev-parse", "--show-toplevel"],
+  ["rev-parse", "--path-format=absolute", "--git-common-dir"],
+  ["rev-parse", "--path-format=absolute", "--git-common-dir"],
+];
 
 describe("ensureSiblingWorktree and an unreachable registration (B4)", () => {
   it("THROWS, and issues no prune, no add and no branch write", async () => {
@@ -489,11 +518,8 @@ describe("ensureSiblingWorktree and an unreachable registration (B4)", () => {
       created: false,
       workBranch: "rennet/feat/x",
     });
-    // The read, then the probe, and nothing else. Both are reads.
-    expect(calls).toEqual([
-      ["worktree", "list", "--porcelain", "-z"],
-      ["rev-parse", "--show-toplevel"],
-    ]);
+    // The read, then the probes, and nothing else. Every one of them is a read.
+    expect(calls).toEqual([["worktree", "list", "--porcelain", "-z"], ...IDENTITY_PROBES]);
   });
 
   it("treats an UNANNOTATED registration whose probe fails as unreachable (S1)", async () => {
@@ -519,6 +545,7 @@ describe("ensureSiblingWorktree and an unreachable registration (B4)", () => {
     ).rejects.toThrow(
       /worktree for rennet\/feat\/x is registered at \/volumes\/scratch\/rennet\/feat\/x but that directory is not reachable/,
     );
+    // The probe FAILED, so the identity comparisons that follow it never ran.
     expect(calls).toEqual([
       ["worktree", "list", "--porcelain", "-z"],
       ["rev-parse", "--show-toplevel"],
@@ -554,41 +581,77 @@ describe("ensureBranchWorktree and an unreachable registration (P1)", () => {
     expect(calls.some((argv) => argv[0] === "checkout")).toBe(false);
   });
 
-  it("uses a REACHABLE registration, checking the branch out only when it has drifted", async () => {
-    // The pair, in both of its halves — without them the throw above passes for a function
-    // that refuses every branch worktree. The two halves differ ONLY in what HEAD answers,
-    // which is the fact the arm is supposed to turn on.
-    const registered = listing([
-      `worktree ${WORKTREE}`,
-      "HEAD 1111111111111111111111111111111111111111",
-      "branch refs/heads/feat/x",
-    ]);
+  it("uses a REACHABLE registration that is on the branch, writing nothing in it", async () => {
+    // THE PAIR for every refusal in this file. Without it the throws all pass for a function
+    // that refuses every branch worktree.
+    const onBranch = fakeGit(
+      listing([
+        `worktree ${WORKTREE}`,
+        "HEAD 1111111111111111111111111111111111111111",
+        "branch refs/heads/feat/x",
+      ]),
+      { answers: { "rev-parse --abbrev-ref HEAD": "feat/x\n" } },
+    );
 
-    const onBranch = fakeGit(registered, {
-      answers: { "rev-parse --abbrev-ref HEAD": "feat/x\n" },
-    });
     expect(await ensureBranchWorktree(onBranch.git, "/repo", WORKTREE, "feat/x")).toEqual({
       path: WORKTREE,
       created: false,
     });
-    // Read, probe, read. Nothing is written in the directory a session is already using.
+    // Reads, and only reads. Nothing is written in the directory a session is already using.
     expect(onBranch.calls).toEqual([
       ["worktree", "list", "--porcelain", "-z"],
-      ["rev-parse", "--show-toplevel"],
+      ...IDENTITY_PROBES,
       ["rev-parse", "--abbrev-ref", "HEAD"],
     ]);
+  });
 
-    const drifted = fakeGit(registered, {
-      answers: { "rev-parse --abbrev-ref HEAD": "some/other\n" },
-    });
-    await ensureBranchWorktree(drifted.git, "/repo", WORKTREE, "feat/x");
-    expect(drifted.calls).toEqual([
-      ["worktree", "list", "--porcelain", "-z"],
-      ["rev-parse", "--show-toplevel"],
-      ["rev-parse", "--abbrev-ref", "HEAD"],
-      ["checkout", "feat/x"],
-    ]);
-    expect(drifted.calls.some((argv) => argv.includes("prune"))).toBe(false);
+  it("THROWS on the REVIEWER'S OWN CHECKOUT sitting at the computed path (F1)", async () => {
+    // THE SIGHTED BUG. `git worktree list` includes the MAIN worktree, and a branch pattern
+    // that carries no `{branch}` — `{name}` is one the write blesses — computes a path that
+    // CAN be the clone root. The registration matched by path alone, the old body read HEAD,
+    // saw `main`, and ran `git checkout feat/x` IN THE REVIEWER'S TREE.
+    //
+    // Reviewing a branch nothing has out is exactly when this arm runs, so nothing upstream
+    // rules the clone out: `worktreeForBranch` found no worktree on `feat/x`, which is why we
+    // are here at all.
+    const { git, calls } = fakeGit(
+      listing([
+        "worktree /repo",
+        "HEAD 1111111111111111111111111111111111111111",
+        "branch refs/heads/main",
+      ]),
+      { answers: { "rev-parse --abbrev-ref HEAD": "main\n" } },
+    );
+
+    await expect(ensureBranchWorktree(git, "/repo", "/repo", "feat/x")).rejects.toThrow(
+      /\/repo is this repository's own checkout, not a worktree Rennet placed/,
+    );
+
+    // Executed, not reasoned: the whole argv trace is reads.
+    expect(calls.some((argv) => argv[0] === "checkout")).toBe(false);
+    expect(calls.some((argv) => argv[0] === "worktree" && argv[1] === "add")).toBe(false);
+    expect(calls.some((argv) => argv.includes("prune"))).toBe(false);
+  });
+
+  it("THROWS on a worktree at the computed path that is on ANOTHER ref (F1)", async () => {
+    // The second half of the same guard, and the sentence the spec already carried: "a bind
+    // whose computed path is already a worktree of the repository on any other reference
+    // SHALL fail with that path and that reference named". The sibling arm has refused this
+    // since B4; this arm switched the tree instead.
+    const { git, calls } = fakeGit(
+      listing([
+        `worktree ${WORKTREE}`,
+        "HEAD 1111111111111111111111111111111111111111",
+        "branch refs/heads/some/other",
+      ]),
+      { answers: { "rev-parse --abbrev-ref HEAD": "some/other\n" } },
+    );
+
+    await expect(ensureBranchWorktree(git, "/repo", WORKTREE, "feat/x")).rejects.toThrow(
+      /is already a worktree of this repository on some\/other, so Rennet will not check feat\/x out in it/,
+    );
+    expect(calls.some((argv) => argv[0] === "checkout")).toBe(false);
+    expect(calls.some((argv) => argv[0] === "worktree" && argv[1] === "add")).toBe(false);
   });
 
   it("ADDS when nothing is registered at the path, with no prune first", async () => {
@@ -610,5 +673,153 @@ describe("ensureBranchWorktree and an unreachable registration (P1)", () => {
       ["worktree", "list", "--porcelain", "-z"],
       ["worktree", "add", target, "feat/x"],
     ]);
+  });
+});
+
+// ── F4: MATCHING A REGISTRATION UNDER A SYMLINKED ROOT ────────────────────────────────
+//
+// git prints the RESOLVED spelling of every worktree it lists; a computed placement carries
+// whatever the settings ladder produced, which on macOS is `/var/…` wherever git says
+// `/private/var/…` — every default `TMPDIR`, and any worktree root under one.
+//
+// Both binds used to match with a plain `realpath`-or-literal, which REFUSES a path that is
+// missing — and the registration this question matters most about is precisely the missing
+// one. So an unreachable registration under a symlinked root matched nothing, the bind fell
+// through to `worktree add`, and the reviewer got git's own `fatal: … is missing but already
+// registered worktree` instead of the designed sentence that names the path, gives git's
+// reason, and says nothing was changed. Same comparison as the daemon's sweep now, one
+// helper, one answer.
+describe("a registration git spells through a resolved root (F4)", () => {
+  /** A real symlink to a real directory, and a worktree path under BOTH spellings of it. */
+  function symlinkedRoot(): { resolved: string; linked: string } {
+    const real = realpathSync(mkdtempSync(join(tmpdir(), "rennet-symlinked-root-")));
+    scratch.push(real);
+    const link = join(dirname(real), `${basename(real)}-link`);
+    symlinkSync(real, link);
+    scratch.push(link);
+    // The leaf itself never exists: an unreachable registration is a directory that is gone,
+    // which is the only state this comparison is ever asked about.
+    return {
+      resolved: join(real, "worktrees", "repo", "feat", "x"),
+      linked: join(link, "worktrees", "repo", "feat", "x"),
+    };
+  }
+
+  it("the BRANCH bind throws its own designed refusal, not git's", async () => {
+    const { resolved, linked } = symlinkedRoot();
+    const { git, calls } = fakeGit(
+      listing([
+        `worktree ${resolved}`,
+        "branch refs/heads/feat/x",
+        "prunable gitdir file points to non-existent location",
+      ]),
+    );
+
+    await expect(ensureBranchWorktree(git, "/repo", linked, "feat/x")).rejects.toThrow(
+      /the worktree for feat\/x is registered at .* but that directory is not reachable/,
+    );
+    expect(calls).toEqual([["worktree", "list", "--porcelain", "-z"]]);
+  });
+
+  it("the SIBLING bind's occupant check sees the same registration", async () => {
+    // Arm 2, the other `comparablePath` call site: a DETACHED worktree (a pull-request
+    // snapshot) sitting at the computed sibling path, registered under the resolved spelling
+    // and gone from disk. It has no branch, so arm 1 cannot find it — only the path match can.
+    const { resolved, linked } = symlinkedRoot();
+    const { git, calls } = fakeGit(
+      listing([
+        `worktree ${resolved}`,
+        "HEAD 1111111111111111111111111111111111111111",
+        "detached",
+        "prunable gitdir file points to non-existent location",
+      ]),
+    );
+
+    await expect(ensureSiblingWorktree(git, "/repo", linked, "feat/x")).rejects.toThrow(
+      /is registered as a worktree of this repository on .* but that directory is not reachable/,
+    );
+    expect(calls.some((argv) => argv[0] === "worktree" && argv[1] === "add")).toBe(false);
+  });
+});
+
+// ── F2: A PROBE THAT SUCCEEDS IS NOT A PROBE THAT FOUND THIS WORKTREE ──────────────────
+//
+// `git -C <path> rev-parse` SEARCHES UPWARDS. A registration whose own `.git` file is gone,
+// sitting anywhere beneath another repository — a worktree root under the reviewer's home
+// that is itself a checkout, a nested clone — answers through that PARENT. The probe
+// returns 0, `unreachableReason` said "reachable", and on a git too old to print `prunable`
+// (< 2.36, the entire reason the probe exists) the bind then recorded a FOREIGN repository
+// as this session's workspace for its whole life. That is the wrong-repository-under-the-
+// right-label failure, and it is silent.
+//
+// So the probe's ANSWER is compared, not just its exit code — `--show-toplevel` against the
+// record's own path, and `--git-common-dir` against the clone's. Both binds ask through the
+// same helper, so both refuse.
+describe("a registration whose git answers for ANOTHER repository (F2)", () => {
+  const WORKTREE = "/data/worktrees/repo/feat/x";
+  const STALE = ["worktree /data/worktrees/repo/feat/x", "branch refs/heads/feat/x"];
+
+  it("is UNREACHABLE to the branch bind when the toplevel is a parent repository", async () => {
+    const { git, calls } = fakeGit(listing(STALE), {
+      // No `prunable` — a git older than 2.36, which is the only git that reaches the probe.
+      answersAt: { [WORKTREE]: { "rev-parse --show-toplevel": "/data/worktrees\n" } },
+    });
+
+    await expect(ensureBranchWorktree(git, "/repo", WORKTREE, "feat/x")).rejects.toThrow(
+      /is registered at \/data\/worktrees\/repo\/feat\/x but that directory is not reachable \(git: the git there answers for \/data\/worktrees, not for this registration\)/,
+    );
+    expect(calls.some((argv) => argv[0] === "checkout")).toBe(false);
+    expect(calls.some((argv) => argv[0] === "worktree" && argv[1] === "add")).toBe(false);
+  });
+
+  it("is UNREACHABLE to the sibling bind's arm 1 for the same reason", async () => {
+    const sibling = "/data/worktrees/repo/rennet/feat/x";
+    const { git, calls } = fakeGit(
+      listing([`worktree ${sibling}`, "branch refs/heads/rennet/feat/x"]),
+      { answersAt: { [sibling]: { "rev-parse --show-toplevel": "/data/worktrees\n" } } },
+    );
+
+    await expect(ensureSiblingWorktree(git, "/repo", sibling, "feat/x")).rejects.toThrow(
+      /the git there answers for \/data\/worktrees, not for this registration/,
+    );
+    expect(calls.some((argv) => argv[0] === "worktree" && argv[1] === "add")).toBe(false);
+    expect(calls.some((argv) => argv[0] === "branch")).toBe(false);
+  });
+
+  it("is FOREIGN when the toplevel matches but the object store is another clone's", async () => {
+    // The narrower case the toplevel comparison cannot see: a whole different repository
+    // cloned EXACTLY at the registered path. `--show-toplevel` answers with the path itself
+    // and only the common `.git` says they are strangers.
+    const { git } = fakeGit(listing(STALE), {
+      answersAt: {
+        [WORKTREE]: {
+          "rev-parse --path-format=absolute --git-common-dir": "/elsewhere/other-repo/.git\n",
+        },
+      },
+    });
+
+    await expect(ensureBranchWorktree(git, "/repo", WORKTREE, "feat/x")).rejects.toThrow(
+      /it belongs to another repository \(\/elsewhere\/other-repo\/\.git\), not to this one/,
+    );
+  });
+
+  it("says NOTHING about identity when this git will not print an absolute common dir", async () => {
+    // The honest degradation, and its control. `--path-format=absolute` needs git ≥ 2.31, and
+    // joining a relative `.git` on THIS side would resolve it in the daemon's spelling against
+    // a path in git's — the WSL arrangement, where every registration would then read foreign.
+    // So a relative or missing answer drops the comparison instead of inventing a verdict; the
+    // toplevel half above has already run and is what caught the sighted case.
+    const { git } = fakeGit(listing(STALE), {
+      answersAt: {
+        [WORKTREE]: { "rev-parse --path-format=absolute --git-common-dir": ".git\n" },
+        "/repo": { "rev-parse --path-format=absolute --git-common-dir": ".git\n" },
+      },
+      answers: { "rev-parse --abbrev-ref HEAD": "feat/x\n" },
+    });
+
+    expect(await ensureBranchWorktree(git, "/repo", WORKTREE, "feat/x")).toEqual({
+      path: WORKTREE,
+      created: false,
+    });
   });
 });

@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { BUILTIN_PR_WORKTREE_PATTERN, BUILTIN_WORKTREE_PATTERN, escapePath } from "@rennet/core";
 import { execa } from "execa";
+import { comparablePath } from "./comparable-path";
 import type { GitExec } from "./git-range-diff";
 import {
   parseWorktreeRecords,
@@ -361,14 +362,26 @@ export async function worktreeForBranch(
  * registration when the volume came back.
  *
  * So the registration is READ, from the same `worktree list --porcelain -z` the sibling arm
- * reads, and the three answers are:
+ * reads, and the answers are:
  *
- *   • registered and reachable → that IS the workspace: returned as it stands when it is
- *     already on the branch, switched in place with `checkout` when it has drifted onto
- *     another ref, so a session keeps its workspace path for its whole life;
+ *   • registered, reachable AND OURS TO USE — not the clone itself, and already on the
+ *     branch → that IS the workspace, returned as it stands, so a session keeps its
+ *     workspace path for its whole life;
  *   • registered and NOT reachable → THROWS, naming the path and git's own reason, with
  *     nothing pruned, nothing added and nothing checked out;
+ *   • registered and NOT OURS — the clone root, or a worktree on any other reference →
+ *     THROWS, naming the path and that reference, creating and checking out nothing;
  *   • not registered → `worktree add`.
+ *
+ * ⚠️ THE THIRD ANSWER IS THE ONE THIS ARM WAS MISSING (review finding F1). It matched the
+ * registration BY PATH ALONE and then ran `git checkout <branch>` in whatever it found, and
+ * `git worktree list` includes THE MAIN WORKTREE. So a branch pattern that names no
+ * `{branch}` — `{name}` is enough — computes a path that can be the repository root itself,
+ * and reviewing a branch nothing has out switched THE REVIEWER'S OWN CHECKOUT onto it. The
+ * sibling arm has refused this since B4 for the same reason, in the same words: checking out
+ * inside a worktree that is not ours is the destructive act, and the spec already says a bind
+ * whose computed path is a worktree of the repository on any other reference fails with that
+ * path and that reference named.
  *
  * A registration only the daemon-start sweep may prune, and only under D5's rule: Rennet's
  * own placement, unreachable, and claimed by no live session.
@@ -381,21 +394,31 @@ export async function ensureBranchWorktree(
 ): Promise<{ path: string; created: boolean }> {
   const records = await listWorktreeRecords(git, cloneRoot);
   const registered = records.find(
-    (record) => resolvedPath(record.path) === resolvedPath(worktreePath),
+    (record) => comparablePath(record.path) === comparablePath(worktreePath),
   );
   if (registered !== undefined) {
-    const unreachable = await unreachableReason(git, registered);
+    const unreachable = await unreachableReason(git, cloneRoot, registered);
     if (unreachable !== undefined) {
       throw new Error(
         `worktree placement: the worktree for ${branch} is registered at ${registered.path} but that directory is not reachable (git: ${unreachable}). Nothing was changed. Reconnect it and dispatch again, or remove the registration yourself once you are sure it is gone.`,
+      );
+    }
+    // WHOSE IS IT. The clone root is never a worktree Rennet placed, whatever it has out —
+    // it is the reviewer's tree, and the `share` bind is the only thing that ever binds
+    // there. Asked before the ref, because "the clone, on the branch you asked for" is still
+    // not a directory this call may take over.
+    if (comparablePath(registered.path) === comparablePath(cloneRoot)) {
+      throw new Error(
+        `worktree placement: ${registered.path} is this repository's own checkout, not a worktree Rennet placed, so Rennet will not check ${branch} out in it. Change this repository's worktree location or layout.`,
       );
     }
     const current = (
       await git(registered.path, ["rev-parse", "--abbrev-ref", "HEAD"], { reject: false })
     ).trim();
     if (current === branch) return { path: worktreePath, created: false };
-    await git(registered.path, ["checkout", branch]);
-    return { path: worktreePath, created: false };
+    throw new Error(
+      `worktree placement: ${registered.path} is already a worktree of this repository on ${current === "" ? "a reference git would not name" : current}, so Rennet will not check ${branch} out in it. Move it, or change this repository's worktree location or layout.`,
+    );
   }
   await mkdir(join(worktreePath, ".."), { recursive: true });
   await git(cloneRoot, ["worktree", "add", worktreePath, branch]);
@@ -418,15 +441,38 @@ export async function ensureBranchWorktree(
  * when the directory cannot be entered — a missing directory, an unmounted volume, a distro
  * that is not running. One extra git call, on the one arm that would otherwise record a
  * dead directory as a session's workspace for its whole life.
+ *
+ * ⚠️ AND A PROBE THAT MERELY SUCCEEDS IS NOT A PROBE THAT FOUND THIS WORKTREE (review
+ * finding F2). `git -C <path> rev-parse` searches UPWARDS. A registration whose own `.git`
+ * file is gone but whose directory sits beneath ANOTHER repository answers through that
+ * parent — `rev-parse --show-toplevel` succeeds, prints the STRANGER'S root, and on a git
+ * too old to annotate the bind then treats a foreign checkout as this session's workspace.
+ * So the answer is compared, twice, and either mismatch is reported as unreachable/foreign
+ * with what was actually found:
+ *
+ *   • `--show-toplevel` against the record's own path (through `comparablePath`, because git
+ *     prints the resolved spelling and the record's path is git's too — this is the cheap
+ *     equality, and it is what catches the stale registration under a parent repository);
+ *   • `--git-common-dir` against the CLONE's, which catches the narrower case the first
+ *     misses: a whole different repository cloned exactly at the registered path, where the
+ *     toplevel is the path and only the object store says they are strangers.
+ *
+ * The common-dir halves are asked with `--path-format=absolute` (git ≥ 2.31), because git
+ * prints a plain `.git` for a main worktree and joining that in Node would resolve it in the
+ * DAEMON's spelling against a path in GIT's — the WSL arrangement, where every registration
+ * would then read as foreign. A git too old for the flag, or any answer that still comes back
+ * relative, skips this half rather than inventing a verdict; the `--show-toplevel` comparison
+ * above has already run, and it is the half that catches the sighted case.
  */
 async function unreachableReason(
   git: GitExec,
+  cloneRoot: string,
   record: WorktreeRecord,
 ): Promise<string | undefined> {
   if (record.prunable !== undefined) return record.prunable;
+  let toplevel: string;
   try {
-    await git(record.path, ["rev-parse", "--show-toplevel"]);
-    return undefined;
+    toplevel = (await git(record.path, ["rev-parse", "--show-toplevel"])).trim();
   } catch (error) {
     const reason = error instanceof Error ? error.message.split("\n")[0] : String(error);
     // Capped: an execa failure carries the whole command line and its stderr, and this
@@ -435,6 +481,28 @@ async function unreachableReason(
       ? "the directory could not be entered"
       : reason.slice(0, UNREACHABLE_REASON_CAP);
   }
+  if (toplevel === "" || comparablePath(toplevel) !== comparablePath(record.path))
+    return `the git there answers for ${toplevel === "" ? "no worktree at all" : toplevel.slice(0, UNREACHABLE_REASON_CAP)}, not for this registration`;
+  const [mine, theirs] = await Promise.all([
+    commonGitDir(git, record.path),
+    commonGitDir(git, cloneRoot),
+  ]);
+  if (mine === undefined || theirs === undefined) return undefined;
+  return comparablePath(mine) === comparablePath(theirs)
+    ? undefined
+    : `it belongs to another repository (${mine.slice(0, UNREACHABLE_REASON_CAP)}), not to this one`;
+}
+
+/** The absolute common `.git` directory git reports AT `cwd`, or nothing when this git
+ *  will not give an absolute one — see `unreachableReason` for why a relative answer is
+ *  dropped rather than joined on this side. */
+async function commonGitDir(git: GitExec, cwd: string): Promise<string | undefined> {
+  const answer = await git(cwd, ["rev-parse", "--path-format=absolute", "--git-common-dir"], {
+    reject: false,
+  })
+    .then((out) => out.trim())
+    .catch(() => "");
+  return answer === "" || !isAbsolute(answer) ? undefined : answer;
 }
 
 /** How much of git's own failure the unreachable-registration message quotes. */
@@ -542,7 +610,7 @@ export async function ensureSiblingWorktree(
     // Git's `prunable` when this git prints one, and a locus-aware probe when it does not:
     // the annotation landed in git 2.36, and an absent annotation on an older git would
     // otherwise record a directory that is GONE as this session's workspace for its life.
-    const unreachable = await unreachableReason(git, registered);
+    const unreachable = await unreachableReason(git, cloneRoot, registered);
     if (unreachable !== undefined) {
       throw new Error(
         `worktree placement: the worktree for ${workBranch} is registered at ${registered.path} but that directory is not reachable (git: ${unreachable}). Nothing was changed. Reconnect it and dispatch again, or remove the registration yourself once you are sure it is gone.`,
@@ -553,7 +621,7 @@ export async function ensureSiblingWorktree(
 
   // 2. Somebody else's worktree is at the path we would have used. Never check out in it.
   const occupant = records.find(
-    (record) => resolvedPath(record.path) === resolvedPath(worktreePath),
+    (record) => comparablePath(record.path) === comparablePath(worktreePath),
   );
   if (occupant !== undefined) {
     const ref = occupant.branch ?? occupant.head ?? "a detached head";
@@ -586,9 +654,14 @@ export async function ensureSiblingWorktree(
  *
  * `parseWorktreeRecords`, not `parseWorktrees`: the latter drops DETACHED entries, and a
  * detached pull-request snapshot sitting at a computed sibling path is exactly a worktree
- * Rennet must not check anything out inside of. Paths are compared through `realpath` by
- * the callers, because git prints resolved paths and a computed placement carries whatever
- * the settings ladder produced — `/var/…` and `/private/var/…` are one directory on macOS.
+ * Rennet must not check anything out inside of. Paths are compared by the callers through
+ * `comparablePath` — the SAME helper the daemon's sweep matches claims with — because git
+ * prints resolved paths while a computed placement carries whatever the settings ladder
+ * produced, and because the hardest of these comparisons is about a directory that is GONE.
+ * A plain `realpath` refuses a missing path outright and falls back to a literal compare, so
+ * an unreachable registration under a symlinked root (`/var` → `/private/var`, which is every
+ * default `TMPDIR` on macOS) matched nothing here and the designed "registered but not
+ * reachable" throw degraded into git's own `fatal: … missing but already registered`.
  */
 async function listWorktreeRecords(
   git: GitExec,
@@ -598,16 +671,6 @@ async function listWorktreeRecords(
     reject: false,
   }).catch(() => "");
   return parseWorktreeRecords(listed);
-}
-
-/** `realpath` where the path exists, its literal form where it does not (which still
- *  compares equal to itself). */
-function resolvedPath(path: string): string {
-  try {
-    return realpathSync(path);
-  } catch {
-    return path;
-  }
 }
 
 export type SetupStatus =

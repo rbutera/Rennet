@@ -113,6 +113,7 @@ export {
   defaultCodexTransportEffects,
   deriveCodexImplementedEvidence,
 } from "./codex-turn-transport";
+export { comparablePath } from "./comparable-path";
 export {
   assembleContextForComposition,
   DEFAULT_CONTEXT_BYTE_BUDGET,
