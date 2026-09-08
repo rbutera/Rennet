@@ -176,15 +176,39 @@ interface ParagraphSource {
   readonly start: number;
 }
 
-function splitParagraphs(text: string): ParagraphSource[] {
-  const paragraphs: ParagraphSource[] = [];
-  let start = 0;
-  for (const separator of text.matchAll(/\n\n+/g)) {
-    paragraphs.push({ text: text.slice(start, separator.index), start });
-    start = separator.index + separator[0].length;
+type TextBlock =
+  | { readonly kind: "paragraph"; readonly source: ParagraphSource }
+  | { readonly kind: "list"; readonly items: ParagraphSource[] };
+
+function splitBlocks(text: string): TextBlock[] {
+  const blocks: TextBlock[] = [];
+  let offset = 0;
+  let current: TextBlock | undefined;
+  for (const line of text.split("\n")) {
+    const bullet = /^[-*+] +/.exec(line);
+    if (!line.trim()) {
+      current = undefined;
+    } else if (bullet) {
+      if (current?.kind !== "list") {
+        current = { kind: "list", items: [] };
+        blocks.push(current);
+      }
+      current.items.push({ text: line.slice(bullet[0].length), start: offset + bullet[0].length });
+    } else if (current?.kind === "list" && /^ {2,}\S/.test(line)) {
+      const last = current.items.at(-1);
+      if (last)
+        current.items[current.items.length - 1] = { ...last, text: `${last.text}\n${line}` };
+    } else if (current?.kind === "paragraph") {
+      const source = { ...current.source, text: `${current.source.text}\n${line}` };
+      current = { kind: "paragraph", source };
+      blocks[blocks.length - 1] = current;
+    } else {
+      current = { kind: "paragraph", source: { text: line, start: offset } };
+      blocks.push(current);
+    }
+    offset += line.length + 1;
   }
-  paragraphs.push({ text: text.slice(start), start });
-  return paragraphs;
+  return blocks;
 }
 
 export interface RichTextProps {
@@ -224,7 +248,7 @@ export function RichText({
   // store write anywhere re-parsed every element on the board. It depends on nothing but
   // the props and the revealed citation, so it is memoized whole.
   const body = useMemo(() => {
-    const paragraphs = splitParagraphs(text);
+    const blocks = splitBlocks(text);
 
     function decorationFor(start: number, end: number): RichTextDecoration | undefined {
       return decorations.find((decoration) => decoration.start <= start && decoration.end >= end);
@@ -347,7 +371,7 @@ export function RichText({
       );
     }
 
-    function renderParagraph(paragraph: ParagraphSource, paragraphIndex: number) {
+    function renderBlock(block: TextBlock, paragraphIndex: number) {
       const activeInParagraph =
         autolink && activeRef?.startsWith(`${paragraphIndex}:`)
           ? activeRef.slice(activeRef.indexOf(":") + 1)
@@ -363,24 +387,14 @@ export function RichText({
           })()
         : null;
 
-      // A block whose lines all start with "- " is a bulleted list (a one-item `- x`
-      // paragraph counts); each line keeps the full token pipeline (citations, code,
-      // bold, keywords).
-      const lines = paragraph.text.split("\n");
-      let nextLineStart = paragraph.start;
-      const lineSources = lines.map((line) => {
-        const source = { text: line, start: nextLineStart };
-        nextLineStart += line.length + 1;
-        return source;
-      });
-      if (lineSources.every((line) => line.text.startsWith("- "))) {
+      if (block.kind === "list") {
         return (
           <Fragment key={paragraphIndex}>
-            <ul className="flex list-disc flex-col gap-1 pl-5 marker:text-muted-foreground/60">
-              {lineSources.map((line, lineIndex) => (
+            <ul className="flex list-disc flex-col gap-2 pl-5 marker:text-muted-foreground">
+              {block.items.map((line, lineIndex) => (
                 // biome-ignore lint/suspicious/noArrayIndexKey: bullet lines are a fixed positional list.
-                <li key={lineIndex} className={paragraphClassName}>
-                  {renderInline(line.text.slice(2), paragraphIndex, line.start + 2)}
+                <li key={lineIndex} className={cn("pl-1", paragraphClassName)}>
+                  {renderInline(line.text, paragraphIndex, line.start)}
                 </li>
               ))}
             </ul>
@@ -392,14 +406,14 @@ export function RichText({
       return (
         <Fragment key={paragraphIndex}>
           <p className={paragraphClassName}>
-            {renderInline(paragraph.text, paragraphIndex, paragraph.start)}
+            {renderInline(block.source.text, paragraphIndex, block.source.start)}
           </p>
           {reveal}
         </Fragment>
       );
     }
 
-    return paragraphs.map(renderParagraph);
+    return blocks.map(renderBlock);
   }, [text, patchsetId, autolink, decorations, keywords, paragraphClassName, activeRef]);
 
   return (

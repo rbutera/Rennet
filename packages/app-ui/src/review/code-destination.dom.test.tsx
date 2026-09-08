@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import type { PatchFile, Review, SidebarSession } from "@rennet/protocol";
+import type { PatchFile, Review, SidebarSession, SymbolInspection } from "@rennet/protocol";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Router } from "wouter";
 import { BridgeProvider } from "../data";
@@ -8,8 +8,9 @@ import { AppLayout } from "../routes/layout";
 import { useRennetStore } from "../store";
 import { cleanup, mount, waitFor } from "../test/dom";
 import { frontDoorHandlers } from "../test/fixtures/front-door";
-import { MemoryBridge } from "../test/memory-bridge";
+import { MemoryBridge, type MemoryBridgeHandlers } from "../test/memory-bridge";
 import { CodeBlock, type CodeBlockProps } from "./code-block";
+import { DiffView } from "./diff-view";
 
 const IMPLEMENTATION = "src/parser.ts";
 const TEST = "src/parser.test.ts";
@@ -23,7 +24,7 @@ function changedFile(path: string): PatchFile {
     additions: 1,
     deletions: 0,
     binary: false,
-    patch: `diff --git a/${path} b/${path}`,
+    patch: `diff --git a/${path} b/${path}\n@@ -0,0 +1 @@\n+export const parser = true;`,
   };
 }
 
@@ -90,6 +91,7 @@ afterEach(cleanup);
 function mountEvidence(
   path: string,
   overrides: Pick<CodeBlockProps, "onOpenPath" | "counterpart"> = {},
+  options: { handlers?: MemoryBridgeHandlers; diff?: boolean } = {},
 ) {
   let reviewLoads = 0;
   const bridge = new MemoryBridge({
@@ -100,6 +102,7 @@ function mountEvidence(
       reviewLoads += 1;
       return { review: REVIEW, repositoryPresent: true };
     },
+    ...options.handlers,
   });
   const history = memoryHistory(
     "/s/session-1?lens=sequence&generation=generation-1&ask=keep%20me&round=2&file=old.ts",
@@ -108,7 +111,11 @@ function mountEvidence(
     <BridgeProvider bridge={bridge}>
       <Router hook={history.hook} searchHook={history.searchHook}>
         <AppLayout>
-          <CodeBlock code="export const parser = true" path={path} {...overrides} />
+          {options.diff ? (
+            <DiffView files={[changedFile(path)]} patchsetId={REVIEW.activePatchsetId} />
+          ) : (
+            <CodeBlock code="export const parser = true" path={path} {...overrides} />
+          )}
         </AppLayout>
       </Router>
     </BridgeProvider>,
@@ -165,5 +172,79 @@ describe("route-scoped code destinations", () => {
     await waitFor(() => expect(reviewLoads()).toBeGreaterThan(0));
     expect(getByText(IMPLEMENTATION).tagName).toBe("SPAN");
     expect(queryByRole("button", { name: "View test" })).toBeNull();
+  });
+});
+
+describe("symbol inspection through the live layout", () => {
+  const inspection: SymbolInspection = {
+    name: "parser",
+    definition: {
+      status: "ok",
+      sites: [{ path: IMPLEMENTATION, line: 4, kind: "function", scope: null }],
+      tier: { kind: "exact", method: "structural" },
+    },
+    references: {
+      status: "ok",
+      sites: [{ path: TEST, line: 9, scope: null }],
+      truncated: false,
+      tier: { kind: "guess", method: "textual" },
+    },
+  };
+
+  it.each([
+    { surface: "board snippet", diff: false },
+    { surface: "diff", diff: true },
+  ])("opens a symbol from the $surface and restores focus on Escape", async ({ diff }) => {
+    const lookup = vi.fn(() => inspection);
+    const openEditor = vi.fn(() => ({ ok: true }));
+    const { findByRole, getByRole, queryByRole, user } = mountEvidence(
+      IMPLEMENTATION,
+      {},
+      {
+        diff,
+        handlers: {
+          "review.symbolLookup": lookup,
+          "review.openInEditor": openEditor,
+        },
+      },
+    );
+    const token = await findByRole("button", { name: "Inspect parser" });
+    token.focus();
+    await user.keyboard("{Enter}");
+    expect(lookup).toHaveBeenCalledWith({ reviewId: REVIEW.id, name: "parser", side: "head" });
+    await findByRole("complementary", { name: "Symbol: parser" });
+    await user.click(await findByRole("button", { name: "parser.ts:4" }));
+    expect(openEditor).toHaveBeenCalledWith({
+      reviewId: REVIEW.id,
+      path: IMPLEMENTATION,
+      line: 4,
+    });
+    expect(getByRole("button", { name: "parser.test.ts:9" })).toBeTruthy();
+    expect(queryByRole("button", { name: "Inspect export" })).toBeNull();
+    await user.keyboard("{Escape}");
+    await waitFor(() =>
+      expect(queryByRole("complementary", { name: "Symbol: parser" })).toBeNull(),
+    );
+    expect(document.activeElement).toBe(token);
+  });
+
+  it("shows the lookup failure and retries when the symbol is opened again", async () => {
+    const lookup = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("index offline"))
+      .mockResolvedValue(inspection);
+    const { findByRole, getByRole, user } = mountEvidence(
+      IMPLEMENTATION,
+      {},
+      {
+        handlers: { "review.symbolLookup": lookup },
+      },
+    );
+    await user.click(await findByRole("button", { name: "Inspect parser" }));
+    expect((await findByRole("alert")).textContent).toContain("index offline");
+    await user.click(getByRole("button", { name: "Close symbol inspector" }));
+    await user.click(getByRole("button", { name: "Inspect parser" }));
+    await findByRole("button", { name: "parser.ts:4" });
+    expect(lookup).toHaveBeenCalledTimes(2);
   });
 });

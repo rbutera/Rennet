@@ -134,7 +134,7 @@ These versions come from the current workspace manifests:
 | Processes and file watching | `execa`, `chokidar` | `10.0.0`, `5.0.0` |
 | Durable IDs | `uuid` | `14.0.1` |
 | Browser UI | `react`, `react-dom` | `19.2.8` |
-| UI failures and transient state | `react-error-boundary`, `zustand` | `6.1.2`, `5.0.14` |
+| UI transient state | `zustand` | `5.0.14` |
 | Renderer routing | `wouter` | `3.10.0` |
 | Renderer animation | `motion` | `13.1.1` |
 | Mobile | `expo`, `expo-router`, `react-native` | `~55.0.26`, `~55.0.16`, `0.83.6` |

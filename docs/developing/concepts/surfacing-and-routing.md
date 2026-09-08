@@ -146,7 +146,7 @@ layers so the caller can record what the model actually received.
 RSP does not name provider models, effort levels, or harness processes. The
 Model Council catalog in `packages/core/src/model-council.ts` assigns those
 details to named jobs. This keeps one document contract usable across Claude
-Code, Codex, omp, deterministic jobs, and test ports.
+Code, Codex, deterministic jobs, and test ports.
 
 The live server resolves an assignment against installed harnesses, runs the
 matching adapter, and records the observed result. A registered job or protocol

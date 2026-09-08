@@ -298,20 +298,16 @@ export {
   type GitLabPrSubmissionConfig,
 } from "./gitlab-pr-submission";
 export { readGrillSpec, readGrillSpecSource, selectedGrillDocPaths } from "./grill-spec-reader";
-export { claudeHandoffRunPort } from "./handoff-run-live";
 export {
   compareVersions,
   type DiscoverCodexOptions,
   type DiscoveredCandidate,
-  type DiscoverOmpOptions,
   type DiscoveryDeps,
   type DiscoveryResult,
   defaultCodexDiscoveryDeps,
   defaultDiscoveryDeps,
-  defaultOmpDiscoveryDeps,
   discoverClaude,
   discoverCodex,
-  discoverOmp,
   type VersionRange,
   wslDiscoveryDeps,
 } from "./harness-discovery";
@@ -373,28 +369,6 @@ export {
   NoveltyLifecycleReader,
 } from "./novelty-lifecycle-reader";
 export { NoveltyLifecycleRegistry } from "./novelty-lifecycle-registry";
-export {
-  buildOmpTurnArgs,
-  classifyOmpToolKind,
-  encodeOmpPromptFrame,
-  mapOmpError,
-  OmpAdapter,
-  type OmpAdapterConfig,
-  type OmpTurnArgs,
-  type OmpTurnResultFrame,
-  type OmpTurnSpec,
-  type OmpTurnTransport,
-} from "./omp-adapter";
-export {
-  createOmpHarness,
-  createOmpTurnTransport,
-  defaultOmpTransportEffects,
-  deriveOmpImplementedEvidence,
-  type OmpHarnessDeps,
-  type OmpHarnessResult,
-  type OmpTransportEffects,
-  renderOmpMcpConfig,
-} from "./omp-turn-transport";
 export {
   readOpenSpecChange,
   readOpenSpecChangeSource,

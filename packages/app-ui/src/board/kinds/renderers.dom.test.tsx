@@ -98,6 +98,15 @@ async function openFinding(
 }
 
 describe("board kind renderers over the fixture set", () => {
+  it("puts a Sequence explanation before its citation", () => {
+    const { container } = renderBoard(sequenceBoard);
+    const step = container.querySelector('[data-element-id="os-record"]');
+    const prose = step?.querySelector('[data-kind="prose"]');
+    const citation = step?.querySelector("button");
+    if (!prose || !citation) throw new Error("Missing step explanation or citation");
+    expect(prose.compareDocumentPosition(citation) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
   it("renders every registered board kind's distinctive DOM across the fixtures", () => {
     const present = new Set<string>();
     for (const board of ALL_BOARDS) {

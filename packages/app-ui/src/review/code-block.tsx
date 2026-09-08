@@ -16,6 +16,7 @@ import { useCodeDestination } from "./code-destination";
 import type { NumberedLine } from "./diff-parse";
 import { LineCommentEditor } from "./line-comment-editor";
 import { QuoteThreadPopover } from "./quote-thread-popover";
+import { SymbolTokens, useSymbolNavigation } from "./symbol-inspection";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The ONE code surface (C4): every code appearance in the product renders through here.
@@ -91,6 +92,7 @@ export function CodeBlock({
       ),
     [quoteThreads, patchsetId, path, previousPath],
   );
+  const symbolNavigation = useSymbolNavigation(patchsetId);
   const stagedAsks = useRennetStore((s) => s.review.stagedAsks);
   const {
     setCodeComment,
@@ -281,6 +283,7 @@ export function CodeBlock({
 
       <div
         data-code-scroll
+        {...symbolNavigation}
         ref={scrollElement}
         className="overflow-auto"
         style={virtual ? { height: viewportHeight } : undefined}
@@ -427,14 +430,15 @@ export function CodeBlock({
                     data-code-line={lineNumber}
                     className="whitespace-pre px-3 text-foreground/90"
                   >
-                    {lineTokens.length === 0
-                      ? " "
-                      : lineTokens.map((token, ti) => (
-                          // biome-ignore lint/suspicious/noArrayIndexKey: token order within a line is stable and positional.
-                          <span key={ti} className={`rtok rtok-${token.type}`}>
-                            {token.text}
-                          </span>
-                        ))}
+                    {lineTokens.length === 0 ? (
+                      " "
+                    ) : (
+                      <SymbolTokens
+                        tokens={lineTokens}
+                        side={rowSide === "LEFT" ? "base" : "head"}
+                        patchsetId={patchsetId}
+                      />
+                    )}
                   </span>
                 </div>
               </div>
