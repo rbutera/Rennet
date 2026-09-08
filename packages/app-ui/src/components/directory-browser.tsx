@@ -82,12 +82,8 @@ export function DirectoryBrowser({
     // and types immediately had their text silently replaced by the home directory
     // when it landed — input accepted and then discarded, with no sign it happened.
     const typedAtIssue = typedRef.current;
-    // The bar shows the directory WITH a trailing slash (see `withTrailingSlash`), so a
-    // path typed or edited there usually carries one. The daemon lists it either way,
-    // but the path it echoes back — and that the flow submits — must not.
-    const requested = target === undefined ? undefined : stripTrailingSlash(target);
     bridge
-      .invoke("fs.listDir", requested ? { path: requested } : {})
+      .invoke("fs.listDir", target ? { path: target } : {})
       .then(({ result }) => {
         if (generation !== generationRef.current) return;
         setPath(result.path);
@@ -124,8 +120,21 @@ export function DirectoryBrowser({
   const rows = error ? [] : visible;
   const showEmpty = loaded && !error && rows.length === 0;
 
+  // Hiding folders can remove the very row that holds focus; without this the focus falls to
+  // <body> and the arrow keys go dead. Set when the toggle fires with a row focused, consumed
+  // after the re-render moves the roving tabindex to row 0.
+  const refocusRef = useRef(false);
+  useEffect(() => {
+    if (!refocusRef.current) return;
+    refocusRef.current = false;
+    rowRefs.current[0]?.focus();
+  });
+
   function toggleHidden(): void {
     const next = !showHidden;
+    refocusRef.current = rowRefs.current.some(
+      (row) => row !== null && row === globalThis.document?.activeElement,
+    );
     setShowHidden(next);
     setFocusIndex(0);
     writeShowHidden(next);
@@ -133,10 +142,16 @@ export function DirectoryBrowser({
 
   async function browseNative(): Promise<void> {
     if (!pickDirectory) return;
+    // The dialog is open across an await; if a source switch reloads the browser meanwhile,
+    // its answer (a HOST path) must not be listed on the new source's daemon, and its
+    // failure must not paint over that source's fresh listing.
+    const generation = generationRef.current;
     try {
       const picked = await pickDirectory({ defaultPath: path ?? undefined });
+      if (generation !== generationRef.current) return;
       if (picked) load(picked);
     } catch (reason) {
+      if (generation !== generationRef.current) return;
       setError(messageFrom(reason) || "Could not open the folder dialog");
     }
   }
@@ -233,7 +248,12 @@ export function DirectoryBrowser({
         onKeyDown={(event) => {
           if (event.key !== "Enter") return;
           event.preventDefault();
-          load(typed);
+          // Only what the USER typed is normalised: the bar shows the directory with a
+          // trailing slash (see `withTrailingSlash`), so an edited path usually carries one,
+          // and the path the daemon echoes back — and that the flow submits — must not. A
+          // row's or the picker's path is the filesystem's own and is passed through intact
+          // (a folder named "repo " is a folder named "repo ").
+          load(normaliseTypedPath(typed));
         }}
       />
 
@@ -353,16 +373,34 @@ function isHidden(name: string): boolean {
   return name.startsWith(".");
 }
 
-/** `/Users/rai` → `/Users/rai/`; the root stays `/`. */
-export function withTrailingSlash(path: string): string {
-  return path.endsWith("/") ? path : `${path}/`;
+/**
+ * The separator a path is written with. A drive-lettered or UNC path is a Windows daemon's
+ * (Browse… on a Windows host drops one straight into the bar); everything else is POSIX, where
+ * a backslash is an ordinary name character and must never be treated as a separator.
+ */
+function separatorOf(path: string): "/" | "\\" {
+  return /^([A-Za-z]:|\\\\)/.test(path) ? "\\" : "/";
 }
 
-/** `/Users/rai/` → `/Users/rai`; the root stays `/`, and whitespace is trimmed. */
-export function stripTrailingSlash(path: string): string {
-  const trimmed = path.trim();
-  if (trimmed === "/") return trimmed;
-  return trimmed.replace(/\/+$/, "") || trimmed;
+/** `/Users/rai` → `/Users/rai/` and `C:\Users\rai` → `C:\Users\rai\`; a bare root is left as is. */
+export function withTrailingSlash(path: string): string {
+  const separator = separatorOf(path);
+  if (separator === "\\" ? /[\\/]$/.test(path) : path.endsWith("/")) return path;
+  return `${path}${separator}`;
+}
+
+/**
+ * What the user typed, made canonical: surrounding whitespace dropped and the trailing
+ * separator(s) removed. A bare root keeps its separator — `/` stays `/`, and a Windows drive
+ * root typed as `C:/` or `C:\` stays whole, because `C:` alone names the drive's CURRENT
+ * directory. The daemon strips again on its side (`fs-list-dir.ts`), so a paired daemon
+ * running an older build still gets a canonical path from a current client.
+ */
+export function normaliseTypedPath(typed: string): string {
+  const trimmed = typed.trim();
+  const separator = separatorOf(trimmed);
+  const stripped = trimmed.replace(separator === "\\" ? /[\\/]+$/ : /\/+$/, "");
+  return stripped.length === 0 || /^[A-Za-z]:$/.test(stripped) ? trimmed : stripped;
 }
 
 const SHOW_HIDDEN_KEY = "rennet.directory-browser.show-hidden";

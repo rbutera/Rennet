@@ -280,7 +280,7 @@ describe("AddProjectDialog", () => {
     expect(screen.queryByRole("button", { name: "Browse…" })).toBeNull();
   });
 
-  it("offers no folder dialog on a host without one", async () => {
+  it("renders no Browse button when the bridge omits pickDirectory", async () => {
     open();
     renderDialog({ "fs.listDir": () => ({ result: HOME }) });
     await screen.findByText("dev");

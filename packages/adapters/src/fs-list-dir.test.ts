@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { defaultFsListDirDeps, listDir } from "./fs-list-dir";
+import { defaultFsListDirDeps, listDir, stripTrailingSeparator } from "./fs-list-dir";
 
 const deps = {
   homedir: () => "/home/rai",
@@ -34,6 +34,18 @@ describe("listDir", () => {
     expect(r.entries.map((e) => e.path)).toEqual(["/home/rai/.config", "/home/rai/dev"]);
     const root = await listDir({ path: "/" }, { ...deps, readEntries: async () => [] });
     expect(root.path).toBe("/");
+  });
+
+  it("strips only the daemon's own separators, and keeps a bare root whole", () => {
+    // POSIX: a backslash is a legal name character, never a separator.
+    expect(stripTrailingSeparator("/home/rai/repo\\", "/")).toBe("/home/rai/repo\\");
+    expect(stripTrailingSeparator("/home/rai//", "/")).toBe("/home/rai");
+    expect(stripTrailingSeparator("/", "/")).toBe("/");
+    // Windows: both separators trail, and `C:` alone would mean the drive's CURRENT dir.
+    expect(stripTrailingSeparator("C:\\dev\\", "\\")).toBe("C:\\dev");
+    expect(stripTrailingSeparator("C:/dev/", "\\")).toBe("C:/dev");
+    expect(stripTrailingSeparator("C:\\", "\\")).toBe("C:\\");
+    expect(stripTrailingSeparator("C:/", "\\")).toBe("C:/");
   });
 
   it("returns null parent at filesystem root", async () => {

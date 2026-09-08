@@ -1,6 +1,6 @@
 import { readdir } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, sep } from "node:path";
 import type { FsEntry, FsListDirResult } from "@rennet/protocol";
 
 export interface FsListDirDeps {
@@ -66,8 +66,15 @@ export async function listDir(
   return { path, home, parent: parent === path ? null : parent, entries };
 }
 
-/** `/Users/rai/` → `/Users/rai` (and `C:\dev\` → `C:\dev`); a bare root keeps its separator. */
-function stripTrailingSeparator(path: string): string {
-  const stripped = path.replace(/[/\\]+$/, "");
-  return stripped.length === 0 || /^[A-Za-z]:$/.test(stripped) ? path : stripped;
+/**
+ * `/Users/rai/` → `/Users/rai`; on a Windows daemon `C:\dev\` and `C:/dev/` → `C:\dev` / `C:/dev`.
+ * Only the daemon's OWN separators count: a POSIX folder can legitimately be named `repo\`.
+ * A bare root keeps its separator (`/`, and `C:\`, since `C:` alone means the drive's current
+ * directory). `separator` is injectable so the Windows branch is testable off Windows.
+ */
+export function stripTrailingSeparator(path: string, separator: string = sep): string {
+  const trailing = separator === "\\" ? /[\\/]+$/ : /\/+$/;
+  const stripped = path.replace(trailing, "");
+  const bareRoot = stripped.length === 0 || (separator === "\\" && /^[A-Za-z]:$/.test(stripped));
+  return bareRoot ? path : stripped;
 }
