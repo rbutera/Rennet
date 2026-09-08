@@ -17,7 +17,12 @@ import type { CouncilEffort } from "@rennet/protocol";
 import { normalizeOutputSchema } from "./claude-query";
 import { sanitizeSchemaForCodex, stripNullDeep } from "./codex-exec";
 import type { ProviderTurnSettlement, RunTurn } from "./council-seat-turn";
-import { type ClaudeTurnUsage, inlineContextMetric, type MetricsCollector } from "./turn-metrics";
+import {
+  type ClaudeTurnUsage,
+  extractClaudeUsage,
+  inlineContextMetric,
+  type MetricsCollector,
+} from "./turn-metrics";
 
 /** The thread a seat runs on, as the supervisor's binding reports it. */
 export interface T3SeatThread {
@@ -53,8 +58,10 @@ export interface T3SettledTurn {
   readonly state: "completed" | "interrupted" | "error";
   readonly structuredOutput?: unknown;
   readonly durationMs?: number;
-  /** The provider's raw usage record, cumulative over the session on the Claude path. */
+  /** Claude main-loop tokens for this turn; excludes subagents and auxiliary calls. */
   readonly usage?: unknown;
+  readonly modelUsage?: unknown;
+  readonly usageEpoch?: string;
   readonly totalCostUsd?: number;
   readonly errorMessage?: string;
   /** T3's last-request context-window snapshot, separate from turn spend. */
@@ -62,7 +69,10 @@ export interface T3SettledTurn {
   /** Exact per-turn Codex totals, separate from the context-window snapshot. */
   readonly aggregateUsage?: unknown;
   /** The nearest earlier settled turn's usage on the thread, off the thread itself. */
-  readonly previousUsage?: { readonly usage: unknown; readonly totalCostUsd?: number };
+  readonly previousUsage?: Pick<
+    T3SettledTurn,
+    "usage" | "modelUsage" | "usageEpoch" | "totalCostUsd"
+  >;
   readonly thread: {
     readonly messages: readonly { readonly role: string; readonly text: string }[];
     readonly session: { readonly lastError: string | null } | null;
@@ -179,28 +189,38 @@ function asRecord(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
-function numberField(record: Record<string, unknown>, key: string): number {
-  const value = record[key];
-  return typeof value === "number" && Number.isFinite(value) ? value : 0;
-}
-
-/** Claude's SDK `usage` in a streaming session is CUMULATIVE over the session's turns. */
-function cumulativeUsage(usage: unknown, totalCostUsd: number | undefined): ClaudeTurnUsage | null {
+/** SDK modelUsage totals include all query-pipeline models, including subagents. */
+function modelUsageTotals(usage: unknown): ClaudeTurnUsage | null {
   const record = asRecord(usage);
   if (!record) return null;
-  const inputTokens = numberField(record, "input_tokens");
-  const outputTokens = numberField(record, "output_tokens");
-  const cacheReadTokens = numberField(record, "cache_read_input_tokens");
-  const cacheCreationTokens = numberField(record, "cache_creation_input_tokens");
-  return {
-    inputTokens,
-    outputTokens,
-    cacheReadTokens,
-    cacheCreationTokens,
-    totalTokens: inputTokens + outputTokens + cacheReadTokens + cacheCreationTokens,
-    reportedUsd:
-      typeof totalCostUsd === "number" && Number.isFinite(totalCostUsd) ? totalCostUsd : null,
+  const totals = {
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheReadInputTokens: 0,
+    cacheCreationInputTokens: 0,
   };
+  for (const value of Object.values(record)) {
+    const model = asRecord(value);
+    if (!model) return null;
+    for (const key of [
+      "inputTokens",
+      "outputTokens",
+      "cacheReadInputTokens",
+      "cacheCreationInputTokens",
+    ] as const) {
+      const count = model[key];
+      if (typeof count !== "number" || !Number.isSafeInteger(count) || count < 0) return null;
+      totals[key] += count;
+    }
+  }
+  return extractClaudeUsage({
+    usage: {
+      input_tokens: totals.inputTokens,
+      output_tokens: totals.outputTokens,
+      cache_read_input_tokens: totals.cacheReadInputTokens,
+      cache_creation_input_tokens: totals.cacheCreationInputTokens,
+    },
+  });
 }
 
 /** Codex input includes cache hits; reasoning is already included in output. */
@@ -231,56 +251,67 @@ function aggregateUsage(usage: unknown): ClaudeTurnUsage | null {
   };
 }
 
-/**
- * This turn's own spend, as the difference against what the session had already reported.
- * Recording the raw cumulative figure on a repair turn would bill the drafting turn twice.
- * A total BELOW the previous one means the session was restarted between the turns and
- * its counter began again, so the total is the turn's own and nothing is subtracted.
- */
-function subtractUsage(
-  total: ClaudeTurnUsage | null,
-  previous: ClaudeTurnUsage | null,
-): ClaudeTurnUsage | null {
-  if (total === null) return null;
-  if (previous === null || total.totalTokens < previous.totalTokens) return total;
-  const at = (a: number, b: number) => Math.max(0, a - b);
-  const inputTokens = at(total.inputTokens, previous.inputTokens);
-  const outputTokens = at(total.outputTokens, previous.outputTokens);
-  const cacheReadTokens = at(total.cacheReadTokens, previous.cacheReadTokens);
-  const cacheCreationTokens = at(total.cacheCreationTokens, previous.cacheCreationTokens);
+/** Subtract only cumulative model totals from the same known query epoch. */
+function subtractUsage(total: ClaudeTurnUsage, previous: ClaudeTurnUsage): ClaudeTurnUsage | null {
+  const inputTokens = total.inputTokens - previous.inputTokens;
+  const outputTokens = total.outputTokens - previous.outputTokens;
+  const cacheReadTokens = total.cacheReadTokens - previous.cacheReadTokens;
+  const cacheCreationTokens = total.cacheCreationTokens - previous.cacheCreationTokens;
+  if ([inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens].some((count) => count < 0))
+    return null;
   return {
     inputTokens,
     outputTokens,
     cacheReadTokens,
     cacheCreationTokens,
     totalTokens: inputTokens + outputTokens + cacheReadTokens + cacheCreationTokens,
-    reportedUsd:
-      total.reportedUsd === null
-        ? null
-        : Math.max(0, total.reportedUsd - (previous.reportedUsd ?? 0)),
+    reportedUsd: null,
   };
 }
 
-/**
- * A settled T3 turn's own spend. Claude reports on the settlement, cumulatively over the
- * session, so the turn's share is the difference against the previous settled turn on
- * the thread — which the settlement carries from the thread itself, so a runner
- * recreated for the thread (a whole-board restart re-resolves the seat) or a daemon
- * restarted under it subtracts exactly what one that watched every turn would. Codex
- * uses the exact turn aggregate derived from durable, turn-stamped provider counters.
- */
+/** Claude modelUsage and cost accumulate per query; usage is already per-turn. */
 export function settledTurnUsage(
   settled: Pick<
     T3SettledTurn,
-    "usage" | "totalCostUsd" | "tokenUsage" | "aggregateUsage" | "previousUsage"
+    | "usage"
+    | "modelUsage"
+    | "usageEpoch"
+    | "totalCostUsd"
+    | "tokenUsage"
+    | "aggregateUsage"
+    | "previousUsage"
   >,
 ): ClaudeTurnUsage | null {
-  if (settled.usage === undefined) return aggregateUsage(settled.aggregateUsage);
   const previous = settled.previousUsage;
-  return subtractUsage(
-    cumulativeUsage(settled.usage, settled.totalCostUsd),
-    previous === undefined ? null : cumulativeUsage(previous.usage, previous.totalCostUsd),
-  );
+  const knownEpoch = settled.usageEpoch !== undefined;
+  const sameEpoch = knownEpoch && settled.usageEpoch === previous?.usageEpoch;
+  const freshEpoch =
+    knownEpoch &&
+    (previous === undefined ||
+      (previous.usageEpoch !== undefined && previous.usageEpoch !== settled.usageEpoch));
+  const total = modelUsageTotals(settled.modelUsage);
+  const baseline = sameEpoch ? modelUsageTotals(previous?.modelUsage) : null;
+  const complete = freshEpoch
+    ? total
+    : sameEpoch && total && baseline
+      ? subtractUsage(total, baseline)
+      : null;
+  const usage = complete ?? extractClaudeUsage({ usage: settled.usage });
+  if (!usage) return aggregateUsage(settled.aggregateUsage);
+  const cost = settled.totalCostUsd;
+  const previousCost = previous?.totalCostUsd;
+  let reportedUsd: number | null = null;
+  if (typeof cost === "number" && Number.isFinite(cost)) {
+    if (freshEpoch) reportedUsd = cost;
+    else if (
+      sameEpoch &&
+      typeof previousCost === "number" &&
+      Number.isFinite(previousCost) &&
+      cost >= previousCost
+    )
+      reportedUsd = cost - previousCost;
+  }
+  return { ...usage, reportedUsd };
 }
 
 /** The last assistant message of a thread, or an empty string. */

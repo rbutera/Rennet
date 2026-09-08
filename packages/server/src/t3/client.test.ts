@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { settledTurnUsage } from "@rennet/adapters";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   awaitTurnSettled,
@@ -712,6 +713,44 @@ describe("readTurnSettlement", () => {
     expect(readTurnSettlement(t, "turn-9")).toBeUndefined();
   });
 
+  it("does not attribute an intervening unmeasured turn's spend to its successor", () => {
+    const t = thread([
+      activity("turn.settled", "A", {
+        usageEpoch: "query",
+        usage: { input_tokens: 10_000 },
+        modelUsage: {
+          sonnet: {
+            inputTokens: 10_000,
+            outputTokens: 0,
+            cacheReadInputTokens: 0,
+            cacheCreationInputTokens: 0,
+          },
+        },
+        totalCostUsd: 1,
+      }),
+      activity("turn.settled", "B", { usageEpoch: "query" }),
+      activity("turn.settled", "C", {
+        usageEpoch: "query",
+        usage: { input_tokens: 1_000 },
+        modelUsage: {
+          sonnet: {
+            inputTokens: 30_000,
+            outputTokens: 0,
+            cacheReadInputTokens: 0,
+            cacheCreationInputTokens: 0,
+          },
+        },
+        totalCostUsd: 3,
+      }),
+    ]);
+    const settlement = readTurnSettlement(t, "C");
+    expect(settlement?.previousUsage).toEqual({ usageEpoch: "query" });
+    expect(settledTurnUsage(settlement ?? {})).toMatchObject({
+      totalTokens: 1_000,
+      reportedUsd: null,
+    });
+  });
+
   it("derives each Codex turn's total from stamped durable counters, independent of event arrival order", () => {
     const snapshot = (inputTokens: number, cachedInputTokens: number, outputTokens: number) => ({
       usedTokens: 1_200,
@@ -819,15 +858,13 @@ describe("readTurnSettlement", () => {
     ).toBeUndefined();
   });
 
-  it("skips an earlier settlement that carried no usage and finds the one before it", () => {
+  it("keeps an earlier settlement without usage as an unknown baseline", () => {
     const t = thread([
       activity("turn.settled", "turn-1", { usage: { input_tokens: 5 } }),
       activity("turn.settled", "turn-2", { errorMessage: "interrupted" }),
       activity("turn.settled", "turn-3", { usage: { input_tokens: 9 } }),
     ]);
-    expect(readTurnSettlement(t, "turn-3")?.previousUsage).toEqual({
-      usage: { input_tokens: 5 },
-    });
+    expect(readTurnSettlement(t, "turn-3")?.previousUsage).toEqual({});
     expect(readTurnSettlement(t, "turn-3")?.tokenUsage).toBeUndefined();
   });
 });

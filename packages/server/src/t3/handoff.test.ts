@@ -121,14 +121,18 @@ describe("runHandoffTurn", () => {
     ).toBe("failed");
   });
 
-  it("carries the turn's own usage on a completed outcome, as the delta on the review's thread", async () => {
+  it("carries per-turn main-loop usage without subtracting the previous handoff", async () => {
     const { client, threadFor } = stubs({
       turnId: "turn-2",
       state: "completed",
       thread: thread("completed"),
-      // Cumulative over the session; the previous handoff on this thread is subtracted.
-      usage: { input_tokens: 12_000, output_tokens: 900, cache_read_input_tokens: 4_000 },
-      previousUsage: { usage: { input_tokens: 10_000, output_tokens: 500 } },
+      // Raw SDK usage is already per-turn; only modelUsage is cumulative.
+      usage: { input_tokens: 2_000, output_tokens: 400, cache_read_input_tokens: 4_000 },
+      usageEpoch: "handoff-runtime",
+      previousUsage: {
+        usage: { input_tokens: 10_000, output_tokens: 500 },
+        usageEpoch: "handoff-runtime",
+      },
     });
     const outcome = await runHandoffTurn(
       { repoRoot: "/repos/a", prompt: "x", reviewId: "rv-1" },
