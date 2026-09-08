@@ -529,6 +529,42 @@ describe("cite resolves against the captured patchset in the same call", () => {
 // ── 1.6 finish ──────────────────────────────────────────────────────────────
 
 describe("finish is the whole-board verdict and returns pointers only", () => {
+  it.each(["decisions", "flagged"] as const)(
+    "%s keeps orphaned material repairable before settlement",
+    (lens) => {
+      const w = writer(lens);
+      const citation = idOf(
+        w.call("cite", { path: "src/auth.ts", side: "head", start_line: 11, end_line: 12 }),
+      );
+      const verb = lens === "decisions" ? "add_decision" : "add_finding";
+      const input =
+        lens === "decisions"
+          ? {
+              statement: "Refresh before classification.",
+              why: "Classification needs the refreshed code.",
+              evidence_ref_ids: [citation],
+              alternatives: ["Classify first."],
+            }
+          : {
+              severity: "high",
+              concern: "Classification reads the expired code before refresh.",
+              code_ref_ids: [citation],
+            };
+      const element = idOf(w.call(verb, input));
+      const unfinished = ok(w.call("finish")).outcome;
+      if (unfinished.kind !== "pointers") throw new Error(JSON.stringify(unfinished));
+      expect(unfinished.pointers).toEqual([
+        expect.objectContaining({ elementRef: element, ruleId: `${lens}-material-reachable` }),
+      ]);
+      expect(w.status()).toBe("drafting");
+      const section = idOf(w.call("add_section", { title: "Refresh order" }));
+      ok(w.call(verb, { ...input, parent_id: section }));
+      ok(w.call("remove_element", { element_id: element }));
+      const settled = ok(w.call("finish")).outcome;
+      if (settled.kind !== "settled") throw new Error(JSON.stringify(settled));
+    },
+  );
+
   it("an empty board does not finish: the emptiness check moved here", () => {
     const w = writer("flagged");
     const pointers = pointersOf(w.call("finish"));

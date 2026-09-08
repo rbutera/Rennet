@@ -47,6 +47,11 @@ describe("Section fold grammar", () => {
     expect(container.querySelector("[data-testid=delta-dot]")).toBeNull();
   });
 
+  it("names Noise members as regions rather than extra groups", () => {
+    expect(sectionCountText({ groups: 24 })).toBe("24 regions");
+    expect(sectionCountText({ noise_verdict: 1 })).toBe("1 region");
+  });
+
   it("normalizes legacy raw kinds to ordered domain-object counts", () => {
     expect(
       sectionCountText({

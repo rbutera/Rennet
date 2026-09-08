@@ -5337,19 +5337,15 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // calling this, so the backend is built for the addressed review's active
     // patchset. The pipeline is a deterministic-floor build (no lens/model turns).
     symbolLookup: createLiveSymbolLookup({
-      buildBackend: async (review) => {
-        // Pin to the REVIEWED tree (base..head), not the base — so a symbol added,
-        // renamed, or moved in the PR resolves instead of reading stale/missing over
-        // the base snapshot. The pipeline is a deterministic-floor build; only the
-        // symbolic ops (context.symbol/references) are read from this backend.
-        const headReview = reviewPinnedToHead(review);
+      buildBackend: async (review, side) => {
+        const indexedReview = side === "base" ? review : reviewPinnedToHead(review);
         const pipeline = await buildReviewCanvases({
-          reviewId: headReview.id,
-          patchset: activePatchset(headReview),
-          dispositions: headReview.dispositions,
+          reviewId: indexedReview.id,
+          patchset: activePatchset(indexedReview),
+          dispositions: indexedReview.dispositions,
           budget: createInvocationBudget(0),
         });
-        const live = await createDesktopReviewBackend(headReview, pipeline, {
+        const live = await createDesktopReviewBackend(indexedReview, pipeline, {
           noveltyLifecycle: liveNoveltyLifecycle,
         });
         return live.backend;
