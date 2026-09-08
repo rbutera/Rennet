@@ -609,7 +609,7 @@ function checkProcessVocab(
 
 // ── The rules (each: pure, over one draft + ctx) ─────────────────────────────
 
-type Rule = (draft: DraftBoard, ctx: LintContext) => Violation[];
+type Rule = (draft: DraftBoard, ctx: LintContext, register?: BoardRegister) => Violation[];
 
 const FENCE = /```/;
 // ponytail: a run of ≥2 four-space-indented lines. A markdown list/paragraph
@@ -656,8 +656,8 @@ const noDialogue: Rule = (draft) =>
   });
 
 /** L3 — prose citations are full repo-relative `path:line`, never absolute/GitHub/basename. */
-const citationWellFormed: Rule = (draft) =>
-  allProseFields(draft).flatMap(({ elementId, field, text }) =>
+const citationWellFormed: Rule = (draft, _ctx, register) =>
+  (register === "transcribed" ? [] : allProseFields(draft)).flatMap(({ elementId, field, text }) =>
     checkCitationWellFormed(text, ref(elementId, field)),
   );
 
@@ -749,11 +749,13 @@ const elementReferencesResolve: Rule = (draft) => {
  * patchset (S2), and must not invert their line span (S8). A `noise_verdict`'s
  * `hunk` element reference (L12) must point at a real `code_ref` on this board.
  */
-const citationResolves: Rule = (draft, ctx) => {
+const citationResolves: Rule = (draft, ctx, register) => {
   const out: Violation[] = [];
   const byId = new Map(draft.elements.map((el) => [el.id, el]));
   // Prose path:line mentions — HEAD side. The document's intro is prose too.
-  for (const { elementId, field, text } of allProseFields(draft)) {
+  for (const { elementId, field, text } of register === "transcribed"
+    ? []
+    : allProseFields(draft)) {
     out.push(...checkCitationResolves(text, ctx.files, ref(elementId, field)));
   }
   for (const el of draft.elements) {
@@ -3162,15 +3164,11 @@ export const DRAFT_LINT_RULES: readonly Rule[] = LENS_RULES.filter(
  * `openspec/changes/archive/`, it was the single largest cause of a deterministic
  * board being thrown away and re-bought as an ~880-second model seat.
  *
- * The line is INTEGRITY vs VOICE, and only the voice half is dropped:
- *
- * - A rule that protects a READER from a broken board runs in both registers, always
- *   — citations well-formed and resolving, references resolving, code bytes, kind
- *   allowlist, scaffold lane, grounding, the source and requirement screens, and
- *   every whole-board finish rule. A transcription can still produce a board a reader
- *   cannot follow, and it is refused for it exactly as a seat's board would be.
- * - A rule that polices a WRITER's choices has no subject when nobody chose. Those
- *   are {@link VOICE_RULES}, and they are skipped for `transcribed` alone.
+ * Voice rules address the writer and are skipped for transcribed prose. Citation
+ * rules still validate explicit code_ref elements, but path-shaped source text is
+ * not a citation claim. The renderer preserves those tokens as text using the host's
+ * durable proseRegister stamp. Authored prose keeps automatic citation validation.
+ * Every other integrity and finish rule applies in both registers.
  *
  * This is deliberately NOT an allowlist widening. Adding "session", "workspace",
  * … to `PROCESS_VOCAB`'s exemptions treats the symptom and needs widening again for
@@ -3197,8 +3195,8 @@ export type BoardRegister = "authored" | "transcribed";
  * `no-code-bytes` is deliberately NOT here, though a fenced block in a quoted `## Why`
  * is also the author's. A board that carries code as bytes instead of a `code_ref` is
  * broken for the reader whatever produced it, so it stays in both registers and the
- * change routes to the seat. Same for the citation screens: a bare-basename citation
- * quoted verbatim is still a citation a reader cannot resolve.
+ * change routes to the seat. Citation rules remain registered too, but distinguish
+ * explicit code references from path-shaped text in a transcription.
  */
 export const VOICE_RULES: readonly Rule[] = [processVocabulary, noDialogue, noRemainderNarration];
 
@@ -3248,7 +3246,8 @@ export function rulesForTier(
  * tool boundary and `finish` differ in WHEN they ask, never in what they know.
  *
  * `register` is WHO wrote the prose ({@link BoardRegister}); a transcription skips the
- * {@link VOICE_RULES} and answers every other rule exactly as an authored board does.
+ * {@link VOICE_RULES}; citation rules receive the register to distinguish prose
+ * examples from explicit code references. The model cannot supply this argument.
  */
 export function lintTier(
   draft: DraftBoard,
@@ -3256,7 +3255,7 @@ export function lintTier(
   tier: LintTier,
   register: BoardRegister = "authored",
 ): Violation[] {
-  return rulesForTier(ctx.lens, tier, register).flatMap((rule) => rule(draft, ctx));
+  return rulesForTier(ctx.lens, tier, register).flatMap((rule) => rule(draft, ctx, register));
 }
 
 /**

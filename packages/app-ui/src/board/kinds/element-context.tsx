@@ -1,5 +1,6 @@
 import type { CodeRef, HostElement } from "@rennet/protocol";
 import { createContext, type ReactNode, useContext, useMemo } from "react";
+import { CitationAutolinkContext } from "../../review/rich-text";
 import type { ElementOf } from "../registry";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -71,6 +72,7 @@ export function BoardElementsProvider({
   generation = "",
   boardId = "",
   lens = "",
+  proseRegister,
   children,
 }: {
   readonly elements: readonly HostElement[];
@@ -82,6 +84,7 @@ export function BoardElementsProvider({
   readonly boardId?: string;
   /** The lens this board belongs to; gates the design-only section metadata. */
   readonly lens?: string;
+  readonly proseRegister?: "authored" | "transcribed";
   readonly children: ReactNode;
 }) {
   const value = useMemo<BoardElements>(() => {
@@ -97,7 +100,13 @@ export function BoardElementsProvider({
       lens,
     };
   }, [elements, reviewId, generation, boardId, lens]);
-  return <BoardElementsContext.Provider value={value}>{children}</BoardElementsContext.Provider>;
+  return (
+    <BoardElementsContext.Provider value={value}>
+      <CitationAutolinkContext.Provider value={proseRegister !== "transcribed"}>
+        {children}
+      </CitationAutolinkContext.Provider>
+    </BoardElementsContext.Provider>
+  );
 }
 
 /** The review id for source/artifact navigation, or "" outside a review board. */

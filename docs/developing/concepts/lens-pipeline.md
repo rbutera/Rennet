@@ -216,9 +216,15 @@ and calls board regeneration through this runtime.
    board is **transcribed**: the host is quoting the project's own artifacts, and a rule
    that tells a writer to choose different words has no subject. So the transcribed
    register drops exactly the voice rules — `process-vocabulary`, `no-dialogue`,
-   `no-remainder-narration` — and runs every other rule of both tiers unchanged. A
-   transcription is still refused for a citation a reader cannot resolve, for code carried
-   as bytes instead of a `code_ref`, and for anything `finish` finds over the whole board.
+   `no-remainder-narration`. Citation rules treat path-shaped strings in transcribed
+   prose as text, preserving the original wording and inline formatting without creating
+   source-navigation controls. Explicit `code_ref` elements still validate their immutable
+   patchset, side and range. Authored prose keeps automatic citation validation and links.
+   The host stamps `proseRegister` on the board document so saved boards retain this
+   distinction in introductions, prose, decisions and quote highlighting. Model tools
+   cannot set that field; older boards without it keep their existing behavior.
+   Code carried as bytes instead of a `code_ref`, and other integrity or finish failures,
+   still take the existing fallback path.
 
    The distinction is load-bearing rather than tidy. `process-vocabulary` exists to stop a
    model writing about the review machinery instead of the change under review; run over a

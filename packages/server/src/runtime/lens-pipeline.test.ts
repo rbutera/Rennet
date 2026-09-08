@@ -9,6 +9,7 @@ import {
   WhiteboardClient,
 } from "@rennet/adapters";
 import {
+  assembleDesignBoard,
   type BoardVoiceWriter,
   buildDeltaPacket,
   CHANGE_INDEX_FILE,
@@ -1768,6 +1769,49 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     expect(design?.board?.document?.title).toBe("token-refresh");
     // No Design turn was ever sent to the fake harness.
     expect(captures.some(({ prompt }) => lensFromPrompt(prompt ?? "") === "design")).toBe(false);
+  });
+
+  it("transcribes illustrative spec paths without starting a Design model turn", async () => {
+    const captures: SeatCapture[] = [];
+    const intro = "Examples use `example/file.ts:42` and sample.ts:99.";
+    const result = await runLensPipeline({
+      ...boardSeats(captures, (prompt, label) => cleanBody(lensFromPrompt(prompt, label))),
+      repoRoot: "/pr-worktree",
+      deltaPacket: PACKET,
+      lintContextFor,
+      readPrompt,
+      whiteboard: fakeWhiteboard([]),
+      boardIdFor: (lens) => `board:${lens}`,
+      assembleDesignBoard: (ctx) =>
+        assembleDesignBoard(
+          [
+            {
+              format: "openspec",
+              candidate: "examples",
+              role: "proposal",
+              path: "openspec/changes/examples/proposal.md",
+              text: `## Why\n${intro}`,
+            },
+            {
+              format: "openspec",
+              candidate: "examples",
+              role: "tasks",
+              path: "openspec/changes/examples/tasks.md",
+              text: "## 1. Examples\n- [ ] Preserve `example/file.ts:42` verbatim",
+            },
+          ],
+          ctx,
+          { kind: "lens-agent", id: "design-seat" },
+        ),
+    });
+    expect(captures.filter(({ prompt }) => lensFromPrompt(prompt ?? "") === "design")).toHaveLength(
+      0,
+    );
+    const design = result.boards.find((board) => board.lens === "design");
+    expect(design?.failure).toBeUndefined();
+    expect(design?.board?.document?.introMarkdown).toBe(intro);
+    expect(design?.board?.document?.proseRegister).toBe("transcribed");
+    expect(JSON.stringify(design?.board)).toContain("Preserve `example/file.ts:42` verbatim");
   });
 
   it("refuses a dangling Sequence or Decisions reference where it is made, and the board still lands", async () => {

@@ -11,6 +11,7 @@ const meta = (boardId: string, lens: BoardMetaInput["lens"]): BoardMetaInput => 
     title: lens === "report" ? "Round report" : "A grounded board",
     introMarkdown: "Walked from the durable write to the reader.",
     measure: lens === "design" ? "structured" : "reading",
+    ...(lens === "design" ? { proseRegister: "transcribed" } : {}),
   },
   blemishes: [{ ruleId: "prose-length", elementRef: "/e1", message: "too long" }],
   omissions: [{ elementId: "e2", reason: "not covered" }],
@@ -21,15 +22,17 @@ describe("BoardMetaStore", () => {
   const dir = () => mkdtempSync(join(tmpdir(), "board-meta-"));
 
   it("round-trips a board's coverage/validation metadata through disk", () => {
-    const store = new BoardMetaStore(dir());
+    const root = dir();
+    const store = new BoardMetaStore(root);
     store.save(meta("board:design", "design"));
-    const read = store.load("board:design");
+    const read = new BoardMetaStore(root).load("board:design");
     expect(read?.boardId).toBe("board:design");
     expect(read?.lens).toBe("design");
     expect(read?.document).toEqual({
       title: "A grounded board",
       introMarkdown: "Walked from the durable write to the reader.",
       measure: "structured",
+      proseRegister: "transcribed",
     });
     expect(read?.blemishes).toEqual([
       { ruleId: "prose-length", elementRef: "/e1", message: "too long" },
