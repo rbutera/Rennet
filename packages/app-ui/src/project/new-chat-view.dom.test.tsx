@@ -290,14 +290,25 @@ function renderView(
 }
 
 /** The list row (`data-row="target"`) carrying `name` — scoped to the rows so the
- *  composer's own "Current Checkout" chip text is never a false match. */
-function rowButton(name: RegExp): HTMLButtonElement {
+ *  composer's own "Current Checkout" chip text is never a false match. The rows are
+ *  table rows (a `<tr>` cannot be a `<button>`), found by the same seam the E2E specs use. */
+function rowButton(name: RegExp): HTMLTableRowElement {
   const match = screen
     .getAllByText(name)
-    .map((node) => node.closest('button[data-row="target"]'))
-    .find((button): button is HTMLButtonElement => button !== null);
-  if (!match) throw new Error(`no row button for ${name}`);
+    .map((node) => node.closest('tr[data-row="target"]'))
+    .find((row): row is HTMLTableRowElement => row !== null);
+  if (!match) throw new Error(`no row for ${name}`);
   return match;
+}
+/** One column's cell in a row (`data-column` is the column id). */
+function cell(row: HTMLTableRowElement, column: string): HTMLElement {
+  const match = row.querySelector<HTMLElement>(`td[data-column="${column}"]`);
+  if (!match) throw new Error(`no ${column} cell`);
+  return match;
+}
+/** Every target row, in display order. */
+function targetRows(): HTMLTableRowElement[] {
+  return Array.from(document.querySelectorAll<HTMLTableRowElement>('tr[data-row="target"]'));
 }
 
 describe("NewChatView", () => {
@@ -347,11 +358,7 @@ describe("NewChatView", () => {
   it("sorts by activity by default and by created time from the headers", async () => {
     renderView("p1", { p1: detailP1() });
     await screen.findByText("Teammate span fix");
-    const titles = () =>
-      screen
-        .getAllByRole("button")
-        .filter((button) => button.dataset.row === "target")
-        .map((button) => button.textContent);
+    const titles = () => targetRows().map((row) => row.textContent);
 
     expect(titles()[0]).toContain("Teammate span fix");
     fireEvent.click(screen.getByRole("button", { name: "Sort by created" }));
@@ -545,7 +552,7 @@ describe("NewChatView", () => {
     const worktree = rowButton(/feat\/local-x/);
     expect(within(worktree).getByText("+7")).toBeTruthy();
     expect(within(worktree).getByText("−3")).toBeTruthy();
-    expect(within(worktree).getByText("2")).toBeTruthy(); // files
+    expect(within(cell(worktree, "files")).getByText("2")).toBeTruthy();
     expect(worktree.querySelector("time[datetime='2026-08-22T08:00:00.000Z']")).not.toBeNull();
     expect(worktree.querySelector("[data-worktree='dirty']")?.textContent).toBe("dirty");
     expect(within(worktree).queryByText("reviewed")).toBeNull(); // the stage word is gone
@@ -556,7 +563,9 @@ describe("NewChatView", () => {
     expect(within(bare).queryByText("clean")).toBeNull();
     expect(within(bare).queryByText("captured")).toBeNull();
     expect(within(bare).getAllByText("—").length).toBeGreaterThanOrEqual(3); // +/−, files, created
-    expect(within(bare).getByText("↓3")).toBeTruthy();
+    // Ahead/behind are drawn icons with the word for a screen reader, not glyphs.
+    expect(within(bare).getByText("3 behind")).toBeTruthy();
+    expect(within(worktree).getByText("2 ahead")).toBeTruthy();
   });
 
   it("shows a forge avatar where the forge gave one, initials everywhere else", async () => {
@@ -668,6 +677,87 @@ describe("NewChatView", () => {
 
     archivedCoach.getState().replay();
     expect(archived.getByTestId("active-coach").textContent).toBe("smart-list");
+  });
+});
+
+describe("NewChatView — the table: sort state is spoken, facets split, refresh re-reads", () => {
+  it("the sorted header carries aria-sort, and only that one", async () => {
+    renderView("p1", { p1: detailP1() });
+    await screen.findByText("Teammate span fix");
+    const sortedHeaders = () =>
+      Array.from(document.querySelectorAll("th[aria-sort]")).map(
+        (th) => `${th.textContent?.trim()}:${th.getAttribute("aria-sort")}`,
+      );
+    expect(sortedHeaders()).toEqual(["Activity:descending"]);
+    fireEvent.click(screen.getByRole("button", { name: "Sort by created" }));
+    expect(sortedHeaders()).toEqual(["Created:descending"]);
+    fireEvent.click(screen.getByRole("button", { name: "Sort by created" }));
+    expect(sortedHeaders()).toEqual(["Created:ascending"]);
+  });
+
+  it("a facet exists only where it can split the rows, narrows with a count, and composes with the rail", async () => {
+    const { user } = renderView("p1", { p1: detailP1() });
+    await screen.findByText("Teammate span fix");
+    // Two authors and two CI states split p1's rows; its one repository does not, so no
+    // repository facet is drawn — chrome names a fact about the list, never itself.
+    expect(screen.getByRole("button", { name: "Filter by author" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Filter by ci" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Filter by repository" })).toBeNull();
+    expect(document.querySelector("[data-result-count]")).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "Filter by author" }));
+    await user.click(await screen.findByRole("menuitemcheckbox", { name: /emma/ }));
+    await waitFor(() => expect(screen.queryByText("My open change")).toBeNull());
+    expect(screen.getByText("Teammate span fix")).toBeTruthy();
+    expect(screen.queryByText("feat/local-x")).toBeNull();
+    expect(document.querySelector("[data-result-count]")?.textContent).toContain("1 of 3");
+    expect(document.querySelector("[data-facet-count]")?.textContent).toBe("1");
+
+    // The facet is one filter among the table's: "Yours" inside emma's rows is honestly empty.
+    fireEvent.click(screen.getByRole("button", { name: /^Yours/ }));
+    expect(screen.getByText("nothing matches")).toBeTruthy();
+    // Clear filters restores every row, the rail's scope, and drops the count.
+    fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+    expect(screen.getByText("My open change")).toBeTruthy();
+    expect(screen.getByText("feat/local-x")).toBeTruthy();
+    expect(document.querySelector("[data-result-count]")).toBeNull();
+  });
+
+  it("Refresh re-reads the project, says so while it runs, and never drops the rows", async () => {
+    let reads = 0;
+    let release: (() => void) | undefined;
+    renderView("p1", { p1: detailP1() }, undefined, undefined, undefined, undefined, (input) => {
+      reads += 1;
+      const answer = input.projectId === "p1" ? detailP1() : EMPTY_DETAIL;
+      // The first read answers at once; the second is held until the test releases it,
+      // which is the only state in which the in-flight face is on screen at all.
+      if (reads === 1) return answer;
+      return new Promise((resolve) => {
+        release = () => resolve(answer);
+      });
+    });
+    await screen.findByText("My open change");
+    expect(reads).toBe(1);
+    expect(
+      screen
+        .getByRole("button", { name: "Refresh branches and pull requests" })
+        .getAttribute("data-refresh"),
+    ).toBe("idle");
+
+    fireEvent.click(screen.getByRole("button", { name: "Refresh branches and pull requests" }));
+    await waitFor(() => expect(reads).toBe(2));
+    // In flight: the button says so and waits; the rows stay put — a refresh is a
+    // background re-read, never a fresh scan.
+    const refreshing = await screen.findByRole("button", { name: "Refreshing" });
+    expect(refreshing.getAttribute("data-refresh")).toBe("refreshing");
+    expect(screen.getByText("My open change")).toBeTruthy();
+    expect(screen.queryByText(/scanning this project/)).toBeNull();
+
+    await act(async () => {
+      release?.();
+    });
+    await screen.findByRole("button", { name: "Refresh branches and pull requests" });
+    expect(screen.getByText("My open change")).toBeTruthy();
   });
 });
 
@@ -799,7 +889,7 @@ describe("NewChatView — a row click starts the session (C21, R26)", () => {
 
     // Before any click every row reserves the mark column, and none of them wears it — so
     // the list cannot shift sideways when one appears.
-    const rows = () => screen.getAllByRole("button").filter((b) => b.dataset.row === "target");
+    const rows = () => targetRows();
     expect(rows().length).toBeGreaterThan(1);
     for (const row of rows()) expect(row.dataset.starting).toBeUndefined();
 
