@@ -646,7 +646,9 @@ createInterface({ input: process.stdin }).on("line", line => {
       running?.child?.kill("SIGKILL");
       try {
         process.kill(Number(readFileSync(holderFile, "utf8")), "SIGKILL");
-      } catch {}
+      } catch (error) {
+        expect(error).toMatchObject({ code: expect.stringMatching(/^(ENOENT|ESRCH)$/) });
+      }
       rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     }
   }, 60_000);
