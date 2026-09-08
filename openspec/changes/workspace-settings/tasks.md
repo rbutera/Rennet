@@ -28,9 +28,9 @@ Ships on its own: values resolve and preview correctly; the binding still ignore
 
 ## 4. The card (D7)
 
-- [ ] 4.1 Rewrite `worktrees.tsx`: Location with provenance, Reset and Pin; Layout with two fields and their preview lines from the row; Workspace as a two-segment control; Workspaces as the inventory rows with remove on Rennet-made idle entries; one-sentence empty state; the four prose rows deleted. Section caption keeps `BackingFile` for the two files the section writes
-- [ ] 4.2 `projects.dom.test.tsx`: the preview renders the row's string and nothing computed (control: change the row's string, watch the render follow); a `share`/`own` click writes through `settings.setProjectValue` with the right `repoPath` for the scoped row in a two-repo project; a remove click dispatches with the row's path; a refused remove renders git's text
-- [ ] 4.3 Editors sit DISABLED with `UnbackedNote` when no write store backs the row, as the other Projects editors do
+- [x] 4.1 Rewrite `worktrees.tsx`: Location with provenance, Reset and Pin; Layout with two fields and their preview lines from the row; Workspace as a two-segment control; Workspaces as the inventory rows with remove on Rennet-made idle entries; one-sentence empty state; the four prose rows deleted. Section caption keeps `BackingFile` for the two files the section writes
+- [x] 4.2 `projects.dom.test.tsx`: the preview renders the row's string and nothing computed (control: change the row's string, watch the render follow); a `share`/`own` click writes through `settings.setProjectValue` with the right `repoPath` for the scoped row in a two-repo project; a remove click dispatches with the row's id; a refused remove renders git's text
+- [x] 4.3 Editors sit DISABLED with `UnbackedNote` when no write store backs the row, as the other Projects editors do
 
 ## 5. Documentation and the cost sentence
 
