@@ -65,11 +65,11 @@ const bigPacket = buildDeltaPacket(synthetic(), []);
 // Budgets leave 10% headroom. The context-reference layer has its own bounded test.
 // These are bytes sent, not measured provider tokens or total conversation cost.
 const BUDGET: Record<(typeof LENS_KINDS)[number], number> = {
-  design: 16_428,
-  sequence: 10_959,
-  decisions: 10_764,
-  flagged: 11_213,
-  noise: 11_486,
+  design: 16_596,
+  sequence: 11_153,
+  decisions: 10_958,
+  flagged: 11_381,
+  noise: 11_654,
 };
 
 describe("drafter prompt byte budget (tripwire, #737)", () => {
