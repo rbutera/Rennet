@@ -192,7 +192,7 @@ describe("the push under `own` (task 2.4)", () => {
     // reviewer under `share` must not be able to tell this change happened.
     const { forges } = registry();
     const calls: string[][] = [];
-    const recording = async (cwd: string, args: string[]) => {
+    const recording = async (_cwd: string, args: string[]) => {
       calls.push(args);
       return "";
     };
