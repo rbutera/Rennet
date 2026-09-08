@@ -1,9 +1,9 @@
 import type { CodeRef } from "@rennet/protocol";
 import { cn } from "@rennet/ui";
 import { Check, Copy, FileCode, MessageSquare, Plus } from "lucide-react";
-import { useLayoutEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "../components/icon";
-import { windowRows } from "../components/window-rows";
+import { rowOffsets, windowMeasuredRows } from "../components/window-rows";
 import { useFlightBatcher } from "../handoff/exit-flight";
 import {
   codePositionKey,
@@ -25,6 +25,17 @@ import { SymbolTokens, useSymbolNavigation } from "./symbol-inspection";
 // `review` slice DIRECTLY (no provider shim, no `store?.` guard — reconciliation 8).
 // Header navigation comes from the route-scoped code destination. Explicit props can
 // replace or suppress those defaults for tests and special callers.
+//
+// Lines WRAP (Rai, 2026-09-08: "you can't actually read the whole line"). The card is
+// bounded at 640px and a reviewed line is routinely longer, so a horizontal scroller hid
+// the end of every long line behind a scrollbar nobody reached for. A wrapped row is
+// taller than the 22px estimate, which is why the virtual window measures the rows it
+// paints (`rowOffsets`) instead of assuming one height for all of them.
+//
+// The header is the card's control strip: path, range, whatever the caller passes as
+// `headerActions` (the evidence controls — expand, full file, counterpart, back), then
+// Copy. Controls that sat in a row above the card read as loose chrome between prose and
+// code; on the card they belong to it.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface CodeBlockProps {
@@ -57,6 +68,8 @@ export interface CodeBlockProps {
    * function overrides it, and `null` keeps the path inert.
    */
   readonly onOpenPath?: ((path: string) => void) | null;
+  /** Controls that act on this block, rendered in the header left of Copy. */
+  readonly headerActions?: ReactNode;
   readonly className?: string;
 }
 
@@ -72,6 +85,7 @@ export function CodeBlock({
   side = "RIGHT",
   counterpart,
   onOpenPath,
+  headerActions,
   className,
 }: CodeBlockProps) {
   const destination = useCodeDestination(path);
@@ -115,6 +129,18 @@ export function CodeBlock({
   const viewportHeight = 440;
   const scrollElement = useRef<HTMLDivElement>(null);
   const [scrollTop, setScrollTop] = useState(0);
+  // Measured heights of rows the window has painted, by row index. A row that wrapped is
+  // taller than `rowHeight`; unmeasured rows take the estimate. Reset with the source.
+  const [measured, setMeasured] = useState<ReadonlyMap<number, number>>(() => new Map());
+  const measuredFor = useRef(sourceLines);
+  if (measuredFor.current !== sourceLines) {
+    measuredFor.current = sourceLines;
+    if (measured.size > 0) setMeasured(new Map());
+  }
+  const offsets = useMemo(
+    () => (virtual ? rowOffsets(lineCount, rowHeight, measured) : []),
+    [virtual, lineCount, measured],
+  );
   const focusIndex = focusRef
     ? (rows?.findIndex(
         (row) => (focusRef.side === "base" ? row.oldLine : row.newLine) === focusRef.startLine,
@@ -127,8 +153,27 @@ export function CodeBlock({
     setScrollTop(top);
   }, [focusIndex, virtual]);
   const range = virtual
-    ? windowRows({ total: lineCount, rowHeight, viewportHeight, scrollTop })
+    ? windowMeasuredRows({ offsets, viewportHeight, scrollTop })
     : { start: 0, end: lineCount };
+  // After paint, read the height of every row in the window. A row that differs from what
+  // is on record moves everything below it; a row that agrees changes nothing, so this
+  // settles after one extra render per newly painted row. A zero height is an unlaid-out
+  // row (a hidden card, a DOM without layout) and is not a measurement.
+  useLayoutEffect(() => {
+    if (!virtual) return;
+    const painted = scrollElement.current?.querySelectorAll<HTMLElement>("[data-virtual-row]");
+    if (!painted || painted.length === 0) return;
+    let next: Map<number, number> | null = null;
+    for (const row of painted) {
+      const index = Number(row.dataset.virtualRow);
+      const height = row.offsetHeight;
+      if (!Number.isFinite(index) || height <= 0) continue;
+      if ((measured.get(index) ?? rowHeight) === height) continue;
+      next ??= new Map(measured);
+      next.set(index, height);
+    }
+    if (next) setMeasured(next);
+  });
   const tokenLines = useMemo(
     () => sourceLines.slice(range.start, range.end).map((line) => tokenizeDiffLine(line, language)),
     [sourceLines, range.start, range.end, language],
@@ -238,7 +283,7 @@ export function CodeBlock({
         className,
       )}
     >
-      <div className="flex items-center justify-between gap-3 border-b border-border bg-secondary/50 px-3 py-1.5">
+      <div className="flex items-center justify-between gap-2 border-b border-border bg-secondary/50 px-3 py-1.5">
         <div className="flex min-w-0 items-center gap-1.5">
           <Icon icon={FileCode} className="size-3.5 shrink-0 text-muted-foreground" />
           {resolvedOpenPath ? (
@@ -259,7 +304,8 @@ export function CodeBlock({
             {lineCount > 1 ? `L${startLine}–${endLine}` : `L${startLine}`}
           </span>
         </div>
-        <div className="flex shrink-0 items-center gap-1">
+        <div className="flex shrink-0 items-center gap-0.5">
+          {headerActions}
           <button
             type="button"
             onClick={handleCopy}
@@ -290,10 +336,10 @@ export function CodeBlock({
         onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
       >
         <div
-          className="relative min-w-max font-mono text-12-5"
+          className="relative w-full font-mono text-12-5"
           style={
             virtual
-              ? { height: lineCount * rowHeight, lineHeight: `${rowHeight}px` }
+              ? { height: offsets[lineCount] ?? 0, lineHeight: `${rowHeight}px` }
               : { lineHeight: "1.7" }
           }
         >
@@ -342,12 +388,14 @@ export function CodeBlock({
             return (
               <div
                 key={i}
+                {...(virtual ? { "data-virtual-row": i } : {})}
                 style={
                   virtual
                     ? {
                         position: "absolute",
-                        top: i * rowHeight,
-                        minWidth: "100%",
+                        top: offsets[i] ?? 0,
+                        left: 0,
+                        right: 0,
                       }
                     : undefined
                 }
@@ -369,7 +417,7 @@ export function CodeBlock({
                 >
                   <span
                     className={cn(
-                      "sticky left-0 flex shrink-0 select-none items-center justify-end gap-1 border-r px-2.5 text-muted-foreground/50",
+                      "flex shrink-0 select-none items-start justify-end gap-1 border-r px-2.5 text-muted-foreground/50",
                       hasAsk
                         ? "border-destructive/60 bg-destructive/25"
                         : isHighlighted || hasComment || isOpen
@@ -392,7 +440,7 @@ export function CodeBlock({
                           : `Comment on line ${lineNumber}`
                       }
                       className={cn(
-                        "size-4 shrink-0 items-center justify-center rounded transition-colors",
+                        "mt-[3px] size-4 shrink-0 items-center justify-center rounded transition-colors",
                         hasAsk
                           ? "flex bg-destructive text-on-danger hover:bg-destructive/90"
                           : hasComment || isOpen
@@ -428,7 +476,7 @@ export function CodeBlock({
                     data-code-path={rowPath}
                     data-code-side={rowSide === "LEFT" ? "base" : "head"}
                     data-code-line={lineNumber}
-                    className="whitespace-pre px-3 text-foreground/90"
+                    className="min-w-0 flex-1 wrap-anywhere whitespace-pre-wrap px-3 text-foreground/90"
                   >
                     {lineTokens.length === 0 ? (
                       " "

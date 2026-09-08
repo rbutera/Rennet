@@ -498,7 +498,15 @@ export function LensBoardDocument({
             {board.lens === "design" ? <DesignCapabilityGrid board={board} /> : null}
             <div className="flex flex-col gap-8">
               {sections.map((entry) => (
-                <Section key={entry.ref} entry={entry} lens={board.lens} defaultOpen={forceOpen} />
+                <Section
+                  key={entry.ref}
+                  entry={entry}
+                  lens={board.lens}
+                  defaultOpen={forceOpen}
+                  // A Flagged section is a heading over finding rows, not a fold: the folded
+                  // finding is the summary (see `Section`).
+                  foldable={board.lens !== "flagged"}
+                />
               ))}
             </div>
           </article>

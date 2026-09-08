@@ -35,7 +35,8 @@ reads. Write it in exactly this shape:
 - **First line: the claim, ten words or fewer.** This line is the finding's
   header — the surface folds every finding down to it, so a paragraph here is
   a paragraph in the header. Not a topic ("error handling"), a claim
-  ("Signing in again cannot recover an expired login").
+  ("Signing in again cannot recover an expired login"). Plain text: no
+  `**bold**`, no `#`; backticks for a code name are fine.
 - **Blank line, then the body.** Name who or what is affected, the
   triggering action or state, and the wrong outcome. Explain the cause with
   only the code names needed to locate it. Attach citations as evidence.

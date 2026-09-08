@@ -30,7 +30,8 @@ using the returned parent id. This makes each item reachable by the reader.
 
 Each decision block carries:
 
-- **Title** — a short heading naming the choice. The statement, why,
+- **Title** — a short heading naming the choice, as plain text: no
+  `**bold**`, backticks around a code name are fine. The statement, why,
   alternatives and evidence sit beneath it, never inside it.
 
 - **Statement** — name the chosen mechanism and the behavior it produces.

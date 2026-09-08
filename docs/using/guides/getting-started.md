@@ -329,16 +329,25 @@ so you take the previews first and open what you want to read.
 Folded counts name review objects: findings, decisions, requirements, steps,
 outcomes, groups, files, and comments.
 
+Flagged is the one board whose sections do not fold. Each section is a heading
+over its findings, and each finding is its own fold: severity, the claim, and the
+concurrence pill read at a glance, and the row opens to the scenario, the fix, and
+the cited code. A title on any board renders code names in backticks as code and
+never shows markdown emphasis marks.
+
 Code is cited, never copied. A code block card carries the file path and the
 exact line range and hydrates the real lines from the captured patchset, so
-numbering cannot drift from the code under review. When that path belongs to the
-active captured patchset, clicking it opens Diff on the file and preserves the
-other session query state. A code card adds **View test** or **View
+numbering cannot drift from the code under review. Long lines wrap inside the
+card rather than scrolling sideways. When that path belongs to the active
+captured patchset, clicking it opens Diff on the file and preserves the other
+session query state. The card's header carries its controls: **Expand context**
+widens the excerpt, **Full file** shows the whole reviewed file and **Cited
+hunks** returns to the excerpt, and the card adds **View test** or **View
 implementation** when the reviewed tree relates the two files, by import or by
-name; an unchanged test opens inline from the reviewed revision, and several
-matches offer a chooser. In prose, a `path:line`
-citation is a chip: click it and the real lines unfold below the paragraph;
-click again and they fold away.
+name; an unchanged test opens inline from the reviewed revision with **Back to
+review** in the same header, and several matches offer a chooser. In prose, a
+`path:line` citation is a chip: click it and the real lines unfold below the
+paragraph; click again and they fold away.
 
 Click an identifier in the current diff or a code card to inspect its definition
 and references. Tab enters the code region; arrow keys move between identifiers,

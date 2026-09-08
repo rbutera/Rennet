@@ -167,6 +167,35 @@ describe("board kind renderers over the fixture set", () => {
     await waitFor(() => expect(findAction("Dismiss")).toBeDefined());
   });
 
+  it("paints a bold, code-bearing claim line as a heading and does not repeat it in the body", async () => {
+    // Codex writes `**claim**`; the header is already a heading, so the bold is unwrapped
+    // and the backticked token becomes code. The body starts at the second paragraph.
+    const board: LensBoard = {
+      ...flaggedBoard,
+      elements: flaggedBoard.elements.map((element) =>
+        element.kind === "finding" && element.id === "f1"
+          ? {
+              ...element,
+              data: {
+                ...element.data,
+                concern:
+                  "**`--ff-only` does not require a clean checkout**\n\nGit fast-forwards over an untracked file.\n\n**Fix:** check `git status --porcelain` first.",
+              },
+            }
+          : element,
+      ),
+    };
+    const { container, user } = renderBoard(board);
+    const header = container.querySelector('[data-kind="finding"][data-element-id="f1"] h3');
+    expect(header?.textContent).toContain("--ff-only does not require a clean checkout");
+    expect(header?.textContent).not.toContain("*");
+    expect(header?.querySelector("code")?.textContent).toBe("--ff-only");
+    const finding = await openFinding(container, "f1", user);
+    const body = finding.querySelector("[data-quote-target]:not(h3 *)");
+    expect(finding.textContent?.match(/does not require a clean checkout/g)).toHaveLength(1);
+    expect(body?.textContent ?? finding.textContent).toContain("Git fast-forwards");
+  });
+
   it("stages a deletion-side finding against the base hunk", async () => {
     const board: LensBoard = {
       ...flaggedBoard,
@@ -537,7 +566,7 @@ describe("board kind renderers over the fixture set", () => {
     expect(badge?.textContent).toBe("inferred");
     // …and its card is the bordered decision, not loose prose.
     expect(badge?.closest('[data-kind="decision"]')?.className).toContain(
-      "rounded-md border border-border",
+      "rounded-xl border border-border",
     );
     marked.unmount();
 
@@ -548,7 +577,7 @@ describe("board kind renderers over the fixture set", () => {
     const plain = renderBoard(decisionsBoard);
     expect(plain.container.querySelectorAll('[data-kind="decision-inferred"]')).toHaveLength(0);
     expect(plain.container.querySelector('[data-kind="decision"]')?.className).toContain(
-      "rounded-md border border-border",
+      "rounded-xl border border-border",
     );
   });
 
