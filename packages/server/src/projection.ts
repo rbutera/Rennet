@@ -488,6 +488,12 @@ export function projectCommandOutput(
     if (command === "session.landWorkBranch" && typeof o.reason === "string") {
       o.reason = capRefusal(String(redactAbsolutePathsDeep(o.reason, ctx)));
     }
+    // `session.workBranchState` is classified HERE, by having no branch of its own: every
+    // field it carries is a ref NAME (`feat/x`, `rennet/feat/x`, `refs/remotes/origin/
+    // feat/x`) or a number or a boolean. Ref names cross a projected connection unchanged,
+    // exactly as `claim.branch` and the sidebar row's `workBranch` do, and there is no free
+    // text for git to have named a host path inside. Stated rather than left silent, so the
+    // next field added to that read is a deliberate decision rather than a default.
     projected = o;
   }
   return scrubProjectedValue(projected, ctx);

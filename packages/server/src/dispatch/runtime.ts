@@ -81,6 +81,7 @@ import {
 } from "../review-intelligence-session";
 import type { SettingsComposition } from "../settings";
 import type { T3SidecarSupervisor } from "../t3/supervisor";
+import type { WorkBranchState } from "../work-branch-state";
 
 /**
  * The command router (issue #54), extracted from the electron main so it can be
@@ -680,6 +681,13 @@ export interface DispatchDeps {
      * nothing to land.
      */
     landWorkBranch(sessionId: string): Promise<LandWorkBranchOutcome>;
+    /**
+     * Where this session's work branch has got to (workspace-settings D4), read from git at
+     * request time — ahead / pushed / landed. The HOST owns it for the same reason it owns
+     * the landing: the session store, the per-repo git and the recorded push destination
+     * are all on this side and none of them crosses this seam.
+     */
+    workBranchState(sessionId: string): Promise<WorkBranchState>;
   };
   /**
    * The lens-board read for `board.read` (C05 cluster 8, bound in C18): the PERSISTED board

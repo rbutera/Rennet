@@ -139,6 +139,9 @@ const ABSORBED_IDS = [
   "session.rounds",
   "session.setPinned",
   "session.transcript",
+  // Where the work branch has got to (workspace-settings D4): ahead / pushed / landed,
+  // computed from git at request time rather than stamped on the session record.
+  "session.workBranchState",
   "settings.completeWelcome",
   "settings.get",
   "settings.guidance",
@@ -196,7 +199,7 @@ const MENU_INVENTORY: readonly string[] = [];
 describe("command registry invariants (#465)", () => {
   it("matches the recorded command snapshot (settings.setRepoLocus demoted, #476)", () => {
     expect(Object.keys(commands).sort()).toEqual([...ABSORBED_IDS]);
-    expect(ABSORBED_IDS).toHaveLength(112);
+    expect(ABSORBED_IDS).toHaveLength(113);
   });
 
   it("every row carries label, exposure, and locus with today's uniform values", () => {

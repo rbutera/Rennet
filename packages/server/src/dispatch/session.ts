@@ -134,12 +134,12 @@ export function sidebarSessionOf(
     // nothing has been captured for this session — honestly, there is no diff.
     ...(session.reviewId === undefined ? {} : { reviewId: session.reviewId }),
     ...(session.preparation === undefined ? {} : { preparation: session.preparation }),
-    // The sibling this session's rounds commit on (workspace-settings D4), and whether it
-    // has reached the reviewed branch's name on the remote. A branch NAME, never a path,
-    // exactly like `claim.branch`. Absent means the work is on the reviewed branch itself,
-    // which is every `share` session and every session written before the field.
+    // The sibling this session's rounds commit on (workspace-settings D4). A branch NAME,
+    // never a path, exactly like `claim.branch`. Absent means the work is on the reviewed
+    // branch itself, which is every `share` session and every session written before the
+    // field. WHERE those commits have got to is not on the row: "pushed" and "behind" are
+    // ref questions, and `session.workBranchState` asks git when the surface asks.
     ...(session.workBranch === undefined ? {} : { workBranch: session.workBranch }),
-    ...(session.workBranchPushedAt === undefined ? {} : { workBranchPushed: true }),
     ...(reviewActivity === undefined ? {} : { reviewActivity }),
     ...(completedRoundNumber === undefined
       ? {}
@@ -325,6 +325,19 @@ export function sessionHandlers(rt: DispatchRuntime) {
         reason: "this daemon cannot land a work branch",
       };
       return parseCommandOutput(name, outcome);
+    },
+    "session.workBranchState": async (rawInput) => {
+      const name = "session.workBranchState" as const;
+      const input = parseCommandInput(name, rawInput);
+      // No seam wired ⇒ this daemon binds no siblings, so there is nothing to be behind.
+      // Every field is a fact about refs, and the honest answer with no git is "none of
+      // this is true here" rather than a throw the surface would have to render.
+      const state = (await rt.deps.sessions?.workBranchState(input.sessionId)) ?? {
+        ahead: 0,
+        pushed: false,
+        landed: false,
+      };
+      return parseCommandOutput(name, state);
     },
   } satisfies Record<string, CommandHandler>;
 }

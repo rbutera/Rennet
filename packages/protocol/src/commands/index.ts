@@ -83,6 +83,7 @@ import {
   themePackSchema,
 } from "../wire";
 import {
+  WORKTREE_REF_NAME_CAP,
   WORKTREE_REFUSAL_CAP,
   worktreeInventorySchema,
   worktreeRemoveOutcomeSchema,
@@ -1675,6 +1676,39 @@ const definitions = {
         reason: z.string().max(WORKTREE_REFUSAL_CAP + 16),
       }),
     ]),
+  },
+  // ── Where the work branch has got to (workspace-settings D4/D6) ─────────────
+  // A READ, computed from git at request time, and the reason `workBranchPushed` is gone
+  // from the sidebar row: "pushed" was a durable flag stamped by a push that once
+  // succeeded, and it went on claiming the branch was behind after a landing, a
+  // force-push, or a deleted remote branch made that false. Every field below is a ref
+  // question, so every field below is asked of refs when it is asked at all.
+  //
+  // `ahead` counts the commits the SIBLING holds that the reviewed branch does not —
+  // `rev-list --count refs/heads/<branch>..refs/heads/<workBranch>`. `pushed` is
+  // reachability of the sibling's tip from `refs/remotes/<remote>/<branch>` for the remote
+  // the session's push recorded, never a stamp. `landed` is the plain equality that makes
+  // the note disappear: the branch is already at the work branch's tip.
+  "session.workBranchState": {
+    input: z.object({ sessionId: z.string().min(1) }),
+    output: z.object({
+      /** The reviewed branch, when the session knows one. */
+      branch: z.string().min(1).max(WORKTREE_REF_NAME_CAP).optional(),
+      /** The branch the work commits on. Absent, or equal to `branch`, ⇒ nothing to say. */
+      workBranch: z.string().min(1).max(WORKTREE_REF_NAME_CAP).optional(),
+      /** Commits the work branch holds that the reviewed branch does not. */
+      ahead: z.number().int().nonnegative(),
+      /** The work branch's tip is reachable from the recorded push destination's ref. */
+      pushed: z.boolean(),
+      /** The reviewed branch is already AT the work branch's tip. */
+      landed: z.boolean(),
+      /**
+       * The remote-tracking ref `pushed` was decided against, named so the surface can say
+       * "`feat/x` is behind `origin/feat/x`" rather than "behind its upstream" — a fact
+       * about the reviewer's repository, not about Rennet's machinery.
+       */
+      remoteRef: z.string().min(1).max(WORKTREE_REF_NAME_CAP).optional(),
+    }),
   },
   // ── Living-draft span rework (B11 cluster 5) ────────────────────────────────
   // The backend for the client's gated `reviseDraftSpan` seam (C9 binds the seam;

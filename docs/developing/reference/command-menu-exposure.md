@@ -1,6 +1,6 @@
 ---
 title: Command menu exposure
-description: Which of the 111 registered commands the ⌘K menu lists, and the rationale for every row.
+description: Which of the 113 registered commands the ⌘K menu lists, and the rationale for every row.
 ---
 
 The command registry in `packages/protocol/src/commands/index.ts` carries an
@@ -20,7 +20,7 @@ boolean flag has no input channel, and the dialog has no result surface. So a
 command earns `commandMenu: true` only when all four hold:
 
 1. **Its schema accepts `{}`.** Nothing required that the menu cannot supply.
-   19 of the 111 commands pass this; the rest need a review, session, project,
+   19 of the 113 commands pass this; the rest need a review, session, project,
    span, host, or path the menu has no way to name. A protocol test asserts the
    invariant, so an exposed row can never be one that only fails.
 2. **It is an action, not a read the UI already drives.** `settings.get`,
@@ -221,6 +221,7 @@ still goes through the one seam; only the label is hand-written.
 | `session.setPinned` | Needs the session and the pin state. |
 | `session.archive` | Needs the session being archived or restored. |
 | `session.landWorkBranch` | Needs the session whose work branch is being landed; the action is offered on that session's round card, beside the branch it fast-forwards. |
+| `session.workBranchState` | Read the review workspace drives beside the session's branch; needs the session whose work branch is being measured. It answers ahead / pushed / landed from git at request time, so running it from the menu would change nothing a reader would see. |
 
 ### worktrees
 

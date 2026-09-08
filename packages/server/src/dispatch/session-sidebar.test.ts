@@ -15,6 +15,7 @@ import type { LandWorkBranchOutcome } from "../land-work-branch";
 import { SessionEntry } from "../session/session-entry";
 import type { ModelSelection, T3Client } from "../t3/client";
 import { bindThread, findBindingsForSessions, sweepIfArchived, sweepThreads } from "../t3/threads";
+import type { WorkBranchState } from "../work-branch-state";
 import { projectHandlers } from "./project";
 import { createDispatchRuntime, type DispatchDeps } from "./runtime";
 import { sessionHandlers, sidebarSessionOf } from "./session";
@@ -772,24 +773,76 @@ describe("a round that outlives an archive sweeps its own late seat bindings", (
 });
 
 describe("the sidebar row carries the work branch (workspace-settings D4)", () => {
-  it("projects the sibling and the push, and omits both for a `share` session", () => {
+  it("projects the sibling, and carries NO push state — that is a ref read, not a row field", () => {
     const share = sidebarSessionOf(seed("s1", "feat/x"));
     expect(share.workBranch).toBeUndefined();
-    expect(share.workBranchPushed).toBeUndefined();
 
     const own = sidebarSessionOf({ ...seed("s2", "feat/x"), workBranch: "rennet/feat/x" });
     expect(own.workBranch).toBe("rennet/feat/x");
-    // Not pushed yet: the card must not claim an upstream is behind before one is.
-    expect(own.workBranchPushed).toBeUndefined();
+    // A branch NAME crosses the wire; the host paths the session also holds do not (R19).
+    expect(parseCommandOutput("session.list", { sessions: [own] }).sessions[0]).toEqual(own);
 
+    // THE REVIEW FINDING, PINNED. A session that HAS pushed still projects no "pushed"
+    // flag: the row is a projection of a durable record, and "pushed" is true or false
+    // about a ref right now. The old `workBranchPushed: true` stayed on the row after a
+    // landing, a force-push or a deleted remote branch had made it false, and the card
+    // went on saying "behind its upstream" over a branch that had caught up.
     const pushed = sidebarSessionOf({
       ...seed("s3", "feat/x"),
       workBranch: "rennet/feat/x",
-      workBranchPushedAt: 1_700_000_000_000,
+      workBranchPush: { remote: "origin", branch: "feat/x" },
     });
-    expect(pushed.workBranchPushed).toBe(true);
-    // A branch NAME crosses the wire; the host paths the session also holds do not (R19).
-    expect(parseCommandOutput("session.list", { sessions: [pushed] }).sessions[0]).toEqual(pushed);
+    expect(Object.keys(pushed)).not.toContain("workBranchPushed");
+    expect(Object.keys(pushed)).not.toContain("workBranchPush");
+    expect(pushed.workBranch).toBe("rennet/feat/x");
+  });
+});
+
+describe("session.workBranchState — the route (workspace-settings D4)", () => {
+  function stateDispatch(seam?: {
+    workBranchState: (sessionId: string) => Promise<WorkBranchState>;
+  }) {
+    const rt = createDispatchRuntime({
+      service: { reviewById: () => undefined },
+      ...(seam === undefined ? {} : { sessions: seam }),
+    } as unknown as DispatchDeps);
+    return sessionHandlers(rt);
+  }
+
+  it("hands the session id to the host seam and returns its state through the wire", async () => {
+    const asked: string[] = [];
+    const handlers = stateDispatch({
+      workBranchState: async (sessionId) => {
+        asked.push(sessionId);
+        return {
+          branch: "feat/x",
+          workBranch: "rennet/feat/x",
+          ahead: 2,
+          pushed: true,
+          landed: false,
+          remoteRef: "refs/remotes/origin/feat/x",
+        };
+      },
+    });
+
+    expect(await handlers["session.workBranchState"]({ sessionId: "s1" })).toEqual({
+      branch: "feat/x",
+      workBranch: "rennet/feat/x",
+      ahead: 2,
+      pushed: true,
+      landed: false,
+      remoteRef: "refs/remotes/origin/feat/x",
+    });
+    expect(asked).toEqual(["s1"]);
+  });
+
+  it("answers a quiet state when no session seam is wired — never a throw", async () => {
+    const handlers = stateDispatch();
+    expect(await handlers["session.workBranchState"]({ sessionId: "s1" })).toEqual({
+      ahead: 0,
+      pushed: false,
+      landed: false,
+    });
   });
 });
 

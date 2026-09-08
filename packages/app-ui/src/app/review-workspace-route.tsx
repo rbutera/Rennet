@@ -33,6 +33,7 @@ import {
   useRoundsUnavailable,
 } from "../rounds/rounds-data";
 import { generationLine, RoundsLedger } from "../rounds/rounds-ledger";
+import { WorkBranchNote } from "../rounds/work-branch-note";
 import { ROUTES, readSessionQuery, sessionPath, sessionRunPath, viewToggle } from "../routes/url";
 import { useRennetStore } from "../store";
 
@@ -211,10 +212,8 @@ export function ReviewWorkspace({ review }: { review: Review }) {
     armGreeting(true);
   }, [armGreeting, greetingArmed, liveReportPhase]);
   const showRoundGreeting = inReportPhase && !reportAcknowledged;
-  // Where this round's commits are, when that is not the branch the reviewer has out
-  // (workspace-settings D4). BOTH halves come from facts: the sibling off the session row
-  // the daemon projected, and the reviewed branch off the review's own active patchset —
-  // never the claim, which a workspace project's other repository can share a name with.
+  // WHICH BRANCH THIS REVIEW IS ABOUT — off the review's own ACTIVE PATCHSET, never the
+  // session's claim, which a workspace project's other repository can share a name with.
   // Every step optional, including `patchsets` itself. The type says it is there; the
   // reviews this route is really handed do not always agree — a dispatch fixture carries a
   // review with no patchset list at all, and a freshness one a patchset with no repository
@@ -223,15 +222,16 @@ export function ReviewWorkspace({ review }: { review: Review }) {
   const reviewedBranch = (review.patchsets ?? []).find(
     (entry) => entry.id === review.activePatchsetId,
   )?.repository?.headRef;
-  const workBranchNote =
-    session?.workBranch === undefined || reviewedBranch === undefined
-      ? undefined
-      : {
-          sessionId: session.id,
-          branch: reviewedBranch,
-          workBranch: session.workBranch,
-          ...(session.workBranchPushed === true ? { pushed: true } : {}),
-        };
+  // Where this session's commits have got to (workspace-settings D4) — mounted for every
+  // view, not only the round greeting, because the gap between `feat/x` and
+  // `rennet/feat/x` is open until the reviewer lands or pulls. The note asks
+  // `session.workBranchState` itself; the route only decides WHETHER there is a session
+  // whose work is on a branch OTHER than the one this review is about — and it decides
+  // that from the ACTIVE PATCHSET's head ref, which is the derivation guarded above.
+  const showWorkBranch =
+    session?.workBranch !== undefined &&
+    reviewedBranch !== undefined &&
+    session.workBranch !== reviewedBranch;
   const consumeRoundReport = useCallback(() => {
     acknowledgeRoundReport(reportBoardId);
     setAcknowledgedReportBoardId(reportBoardId);
@@ -358,6 +358,18 @@ export function ReviewWorkspace({ review }: { review: Review }) {
           prepared it renders nothing. The boards are on screen behind it either way —
           there is no waiting stage between the reviewer and their review. */}
       <WorkspaceHeader slug={slug} />
+      {/* The session's work branch, beside the branch the workspace is about — one strip,
+          above every view, offering the fast-forward (workspace-settings D4). It renders
+          nothing at all under `share`, and nothing once the branch is at the work branch's
+          tip; what it says in between is read from git, not from a flag. */}
+      {showWorkBranch && session !== undefined ? (
+        <div
+          data-testid="workspace-work-branch"
+          className="flex shrink-0 flex-col border-line border-b bg-surface px-6 py-2"
+        >
+          <WorkBranchNote sessionId={session.id} />
+        </div>
+      ) : null}
       {view === "handoff" ? (
         <HandoffMount key={slug} review={review} slug={slug} navigate={navigate} />
       ) : view === "diff" ? (
@@ -393,7 +405,6 @@ export function ReviewWorkspace({ review }: { review: Review }) {
                   state={roundState}
                   onReveal={consumeRoundReport}
                   {...(greetingReceipt === undefined ? {} : { receipt: greetingReceipt })}
-                  {...(workBranchNote === undefined ? {} : { workBranch: workBranchNote })}
                 />
               ) : (
                 <ReportUnavailable status={report.status} />

@@ -17,7 +17,6 @@ import {
 } from "./round-machine";
 import { RoundReportBoard } from "./round-report";
 import { StatusIcon } from "./run-route";
-import { WorkBranchNote } from "./work-branch-note";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The round report as the greeting (C09 §5, Objective "round report as the greeting" +
@@ -280,23 +279,11 @@ export function RoundGreeting({
   state,
   onReveal,
   receipt,
-  workBranch,
 }: {
   readonly board: RoundReportBoardModel;
   readonly state: RoundState;
   readonly onReveal: () => void;
   readonly receipt?: { readonly record: RoundLedgerRecord; readonly roundNumber: number };
-  /**
-   * Where this round's commits are, when that is NOT the branch the reviewer has out
-   * (workspace-settings D4). Handed in already resolved — the greeting owns no round data,
-   * and the session row that carries the work branch is the workspace's read.
-   */
-  readonly workBranch?: {
-    readonly sessionId: string;
-    readonly branch: string;
-    readonly workBranch: string;
-    readonly pushed?: boolean;
-  };
 }) {
   // The regeneration block lives on both regeneration phases: `composing` carries the
   // live lanes, and `composed` carries the ones it composed from (the machine forwards
@@ -316,10 +303,12 @@ export function RoundGreeting({
       className="mx-auto flex w-full max-w-[820px] flex-col gap-6 p-6"
     >
       {receipt !== undefined && <RunReceiptSummary {...receipt} />}
-      {/* Beside the run receipt, because it answers the same question the receipt does —
-          where the round's work went — for the one arrangement where the answer is not
-          the branch the reviewer is standing on (workspace-settings D4). */}
-      {workBranch !== undefined && <WorkBranchNote {...workBranch} />}
+      {/* The work-branch note is NOT here any more (workspace-settings D4). Where the
+          round's commits went is true from the round that made them until the reviewer
+          lands or pulls, and mounting it on the greeting made it visible only on the one
+          card that happened to be showing a fresh report — the reviewer who navigated to
+          the diff, or reloaded, saw nothing. The workspace mounts it beside the session's
+          branch instead, on every view. */}
       <RoundReportBoard board={board} />
       {regenerating && (
         <RegenerationProgress

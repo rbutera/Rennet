@@ -242,20 +242,50 @@ export class SessionStore {
   }
 
   /**
-   * Stamp the moment this session's work branch reached the reviewed branch's name on the
-   * remote (workspace-settings D4). Written by the pull-request submission, and only when
-   * the two names differ: under `share` the push moves the branch the reviewer is standing
-   * on, and there is nothing about it to say.
+   * Record WHERE this session's work branch was pushed (workspace-settings D4): the remote
+   * it went to and the branch name it landed under. Written by the pull-request submission,
+   * and only when the two names differ — under `share` the push moves the branch the
+   * reviewer is standing on, and there is nothing about it to say.
    *
-   * It is what lets the round card claim the local branch is behind its upstream — a claim
-   * about the REMOTE, which only a push that really happened makes true. `undefined` if the
-   * session is absent.
+   * A destination, not a stamp. It names the ref every later question is asked of
+   * (`refs/remotes/<remote>/<branch>`): whether the sibling is reachable, whether the local
+   * branch is behind. A "pushed at" answered none of those — it said a push once happened,
+   * which stays recorded after a landing, a force-push, or a deleted remote branch has made
+   * every claim built on it false. `undefined` if the session is absent.
    */
-  markWorkBranchPushed(sessionId: string, at: number): SessionModel | undefined {
+  recordWorkBranchPush(
+    sessionId: string,
+    push: { remote: string; branch: string },
+  ): SessionModel | undefined {
     const session = this.load(sessionId);
     if (!session) return undefined;
     if (session.workBranch === undefined) return session;
-    const next = { ...session, workBranchPushedAt: at };
+    const next = { ...session, workBranchPush: { ...push } };
+    this.save(next);
+    return next;
+  }
+
+  /**
+   * Forget this session's recorded workspace — its bound root and its work branch.
+   *
+   * The ONE case a session re-binds (workspace-settings D5): its sibling was COLLECTED
+   * while it was archived, so the directory the record names is gone. Leaving the record
+   * would point every read of an un-archived session at a workspace that no longer exists;
+   * clearing it lets `decideBoundWorkspace` run again on the next use and record a fresh
+   * binding, which is exactly what a session minted before the binding wave does.
+   *
+   * Deliberately NOT reachable from anything but collection. `setBoundRoot` refuses to
+   * overwrite a recorded root for the same reason this exists as its own narrow call: a
+   * session that re-decides its workspace mid-life reads, drafts and commits somewhere
+   * else under the same label.
+   */
+  clearBoundWorkspace(sessionId: string): SessionModel | undefined {
+    const session = this.load(sessionId);
+    if (!session) return undefined;
+    const next = { ...session };
+    delete next.boundRoot;
+    delete next.workBranch;
+    delete next.workBranchPush;
     this.save(next);
     return next;
   }

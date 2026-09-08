@@ -1939,16 +1939,19 @@ export const SessionModelSchema = z
      */
     workBranch: z.string().min(1).optional(),
     /**
-     * When this session's work branch was last pushed onto the reviewed branch's name on
-     * the remote, epoch ms. Written only by the pull-request submission, and only when the
-     * two names differ — under `share` a push moves the branch the reviewer is standing on,
-     * so there is nothing to say about it.
+     * WHERE this session's work branch was pushed: the remote it went to and the branch
+     * name it landed under. Written by the pull-request submission, and only when the work
+     * branch differs from the reviewed branch — under `share` a push moves the branch the
+     * reviewer is standing on, so there is nothing to record about it.
      *
-     * It exists because "your local branch is behind its upstream" is a claim about the
-     * remote, and only a push that really happened makes it true. Absent ⇒ the round's
-     * commits are on the sibling and nowhere else, which the card says instead.
+     * A DESTINATION, not a timestamp. This replaced `workBranchPushedAt`, which was the
+     * review finding: a stamp says a push once succeeded, and every question actually asked
+     * of it — is the sibling reachable, is the branch behind — is a question about what the
+     * refs hold NOW. So this names the ref to read (`refs/remotes/<remote>/<branch>`) and
+     * git answers at request time; a force-push or a deleted remote branch changes the
+     * answer, where a stamp would have kept claiming the old one.
      */
-    workBranchPushedAt: z.number().optional(),
+    workBranchPush: z.object({ remote: z.string().min(1), branch: z.string().min(1) }).optional(),
     /**
      * The `owner/name` identity of the repo this session's target lives in (#580). NOT a path —
      * it is the same stable identity `LocalWork.repository`/`PullRequest.repository` carry (the

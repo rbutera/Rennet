@@ -2215,14 +2215,13 @@ export const sidebarSessionSchema = z
      * A branch NAME, never a path, so it crosses the wire exactly as `claim.branch` does.
      * Absent means the session commits on the reviewed branch itself, which is every
      * session under `share` and every session written before this field.
+     *
+     * WHAT THE ROW DOES NOT CARRY is where those commits have got to. "Pushed" and "behind"
+     * are questions about refs, and a row is a projection of a durable record; the row said
+     * `workBranchPushed: true` forever once a push had happened, which stopped being true
+     * the moment anything moved. `session.workBranchState` is the read that asks git.
      */
     workBranch: z.string().min(1).optional(),
-    /**
-     * True once this session's work branch has been pushed onto the reviewed branch's name
-     * on the remote. It is what lets the round card say the local branch is behind its
-     * upstream — a claim about the remote, which only a real push makes true.
-     */
-    workBranchPushed: z.boolean().optional(),
     /** When the session was minted (epoch ms) — the client renders the relative line. */
     createdAt: z.number(),
   })

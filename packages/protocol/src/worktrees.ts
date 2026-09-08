@@ -47,6 +47,16 @@ export const WORKTREE_REFUSAL_CAP = 2000;
 export const WORKTREE_ROW_MARKER_CAP = 200;
 
 /**
+ * The longest REF NAME any workspace read carries, in characters.
+ *
+ * Git bounds a ref name only by the filesystem, so a branch name is a dynamic
+ * interpolation like any other and gets a declared bound at the surface that carries it
+ * (CLAUDE.md, byte discipline). 512 is generous for anything a human types and small
+ * enough that a pathological name cannot be a payload.
+ */
+export const WORKTREE_REF_NAME_CAP = 512;
+
+/**
  * What a workspace IS, which decides what the surface may offer for it:
  *   • `own-checkout` — THE REPOSITORY ROOT THE LIST WAS ASKED FOR: the reviewer's own
  *     checkout, by definition, since that is the directory the card is about. Listed only
