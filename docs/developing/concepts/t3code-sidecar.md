@@ -1054,7 +1054,7 @@ Where each number below was read, so a later reader can take the same measuremen
 | Figure | Read from |
 | --- | --- |
 | Prompt bytes | `projection_thread_messages` in the sidecar's projection database, `<dataDir>/t3/userdata/state.sqlite` — the user-role row of each seat thread, `length(cast(text as blob))` |
-| Draft and repair timings | `timings.phases` on the generation record, `<dataDir>/generations/<generationId>.json` |
+| Draft and repair timings | `timings.phases` in the `document` column of `generations`, keyed by `id`, in `<dataDir>/generations/generations.sqlite` |
 | Token usage | the `usage` block on that same generation record |
 | Wall clock | the `startedAtMs`/`durationMs` span of those phases, against the clock times of the branch pick and the reveal |
 | Bound roots and binding rows | `boundRoot` on the session records under `<dataDir>/sessions/`, and every row of `<dataDir>/t3/thread-bindings.json` |

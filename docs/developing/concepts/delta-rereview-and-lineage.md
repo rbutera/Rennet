@@ -46,6 +46,15 @@ place. The session URL selects a frozen generation with `?generation=<id>`;
 without that parameter the client reads the live generation. The drill-down is
 therefore reloadable and directly addressable, not local switcher state.
 
+Generation documents live in `<dataDir>/generations/generations.sqlite`. Every
+replacement increments the durable revision. A round observes its predecessor
+before saving the successor, then freezes only that exact revision with one
+conditional database update. A competing write leaves the newer generation
+intact; the losing round records no frozen-predecessor pointer and emits no
+predecessor transition. Old per-generation JSON files are imported on first read
+and retained; the database becomes authoritative for that generation. The rounds
+ledger stays in its existing store.
+
 ## What carries
 
 Carry is decided by evidence, never by resemblance.

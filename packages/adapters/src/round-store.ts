@@ -9,6 +9,7 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import {
   type Generation,
   GenerationSchema,
@@ -89,17 +90,29 @@ export function defaultGenerationStoreDir(): string {
 }
 
 /**
- * The durable generation store (C15 2.1) — one JSON document per generation at
- * `<dir>/<generationId>.json`. Persists the frozen prior and the live successor a
- * round mints, so gen-1 survives a restart as a drill-down the ledger's generation
- * switcher can open by id (C15 2.3). A generation never persisted is honestly absent
- * (`undefined`), never a fabricated board set.
+ * Revisioned generation documents. SQLite owns the conditional freeze across processes;
+ * legacy JSON is imported lazily and retained as recovery evidence.
  */
 export class GenerationStore {
-  private tmpSeq = 0;
+  private readonly database: DatabaseSync;
 
   constructor(private readonly dir: string = defaultGenerationStoreDir()) {
     mkdirSync(dir, { recursive: true });
+    this.database = new DatabaseSync(join(dir, "generations.sqlite"));
+    this.database.exec(`
+      PRAGMA busy_timeout = 5000;
+      PRAGMA journal_mode = WAL;
+      PRAGMA synchronous = FULL;
+      CREATE TABLE IF NOT EXISTS generations (
+        id TEXT PRIMARY KEY,
+        revision INTEGER NOT NULL,
+        document TEXT NOT NULL
+      ) STRICT;
+    `);
+  }
+
+  close(): void {
+    this.database.close();
   }
 
   private pathFor(id: string): string {
@@ -110,16 +123,52 @@ export class GenerationStore {
    *  re-saved as frozen replaces the live copy under the same id). */
   save(gen: Generation): void {
     const validated = GenerationSchema.parse(gen);
-    atomicWriteJson(this.dir, this.pathFor(validated.id), this.tmpSeq++, validated);
+    this.database
+      .prepare(`
+      INSERT INTO generations (id, revision, document) VALUES (?, 1, ?)
+      ON CONFLICT(id) DO UPDATE SET revision = revision + 1, document = excluded.document
+    `)
+      .run(validated.id, JSON.stringify(validated));
   }
 
   /** Load one generation by id. Absent (never persisted) ⇒ `undefined`; corrupt ⇒ THROW. */
   load(id: string): Generation | undefined {
+    return this.loadVersion(id)?.generation;
+  }
+
+  loadVersion(id: string): { generation: Generation; revision: number } | undefined {
+    const row = this.database
+      .prepare("SELECT revision, document FROM generations WHERE id = ?")
+      .get(id);
+    if (row !== undefined) {
+      if (typeof row.document !== "string" || typeof row.revision !== "number") {
+        throw new RoundStoreCorruptError(id, "invalid database row");
+      }
+      const result = GenerationSchema.safeParse(JSON.parse(row.document));
+      if (!result.success) throw new RoundStoreCorruptError(id, "schema mismatch");
+      return { generation: result.data, revision: row.revision };
+    }
     const parsed = readJsonStrict(this.pathFor(id), id);
     if (parsed === undefined) return undefined;
     const result = GenerationSchema.safeParse(parsed);
     if (!result.success) throw new RoundStoreCorruptError(id, "schema mismatch");
-    return result.data;
+    this.database
+      .prepare("INSERT OR IGNORE INTO generations (id, revision, document) VALUES (?, 1, ?)")
+      .run(id, JSON.stringify(result.data));
+    return this.loadVersion(id);
+  }
+
+  /** Compare and replace are one database statement; every save advances the revision. */
+  freeze(id: string, expectedRevision: number): Generation | undefined {
+    const row = this.database
+      .prepare(`
+      UPDATE generations
+      SET document = json_set(document, '$.status', 'frozen'), revision = revision + 1
+      WHERE id = ? AND revision = ?
+      RETURNING document
+    `)
+      .get(id, expectedRevision);
+    return row === undefined ? undefined : GenerationSchema.parse(JSON.parse(String(row.document)));
   }
 }
 
@@ -186,6 +235,14 @@ export class RoundRecordStore {
    */
   record(sessionId: string, incoming: RoundRecord): void {
     const records = this.read(sessionId);
+    if (
+      incoming.dispatchId !== undefined &&
+      records.some(
+        (record) =>
+          record.dispatchId === incoming.dispatchId && record.boardGeneration !== ROUND_NO_REGEN,
+      )
+    )
+      return;
     if (
       incoming.boardGeneration === ROUND_NO_REGEN &&
       incoming.outcome === "completed" &&
