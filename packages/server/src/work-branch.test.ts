@@ -1,0 +1,432 @@
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { ensureSiblingWorktree } from "@rennet/adapters";
+import type { ForgePrSubmissionPort } from "@rennet/core";
+import { HOST_LOCUS } from "@rennet/core";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { captureLandedBranchPatchset } from "./create-server";
+import {
+  type ForgePrSubmissionResolver,
+  type ResolvedForgePullRequestDestination,
+  submitForgePullRequest,
+} from "./forge-submission";
+import { landWorkBranch } from "./land-work-branch";
+import { createForgeRegistry } from "./project-forge-registry";
+import { collectSibling, orphanedSiblings } from "./sibling-cleanup";
+
+// What `workspace: own` costs and what it buys, driven against REAL git repositories.
+//
+// Every claim in D4/D5 is a claim about what git did — where a commit is, which ref moved,
+// what a refusal said. A stubbed runner would let this file assert any of them, so nothing
+// here is stubbed except the forge PROVIDER (there is no GitHub to open a pull request on);
+// the push itself goes to a real bare remote over a real `git push`, and the assertions read
+// that remote's refs back.
+
+function git(cwd: string, args: readonly string[]): string {
+  return execFileSync("git", [...args], {
+    cwd,
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      GIT_AUTHOR_NAME: "t",
+      GIT_AUTHOR_EMAIL: "t@example.com",
+      GIT_COMMITTER_NAME: "t",
+      GIT_COMMITTER_EMAIL: "t@example.com",
+    },
+  });
+}
+
+const gitExec = async (cwd: string, args: string[], options?: { reject?: boolean }) => {
+  try {
+    return git(cwd, args);
+  } catch (error) {
+    if (options?.reject === false) return "";
+    throw error;
+  }
+};
+
+function oid(repo: string, ref: string): string {
+  return git(repo, ["rev-parse", ref]).trim();
+}
+
+function commit(dir: string, name: string, body: string): string {
+  writeFileSync(join(dir, name), body);
+  git(dir, ["add", "."]);
+  git(dir, ["commit", "-q", "-m", name]);
+  return oid(dir, "HEAD");
+}
+
+let root: string;
+let repo: string;
+let worktrees: string;
+
+/** A repository on `main`, with `feat/x` CHECKED OUT — the arrangement `own` exists for. */
+beforeEach(() => {
+  // realpath: `/var` is a symlink to `/private/var` on macOS and `git worktree list` prints
+  // the resolved path, so an unresolved fixture root compares unequal for no real reason.
+  root = realpathSync(mkdtempSync(join(tmpdir(), "rennet-work-branch-")));
+  repo = join(root, "repo");
+  worktrees = join(root, "worktrees");
+  mkdirSync(repo, { recursive: true });
+  git(repo, ["init", "-q", "-b", "main"]);
+  commit(repo, "README.md", "repo\n");
+  git(repo, ["checkout", "-q", "-b", "feat/x"]);
+  commit(repo, "feature.txt", "feature\n");
+});
+
+afterEach(() => {
+  rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+});
+
+/** Rennet's own worktree on `rennet/feat/x`, as the `own` bind makes it. */
+async function bindSibling(): Promise<string> {
+  const path = join(worktrees, "feat", "x");
+  await ensureSiblingWorktree(gitExec, repo, path, "feat/x");
+  return path;
+}
+
+describe("the round under `own` (workspace-settings D4, task 2.3)", () => {
+  it("captures a patchset that NAMES the reviewed branch and points at the sibling's tip", async () => {
+    const sibling = await bindSibling();
+    const baseOid = oid(repo, "refs/heads/main");
+    const branchBefore = oid(repo, "refs/heads/feat/x");
+
+    // The round's turn commits in the bound root, which has the sibling checked out. The
+    // worker never learns that: it commits on HEAD, exactly as it does under `share`.
+    const roundCommit = commit(sibling, "round.txt", "the round's work\n");
+
+    const patchset = await captureLandedBranchPatchset({
+      git: gitExec,
+      locus: HOST_LOCUS,
+      repoPath: sibling,
+      // The reviewed branch's NAME — what the review and the pull request are about.
+      headRef: "feat/x",
+      baseRef: "main",
+      // …and the sibling's tip, which is where `operation.state.commits.to` points.
+      headOid: roundCommit,
+      baseOid,
+      resolveProjectSnapshotId: async () => "snapshot-1",
+    });
+
+    expect(patchset.repository.headRef).toBe("feat/x");
+    expect(patchset.repository.headOid).toBe(roundCommit);
+    // The commit is on the SIBLING and on nothing else. Asked of git as a reachability
+    // question, not inferred from the oids: `branch --contains` is the whole claim.
+    const containing = git(repo, ["branch", "--format=%(refname)", "--contains", roundCommit])
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+    expect(containing).toEqual(["refs/heads/rennet/feat/x"]);
+    // …and the reviewed branch's own ref has not moved.
+    expect(oid(repo, "refs/heads/feat/x")).toBe(branchBefore);
+  });
+});
+
+describe("the push under `own` (task 2.4)", () => {
+  const SUBMISSION = {
+    title: "The round's work",
+    body: "opened from a sibling",
+    base: "main",
+    head: "feat/x",
+    draft: false,
+  };
+  const DESTINATION = {
+    remoteName: "origin",
+    target: { repo: { forge: "github", owner: "acme", name: "widget" } },
+  } satisfies ResolvedForgePullRequestDestination;
+
+  /** A real bare remote, wired as `origin`, with `feat/x` already on it. */
+  function remote(): string {
+    const bare = join(root, "remote.git");
+    git(root, ["init", "-q", "--bare", bare]);
+    git(repo, ["remote", "add", "origin", bare]);
+    git(repo, ["push", "-q", "origin", "refs/heads/feat/x:refs/heads/feat/x"]);
+    return bare;
+  }
+
+  function registry() {
+    const submit = vi.fn<ForgePrSubmissionPort["submitPullRequest"]>(async () => ({
+      number: 7,
+      url: "https://github.com/acme/widget/pull/7",
+      reused: false,
+    }));
+    return {
+      submit,
+      forges: createForgeRegistry<ForgePrSubmissionResolver>([
+        { forge: "github", implementation: () => ({ submitPullRequest: submit }) },
+      ]),
+    };
+  }
+
+  it("sends the SIBLING's tip to the reviewed branch's name, and the local branch stays put", async () => {
+    const bare = remote();
+    const sibling = await bindSibling();
+    const roundCommit = commit(sibling, "round.txt", "the round's work\n");
+    const localBefore = oid(repo, "refs/heads/feat/x");
+    expect(localBefore).not.toBe(roundCommit);
+    const { forges } = registry();
+
+    await submitForgePullRequest({
+      registry: forges,
+      git: gitExec,
+      repoRoot: repo,
+      headRef: "feat/x",
+      workBranch: "rennet/feat/x",
+      submission: SUBMISSION,
+      destination: DESTINATION,
+    });
+
+    // The REMOTE's `feat/x` is now the sibling's tip — the pull request's head is `feat/x`,
+    // which is the whole point of pushing the sibling under the branch's name.
+    expect(oid(bare, "refs/heads/feat/x")).toBe(roundCommit);
+    // …and the reviewer's local branch has not moved. This is the pair `own` promises.
+    expect(oid(repo, "refs/heads/feat/x")).toBe(localBefore);
+    // The remote holds no `rennet/*` ref: the sibling is a local working detail.
+    expect(() => git(bare, ["rev-parse", "--verify", "refs/heads/rennet/feat/x"])).toThrow();
+  });
+
+  it("pushes the BYTE-IDENTICAL refspec under `share` — no work branch, no change", async () => {
+    // The literal, spelled out: this is the refspec the previous release pushed, and a
+    // reviewer under `share` must not be able to tell this change happened.
+    const { forges } = registry();
+    const calls: string[][] = [];
+    const recording = async (cwd: string, args: string[]) => {
+      calls.push(args);
+      return "";
+    };
+
+    await submitForgePullRequest({
+      registry: forges,
+      git: recording,
+      repoRoot: repo,
+      headRef: "feat/x",
+      submission: SUBMISSION,
+      destination: DESTINATION,
+    });
+
+    expect(calls).toEqual([["push", "origin", "refs/heads/feat/x:refs/heads/feat/x"]]);
+  });
+});
+
+describe("session.landWorkBranch (task 2.5)", () => {
+  it("fast-forwards the reviewer's checkout, and touches nothing else in it", async () => {
+    const sibling = await bindSibling();
+    const roundCommit = commit(sibling, "round.txt", "the round's work\n");
+    // An untracked file the reviewer left lying about: a fast-forward does not disturb it,
+    // and git does not refuse over it either.
+    writeFileSync(join(repo, "scratch.txt"), "mine\n");
+    const indexBefore = git(repo, ["ls-files", "-s", "-z"]);
+
+    const outcome = await landWorkBranch({
+      git: gitExec,
+      repoRoot: repo,
+      locus: HOST_LOCUS,
+      branch: "feat/x",
+      workBranch: "rennet/feat/x",
+    });
+
+    expect(outcome).toEqual({
+      status: "landed",
+      branch: "feat/x",
+      workBranch: "rennet/feat/x",
+      headOid: roundCommit,
+    });
+    expect(oid(repo, "refs/heads/feat/x")).toBe(roundCommit);
+    // The round's file arrived; the reviewer's own untracked file is still there.
+    expect(existsSync(join(repo, "round.txt"))).toBe(true);
+    expect(existsSync(join(repo, "scratch.txt"))).toBe(true);
+    // The index changed by exactly the round's file and nothing else.
+    expect(git(repo, ["ls-files", "-s", "-z"])).not.toBe(indexBefore);
+    expect(git(repo, ["status", "--porcelain=v1"]).trim()).toBe("?? scratch.txt");
+    // A fast-forward, never a merge: one parent all the way down.
+    expect(git(repo, ["rev-list", "--merges", "main..feat/x"]).trim()).toBe("");
+  });
+
+  it("returns GIT'S refusal verbatim over a dirty tree, and changes nothing", async () => {
+    const sibling = await bindSibling();
+    // The sibling rewrites a file the reviewer has uncommitted edits in — the arrangement
+    // git refuses. (A dirty file the merge does not touch is NOT refused, and Rennet does
+    // not invent a refusal git would not have made.)
+    commit(sibling, "feature.txt", "the round's version\n");
+    writeFileSync(join(repo, "feature.txt"), "mine, uncommitted\n");
+    const before = oid(repo, "refs/heads/feat/x");
+
+    const outcome = await landWorkBranch({
+      git: gitExec,
+      repoRoot: repo,
+      locus: HOST_LOCUS,
+      branch: "feat/x",
+      workBranch: "rennet/feat/x",
+    });
+
+    expect(outcome.status).toBe("refused");
+    // GIT'S words, not Rennet's: this is the sentence the reviewer is shown.
+    if (outcome.status !== "refused") throw new Error("expected a refusal");
+    expect(outcome.reason).toContain("local changes");
+    expect(outcome.reason).toContain("feature.txt");
+    expect(outcome.branch).toBe("feat/x");
+    // Nothing moved and nothing was overwritten.
+    expect(oid(repo, "refs/heads/feat/x")).toBe(before);
+    expect(git(repo, ["show", ":feature.txt"])).toBe("feature\n");
+    // NOT trimmed: the leading space is porcelain's "unstaged" column, and trimming it
+    // away turns "modified in the worktree only" into an assertion that cannot tell the
+    // difference from "staged".
+    expect(git(repo, ["status", "--porcelain=v1"])).toBe(" M feature.txt\n");
+  });
+
+  it("returns GIT'S refusal over a DIVERGED branch, and writes no merge commit", async () => {
+    const sibling = await bindSibling();
+    commit(sibling, "round.txt", "the round's work\n");
+    // The reviewer committed on their own branch meanwhile: the sibling is no longer an
+    // ancestor, so a fast-forward is impossible. Rennet does not merge or rebase for them.
+    const diverged = commit(repo, "theirs.txt", "mine\n");
+
+    const outcome = await landWorkBranch({
+      git: gitExec,
+      repoRoot: repo,
+      locus: HOST_LOCUS,
+      branch: "feat/x",
+      workBranch: "rennet/feat/x",
+    });
+
+    expect(outcome.status).toBe("refused");
+    if (outcome.status !== "refused") throw new Error("expected a refusal");
+    expect(outcome.reason).toContain("fast-forward");
+    expect(oid(repo, "refs/heads/feat/x")).toBe(diverged);
+    // No merge commit anywhere on the branch — the refusal really did nothing.
+    expect(git(repo, ["rev-list", "--merges", "main..feat/x"]).trim()).toBe("");
+    expect(git(repo, ["status", "--porcelain=v1"]).trim()).toBe("");
+  });
+
+  it("says there is nothing to land when the work is on the reviewed branch itself", async () => {
+    const outcome = await landWorkBranch({
+      git: gitExec,
+      repoRoot: repo,
+      locus: HOST_LOCUS,
+      branch: "feat/x",
+    });
+    expect(outcome).toEqual({
+      status: "unavailable",
+      reason: "this session's work is on feat/x already",
+    });
+  });
+});
+
+describe("sibling collection (D5, task 2.6)", () => {
+  it("removes a MERGED sibling's worktree and its branch", async () => {
+    const sibling = await bindSibling();
+    // Landed: the branch now contains everything the sibling does.
+    commit(sibling, "round.txt", "the round's work\n");
+    await landWorkBranch({
+      git: gitExec,
+      repoRoot: repo,
+      locus: HOST_LOCUS,
+      branch: "feat/x",
+      workBranch: "rennet/feat/x",
+    });
+
+    const collection = await collectSibling({
+      git: gitExec,
+      repoRoot: repo,
+      siblingBranch: "rennet/feat/x",
+      branch: "feat/x",
+    });
+
+    expect(collection.worktreeRemoved).toBe(true);
+    expect(collection.branchDeleted).toBe(true);
+    expect(existsSync(sibling)).toBe(false);
+    expect(() => git(repo, ["rev-parse", "--verify", "refs/heads/rennet/feat/x"])).toThrow();
+  });
+
+  it("removes a PUSHED sibling: reachable through the branch's remote-tracking ref", async () => {
+    // The push under `own` advances `origin/feat/x` and leaves the local branch behind, so
+    // the local branch alone says the sibling is unmerged. It is not — the commits are on
+    // the remote, and D5 asks both.
+    const bare = join(root, "remote.git");
+    git(root, ["init", "-q", "--bare", bare]);
+    git(repo, ["remote", "add", "origin", bare]);
+    git(repo, ["push", "-q", "-u", "origin", "refs/heads/feat/x:refs/heads/feat/x"]);
+    const sibling = await bindSibling();
+    const roundCommit = commit(sibling, "round.txt", "the round's work\n");
+    git(repo, ["push", "-q", "origin", "refs/heads/rennet/feat/x:refs/heads/feat/x"]);
+    git(repo, ["fetch", "-q", "origin"]);
+    expect(oid(repo, "refs/remotes/origin/feat/x")).toBe(roundCommit);
+
+    const collection = await collectSibling({
+      git: gitExec,
+      repoRoot: repo,
+      siblingBranch: "rennet/feat/x",
+      branch: "feat/x",
+    });
+
+    expect(collection.branchDeleted).toBe(true);
+    expect(existsSync(sibling)).toBe(false);
+    expect(() => git(repo, ["rev-parse", "--verify", "refs/heads/rennet/feat/x"])).toThrow();
+  });
+
+  it("KEEPS an unpushed sibling — its worktree AND its branch — and says why", async () => {
+    const sibling = await bindSibling();
+    commit(sibling, "round-1.txt", "one\n");
+    const tip = commit(sibling, "round-2.txt", "two\n");
+
+    const collection = await collectSibling({
+      git: gitExec,
+      repoRoot: repo,
+      siblingBranch: "rennet/feat/x",
+      branch: "feat/x",
+    });
+
+    expect(collection).toEqual({
+      worktreeRemoved: false,
+      branchDeleted: false,
+      reason: "rennet/feat/x holds commits feat/x does not — kept with its worktree",
+    });
+    // Both survive, and the two commits are still exactly where the round left them.
+    expect(existsSync(join(sibling, "round-2.txt"))).toBe(true);
+    expect(oid(repo, "refs/heads/rennet/feat/x")).toBe(tip);
+    expect(
+      git(repo, ["rev-list", "--count", "refs/heads/feat/x..refs/heads/rennet/feat/x"]).trim(),
+    ).toBe("2");
+  });
+
+  it("is not fooled by a TAG named like the sibling", async () => {
+    // `git rev-parse rennet/feat/x` resolves `refs/tags/` before `refs/heads/`. A tag on a
+    // merged commit would answer the reachability question for a branch that is two commits
+    // ahead — and the collection would then delete unmerged work believing it was safe.
+    const sibling = await bindSibling();
+    commit(sibling, "round.txt", "the round's work\n");
+    git(repo, ["tag", "rennet/feat/x", "refs/heads/feat/x"]);
+
+    const collection = await collectSibling({
+      git: gitExec,
+      repoRoot: repo,
+      siblingBranch: "rennet/feat/x",
+      branch: "feat/x",
+    });
+
+    expect(collection.branchDeleted).toBe(false);
+    expect(existsSync(sibling)).toBe(true);
+  });
+
+  it("sweeps a sibling no live session claims, and skips the one a session is bound to", async () => {
+    const sibling = await bindSibling();
+    commit(sibling, "round.txt", "the round's work\n");
+    // A second sibling, on another branch, that a live session IS bound to.
+    git(repo, ["branch", "feat/y", "refs/heads/main"]);
+    const other = join(worktrees, "feat", "y");
+    await ensureSiblingWorktree(gitExec, repo, other, "feat/y");
+
+    const found = await orphanedSiblings({
+      git: gitExec,
+      repoRoot: repo,
+      under: (path) => path.startsWith(worktrees),
+      claimed: (path) => path === other,
+    });
+
+    expect(found).toEqual([{ path: sibling, siblingBranch: "rennet/feat/x", branch: "feat/x" }]);
+    // The reviewer's own checkout is not in the list either: it is not a `rennet/*` worktree.
+    expect(found.some((entry) => entry.path === repo)).toBe(false);
+  });
+});
