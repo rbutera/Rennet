@@ -2898,6 +2898,14 @@ export interface RennetBridge {
   /** Opens the host operating system's Full Disk Access settings, when supported. */
   openFullDiskAccessSettings?(): Promise<boolean>;
   /**
+   * The host's native folder dialog, as a SHORTCUT into the in-app directory browser (the
+   * browser stays the path's source of truth so remote/WSL sources browse identically).
+   * Resolves to the chosen absolute path on the HOST's filesystem, or null when cancelled.
+   * Optional and host-provided like {@link platform}: a browser tab or a test omits it and
+   * the browser simply offers no Browse button.
+   */
+  pickDirectory?(options: { defaultPath?: string }): Promise<string | null>;
+  /**
    * Subscribe to live progress events pushed by a long-running command, keyed by
    * the `commandId` the caller passes to `invoke`. Returns an unsubscribe. Today
    * this carries `project.process`'s snapshot-build narration. Optional: a bridge

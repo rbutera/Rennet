@@ -56,7 +56,7 @@ still goes through the one seam; only the label is hand-written.
 | Command | Rationale |
 |---|---|
 | `app.bootstrap` | Boot handshake the client runs itself on mount. |
-| `repository.choose` | The path comes from the client's own native picker; an empty input reaches the daemon's fallback chooser, not the user's pick. |
+| `repository.choose` | The path comes from the in-app directory browser; an empty input reaches the daemon's fallback chooser, not the user's pick. |
 
 ### review
 

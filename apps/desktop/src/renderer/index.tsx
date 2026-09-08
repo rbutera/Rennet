@@ -29,9 +29,9 @@ if (preload.platform) {
 // loopback port the preload ASKS MAIN for — the window is created before the daemon is healthy,
 // so the port arrives as a late endpoint rather than in argv). A SAVED remote target is a `WsRennetBridge` at its
 // host with its device token. The in-app directory browser (source-aware project selection)
-// retired the native directory picker AND the remote path prompt — `repository.choose` now
-// always arrives with a `{ path }` the browser supplied, on whichever source's daemon is
-// attached. The Electron-native preload residue (platform, the app-updater channels, the WSL
+// is the path's source of truth — `repository.choose` always arrives with a `{ path }` the
+// browser supplied, on whichever source's daemon is attached; the native folder dialog
+// survives only as a shortcut that jumps the browser to its answer. The Electron-native preload residue (platform, the app-updater channels, the WSL
 // distro list) merges onto every target — it operates whichever daemon the window is attached
 // to, since those are about the installed app, not the daemon. Switching a target is a clean
 // RennetApp remount; the desktop's own daemon spawn/supervision is untouched (remote
@@ -50,9 +50,9 @@ function targetTokenStore(target: ConnectionTarget): TokenStore {
 
 /**
  * Compose a full RennetBridge from the supervisor + the Electron-native preload residue. The
- * native directory picker is retired (source-aware project selection): the in-app directory
- * browser now supplies the path, so `repository.choose` always arrives with its `{ path }` and the
- * bridge forwards every command straight through — no interception.
+ * in-app directory browser supplies the path (the native dialog is only a shortcut into it), so
+ * `repository.choose` always arrives with its `{ path }` and the bridge forwards every command
+ * straight through — no interception.
  */
 function composeBridge(supervisor: ConnectionSupervisor): RennetBridge & { close?(): void } {
   return {
@@ -68,6 +68,9 @@ function composeBridge(supervisor: ConnectionSupervisor): RennetBridge & { close
     platform: preload.platform,
     version: preload.version,
     openFullDiskAccessSettings: preload.openFullDiskAccessSettings,
+    // The native folder dialog as a shortcut into the in-app browser. Rides every target
+    // like the platform residue; the browser only OFFERS it while listing this machine.
+    pickDirectory: (options) => preload.pickDirectory(options),
     // App-binary update readiness rides every target like the platform residue — the
     // update is about THIS installed app, not whichever daemon the window watches.
     onUpdateReady: preload.onUpdateReady,
