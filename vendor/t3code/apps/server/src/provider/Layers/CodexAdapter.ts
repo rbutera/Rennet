@@ -24,6 +24,7 @@ import {
   type RuntimeTaskUsage,
   ProviderApprovalDecision,
   ThreadId,
+  TurnId,
   ProviderSendTurnInput,
   type TurnMcpServers,
   SIDECAR_OWNED_MCP_SERVER_NAME,
@@ -273,7 +274,7 @@ function normalizeCodexTokenUsage(
 ): ThreadTokenUsageSnapshot | undefined {
   const totalProcessedTokens = usage.total.totalTokens;
   const usedTokens = usage.last.totalTokens;
-  if (usedTokens === undefined || usedTokens <= 0) {
+  if (usedTokens === undefined || usedTokens < 0) {
     return undefined;
   }
 
@@ -1145,8 +1146,15 @@ function mapToRuntimeEvents(
       {
         type: "thread.token-usage.updated",
         ...runtimeEventBase(event, canonicalThreadId),
+        ...(payload ? { turnId: TurnId.make(payload.turnId) } : {}),
         payload: {
-          usage: normalizedUsage,
+          usage: {
+            ...normalizedUsage,
+            ...(payload ? { codexCumulativeUsage: {
+              providerThreadId: payload.threadId,
+              ...payload.tokenUsage.total,
+            } } : {}),
+          },
         },
       },
     ];
