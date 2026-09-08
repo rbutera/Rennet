@@ -1,7 +1,7 @@
 import { mkdtempSync, realpathSync, rmSync, symlinkSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { withRepoPref } from "@rennet/adapters";
+import { defaultWorktreePlacement, prWorktreePath, withRepoPref } from "@rennet/adapters";
 import { escapePath, reviewRoleMappings } from "@rennet/core";
 import type {
   ClientSettings,
@@ -2362,6 +2362,39 @@ describe("resolveWorktreePlacement — what the BINDING reads (workspace-setting
     }).resolveWorktreePlacement("/work/api");
     expect(placement.root).toBe("/srv/trees");
     expect(placement.workspace).toBe("own");
+  });
+
+  it("places a PULL REQUEST at the RESOLVED root and pattern, where the row previews it", async () => {
+    // REVIEW FINDING W5. The pull-request front door computed its worktree from
+    // `defaultWorktreePlacement(dataDir)` and INDEXED that path before any binding ran, so
+    // `decideBoundWorkspace` reused it: a repository with a configured root previewed one
+    // location on its Worktrees card and got the builtin on disk, and the binding never had
+    // a chance to place it. One placement read, both callers — this is the value they read.
+    const { deps } = twoRepoDeps({
+      [escapePath("/work/api")]: {
+        worktreeBaseDir: "/srv/trees",
+        prWorktreePattern: "{name}/pr/{number}",
+      },
+    });
+    const identity = {
+      repoKey: escapePath("/work/api"),
+      repoRoot: "/work/api",
+      owner: "acme",
+      remoteName: "widget",
+    };
+
+    const placement = await createSettingsComposition(deps).resolveWorktreePlacement("/work/api");
+
+    expect(prWorktreePath(placement.root, placement.prPattern, identity, 7)).toBe(
+      join("/srv/trees", "widget", "pr", "7"),
+    );
+    // …and it is NOT where the hardcoded builtin the front door used to read puts it. This
+    // is the pair: a test that only asserted the resolved path would pass unchanged against
+    // the defect whenever the two happened to agree.
+    const builtin = defaultWorktreePlacement("/data");
+    expect(prWorktreePath(builtin.root, builtin.prPattern, identity, 7)).toBe(
+      join("/data", "worktrees", "acme", "widget", "pr-7"),
+    );
   });
 
   it("resolves the BUILTIN placement for a MALFORMED config rather than half a file", async () => {
