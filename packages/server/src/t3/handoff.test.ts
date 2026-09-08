@@ -285,10 +285,11 @@ describe("runRoundTurn", () => {
 // attempt started" — the prompt-text matching that guarded a SHARED thread is gone with the
 // sharing. `since` is what still separates a retry from the attempt before it.
 describe("readRoundTurnCheckpoint", () => {
-  const SINCE = Date.parse("2026-09-04T10:00:00.000Z");
+  const START_COMMAND = "worker-2";
 
   const summary = (turnId: string, completedAt: string, status: "ready" | "error" | "missing") => ({
     turnId,
+    startCommandId: turnId === "turn-2" || turnId === "turn-3" ? START_COMMAND : "worker-1",
     checkpointTurnCount: Number(turnId.split("-")[1]),
     checkpointRef: `refs/t3/checkpoints/${turnId}`,
     status,
@@ -317,14 +318,18 @@ describe("readRoundTurnCheckpoint", () => {
     return { client, threadFor, seen };
   }
 
-  const read = (stubs: ReturnType<typeof checkpointStubs>, since = SINCE) =>
+  const read = (
+    stubs: ReturnType<typeof checkpointStubs>,
+    startCommandId: string | undefined = START_COMMAND,
+  ) =>
     readRoundTurnCheckpoint(
       {
         repoRoot: "/repos/a",
         sessionId: "s-1",
         operationId: "op-1",
         title: "feat/x — round 2",
-        since,
+        ...(startCommandId === undefined ? {} : { startCommandId }),
+        checkpointWait: { waitMs: 0 },
       },
       { client: async () => stubs.client, threadFor: stubs.threadFor },
     );
@@ -336,8 +341,7 @@ describe("readRoundTurnCheckpoint", () => {
   });
 
   it("refuses an earlier attempt's turn on the same thread", async () => {
-    // An identical re-dispatch reuses this thread, so `since` is the guard. The old turn is
-    // deliberately LAST in array order, so position and time disagree.
+    // The previous attempt is last in array order; only the start identity matches.
     const stubs = checkpointStubs([
       summary("turn-3", "2026-09-04T10:00:09.000Z", "ready"),
       summary("turn-1", "2026-09-04T09:59:59.000Z", "ready"),
@@ -345,17 +349,70 @@ describe("readRoundTurnCheckpoint", () => {
     expect((await read(stubs))?.checkpoint.turnId).toBe("turn-3");
   });
 
+  it("does not recover a previous attempt that checkpoints after this attempt started", async () => {
+    const stubs = checkpointStubs([
+      summary("turn-2", "2026-09-04T10:00:05.000Z", "ready"),
+      summary("turn-1", "2026-09-04T10:00:10.000Z", "ready"),
+    ]);
+    expect((await read(stubs))?.checkpoint.turnId).toBe("turn-2");
+  });
+
   it("carries T3's status through, so a failed turn cannot read as a completed one", async () => {
     const stubs = checkpointStubs([summary("turn-2", "2026-09-04T10:00:05.000Z", "error")]);
     expect(await read(stubs)).toMatchObject({ status: "error", diff: "diff for turn-2" });
   });
 
-  it("is absent when every checkpoint predates the attempt", async () => {
+  it("is absent when only sibling checkpoints exist", async () => {
     const stubs = checkpointStubs([summary("turn-1", "2026-09-04T09:59:59.000Z", "ready")]);
     expect(await read(stubs)).toBeUndefined();
   });
 
-  // Finding 4: the checkpoint IS listed (a ready summary at or after `since`), but its diff
+  it("does not adopt a sibling for a legacy attempt without a start association", async () => {
+    const stubs = checkpointStubs([summary("turn-2", "2026-09-04T10:00:05.000Z", "ready")]);
+    await expect(
+      readRoundTurnCheckpoint(
+        { repoRoot: "/repos/a", sessionId: "s-1", operationId: "op-1", title: "legacy" },
+        { client: async () => stubs.client, threadFor: stubs.threadFor },
+      ),
+    ).resolves.toBeUndefined();
+    expect(stubs.client.readThread).not.toHaveBeenCalled();
+  });
+
+  it("waits for its own late checkpoint after a sibling finished last", async () => {
+    const stubs = checkpointStubs([summary("turn-1", "2026-09-04T10:00:05.000Z", "ready")]);
+    await expect(
+      readRoundTurnCheckpoint(
+        {
+          repoRoot: "/repos/b",
+          sessionId: "s-2",
+          operationId: "op-1",
+          title: "main",
+          branch: "main",
+          startCommandId: START_COMMAND,
+          checkpointWait: {
+            waitMs: 1000,
+            sleep: async () => {
+              vi.mocked(stubs.client.readThread).mockResolvedValue({
+                checkpoints: [
+                  summary("turn-2", "2026-09-04T09:59:59.000Z", "ready"),
+                  summary("turn-1", "2026-09-04T10:00:05.000Z", "ready"),
+                ],
+              } as unknown as OrchestrationThread);
+            },
+          },
+        },
+        { client: async () => stubs.client, threadFor: stubs.threadFor },
+      ),
+    ).resolves.toMatchObject({ checkpoint: { turnId: "turn-2" } });
+    expect(stubs.threadFor).toHaveBeenCalledWith({
+      repositoryRoot: "/repos/b",
+      key: { kind: "round", sessionId: "s-2", operationId: "op-1" },
+      title: "main",
+      branch: "main",
+    });
+  });
+
+  // The exact checkpoint is listed, but its diff
   // read throws — a sidecar we could not reach. Swallowing that into `undefined` would report
   // "the turn left no checkpoint", which the recovery port then narrates as a turn that did
   // nothing. Instead the read failure PROPAGATES, so recovery records "could not be read".

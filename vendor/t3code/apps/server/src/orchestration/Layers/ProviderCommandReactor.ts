@@ -1158,6 +1158,7 @@ const make = Effect.gen(function* () {
       yield* appendProviderFailureActivity({
         threadId: event.payload.threadId,
         kind: "provider.turn.start.failed",
+        requestId: event.commandId ?? event.eventId,
         summary: "Provider turn start failed",
         detail: `User message '${event.payload.messageId}' was not found for turn start request.`,
         turnId: null,
@@ -1213,6 +1214,7 @@ const make = Effect.gen(function* () {
           appendProviderFailureActivity({
             threadId: event.payload.threadId,
             kind: "provider.turn.start.failed",
+        requestId: event.commandId ?? event.eventId,
             summary: "Provider turn start failed",
             detail,
             turnId: null,
@@ -1261,7 +1263,24 @@ const make = Effect.gen(function* () {
 
     yield* providerService
       .sendTurn(sendTurnRequest.value)
-      .pipe(Effect.catchCause(recoverTurnStartFailure), Effect.forkScoped);
+      .pipe(
+        Effect.flatMap((started) => orchestrationEngine.dispatch({
+          type: "thread.activity.append",
+          commandId: CommandId.make(`turn-start-associated:${event.commandId ?? event.eventId}`),
+          threadId: event.payload.threadId,
+          activity: {
+            id: EventId.make(`turn-start:${event.payload.threadId}:${started.turnId}`),
+            tone: "info",
+            kind: "turn.start-associated",
+            summary: "Turn start associated",
+            payload: { startCommandId: event.commandId ?? event.eventId },
+            turnId: started.turnId,
+            createdAt: event.payload.createdAt,
+          },
+          createdAt: event.payload.createdAt,
+        })),
+        Effect.catchCause(recoverTurnStartFailure), Effect.forkScoped,
+      );
   });
 
   const processTurnInterruptRequested = Effect.fn("processTurnInterruptRequested")(function* (

@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
@@ -248,6 +248,108 @@ describe.skipIf(!bundle)("t3 client over the vendored sidecar", () => {
 // 6), so this runs on every platform again. A `claude` that merely EXITS cannot see it —
 // the SDK's own exit check wins that race, ten runs out of ten — so the stand-in below
 // closes its stdin and lives on, which is the shape that produces the write.
+describe.skipIf(!bundle)("round accepted-start recovery over the real sidecar", () => {
+  it("reconnects after acceptance and replays the command without another worker", async () => {
+    const root = mkdtempSync(join(tmpdir(), "rennet-start-association-"));
+    const repo = join(root, "repo");
+    mkdirSync(repo);
+    execFileSync("git", ["init", "-q", "-b", "main", repo]);
+    writeFileSync(join(repo, "README.md"), "fixture\n");
+    execFileSync("git", ["-C", repo, "add", "."]);
+    execFileSync("git", [
+      "-C",
+      repo,
+      "-c",
+      "user.name=t",
+      "-c",
+      "user.email=t@example.com",
+      "commit",
+      "-qm",
+      "fixture",
+    ]);
+    const starts = join(root, "starts.txt");
+    const claude = join(root, "claude-fixture.mjs");
+    writeFileSync(
+      claude,
+      `#!/usr/bin/env node
+import { createInterface } from "node:readline";
+import { appendFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+const send = (value) => process.stdout.write(JSON.stringify(value) + "\\n");
+createInterface({ input: process.stdin }).on("line", (line) => {
+  const message = JSON.parse(line);
+  if (message.type === "control_request") {
+    send({ type: "control_response", response: { subtype: "success", request_id: message.request_id, response: { commands: [], agents: [], models: [], account: {} } } });
+  } else if (message.type === "user") {
+    if (JSON.stringify(message).includes("round-worker-fixture")) appendFileSync(${JSON.stringify(starts)}, "started\\n");
+    send({ type: "system", subtype: "init", session_id: "fixture-session", tools: [], model: "claude-sonnet-5" });
+    send({ type: "assistant", uuid: randomUUID(), session_id: "fixture-session", parent_tool_use_id: null, message: { id: randomUUID(), role: "assistant", content: [{ type: "text", text: "Done." }] } });
+    send({ type: "result", subtype: "success", is_error: false, result: "Done.", session_id: "fixture-session", uuid: randomUUID(), usage: { input_tokens: 1, output_tokens: 1 } });
+  }
+});
+`,
+      { mode: 0o755 },
+    );
+    const dataDir = join(root, "data");
+    const running = await spawnSidecar({
+      dataDir,
+      bundlePath: bundle as string,
+      upstreamCommit: "test",
+      env: { ...process.env, HOME: join(root, "home") },
+      binaries: { claude },
+      readyTimeoutMs: 30_000,
+    });
+    const connect = () =>
+      connectT3({
+        wsUrl: `${running.origin.replace(/^http/, "ws")}/ws`,
+        accessToken: running.credentials.accessToken,
+      });
+    let client = await connect();
+    try {
+      const projectId = await client.ensureProject(repo, "fixture");
+      const threadId = await client.createThread({
+        projectId,
+        title: "round fixture",
+        modelSelection: modelSelection("claudeAgent", "claude-sonnet-5"),
+      });
+      const input = {
+        threadId,
+        text: "round-worker-fixture",
+        startCommandId: "durable-worker-start",
+      };
+      await client.startTurn(input);
+      await client.close();
+      client = await connect();
+      const replay = await client.startTurn(input);
+      const outcome = await client.waitForTurnSettled(threadId, {
+        after: replay,
+        startTimeoutMs: 15_000,
+      });
+      expect(outcome.state).toBe("completed");
+      await expect
+        .poll(
+          async () =>
+            (await client.readThread(threadId)).checkpoints.find(
+              (entry) => entry.startCommandId === input.startCommandId,
+            ),
+          { timeout: 15_000 },
+        )
+        .toMatchObject({ turnId: outcome.turnId });
+      expect(
+        (await client.readThread(threadId)).messages.filter(
+          (message) => message.role === "user" && message.text === input.text,
+        ),
+      ).toHaveLength(1);
+      expect(readFileSync(starts, "utf8")).toBe("started\n");
+    } finally {
+      await client.close();
+      await stopSidecar(dataDir);
+      running.child?.kill("SIGKILL");
+      rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    }
+  }, 60_000);
+});
+
 describe.skipIf(!bundle)("t3 client: a provider stream that dies before its turn registers", () => {
   let root: string;
   let running: RunningSidecar;
@@ -602,6 +704,25 @@ describe("awaitTurnSettled", () => {
       },
     };
   }
+
+  it("replays an accepted start by exact identity even after its turn has already settled", async () => {
+    const p = projection(
+      fakeThread({
+        latestTurn: { turnId: "turn-older", state: "completed" },
+        checkpoints: [{ turnId: "turn-mine", startCommandId: "start-mine", status: "ready" }],
+        activities: [settledActivity("turn-mine", { structuredOutput: { mine: true } })],
+      }),
+    );
+    await expect(
+      awaitTurnSettled("t", p.deps, {
+        after: { previousTurnId: "turn-mine", requestedAt: T0, startCommandId: "start-mine" },
+      }),
+    ).resolves.toMatchObject({
+      turnId: "turn-mine",
+      state: "completed",
+      structuredOutput: { mine: true },
+    });
+  });
 
   it("waits for ITS turn: the settlement already on the thread is the previous turn's", async () => {
     const drafted = fakeThread({

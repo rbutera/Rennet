@@ -74,6 +74,7 @@ export interface CreateThreadInput {
 }
 
 export interface StartTurnInput {
+  readonly startCommandId?: string;
   readonly threadId: string;
   readonly text: string;
   readonly modelSelection?: ModelSelection;
@@ -146,6 +147,7 @@ export interface TurnOutcome extends TurnSettlement {
 
 /** What `startTurn` saw before it dispatched, so the wait can tell the new turn from the last one. */
 export interface TurnStart {
+  readonly startCommandId?: string;
   /** The thread's latest turn when this one was requested; `null` on a fresh thread. */
   readonly previousTurnId: string | null;
   /** The start command's own stamp. A session error recorded before it is an earlier turn's. */
@@ -396,7 +398,12 @@ export async function connectT3(options: T3ClientOptions): Promise<T3Client> {
       const previousTurnId =
         (await bounded(() => readThread(input.threadId), "could not be read before the turn start"))
           .latestTurn?.turnId ?? null;
-      const stamped = stamp();
+      const stamped = {
+        ...stamp(),
+        ...(input.startCommandId === undefined
+          ? {}
+          : { commandId: CommandId.make(input.startCommandId) }),
+      };
       await bounded(
         () =>
           dispatch({
@@ -404,7 +411,7 @@ export async function connectT3(options: T3ClientOptions): Promise<T3Client> {
             ...stamped,
             threadId: ThreadId.make(input.threadId),
             message: {
-              messageId: MessageId.make(randomUUID()),
+              messageId: MessageId.make(input.startCommandId ?? randomUUID()),
               role: "user",
               text: input.text,
               attachments: [],
@@ -417,7 +424,11 @@ export async function connectT3(options: T3ClientOptions): Promise<T3Client> {
           }),
         "did not accept the turn start",
       );
-      return { previousTurnId, requestedAt: stamped.createdAt };
+      return {
+        previousTurnId,
+        requestedAt: stamped.createdAt,
+        ...(input.startCommandId === undefined ? {} : { startCommandId: input.startCommandId }),
+      };
     },
     interruptTurn: async (threadId) => {
       await dispatch({
@@ -544,9 +555,36 @@ export async function awaitTurnSettled(
   /** The turn this wait is for: the latest one, unless it is the one already there at the start. */
   const currentTurn = (thread: OrchestrationThread | undefined) => {
     const latest = thread?.latestTurn;
+    if (after?.startCommandId !== undefined && thread !== undefined) {
+      const checkpoint = thread.checkpoints.find(
+        (entry) => entry.startCommandId === after.startCommandId,
+      );
+      const associated = thread.activities.find(
+        (entry) =>
+          entry.kind === "turn.start-associated" &&
+          typeof entry.payload === "object" &&
+          entry.payload !== null &&
+          "startCommandId" in entry.payload &&
+          entry.payload.startCommandId === after.startCommandId,
+      );
+      const turnId = checkpoint?.turnId ?? associated?.turnId;
+      if (latest != null && latest.turnId === turnId) return latest;
+      if (checkpoint !== undefined)
+        return {
+          turnId: checkpoint.turnId,
+          state:
+            checkpoint.status === "ready"
+              ? ("completed" as const)
+              : checkpoint.status === "error"
+                ? ("error" as const)
+                : ("interrupted" as const),
+        };
+      return undefined;
+    }
     return latest && latest.turnId !== after?.previousTurnId ? latest : undefined;
   };
   const sessionFailure = (thread: OrchestrationThread | undefined): string | undefined => {
+    if (after?.startCommandId !== undefined) return undefined;
     const session = thread?.session;
     if (!session || session.activeTurnId !== null) return undefined;
     if (session.status !== "stopped" && session.status !== "error") return undefined;
@@ -564,14 +602,20 @@ export async function awaitTurnSettled(
    * `provider.turn.start.failed` activity with no turn id, and marks the session `error`
    * — which the session start it had just kicked off overwrites with `ready` a moment
    * later. So the session reads healthy, no turn row ever appears, and the activity is
-   * the only durable trace. One stamped at or after this request is this turn's refusal.
+   * the only durable trace. Correlated round starts match the exact request ID; older
+   * interactive callers retain their request-time fallback.
    */
   const startFailure = (thread: OrchestrationThread | undefined): string | undefined => {
     const refusal = thread?.activities.findLast(
       (activity) =>
         activity.kind === "provider.turn.start.failed" &&
         activity.turnId === null &&
-        (after === undefined || Date.parse(activity.createdAt) >= Date.parse(after.requestedAt)),
+        (after?.startCommandId !== undefined
+          ? typeof activity.payload === "object" &&
+            activity.payload !== null &&
+            "requestId" in activity.payload &&
+            activity.payload.requestId === after.startCommandId
+          : after === undefined || Date.parse(activity.createdAt) >= Date.parse(after.requestedAt)),
     );
     if (refusal === undefined) return undefined;
     const detail = asRecord(refusal.payload)?.detail;

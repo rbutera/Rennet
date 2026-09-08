@@ -940,7 +940,7 @@ describe("the round runs in the session's bound root", () => {
       sourceHead: "bound-head",
       preparedAt: 3,
     };
-    const workerAttempt = { executionId: "worker-1", startedAt: 900 };
+    const workerAttempt = { executionId: "worker-1", startCommandId: "worker-1", startedAt: 900 };
     const running: RoundOperation = {
       ...operation(),
       state: { phase: "worker-running", workspace, worker: workerAttempt },
@@ -956,14 +956,11 @@ describe("the round runs in the session's bound root", () => {
       operation: running,
       attempt: workerAttempt,
     });
-    // The read is scoped to the ROUND's own thread and to this attempt's start. The
-    // prompt-text matching that used to be needed is gone with the thread sharing: the
-    // only turns on this thread are this round's own attempts, and `since` separates a
-    // retry from the attempt before it.
+    // The durable start identity scopes the read even when an older attempt finishes late.
     expect(readCheckpoint).toHaveBeenCalledWith({
       repoRoot: "/bound",
       worktreePath: "/bound",
-      since: 900,
+      startCommandId: "worker-1",
       sessionId: "session-1",
       operationId: "operation-1",
       title: "feat/test — round 1",
@@ -993,6 +990,19 @@ describe("the round runs in the session's bound root", () => {
         ? errored.termination.reason
         : "",
     ).toContain("failed");
+
+    readCheckpoint.mockClear();
+    const legacy = await createRoundWorkerRecoveryPort({ readCheckpoint, now: () => 1000 })({
+      operation: running,
+      attempt: { executionId: "legacy", startedAt: 899 },
+    });
+    expect(legacy.outcome).toBe("failed");
+    expect(readCheckpoint).not.toHaveBeenCalled();
+    expect(
+      legacy.outcome === "failed" && legacy.termination.kind === "error"
+        ? legacy.termination.reason
+        : "",
+    ).toContain("no recorded start association");
 
     const failed = await createRoundWorkerRecoveryPort({
       readCheckpoint: async () => undefined,

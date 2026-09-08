@@ -378,6 +378,7 @@ export const RoundWorkspaceReceiptSchema = z.object({
 export type RoundWorkspaceReceipt = z.infer<typeof RoundWorkspaceReceiptSchema>;
 
 export const RoundWorkerAttemptSchema = z.object({
+  startCommandId: id.optional(),
   executionId: id,
   startedAt: z.number().int().nonnegative(),
 });

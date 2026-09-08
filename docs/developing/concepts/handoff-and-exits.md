@@ -467,6 +467,9 @@ that host's repair.
    session is archived. The session's chat thread never receives a round turn:
    the reviewer's conversation and the coding agent's tool calls are two
    transcripts, not one scroll.
+   Each attempt records its start identity before dispatch. Restart recovery reads
+   only that start's exact checkpoint; replaying the accepted start does not run
+   another worker. An older attempt finishing late cannot supply a retry's result.
 3. Watch the run live. Until the daemon answers, what the view shows is the
    *intent*: you asked for a round, and nothing has come back. The daemon's
    receipt is what promotes it, and a refused dispatch reads as the refusal it
