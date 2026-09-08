@@ -190,7 +190,9 @@ export function summarizeUsage(metrics: readonly TurnMetric[]): GenerationUsage 
     totalTokens: 0,
   };
   let usd: number | null = 0;
+  let boardToolCalls: number | undefined;
   for (const metric of metrics) {
+    if (metric.toolCalls !== undefined) boardToolCalls = (boardToolCalls ?? 0) + metric.toolCalls;
     const usage = metric.usage;
     if (usage === null) {
       sum.unmeasuredTurns += 1;
@@ -208,7 +210,11 @@ export function summarizeUsage(metrics: readonly TurnMetric[]): GenerationUsage 
     if (usd !== null && metered && usage.reportedUsd !== null) usd += usage.reportedUsd;
     else usd = null;
   }
-  return { ...sum, reportedUsd: metrics.length === 0 ? null : usd };
+  return {
+    ...sum,
+    ...(boardToolCalls === undefined ? {} : { boardToolCalls }),
+    reportedUsd: metrics.length === 0 ? null : usd,
+  };
 }
 
 /**
@@ -222,7 +228,16 @@ export function mergeGenerationUsage(
 ): GenerationUsage | undefined {
   if (prior === undefined) return current;
   if (current === undefined) return prior;
+  const boardToolCalls =
+    prior.turns === 0
+      ? current.boardToolCalls
+      : current.turns === 0
+        ? prior.boardToolCalls
+        : prior.boardToolCalls === undefined || current.boardToolCalls === undefined
+          ? undefined
+          : prior.boardToolCalls + current.boardToolCalls;
   return {
+    ...(boardToolCalls === undefined ? {} : { boardToolCalls }),
     turns: prior.turns + current.turns,
     unmeasuredTurns: prior.unmeasuredTurns + current.unmeasuredTurns,
     inputTokens: prior.inputTokens + current.inputTokens,

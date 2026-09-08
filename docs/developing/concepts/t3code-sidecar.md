@@ -1466,6 +1466,14 @@ it as a tool-call count, never as a round-trip count, and note that it excludes 
 calls (a seat with `Agent` sub-sessions reports 37 while 106 calls appear in its log). **The
 number of distinct assistant message ids is the round-trip count.**
 
+Generation usage stores the sum of observed `TurnMetric.toolCalls` as optional
+`boardToolCalls`, including refusals and turns with no token result. The review's
+usage line labels this **observed board tool calls**. It excludes the provider's other tools
+and does not measure provider round trips. Zero means an observed board counter
+reported zero; absence means no counter was available or a legacy record predates
+collection. If an earlier attempt lacks counts, the merged generation omits the
+total rather than presenting a partial sum as complete.
+
 Timings on the 95-file branch, from the drafting kickoff: **time to first element 339.8 s**,
 **time to first core board 555.7 s** (Sequence). Against the v0.7.0 figure of 360 s to first
 core board, the reader now sees the first *element* at about the moment they used to see the

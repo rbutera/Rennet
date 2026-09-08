@@ -23,16 +23,13 @@ the surrounding heavy analysis session instead of requiring an independent seat.
 A catalogue entry is assignment metadata, not proof that a feature currently
 calls it. Live call sites include review-pipeline jobs, selection-aware context
 questions, CI analysis, delta digests, pull-request body drafting, handoff
-composition, comment refinement, orchestration, and adjudication.
+composition and comment refinement.
 
-The lens drafting pipeline runs five: `lens-draft` (the drafting seat for the
+The lens drafting pipeline routes `lens-draft` (the drafting seat for the
 Design, Sequence, and Decisions lenses), `lens-draft-flagged` (the dual seat —
 Claude and Codex on the same instructions, reconciled by cross-model
-concurrence), `lens-draft-noise` (the noise lens), `board-post-process` (a
-reserved role: the catalogue names it and a pick resolves for it, but no
-production turn runs it — the lens scheduler supplies no model-backed
-post-process transform), and `round-report`. The last is a single-turn
-classifier for landed coding rounds, not another full board drafter. It receives
+concurrence), `lens-draft-noise` (the noise lens), and `round-report`. The last is
+a single-turn classifier for landed coding rounds, not another full board drafter. It receives
 the successor patchset id, durable asks, and exact worker receipt. The host builds
 and verifies the report board from its classification. The Flagged dual-seat
 merge routes through `finding-reconcile`.
@@ -144,28 +141,26 @@ a refused grant to stop that runner and expose degraded output.
 
 ## Review roles in Settings
 
-The council routes jobs; the settings surface shows **review roles** — six
-user-legible names, each mapped to a council job that already exists in the
-catalogue. The mapping adds no job IDs and changes no table value; it is a reading
-of the tables, not a second source of truth.
+Model Mappings offers two review roles whose overrides reach production seats.
+The settings catalogue selects these existing council jobs without changing
+their assignment tables.
 
 | Review role | Council job |
 |---|---|
-| Orchestrator | `orchestrator-chat` |
-| Confirmation Worker | `self-consistency` |
 | Lens Drafters | `lens-draft` |
 | Flagged Second Seat | `lens-draft-flagged` |
-| Adjudication | `adjudication` |
-| Post-Process | `board-post-process` |
 
 `REVIEW_ROLE_CATALOGUE` in `packages/core/src/model-council-roles.ts` is the
-source of truth for that list.
+source of truth for that list. Orchestrator, Confirmation, Adjudication and
+Post-Process have no production model work, so they offer no controls. Legacy
+overrides for those jobs remain readable in saved settings but do not affect
+dispatch. A registered council job alone does not make a setting active.
 
 Settings → Environments → *(host card)* → **Edit Mappings** resolves every role in
 all three availability scenarios and shows the result in two columns: **Dual
 Harness**, and a **Single Harness** column that resolves to whichever provider is
 enabled on that host. The read is
-**honest-present**: the tables are static, so the six roles are always there with
+**honest-present**: the tables are static, so the two roles are always there with
 real values, even on an install that has never been configured. A role that does
 not run in a scenario resolves to a null cell and renders an em dash — the Flagged
 Second Seat is the case that matters, since it exists only when both providers are
@@ -215,8 +210,8 @@ The sites that read it are the round runner (which carries it into every lens se
 through the lens pipeline), the project scout, and the utility ports — comment
 refinement, PR-body drafting, the delta digest, the handoff-bundle composer, the
 review opener, related-context retrieval, and CI-failure classification. Only the
-six roles the catalogue names can be overridden, so a site running a job outside the
-catalogue resolves from the tables as before.
+two roles the settings catalogue names can be overridden, so a site running a job
+outside the catalogue resolves from the tables as before.
 
 The Flagged lane is the one site that narrows what it is given. It runs one job on
 two provider-pinned seats, each resolved against a synthetic single-provider

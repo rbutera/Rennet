@@ -19,8 +19,7 @@ export const CODEX_MODELS = ["gpt-5.5", "gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.
  *
  * ⚠️ Do NOT render this. It is a hand-copied snapshot of the council tables with
  * nothing pinning it to `packages/core/src/model-council.ts`, and it HAS already
- * drifted: six cells (the whole Orchestrator and Confirmation Worker rows, models
- * and efforts both) disagreed with core when C16 checked. The real values are
+ * drifted. The real values are
  * served — `settings.get` resolves the live tables and is honest-present at the
  * source, so no product code needs a local copy and none may have one.
  *
@@ -30,22 +29,6 @@ export const CODEX_MODELS = ["gpt-5.5", "gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.
  * (claim 624).
  */
 export const REVIEW_ROLE_DEFAULTS: readonly ReviewRole[] = [
-  {
-    id: "orchestrator",
-    label: "Orchestrator",
-    hint: "The review seat — decomposition, the living draft, and chat.",
-    dual: { model: "opus-4.8", effort: "high" },
-    claudeOnly: { model: "opus-4.8", effort: "high" },
-    codexOnly: { model: "gpt-5.6-sol", effort: "high" },
-  },
-  {
-    id: "confirmation",
-    label: "Confirmation Worker",
-    hint: "The verify/synthesis seat — re-reads cited evidence, settles hypotheses.",
-    dual: { model: "sonnet-5", effort: "medium" },
-    claudeOnly: { model: "sonnet-5", effort: "medium" },
-    codexOnly: { model: "gpt-5.6-terra", effort: "medium" },
-  },
   {
     id: "lens-workers",
     label: "Lens Drafters",
@@ -61,22 +44,6 @@ export const REVIEW_ROLE_DEFAULTS: readonly ReviewRole[] = [
     dual: { model: "gpt-5.6-sol", effort: "high" },
     claudeOnly: null,
     codexOnly: null,
-  },
-  {
-    id: "adjudication",
-    label: "Adjudication",
-    hint: "One fresh-session turn per disagreement, capped per review.",
-    dual: { model: "opus-4.8", effort: "high" },
-    claudeOnly: { model: "opus-4.8", effort: "high" },
-    codexOnly: { model: "gpt-5.6-sol", effort: "high" },
-  },
-  {
-    id: "post-process",
-    label: "Post-Process Pass",
-    hint: "The editor pass every draft board takes before it shows.",
-    dual: { model: "gpt-5.6-terra", effort: "medium" },
-    claudeOnly: { model: "sonnet-5", effort: "medium" },
-    codexOnly: { model: "gpt-5.6-terra", effort: "medium" },
   },
 ];
 
