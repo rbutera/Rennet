@@ -2473,6 +2473,32 @@ export const settingsProjectWriteOutcomeSchema = z.object({
 });
 export type SettingsProjectWriteOutcome = z.infer<typeof settingsProjectWriteOutcomeSchema>;
 
+/**
+ * The worktree value a `settings.setWorktreeValue` write addresses — the GLOBAL rung of
+ * the worktree section (workspace-settings D1/D2/D4), stored in `daemon-settings.json`
+ * under `worktrees`. The names are the section's own field names, not the per-project
+ * key spellings: this write is about the HOST, and the repo rung's spellings
+ * (`worktreeRoot`, `worktreePattern`, …) belong to {@link settingsProjectValueKeySchema}.
+ */
+export const settingsWorktreeValueKeySchema = z.enum(["root", "pattern", "prPattern", "workspace"]);
+export type SettingsWorktreeValueKey = z.infer<typeof settingsWorktreeValueKeySchema>;
+
+/**
+ * The outcome of a global-rung worktree write. `applied` means the daemon settings now
+ * hold the value; `unresolved` means no settings store was wired and NOTHING was written.
+ *
+ * It deliberately echoes NO value back. The section's own read is `settings.get`, which
+ * carries the resolved row with the layer it came from, so the surface settles on the
+ * resolver's answer rather than on a value the write repeated — and a refusal (a pattern
+ * that escapes the root, an unknown token) arrives as the write's own rejection, carrying
+ * git-level honesty about which, rather than as a status this shape would have to flatten.
+ */
+export const settingsWorktreeWriteOutcomeSchema = z.object({
+  status: z.enum(["applied", "unresolved"]),
+  key: settingsWorktreeValueKeySchema,
+});
+export type SettingsWorktreeWriteOutcome = z.infer<typeof settingsWorktreeWriteOutcomeSchema>;
+
 /** One convention rule shown in the per-repo guidance panel (never model-facing). */
 export const settingsConventionRuleSchema = z.object({
   convention: z.string().min(1),

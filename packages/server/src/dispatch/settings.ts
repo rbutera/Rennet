@@ -202,6 +202,22 @@ export function settingsHandlers(rt: DispatchRuntime) {
         }),
       );
     },
+    "settings.setWorktreeValue": async (rawInput) => {
+      const name = "settings.setWorktreeValue" as const;
+      // The GLOBAL rung of the worktree section (workspace-settings D1): this host's
+      // `daemon-settings.json`, the same store the resolver folds under `worktrees`.
+      // A refused pattern (unknown token, an escape past the root) and a malformed
+      // daemon-settings both THROW out of the composition, and that rejection is what
+      // the card renders under the field — flattening it into a status would lose the
+      // reason, which is the only part the reviewer can act on. Absent dep ⇒ a typed
+      // `unresolved` no-op: no store, so nothing was persisted, and it says so.
+      const input = parseCommandInput(name, rawInput);
+      if (!deps.settings) {
+        return parseCommandOutput(name, { status: "unresolved", key: input.key });
+      }
+      deps.settings.setWorktreeValue({ key: input.key, value: input.value });
+      return parseCommandOutput(name, { status: "applied", key: input.key });
+    },
     "settings.setGuidance": async (rawInput) => {
       const name = "settings.setGuidance" as const;
       // The WRITE beside `settings.guidance`'s read: the repo's own

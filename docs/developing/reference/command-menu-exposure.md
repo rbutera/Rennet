@@ -1,6 +1,6 @@
 ---
 title: Command menu exposure
-description: Which of the 113 registered commands the ⌘K menu lists, and the rationale for every row.
+description: Which of the 114 registered commands the ⌘K menu lists, and the rationale for every row.
 ---
 
 The command registry in `packages/protocol/src/commands/index.ts` carries an
@@ -20,7 +20,7 @@ boolean flag has no input channel, and the dialog has no result surface. So a
 command earns `commandMenu: true` only when all four hold:
 
 1. **Its schema accepts `{}`.** Nothing required that the menu cannot supply.
-   19 of the 113 commands pass this; the rest need a review, session, project,
+   19 of the 114 commands pass this; the rest need a review, session, project,
    span, host, or path the menu has no way to name. A protocol test asserts the
    invariant, so an exposed row can never be one that only fails.
 2. **It is an action, not a read the UI already drives.** `settings.get`,
@@ -169,6 +169,7 @@ still goes through the one seam; only the label is hand-written.
 | `settings.pinRepoValue` | Needs the repository, key, and value. |
 | `settings.setProjectValue` | Needs the project, key, and value. |
 | `settings.setGuidance` | Needs the guidance text and its scope. |
+| `settings.setWorktreeValue` | Needs the worktree key and the value to store on the host rung. |
 | `settings.setThemePack` | Needs the pack being selected. |
 | `settings.setLastProject` | Needs the project being remembered; the app writes it as you navigate. |
 | `settings.completeWelcome` | Only means something inside the welcome wizard, whose Ready step runs it. |

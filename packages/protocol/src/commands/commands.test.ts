@@ -161,6 +161,10 @@ const ABSORBED_IDS = [
   "settings.setRepoVisibility",
   "settings.setRoleAssignment",
   "settings.setThemePack",
+  // The GLOBAL rung of the worktree section (workspace-settings D1): this host's own
+  // answer for where Rennet places worktrees, how it names them, and whether it works
+  // inside a checkout the reviewer already has out.
+  "settings.setWorktreeValue",
   // The workspace inventory (workspace-settings D6): the per-repository list of every
   // workspace Rennet knows, and the non-forcing removal of one idle Rennet-made row.
   "worktrees.list",
@@ -202,7 +206,7 @@ const MENU_INVENTORY: readonly string[] = [];
 describe("command registry invariants (#465)", () => {
   it("matches the recorded command snapshot (settings.setRepoLocus demoted, #476)", () => {
     expect(Object.keys(commands).sort()).toEqual([...ABSORBED_IDS]);
-    expect(ABSORBED_IDS).toHaveLength(113);
+    expect(ABSORBED_IDS).toHaveLength(114);
   });
 
   it("every row carries label, exposure, and locus with today's uniform values", () => {

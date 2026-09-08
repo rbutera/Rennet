@@ -74,6 +74,8 @@ import {
   settingsRepoValueKeySchema,
   settingsRepoWriteOutcomeSchema,
   settingsViewSchema,
+  settingsWorktreeValueKeySchema,
+  settingsWorktreeWriteOutcomeSchema,
   sidebarSessionSchema,
   sourceSchema,
   symbolInspectionSchema,
@@ -1237,6 +1239,29 @@ const definitions = {
       value: z.string().nullable(),
     }),
     output: settingsProjectWriteOutcomeSchema,
+  },
+  // ── Settings: write one worktree value on the GLOBAL rung (workspace-settings D1) ──
+  // The HOST's answer for where Rennet places its worktrees, how it names them, and
+  // whether it works inside a checkout the reviewer already has out. It lands in
+  // `daemon-settings.json`, not client settings, because a filesystem path is a fact
+  // about the machine that binds rather than about the viewer looking at it — the same
+  // argument that put `tracker` there. The REPO rung of the same four values is
+  // `settings.setProjectValue`'s `worktreeRoot` / `worktreePattern` / `prWorktreePattern`
+  // / `workspace`, so the Worktrees card writes two files and each control says which.
+  //
+  // `value: null` RESETS (the entry is dropped and the value falls back to its builtin).
+  // A plain write, first click, no confirmation (Rule Zero). A pattern that names an
+  // unknown token, resolves outside the root, or resolves to an absolute path is REFUSED
+  // — the write REJECTS with git-level honesty about which, and the file is untouched —
+  // and so is a write over a malformed `daemon-settings.json` (Rule 75). The outcome
+  // echoes no value: the section's read is `settings.get`, which carries the resolved
+  // row with the rung it came from.
+  "settings.setWorktreeValue": {
+    input: z.object({
+      key: settingsWorktreeValueKeySchema,
+      value: z.string().nullable(),
+    }),
+    output: settingsWorktreeWriteOutcomeSchema,
   },
   // ── Settings: write a repo's guidance catalogue (C18 group A) ──────────────
   // The WRITE beside `settings.guidance`'s read: the Guidance section's rules, saved
