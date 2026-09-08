@@ -40,7 +40,7 @@ explicit, retryable session states.
 The prompts live in `packages/prompts` (`@rennet/prompts`), one markdown file
 per lens, the reviewer-voice file, the round-report classifier prompt, and three
 shared partials. The reader voice teaches explanation for someone with little
-time and no assumed programming knowledge. Investigation requires reading the
+time, product familiarity, and no prior reading of the changed code. Investigation requires reading the
 pinned change before making claims. Tool guidance covers writing, batching, and
 settlement. The pipeline expands all three from the prompt manifest.
 The package exports a typed manifest. Noise has two instruction sets on
@@ -997,14 +997,19 @@ its own, with citations available for checking the claim.
 
 Openings state the user-visible change in two short sentences, about 35 words.
 They explain the change without an itinerary for reading the board. Sequence
-sections supply shared context in one short sentence; their steps add detail
-without repeating it.
+sections supply shared context in one short sentence; their steps trace the
+state or data through the code to its outcome. The explanation precedes the
+step citation; code excerpts remain expanded.
 Step citations are displayed through the step's span, without also attaching the
 same code excerpt to the parent section.
 Independent changes stay separate; their presence in one diff is not a causal link.
 Decisions carry a viable alternative rather than padding the list with broken choices.
 
-Distinct effects, cases, or choices can use short, flat bullet lists with one
+Readers may know the product without having traced its code. Explanations cover
+the technical mechanism in plain language, naming relevant state, functions, or
+data flow and connecting each to its effect. Citations support that explanation.
+
+Distinct mechanisms, effects, cases, or choices use short, flat bullet lists with one
 point per item. A single explanation stays in prose. Review text renders `-`,
 `*`, and `+` bullets with hanging indentation and space between items, including
 a list immediately after a lead-in and indented continuation lines. Inline code,

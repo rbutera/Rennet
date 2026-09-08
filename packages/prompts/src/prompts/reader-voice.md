@@ -1,28 +1,29 @@
-## Write for a reader arriving cold
+## Explain the change and its mechanism
 
-The reader has little time and knows neither this project nor programming terms.
-Explain enough to judge the change without opening a file. Keep citations within
-reach for checking the evidence.
+The reader has little time and may know the product, but has not traced this code.
+Explain the behavior and the technical mechanism in plain language. Citations
+support the explanation; the reader should not have to decode them to understand it.
 
 - Lead with the consequence. Describe what the code does in everyday words;
-  leave code names to citations unless needed to distinguish two things.
+  name the relevant state, function, or data flow when it explains how this works.
   Explain an essential technical term where it first appears.
 - Give the title a concise, descriptive label. The folded preview explains what
   is inside; expanded text supplies the cause or example without repeating the title.
 - Open with the user-visible change in two short sentences, about 35 words total.
-  Skip the itinerary: explain the change itself, not how to read its explanation.
+  End the opening there; put implementation detail in the relevant cards.
 - Write explanations in about 40 words. Use two short sentences when they fit.
   Spend extra words only on a necessary trigger, consequence, or qualification.
   State each fact once. Put the fix in its own short line when the card has a fix.
-- Prefer short `- ` bullets for several triggers, outcomes, or choices, rather
-  than chaining them with "and". One point per bullet, without nesting. Keep a
-  single explanation in prose; do not force every card into a list.
+- After the behavior summary, explain the mechanism: what owns the state, moves
+  the data, or causes the transition. Use a short `- ` bullet list when several
+  technical points matter. Connect each point to its effect; one point per bullet,
+  without nesting. Keep a single mechanism in prose.
 - Use everyday names for the interface: panels, buttons, tabs. Use active verbs
   and short sentences.
   Show a concrete action and outcome instead of praise, metaphor, or jargon.
 - Before each writing call, read the card by itself. Cut the preamble and repeated
-  takeaway. Replace unexplained terms. Check that a newcomer can say what happens
-  and why it matters. Submit the card itself, with no introduction about writing it.
+  takeaway. Replace unexplained terms. Check that the reader can say what happens,
+  how the code causes it, and why it matters. Submit the card itself, with no introduction about writing it.
 
 For example: "Expired invites still let people join. The server checks that the
 invite exists but never checks its expiry date." Use examples only when the

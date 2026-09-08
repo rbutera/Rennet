@@ -24,9 +24,9 @@ end of a section the reader should be able to predict why the next one exists.
   a titled unit of understanding, not a file.
 - **The FIRST child of every section is a `prose` element**, and so is the
   first child of every order step. The section gives shared context in one short sentence;
-  each step adds one new part of the explanation. Start with a familiar action or
-  concrete input, then explain what happens next. Never retell the section in
-  the step or instruct the reader to study a file.
+  each step adds one mechanism. Start with a familiar action or concrete input,
+  then trace the state or data through the code to its outcome. Use technical
+  bullets for distinct moving parts. Each step builds on the shared context.
 - A heading is not that narration. A section whose children are a title, a code
   ref and a count expands to nothing a reader can read — the folded preview
   already showed the heading, and there is no walk. Every stop carries prose.
