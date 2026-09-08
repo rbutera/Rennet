@@ -263,8 +263,14 @@ job that carries one now is the round-report seat, which still returns a documen
 
 A session binds to exactly **one workspace** when it is created and keeps that binding for
 its whole life: the reviewer's own checkout when some worktree of the repository already has
-the reviewed branch out, a Rennet-created worktree for that branch when nothing does, the
-detached worktree at the reviewed head for a pull-request snapshot. The bound root is
+the reviewed branch out and the repository resolves `workspace: share`, a Rennet-created
+worktree on a `rennet/<branch>` sibling when it resolves `own`, a Rennet-created worktree on
+the branch itself when nothing has it out, the
+detached worktree at the reviewed head for a pull-request snapshot. Where a Rennet-created
+worktree goes is the location and layout resolved off the settings ladder for the reviewed
+repository, never a hardcoded shape. The session records the branch its commits land on —
+the **work branch**, the reviewed branch itself or the sibling — beside the bound root, and
+every consumer that needs "the branch this session commits on" reads that field. The bound root is
 recorded on the session and is the working directory of every turn the session spawns — each
 lens seat, the chat thread, the handoff thread, and every cold utility turn — and the root
 their context files are written under, so a relative path in a prompt resolves in the tree
@@ -275,7 +281,11 @@ is not invertible. A workspace that cannot be created fails the bind rather than
 binding the session to the clone, which sits on another branch. Nothing re-decides a binding;
 a pull-request binding is re-pinned in place when the reviewed head moves. Worktrees earlier
 versions created per review are removed by a startup sweep that leaves any directory a live
-session is bound to, and nothing creates that layout again. The coding round runs in the
+session is bound to, and nothing creates that layout again. **A bind never prunes a worktree
+registration.** Rennet prunes only from the daemon-start sweep, only registrations it placed,
+only when git reports them unreachable and no live session claims them — and because the
+prune verb is repository-wide, a repository holding any unreachable registration that fails
+those tests is not pruned at all on that pass. The coding round runs in the
 bound workspace like every other child of the session; no per-round worktree is created.
 A round runs on a sidecar thread of its **own**, keyed on the session and the round's durable
 operation, created with that bound workspace — never on the session's chat thread, which is
