@@ -6,7 +6,7 @@ import { ensureSiblingWorktree } from "@rennet/adapters";
 import type { ForgePrSubmissionPort } from "@rennet/core";
 import { HOST_LOCUS } from "@rennet/core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { captureLandedBranchPatchset } from "./create-server";
+import { captureLandedBranchPatchset, createRoundWorkspacePlanner } from "./create-server";
 import {
   type ForgePrSubmissionResolver,
   type ResolvedForgePullRequestDestination,
@@ -80,12 +80,119 @@ afterEach(() => {
   rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 
-/** Rennet's own worktree on `rennet/feat/x`, as the `own` bind makes it. */
+/** Rennet's own worktree on `rennet/feat/x`, at the SIBLING's own placement — the branch
+ *  pattern applied to `rennet/feat/x`, which is where the bind puts it. */
 async function bindSibling(): Promise<string> {
-  const path = join(worktrees, "feat", "x");
-  await ensureSiblingWorktree(gitExec, repo, path, "feat/x");
-  return path;
+  const path = join(worktrees, "rennet", "feat", "x");
+  const { path: bound } = await ensureSiblingWorktree(gitExec, repo, path, "feat/x");
+  return bound;
 }
+
+describe("the round's WORKSPACE under `own` (review finding W1)", () => {
+  // THE DEFECT, DRIVEN THROUGH THE PLANNER. `createRoundWorkspacePlanner` matched a
+  // candidate root by `sourceTarget.branch` — the REVIEWED branch — while the session's
+  // bound root is a sibling worktree on `rennet/feat/x`. The sibling therefore failed the
+  // match, the search fell through to the review's own repository root, and the round's
+  // worker committed on `feat/x` IN THE REVIEWER'S CHECKOUT. Every promise `own` makes was
+  // broken by one comparison, silently, under the right label.
+  //
+  // Driven through the planner and not through `captureLandedBranchPatchset`, because the
+  // capture was never wrong: it was handed the wrong root.
+
+  /** The planner as `create-server` composes it, over REAL git in this fixture. */
+  function planner(input: { boundRoot?: string; workBranch?: string }) {
+    const readGit = async (root: string, args: readonly string[]): Promise<string | undefined> => {
+      try {
+        const out = (await gitExec(root, [...args], { reject: false })).trim();
+        return out.length === 0 ? undefined : out;
+      } catch {
+        return undefined;
+      }
+    };
+    return createRoundWorkspacePlanner({
+      ...(input.boundRoot === undefined ? {} : { boundRoot: () => input.boundRoot }),
+      ...(input.workBranch === undefined ? {} : { workBranch: () => input.workBranch }),
+      // Both roots are offered, in the order `create-server` offers them: the session's
+      // binding first, the review's repository second.
+      candidateRoots: () => [input.boundRoot, repo].filter((v): v is string => v !== undefined),
+      reviewedHead: () => oid(repo, "refs/heads/feat/x"),
+      headOf: (root) => readGit(root, ["rev-parse", "HEAD"]),
+      branchOf: (root) => readGit(root, ["symbolic-ref", "--quiet", "--short", "HEAD"]),
+      repositoryOf: async (root) => {
+        const dir = await readGit(root, [
+          "rev-parse",
+          "--path-format=absolute",
+          "--git-common-dir",
+        ]);
+        return dir === undefined ? undefined : realpathSync(dir);
+      },
+      containsCommit: async (root, sha) => {
+        try {
+          await gitExec(root, ["merge-base", "--is-ancestor", sha, "HEAD"]);
+          return true;
+        } catch {
+          return false;
+        }
+      },
+    });
+  }
+
+  /** A round on `feat/x` — the branch the REVIEW is about, which is what the target names. */
+  const operation = {
+    sessionId: "s1",
+    repoRoot: repo,
+    sourceTarget: { kind: "branch", branch: "feat/x" },
+  };
+
+  it("plans the SIBLING, and the reviewer's checkout gains no commit and no change", async () => {
+    const sibling = await bindSibling();
+    const checkoutHead = oid(repo, "HEAD");
+    // The reviewer is mid-edit in their own tree, which a round has no business touching.
+    writeFileSync(join(repo, "mine.txt"), "mine\n");
+
+    const plan = await planner({ boundRoot: sibling, workBranch: "rennet/feat/x" })({
+      ...operation,
+      repoRoot: repo,
+    } as never);
+
+    expect(plan.kind).toBe("bound-root");
+    expect(plan.root).toBe(sibling);
+    expect(plan.sourceHead).toBe(oid(sibling, "HEAD"));
+    // The round's turn commits in the planned root. Where that lands is the whole finding.
+    commit(plan.root, "round.txt", "the round's work\n");
+    expect(oid(repo, "HEAD")).toBe(checkoutHead);
+    expect(oid(repo, "refs/heads/feat/x")).toBe(checkoutHead);
+    expect(existsSync(join(repo, "round.txt"))).toBe(false);
+    expect(git(repo, ["status", "--porcelain=v1"]).trim()).toBe("?? mine.txt");
+  });
+
+  it("POSITIVE CONTROL: matching by the SOURCE TARGET plans the reviewer's tree", async () => {
+    // The planner as it was: no work branch, no bound root — so `feat/x` is matched, the
+    // sibling (on `rennet/feat/x`) is skipped, and the search reaches the reviewer's
+    // checkout. This is the exact composition the finding describes.
+    const sibling = await bindSibling();
+
+    const plan = await planner({})({ ...operation, repoRoot: repo } as never);
+
+    expect(plan.root).toBe(repo);
+    expect(plan.root).not.toBe(sibling);
+  });
+
+  it("THROWS naming the workspace when a bound root is not on the work branch", async () => {
+    // A bound session does not fall through. The binding IS the workspace, so a bound root
+    // that is not on the work branch is a fact to report — the reviewer checked something
+    // else out — never a licence to go and commit in another tree.
+    const sibling = await bindSibling();
+    git(sibling, ["checkout", "-q", "--detach"]);
+
+    await expect(
+      planner({ boundRoot: sibling, workBranch: "rennet/feat/x" })({
+        ...operation,
+        repoRoot: repo,
+      } as never),
+    ).rejects.toThrow(new RegExp(`${sibling.replaceAll(".", "\\.")} is not on it`));
+  });
+});
 
 describe("the round under `own` (workspace-settings D4, task 2.3)", () => {
   it("captures a patchset that NAMES the reviewed branch and points at the sibling's tip", async () => {
@@ -340,19 +447,87 @@ describe("sibling collection (D5, task 2.6)", () => {
     expect(() => git(repo, ["rev-parse", "--verify", "refs/heads/rennet/feat/x"])).toThrow();
   });
 
-  it("removes a PUSHED sibling: reachable through the branch's remote-tracking ref", async () => {
-    // The push under `own` advances `origin/feat/x` and leaves the local branch behind, so
-    // the local branch alone says the sibling is unmerged. It is not — the commits are on
-    // the remote, and D5 asks both.
+  it("removes a sibling THE PRODUCTION PUSH sent out — no `-u`, no fetch, no upstream", async () => {
+    // THE REVIEW FINDING. `siblingIsCollectable` used to ask `<branch>@{upstream}`, which
+    // reads the CONFIGURED upstream — and `submitForgePullRequest` pushes an explicit
+    // refspec with no `-u`, deliberately, so no upstream is ever configured. The rule
+    // answered false forever, and the old version of this test only passed because it had
+    // manufactured a `-u` push and a `git fetch` of its own that production never runs.
+    //
+    // So nothing here manufactures anything: the push is the PRODUCTION one, through
+    // `submitForgePullRequest`, and what makes the sibling collectable is the
+    // remote-tracking ref that push updates by itself.
     const bare = join(root, "remote.git");
     git(root, ["init", "-q", "--bare", bare]);
     git(repo, ["remote", "add", "origin", bare]);
-    git(repo, ["push", "-q", "-u", "origin", "refs/heads/feat/x:refs/heads/feat/x"]);
+    git(repo, ["push", "-q", "origin", "refs/heads/feat/x:refs/heads/feat/x"]);
+    const sibling = await bindSibling();
+    const roundCommit = commit(sibling, "round.txt", "the round's work\n");
+    const submit = vi.fn<ForgePrSubmissionPort["submitPullRequest"]>(async () => ({
+      number: 7,
+      url: "https://github.com/acme/widget/pull/7",
+      reused: false,
+    }));
+
+    await submitForgePullRequest({
+      registry: createForgeRegistry<ForgePrSubmissionResolver>([
+        { forge: "github", implementation: () => ({ submitPullRequest: submit }) },
+      ]),
+      git: gitExec,
+      repoRoot: repo,
+      headRef: "feat/x",
+      workBranch: "rennet/feat/x",
+      submission: {
+        title: "The round's work",
+        body: "opened from a sibling",
+        base: "main",
+        head: "feat/x",
+        draft: false,
+      },
+      destination: {
+        remoteName: "origin",
+        target: { repo: { forge: "github", owner: "acme", name: "widget" } },
+      },
+    });
+
+    // No upstream was configured — the thing the old rule depended on genuinely is not there.
+    expect(() => git(repo, ["rev-parse", "--symbolic-full-name", "feat/x@{upstream}"])).toThrow();
+    // What IS there is the remote-tracking ref the push updated, and it holds the round.
+    expect(oid(repo, "refs/remotes/origin/feat/x")).toBe(roundCommit);
+    // …while the reviewer's LOCAL branch is still behind, so the local ref alone would say
+    // the sibling is unmerged. D5 asks both, which is the whole point.
+    expect(oid(repo, "refs/heads/feat/x")).not.toBe(roundCommit);
+
+    const collection = await collectSibling({
+      git: gitExec,
+      repoRoot: repo,
+      siblingBranch: "rennet/feat/x",
+      branch: "feat/x",
+      // Where the push actually went, as the session recorded it.
+      push: { remote: "origin" },
+    });
+
+    expect(collection.branchDeleted).toBe(true);
+    expect(existsSync(sibling)).toBe(false);
+    expect(() => git(repo, ["rev-parse", "--verify", "refs/heads/rennet/feat/x"])).toThrow();
+  });
+
+  it("consults EVERY remote-tracking ref when no push destination is recorded (the sweep)", async () => {
+    // The sweep has no session to ask where a push went, so "some remote has these commits"
+    // is the reachability question it can answer. A repository with a second remote that
+    // does NOT have them must not decide it either way.
+    const bare = join(root, "remote.git");
+    const other = join(root, "other.git");
+    git(root, ["init", "-q", "--bare", bare]);
+    git(root, ["init", "-q", "--bare", other]);
+    git(repo, ["remote", "add", "upstream", other]);
+    git(repo, ["remote", "add", "origin", bare]);
+    git(repo, ["push", "-q", "upstream", "refs/heads/feat/x:refs/heads/feat/x"]);
     const sibling = await bindSibling();
     const roundCommit = commit(sibling, "round.txt", "the round's work\n");
     git(repo, ["push", "-q", "origin", "refs/heads/rennet/feat/x:refs/heads/feat/x"]);
-    git(repo, ["fetch", "-q", "origin"]);
     expect(oid(repo, "refs/remotes/origin/feat/x")).toBe(roundCommit);
+    expect(oid(repo, "refs/remotes/upstream/feat/x")).not.toBe(roundCommit);
 
     const collection = await collectSibling({
       git: gitExec,
@@ -363,7 +538,34 @@ describe("sibling collection (D5, task 2.6)", () => {
 
     expect(collection.branchDeleted).toBe(true);
     expect(existsSync(sibling)).toBe(false);
-    expect(() => git(repo, ["rev-parse", "--verify", "refs/heads/rennet/feat/x"])).toThrow();
+  });
+
+  it("KEEPS a sibling when the RECORDED remote does not have it, though another does", async () => {
+    // The control for the pair above, and the reason the recorded destination is consulted
+    // alone when there is one: a repository with several remotes must not have a push to
+    // one of them answer for a push that went to another.
+    const bare = join(root, "remote.git");
+    const other = join(root, "other.git");
+    git(root, ["init", "-q", "--bare", bare]);
+    git(root, ["init", "-q", "--bare", other]);
+    git(repo, ["remote", "add", "origin", bare]);
+    git(repo, ["remote", "add", "upstream", other]);
+    const sibling = await bindSibling();
+    commit(sibling, "round.txt", "the round's work\n");
+    // The commits went to `upstream`; the session recorded `origin`.
+    git(repo, ["push", "-q", "upstream", "refs/heads/rennet/feat/x:refs/heads/feat/x"]);
+    git(repo, ["push", "-q", "origin", "refs/heads/feat/x:refs/heads/feat/x"]);
+
+    const collection = await collectSibling({
+      git: gitExec,
+      repoRoot: repo,
+      siblingBranch: "rennet/feat/x",
+      branch: "feat/x",
+      push: { remote: "origin" },
+    });
+
+    expect(collection.branchDeleted).toBe(false);
+    expect(existsSync(sibling)).toBe(true);
   });
 
   it("KEEPS an unpushed sibling — its worktree AND its branch — and says why", async () => {

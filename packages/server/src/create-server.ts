@@ -353,6 +353,7 @@ import { resolveProviderBinaries } from "./t3/resolve-provider-binaries";
 import { type SeatThreadWatch, watchSeatThread } from "./t3/seat-progress";
 import { createT3SidecarSupervisor } from "./t3/supervisor";
 import { roundThreadTitle, type SeatKind, seatThreadTitle, sweepIfArchived } from "./t3/threads";
+import { readWorkBranchState } from "./work-branch-state";
 import { startWsListener, type WsListener } from "./ws-listener";
 import { createWslRunner } from "./wsl-daemon";
 import { ensureWslDaemon, probeWslDaemon } from "./wsl-supervisor";
@@ -701,16 +702,31 @@ export function createGitLabPrSubmissionResolver(
  * the turn (session-bound-workspace D1/D2). No worktree is created and none is reserved —
  * a round is a turn in the reviewer's own bound root, so this is reads only.
  *
- * It must be a root the round's SOURCE is actually checked out in, and that is checked
+ * It must be a root the round's WORK BRANCH is actually checked out in, and that is checked
  * rather than assumed. A session's recorded root can still be a drafting checkout detached
  * at the reviewed head (a range review's evidence worktree, until the session binding
  * records one root for everything); a round that committed there would move nothing the
  * reviewer can see, advance the review anyway, and leave the branch exactly where it was.
  * That is the "many roots, one label" failure, and it is silent. So the candidates are
- * tried in order and the first one ON the round's source wins; when none is, the round
- * fails naming what it looked for and where.
+ * tried in order and the first one ON the round's work branch wins.
  *
- * "On the round's source" is TWO facts, because a branch NAME is not an identity: a
+ * ⚠️ THE WORK BRANCH, NOT THE REVIEWED BRANCH. Under `workspace: own` beside a checkout the
+ * reviewer already has out, the session's bound root is a sibling worktree on
+ * `rennet/<branch>`, and the round's source target still names `<branch>` — that is what
+ * the review and the pull request are about. Matching candidates by the source target's
+ * branch therefore SKIPPED the session's own bound root and fell through to the reviewer's
+ * checkout, where the round's worker committed on `<branch>` in the reviewer's tree and the
+ * successor patchset was captured from it. Every promise `own` makes was broken by one
+ * comparison. So the planner is told which branch the WORK is on and matches by that.
+ *
+ * A SESSION WITH A BOUND ROOT DOES NOT FALL THROUGH. The bound root IS the workspace
+ * (session-bound-workspace D1) — that is the whole content of the binding — so a bound root
+ * that is missing or on the wrong branch is a thrown error naming both, never a quiet
+ * substitution of another candidate. Falling through is what turned a mismatched sibling
+ * into a write in the reviewer's tree; the fallback list exists for a session that has no
+ * binding at all, which is a session minted before the binding wave.
+ *
+ * "On the round's work branch" is TWO facts, because a branch NAME is not an identity: a
  * workspace maps many repos to one session, two of them can both have `feature/shared`
  * checked out, and the name alone picks whichever the mapping happened to yield. So the
  * root must also be the SAME REPOSITORY as the review — equal `git rev-parse
@@ -725,6 +741,18 @@ export function createGitLabPrSubmissionResolver(
  */
 export function createRoundWorkspacePlanner(input: {
   readonly candidateRoots: (operation: RoundOperation) => readonly string[];
+  /**
+   * The root this session BOUND, when it has one — the workspace, not a candidate. Given,
+   * it is the only root considered and a mismatch throws (session-bound-workspace D1).
+   */
+  readonly boundRoot?: (operation: RoundOperation) => string | undefined;
+  /**
+   * The branch this round's commits go ON — the session's `workBranch` under `own`, and
+   * the source target's branch everywhere else (workspace-settings D4). Absent ⇒ the
+   * source target's branch, which is every `share` session and every session written
+   * before the setting.
+   */
+  readonly workBranch?: (operation: RoundOperation) => string | undefined;
   readonly reviewedHead: (operation: RoundOperation) => string;
   readonly headOf: (root: string) => Promise<string | undefined>;
   readonly branchOf: (root: string) => Promise<string | undefined>;
@@ -738,32 +766,57 @@ export function createRoundWorkspacePlanner(input: {
     const target = operation.sourceTarget;
     const reviewed = input.reviewedHead(operation);
     const repository = await input.repositoryOf(operation.repoRoot);
-    const tried: string[] = [];
-    for (const root of input.candidateRoots(operation)) {
-      if (tried.includes(root)) continue;
-      tried.push(root);
+    // The branch the round's commits land ON. Under `own` beside a checkout the reviewer
+    // already has out this is the sibling, and the source target still names the reviewed
+    // branch; matching on the target here is the W1 defect.
+    const wantedBranch =
+      target.kind === "branch" ? (input.workBranch?.(operation) ?? target.branch) : undefined;
+    const bound = input.boundRoot?.(operation);
+    const plan = async (root: string) => {
       const head = await input.headOf(root);
-      if (head === undefined) continue;
-      if (target.kind === "branch" && (await input.branchOf(root)) !== target.branch) continue;
-      if (target.kind === "detached" && head !== target.head) continue;
+      if (head === undefined) return undefined;
+      if (wantedBranch !== undefined && (await input.branchOf(root)) !== wantedBranch) {
+        return undefined;
+      }
+      if (target.kind === "detached" && head !== target.head) return undefined;
       // The name matched; now the repository has to. Asymmetric on purpose: an UNKNOWN
       // repository on either side is silence, not a contradiction, and excluding on silence
       // refuses every root git could not answer for.
       if (repository !== undefined) {
         const candidate = await input.repositoryOf(root);
-        if (candidate !== undefined && candidate !== repository) continue;
+        if (candidate !== undefined && candidate !== repository) return undefined;
       }
       const rewritten = !(await input.containsCommit(root, reviewed));
       return {
-        kind: "bound-root",
+        kind: "bound-root" as const,
         root,
         sourceHead: head,
         preparedAt: (input.now ?? Date.now)(),
         ...(rewritten ? { branchRewritten: true as const } : {}),
       };
-    }
+    };
     const wanted =
-      target.kind === "branch" ? `the branch ${target.branch}` : `the commit ${target.head}`;
+      wantedBranch !== undefined
+        ? `the branch ${wantedBranch}`
+        : `the commit ${target.kind === "detached" ? target.head : reviewed}`;
+    // A BOUND SESSION HAS EXACTLY ONE ANSWER. No search, no second candidate: the binding
+    // is the workspace for the session's whole life, and a bound root that is not on the
+    // work branch is a fact to report — the reviewer moved it, or something else checked
+    // that branch out — never a licence to go and commit somewhere else.
+    if (bound !== undefined) {
+      const planned = await plan(bound);
+      if (planned !== undefined) return planned;
+      throw new Error(
+        `This round works on ${wanted}, and this session's workspace ${bound} is not on it. Check it out there, then dispatch again.`,
+      );
+    }
+    const tried: string[] = [];
+    for (const root of input.candidateRoots(operation)) {
+      if (tried.includes(root)) continue;
+      tried.push(root);
+      const planned = await plan(root);
+      if (planned !== undefined) return planned;
+    }
     throw new Error(
       `This round works on ${wanted}, and none of this session's workspaces for this repository is on it: ${tried.join(", ") || "none"}. Check it out there, then dispatch again.`,
     );
@@ -1229,6 +1282,14 @@ export interface RennetServerOptions {
     ) => ForgeDetectionDeps | Promise<ForgeDetectionDeps>;
     readonly run: GitLabPrSubmissionCommandRunner;
   };
+  /**
+   * Where the sibling collection's sentences go (workspace-settings D5). Defaults to
+   * `console.info`, which is the daemon log. `SiblingCollection.reason` is documented as
+   * being for this log, and the archive and the sweep both write it: without it, "collected
+   * nothing" and "failed on every repository" are the same silence — which is exactly the
+   * shape the sweep's own temporal-dead-zone bug wore for a release. Tests read it.
+   */
+  readonly siblingCollectionLog?: (message: string) => void;
   /** Hermetic seam for GitLab read, CI, and review-publication commands. */
   readonly gitLabForgeEffects?: {
     readonly detectionDepsForLocus: (
@@ -2266,6 +2327,18 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       // must never delay the capture, and a failed one is honest status rather than a wall.
       onWorktreeCreated: (worktree: string) =>
         void runPrWorktreeSetup(worktree).catch(() => undefined),
+      // Where this session last pushed, when it did. The only thing it decides is whether a
+      // SURVIVING sibling branch with no worktree may be re-forked from the branch's head —
+      // a reachability question, and a sibling whose commits are on `refs/remotes/<remote>/
+      // <branch>` is reachable while the local branch alone still says otherwise.
+      ...(sessionStore.load(sessionId)?.workBranchPush === undefined
+        ? {}
+        : {
+            siblingPush: {
+              remote: (sessionStore.load(sessionId) as SessionModel).workBranchPush
+                ?.remote as string,
+            },
+          }),
     };
     const recorded = sessionStore.load(sessionId)?.boundRoot;
     // A recorded binding is RE-PINNED, never re-decided: a landed round advances the reviewed
@@ -2362,7 +2435,16 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // agent to run tests in). A superseded head replaces the old checkout. Failure
     // here never blocks the review — the diff and conversation need no checkout.
     try {
-      const placement = defaultWorktreePlacement(dataDir);
+      // THE RESOLVED PLACEMENT, not the builtin (workspace-settings D1/D2). This creation
+      // site ran first and the later `decideBoundWorkspace` reused the path it had already
+      // indexed, so a repository with a configured worktree root or pull-request pattern
+      // previewed one location on its Worktrees card and got the builtin on disk — the
+      // binding never had a chance to place it. One placement read, both callers. A
+      // settings read that fails takes the builtin, which is what this line always used:
+      // a pull-request review must not be refused over where its checkout goes.
+      const placement = await settingsComposition
+        .resolveWorktreePlacement(root)
+        .catch(() => defaultWorktreePlacement(dataDir));
       const worktree = prWorktreePath(
         placement.root,
         placement.prPattern,
@@ -2918,18 +3000,39 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     const sessionId = review === null ? undefined : sessionIdForReview(review);
     const workBranch =
       sessionId === undefined ? undefined : sessionStore.load(sessionId)?.workBranch;
+    // WHAT THIS PUSH IS ALLOWED TO BE. The refspec is `refs/heads/<workBranch>:refs/heads/
+    // <headRef>`, which sends one branch's commits to ANOTHER branch's name on a remote —
+    // the only shape that makes sense there is the reviewed branch itself, or its own
+    // sibling. A session whose recorded work branch is neither is a session whose binding
+    // and whose review have come apart, and pushing on that pairing publishes the wrong
+    // branch under the right label. Asserted rather than assumed, and the throw names both.
+    if (
+      workBranch !== undefined &&
+      workBranch !== input.headRef &&
+      branchBehindSibling(workBranch) !== input.headRef
+    ) {
+      throw new Error(
+        `This session's work branch is ${workBranch}, which is neither ${input.headRef} nor its sibling rennet/${input.headRef}. Nothing was pushed.`,
+      );
+    }
     const outcome = await submitForgePullRequest({
       registry: forgePrSubmissionResolvers,
       git: gitInLocus,
       ...input,
       ...(workBranch === undefined ? {} : { workBranch }),
     });
-    // The push landed: the reviewed branch's name on the remote now holds the sibling's
-    // commits, so the reviewer's local branch really is behind its upstream and the round
-    // card may say so. Stamped only when a sibling was pushed — under `share` the push
-    // moved the branch the reviewer is standing on.
-    if (workBranch !== undefined && sessionId !== undefined) {
-      sessionStore.markWorkBranchPushed(sessionId, Date.now());
+    // WHERE the push went, recorded so every later reachability question can read the ref
+    // it actually updated: `refs/remotes/<remote>/<headRef>`. Recorded only when a sibling
+    // was pushed — under `share` the push moved the branch the reviewer is standing on.
+    //
+    // Not a "pushed at" stamp. The questions this record answers — is the sibling
+    // collectable, is the local branch behind — are questions about what the refs hold now,
+    // and a stamp went on answering yes after a landing or a force-push had made it no.
+    if (workBranch !== undefined && workBranch !== input.headRef && sessionId !== undefined) {
+      sessionStore.recordWorkBranchPush(sessionId, {
+        remote: input.destination.remoteName,
+        branch: input.headRef,
+      });
     }
     return outcome;
   };
@@ -2994,6 +3097,9 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       ? undefined
       : service.reviewById(session.reviewId)?.repositoryRoot;
   };
+  /** The sibling collection's daemon log (D5). One sentence per decision, from the same
+   *  `SiblingCollection.reason` the outcome carries, so the log and the outcome cannot drift. */
+  const siblingLog = options.siblingCollectionLog ?? ((message: string) => console.info(message));
   /**
    * The branch a session's review is ABOUT — which under `own` is NOT the branch its work
    * is on. The sibling's own name carries it (`rennet/<branch>` is forked from `<branch>`
@@ -3009,11 +3115,62 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     return headRef ?? session.claim?.branch;
   };
   /**
+   * Whether some OTHER live session is working in the sibling `session` records.
+   *
+   * Sessions share a sibling exactly as they share a checkout — one sibling worktree per
+   * (repository, branch), which is what the bind now enforces — so archiving one of them
+   * must not remove the directory another is committing in. The sweep has always asked
+   * this; the archive path did not, which is the W3 defect.
+   *
+   * Two positive matches, either sufficient: the same bound directory (the direct claim),
+   * or the same sibling branch in the same repository (the claim that survives a session
+   * whose recorded spelling differs — the WSL UNC arrangement).
+   *
+   * Deliberately ASYMMETRIC about an unknown repository, and the asymmetry runs the other
+   * way from a matcher's: silence on either side COUNTS AS A CLAIM. The usual rule is
+   * "match on a positive contradiction" because excluding on silence loses rows; here the
+   * thing lost by excluding on silence is another session's working tree.
+   */
+  const siblingHasLiveClaimant = (session: SessionModel): boolean => {
+    const repoRoot = repositoryRootForSession(session);
+    const recorded = session.boundRoot;
+    return sessionStore.list().some((other) => {
+      if (other.id === session.id || other.archivedAt !== undefined) return false;
+      if (
+        recorded !== undefined &&
+        other.boundRoot !== undefined &&
+        comparablePath(other.boundRoot) === comparablePath(recorded)
+      ) {
+        return true;
+      }
+      if (other.workBranch !== session.workBranch) return false;
+      const otherRoot = repositoryRootForSession(other);
+      if (repoRoot === undefined || otherRoot === undefined) return true;
+      return comparablePath(otherRoot) === comparablePath(repoRoot);
+    });
+  };
+
+  /**
    * D5's collection for ONE session's sibling, run as that session is archived.
    *
    * The rule is `collectSibling`'s and is not restated here: reachable ⇒ the worktree and
    * the branch go; not reachable ⇒ BOTH stay and the inventory row says how far ahead it
    * is. A session under `share` has no sibling and this is a no-op for it.
+   *
+   * Two things happen around that call, and both are review findings:
+   *
+   *   • NO LIVE CLAIMANT. Collection needs one, and archiving is not one — another live
+   *     session bound to the same sibling keeps it.
+   *   • THE RECORD IS CLEARED when the worktree really goes. A session's binding is for its
+   *     whole life precisely so nothing re-decides it, but a recorded root that no longer
+   *     exists is not a binding, it is a pointer at a deleted directory; leaving it would
+   *     make a later un-archive re-open the session on a workspace that is gone. Cleared,
+   *     the next use runs `decideBoundWorkspace` again and records a fresh binding. This is
+   *     the ONE case a session re-binds, and it is the case where the alternative is worse.
+   *
+   * The outcome's sentence reaches the daemon log either way: `SiblingCollection.reason` is
+   * documented as being for the log, and a collection that says nothing cannot be told
+   * apart from a collection that never ran.
    */
   const collectSiblingForSession = async (sessionId: string): Promise<void> => {
     const session = sessionStore.load(sessionId);
@@ -3021,15 +3178,26 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     const branch = branchBehindSibling(session.workBranch);
     const repoRoot = repositoryRootForSession(session);
     if (branch === undefined || repoRoot === undefined || session.workBranch === undefined) return;
-    await collectSibling({
+    if (siblingHasLiveClaimant(session)) {
+      siblingLog(`rennet: kept ${session.workBranch} — another live session is bound to it`);
+      return;
+    }
+    const collection = await collectSibling({
       git: gitForRepo(repoRoot),
       repoRoot,
       siblingBranch: session.workBranch,
       branch,
+      // Where the push went, when this session pushed. It decides reachability against the
+      // ref the push actually updated, rather than a configured upstream nothing sets.
+      ...(session.workBranchPush === undefined
+        ? {}
+        : { push: { remote: session.workBranchPush.remote } }),
       // The worktree path is left to git deliberately: what the session recorded is the
       // DAEMON's spelling of its bound root, which on a Windows daemon driving a WSL
       // repository is a UNC path the git inside the distro does not own.
     });
+    siblingLog(`rennet: ${collection.reason}`);
+    if (collection.worktreeRemoved) sessionStore.clearBoundWorkspace(sessionId);
   };
   // Deferred while a round is in flight: `session.archive` awaits the session's
   // preparation, but nothing tracks a round, so an immediate purge deletes the directory
@@ -3176,15 +3344,20 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
    */
   const sweepOrphanedSiblings = async (
     /**
-     * How ONE repository's worktree root is resolved. A PARAMETER, not a closure over
-     * `settingsComposition`: taken from the closure, the loop's first read of that
-     * still-uninitialised `const` threw a ReferenceError INSIDE the try that skips an
-     * unreadable repository, so the sweep skipped every one of them and reported nothing.
-     * Passed in, the same mistake is a synchronous throw at the call site, where it cannot
-     * be mistaken for "this daemon had nothing to collect".
+     * How ONE repository's worktree root is resolved.
+     *
+     * What fixed the temporal-dead-zone bug was moving the CALL below the
+     * `settingsComposition` const, not making this a parameter: a closure reading that
+     * `const` before its initialiser ran threw a ReferenceError inside the `try` that skips
+     * an unreadable repository, so the sweep skipped every repository and reported nothing.
+     * The parameter is worth keeping for its own reason — it is the seam a test drives the
+     * sweep through — but it did not fix anything, and saying it did would send the next
+     * reader looking for a guarantee that is not there. The guarantee is the call site.
      */
     resolveRoot: (repoRoot: string) => Promise<string>,
   ): Promise<void> => {
+    let collected = 0;
+    let kept = 0;
     const claimed = new Set(
       sessionStore
         .list()
@@ -3204,8 +3377,14 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       let placementRoot: string;
       try {
         placementRoot = await resolveRoot(repoRoot);
-      } catch {
-        continue; // a repository whose settings cannot be read places nothing to sweep
+      } catch (error) {
+        // A repository whose settings cannot be read places nothing to sweep — and SAYS SO,
+        // per repository. "Collected nothing" and "could not read anything" are different
+        // daemons, and the silence that made them look identical is what hid the TDZ bug.
+        siblingLog(
+          `rennet: sibling sweep skipped ${repoRoot} — ${error instanceof Error ? error.message : String(error)}`,
+        );
+        continue;
       }
       const under = (path: string): boolean => {
         const base = comparablePath(placementRoot);
@@ -3219,15 +3398,26 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         claimed: (path) => claimed.has(path) || claimed.has(comparablePath(path)),
       }).catch(() => []);
       for (const orphan of orphans) {
-        await collectSibling({
+        // No `push`: the sweep has no session to ask where a push went, so reachability is
+        // asked of EVERY remote-tracking ref of the branch. Refusing to look would keep
+        // every swept sibling forever.
+        const collection = await collectSibling({
           git,
           repoRoot,
           siblingBranch: orphan.siblingBranch,
           branch: orphan.branch,
           worktreePath: orphan.path,
         }).catch(() => undefined);
+        if (collection === undefined) continue;
+        if (collection.worktreeRemoved) collected += 1;
+        else kept += 1;
+        siblingLog(`rennet: ${collection.reason}`);
       }
     }
+    // The count, always — the legacy sweep reports its own and this one was silent. A run
+    // that says "0 collected, 0 kept" is a daemon that looked; a run that says nothing at
+    // all is a daemon that did not, and only one of those is a bug.
+    siblingLog(`rennet: sibling sweep collected ${collected}, kept ${kept}`);
   };
   const sessionPreparations = new Map<string, AbortController>();
   const sessionPreparationRuns = new Map<string, Promise<void>>();
@@ -3919,12 +4109,21 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     }
   };
   const planRoundWorkspace = createRoundWorkspacePlanner({
+    // The RECORDED binding only — never `boundRootForSession`, whose fallbacks answer with
+    // the repository root for a session that has bound nothing. A fallback handed to
+    // `boundRoot` would be treated as the workspace and would refuse the search that a
+    // never-bound session actually needs.
+    boundRoot: (operation) => sessionStore.load(operation.sessionId)?.boundRoot,
     candidateRoots: (operation) => [
       ...(boundRootForSession(operation.sessionId) === undefined
         ? []
         : [boundRootForSession(operation.sessionId) as string]),
       operation.repoRoot,
     ],
+    // WHICH BRANCH THE ROUND COMMITS ON (workspace-settings D4). Under `own` the bound root
+    // is a sibling worktree on `rennet/<branch>` while the source target names `<branch>`,
+    // and matching on the target sent the round to the reviewer's checkout instead.
+    workBranch: (operation) => sessionStore.load(operation.sessionId)?.workBranch,
     reviewedHead: (operation) => sourcePatchsetFor(operation).repository.headOid,
     headOf: (root) => readGit(root, ["rev-parse", "HEAD"]),
     branchOf: (root) => readGit(root, ["symbolic-ref", "--quiet", "--short", "HEAD"]),
@@ -4947,11 +5146,13 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     },
   });
 
-  // …and only NOW is the sibling sweep started. It resolves each repository's placement
-  // through `settingsComposition`, which is the `const` above: calling it any earlier ran
-  // the loop's first iteration into that binding's temporal dead zone, and the `catch` that
-  // skips an unreadable repository swallowed the ReferenceError and skipped EVERY one — a
-  // sweep that ran, logged nothing, and collected nothing.
+  // …and only NOW is the sibling sweep started. THE POSITION OF THIS CALL is the fix, not
+  // the shape of the callback: `settingsComposition` is the `const` immediately above, and
+  // calling the sweep any earlier ran the loop's first iteration into that binding's
+  // temporal dead zone, where the `catch` that skips an unreadable repository swallowed the
+  // ReferenceError and skipped EVERY repository — a sweep that ran, logged nothing, and
+  // collected nothing. Moving the call below the `const` is what makes the reference live;
+  // the sweep now also logs its counts, so a repeat could not hide the same way twice.
   void sweepOrphanedSiblings(
     async (repoRoot) => (await settingsComposition.resolveWorktreePlacement(repoRoot)).root,
   ).catch(() => undefined);
@@ -5261,6 +5462,20 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         // here. Fire and forget — an archive must not fail or wait on a git call, and a
         // sibling left behind is collected by the next start's sweep.
         if (archived) void collectSiblingForSession(sessionId).catch(() => undefined);
+        // UN-ARCHIVING: the workspace this session recorded may have been collected while
+        // it was away — by its own archive, or by a later daemon-start sweep that had no
+        // session record to clear. A recorded root that is not on disk is not a binding, it
+        // is a pointer at a deleted directory, and every turn this session spawns would run
+        // in it. Cleared here, the next use runs `decideBoundWorkspace` again and records a
+        // fresh binding, which is the same lazy path a session minted before the binding
+        // wave takes. Only a MISSING directory: a root that is still there is still the
+        // session's workspace, and re-deciding a live binding is what D1 forbids.
+        if (!archived) {
+          const recorded = sessionStore.load(sessionId)?.boundRoot;
+          if (recorded !== undefined && !existsSync(recorded)) {
+            sessionStore.clearBoundWorkspace(sessionId);
+          }
+        }
         const session = archived
           ? sessionStore.archive(sessionId)
           : sessionStore.restore(sessionId);
@@ -5282,6 +5497,25 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
           repoRoot,
           branch,
           ...(session.workBranch === undefined ? {} : { workBranch: session.workBranch }),
+        });
+      },
+      // Where the work branch has got to, asked of git NOW (workspace-settings D4). The
+      // session record carries which branches and where the push went; every claim built on
+      // them — ahead, pushed, landed — is read from refs at this call, because each one
+      // stops being true when the reviewer pulls, lands, or pushes something else.
+      workBranchState: async (sessionId) => {
+        const session = sessionStore.load(sessionId);
+        if (session === undefined) return { ahead: 0, pushed: false, landed: false };
+        const repoRoot = repositoryRootForSession(session);
+        if (repoRoot === undefined) return { ahead: 0, pushed: false, landed: false };
+        return readWorkBranchState({
+          git: gitForRepo(repoRoot),
+          repoRoot,
+          ...(reviewedBranchForSession(session) === undefined
+            ? {}
+            : { branch: reviewedBranchForSession(session) as string }),
+          ...(session.workBranch === undefined ? {} : { workBranch: session.workBranch }),
+          ...(session.workBranchPush === undefined ? {} : { push: session.workBranchPush }),
         });
       },
     },
