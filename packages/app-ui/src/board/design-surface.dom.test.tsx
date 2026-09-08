@@ -190,7 +190,7 @@ describe("Design board document metadata", () => {
       {
         id: "refresh-log",
         kind: "prose",
-        data: { author, markdown: "Record every refresh attempt and outcome." },
+        data: { author, markdown: "Record every refresh attempt and outcome.", tag: "C1" },
       },
       {
         id: "retry-owner",
@@ -391,8 +391,11 @@ describe("Design board document metadata", () => {
 
     const spine = view.container.querySelector('[data-kind="design-proposal-spine"]');
     expect(spine?.querySelectorAll('[data-kind="design-change-row"]')).toHaveLength(2);
-    expect(view.getByText("refresh-log")).toBeTruthy();
-    expect(view.getByText("retry-owner")).toBeTruthy();
+    // A row wears its author's tag, and ONLY that: an untagged row shows no chip, since
+    // an element id is not a label a reader can use.
+    expect(view.getByText("C1")).toBeTruthy();
+    expect(view.queryByText("refresh-log")).toBeNull();
+    expect(view.queryByText("retry-owner")).toBeNull();
     expect(spine?.querySelector('[data-kind="design-impact"]')?.textContent).toContain(
       "Adapters only. No new package or dependency.",
     );
@@ -1483,5 +1486,53 @@ describe("Design requirements", () => {
     expect(scenarioItems[0]?.querySelector('[data-element-id="scenario-attempt"]')).toBeTruthy();
     expect(scenarioItems[1]?.getAttribute("data-scenario-ref")).toBe("scenario-persisted");
     expect(scenarioItems[1]?.querySelector('[data-element-id="scenario-persisted"]')).toBeTruthy();
+  });
+});
+
+describe("scenario rows", () => {
+  it("renders a transcribed OpenSpec scenario as its name over When/Then/And rows", () => {
+    const scenario: HostElement = {
+      id: "scenario-share",
+      kind: "prose",
+      data: {
+        author,
+        markdown:
+          "Scenario: Branch review on the current checkout - **WHEN** a reviewer whose repository resolves `workspace: share` starts a review - **THEN** the session binds to that checkout - **AND** no worktree is created",
+        scenario_clauses: {
+          condition: "a reviewer whose repository resolves `workspace: share` starts a review",
+          response: "the session binds to that checkout - AND no worktree is created",
+        },
+      },
+    };
+    const requirement: HostElement = {
+      id: "req-share",
+      kind: "requirement",
+      data: {
+        author,
+        name: "A session binds to exactly one workspace at creation",
+        shall: "A session SHALL bind to exactly one workspace root.",
+        scenarios: [scenario.id],
+      },
+    };
+    const view = mount(
+      <BridgeProvider bridge={new MemoryBridge()}>
+        <BoardElementsProvider elements={[requirement, scenario]} reviewId="review-rows">
+          <BoardElement element={requirement} />
+        </BoardElementsProvider>
+      </BridgeProvider>,
+    );
+    const clauses = view.container.querySelector('[data-kind="scenario-clauses"]');
+    expect(clauses?.querySelector("p")?.textContent).toBe("Branch review on the current checkout");
+    expect([...(clauses?.querySelectorAll("dt") ?? [])].map((dt) => dt.textContent)).toEqual([
+      "When",
+      "Then",
+      "And",
+    ]);
+    expect(clauses?.querySelector('[data-scenario-clause="and"]')?.textContent).toBe(
+      "no worktree is created",
+    );
+    // The host's flattened pair is not what the reader sees when the source has rows.
+    expect(view.queryByText("Trigger")).toBeNull();
+    expect(view.container.textContent).not.toContain("- AND");
   });
 });

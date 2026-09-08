@@ -1,10 +1,12 @@
-import type { HostElement } from "@rennet/protocol";
+import type { HostElement, SpecDelta } from "@rennet/protocol";
 import { HeadingText, stripHeadingMarkup } from "./heading-text";
 import type { ElementOf } from "./registry";
 
 export interface SectionPreviewEntry {
   readonly id: string;
   readonly text: string;
+  /** A requirement's spec delta, a fact about the entry the fold can show beside its name. */
+  readonly delta?: SpecDelta;
 }
 
 export type SectionPreview =
@@ -113,7 +115,8 @@ export function sectionPreview(
       const title = elementHeading(element)?.trim();
       if (title && !labels.has(normalized(title))) {
         labels.add(normalized(title));
-        entries.push({ id, text: title });
+        const delta = element.kind === "requirement" ? element.data.spec_delta : undefined;
+        entries.push({ id, text: title, ...(delta === undefined ? {} : { delta }) });
       }
       const text = elementText(element);
       if (text !== undefined) content.push({ id, text });

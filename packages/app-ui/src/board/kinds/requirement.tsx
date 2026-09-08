@@ -1,6 +1,8 @@
+import { Fragment } from "react";
 import { SourceChips, SpecDeltaBadge, StoryStatus } from "../design-meta";
 import { InlineQuoteHighlight, QuoteHighlightLayer } from "../quote-highlight";
 import type { ElementOf } from "../registry";
+import { readScenario } from "../scenario-reading";
 import { BoardAnchorReveal } from "./board-anchor-reveal";
 import { useBoardPatchsetId, useCodeRefs, useElements } from "./element-context";
 import { ProseElement } from "./prose";
@@ -69,35 +71,45 @@ export function RequirementElement({ element }: { readonly element: ElementOf<"r
         paragraphClassName="text-foreground/90 text-sm leading-relaxed"
       />
       {scenarioElements.length > 0 ? (
-        <ul data-kind="requirement-scenarios" className="flex flex-col gap-1">
+        <ul data-kind="requirement-scenarios" className="flex flex-col gap-2.5">
           {scenarioElements.map((scenario) => {
-            const clauses = scenario.kind === "prose" ? scenarioClauses(scenario) : undefined;
+            const reading =
+              scenario.kind === "prose"
+                ? readScenario(scenario.data.markdown, scenarioClauses(scenario))
+                : { rows: [] };
             return (
               <li
                 key={scenario.id}
                 data-scenario-ref={scenario.id}
-                className="flex gap-1.5 text-13 text-foreground/75 leading-relaxed"
+                // Each scenario is its own block under a hairline: the name is its
+                // heading and the clauses sit in a keyword column beneath it, so a
+                // requirement with nine scenarios reads as nine cases, not one run of
+                // Trigger/Outcome pairs.
+                className="flex flex-col gap-1 border-line border-l-2 pl-3 text-13 text-foreground/75 leading-relaxed"
               >
-                <span aria-hidden="true" className="select-none text-muted-foreground/60">
-                  ‣
-                </span>
-                {clauses ? (
-                  <dl
+                {reading.rows.length > 0 ? (
+                  <div
                     data-kind="scenario-clauses"
                     data-element-id={scenario.id}
-                    // No size of its own: the clauses ARE the row's text, so they inherit
-                    // the row's 13px rather than dropping a step below the bullet beside them.
-                    className="grid min-w-0 flex-1 gap-x-3 gap-y-1 sm:grid-cols-[auto_1fr]"
+                    className="flex min-w-0 flex-col gap-1"
                   >
-                    <dt className="font-medium text-muted-foreground">Trigger</dt>
-                    <dd data-scenario-clause="condition" className="text-foreground/80">
-                      <InlineQuoteHighlight text={clauses.condition} elementId={scenario.id} />
-                    </dd>
-                    <dt className="font-medium text-muted-foreground">Outcome</dt>
-                    <dd data-scenario-clause="response" className="text-foreground/80">
-                      <InlineQuoteHighlight text={clauses.response} elementId={scenario.id} />
-                    </dd>
-                  </dl>
+                    {reading.name !== undefined ? (
+                      <p className="font-medium text-foreground/90">
+                        <InlineQuoteHighlight text={reading.name} elementId={scenario.id} />
+                      </p>
+                    ) : null}
+                    <dl className="grid min-w-0 gap-x-3 gap-y-0.5 sm:grid-cols-[auto_1fr]">
+                      {reading.rows.map((row, index) => (
+                        // biome-ignore lint/suspicious/noArrayIndexKey: rows are positional clauses of one scenario; two `And` rows share a keyword and have no identity beyond their order.
+                        <Fragment key={index}>
+                          <dt className="font-medium text-muted-foreground">{row.keyword}</dt>
+                          <dd data-scenario-clause={row.clause} className="text-foreground/80">
+                            <InlineQuoteHighlight text={row.text} elementId={scenario.id} />
+                          </dd>
+                        </Fragment>
+                      ))}
+                    </dl>
+                  </div>
                 ) : scenario.kind === "prose" ? (
                   // A scenario is prose nested INSIDE this row, so the row's own type is
                   // what it should read at. Left to its top-level defaults, `ProseElement`

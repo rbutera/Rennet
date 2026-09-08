@@ -112,6 +112,109 @@ describe("assembleDesignBoard", () => {
     expect(taskMarkdown).not.toContain("- [x] - [x]");
   });
 
+  it("fills the Proposal section with the proposal's own headings, one row per listed change", () => {
+    // The shape of a real proposal (workspace-settings, 2026-09-08): a `## Why` that opens
+    // the document, a `## What Changes` list whose items wrap onto continuation lines, a
+    // `## Capabilities` heading with `###` groups beneath it, and an `## Impact` list. The
+    // Proposal section shipped EMPTY for this shape, because none of it is an obligation.
+    const proposal: OpenSpecChangeSource = {
+      ...CHANGE,
+      proposalMd: [
+        "## Why",
+        "Settings → Projects → Worktrees is a settings section with no settings in it.",
+        "",
+        "## What Changes",
+        "- **BREAKING: `worktreeRoot` becomes live.** The binding reads the resolved location",
+        "  off the settings ladder.",
+        "- **A new setting, `workspace`, with two values.** `share` and `own`.",
+        "",
+        "## Capabilities",
+        "",
+        "### New Capabilities",
+        "- `workspace-inventory`: the settings surface lists every workspace.",
+        "",
+        "### Modified Capabilities",
+        "- `session-bound-workspace`: the location resolves off the ladder.",
+        "",
+        "## Impact",
+        "- `packages/protocol/src/wire.ts`: `workspace` joins the schema.",
+        "    - a nested item, indented the way a nested list is",
+        "    - and a second, which read as an indented code block before",
+        "- Harness cost: **nothing a session sends changes.**",
+      ].join("\n"),
+    };
+    const board = assemble(proposal);
+    if (board === undefined) throw new Error("expected a board");
+    const byId = new Map(board.elements.map((element) => [element.id, element]));
+    const section = board.elements.find(
+      (el) => el.kind === "section" && (el.data as { title?: string }).title === "Proposal",
+    );
+    const dataOf = (el: DraftBoard["elements"][number] | undefined) =>
+      (el?.data ?? {}) as { title?: string; markdown?: string; children?: readonly string[] };
+    const childrenOf = (id: string | undefined) =>
+      (dataOf(byId.get(id ?? "")).children ?? []).map((childId) => byId.get(childId));
+    const titles = childrenOf(section?.id).map((el) => dataOf(el).title);
+    // `Why` is the intro and is not repeated; every other heading is a nested section, in
+    // the proposal's own order.
+    expect(titles).toEqual(["What Changes", "Capabilities", "Impact"]);
+
+    const whatChanges = childrenOf(section?.id)[0];
+    const rows = childrenOf(whatChanges?.id).map((el) => dataOf(el).markdown);
+    expect(rows).toEqual([
+      "**BREAKING: `worktreeRoot` becomes live.** The binding reads the resolved location off the settings ladder.",
+      "**A new setting, `workspace`, with two values.** `share` and `own`.",
+    ]);
+
+    const capabilities = childrenOf(section?.id)[1];
+    const groups = childrenOf(capabilities?.id);
+    expect(groups.map((el) => el?.kind)).toEqual(["section", "section"]);
+    expect(groups.map((el) => dataOf(el).title)).toEqual([
+      "New Capabilities",
+      "Modified Capabilities",
+    ]);
+    expect(dataOf(childrenOf(groups[0]?.id)[0]).markdown).toBe(
+      "- `workspace-inventory`: the settings surface lists every workspace.",
+    );
+
+    const impact = childrenOf(childrenOf(section?.id)[2]?.id)[0];
+    const impactMarkdown = dataOf(impact).markdown ?? "";
+    // The nested list survives with its indent halved: the words are the file's own, and
+    // the four-space run that `no-code-bytes` reads as an indented block is gone.
+    expect(impactMarkdown).toContain("  - a nested item, indented the way a nested list is\n");
+    expect(impactMarkdown).not.toMatch(/^ {4}/m);
+    expect(impactMarkdown).toContain("- Harness cost: **nothing a session sends changes.**");
+  });
+
+  it("keeps the fast path for a proposal with a fenced block by stating where the block was", () => {
+    const fenced: OpenSpecChangeSource = {
+      ...CHANGE,
+      proposalMd: [
+        "## Why",
+        "The packet shape is wrong.",
+        "",
+        "## What this change does",
+        "It reshapes the packet:",
+        "```ts",
+        "type Packet = { id: string };",
+        "```",
+        "and nothing else.",
+      ].join("\n"),
+    };
+    const board = assemble(fenced);
+    if (board === undefined) throw new Error("expected a board");
+    const prose = board.elements.find(
+      (el) =>
+        el.kind === "prose" &&
+        ((el.data as { markdown?: string }).markdown ?? "").includes("It reshapes the packet"),
+    );
+    const markdown = (prose?.data as { markdown?: string } | undefined)?.markdown ?? "";
+    expect(markdown).not.toContain("```");
+    expect(markdown).not.toContain("type Packet");
+    expect(markdown).toBe(
+      "It reshapes the packet:\n*(A code block here is not shown; read it in the file.)*\nand nothing else.",
+    );
+  });
+
   it("declines the fast path when a spec-delta renames a requirement, leaving it to the seat", () => {
     // OpenSpec RENAMED sections are FROM/TO list pairs the parser yields no obligation for.
     // Rendering here would drop the rename and undercount the Requirements stat, so the whole

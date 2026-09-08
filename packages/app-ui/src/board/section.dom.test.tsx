@@ -335,3 +335,60 @@ describe("Section content previews", () => {
     expect(alternatives?.querySelectorAll("li")).toHaveLength(2);
   });
 });
+
+describe("the folded section index", () => {
+  it("lists each requirement by name with its spec delta, and opens the section on it", async () => {
+    const author = { kind: "lens-agent", id: "lens:design" } as const;
+    const elements: HostElement[] = [
+      {
+        id: "cap",
+        kind: "section",
+        data: { author, title: "session-bound-workspace", children: ["req-bind", "req-sibling"] },
+      },
+      {
+        id: "req-bind",
+        kind: "requirement",
+        data: {
+          author,
+          name: "A session binds to exactly one workspace at creation",
+          shall: "A session SHALL bind to exactly one workspace root.",
+          spec_delta: "modified",
+        },
+      },
+      {
+        id: "req-sibling",
+        kind: "requirement",
+        data: {
+          author,
+          name: "A sibling branch is collected",
+          shall: "A sibling SHALL be deleted with its worktree when reachable.",
+          spec_delta: "added",
+        },
+      },
+    ];
+    const entry: LensSection = { ref: "cap", gist: "", counts: { requirements: 2 } };
+    const { container, user } = mount(
+      <BoardElementsProvider elements={elements} boardId="b-design">
+        <Section entry={entry} lens="design" />
+      </BoardElementsProvider>,
+    );
+    const index = container.querySelector('[data-kind="section-index"]');
+    const rows = [...(index?.querySelectorAll("li") ?? [])];
+    expect(rows.map((row) => row.querySelector("button")?.textContent)).toEqual([
+      "A session binds to exactly one workspace at creationmodified",
+      "A sibling branch is collectedadded",
+    ]);
+    expect(rows[0]?.querySelector('[data-spec-delta="modified"]')).toBeTruthy();
+    expect(rows[1]?.querySelector('[data-spec-delta="added"]')).toBeTruthy();
+
+    const second = rows[1]?.querySelector("button");
+    if (!second) throw new Error("no index row");
+    await user.click(second);
+    expect(container.querySelector("[data-kind=board-section]")?.getAttribute("data-open")).toBe(
+      "true",
+    );
+    await waitFor(() =>
+      expect(container.querySelector('[data-element-id="req-sibling"]')).toBeTruthy(),
+    );
+  });
+});
