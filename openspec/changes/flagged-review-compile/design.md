@@ -50,6 +50,14 @@ Rennet does not run the reviewed repo's gate. It reviews the diff, reads real fi
 
 **Chosen: forbid running the gate on scope-and-cost grounds** ("reviewing whether the gate passes is not your job; finding real problems in the diff is; don't run build/test/lint"), and say nothing that implies the code works. Handing the seats the already-fetched CI status explicitly is a possible separate enhancement, not required here.
 
+## Decision 8 — the compile seat authors origin, concurrence, and accord
+
+A finding's `author`, `concurrence`, and `accord` are host-owned today: a board seat cannot write them (`tool-schemas.ts` — `author` is "never a seat's to write", concurrence/accord are "computed by `reconcileFindings`"). The invariant exists so an ordinary lens seat cannot forge authorship or fake agreement, because the seat is known from its address and its findings are its own. The compiler is a different animal: its whole job is to attribute each finding to the model that raised it and to judge whether both did (Decisions 1 and 2).
+
+**Chosen: relax the host-owned constraint for the compile target only — the compiler sets `author` (origin model), `concurrence`, and `accord` directly through its board tools, in the one `write_board` call.** The anti-forgery rationale does not apply to a trusted assembler whose output those fields *are*; a side-channel that emitted them separately would be a second authoring format for the same facts. Scoped to the compile target: the two review seats write no board at all, and every other lens seat keeps the fields host-owned exactly as before.
+
+Rejected: keeping the fields host-owned and having the compiler emit a separate per-finding judgment the pipeline post-stamps — it preserves the invariant for a seat the invariant was not written for, at the cost of a parallel judgment channel and a second place origin/concurrence can drift.
+
 ## Move ordering
 
 Move one (prompt guard + render/projection guard + a positive-control test using the #927 element shape) ships as its own PR first. It is the real fix for the observed header and is correct independent of the rework. Move two supersedes the *cause* by collapsing structural authorship to one compiler; the move-one guards remain as defense in depth.
