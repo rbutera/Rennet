@@ -5,6 +5,7 @@ import { type BoardTool, boardToolsByName } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import {
   expandPromptPartials,
+  FLAGGED_REVIEW_FILE,
   INVESTIGATE_PARTIAL_FILE,
   LENS_KINDS,
   LENS_PROMPT_FILES,
@@ -17,6 +18,13 @@ import {
 } from "./index.js";
 
 const srcDir = dirname(fileURLToPath(import.meta.url));
+
+// Four lenses are drafted by one investigating seat and share the three board-drafting
+// partials. Flagged is not one of them (move two, #452): its `LENS_PROMPT_FILES` entry is the
+// COMPILER prompt, which investigates nothing and emits the whole board in one `write_board`
+// batch, so it carries none of those partials. The drafting-lens sweeps run over these four;
+// Flagged's review and compile prompts are pinned by their own dedicated tests below.
+const DRAFTING_LENS_KINDS = LENS_KINDS.filter((kind) => kind !== "flagged");
 const partials = Object.fromEntries(
   Object.entries(PROMPT_PARTIALS).map(([marker, file]) => [
     marker,
@@ -25,8 +33,8 @@ const partials = Object.fromEntries(
 );
 
 describe("lens prompt manifest", () => {
-  it("carries a non-empty prompt file for every lens", () => {
-    for (const kind of LENS_KINDS) {
+  it("carries a non-empty prompt file for every drafting lens", () => {
+    for (const kind of DRAFTING_LENS_KINDS) {
       const text = readFileSync(join(srcDir, LENS_PROMPT_FILES[kind]), "utf8");
       expect(text.length, `${kind} prompt`).toBeGreaterThan(500);
       expect(text).toMatch(/^# /);
@@ -64,9 +72,9 @@ describe("lens prompt manifest", () => {
     }
   });
 
-  it("every lens prompt carries each shared marker exactly once, not the section body", () => {
+  it("every drafting-lens prompt carries each shared marker exactly once, not the section body", () => {
     const checked: string[] = [];
-    for (const kind of LENS_KINDS) {
+    for (const kind of DRAFTING_LENS_KINDS) {
       const text = readFileSync(join(srcDir, LENS_PROMPT_FILES[kind]), "utf8");
       for (const marker of Object.keys(PROMPT_PARTIALS)) {
         checked.push(`${kind}/${marker}`);
@@ -75,9 +83,11 @@ describe("lens prompt manifest", () => {
       expect(text).not.toContain("## Investigate before you draft");
       expect(text).not.toContain("## How you write this board");
     }
-    expect(LENS_KINDS, "lens prompts swept").toHaveLength(5);
+    // Flagged left the drafting contract (move two): 4 lenses × 3 markers.
+    expect(LENS_KINDS, "lens kinds").toHaveLength(5);
+    expect(DRAFTING_LENS_KINDS, "drafting lens prompts swept").toHaveLength(4);
     expect(Object.keys(PROMPT_PARTIALS), "shared markers swept").toHaveLength(3);
-    expect(checked, "lens/marker pairs actually asserted").toHaveLength(15);
+    expect(checked, "lens/marker pairs actually asserted").toHaveLength(12);
   });
 
   /**
@@ -141,7 +151,7 @@ describe("lens prompt manifest", () => {
       ]),
     );
     const rule = "agents do not specify presentation highlights or copy source into prose";
-    for (const kind of LENS_KINDS) {
+    for (const kind of DRAFTING_LENS_KINDS) {
       const source = readFileSync(join(srcDir, LENS_PROMPT_FILES[kind]), "utf8");
       const prompt = expandPromptPartials(source, partials).replace(/\s+/g, " ");
       expect(prompt.split(rule), kind).toHaveLength(2);
@@ -266,16 +276,94 @@ describe("lens prompt manifest", () => {
     expect(text).not.toContain("Set `document.measure`");
   });
 
-  it.each([
-    ["decisions", "decision"],
-    ["flagged", "finding"],
-  ] as const)("requires a served root section for every non-empty %s result", (lens, kind) => {
-    const text = readFileSync(join(srcDir, LENS_PROMPT_FILES[lens]), "utf8").replace(/\s+/g, " ");
+  it("requires a served root section for every non-empty decisions result", () => {
+    // The incremental drafting seat names the parent by the id the host RETURNS. The Flagged
+    // compiler roots its board the same way but batches, so it names ids with `local_id`
+    // instead — that contract is pinned in the compile-prompt test below, not here.
+    const text = readFileSync(join(srcDir, LENS_PROMPT_FILES.decisions), "utf8").replace(
+      /\s+/g,
+      " ",
+    );
 
     expect(text).toContain("top-level section with `add_section`");
-    expect(text).toContain(kind);
+    expect(text).toContain("decision");
     expect(text).toContain("returned parent id");
     expect(text).not.toMatch(/return an empty|section\.data\.children/);
+  });
+
+  it("the Flagged REVIEW seat writes a findings file and holds no board tools", () => {
+    // One of the two lane-less review seats (move two, #452). It investigates and writes the
+    // concern prose, so it carries the investigate and reader-voice partials — but it authors
+    // NO board, so it must not carry the board-writing partial or name a board verb.
+    const text = readFileSync(join(srcDir, FLAGGED_REVIEW_FILE), "utf8");
+    const normalized = text.replace(/\s+/g, " ");
+    expect(text.length).toBeGreaterThan(500);
+    expect(text).toMatch(/^# /);
+
+    // It carries exactly the two partials a reviewer needs, and not the board-writing one.
+    expect(text.split(PROMPT_PARTIAL_MARKER), "investigate marker").toHaveLength(2);
+    expect(text.split("{{reader-voice}}"), "reader-voice marker").toHaveLength(2);
+    expect(text, "review seat writes no board").not.toContain(WRITE_WITH_TOOLS_MARKER);
+
+    // The output is a findings FILE written with the harness's own tools, not a board.
+    expect(normalized).toContain("write what you find to a file");
+    expect(normalized).toContain("You write no board and hold no board tools");
+    expect(normalized).toContain("Write it with your own");
+    // A reviewer names no board verb: the compiler authors the board, not this seat.
+    expect(text, "review seat names no board verb").not.toMatch(
+      /`(set_document|add_section|add_finding|write_board|finish)`/,
+    );
+    // The finding's shape is the reviewer's contract: the concern block the compiler copies
+    // verbatim, with its severity, refs, and fix.
+    expect(normalized).toContain("is the finding's `concern`");
+    expect(normalized).toContain("the compiler copies it verbatim");
+    expect(text).toContain("**Fix:**");
+    expect(normalized).toContain("## No findings"); // the honest empty ending
+  });
+
+  it("the Flagged COMPILE seat authors the board from two reviews, verbatim, without re-reviewing", () => {
+    // The compiler is `LENS_PROMPT_FILES.flagged`: the sole writer of the flagged board.
+    const text = readFileSync(join(srcDir, LENS_PROMPT_FILES.flagged), "utf8");
+    const normalized = text.replace(/\s+/g, " ");
+    expect(text.length).toBeGreaterThan(500);
+    expect(text).toMatch(/^# /);
+
+    // It merges two finished reviews; it does not investigate or re-review. So it carries
+    // NONE of the drafting-lens partials — naming the investigate one would be a lie.
+    expect(text, "compiler does not investigate").not.toContain(PROMPT_PARTIAL_MARKER);
+    expect(text, "compiler does not draft incrementally").not.toContain(WRITE_WITH_TOOLS_MARKER);
+    expect(normalized).toContain("you do not re-review");
+    expect(normalized).toContain("verbatim");
+    expect(normalized).toContain("Merge, never rewrite");
+
+    // It authors the flagged board: the same document surface, named as real inputs.
+    expect(text).toContain("`set_document`");
+    const flaggedTools = boardToolsByName("flagged");
+    const documentFields = new Set(
+      (flaggedTools.get("set_document") as BoardTool).fields.map(({ name }) => name),
+    );
+    expect(documentFields).toContain("title");
+    expect(documentFields).toContain("intro_markdown");
+
+    // One top-level section, findings attached in severity order. It batches, so it names
+    // host-minted ids with `local_id` rather than the returned-id mechanism a drafter uses.
+    expect(normalized).toContain("ONE top-level section with `add_section`");
+    expect(normalized).toContain("`add_finding`");
+    expect(normalized).toContain("`local_id`");
+
+    // Decision 9: the compiler is the whole-board writer, so the target carries `write_board`.
+    expect(flaggedTools.has("write_board"), "flagged target has write_board").toBe(true);
+    expect(text).toContain("`write_board`");
+
+    // Decision 10: it authors the two flat enums the host expands, in the compiler's own
+    // vocabulary — the prompt teaches `diverge`/`solo`, never the schema's `split`/`conflict`.
+    expect(text).toContain("`origin`");
+    expect(text).toContain("`agreement`");
+    expect(normalized).toContain("`claude` or `codex`");
+    expect(normalized).toContain("`concur`, `diverge`, or `solo`");
+    expect(text, "compiler must not teach accord's own words").not.toMatch(
+      /`agreement`[^.]*`(split|conflict)`/,
+    );
   });
 
   it("tells the Noise seat its board is the complement of the other four", () => {

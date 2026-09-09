@@ -31,11 +31,17 @@ import { describeOutcome, servedToolCatalog } from "./board-mcp-server";
  * bigger; and before both of those the aggregate row summed six targets under a
  * seven-seat label. If you add an operand here, take it from the module that ships it.
  *
- * ── Seats, not targets ───────────────────────────────────────────────────────────
- * A generation seats SEVEN threads over six boards: Flagged runs two, one per provider,
- * pinned by construction (`runFlaggedDual`). Every other seat runs on the harness the
- * council routes it to, which is Claude in the default council — that is the assumption in
- * {@link SEATS}, and it is the only thing here that could drift without this file noticing.
+ * ── Board seats, not targets ───────────────────────────────────────────────────────
+ * After move two (`flagged-review-compile`) a generation seats EIGHT threads, but only SIX
+ * of them carry a board tool surface. The Flagged lane runs three threads: two review legs
+ * (`flagged-claude`, `flagged-codex`), which write a free-form findings FILE with the
+ * harness's own file tools and so carry NO board tool surface and NO output schema, and one
+ * compiler (`flagged-compile`), which reads both files and writes the whole flagged board.
+ * The compiler is the only Flagged thread this measurement counts, because it is the only
+ * one that replaced an output schema with a tool surface. Every board seat runs on the
+ * harness the council routes it to, which is Claude in the default council — that is the
+ * assumption in {@link SEATS}, and it is the only thing here that could drift without this
+ * file noticing.
  */
 
 interface SeatRow {
@@ -44,13 +50,12 @@ interface SeatRow {
   readonly provider: "claudeAgent" | "codex";
 }
 
-/** The seven threads of one generation, and the provider each one's schema is shaped for. */
+/** The six BOARD seats of one generation, and the provider each one's schema is shaped for. */
 const SEATS: readonly SeatRow[] = [
   { seat: "design", target: "design", provider: "claudeAgent" },
   { seat: "sequence", target: "sequence", provider: "claudeAgent" },
   { seat: "decisions", target: "decisions", provider: "claudeAgent" },
-  { seat: "flagged-claude", target: "flagged", provider: "claudeAgent" },
-  { seat: "flagged-codex", target: "flagged", provider: "codex" },
+  { seat: "flagged-compile", target: "flagged", provider: "claudeAgent" },
   { seat: "noise", target: "noise", provider: "claudeAgent" },
   { seat: "round-report", target: "report", provider: "claudeAgent" },
 ];
@@ -70,38 +75,38 @@ const retiredSchema = (row: SeatRow): unknown => outputSchemaFor(row.provider, b
 
 /**
  * The declared bounds (token discipline: "every dynamic interpolation declares a byte
- * bound at its call site"). RE-MEASURED 2026-09-05 with both operands as-sent, after #869
- * gave the Noise seat `write_board` and #856 gave `prose` its scenario clauses: the worst
- * seat is Design at 1.36x the schema it replaces, and a generation's seven seats together
- * are 0.984x (68,903 B of tools against 70,057 B of schema) — the tool surface is still
- * SMALLER in aggregate than the output schema it replaces.
+ * bound at its call site"). RE-MEASURED 2026-09-09 with both operands as-sent, after move
+ * two (`flagged-review-compile`) reshaped the Flagged lane: the worst seat is Design at
+ * 1.37x the schema it replaces, and a generation's SIX board seats together are 1.032x
+ * (61,385 B of tools against 59,496 B of schema) — the tool surface is now slightly LARGER
+ * in aggregate than the output schema it replaces, and this note and the PR say so.
  *
- * Two moves, one day apart, both worth telling apart:
+ * Why the aggregate crossed parity, told apart from the earlier moves it inherits:
  *
- * - #869 moved the Noise seat 7,693 → 8,179 B and no other seat at all, so the generation
- *   moved 64,595 → 65,081, +486 B once per session.
- * - #856 declared `scenario_clauses` on `prose`, which is a UNIVERSAL kind, so it lands on
- *   `add_prose` and `update_prose` for all six targets: +546 B on EVERY seat, 65,081 →
- *   68,903, +3,822 per generation. And because it is a field of the board schema, the
- *   output schema this is measured against grew too — 68,582 → 70,057, +1,475. Both
- *   operands moving is why the ratio only went 0.949 → 0.984, and the margin on the
- *   generation bound is now 0.02 rather than 0.05.
+ * - Before move two the Flagged lane ran two board seats (one per provider), each counted
+ *   here with the flagged tool surface and the flagged output schema — a near-parity pair
+ *   counted twice. Move two makes the two review legs write a findings FILE, not a board, so
+ *   they carry no board tool surface and leave this population entirely. What remains is one
+ *   Flagged thread, the compiler, and the population drops 7 → 6 board seats.
+ * - The compiler is the sole writer of its board and compiles the whole thing in one pass,
+ *   so it carries `write_board` (D9) — the same +486 B verb #869 measured on Noise, now on a
+ *   second seat — plus its `add_finding`/`update_finding` each carry the two authored enums
+ *   `origin` + `agreement` (D10). Its surface is 10,604 B against the 9,916 B schema, 1.069x.
+ * - Removing a near-parity duplicate and leaving the heavier seats (Design at 1.37x, the
+ *   compiler at 1.069x) is what lifts the aggregate from the old 0.984x to 1.032x. No single
+ *   seat's turn crosses the per-seat bound; the aggregate crosses the parity bound, which is
+ *   the disclosed cost of giving the compiler a bulk-write verb.
  *
- * (The figure this note carried before #869, 64,785, had drifted: it was measured before
- * #864/#868 changed the Noise verb set. Re-run the test — it prints the table — rather than
- * copying a number forward, which is this file's whole point. That is not a hypothetical:
- * the first draft of the #856 measurement subtracted from the drifted 64,785 and reported
- * a +3,632 delta that was 190 B per seat wrong.)
+ * Re-run the test — it prints the table — rather than copying a number forward, which is
+ * this file's whole point.
  *
- * The generation bound is therefore set at parity, which makes it a claim rather than
- * slack: a change that takes a generation's seats past what they replace has grown what
- * every seat sends on every request, and the PR that makes it has to say so. That is why
- * this is a test and not a script somebody once ran. It is also why #869 is Noise-only:
- * the spike that measured the verb put it on all seven and reached 67,997 B, 0.99x, with
- * its first draft over the ceiling at 69,222 B.
+ * The generation bound is set just above the measured aggregate, so it stays a tripwire: a
+ * change that grows a board seat's surface further trips it, and the PR that makes it has to
+ * say so, exactly as this one does. That is why this is a test and not a script somebody
+ * once ran.
  */
 const PER_SEAT_CEILING = 1.4;
-const GENERATION_CEILING = 1.0;
+const GENERATION_CEILING = 1.05;
 
 describe("the tool surface a seat receives, beside the output schema it replaces (2.7)", () => {
   it("stays inside the declared bound against the board schema it replaces", () => {
@@ -131,11 +136,11 @@ describe("the tool surface a seat receives, beside the output schema it replaces
     const schemas = rows.reduce((sum, row) => sum + row.outputSchemaBytes, 0);
     expect(
       surface / schemas,
-      `a generation's seven seats carry ${surface} B of tools against ${schemas} B of output schema`,
+      `a generation's six board seats carry ${surface} B of tools against ${schemas} B of output schema`,
     ).toBeLessThan(GENERATION_CEILING);
   });
 
-  it("prices `write_board` where it is served, and it is served to one seat (#869)", () => {
+  it("prices `write_board` where it is served, and it is served to two seats (#869, D9)", () => {
     // The PR's cost sentence, made executable. It is taken from `servedToolCatalog` — what
     // `tools/list` actually answers with — and not from a local rebuild of the tool set:
     // the recurring defect of this change is an assertion pointed at a copy of the thing,
@@ -147,27 +152,36 @@ describe("the tool surface a seat receives, beside the output schema it replaces
     });
     const carrying = priced.filter((row) => row.cost > 0);
     console.info(
-      `write_board is served to ${carrying.map((row) => row.seat).join(", ") || "no seat"} at ${carrying[0]?.cost ?? 0} B`,
+      `write_board is served to ${carrying.map((row) => row.seat).join(", ") || "no seat"} at ${carrying.map((row) => row.cost).join(", ")} B`,
     );
-    // ONE seat. The other six do not pay for a verb the spike measured them slower with.
-    expect(carrying.map((row) => row.seat)).toEqual(["noise"]);
-    // And what that one seat pays, once per session — the whole of #869's session cost.
-    // 486 and not 485: the verb's own JSON is 485 B and the catalog's separator is the
-    // other byte, which is what the seat is actually sent.
-    expect(carrying[0]?.cost).toBe(486);
+    // TWO seats: the Noise seat, which bulk-writes its derived board (#869), and the Flagged
+    // compiler, the sole writer of its board, which compiles the whole thing from the two
+    // review files in one pass (D9). The four reasoning lenses and the report do not pay for
+    // a verb the spike measured them slower with.
+    expect(carrying.map((row) => row.seat).sort()).toEqual(["flagged-compile", "noise"]);
+    // What each seat pays, once per session — the whole of #869's session cost, now on two
+    // seats. 486 and not 485: the verb's own JSON is 485 B and the catalog's separator is
+    // the other byte. Both seats pay the SAME: `write_board` carries one opaque `board_json`
+    // field, whose size does not move with the target's finding schema.
+    const noiseCost = carrying.find((row) => row.seat === "noise")?.cost;
+    const flaggedCost = carrying.find((row) => row.seat === "flagged-compile")?.cost;
+    expect(noiseCost).toBe(486);
+    expect(flaggedCost).toBe(486);
   });
 
   it("measures the schema the seat leg SENDS, not the one the pipeline holds", () => {
     // The guard on the operand: a raw `boardOutputSchema()` still carries its `$schema`
-    // stamp, and the Codex seat's is a different schema again. If this file ever goes back
-    // to measuring the raw one, these two are what say so.
+    // stamp, and the Codex-shaped schema is a different schema again. If this file ever goes
+    // back to measuring the raw one, these two are what say so. Taken from the providers
+    // directly, not a seat row: the default council routes every board seat to Claude, so no
+    // seat here is Codex-shaped — but the shaping is a property of the provider leg, which is
+    // still what a Codex-routed compiler would send.
     const raw = JSON.stringify(boardOutputSchema());
     expect(raw).toContain("$schema");
-    const claudeSeat = SEATS.find((row) => row.seat === "sequence");
-    const codexSeat = SEATS.find((row) => row.seat === "flagged-codex");
-    if (claudeSeat === undefined || codexSeat === undefined) throw new Error("seat row missing");
-    expect(JSON.stringify(retiredSchema(claudeSeat))).not.toContain("$schema");
-    expect(bytes(retiredSchema(codexSeat))).toBeGreaterThan(bytes(retiredSchema(claudeSeat)));
+    const claudeShaped = outputSchemaFor("claudeAgent", boardOutputSchema());
+    const codexShaped = outputSchemaFor("codex", boardOutputSchema());
+    expect(JSON.stringify(claudeShaped)).not.toContain("$schema");
+    expect(bytes(codexShaped)).toBeGreaterThan(bytes(claudeShaped));
   });
 });
 
@@ -223,6 +237,10 @@ describe("what a tool-writing seat pays per turn that a document return did not 
         input: {
           severity: "high",
           concern: "The refresh path retries before the token is replaced.",
+          // The compiler attributes every finding: `origin` names the model that raised it,
+          // `agreement` how the two reviews landed. Both are required on the flagged board.
+          origin: "claude",
+          agreement: "solo",
         },
       },
       {
@@ -411,6 +429,9 @@ function collectionResults(scale: { regions: number; danglers: number }): Record
       severity: "medium",
       concern: `The retry path number ${index} runs before the token is replaced.`,
       code_ref_ids: [citation],
+      // The compiler attributes every flagged finding; both enums are required on the board.
+      origin: "claude",
+      agreement: "solo",
     });
   }
 

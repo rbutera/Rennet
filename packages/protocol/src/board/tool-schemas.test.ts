@@ -160,10 +160,15 @@ describe("a seat cannot type a count (D10)", () => {
     //
     // 345 → 369 on 2026-09-05: `scenario_clauses` (#856) flattens to two inputs, and
     // `prose` has an `add` and an `update` on all six targets — 2 × 2 × 6 = 24.
+    //
+    // 95 → 96 tools and 374 → 379 fields (`flagged-review-compile` Decisions 9/10): the
+    // Flagged compiler is the sole writer of the `flagged` board, so `write_board` now lands
+    // there too (+1 tool, +1 `board_json` field), and its `add_finding` / `update_finding`
+    // each carry the compiler's two authored enums `origin` + `agreement` (+2 fields each).
     expect(targetsSwept.size, "targets swept").toBe(6);
-    expect(toolsSwept.size, "tools swept").toBe(95);
+    expect(toolsSwept.size, "tools swept").toBe(96);
     // #907 adds optional decision titles to add/update on Design and Decisions.
-    expect(swept, "target/tool/field triples swept").toHaveLength(374);
+    expect(swept, "target/tool/field triples swept").toHaveLength(379);
   });
 
   it("the section verb carries its title and nothing tallied", () => {
@@ -174,6 +179,46 @@ describe("a seat cannot type a count (D10)", () => {
     // …and the frozen `section` kind has no counts field either, which is what makes the
     // disagreement structurally impossible rather than merely unoffered.
     expect(toolFieldsForKind("section").map((f) => f.name)).not.toContain("counts");
+  });
+});
+
+/**
+ * D10 (move two, #452) — the compiler attributes two finished reviews, so it owns each
+ * finding's origin and agreement. Those facts live on the wire as `author` (`{kind,id}`),
+ * `concurrence` (array of `{model,agree,total}`) and `accord` — all nested, all forbidden to
+ * a seat by the flat-input rule. So the compiler authors two FLAT enums, `origin` and
+ * `agreement`, which ride the tool INPUT but are on no tool FIELD: `dataFromInput` reads only
+ * fields, so the enums never persist, and the writer expands them into the three host fields.
+ */
+describe("the Flagged compiler's origin + agreement are input-only (D10)", () => {
+  const findingInput = (name: "add_finding" | "update_finding") =>
+    (boardToolsByName("flagged").get(name) as BoardTool).input as z.ZodObject;
+
+  it("add_finding and update_finding on the flagged target carry origin and agreement inputs", () => {
+    for (const name of ["add_finding", "update_finding"] as const) {
+      expect(Object.keys(findingInput(name).shape), name).toEqual(
+        expect.arrayContaining(["origin", "agreement"]),
+      );
+    }
+  });
+
+  it("origin and agreement are input-only, so they land on no tool field and never persist", () => {
+    for (const name of ["add_finding", "update_finding"] as const) {
+      const fields = (boardToolsByName("flagged").get(name) as BoardTool).fields.map((f) => f.name);
+      expect(fields, `${name}.fields`).not.toContain("origin");
+      expect(fields, `${name}.fields`).not.toContain("agreement");
+    }
+    // …and `finding` is authored by the flagged target alone, so there is no other door.
+    expect(names("sequence")).not.toContain("add_finding");
+  });
+
+  it("the enum values are the compiler's vocabulary, deliberately not the accord words", () => {
+    // `accord` is concur|split|conflict; the compiler's agreement is concur|diverge|solo so
+    // the writer's map reads without a collision (solo→split, diverge→conflict). See D10.
+    const agreement = findingInput("add_finding").shape.agreement as z.ZodEnum;
+    expect(new Set(agreement.options)).toEqual(new Set(["concur", "diverge", "solo"]));
+    const origin = findingInput("add_finding").shape.origin as z.ZodEnum;
+    expect(new Set(origin.options)).toEqual(new Set(["claude", "codex"]));
   });
 });
 

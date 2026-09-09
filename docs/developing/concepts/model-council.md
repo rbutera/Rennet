@@ -26,13 +26,13 @@ questions, CI analysis, delta digests, pull-request body drafting, handoff
 composition and comment refinement.
 
 The lens drafting pipeline routes `lens-draft` (the drafting seat for the
-Design, Sequence, and Decisions lenses), `lens-draft-flagged` (the dual seat —
-Claude and Codex on the same instructions, reconciled by cross-model
-concurrence), `lens-draft-noise` (the noise lens), and `round-report`. The last is
+Design, Sequence, and Decisions lenses), `lens-draft-flagged` (Flagged's three
+seats — two lane-less review seats, Claude and Codex, plus the compiler that
+reads both findings files and writes the board), `lens-draft-noise` (the noise
+lens), and `round-report`. The last is
 a single-turn classifier for landed coding rounds, not another full board drafter. It receives
 the successor patchset id, durable asks, and exact worker receipt. The host builds
-and verifies the report board from its classification. The Flagged dual-seat
-merge routes through `finding-reconcile`.
+and verifies the report board from its classification.
 
 Every model path in the product resolves through the council.
 
@@ -103,8 +103,9 @@ choices. The normal task override, then tier override, remains authoritative.
 
 ## The dual-model second seat
 
-Flagged can run the same finding lens on both providers and reconcile the two
-results. Only one seat is a council assignment; the other is the second opinion
+Flagged runs the review leg on both providers and a compiler reads both findings
+files into one board (see the Flagged review→compile flow in the lens pipeline).
+Only one review seat is a council assignment; the other is the second opinion
 the council never picked, so it carries no resolution trace. That second seat is
 deliberately strong rather than cheap: a Codex second seat that the council did
 not assign runs `gpt-5.6-sol` at effort `high`. A second opinion is only worth
@@ -213,13 +214,15 @@ review opener, related-context retrieval, and CI-failure classification. Only th
 two roles the settings catalogue names can be overridden, so a site running a job
 outside the catalogue resolves from the tables as before.
 
-The Flagged lane is the one site that narrows what it is given. It runs one job on
-two provider-pinned seats, each resolved against a synthetic single-provider
-availability, so a **model** override reaches only the leg whose provider that model
-belongs to; an **effort** override reaches both, because effort is
+The Flagged lane is the one site that narrows what it is given. Its two
+provider-pinned **review** seats are each resolved against a synthetic
+single-provider availability, so a **model** override reaches only the leg whose
+provider that model belongs to; an **effort** override reaches both, because effort is
 provider-independent. Passing a model override to the other leg would resolve it
 onto a harness its own synthetic availability does not hold, and the lane would lose
-that seat to a "not installed" failure naming a harness the host actually has.
+that seat to a "not installed" failure naming a harness the host actually has. The
+compiler seat resolves against the full council, on whichever harness it routes
+`lens-draft-flagged` to.
 
 A board job that resolves to a harness this host has not got still fails, by design:
 `councilSeatTurn` re-checks the installed set before opening a thread, because

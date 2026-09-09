@@ -752,7 +752,8 @@ export interface T3SeatRuntime {
 
 /** Which lane a seat's thread belongs to. The report seat has no lens lane. */
 export function laneForSeat(seat: string): LensKind | undefined {
-  if (seat === "flagged-claude" || seat === "flagged-codex") return "flagged";
+  if (seat === "flagged-claude" || seat === "flagged-codex" || seat === "flagged-compile")
+    return "flagged";
   return (LENS_KINDS as readonly string[]).includes(seat) ? (seat as LensKind) : undefined;
 }
 
@@ -1300,7 +1301,7 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
     const seatWatches: { readonly stop: () => void }[] = [];
     // Per LENS, because the subscription is dropped when that lane settles rather than when
     // the generation does (review finding 7). A list per lens, not one entry: Flagged runs
-    // two seats on two providers, and both belong to the one lane.
+    // three seats (two review legs and the compiler), and all belong to the one lane.
     const seatWatchesByLens = new Map<LensKind, { readonly stop: () => void }[]>();
     const stopSeatWatches = (lens: LensKind): void => {
       const held = seatWatchesByLens.get(lens);
@@ -1532,8 +1533,8 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
             onThread: (seat, thread, provider) => {
               const lens = laneForSeat(seat);
               if (lens === undefined || lanes === undefined) return;
-              // By SEAT: the two Flagged seats share a lane and must not overwrite each
-              // other's thread or line.
+              // By SEAT: the three Flagged seats (two review legs and the compiler) share a
+              // lane and must not overwrite each other's thread or line.
               lanes.thread(seat, provider, {
                 environmentId: t3Runtime.environmentId,
                 threadId: thread.threadId,

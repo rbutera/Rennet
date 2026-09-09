@@ -30,24 +30,26 @@ const boardsFor = async (generationId: string) =>
   });
 
 describe("a seat thread is addressed onto its lane's board (2.6)", () => {
-  it("gives the Flagged lane's two seats two addresses onto the ONE flagged board", async () => {
+  it("addresses only the compiler onto the flagged board; the review seats are lane-less", async () => {
     const boards = await boardsFor("gen-1");
     const lane = await boards.openLane({ target: "flagged", lint: lint() });
 
-    const claude = seatBoardServer(boards, "flagged-claude");
-    const codex = seatBoardServer(boards, "flagged-codex");
-    expect(claude).toBeDefined();
-    expect(codex).toBeDefined();
-    expect(claude?.url).not.toBe(codex?.url);
-    // Both resolved to the same lane, so both write the one board — which is the thing a
-    // seat-name-as-target lookup would get wrong without changing either url's shape.
-    expect(lane.seatWriter("flagged-claude")).toBeDefined();
-    expect(lane.seatWriter("flagged-codex")).toBeDefined();
-    const first = lane.seatWriter("flagged-claude")?.call("add_section", { title: "Correctness" });
-    const second = lane.seatWriter("flagged-codex")?.call("add_section", { title: "Risk" });
-    expect(first?.ok).toBe(true);
-    expect(second?.ok).toBe(true);
-    expect(lane.board().elements).toHaveLength(2);
+    // The compiler is the sole writer of the flagged board (move two): it reads the two
+    // review legs' findings files and compiles the whole board through the tool surface.
+    const compile = seatBoardServer(boards, "flagged-compile");
+    expect(compile).toBeDefined();
+
+    // The two review seats are lane-less: no target in `SEAT_BOARD_TARGET`, so no address and
+    // no board tools. They review with the harness's own file tools and land a findings file.
+    expect(seatBoardServer(boards, "flagged-claude")).toBeUndefined();
+    expect(seatBoardServer(boards, "flagged-codex")).toBeUndefined();
+
+    // Only the compiler has a writer onto the lane, and it writes the one board.
+    expect(lane.seatWriter("flagged-claude")).toBeUndefined();
+    expect(lane.seatWriter("flagged-codex")).toBeUndefined();
+    const written = lane.seatWriter("flagged-compile")?.call("add_section", { title: "Findings" });
+    expect(written?.ok).toBe(true);
+    expect(lane.board().elements).toHaveLength(1);
   });
 
   it("each lens seat is addressed onto its own lens's board", async () => {

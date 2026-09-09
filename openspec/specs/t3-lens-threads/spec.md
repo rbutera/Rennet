@@ -5,9 +5,9 @@ Every seat the review pipeline runs is a durable, inspectable T3 Code thread in 
 ## Requirements
 ### Requirement: Every board seat runs as one persistent T3 thread
 
-Each lens seat (Design, Sequence, Decisions, Flagged primary, Flagged second, Noise) and the round report SHALL run as one T3 thread on the review's project in the daemon-owned sidecar, with the review's checkout as its working directory. A generation SHALL create one thread per seat, and every turn of that seat in that generation SHALL run on that thread. Threads SHALL persist in the sidecar's own home and SHALL never be created in or read from the user's own T3 installation.
+Each lens seat (Design, Sequence, Decisions, the two Flagged review legs, the Flagged compiler, Noise) and the round report SHALL run as one T3 thread on the review's project in the daemon-owned sidecar, with the review's checkout as its working directory. A generation SHALL create one thread per seat, and every turn of that seat in that generation SHALL run on that thread. Threads SHALL persist in the sidecar's own home and SHALL never be created in or read from the user's own T3 installation.
 
-#### Scenario: a generation opens six threads
+#### Scenario: a generation opens seven threads
 - **WHEN** a review's first generation starts with both harnesses available
 - **THEN** the sidecar lists one thread per seat for that generation, each rooted at the review's checkout, and the daemon's binding names the generation, the seat and the thread
 
@@ -35,13 +35,13 @@ Each turn on a seat's thread SHALL report its token usage and wall-clock duratio
 - **WHEN** a Design seat drafts and then repairs once
 - **THEN** the collector holds two records for `board.lens-draft` on that generation, each with tokens and duration from the thread's turn
 
-### Requirement: The Flagged dual seat runs on two providers as two threads
+### Requirement: The Flagged lens runs two review legs and a compiler
 
-The Flagged lens SHALL run its primary seat as a thread on the Claude provider and its second seat as a thread on the Codex provider, reconciled as they are today; when only one provider is available it SHALL degrade to one thread and say so in the round account.
+The Flagged lens SHALL run its Claude review leg as a thread on the Claude provider and its Codex review leg as a thread on the Codex provider; each leg reviews with its own file tools, writes a structured findings file, and holds no board tools. A third compiler thread SHALL read both findings files and write the whole Flagged board in one call, stamping each finding's origin model and the two legs' agreement as its own judgment — there is no host-side reconciliation. When only one provider is available the lens SHALL degrade to a single review leg feeding the compiler and say so in the round account.
 
 #### Scenario: both providers present
 - **WHEN** a generation runs with Claude and Codex both seeded in the sidecar
-- **THEN** the Flagged lane has two threads, one per provider, and the reconciled findings carry each seat's provenance
+- **THEN** the Flagged lane has three threads — a Claude review leg, a Codex review leg, and the compiler — and the compiled board carries each finding's origin model and the compiler's agreement judgment
 
 ### Requirement: Archiving a session deletes its threads
 

@@ -226,9 +226,11 @@ message alone, and that absence means the classification is **unknown** — it i
 not a licence to present the lens as beyond another attempt.
 
 The generation's per-phase **timings** follow the same rule. `timings` carries a
-`version` and one record per phase — per SEAT for a lane that ran more than one,
-so the Flagged dual seat contributes two `lens-draft` records rather than one
-anonymous span. A record's `lens` is discriminated by its phase: the lane-scoped
+`version` and one record per phase — for a lane that ran more than one model, one
+record per distinct `(harness, model)` that ran a turn, so Flagged's two review legs
+each contribute a `lens-draft` record rather than folding into one anonymous span; its
+compiler merges into whichever leg shares its harness and model, adding a third record
+only when the council routed it to a model neither review used. A record's `lens` is discriminated by its phase: the lane-scoped
 phases require it and the generation-wide ones refuse it, which is a constraint
 on the record and never on the field's presence. A generation or a daemon without
 the field says nothing about duration. The `coverage` phase stays in the phase

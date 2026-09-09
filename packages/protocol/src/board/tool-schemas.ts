@@ -1,5 +1,6 @@
 import type { AuthoredSchema } from "@wboard/core";
 import { z } from "zod";
+import { COMPILE_AGREEMENTS, FINDING_ORIGINS } from "./finding-compile";
 import {
   authorableKindsFor,
   type BoardTarget,
@@ -53,8 +54,9 @@ import {
  * so a seat cannot forge one: the element `author` (the seat is known from its address),
  * a `code_ref`'s `patchset_id` (stamped once before persistence; a seat is never told
  * the capture's id), a noise verdict's `judge` (a seat is `llm`), a finding's `status`
- * (a draft is `open`) and its `concurrence` / `accord` (computed by `reconcileFindings`
- * when both Flagged voices have settled), a section's round-`delta` stamp (set by the
+ * (a draft is `open`) and its `concurrence` / `accord` (expanded by
+ * `expandFindingCompile` from the Flagged compiler's `origin` / `agreement` enums),
+ * a section's round-`delta` stamp (set by the
  * composition step at regeneration — a seat that could set it could mark its own work
  * new), and the document `measure` (`resolveBoardDocument` overrides whatever a seat
  * authors with the target's own).
@@ -393,6 +395,31 @@ const PARENT_ID = z
 
 const ELEMENT_ID = z.string().min(1).describe("The id of the element to change.");
 
+/**
+ * The Flagged compiler's two authored enums (`flagged-review-compile` Decision 10). They ride
+ * the finding verbs' input beside `parent_id` rather than `AUTHORED_BOARD_SCHEMA`, because
+ * they are input-only: the writer expands them into the host-owned `author` / `concurrence` /
+ * `accord` (`expandFindingCompile`) and never persists them. Flat enums, so a finding's
+ * nested `author` and `concurrence` are never authored directly — the flat-input rule holds.
+ * Scoped to `finding`, which the flagged lens authors alone, so only the compile board carries
+ * them; `optional` on an update, which sends only what changes.
+ */
+function findingCompileInputs(optional: boolean): Record<string, z.ZodType> {
+  const origin = z
+    .enum(FINDING_ORIGINS)
+    .describe(
+      "The model that raised this finding — claude or codex. On a concur, the one whose concern you kept.",
+    );
+  const agreement = z
+    .enum(COMPILE_AGREEMENTS)
+    .describe(
+      "How the two reviews landed: concur (both raised it), diverge (both raised it, different verdict — higher severity wins), or solo (only origin raised it).",
+    );
+  return optional
+    ? { origin: origin.optional(), agreement: agreement.optional() }
+    : { origin, agreement };
+}
+
 function objectOf(
   fields: readonly BoardToolField[],
   extra: Record<string, z.ZodType>,
@@ -416,7 +443,10 @@ function addTool(kind: DraftKind): BoardTool {
     kind,
     description: AUTHORED_BOARD_SCHEMA[kind].description,
     fields,
-    input: objectOf(fields, { parent_id: PARENT_ID }),
+    input: objectOf(fields, {
+      parent_id: PARENT_ID,
+      ...(kind === "finding" ? findingCompileInputs(false) : {}),
+    }),
   };
 }
 
@@ -442,10 +472,11 @@ function updateTool(kind: DraftKind, reparents = false): BoardTool {
       ? `Group an existing \`${kind}\` under a section and say why it is there. Only the fields given change.`
       : `Change fields of an existing \`${kind}\` element. Only the fields given change.`,
     fields,
-    input: objectOf(
-      fields,
-      reparents ? { element_id: ELEMENT_ID, parent_id: PARENT_ID } : { element_id: ELEMENT_ID },
-    ),
+    input: objectOf(fields, {
+      element_id: ELEMENT_ID,
+      ...(reparents ? { parent_id: PARENT_ID } : {}),
+      ...(kind === "finding" ? findingCompileInputs(true) : {}),
+    }),
   };
 }
 

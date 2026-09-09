@@ -126,6 +126,18 @@ export function replayBoard(voice: BoardVoiceWriter, target: BoardTarget, board:
     const input = inputFrom(tool.fields, element.data as Record<string, unknown>);
     const parent = parentOf.get(element.id);
     if (parent !== undefined) input.parent_id = remap(parent);
+    // The Flagged compile board asks each finding for its `origin` and `agreement` — the
+    // review provenance the compiler carries in from the two findings files. These ride the
+    // finding verbs as input-only enums (they expand into the host-owned author and tallies
+    // and never persist), so they sit beside `tool.fields` rather than in it, and a replayed
+    // DraftBoard has no field to read them from. A fixture that drives the compile board
+    // through `replayBoard` gets the plain single-origin reading (this finding came from one
+    // review), which is what every board-shaped flagged fixture wants; a test about
+    // concurrence or conflict scripts the compiler turn itself instead.
+    if (target === "flagged" && element.kind === "finding") {
+      input.origin ??= "claude";
+      input.agreement ??= "solo";
+    }
     const id = call(tool.name, input);
     if (id !== undefined) minted.set(element.id, id);
   }
@@ -204,6 +216,9 @@ export async function applySeatTurn(
   voice: BoardVoiceWriter,
 ): Promise<void> {
   const target = SEAT_BOARD_TARGET[seat];
+  // A lane-less seat (the Flagged review seats) authors no board, so a scripted BOARD turn
+  // for one is a fixture bug — it has no lane to replay onto. Say so rather than write nowhere.
+  if (target === undefined) throw new Error(`seat \`${seat}\` is lane-less: it authors no board`);
   if (written === undefined || written === null) return;
   const absence = (written as { absence?: unknown }).absence;
   if (typeof absence === "string") {
@@ -274,12 +289,17 @@ function withoutDroppedChildren(element: DraftElement, dropped: ReadonlySet<stri
     : ({ ...element, data: { ...(element.data as object), children: kept } } as DraftElement);
 }
 
-/** This seat's handle on its lane's board, or `undefined` when its lane is not open. */
+/**
+ * This seat's handle on its lane's board, or `undefined` when its lane is not open OR the
+ * seat is lane-less (the Flagged review seats, move two, author no board).
+ */
 export function seatVoiceOn(
   boards: GenerationBoards | undefined,
   seat: SeatKind,
 ): BoardVoiceWriter | undefined {
-  return boards?.lane(SEAT_BOARD_TARGET[seat])?.writer().voice(SEAT_BOARD_VOICE[seat]);
+  const target = SEAT_BOARD_TARGET[seat];
+  if (target === undefined) return undefined;
+  return boards?.lane(target)?.writer().voice(SEAT_BOARD_VOICE[seat]);
 }
 
 // ── The loopback board server a test's lanes live on ─────────────────────────

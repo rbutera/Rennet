@@ -42,9 +42,12 @@ import {
   type BoardTarget,
   type BoardTool,
   boardToolsByName,
+  type CompileAgreement,
   type DraftBoard,
   type DraftElement,
   type DraftKind,
+  expandFindingCompile,
+  type FindingOrigin,
   type LensAbsenceReason,
   parseDraft,
   resolveBoardDocument,
@@ -272,8 +275,10 @@ export interface BoardVoiceWriter {
 
 /** What the host stamps on each kind, over and above the `author` every kind carries. */
 const HOST_DEFAULTS: Readonly<Partial<Record<DraftKind, Readonly<Record<string, unknown>>>>> = {
-  // A drafted finding is `open` and has no cross-seat agreement yet: `reconcileFindings`
-  // stamps concurrence and accord when both Flagged voices have settled.
+  // A drafted finding is `open` and has no cross-model agreement yet. On the Flagged
+  // board the compiler carries `origin` / `agreement` on its `add_finding` input, which
+  // `expandFindingCompile` turns into concurrence and accord at write time; this default
+  // is the resting shape for every other finding path.
   finding: { status: "open", concurrence: [] },
   // A member of a derived board is host-placed and host-stamped (D16f): membership is a
   // POSITION — a changed region no other board cited — so `verdict` is `noise` and the
@@ -762,6 +767,26 @@ export class BoardWriter {
     return { ok: true, outcome: { kind: "document" } };
   }
 
+  /**
+   * The host-owned finding fields the Flagged compiler's two enums expand into
+   * (`flagged-review-compile` Decision 10), or `{}` when a call carries neither. `origin` and
+   * `agreement` are input-only — they never land in `data` (`dataFromInput` reads only
+   * `tool.fields`, and these ride the input beside `parent_id`), so this is where they become
+   * the finding's `author` / `concurrence` / `accord`, overriding the voice author and the
+   * `concurrence: []` host default. Both or neither: an update carrying only one cannot
+   * recompute the tally, and the compiler always authors the pair together.
+   */
+  private findingCompileData(
+    kind: DraftKind | undefined,
+    input: Record<string, unknown>,
+  ): Record<string, unknown> {
+    if (kind !== "finding") return {};
+    const origin = input.origin as FindingOrigin | undefined;
+    const agreement = input.agreement as CompileAgreement | undefined;
+    if (origin === undefined || agreement === undefined) return {};
+    return { ...expandFindingCompile(origin, agreement) };
+  }
+
   private add(
     tool: BoardTool,
     input: Record<string, unknown>,
@@ -788,6 +813,7 @@ export class BoardWriter {
         author: voice?.author ?? this.options.author,
         ...(HOST_DEFAULTS[kind] ?? {}),
         ...dataFromInput(tool, input, {}),
+        ...this.findingCompileData(kind, input),
       },
     } as DraftElement;
 
@@ -844,6 +870,7 @@ export class BoardWriter {
       data: {
         ...(current.data as Record<string, unknown>),
         ...dataFromInput(tool, input, current.data as Record<string, unknown>),
+        ...this.findingCompileData(tool.kind, input),
       },
     } as DraftElement;
     const patchedElements = this.elements.map((element, at) => (at === index ? patched : element));

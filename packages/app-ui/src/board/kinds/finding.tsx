@@ -19,7 +19,7 @@ import { useBoardGeneration, useBoardId, useBoardPatchsetId, useCodeRefs } from 
 // frozen board status without changing its bytes. The inline `**Fix:**` is lifted into
 // a callout when present; every finding keeps its actions even without that optional marker.
 //
-// The first line is the HEADER (`prompts/flagged.md`: "First line: the claim"), so it
+// The first line is the HEADER (`prompts/flagged-review.md`: "The claim is the first line"), so it
 // renders as a heading — backticks as code, any `**bold**` a seat wrapped it in
 // unwrapped — and the body below it starts at the second paragraph, because a claim
 // printed in the header and again as the body's first line is the same sentence twice.
@@ -69,20 +69,22 @@ const CONCURRENCE_TONE: Record<ConcurrenceRead, string> = {
  * The cross-model concurrence read, as ONE bordered tinted pill (prototype
  * `lens-board.tsx:503-516`) rather than a row of plain per-model counts.
  *
- * **The tallies alone cannot answer the question this pill asks.** `foldConcurrence`
- * (`server/runtime/lens-pipeline.ts:226-241`) stamps `[{a,1,1},{b,1,1}]` for a concurring
- * pair — and for a severity CONFLICT, where both seats raised the finding at materially
- * different severities and neither answered "no concern" (`core/finding-reconcile.ts`,
- * the conflict arm of `reconcileFindings`). Byte-identical. Reading `sum(agree) ===
- * sum(total)` as agreement therefore printed a green "concur 2/2" over a disagreement.
+ * **The tallies alone cannot answer the question this pill asks.** `expandFindingCompile`
+ * (`protocol/board/finding-compile.ts`) writes `[{a,1,1},{b,1,1}]` for a concurring
+ * pair — and for a severity CONFLICT, where both reviews raised the finding at materially
+ * different severities (the compiler's `agreement === "diverge"`). Byte-identical. Reading
+ * `sum(agree) === sum(total)` as agreement therefore printed a green "concur 2/2" over a
+ * disagreement.
  *
- * So the pipeline also stamps `accord`, and the green concurrence claim is made ONLY on
- * `accord === "concur"`. The other reads:
+ * So the same expansion also stamps `accord`, and the green concurrence claim is made ONLY
+ * on `accord === "concur"`. The other reads:
  *
- * - `conflict` — both raised it, incompatible severities. Named, in the model register.
- * - `split` — one seat raised it, another answered "no concern" (`agree: 0`). Names who did.
- * - `solo` — ONE tally, the single-harness degrade (`stampSingleSeatConcurrence`, `:398-410`).
- *   No second opinion exists, so there is no split to report: it reads as the seat, muted.
+ * - `conflict` — both raised it, incompatible severities (`diverge`). Named, in the model register.
+ * - `solo` — ONE tally: the compiler's per-finding `solo` (one model raised it, accord
+ *   `split`) or the single-harness degrade (only one model reviewed). No second opinion
+ *   exists, so it reads as the model, muted.
+ * - `split` — a legacy two-tally board where one seat answered "no concern" (`agree: 0`).
+ *   The compiler no longer writes this shape: its `solo` carries one tally and reads `solo`.
  * - `unstamped` — a board drafted before `accord`, whose tallies are the ambiguous pair.
  *   It may be either, so it states the tally and claims nothing. Never green.
  */

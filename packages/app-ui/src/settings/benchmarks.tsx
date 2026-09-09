@@ -20,8 +20,8 @@ import { useBenchmarks, useSetBenchmarkRecording, useSettingsView } from "./data
 //
 // The panel DERIVES every run's mode from its own stage records rather than reading a
 // stored label, because the Model Council routes per job and a run can legitimately span
-// providers. A dual-seat lane records one draft per seat, so a run that put one lane on
-// each harness names both here — which is the whole reason the mode is a function and not
+// providers. A multi-seat lane (Flagged) records one draft per seat, so a run that put one
+// lane on each harness names both here — which is the whole reason the mode is a function and not
 // a field. Runs are split into a section per mode: averaging a Claude-only run together
 // with a council run would state a number describing no configuration that exists.
 //

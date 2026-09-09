@@ -9,8 +9,6 @@ import {
   type LensKind,
 } from "@rennet/protocol";
 import {
-  LENS_SETTLEMENT_FLAGGED_FINDING,
-  LENS_SETTLEMENT_FLAGGED_SECTION,
   LENS_SETTLEMENT_GENERATED,
   LENS_SETTLEMENT_GENERATED_SENTINEL,
   LENS_SETTLEMENT_SEQUENCE_STEP,
@@ -40,17 +38,10 @@ import { startTestDaemon } from "./scripted-daemon";
 //   #548 — Sequence and Decisions settle populated boards and their anchors are hydrated
 //   through `patchset.readSpan`, which serves from the captured patchset's own patch text
 //   and refuses a span it does not hold, so a hydrated anchor is the reviewer's own
-//   navigation, performed. Flagged carries the reference half: both seats answer the one
-//   plan, so they raise the same finding at the same location, the reconciler collapses
-//   one into the other, and the collapsed finding's section is left citing an id the
-//   merged board no longer holds. That happens AFTER lint (lint resolves references in
-//   the draft it sees; the merge runs later), so the board service would reject the whole
-//   write. A Flagged board on screen means the merge repointed the citer.
-//
-//   An in-draft dangling reference is NOT what this exercises: lint catches that one and
-//   the ladder settles it long before the write boundary. The write-boundary admission
-//   pass itself is proven against the real board service in
-//   `packages/server/src/runtime/lens-pipeline.test.ts`.
+//   navigation, performed. (The #548 Flagged half proved a reconciler-merge bad-ref
+//   repoint; move two retired the merge — the compiler writes the board directly with
+//   in-turn lint — so there is no post-lint reference shape left to prove, and Flagged is
+//   no longer part of this proof.)
 //
 //   #549 — the Noise seat either draws a real skip-safe group or emits the empty board
 //   that is its honest "nothing here is skippable". The first settles a populated board;
@@ -174,8 +165,8 @@ async function runSettlement(
   const userData = makeTempDir("rennet-e2e-settlement-state-");
   const home = makeTempDir("rennet-e2e-settlement-home-");
   const { planPath } = writeLensSettlementScriptedHarnessPlan(userData, noise);
-  // Both providers from the one plan: the Flagged lens is the council's only dual seat,
-  // and its merge is what produces the post-lint reference shape under test.
+  // Both providers installed so the run resolves the same council it does in production;
+  // this proof reads only the single-provider Sequence, Decisions, and Noise lenses.
   const daemon = await startTestDaemon({ userData, home, planPath, dualSeat: true });
   const launched = await launchRennet({
     repository,
@@ -285,37 +276,6 @@ test("Sequence and Decisions settle with anchors into the captured patchset (#54
     await page.locator('[data-kind="lens-switcher"] [data-lens="sequence"]').click();
     await expect(page.locator('[data-kind="board-failed"]')).toHaveCount(0);
     await expect(page.locator('[data-kind="lens-board-view"]')).toContainText("Settlement");
-  });
-});
-
-test("the dual-seat merge's collapsed finding is repointed, so Flagged is writable (#548)", async () => {
-  test.setTimeout(300_000);
-  await runSettlement("populated", async ({ bridge, reviewId, generation }) => {
-    const flagged = await settledLens(bridge, reviewId, generation, "flagged");
-    // Before the merge repointed its citer, this write was rejected wholesale by the
-    // board service and the reviewer got a failed lens instead of the finding.
-    expect(flagged.failure, "Flagged failed instead of settling the merged board").toBeUndefined();
-    const board = flagged.board;
-    if (board === null) throw new Error("Flagged settled without a board");
-
-    // Two seats, one location: the findings collapsed into a single row.
-    const findings = board.elements.filter((element) => element.kind === "finding");
-    expect(findings).toHaveLength(1);
-    const survivor = findings[0];
-    if (survivor === undefined) throw new Error("Flagged settled with no finding");
-
-    // The collapsed seat's section still names a finding — the SURVIVING one. A section
-    // citing the consumed id is exactly the `bad-ref` the service refuses.
-    const section = board.elements.find(
-      (element) =>
-        element.kind === "section" && element.id.endsWith(LENS_SETTLEMENT_FLAGGED_SECTION),
-    );
-    if (section?.kind !== "section") throw new Error("Flagged settled with no section");
-    expect(section.data.children).toContain(survivor.id);
-    // The consumed id is gone from the board, so nothing may still cite it.
-    const liveIds = new Set(board.elements.map((element) => element.id));
-    for (const child of section.data.children) expect(liveIds.has(child)).toBe(true);
-    expect(survivor.id.endsWith(LENS_SETTLEMENT_FLAGGED_FINDING)).toBe(true);
   });
 });
 

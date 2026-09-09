@@ -9,7 +9,7 @@
  * and run the Brita route-plan budget gate. No model turns, no canvas projection:
  * `canvases` and `elementDiffs` are empty (nothing live reads a built Canvas after
  * this change), and the deterministic producers (`blast-radius`, `element-diffs`,
- * `openspec-change`, `finding-reconcile`, `noise-generation`) survive as standalone
+ * `openspec-change`, `noise-generation`) survive as standalone
  * units for the B-series to re-wire onto the Board surface.
  */
 

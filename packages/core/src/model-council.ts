@@ -588,9 +588,9 @@ function pickForHarness(
 /**
  * The overrides a PROVIDER-PINNED leg may honour (#876).
  *
- * The Flagged lane runs ONE job on TWO seats, one per provider, each resolved against a
- * synthetic single-provider availability so it lands on that provider's table row
- * (`runFlaggedDual`). A task override naming the OTHER provider's model would resolve that
+ * The Flagged lane runs ONE job on TWO review seats, one per provider, each resolved against
+ * a synthetic single-provider availability so it lands on that provider's table row
+ * (`runFlaggedReviewCompile`). A task override naming the OTHER provider's model would resolve that
  * leg onto a harness its own synthetic availability does not hold, and the seat would die
  * with "resolved to codex, which is not installed" — naming a harness the host actually
  * has. So a MODEL override reaches only the leg whose provider it names; an EFFORT
