@@ -5,6 +5,7 @@ import {
   fallbackBoardDocument,
   LensBoardSchema,
   LensKindSchema,
+  projectBoardSections,
   RoundReportBoardSchema,
   resolveBoardDocument,
 } from "./lens-board";
@@ -133,6 +134,82 @@ describe("LensBoard projection (client asset risk 1)", () => {
       elements: [{ id: "x", kind: "custom", data: { author } }],
     };
     expect(LensBoardSchema.safeParse(bad).success).toBe(false);
+  });
+
+  // The #927 shape, from the persisted board log: the Codex seat minted a SECOND top-level
+  // section ("Proposal fidelity") and hung three bare code_refs off it before its findings,
+  // which rendered as a heading over orphaned code blocks. `codeRef`/`finding`/`section`
+  // build the exact element tree that board carried.
+  const codeRef = (id: string, path: string) => ({
+    id,
+    kind: "code_ref",
+    data: { author, patchset_id: "ps1", path, side: "head", start_line: 1, end_line: 4 },
+  });
+  const finding = (id: string, concern: string, code: string[]) => ({
+    id,
+    kind: "finding",
+    data: { author, severity: "medium", concern, code, concurrence: [], status: "open" },
+  });
+  const section = (id: string, title: string, children: string[]) => ({
+    id,
+    kind: "section",
+    data: { author, title, children },
+  });
+
+  describe("Flagged orphan-section guard (#927)", () => {
+    // fe1 "Findings" owns fe4; ge5 "Proposal fidelity" hangs three bare code_refs then its
+    // own finding ge9 (and re-lists fe4). A third section is pure orphan citation.
+    const elements = [
+      section("fe1", "Findings", ["fe4"]),
+      section("ge5", "Proposal fidelity", ["ge6", "ge7", "ge8", "ge9", "fe4"]),
+      section("or1", "Orphans", ["cr9"]),
+      codeRef("ge6", "src/design-assembler.ts"),
+      codeRef("ge7", "src/design-structure.tsx"),
+      codeRef("ge8", "src/design-assembler.ts"),
+      codeRef("cr9", "src/other.ts"),
+      finding("ge9", "Impact jumps ahead of intervening proposal headings", ["ge7"]),
+      finding("fe4", "What Changes text outside its bullet list is dropped", ["cr9"]),
+    ];
+
+    it("drops a finding-less Flagged section and never counts an orphan code_ref as a file", () => {
+      const refs = projectBoardSections(elements, "flagged");
+      // The pure-orphan "Orphans" section is gone; the two sections with findings survive.
+      // fe4 is reached from both fe1 and ge5, so it is counted under each — the double count
+      // move two's compiler retires; here it is the faithful reading of a two-parent shape.
+      expect(refs.map((s) => s.ref)).toEqual(["fe1", "ge5"]);
+      const proposal = refs.find((s) => s.ref === "ge5");
+      // ge5 keeps its two findings; its three orphan code_refs are not counted as files.
+      expect(proposal?.counts).toEqual({ findings: 2 });
+    });
+
+    it("keeps a Flagged section whose only finding sits inside a nested section", () => {
+      // outer → inner → finding. The guard that shipped in the first pass of #927 checked a
+      // section's DIRECT children only, so `outer` (direct child: a section, no finding) was
+      // dropped and the nested finding vanished from the board — a guard deleting a real
+      // finding is worse than the cosmetic bug it fixed. The fix counts findings REACHABLE
+      // through nested sections, matching the server's reachableElementsOfKind.
+      const nested = [
+        section("outer", "Fidelity", ["inner"]),
+        section("inner", "Detail", ["nf1"]),
+        finding("nf1", "A real concern one section deep", []),
+      ];
+      const refs = projectBoardSections(nested, "flagged");
+      // Only `outer` is top-level (`inner` is nested); it survives, counting its one
+      // reachable finding. POSITIVE CONTROL: revert the projection to a direct-children
+      // check and this reddens — `refs` is empty and the finding is gone.
+      expect(refs.map((s) => s.ref)).toEqual(["outer"]);
+      expect(refs[0]?.counts).toEqual({ findings: 1 });
+    });
+
+    it("scope control: on a non-Flagged lens the guard does not fire", () => {
+      // Same elements, design lens: the orphan section survives and code_refs count as files.
+      // This is the discriminating pair — remove the guard and the flagged case above turns
+      // into this; broaden the guard past flagged and this case turns into the one above.
+      const refs = projectBoardSections(elements, "design");
+      expect(refs.map((s) => s.ref)).toEqual(["fe1", "ge5", "or1"]);
+      const proposal = refs.find((s) => s.ref === "ge5");
+      expect(proposal?.counts).toEqual({ findings: 2, files: 2 });
+    });
   });
 
   it("gives report projections their own identity and excludes human review comments", () => {

@@ -25,7 +25,9 @@ import {
 //   • `sections` — the TOP-LEVEL `section` elements (a section another element
 //     names as a child is nested, not a fold line), in that same order. `counts`
 //     is TALLIED from each section's own resolved children, exactly as the fold
-//     line is defined; `delta` is the R58 stamp the section element carries.
+//     line is defined; `delta` is the R58 stamp the section element carries. On
+//     the Flagged lens the tally is instead the findings REACHABLE through nested
+//     sections, and a section reaching none is dropped (#927 orphan-section guard).
 //
 // A stored `gist` wins when present; otherwise this wire view uses the section
 // title. The renderer derives its own content preview from the children.
@@ -92,7 +94,7 @@ function projectBoard(stored: readonly StateElement[], identity: BoardIdentity) 
   // runs over the live element stream (`lens-board-tools` D11/D13). One derivation, two
   // readers: a board that folded one way while it was being written and another way once
   // it settled would reorganise itself under the reviewer at the moment the lane settled.
-  const sections = projectBoardSections(elements);
+  const sections = projectBoardSections(elements, identity.lens);
   return {
     lens: identity.lens,
     generation: identity.generation,

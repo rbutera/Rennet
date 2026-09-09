@@ -195,18 +195,69 @@ function nestedBoardIds(elements: readonly BoardStateElement[]): ReadonlySet<str
   return nested;
 }
 
+/** The `finding` ids a section reaches, recursing through nested `section`/`order_step`
+ *  children — the same traversal the server's `reachableElementsOfKind` runs, so a Flagged
+ *  finding nested one section deep is still its section's finding, not a lost element. Both
+ *  readers of a Flagged board call this (here, and the `Section` renderer), so they agree on
+ *  which findings a top-level section carries. `get` resolves an id to its element and is the
+ *  only coupling to the caller's pool (a `Map.get`, the board index). A finding reachable
+ *  through two parents is listed under each — a double count move two's compiler retires. */
+export function reachableFindingIds(
+  get: (id: string) => BoardStateElement | undefined,
+  rootId: string,
+): string[] {
+  const found: string[] = [];
+  const visited = new Set<string>();
+  const visit = (id: string): void => {
+    if (visited.has(id)) return;
+    visited.add(id);
+    const element = get(id);
+    if (element === undefined) return;
+    if (element.kind === "finding") found.push(id);
+    if (element.kind !== "section" && element.kind !== "order_step") return;
+    const children = element.data.children;
+    if (!Array.isArray(children)) return;
+    for (const child of children) if (typeof child === "string") visit(child);
+  };
+  visit(rootId);
+  return found;
+}
+
 /**
  * The top-level section entries of a board, in reading order, each with its fold line.
  * `gist` falls back to the section's own TITLE when the drafter authored none — its own
  * words, never a summary this projection wrote.
  */
-export function projectBoardSections(elements: readonly BoardStateElement[]): LensSection[] {
+export function projectBoardSections(
+  elements: readonly BoardStateElement[],
+  lens?: string,
+): LensSection[] {
   const byId = new Map(elements.map((element) => [element.id, element]));
   const nested = nestedBoardIds(elements);
   return elements
     .filter((element) => element.kind === "section" && !nested.has(element.id))
-    .map((element) => {
+    .flatMap((element) => {
       const children = Array.isArray(element.data.children) ? element.data.children : [];
+      // A Flagged section's fold line is the findings it reaches, recursing nested sections.
+      // A `code_ref` is a finding's own citation (its `code` field), never a section child, so
+      // an orphan citation is never a counted file; a section reaching no finding at all is not
+      // a section — it is the malformed shape #927 rendered as a heading over bare code blocks —
+      // and is dropped. Both readers share this derivation, so they cannot disagree.
+      if (lens === "flagged") {
+        const findingCount = reachableFindingIds((id) => byId.get(id), element.id).length;
+        if (findingCount === 0) return [];
+        const flaggedDelta = element.data.delta;
+        return [
+          {
+            ref: element.id,
+            gist: asBoardString(element.data.gist) ?? asBoardString(element.data.title) ?? "",
+            counts: { findings: findingCount },
+            ...(flaggedDelta === "new" || flaggedDelta === "reworked"
+              ? { delta: flaggedDelta }
+              : {}),
+          },
+        ];
+      }
       const counts: Record<string, number> = {};
       // A file is counted once however many spans cite it, so a section citing four ranges
       // of one file reads "1 file" rather than four.
@@ -225,11 +276,13 @@ export function projectBoardSections(elements: readonly BoardStateElement[]): Le
         counts[domainKind] = (counts[domainKind] ?? 0) + 1;
       }
       const delta = element.data.delta;
-      return {
-        ref: element.id,
-        gist: asBoardString(element.data.gist) ?? asBoardString(element.data.title) ?? "",
-        counts,
-        ...(delta === "new" || delta === "reworked" ? { delta } : {}),
-      };
+      return [
+        {
+          ref: element.id,
+          gist: asBoardString(element.data.gist) ?? asBoardString(element.data.title) ?? "",
+          counts,
+          ...(delta === "new" || delta === "reworked" ? { delta } : {}),
+        },
+      ];
     });
 }
