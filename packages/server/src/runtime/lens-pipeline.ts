@@ -46,6 +46,7 @@ import {
 } from "@rennet/core";
 import {
   expandPromptPartials,
+  FLAGGED_REVIEW_FILE,
   LENS_PROMPT_FILES,
   PROMPT_PARTIALS,
   REVIEW_DRAFT_VOICE_FILE,
@@ -70,6 +71,7 @@ import {
   type FindingAgreement,
   type FindingDisposition,
   type FindingElement,
+  type FindingOrigin,
   type GenerationPhaseTiming,
   generationIdForPatchset,
   HOST_CHANGE_ABSENCES,
@@ -1042,13 +1044,25 @@ export function renderDrafterPrompt(
      * name a second, contradicting range.
      */
     readonly omitTaskLayer?: boolean;
+    /**
+     * Replace the reviewed-range task text entirely. The Flagged COMPILER does not read
+     * the diff — it merges two finished reviews — so its task names the review files,
+     * never a range, and naming a range would invite the re-review its prompt forbids.
+     */
+    readonly taskOverride?: string;
+    /**
+     * Append a line to the reviewed-range task. A Flagged REVIEW seat reads the diff
+     * exactly as any drafter does, and then writes its findings to the one path this
+     * names — the only thing that differs from a drafter's task.
+     */
+    readonly appendTask?: string;
   },
 ): string {
   const repo = packet.patchset?.repository;
   const reviewedOid = repo?.reviewedTreeOid ?? repo?.headOid;
   // The partial (`investigate-before-you-draft.md`) owns "read it yourself"; this layer
   // owns only what the partial says it names: the range and the exact commands.
-  const task = [
+  const reviewedTask = [
     repo === undefined
       ? "Your working directory is a checkout of the reviewed repository."
       : repo.reviewedTreeOid === undefined
@@ -1060,6 +1074,9 @@ export function renderDrafterPrompt(
         : `; \`git show ${reviewedOid}:<path>\` reads reviewed file content.`
     }`,
   ].join("\n");
+  const task =
+    options?.taskOverride ??
+    (options?.appendTask === undefined ? reviewedTask : `${reviewedTask}\n${options.appendTask}`);
   const layers = [
     renderLayer("payload", promptText),
     ...(options?.omitTaskLayer === true ? [] : [renderLayer("task", task)]),
@@ -3207,158 +3224,160 @@ function flaggedLegOverrides(
   return narrowed === undefined ? {} : { overrides: narrowed };
 }
 
-async function runFlaggedDual(
+/** A resolved board seat: the turn plus the harness and model the council routed to. */
+type ResolvedBoardSeat = Exclude<ReturnType<typeof resolveBoardSeatDetails>, { failure: string }>;
+
+/** One Flagged review model, and the file it writes under the session context dir. */
+interface FlaggedReviewLeg {
+  readonly seat: BoardSeatId;
+  readonly origin: FindingOrigin;
+  readonly label: string;
+  readonly harness: CouncilHarnessId;
+}
+
+/** The two review legs, in the fixed order the compiler's task names them (Claude first). */
+const FLAGGED_REVIEW_LEGS: readonly FlaggedReviewLeg[] = [
+  {
+    seat: "flagged-claude",
+    origin: "claude",
+    label: DEFAULT_SEAT_LABELS["claude-code"],
+    harness: "claude-code",
+  },
+  { seat: "flagged-codex", origin: "codex", label: DEFAULT_SEAT_LABELS.codex, harness: "codex" },
+];
+
+/** The review file a leg writes, relative to the seat's cwd (the session context dir). */
+function flaggedReviewPath(contextDir: string, origin: FindingOrigin): string {
+  return `${contextDir.replace(/\/$/, "")}/review-${origin}.md`;
+}
+
+/**
+ * The Flagged lens, review-then-compile (`flagged-review-compile`, move two).
+ *
+ * Two models REVIEW the change independently and each writes a findings file with its own
+ * file tools — no board, no lane, no board tools (`seatBoardServer` hands a lane-less seat
+ * no address). A third seat, the COMPILER, reads both files and writes the whole Flagged
+ * board in one `write_board` call, attributing each finding to the model that raised it and
+ * marking whether both did. The compiler's `origin`/`agreement` enums expand into the
+ * host-owned `author`/`concurrence`/`accord` at write time (Decision 10), so there is
+ * nothing to reconcile after it settles — the board it wrote IS the reader's board.
+ *
+ * Degrades the same way the dual draft did: to a SINGLE review when one harness is
+ * installed (the compiler marks every finding solo from that model), and to the survivor's
+ * review when one of two review seats fails. Returns a failure only when no review seat can
+ * run, when both review seats fail, or when the compiler cannot settle the board.
+ */
+async function runFlaggedReviewCompile(
   deps: LensPipelineDeps,
   council: CouncilResolveContext,
   lane: BoardLane | undefined,
-  basePrompt: string,
-  retryCap: number,
-  wrapSeat: <T extends (prompt: string, attempt: number) => Promise<HarnessTurnResult>>(
-    seat: T,
-    provenance?: SeatProvenance,
-  ) => T,
+  params: {
+    readonly reviewPromptText: string;
+    readonly compilePromptText: string;
+    readonly context: DrafterContextRef | undefined;
+    readonly retryCap: number;
+    readonly wrapSeat: <T extends (prompt: string, attempt: number) => Promise<HarnessTurnResult>>(
+      seat: T,
+      provenance?: SeatProvenance,
+    ) => T;
+  },
 ): Promise<LaneDraft | LensDraftFailure> {
-  // `resolveBoardSeatDetails`, not `resolveBoardSeat`: the DETAILS carry the harness and
-  // model the Council actually routed to, and every timing record this lane emits names
-  // the seat that produced it (#726 D8) — including the single-seat degrade, which ran
-  // exactly one resolved seat and can say which.
+  const { reviewPromptText, compilePromptText, context, retryCap, wrapSeat } = params;
   const installed = council.availability.installed;
-  // Each leg resolves against a SYNTHETIC single-provider availability, which is how one
-  // job seats two providers off two table rows. The reviewer's overrides come with it,
-  // narrowed to what a leg pinned to that provider can honour (#876): an effort override
-  // reaches both legs, a model override reaches only the leg whose provider it names.
-  // Passing them whole would resolve one leg onto the other's harness and lose the seat to
-  // a "not installed" failure naming a harness this host has.
-  const claudeSeat = installed.includes("claude-code")
-    ? resolveBoardSeatDetails("lens-draft-flagged", "flagged-claude", deps, {
-        availability: { installed: ["claude-code"] },
-        ...flaggedLegOverrides(council, "claude-code"),
-      })
-    : { failure: "no claude harness" };
-  const codexSeat = installed.includes("codex")
-    ? resolveBoardSeatDetails("lens-draft-flagged", "flagged-codex", deps, {
-        availability: { installed: ["codex"] },
-        ...flaggedLegOverrides(council, "codex"),
-      })
-    : { failure: "no codex harness" };
-
-  const haveClaude = !("failure" in claudeSeat);
-  const haveCodex = !("failure" in codexSeat);
-  if (!haveClaude && !haveCodex) {
-    // Both reasons, not just the shape: a sidecar that would not start is why BOTH seats
-    // are unrunnable, and a lane that only says "no runnable seat" sends the reviewer
-    // looking for a missing harness that is sitting right there.
-    // Deduplicated: when one cause takes both seats out — a sidecar that would not start
-    // is the usual one — saying it twice reads as two different problems.
-    const reasons = [...new Set([claudeSeat.failure, codexSeat.failure])].join("; ");
-    return { failure: `lens-draft-flagged resolved to no runnable seat (${reasons})` };
+  // Each review leg resolves against a SYNTHETIC single-provider availability, which is how
+  // one job seats two providers off two table rows. The reviewer's overrides come with it,
+  // narrowed per harness (#876): an effort override reaches both legs, a model override only
+  // the leg whose provider it names. Passing them whole would resolve one leg onto the
+  // other's harness and lose the seat to a "not installed" failure naming a harness we have.
+  const resolvedLegs = FLAGGED_REVIEW_LEGS.map((leg) => ({
+    leg,
+    resolved: installed.includes(leg.harness)
+      ? resolveBoardSeatDetails("lens-draft-flagged", leg.seat, deps, {
+          availability: { installed: [leg.harness] },
+          ...flaggedLegOverrides(council, leg.harness),
+        })
+      : { failure: `no ${leg.origin} harness` as string },
+  }));
+  const runnable = resolvedLegs.filter(
+    (entry): entry is { leg: FlaggedReviewLeg; resolved: ResolvedBoardSeat } =>
+      !("failure" in entry.resolved),
+  );
+  if (runnable.length === 0) {
+    // Both reasons, deduplicated: one cause (a sidecar that would not start) taking both
+    // legs out reads as two problems if said twice, and a lane that only says "no runnable
+    // seat" sends the reviewer hunting a harness that is sitting right there.
+    const reasons = [
+      ...new Set(resolvedLegs.map((entry) => (entry.resolved as { failure: string }).failure)),
+    ].join("; ");
+    return { failure: `lens-draft-flagged resolved to no runnable review seat (${reasons})` };
   }
-  // Checked after resolution, for the same reason the one-seat branch checks it there: a
-  // host with no sidecar has no lanes either, and naming the lane would report the symptom
-  // over the cause.
+  // Checked after resolution, like the seat branch: a host with no sidecar has no lanes
+  // either, and naming the lane would report the symptom over the cause. The compiler needs
+  // its lane to write the board; the review seats need the context dir to write their files.
   if (lane === undefined) return { failure: noLaneFailure("flagged") };
-
-  /** The label a voice's findings report under, keyed by the author id they carry. */
-  const labelByAuthor = new Map<string, string>([
-    [SEAT_BOARD_VOICE["flagged-claude"].author.id, DEFAULT_SEAT_LABELS["claude-code"]],
-    [SEAT_BOARD_VOICE["flagged-codex"].author.id, DEFAULT_SEAT_LABELS.codex],
-  ]);
-  const labelFor = (authorId: string): string =>
-    labelByAuthor.get(authorId) ?? DEFAULT_SEAT_LABELS["claude-code"];
-
-  // Single-seat degrade — honest single-model concurrence, and an honestly ATTRIBUTED
-  // timing: one seat ran, so the record names it rather than leaving the stage anonymous.
-  if (!haveClaude || !haveCodex) {
-    const seat: BoardSeatId = haveClaude ? "flagged-claude" : "flagged-codex";
-    const resolved = (haveClaude ? claudeSeat : codexSeat) as Exclude<
-      typeof claudeSeat,
-      { failure: string }
-    >;
-    const label = haveClaude ? DEFAULT_SEAT_LABELS["claude-code"] : DEFAULT_SEAT_LABELS.codex;
-    const single = await runSeatTurns(
-      "flagged lens",
-      basePrompt,
-      wrapSeat(resolved.runTurn, { harness: resolved.harness, model: resolved.model }),
-      seatVoice(lane, seat),
-      retryCap,
-    );
-    // Carry the account, not just the words: the sole seat's classification IS the lens's.
-    if (single.kind === "unsettled") return single.failure;
+  if (context === undefined) {
     return {
-      board: stampSingleSeatConcurrence(lane.board(), label),
-      attempts: single.attempts,
-      ...(single.kind === "absent" ? { absence: single.reason } : {}),
+      failure: "flagged lens: no session context directory, so the reviews have nowhere to land.",
     };
   }
 
-  // Both seats run independently into the one board (Claude is voice A).
-  const claude = claudeSeat as Exclude<typeof claudeSeat, { failure: string }>;
-  const codex = codexSeat as Exclude<typeof codexSeat, { failure: string }>;
-  const [a, b] = await Promise.all([
-    runSeatTurns(
-      "flagged lens (claude seat)",
-      basePrompt,
-      wrapSeat(claude.runTurn, { harness: claude.harness, model: claude.model }),
-      seatVoice(lane, "flagged-claude"),
-      retryCap,
-    ),
-    runSeatTurns(
-      "flagged lens (codex seat)",
-      basePrompt,
-      wrapSeat(codex.runTurn, { harness: codex.harness, model: codex.model }),
-      seatVoice(lane, "flagged-codex"),
-      retryCap,
-    ),
-  ]);
-  const attempts = a.attempts + b.attempts;
-  // Neither seat settled ⇒ the flagged lens honestly failed.
-  if (a.kind === "unsettled" && b.kind === "unsettled") {
-    const seats = [a.failure, b.failure];
-    const account = aggregateFailureAccount(seats);
+  // Each review leg runs ONE turn — it writes a free-form findings file, not a board, so
+  // there is no lint loop to repair against. The turn emitting IS the leg settling; a turn
+  // that ends otherwise is a failed leg whose file the compiler will not find.
+  const reviewed = await Promise.all(
+    runnable.map(async ({ leg, resolved }) => {
+      const path = flaggedReviewPath(context.dir, leg.origin);
+      const prompt = renderDrafterPrompt(reviewPromptText, deps.deltaPacket, context, {
+        appendTask: `Write your findings to \`${path}\` with your own file tools — that file is your whole output. Create it even when you find nothing (a single \`## No findings\` section).`,
+      });
+      const turn = wrapSeat(resolved.runTurn, { harness: resolved.harness, model: resolved.model });
+      let result: HarnessTurnResult;
+      try {
+        result = await turn(prompt, 0);
+      } catch (error) {
+        result = {
+          status: "failed",
+          message: error instanceof Error ? error.message : String(error),
+        };
+      }
+      return { leg, ok: result.status === "emitted", path };
+    }),
+  );
+  const written = reviewed.filter((entry) => entry.ok);
+  const failedReviews = reviewed.length - written.length;
+  if (written.length === 0) {
+    const reasons = reviewed.map((entry) => entry.leg.origin).join(", ");
     return {
-      failure: `both flagged seats failed — ${seats[0]?.failure} | ${seats[1]?.failure}`,
-      ...(account === undefined ? {} : { failureAccount: account }),
+      failure: `every flagged review seat failed (${reasons}) — no findings file to compile.`,
     };
   }
-  // One seat did not settle ⇒ no agreement was reached, so no `accord` and no cross-model
-  // tally. Each finding still carries the concurrence of the voice that WROTE it — which
-  // on this board is not one label, because the seat that died may well have written some.
-  if (a.kind === "unsettled" || b.kind === "unsettled") {
-    const settled = a.kind === "unsettled" ? b : a;
-    return {
-      board: stampVoiceConcurrence(lane.board(), labelFor),
-      attempts,
-      ...(settled.kind === "absent" ? { absence: settled.reason } : {}),
-    };
+
+  // The compiler resolves against the FULL council — it is one seat on whichever harness the
+  // council routes `lens-draft-flagged` to — and writes the `flagged` board (its lane).
+  const compiler = resolveBoardSeatDetails("lens-draft-flagged", "flagged-compile", deps, council);
+  if ("failure" in compiler) {
+    return { failure: `flagged compiler did not resolve (${compiler.failure}).` };
   }
-  // BOTH voices settled: the one moment a cross-seat mark can be stamped honestly.
-  const board = reconcileFlaggedVoices(lane.board(), {
-    a: {
-      authorId: SEAT_BOARD_VOICE["flagged-claude"].author.id,
-      label: DEFAULT_SEAT_LABELS["claude-code"],
-    },
-    b: {
-      authorId: SEAT_BOARD_VOICE["flagged-codex"].author.id,
-      label: DEFAULT_SEAT_LABELS.codex,
-    },
+  const dir = context.dir.replace(/\/$/, "");
+  const reviewsTask =
+    written.length === FLAGGED_REVIEW_LEGS.length
+      ? `The two model reviews are in \`${dir}/\`: \`review-claude.md\` (Claude) and \`review-codex.md\` (Codex). Read both before you write.`
+      : `One model review was produced: \`${written[0]?.path}\` (${written[0]?.leg.label}). The other reviewer did not run, so every finding is that model's alone — mark each \`solo\`, origin \`${written[0]?.leg.origin}\`. Read it before you write.`;
+  const compilePrompt = renderDrafterPrompt(compilePromptText, deps.deltaPacket, context, {
+    taskOverride: reviewsTask,
   });
-  // Wire-validate the reconciled board (finding 7): a reconciliation that produced a
-  // structurally-invalid board surfaces as a labeled blemish, never ships silently.
-  const wire = parseDraft(board);
-  const blemishes: Violation[] = wire.ok
-    ? []
-    : wire.issues.map((i) => ({
-        ruleId: "schema-invalid",
-        elementRef: `/${(i.path as (string | number)[]).join("/")}`,
-        message: i.message,
-      }));
+  const compiled = await runSeatTurns(
+    "flagged lens (compile)",
+    compilePrompt,
+    wrapSeat(compiler.runTurn, { harness: compiler.harness, model: compiler.model }),
+    seatVoice(lane, "flagged-compile"),
+    retryCap,
+  );
+  if (compiled.kind === "unsettled") return compiled.failure;
   return {
-    board,
-    attempts,
-    blemishes,
-    // Both voices declaring their lens's absence is the lane declaring it. One of two
-    // voices declaring it is not: the other wrote findings, and they are on this board.
-    ...(a.kind === "absent" && b.kind === "absent" ? { absence: a.reason } : {}),
+    board: lane.board(),
+    attempts: failedReviews + compiled.attempts,
+    ...(compiled.kind === "absent" ? { absence: compiled.reason } : {}),
   };
 }
 
@@ -3535,12 +3554,24 @@ async function draftLensBoard(
   if (assembledDesign !== undefined) {
     draft = { board: assembledDesign, attempts: 0 };
   } else if (lens === "flagged") {
-    // The flagged lens is the dual seat (Claude + Codex, cross-model concurrence).
-    const dual = await runFlaggedDual(deps, council, lane, basePrompt, retryCap, spans.wrap);
-    if ("failure" in dual) {
-      return failedLensOutcome(lens, dual);
-    }
-    draft = dual;
+    // Flagged runs review→compile (`flagged-review-compile`): two lane-less review seats
+    // write findings files, and the compiler reads both and writes the board. The review
+    // seats carry their OWN prompt (investigate + reader-voice, no board-writing partial);
+    // `promptText`/`basePrompt` above is the COMPILER payload, since `LENS_PROMPT_FILES`
+    // maps `flagged` to the compile prompt.
+    const reviewPromptText = expandPromptPartials(
+      await deps.readPrompt(FLAGGED_REVIEW_FILE),
+      Object.fromEntries(partials),
+    );
+    const compiled = await runFlaggedReviewCompile(deps, council, lane, {
+      reviewPromptText,
+      compilePromptText: promptText,
+      context,
+      retryCap,
+      wrapSeat: spans.wrap,
+    });
+    if ("failure" in compiled) return failedLensOutcome(lens, compiled);
+    draft = compiled;
   } else {
     const jobId: CouncilJobId = lens === "noise" ? "lens-draft-noise" : "lens-draft";
     // No output schema. A board seat's turn carries no structured-output contract at all
