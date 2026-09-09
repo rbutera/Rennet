@@ -24,8 +24,11 @@ it. If you cannot write the failure scenario, you do not have a finding yet.
 
 ## Shape of the board
 
-Create a top-level section with `add_section`, then attach each finding to it
-using the returned parent id. This makes each item reachable by the reader.
+Create exactly ONE top-level section with `add_section`, then attach each
+finding to it using the returned parent id. Do not create a second section, and
+attach nothing but findings to it: a `code_ref` lives INSIDE the finding that
+cites it (its `code` field), never as a section child. A bare citation under a
+heading renders as an orphaned code block with nothing to explain it.
 
 A finding is ONE element: a severity, the code refs it cites, and a single
 `concern` markdown string. There is no separate title field, no body field and
@@ -73,6 +76,10 @@ instead of creating placeholder content.
 - Do not set a section's `sources`. That field is a specification artifact's
   provenance and a defect has none; filling it puts an unexplained chip on the
   section header that opens the reader's editor at an arbitrary line.
+- Do not run the repository's build, test, or lint gate: CI owns pass/fail and
+  it is read for you. Read the diff, not the toolchain. This is scope, not
+  assurance — the branch is not known correct, and finding where it is wrong is
+  your job.
 
 {{reader-voice}}
 

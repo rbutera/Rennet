@@ -92,7 +92,7 @@ function projectBoard(stored: readonly StateElement[], identity: BoardIdentity) 
   // runs over the live element stream (`lens-board-tools` D11/D13). One derivation, two
   // readers: a board that folded one way while it was being written and another way once
   // it settled would reorganise itself under the reviewer at the moment the lane settled.
-  const sections = projectBoardSections(elements);
+  const sections = projectBoardSections(elements, identity.lens);
   return {
     lens: identity.lens,
     generation: identity.generation,

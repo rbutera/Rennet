@@ -200,13 +200,26 @@ function nestedBoardIds(elements: readonly BoardStateElement[]): ReadonlySet<str
  * `gist` falls back to the section's own TITLE when the drafter authored none — its own
  * words, never a summary this projection wrote.
  */
-export function projectBoardSections(elements: readonly BoardStateElement[]): LensSection[] {
+export function projectBoardSections(
+  elements: readonly BoardStateElement[],
+  lens?: string,
+): LensSection[] {
   const byId = new Map(elements.map((element) => [element.id, element]));
   const nested = nestedBoardIds(elements);
   return elements
     .filter((element) => element.kind === "section" && !nested.has(element.id))
-    .map((element) => {
+    .flatMap((element) => {
       const children = Array.isArray(element.data.children) ? element.data.children : [];
+      const childKind = (child: unknown): string | undefined =>
+        typeof child === "string" ? byId.get(child)?.kind : undefined;
+      // A Flagged section holds findings; a `code_ref` is a finding's own citation
+      // (its `code` field), never a section child. So an orphan citation is not counted,
+      // and a section with no finding at all is not a section — it is the malformed shape
+      // #927 rendered as a heading over bare code blocks. Drop it (both readers agree,
+      // since this is the one shared derivation).
+      if (lens === "flagged" && !children.some((child) => childKind(child) === "finding")) {
+        return [];
+      }
       const counts: Record<string, number> = {};
       // A file is counted once however many spans cite it, so a section citing four ranges
       // of one file reads "1 file" rather than four.
@@ -214,6 +227,9 @@ export function projectBoardSections(elements: readonly BoardStateElement[]): Le
       for (const child of children) {
         const childElement = typeof child === "string" ? byId.get(child) : undefined;
         const hostKind = childElement?.kind;
+        // On Flagged, an orphan `code_ref` child is dropped at render, so it is not counted
+        // here either — a count that named a file the reader cannot see would be a small lie.
+        if (lens === "flagged" && hostKind === "code_ref") continue;
         const domainKind =
           hostKind === undefined ? undefined : DOMAIN_COUNT_FOR_HOST_KIND.get(hostKind);
         if (domainKind === undefined) continue;
@@ -225,11 +241,13 @@ export function projectBoardSections(elements: readonly BoardStateElement[]): Le
         counts[domainKind] = (counts[domainKind] ?? 0) + 1;
       }
       const delta = element.data.delta;
-      return {
-        ref: element.id,
-        gist: asBoardString(element.data.gist) ?? asBoardString(element.data.title) ?? "",
-        counts,
-        ...(delta === "new" || delta === "reworked" ? { delta } : {}),
-      };
+      return [
+        {
+          ref: element.id,
+          gist: asBoardString(element.data.gist) ?? asBoardString(element.data.title) ?? "",
+          counts,
+          ...(delta === "new" || delta === "reworked" ? { delta } : {}),
+        },
+      ];
     });
 }

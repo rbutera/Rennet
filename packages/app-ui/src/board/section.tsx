@@ -139,6 +139,14 @@ export const Section = memo(function Section({
   if (el?.kind !== "section") return null;
   const { title, children, sources, spec_delta: specDelta } = el.data;
 
+  // On Flagged, a `code_ref` is a finding's own citation (its `code` field), never a
+  // section child. A bare citation attached to the section renders as an orphaned code
+  // block with nothing to explain it — the #927 "header, then code, no prose" defect. Drop
+  // it here; the finding that cites it renders its own code. The projection already omits a
+  // Flagged section that has no finding at all, so a section reaching this point has one.
+  const renderedChildren =
+    lens === "flagged" ? children.filter((id) => index.get(id)?.kind !== "code_ref") : children;
+
   const countText = sectionCountText(entry.counts);
   const showDot = entry.delta !== undefined && !viewed;
   const headingLabel = [
@@ -284,7 +292,7 @@ export const Section = memo(function Section({
           {lens === "design" ? (
             <DesignSectionBody section={el} />
           ) : (
-            <BoardChildren ids={children} />
+            <BoardChildren ids={renderedChildren} />
           )}
         </div>
       </Collapse>

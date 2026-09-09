@@ -185,7 +185,7 @@ export function draftAsBoard(draft: LiveDraft): LensBoard {
     generation: draft.generation,
     boardId: `draft:${draft.generation}:${draft.lens}`,
     document: resolveBoardDocument(draft.lens, draft.document),
-    sections: projectBoardSections(draft.elements),
+    sections: projectBoardSections(draft.elements, draft.lens),
     elements: draft.elements,
   } as LensBoard;
 }
