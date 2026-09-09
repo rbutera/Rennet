@@ -11,12 +11,9 @@ import type { ScriptedHarnessPlan } from "./scripted-harness-plan";
  *
  * - Sequence and Decisions draw real boards citing the reviewed source, so the launched
  *   run can hydrate their anchors against the captured patchset (#548's acceptance).
- * - BOTH Flagged seats answer this one plan, so they return the same finding at the same
- *   location: the reconciler collapses one into the other, and its seat's section is left
- *   citing an id the merged board no longer holds. That is the production `bad-ref` shape
- *   #548 is about, and it is produced AFTER lint — lint resolves references in the draft
- *   it sees, and the merge happens after. The reviewer only gets a Flagged board if the
- *   merge repointed the citer at the surviving finding.
+ * - Flagged is NOT part of this proof. The #548 Flagged half proved a reconciler-merge
+ *   bad-ref repoint; move two retired the merge (the compiler writes the board directly,
+ *   with in-turn lint), so there is no post-lint reference shape left to prove here.
  * - Noise's seat either draws a real skip-safe group or emits the empty board that is its
  *   honest "nothing here is skippable" — the two settlements #549's launched proof needs.
  *   The two legs run over DIFFERENT repositories, because a `no-noise` settlement over a
@@ -32,9 +29,6 @@ export const LENS_SETTLEMENT_SOURCE_SENTINEL = "settlementSourceSentinel";
 export const LENS_SETTLEMENT_GENERATED_SENTINEL = "settlement-generated-sentinel";
 /** The step title the launched proof reads back off the settled Sequence board. */
 export const LENS_SETTLEMENT_SEQUENCE_STEP = "Read `src/settlement.ts` first.";
-/** The one finding both Flagged seats raise, and the section that cites it. */
-export const LENS_SETTLEMENT_FLAGGED_FINDING = "flag-finding";
-export const LENS_SETTLEMENT_FLAGGED_SECTION = "flag-section";
 
 const author: Author = { kind: "lens-agent", id: LENS_SETTLEMENT_LANE };
 
@@ -121,40 +115,6 @@ function decisionsBoard(): DraftBoard {
   };
 }
 
-function flaggedBoard(): DraftBoard {
-  return {
-    document: {
-      title: "Settlement checks",
-      introMarkdown: "The exported value has one source anchor and one open concern.",
-      measure: "reading",
-    },
-    elements: [
-      codeRef("flag-code", LENS_SETTLEMENT_SOURCE),
-      {
-        id: LENS_SETTLEMENT_FLAGGED_FINDING,
-        kind: "finding",
-        data: {
-          author,
-          severity: "medium",
-          concern: "The exported settlement value has no validation at its use boundary.",
-          code: ["flag-code"],
-          concurrence: [],
-          status: "open",
-        },
-      },
-      {
-        id: LENS_SETTLEMENT_FLAGGED_SECTION,
-        kind: "section",
-        data: {
-          author,
-          title: "Observed behavior",
-          children: [LENS_SETTLEMENT_FLAGGED_FINDING],
-        },
-      },
-    ],
-  };
-}
-
 /** The populated Noise board: the generated table is real, skip-safe churn. */
 function noiseBoard(): DraftBoard {
   return {
@@ -215,12 +175,6 @@ export function lensSettlementScriptedHarnessPlan(
         kind: "structured",
         promptIncludes: "You draft the Decisions board for a code change under review.",
         output: decisionsBoard(),
-      },
-      {
-        id: "flagged",
-        kind: "structured",
-        promptIncludes: "You draft one seat of the Flagged board for a code change under review.",
-        output: flaggedBoard(),
       },
       {
         id: "noise",

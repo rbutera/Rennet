@@ -1387,8 +1387,9 @@ export const LaneLatestSchema = z.object({
 export type LaneLatest = z.infer<typeof LaneLatestSchema>;
 
 /**
- * One SEAT on a lane. Most lanes run one; Flagged runs two (a Claude seat and a Codex
- * seat, reconciled into one board), and each has its own thread and its own live line.
+ * One SEAT on a lane. Most lanes run one; Flagged runs three (two review legs, a Claude
+ * seat and a Codex seat, then a compiler that writes the one board), and each has its own
+ * thread and its own live line.
  * A lane's top-level `thread`/`latest` mirror `seats[0]` (the PRIMARY seat) so readers
  * of the single-seat shape keep working for one release; new readers read `seats`.
  */
@@ -1467,10 +1468,10 @@ export type LensDraftElement = z.infer<typeof LensDraftElementSchema>;
  * a reader takes the elements it carries as the board entire, rather than appending a
  * second board onto the first. It is not always an EMPTY board — see the field. `elements` is one accepted tool call: the elements it
  * added or changed (a parent whose `children` grew is one of them), the ids it removed,
- * and the document when it set one. No frame names the seat that made the call: Flagged
- * runs two voices into one board and every element already carries the `author` that voice
- * stamped on it (task 3.4), so a second attribution on the envelope would be one fact with
- * two sources. `state` is the board's own settlement moving.
+ * and the document when it set one. No frame names the seat that made the call: every
+ * element already carries its `author` (on Flagged the compiler stamps each finding per
+ * origin), so a second attribution on the envelope would be one fact with two sources.
+ * `state` is the board's own settlement moving.
  * `closed` is the lane settling: nothing more will land on this board, and `state` says
  * how it finally stood — a failed lane closes still `drafting`, which is the honest shape
  * and is why the lane's own status stays the authority on whether the LANE succeeded.

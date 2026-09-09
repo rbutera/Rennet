@@ -667,8 +667,8 @@ describe("board kind renderers over the fixture set", () => {
     expect(pill?.className).not.toContain("text-green");
   });
 
-  // A single-harness run (`stampSingleSeatConcurrence`) leaves ONE tally and no accord.
-  // There is no second opinion, so there is nothing to split: the verdigris "claude only"
+  // A single-harness run (the compiler marks every finding `solo`) leaves ONE tally and no
+  // accord. There is no second opinion, so there is nothing to split: the verdigris "claude only"
   // register named a disagreement that never happened. It reads as the seat, muted.
   it("reads a single-harness run as the seat's name, not as a split", () => {
     const solo = renderBoard(

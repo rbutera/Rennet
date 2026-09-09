@@ -121,8 +121,8 @@ export interface T3SeatSeam {
     readonly effort: CouncilEffort;
   }) => Promise<T3SeatThread>;
   /** Told the seat's thread as soon as it exists, so a lane can carry the reference. The
-   *  provider rides along because a lane can hold two seats (Flagged: Claude AND Codex)
-   *  and the surface names which one is speaking. */
+   *  provider rides along because a lane can hold more than one seat (Flagged runs a Claude
+   *  review leg, a Codex review leg, and a compiler) and the surface names which is speaking. */
   readonly onThread?: (
     seat: string,
     thread: T3SeatThread,

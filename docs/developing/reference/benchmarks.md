@@ -31,8 +31,8 @@ Three pipelines carry stage records:
   thing it excludes is other repositories.
 - **Lens drafting.** Per lens: the drafting turn (`lens-draft`), the repair ladder
   (`lens-repair`), and the deterministic work between the ladder and the accepted
-  write (`lens-post-process`). A lane with two seats records one `lens-draft` per
-  seat, so a dual review names both providers rather than averaging them into one.
+  write (`lens-post-process`). A lane with more than one seat records one `lens-draft`
+  per seat, so a dual review names each provider rather than averaging them into one.
 - **The round report.** `report` is the whole gate — building and measuring the
   evidence manifest, resolving the seat, the turn, deterministic verification —
   and `report-classification` is the provider turn inside it.

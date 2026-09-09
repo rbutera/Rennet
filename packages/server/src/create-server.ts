@@ -1601,8 +1601,9 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
             ),
           });
           // The seat's own address onto its lane's board, minted on the seat's first turn
-          // and refreshed on every later one. Flagged's two seats resolve to the ONE
-          // flagged lane and are given two addresses onto it (D9).
+          // and refreshed on every later one. On Flagged only the compiler gets one — the
+          // two review seats are lane-less (move two, D9), so `seatBoardServer` hands them
+          // no address and no board tools.
           const boardServer = seatBoardServer(boards, seat);
           return {
             threadId: binding.threadId,

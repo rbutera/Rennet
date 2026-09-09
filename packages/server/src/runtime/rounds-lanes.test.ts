@@ -2,9 +2,10 @@ import type { LensLane } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { createRegenerationLanes } from "./rounds";
 
-// The regeneration lanes hold SEATS, not one thread per lane. Flagged runs a Claude seat
-// and a Codex seat on the same lane (`runFlaggedDual`), and before this the second seat's
-// thread overwrote the first's and the lane's live line flipped between the two speakers.
+// The regeneration lanes hold SEATS, not one thread per lane. Flagged runs its review legs
+// (a Claude seat and a Codex seat) plus the compiler on the same lane, and before this the
+// second seat's thread overwrote the first's and the lane's live line flipped between the
+// two speakers.
 //
 // POSITIVE CONTROL, run 2026-09-03: `thread()` rewritten to `lanes.set(lens, {...current,
 // thread})` (the pre-fix body, no `seats`) → every test in the first describe fails: the

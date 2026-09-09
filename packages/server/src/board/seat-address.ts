@@ -1,9 +1,10 @@
 // Which board address a seat thread is given (`lens-board-tools` 2.6).
 //
-// A seat is a THREAD and a target is a BOARD, and the two are not the same thing: the
-// Flagged lane runs two seats over one board. So the seat's address is looked up through
-// `SEAT_BOARD_TARGET`, never by reading the seat name as a target — which would leave both
-// Flagged seats addressing a `flagged-claude`/`flagged-codex` board that does not exist.
+// A seat is a THREAD and a target is a BOARD, and the two are not the same thing: on the
+// Flagged lane only the compiler writes the board, while its two review seats are lane-less.
+// So the seat's address is looked up through `SEAT_BOARD_TARGET`, never by reading the seat
+// name as a target — which would hand a review seat a `flagged-claude`/`flagged-codex` board
+// that does not exist instead of no address at all.
 //
 // Lives beside the board server rather than inside `create-server.ts` so the mapping is
 // something a test can drive; the composition root calls this and does nothing else.

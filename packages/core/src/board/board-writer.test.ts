@@ -129,9 +129,11 @@ describe("the host mints ids and a child names its parent (D4)", () => {
     expect(two.startsWith("b")).toBe(true);
   });
 
-  it("two voices on ONE board are handed ids that cannot collide (D9)", () => {
-    // The Flagged scenario: one writer, one element list, two voices. The daemon's board
-    // server gives each of the lane's two addresses one of these handles.
+  it("two voices on ONE board are handed ids that cannot collide", () => {
+    // A board writer supports more than one voice: one writer, one element list, two voice
+    // handles, ids that cannot collide because the writer mints them. Flagged no longer
+    // drives this with two live seats (the compiler is its sole writer, move two), but the
+    // primitive stands and the per-voice id prefix is what keeps two authors legible.
     const board = writer("flagged");
     const claude = board.voice({
       author: { kind: "lens-agent", id: "lens:flagged:claudeAgent" },
@@ -1146,10 +1148,11 @@ describe("the writer remembers what finish said", () => {
 });
 
 /**
- * D9 — Flagged is two seats, two voices, ONE board. The lane needs each voice's own
- * settlement, because one seat finishing is not the lane finishing.
+ * A board writer tracks each voice's settlement independently: one voice finishing is not
+ * the whole board finishing. A general primitive — Flagged now writes through the single
+ * compiler voice (move two), but the writer still answers per-voice for any caller.
  */
-describe("two voices on one board keep their own settlements (D9)", () => {
+describe("two voices on one board keep their own settlements", () => {
   const twoVoices = () => {
     const w = writer("flagged");
     const claude = w.voice({ author: { kind: "lens-agent", id: "flagged-claude" }, idPrefix: "a" });
@@ -1445,7 +1448,7 @@ describe("BoardWriter publication", () => {
     expect(voice.callCount()).toBe(3);
   });
 
-  it("counts each voice separately, because Flagged is two seats over one board", () => {
+  it("counts each voice separately, so any multi-voice caller is billed per voice", () => {
     const w = writer("flagged");
     const claude = w.voice({ author: { kind: "lens-agent", id: "seat:flagged-claude" } });
     const codex = w.voice({ author: { kind: "lens-agent", id: "seat:flagged-codex" } });

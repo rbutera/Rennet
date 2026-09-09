@@ -268,8 +268,9 @@ describe("the review opens on its boards, with no waiting stage in front of them
     );
     await user.click(noise);
     expect(history.history.at(-1)).toBe(before);
-    // Flagged carries ONE INDICATOR PER VOICE, because it runs two seats. The contrast is
-    // the assertion: Sequence is running too and carries one.
+    // Flagged carries ONE INDICATOR PER VOICE. Here its two review legs are mid-flight (the
+    // compiler runs after them), so two voices show; the contrast is the assertion: Sequence
+    // is running too and carries one.
     expect(
       tabOf("flagged")?.querySelector('[data-testid="lens-working"]')?.getAttribute("data-voices"),
     ).toBe("2");

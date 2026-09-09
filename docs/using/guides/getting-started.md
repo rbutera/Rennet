@@ -213,7 +213,7 @@ has been drawn yet; a dashed rule with a lamp travelling along it means the seat
 writing right now; a solid rule means the board is cut clean; a rule split by a
 seam means that lens came back with something changed; two offset pieces mean the
 seat failed; a dotted rule means the lens had nothing to say. Flagged carries one
-working mark per voice, because it runs two seats. Noise waits for the other four
+working mark per voice, because it runs two review passes. Noise waits for the other four
 and says which ones it is waiting on — its board is whatever they did not cite, so
 it cannot start until they finish.
 

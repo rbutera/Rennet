@@ -58,7 +58,6 @@ afterAll(closeFixtureBoardServer);
 
 import {
   admitBoardReferences,
-  aggregateFailureAccount,
   type BoardArrivalEvent,
   type BoardMeta,
   boardOutputSchema,
@@ -1239,35 +1238,6 @@ describe("Codex board output-schema compatibility", () => {
   });
 });
 
-describe("aggregateFailureAccount — one lens account from many seats (#549)", () => {
-  const terminal = (attempt: number) => ({ attempt, classification: "terminal" as const });
-  const retryable = (attempt: number) => ({ attempt, classification: "retryable" as const });
-
-  it("is RETRYABLE when any seat is: the lens needs only one seat to draw a board", () => {
-    expect(
-      aggregateFailureAccount([
-        { failure: "seat A", failureAccount: terminal(3) },
-        { failure: "seat B", failureAccount: retryable(1) },
-      ]),
-    ).toEqual(retryable(1));
-  });
-
-  it("is TERMINAL only when every seat is, and reports the deepest spent attempt", () => {
-    expect(
-      aggregateFailureAccount([
-        { failure: "seat A", failureAccount: terminal(1) },
-        { failure: "seat B", failureAccount: terminal(3) },
-      ]),
-    ).toEqual(terminal(3));
-  });
-
-  it("names no account when no seat named one — unknown stays unknown", () => {
-    expect(
-      aggregateFailureAccount([{ failure: "no runnable seat" }, { failure: "no runnable seat" }]),
-    ).toBeUndefined();
-  });
-});
-
 describe("the Flagged lens compiles two reviews into one board (flagged-review-compile, move two)", () => {
   // The lane runs two lane-less REVIEW seats (each writes a findings FILE with its own tools,
   // which this fake drops — they hold no board) and one COMPILER seat that reads both files
@@ -1356,11 +1326,12 @@ describe("the Flagged lens compiles two reviews into one board (flagged-review-c
     okCall(voice.call("finish"));
   };
 
-  it("compiles two reviews of the same bug into ONE concurring finding (semantic concurrence)", async () => {
-    // The two reviewers each flagged the same bug, at spans a couple of lines apart. There is
-    // no host matcher now: the COMPILER read both files and judged them one concern, saying so
-    // with `agreement: "concur"`. The host expands that into both models' tallies and accord
-    // `concur` — one finding, both credited. Two review files in, one finding out.
+  it("expands a compiler `agreement: concur` into both models' tallies and accord concur", async () => {
+    // Scope: the HOST-side expansion of one flat enum, not the compiler's semantic merge (that
+    // judgement is the model's, and this fake stands in for it). When the compiler marks a
+    // finding `concur` with `origin: "claude"`, the host must credit BOTH models — one tally
+    // each, accord `concur`, one finding out. What this cannot catch: that the compiler was
+    // right to call two review files one concern. That is the model's job, not host-testable.
     const { board, failure } = await runFlagged((voice) =>
       addFinding(voice, {
         concern: "The refresh token is classified as an error before its code is read.",
@@ -4523,10 +4494,10 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
   });
 
   it("emits ONE lens-draft record per Flagged seat, each naming what ran it (#726 D8)", async () => {
-    // A genuinely dual lane: BOTH harnesses are installed, so `runFlaggedDual` runs two
-    // seats rather than degrading. That is load-bearing — an earlier version of this
-    // assertion ran with only one harness, so exactly one seat ever ran, and "the dual
-    // seat names no harness" passed because there was no dual seat.
+    // A genuinely dual lane: BOTH harnesses are installed, so `runFlaggedReviewCompile` runs
+    // both review legs rather than degrading. That is load-bearing — an earlier version of this
+    // assertion ran with only one harness, so exactly one review leg ever ran, and "the leg
+    // names no harness" passed because there was no second leg.
     const timings: GenerationPhaseTiming[] = [];
     const result = await runLensPipeline({
       ...boardSeats([], (prompt, seat) => cleanBody(lensFromPrompt(prompt, seat)), [

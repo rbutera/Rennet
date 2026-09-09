@@ -257,9 +257,8 @@ and calls board regeneration through this runtime.
    A lane whose attempts are spent while its board is unfinished settles as a **typed
    terminal failure** naming the lens, the attempts spent and what the last verdict said —
    not as an empty board and not as an absence — and the elements the seat did write stay
-   on the lane's board. Anything the host finds after the seats settle, such as the Flagged
-   reconciliation's own wire check, ships as a labelled `blemish`: **visible, never
-   blocking.**
+   on the lane's board. Anything the host finds after the seats settle ships as a labelled
+   `blemish`: **visible, never blocking.**
 
    Two things the document path had are simply gone from a seat's life, because the states
    they accounted for cannot occur. There is no **honest-omission exit**: an element the

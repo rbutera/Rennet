@@ -334,7 +334,8 @@ between the reviewer and their boards.
   working, settled, failed or absent — read from the generation's lanes through
   `board/lens-seats.ts`. A running lens is selectable; Noise alone is unavailable while
   the lanes it waits on are running, with its explanation on hover and keyboard focus.
-  Flagged carries one indicator per voice because it runs two seats. The register rides
+  Flagged carries one indicator per review voice because it runs two review legs (the
+  compiler is a third thread behind the board, not a rail voice). The register rides
   the stop under each tab as a `data-cut` (`unstarted` / `open` / `clean` / `seamed` /
   `snapped` / `empty`), so it survives the colour being ignored — the hue says which lens
   this is, so a failed Design lane is a snapped blue stop and never a red one.
@@ -616,12 +617,12 @@ project scout, the repo map, the delta digest, the compose turn — but a lens d
 would have no thread, no transcript, no live line and no same-thread repair, and nothing on
 screen would say so.
 
-The **Flagged lane still holds two seats**, Claude and Codex, both of them sidecar threads:
-`t3-seat-turn.ts` binds a thread with `provider: "claudeAgent" | "codex"` through T3's model
-selection, so cross-model concurrence survives the deletion intact. What decides whether
-each seat can run is the council's installed-harness answer plus the seam — never a port the
-pipeline holds. With only one harness installed the lane degrades to a single seat and says
-so, exactly as before.
+The **Flagged lane holds three seats** — two review legs, Claude and Codex, and a compiler —
+all of them sidecar threads: `t3-seat-turn.ts` binds each review leg with `provider:
+"claudeAgent" | "codex"` through T3's model selection, so cross-model concurrence survives the
+deletion intact. What decides whether each review leg can run is the council's installed-harness
+answer plus the seam — never a port the pipeline holds. With only one harness installed the lane
+degrades to a single review leg feeding the compiler and says so, exactly as before.
 
 One consequence worth naming: the round-report classifier's raw-response caps
 (`outputByteCap`, `outputTokenCap`) were enforced by the ephemeral legs at their own
@@ -708,10 +709,11 @@ flowchart LR
 
 **The address names the board, and that is all it does.** A seat writes its own board
 because that is what its endpoint is for, exactly as a file handle names a file. Nothing
-is being withheld from a seat and nothing here is a consent step. Flagged's two seats get
-TWO addresses onto ONE board: one lane, one writer, one element list, two voices, one mint
-counter — which is why the ids the two are handed cannot collide, and why either voice can
-cite an element the other created.
+is being withheld from a seat and nothing here is a consent step. On Flagged only the compiler
+holds a board address: its two review legs are lane-less and write findings files with the
+harness's own file tools, never the board. So the lane has one writer, one element list, one
+mint counter, and the compiler assembles both reviews' findings into it under ids that cannot
+collide.
 
 **A seat's credential has two halves, and the seam decides that it must.** A caller-supplied
 MCP server carries the NAME of an environment variable and never a value, and the harness

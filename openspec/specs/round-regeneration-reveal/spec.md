@@ -63,10 +63,10 @@ The system SHALL record distinct durable timings for the round report, each lens
 - **WHEN** a post-round regeneration completes
 - **THEN** durable per-phase timings exist for report, each lens lane, coverage, reveal, and time-to-first-core-board, and no single label absorbed another phase's time
 
-#### Scenario: The dual Flagged lane records both seats
+#### Scenario: The Flagged lane records each of its seats
 
-- **WHEN** the Flagged lane runs two harnesses
-- **THEN** two draft timings are recorded for that lane, each naming its own harness and model, and the run's dual-model mode is derivable from those records alone
+- **WHEN** the Flagged lane runs its two review legs and the compiler
+- **THEN** a draft timing is recorded for each seat, the two review-leg records each name their own harness and model, and the run's dual-model mode is derivable from those records alone
 
 #### Scenario: Positive control mislabels lens work
 

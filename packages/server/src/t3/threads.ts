@@ -62,10 +62,11 @@ export const SEAT_BOARD_TARGET: Readonly<Partial<Record<SeatKind, BoardTarget>>>
  * The voice each seat writes with: the author its elements carry, and the prefix on every
  * id the host hands it.
  *
- * The prefix is per SEAT, not per board, so a Flagged element says on sight which of the
- * lane's two seats was handed it. Ids could not collide without it either — the lane's two
- * seats share one board and one mint counter — but a prefix is what makes the two voices
- * legible in a list of ids.
+ * The prefix is per SEAT, so an element says on sight which seat minted it. On Flagged the
+ * compiler (`flagged-compile`, prefix `c`) is the sole board writer, so every Flagged id
+ * carries its prefix; the review seats' prefixes are vestigial, kept only so the table stays
+ * total. It is the per-finding AUTHOR the compiler stamps — not the id prefix — that records
+ * which model raised a finding.
  */
 export const SEAT_BOARD_VOICE: Readonly<
   Record<SeatKind, { readonly author: Author; readonly idPrefix: string }>

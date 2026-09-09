@@ -19,7 +19,7 @@ import { useBoardGeneration, useBoardId, useBoardPatchsetId, useCodeRefs } from 
 // frozen board status without changing its bytes. The inline `**Fix:**` is lifted into
 // a callout when present; every finding keeps its actions even without that optional marker.
 //
-// The first line is the HEADER (`prompts/flagged.md`: "First line: the claim"), so it
+// The first line is the HEADER (`prompts/flagged-review.md`: "The claim is the first line"), so it
 // renders as a heading — backticks as code, any `**bold**` a seat wrapped it in
 // unwrapped — and the body below it starts at the second paragraph, because a claim
 // printed in the header and again as the body's first line is the same sentence twice.

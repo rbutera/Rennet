@@ -924,7 +924,8 @@ export function createNodePromptReader(promptsSrcDir: string): PromptReader {
  * bill.
  *
  * The table is per lane so a lane's cost can be tuned where its cost differs — Flagged
- * runs two seats, so each repair turn there costs two provider calls. The first-attempt
+ * spends two review turns plus a compiler turn before its ladder even starts, and the
+ * ladder then reruns the compiler alone. The first-attempt
  * numbers below are the ladder that shipped ({@link RETRY_CAP} = 1) stated explicitly
  * rather than inherited, so changing one lane is one edit and not a global re-tune.
  */
@@ -972,10 +973,10 @@ export interface SeatSpan extends SeatProvenance {
 /**
  * Accumulate a lane's provider WALL-CLOCK spans, split into the drafting turn and the
  * repair ladder and kept PER SEAT. Wall clock, not summed turn time: the Flagged lane runs
- * two seats in parallel, and a sum would report a latency no reviewer ever waited.
+ * its two review legs in parallel, and a sum would report a latency no reviewer ever waited.
  *
- * Per seat, because a single aggregate record for the dual lane could name no harness at
- * all — and a stage record with no harness is exactly what makes "was this run dual-model
+ * Per seat, because a single aggregate record for the multi-seat lane could name no harness
+ * at all — and a stage record with no harness is exactly what makes "was this run dual-model
  * or single-model?" underivable from the stages (#726 D8, which requires deriving it from
  * them rather than from settings). Each seat gets its own record with its own provenance;
  * the LANE's aggregate span stays derivable as min-start/max-end across them.
@@ -1647,13 +1648,11 @@ function resolveBoardSeatDetails(
   onProviderSettled?: (milestone: ProviderTurnSettlement) => void,
 ) {
   // This seat's board, looked up the ONE way a seat maps to a board (`seat-address.ts`'s
-  // rule): through `SEAT_BOARD_TARGET`, never by reading the seat name as a target — the
-  // Flagged lane runs two seats over one board, and both must count onto it. `undefined`
-  // for the round-report seat and for any caller with no board server behind it, and the
-  // metric then carries no tool-call figure rather than a zero it did not measure.
-  // `undefined` for the round-report seat, for a lane-less seat (the Flagged review seats,
-  // move two), and for any caller with no board server behind it; the metric then carries no
-  // tool-call figure rather than a zero it did not measure.
+  // rule): through `SEAT_BOARD_TARGET`, never by reading the seat name as a target — on the
+  // Flagged lane only the compiler seat maps to the board it writes. `undefined` for the
+  // round-report seat, for a lane-less seat (the Flagged review seats, move two), and for
+  // any caller with no board server behind it; the metric then carries no tool-call figure
+  // rather than a zero it did not measure.
   const seatTarget = SEAT_BOARD_TARGET[seat];
   const seatLane = seatTarget === undefined ? undefined : deps.boards?.lane(seatTarget);
   const toolCalls = seatLane === undefined ? undefined : () => seatLane.seatCalls(seat);
@@ -1667,8 +1666,9 @@ function resolveBoardSeatDetails(
       ...(deps.t3Unavailable === undefined ? {} : { t3Unavailable: deps.t3Unavailable }),
       repoRoot: deps.repoRoot,
       // The SEAT, not just the job: `lens-draft` runs Design, Sequence and Decisions, and
-      // `lens-draft-flagged` runs two providers. Since a repair turn is pointer-only on
-      // every leg (session-bound-workspace 3.2) the prompt no longer says which seat it
+      // `lens-draft-flagged` runs three seats (two review legs and the compiler). Since a
+      // repair turn is pointer-only on every leg (session-bound-workspace 3.2) the prompt no
+      // longer says which seat it
       // belongs to, so the label is the only attribution the log, the token collector and
       // a test fake have. `board.lens-draft.design`, `board.lens-draft-flagged.flagged-codex`.
       label: `board.${jobId}.${seat}`,
@@ -2880,7 +2880,7 @@ async function runRoundReport(
 }
 
 /** Draft, validate, write, and announce one lens board. */
-/** The shape the common tail needs — one seat's or the reconciled dual seat's. */
+/** The shape the common tail needs — a single seat's board or the compiler's. */
 interface ValidatedLike {
   readonly board: DraftBoard;
   readonly omissions: readonly Omission[];
@@ -2901,7 +2901,7 @@ interface LaneDraft {
   readonly board: DraftBoard;
   /** Turns that ended unsettled. A refusal and a `finish` verdict cost nothing (D6). */
   readonly attempts: number;
-  /** The absence the lane's seat (or, on Flagged, both its seats) declared. */
+  /** The absence the lane's board-writing seat (on Flagged, the compiler) declared. */
   readonly absence?: LensAbsenceReason;
   /** What the HOST found after the seats settled; visible, never blocking (Rule Zero). */
   readonly blemishes?: readonly Violation[];
@@ -2933,27 +2933,6 @@ function noLaneFailure(lens: LintTarget): string {
 /** One seat's handle on its lane's board: the same voice table its address is minted from. */
 function seatVoice(lane: BoardLane, seat: BoardSeatId): BoardVoiceWriter {
   return lane.writer().voice(SEAT_BOARD_VOICE[seat]);
-}
-
-/**
- * Aggregate the per-seat failure accounts of a multi-seat lens into the lens's one account
- * (#549 finding b). RETRYABLE IFF ANY SEAT IS RETRYABLE: the lens needs one seat to
- * produce a board, so one seat with attempts left is a lens with attempts left, and
- * calling the pair terminal would spend a retry the lens still has. The reported
- * `attempt` belongs to the seat that decided the classification — the first retryable
- * one, otherwise the seat that spent the most attempts before settling terminal.
- * Undefined when no seat named an account (a resolution failure, which has no attempt).
- */
-export function aggregateFailureAccount(
-  seats: readonly LensDraftFailure[],
-): LensFailureAccount | undefined {
-  const accounts = seats.flatMap((seat) => (seat.failureAccount ? [seat.failureAccount] : []));
-  const retryable = accounts.find(({ classification }) => classification === "retryable");
-  if (retryable !== undefined) return retryable;
-  return accounts.reduce<LensFailureAccount | undefined>(
-    (worst, account) => (worst === undefined || account.attempt > worst.attempt ? account : worst),
-    undefined,
-  );
 }
 
 /** One Flagged leg's slice of the reviewer's overrides, or nothing to spread. */
@@ -2988,8 +2967,20 @@ const FLAGGED_REVIEW_LEGS: readonly FlaggedReviewLeg[] = [
 ];
 
 /** The review file a leg writes, relative to the seat's cwd (the session context dir). */
-function flaggedReviewPath(contextDir: string, origin: FindingOrigin): string {
-  return `${contextDir.replace(/\/$/, "")}/review-${origin}.md`;
+function flaggedReviewPath(
+  contextDir: string,
+  generationId: string,
+  origin: FindingOrigin,
+): string {
+  // GENERATION-SCOPED, because the context dir is session-scoped and never swept between
+  // generations (`writeSessionContext` only overwrites the host files it is handed, never the
+  // review files the seats write). A review turn reports `emitted` when the turn ENDS, not
+  // when the file lands (`t3-seat-turn` settles any schema-less seat that way), so a leg that
+  // completes without writing would otherwise leave a PRIOR round's `review-<origin>.md` for
+  // the compiler to read as this round's — silent wrong content. The generation id carries a
+  // colon, illegal in a filename on some hosts a WSL seat runs under, so flatten it first.
+  const gen = generationId.replace(/[^a-zA-Z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  return `${contextDir.replace(/\/$/, "")}/review-${gen}-${origin}.md`;
 }
 
 /**
@@ -3062,12 +3053,17 @@ async function runFlaggedReviewCompile(
     };
   }
 
+  // Scope every review file to THIS generation. The context dir is reused across a
+  // patchset's rounds, so an un-scoped name lets a leg that completes without writing leave
+  // the prior round's file for the compiler to read as current (see `flaggedReviewPath`).
+  const generationId = pipelineGenerationId(deps);
+
   // Each review leg runs ONE turn — it writes a free-form findings file, not a board, so
   // there is no lint loop to repair against. The turn emitting IS the leg settling; a turn
   // that ends otherwise is a failed leg whose file the compiler will not find.
   const reviewed = await Promise.all(
     runnable.map(async ({ leg, resolved }) => {
-      const path = flaggedReviewPath(context.dir, leg.origin);
+      const path = flaggedReviewPath(context.dir, generationId, leg.origin);
       const prompt = renderDrafterPrompt(reviewPromptText, deps.deltaPacket, context, {
         appendTask: `Write your findings to \`${path}\` with your own file tools — that file is your whole output. Create it even when you find nothing (a single \`## No findings\` section).`,
       });
@@ -3114,10 +3110,14 @@ async function runFlaggedReviewCompile(
   if ("failure" in compiler) {
     return { failure: `flagged compiler did not resolve (${compiler.failure}).` };
   }
-  const dir = context.dir.replace(/\/$/, "");
+  // Name the ACTUAL written paths, never a hardcoded filename: the review files are
+  // generation-scoped, so `review-claude.md` is a lie in the prompt the moment the round id
+  // enters the name, and a compiler pointed at a missing file reads a stale one or nothing.
   const reviewsTask =
     written.length === FLAGGED_REVIEW_LEGS.length
-      ? `The two model reviews are in \`${dir}/\`: \`review-claude.md\` (Claude) and \`review-codex.md\` (Codex). Read both before you write.`
+      ? `The two model reviews are written: ${written
+          .map((entry) => `\`${entry.path}\` (${entry.leg.label})`)
+          .join(" and ")}. Read both before you write.`
       : `One model review was produced: \`${written[0]?.path}\` (${written[0]?.leg.label}). The other reviewer did not run, so every finding is that model's alone — mark each \`solo\`, origin \`${written[0]?.leg.origin}\`. Read it before you write.`;
   const compilePrompt = renderDrafterPrompt(compilePromptText, deps.deltaPacket, context, {
     taskOverride: reviewsTask,
@@ -3392,9 +3392,9 @@ async function draftLensBoard(
     // The ladder that produced these is gone from the seat path (3.2). A structural rule
     // is refused where the call is made and a whole-board rule comes back from `finish`,
     // both inside the seat's own turn, so a settled board has no dropped element to
-    // account for and no unfixed violation to label. `blemishes` carries only what the
-    // host found AFTER the seats settled — today, the Flagged reconciliation's own
-    // wire check.
+    // account for and no unfixed violation to label. `blemishes` would carry anything the
+    // host found AFTER the seats settled; no lane produces such a check today (the Flagged
+    // reconciliation that once did is gone with move two), so the `?? []` is the default.
     omissions: [],
     blemishes: draft.blemishes ?? [],
     immutability: [],

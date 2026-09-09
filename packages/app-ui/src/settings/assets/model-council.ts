@@ -40,7 +40,7 @@ export const REVIEW_ROLE_DEFAULTS: readonly ReviewRole[] = [
   {
     id: "second-seat",
     label: "Flagged Second Seat",
-    hint: "The independent second opinion on Flagged — reconciled, never merged.",
+    hint: "The independent second opinion on Flagged — compiled, never merged.",
     dual: { model: "gpt-5.6-sol", effort: "high" },
     claudeOnly: null,
     codexOnly: null,
