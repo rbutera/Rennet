@@ -76,10 +76,9 @@ instead of creating placeholder content.
 - Do not set a section's `sources`. That field is a specification artifact's
   provenance and a defect has none; filling it puts an unexplained chip on the
   section header that opens the reader's editor at an arbitrary line.
-- Do not run the repository's build, test, or lint gate: CI owns pass/fail and
-  it is read for you. Read the diff, not the toolchain. This is scope, not
-  assurance — the branch is not known correct, and finding where it is wrong is
-  your job.
+- Do not run the repository's build, test, or lint gate: CI owns pass/fail. Read
+  the diff, not the toolchain. This is scope, not assurance — the branch is not
+  known correct, and finding where it is wrong is your job.
 
 {{reader-voice}}
 

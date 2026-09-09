@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import type { HostElement, LensBoard, LensSection } from "@rennet/protocol";
+import type { HostElement, LensBoard, LensKind, LensSection } from "@rennet/protocol";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useRennetStore } from "../store";
 import { mount, waitFor, within } from "../test/dom";
@@ -333,6 +333,121 @@ describe("Section content previews", () => {
     expect(view.getByRole("heading", { name: "Rationale" })).toBeTruthy();
     const alternatives = view.container.querySelector('[data-kind="decision-alternatives"]');
     expect(alternatives?.querySelectorAll("li")).toHaveLength(2);
+  });
+});
+
+describe("Flagged section render (#927)", () => {
+  const flaggedAuthor = { kind: "lens-agent", id: "flagged-claude" } as const;
+  const codeRef = (id: string, path: string): HostElement => ({
+    id,
+    kind: "code_ref",
+    data: {
+      author: flaggedAuthor,
+      patchset_id: "ps-1",
+      path,
+      side: "head",
+      start_line: 1,
+      end_line: 2,
+    },
+  });
+  const finding = (id: string, concern: string): HostElement => ({
+    id,
+    kind: "finding",
+    data: {
+      author: flaggedAuthor,
+      severity: "medium",
+      concern,
+      code: [],
+      concurrence: [],
+      status: "open",
+    },
+  });
+  const mountFlagged = (elements: HostElement[], entry: LensSection, lens: LensKind = "flagged") =>
+    mount(
+      <BoardElementsProvider elements={elements} boardId="flagged-board">
+        <Section entry={entry} lens={lens} foldable={false} />
+      </BoardElementsProvider>,
+    );
+
+  it("renders a finding but not a bare code_ref child, and the design lens renders the code_ref", () => {
+    const elements: HostElement[] = [
+      {
+        id: "sec",
+        kind: "section",
+        data: { author: flaggedAuthor, title: "Fidelity", children: ["f1", "orphan"] },
+      },
+      finding("f1", "A real concern worth the reader's time"),
+      codeRef("orphan", "src/design-assembler.ts"),
+    ];
+    const entry: LensSection = { ref: "sec", gist: "Fidelity", counts: { findings: 1 } };
+
+    const flagged = mountFlagged(elements, entry);
+    // The finding renders; the orphan code_ref does not, so the heading is never a frame over
+    // a bare code block with no prose — the #927 defect.
+    expect(flagged.container.querySelector('[data-element-id="f1"]')).toBeTruthy();
+    expect(flagged.container.querySelectorAll('[data-kind="code_ref"]')).toHaveLength(0);
+
+    // DISCRIMINATING PAIR: the same tree on the design lens DOES render the code_ref as its
+    // own block — so the assertion above can see a code_ref when one is present, and the
+    // filter is scoped to Flagged rather than hiding code everywhere.
+    const design = mountFlagged(elements, entry, "design");
+    expect(design.container.querySelectorAll('[data-kind="code_ref"]')).toHaveLength(1);
+  });
+
+  it("keeps a reviewer message thread and prose beside the findings, dropping only the code_ref", () => {
+    // A Flagged section legitimately carries more than findings: a human `discuss` thread
+    // anchored to cited code, and prose. The orphan-section guard drops the bare `code_ref`
+    // citation, NOT these — flattening to findings-only would silently erase a reviewer's
+    // own discussion, a lie in the UI worse than the cosmetic bug the guard fixes.
+    const human = { kind: "human", id: "reviewer" } as const;
+    const elements: HostElement[] = [
+      {
+        id: "sec",
+        kind: "section",
+        data: { author: flaggedAuthor, title: "Fidelity", children: ["f1", "note", "talk", "cr"] },
+      },
+      finding("f1", "A real concern worth the reader's time"),
+      {
+        id: "note",
+        kind: "prose",
+        data: { author: flaggedAuthor, markdown: "Context for the finding." },
+      },
+      { id: "talk", kind: "message", data: { author: human, role: "discuss" } },
+      codeRef("cr", "src/github-auth.ts"),
+    ];
+    const entry: LensSection = { ref: "sec", gist: "Fidelity", counts: { findings: 1 } };
+
+    const view = mountFlagged(elements, entry);
+    expect(view.container.querySelector('[data-element-id="f1"]')).toBeTruthy();
+    expect(view.getByText("Context for the finding.")).toBeTruthy();
+    expect(view.container.querySelector('[data-kind="message"]')).toBeTruthy();
+    expect(view.container.querySelectorAll('[data-kind="code_ref"]')).toHaveLength(0);
+  });
+
+  it("pulls a finding nested inside an inner section up to the heading", () => {
+    // outer → inner → finding. The flatten renders the finding directly under the heading
+    // rather than the inner section's own frame, matching the projection that counts it.
+    const elements: HostElement[] = [
+      {
+        id: "outer",
+        kind: "section",
+        data: { author: flaggedAuthor, title: "Fidelity", children: ["inner"] },
+      },
+      {
+        id: "inner",
+        kind: "section",
+        data: { author: flaggedAuthor, title: "Detail", children: ["nf1", "orphan"] },
+      },
+      finding("nf1", "A real concern one section deep"),
+      codeRef("orphan", "src/other.ts"),
+    ];
+    const entry: LensSection = { ref: "outer", gist: "Fidelity", counts: { findings: 1 } };
+
+    const view = mountFlagged(elements, entry);
+    expect(view.container.querySelector('[data-element-id="nf1"]')).toBeTruthy();
+    // No inner section frame rendered in the body, and no orphan code_ref.
+    expect(view.container.querySelectorAll('[data-kind="board-section"]')).toHaveLength(1);
+    expect(view.container.querySelectorAll('[data-kind="code_ref"]')).toHaveLength(0);
   });
 });
 

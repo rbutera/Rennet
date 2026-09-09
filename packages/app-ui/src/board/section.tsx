@@ -1,6 +1,7 @@
 import {
   DOMAIN_COUNT_KINDS,
   type DomainCountKind,
+  type HostElement,
   type LensKind,
   type LensSection,
 } from "@rennet/protocol";
@@ -48,6 +49,27 @@ const SINGULAR: Readonly<Record<DomainCountKind, string>> = {
   files: "file",
   comments: "comment",
 };
+
+/** The renderable descendants of a Flagged section: a `code_ref` citation is dropped (a
+ *  finding renders its own `code`; a bare one is the #927 orphaned code block), a nested
+ *  section's frame is flattened away (the malformed shape move two retires), and every other
+ *  child — finding, reviewer `message` thread, prose, callout, annotation — is kept in place.
+ *  Recurses with a visited guard so a malformed cycle cannot loop; the finding half of what
+ *  it reaches is the same set the projection's `reachableFindingIds` counts. */
+function flaggedRenderIds(
+  ids: readonly string[],
+  index: ReadonlyMap<string, HostElement>,
+  visited: Set<string> = new Set(),
+): string[] {
+  return ids.flatMap((id) => {
+    if (visited.has(id)) return [];
+    visited.add(id);
+    const element = index.get(id);
+    if (element === undefined || element.kind === "code_ref") return [];
+    if (element.kind === "section") return flaggedRenderIds(element.data.children, index, visited);
+    return [id];
+  });
+}
 
 /** Convert current domain counts and legacy raw-kind counts into one stable reading line. */
 export function sectionCountText(counts: LensSection["counts"]): string {
@@ -139,13 +161,14 @@ export const Section = memo(function Section({
   if (el?.kind !== "section") return null;
   const { title, children, sources, spec_delta: specDelta } = el.data;
 
-  // On Flagged, a `code_ref` is a finding's own citation (its `code` field), never a
-  // section child. A bare citation attached to the section renders as an orphaned code
-  // block with nothing to explain it — the #927 "header, then code, no prose" defect. Drop
-  // it here; the finding that cites it renders its own code. The projection already omits a
-  // Flagged section that has no finding at all, so a section reaching this point has one.
-  const renderedChildren =
-    lens === "flagged" ? children.filter((id) => index.get(id)?.kind !== "code_ref") : children;
+  // On Flagged, a section renders the renderable content it reaches, recursing nested
+  // sections so the body agrees with the projection's reachable-findings count. A bare
+  // `code_ref` child is dropped (a finding's own citation via its `code` field, which alone
+  // renders as an orphaned code block with no prose — the #927 defect); a nested section's
+  // own frame is flattened away (the malformed shape move two retires); everything else a
+  // Flagged board legitimately holds — findings, reviewer `message` threads, prose, callouts
+  // — renders in place. A finding renders its own cited code.
+  const renderedChildren = lens === "flagged" ? flaggedRenderIds(children, index) : children;
 
   const countText = sectionCountText(entry.counts);
   const showDot = entry.delta !== undefined && !viewed;

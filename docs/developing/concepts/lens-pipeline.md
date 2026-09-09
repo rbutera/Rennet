@@ -690,7 +690,10 @@ go to the board-meta store before the board arrival is announced. The client
 reads both halves through `board.read`, keyed by review, generation, and lens. The handler resolves the review's session, finds that
 triple's board-meta record, projects the element state, and assembles one
 `LensBoard` with the persisted document, the element pool in creation order,
-and one fold line per top-level section.
+and one fold line per top-level section. On the Flagged lens a top-level section
+that reaches no finding (through nested sections too) is dropped rather than
+folded, and its fold line counts those reachable findings — the #927
+orphan-section guard, shared with the live-draft reader so both agree.
 
 ## The Noise board is the complement
 
@@ -832,7 +835,11 @@ Fold counts are reader-facing domain objects, not raw element-kind tallies. The
 projection emits findings, decisions, requirements, steps, outcomes, groups,
 files, and comments from each section's direct children. The stored `groups` count
 counts Noise members, so the UI labels it as changed regions within that group. Repeated code refs for
-one path count as one file, and structural prose does not inflate the count. A
+one path count as one file, and structural prose does not inflate the count. The
+Flagged lens is the exception: its fold line counts the findings a section reaches
+through nested sections, and a `code_ref` is never counted as a file (it is a
+finding's own `code` citation, not a section child), matching the orphan-section
+guard that drops a finding-less Flagged section at both readers. A
 pair with no persisted board answers `null`. A successful empty result is typed
 instead of persisted as a zero-element board: Design uses `no-spec`,
 Decisions uses `no-decisions`, Flagged uses `no-findings`, and Noise uses
