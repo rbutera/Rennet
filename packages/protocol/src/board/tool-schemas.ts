@@ -54,8 +54,9 @@ import {
  * so a seat cannot forge one: the element `author` (the seat is known from its address),
  * a `code_ref`'s `patchset_id` (stamped once before persistence; a seat is never told
  * the capture's id), a noise verdict's `judge` (a seat is `llm`), a finding's `status`
- * (a draft is `open`) and its `concurrence` / `accord` (computed by `reconcileFindings`
- * when both Flagged voices have settled), a section's round-`delta` stamp (set by the
+ * (a draft is `open`) and its `concurrence` / `accord` (expanded by
+ * `expandFindingCompile` from the Flagged compiler's `origin` / `agreement` enums),
+ * a section's round-`delta` stamp (set by the
  * composition step at regeneration — a seat that could set it could mark its own work
  * new), and the document `measure` (`resolveBoardDocument` overrides whatever a seat
  * authors with the target's own).

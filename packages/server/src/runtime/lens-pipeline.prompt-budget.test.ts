@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { buildDeltaPacket } from "@rennet/core";
 import {
   expandPromptPartials,
+  FLAGGED_REVIEW_FILE,
   LENS_KINDS,
   LENS_PROMPT_FILES,
   PROMPT_PARTIALS,
@@ -61,16 +62,22 @@ function synthetic(): Patchset {
 const bigPacket = buildDeltaPacket(synthetic(), []);
 
 // Full prompts on this fixture, including the task layer but no context directory:
-// design 15,588 B (the located-specification section, this change); sequence 10,248 B; decisions 9,961 B; flagged 10,869 B (single-section + no-gate guards, #927); noise 10,594 B.
+// design 15,588 B (the located-specification section, this change); sequence 10,248 B;
+// decisions 9,961 B; noise 10,594 B. Move two splits Flagged into two drafter prompts —
+// the review leg (`flagged-review.md`) and the compiler (`flagged-compile.md`, which
+// `LENS_PROMPT_FILES.flagged` names) — each much shorter than the old single flagged prompt.
 // Budgets leave 10% headroom. The context-reference layer has its own bounded test.
 // These are bytes sent, not measured provider tokens or total conversation cost.
 const BUDGET: Record<(typeof LENS_KINDS)[number], number> = {
   design: 17_147,
   sequence: 11_273,
   decisions: 10_958,
-  flagged: 11_983,
+  flagged: 4_698,
   noise: 11_654,
 };
+// The Flagged review leg is a drafter prompt too — sent by both review seats — so it gets
+// the same tripwire. `flagged` above is the compiler prompt (`LENS_PROMPT_FILES.flagged`).
+const FLAGGED_REVIEW_BUDGET = 8_486;
 
 describe("drafter prompt byte budget (tripwire, #737)", () => {
   it.each(LENS_KINDS)("%s drafter prompt stays under the declared budget", (lens) => {
@@ -99,6 +106,28 @@ describe("drafter prompt byte budget (tripwire, #737)", () => {
     const headroom = BUDGET[lens] / measured;
     expect(headroom, `${lens}: ${BUDGET[lens]} over a measured ${measured}`).toBeGreaterThan(1.09);
     expect(headroom, `${lens}: ${BUDGET[lens]} over a measured ${measured}`).toBeLessThan(1.12);
+  });
+
+  it("the flagged review prompt stays under budget at the stated headroom", () => {
+    const review = expandPromptPartials(
+      read(FLAGGED_REVIEW_FILE),
+      Object.fromEntries(
+        Object.entries(PROMPT_PARTIALS).map(([marker, file]) => [marker, read(file)]),
+      ),
+    );
+    const measured = bytes(renderDrafterPrompt(review, packet));
+    expect(measured).toBeLessThanOrEqual(FLAGGED_REVIEW_BUDGET);
+    const headroom = FLAGGED_REVIEW_BUDGET / measured;
+    expect(
+      headroom,
+      `flagged review: ${FLAGGED_REVIEW_BUDGET} over a measured ${measured}`,
+    ).toBeGreaterThan(1.09);
+    expect(
+      headroom,
+      `flagged review: ${FLAGGED_REVIEW_BUDGET} over a measured ${measured}`,
+    ).toBeLessThan(1.12);
+    // Nothing derived from the packet reaches it either, so a large branch pays the same.
+    expect(bytes(renderDrafterPrompt(review, bigPacket))).toBe(measured);
   });
 
   it("reddens when a layer inflates (positive control)", () => {

@@ -296,9 +296,25 @@ export function ownerLoopScriptedHarnessPlan(
         output: decisionsBoard(),
       },
       {
-        id: "flagged",
+        // A Flagged REVIEW leg (`flagged-review-compile`, move two): both review seats send
+        // this same prompt, so ONE step answers both — the seat is lane-less, so its turn
+        // writes no board and its `output` is ignored (the seat leg reads no body off a
+        // schema-less turn). The findings file the real seat would write is what the compiler
+        // reads; the scripted compiler returns its board regardless, so no file need exist.
+        id: "flagged-review",
         kind: "structured",
-        promptIncludes: "You draft one seat of the Flagged board for a code change under review.",
+        promptIncludes:
+          "You review a code change for real defects and write what you find to a file.",
+        output: {},
+      },
+      {
+        // The COMPILER seat: it reads both reviews and writes the whole Flagged board through
+        // `write_board`, exactly as the other lens seats write theirs. `flaggedBoard()` replays
+        // onto the `flagged` lane, its finding gaining the host-defaulted `origin`/`agreement`
+        // in `seat-fixture.ts`.
+        id: "flagged-compile",
+        kind: "structured",
+        promptIncludes: "You compile the Flagged board from those two files.",
         output: flaggedBoard(),
       },
       {

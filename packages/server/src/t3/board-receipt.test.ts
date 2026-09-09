@@ -260,10 +260,10 @@ describe("boardReceipt", () => {
       }
     }
     // A loop that stopped iterating passes as a sweep, so the sweep counts what it swept.
-    // 26 distinct tools spread over 6 targets, most of them shared: 95 (target, tool) pairs.
-    // 95 and not 100: `write_board` is on the Noise target alone (#869), so it adds one
-    // pair rather than six.
-    expect(asserted).toBe(95);
+    // 26 distinct tools spread over 6 targets, most of them shared: 96 (target, tool) pairs.
+    // 96 and not 100: `write_board` is on the Noise and Flagged targets alone (#869, D9) —
+    // the Flagged compiler is the sole writer of its board — so it adds two pairs, not six.
+    expect(asserted).toBe(96);
     // The exception list is exercised rather than merely declared.
     expect([...spokenSeen].sort()).toEqual(["element_id", "path"]);
   });

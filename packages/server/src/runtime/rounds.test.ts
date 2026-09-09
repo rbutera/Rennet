@@ -84,7 +84,12 @@ const readPrompt = (file: string): string => `PROMPT_FILE:${file}`;
  */
 const lensFromPrompt = (prompt: string, label?: string): string => {
   const marker = /PROMPT_FILE:prompts\/([a-z-]+)\.md/.exec(prompt)?.[1];
-  if (marker !== undefined) return marker;
+  // Flagged runs as three seats over two prompt files — the review legs read
+  // `flagged-review.md`, the compiler `flagged-compile.md` — but the round-level tests speak
+  // of ONE flagged lens. Fold both markers (and the seat labels a repair turn carries) to
+  // `flagged`: the review legs are lane-less and their body is dropped, so a single flagged
+  // answer drives all three, the compiler being the one that writes it.
+  if (marker !== undefined) return marker.startsWith("flagged") ? "flagged" : marker;
   const seat = label?.split(".").at(-1);
   if (seat === undefined) return "unknown";
   return seat.startsWith("flagged") ? "flagged" : seat;
@@ -269,6 +274,10 @@ function baseDeps(over: Partial<RoundsRuntimeDeps> = {}): RoundsRuntimeDeps {
     resolveCodexExecutor: async () => null as CodexExecutor | null,
     boardsRuntimeFor: fakeBoardsRuntimeFor(),
     readPrompt,
+    // The Flagged review legs write their findings files under the session context dir, so
+    // every runtime needs a place to put them; without it the flagged lane fails before its
+    // first review turn. A test that inspects the write supplies its own via `over`.
+    writeSessionContext: (root, sessionId) => `${root}/.rennet/context/${sessionId}`,
     ...over,
   };
 }
@@ -1793,9 +1802,12 @@ describe("createRoundsRuntime", () => {
         ),
       ).runRound(input);
 
+      // Flagged re-drafts through its compiler prompt — there is no `flagged.md`; the lane's
+      // sole board writer reads `flagged-compile.md`.
+      const retryPromptFile = failedCoreLens === "flagged" ? "flagged-compile" : failedCoreLens;
       expect(
         retryCaptures.some(({ prompt }) =>
-          prompt?.includes(`PROMPT_FILE:prompts/${failedCoreLens}.md`),
+          prompt?.includes(`PROMPT_FILE:prompts/${retryPromptFile}.md`),
         ),
       ).toBe(true);
       expect(recovered.boardGeneration.lensBoards[failedCoreLens]).toBe(boardIds[failedCoreLens]);
@@ -1906,7 +1918,9 @@ describe("createRoundsRuntime", () => {
     ).runRound(roundInput());
 
     expect(attemptWrites).toBeGreaterThan(0);
-    expect(captures.some(({ prompt }) => prompt?.includes("prompts/flagged.md"))).toBe(true);
+    expect(captures.some(({ prompt }) => prompt?.includes("prompts/flagged-compile.md"))).toBe(
+      true,
+    );
     expect(recovered.pipeline.boards.map(({ lens }) => lens)).toEqual([...LENS_KINDS]);
     expect(recovered.boardGeneration.lensBoards.flagged).toBeDefined();
 
@@ -2013,7 +2027,9 @@ describe("createRoundsRuntime", () => {
       ),
     ).runRound(roundInput());
 
-    expect(captures.some(({ prompt }) => prompt?.includes("prompts/flagged.md"))).toBe(true);
+    expect(captures.some(({ prompt }) => prompt?.includes("prompts/flagged-compile.md"))).toBe(
+      true,
+    );
     expect(recoveryWrites).toContain("flagged");
     expect(recovered.boardGeneration.lensBoards.flagged).toBeDefined();
 
@@ -2189,10 +2205,9 @@ describe("createRoundsRuntime", () => {
         boardsRuntimeFor: boardsRuntime(attempt, crashFlagged),
         resolveClaudePort: async () =>
           fakeClaudePort([], (prompt, label) => {
-            if (
-              prompt.includes("prompts/flagged.md") ||
-              (prompt.includes("prompts/post-process.md") && /"kind"\s*:\s*"finding"/.test(prompt))
-            ) {
+            // The compiler is Flagged's sole board writer, so its prompt is the one that
+            // replays this attempt's flagged board.
+            if (prompt.includes("prompts/flagged-compile.md")) {
               return currentFlagged;
             }
             return cleanBody(lensFromPrompt(prompt, label));

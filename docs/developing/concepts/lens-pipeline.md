@@ -145,9 +145,12 @@ and calls board regeneration through this runtime.
    the landed-round report document with the `reading` measure.
    The host, never the drafter, writes the board ops through
    `whiteboard-client` (the sole op writer); drafters never call whiteboard
-   tools. The Flagged lens runs two seats (Claude and Codex) on the same instructions,
-   over **one** board: each element is stamped with the voice that wrote it as it lands,
-   and the ids come from one mint counter, so the two seats' ids cannot collide.
+   tools. The Flagged lens runs **review then compile**: two lane-less review seats
+   (Claude and Codex) read the change independently and each writes a findings file with
+   its own file tools — no board, no board tools, no lane address. A third **compiler**
+   seat reads both files and writes the whole Flagged board in one turn, attributing each
+   finding to the model that raised it and marking whether both did. The board has one
+   author, the compiler, so its ids come from one mint counter and cannot collide.
 
    A branch that carries a specification in a format Rennet parses takes a
    **deterministic fast path** for its Design board and settles with no model turn at
@@ -190,26 +193,27 @@ and calls board regeneration through this runtime.
    sidecar's own turn command carries — the daemon's per-seat loopback board
    server among them — rather than anything a one-shot leg narrowed for it.
    A clean generation makes one drafting turn for Design, Sequence, Decisions,
-   and Noise, plus the two parallel Flagged seats. It does not run a separate
-   board editor after those turns, and no lens spends a second turn accounting
-   for what it did not cite.
-2. **Reconcile** (Flagged only). The two seats' findings are matched by cited
-   location: a matched pair collapses to ONE row carrying both models'
-   concurrence — the clearer of the two summaries when the seats concur, seat
-   A's when they conflict, with both seats' verbatim answers riding along in the
-   agreement — and a solo finding carries only the raising model's. Whichever id
-   the surviving row keeps, the consumed one is gone from the board, so the merge
-   repoints its citers rather than leaving them naming an element the write no
-   longer holds. The result is folded into each finding's board-native
-   `concurrence` tally (`{ model, agree, total }` per seat), alongside an
-   `accord` stamp naming how the seats landed: `concur`, `split` (one seat
-   answered "no concern"), or `conflict` (both raised it at materially different
-   severities). The stamp is load-bearing, because a concurrence and a conflict
-   fold to the identical tally pair — without it a reader cannot tell agreement
-   from disagreement.
-   With only one harness available the lens degrades to a single seat, stamped
-   with honest single-model concurrence and no accord: one seat has no
-   agreement to report.
+   and Noise, one review turn for each installed Flagged model, and one compile
+   turn that assembles the Flagged board from those reviews. It does not run a
+   separate board editor after those turns, and no lens spends a second turn
+   accounting for what it did not cite.
+2. **Compile** (Flagged only). The two review files are not a board; the compiler
+   turns them into one. It writes each finding once through `add_finding`,
+   carrying two flat authored enums beside the element: `origin` (`claude` or
+   `codex`), the model that raised it, and `agreement` (`concur`, `diverge`, or
+   `solo`), whether both reviews raised it and how they landed. The host expands
+   those two enums at write time into the finding's board-native `author`,
+   `concurrence` tally (`{ model, agree, total }` per model), and `accord` stamp:
+   `solo` writes one tally and accord `split`; `concur` writes both tallies and
+   accord `concur`; `diverge` writes both tallies and accord `conflict`. The
+   enums are input-only — they ride the `add_finding` call, never the persisted
+   board, because `author` already encodes the model and `accord` the agreement,
+   so keeping them would store one fact twice. The `accord` stamp is load-bearing,
+   because a concurrence and a conflict fold to the identical tally pair — without
+   it a reader cannot tell agreement from disagreement.
+   With only one harness available the lens degrades to a single review and the
+   compiler marks every finding `solo` from that model. When one of two review
+   seats fails, the compiler assembles the survivor's file alone.
 3. **Validate.** Validation is **two-tier, and both tiers run inside the seat's own
    turn.** A rule decidable from the element a call carries is enforced at the tool
    boundary: the call is refused, the element is not created, and the refusal names the
@@ -370,8 +374,9 @@ and calls board regeneration through this runtime.
    board schema. `lint`, `validateDraft` and the pointer-only `renderRepairPrompt` are that
    caller's loop and nothing else's.
 4. **Freeze.** The validated structured draft becomes the lens board without a
-   second model rewrite. Host-owned Design projections, Flagged reconciliation,
-   round composition, delta stamps, and metadata persistence remain deterministic.
+   second model rewrite. Host-owned Design projections, the Flagged compiler's
+   `origin`/`agreement` expansion, round composition, delta stamps, and metadata
+   persistence remain deterministic.
 
    Those host-owned passes run *after* lint, so the board that gets written is
    not the board lint last saw. A **reference-admission pass** at the write
@@ -395,8 +400,7 @@ and calls board regeneration through this runtime.
    make the rest of a board acceptable — an accepted board that silently sheds
    produced material is the quiet lie the complete-coverage ruling forbids. The
    board service stays authoritative and keeps rejecting; repairs happen
-   producer-side. The Flagged dual-seat merge repoints its own collapsed
-   findings' citers at the surviving partner for the same reason.
+   producer-side.
 5. **Compose.** A frozen draft board *is* the lens board the human reads; there
    is no separate composed surface. Composition is split. The **mechanical**
    part lives in `core/board/`: verbatim carry on stable element ids (a carried
@@ -503,11 +507,13 @@ nothing and does not extend the window.
 
 **Every stage record names what ran it, one record per seat.** A single-seat
 lane emits one `lens-draft` record carrying that seat's harness and model. The
-Flagged lane runs two seats, so it emits **two** — each with its own provenance
-and its own wall-clock span, and the lane's aggregate span is min-start to
-max-end across them. That is what makes "this run was dual-model" derivable from
-the stages rather than assumed from settings; one merged record could name no
-harness at all, which answered the question with silence.
+Flagged lane runs a review seat per installed model plus the compiler, so it
+emits one record per seat that ran — each with its own provenance and its own
+wall-clock span, and the lane's aggregate span is min-start to max-end across
+them. The two review records name their harnesses, which is what makes "this run
+was dual-model" derivable from the stages rather than assumed from settings; one
+merged record could name no harness at all, which answered the question with
+silence.
 
 **Repair budgets are per lane and per whole-board attempt.** The first drafting
 run over a generation spends the lane's full ladder; every repeat whole-board

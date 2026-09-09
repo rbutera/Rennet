@@ -521,10 +521,15 @@ describe("#685 owner loop through a real server", () => {
     const seatsOfGeneration = scriptedSeats.threads.filter(({ threadId }) =>
       threadId.includes(initialGeneration),
     );
+    // Flagged runs review→compile now (`flagged-review-compile`): a lane-less review seat
+    // per installed model plus one compiler seat that writes the board. Codex is not
+    // installed here, so the Codex review leg never seats — the Claude reviewer and the
+    // compiler are the two Flagged threads.
     expect(seatsOfGeneration.map(({ seat }) => seat).sort()).toEqual([
       "decisions",
       "design",
       "flagged-claude",
+      "flagged-compile",
       "noise",
       "sequence",
     ]);
@@ -910,7 +915,8 @@ describe("#685 owner loop through a real server", () => {
       "design",
       "sequence",
       "decisions",
-      "flagged",
+      "flagged-review",
+      "flagged-compile",
       "noise",
       "report-round-one",
       "report-round-two",
@@ -932,7 +938,17 @@ describe("#685 owner loop through a real server", () => {
     expect(readFileSync(join(evidenceRoot, OWNER_LOOP_SOURCE), "utf8")).toBe(
       "export const ownerValue = 'round-two';\n",
     );
-    for (const stepId of ["design", "sequence", "decisions", "flagged", "noise"]) {
+    // Each board seat drafts once per generation across the two rounds and the restart
+    // replay. Flagged is two seats now: the Claude review leg and the compiler, each running
+    // once a generation (Codex is not installed, so its review leg never seats).
+    for (const stepId of [
+      "design",
+      "sequence",
+      "decisions",
+      "flagged-review",
+      "flagged-compile",
+      "noise",
+    ]) {
       expect(records.filter((record) => record.stepId === stepId)).toHaveLength(3);
     }
     expect(records.filter((record) => record.stepId === "report-round-one")).toHaveLength(1);

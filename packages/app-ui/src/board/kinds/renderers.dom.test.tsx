@@ -624,11 +624,11 @@ describe("board kind renderers over the fixture set", () => {
     expect(f1?.className).not.toContain("border-green-line");
   });
 
-  // THE LIE THIS GUARDS: a severity CONFLICT — both seats raised the finding, at
-  // materially different severities, so `reconcileFindings` emits `disagree` with NEITHER
-  // answer being `NO_CONCERN_ANSWER` — folds to `[{claude,1,1},{codex,1,1}]`, the
-  // BYTE-IDENTICAL tally a real concurrence produces. Read from the arithmetic alone the
-  // pill went green and said "concur 2/2" over a disagreement. Only `accord` separates them.
+  // THE LIE THIS GUARDS: a severity CONFLICT — both models raised the finding, at
+  // materially different severities, so the compiler's `agreement: "diverge"` expands to
+  // accord `conflict` over `[{claude,1,1},{codex,1,1}]`, the BYTE-IDENTICAL tally a real
+  // concurrence produces. Read from the arithmetic alone the pill went green and said
+  // "concur 2/2" over a disagreement. Only `accord` separates them.
   it("does not call a severity conflict a concurrence, though its tallies are identical", () => {
     const conflict = renderBoard(
       withF1Concurrence({

@@ -82,12 +82,13 @@ const concurrenceSchema = z.object({
 /**
  * How the seats LANDED on a finding — the one fact the tallies cannot carry.
  *
- * `reconcileFindings` (`core/src/finding-reconcile.ts`) distinguishes three
+ * The Flagged compiler's `agreement` enum (`expandFindingCompile`,
+ * `./finding-compile.ts`) distinguishes three
  * outcomes, and two of them fold to the byte-identical tally pair
- * `[{a,1,1},{b,1,1}]`: a CONCUR (both seats raised it at comparable severity)
- * and a CONFLICT (both raised it at materially different severities, so both
- * verbatim answers ride along). A reader working from the arithmetic alone reads
- * a conflict as agreement. `accord` is the stamp that tells them apart.
+ * `[{a,1,1},{b,1,1}]`: a CONCUR (both reviews raised it at comparable severity)
+ * and a CONFLICT (both raised it, `diverge`, so both are attributed). A reader
+ * working from the arithmetic alone reads a conflict as agreement. `accord` is
+ * the stamp that tells them apart.
  *
  * - `concur`   — every seat raised it, at comparable severity.
  * - `split`    — one seat raised it and another answered "no concern".

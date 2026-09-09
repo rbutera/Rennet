@@ -56,8 +56,12 @@ const lintContextFor = (lens: LintTarget): LintContext => ({
   files: new Map(),
 });
 const readPrompt = (file: string): string => `PROMPT_FILE:${file}`;
-const lensFromPrompt = (prompt: string): string =>
-  /PROMPT_FILE:prompts\/([a-z-]+)\.md/.exec(prompt)?.[1] ?? "unknown";
+const lensFromPrompt = (prompt: string): string => {
+  const marker = /PROMPT_FILE:prompts\/([a-z-]+)\.md/.exec(prompt)?.[1] ?? "unknown";
+  // Flagged's review legs and compiler both draft through `flagged-*.md`; the fake answers
+  // by lane. The lane-less review legs' bodies are dropped; the compiler writes the board.
+  return marker.startsWith("flagged") ? "flagged" : marker;
+};
 const cleanBody = (lens: string): DraftBoard => {
   const author = { kind: "lens-agent" as const, id: `${lens}-seat` };
   if (lens === "sequence") {

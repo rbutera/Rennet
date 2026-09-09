@@ -79,8 +79,12 @@ function patchset(): Patchset {
 // Records the ORDER seats are asked to draft, and answers a clean board per lens —
 // so the test can assert the round-report drafts before any lens (R58/D3).
 function orderedFakeClaudePort(order: string[]): HarnessPort {
-  const lensFromPrompt = (p: string): string =>
-    /PROMPT_FILE:prompts\/([a-z-]+)\.md/.exec(p)?.[1] ?? "unknown";
+  const lensFromPrompt = (p: string): string => {
+    const marker = /PROMPT_FILE:prompts\/([a-z-]+)\.md/.exec(p)?.[1] ?? "unknown";
+    // Flagged's review legs and compiler both draft through `flagged-*.md`; the fake answers
+    // by lane. The lane-less review legs' boards are dropped; the compiler writes the board.
+    return marker.startsWith("flagged") ? "flagged" : marker;
+  };
   const board = (lens: string): DraftBoard => {
     const author = { kind: "lens-agent" as const, id: `${lens}-seat` };
     const prose = {

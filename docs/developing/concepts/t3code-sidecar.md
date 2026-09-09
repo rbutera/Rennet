@@ -415,8 +415,8 @@ because `@pierre/diffs` splits every Shiki grammar into its own on-demand chunk 
 
 ## Seats as threads
 
-Every board seat of a review generation — Design, Sequence, Decisions, both Flagged seats,
-Noise, and the round report — runs as one persistent thread in this sidecar, on the
+Every board seat of a review generation — Design, Sequence, Decisions, Flagged's two review
+seats and its compiler, Noise, and the round report — runs as one persistent thread in this sidecar, on the
 review's checkout. That is the only way a board seat runs: the ephemeral Claude and Codex
 board legs are deleted, so a generation with no sidecar drafts no board and says why. The
 binding is
@@ -426,11 +426,13 @@ sidecar's own thread list reads sensibly. Two repositories in one workspace on t
 branch get two threads, because the key starts at the checkout and never at a project id.
 
 The council still routes each seat: a Claude seat is a thread on T3's `claudeAgent`
-instance at the council's model, a Codex seat one on `codex`. Flagged runs both, on two
-threads. A lane holds its seats in provider order — Claude first, Codex second, never the
-order the two threads happened to bind in — so the lane's own `thread` and `latest` always
-mirror the Claude seat, and the rail and the widget list the two voices the same way on
-every run.
+instance at the council's model, a Codex seat one on `codex`. Flagged runs three threads:
+two review legs (Claude and Codex) that author no board, and a compiler on whichever harness
+the council routes `lens-draft-flagged` to, which reads both reviews and writes the lane. The
+lane surfaces its two review seats in provider order — Claude first, Codex second, never the
+order the two threads happened to bind in — so the lane's own `thread` and `latest` mirror
+the Claude review seat, and the rail and the widget list those two voices the same way on
+every run; the compiler is the third thread, where the board it wrote comes from.
 
 Three things follow from the thread being persistent.
 

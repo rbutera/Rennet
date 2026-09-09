@@ -188,9 +188,24 @@ export function withFakeT3Seats<D extends RoundsRuntimeDeps>(
   deps: D,
   boards?: GenerationBoards,
 ): D {
-  if (deps.resolveT3Seats !== undefined) return deps;
+  // Flagged's review legs write their findings files under the session context directory;
+  // the runtime only wires `writeContext` when this dep is present, and its return value is
+  // unused (the runtime names the relative dir itself), so a stub is enough. An explicit
+  // dep the caller set wins.
+  const withContext: D =
+    deps.writeSessionContext === undefined
+      ? {
+          ...deps,
+          writeSessionContext: (root, sessionId) => `${root}/.rennet/context/${sessionId}`,
+        }
+      : deps;
+  if (withContext.resolveT3Seats !== undefined) return withContext;
   return {
-    ...deps,
-    resolveT3Seats: fakeT3SeatsOverPorts(deps.resolveClaudePort, deps.resolveCodexExecutor, boards),
+    ...withContext,
+    resolveT3Seats: fakeT3SeatsOverPorts(
+      withContext.resolveClaudePort,
+      withContext.resolveCodexExecutor,
+      boards,
+    ),
   };
 }

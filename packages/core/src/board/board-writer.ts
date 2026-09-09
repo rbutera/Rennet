@@ -275,8 +275,10 @@ export interface BoardVoiceWriter {
 
 /** What the host stamps on each kind, over and above the `author` every kind carries. */
 const HOST_DEFAULTS: Readonly<Partial<Record<DraftKind, Readonly<Record<string, unknown>>>>> = {
-  // A drafted finding is `open` and has no cross-seat agreement yet: `reconcileFindings`
-  // stamps concurrence and accord when both Flagged voices have settled.
+  // A drafted finding is `open` and has no cross-model agreement yet. On the Flagged
+  // board the compiler carries `origin` / `agreement` on its `add_finding` input, which
+  // `expandFindingCompile` turns into concurrence and accord at write time; this default
+  // is the resting shape for every other finding path.
   finding: { status: "open", concurrence: [] },
   // A member of a derived board is host-placed and host-stamped (D16f): membership is a
   // POSITION — a changed region no other board cited — so `verdict` is `noise` and the

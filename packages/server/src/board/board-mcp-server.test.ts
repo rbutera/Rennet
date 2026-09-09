@@ -245,8 +245,9 @@ describe("a seat's MCP client discovers and calls the board tools (2.5)", () => 
     // 94, not 96: the Noise seat lost two verbs when its membership became the host's
     // derivation (D16) — no verb creates a member, and none settles the absence the host
     // decides from an empty complement. 95, not 94, because the same derivation is what
-    // gives the Noise seat `write_board` and no other seat it (#869).
-    expect(seen).toBe(95);
+    // gives the Noise seat `write_board` (#869). 96, not 95, because the Flagged compiler is
+    // the sole writer of the `flagged` board, so `write_board` lands there too (D9/D10).
+    expect(seen).toBe(96);
   });
 
   it("a Sequence seat is served no settle_absent, because Sequence admits no absence", async () => {
@@ -353,7 +354,7 @@ describe("a Noise seat writes its whole board in one call (#869)", () => {
 
   const boardJson = (calls: readonly Record<string, unknown>[]) => JSON.stringify({ calls });
 
-  it("tools/list serves write_board to Noise and to no other lens", async () => {
+  it("tools/list serves write_board to Noise and the Flagged compiler, no other lens", async () => {
     const server = await serverWith();
     const { url } = await noiseLane(server);
     const listed = await rpc(url, { jsonrpc: "2.0", id: 2, method: "tools/list" });
@@ -361,9 +362,28 @@ describe("a Noise seat writes its whole board in one call (#869)", () => {
     expect(names).toContain("write_board");
     expect(names).toContain("update_noise_verdict");
 
-    // The four reasoning lenses compose rather than bulk-write, and were measured slightly
-    // SLOWER with this verb, so they do not pay its tool surface once per session.
-    for (const target of ["design", "sequence", "decisions", "flagged"] as const) {
+    // The Flagged compiler is the sole writer of its board and compiles the whole thing from
+    // the two review legs' findings files in one pass, so it carries `write_board` too (D9).
+    const flaggedLane = server.openLane({
+      generationId: "gen-869-c",
+      target: "flagged",
+      lint: lint(),
+    });
+    const flaggedUrl = addressOf(
+      flaggedLane.address({
+        seat: "flagged-compile",
+        author: { kind: "lens-agent", id: "lens:flagged" },
+      }),
+    ).url;
+    await handshake(flaggedUrl);
+    const flaggedTools = await rpc(flaggedUrl, { jsonrpc: "2.0", id: 2, method: "tools/list" });
+    expect((result(flaggedTools).tools as { name: string }[]).map((tool) => tool.name)).toContain(
+      "write_board",
+    );
+
+    // The reasoning lenses compose rather than bulk-write, and were measured slightly SLOWER
+    // with this verb, so they do not pay its tool surface once per session.
+    for (const target of ["design", "sequence", "decisions"] as const) {
       const lane = server.openLane({ generationId: "gen-869-b", target, lint: lint() });
       const other = addressOf(
         lane.address({ seat: target, author: { kind: "lens-agent", id: `lens:${target}` } }),
@@ -745,31 +765,25 @@ describe("the listener comes back on the port it recorded (2.5)", () => {
 
 // ── 2.6 Flagged: two addresses, one board ────────────────────────────────────
 
-describe("a Flagged lane gets two addresses onto one board (2.6, D9)", () => {
-  it("both seats write the ONE board and the ids they are handed cannot collide", async () => {
+describe("a Flagged compiler writes the one board, attributing each finding (2.6, D9/D10)", () => {
+  it("writes findings from both origins onto the ONE board with unique ids", async () => {
     const server = await serverWith();
     const lane = server.openLane({ generationId: "gen-1", target: "flagged", lint: lint() });
-    const claude = addressOf(
+    // The compiler is the sole writer of the flagged board: it reads the two review legs'
+    // findings files and compiles the whole board, attributing each finding to the model
+    // that raised it through the input-only `origin` enum (host-expanded into `author`).
+    const compile = addressOf(
       lane.address({
-        seat: "flagged-claude",
-        author: { kind: "lens-agent", id: "lens:flagged:claudeAgent" },
-        idPrefix: "f",
+        seat: "flagged-compile",
+        author: { kind: "lens-agent", id: "lens:flagged" },
+        idPrefix: "c",
       }),
     );
-    const codex = addressOf(
-      lane.address({
-        seat: "flagged-codex",
-        author: { kind: "lens-agent", id: "lens:flagged:codex" },
-        idPrefix: "g",
-      }),
-    );
-    expect(claude.url).not.toBe(codex.url);
 
-    await handshake(claude.url);
-    await handshake(codex.url);
-    const cite = async (url: string, id: number, startLine: number) =>
+    await handshake(compile.url);
+    const cite = async (id: number, startLine: number) =>
       textOf(
-        await rpc(url, {
+        await rpc(compile.url, {
           jsonrpc: "2.0",
           id,
           method: "tools/call",
@@ -784,42 +798,48 @@ describe("a Flagged lane gets two addresses onto one board (2.6, D9)", () => {
           },
         }),
       );
-    const addFinding = async (url: string, id: number, concern: string, ref: string) =>
+    const addFinding = async (
+      id: number,
+      concern: string,
+      ref: string,
+      origin: "claude" | "codex",
+    ) =>
       textOf(
-        await rpc(url, {
+        await rpc(compile.url, {
           jsonrpc: "2.0",
           id,
           method: "tools/call",
           params: {
             name: "add_finding",
-            arguments: { severity: "high", concern, code_ref_ids: [ref] },
+            arguments: {
+              severity: "high",
+              concern,
+              code_ref_ids: [ref],
+              origin,
+              agreement: "solo",
+            },
           },
         }),
       );
 
-    const claudeRef = await cite(claude.url, 2, 10);
-    const codexRef = await cite(codex.url, 3, 12);
+    const claudeRef = await cite(2, 10);
+    const codexRef = await cite(3, 12);
     const fromClaude = await addFinding(
-      claude.url,
       4,
       "The refresh token is classified before its code is read.",
       claudeRef,
+      "claude",
     );
     const fromCodex = await addFinding(
-      codex.url,
       5,
       "The retry loop has no ceiling on the error path.",
       codexRef,
+      "codex",
     );
 
     expect(new Set([claudeRef, codexRef, fromClaude, fromCodex]).size).toBe(4);
-    expect(claudeRef.startsWith("f")).toBe(true);
-    expect(fromClaude.startsWith("f")).toBe(true);
-    expect(codexRef.startsWith("g")).toBe(true);
-    expect(fromCodex.startsWith("g")).toBe(true);
 
-    // ONE board, holding all four in the order the two seats' calls arrived — not two
-    // boards that happen to be prefixed differently.
+    // ONE board, holding all four in the order the compiler's calls arrived.
     const elements = lane.board().elements;
     expect(elements.map((element) => element.id)).toEqual([
       claudeRef,
@@ -827,7 +847,9 @@ describe("a Flagged lane gets two addresses onto one board (2.6, D9)", () => {
       fromClaude,
       fromCodex,
     ]);
-    // Each element carries the voice that wrote it.
+    // Each finding carries the author of the model the compiler attributed it to — the two
+    // review seats write no board, so this attribution is the compiler's `origin` enum, not
+    // a voice on the writing seat.
     const authorOf = (id: string): string | undefined => {
       const data = elements.find((element) => element.id === id)?.data as
         | { author?: { id?: string } }
@@ -838,28 +860,20 @@ describe("a Flagged lane gets two addresses onto one board (2.6, D9)", () => {
     expect(authorOf(fromCodex)).toBe("lens:flagged:codex");
   });
 
-  it("one voice can cite an element the other voice created, because it is one board", async () => {
+  it("a finding the compiler marks `concur` carries both models' concurrence tallies", async () => {
     const server = await serverWith();
     const lane = server.openLane({ generationId: "gen-1", target: "flagged", lint: lint() });
-    const claude = addressOf(
+    const compile = addressOf(
       lane.address({
-        seat: "flagged-claude",
-        author: { kind: "lens-agent", id: "lens:flagged:claudeAgent" },
-        idPrefix: "f",
+        seat: "flagged-compile",
+        author: { kind: "lens-agent", id: "lens:flagged" },
+        idPrefix: "c",
       }),
     );
-    const codex = addressOf(
-      lane.address({
-        seat: "flagged-codex",
-        author: { kind: "lens-agent", id: "lens:flagged:codex" },
-        idPrefix: "g",
-      }),
-    );
-    await handshake(claude.url);
-    await handshake(codex.url);
+    await handshake(compile.url);
 
     const cited = textOf(
-      await rpc(claude.url, {
+      await rpc(compile.url, {
         jsonrpc: "2.0",
         id: 2,
         method: "tools/call",
@@ -869,7 +883,7 @@ describe("a Flagged lane gets two addresses onto one board (2.6, D9)", () => {
         },
       }),
     );
-    const finding = await rpc(codex.url, {
+    const finding = await rpc(compile.url, {
       jsonrpc: "2.0",
       id: 3,
       method: "tools/call",
@@ -879,10 +893,20 @@ describe("a Flagged lane gets two addresses onto one board (2.6, D9)", () => {
           severity: "medium",
           concern: "The classification happens before the code is read.",
           code_ref_ids: [cited],
+          origin: "codex",
+          agreement: "concur",
         },
       },
     });
     expect(isError(finding)).toBe(false);
+
+    // `concur` is the both-models-raised case: two concurrence tallies and an `accord` of
+    // `concur`, host-expanded from the compiler's two flat enums.
+    const written = lane.board().elements.find((element) => element.kind === "finding")?.data as
+      | { accord?: string; concurrence?: readonly unknown[] }
+      | undefined;
+    expect(written?.accord).toBe("concur");
+    expect(written?.concurrence).toHaveLength(2);
   });
 
   it("opening the same lane twice returns the board that is already being written", async () => {
@@ -890,9 +914,9 @@ describe("a Flagged lane gets two addresses onto one board (2.6, D9)", () => {
     const first = server.openLane({ generationId: "gen-1", target: "flagged", lint: lint() });
     const url = addressOf(
       first.address({
-        seat: "flagged-claude",
-        author: { kind: "lens-agent", id: "lens:flagged:claudeAgent" },
-        idPrefix: "f",
+        seat: "flagged-compile",
+        author: { kind: "lens-agent", id: "lens:flagged" },
+        idPrefix: "c",
       }),
     ).url;
     await handshake(url);
@@ -900,7 +924,7 @@ describe("a Flagged lane gets two addresses onto one board (2.6, D9)", () => {
       jsonrpc: "2.0",
       id: 2,
       method: "tools/call",
-      params: { name: "add_section", arguments: { title: "Correctness" } },
+      params: { name: "add_section", arguments: { title: "Findings" } },
     });
     const second = server.openLane({ generationId: "gen-1", target: "flagged", lint: lint() });
     expect(second.board().elements).toHaveLength(1);

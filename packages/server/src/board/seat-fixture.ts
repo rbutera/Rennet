@@ -126,6 +126,18 @@ export function replayBoard(voice: BoardVoiceWriter, target: BoardTarget, board:
     const input = inputFrom(tool.fields, element.data as Record<string, unknown>);
     const parent = parentOf.get(element.id);
     if (parent !== undefined) input.parent_id = remap(parent);
+    // The Flagged compile board asks each finding for its `origin` and `agreement` — the
+    // review provenance the compiler carries in from the two findings files. These ride the
+    // finding verbs as input-only enums (they expand into the host-owned author and tallies
+    // and never persist), so they sit beside `tool.fields` rather than in it, and a replayed
+    // DraftBoard has no field to read them from. A fixture that drives the compile board
+    // through `replayBoard` gets the plain single-origin reading (this finding came from one
+    // review), which is what every board-shaped flagged fixture wants; a test about
+    // concurrence or conflict scripts the compiler turn itself instead.
+    if (target === "flagged" && element.kind === "finding") {
+      input.origin ??= "claude";
+      input.agreement ??= "solo";
+    }
     const id = call(tool.name, input);
     if (id !== undefined) minted.set(element.id, id);
   }

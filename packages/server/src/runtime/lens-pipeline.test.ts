@@ -14,7 +14,6 @@ import {
   buildDeltaPacket,
   CHANGE_INDEX_FILE,
   type DeltaPacket,
-  HOST_COMPOSER_AUTHOR_ID,
   inlineContextViolation,
   type LintContext,
   type LintTarget,
@@ -53,7 +52,7 @@ import {
 } from "../board/seat-fixture";
 import { createBoardsRuntime } from "../boards/boards-runtime";
 import type { SessionContextFile } from "../context-files";
-import { SEAT_BOARD_TARGET, SEAT_BOARD_VOICE, type SeatKind } from "../t3/threads";
+import { SEAT_BOARD_TARGET, type SeatKind } from "../t3/threads";
 
 afterAll(closeFixtureBoardServer);
 
@@ -72,15 +71,12 @@ import {
   REPAIR_TARGET_KINDS,
   ROUND_CONTEXT_FILE,
   ROUND_EVIDENCE_FILE,
-  reconcileFlaggedVoices,
   renderDrafterPrompt,
   renderRepairPrompt,
   renderRoundReportClassifierPrompt,
   roundContextFile,
   roundEvidenceFile,
   runLensPipeline,
-  stampSingleSeatConcurrence,
-  stampVoiceConcurrence,
 } from "./lens-pipeline";
 import { buildRoundEvidenceManifest } from "./round-evidence-manifest";
 
@@ -349,13 +345,47 @@ const proseOnlyBody = (lens: string, markdown = "This change reads cleanly."): D
   ],
 });
 
-/** A semantically populated board for load-bearing lanes, ordinary prose elsewhere. */
-const cleanBody = (lens: string): DraftBoard => {
+/** A semantically populated DraftBoard for load-bearing lanes, ordinary prose elsewhere. */
+const draftBody = (lens: string): DraftBoard => {
   if (lens === "sequence") return meaningfulSequenceBody();
   if (lens === "decisions") return meaningfulDecisionBody();
   if (lens === "flagged") return meaningfulFlaggedBody();
   return proseOnlyBody(lens);
 };
+
+/**
+ * The compiler's default turn (move two). The Flagged board's `add_finding` REQUIRES the two
+ * compile enums (`origin`, `agreement`), which a `DraftBoard` replay cannot supply — the
+ * replay derives its input from `tool.fields`, and those two ride beside them. So the seat
+ * that WRITES the Flagged board is always a function turn, never a draft body: it calls the
+ * verb directly, carrying the enums. One grounded-independent finding (empty `code_ref_ids`,
+ * exactly as the old flagged body's finding), authored as this model's alone.
+ */
+const defaultCompileTurn = (voice: BoardVoiceWriter): void => {
+  // A section root the finding hangs under, so the served board reaches it
+  // (`flagged-material-reachable`) and the turn settles without a repair.
+  const root = idOf(voice.call("add_section", { title: "Findings" }));
+  okCall(
+    voice.call("add_finding", {
+      severity: "medium",
+      concern: "A partial write leaves the event batch inconsistent.",
+      code_ref_ids: [],
+      parent_id: root,
+      origin: "claude",
+      agreement: "solo",
+    }),
+  );
+  okCall(voice.call("finish"));
+};
+
+/**
+ * The body a generic full-pipeline seat writes. `flagged-compile` is the seat that writes the
+ * Flagged board now, and it can only be a function turn (see `defaultCompileTurn`); `flagged`
+ * (the legacy literal) and every other lens stay `DraftBoard`s. `flagged-review` is lane-less —
+ * its output is dropped — so it falls through to a prose body that never lands.
+ */
+const cleanBody = (lens: string): DraftBoard | ((voice: BoardVoiceWriter) => void) =>
+  lens === "flagged-compile" ? defaultCompileTurn : draftBody(lens);
 
 const DESIGN_SOURCE = "openspec/changes/token-refresh/specs/auth/spec.md";
 const DESIGN_HUNKS = [
@@ -500,8 +530,22 @@ function lensFromPrompt(prompt: string, label?: string): string {
   if (match?.[1] !== undefined) return match[1];
   const seat = label?.split(".").at(-1);
   if (seat === undefined) return "unknown";
-  return seat.startsWith("flagged") ? "flagged" : seat;
+  // A repair turn carries only its lint pointers, not the base prompt's `PROMPT_FILE` marker,
+  // so the lens is read off the seat label. Flagged is three seats now (move two): the compiler
+  // writes the board and the two review seats are lane-less, and they take different fixture
+  // paths — so the label must keep them apart rather than collapsing all three to `flagged`.
+  if (seat === "flagged-compile") return "flagged-compile";
+  if (seat.startsWith("flagged")) return "flagged-review";
+  return seat;
 }
+
+/**
+ * The user-facing LANE a seat prompt belongs to. Flagged is three seats now (move two) — two
+ * lane-less review seats and one compiler — but they all write, review, and settle the single
+ * `flagged` board, so a test keying on the lane folds all three to `flagged`.
+ */
+const laneOf = (lens: string): string =>
+  lens === "flagged-review" || lens === "flagged-compile" ? "flagged" : lens;
 
 /** One turn a seat ran on its thread, as the fake sidecar saw it. */
 interface SeatCapture {
@@ -621,12 +665,16 @@ function boardSeats(
   captures: SeatCapture[],
   script: (prompt: string, seat: string) => unknown,
   installed: readonly CouncilHarnessId[] = ["claude-code"],
-): Pick<LensPipelineDeps, "t3" | "council" | "boards"> {
+): Pick<LensPipelineDeps, "t3" | "council" | "boards" | "writeContext"> {
   const boards = fixtureGenerationBoards();
   return {
     t3: fakeT3Seam(captures, script, boards),
     council: { availability: { installed } },
     boards,
+    // A session context dir, as production always has one. Flagged's review seats write their
+    // findings files under it, so the review→compile lane needs it to run at all; a test that
+    // drives the no-context path sets its own `writeContext` after the spread to override this.
+    writeContext: () => ".rennet/context/s1",
   };
 }
 
@@ -1220,300 +1268,171 @@ describe("aggregateFailureAccount — one lens account from many seats (#549)", 
   });
 });
 
-describe("reconcileFlaggedVoices — two voices, one Flagged board (J1/J2, D9)", () => {
-  const CLAUDE_VOICE = SEAT_BOARD_VOICE["flagged-claude"].author.id;
-  const CODEX_VOICE = SEAT_BOARD_VOICE["flagged-codex"].author.id;
-  const voices = {
-    a: { authorId: CLAUDE_VOICE, label: "Claude" },
-    b: { authorId: CODEX_VOICE, label: "Codex" },
+describe("the Flagged lens compiles two reviews into one board (flagged-review-compile, move two)", () => {
+  // The lane runs two lane-less REVIEW seats (each writes a findings FILE with its own tools,
+  // which this fake drops — they hold no board) and one COMPILER seat that reads both files
+  // and writes the whole Flagged board. The compiler attributes each finding with two flat
+  // enums, `origin` (which model raised it) and `agreement` (concur | diverge | solo), and the
+  // host expands them into `author` / `concurrence` / `accord` at WRITE time (Decision 10). So
+  // there is nothing to reconcile after the compiler settles — the board it wrote is the
+  // reader's board. These drive the real tool surface, so the expansion is exercised, not
+  // described.
+  const flaggedCtx: LintContext = {
+    lens: "flagged",
+    regions: [
+      { path: "src/auth.ts", side: "head", start: 10, end: 14 },
+      { path: "src/util.ts", side: "head", start: 1, end: 3 },
+    ],
+    files: new Map([
+      ["src/auth.ts", 200],
+      ["src/util.ts", 50],
+    ]),
+    patchsetId: PACKET.patchset.id,
   };
-  /** Stamp a fixture element with the voice that wrote it — what the writer does per call. */
-  const by = (
-    authorId: string,
-    element: DraftBoard["elements"][number],
-  ): DraftBoard["elements"][number] =>
-    ({
-      ...element,
-      data: { ...(element.data as object), author: { kind: "lens-agent", id: authorId } },
-    }) as DraftBoard["elements"][number];
 
-  it("repoints a collapse the voices reached at DIFFERENT spans in the same window", () => {
-    // The live shape (#548): two seats agree about one concern but cite spans a couple of
-    // lines apart. The reconciler matches within a line window, so they still collapse —
-    // and an anchor-equality repointing would miss exactly this, leaving the settled board
-    // unwritable. The fixture carries the difference on purpose.
-    const board = mkBoard([
-      by(CLAUDE_VOICE, mkFinding("a-f1", "Short.", ["a-c1"])),
-      by(CLAUDE_VOICE, mkCodeRef("a-c1", "src/client.ts", 11, 12)),
-      by(CLAUDE_VOICE, mkSection("a-sec", "Findings", ["a-f1"])),
-      by(
-        CODEX_VOICE,
-        mkFinding("b-f1", "A materially longer statement of the very same concern.", ["b-c1"]),
+  /**
+   * Drive one Flagged generation: review seats emit (their files are dropped), and the
+   * compiler's turn is `compile`. Returns the served Flagged board and every captured turn.
+   */
+  const runFlagged = async (
+    compile: (voice: BoardVoiceWriter) => void,
+    installed: readonly CouncilHarnessId[] = ["claude-code", "codex"],
+  ): Promise<{ board: DraftBoard; failure: string | undefined; seatTurns: SeatCapture[] }> => {
+    const seatTurns: SeatCapture[] = [];
+    const result = await runLensPipeline({
+      ...boardSeats(
+        seatTurns,
+        (prompt, seat) => {
+          const lens = lensFromPrompt(prompt, seat);
+          // A review seat writes its findings file with its own file tools; this fake holds
+          // no lane for it, so the turn just emits and the return is dropped — exactly what
+          // production does with it.
+          if (lens === "flagged-review") return undefined;
+          if (lens === "flagged-compile") return (voice: BoardVoiceWriter): void => compile(voice);
+          return cleanBody(lens);
+        },
+        installed,
       ),
-      by(CODEX_VOICE, mkCodeRef("b-c1", "src/client.ts", 13, 14)),
-      by(CODEX_VOICE, mkSection("b-sec", "Findings", ["b-f1"])),
-    ]);
-
-    const settled = reconcileFlaggedVoices(board, voices);
-    expect(settled.elements.filter(({ kind }) => kind === "finding")).toHaveLength(1);
-    const section = settled.elements.find(({ id }) => id === "a-sec");
-    expect((section?.data as { children?: string[] } | undefined)?.children).toEqual(["b-f1"]);
-    expect(admitBoardReferences(settled, "ps-1").unrepairable).toEqual([]);
-  });
-
-  it("repoints a COLLAPSED finding's citers at its kept partner, so the board is writable", async () => {
-    // Both voices raise the same finding at the same location; the Codex voice's wording is
-    // longer, so the reconciler keeps it and drops the Claude voice's. The Claude voice's
-    // section still cites the dropped id — the exact `bad-ref` the board service rejects a
-    // whole write for.
-    const board = mkBoard([
-      by(CLAUDE_VOICE, mkFinding("a-f1", "Short.", ["a-c1"])),
-      by(CLAUDE_VOICE, mkCodeRef("a-c1", "src/auth.ts", 11, 12)),
-      by(CLAUDE_VOICE, mkSection("findings", "Findings", ["a-f1"])),
-      by(
-        CODEX_VOICE,
-        mkFinding("b-f1", "A materially longer statement of the very same concern.", ["b-c1"]),
-      ),
-      by(CODEX_VOICE, mkCodeRef("b-c1", "src/auth.ts", 11, 12)),
-    ]);
-
-    const settled = reconcileFlaggedVoices(board, voices);
-    const findings = settled.elements.filter(({ kind }) => kind === "finding");
-    expect(findings).toHaveLength(1);
-    const keptId = findings[0]?.id ?? "";
-    expect(keptId).toBe("b-f1");
-    // The Claude voice's section now cites the SURVIVOR, not the id that collapsed into it.
-    const section = settled.elements.find(({ id }) => id === "findings");
-    expect((section?.data as { children?: string[] } | undefined)?.children).toEqual([keptId]);
-    expect(admitBoardReferences(settled, "ps-1").unrepairable).toEqual([]);
-
-    const root = await mkdtemp(join(tmpdir(), "lens-flagged-merge-"));
-    try {
-      const runtime = createBoardsRuntime(root);
-      const client = new WhiteboardClient(runtime.service);
-      const accepted = await client.apply(
-        await runtime.createRennetBoard(),
-        draftToOps(settled) as never,
-        "lens:flagged",
-      );
-      expect(accepted.response).toMatchObject({ ok: true });
-
-      // POSITIVE CONTROL — put the collapsed id back in the section's children (the shape
-      // reconciliation produced before it repointed) and the real service rejects the write.
-      const unrepointed = mkBoard(
-        settled.elements.map((element) =>
-          element.id === "findings"
-            ? ({
-                ...element,
-                data: { ...(element.data as object), children: ["a-f1"] },
-              } as DraftBoard["elements"][number])
-            : element,
-        ),
-      );
-      const rejected = await client.apply(
-        await runtime.createRennetBoard(),
-        draftToOps(unrepointed) as never,
-        "lens:flagged",
-      );
-      expect(rejected.response).toMatchObject({ ok: false, code: "bad-ref" });
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
-  });
-
-  it("rebuilds the document opening from the final reconciled severity picture", () => {
-    const board = {
-      ...mkBoard([
-        by(CLAUDE_VOICE, mkFinding("a-f1", "high concern", ["a-c1"], "high")),
-        by(CLAUDE_VOICE, mkCodeRef("a-c1", "src/high.ts", 1, 2)),
-        by(CODEX_VOICE, mkFinding("b-f1", "medium concern", ["b-c1"], "medium")),
-        by(CODEX_VOICE, mkCodeRef("b-c1", "src/medium.ts", 3, 4)),
-      ]),
-      document: {
-        title: "Flagged · primary",
-        introMarkdown: "1 high finding requires attention.",
-        measure: "reading" as const,
-      },
-    };
-
-    expect(reconcileFlaggedVoices(board, voices).document).toEqual({
-      title: "Flagged · primary",
-      introMarkdown: "2 findings require attention: 1 high, 1 medium.",
-      measure: "reading",
+      repoRoot: "/pr-worktree",
+      deltaPacket: PACKET,
+      lintContextFor: (lens) => (lens === "flagged" ? flaggedCtx : lintContextFor(lens)),
+      readPrompt,
+      writeContext: () => ".rennet/context/s1",
+      whiteboard: fakeWhiteboard([]),
+      boardIdFor: (lens) => `board:${lens}`,
     });
-  });
-
-  it("keeps the board's own title with a clean reconciled opening when nothing survived", () => {
-    const board = {
-      ...mkBoard([]),
-      document: {
-        title: "Flagged · secondary",
-        introMarkdown: "The secondary seat found one open concern.",
-        measure: "reading" as const,
-      },
+    const flagged = result.boards.find((b) => b.lens === "flagged");
+    return {
+      board: flagged?.board as DraftBoard,
+      failure: flagged?.failure,
+      seatTurns,
     };
+  };
 
-    expect(reconcileFlaggedVoices(board, voices).document).toEqual({
-      title: "Flagged · secondary",
-      introMarkdown: "No findings require attention.",
-      measure: "reading",
-    });
-  });
+  /** Add one finding the way the compiler does — citing a grounded span, carrying the enums. */
+  const addFinding = (
+    voice: BoardVoiceWriter,
+    opts: {
+      concern: string;
+      origin: "claude" | "codex";
+      agreement: "concur" | "diverge" | "solo";
+      severity?: "high" | "medium" | "low";
+    },
+  ): void => {
+    const root = idOf(voice.call("add_section", { title: "Findings" }));
+    const cited = idOf(
+      voice.call("cite", { path: "src/auth.ts", side: "head", start_line: 11, end_line: 12 }),
+    );
+    okCall(
+      voice.call("add_finding", {
+        severity: opts.severity ?? "high",
+        concern: opts.concern,
+        code_ref_ids: [cited],
+        parent_id: root,
+        origin: opts.origin,
+        agreement: opts.agreement,
+      }),
+    );
+    okCall(voice.call("finish"));
+  };
 
-  it("collapses a matched pair to the clearer finding with BOTH models concurring", () => {
-    const board = mkBoard([
-      by(CLAUDE_VOICE, mkFinding("a-f1", "short", ["a-c1"])),
-      by(CLAUDE_VOICE, mkCodeRef("a-c1", "src/auth.ts", 11, 12)),
-      by(
-        CODEX_VOICE,
-        mkFinding("b-f1", "a materially clearer, longer summary of the same concern", ["b-c1"]),
-      ),
-      by(CODEX_VOICE, mkCodeRef("b-c1", "src/auth.ts", 11, 12)),
-    ]);
-    const settled = reconcileFlaggedVoices(board, voices);
-    const findings = settled.elements.filter((element) => element.kind === "finding");
+  it("compiles two reviews of the same bug into ONE concurring finding (semantic concurrence)", async () => {
+    // The two reviewers each flagged the same bug, at spans a couple of lines apart. There is
+    // no host matcher now: the COMPILER read both files and judged them one concern, saying so
+    // with `agreement: "concur"`. The host expands that into both models' tallies and accord
+    // `concur` — one finding, both credited. Two review files in, one finding out.
+    const { board, failure } = await runFlagged((voice) =>
+      addFinding(voice, {
+        concern: "The refresh token is classified as an error before its code is read.",
+        origin: "claude",
+        agreement: "concur",
+      }),
+    );
+    expect(failure).toBeUndefined();
+    const findings = board.elements.filter((e) => e.kind === "finding");
     expect(findings).toHaveLength(1);
-    // The clearer (longer) summary — the Codex voice's — is kept, with both models at 1/1.
-    expect(concurrenceOf(settled, findings[0]?.id ?? "")).toEqual([
+    expect(concurrenceOf(board, findings[0]?.id ?? "")).toEqual([
       { model: "Claude", agree: 1, total: 1 },
       { model: "Codex", agree: 1, total: 1 },
     ]);
-    expect(accordOn(settled, findings[0]?.id ?? "")).toBe("concur");
+    expect(accordOn(board, findings[0]?.id ?? "")).toBe("concur");
   });
 
-  // THE AMBIGUITY THE TALLIES CANNOT RESOLVE: two voices that both raised the finding at
-  // materially different severities produce `disagree` with NEITHER answer being
-  // `NO_CONCERN_ANSWER`, so `foldConcurrence` emits `[{a,1,1},{b,1,1}]` — the BYTE-IDENTICAL
-  // tally set a real concurrence produces. A client reading the arithmetic renders a
-  // disagreement as agreement, which is exactly what the board pill used to do. The
-  // `accord` stamp is the only thing that separates the two, so this test asserts both
-  // halves: the tallies really are identical, and the accord really does differ.
-  it("stamps a severity conflict `conflict`, though its tallies match a concurrence exactly", () => {
-    const board = mkBoard([
-      by(CLAUDE_VOICE, mkFinding("a-f1", "this drops writes under load", ["a-c1"], "high")),
-      by(CLAUDE_VOICE, mkCodeRef("a-c1", "src/auth.ts", 11, 12)),
-      by(CODEX_VOICE, mkFinding("b-f1", "minor: tidy this up sometime", ["b-c1"], "low")),
-      by(CODEX_VOICE, mkCodeRef("b-c1", "src/auth.ts", 11, 12)),
-    ]);
-    const settled = reconcileFlaggedVoices(board, voices);
-    const findings = settled.elements.filter((element) => element.kind === "finding");
-    expect(findings).toHaveLength(1);
-    const id = findings[0]?.id ?? "";
-    expect(concurrenceOf(settled, id)).toEqual([
-      { model: "Claude", agree: 1, total: 1 },
+  it("keeps a solo finding under the model that raised it — one tally, that model's author", async () => {
+    // Only Codex flagged this; the compiler marks it `solo` with `origin: "codex"`. The host
+    // authors it under Codex ALONE — one tally, accord `split`, author `lens:flagged:codex`.
+    // Crediting the other model would name a model that never saw it.
+    const { board, failure } = await runFlagged((voice) =>
+      addFinding(voice, {
+        concern: "Only Codex saw this one.",
+        origin: "codex",
+        agreement: "solo",
+      }),
+    );
+    expect(failure).toBeUndefined();
+    const finding = board.elements.find((e) => e.kind === "finding");
+    expect(concurrenceOf(board, finding?.id ?? "")).toEqual([
       { model: "Codex", agree: 1, total: 1 },
     ]);
-    expect(accordOn(settled, id)).toBe("conflict");
-  });
-
-  it("keeps two solo findings, each with the raising model agreeing and the other at zero", () => {
-    const board = mkBoard([
-      by(CLAUDE_VOICE, mkFinding("a-f1", "only Claude saw this", ["a-c1"])),
-      by(CLAUDE_VOICE, mkCodeRef("a-c1", "src/auth.ts", 11, 12)),
-      by(CODEX_VOICE, mkFinding("b-f1", "only Codex saw this", ["b-c1"])),
-      by(CODEX_VOICE, mkCodeRef("b-c1", "src/other.ts", 3, 4)),
-    ]);
-    const settled = reconcileFlaggedVoices(board, voices);
-    expect(settled.elements.filter((element) => element.kind === "finding")).toHaveLength(2);
-    expect(concurrenceOf(settled, "a-f1")).toEqual([
-      { model: "Claude", agree: 1, total: 1 },
-      { model: "Codex", agree: 0, total: 1 },
-    ]);
-    expect(concurrenceOf(settled, "b-f1")).toEqual([
-      { model: "Claude", agree: 0, total: 1 },
-      { model: "Codex", agree: 1, total: 1 },
-    ]);
-    // A solo is a SPLIT, not a conflict — one voice answered "no concern".
-    expect(accordOn(settled, "a-f1")).toBe("split");
-    expect(accordOn(settled, "b-f1")).toBe("split");
-  });
-
-  it("leaves a finding neither voice wrote alone — the host's carried round history", () => {
-    // A round carries the previous generation's addressed findings onto this board under
-    // the HOST's author. They are not either seat's work and were never in the fold, so a
-    // reconciliation that dropped them (or stamped them with a model's concurrence) would
-    // be crediting a model that never saw them.
-    const board = mkBoard([
-      by(CLAUDE_VOICE, mkFinding("a-f1", "only Claude saw this", ["a-c1"])),
-      by(CLAUDE_VOICE, mkCodeRef("a-c1", "src/auth.ts", 11, 12)),
-      by(CODEX_VOICE, mkFinding("b-f1", "only Codex saw this", ["b-c1"])),
-      by(CODEX_VOICE, mkCodeRef("b-c1", "src/other.ts", 3, 4)),
-      by(HOST_COMPOSER_AUTHOR_ID, mkFinding("h-f1", "carried from round 1", [])),
-    ]);
-    const settled = reconcileFlaggedVoices(board, voices);
-    const carried = settled.elements.find(({ id }) => id === "h-f1");
-    expect(carried, "the host's carried finding was dropped by reconciliation").toBeDefined();
-    expect(concurrenceOf(settled, "h-f1")).toEqual([]);
-    expect(accordOn(settled, "h-f1")).toBeUndefined();
-  });
-});
-
-describe("stampVoiceConcurrence — no fold ran, so each finding names its own voice", () => {
-  const CLAUDE_VOICE = SEAT_BOARD_VOICE["flagged-claude"].author.id;
-  const CODEX_VOICE = SEAT_BOARD_VOICE["flagged-codex"].author.id;
-  const labelFor = (authorId: string): string =>
-    authorId === CODEX_VOICE ? "Codex" : authorId === CLAUDE_VOICE ? "Claude" : "unknown";
-  const by = (
-    authorId: string,
-    element: DraftBoard["elements"][number],
-  ): DraftBoard["elements"][number] =>
-    ({
-      ...element,
-      data: { ...(element.data as object), author: { kind: "lens-agent", id: authorId } },
-    }) as DraftBoard["elements"][number];
-
-  it("credits each voice for its OWN findings when the lane's other seat never settled", () => {
-    // The shape this exists for: two seats ran, one died with findings already on the
-    // board. Stamping one label over the whole board would report the dead seat's findings
-    // under the survivor's model — a second opinion that never happened, on the very
-    // findings the failed model produced.
-    const board = mkBoard([
-      by(CLAUDE_VOICE, mkFinding("a-f1", "the seat that settled", [])),
-      by(CODEX_VOICE, mkFinding("b-f1", "the seat that died mid-turn", [])),
-    ]);
-    const stamped = stampVoiceConcurrence(board, labelFor);
-    expect(concurrenceOf(stamped, "a-f1")).toEqual([{ model: "Claude", agree: 1, total: 1 }]);
-    expect(concurrenceOf(stamped, "b-f1")).toEqual([{ model: "Codex", agree: 1, total: 1 }]);
-    // No accord in either case: one voice has no agreement to report.
-    expect(accordOn(stamped, "a-f1")).toBeUndefined();
-    expect(accordOn(stamped, "b-f1")).toBeUndefined();
-  });
-});
-
-describe("stampSingleSeatConcurrence — the honest single-seat degrade", () => {
-  it("stamps every finding with the one running model's concurrence", () => {
-    const board = mkBoard([
-      mkFinding("f1", "concern", ["c1"]),
-      mkCodeRef("c1", "src/auth.ts", 11, 12),
-    ]);
-    const stamped = stampSingleSeatConcurrence(board, "Claude");
-    expect(concurrenceOf(stamped, "f1")).toEqual([{ model: "Claude", agree: 1, total: 1 }]);
-    // …and NO accord: one seat has no agreement to report, so there is nothing to stamp.
-    // `concur` here would claim a second opinion that never ran.
-    expect(accordOn(stamped, "f1")).toBeUndefined();
-    expect(stamped.document).toBeUndefined();
-  });
-
-  it("rebuilds a surviving seat's document from its final severity picture", () => {
-    const board = {
-      ...mkBoard([
-        mkFinding("f1", "high concern", ["c1"], "high"),
-        mkCodeRef("c1", "src/high.ts", 11, 12),
-        mkFinding("f2", "low concern", ["c2"], "low"),
-        mkCodeRef("c2", "src/low.ts", 21, 22),
-      ]),
-      document: {
-        title: "Flagged · surviving seat",
-        introMarkdown: "1 high finding requires attention.",
-        measure: "structured" as const,
-      },
-    };
-
-    expect(stampSingleSeatConcurrence(board, "Codex").document).toEqual({
-      title: "Flagged · surviving seat",
-      introMarkdown: "2 findings require attention: 1 high, 1 low.",
-      measure: "reading",
+    expect(accordOn(board, finding?.id ?? "")).toBe("split");
+    expect((finding?.data as { author?: unknown } | undefined)?.author).toEqual({
+      kind: "lens-agent",
+      id: "lens:flagged:codex",
     });
+  });
+
+  it("carries the compiler's concern prose onto the board verbatim", async () => {
+    // The compiler merges by what a finding SAYS and never rewrites it, so whatever concern
+    // text it passes to `add_finding` is exactly what the board shows — no host paraphrase.
+    const CONCERN =
+      "The refresh token is classified as an error before its code is read, so a live token is rejected.";
+    const { board, failure } = await runFlagged((voice) =>
+      addFinding(voice, { concern: CONCERN, origin: "claude", agreement: "concur" }),
+    );
+    expect(failure).toBeUndefined();
+    const finding = board.elements.find((e) => e.kind === "finding");
+    expect((finding?.data as { concern?: unknown } | undefined)?.concern).toBe(CONCERN);
+  });
+
+  it("degrades to a single review when one harness is missing, and still compiles the board", async () => {
+    // Codex is not installed, so only the Claude review runs. The lane does not fail — the
+    // compiler still runs, and its task tells it the one review it got is a solo from that
+    // model. A single review is a degrade, not a lane failure.
+    const { board, failure, seatTurns } = await runFlagged(
+      (voice) =>
+        addFinding(voice, {
+          concern: "The one review's only finding.",
+          origin: "claude",
+          agreement: "solo",
+        }),
+      ["claude-code"],
+    );
+    expect(failure).toBeUndefined();
+    expect(seatTurns.some((c) => c.seat === "flagged-claude")).toBe(true);
+    expect(seatTurns.some((c) => c.seat === "flagged-codex")).toBe(false);
+    const compile = seatTurns.find((c) => c.seat === "flagged-compile");
+    expect(compile?.prompt).toContain("every finding is that model's alone");
+    expect(board.elements.filter((e) => e.kind === "finding")).toHaveLength(1);
   });
 });
 
@@ -1628,7 +1547,16 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
 
     const seatMetrics = collector.metrics.filter(({ label }) => label.startsWith("board.lens-"));
     expect(seatMetrics.length, "every lens seat recorded a turn").toBeGreaterThan(0);
+    // The Flagged review seats are lane-less (move two): they write a findings FILE with the
+    // harness's own tools, hold no board, and so carry no board tool count — exactly like the
+    // round-report seat below. Every seat that DOES hold a lane carries a real count.
+    const laneless = (label: string): boolean =>
+      label.endsWith(".flagged-claude") || label.endsWith(".flagged-codex");
     for (const metric of seatMetrics) {
+      if (laneless(metric.label)) {
+        expect(metric.toolCalls, `${metric.label} fabricated a tool-call count`).toBeUndefined();
+        continue;
+      }
       expect(metric.toolCalls, `${metric.label} carried no tool-call count`).toBeDefined();
     }
     // …and at least one is a real count off a board that was actually written, not a zero
@@ -1679,12 +1607,20 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     // ("reveals each lens board as its own lane settles"), which releases the lanes in a
     // known order and asserts the reveal follows it.
     expect([...arrivals.map((a) => a.lens)].sort()).toEqual([...lenses].sort());
-    expect(captures.map(({ prompt }) => lensFromPrompt(prompt ?? "")).sort()).toEqual(
-      [...lenses].sort(),
-    );
-    expect(captures.some(({ prompt }) => lensFromPrompt(prompt ?? "") === "post-process")).toBe(
-      false,
-    );
+    // Flagged is a review-then-compile lane now (move two): a review prompt per installed
+    // harness and one compile prompt, so its board comes from more than one capture. This
+    // council installs Claude alone, so one review runs; the distinct prompt set names all six.
+    const seatPrompts = captures.map(({ prompt }) => lensFromPrompt(prompt ?? ""));
+    expect([...new Set(seatPrompts)].sort()).toEqual([
+      "decisions",
+      "design",
+      "flagged-compile",
+      "flagged-review",
+      "noise",
+      "sequence",
+    ]);
+    expect(seatPrompts.filter((lens) => lens === "flagged-review")).toHaveLength(1);
+    expect(seatPrompts.some((lens) => lens === "post-process")).toBe(false);
   });
 
   it("falls the Design lane back to the seat when the assembler throws, SAYING SO on the log", async () => {
@@ -2148,7 +2084,12 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       const result = await runLensPipeline({
         ...boardSeats([], (prompt, label) => {
           const lens = lensFromPrompt(prompt, label);
-          if (lens === emptyLens) {
+          // The seat that OWNS the lane's board declares its absence. For Flagged that is the
+          // COMPILER now (move two): the two review seats just emit their files (dropped here),
+          // and the compiler reads them and settles the board — or declares it empty.
+          if (lens === "flagged-review") return undefined;
+          const owner = emptyLens === "flagged" ? "flagged-compile" : emptyLens;
+          if (lens === owner) {
             emptyLensTurns += 1;
             // An absence is now an ACT, not an inference from an empty return: the seat
             // calls the one settle-absent verb its lens has, whose reason is fixed by the
@@ -2289,15 +2230,17 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     expect(noiseTurns.length).toBe(noise?.failureAccount?.attempt ?? 0);
   });
 
-  it("carries an aggregated account when BOTH flagged seats fail (#549)", async () => {
-    // Both seats emit nothing, on every turn, so both spend their ladders — the lens is
-    // terminal, and it says so with an account rather than a bare sentence.
-    const noBoard = (prompt: string, label?: string): unknown =>
-      lensFromPrompt(prompt, label) === "flagged"
-        ? undefined
-        : cleanBody(lensFromPrompt(prompt, label));
+  it("carries a terminal account when BOTH flagged review seats fail (#549)", async () => {
+    // Move two: the lane fails before the compiler runs when neither review leg emits a
+    // findings file. Each review seat throws, so both legs fail; the lane is terminal, and it
+    // says so with an account rather than a bare sentence — like every other exhausted lane.
+    const noReview = (prompt: string, label?: string): unknown => {
+      const lens = lensFromPrompt(prompt, label);
+      if (lens === "flagged-review") throw new Error("the review seat crashed");
+      return cleanBody(lens);
+    };
     const result = await runLensPipeline({
-      ...boardSeats([], noBoard, ["claude-code", "codex"]),
+      ...boardSeats([], noReview, ["claude-code", "codex"]),
       repoRoot: "/pr-worktree",
       deltaPacket: PACKET,
       lintContextFor,
@@ -2307,9 +2250,12 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     });
 
     const flagged = result.boards.find(({ lens }) => lens === "flagged");
-    expect(flagged?.failure).toContain("both flagged seats failed");
-    // Both seats named the SAME lane's failure; the account survives the aggregation
-    // instead of being rebuilt as a string with the classification thrown away.
+    // Both origins named, and no findings file to compile — the lane never reaches the compiler.
+    expect(flagged?.failure).toContain("every flagged review seat failed");
+    expect(flagged?.failure).toContain("claude");
+    expect(flagged?.failure).toContain("codex");
+    // The failure carries a terminal account, so the reader sorts it beside the other
+    // exhausted lanes rather than special-casing the one with no classification.
     expect(flagged?.failureAccount?.classification).toBe("terminal");
     expect(flagged?.failureAccount?.attempt).toBeGreaterThan(0);
   });
@@ -2673,7 +2619,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       );
     }
     const lensesDispatched = new Set(
-      seatTurns.map(({ prompt, seat }) => lensFromPrompt(prompt ?? "", seat)),
+      seatTurns.map(({ prompt, seat }) => laneOf(lensFromPrompt(prompt ?? "", seat))),
     );
     for (const lens of ["design", "sequence", "decisions", "flagged", "noise"]) {
       expect(lensesDispatched.has(lens), `${lens} seat ran`).toBe(true);
@@ -2706,11 +2652,28 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
   it.each([
     ["decisions", "prose-only", () => proseOnlyBody("decisions", "No choices found.")],
     ["decisions", "orphan decision", () => withoutRootSections(meaningfulDecisionBody())],
+    // Flagged's board is the COMPILER's now (move two). Its prose-only shape is a plain draft
+    // body (no finding → `finish` refused); its orphan-finding shape must be a function turn,
+    // because the board's `add_finding` requires the compile enums a draft replay cannot carry —
+    // so it adds a finding WITH the enums but under no section, leaving it unreachable.
     ["flagged", "prose-only", () => proseOnlyBody("flagged", "No defect found.")],
     [
       "flagged",
       "orphan finding",
-      () => mkBoard([mkFinding("detached-finding", "A detached finding is not served.", [])]),
+      () =>
+        (voice: BoardVoiceWriter): void => {
+          okCall(
+            voice.call("add_finding", {
+              severity: "medium",
+              concern: "A detached finding is not served.",
+              code_ref_ids: [],
+              origin: "claude",
+              agreement: "solo",
+            }),
+          );
+          // No section root, so the finding is unreachable and `finish` is refused.
+          okCall(voice.call("finish"));
+        },
     ],
   ] as const)(
     "records a non-empty %s %s result as a precise failure, on one base prompt",
@@ -2719,14 +2682,17 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       const captures: SeatCapture[] = [];
       const applied: Applied[] = [];
       const arrivals: BoardArrivalEvent[] = [];
+      // For Flagged the board owner is the compiler; its two review seats just emit (dropped).
+      const owner = malformedLens === "flagged" ? "flagged-compile" : malformedLens;
       const result = await runLensPipeline({
         ...boardSeats(captures, (prompt, label) => {
           const lens = lensFromPrompt(prompt, label);
+          if (lens === "flagged-review") return undefined;
           if (lens === "post-process") {
             const context = /rennet:layer context>>>\n(\{.*)/s.exec(prompt);
             return context ? (JSON.parse(context[1] as string).board as unknown) : { elements: [] };
           }
-          if (lens === malformedLens) {
+          if (lens === owner) {
             malformedLensTurns += 1;
             return malformedBody();
           }
@@ -2750,9 +2716,9 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       // prompt travels once, on the thread's first turn, and the repair carries the verdict
       // alone.
       expect(malformedLensTurns).toBe(2);
-      expect(
-        captures.filter(({ prompt }) => prompt?.includes(`prompts/${malformedLens}.md`)),
-      ).toHaveLength(1);
+      expect(captures.filter(({ prompt }) => prompt?.includes(`prompts/${owner}.md`))).toHaveLength(
+        1,
+      );
       expect(outcome?.absence).toBeUndefined();
       expect(outcome?.failure).toContain("did not finish its board");
       expect(applied.map(({ boardId }) => boardId)).not.toContain(`board:${malformedLens}`);
@@ -3400,23 +3366,18 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     // The council's claude-only table: the deep reading-surface lenses on opus, noise on haiku, flagged on sonnet.
     expect(modelFor("prompts/design.md")).toBe("opus-4.8");
     expect(modelFor("prompts/noise.md")).toBe("haiku");
-    expect(modelFor("prompts/flagged.md")).toBe("opus-4.8"); // Opus, not Sonnet (Rai, 2026-09-03)
+    // The compiler is the flagged lane's board-writing seat; it routes on `lens-draft-flagged`.
+    expect(modelFor("prompts/flagged-compile.md")).toBe("opus-4.8"); // Opus, not Sonnet (Rai, 2026-09-03)
   });
 
-  it("leaves the cross-seat marks OFF the board while one voice is still writing (3.4)", async () => {
-    // Task 3.4's stated control, which existed in no form: the positive half — both voices
-    // settled, both models tallied — is proven by the dual-seat test below, and the
-    // NEGATIVE half was not. Replacing `stampVoiceConcurrence(lane.board(), labelFor)` with
-    // a bare `lane.board()` left the whole server suite green, because nothing anywhere
-    // read a Flagged board that had NOT been through a fold.
-    //
-    // The shape: the Claude voice writes a finding and settles; the Codex voice writes one
-    // and its turn ENDS without finishing, on every attempt, so it never settles and no
-    // fold may run. What the board must then say is what actually happened — each finding
-    // credited to the voice that wrote it, and NO `accord`, because there was no agreement
-    // to report. A board that came back carrying `concur` here would be claiming a second
-    // opinion from a seat that never gave one.
+  it("routes two review legs to two providers and the compiler to the council pick", async () => {
+    // The flagged-review-compile flow: two lane-less REVIEW seats — one pinned to the Claude
+    // harness, one to Codex, via `flaggedLegOverrides` — each write a findings file (dropped
+    // by this fake, which holds no lane for them), and ONE compiler seat routes on
+    // `lens-draft-flagged` against the full council and writes the board. So flagged spends
+    // THREE turns where a one-seat lens spends one, and no `post-process` turn runs.
     const seatTurns: SeatCapture[] = [];
+    const applied: Applied[] = [];
     const flaggedCtx: LintContext = {
       lens: "flagged",
       regions: [
@@ -3429,56 +3390,36 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       ]),
       patchsetId: PACKET.patchset.id,
     };
-    const CLAUDE_CONCERN = "The refresh token is classified as an error before its code is read.";
-    const CODEX_CONCERN = "A different concern, in a different file, from the seat that died.";
+
+    // The compiler judges the two reviews one concern and says so: one `concur` finding, both
+    // models tallied. The enum→tallies expansion is board-writer's to prove exhaustively; here
+    // it rides the whole pipeline to show the wiring carries origin/agreement end to end.
+    const compileTurn = (voice: BoardVoiceWriter): void => {
+      const root = idOf(voice.call("add_section", { title: "Findings" }));
+      const cited = idOf(
+        voice.call("cite", { path: "src/auth.ts", side: "head", start_line: 11, end_line: 12 }),
+      );
+      okCall(
+        voice.call("add_finding", {
+          severity: "high",
+          concern: "The refresh token is classified as an error before its code is read.",
+          code_ref_ids: [cited],
+          parent_id: root,
+          origin: "claude",
+          agreement: "concur",
+        }),
+      );
+      okCall(voice.call("finish"));
+    };
 
     const result = await runLensPipeline({
       ...boardSeats(
         seatTurns,
-        (prompt, label) => {
-          const lens = lensFromPrompt(prompt, label);
-          if (lens !== "flagged") return cleanBody(lens);
-          if (label === "flagged-codex") {
-            // Writes, then STOPS. No `finish`, no settle-absent: the turn ends unsettled,
-            // which is the one event that spends an attempt — and this voice never settles.
-            return (voice: BoardVoiceWriter): void => {
-              const cited = idOf(
-                voice.call("cite", {
-                  path: "src/util.ts",
-                  side: "head",
-                  start_line: 1,
-                  end_line: 3,
-                }),
-              );
-              okCall(
-                voice.call("add_finding", {
-                  severity: "medium",
-                  concern: CODEX_CONCERN,
-                  code_ref_ids: [cited],
-                }),
-              );
-            };
-          }
-          return (voice: BoardVoiceWriter): void => {
-            const root = idOf(voice.call("add_section", { title: "Findings" }));
-            const cited = idOf(
-              voice.call("cite", {
-                path: "src/auth.ts",
-                side: "head",
-                start_line: 11,
-                end_line: 12,
-              }),
-            );
-            okCall(
-              voice.call("add_finding", {
-                severity: "high",
-                concern: CLAUDE_CONCERN,
-                code_ref_ids: [cited],
-                parent_id: root,
-              }),
-            );
-            okCall(voice.call("finish"));
-          };
+        (prompt, seat) => {
+          const lens = lensFromPrompt(prompt, seat);
+          if (lens === "flagged-review") return undefined;
+          if (lens === "flagged-compile") return compileTurn;
+          return cleanBody(lens);
         },
         ["claude-code", "codex"],
       ),
@@ -3486,113 +3427,23 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       deltaPacket: PACKET,
       lintContextFor: (lens) => (lens === "flagged" ? flaggedCtx : lintContextFor(lens)),
       readPrompt,
-      whiteboard: fakeWhiteboard([]),
-      boardIdFor: (lens) => `board:${lens}`,
-    });
-
-    const flagged = result.boards.find(({ lens }) => lens === "flagged");
-    // The lane still settles: one seat finished, and one seat that never did is a degrade,
-    // not a lane failure.
-    expect(flagged?.failure).toBeUndefined();
-    const board = flagged?.board as DraftBoard | undefined;
-    const findingBy = (concern: string): string =>
-      board?.elements.find(
-        (element) =>
-          element.kind === "finding" && (element.data as { concern?: unknown }).concern === concern,
-      )?.id ?? "";
-    const claudeFinding = findingBy(CLAUDE_CONCERN);
-    const codexFinding = findingBy(CODEX_CONCERN);
-
-    // BOTH findings are on the one board — the unsettled voice's work is kept, not
-    // discarded, which is the same partial-board rule the repair path relies on.
-    expect(claudeFinding, "the settled voice's finding is missing").not.toBe("");
-    expect(codexFinding, "the unsettled voice's finding was discarded").not.toBe("");
-
-    // NO fold ran, so each finding names ONLY the voice that wrote it…
-    expect(concurrenceOf(board as DraftBoard, claudeFinding)).toEqual([
-      { model: "Claude", agree: 1, total: 1 },
-    ]);
-    expect(concurrenceOf(board as DraftBoard, codexFinding)).toEqual([
-      { model: "Codex", agree: 1, total: 1 },
-    ]);
-    // …and neither carries an `accord`, in either direction. `concur` would claim a second
-    // opinion that never ran and `split` would name a disagreement with nobody, so the
-    // honest mark is no mark at all.
-    expect(accordOn(board as DraftBoard, claudeFinding)).toBeUndefined();
-    expect(accordOn(board as DraftBoard, codexFinding)).toBeUndefined();
-
-    // The credit is per VOICE, not one label over the board: the seat that died wrote a
-    // finding, and reporting it under the survivor's model would credit a model that never
-    // saw it. A single-label stamp passes every assertion above except this one.
-    expect(
-      concurrenceOf(board as DraftBoard, codexFinding).map(({ model }) => model),
-    ).not.toContain("Claude");
-  });
-
-  it("runs the Flagged lens as a dual seat under both harnesses — cross-model concurrence", async () => {
-    // Both seats are SIDECAR THREADS after session-bound-workspace 5.7 — one on
-    // `provider: "claudeAgent"`, one on `"codex"`, through T3's model selection. The lane
-    // still holds two seats; what it no longer holds is two harness ports.
-    const seatTurns: SeatCapture[] = [];
-    const applied: Applied[] = [];
-
-    // A clean flagged board both seats return: a grounded finding citing c1 (covers
-    // h1), h2 consciously skipped — passes the flagged lens lint.
-    const flaggedBody = (): unknown =>
-      mkBoard([
-        mkFinding("f1", "The refresh token is classified as an error before its code is read.", [
-          "c1",
-        ]),
-        mkCodeRef("c1", "src/auth.ts", 11, 12),
-        mkSection("findings", "Findings", ["f1"]),
-      ]);
-    const bodyFor = (prompt: string, label?: string): unknown => {
-      const lens = lensFromPrompt(prompt, label);
-      if (lens === "flagged") return flaggedBody();
-      if (lens === "post-process") {
-        const ctx = /rennet:layer context>>>\n(\{.*)/s.exec(prompt);
-        return ctx ? (JSON.parse(ctx[1] as string).board as unknown) : { elements: [] };
-      }
-      return cleanBody(lens);
-    };
-    const flaggedCtx: LintContext = {
-      lens: "flagged",
-      regions: [
-        { path: "src/auth.ts", side: "head", start: 10, end: 14 },
-        { path: "src/util.ts", side: "head", start: 1, end: 3 },
-      ],
-      files: new Map([
-        ["src/auth.ts", 200],
-        ["src/util.ts", 50],
-      ]),
-      patchsetId: PACKET.patchset.id,
-    };
-
-    const result = await runLensPipeline({
-      ...boardSeats(seatTurns, bodyFor, ["claude-code", "codex"]),
-      repoRoot: "/pr-worktree",
-      deltaPacket: PACKET,
-      lintContextFor: (lens) => (lens === "flagged" ? flaggedCtx : lintContextFor(lens)),
-      readPrompt,
+      writeContext: () => ".rennet/context/s1",
       whiteboard: fakeWhiteboard(applied),
       boardIdFor: (lens) => `board:${lens}`,
     });
 
     const flagged = result.boards.find((b) => b.lens === "flagged");
     expect(flagged?.failure).toBeUndefined();
-    // Both models concurred on the matched finding — it collapses to ONE (its id is
-    // whichever seat's summary was clearer, so look it up by kind, not a fixed id).
     const flaggedBoard = flagged?.board as DraftBoard | undefined;
-    const matched = (flaggedBoard?.elements ?? []).filter((e) => e.kind === "finding");
-    expect(matched).toHaveLength(1);
-    const conc = concurrenceOf(flaggedBoard as DraftBoard, matched[0]?.id ?? "");
-    expect(conc).toEqual([
+    const findings = (flaggedBoard?.elements ?? []).filter((e) => e.kind === "finding");
+    expect(findings).toHaveLength(1);
+    expect(concurrenceOf(flaggedBoard as DraftBoard, findings[0]?.id ?? "")).toEqual([
       { model: "Claude", agree: 1, total: 1 },
       { model: "Codex", agree: 1, total: 1 },
     ]);
-    // Each seat was forced to its own provider's flagged pick, on its own thread: the
-    // Claude seat's thread is bound `provider: "claudeAgent"`, the Codex seat's `"codex"`,
-    // which is how one lane holds two providers on one sidecar.
+
+    // Each review leg is pinned to its provider's flagged pick on its own thread; the compiler
+    // routes on `lens-draft-flagged` to the council's Claude pick.
     expect(
       seatTurns.some(
         (c) =>
@@ -3604,17 +3455,34 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
         (c) => c.seat === "flagged-codex" && c.provider === "codex" && c.model === "gpt-5.6-sol",
       ),
     ).toBe(true);
+    expect(
+      seatTurns.some(
+        (c) =>
+          c.seat === "flagged-compile" && c.provider === "claudeAgent" && c.model === "opus-4.8",
+      ),
+    ).toBe(true);
+
+    // Flagged spends THREE provider turns now — two reviews and one compile — where the old
+    // dual draft spent two, so a full run is 7 turns, not 6.
     const providerCalls = seatTurns.map(({ prompt }) => lensFromPrompt(prompt ?? ""));
-    expect(providerCalls).toHaveLength(6);
+    expect(providerCalls).toHaveLength(7);
     expect(
       Object.fromEntries(
-        ["design", "sequence", "decisions", "flagged", "noise"].map((lens) => [
-          lens,
-          providerCalls.filter((calledLens) => calledLens === lens).length,
-        ]),
+        ["design", "sequence", "decisions", "flagged-review", "flagged-compile", "noise"].map(
+          (lens) => [lens, providerCalls.filter((calledLens) => calledLens === lens).length],
+        ),
       ),
-    ).toEqual({ design: 1, sequence: 1, decisions: 1, flagged: 2, noise: 1 });
+    ).toEqual({
+      design: 1,
+      sequence: 1,
+      decisions: 1,
+      "flagged-review": 2,
+      "flagged-compile": 1,
+      noise: 1,
+    });
     expect(providerCalls).not.toContain("post-process");
+    // The lens marker is the leg/compile prompt now, never a bare `flagged` draft.
+    expect(providerCalls).not.toContain("flagged");
   });
 
   it("runs the round-report FIRST on a round and threads it into the lens drafters (D3/R58)", async () => {
@@ -4479,10 +4347,12 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     const codexSeat = async (prompt: string, seat: string): Promise<unknown> => {
       const lens = lensFromPrompt(prompt, seat);
       providerCalls.push(lens);
+      // Flagged's three seats (move two) all belong to the `flagged` lane and share its barrier.
+      const lane = laneOf(lens);
       // Noise runs unbarriered: it cannot start until the four have settled, so a barrier
       // on it would only measure the sequencing this test already asserts by ordering.
-      if (lens !== "report" && lenses.includes(lens as LensKind)) {
-        const lensKind = lens as LensKind;
+      if (lens !== "report" && lenses.includes(lane as LensKind)) {
+        const lensKind = lane as LensKind;
         if (!started.includes(lensKind)) {
           started.push(lensKind);
           announceFirstLensStart();
@@ -4590,8 +4460,18 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     expect(arrivals).toEqual([...[...lenses].reverse(), "noise"]);
     // …and it was DISPATCHED last too, which is the sequencing rather than a race that
     // happened to resolve in this order: its prompt could not be sent before the four
-    // settled, so it is the final entry and nothing follows it.
-    expect(providerCalls).toEqual(["report", ...lenses, "noise"]);
+    // settled, so it is the final entry and nothing follows it. Flagged is review→compile now
+    // (move two): its review leg dispatches with the other three, and the compiler follows once
+    // the review settles — so the lane contributes two provider calls, not one.
+    expect(providerCalls).toEqual([
+      "report",
+      "design",
+      "sequence",
+      "decisions",
+      "flagged-review",
+      "flagged-compile",
+      "noise",
+    ]);
     expect(providerCalls.at(-1)).toBe("noise");
     expect(pipelineSettled).toBe(true);
   });
@@ -5001,8 +4881,10 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
         const context = /rennet:layer context>>>\n(\{.*)/s.exec(prompt);
         return context ? (JSON.parse(context[1] as string).board as unknown) : { elements: [] };
       }
-      if (modelLenses.includes(lens as LensKind)) {
-        const lensKind = lens as LensKind;
+      // Flagged's three seats (move two) all belong to the `flagged` lane.
+      const lane = laneOf(lens);
+      if (modelLenses.includes(lane as LensKind)) {
+        const lensKind = lane as LensKind;
         if (!started.includes(lensKind)) {
           started.push(lensKind);
           announceFirstLensStart();
@@ -5437,7 +5319,8 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     const result = await runLensPipeline({
       ...boardSeats([], (prompt, label) => {
         const lens = lensFromPrompt(prompt, label);
-        if (lens === "flagged") return currentFlagged;
+        if (lens === "flagged-review") return undefined;
+        if (lens === "flagged-compile") return currentFlagged;
         if (lens === "report") return cleanBody("report");
         if (lens === "post-process") {
           const context = /rennet:layer context>>>\n(\{.*)/s.exec(prompt);
@@ -5529,7 +5412,8 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     const result = await runLensPipeline({
       ...boardSeats([], (prompt, label) => {
         const lens = lensFromPrompt(prompt, label);
-        if (lens === "flagged") {
+        if (lens === "flagged-review") return undefined;
+        if (lens === "flagged-compile") {
           flaggedTurns += 1;
           return { absence: "no-findings" };
         }
@@ -5640,7 +5524,8 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     const result = await runLensPipeline({
       ...boardSeats([], (prompt, label) => {
         const lens = lensFromPrompt(prompt, label);
-        if (lens === "flagged") return flaggedBoard;
+        if (lens === "flagged-review") return undefined;
+        if (lens === "flagged-compile") return flaggedBoard;
         if (lens === "report") return cleanBody("report");
         if (lens === "post-process") {
           const context = /rennet:layer context>>>\n(\{.*)/s.exec(prompt);
@@ -5923,9 +5808,11 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
       expect(index?.body).toContain("2 files changed, +3 -1, 2 hunks.");
       expect(index?.body).toContain("- `src/widget.ts` — modified, +2 -1, 1 hunk: 1-2");
       expect(index?.body).toContain("- `docs/note.md` — added, +1 -0, 1 hunk: 1-1");
-      // …and every seat is told the path, so none of them has to derive it again.
+      // …and every seat is told the path, so none of them has to derive it again. Flagged is
+      // three seats now (move two); this council installs Claude alone, so its Codex review seat
+      // does not run — the Claude review seat and the compiler do.
       expect(turns.map((turn) => turn.seat).sort()).toEqual(
-        ["decisions", "design", "flagged-claude", "noise", "sequence"].sort(),
+        ["decisions", "design", "flagged-claude", "flagged-compile", "noise", "sequence"].sort(),
       );
       for (const turn of turns) {
         expect(turn.prompt, turn.seat).toContain(`\`.rennet/context/s1/${CHANGE_INDEX_FILE}\``);
@@ -6093,7 +5980,8 @@ describe("runLensPipeline — persistence honesty (findings 2/3/6)", () => {
     ]);
   const bodyForFlagged = (prompt: string, label?: string): unknown => {
     const lens = lensFromPrompt(prompt, label);
-    if (lens === "flagged") return flaggedBody();
+    if (lens === "flagged-review") return undefined;
+    if (lens === "flagged-compile") return flaggedBody();
     if (lens === "post-process") {
       const ctx = /rennet:layer context>>>\n(\{.*)/s.exec(prompt);
       if (!ctx) return { elements: [] };
@@ -6113,7 +6001,7 @@ describe("runLensPipeline — persistence honesty (findings 2/3/6)", () => {
     }
     if (lens === "sequence") {
       return {
-        ...cleanBody(lens),
+        ...draftBody(lens),
         document: {
           title: "Follow the accepted write",
           introMarkdown: "The walk starts at persistence and ends at the reader.",
@@ -6302,6 +6190,7 @@ describe("runLensPipeline — persistence honesty (findings 2/3/6)", () => {
       deltaPacket: PACKET,
       lintContextFor,
       readPrompt,
+      writeContext: () => ".rennet/context/s1",
       whiteboard: fakeWhiteboard([]),
       boardIdFor: (l) => `board:${l}`,
     });
@@ -6718,7 +6607,8 @@ describe("runLensPipeline writes the session context through the ONE writer, bef
     //    body holds the frozen report board — and the index still lists evidence.json.
     expect(writes[1]).toEqual([ROUND_EVIDENCE_FILE, ROUND_CONTEXT_FILE]);
     const lensTurns = prompts.filter((entry) => entry.lens !== "report");
-    expect(lensTurns.map((entry) => entry.lens).sort()).toEqual(
+    // Flagged is three seats now (move two), all folding to the one `flagged` lane.
+    expect([...new Set(lensTurns.map((entry) => laneOf(entry.lens)))].sort()).toEqual(
       ["decisions", "design", "flagged", "noise", "sequence"].sort(),
     );
     for (const turn of lensTurns) {
@@ -6923,15 +6813,20 @@ describe("runLensPipeline — a citation past the change is refused where it is 
         });
         if (refused.ok) throw new Error(`${lens}: a citation past the change was accepted`);
         refusals.push(refused.refusal);
-        // The board it goes on to write is an ordinary one for its lens.
-        replayBoard(voice, target, cleanBody(lens));
+        // The board it goes on to write is an ordinary one for its lane — the compiler's seat
+        // lens folds to the `flagged` board, whose material is findings, not prose.
+        replayBoard(voice, target, draftBody(laneOf(lens)));
         okCall(voice.call("finish"));
       };
 
     const result = await runLensPipeline({
       ...boardSeats(seatTurns, (prompt, label) => {
         const lens = lensFromPrompt(prompt, label);
-        return lens === "flagged" || lens === "design" ? citingPast(lens) : cleanBody(lens);
+        // The review legs are lane-less — they write a findings FILE, not a board, so they
+        // have no `cite` to refuse. The compiler is the one Flagged voice that writes a board,
+        // so it is where a past-the-change citation is made and refused.
+        if (lens === "flagged-review") return undefined;
+        return lens === "flagged-compile" || lens === "design" ? citingPast(lens) : cleanBody(lens);
       }),
       repoRoot: "/pr-worktree",
       deltaPacket: PACKET,
@@ -6946,8 +6841,9 @@ describe("runLensPipeline — a citation past the change is refused where it is 
       boardIdFor: (lens) => `board:${lens}`,
     });
 
-    // One refusal per seat that tried it — Design, and BOTH of Flagged's voices would try
-    // it if two harnesses were installed; this council installs one, so two refusals.
+    // One refusal per board seat that tried it — Design, and Flagged's compiler (the only
+    // Flagged voice with a board; its review legs are lane-less and never cite). Two seats,
+    // two refusals.
     expect(refusals.length).toBeGreaterThanOrEqual(2);
     for (const refusal of refusals) {
       expect(refusal).toContain("unresolvable-citation");
@@ -7004,7 +6900,7 @@ describe("a repair is a second turn on the SAME seat thread, carrying the verdic
         okCall(voice.call("add_prose", { markdown: "Half of what this lens found." }));
         return;
       }
-      replayBoard(voice, target, cleanBody(lens));
+      replayBoard(voice, target, draftBody(lens));
       okCall(voice.call("finish"));
     };
   };
@@ -7017,9 +6913,13 @@ describe("a repair is a second turn on the SAME seat thread, carrying the verdic
         turns,
         (prompt, label) => {
           const lens = lensFromPrompt(prompt, label);
-          if (lens !== "design" && lens !== "flagged") return cleanBody(lens);
-          // One stalling script per SEAT, so Flagged's two voices each stall once rather
-          // than sharing a counter and one of them settling on its first turn.
+          // The review legs run ONE turn each — a lane-less findings file, with no lint loop
+          // to repair against — so they cannot stall. Only the compiler has a board and a
+          // repair ladder, so it is the one Flagged seat that stalls and repairs.
+          if (lens === "flagged-review") return undefined;
+          if (lens !== "design" && lens !== "flagged-compile") return cleanBody(lens);
+          // One stalling script per SEAT, so Design and the compiler each keep their own
+          // turn counter rather than sharing one and settling on the first turn.
           const seat = label ?? lens;
           const script = stallers.get(seat) ?? stalling(lens);
           stallers.set(seat, script);
@@ -7045,12 +6945,13 @@ describe("a repair is a second turn on the SAME seat thread, carrying the verdic
 
   it("repairs on the drafting turn's own thread, carrying no board and no base prompt", async () => {
     const { result, turns } = await run();
-    // Every seat that stalled: Design plus BOTH Flagged seats, which are two sidecar
-    // threads on two providers — the lane kept its pair.
+    // Every seat that stalled: Design plus the Flagged compiler. The review legs run one
+    // turn each with no repair ladder, so they never appear here — only the compiler's
+    // board-writing thread carries a second turn.
     const repairing = [...new Set(turns.map(({ seat }) => seat))].filter(
       (seat) => turns.filter((turn) => turn.seat === seat).length > 1,
     );
-    expect(repairing.sort()).toEqual(["design", "flagged-claude", "flagged-codex"]);
+    expect(repairing.sort()).toEqual(["design", "flagged-compile"]);
     for (const seat of repairing) {
       const seatTurns = turns.filter((turn) => turn.seat === seat);
       const draft = seatTurns[0];

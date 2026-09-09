@@ -304,8 +304,12 @@ function boardAnswer(
 ): unknown {
   const marker = /PROMPT_FILE:prompts\/([a-z-]+)\.md/.exec(prompt)?.[1];
   const seat = label?.split(".").at(-1);
-  const lens =
+  // Flagged's three seats — the two review legs and the compiler — draft through
+  // `flagged-review.md`/`flagged-compile.md`; the tests answer by lane, so fold them to
+  // `flagged`. The lane-less review legs' answers are dropped; the compiler writes the board.
+  const raw =
     marker ?? (seat === undefined ? "unknown" : seat.startsWith("flagged") ? "flagged" : seat);
+  const lens = raw.startsWith("flagged") ? "flagged" : raw;
   if (lens === "post-process") {
     const context = /rennet:layer context>>>\n(\{.*)/s.exec(prompt);
     return context ? (JSON.parse(context[1] as string).board as unknown) : { elements: [] };
