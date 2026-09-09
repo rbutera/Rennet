@@ -26,5 +26,9 @@ export function seatBoardServer(
   if (boards === undefined) return undefined;
   if (!(SEAT_KINDS as readonly string[]).includes(seat)) return undefined;
   const kind = seat as SeatKind;
-  return boards.lane(SEAT_BOARD_TARGET[kind])?.address({ seat, ...SEAT_BOARD_VOICE[kind] });
+  // No target ⇒ a lane-less seat (the Flagged review seats, move two): no board, no board
+  // tools. It reviews with the harness's own file tools and the turn names no board server.
+  const target = SEAT_BOARD_TARGET[kind];
+  if (target === undefined) return undefined;
+  return boards.lane(target)?.address({ seat, ...SEAT_BOARD_VOICE[kind] });
 }

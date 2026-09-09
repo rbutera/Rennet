@@ -21,29 +21,39 @@ import { z } from "zod";
 import type { ModelSelection, T3Client } from "./client";
 import { sidecarBaseDir } from "./sidecar";
 
-/** One thread per seat per generation. Flagged runs two, one per provider. */
+/**
+ * One thread per seat per generation. Flagged runs THREE: two lane-less review seats, one
+ * per provider, each writing a findings file, and one compiler that reads both and authors
+ * the whole Flagged board (move two, #452).
+ */
 export const SEAT_KINDS = [
   "design",
   "sequence",
   "decisions",
   "flagged-claude",
   "flagged-codex",
+  "flagged-compile",
   "noise",
   "round-report",
 ] as const;
 export type SeatKind = (typeof SEAT_KINDS)[number];
 
 /**
- * Which board a seat writes (`lens-board-tools` D8/D9). Flagged's two seats write ONE
- * board, which is why this is a map and not the identity: the seat is the thread, the
- * target is the board, and the two are not the same thing.
+ * Which board a seat writes (`lens-board-tools` D8/D9), and the whole reason a seat's
+ * address is looked up here rather than by reading its name as a target: the seat is the
+ * THREAD, the target is the BOARD, and the two are not the same thing.
+ *
+ * This is a PARTIAL map. The two Flagged review seats (`flagged-claude`, `flagged-codex`)
+ * have NO entry: they author no board (move two, Decision 9), they write a findings file
+ * with the harness's own file tools, so `seatBoardServer` hands them no address and no
+ * board tools. The `flagged-compile` seat is the sole writer of the `flagged` board. A seat
+ * with no entry here is lane-less by construction, not merely by lane timing.
  */
-export const SEAT_BOARD_TARGET: Readonly<Record<SeatKind, BoardTarget>> = {
+export const SEAT_BOARD_TARGET: Readonly<Partial<Record<SeatKind, BoardTarget>>> = {
   design: "design",
   sequence: "sequence",
   decisions: "decisions",
-  "flagged-claude": "flagged",
-  "flagged-codex": "flagged",
+  "flagged-compile": "flagged",
   noise: "noise",
   "round-report": "report",
 };
@@ -63,11 +73,18 @@ export const SEAT_BOARD_VOICE: Readonly<
   design: { author: { kind: "lens-agent", id: "lens:design" }, idPrefix: "d" },
   sequence: { author: { kind: "lens-agent", id: "lens:sequence" }, idPrefix: "q" },
   decisions: { author: { kind: "lens-agent", id: "lens:decisions" }, idPrefix: "k" },
+  // The review seats are lane-less (move two): they author no board, so their voice is
+  // vestigial. It is kept because the per-finding author the COMPILER stamps reuses these
+  // very ids (`flaggedOriginAuthor` in @rennet/protocol), so the reader's attribution is
+  // unchanged — `lens:flagged:claudeAgent` / `lens:flagged:codex` still label each finding.
   "flagged-claude": {
     author: { kind: "lens-agent", id: "lens:flagged:claudeAgent" },
     idPrefix: "f",
   },
   "flagged-codex": { author: { kind: "lens-agent", id: "lens:flagged:codex" }, idPrefix: "g" },
+  // The compiler authors the board's document and sections under the bare lens author; each
+  // finding's author is overridden per-origin by the writer's expansion (Decision 10).
+  "flagged-compile": { author: { kind: "lens-agent", id: "lens:flagged" }, idPrefix: "c" },
   noise: { author: { kind: "lens-agent", id: "lens:noise" }, idPrefix: "n" },
   "round-report": { author: { kind: "lens-agent", id: "lens:report" }, idPrefix: "r" },
 };
@@ -79,6 +96,7 @@ const SEAT_LABELS: Readonly<Record<SeatKind, string>> = {
   decisions: "Decisions",
   "flagged-claude": "Flagged (Claude)",
   "flagged-codex": "Flagged (Codex)",
+  "flagged-compile": "Flagged (compile)",
   noise: "Noise",
   "round-report": "Round report",
 };

@@ -1875,7 +1875,11 @@ function resolveBoardSeatDetails(
   // Flagged lane runs two seats over one board, and both must count onto it. `undefined`
   // for the round-report seat and for any caller with no board server behind it, and the
   // metric then carries no tool-call figure rather than a zero it did not measure.
-  const seatLane = deps.boards?.lane(SEAT_BOARD_TARGET[seat]);
+  // `undefined` for the round-report seat, for a lane-less seat (the Flagged review seats,
+  // move two), and for any caller with no board server behind it; the metric then carries no
+  // tool-call figure rather than a zero it did not measure.
+  const seatTarget = SEAT_BOARD_TARGET[seat];
+  const seatLane = seatTarget === undefined ? undefined : deps.boards?.lane(seatTarget);
   const toolCalls = seatLane === undefined ? undefined : () => seatLane.seatCalls(seat);
   return councilSeatTurn(
     jobId,
