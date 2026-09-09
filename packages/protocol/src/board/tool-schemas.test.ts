@@ -160,10 +160,15 @@ describe("a seat cannot type a count (D10)", () => {
     //
     // 345 → 369 on 2026-09-05: `scenario_clauses` (#856) flattens to two inputs, and
     // `prose` has an `add` and an `update` on all six targets — 2 × 2 × 6 = 24.
+    //
+    // 95 → 96 tools and 374 → 379 fields (`flagged-review-compile` Decisions 9/10): the
+    // Flagged compiler is the sole writer of the `flagged` board, so `write_board` now lands
+    // there too (+1 tool, +1 `board_json` field), and its `add_finding` / `update_finding`
+    // each carry the compiler's two authored enums `origin` + `agreement` (+2 fields each).
     expect(targetsSwept.size, "targets swept").toBe(6);
-    expect(toolsSwept.size, "tools swept").toBe(95);
+    expect(toolsSwept.size, "tools swept").toBe(96);
     // #907 adds optional decision titles to add/update on Design and Decisions.
-    expect(swept, "target/tool/field triples swept").toHaveLength(374);
+    expect(swept, "target/tool/field triples swept").toHaveLength(379);
   });
 
   it("the section verb carries its title and nothing tallied", () => {

@@ -244,7 +244,13 @@ export function hostSettlesAbsenceFor(target: BoardTarget): boolean {
  * its 486 B of tool surface once per session for a thing that made them slower. A target
  * added to {@link HOST_DERIVED_MEMBER_KIND} gets it with nothing else edited; a target that
  * wants it for another reason changes this one line and says which measurement it has.
+ *
+ * `flagged` is that second case (`flagged-review-compile` Decisions 1/9). After the
+ * review→compile rework the Flagged board has ONE writer — a compiler seat that reads two
+ * finished review files and composes the whole board at once. That is authoring, not the
+ * bulk grouping of host-placed members, which is the cost the measurement found the verb
+ * pays for: one seat deciding what the board IS writes it whole rather than in N round trips.
  */
 export function writesWholeBoard(target: BoardTarget): boolean {
-  return hostDerivedMemberKind(target) !== undefined;
+  return target === "flagged" || hostDerivedMemberKind(target) !== undefined;
 }

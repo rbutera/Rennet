@@ -58,6 +58,28 @@ A finding's `author`, `concurrence`, and `accord` are host-owned today: a board 
 
 Rejected: keeping the fields host-owned and having the compiler emit a separate per-finding judgment the pipeline post-stamps — it preserves the invariant for a seat the invariant was not written for, at the cost of a parallel judgment channel and a second place origin/concurrence can drift.
 
+## Decision 9 — the compiler reuses the `flagged` board target; the review seats are lane-less
+
+A board seat is a THREAD; a board target is a BOARD; the two are decoupled, and the Flagged lane already runs two seats over one board (`SEAT_BOARD_TARGET` maps both `flagged-claude` and `flagged-codex` to `flagged`). Move two keeps that target and changes who writes it: the two review seats write NO board (no open lane, so `seatBoardServer` hands them no address and no board tools — they write their findings file with the harness's own file tools), and a third seat, `flagged-compile`, is the sole writer of the `flagged` board.
+
+**Chosen: the compiler writes the existing `flagged` target; no new board target is introduced.** The rendered Flagged lens board is read as `lane("flagged")`, so reusing the target means the compiler's board IS the lens board with nothing to bridge. `finding` is authored by the flagged lens alone (`LENS_TYPED_KINDS`), so relaxing finding-authoring for "the compile target" and relaxing it for "the finding kind" are the same relaxation — there is no other target to leak to. `writesWholeBoard` gains `flagged` beside `noise`; its own comment already invites this ("a target that wants it for another reason changes this one line and says which measurement it has"), and the measurement here is Decision 1: one compiler composing the whole board is authoring, which is what the whole-board write is for.
+
+Rejected: a distinct `flagged-compile` board target. It would make `BoardTarget` no longer `LensKind | "report"`, force a row in every table keyed on `BoardTarget`, and open a lane that nothing renders as the Flagged lens — so the pipeline would have to copy the compile lane's board into the flagged result. More surface, more tables, a bridge, for a separation the seat≠target decoupling already provides.
+
+## Decision 10 — the compiler authors `origin` and `agreement`; the host expands them (mechanism for Decision 8)
+
+Decision 8 relaxes the host-owned constraint so the compiler owns each finding's origin and agreement. The wire fields those facts live in — `author` (`{kind,id}`), `concurrence` (an array of `{model,agree,total}`), `accord` — are nested shapes, and the flat-input rule (`flatInputViolations`, the fix for #810) forbids a seat authoring a nested or union input. So the compiler cannot write them directly; it authors two FLAT ENUM inputs and the host expands them.
+
+**Chosen: `add_finding`/`update_finding` on the flagged target carry two extra input-only enums — `origin` (`claude` | `codex`) and `agreement` (`concur` | `diverge` | `solo`) — and the board writer expands them into the host-owned `author`, `concurrence`, and `accord` at write time.** The two enums do not persist as finding attributes: `author` already encodes the model and `accord` already encodes the agreement, so persisting the enums beside them would be the same fact twice. They ride the tool input (beside `parent_id`), never `AUTHORED_BOARD_SCHEMA`, so the schema-derived field machinery ignores them and `dataFromInput` never lands them in `data`; the writer reads them in the finding arm and stamps the three host fields, overriding the voice-author default and the `concurrence: []` host default.
+
+The agreement vocabulary is deliberately NOT the schema's `accord` words. `accord` is `concur | split | conflict`, where `split` means "one model raised it, the other said no concern" — i.e. a solo. Reusing `split` for the compiler would make the writer's `agreement → accord` map read like a bug (`solo → split`, `diverge → conflict`). The compiler's words are chosen to map without a collision:
+
+- `concur` → accord `concur`, concurrence both models (`[{claude,1,1},{codex,1,1}]`) — both raised it at comparable severity.
+- `diverge` → accord `conflict`, concurrence both models — both raised it, materially different verdict (the higher severity wins).
+- `solo` → accord `split`, concurrence the one model (`[{origin,1,1}]`) — only `origin` raised it.
+
+The origin→author and origin→concurrence-label mappings are protocol constants (`flaggedOriginAuthor`, `flaggedOriginLabel`) so the compiler-authored board carries the same `lens:flagged:claudeAgent` / `lens:flagged:codex` author ids the two seats stamped before the rework — the reader's attribution is unchanged. This retires `reconcileFlaggedVoices` location-matching (Decision 1): the compiler's `agreement` IS the accord, stamped per finding, not inferred from where two boards' findings landed.
+
 ## Move ordering
 
 Move one (prompt guard + render/projection guard + a positive-control test using the #927 element shape) ships as its own PR first. It is the real fix for the observed header and is correct independent of the rework. Move two supersedes the *cause* by collapsing structural authorship to one compiler; the move-one guards remain as defense in depth.

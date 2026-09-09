@@ -173,6 +173,8 @@ describe("the host mints ids and a child names its parent (D4)", () => {
         severity: "medium",
         concern: "The classification happens before the code is read.",
         code_ref_ids: [cited],
+        origin: "codex",
+        agreement: "solo",
       }),
     );
     expect(dataOf<{ code: string[] }>(board, finding).code).toEqual([cited]);
@@ -205,6 +207,8 @@ describe("a reference argument is refused when the board does not hold it (D4)",
         severity: "high",
         concern: "The refresh token is classified before its code is read.",
         code_ref_ids: ["c-does-not-exist"],
+        origin: "claude",
+        agreement: "solo",
       }),
     );
     expect(refusal).toContain("code_ref_ids");
@@ -223,6 +227,8 @@ describe("a reference argument is refused when the board does not hold it (D4)",
         severity: "low",
         concern: "Something.",
         code_ref_ids: [cited, "ghost"],
+        origin: "claude",
+        agreement: "solo",
       }),
     );
     expect(refusal).toContain("ghost");
@@ -549,6 +555,8 @@ describe("finish is the whole-board verdict and returns pointers only", () => {
               severity: "high",
               concern: "Classification reads the expired code before refresh.",
               code_ref_ids: [citation],
+              origin: "claude",
+              agreement: "solo",
             };
       const element = idOf(w.call(verb, input));
       const unfinished = ok(w.call("finish")).outcome;
@@ -1150,7 +1158,11 @@ describe("two voices on one board keep their own settlements (D9)", () => {
   };
 
   /** A finding, cited, under a section — the smallest board `finish` will settle. */
-  const writeFinding = (voice: ReturnType<BoardWriter["voice"]>, concern: string): string => {
+  const writeFinding = (
+    voice: ReturnType<BoardWriter["voice"]>,
+    concern: string,
+    origin: "claude" | "codex" = "claude",
+  ): string => {
     const section = idOf(voice.call("add_section", { title: "Findings" }));
     const cite = idOf(
       voice.call("cite", { path: "src/auth.ts", side: "head", start_line: 10, end_line: 14 }),
@@ -1161,21 +1173,25 @@ describe("two voices on one board keep their own settlements (D9)", () => {
         severity: "high",
         concern,
         code_ref_ids: [cite],
+        origin,
+        agreement: "solo",
       }),
     );
   };
 
-  it("each element carries the voice that wrote it, and the ids cannot collide", () => {
+  it("the id carries the voice, the finding author carries its origin, and ids cannot collide", () => {
     const { w, claude, codex } = twoVoices();
-    const a = writeFinding(claude, "The retry cap is unbounded.");
-    const b = writeFinding(codex, "The retry cap is unbounded.");
+    const a = writeFinding(claude, "The retry cap is unbounded.", "claude");
+    const b = writeFinding(codex, "The retry cap is unbounded.", "codex");
 
     expect(a).not.toBe(b);
+    // The id prefix is the voice that made the call…
     expect(a.startsWith("a")).toBe(true);
     expect(b.startsWith("b")).toBe(true);
-    // One board, two authors — the stamp is what the reconciliation partitions on.
-    expect(dataOf<{ author: Author }>(w, a).author.id).toBe("flagged-claude");
-    expect(dataOf<{ author: Author }>(w, b).author.id).toBe("flagged-codex");
+    // …but a finding's author is expanded from its `origin`, not the voice (Decision 10):
+    // the one compiler voice stamps each finding with the model that raised it.
+    expect(dataOf<{ author: Author }>(w, a).author.id).toBe("lens:flagged:claudeAgent");
+    expect(dataOf<{ author: Author }>(w, b).author.id).toBe("lens:flagged:codex");
     expect(w.board().elements.filter((el) => el.kind === "finding")).toHaveLength(2);
   });
 
@@ -1214,6 +1230,63 @@ describe("two voices on one board keep their own settlements (D9)", () => {
     ok(claude.call("finish"));
     ok(claude.call("add_prose", { markdown: "One more thing about the cap." }));
     expect(claude.voiceStatus()).toBe("drafting");
+  });
+});
+
+// Decision 10 — the compiler authors flat `origin` + `agreement` on `add_finding`, and the
+// writer expands them into the host-owned `author` / `concurrence` / `accord` on the persisted
+// element. `origin`/`agreement` are input-only: they are read here and must not leak into data.
+describe("the Flagged compiler's origin + agreement expand into host-owned finding fields", () => {
+  const finding = (over: Record<string, unknown>) => {
+    const w = writer("flagged");
+    const cite = idOf(
+      w.call("cite", { path: "src/auth.ts", side: "head", start_line: 10, end_line: 14 }),
+    );
+    const id = idOf(
+      w.call("add_finding", {
+        severity: "high",
+        concern: "The retry cap is unbounded.",
+        code_ref_ids: [cite],
+        ...over,
+      }),
+    );
+    return dataOf<{
+      author: Author;
+      concurrence: { model: string; agree: number; total: number }[];
+      accord?: string;
+      origin?: unknown;
+      agreement?: unknown;
+    }>(w, id);
+  };
+
+  it("concur stamps both tallies and accord concur, authored by its origin", () => {
+    const data = finding({ origin: "claude", agreement: "concur" });
+    expect(data.author).toEqual({ kind: "lens-agent", id: "lens:flagged:claudeAgent" });
+    expect(data.accord).toBe("concur");
+    expect(data.concurrence).toEqual([
+      { model: "Claude", agree: 1, total: 1 },
+      { model: "Codex", agree: 1, total: 1 },
+    ]);
+  });
+
+  it("diverge stamps accord conflict with both tallies", () => {
+    const data = finding({ origin: "codex", agreement: "diverge" });
+    expect(data.author.id).toBe("lens:flagged:codex");
+    expect(data.accord).toBe("conflict");
+    expect(data.concurrence).toHaveLength(2);
+  });
+
+  it("solo stamps accord split and a single tally", () => {
+    const data = finding({ origin: "codex", agreement: "solo" });
+    expect(data.author.id).toBe("lens:flagged:codex");
+    expect(data.accord).toBe("split");
+    expect(data.concurrence).toEqual([{ model: "Codex", agree: 1, total: 1 }]);
+  });
+
+  it("does not leak the input-only enums onto the persisted element", () => {
+    const data = finding({ origin: "claude", agreement: "solo" });
+    expect(data.origin).toBeUndefined();
+    expect(data.agreement).toBeUndefined();
   });
 });
 
@@ -1435,12 +1508,15 @@ describe("write_board writes the whole board in one call (#869)", () => {
     })),
   ];
 
-  it("is on the Noise board and on no other, because only Noise's writing is bulk", () => {
+  it("is on the Noise and Flagged boards and on no other — the two whole-board writers", () => {
     // Attempted, not asserted about: the call a Design seat would actually make, refused by
-    // name. The four reasoning lenses were measured SLOWER with this verb, so they do not
-    // carry its tool surface — that is the whole reason `writesWholeBoard` exists.
+    // name. The three remaining reasoning lenses and the report were measured SLOWER with this
+    // verb, so they do not carry its tool surface — that is the whole reason `writesWholeBoard`
+    // exists. Flagged joins Noise after the review→compile rework: its one compiler seat
+    // composes the whole board at once (`flagged-review-compile` Decision 9).
     expect(writer("noise").toolNames()).toContain("write_board");
-    for (const target of ["design", "sequence", "decisions", "flagged", "report"] as const) {
+    expect(writer("flagged").toolNames()).toContain("write_board");
+    for (const target of ["design", "sequence", "decisions", "report"] as const) {
       const w = writer(target);
       expect(w.toolNames(), target).not.toContain("write_board");
       expect(refusalOf(w.call("write_board", { board_json: '{"calls":[]}' })), target).toContain(
