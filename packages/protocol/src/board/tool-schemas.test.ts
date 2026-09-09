@@ -182,6 +182,46 @@ describe("a seat cannot type a count (D10)", () => {
   });
 });
 
+/**
+ * D10 (move two, #452) — the compiler attributes two finished reviews, so it owns each
+ * finding's origin and agreement. Those facts live on the wire as `author` (`{kind,id}`),
+ * `concurrence` (array of `{model,agree,total}`) and `accord` — all nested, all forbidden to
+ * a seat by the flat-input rule. So the compiler authors two FLAT enums, `origin` and
+ * `agreement`, which ride the tool INPUT but are on no tool FIELD: `dataFromInput` reads only
+ * fields, so the enums never persist, and the writer expands them into the three host fields.
+ */
+describe("the Flagged compiler's origin + agreement are input-only (D10)", () => {
+  const findingInput = (name: "add_finding" | "update_finding") =>
+    (boardToolsByName("flagged").get(name) as BoardTool).input as z.ZodObject;
+
+  it("add_finding and update_finding on the flagged target carry origin and agreement inputs", () => {
+    for (const name of ["add_finding", "update_finding"] as const) {
+      expect(Object.keys(findingInput(name).shape), name).toEqual(
+        expect.arrayContaining(["origin", "agreement"]),
+      );
+    }
+  });
+
+  it("origin and agreement are input-only, so they land on no tool field and never persist", () => {
+    for (const name of ["add_finding", "update_finding"] as const) {
+      const fields = (boardToolsByName("flagged").get(name) as BoardTool).fields.map((f) => f.name);
+      expect(fields, `${name}.fields`).not.toContain("origin");
+      expect(fields, `${name}.fields`).not.toContain("agreement");
+    }
+    // …and `finding` is authored by the flagged target alone, so there is no other door.
+    expect(names("sequence")).not.toContain("add_finding");
+  });
+
+  it("the enum values are the compiler's vocabulary, deliberately not the accord words", () => {
+    // `accord` is concur|split|conflict; the compiler's agreement is concur|diverge|solo so
+    // the writer's map reads without a collision (solo→split, diverge→conflict). See D10.
+    const agreement = findingInput("add_finding").shape.agreement as z.ZodEnum;
+    expect(new Set(agreement.options)).toEqual(new Set(["concur", "diverge", "solo"]));
+    const origin = findingInput("add_finding").shape.origin as z.ZodEnum;
+    expect(new Set(origin.options)).toEqual(new Set(["claude", "codex"]));
+  });
+});
+
 describe("the tool set is derived from the kind tables, not listed per lens (D2)", () => {
   // 1.3 — the derivation itself. Adding a kind to a lens's typed-kind row must produce
   // that kind's verbs with NO per-lens list edited anywhere.

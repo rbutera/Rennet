@@ -46,7 +46,7 @@ Merge by what a finding SAYS, not where it points:
   other. Union their `Refs`.
 - **Both raised the same location with materially different verdicts** (say one
   calls it high, the other low, or they disagree on what breaks) is ONE finding
-  marked `split`, carrying the higher severity.
+  marked `diverge`, carrying the higher severity.
 - **Only one model raised it** is a `solo` finding, marked with that model as
   its origin.
 
@@ -64,13 +64,13 @@ but findings under the section.
 Each `add_finding` carries:
 
 - **`concern`** — the verbatim block described above.
-- **`severity`** — high, medium, or low (the higher one on a `split`).
+- **`severity`** — high, medium, or low (the higher one on a `diverge`).
 - **Code refs** — `cite` each location from the finding's `Refs`, then attach
   the returned citations. Use a refusal's corrected range only when it still
   supports the claim.
 - **`origin`** — the model that raised this finding: `claude` or `codex`. On a
   `concur`, name the model whose `concern` you kept.
-- **`agreement`** — `concur`, `split`, or `solo`, decided above.
+- **`agreement`** — `concur`, `diverge`, or `solo`, decided above.
 
 `origin` and `agreement` are yours to set here: you are attributing two reviews,
 so the board trusts your judgment of who raised what and where they agreed. The

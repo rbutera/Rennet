@@ -20,14 +20,34 @@ import type { LensKind } from "@rennet/protocol";
 
 export { LENS_KINDS, type LensKind } from "@rennet/protocol";
 
-/** Prompt file for each lens's drafting agent, relative to this package's src/. */
+/**
+ * Prompt file that AUTHORS each lens's board, relative to this package's src/.
+ *
+ * Four lenses are drafted by a single investigating seat. Flagged is not: it runs
+ * review→compile (move two, #452). Two lane-less review seats each write a findings
+ * file with the harness's own file tools (`FLAGGED_REVIEW_FILE`); the `flagged`
+ * compiler seat here reads both and writes the whole board via `write_board`. So the
+ * `flagged` entry is the COMPILER's prompt — the seat that authors the flagged board —
+ * and it carries none of the drafting-lens partials: it does not investigate, and it
+ * emits the whole board in one batch rather than the incremental surface.
+ */
 export const LENS_PROMPT_FILES: Record<LensKind, string> = {
   design: "prompts/design.md",
   sequence: "prompts/sequence.md",
   decisions: "prompts/decisions.md",
-  flagged: "prompts/flagged.md",
+  flagged: "prompts/flagged-compile.md",
   noise: "prompts/noise.md",
 };
+
+/**
+ * The Flagged REVIEW seat's prompt: one of the two lane-less seats that reviews the change
+ * and writes a findings file its task layer names. It holds no board tools and authors no
+ * board — the compiler (`LENS_PROMPT_FILES.flagged`) reads both review files and does that.
+ * It is not a lens in the drafting sense, so it sits beside `ROUND_REPORT_FILE` rather than
+ * in the manifest above; it carries the investigate and reader-voice partials but not the
+ * board-writing one.
+ */
+export const FLAGGED_REVIEW_FILE = "prompts/flagged-review.md";
 
 /**
  * Prompt file for the round-report classifier — the per-round seat that verifies
