@@ -312,7 +312,9 @@ describe("the corner while the boards are being written", () => {
     );
     // …and the chip has left the corner it was keeping for the exit.
     expect(document.querySelector('[data-testid="preparation-cancel"]')).toBeNull();
-  });
+    // The settle rides the 400ms `session.list` poll; under a full gate's contention the
+    // default 5s budget is what timed out, not the transition.
+  }, 15_000);
 
   it("keeps the lens the reviewer clicked while its seat is still writing, instead of falling back to Design", async () => {
     // Design settled (a real board), Flagged running with no durable board and no element
