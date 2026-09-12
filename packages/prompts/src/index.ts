@@ -73,12 +73,13 @@ export const ROUND_REPORT_FILE = "prompts/report.md";
  * file at `SESSION_BRIEFING_FIXED_MAX_BYTES` so the dynamic lines always have room under
  * `SESSION_BRIEFING_MAX_BYTES`.
  *
- * Measured 2026-09-12: the file is 2,559 B and renders to 3,297 B beside a reference
- * review's patchset, context and tool lines — 799 B of headroom. Its `{{reader-voice}}`
- * marker costs 16 B as it stands; expanding that partial in whole (2,846 B) puts the fixed
- * half at 5,389 B, past the whole ceiling on its own. Whoever splices partials into this
- * file answers for that, and the renderer will not hide it — the truncation marker lands
- * on the review's lines, never on this text.
+ * It carries its own short register and NO shared partial (Rai, 2026-09-12). Splicing
+ * `reader-voice.md` here would put 2,846 B of board-prose guidance under a 4,096 B ceiling
+ * that also has to hold the review's own lines, and its ground rules tell a writer not to
+ * name lenses or boards — which is what this thread does for the reviewer all day.
+ *
+ * Measured 2026-09-12: the file is 2,550 B and renders to 3,288 B beside a reference
+ * review's patchset, context and tool lines — 808 B of headroom.
  */
 export const SESSION_BRIEFING_FILE = "prompts/session-briefing.md";
 

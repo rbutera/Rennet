@@ -100,7 +100,7 @@ describe("renderSessionBriefing", () => {
 
     // The ceiling covers the WHOLE append, because the append is a prefix re-read on every
     // round trip of every turn for the thread's life. Measured with the shipped fixed text:
-    // 2,559 B fixed + the review's lines.
+    // 2,550 B fixed + 738 B of review lines = 3,288 B, 808 B under the ceiling.
     expect(bytes(rendered), "rendered briefing bytes").toBeLessThanOrEqual(
       SESSION_BRIEFING_MAX_BYTES,
     );

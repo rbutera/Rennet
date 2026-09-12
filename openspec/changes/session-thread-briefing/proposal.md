@@ -67,8 +67,9 @@ Rule Zero: a capable agent is the product, and every tool this needs is already 
   bound). It is a MAP: role and division of labour; the patchset (branch or PR, base and head, the
   exact `git diff` command); where the boards are read (`board_read`) and what the context
   directory is; what the app tools do and why staging an ask — to the draft PR or the round
-  submission — is the path Rennet tracks; what an Explain's `Code reference` is; the reader-voice
-  partial. It carries no board, no diff,
+  submission — is the path Rennet tracks; what an Explain's `Code reference` is; its own short
+  register, no shared partial (Rai, 2026-09-12: `reader-voice.md` is 2,846 B against a 4,096-byte
+  ceiling, and it is written for board prose). It carries no board, no diff,
   no inventory — session-context-files' "no prompt carries context inline" holds for the append
   exactly as for a prompt, and harder: an append is a prefix re-billed on every turn.
 - **The app-tools MCP server.** The daemon stands up one loopback HTTP MCP listener for
@@ -141,7 +142,7 @@ Rule Zero: a capable agent is the product, and every tool this needs is already 
 - **Briefing:** `session-briefing.test.ts` renders against a fixture and asserts the byte ceiling, the
   presence of the patchset line and the tool names, and the ABSENCE of any diff hunk or board
   element (control: interpolate one board element and the absence assertion fails). The manifest
-  test in `@rennet/prompts` covers the new file and its `{{reader-voice}}` marker.
+  test in `@rennet/prompts` covers the new file and asserts it carries no partial marker.
 - **App tools server:** a hermetic test drives `tools/list` and asserts the set equals
   `buildAppTools`' names; flips `board.read` out of `AGENT_EXPOSED` in a fixture registry and
   asserts it vanishes; calls `app_ask_stage` and asserts the ask reaches the dispatch with the

@@ -90,7 +90,11 @@ the exits), what it can do (everything the reviewer can: read, run, edit, and us
 its tools), the steer (stage asks to the draft PR or the round submission, because that is the
 path Rennet tracks and receipts — a steer, never a prohibition; the file carries no "never"),
 what an Explain's `Code reference` is, how to find and read a review (`app_session_list`,
-`app_review_load`, `app_board_read`, `app_patchset_readSpan`), the `{{reader-voice}}` marker. `renderSessionBriefing(input)` in `prompt-contracts.ts` splices the dynamic lines — the
+`app_review_load`, `app_board_read`, `app_patchset_readSpan`), and its own short register — no
+shared partial, because `reader-voice.md` is 2,846 B of board-prose guidance against a 4,096-byte
+ceiling that must also hold the review's lines, and its ground rules tell a writer not to name
+lenses or boards, which is the opposite of what this thread does for the reviewer (Rai,
+2026-09-12). `renderSessionBriefing(input)` in `prompt-contracts.ts` splices the dynamic lines — the
 patchset (branch or PR number, base and head oids, the exact `git diff <base>...<head>` command),
 the context directory path when one exists, the tool names actually attached — and enforces
 `SESSION_BRIEFING_MAX_BYTES = 4096` with an honest truncation marker on the dynamic lines only

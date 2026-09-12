@@ -44,9 +44,12 @@ grep -n "board.read" packages/protocol/src/commands/index.ts     # present; NOT 
 
 - [x] 2.1 `packages/prompts/src/prompts/session-briefing.md`: the fixed text per design (role,
   what it can do — everything — and the steer toward staging, Explain's `Code reference`, finding
-  and reading a review, `{{reader-voice}}`). A test asserts the file contains no "never", "do not
-  commit", "do not push" or "must not" sentence (**positive control:** add one, it reddens). Exported as
-  `SESSION_BRIEFING_FILE`; the manifest test covers the file and its marker.
+  and reading a review, and its own short register — no shared partial, because splicing
+  `reader-voice.md` (2,846 B) under the 4,096-byte ceiling leaves no room for the review's lines
+  and its ground rules tell a writer not to name lenses or boards). A test asserts the file
+  contains no "never", "do not commit", "do not push" or "must not" sentence (**positive
+  control:** add one, it reddens). Exported as `SESSION_BRIEFING_FILE`; the manifest test covers
+  the file and asserts it carries no partial marker at all.
 - [x] 2.2 `prompt-contracts.ts`: `renderSessionBriefing(input: SessionBriefingInput): string` —
   splices patchset (kind, branch or PR number, base and head oids, the exact `git diff` command),
   the context directory path when present, and the attached tool names; `SESSION_BRIEFING_MAX_BYTES = 4096`

@@ -499,14 +499,23 @@ describe("lens prompt manifest", () => {
     expect(text).not.toContain("```json");
     expect(text).not.toMatch(/"type"\s*:/);
 
-    // The register partial, spliced by the same mechanism the lens prompts use.
-    expect(text.split("{{reader-voice}}"), "reader-voice marker").toHaveLength(2);
+    // The briefing carries its OWN short register and no shared partial (Rai, 2026-09-12):
+    // `reader-voice.md` is 2,846 B of board-prose guidance against a 4,096 B ceiling that
+    // also has to hold the review's lines, and its ground rules tell a writer not to name
+    // lenses or boards — which is the opposite of what this thread does for the reviewer.
+    // So the file carries no marker at all, and this asserts that for EVERY partial the
+    // manifest knows, not just the one that was removed.
+    for (const marker of Object.keys(PROMPT_PARTIALS)) {
+      expect(text, `the briefing carries no ${marker}`).not.toContain(marker);
+    }
+    expect(text, "a marker of any shape").not.toMatch(/\{\{[\w-]+\}\}/);
     expect(text).not.toContain("## Explain the change and its mechanism");
-    expect(expandPromptPartials(text, partials)).toContain("Ground rules");
+    expect(expandPromptPartials(text, partials), "nothing to splice").toBe(text);
+    // Its own register, in the briefing's own words.
+    expect(normalized).toContain("Lead with the consequence, then the mechanism");
+    expect(normalized).toContain("cite it by path and line range");
 
-    // Decision 3: the briefing forbids nothing. This reads the briefing's OWN text — the
-    // reader-voice partial's "reader-facing prose never names lenses" is board-prose
-    // guidance, not a limit on what the thread may do, and it is shared with five seats.
+    // Decision 3: the briefing forbids nothing.
     expect(prohibitions(text), "the briefing forbids nothing").toEqual([]);
     // Positive control, one per pattern: each phrase is proven able to fire. Without this
     // the assertion above passes for a file that simply never matched anything.
