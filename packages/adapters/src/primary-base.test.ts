@@ -145,10 +145,22 @@ describe("resolvePrimaryBase", () => {
   });
 
   it("names the primary from origin/HEAD when the caller has no name", async () => {
-    const { root } = staleLocalMain();
-    git(root, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main");
+    // The primary is `trunk`, a name the `main`/`master` probe can never find, so this
+    // answer can only have come from reading `origin/HEAD`. With `main` as the fixture's
+    // primary the probe would find it whether or not the symbolic ref was read at all.
+    const origin = scratchDirectory("rennet-primary-base-origin-");
+    git(origin, "init", "-q", "--bare", "-b", "trunk");
+    const root = repository();
+    git(root, "branch", "-m", "main", "trunk");
+    git(root, "remote", "add", "origin", origin);
+    commit(root, "base.txt", "base\n");
+    git(root, "push", "-q", "origin", "trunk");
+    git(root, "fetch", "-q", "origin");
+    git(root, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/trunk");
+    expect(resolves(root, "refs/heads/main")).toBe(false);
+    expect(resolves(root, "refs/remotes/origin/main")).toBe(false);
 
-    expect((await resolvePrimaryBase(execaGit, root)).baseRef).toBe("origin/main");
+    expect((await resolvePrimaryBase(execaGit, root)).baseRef).toBe("origin/trunk");
   });
 
   it("probes main then master when there is no origin/HEAD", async () => {

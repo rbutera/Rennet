@@ -35,7 +35,9 @@ export interface ResolvedForgePullRequestDestination {
  * one leading `<remote>/` when `<remote>` is a remote of this repository — and only
  * then, so a genuine branch called `origin/thing` in a clone with no remote named
  * `origin` survives intact. Longest remote name first, so nested spellings resolve the
- * same way twice.
+ * same way twice. The one shape this cannot tell apart is a branch whose own first
+ * segment is also a remote's name (`release/1.2` beside a remote called `release`);
+ * git warns about that ambiguity itself, and a read at this seam would not settle it.
  */
 export function forgeBaseBranch(baseRef: string, remotes: readonly string[]): string {
   const byLength = [...remotes].sort((left, right) => right.length - left.length);

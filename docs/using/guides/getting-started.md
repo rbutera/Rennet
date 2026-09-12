@@ -185,8 +185,8 @@ the primary branch has nothing to review yet, so those cells read "—" rather
 than zero. A local branch also shows how many commits it is ahead of and behind
 that same commit. A checked-out worktree says **clean** or **dirty** beside its
 name; a bare branch with no checkout says nothing about it, because there is
-nothing to measure. Uncommitted edits are not
-counted in the lines; **dirty** is how the list says they exist. GitLab does not
+nothing to measure. Uncommitted edits are not counted in the lines; **dirty** is
+how the list says they exist. GitLab does not
 report line counts in its merge-request list, so GitLab rows show "—" there.
 **Review requested** and **Your PR** sit beside a pull request's title rather than
 in a column of their own. As the canvas narrows the list folds from the right:

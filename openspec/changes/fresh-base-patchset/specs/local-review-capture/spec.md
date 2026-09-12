@@ -29,6 +29,11 @@ The system SHALL capture committed branch changes since the resolved base, stage
 - **WHEN** local `main` is ahead of `origin/main` and the checked-out branch was cut from local `main`
 - **THEN** the patchset's base is the merge-base with `main`, and `baseRef` records `main`
 
+#### Scenario: A capture measured against a remote-tracking spelling opens its pull request against the branch name
+
+- **WHEN** a patchset records `origin/main` as its `baseRef` and the reviewer opens a pull request from it
+- **THEN** the submission and its preview name `main` as the base, and a branch genuinely called `origin/thing` in a clone with no remote named `origin` is submitted as `origin/thing`
+
 #### Scenario: Board storage exists in a repository without an ignore rule
 
 - **WHEN** capture runs in a repository that does not ignore `.rennet/` and app-owned files exist under `.rennet/boards/`
