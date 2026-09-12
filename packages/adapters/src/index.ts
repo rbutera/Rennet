@@ -405,6 +405,11 @@ export {
   worktreeForBranch,
 } from "./pr-worktree";
 export {
+  type PrimaryBaseOptions,
+  type PrimaryBaseResolution,
+  resolvePrimaryBase,
+} from "./primary-base";
+export {
   type ProjectContextBackendPart,
   projectContextBackend,
   type ResolvedRepoContext,
