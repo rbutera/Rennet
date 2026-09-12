@@ -580,6 +580,43 @@ describe("GitCaptureAdapter", () => {
     expect(patchset.rawDiff).not.toContain("a sibling lane landed this");
   });
 
+  it("bases the capture on local main when it is the newer spelling", async () => {
+    // The other half of the resolver's job, and the half the OLD `resolveBase` got wrong:
+    // it took the first spelling that resolved, `origin/*` before `refs/heads/*`, so a
+    // reviewer who pulled and then cut a branch was reviewed against the tip they had
+    // already moved past — every commit they pulled counted as the branch's own work.
+    const origin = mkdtempSync(join(tmpdir(), "rennet-git-origin-"));
+    directories.push(origin);
+    git(origin, "init", "-q", "--bare", "-b", "main");
+    const root = repository();
+    git(root, "remote", "add", "origin", origin);
+    git(root, "push", "-q", "origin", "main");
+    const remoteMain = git(root, "rev-parse", "origin/main").trim();
+
+    // The reviewer pulls — or, here, commits on `main` directly — so local `main` now
+    // carries a commit `origin/main` does not.
+    writeFileSync(join(root, "pulled.txt"), "landed since the last fetch\n");
+    git(root, "add", "pulled.txt");
+    git(root, "commit", "-qm", "pulled");
+    const localMain = git(root, "rev-parse", "main").trim();
+    expect(localMain).not.toBe(remoteMain);
+
+    git(root, "checkout", "-qb", "feature", "main");
+    writeFileSync(join(root, "branch.txt"), "the branch's own work\n");
+    git(root, "add", "branch.txt");
+    git(root, "commit", "-qm", "branch change");
+
+    const patchset = await new GitCaptureAdapter().capture(root);
+
+    expect(patchset.repository.baseRef).toBe("main");
+    expect(patchset.repository.baseOid).toBe(localMain);
+    expect(patchset.repository.baseOid).not.toBe(remoteMain);
+    const paths = patchset.files.map((file) => file.path);
+    expect(paths).toEqual(["branch.txt"]);
+    expect(paths).not.toContain("pulled.txt");
+    expect(patchset.rawDiff).not.toContain("landed since the last fetch");
+  });
+
   it("marks a visible diff as truncated without changing its content identity", async () => {
     const root = repository();
     writeFileSync(join(root, "tracked.txt"), "x".repeat(1024));
