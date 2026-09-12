@@ -82,11 +82,18 @@ export const EVIDENCE_TOOL_BYTES_CAP = 16 * 1024;
  * An element count is not a byte count: a board element is a sentence or a whole finding,
  * so 200 of them is anywhere from 8 kB to 90 kB, and a cap that admits 90 kB into the
  * conversation prefix is not a cap. So a page stops at whichever bound it reaches first,
- * and the marker names the cursor either way. Set to the same 16 kB the evidence read
- * declares, because it is the same question asked of a different payload: how much of one
- * answer may sit in the prefix and be re-read on every remaining round trip of the turn.
+ * and the marker names the cursor either way.
+ *
+ * 5 kB, and the number is chosen AGAINST {@link APP_TOOL_RESULT_MAX_BYTES} rather than for
+ * its own sake. It used to be the evidence read's 16 kB, which is DOUBLE the universal
+ * ceiling — so every page that actually filled its byte budget was immediately over the
+ * ceiling and spilled to a file, and paging existed only to decide how much got written to
+ * disk. A page has to be able to ride INLINE, which is the whole point of paging a
+ * collection instead of spilling it: this leaves room for the JSON-RPC envelope, the
+ * marker's own sentence and the escaping, with the head-room the ceiling's shrink loop needs
+ * if a page does go over.
  */
-export const PAGE_TOOL_BYTES_CAP = EVIDENCE_TOOL_BYTES_CAP;
+export const PAGE_TOOL_BYTES_CAP = 5 * 1024;
 
 /**
  * The universal ceiling on EVERY exposed command's complete serialised result (item 1, both
@@ -633,6 +640,13 @@ export function applyResultCeiling(
       bytes,
       path,
       head,
+      // The PAGING CURSOR, when the per-command shaping produced one. It was folded into
+      // the spilled FILE and dropped from the reply, so a thread whose board page both
+      // paged and spilled was told where the bytes are and NOT how to ask for the next
+      // page — and the only way back was to guess a cursor. The shrink loop below
+      // re-measures the whole wrapped body on every pass, so carrying it here cannot push
+      // the envelope over: it costs `head` bytes, which is what `head` is for.
+      ...(result.marker === undefined ? {} : { marker: result.marker }),
       note: `The complete ${bytes}-byte result did not fit this call's ${APP_TOOL_RESULT_MAX_BYTES}-byte budget, so ${locationNote}; read it with your own tools for the rest. \`head\` is this result's own first bytes, not a separate summary.`,
     };
     const candidate = toolResultOf({ text: JSON.stringify(envelope) }, isError);

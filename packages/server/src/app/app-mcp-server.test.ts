@@ -397,10 +397,17 @@ describe("paging a collection-carrying result", () => {
     expect(marker).toContain(`cursor: ${16 * 1024}`);
   });
 
-  it("caps a page by BYTES when the elements are large, still moves the cursor, and spills the (still oversized) page", async () => {
-    // Ten elements would be under the count cap; each is ~4 kB, so the byte budget is what
+  it("caps a page by BYTES when the elements are large, moves the cursor, and still rides INLINE", async () => {
+    // Two elements would be under the count cap; each is ~4 kB, so the byte budget is what
     // stops this page. A count cap alone would have admitted 200 of these — 800 kB into the
     // conversation prefix, re-read on every remaining round trip of the turn.
+    //
+    // And the page comes back IN THE REPLY. The budget used to be the evidence read's
+    // 16 kB — DOUBLE the 8 kB universal ceiling — so every page that actually filled it was
+    // over the ceiling on arrival and spilled to a file, which made paging a decision about
+    // how much got written to disk rather than about what the model reads. At 5 kB a real
+    // page rides inline, which is the whole point of paging a collection instead of spilling
+    // it (round 5, item 1).
     const fat = Array.from({ length: 40 }, (_, index) => ({
       id: `e${index}`,
       kind: "prose",
@@ -423,21 +430,80 @@ describe("paging a collection-carrying result", () => {
       generation: "g",
       lens: "noise",
     });
-    // The 16 kB page-byte budget still stopped this well short of all 40 elements — but the
-    // result (still well over the 8 kB universal ceiling) now spills rather than riding
-    // inline, exactly like the evidence page above.
+    // TWO blocks — the page and its marker — not one spill envelope.
+    expect(blocks(answer)).toHaveLength(2);
+    const served = JSON.parse(blocks(answer)[0]?.text ?? "{}") as {
+      board: { elements: unknown[] };
+    };
+    expect(served.board.elements.length).toBeLessThan(10);
+    expect(blocks(answer)[1]?.text).toContain("page budget");
+    expect(blocks(answer)[1]?.text).toContain("cursor:");
+    expect(Buffer.byteLength(blocks(answer)[0]?.text ?? "", "utf8")).toBeLessThan(
+      APP_TOOL_RESULT_MAX_BYTES,
+    );
+  });
+
+  // ── Round 5, item 1 ─────────────────────────────────────────────────────────
+  // A page that ALSO spills was told where its bytes are and NOT how to ask for the next
+  // page: `result.marker` — the half carrying `cursor: N` — was folded into the spilled
+  // FILE and dropped from the reply. The thread's only way forward was to guess a cursor,
+  // and `{ id: "eN" }` fixtures could never see it, because a page of those rides inline.
+  //
+  // A board element is a finding or a paragraph, so this drives the shape production has.
+  it("carries the paging cursor on the ENVELOPE when a page both pages and spills", async () => {
+    // One finding-sized element per page: over the 5 kB page budget on its own, so `page`
+    // takes exactly one (it always takes at least one — a page of nothing is a gate), and
+    // the result is over the 8 kB ceiling, so it spills. Both halves at once, which is the
+    // combination that lost the cursor.
+    const finding = (index: number) => ({
+      id: `f${index}`,
+      kind: "finding",
+      severity: "major",
+      concern: `Finding ${index}. ${"The handler swallows the rejection and reports success, so a failed write reads as a completed one. ".repeat(120)}`,
+    });
+    const server = await serverWith({
+      dispatch: () => async () => ({
+        board: {
+          lens: "flagged",
+          generation: "g",
+          boardId: "b",
+          document: { title: "Flagged" },
+          sections: [],
+          elements: Array.from({ length: 5 }, (_, index) => finding(index)),
+        },
+      }),
+    });
+    const answer = await call(server.addressFor(THREAD).url, "app_board_read", {
+      reviewId: "r",
+      generation: "g",
+      lens: "flagged",
+    });
     expect(blocks(answer)).toHaveLength(1);
     const envelope = JSON.parse(blocks(answer)[0]?.text ?? "{}") as {
       truncated: boolean;
-      bytes: number;
       path: string;
+      marker?: string;
+      head?: string;
     };
     expect(envelope.truncated).toBe(true);
-    const spilled = readFileSync(envelope.path, "utf8");
-    const [json, marker] = spilled.split("\n\n");
-    const served = JSON.parse(json ?? "{}") as { board: { elements: unknown[] } };
-    expect(served.board.elements.length).toBeLessThan(10);
-    expect(marker).toContain("page budget");
+    // THE FIX: the cursor is on the reply, not only inside the file.
+    expect(envelope.marker).toBeDefined();
+    expect(envelope.marker).toContain("cursor: 1");
+    expect(envelope.marker).toContain("of 5");
+    // ...and the next page is actually servable from it, which is the claim that matters.
+    const cursor = Number(/cursor: (\d+)/.exec(envelope.marker ?? "")?.[1]);
+    const second = await call(server.addressFor(THREAD).url, "app_board_read", {
+      reviewId: "r",
+      generation: "g",
+      lens: "flagged",
+      cursor,
+    });
+    const secondEnvelope = JSON.parse(blocks(second)[0]?.text ?? "{}") as { marker?: string };
+    expect(secondEnvelope.marker).toContain("cursor: 2");
+    // The ceiling still holds over the whole wire body, marker included.
+    expect(Buffer.byteLength(blocks(answer)[0]?.text ?? "", "utf8")).toBeLessThan(
+      APP_TOOL_RESULT_MAX_BYTES,
+    );
   });
 
   // ── Both reviewers' cluster-3 finding 1 ─────────────────────────────────────

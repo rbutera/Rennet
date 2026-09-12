@@ -682,16 +682,29 @@ const GENERIC_LARGE_BLOB = {
   blob: "x".repeat(40_000),
 };
 
+/**
+ * The named fixtures whose result is over the ceiling even AFTER whatever shaping they have,
+ * so the operand guard below can assert each really spills — a fixture that quietly shrank
+ * cannot leave the spill path unexercised.
+ *
+ * The three COUNT-paged tools are not here, and that is round 5's item 1: the page budget
+ * was the evidence read's 16 kB, double the 8 kB ceiling, so a full page was over the
+ * ceiling on arrival and every one of them spilled — paging decided how much got written to
+ * disk rather than what the model reads. At 5 kB their pages ride INLINE with their cursors
+ * ({@link PAGED_TOOLS_INLINE}). `patchset.readEvidence` stays here on purpose: its own
+ * declared cap is 16 kB of patch text, which is a deliberate "this page is genuinely big",
+ * and it therefore still answers with a path.
+ */
 const NAMED_LARGE_FIXTURE_TOOLS = [
-  "app_board_read",
-  "app_session_list",
-  "app_session_transcript",
   "app_patchset_readEvidence",
   "app_ask_read",
   "app_session_rounds",
   "app_review_handoff_compose",
   "app_round_dispatch",
 ];
+
+/** The paged tools whose page is expected to RIDE INLINE at the 5 kB page budget. */
+const PAGED_TOOLS_INLINE = ["app_board_read", "app_session_list", "app_session_transcript"];
 
 function fixtureFor(commandId: CommandName): unknown {
   return LARGE_FIXTURES[commandId] ?? GENERIC_LARGE_BLOB;
@@ -862,6 +875,16 @@ describe("what the session thread's app tools cost (session-thread-briefing)", (
           true,
         );
       }
+      // ...and the count-paged tools, whose pages now FIT, come back in the reply with
+      // their cursors rather than as paths to files (round 5, item 1). A page of the
+      // 1,252-element Noise board is the case that was sighted.
+      for (const name of PAGED_TOOLS_INLINE) {
+        expect(
+          rows.find((row) => row.name === name)?.spilled,
+          `${name}'s page should ride inline at the 5 kB page budget, not spill`,
+        ).toBeUndefined();
+      }
+
       const genericSpilled = rows.some(
         (row) => row.spilled !== undefined && !NAMED_LARGE_FIXTURE_TOOLS.includes(row.name),
       );
