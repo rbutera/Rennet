@@ -126,6 +126,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.11",
+    "@electron/asar": "3.4.1",
     "@electron/node-gyp": "git+https://github.com/electron/node-gyp.git#06b29aafb7708acef8b3669835c8a7857ebc92d2",
     "@emnapi/core": "2.0.0-alpha.3",
     "@emnapi/runtime": "2.0.0-alpha.3",
