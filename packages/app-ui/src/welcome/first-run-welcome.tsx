@@ -27,9 +27,18 @@ import {
   TriangleAlert,
 } from "lucide-react";
 import { type AnimationSequence, stagger, useAnimate, useReducedMotion } from "motion/react";
-import { type CSSProperties, type ReactNode, useEffect, useMemo, useState } from "react";
+import {
+  type CSSProperties,
+  type ReactNode,
+  type RefObject,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useLocation } from "wouter";
 import { Icon } from "../components/icon";
+import { LiquidSphere } from "../components/liquid-sphere";
 import { useBridge, useCommand, useMutation, useRefreshCommand } from "../data";
 import { AddProjectFlow } from "../project/add-project-dialog";
 import { newChatPath } from "../routes/url";
@@ -342,7 +351,16 @@ function WelcomeShell({
     <div className="min-h-dvh overflow-hidden bg-canvas text-ink">
       {step > 0 ? (
         <header className="flex h-[58px] items-center justify-between border-b border-line bg-canvas px-7">
-          <RennetLockup size={24} />
+          {/* The same lockup the sidebar's row carries, at the size a 58px strip holds:
+           *  the LIVE sphere at 32px with the wordmark drawn at HALF its height — 16px,
+           *  ~68.6px wide on the authored 480.168:112 window — and the authored gap,
+           *  32 × 24/126 ≈ 6.1px, taken as `gap-1.5`. Both halves are decorative and the
+           *  name rides the wrapper, so the assembly reads as one image called Rennet.
+           *  Resting: the wizard is configuring the client, not running a review. */}
+          <span className="flex items-center gap-1.5" role="img" aria-label="Rennet">
+            <LiquidSphere size={32} state="resting" className="shrink-0" />
+            <RennetLockup part="wordmark" size={16} className="w-auto" />
+          </span>
           <span className="flex items-center gap-1.5 text-xs text-ink-faint">
             <Icon icon={ShieldCheck} className="size-3.5 text-green" /> Local by default
           </span>
@@ -457,6 +475,50 @@ const SENTENCE_REEL = "[data-sentence-reel]";
 const LOGO_MARK = "[data-logo-mark]";
 const LOGO_WORDMARK = "[data-logo-wordmark]";
 const APPEARANCE_PANEL = "[data-appearance-panel]";
+
+// The wordmark's wipe, on the opening sequence's clock. Named because the sphere settles
+// from working to resting the moment the wipe lands — the assembly is complete there, not
+// at the end of the whole sequence — and a start/duration written twice would drift apart.
+const WORDMARK_WIPE_AT = 0.94;
+const WORDMARK_WIPE_DURATION = 0.86;
+
+/** What the hero's sphere is drawn at before its span has been measured — mid-range for
+ *  the clamp below, so the one pre-measurement frame is never a zero-sized engine. */
+const HERO_MARK_FALLBACK = 112;
+
+/**
+ * The rendered width of `ref`'s element in px. `LiquidSphere` takes a pixel size and the
+ * hero's mark is a PERCENTAGE of a clamped container, so the sphere has to be told what
+ * that percentage currently resolves to.
+ *
+ * `ResizeObserver` where it works, a window `resize` listener where there is no
+ * constructor at all, and the fallback until a real measurement arrives — happy-dom has
+ * the constructor but lays nothing out, so every measurement there is 0 and the guard is
+ * what keeps the test environment on the fallback instead of on a zero-sized sphere.
+ */
+function useMeasuredWidth(ref: RefObject<HTMLElement | null>, fallback: number): number {
+  const [width, setWidth] = useState(fallback);
+  useEffect(() => {
+    const node = ref.current;
+    if (!node) return;
+    // `offsetWidth`, NOT `getBoundingClientRect().width`: the hero's mark span starts the
+    // opening at `scale(0.92)`, and a client rect is the TRANSFORMED box, so measuring it
+    // shrank the sphere to 133 inside its own 145px span and left it there — the span's
+    // layout width never changes, so no observer callback ever corrected it.
+    const measure = () => {
+      if (node.offsetWidth > 0) setWidth(node.offsetWidth);
+    };
+    measure();
+    if (typeof ResizeObserver !== "function") {
+      window.addEventListener("resize", measure);
+      return () => window.removeEventListener("resize", measure);
+    }
+    const observer = new ResizeObserver(measure);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [ref]);
+  return width;
+}
 
 /** The run-of-the-wizard treatments, written once because five stages share them. */
 const EYEBROW = "m-0 mb-[7px] text-2xs font-bold tracking-[0.12em] text-accent uppercase";
@@ -580,6 +642,13 @@ function AppearanceStage({ settings, onContinue }: { settings: SettingsView; onC
   const [scope, animate] = useAnimate();
   const reduceMotion = useReducedMotion();
   const [started, setStarted] = useState(false);
+  // The hero's sphere reports the opening: it WORKS while the logo is assembling and
+  // settles the moment the wordmark's wipe lands. Reduced motion has no assembly to
+  // report — its opening is a 0.18s cross-fade — so it stays resting throughout.
+  const [wipeLanded, setWipeLanded] = useState(false);
+  const markState = started && !wipeLanded && !reduceMotion ? "working" : "resting";
+  const heroMark = useRef<HTMLSpanElement | null>(null);
+  const heroMarkSize = useMeasuredWidth(heroMark, HERO_MARK_FALLBACK);
   const { themePack, setThemePack } = useThemePref();
   const { mutate: setAppearance } = useMutation("settings.setAppearance", {
     invalidates: ["settings.get"],
@@ -720,7 +789,7 @@ function AppearanceStage({ settings, onContinue }: { settings: SettingsView; onC
       [
         LOGO_WORDMARK,
         { opacity: 1, x: 0, clipPath: "inset(0 0% 0 0)" },
-        { at: 0.94, duration: 0.86, ease: EASE_OUT },
+        { at: WORDMARK_WIPE_AT, duration: WORDMARK_WIPE_DURATION, ease: EASE_OUT },
       ],
       [
         `${REVIEW_TAGLINE} > span`,
@@ -734,6 +803,16 @@ function AppearanceStage({ settings, onContinue }: { settings: SettingsView; onC
         { at: 2.76, duration: 0.68, ease: EASE_OUT },
       ],
     ]);
+
+    // The sphere's settle, on the sequence's own clock and from the sequence's own
+    // numbers: a value animation started in the same tick with the wipe's `at` as its
+    // delay, so "resting" lands exactly when the wordmark finishes wiping in rather than
+    // at the end of the whole opening (a further 1.6s of appearance panel).
+    const settle = animate(0, 1, {
+      delay: WORDMARK_WIPE_AT,
+      duration: WORDMARK_WIPE_DURATION,
+      onComplete: () => setWipeLanded(true),
+    });
 
     const reel = reelKeyframes();
     const wordShuffle = animate(
@@ -751,6 +830,7 @@ function AppearanceStage({ settings, onContinue }: { settings: SettingsView; onC
 
     return () => {
       controls.stop();
+      settle.stop();
       stopWordShuffle();
     };
   }, [animate, reduceMotion, scope, started]);
@@ -780,22 +860,31 @@ function AppearanceStage({ settings, onContinue }: { settings: SettingsView; onC
     >
       <CodeField />
       <div className="relative z-[2] grid min-h-[292px] content-start justify-items-center text-center">
-        {/* Mark and wordmark are two windows onto one drawing, so the mark can land
-         *  from a blurred scale while the wordmark wipes in behind it. */}
+        {/* The hero is the app's real mark, live: the sphere lands from a blurred scale
+         *  while the wordmark wipes in beside it, and the sphere RIPPLES until that wipe
+         *  finishes. The halves keep the sidebar row's proportion — the wordmark's height
+         *  is half the mark's, so their widths are 1 : 2.14 on the authored 480.168:112
+         *  window — which is why the container clamp is narrower than the old 2:9.6
+         *  assembly's: 320–500px here puts the mark between 93 and 145px across the
+         *  viewport range, the size the mark reads at rather than the size the wordmark
+         *  needs. Motion animates these SPANS, never their contents, so the sphere is free
+         *  to be a canvas; the code-field's gather target is measured from the mark span
+         *  for the same reason. */}
         <div
-          className="mt-[clamp(42px,7vh,72px)] flex w-[clamp(360px,44vw,640px)] items-center justify-center gap-[clamp(12px,1.5vw,22px)] [@media(max-height:760px)]:mt-5"
+          className="mt-[clamp(42px,7vh,72px)] flex w-[clamp(320px,34vw,500px)] items-center justify-center gap-[clamp(12px,1.5vw,22px)] [@media(max-height:760px)]:mt-5"
           role="img"
           aria-label="Rennet"
         >
           <span
-            className="w-[20%] shrink-0 [&>svg]:h-auto [&>svg]:w-full"
+            className="w-[29%] shrink-0"
             data-logo-mark
+            ref={heroMark}
             style={{ opacity: 0, transform: "scale(0.92)", filter: "blur(2px)" }}
           >
-            <RennetLockup size={100} part="mark" />
+            <LiquidSphere size={heroMarkSize} state={markState} />
           </span>
           <span
-            className="w-[76%] shrink-0 [&>svg]:h-auto [&>svg]:w-full"
+            className="w-[62%] shrink-0 [&>svg]:h-auto [&>svg]:w-full"
             data-logo-wordmark
             style={{
               opacity: 0,
@@ -1495,10 +1584,11 @@ function ReadyStage({
   return (
     <section className="mx-auto flex min-h-[calc(100dvh-58px)] w-[min(780px,calc(100vw-48px))] flex-col items-center pt-[clamp(70px,10vh,120px)] pb-[120px] text-center">
       {/* The ready badge is the MARK alone, and the box hugs it: the tick pins to the
-       *  artwork's own corner rather than to the far end of a wordmark-wide strip. A
-       *  `part` is decorative, so the assembly carries the accessible name. */}
+       *  sphere's own corner rather than to the far end of a wordmark-wide strip. The
+       *  sphere is decorative, so the assembly carries the accessible name. Resting —
+       *  setup is finished, which is what the tick says. */}
       <span className="relative mb-[22px] grid place-items-center" role="img" aria-label="Rennet">
-        <RennetLockup size={72} part="mark" />
+        <LiquidSphere size={72} state="resting" />
         <i className="absolute right-0 -bottom-1 grid size-[31px] place-items-center rounded-full border-4 border-canvas bg-green text-surface [&_svg]:size-3.5">
           <Icon icon={Check} />
         </i>
