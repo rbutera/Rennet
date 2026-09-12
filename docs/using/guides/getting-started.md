@@ -443,7 +443,13 @@ you do: read the boards, stage asks into your composer, compose a hand-off,
 dispatch a round. Staging is what it is steered toward, because a staged ask is
 what Rennet tracks — an ask it stages carries the thread as its author, joins the
 basket beside the ones you stage from a board, a line, or a highlighted span, and
-leaves only through the exit you click. Unstage it like any other ask.
+leaves only through the exit you click. Unstage it like any other ask, and the
+basket names it as coming from the chat thread.
+
+A session you opened before this release keeps the thread it already has: a
+thread's briefing and its tools are fixed when the thread is created, and Rennet
+never rewrites one under you. Archive that session and reopen it to get a briefed
+thread.
 
 If the thread is not there yet, the column says which kind of "not there" it is,
 and it never claims something is coming when nothing is. *Connecting to the T3 Code

@@ -52,9 +52,10 @@ grep -n "board.read" packages/protocol/src/commands/index.ts     # present; NOT 
   the file and asserts it carries no partial marker at all.
 - [x] 2.2 `prompt-contracts.ts`: `renderSessionBriefing(input: SessionBriefingInput): string` —
   splices patchset (kind, branch or PR number, base and head oids, the exact `git diff` command),
-  the context directory path when present, and the attached tool names; `SESSION_BRIEFING_MAX_BYTES = 4096`
+  the context directory path, and how many tools are attached on which server (a COUNT, never
+  the names — the harness's own `tools/list` carries those); `SESSION_BRIEFING_MAX_BYTES = 4096`
   enforced with an honest marker on the dynamic lines; every interpolation bounded at its call site.
-- [x] 2.3 `session-briefing.test.ts`: byte ceiling; patchset line and tool names present; a fixture
+- [x] 2.3 `session-briefing.test.ts`: byte ceiling; patchset line and attached-tool count present; a fixture
   with a 95-file change renders byte-identical to a 1-file change (no content travels); **positive
   control** — interpolate one board element into the fixture and the absence assertion fails.
   Cluster gate green. Commit.

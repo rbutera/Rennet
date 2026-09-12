@@ -140,7 +140,7 @@ Rule Zero: a capable agent is the product, and every tool this needs is already 
   without them (control: drop the pass-through, the assertion reddens); the Codex adapter test
   asserts the developer instructions carry the append.
 - **Briefing:** `session-briefing.test.ts` renders against a fixture and asserts the byte ceiling, the
-  presence of the patchset line and the tool names, and the ABSENCE of any diff hunk or board
+  presence of the patchset line and the attached-tool count, and the ABSENCE of any diff hunk or board
   element (control: interpolate one board element and the absence assertion fails). The manifest
   test in `@rennet/prompts` covers the new file and asserts it carries no partial marker.
 - **App tools server:** a hermetic test drives `tools/list` and asserts the set equals
