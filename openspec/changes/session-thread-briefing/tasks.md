@@ -128,7 +128,7 @@ grep -n "board.read" packages/protocol/src/commands/index.ts     # present; NOT 
 
 ## 6. Live proof, full gate
 
-- [ ] 6.1 **Driving the real app.** Open a review; ask the thread what it is and what it can do —
+- [ ] 6.1 **Driving the real app.** *(parked: spawns the reviewer's real `claude`; runs on Rai's go — everything below it landed)* Open a review; ask the thread what it is and what it can do —
   it names Rennet, the branch, the boards and the tools. Ask it to stage an ask for a flagged
   finding — the ask appears in the composer with the thread as author. Ask about a board on
   another session by name — it lists sessions, loads it, reads the board. Explain a board span —
@@ -136,7 +136,7 @@ grep -n "board.read" packages/protocol/src/commands/index.ts     # present; NOT 
   turn is still briefed. **Positive control:** flip `board.read` out of `AGENT_EXPOSED`, rebuild,
   and the thread reports it has no board tool. Evidence in the PR body, never asserted; read the PR
   body back after `create`.
-- [ ] 6.2 PR description states the append's byte size and that it is per-turn prefix cost for the
+- [x] 6.2 PR description states the append's byte size and that it is per-turn prefix cost for the
   thread's life; states the `app_board_read` per-call ceiling.
-- [ ] 6.3 `sh -c 'pnpm check'` green with a positive control capable of failing. Output
+- [x] 6.3 `sh -c 'pnpm check'` green with a positive control capable of failing. Output
   `<promise>SESSION-THREAD-BRIEFING-COMPLETE</promise>`. Commit.
