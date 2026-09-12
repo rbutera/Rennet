@@ -20,7 +20,7 @@ Do not recolour the colour sphere, and do not simulate it with a filter over the
 - `exports/logo/svg/mark-color.svg` for the mark alone wherever colour is available
 - `exports/logo/svg/mark-black.svg` / `mark-white.svg` for the monochrome mark at 48 px and up
 - `exports/logo/svg/mark-small-black.svg` / `mark-small-white.svg` for the monochrome mark from 16 px to 47 px
-- `exports/sphere/mark-resting-1024.png` and `mark-working-1024.png` for the shader's own still frames, and the `*-loop-*.webp` / `.webm` files for the animated ripple — produced by `node brand/scripts/render-sphere.mjs`, not by the asset builder
+- `exports/sphere/mark-resting-1024.png` and `mark-working-1024.png` for the shader's own still frames; `working-loop-512.webm` and `resting-loop-512.webm` (VP9 with alpha, seamless 16 s and 32 s loops) for pages and the app; `working-loop-256.webp` (12 fps animated WebP) for READMEs and anywhere that cannot play video — produced by `node brand/scripts/render-sphere.mjs`, not by the asset builder
 - `exports/app-icons/masters/` for the 1024 px application-icon masters and their SVG sources
 - `exports/app-icons/macos/` for `.icns` files and source iconsets
 - `exports/app-icons/windows/` for multi-resolution `.ico` files
