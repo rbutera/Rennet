@@ -464,7 +464,10 @@ describe("a handoff turn on a briefed session thread", () => {
     // The turn went out and settled — the refusal this guards against would have been a
     // failed start, not a quiet omission.
     expect(outcome.status).toBe("completed");
-    const sent = startTurn.mock.calls[0]?.[0] as Record<string, unknown> | undefined;
+    // `stubs`' `startTurn` declares no parameters, so its recorded calls are typed empty —
+    // the cast reads the argument the implementation really received.
+    const calls = startTurn.mock.calls as unknown as readonly (readonly unknown[])[];
+    const sent = calls[0]?.[0] as Record<string, unknown> | undefined;
     expect(sent).toBeDefined();
     expect(Object.keys(sent ?? {}).sort()).toEqual(["text", "threadId"]);
     expect(sent?.mcpServers).toBeUndefined();

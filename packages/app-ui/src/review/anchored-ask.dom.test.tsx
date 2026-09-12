@@ -288,7 +288,7 @@ describe("anchoredAskText labels the code reference", () => {
   const ref = {
     patchsetId: "ps-1",
     path: "packages/server/src/dispatch/chat.ts",
-    side: "new",
+    side: "head",
     startLine: 42,
     endLine: 58,
   } as const;
@@ -303,7 +303,7 @@ describe("anchoredAskText labels the code reference", () => {
       generation: "gen-2",
     });
     const label =
-      "Anchor: the flagged board, element f3, generation gen-2 — packages/server/src/dispatch/chat.ts lines 42–58 (new side).";
+      "Anchor: the flagged board, element f3, generation gen-2 — packages/server/src/dispatch/chat.ts lines 42–58 (head side).";
     expect(text).toContain(label);
     // Immediately above, on its own line: the briefing says "the line above it".
     expect(text).toContain(`${label}\nCode reference: `);
@@ -312,7 +312,7 @@ describe("anchoredAskText labels the code reference", () => {
 
   it("names what it can when the span came from the diff and not from a board", () => {
     const text = anchoredAskText({ question: "Why?", excerpt: "", codeRef: ref });
-    expect(text).toContain("Anchor: packages/server/src/dispatch/chat.ts lines 42–58 (new side).");
+    expect(text).toContain("Anchor: packages/server/src/dispatch/chat.ts lines 42–58 (head side).");
     // No invented board: a diff selection has none, and saying one would be a lie the
     // thread would then repeat back to the reviewer.
     expect(text).not.toContain("board");
@@ -324,7 +324,7 @@ describe("anchoredAskText labels the code reference", () => {
       excerpt: "",
       codeRef: { ...ref, endLine: 42 },
     });
-    expect(text).toContain("line 42 (new side)");
+    expect(text).toContain("line 42 (head side)");
     expect(text).not.toContain("lines 42");
   });
 
