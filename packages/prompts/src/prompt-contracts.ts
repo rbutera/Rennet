@@ -903,7 +903,12 @@ export function renderSessionBriefing(input: SessionBriefingInput): string {
     ...(input.contextDir === undefined
       ? []
       : [
-          `- ${renderContextDirectorySentence(capBytes(input.contextDir.replace(/\/$/, ""), SESSION_BRIEFING_CONTEXT_DIR_MAX_BYTES))}`,
+          // The seats' own sentence, plus WHEN the directory appears. A session thread is
+          // created at capture, before any generation has drafted, and its instructions are
+          // fixed at create — so for most of the threads that read this the directory does
+          // not exist yet, and a sentence that only described a directory already there
+          // would be wrong for exactly the reviewer who just opened a review.
+          `- ${renderContextDirectorySentence(capBytes(input.contextDir.replace(/\/$/, ""), SESSION_BRIEFING_CONTEXT_DIR_MAX_BYTES))} It appears once the lens boards have been drafted for this review; before that there is nothing there to read.`,
         ]),
     renderSessionBriefingTools(input.tools),
   ];

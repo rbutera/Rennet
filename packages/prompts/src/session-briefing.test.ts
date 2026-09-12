@@ -233,7 +233,7 @@ describe("renderSessionBriefing", () => {
     });
     const branchLine = lineOf(longBranch, "- Patchset:");
     expect(branchLine, "the branch is cut inside its own backticks").toMatch(
-      /^- Patchset: branch `feat\/long-[^\n`]*…` — base aaa1111 → head bbb2222\./,
+      /^- Patchset: branch `feat\/long-[^\n`]*…` — review `rev-1`, base aaa1111 → head bbb2222\./,
     );
     expect(bytes(branchLine), "branch line bytes").toBeLessThanOrEqual(
       SESSION_BRIEFING_REF_MAX_BYTES + 200,
@@ -252,7 +252,7 @@ describe("renderSessionBriefing", () => {
       patchset: { ...base.patchset, diffCommand: `git diff ${"2".repeat(4_000)}` },
     });
     expect(lineOf(longCommand, "- Patchset:"), "the command is cut inside its backticks").toMatch(
-      /Read the change with `git diff 2{10}[2]*…`\.$/,
+      /Read the change with `git diff 2{10}[2]*…`\. Every `app_\*` tool takes that review id/,
     );
 
     const longContext = renderSessionBriefing({
