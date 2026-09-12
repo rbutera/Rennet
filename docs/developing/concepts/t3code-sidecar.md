@@ -771,12 +771,17 @@ adapter as a different server.
 
 **A tool result is billed like a prompt, and worse.** It sits in the conversation prefix
 and is re-read on every remaining round trip of the turn, so every result on this server is
-bounded: 8 kB per call, with the full result written to a file under
-`.rennet/context/<sessionId>/tool-results/` and the returned result naming that path. A
-result carrying a collection declares its cap in the result itself, with an honest marker
-saying how many rows were elided and a cursor for the next page. The thread reads the file
-or asks for the next page when it wants the rest — the same progressive disclosure the
-seats get, applied to the answers rather than the questions.
+bounded: 8 kB per call. Over that, the envelope carries the first 2 kB as a `head` and the
+full result goes to a file — under `.rennet/context/<sessionId>/tool-results/` in the
+review's own checkout, named in the envelope as a path RELATIVE to the thread's working
+directory, so the thread opens it with the same tools it reads code with. When the call
+resolves no session or no root to write into, the file lands in the daemon's state
+directory instead (`<stateDir>/tool-results/`, swept at daemon start of anything older
+than 24 hours) and the envelope names it absolutely. A result carrying a collection
+declares its cap in the result itself, with an honest marker saying how many rows were
+elided and a cursor for the next page. The thread reads the file or asks for the next page
+when it wants the rest — the same progressive disclosure the seats get, applied to the
+answers rather than the questions.
 
 ## The board server
 

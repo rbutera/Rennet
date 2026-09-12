@@ -128,7 +128,7 @@ This file defines the terms shared by the product, documentation, and code. It c
 - **Settings ladder**: the precedence order a setting resolves through — builtin, detected, global, repo. The highest layer offering a value is effective, and every contribution stays visible as provenance.
 - **Client settings**: preferences and client-local continuity of the machine a person views Rennet on — appearance, keybindings, welcome completion, coach marks, and last-used project. They follow the viewer, apply to whatever it views, and sit outside the settings ladder.
 - **Daemon settings**: a source's machine-local settings, read by that source's Rennet host. They form the global rung of the settings ladder for projects on that source.
-- **Orchestrator harness**: the coding harness a source uses for its session threads. Chosen in the welcome — a source with both Claude and Codex detected has an explicit preferred orchestrator harness — and read by the model council's `orchestrator-chat` job, which resolves the harness and model a session thread runs on.
+- **Orchestrator harness**: the coding harness a source uses for its session threads. Chosen in the welcome — a source with both Claude and Codex detected has an explicit preferred orchestrator harness — and the choice enables that harness, from which the model council's `orchestrator-chat` job resolves the harness and model a session thread actually runs on.
 - **Dual Harness**: a per-source review mode available when Claude and Codex are both detected. It runs one seat per provider for review roles that define a second seat; it does not run every model job twice.
 
 ## Desktop presence

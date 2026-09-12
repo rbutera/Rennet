@@ -165,8 +165,17 @@ projection pipeline, its two persistence layers and the snapshot query that
 reads a thread back, `ws.ts`, both adapters and
 the Codex developer instructions and session runtime, plus the tests that cover
 each. Each row says why the field exists there rather than repeating the seam,
-and every one is marked upstreamable: the briefing append is one object field on
-a preset system prompt, not a new path through T3's code.
+and nearly every one is marked upstreamable: the briefing append is one object
+field on a preset system prompt, not a new path through T3's code.
+
+The two exceptions are `apps/server/src/persistence/Migrations.ts` and its test.
+The thread's two columns are added after the migrator rather than as a
+migration, because the migrator runs only ids greater than the highest it has
+recorded: a fork that takes an id makes upstream's own migration at that id
+unrunnable on every database that ran ours, and one that takes a far-future id
+makes every later upstream migration unrunnable — neither failing loudly. The
+guarded, idempotent `ALTER`s leave upstream's id space untouched, which is
+exactly why those two rows are marked Upstreamable **no**.
 
 ## Licence notes
 
