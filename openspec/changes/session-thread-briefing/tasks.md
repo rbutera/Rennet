@@ -19,7 +19,7 @@ grep -n "board.read" packages/protocol/src/commands/index.ts     # present; NOT 
 
 ## 1. Vendored seam — a thread carries `instructions` and `mcpServers`
 
-- [ ] 1.1 `vendor/t3code/packages/contracts/src/orchestration.ts`: `thread.create` (both command
+- [x] 1.1 `vendor/t3code/packages/contracts/src/orchestration.ts`: `thread.create` (both command
   shapes) and the `thread.created` event gain optional `instructions` (TrimmedString) and
   `mcpServers` (`TurnMcpServers`); the thread projection carries both. Contract test: decodes with
   and without; a raw credential still has nowhere to live. Ledger row.
