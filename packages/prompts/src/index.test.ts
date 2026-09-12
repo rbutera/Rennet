@@ -13,6 +13,7 @@ import {
   PROMPT_PARTIALS,
   REVIEW_DRAFT_VOICE_FILE,
   ROUND_REPORT_FILE,
+  SESSION_BRIEFING_FILE,
   WRITE_WITH_TOOLS_MARKER,
   WRITE_WITH_TOOLS_PARTIAL_FILE,
 } from "./index.js";
@@ -31,6 +32,24 @@ const partials = Object.fromEntries(
     readFileSync(join(srcDir, file), "utf8"),
   ]),
 );
+
+/**
+ * The prohibition shapes Decision 3 rules out of the session briefing: a "never", a
+ * "do not commit", a "do not push", a "must not". Returned as the matched sentences so a
+ * failure names what crept in, and so the assertion has something to be controlled with.
+ */
+const PROHIBITION_PATTERNS = [
+  /\bnever\b/i,
+  /\bdo not commit\b/i,
+  /\bdo not push\b/i,
+  /\bmust not\b/i,
+];
+
+function prohibitions(text: string): string[] {
+  return text
+    .split(/(?<=[.!?])\s+|\n/)
+    .filter((sentence) => PROHIBITION_PATTERNS.some((pattern) => pattern.test(sentence)));
+}
 
 describe("lens prompt manifest", () => {
   it("carries a non-empty prompt file for every drafting lens", () => {
@@ -430,6 +449,74 @@ describe("lens prompt manifest", () => {
     expect(text.length).toBeGreaterThan(500);
     expect(text).not.toContain("post-process"); // #737: the file it cited is gone
     expect(text.replace(/\s+/g, " ")).toContain("under their own name");
+  });
+
+  /**
+   * The session thread's briefing (`session-thread-briefing` 2.1). Two things are pinned
+   * here that no other prompt file needs: its SIZE, because the briefing is a system-prompt
+   * append — a prefix re-read on every round trip of every turn for the thread's life — and
+   * the ABSENCE of any prohibition, because Decision 3 says the thread can do everything the
+   * reviewer can and the briefing steers rather than forbids.
+   */
+  it("briefs the session thread with a map, a steer, and no prohibition", () => {
+    const text = readFileSync(join(srcDir, SESSION_BRIEFING_FILE), "utf8");
+    const normalized = text.replace(/\s+/g, " ");
+    // The fixed half's budget. `SESSION_BRIEFING_MAX_BYTES` (4,096) covers fixed + dynamic,
+    // so pinning the file here is what leaves the patchset, context and tool lines room.
+    expect(new TextEncoder().encode(text).length, "fixed briefing bytes").toBeLessThanOrEqual(
+      2_560,
+    );
+    expect(text).toMatch(/^# /);
+
+    // Identity and division of labour: who it is, who already read the change, who judges.
+    expect(normalized).toContain("conversation of one Rennet review session");
+    expect(normalized).toContain("Design, Sequence, Decisions, Flagged, Noise");
+    expect(normalized).toContain("drafted by seats that already read it");
+    expect(normalized).toContain("coding rounds run on their own threads");
+    expect(normalized).toContain("Rennet has no backend");
+    // Capability, then the steer — in that order, because the steer is a steer.
+    expect(normalized).toContain("Everything the reviewer can");
+    expect(normalized.indexOf("Everything the reviewer can")).toBeLessThan(
+      normalized.indexOf("stage an ask"),
+    );
+    expect(normalized).toContain("Staging is the path Rennet tracks");
+    expect(normalized).toContain("Editing the checkout yourself is fine");
+    // The tools it reaches the review through, and the anchored-question contract.
+    for (const tool of [
+      "`app_session_list`",
+      "`app_review_load`",
+      "`app_board_read`",
+      "`app_patchset_readSpan`",
+      "`app_patchset_readEvidence`",
+      "`app_ask_stage`",
+    ]) {
+      expect(text, `the briefing names ${tool}`).toContain(tool);
+    }
+    expect(normalized).toContain("`Code reference: {…}`");
+    expect(normalized).toContain("Retrieve it first");
+    // No tool's input schema is restated: the schemas travel with the tool list.
+    expect(text).not.toContain("```json");
+    expect(text).not.toMatch(/"type"\s*:/);
+
+    // The register partial, spliced by the same mechanism the lens prompts use.
+    expect(text.split("{{reader-voice}}"), "reader-voice marker").toHaveLength(2);
+    expect(text).not.toContain("## Explain the change and its mechanism");
+    expect(expandPromptPartials(text, partials)).toContain("Ground rules");
+
+    // Decision 3: the briefing forbids nothing. This reads the briefing's OWN text — the
+    // reader-voice partial's "reader-facing prose never names lenses" is board-prose
+    // guidance, not a limit on what the thread may do, and it is shared with five seats.
+    expect(prohibitions(text), "the briefing forbids nothing").toEqual([]);
+    // Positive control, one per pattern: each phrase is proven able to fire. Without this
+    // the assertion above passes for a file that simply never matched anything.
+    for (const sentence of [
+      "Never edit the checkout.",
+      "Do not commit anything.",
+      "Do not push this branch.",
+      "You must not open the pull request.",
+    ]) {
+      expect(prohibitions(`${text}\n${sentence}\n`), sentence).toHaveLength(1);
+    }
   });
 
   it("fails when a manifest entry points at a missing file", () => {

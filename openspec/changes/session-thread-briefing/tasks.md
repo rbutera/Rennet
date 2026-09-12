@@ -42,7 +42,7 @@ grep -n "board.read" packages/protocol/src/commands/index.ts     # present; NOT 
 
 ## 2. The briefing — `@rennet/prompts`
 
-- [ ] 2.1 `packages/prompts/src/prompts/session-briefing.md`: the fixed text per design (role,
+- [x] 2.1 `packages/prompts/src/prompts/session-briefing.md`: the fixed text per design (role,
   what it can do — everything — and the steer toward staging, Explain's `Code reference`, finding
   and reading a review, `{{reader-voice}}`). A test asserts the file contains no "never", "do not
   commit", "do not push" or "must not" sentence (**positive control:** add one, it reddens). Exported as
