@@ -173,7 +173,7 @@ A spinner is enough only before the first useful event arrives. Do not replace
 available stage, count, or failure information with an indefinite animation.
 
 Board preparation is the one deliberate exception. While capture and drafting run,
-the mark in the corner slot ripples and the workspace offers a floating Cancel;
+the Rennet mark in the frame's top-left ripples and the workspace offers a floating Cancel;
 no banner names the stage, because the boards themselves arrive lens by lens and
 are the progress. A failure or a cancellation still gets an explicit header with
 Retry.

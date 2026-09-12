@@ -1,6 +1,5 @@
 import { cn } from "@rennet/ui";
 import { PanelLeft } from "lucide-react";
-import type { ReactNode } from "react";
 import { Icon } from "../components/icon";
 import { LiquidSphere } from "../components/liquid-sphere";
 import { useBridge } from "../data";
@@ -15,11 +14,16 @@ import { useAppWorking } from "./use-app-working";
 // over the full-bleed main view when both are shut. `cornerSlotOwner` is the one
 // authority for which; each of the three call sites renders only when it owns it.
 //
+// The sidebar owner carries NEITHER the sphere nor the wordmark: with the lockup on
+// its own 56px row beneath (`sidebar.tsx`), the identity is off the titlebar strip
+// entirely and this row is lights + toggle. The other two owners have no row beneath
+// them, so they keep the sphere as the orb.
+//
 // On darwin the window is `titleBarStyle: "hiddenInset"`, so the OS paints the
 // real close/minimise/zoom buttons over the renderer's top-left. There is nothing
-// to draw here — the slot RESERVES their zone (81px in state 1 so the wordmark
-// clears the lights outright; 76px is the bare OS light zone, kept for the chat
-// header's leading element and 72px for the 4px-inset floating pill) and, being
+// to draw here — the slot RESERVES their zone (81px in state 1, the reserve the
+// sidebar's 256px budget was derived against; 76px is the bare OS light zone, kept for
+// the chat header's leading element and 72px for the 4px-inset floating pill) and, being
 // the titlebar in that state, carries `app-region-drag` so the corner strip drags
 // the window while each control inside marks itself `app-region-no-drag`. Every other
 // host keeps its native frame and reserves nothing, while keeping the same single
@@ -57,20 +61,13 @@ export function useMacTrafficLights(): boolean {
   return useBridge().platform === "darwin";
 }
 
-export function CornerSlot({
-  owner,
-  wordmark,
-}: {
-  readonly owner: CornerSlotOwner;
-  /** State 1 only: the Rennet lockup, rendered BETWEEN the lights and the toggle. */
-  readonly wordmark?: ReactNode;
-}) {
+export function CornerSlot({ owner }: { readonly owner: CornerSlotOwner }) {
   const mac = useMacTrafficLights();
-  // THE ORB (states 2 and 3): with the sidebar collapsed the lockup is gone and with it
-  // the sphere that lives inside it, so the slot carries the sphere on its own — same
-  // mark, same size, same fact. It is rendered HERE rather than by the two call sites so
-  // the corner slot's one-mount invariant covers the sphere too: exactly one sphere is on
-  // screen in every state of the frame, because the slot that owns the corner owns it.
+  // THE ORB (states 2 and 3): with the sidebar collapsed the lockup row is gone and with
+  // it the sphere that lives on it, so the slot carries the sphere on its own — same mark,
+  // same fact, 32px. It is rendered HERE rather than by the two call sites so the
+  // corner slot's one-mount invariant covers the sphere too: exactly one sphere is on
+  // screen in every state of the frame, and it moves with the corner.
   const working = useAppWorking();
   const open = useRennetStore((s) => s.ui.sidebarOpen);
   const setSidebarOpen = useRennetStore((s) => s.uiActions.setSidebarOpen);
@@ -92,18 +89,18 @@ export function CornerSlot({
         // one sanctioned use of translucent chrome (DESIGN.md §Material, amended
         // 2026-08-28). That amendment covers translucency and blur ONLY; the separate
         // ban on decorative shadows stands, so this is a hairline, not a shadow.
-        // Inset 4px from the corner, so the mac padding is 76 − 4.
+        // Inset 4px from the corner, so the mac padding is 76 − 4. 36px tall for a 32px
+        // orb — the pill is the mark's only home in state 3, so it is sized to the mark.
         owner === "floating" &&
           cn(
-            "fixed top-1 left-1 z-40 h-8 rounded-full border border-line/60 bg-surface/70 pr-1.5 backdrop-blur-md",
+            "fixed top-1 left-1 z-40 h-9 rounded-full border border-line/60 bg-surface/70 pr-1.5 backdrop-blur-md",
             mac ? "pl-[72px]" : "pl-1.5",
           ),
       )}
     >
-      {wordmark ? <div className="min-w-0 flex-1">{wordmark}</div> : null}
       {owner === "sidebar" ? null : (
         <LiquidSphere
-          size={24}
+          size={32}
           state={working ? "working" : "resting"}
           title="Rennet"
           className="shrink-0"
@@ -117,7 +114,13 @@ export function CornerSlot({
         // `app-region-no-drag` explicitly: inside a drag region a control that does not
         // opt out never receives the click at all. The old tag-list opt-out happened to
         // cover a <button>; it would not have covered a div/span trigger.
-        className="app-region-no-drag flex size-6 shrink-0 items-center justify-center rounded-chip text-ink-soft hover:bg-raised hover:text-ink"
+        className={cn(
+          "app-region-no-drag flex size-6 shrink-0 items-center justify-center rounded-chip text-ink-soft hover:bg-raised hover:text-ink",
+          // State 1 holds the toggle against the row's trailing edge — the position it
+          // had when the lockup filled the space between. `ml-auto`, not a spacer
+          // element, so the row has exactly the children it draws.
+          owner === "sidebar" && "ml-auto",
+        )}
       >
         <Icon icon={PanelLeft} className="size-3.5" />
       </button>

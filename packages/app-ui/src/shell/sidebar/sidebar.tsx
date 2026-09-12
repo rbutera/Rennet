@@ -932,29 +932,39 @@ export function Sidebar() {
     >
       {open ? (
         <div className="flex h-full min-h-0 w-64 flex-col">
-          {/* Header — state 1's corner slot: lights → lockup → toggle (C20).
-              The 81px light reserve, the `app-region-drag` utility and the collapse
-              toggle all live in `CornerSlot`. The lockup is assembled from its two
-              authored halves rather than drawn whole, because the MARK is the live
-              sphere now: the sphere component beside the wordmark artwork, at the
-              authored gap (24/126 of the mark height ≈ 4.6px, taken as `gap-1`).
-              The accessible name rides the wrapper, so the assembly still reads as
-              one image called "Rennet" however the two halves are drawn.
-              24px on every host: 81 + 24 + 4 + 102.9 + 8 + 12 + 24 = 255.9 ≤ 256,
-              so darwin no longer pays the 14px shrink (#557). */}
-          <CornerSlot
-            owner="sidebar"
-            wordmark={
-              <div role="img" aria-label="Rennet" className="flex items-center gap-1">
-                <LiquidSphere
-                  size={24}
-                  state={working ? "working" : "resting"}
-                  className="shrink-0"
-                />
-                <RennetLockup part="wordmark" size={24} className="w-auto" />
-              </div>
-            }
-          />
+          {/* Header — state 1's corner slot: lights → toggle (C20). The 81px light
+              reserve, the `app-region-drag` utility and the collapse toggle all live
+              in `CornerSlot`; the identity does NOT, any more. A 40px strip that also
+              carries the traffic-light reserve leaves the mark nowhere to grow, so the
+              lockup moved to its own row below and this strip is the titlebar alone.
+              The budget it has to clear is now only its own: 81 + 12 + 24 = 117 ≤ 256. */}
+          <CornerSlot owner="sidebar" />
+          {/* The lockup row — the placement Rai chose from
+              `spikes/sidebar-lockup-prototypes` ("Own row", with the stacked header's
+              proportions). 56px tall, its left edge on the 16px content padding the
+              actions' icon column sits on, BELOW the drag strip, so it is not titlebar
+              and does not drag the window.
+
+              The mark is the live sphere at 44px and the wordmark is drawn at HALF that
+              height — 22px, ~94px wide on the authored 480.168:112 window. The 2:1 is
+              the STACKED HEADER prototype's proportion (52 over 26.12), which is what
+              Rai picked; it is not the artwork's 126:112, which at a 44px mark would
+              give a 39px wordmark ~168px wide and would also fit (248 of 256) — the
+              choice is the proportion, not the fit. The gap IS authored:
+              44 × 24/126 ≈ 8.4px, taken as `gap-2`.
+
+              Both halves are decorative and the name rides the wrapper, so the assembly
+              reads as one image called "Rennet" however the halves are drawn. Row
+              occupies 16 + 44 + 8 + 94.3 + 12 = 174.3 of 256. */}
+          <div
+            data-slot="sidebar-lockup"
+            role="img"
+            aria-label="Rennet"
+            className="flex h-14 shrink-0 items-center gap-2 pr-3 pl-4"
+          >
+            <LiquidSphere size={44} state={working ? "working" : "resting"} className="shrink-0" />
+            <RennetLockup part="wordmark" size={22} className="w-auto" />
+          </div>
           <SidebarActions />
           <SidebarTree />
           <SidebarFooter />

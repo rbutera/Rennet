@@ -73,13 +73,23 @@ describe("corner slot: exactly one mount, always (C20 §6.1)", () => {
       );
       expect(slots().length).toBe(1);
       expect(slots()[0]?.getAttribute("data-owner")).toBe(state.owner);
-      // ...and exactly ONE sphere, in the slot, in every state. The mark moves with the
-      // corner: inside the sidebar's lockup while the sidebar owns it, standing alone as
-      // the orb in the other two. Two spheres would be two animated marks claiming the
-      // same fact — the same regression class as two slots, and just as quiet, because
-      // the second one looks perfectly correct wherever it is.
+      // ...and exactly ONE sphere in every state. The mark moves with the corner, but
+      // it no longer rides INSIDE the slot in state 1: the sidebar's lockup has its own
+      // row beneath the strip, so the sphere is there, and the slot is lights + toggle.
+      // In the other two states there is no row beneath, so the slot carries the orb.
+      // Two spheres would be two animated marks claiming the same fact — the same
+      // regression class as two slots, and just as quiet, because the second one looks
+      // perfectly correct wherever it is.
       expect(spheres().length).toBe(1);
-      expect(spheres()[0]?.closest('[data-slot="corner-slot"]')).toBe(slots()[0]);
+      const home = spheres()[0]?.closest(
+        state.owner === "sidebar" ? '[data-slot="sidebar-lockup"]' : '[data-slot="corner-slot"]',
+      );
+      expect(home).not.toBeNull();
+      if (state.owner === "sidebar") {
+        expect(spheres()[0]?.closest('[data-slot="corner-slot"]')).toBeNull();
+      } else {
+        expect(home).toBe(slots()[0]);
+      }
       cleanup();
     });
   }
@@ -107,11 +117,11 @@ describe("corner slot: exactly one mount, always (C20 §6.1)", () => {
     expect(seen).toEqual(["sidebar", "chat", "floating", "sidebar"]);
   });
 
-  it("names the orb, and only the orb — the sidebar's lockup owns the name in state 1", async () => {
+  it("names the orb, and only the orb — the sidebar's lockup row owns the name in state 1", async () => {
     // Two spheres is not the only way to say "Rennet" twice: the assembled lockup already
-    // carries the accessible name, so an orb that also named itself inside it would be a
-    // second image with the same label. In states 2 and 3 there is no lockup, so the orb
-    // is the name.
+    // carries the accessible name on its row, so an orb that also named itself would be a
+    // second image with the same label. In states 2 and 3 there is no lockup row, so the
+    // orb is the name.
     for (const state of STATES) {
       const { getByTestId } = mountFrame(state);
       await waitFor(() =>
@@ -165,6 +175,32 @@ describe("corner slot: exactly one mount, always (C20 §6.1)", () => {
     }
     // The slot genuinely MOVED — this is not one static mount passing four times.
     expect(seen).toEqual(["sidebar", "chat", "floating", "sidebar"]);
+  });
+});
+
+describe("corner slot: the orb's size and the pill's height (option B)", () => {
+  it("draws the orb at 32px in both collapsed states, in a 36px floating pill", async () => {
+    for (const state of STATES) {
+      const { getByTestId } = mountFrame(state);
+      await waitFor(() =>
+        expect(getByTestId("chat-dock-slot").getAttribute("data-open")).toBe(
+          String(state.chatOpen),
+        ),
+      );
+      const sphere = spheres()[0] as HTMLElement | undefined;
+      if (!sphere) throw new Error("no sphere");
+      // State 1's sphere is the lockup row's 44px mark; the collapsed states carry the
+      // 32px orb. Both numbers asserted here, so a change to either is a change to this
+      // sentence rather than a silent drift in one of two files.
+      expect(sphere.style.height).toBe(state.owner === "sidebar" ? "44px" : "32px");
+      if (state.owner === "floating") {
+        // The pill grew with the orb: 36px tall, still a full-radius translucent chip.
+        expect(slots()[0]?.className).toContain("h-9");
+        expect(slots()[0]?.className).not.toContain("h-8");
+        expect(slots()[0]?.className).toContain("rounded-full");
+      }
+      cleanup();
+    }
   });
 });
 
