@@ -566,11 +566,16 @@ describe("paging a collection-carrying result", () => {
       path: string;
     };
     expect(envelope.truncated).toBe(true);
-    // Under the bound root, not a bare temp/state directory — the same place the rest of
-    // this session's context files live.
-    expect(envelope.path.startsWith(root)).toBe(true);
+    // RELATIVE to the bound root, not absolute (Codex, second reviewer, "item 4"): a
+    // WSL-locus session's bound root is a Windows-visible path, but the harness agent that
+    // reads this path back runs inside the distro, whose cwd IS that same root under a
+    // distro-native name. A relative path resolves under both; `join(root, ...)` only
+    // resolves under the daemon's own view. Mirrors `writeRunScopedContext`'s own contract
+    // (context-files.test.ts's "writes under the session directory..." test).
+    expect(envelope.path.startsWith(root)).toBe(false);
+    expect(envelope.path).not.toContain("\\");
     expect(envelope.path).toContain(".rennet/context/session-spill/tool-results/");
-    const spilled = readFileSync(envelope.path, "utf8");
+    const spilled = readFileSync(join(root, envelope.path), "utf8");
     expect(spilled).toContain("z".repeat(50_000));
   });
 
@@ -599,11 +604,13 @@ describe("paging a collection-carrying result", () => {
     // treated as if it were the session id) leave the file where archiving "s1" never looks.
     expect(envelope.path).toContain(".rennet/context/s1/tool-results/");
     expect(envelope.path).not.toContain("rev-1");
-    expect(existsSync(envelope.path)).toBe(true);
+    // Relative to `root`, same contract as the test above (Codex, second reviewer).
+    expect(envelope.path.startsWith(root)).toBe(false);
+    expect(existsSync(join(root, envelope.path))).toBe(true);
 
     // Archiving "s1" — the real purge path a session's own archive takes — removes it.
     expect(purgeSessionContext(root, "s1")).toBe(true);
-    expect(existsSync(envelope.path)).toBe(false);
+    expect(existsSync(join(root, envelope.path))).toBe(false);
   });
 });
 

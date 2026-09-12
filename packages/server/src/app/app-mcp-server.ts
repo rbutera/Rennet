@@ -519,7 +519,16 @@ function writeSpillFile(
       `tool-results/${name}`,
       body,
     );
-    return join(owner.root, written.path);
+    // Relative, deliberately (Codex, second reviewer): a WSL-locus session stores its bound
+    // root as a Windows-visible path (see create-server.ts's boundRootForSession / the
+    // "review finding 4" comment near its spillOwnerFor wiring), while the harness agent
+    // that later reads this path back runs inside the distro, with a distro-native cwd that
+    // IS that same root. A relative path resolves under both; joining it onto `owner.root`
+    // only resolves under the daemon's own view of the root, which the agent does not
+    // share. `writeRunScopedContext` already returns relative for exactly this reason
+    // (context-files.ts, tested at context-files.test.ts:469-470) — this tier just has to
+    // stop discarding that by re-joining it back to absolute.
+    return written.path;
   }
   const dir = join(options.stateDir ?? tmpdir(), "tool-results");
   mkdirSync(dir, { recursive: true });
@@ -584,11 +593,19 @@ export function applyResultCeiling(
   const body = result.marker === undefined ? result.text : `${result.text}\n\n${result.marker}`;
   const bytes = utf8(body);
   const path = spill(body);
+  // Tier 1 (`spillOwnerFor` resolved) returns a path RELATIVE to the thread's own
+  // cwd, which IS the bound root, deliberately (see writeSpillFile's doc): the note
+  // has to say so, since "read the path above" is only true as written for tier
+  // 2's absolute sidecar fallback.
+  const pathIsAbsolute = isAbsolute(path);
 
   // Shrink `head` until the REPLACEMENT envelope's own complete serialisation fits too:
   // escaping (quotes, backslashes, control bytes) can expand a raw byte up to sixfold
   // (`\u0000`), so this is MEASURED on the wrapped wire object every pass, never computed
   // analytically from the raw head length.
+  const locationNote = pathIsAbsolute
+    ? "it was written whole to the path above"
+    : "it was written whole to the path above, relative to your working directory";
   let headBytes = RESULT_HEAD_BYTES;
   for (;;) {
     const head = headAtCodePointBoundary(result.text, headBytes);
@@ -597,7 +614,7 @@ export function applyResultCeiling(
       bytes,
       path,
       head,
-      note: `The complete ${bytes}-byte result did not fit this call's ${APP_TOOL_RESULT_MAX_BYTES}-byte budget, so it was written whole to the path above; read it with your own tools for the rest. \`head\` is this result's own first bytes, not a separate summary.`,
+      note: `The complete ${bytes}-byte result did not fit this call's ${APP_TOOL_RESULT_MAX_BYTES}-byte budget, so ${locationNote}; read it with your own tools for the rest. \`head\` is this result's own first bytes, not a separate summary.`,
     };
     const candidate = toolResultOf({ text: JSON.stringify(envelope) }, isError);
     const candidateBytes = utf8(JSON.stringify(candidate));
