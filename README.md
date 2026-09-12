@@ -16,18 +16,18 @@ The local daemon captures immutable patchsets, builds deterministic project cont
 - [Architecture contracts](./docs/developing/concepts/architecture-contracts.md): immutable patchsets, context, lineage, persistence, and publication.
 - [Contracts and rulings](./docs/developing/decisions/contracts-and-rulings.md): the authority register and durable product decisions.
 - [Dependency standard](./docs/developing/reference/dependency-standard.md): package, licence, toolchain, and ownership decisions.
-- [Wireframes](./wireframes/): behavioral-flow references with rendered PNGs and HTML sources. Open `wireframes/gallery.html` to scan the complete flow.
 
 ## Repository shape
 
 ```text
 apps/          Desktop, browser-hosting, mobile, documentation, and marketing apps
-packages/      Shared types, protocol, instructions, core, adapters, server, client, UI, app UI, and theme
+packages/      Protocol, prompts, core, adapters, server, client, UI kit, app UI, T3 chat mount, and theme
 scripts/       Repository gates and maintenance tooling
 tools/         Build tooling (the Nx cache proxy)
 docs/          Canonical Markdown documentation and architecture decisions
 brand/         Canonical brand assets, sources, and generated exports
-wireframes/    Current flow references, rendered images, HTML sources, and gallery
+openspec/      Accepted specs and the change proposals that produced them
+vendor/        Vendored T3 Code snapshot, advanced with `pnpm t3:fold`
 prototypes/    Non-authoritative interface experiments
 site/          Frozen pre-launch site kept as design history, not deployed
 spikes/        Isolated evidence probes, excluded from the workspace

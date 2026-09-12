@@ -5,7 +5,7 @@ description: Use when dispatching implementer agents and review agents on Rennet
 
 # Wave — implementer dispatch and review for Rennet
 
-**The loop:** `openspec propose` (issue + wireframes + docs + AGENTS.md as input) → the same agent applies its own proposal → the orchestrator gates it and hands off to review → findings are **sorted** before any reach the implementer → the change is **archived** once it merges.
+**The loop:** `openspec propose` (issue + DESIGN.md + docs + AGENTS.md as input) → the same agent applies its own proposal → the orchestrator gates it and hands off to review → findings are **sorted** before any reach the implementer → the change is **archived** once it merges.
 
 
 This exists because on 2026-08-11 a night of parallel agent work burned roughly half of Rai's Claude capacity, and **most of the burn was not building. It was ceremony around building** — reviewing, verifying, re-verifying, and fixing things nobody needed fixed. Every rule below is a specific thing that went wrong.
@@ -72,11 +72,11 @@ A review is evidence. It is not a work order.
 The implementer runs the `openspec-propose` skill, with **four inputs named explicitly in the brief**:
 
 1. **The GitHub issue** — `gh issue view <n>`, in full, including its acceptance criteria.
-2. **The v3.2 wireframes** at `/Users/rai/dev/rennet/wireframes/` — **the canonical behavioural and visual spec.** Name the specific frames that bear on the issue; the agent should not read all of them.
+2. **`DESIGN.md`** for anything with a screen in it — palette, type, and component rules — plus whatever spec the issue itself links. Name the specific sections that bear on the issue; the agent should not read all of it.
 3. **The relevant `docs/`** — as rationale and history, never as law. See Rule Zero.
 4. **`AGENTS.md`** — the repo rules, which are law.
 
-⭐ **Where the wireframe and the issue prose disagree, the wireframe wins, and the agent must say so in the proposal** rather than silently picking one. This has already happened once: an issue said an editable draft rendered "on the paper", the wireframes said the paper is frozen and the collation draft is the one editable surface, and the wireframes were right.
+⭐ **Where the issue prose and the spec it points at disagree, the spec wins, and the agent must say so in the proposal** rather than silently picking one. This has already happened once: an issue said an editable draft rendered "on the paper", the spec said the paper is frozen and the collation draft is the one editable surface, and the spec was right.
 
 The proposal lands in `openspec/changes/<name>/` as `proposal.md`, `design.md`, `tasks.md` and `specs/`.
 
