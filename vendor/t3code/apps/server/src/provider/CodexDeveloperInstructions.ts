@@ -189,6 +189,15 @@ export function buildCodexDeveloperInstructions(
    * setting, so the prompt cannot claim tools the turn doesn't have.
    */
   browserToolsAvailable = true,
+  /**
+   * The thread's own instructions, appended after every block T3 assembles.
+   * Codex has no system-prompt append; developer instructions are its
+   * equivalent, and they are what the Claude leg's `systemPrompt.append`
+   * carries. Last, so T3's own blocks are the context the thread's briefing is
+   * read against rather than the other way round, and verbatim: this is the
+   * creator's text and nothing here edits it.
+   */
+  threadInstructions?: string,
 ): string {
   const base =
     interactionMode === "plan"
@@ -196,5 +205,9 @@ export function buildCodexDeveloperInstructions(
       : codexDefaultModeDeveloperInstructions(browserToolsAvailable);
   return `${base}
 
-<runtime_info>In case you're asked: you are running in T3 Code through the Codex harness, as ${toSingleLine(runtime.model)} with ${toSingleLine(runtime.reasoningEffort)} reasoning effort. No need to mention this otherwise.</runtime_info>`;
+<runtime_info>In case you're asked: you are running in T3 Code through the Codex harness, as ${toSingleLine(runtime.model)} with ${toSingleLine(runtime.reasoningEffort)} reasoning effort. No need to mention this otherwise.</runtime_info>${
+    threadInstructions === undefined || threadInstructions.trim() === ""
+      ? ""
+      : `\n\n${threadInstructions}`
+  }`;
 }
