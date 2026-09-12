@@ -788,14 +788,14 @@ function AppearanceStage({ settings, onContinue }: { settings: SettingsView; onC
           aria-label="Rennet"
         >
           <span
-            className="w-[28%] shrink-0 [&>svg]:h-auto [&>svg]:w-full"
+            className="w-[20%] shrink-0 [&>svg]:h-auto [&>svg]:w-full"
             data-logo-mark
             style={{ opacity: 0, transform: "scale(0.92)", filter: "blur(2px)" }}
           >
             <RennetLockup size={100} part="mark" />
           </span>
           <span
-            className="w-[68%] shrink-0 [&>svg]:h-auto [&>svg]:w-full"
+            className="w-[76%] shrink-0 [&>svg]:h-auto [&>svg]:w-full"
             data-logo-wordmark
             style={{
               opacity: 0,

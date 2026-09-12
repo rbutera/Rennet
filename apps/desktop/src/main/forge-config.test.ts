@@ -57,15 +57,15 @@ afterEach(() => {
 });
 
 describe("forge.config.cjs signing", () => {
-  it("packages the white-on-black brand icon for the packaging platform", () => {
+  it("packages the colour brand icon for the packaging platform", () => {
     const { packagerConfig } = loadConfig({});
     // The product picks the icon by `process.platform` (win32 → the `.ico` export dir,
     // else the macOS `.icns` dir). Key the expectation the same way so this asserts the
     // real per-platform choice — on Windows it becomes live win32 icon coverage.
     const expected =
       process.platform === "win32"
-        ? /brand[\\/]exports[\\/]app-icons[\\/]windows[\\/]rennet-white-on-black$/
-        : /brand[\\/]exports[\\/]app-icons[\\/]macos[\\/]rennet-white-on-black$/;
+        ? /brand[\\/]exports[\\/]app-icons[\\/]windows[\\/]rennet-color$/
+        : /brand[\\/]exports[\\/]app-icons[\\/]macos[\\/]rennet-color$/;
     expect(packagerConfig.icon).toMatch(expected);
   });
 

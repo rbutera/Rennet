@@ -3,489 +3,514 @@
   "assets": [
     {
       "path": "PROVENANCE.md",
-      "bytes": 842,
-      "sha256": "fae9b56f2fa14e9164a1c1d98ef635d22a268d5753bff38e93274f5d29e1c099"
+      "bytes": 1826,
+      "sha256": "7a7ec9677d9f537b2fe783e795c2b7af04e48d4f4ab6bc8200e740cc29d66c30"
     },
     {
       "path": "README.md",
-      "bytes": 2825,
-      "sha256": "7dc1f2aa631da22cba6514f46526b160075aa0a1bdc72e9d788b5947bb18ab97"
+      "bytes": 6552,
+      "sha256": "f9fc2a54be18af6e18a89a9ffe9a93064c30c35f9e832a854bed39b555f030f3"
     },
     {
       "path": "brand.json",
-      "bytes": 815,
-      "sha256": "b624be1db89bc7017df1c6f4bbdafd1ed0438554c2ac8d63417b83f30169c820"
+      "bytes": 1283,
+      "sha256": "659a46d9360b17acc8cc3aaf10a40d028d7700a266f0df2ce9d11b65370e1688"
     },
     {
       "path": "exports/app-icons/linux/black-on-white/1024x1024.png",
-      "bytes": 65254,
-      "sha256": "95546f810a58005ec03504cb3a83bce0ad8a83ab9f89fa6abab20f2017c65a79",
+      "bytes": 55140,
+      "sha256": "c7f8c169d8bb9224e4710a5bff0a39a39c2ac3a6265d53d8416b73fe031b78e0",
       "dimensions": "1024x1024"
     },
     {
       "path": "exports/app-icons/linux/black-on-white/128x128.png",
-      "bytes": 8612,
-      "sha256": "2d47fd77046a4fcd898cac55935c311f060b25fea4a4439c5a27d545dc334b06",
+      "bytes": 10581,
+      "sha256": "f156cca8ee2a52306049984412bf2ccbd34e2b462605f5b008e4896a52a524f9",
       "dimensions": "128x128"
     },
     {
       "path": "exports/app-icons/linux/black-on-white/16x16.png",
-      "bytes": 663,
-      "sha256": "a6fbc354cbe3a2736f73af353c0a226e1ca7ee92a472798a20be063ec253f16c",
+      "bytes": 715,
+      "sha256": "68e541c6c6ad77f0a8e08aa98310a1c5c975478306d49567227f0fd5b38cae38",
       "dimensions": "16x16"
     },
     {
       "path": "exports/app-icons/linux/black-on-white/24x24.png",
-      "bytes": 1095,
-      "sha256": "7b95b34dd92674f7288622eb28d3fdd2a87a573a777d8f328bd85efdbbd3b84e",
+      "bytes": 1241,
+      "sha256": "28f82c48505c1c64af67960ef81d4b5351f455d94d869937773749807599d0ea",
       "dimensions": "24x24"
     },
     {
       "path": "exports/app-icons/linux/black-on-white/256x256.png",
-      "bytes": 19124,
-      "sha256": "e7ef4193762bb0be4869c91629651100bdd2f8f88f5de475d01b59b71b573782",
+      "bytes": 24552,
+      "sha256": "c66236c87b465c345fca48a7b16e61a83d46b2af836a3e547ce54cc2b5476f93",
       "dimensions": "256x256"
     },
     {
       "path": "exports/app-icons/linux/black-on-white/32x32.png",
-      "bytes": 1563,
-      "sha256": "e6ffd1adaf05e3cda3de0e04483eb77c64617d2c190e3693aabef3e3bbb6efd2",
+      "bytes": 1764,
+      "sha256": "906fc753d474888f9b63640e7dbbc12163a7b6453773082667ce6e45115eeb00",
       "dimensions": "32x32"
     },
     {
       "path": "exports/app-icons/linux/black-on-white/48x48.png",
-      "bytes": 2477,
-      "sha256": "bf7c843ae5c2da081b9165865ef585197d6b4ffa39968246f55120a3de2142c2",
+      "bytes": 3055,
+      "sha256": "8627d956e9fc9e89234249d1f7fcdb5b6034255b98d7005ac0ae523c91e0d4d0",
       "dimensions": "48x48"
     },
     {
       "path": "exports/app-icons/linux/black-on-white/512x512.png",
-      "bytes": 41776,
-      "sha256": "a4887651ae37b2dfb9d5893e96001704dcdf5e8c6b483eb7b5a003824b3012b9",
+      "bytes": 54926,
+      "sha256": "0d84a191ef5bdb2b908a1bd8c5dc371eb8b44091935da332806c86ef9281270f",
       "dimensions": "512x512"
     },
     {
       "path": "exports/app-icons/linux/black-on-white/64x64.png",
-      "bytes": 3642,
-      "sha256": "104dbf592d2bf86e297bd98f22ef9185408d9a85f04b93aa36f2c599bfa4e779",
+      "bytes": 4463,
+      "sha256": "1dfeb40683b77c508ff20ed1514c2a69cf4d34384b529f9bfb015d27291c9098",
       "dimensions": "64x64"
     },
     {
       "path": "exports/app-icons/linux/color/1024x1024.png",
-      "bytes": 1193792,
-      "sha256": "0b6e0d3de97ff95ea71a636532fc00738a6c598da15f02ff07ed3f4f0ef59f65",
+      "bytes": 172694,
+      "sha256": "16ed65a88b95c8630e88b4ab47e896f5a94d01dad8ee9cfc6cf8adde0e841f66",
       "dimensions": "1024x1024"
     },
     {
       "path": "exports/app-icons/linux/color/128x128.png",
-      "bytes": 20528,
-      "sha256": "85dde4ceba98a67c59420d39fe7f29a06404ec3297136f14b3f05aded6ce154f",
+      "bytes": 11800,
+      "sha256": "ea58bbad3aa14ceaab84bf6f88c7e6b96661bfa03d4376b47524111d471a0761",
       "dimensions": "128x128"
     },
     {
       "path": "exports/app-icons/linux/color/16x16.png",
-      "bytes": 770,
-      "sha256": "266c88b856ff0194e040532bf7ae74e9dbac252f70995b7e3fbe5bc4f492a8a2",
+      "bytes": 773,
+      "sha256": "f9cf64ec8bb9c0f3283d4e314a9dcec27d640d74694198e5837cb9c00e3e5939",
       "dimensions": "16x16"
     },
     {
       "path": "exports/app-icons/linux/color/24x24.png",
-      "bytes": 1497,
-      "sha256": "63b79e9b7a289c7b26f63731767faab91934dbbe6df4762b41ffdb5694aaf745",
+      "bytes": 1406,
+      "sha256": "a61fa8347d293293c83b93e55fa7dbb4bba10f103d88a50339904f4749d6d3d2",
       "dimensions": "24x24"
     },
     {
       "path": "exports/app-icons/linux/color/256x256.png",
-      "bytes": 64249,
-      "sha256": "a1719fd1282b97d7239ad0a292da47a23a682dc023389eedef18c5bc061ead0b",
+      "bytes": 30994,
+      "sha256": "fde6ba79e30c2ca6129229f0bde7e4d356500e318b198a4ac32c9ca2f454071f",
       "dimensions": "256x256"
     },
     {
       "path": "exports/app-icons/linux/color/32x32.png",
-      "bytes": 2417,
-      "sha256": "49ac5ac7fa857baacfa3f60c358c360de2e1f0e5a6565800759ddd0eafc80308",
+      "bytes": 2081,
+      "sha256": "7db6d6081521211dce3cb6655aaeff2ceba5fd86e1b9dc6a680013dba9a5a08f",
       "dimensions": "32x32"
     },
     {
       "path": "exports/app-icons/linux/color/48x48.png",
-      "bytes": 4374,
-      "sha256": "6e9a47118d089f6efee5040298bbc1f8af58d48d3fc515d775321bc32c7e4c13",
+      "bytes": 3147,
+      "sha256": "31672117d06f40ba6a9177521dc56bf757cc8001c97cb52e1474eae6c0f328fd",
       "dimensions": "48x48"
     },
     {
       "path": "exports/app-icons/linux/color/512x512.png",
-      "bytes": 255830,
-      "sha256": "faf4e0c4d011114e204e854f2ca2b34103d8f00fdad814facb10cab840f890c4",
+      "bytes": 84598,
+      "sha256": "1749b9b96317bc2b247107858e0ec923796446ad80f6fdd9563f8e9daf151e95",
       "dimensions": "512x512"
     },
     {
       "path": "exports/app-icons/linux/color/64x64.png",
-      "bytes": 7046,
-      "sha256": "5b56855d2659d13feb5340bd06dae7029f1551dcad9f5f3d11035e142232632f",
+      "bytes": 4631,
+      "sha256": "8f1ab525655980a932e800a5d988193d83ff62d0873fe01c3e67996ed8018b8e",
       "dimensions": "64x64"
     },
     {
       "path": "exports/app-icons/linux/white-on-black/1024x1024.png",
-      "bytes": 65988,
-      "sha256": "6baf371fdcd44a9c7c4cce352168477b0780fb7fb1c8735af34e45f3209acd0d",
+      "bytes": 55278,
+      "sha256": "00e242497c0644bc7d79b8f1e2297dcc4fd38d94688fa14ddcae80b95b7f599c",
       "dimensions": "1024x1024"
     },
     {
       "path": "exports/app-icons/linux/white-on-black/128x128.png",
-      "bytes": 8112,
-      "sha256": "88c2731bb18f68a449521b5a0a20d30021b1ba7f3a197de1a94f3eafd98888ef",
+      "bytes": 10054,
+      "sha256": "515c0f6573e65a998e4a239b3b29a06a5fa8b4375d5fa9a18330f6fe258b2a56",
       "dimensions": "128x128"
     },
     {
       "path": "exports/app-icons/linux/white-on-black/16x16.png",
-      "bytes": 617,
-      "sha256": "b01e13897c749244e59bfff861b8e59647f46d7d65d87049ad2fa0fa592e6cd0",
+      "bytes": 712,
+      "sha256": "ff78dcb83bc3c849b5c3d8de82b694c5067476c3093475e72a6b10f6f250f935",
       "dimensions": "16x16"
     },
     {
       "path": "exports/app-icons/linux/white-on-black/24x24.png",
-      "bytes": 1007,
-      "sha256": "3b1c44c2f59c43953e761570db8835f8a557b3287aeace7313e907acab88c1bb",
+      "bytes": 1172,
+      "sha256": "896432b839a6863b8cee85174fd487cb7d2a6f2b3abcafffab6e198f66b134c1",
       "dimensions": "24x24"
     },
     {
       "path": "exports/app-icons/linux/white-on-black/256x256.png",
-      "bytes": 18068,
-      "sha256": "d886cc4d4acdbfce8b3ca195248b903aa0a0470caf80921e331ee7df1e38619f",
+      "bytes": 23449,
+      "sha256": "71d36eed8a5c912f78928d97399f5eecab77d8ac210ed79028654dad3d500859",
       "dimensions": "256x256"
     },
     {
       "path": "exports/app-icons/linux/white-on-black/32x32.png",
-      "bytes": 1480,
-      "sha256": "ab01034121a3277c616ae20b4a88d3d389c08e6f0d45a247e0500e2ab41e5c55",
+      "bytes": 1665,
+      "sha256": "0cfa0f513b95ec2f197d5e6b089028a3cff8d74cd467ee57aaa867fc9dce5e47",
       "dimensions": "32x32"
     },
     {
       "path": "exports/app-icons/linux/white-on-black/48x48.png",
-      "bytes": 2358,
-      "sha256": "8f0f9f64c20c30dfc831b769557d553ccdebb64814c33ff27640d8c62b69e8ed",
+      "bytes": 2954,
+      "sha256": "b024c5acb2316bf591c7dfd9bf94929393d60560871690245ada4220d51b0c3f",
       "dimensions": "48x48"
     },
     {
       "path": "exports/app-icons/linux/white-on-black/512x512.png",
-      "bytes": 39599,
-      "sha256": "5e4ca57defca391ce87edce3f46003abb2954c8f6219eda83d75f843c4f56b6d",
+      "bytes": 52261,
+      "sha256": "9be892b31b289c376ce87609634809815df94d7d77ab01c5e522de496b6e362a",
       "dimensions": "512x512"
     },
     {
       "path": "exports/app-icons/linux/white-on-black/64x64.png",
-      "bytes": 3453,
-      "sha256": "6322ac9576bc386213de5fdb583a8b30a5865d65483eaf63b67ba5e19dd23ebf",
+      "bytes": 4233,
+      "sha256": "d4a939fc8115f7279b62ab5c74adac0a8a6c46143276b350a7aee156c3ea5fa2",
       "dimensions": "64x64"
     },
     {
       "path": "exports/app-icons/macos/rennet-black-on-white.icns",
-      "bytes": 253273,
-      "sha256": "188c90baac152cdfe3278c0048933a4df6c32c44feb2239e385422aef0cf44ec"
+      "bytes": 282697,
+      "sha256": "a2b07df66e4264777518849feff1ded914f22214237c9ca858a431f0c4dda7b7"
     },
     {
       "path": "exports/app-icons/macos/rennet-black-on-white.iconset/icon_128x128.png",
-      "bytes": 8612,
-      "sha256": "2d47fd77046a4fcd898cac55935c311f060b25fea4a4439c5a27d545dc334b06",
+      "bytes": 10581,
+      "sha256": "f156cca8ee2a52306049984412bf2ccbd34e2b462605f5b008e4896a52a524f9",
       "dimensions": "128x128"
     },
     {
       "path": "exports/app-icons/macos/rennet-black-on-white.iconset/icon_128x128@2x.png",
-      "bytes": 19124,
-      "sha256": "e7ef4193762bb0be4869c91629651100bdd2f8f88f5de475d01b59b71b573782",
+      "bytes": 24552,
+      "sha256": "c66236c87b465c345fca48a7b16e61a83d46b2af836a3e547ce54cc2b5476f93",
       "dimensions": "256x256"
     },
     {
       "path": "exports/app-icons/macos/rennet-black-on-white.iconset/icon_16x16.png",
-      "bytes": 663,
-      "sha256": "a6fbc354cbe3a2736f73af353c0a226e1ca7ee92a472798a20be063ec253f16c",
+      "bytes": 715,
+      "sha256": "68e541c6c6ad77f0a8e08aa98310a1c5c975478306d49567227f0fd5b38cae38",
       "dimensions": "16x16"
     },
     {
       "path": "exports/app-icons/macos/rennet-black-on-white.iconset/icon_16x16@2x.png",
-      "bytes": 1563,
-      "sha256": "e6ffd1adaf05e3cda3de0e04483eb77c64617d2c190e3693aabef3e3bbb6efd2",
+      "bytes": 1764,
+      "sha256": "906fc753d474888f9b63640e7dbbc12163a7b6453773082667ce6e45115eeb00",
       "dimensions": "32x32"
     },
     {
       "path": "exports/app-icons/macos/rennet-black-on-white.iconset/icon_256x256.png",
-      "bytes": 19124,
-      "sha256": "e7ef4193762bb0be4869c91629651100bdd2f8f88f5de475d01b59b71b573782",
+      "bytes": 24552,
+      "sha256": "c66236c87b465c345fca48a7b16e61a83d46b2af836a3e547ce54cc2b5476f93",
       "dimensions": "256x256"
     },
     {
       "path": "exports/app-icons/macos/rennet-black-on-white.iconset/icon_256x256@2x.png",
-      "bytes": 41776,
-      "sha256": "a4887651ae37b2dfb9d5893e96001704dcdf5e8c6b483eb7b5a003824b3012b9",
+      "bytes": 54926,
+      "sha256": "0d84a191ef5bdb2b908a1bd8c5dc371eb8b44091935da332806c86ef9281270f",
       "dimensions": "512x512"
     },
     {
       "path": "exports/app-icons/macos/rennet-black-on-white.iconset/icon_32x32.png",
-      "bytes": 1563,
-      "sha256": "e6ffd1adaf05e3cda3de0e04483eb77c64617d2c190e3693aabef3e3bbb6efd2",
+      "bytes": 1764,
+      "sha256": "906fc753d474888f9b63640e7dbbc12163a7b6453773082667ce6e45115eeb00",
       "dimensions": "32x32"
     },
     {
       "path": "exports/app-icons/macos/rennet-black-on-white.iconset/icon_32x32@2x.png",
-      "bytes": 3642,
-      "sha256": "104dbf592d2bf86e297bd98f22ef9185408d9a85f04b93aa36f2c599bfa4e779",
+      "bytes": 4463,
+      "sha256": "1dfeb40683b77c508ff20ed1514c2a69cf4d34384b529f9bfb015d27291c9098",
       "dimensions": "64x64"
     },
     {
       "path": "exports/app-icons/macos/rennet-black-on-white.iconset/icon_512x512.png",
-      "bytes": 41776,
-      "sha256": "a4887651ae37b2dfb9d5893e96001704dcdf5e8c6b483eb7b5a003824b3012b9",
+      "bytes": 54926,
+      "sha256": "0d84a191ef5bdb2b908a1bd8c5dc371eb8b44091935da332806c86ef9281270f",
       "dimensions": "512x512"
     },
     {
       "path": "exports/app-icons/macos/rennet-black-on-white.iconset/icon_512x512@2x.png",
-      "bytes": 65254,
-      "sha256": "95546f810a58005ec03504cb3a83bce0ad8a83ab9f89fa6abab20f2017c65a79",
+      "bytes": 55140,
+      "sha256": "c7f8c169d8bb9224e4710a5bff0a39a39c2ac3a6265d53d8416b73fe031b78e0",
       "dimensions": "1024x1024"
     },
     {
       "path": "exports/app-icons/macos/rennet-color.icns",
-      "bytes": 2304131,
-      "sha256": "2b2982b225edbf4f6f6774f895ecaff1d5d4a2e199db5346f7a985603383a57b"
+      "bytes": 672289,
+      "sha256": "56f4676e941e3923b8ed443fbe56c9d07c284e425858e0db5e1289dbc71e0eca"
     },
     {
       "path": "exports/app-icons/macos/rennet-color.iconset/icon_128x128.png",
-      "bytes": 20528,
-      "sha256": "85dde4ceba98a67c59420d39fe7f29a06404ec3297136f14b3f05aded6ce154f",
+      "bytes": 11800,
+      "sha256": "ea58bbad3aa14ceaab84bf6f88c7e6b96661bfa03d4376b47524111d471a0761",
       "dimensions": "128x128"
     },
     {
       "path": "exports/app-icons/macos/rennet-color.iconset/icon_128x128@2x.png",
-      "bytes": 64249,
-      "sha256": "a1719fd1282b97d7239ad0a292da47a23a682dc023389eedef18c5bc061ead0b",
+      "bytes": 30994,
+      "sha256": "fde6ba79e30c2ca6129229f0bde7e4d356500e318b198a4ac32c9ca2f454071f",
       "dimensions": "256x256"
     },
     {
       "path": "exports/app-icons/macos/rennet-color.iconset/icon_16x16.png",
-      "bytes": 770,
-      "sha256": "266c88b856ff0194e040532bf7ae74e9dbac252f70995b7e3fbe5bc4f492a8a2",
+      "bytes": 773,
+      "sha256": "f9cf64ec8bb9c0f3283d4e314a9dcec27d640d74694198e5837cb9c00e3e5939",
       "dimensions": "16x16"
     },
     {
       "path": "exports/app-icons/macos/rennet-color.iconset/icon_16x16@2x.png",
-      "bytes": 2417,
-      "sha256": "49ac5ac7fa857baacfa3f60c358c360de2e1f0e5a6565800759ddd0eafc80308",
+      "bytes": 2081,
+      "sha256": "7db6d6081521211dce3cb6655aaeff2ceba5fd86e1b9dc6a680013dba9a5a08f",
       "dimensions": "32x32"
     },
     {
       "path": "exports/app-icons/macos/rennet-color.iconset/icon_256x256.png",
-      "bytes": 64249,
-      "sha256": "a1719fd1282b97d7239ad0a292da47a23a682dc023389eedef18c5bc061ead0b",
+      "bytes": 30994,
+      "sha256": "fde6ba79e30c2ca6129229f0bde7e4d356500e318b198a4ac32c9ca2f454071f",
       "dimensions": "256x256"
     },
     {
       "path": "exports/app-icons/macos/rennet-color.iconset/icon_256x256@2x.png",
-      "bytes": 255830,
-      "sha256": "faf4e0c4d011114e204e854f2ca2b34103d8f00fdad814facb10cab840f890c4",
+      "bytes": 84598,
+      "sha256": "1749b9b96317bc2b247107858e0ec923796446ad80f6fdd9563f8e9daf151e95",
       "dimensions": "512x512"
     },
     {
       "path": "exports/app-icons/macos/rennet-color.iconset/icon_32x32.png",
-      "bytes": 2417,
-      "sha256": "49ac5ac7fa857baacfa3f60c358c360de2e1f0e5a6565800759ddd0eafc80308",
+      "bytes": 2081,
+      "sha256": "7db6d6081521211dce3cb6655aaeff2ceba5fd86e1b9dc6a680013dba9a5a08f",
       "dimensions": "32x32"
     },
     {
       "path": "exports/app-icons/macos/rennet-color.iconset/icon_32x32@2x.png",
-      "bytes": 7046,
-      "sha256": "5b56855d2659d13feb5340bd06dae7029f1551dcad9f5f3d11035e142232632f",
+      "bytes": 4631,
+      "sha256": "8f1ab525655980a932e800a5d988193d83ff62d0873fe01c3e67996ed8018b8e",
       "dimensions": "64x64"
     },
     {
       "path": "exports/app-icons/macos/rennet-color.iconset/icon_512x512.png",
-      "bytes": 255830,
-      "sha256": "faf4e0c4d011114e204e854f2ca2b34103d8f00fdad814facb10cab840f890c4",
+      "bytes": 84598,
+      "sha256": "1749b9b96317bc2b247107858e0ec923796446ad80f6fdd9563f8e9daf151e95",
       "dimensions": "512x512"
     },
     {
       "path": "exports/app-icons/macos/rennet-color.iconset/icon_512x512@2x.png",
-      "bytes": 1193792,
-      "sha256": "0b6e0d3de97ff95ea71a636532fc00738a6c598da15f02ff07ed3f4f0ef59f65",
+      "bytes": 172694,
+      "sha256": "16ed65a88b95c8630e88b4ab47e896f5a94d01dad8ee9cfc6cf8adde0e841f66",
       "dimensions": "1024x1024"
     },
     {
       "path": "exports/app-icons/macos/rennet-white-on-black.icns",
-      "bytes": 246958,
-      "sha256": "2df34f905d6853ba53ca23d924262dd350d47c8b997e5316d3be635b358bc427"
+      "bytes": 275592,
+      "sha256": "3637fb02e510059ed1ef897ec3c2a52a49d928de62ab69897570d6a4a2d93058"
     },
     {
       "path": "exports/app-icons/macos/rennet-white-on-black.iconset/icon_128x128.png",
-      "bytes": 8112,
-      "sha256": "88c2731bb18f68a449521b5a0a20d30021b1ba7f3a197de1a94f3eafd98888ef",
+      "bytes": 10054,
+      "sha256": "515c0f6573e65a998e4a239b3b29a06a5fa8b4375d5fa9a18330f6fe258b2a56",
       "dimensions": "128x128"
     },
     {
       "path": "exports/app-icons/macos/rennet-white-on-black.iconset/icon_128x128@2x.png",
-      "bytes": 18068,
-      "sha256": "d886cc4d4acdbfce8b3ca195248b903aa0a0470caf80921e331ee7df1e38619f",
+      "bytes": 23449,
+      "sha256": "71d36eed8a5c912f78928d97399f5eecab77d8ac210ed79028654dad3d500859",
       "dimensions": "256x256"
     },
     {
       "path": "exports/app-icons/macos/rennet-white-on-black.iconset/icon_16x16.png",
-      "bytes": 617,
-      "sha256": "b01e13897c749244e59bfff861b8e59647f46d7d65d87049ad2fa0fa592e6cd0",
+      "bytes": 712,
+      "sha256": "ff78dcb83bc3c849b5c3d8de82b694c5067476c3093475e72a6b10f6f250f935",
       "dimensions": "16x16"
     },
     {
       "path": "exports/app-icons/macos/rennet-white-on-black.iconset/icon_16x16@2x.png",
-      "bytes": 1480,
-      "sha256": "ab01034121a3277c616ae20b4a88d3d389c08e6f0d45a247e0500e2ab41e5c55",
+      "bytes": 1665,
+      "sha256": "0cfa0f513b95ec2f197d5e6b089028a3cff8d74cd467ee57aaa867fc9dce5e47",
       "dimensions": "32x32"
     },
     {
       "path": "exports/app-icons/macos/rennet-white-on-black.iconset/icon_256x256.png",
-      "bytes": 18068,
-      "sha256": "d886cc4d4acdbfce8b3ca195248b903aa0a0470caf80921e331ee7df1e38619f",
+      "bytes": 23449,
+      "sha256": "71d36eed8a5c912f78928d97399f5eecab77d8ac210ed79028654dad3d500859",
       "dimensions": "256x256"
     },
     {
       "path": "exports/app-icons/macos/rennet-white-on-black.iconset/icon_256x256@2x.png",
-      "bytes": 39599,
-      "sha256": "5e4ca57defca391ce87edce3f46003abb2954c8f6219eda83d75f843c4f56b6d",
+      "bytes": 52261,
+      "sha256": "9be892b31b289c376ce87609634809815df94d7d77ab01c5e522de496b6e362a",
       "dimensions": "512x512"
     },
     {
       "path": "exports/app-icons/macos/rennet-white-on-black.iconset/icon_32x32.png",
-      "bytes": 1480,
-      "sha256": "ab01034121a3277c616ae20b4a88d3d389c08e6f0d45a247e0500e2ab41e5c55",
+      "bytes": 1665,
+      "sha256": "0cfa0f513b95ec2f197d5e6b089028a3cff8d74cd467ee57aaa867fc9dce5e47",
       "dimensions": "32x32"
     },
     {
       "path": "exports/app-icons/macos/rennet-white-on-black.iconset/icon_32x32@2x.png",
-      "bytes": 3453,
-      "sha256": "6322ac9576bc386213de5fdb583a8b30a5865d65483eaf63b67ba5e19dd23ebf",
+      "bytes": 4233,
+      "sha256": "d4a939fc8115f7279b62ab5c74adac0a8a6c46143276b350a7aee156c3ea5fa2",
       "dimensions": "64x64"
     },
     {
       "path": "exports/app-icons/macos/rennet-white-on-black.iconset/icon_512x512.png",
-      "bytes": 39599,
-      "sha256": "5e4ca57defca391ce87edce3f46003abb2954c8f6219eda83d75f843c4f56b6d",
+      "bytes": 52261,
+      "sha256": "9be892b31b289c376ce87609634809815df94d7d77ab01c5e522de496b6e362a",
       "dimensions": "512x512"
     },
     {
       "path": "exports/app-icons/macos/rennet-white-on-black.iconset/icon_512x512@2x.png",
-      "bytes": 65988,
-      "sha256": "6baf371fdcd44a9c7c4cce352168477b0780fb7fb1c8735af34e45f3209acd0d",
+      "bytes": 55278,
+      "sha256": "00e242497c0644bc7d79b8f1e2297dcc4fd38d94688fa14ddcae80b95b7f599c",
       "dimensions": "1024x1024"
     },
     {
       "path": "exports/app-icons/masters/app-icon-black-on-white-1024.png",
-      "bytes": 68749,
-      "sha256": "e89048d5e6f7e4a5237b2e0ca2ba3df0e305352a8a0e4ab390e6bbbf92b0c4b4",
+      "bytes": 52967,
+      "sha256": "86ccf8e8866af6d3636c54c159d499592b1e8b9c1c41ae719ef94ada1a39bf51",
       "dimensions": "1024x1024"
     },
     {
       "path": "exports/app-icons/masters/app-icon-black-on-white-small.svg",
-      "bytes": 2948,
-      "sha256": "e8e1a15aee02d50ffd20f43d86e086c2835616848916d5106148b139b1cb91f6"
+      "bytes": 8376,
+      "sha256": "2967bce66d13470fde9f45e4024bfbccf6d8dc3377fca36a1e6ca1c8ad7890ea"
     },
     {
       "path": "exports/app-icons/masters/app-icon-black-on-white.svg",
-      "bytes": 5179,
-      "sha256": "535a35bc5706089040fb2568f8ac62c358d2d8cddfc5f1cde7455ddc6a85b929"
+      "bytes": 8582,
+      "sha256": "33aca25e15b4709277d044ccc4a5714ef3f6d9285fe8babccd4217ee5ad3b928"
     },
     {
       "path": "exports/app-icons/masters/app-icon-color-1024.png",
-      "bytes": 1193792,
-      "sha256": "0b6e0d3de97ff95ea71a636532fc00738a6c598da15f02ff07ed3f4f0ef59f65",
+      "bytes": 172694,
+      "sha256": "16ed65a88b95c8630e88b4ab47e896f5a94d01dad8ee9cfc6cf8adde0e841f66",
       "dimensions": "1024x1024"
     },
     {
       "path": "exports/app-icons/masters/app-icon-color.svg",
-      "bytes": 2989828,
-      "sha256": "ad54a346bbe7c75810b3179e80164f8208c6e9c8ca4c580e8f714cf3ca3b6ce3"
+      "bytes": 8881,
+      "sha256": "8a61df9d88229861f10600d911dd7acd3d3eccbce68f98e9180d4cd3cf9fa241"
     },
     {
       "path": "exports/app-icons/masters/app-icon-white-on-black-1024.png",
-      "bytes": 69414,
-      "sha256": "ae6f2772c4f54483c85a4d55d4133f6f9a08cffcf450631601fc851a478fe367",
+      "bytes": 53106,
+      "sha256": "6c2cbcba6b95d04e850cfe78897cb26623d2e17f2b465bcba22f263129997ae5",
       "dimensions": "1024x1024"
     },
     {
       "path": "exports/app-icons/masters/app-icon-white-on-black-small.svg",
-      "bytes": 2948,
-      "sha256": "17a98410af5db2d7390cbd44aeed1eae2958fb7d5d77b8f8aadc2de996569b4f"
+      "bytes": 8376,
+      "sha256": "10427dbf129b51634a57f55842fc0aa43e8971bd0a271ec01b66c0f53062d3ef"
     },
     {
       "path": "exports/app-icons/masters/app-icon-white-on-black.svg",
-      "bytes": 5179,
-      "sha256": "8f1f462e1e089e3640c6a98651903581982db2bf98e875eecb183ec16eabb017"
+      "bytes": 8582,
+      "sha256": "cb29c83b9fc821dc1b780268abcba3a143076d9f96a3cc654585a6025729f0a1"
     },
     {
       "path": "exports/app-icons/platform/rennet-color.icns",
-      "bytes": 2304131,
-      "sha256": "2b2982b225edbf4f6f6774f895ecaff1d5d4a2e199db5346f7a985603383a57b"
+      "bytes": 672289,
+      "sha256": "56f4676e941e3923b8ed443fbe56c9d07c284e425858e0db5e1289dbc71e0eca"
     },
     {
       "path": "exports/app-icons/platform/rennet-color.ico",
       "bytes": 372526,
-      "sha256": "b5974b41384e7afb60de18653a6b76de075528706e99f2e7716639d3ba5fbf48"
+      "sha256": "5ec2d9e0025008a68d8767069c06a9d84864df1d4fc9a59216370ff8c81b7eb7"
     },
     {
       "path": "exports/app-icons/platform/rennet-color.png",
-      "bytes": 1193792,
-      "sha256": "0b6e0d3de97ff95ea71a636532fc00738a6c598da15f02ff07ed3f4f0ef59f65",
+      "bytes": 172694,
+      "sha256": "16ed65a88b95c8630e88b4ab47e896f5a94d01dad8ee9cfc6cf8adde0e841f66",
       "dimensions": "1024x1024"
     },
     {
       "path": "exports/app-icons/windows/rennet-black-on-white.ico",
       "bytes": 372526,
-      "sha256": "a3842768c1852d9ce62cbf84589d8eefa3396fef6df23bb7d077691de563f2c0"
+      "sha256": "5a53d1a7a88109f98bca48c8b907520a297f3e928501a379f7aee5e7e2e7b068"
     },
     {
       "path": "exports/app-icons/windows/rennet-color.ico",
       "bytes": 372526,
-      "sha256": "b5974b41384e7afb60de18653a6b76de075528706e99f2e7716639d3ba5fbf48"
+      "sha256": "5ec2d9e0025008a68d8767069c06a9d84864df1d4fc9a59216370ff8c81b7eb7"
     },
     {
       "path": "exports/app-icons/windows/rennet-white-on-black.ico",
       "bytes": 372526,
-      "sha256": "3d258e35b28fd153e0ad5c17e7b991408409e23efefc309667f794fe6e6b0b53"
+      "sha256": "f828863dfb7cf4324145f4da4be62f0892b925603da6f189fc6bbc5574c5807a"
     },
     {
       "path": "exports/logo/svg/lockup-horizontal-black.svg",
-      "bytes": 8443,
-      "sha256": "c9ef3cbc8ba51e86b03e3d1b6666f7338f466fafc30b84f38cfc2c86a967bf28"
+      "bytes": 12161,
+      "sha256": "21a2a6fbbc03bb0ca6ecf4d3b7a959a77c410d1b5937ebb4d6dd3a05eb00c2d6"
+    },
+    {
+      "path": "exports/logo/svg/lockup-horizontal-mono-black.svg",
+      "bytes": 11850,
+      "sha256": "8b7d9cc8aa3be5f8583b6c7322e33750e5bbc7e0d8b5d7b26b14901fa15b1978"
+    },
+    {
+      "path": "exports/logo/svg/lockup-horizontal-mono-white.svg",
+      "bytes": 11850,
+      "sha256": "78849a2d0f1a109949ef0779117c37fcc80a4a8efb5d87d8c053d4bbe8dd35f1"
     },
     {
       "path": "exports/logo/svg/lockup-horizontal-white.svg",
-      "bytes": 8443,
-      "sha256": "d4d4354c01fd9074185c2617bcfdcbe30c2659cfa3598807cf9714e5b6cecbb8"
+      "bytes": 12161,
+      "sha256": "f5034b6c58b4b6df04d7cbfb2b2455588a5e8d8848b008ad3b5e0e5fc845c906"
     },
     {
       "path": "exports/logo/svg/lockup-stacked-black.svg",
-      "bytes": 8444,
-      "sha256": "46389bcb352bf146ad79a77538444ccc118823ac6809f87d9c06158f7b1c7867"
+      "bytes": 12163,
+      "sha256": "3539c7e58a7705d4993ef5fecdcddacdd87189d554b9ee13963ee13125d3f6f5"
+    },
+    {
+      "path": "exports/logo/svg/lockup-stacked-mono-black.svg",
+      "bytes": 11852,
+      "sha256": "91e3f5b6436e6677a203c1cfd1cf5ed6e4de39e62dda38f9e4c2a0bd4ff5cb49"
+    },
+    {
+      "path": "exports/logo/svg/lockup-stacked-mono-white.svg",
+      "bytes": 11852,
+      "sha256": "64adcfeb4b46bdd5eae4f9333ebd22af7d8bae092158d3eb3ce0962772afbd69"
     },
     {
       "path": "exports/logo/svg/lockup-stacked-white.svg",
-      "bytes": 8444,
-      "sha256": "5159d26b269be0327c9e610e161840e1b9ded029e9a774d1a80371c30c16b3e8"
+      "bytes": 12163,
+      "sha256": "3a1d2291c746e45b7eabf3eaeea2b4ef78e406d72c6a402f708e37ec4d7b8704"
     },
     {
       "path": "exports/logo/svg/mark-black.svg",
-      "bytes": 5037,
-      "sha256": "5faf31916af5db52b96546574c5948e21b2ec80044418294a79861dccbdd5c99"
+      "bytes": 8440,
+      "sha256": "da182e9713cbf17dd455b34aaaa8acf3e404bbcc50c45f307430d92ea4673282"
+    },
+    {
+      "path": "exports/logo/svg/mark-color.svg",
+      "bytes": 8739,
+      "sha256": "21df3763630a72c227bdc752d4bddc57c853654ffecf60af41a6f997ea5d551f"
     },
     {
       "path": "exports/logo/svg/mark-small-black.svg",
-      "bytes": 2805,
-      "sha256": "f2e6dae8ba4220ba5146993514a8ee50029395684a56aa3936f7755c25a308f3"
+      "bytes": 8234,
+      "sha256": "4065c7f3b0ddf2ac0fe27777681e92ec074a71d28b77af6a07a20354dc738e26"
     },
     {
       "path": "exports/logo/svg/mark-small-white.svg",
-      "bytes": 2805,
-      "sha256": "734a327982cefb708c7db5b6e5c05e7a36c06c90b7e32544e291f7071996e1e5"
+      "bytes": 8234,
+      "sha256": "d5f29f04cf0bc9d1752b6a84701491e1ef14a84f6852cd7a79aa2a00312bb36f"
     },
     {
       "path": "exports/logo/svg/mark-white.svg",
-      "bytes": 5037,
-      "sha256": "1f3bceb6a7f50ec522c4878888e28e3b95bceed273dc7a71ee94685a72d3a7ed"
+      "bytes": 8440,
+      "sha256": "8db91cca0acc50e6e2122dcc70cd0c6ab15141bccd77589be044a104c9d6162d"
     },
     {
       "path": "exports/logo/svg/wordmark-black.svg",
@@ -499,175 +524,203 @@
     },
     {
       "path": "exports/social/avatar-color-1024.png",
-      "bytes": 1193792,
-      "sha256": "0b6e0d3de97ff95ea71a636532fc00738a6c598da15f02ff07ed3f4f0ef59f65",
+      "bytes": 172694,
+      "sha256": "16ed65a88b95c8630e88b4ab47e896f5a94d01dad8ee9cfc6cf8adde0e841f66",
       "dimensions": "1024x1024"
     },
     {
       "path": "exports/social/avatar-monochrome-1024.png",
-      "bytes": 65254,
-      "sha256": "95546f810a58005ec03504cb3a83bce0ad8a83ab9f89fa6abab20f2017c65a79",
+      "bytes": 55140,
+      "sha256": "c7f8c169d8bb9224e4710a5bff0a39a39c2ac3a6265d53d8416b73fe031b78e0",
       "dimensions": "1024x1024"
     },
     {
+      "path": "exports/sphere/mark-resting-1024.png",
+      "bytes": 182397,
+      "sha256": "8f9edecc6063f5a3ff894fbc7bd0615628e437ce27119f72f0ad0e70d9e126ec",
+      "dimensions": "1024x1024"
+    },
+    {
+      "path": "exports/sphere/mark-working-1024.png",
+      "bytes": 258801,
+      "sha256": "bb61fad0dafe32e839725967ec37fe19b5b5d2c948e0e6cbca818dcee1862749",
+      "dimensions": "1024x1024"
+    },
+    {
+      "path": "exports/sphere/resting-loop-512.webm",
+      "bytes": 911356,
+      "sha256": "2ffbfa656e1c81bb0368de16b37db668e7b4d85dda0eb3cdd0cbf3f9c994d567"
+    },
+    {
+      "path": "exports/sphere/working-loop-256.webp",
+      "bytes": 1540788,
+      "sha256": "164bb1a77d7997823b851ef36eae5c730b24f3f6b23b8a7f222afc1bebeac3a8"
+    },
+    {
+      "path": "exports/sphere/working-loop-512.webm",
+      "bytes": 1230107,
+      "sha256": "d10614aefba0071814369aadd2d32def1877cc84dcaf9c82266010f54ff0d8b5"
+    },
+    {
       "path": "exports/tray/rennet.ico",
-      "bytes": 10988,
-      "sha256": "e981dd3915ec90f6502bc1e20935a12b1bc56f186193947f3456651fa7f56fd0"
+      "bytes": 10814,
+      "sha256": "206f0df68140c7c1ed5b10026a10ddde679f5233d786b66949e6c00a78c1e441"
     },
     {
       "path": "exports/tray/rennet.png",
-      "bytes": 778,
-      "sha256": "46d963151fb8bce24b9d3089fed629c7c75ef9517db34120c6360f9aeb0c51f9",
+      "bytes": 803,
+      "sha256": "39f3361bbc72d4e42357a84f7ec764ac49fba9162a959afbecb2a77037d25a30",
       "dimensions": "32x32"
     },
     {
       "path": "exports/tray/rennet@2x.png",
-      "bytes": 1633,
-      "sha256": "bfb85a48bfa4c70faaa2dcbd6e52f9f6dc439d150158397dbad6fac0b7b28da2",
+      "bytes": 1555,
+      "sha256": "2a90bbeb2ca8fac3545f7e86f99ccb0c13feb7cd850c0b5a20762ae2d4649f35",
       "dimensions": "64x64"
     },
     {
       "path": "exports/tray/rennetTemplate.png",
-      "bytes": 706,
-      "sha256": "9f6c4b82dcc29dc1f2964f7cbbb97b1a1ec7ac0ff0cbe1f1a851468d7fac94f3",
-      "dimensions": "29x16"
+      "bytes": 427,
+      "sha256": "472ea336c5e5d05a5bf8928e66e703e0c51b7bef6092a50e61eab4cd45843590",
+      "dimensions": "16x16"
     },
     {
       "path": "exports/tray/rennetTemplate@2x.png",
-      "bytes": 1457,
-      "sha256": "349cea59a195f52ee5a9409c30cacbfb6637c289f7564daf1b6f79c9a9d48c4f",
-      "dimensions": "57x32"
+      "bytes": 861,
+      "sha256": "03f993ce54fcb07dbeb9fd39b547663d7489ff246385da34f35f44ca11cf3210",
+      "dimensions": "32x32"
     },
     {
       "path": "exports/tray/rennetUpdate.ico",
-      "bytes": 12131,
-      "sha256": "5b05bf8db47f121d486e56104b69f931a2de21baf9bf56b0fa565f22f5ffac96"
+      "bytes": 12116,
+      "sha256": "93e1b7d5f44b4cb96a3e0c004922794fa42032c32286091d44245c8fe1b972ec"
     },
     {
       "path": "exports/tray/rennetUpdate.png",
-      "bytes": 889,
-      "sha256": "7b50e56c7a5f81e4ea9c05829a8f44699c45cbb0f98c542080f98999ed447c15",
+      "bytes": 902,
+      "sha256": "a9945dbbe6852f9d66adf15553f445499a46765505cb0919db2a2a2e715cbd96",
       "dimensions": "32x32"
     },
     {
       "path": "exports/tray/rennetUpdate@2x.png",
-      "bytes": 1807,
-      "sha256": "51c46e99c4df6ba0b25789d39291de0c9254ae5e4a978cb617acc9d205b0d55c",
+      "bytes": 1769,
+      "sha256": "ca499235ee53a45a8222983ca9a38c62d72c66ecbe0302a0639904447443f601",
       "dimensions": "64x64"
     },
     {
       "path": "exports/tray/rennetUpdateTemplate.png",
-      "bytes": 722,
-      "sha256": "a094e4be16f6ade472383e4824aa2affbbea0e2a3ec2077cdc3fc2958394f136",
-      "dimensions": "29x16"
+      "bytes": 443,
+      "sha256": "beb840198004ec45399d1e630029ac124159ec40aaf563722532a3c605618fb3",
+      "dimensions": "16x16"
     },
     {
       "path": "exports/tray/rennetUpdateTemplate@2x.png",
-      "bytes": 1522,
-      "sha256": "6bf9d695b0d79592f86889defcf0ef419c207eac2d91479443d0dd67414594f8",
-      "dimensions": "57x32"
+      "bytes": 892,
+      "sha256": "51d197c0a6bdd2d25338baad209313cd2d85305539214f349aa821af251c5cd4",
+      "dimensions": "32x32"
     },
     {
       "path": "exports/web/apple-touch-icon.png",
-      "bytes": 35228,
-      "sha256": "a07645482ccc4b51177ca3e39e12f25ce52e92825207c7d35d9f5f5568ea5ac4",
+      "bytes": 18340,
+      "sha256": "9f1e1c0f5ccf2f8ef510f71ae525ff85cebb26056f8257059e565c05d550d088",
       "dimensions": "180x180"
     },
     {
       "path": "exports/web/favicon-16x16.png",
-      "bytes": 545,
-      "sha256": "9bcd798200b692d7f9ea4381aa7b4d29b88e3937cf6c89aebe2e5cea076e9c57",
+      "bytes": 717,
+      "sha256": "f86f9ededf369bf41fee6004c7ddae55166d130108261e6e365c6443de476fac",
       "dimensions": "16x16"
     },
     {
       "path": "exports/web/favicon-32x32.png",
-      "bytes": 971,
-      "sha256": "afcdde31443b43db3d107eae0b0f9c7743dfaf4efdecd076743c3496b666af5b",
+      "bytes": 1710,
+      "sha256": "995c1a52b644fef8c568280399ca15c5d64e783b41229ea26be1b819ffa6c1b2",
       "dimensions": "32x32"
     },
     {
       "path": "exports/web/favicon-48x48.png",
-      "bytes": 1442,
-      "sha256": "3a3d9f38790ee7612f87aebb9b2a1e9fbe50d2548b4473e6bb02ba4b9b0bfd9b",
+      "bytes": 2946,
+      "sha256": "294d9a8df32a3954d0cb5da1ce3b5929df7377b0db7814e42577073194f4e518",
       "dimensions": "48x48"
     },
     {
       "path": "exports/web/favicon.ico",
       "bytes": 15086,
-      "sha256": "b3ceb82206c3c29db59d79ab4b592fc35d16377bc49a025943a87f66b28ecc8e"
+      "sha256": "a8631463b8caf71ce4d933c4faff122215951850c0d861aa40801fc5fcc4f74c"
     },
     {
       "path": "exports/web/favicon.svg",
-      "bytes": 2861,
-      "sha256": "d60d794be77f8ebe007be1728e9e5965033be6154636c166427872ddd450f8c8"
+      "bytes": 8739,
+      "sha256": "21df3763630a72c227bdc752d4bddc57c853654ffecf60af41a6f997ea5d551f"
     },
     {
       "path": "exports/web/icon-192.png",
-      "bytes": 39180,
-      "sha256": "d2ca984d12d1168efd3cb0e02ec42a62d504e51edb32fc0ab424419d3ba83355",
+      "bytes": 20229,
+      "sha256": "e0db00a6b21d87318b9af158cf001b5a12a0cba3f3d20a120a9ec87b207f4939",
       "dimensions": "192x192"
     },
     {
       "path": "exports/web/icon-512.png",
-      "bytes": 255830,
-      "sha256": "faf4e0c4d011114e204e854f2ca2b34103d8f00fdad814facb10cab840f890c4",
+      "bytes": 84598,
+      "sha256": "1749b9b96317bc2b247107858e0ec923796446ad80f6fdd9563f8e9daf151e95",
       "dimensions": "512x512"
     },
     {
       "path": "exports/web/site.webmanifest",
       "bytes": 342,
-      "sha256": "987fa36793ddc361b12e6766cb8cf1945f878ce21de8a92cf33dee482ee9efa6"
+      "sha256": "360e110a8dbe338f2a7efdbba27f80242b572712588d397ddaee150a4d0294fe"
     },
     {
       "path": "preview/brand-pack-overview.png",
-      "bytes": 253323,
-      "sha256": "17e2028ee5d1ab054eba4ca0d42140bc7501e3d7c6f4c780428c31ff501ba57a",
+      "bytes": 231811,
+      "sha256": "84dc69a7e0240dc8c2e0fc2dc0c60b84fd58d54f2c075dd4253d285ae8e918f7",
       "dimensions": "1800x1260"
     },
     {
-      "path": "preview/trace-fidelity.png",
-      "bytes": 84184,
-      "sha256": "83fb3b6c6c57289fd5967e9dfc8cb5c8446f4c4d16f7bd1ef4861ddb12b80ed6",
-      "dimensions": "1600x900"
+      "path": "scripts/gen-mark-svgs.py",
+      "bytes": 5881,
+      "sha256": "d3fd663b647f3644df93aca161fe6d8041898e487e578147440a038085e797e1"
     },
     {
       "path": "scripts/gen-tray-icons.mjs",
-      "bytes": 5112,
-      "sha256": "bb042ec401dd92408fd24f337999d72cb081899d00ef184f12c85bf8314e034f"
+      "bytes": 6957,
+      "sha256": "17ea02edbdafa14bbbed58005237fdb80b455631ee00e57f5125696c0de5705f"
     },
     {
-      "path": "sources/gradient-reference.png",
-      "bytes": 2234400,
-      "sha256": "d38287ed8746f86ff964e2ec547b87d8b26c6ebef8cf6cc534fd04cc938157ce",
-      "dimensions": "1254x1254"
+      "path": "scripts/rasterise-svg.mjs",
+      "bytes": 1302,
+      "sha256": "a992a1406cd1329d28dded974b292ce6c2bb56a206f5b27ae745fe8ec381a7d5"
     },
     {
-      "path": "sources/mark-master.svg",
-      "bytes": 5331,
-      "sha256": "e57614832279335acac166d88f55a3fec2eeafe08be6d97cd7b054ab4f5c708f"
+      "path": "scripts/render-sphere.mjs",
+      "bytes": 17925,
+      "sha256": "485b91b9ee52e4ff9206f102faef1376ba346f716be8988d600671b185e41e6c"
     },
     {
-      "path": "sources/mark-small.svg",
-      "bytes": 3098,
-      "sha256": "505c22d163b13e29d78e9f1e01179984564d075306993d86ad581b501850738b"
+      "path": "sources/liquid-sphere/index.html",
+      "bytes": 12489,
+      "sha256": "5235796a6fe16110af3e15d117ee97c0a034093634e77efd14758205ef379ae3"
     },
     {
-      "path": "sources/selected-mark-direction.png",
-      "bytes": 820075,
-      "sha256": "380c0427b982f3ae9a23dcb3c152cc78fc802f420251bf771f928086f8005ade",
-      "dimensions": "1448x1086"
+      "path": "sources/mark-ridged-small.svg",
+      "bytes": 8217,
+      "sha256": "bb5af12254f0e24d8e7cb82ff2e3ce8668e284a89465a235c3cb3895538db534"
+    },
+    {
+      "path": "sources/mark-ridged.svg",
+      "bytes": 8423,
+      "sha256": "dbbd8e43ef9213407ec3e57ad1705102bf5e11274c2adf89d5cfd5f28b24dbbd"
+    },
+    {
+      "path": "sources/mark-sphere.svg",
+      "bytes": 8722,
+      "sha256": "419e5ecc1d245c059d8754d9313a818ff04af52b1cb9b2203fefe40c965aad50"
     },
     {
       "path": "sources/selected-wordmark-direction.png",
       "bytes": 1072751,
       "sha256": "6476c6d2a22d8b8c5f7beb58cca0c7afc10e729d765f54da81385302d651dc14",
       "dimensions": "1536x1024"
-    },
-    {
-      "path": "sources/trace-reference-mark.png",
-      "bytes": 2644,
-      "sha256": "9dea1e810fdeb62b796ebb828868fabbfc445d40af239b338f9fe8a082ee4d6d",
-      "dimensions": "573x259"
     },
     {
       "path": "sources/trace-reference-wordmark.png",
@@ -682,8 +735,8 @@
     },
     {
       "path": "tokens.css",
-      "bytes": 986,
-      "sha256": "32e977ce18be7c6808b53ab2e893da818a1404e3f85468f2481a8ec70110e3b5"
+      "bytes": 1107,
+      "sha256": "90c2efb6f730458e5b44a2b3debc6a101bc01a98b2c68fcfccb762270a564b7f"
     }
   ]
 }

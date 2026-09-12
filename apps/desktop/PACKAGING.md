@@ -118,7 +118,7 @@ The build writes `Setup.exe`, a `.nupkg`, a `RELEASES` update manifest, and a wi
 
 The Windows installer is unsigned and displays a SmartScreen warning on first launch. Windows code signing is planned in [issue #330](https://github.com/rbutera/rennet/issues/330).
 
-The application uses `brand/exports/app-icons/windows/rennet-white-on-black.ico` for the executable and installer. Development loads that file at runtime because the development executable has no embedded Rennet icon.
+The application uses `brand/exports/app-icons/windows/rennet-color.ico` for the executable and installer. Development loads that file at runtime because the development executable has no embedded Rennet icon.
 
 Rennet does not require a POSIX login shell on Windows. Agent discovery checks the process environment and common Windows install locations. A project in WSL runs `git`, `gh`, `claude`, and `codex` inside its selected distribution through `wsl.exe`.
 

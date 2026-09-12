@@ -1,5 +1,7 @@
 # Rennet
 
+<p align="center"><img src="brand/exports/sphere/working-loop-256.webp" width="192" height="192" alt="The Rennet mark: a warm gradient sphere rippling while it works"></p>
+
 Rennet is a **local-first** code review application. It turns local changes and GitHub pull requests into an ordered review with source evidence. The reviewer remains responsible for anything posted in their name.
 
 The local daemon captures immutable patchsets, builds deterministic project context, and runs reviews through installed coding agents. Desktop and browser clients connect to the same daemon, and a native mobile client is in progress ([#383](https://github.com/rbutera/rennet/issues/383)). Team work can become a GitHub review. Your own branch can become an agent work order, a reviewed delta, and a pull request.

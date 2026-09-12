@@ -546,7 +546,7 @@ describe("sidebar tree (C03 §3)", () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** The lockup's authored aspect ratio (`lockup.tsx`): width = height × this. */
-const LOCKUP_RATIO = 726.868 / 126;
+const LOCKUP_RATIO = 630.168 / 126;
 
 function cornerSlot(container: Element): Element {
   const slot = container.querySelector('[data-slot="corner-slot"]');

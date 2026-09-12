@@ -160,12 +160,6 @@ h2 {
   visibility: visible;
 }
 
-/* The closing band is always dark (forced data-scheme="dark" in markup), so
-   the white mark shows in both page schemes. */
-.closing-mark-light {
-  display: none;
-}
-
 .site-header nav,
 .site-footer nav {
   display: flex;
@@ -1147,7 +1141,6 @@ a[href^="http"]:not(.button)::after {
   text-align: center;
 }
 .closing-inner > img {
-  grid-area: 1 / 1;
   width: 72px;
   height: auto;
   margin-bottom: 44px;

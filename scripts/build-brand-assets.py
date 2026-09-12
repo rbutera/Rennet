@@ -1,7 +1,24 @@
 #!/usr/bin/env python3
+"""Build every Rennet brand export from the committed vector and raster sources.
+
+Sources in, exports + manifest out. The identity is the liquid sphere:
+
+  sources/mark-sphere.svg        the COLOUR mark (gradients on a wobbly disc)
+  sources/mark-ridged.svg        the MONOCHROME mark (one fill, creases cut by a mask)
+  sources/mark-ridged-small.svg  the mono mark with three ridges, for 16-32 px
+  sources/wordmark-outline.svg   the wordmark paths
+  exports/sphere/mark-resting-1024.png  the shader's own resting frame (colour raster master)
+
+`exports/sphere/` is written by `brand/scripts/render-sphere.mjs`, not by this
+script, so it is the one export directory this script never deletes.
+
+Every SVG rasterisation goes through `brand/scripts/rasterise-svg.mjs` (Chromium):
+ImageMagick's internal MSVG renderer silently drops gradients, masks and clip
+paths, and both marks depend on all three. `magick` is still used to pack PNGs
+into `.ico` containers, which is a container format job, not a rendering one.
+"""
 from __future__ import annotations
 
-import base64
 import hashlib
 import json
 import re
@@ -10,7 +27,7 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont
+from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -19,13 +36,40 @@ SOURCES = BRAND / "sources"
 EXPORTS = BRAND / "exports"
 LOGOS = EXPORTS / "logo" / "svg"
 APP_ICONS = EXPORTS / "app-icons"
+SPHERE = EXPORTS / "sphere"
 WEB = EXPORTS / "web"
 SOCIAL = EXPORTS / "social"
 PREVIEW = BRAND / "preview"
+RASTERISE = BRAND / "scripts" / "rasterise-svg.mjs"
 
 INK = "#0B0D10"
 PAPER = "#F7F4EE"
-WHITE = (255, 255, 255)
+GROUND = "#ecdfcf"
+SPHERE_MID = "#e8641f"
+
+# Lockup geometry. The mark is square now, so its width is its height.
+MARK_HEIGHT = 126.0
+WORDMARK_HEIGHT = 112.0
+LOCKUP_GAP = 24.0
+STACKED_MARK = 200.0
+STACKED_WORDMARK_WIDTH = 420.0
+STACKED_GAP = 38.0
+
+# App-icon tile: a 960 px squircle inset in a 1024 px canvas, as every platform expects.
+TILE = 1024
+TILE_INSET = 32
+TILE_SIZE = TILE - TILE_INSET * 2
+TILE_RADIUS = 214
+# Every icon size below is the size of the DRAWN ARTWORK, not of the box it is nested in.
+# The marks do not fill their own 100x100 viewBox — the sphere's wobble leaves a few units
+# of slack on each side — so nesting a mark in a 560-high box draws a 521-high sphere. Sizes
+# are divided by the mark's measured extent (`art_fraction`) so "560" means 560 px of sphere.
+COLOR_MARK_FRACTION = 0.72
+COLOR_COMPACT_FRACTION = 0.80
+# One height for both ring counts: the compact mark is more legible because it has three
+# deep ridges instead of six, not because it is drawn larger, and the tray's update dot has
+# to clear the same silhouette in both.
+MONO_MARK_HEIGHT = 560.0
 
 
 @dataclass(frozen=True)
@@ -33,6 +77,10 @@ class Vector:
     width: float
     height: float
     body: str
+    # The authored fill this artwork is recoloured through. `mark-ridged.svg` carries a
+    # mask built from #ffffff/#000000, so recolouring by "the first hex fill" would paint
+    # the mask instead of the mark; the exact source fill is named here on purpose.
+    ink: str | None
 
 
 def run(*command: str) -> None:
@@ -44,146 +92,212 @@ def write_text(path: Path, contents: str) -> None:
     path.write_text(contents, encoding="utf-8")
 
 
-def read_vector(path: Path) -> Vector:
+def read_vector(path: Path, ink: str | None) -> Vector:
     raw = path.read_text(encoding="utf-8")
-    view_box = re.search(r'viewBox="[\d.-]+ [\d.-]+ ([\d.]+) ([\d.]+)"', raw)
-    body = re.search(r'(<g\b.*</g>)', raw, re.DOTALL)
-    if not view_box or not body:
-        raise RuntimeError(f"{path} is not a traced SVG in the expected format")
-    return Vector(float(view_box.group(1)), float(view_box.group(2)), body.group(1))
+    view_box = re.search(r'viewBox="[\d.eE+-]+ [\d.eE+-]+ ([\d.eE+-]+) ([\d.eE+-]+)"', raw)
+    open_tag = re.search(r"<svg\b[^>]*>", raw, re.DOTALL)
+    if not view_box or not open_tag or "</svg>" not in raw:
+        raise RuntimeError(f"{path} is not an SVG with a viewBox")
+    body = raw[open_tag.end() : raw.rindex("</svg>")]
+    body = re.sub(r"<metadata>.*?</metadata>", "", body, flags=re.DOTALL)
+    body = re.sub(r"<!--.*?-->", "", body, flags=re.DOTALL).strip()
+    if ink and f'fill="{ink}"' not in body:
+        raise RuntimeError(f"{path} does not carry the authored fill {ink}")
+    return Vector(float(view_box.group(1)), float(view_box.group(2)), body, ink)
 
 
-def recolor(body: str, color: str) -> str:
-    return re.sub(r'fill="#[0-9A-Fa-f]{6}"', f'fill="{color}"', body, count=1)
+def recolor(vector: Vector, color: str | None) -> str:
+    if color is None or vector.ink is None:
+        return vector.body
+    return vector.body.replace(f'fill="{vector.ink}"', f'fill="{color}"')
 
 
-def svg_document(vector: Vector, color: str, label: str) -> str:
+def namespace_ids(body: str, prefix: str) -> str:
+    """Rename every id and its url(#…) references so two marks can share one document."""
+    for name in dict.fromkeys(re.findall(r'\bid="([^"]+)"', body)):
+        body = body.replace(f'id="{name}"', f'id="{prefix}{name}"')
+        body = body.replace(f"url(#{name})", f"url(#{prefix}{name})")
+    return body
+
+
+def svg_document(vector: Vector, color: str | None, label: str) -> str:
     return f'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {vector.width:.6f} {vector.height:.6f}" role="img" aria-label="{label}">
-{recolor(vector.body, color)}
+{recolor(vector, color)}
 </svg>
 '''
 
 
-def nested(vector: Vector, x: float, y: float, width: float, height: float, color: str) -> str:
+def nested(
+    vector: Vector,
+    x: float,
+    y: float,
+    width: float,
+    height: float,
+    color: str | None = None,
+    prefix: str = "",
+) -> str:
+    body = recolor(vector, color)
+    if prefix:
+        body = namespace_ids(body, prefix)
     return f'''<g transform="translate({x:.3f} {y:.3f}) scale({width / vector.width:.8f} {height / vector.height:.8f})">
-{recolor(vector.body, color)}
+{body}
 </g>'''
 
 
 def prepare_output() -> None:
-    for path in (EXPORTS, PREVIEW):
-        if path.exists():
-            shutil.rmtree(path)
+    # exports/sphere/ is render-sphere.mjs's output, not ours: never delete it.
+    if EXPORTS.exists():
+        for child in EXPORTS.iterdir():
+            if child == SPHERE:
+                continue
+            shutil.rmtree(child) if child.is_dir() else child.unlink()
+    if PREVIEW.exists():
+        shutil.rmtree(PREVIEW)
     for path in (LOGOS, APP_ICONS, WEB, SOCIAL, PREVIEW):
         path.mkdir(parents=True, exist_ok=True)
 
 
-def build_vector_exports(mark: Vector, small_mark: Vector, wordmark: Vector) -> None:
+def rasterise(source: Path, destination: Path, size: int, background: str = "transparent") -> None:
+    """Render an SVG through Chromium at `size` px. Non-square art is fitted, not stretched:
+    the viewBox's own preserveAspectRatio letterboxes it inside the square viewport."""
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    run("node", str(RASTERISE), str(source), str(destination), str(size), background)
+
+
+_ART_FRACTION: dict[Path, float] = {}
+
+
+def art_fraction(source: Path) -> float:
+    """How much of its own viewBox a mark actually draws, as a fraction of the longer side.
+
+    Measured by rendering rather than by reading the path, because the marks are clipped and
+    masked: what the viewer sees is not what the coordinates say. Cached per source — three
+    renders per build.
+    """
+    if source not in _ART_FRACTION:
+        scratch = PREVIEW / ".extent.png"
+        rasterise(source, scratch, 512)
+        with Image.open(scratch) as image:
+            bbox = image.convert("RGBA").getchannel("A").getbbox()
+        scratch.unlink(missing_ok=True)
+        if bbox is None:
+            raise RuntimeError(f"{source} rendered without visible pixels")
+        _ART_FRACTION[source] = max(bbox[2] - bbox[0], bbox[3] - bbox[1]) / 512
+    return _ART_FRACTION[source]
+
+
+def rasterise_fit(source: Path, size: int) -> Image.Image:
+    """Render an SVG at `size` px and crop the transparent letterboxing away."""
+    scratch = PREVIEW / ".raster.png"
+    rasterise(source, scratch, size)
+    image = Image.open(scratch).convert("RGBA")
+    bbox = image.getchannel("A").getbbox()
+    if bbox is None:
+        raise RuntimeError(f"{source} rendered without visible pixels")
+    image = image.crop(bbox)
+    scratch.unlink(missing_ok=True)
+    return image
+
+
+def build_vector_exports(sphere: Vector, ridged: Vector, small: Vector, wordmark: Vector) -> None:
+    write_text(LOGOS / "mark-color.svg", svg_document(sphere, None, "Rennet mark"))
     for name, color in (("black", INK), ("white", PAPER)):
-        write_text(LOGOS / f"mark-{name}.svg", svg_document(mark, color, "Rennet mark"))
-        write_text(LOGOS / f"mark-small-{name}.svg", svg_document(small_mark, color, "Rennet mark"))
+        write_text(LOGOS / f"mark-{name}.svg", svg_document(ridged, color, "Rennet mark"))
+        write_text(LOGOS / f"mark-small-{name}.svg", svg_document(small, color, "Rennet mark"))
         write_text(LOGOS / f"wordmark-{name}.svg", svg_document(wordmark, color, "Rennet"))
 
-        mark_height = 126.0
-        mark_width = mark_height * mark.width / mark.height
-        word_height = 112.0
-        word_width = word_height * wordmark.width / wordmark.height
-        gap = 24.0
-        lockup_height = max(mark_height, word_height)
-        lockup_width = mark_width + gap + word_width
-        horizontal = f'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {lockup_width:.3f} {lockup_height:.3f}" role="img" aria-label="Rennet">
-{nested(mark, 0, (lockup_height - mark_height) / 2, mark_width, mark_height, color)}
-{nested(wordmark, mark_width + gap, (lockup_height - word_height) / 2, word_width, word_height, color)}
+        word_width = WORDMARK_HEIGHT * wordmark.width / wordmark.height
+        stacked_word_height = STACKED_WORDMARK_WIDTH * wordmark.height / wordmark.width
+
+        # `black`/`white` names the WORDMARK ink. The default lockups carry the colour
+        # sphere on both; the `-mono-` lockups carry the ridged mark in the same ink.
+        for kind, mark, mark_color in (("", sphere, None), ("mono-", ridged, color)):
+            lockup_width = MARK_HEIGHT + LOCKUP_GAP + word_width
+            horizontal = f'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {lockup_width:.3f} {MARK_HEIGHT:.3f}" role="img" aria-label="Rennet">
+{nested(mark, 0, 0, MARK_HEIGHT, MARK_HEIGHT, mark_color, "m-")}
+{nested(wordmark, MARK_HEIGHT + LOCKUP_GAP, (MARK_HEIGHT - WORDMARK_HEIGHT) / 2, word_width, WORDMARK_HEIGHT, color, "w-")}
 </svg>
 '''
-        write_text(LOGOS / f"lockup-horizontal-{name}.svg", horizontal)
+            write_text(LOGOS / f"lockup-horizontal-{kind}{name}.svg", horizontal)
 
-        stacked_mark_width = 330.0
-        stacked_mark_height = stacked_mark_width * mark.height / mark.width
-        stacked_word_width = 420.0
-        stacked_word_height = stacked_word_width * wordmark.height / wordmark.width
-        stacked_gap = 38.0
-        stacked_height = stacked_mark_height + stacked_gap + stacked_word_height
-        stacked = f'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {stacked_word_width:.3f} {stacked_height:.3f}" role="img" aria-label="Rennet">
-{nested(mark, (stacked_word_width - stacked_mark_width) / 2 + 20, 0, stacked_mark_width, stacked_mark_height, color)}
-{nested(wordmark, 0, stacked_mark_height + stacked_gap, stacked_word_width, stacked_word_height, color)}
+            stacked_height = STACKED_MARK + STACKED_GAP + stacked_word_height
+            stacked = f'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {STACKED_WORDMARK_WIDTH:.3f} {stacked_height:.3f}" role="img" aria-label="Rennet">
+{nested(mark, (STACKED_WORDMARK_WIDTH - STACKED_MARK) / 2, 0, STACKED_MARK, STACKED_MARK, mark_color, "m-")}
+{nested(wordmark, 0, STACKED_MARK + STACKED_GAP, STACKED_WORDMARK_WIDTH, stacked_word_height, color, "w-")}
 </svg>
 '''
-        write_text(LOGOS / f"lockup-stacked-{name}.svg", stacked)
+            write_text(LOGOS / f"lockup-stacked-{kind}{name}.svg", stacked)
 
 
-def monochrome_icon(mark: Vector, background: str, foreground: str) -> str:
-    mark_height = 350.0
-    mark_width = mark_height * mark.width / mark.height
-    optical_shift = 44.0
-    return f'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-label="Rennet app icon">
-  <rect x="32" y="32" width="960" height="960" rx="214" fill="{background}"/>
-{nested(mark, (1024 - mark_width) / 2 + optical_shift, (1024 - mark_height) / 2, mark_width, mark_height, foreground)}
-</svg>
-'''
+def squircle(background: str) -> str:
+    return f'  <rect x="{TILE_INSET}" y="{TILE_INSET}" width="{TILE_SIZE}" height="{TILE_SIZE}" rx="{TILE_RADIUS}" fill="{background}"/>'
 
 
-def color_icon_svg(mark: Vector) -> str:
-    encoded = base64.b64encode((SOURCES / "gradient-reference.png").read_bytes()).decode("ascii")
-    mark_height = 350.0
-    mark_width = mark_height * mark.width / mark.height
-    x = (1024 - mark_width) / 2 + 44
-    y = (1024 - mark_height) / 2
-    return f'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-label="Rennet app icon">
-  <defs>
-    <clipPath id="squircle"><rect x="32" y="32" width="960" height="960" rx="214"/></clipPath>
-  </defs>
-  <image x="32" y="32" width="960" height="960" preserveAspectRatio="xMidYMid slice" clip-path="url(#squircle)" href="data:image/png;base64,{encoded}"/>
-  <rect x="32" y="32" width="960" height="960" rx="214" fill="#080B2A" fill-opacity=".42"/>
-  <rect x="33" y="33" width="958" height="958" rx="213" fill="none" stroke="#FFFFFF" stroke-opacity=".18" stroke-width="2"/>
-  <g opacity=".25" transform="translate(0 20)">{nested(mark, x, y, mark_width, mark_height, "#090B25")}</g>
-  {nested(mark, x, y, mark_width, mark_height, "#FFFFFF")}
+def monochrome_icon(mark: Vector, source: Path, background: str, foreground: str, height: float) -> str:
+    # `height` is the drawn sphere; the nesting box is larger by the mark's own slack.
+    # The mark is symmetric, so it is centred with no optical shift.
+    height = height / art_fraction(source)
+    offset = (TILE - height) / 2
+    return f'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {TILE} {TILE}" role="img" aria-label="Rennet app icon">
+{squircle(background)}
+{nested(mark, offset, offset, height, height, foreground)}
 </svg>
 '''
 
 
-def render_svg(source: Path, destination: Path, size: int) -> None:
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    run("magick", "-background", "none", "-density", "192", str(source), "-resize", f"{size}x{size}", f"PNG32:{destination}")
+def color_icon_svg(sphere: Vector, source: Path, fraction: float) -> str:
+    # Sized on the drawn sphere so this vector icon matches the raster master, which is
+    # composed from a bbox-cropped render.
+    height = TILE_SIZE * fraction / art_fraction(source)
+    offset = (TILE - height) / 2
+    return f'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {TILE} {TILE}" role="img" aria-label="Rennet app icon">
+{squircle(GROUND)}
+{nested(sphere, offset, offset, height, height)}
+</svg>
+'''
 
 
-def build_color_master(mark_source: Path, destination: Path) -> None:
-    background_rgb = Image.open(SOURCES / "gradient-reference.png").convert("RGB").resize((1024, 1024), Image.Resampling.LANCZOS)
-    background_rgb = ImageEnhance.Brightness(background_rgb).enhance(0.62)
-    background_rgb = ImageEnhance.Contrast(background_rgb).enhance(1.08)
-    background = background_rgb.convert("RGBA")
-    squircle = Image.new("L", (1024, 1024), 0)
-    ImageDraw.Draw(squircle).rounded_rectangle((32, 32, 992, 992), radius=214, fill=255)
-    background.putalpha(squircle)
+def build_color_master(destination: Path, fraction: float) -> None:
+    """The colour icon master: the shader's resting frame on the warm ground squircle.
 
-    temporary = APP_ICONS / "masters" / ".mark.png"
-    run("magick", "-background", "none", "-density", "192", str(mark_source), "-resize", "x350", f"PNG32:{temporary}")
-    mark = Image.open(temporary).convert("RGBA")
-    alpha = mark.getchannel("A")
-    bbox = alpha.getbbox()
+    The sphere comes from the render, not from mark-sphere.svg, so the shipped icon is
+    the actual lit shader and not a flat approximation of it.
+    """
+    tile = Image.new("RGBA", (TILE, TILE), (0, 0, 0, 0))
+    mask = Image.new("L", (TILE, TILE), 0)
+    ImageDraw.Draw(mask).rounded_rectangle(
+        (TILE_INSET, TILE_INSET, TILE - TILE_INSET, TILE - TILE_INSET), radius=TILE_RADIUS, fill=255
+    )
+    ground = Image.new("RGBA", (TILE, TILE), GROUND)
+    ground.putalpha(mask)
+    tile.alpha_composite(ground)
+
+    source = Image.open(SPHERE / "mark-resting-1024.png").convert("RGBA")
+    bbox = source.getchannel("A").getbbox()
     if bbox is None:
-        raise RuntimeError("mark rendered without visible pixels")
-    mark = mark.crop(bbox)
-    alpha = mark.getchannel("A")
+        raise RuntimeError("the sphere render has no visible pixels")
+    mark = source.crop(bbox)
+    target = round(TILE_SIZE * fraction)
+    scale = target / max(mark.width, mark.height)
+    mark = mark.resize((round(mark.width * scale), round(mark.height * scale)), Image.Resampling.LANCZOS)
 
-    white = Image.new("RGBA", mark.size, (*WHITE, 0))
-    white.putalpha(alpha)
-
-    x = (1024 - mark.width) // 2 + 44
-    y = (1024 - mark.height) // 2 - 4
-    shadow_alpha = alpha.filter(ImageFilter.GaussianBlur(20)).point(lambda value: round(value * 0.42))
-    shadow = Image.new("RGBA", mark.size, (8, 9, 32, 0))
+    x = (TILE - mark.width) // 2
+    y = (TILE - mark.height) // 2
+    # A soft warm contact shadow so the sphere sits on the ground rather than floating.
+    shadow_alpha = mark.getchannel("A").filter(ImageFilter.GaussianBlur(26)).point(
+        lambda value: round(value * 0.30)
+    )
+    shadow = Image.new("RGBA", mark.size, (122, 44, 30, 0))
     shadow.putalpha(shadow_alpha)
-    background.alpha_composite(shadow, (x, y + 22))
-    background.alpha_composite(white, (x, y))
-    highlight = Image.new("RGBA", (1024, 1024), (0, 0, 0, 0))
-    ImageDraw.Draw(highlight).rounded_rectangle((34, 34, 990, 990), radius=212, outline=(255, 255, 255, 46), width=2)
-    background.alpha_composite(highlight)
-    background.save(destination, optimize=True)
-    temporary.unlink(missing_ok=True)
+    shadow_layer = Image.new("RGBA", (TILE, TILE), (0, 0, 0, 0))
+    shadow_layer.alpha_composite(shadow, (x, y + 22))
+    shadow_layer.putalpha(Image.composite(shadow_layer.getchannel("A"), Image.new("L", (TILE, TILE), 0), mask))
+    tile.alpha_composite(shadow_layer)
+    tile.alpha_composite(mark, (x, y))
+    tile.save(destination, optimize=True)
 
 
-def build_icon_exports(mark: Vector, small_mark: Vector) -> None:
+def build_icon_exports(sphere: Vector, ridged: Vector, small: Vector) -> None:
     masters = APP_ICONS / "masters"
     masters.mkdir(parents=True, exist_ok=True)
     (APP_ICONS / "windows").mkdir(parents=True, exist_ok=True)
@@ -192,17 +306,20 @@ def build_icon_exports(mark: Vector, small_mark: Vector) -> None:
     color_svg = masters / "app-icon-color.svg"
     compact_black_svg = masters / "app-icon-black-on-white-small.svg"
     compact_white_svg = masters / "app-icon-white-on-black-small.svg"
-    write_text(black_svg, monochrome_icon(mark, PAPER, INK))
-    write_text(white_svg, monochrome_icon(mark, INK, PAPER))
-    write_text(color_svg, color_icon_svg(mark))
-    write_text(compact_black_svg, monochrome_icon(small_mark, PAPER, INK))
-    write_text(compact_white_svg, monochrome_icon(small_mark, INK, PAPER))
-    render_svg(black_svg, masters / "app-icon-black-on-white-1024.png", 1024)
-    render_svg(white_svg, masters / "app-icon-white-on-black-1024.png", 1024)
-    build_color_master(LOGOS / "mark-black.svg", masters / "app-icon-color-1024.png")
-    render_svg(compact_black_svg, masters / ".app-icon-black-on-white-small.png", 1024)
-    render_svg(compact_white_svg, masters / ".app-icon-white-on-black-small.png", 1024)
-    build_color_master(LOGOS / "mark-small-black.svg", masters / ".app-icon-color-small.png")
+    ridged_src = SOURCES / "mark-ridged.svg"
+    small_src = SOURCES / "mark-ridged-small.svg"
+    sphere_src = SOURCES / "mark-sphere.svg"
+    write_text(black_svg, monochrome_icon(ridged, ridged_src, PAPER, INK, MONO_MARK_HEIGHT))
+    write_text(white_svg, monochrome_icon(ridged, ridged_src, INK, PAPER, MONO_MARK_HEIGHT))
+    write_text(color_svg, color_icon_svg(sphere, sphere_src, COLOR_MARK_FRACTION))
+    write_text(compact_black_svg, monochrome_icon(small, small_src, PAPER, INK, MONO_MARK_HEIGHT))
+    write_text(compact_white_svg, monochrome_icon(small, small_src, INK, PAPER, MONO_MARK_HEIGHT))
+    rasterise(black_svg, masters / "app-icon-black-on-white-1024.png", TILE)
+    rasterise(white_svg, masters / "app-icon-white-on-black-1024.png", TILE)
+    build_color_master(masters / "app-icon-color-1024.png", COLOR_MARK_FRACTION)
+    rasterise(compact_black_svg, masters / ".app-icon-black-on-white-small.png", TILE)
+    rasterise(compact_white_svg, masters / ".app-icon-white-on-black-small.png", TILE)
+    build_color_master(masters / ".app-icon-color-small.png", COLOR_COMPACT_FRACTION)
 
     variants = {
         "black-on-white": (masters / "app-icon-black-on-white-1024.png", masters / ".app-icon-black-on-white-small.png"),
@@ -245,11 +362,8 @@ def build_icon_exports(mark: Vector, small_mark: Vector) -> None:
     shutil.copy2(APP_ICONS / "windows" / "rennet-color.ico", platform / "rennet-color.ico")
     shutil.copy2(masters / "app-icon-color-1024.png", platform / "rennet-color.png")
 
-    favicon = f'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" role="img" aria-label="Rennet">
-{nested(small_mark, 2, 28, 96, 43, INK)}
-</svg>
-'''
-    write_text(WEB / "favicon.svg", favicon)
+    # The favicon IS the colour mark: a browser tab is a colour surface.
+    shutil.copy2(LOGOS / "mark-color.svg", WEB / "favicon.svg")
 
     for temporary in masters.glob(".app-icon-*-small.png"):
         temporary.unlink()
@@ -260,7 +374,7 @@ def build_web_and_social() -> None:
     black = masters / "app-icon-black-on-white-1024.png"
     color = masters / "app-icon-color-1024.png"
     for size in (16, 32, 48):
-        render_svg(WEB / "favicon.svg", WEB / f"favicon-{size}x{size}.png", size)
+        rasterise(WEB / "favicon.svg", WEB / f"favicon-{size}x{size}.png", size)
     run("magick", str(WEB / "favicon-16x16.png"), str(WEB / "favicon-32x32.png"), str(WEB / "favicon-48x48.png"), str(WEB / "favicon.ico"))
     for destination, size in (
         (WEB / "apple-touch-icon.png", 180),
@@ -277,7 +391,7 @@ def build_web_and_social() -> None:
             {"src": "icon-192.png", "sizes": "192x192", "type": "image/png"},
             {"src": "icon-512.png", "sizes": "512x512", "type": "image/png"},
         ],
-        "theme_color": "#11143B",
+        "theme_color": SPHERE_MID,
         "background_color": PAPER,
         "display": "standalone",
     }, indent=2) + "\n")
@@ -294,12 +408,11 @@ def build_preview() -> None:
     canvas = Image.new("RGB", (1800, 1260), PAPER)
     draw = ImageDraw.Draw(canvas)
     draw.text((90, 58), "Rennet brand pack", fill=INK, font=preview_font(52))
-    draw.text((90, 124), "20% narrower selected mark · exact option 3 lettering · app icons", fill="#555B65", font=preview_font(24))
-    lockup_png = PREVIEW / ".lockup.png"
-    run("magick", "-background", "none", "-density", "192", str(LOGOS / "lockup-horizontal-black.svg"), "-resize", "1280x300", f"PNG32:{lockup_png}")
-    lockup = Image.open(lockup_png).convert("RGBA")
-    canvas.paste(lockup, ((1800 - lockup.width) // 2, 220), lockup)
-    labels = (("black-on-white", "Black on white"), ("white-on-black", "White on black"), ("color", "Colour gradient"))
+    draw.text((90, 124), "the liquid sphere · colour mark, ridged monochrome mark, app icons", fill="#555B65", font=preview_font(24))
+    lockup = rasterise_fit(LOGOS / "lockup-horizontal-black.svg", 1400)
+    lockup = lockup.resize((1280, round(1280 * lockup.height / lockup.width)), Image.Resampling.LANCZOS)
+    canvas.paste(lockup, ((1800 - lockup.width) // 2, 250), lockup)
+    labels = (("color", "Colour"), ("black-on-white", "Black on white"), ("white-on-black", "White on black"))
     icon_size = 360
     gap = 80
     start_x = (1800 - icon_size * 3 - gap * 2) // 2
@@ -310,31 +423,18 @@ def build_preview() -> None:
         box = draw.textbbox((0, 0), label, font=preview_font(24))
         draw.text((x + (icon_size - box[2] + box[0]) / 2, 1040), label, fill=INK, font=preview_font(24))
     canvas.save(PREVIEW / "brand-pack-overview.png", optimize=True)
-    lockup_png.unlink(missing_ok=True)
 
 
-def build_trace_qa() -> None:
-    canvas = Image.new("RGB", (1600, 900), "#E8E8E8")
-    draw = ImageDraw.Draw(canvas)
-    draw.text((70, 44), "Trace fidelity", fill=INK, font=preview_font(46))
-    draw.text((70, 105), "Selected artwork on the left · 20% narrower production SVG on the right", fill="#555B65", font=preview_font(23))
-    draw.text((70, 180), "Selected artwork", fill=INK, font=preview_font(22))
-    draw.text((830, 180), "Production SVG", fill=INK, font=preview_font(22))
+def build_tray_icons() -> None:
+    """Run the tray generator before the manifest is written.
 
-    mark_reference = Image.open(SOURCES / "trace-reference-mark.png").convert("RGB").resize((650, 294), Image.Resampling.NEAREST)
-    mark_vector_path = PREVIEW / ".mark-vector.png"
-    word_vector_path = PREVIEW / ".word-vector.png"
-    run("magick", "-background", "white", "-density", "192", str(LOGOS / "mark-black.svg"), "-resize", "650x294", str(mark_vector_path))
-    run("magick", "-background", "white", "-density", "192", str(LOGOS / "wordmark-black.svg"), "-resize", "650x160", str(word_vector_path))
-    canvas.paste(mark_reference, (70, 220))
-    canvas.paste(Image.open(mark_vector_path).convert("RGB"), (830, 220))
-
-    word_reference = Image.open(SOURCES / "trace-reference-wordmark.png").convert("RGB").resize((650, 151), Image.Resampling.NEAREST)
-    canvas.paste(word_reference, (70, 640))
-    canvas.paste(Image.open(word_vector_path).convert("RGB"), (830, 635))
-    canvas.save(PREVIEW / "trace-fidelity.png", optimize=True)
-    mark_vector_path.unlink(missing_ok=True)
-    word_vector_path.unlink(missing_ok=True)
+    `prepare_output` clears exports/, tray icons included, and the manifest hashes every
+    file under brand/ — so if the tray step only ever ran after this script, the committed
+    manifest would be permanently missing ten shipped files. The generator is deterministic
+    (same SVG in, same PNG bytes out), so running `node brand/scripts/gen-tray-icons.mjs`
+    by hand afterwards still reproduces exactly what the manifest recorded.
+    """
+    run("node", str(BRAND / "scripts" / "gen-tray-icons.mjs"))
 
 
 def build_manifest() -> None:
@@ -357,14 +457,15 @@ def build_manifest() -> None:
 
 def main() -> None:
     prepare_output()
-    mark = read_vector(SOURCES / "mark-master.svg")
-    small_mark = read_vector(SOURCES / "mark-small.svg")
-    wordmark = read_vector(SOURCES / "wordmark-outline.svg")
-    build_vector_exports(mark, small_mark, wordmark)
-    build_icon_exports(mark, small_mark)
+    sphere = read_vector(SOURCES / "mark-sphere.svg", None)
+    ridged = read_vector(SOURCES / "mark-ridged.svg", INK)
+    small = read_vector(SOURCES / "mark-ridged-small.svg", INK)
+    wordmark = read_vector(SOURCES / "wordmark-outline.svg", "#000000")
+    build_vector_exports(sphere, ridged, small, wordmark)
+    build_icon_exports(sphere, ridged, small)
     build_web_and_social()
     build_preview()
-    build_trace_qa()
+    build_tray_icons()
     build_manifest()
 
 
