@@ -435,9 +435,9 @@ async function runMovedHeadPublication(
   expect(await composeReview(page, original.review.id)).toEqual(oldComposition);
 
   await reviewLatest.click();
-  // The recaptured review opens on its boards; capture is reported in the workspace header
-  // rather than by a screen in front of them (`lens-board-tools` 5.2).
-  await expect(page.locator('[data-testid="workspace-header"]')).toBeVisible({ timeout: 5_000 });
+  // The recaptured review opens on its boards, with no screen and no header in front of
+  // them (`lens-board-tools` 5.2); the running capture's one control is the floating cancel.
+  await expect(page.locator('[data-testid="preparation-cancel"]')).toBeVisible({ timeout: 5_000 });
   const recapturedSessionId = await sessionIdFromRoute(page);
   expect(recapturedSessionId).not.toBe(original.sessionId);
   const recaptured = await waitForCapturedReview(

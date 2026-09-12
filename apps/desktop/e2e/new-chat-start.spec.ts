@@ -178,12 +178,13 @@ test("#668: a row click opens real generation progress before held drafting comp
     // WHAT CHANGED, and it is the whole of `lens-board-tools` 5.2: the surface that paints is
     // the BOARD WORKSPACE, not a preparation screen in front of it. This test used to assert
     // that the board had NOT taken over while capture was held; boards-first inverts that, so
-    // the assertion is inverted with it rather than deleted. Capture is reported in the
-    // workspace header, over boards that are already there.
-    const header = page.locator('[data-testid="workspace-header"]');
-    await expect(header).toBeVisible({ timeout: 5_000 });
+    // the assertion is inverted with it rather than deleted. The running capture adds no
+    // header over those boards any more — the frame's sphere carries the working state and
+    // the workspace offers the one thing it cannot: the floating way to stop.
+    const cancel = page.locator('[data-testid="preparation-cancel"]');
+    await expect(cancel).toBeVisible({ timeout: 5_000 });
     expect(await page.evaluate(() => location.hash)).toMatch(/#\/s\//);
-    await expect(header.getByText("Resolving the repository", { exact: true })).toBeVisible();
+    await expect(page.locator('[data-testid="workspace-header"]')).toHaveCount(0);
     await expect(page.locator('[data-kind="lens-board-view"]')).toBeVisible();
     // All five lenses are on the rail from the first frame (5.1), while capture is still
     // held — and the count is what proves it is all five rather than one.
@@ -197,8 +198,10 @@ test("#668: a row click opens real generation progress before held drafting comp
     await expect(page.locator('[data-register="working"]')).toHaveCount(0);
 
     // Cancellation is a live command, not a disabled navigation state. The review remains on
-    // the same route with an explicit terminal account and can be retried in place.
-    await header.getByRole("button", { name: "Cancel" }).click();
+    // the same route with an explicit terminal account and can be retried in place — and the
+    // header, silent while the generation ran, comes back to carry that account.
+    await cancel.click();
+    const header = page.locator('[data-testid="workspace-header"]');
     await expect(header).toHaveAttribute("data-status", "cancelled");
     await expect(header.getByRole("button", { name: "Retry" })).toBeVisible();
     // …and a cancelled run still says nothing is being written.

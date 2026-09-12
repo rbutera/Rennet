@@ -4,7 +4,7 @@ Rennet's own source is licensed under FSL-1.1-MIT (see [`LICENSE`](./LICENSE)).
 The production dependencies below ship under their own permissive licences,
 reproduced here to satisfy their attribution and notice requirements.
 
-Generated from the resolved production graph: 944 packages across 22 licence buckets. Regenerate with `pnpm notices`.
+Generated from the resolved production graph: 945 packages across 22 licence buckets. Regenerate with `pnpm notices`.
 
 ## (BSD-3-Clause OR GPL-2.0)
 
@@ -921,6 +921,7 @@ Generated from the resolved production graph: 944 packages across 22 licence buc
 - **tagged-tag** 1.0.0 — https://github.com/sindresorhus/tagged-tag#readme
 - **tailwind-merge** 3.6.0 — https://github.com/dcastil/tailwind-merge
 - **terminal-link** 2.1.1 — https://github.com/sindresorhus/terminal-link#readme
+- **three** 0.185.0 — https://threejs.org/
 - **throat** 5.0.0 — https://github.com/ForbesLindesay/throat#readme
 - **to-regex-range** 5.0.1 — https://github.com/micromatch/to-regex-range
 - **toidentifier** 1.0.1 — https://github.com/component/toidentifier#readme

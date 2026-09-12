@@ -785,9 +785,13 @@ observed history and elapsed time stay with the review, generation and seat thre
 across navigation and reconnection. A new generation or thread starts a fresh
 observation.
 
-The header says “Reviewing the change” while the review is being prepared.
-Continue carries the strongest activity treatment and cannot advance until the
-review is ready. The same session's sidebar row stays animated when the user
+No header narrates the preparation. The frame's Rennet mark — the sphere in the
+sidebar lockup, or the floating orb in the corner slot when the sidebar is
+collapsed — animates while any review is being prepared or any round is
+regenerating, and a floating Cancel button under the titlebar is the running
+generation's only other chrome. A header returns for a terminal state, carrying
+the reason and Retry. Continue names “Reviewing the change” and cannot advance
+until the review is ready. The same session's sidebar row stays animated when the user
 navigates away. Completion becomes a check and then an unread dot until opened;
 failure retains its reason. Initial preparation and post-round regeneration
 project their durable state into this presentation rather than relying on the

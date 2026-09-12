@@ -58,6 +58,7 @@ import { useLocation } from "wouter";
 import { useCoachOptional } from "../../coach/context";
 import { useCoachAnchor } from "../../coach/registry";
 import { Icon } from "../../components/icon";
+import { LiquidSphere } from "../../components/liquid-sphere";
 import { useUpdateReady } from "../../components/update-ready";
 import { useBridge, useCommand, useRefreshCommand } from "../../data";
 import {
@@ -80,6 +81,7 @@ import {
   useSidebarSessionProjection,
   useSidebarTree,
 } from "../sidebar-data";
+import { useAppWorking } from "../use-app-working";
 import { RennetLockup } from "./lockup";
 import { SidebarReviewActivity } from "./review-activity";
 import { TargetIcon } from "./target-icon";
@@ -885,7 +887,9 @@ export function Sidebar() {
       if (reviewing) document.removeEventListener("visibilitychange", refresh);
     };
   }, [reviewing, refreshSessions, activeSlug]);
-  const mac = useMacTrafficLights();
+  // The lockup's sphere is the app's working state, from the same hook the collapsed
+  // orb reads — one fact, rendered wherever the corner slot currently lives.
+  const working = useAppWorking();
   const open = useRennetStore((s) => s.ui.sidebarOpen);
   const asideRef = useRef<HTMLElement>(null);
   const firstRun = useRef(true);
@@ -928,14 +932,28 @@ export function Sidebar() {
     >
       {open ? (
         <div className="flex h-full min-h-0 w-64 flex-col">
-          {/* Header — state 1's corner slot: lights → wordmark → toggle (C20).
-              The 81px light reserve, the `app-region-drag` utility and the
-              collapse toggle all live in `CornerSlot` now; the lockup is the real
-              scheme-swapped vector artwork (never a font), dropped 16px → 14px on
-              darwin so it still clears the toggle inside the 256px panel (#557). */}
+          {/* Header — state 1's corner slot: lights → lockup → toggle (C20).
+              The 81px light reserve, the `app-region-drag` utility and the collapse
+              toggle all live in `CornerSlot`. The lockup is assembled from its two
+              authored halves rather than drawn whole, because the MARK is the live
+              sphere now: the sphere component beside the wordmark artwork, at the
+              authored gap (24/126 of the mark height ≈ 4.6px, taken as `gap-1`).
+              The accessible name rides the wrapper, so the assembly still reads as
+              one image called "Rennet" however the two halves are drawn.
+              24px on every host: 81 + 24 + 4 + 102.9 + 8 + 12 + 24 = 255.9 ≤ 256,
+              so darwin no longer pays the 14px shrink (#557). */}
           <CornerSlot
             owner="sidebar"
-            wordmark={<RennetLockup size={mac ? 14 : 16} className="w-auto" />}
+            wordmark={
+              <div role="img" aria-label="Rennet" className="flex items-center gap-1">
+                <LiquidSphere
+                  size={24}
+                  state={working ? "working" : "resting"}
+                  className="shrink-0"
+                />
+                <RennetLockup part="wordmark" size={24} className="w-auto" />
+              </div>
+            }
           />
           <SidebarActions />
           <SidebarTree />

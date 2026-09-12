@@ -56,6 +56,11 @@ function slots(): NodeListOf<Element> {
   return document.querySelectorAll('[data-slot="corner-slot"]');
 }
 
+/** Every Rennet sphere in the document, whichever path it rendered by. */
+function spheres(): NodeListOf<Element> {
+  return document.querySelectorAll("[data-liquid-sphere]");
+}
+
 describe("corner slot: exactly one mount, always (C20 §6.1)", () => {
   for (const state of STATES) {
     it(`mounts exactly one slot in ${state.name}, owned by "${state.owner}"`, async () => {
@@ -68,9 +73,76 @@ describe("corner slot: exactly one mount, always (C20 §6.1)", () => {
       );
       expect(slots().length).toBe(1);
       expect(slots()[0]?.getAttribute("data-owner")).toBe(state.owner);
+      // ...and exactly ONE sphere, in the slot, in every state. The mark moves with the
+      // corner: inside the sidebar's lockup while the sidebar owns it, standing alone as
+      // the orb in the other two. Two spheres would be two animated marks claiming the
+      // same fact — the same regression class as two slots, and just as quiet, because
+      // the second one looks perfectly correct wherever it is.
+      expect(spheres().length).toBe(1);
+      expect(spheres()[0]?.closest('[data-slot="corner-slot"]')).toBe(slots()[0]);
       cleanup();
     });
   }
+
+  it("keeps exactly one sphere across the live walk, and hands it between owners", async () => {
+    const { getByTestId } = mountFrame({ sidebarOpen: true, chatOpen: true });
+    const seen: string[] = [];
+    for (const [sidebarOpen, chatOpen] of [
+      [true, true],
+      [false, true],
+      [false, false],
+      [true, false],
+    ] as const) {
+      act(() => {
+        useRennetStore.getState().uiActions.setSidebarOpen(sidebarOpen);
+        useRennetStore.getState().uiActions.setChatOpen(chatOpen);
+      });
+      await waitFor(() =>
+        expect(getByTestId("chat-dock-slot").getAttribute("data-open")).toBe(String(chatOpen)),
+      );
+      expect(spheres().length).toBe(1);
+      seen.push(slots()[0]?.getAttribute("data-owner") ?? "");
+    }
+    // The sphere genuinely MOVED with the slot — one static mount would pass four times.
+    expect(seen).toEqual(["sidebar", "chat", "floating", "sidebar"]);
+  });
+
+  it("names the orb, and only the orb — the sidebar's lockup owns the name in state 1", async () => {
+    // Two spheres is not the only way to say "Rennet" twice: the assembled lockup already
+    // carries the accessible name, so an orb that also named itself inside it would be a
+    // second image with the same label. In states 2 and 3 there is no lockup, so the orb
+    // is the name.
+    for (const state of STATES) {
+      const { getByTestId } = mountFrame(state);
+      await waitFor(() =>
+        expect(getByTestId("chat-dock-slot").getAttribute("data-open")).toBe(
+          String(state.chatOpen),
+        ),
+      );
+      const sphere = spheres()[0];
+      if (!sphere) throw new Error("no sphere");
+      expect(sphere.getAttribute("aria-label")).toBe(state.owner === "sidebar" ? null : "Rennet");
+      expect(document.querySelectorAll('[aria-label="Rennet"]').length).toBe(1);
+      cleanup();
+    }
+  });
+
+  it("works the sphere while Rennet is working, wherever the slot lives", async () => {
+    for (const state of STATES) {
+      const { getByTestId } = mountFrame(state);
+      await waitFor(() =>
+        expect(getByTestId("chat-dock-slot").getAttribute("data-open")).toBe(
+          String(state.chatOpen),
+        ),
+      );
+      expect(spheres()[0]?.getAttribute("data-state")).toBe("resting");
+      act(() => useRennetStore.getState().runActions.setRoundProgress(0.5));
+      expect(spheres()[0]?.getAttribute("data-state")).toBe("working");
+      act(() => useRennetStore.getState().runActions.resetRun());
+      expect(spheres()[0]?.getAttribute("data-state")).toBe("resting");
+      cleanup();
+    }
+  });
 
   it("keeps exactly one across a live walk through all three states", async () => {
     const { getByTestId } = mountFrame({ sidebarOpen: true, chatOpen: true });

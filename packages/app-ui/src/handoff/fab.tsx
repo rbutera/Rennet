@@ -3,7 +3,6 @@ import { ArrowRight, Check, PenLine } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useCoachAnchor, useMergedRefs } from "../coach/registry";
 import { Icon } from "../components/icon";
-import { ReviewActivity } from "../components/review-activity";
 import { useRennetStore } from "../store";
 import { type EntryMode, modeHasExits } from "./handoff-data";
 import { selectExitPipCount } from "./selectors";
@@ -196,14 +195,15 @@ export function ExitFab({ mode, open, onToggle, reviewing = false, ready = true 
           open && "pointer-events-none scale-75 opacity-0",
         )}
       >
-        {reviewing ? (
-          <ReviewActivity className="size-8 text-current" />
-        ) : (
-          <Icon
-            icon={justReady ? Check : glyph}
-            className="size-4.5 shrink-0 motion-safe:animate-in motion-safe:zoom-in-50"
-          />
-        )}
+        {/* NO SPINNER. While Rennet writes the boards the FAB says so by being
+            unavailable and by naming what it is waiting on — the frame's own sphere
+            is where the working state is animated, and a second spinner beside it
+            was Rennet narrating itself twice. `aria-busy` and the name carry the
+            fact; the glyph stays the glyph. */}
+        <Icon
+          icon={justReady ? Check : glyph}
+          className="size-4.5 shrink-0 motion-safe:animate-in motion-safe:zoom-in-50"
+        />
         {compact && !reviewing ? null : (
           <span>{reviewing ? "Reviewing the change" : !ready ? "Review interrupted" : label}</span>
         )}

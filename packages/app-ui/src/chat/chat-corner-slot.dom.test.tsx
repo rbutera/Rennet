@@ -52,6 +52,18 @@ describe("corner slot in the chat header (C20 state 2)", () => {
     // `self-start` keeps the macOS light inset at its real y in a 56px row.
     expect(slot.className).toContain("self-start");
 
+    // THE ORB (state 2): the sidebar's lockup is gone, so the sphere stands alone in the
+    // slot — after the light reserve, before the toggle, named "Rennet" because with no
+    // lockup on screen the orb is the only thing carrying the name.
+    const sphere = slot.querySelector("[data-liquid-sphere]");
+    if (!sphere) throw new Error("the chat's corner slot has no sphere");
+    expect(sphere.getAttribute("aria-label")).toBe("Rennet");
+    expect(sphere.getAttribute("data-state")).toBe("resting");
+    const toggle = slot.querySelector('[aria-label="Expand sidebar"]');
+    if (!toggle) throw new Error("the chat's corner slot has no sidebar toggle");
+    // Node.DOCUMENT_POSITION_FOLLOWING (4).
+    expect(sphere.compareDocumentPosition(toggle) & 4).toBe(4);
+
     // It is the header's FIRST child, ahead of the trail.
     const header = slot.closest("header");
     if (!header) throw new Error("corner slot is not inside the chat header");
@@ -77,6 +89,9 @@ describe("corner slot in the chat header (C20 state 2)", () => {
     const dock = dockSlot(closed.getByTestId);
     expect(dock.hasAttribute("inert")).toBe(true);
     expect(dock.querySelectorAll('[data-slot="corner-slot"]').length).toBe(0);
+    // The sphere rides the slot, so it leaks exactly where the slot would — and a second
+    // ANIMATED mark inside an inert subtree burns a WebGL context nothing can see.
+    expect(dock.querySelectorAll("[data-liquid-sphere]").length).toBe(0);
   });
 
   it("has no chat collapse control left in the header — the one toggle lives on the main view", async () => {

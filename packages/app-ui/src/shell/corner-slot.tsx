@@ -2,12 +2,14 @@ import { cn } from "@rennet/ui";
 import { PanelLeft } from "lucide-react";
 import type { ReactNode } from "react";
 import { Icon } from "../components/icon";
+import { LiquidSphere } from "../components/liquid-sphere";
 import { useBridge } from "../data";
 import { useRennetStore } from "../store";
+import { useAppWorking } from "./use-app-working";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// The corner slot (C20, #558). ONE object = [macOS traffic-light inset] + [the
-// sidebar toggle], and **the leftmost pane owns it**. It mounts in exactly one
+// The corner slot (C20, #558). ONE object = [macOS traffic-light inset] + [the Rennet
+// sphere] + [the sidebar toggle], and **the leftmost pane owns it**. It mounts in exactly one
 // place at a time — the sidebar header while the sidebar is expanded, the chat
 // header while the sidebar is collapsed and the dock is open, and a floating pill
 // over the full-bleed main view when both are shut. `cornerSlotOwner` is the one
@@ -64,6 +66,12 @@ export function CornerSlot({
   readonly wordmark?: ReactNode;
 }) {
   const mac = useMacTrafficLights();
+  // THE ORB (states 2 and 3): with the sidebar collapsed the lockup is gone and with it
+  // the sphere that lives inside it, so the slot carries the sphere on its own — same
+  // mark, same size, same fact. It is rendered HERE rather than by the two call sites so
+  // the corner slot's one-mount invariant covers the sphere too: exactly one sphere is on
+  // screen in every state of the frame, because the slot that owns the corner owns it.
+  const working = useAppWorking();
   const open = useRennetStore((s) => s.ui.sidebarOpen);
   const setSidebarOpen = useRennetStore((s) => s.uiActions.setSidebarOpen);
   const label = open ? "Collapse sidebar" : "Expand sidebar";
@@ -93,6 +101,14 @@ export function CornerSlot({
       )}
     >
       {wordmark ? <div className="min-w-0 flex-1">{wordmark}</div> : null}
+      {owner === "sidebar" ? null : (
+        <LiquidSphere
+          size={24}
+          state={working ? "working" : "resting"}
+          title="Rennet"
+          className="shrink-0"
+        />
+      )}
       <button
         type="button"
         onClick={() => setSidebarOpen(!open)}

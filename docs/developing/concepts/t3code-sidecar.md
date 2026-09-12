@@ -346,9 +346,11 @@ between the reviewer and their boards.
   words, and a short rolling history of meaningful actions; raw tool calls stay in the
   transcript. Flagged lists both voices, each with its own transcript control. The board
   itself carries only a small activity mark beside the lens heading while its lane runs.
-- The **workspace header** (`board/workspace-header.tsx`) reports capture over the boards
-  — its two named beats and its cancel — and carries the generation-wide retry. Once
-  nothing is being prepared it renders nothing.
+- The **workspace header** (`board/workspace-header.tsx`) carries the generation-wide
+  retry for a failed or cancelled preparation, with its reason. While the generation is
+  still running it renders no header at all — the frame's Rennet sphere animates the
+  working state and the component renders one floating Cancel chip under the titlebar —
+  and once nothing is being prepared it renders nothing.
 - The **board itself** renders each element as the seat writes it, through the same
   per-lens `board.read` seam the settled workspace uses. While the lane is unsettled the
   board says so in three independent ways: the rail entry shows its seat working, the

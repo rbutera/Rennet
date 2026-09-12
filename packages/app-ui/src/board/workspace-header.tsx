@@ -1,69 +1,40 @@
 import { newCommandId, type SessionPreparation, type SidebarSession } from "@rennet/protocol";
 import { Button, cn } from "@rennet/ui";
 import { useEffect } from "react";
-import { ReviewActivity } from "../components/review-activity";
 import { useCommand, useMutation, useRefreshCommand } from "../data";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // THE WORKSPACE HEADER (lens-board-tools 5.2/5.4, D12) — capture reported IN the
 // workspace, over the boards, instead of in front of them.
 //
-// The bench's slab and its two-beat capture rail live here now. What changed is not the
-// content but the POSITION: the boards are already on screen behind this, so there is no
-// waiting stage between the reviewer and their review. When capture settles this header
-// has nothing to say and renders nothing at all — a header that stayed to announce a
-// finished step would be chrome restating history.
+// The bench's slab lives here now. What changed is not the content but the POSITION: the
+// boards are already on screen behind this, so there is no waiting stage between the
+// reviewer and their review. When capture settles this header has nothing to say and
+// renders nothing at all — a header that stayed to announce a finished step would be
+// chrome restating history.
 //
 // It also carries the GENERATION-WIDE retry (5.4). The per-lens retry belongs on the
 // failed lane's own widget; the retry that re-runs the whole preparation belongs here,
 // where its scope is obvious.
+//
+// WHAT IT NO LONGER DOES: while preparation is RUNNING there is no header at all. A
+// full-width slab carrying a spinner and two named beats was Rennet describing its own
+// machinery across the top of the boards the reviewer came to read — and the frame
+// already animates that fact, once, in the corner slot's sphere. What running state
+// still needs is the one thing the sphere cannot offer: a way to stop it. So the
+// running case renders exactly that and nothing else — a floating Cancel chip under the
+// titlebar, in the same skin as the rest of the floating chrome.
+//
+// The header comes back for a terminal state, because a failure has something only it
+// can say (its reason) and an action only it can offer (Retry).
 // ─────────────────────────────────────────────────────────────────────────────
 
-const CAPTURE_BEATS = [
-  { id: "resolving-repository", label: "Resolving the repository" },
-  { id: "capturing-change", label: "Capturing the change" },
-] as const;
-
-/** How often the header re-asks `session.list` while preparation is live. The lane lines
- *  the rail and the widget read come off this one read, so this poll is what makes them
- *  move; it is the bench's own cadence, kept because it is what the live line needs. */
+/** How often this component re-asks `session.list` while preparation is live. The lane
+ *  lines the rail and the seat widget read come off this one read, so this poll is what
+ *  makes them move; it is the bench's own cadence, kept because it is what the live
+ *  surfaces need — the header stopping at the door changes where the poll's answer is
+ *  DRAWN, not whether it is asked. */
 const PREPARATION_POLL_MS = 400;
-
-/** Capture as the first beat of the workspace, not a screen of its own: two named steps.
- *  The step the daemon says it is on is lit; the one behind it is done; the one ahead is
- *  faint. Nothing here is a timer — every state comes off `preparation.step`. */
-function CaptureRail({ step }: { readonly step: "resolving-repository" | "capturing-change" }) {
-  const current = CAPTURE_BEATS.findIndex((beat) => beat.id === step);
-  return (
-    <ol className="flex flex-wrap items-center gap-x-5 gap-y-2" data-testid="capture-rail">
-      {CAPTURE_BEATS.map((beat, index) => {
-        const state = index < current ? "done" : index === current ? "active" : "waiting";
-        return (
-          <li
-            key={beat.id}
-            data-beat={beat.id}
-            data-state={state}
-            className="flex items-center gap-2 text-13"
-          >
-            <span
-              className={cn(
-                "size-1.5 rounded-full",
-                state === "done" && "bg-accent",
-                state === "active" &&
-                  "bg-accent animate-processing-pulse motion-reduce:animate-none",
-                state === "waiting" && "bg-line",
-              )}
-              aria-hidden="true"
-            />
-            <span className={state === "waiting" ? "text-ink-faint" : "text-ink-soft"}>
-              {beat.label}
-            </span>
-          </li>
-        );
-      })}
-    </ol>
-  );
-}
 
 /** Read the session row this workspace is on. Shares `session.list`'s one cache key with
  *  the rail's own lane read, so the poll below feeds both. */
@@ -92,16 +63,30 @@ export function WorkspaceHeader({ slug }: { readonly slug: string }) {
 
   const failed = preparation.status === "failed";
   const cancelled = preparation.status === "cancelled";
-  const stage =
-    preparation.status === "capturing"
-      ? preparation.step === "resolving-repository"
-        ? "Resolving the repository"
-        : "Capturing the change"
-      : preparation.status === "drafting"
-        ? "Reviewing the change"
-        : preparation.stage === "capture"
-          ? "Capture"
-          : "Review";
+
+  // RUNNING: one control, floating, and nothing else. `top-16` clears the session top
+  // bar (min-h-14, with its own pills on this edge) as well as the 40px corner-slot row,
+  // so it never lands under the drag strip, the pill, or the History/Map/Diff rail, and
+  // `right-6` puts it on the FAB's column — the two things the reviewer can do
+  // to a running review share one edge. `app-region-no-drag` is explicit: on darwin this
+  // chip sits just below a drag region, and a control that does not opt out of one never
+  // receives its own clicks.
+  if (active) {
+    return (
+      <button
+        type="button"
+        data-testid="preparation-cancel"
+        aria-label="Cancel board generation"
+        disabled={cancel.pending}
+        onClick={() => void cancel.mutate({ sessionId: session.id })}
+        className="app-region-no-drag fixed top-16 right-6 z-40 flex h-8 items-center rounded-full border border-line/60 bg-surface/70 px-3 font-medium text-ink-soft text-sm backdrop-blur-md transition-colors hover:text-ink disabled:opacity-60"
+      >
+        Cancel
+      </button>
+    );
+  }
+
+  const stage = (failed || cancelled) && preparation.stage === "capture" ? "Capture" : "Review";
 
   return (
     <header
@@ -110,44 +95,29 @@ export function WorkspaceHeader({ slug }: { readonly slug: string }) {
       role={failed ? "alert" : "status"}
       className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-2 border-line border-b bg-surface px-6 py-2.5"
     >
-      {active ? <ReviewActivity /> : null}
       <span
         data-testid="preparation-stage"
         className={cn("font-medium text-13", failed ? "text-danger" : "text-ink")}
       >
         {failed ? `${stage} failed` : cancelled ? `${stage} cancelled` : stage}
       </span>
-      {preparation.status === "capturing" ? <CaptureRail step={preparation.step} /> : null}
       <span className={cn("font-serif text-13", failed ? "text-danger" : "text-ink-soft")}>
         {failed
           ? preparation.reason
           : cancelled
             ? "The review is still here. Retry when you’re ready."
-            : preparation.status === "capturing"
-              ? ""
-              : ""}
+            : ""}
       </span>
       <span className="flex-1" />
-      {active ? (
-        <Button
-          variant="outline"
-          size="sm"
-          disabled={cancel.pending}
-          onClick={() => void cancel.mutate({ sessionId: session.id })}
-        >
-          Cancel
-        </Button>
-      ) : (
-        <Button
-          variant="accent"
-          size="sm"
-          data-testid="workspace-retry"
-          disabled={retry.pending}
-          onClick={() => void retry.mutate({ sessionId: session.id, commandId: newCommandId() })}
-        >
-          {retry.pending ? "Retrying…" : "Retry"}
-        </Button>
-      )}
+      <Button
+        variant="accent"
+        size="sm"
+        data-testid="workspace-retry"
+        disabled={retry.pending}
+        onClick={() => void retry.mutate({ sessionId: session.id, commandId: newCommandId() })}
+      >
+        {retry.pending ? "Retrying…" : "Retry"}
+      </Button>
     </header>
   );
 }

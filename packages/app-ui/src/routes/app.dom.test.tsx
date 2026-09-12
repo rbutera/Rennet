@@ -324,13 +324,13 @@ describe("/s/:slug during New Chat preparation (#668)", () => {
     const { user } = mount(<RennetRouterApp bridge={bridge} history={history} />);
 
     // BOARDS FIRST (lens-board-tools 5.2). A drafting session lands on the board view,
-    // not a stage in front of it: the drafting is reported in the workspace's own header
-    // and each lens's seat state rides its rail entry.
-    // The header's copy is the reviewer's task, not the machinery (#904): asserted here
-    // because this is the one test that mounts the workspace header over a drafting row.
-    expect((await screen.findByTestId("preparation-stage")).textContent).toBe(
-      "Reviewing the change",
-    );
+    // not a stage in front of it: each lens's seat state rides its rail entry, and the
+    // only chrome the running generation adds is the floating way to stop it. The header
+    // that used to name the stage is gone — the frame's sphere animates that fact once,
+    // and a slab repeating it over the boards was Rennet describing its own machinery.
+    const cancel = await screen.findByTestId("preparation-cancel");
+    expect(cancel.getAttribute("aria-label")).toBe("Cancel board generation");
+    expect(document.querySelector('[data-testid="workspace-header"]')).toBeNull();
     expect(document.querySelector('[data-kind="lens-board-view"]')).toBeTruthy();
     expect(document.querySelectorAll('[data-kind="lens-switcher"] [data-lens]')).toHaveLength(5);
     expect(document.querySelector('[data-lens="design"]')?.getAttribute("data-register")).toBe(
@@ -344,7 +344,7 @@ describe("/s/:slug during New Chat preparation (#668)", () => {
       false,
     );
 
-    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    await user.click(screen.getByRole("button", { name: "Cancel board generation" }));
     await waitFor(() =>
       expect(
         document.querySelector('[data-testid="workspace-header"]')?.getAttribute("data-status"),
