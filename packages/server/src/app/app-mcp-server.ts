@@ -153,6 +153,8 @@ interface JsonRpcRequest {
 
 const JSON_RPC_INVALID_PARAMS = -32602;
 const JSON_RPC_METHOD_NOT_FOUND = -32601;
+/** A malformed envelope: wrong/missing `jsonrpc`, no `method`, or an empty batch. */
+export const JSON_RPC_INVALID_REQUEST = -32600;
 
 const sha256 = (value: string): Buffer => createHash("sha256").update(value, "utf8").digest();
 
@@ -610,7 +612,18 @@ export async function startAppMcpServer(options: StartAppMcpServerOptions): Prom
       error: { code, message: text },
     });
 
-    if (typeof method !== "string") return fail(JSON_RPC_INVALID_PARAMS, "no method named");
+    // Envelope validation BEFORE the notification check (item 3, Codex P2): a malformed
+    // request answers `-32600`/`id: null` per the JSON-RPC 2.0 spec's own canonical shape
+    // for an invalid request, rather than being read as a notification (silently answered
+    // with nothing) or refused as `-32602` with whatever `id` it happened to carry. Both
+    // `{}` (no `method`, no `jsonrpc`) and `{"jsonrpc":"1.0", ...}` are invalid this way.
+    if (message.jsonrpc !== "2.0" || typeof method !== "string") {
+      return {
+        jsonrpc: "2.0",
+        id: null,
+        error: { code: JSON_RPC_INVALID_REQUEST, message: "invalid request" },
+      };
+    }
     // A notification carries no id and gets no response, whatever it asks for.
     if (id === undefined || id === null) return null;
 
@@ -690,6 +703,17 @@ export async function startAppMcpServer(options: StartAppMcpServerOptions): Prom
           jsonrpc: "2.0",
           id: null,
           error: { code: -32700, message: "parse error" },
+        });
+        return;
+      }
+      // An empty batch is itself an Invalid Request (item 3, Codex P2) — it carried no
+      // message to notify or reply to, so answering `202` as if a lone notification had
+      // been served would be silently wrong rather than silently right.
+      if (Array.isArray(parsed) && parsed.length === 0) {
+        sendJson(res, 400, {
+          jsonrpc: "2.0",
+          id: null,
+          error: { code: JSON_RPC_INVALID_REQUEST, message: "empty batch" },
         });
         return;
       }

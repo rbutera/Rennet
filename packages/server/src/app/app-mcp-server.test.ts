@@ -485,3 +485,45 @@ describe("evidence paging ends at a complete UTF-8 code point (item 2, Codex P2)
     expect(servedSecond.patch).toBe("€after");
   });
 });
+
+describe("a malformed JSON-RPC envelope is refused honestly (item 3, Codex P2)", () => {
+  it("`{}` — no method, no jsonrpc — gets -32600 with id: null, not -32602 with no id", async () => {
+    const server = await serverWith();
+    const url = server.addressFor(THREAD).url;
+    const answer = await rpc(url, {});
+    expect(answer.status).toBe(200);
+    const body = answer.body as { jsonrpc: string; id: unknown; error?: { code: number } };
+    expect(body.jsonrpc).toBe("2.0");
+    expect(body.id).toBeNull();
+    expect(body.error?.code).toBe(-32600);
+  });
+
+  it("an empty batch `[]` is refused with a 400 and an Invalid Request error, not a silent 202", async () => {
+    const server = await serverWith();
+    const url = server.addressFor(THREAD).url;
+    const answer = await rpc(url, []);
+    expect(answer.status).toBe(400);
+    const body = answer.body as { jsonrpc: string; id: unknown; error?: { code: number } };
+    expect(body.jsonrpc).toBe("2.0");
+    expect(body.id).toBeNull();
+    expect(body.error?.code).toBe(-32600);
+  });
+
+  it('`"jsonrpc": "1.0"` is refused, not silently accepted as 2.0', async () => {
+    const server = await serverWith();
+    const url = server.addressFor(THREAD).url;
+    const answer = await rpc(url, { jsonrpc: "1.0", id: 1, method: "ping" });
+    expect(answer.status).toBe(200);
+    const body = answer.body as { jsonrpc: string; id: unknown; error?: { code: number } };
+    expect(body.id).toBeNull();
+    expect(body.error?.code).toBe(-32600);
+  });
+
+  it("a well-formed 2.0 request still works — the validation does not overreach", async () => {
+    const server = await serverWith();
+    const url = server.addressFor(THREAD).url;
+    const answer = await rpc(url, { jsonrpc: "2.0", id: 1, method: "ping" });
+    expect(answer.status).toBe(200);
+    expect((answer.body as { result?: unknown }).result).toEqual({});
+  });
+});
