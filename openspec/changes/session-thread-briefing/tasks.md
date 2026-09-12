@@ -112,7 +112,7 @@ grep -n "board.read" packages/protocol/src/commands/index.ts     # present; NOT 
   `docs/developing/concepts/model-council.md` names `orchestrator-chat` as the chat's job.
   (`docs/developing/reference/command-menu-exposure.md`'s agent rows are 3.1's, which owns the
   registry flags they document; the sidecar section links to it.)
-- [ ] 5.4 `docs/` sweep for any page still saying the chat cannot act or is a plain harness thread.
+- [x] 5.4 `docs/` sweep for any page still saying the chat cannot act or is a plain harness thread.
   Commit.
 
 ## 6. Live proof, full gate
