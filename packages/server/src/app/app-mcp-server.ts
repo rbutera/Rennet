@@ -155,17 +155,27 @@ export interface StartAppMcpServerOptions {
   /**
    * The review this thread is bound to, when the daemon knows it. Used ONLY to fill a
    * `sessionId` the model left out — never to overrule one it named, because a thread may
-   * legitimately ask about another review (that is what `app_session_list` is for).
+   * legitimately ask about another review (that is what `app_session_list` is for). This is
+   * a REVIEW id, not a durable session id (`dispatch/chat.ts`'s `bindReviewThread` keys the
+   * T3 thread binding on `{ kind: "session", sessionId: reviewId }`) — correct for this
+   * stamp, and exactly why it must never be reused to decide where a spill lands (below).
    */
   readonly sessionFor?: (threadId: string) => string | undefined;
   /**
-   * The session's bound workspace root, when the daemon knows it (item 1). Used ONLY to
-   * decide WHERE an oversized result spills — under that session's own
-   * `.rennet/context/<sessionId>/tool-results/`, alongside every other file the session's
-   * turns already read from — rather than the sidecar's bare state-dir fallback. Absent, or
-   * the thread's session unresolved: the fallback tier is used instead, never a refusal.
+   * Where an oversized result spills, when the daemon can resolve one (item 1; corrected by
+   * Codex's re-review, P2). Deliberately NOT keyed on the review id `sessionFor` returns:
+   * that id is a review, and the durable session bound to a review is a DIFFERENT id
+   * (`sessionIdForReview` in `create-server.ts`) — conflating the two sent a review `rev-1`
+   * bound to session `s1`'s spills to the fallback tier, since `sessionStore.load("rev-1")`
+   * never resolves, and archiving `s1` then left them behind forever. This resolves the
+   * REAL owner in one step: the durable session id AND its bound workspace root together,
+   * through the daemon's own review→session resolver, so the pair can never drift apart the
+   * way two separately-resolved values could. Absent, or the thread's review or session
+   * unresolved: the fallback tier is used instead, never a refusal.
    */
-  readonly rootForSession?: (sessionId: string) => string | undefined;
+  readonly spillOwnerFor?: (
+    threadId: string,
+  ) => { readonly sessionId: string; readonly root: string } | undefined;
   /** The interface to bind. Loopback, and there is no option that is not. */
   readonly host?: "127.0.0.1" | "::1";
   /**
@@ -484,8 +494,10 @@ function headAtCodePointBoundary(text: string, maxBytes: number): string {
  *   1. The thread's own session's context directory, `.rennet/context/<sessionId>/tool-
  *      results/`, via `writeRunScopedContext` — the same directory the rest of that
  *      session's turns already read files from, purged with it at archive. Used only when
- *      BOTH `sessionFor` and `rootForSession` resolve for this call's thread; neither
- *      overrules the other, they simply gate whether this tier applies.
+ *      `spillOwnerFor` resolves a `{ sessionId, root }` pair for this call's thread — the
+ *      DURABLE session id bound to the thread's review, never the review id itself (Codex
+ *      P2; see {@link StartAppMcpServerOptions.spillOwnerFor}'s doc for why the two must
+ *      not be conflated).
  *   2. `<stateDir>/tool-results/` (the sidecar's own base dir, or the OS temp dir when no
  *      `stateDir` was given — a test's ephemeral server, never the daemon). Nothing purges
  *      this tier per-session, which is why {@link sweepStaleAppToolResults} exists: swept by
@@ -499,11 +511,15 @@ function writeSpillFile(
 ): string {
   spillSeq += 1;
   const name = `${toolName}-${Date.now()}-${spillSeq}.json`;
-  const sessionId = options.sessionFor?.(threadId);
-  const root = sessionId === undefined ? undefined : options.rootForSession?.(sessionId);
-  if (sessionId !== undefined && root !== undefined) {
-    const written = writeRunScopedContext(root, sessionId, `tool-results/${name}`, body);
-    return join(root, written.path);
+  const owner = options.spillOwnerFor?.(threadId);
+  if (owner !== undefined) {
+    const written = writeRunScopedContext(
+      owner.root,
+      owner.sessionId,
+      `tool-results/${name}`,
+      body,
+    );
+    return join(owner.root, written.path);
   }
   const dir = join(options.stateDir ?? tmpdir(), "tool-results");
   mkdirSync(dir, { recursive: true });

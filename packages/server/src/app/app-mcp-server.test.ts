@@ -1,9 +1,10 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type CommandName, commands } from "@rennet/protocol";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildAppTools } from "../agent-tools";
+import { purgeSessionContext } from "../context-files";
 import type { DispatchContext } from "../dispatch";
 import { APP_BEARER_ENV_VAR, APP_MCP_SERVER_NAME } from "./app-credentials";
 import {
@@ -556,8 +557,8 @@ describe("paging a collection-carrying result", () => {
     scratch.push(root);
     const server = await serverWith({
       dispatch: () => async () => ({ note: "big", blob: "z".repeat(50_000) }),
-      sessionFor: (threadId) => (threadId === THREAD ? "session-spill" : undefined),
-      rootForSession: (sessionId) => (sessionId === "session-spill" ? root : undefined),
+      spillOwnerFor: (threadId) =>
+        threadId === THREAD ? { sessionId: "session-spill", root } : undefined,
     });
     const answer = await call(server.addressFor(THREAD).url, "app_session_list", {});
     const envelope = JSON.parse(blocks(answer)[0]?.text ?? "{}") as {
@@ -572,14 +573,46 @@ describe("paging a collection-carrying result", () => {
     const spilled = readFileSync(envelope.path, "utf8");
     expect(spilled).toContain("z".repeat(50_000));
   });
+
+  // ── Codex re-review, P2 ───────────────────────────────────────────────────────
+  it("spills under the DURABLE session's context dir, not the review id — and archiving that session removes it (Codex P2)", async () => {
+    // The exact confusion Codex's re-review named: a thread bound to review "rev-1" whose
+    // OWN durable session id is "s1" — two different strings, the way `bindReviewThread`
+    // keys T3 threads on the review id while `sessionIdForReview` mints a different id for
+    // the session store. `sessionFor` still answers "rev-1" (correct for ask-command
+    // stamping); `spillOwnerFor` answers the durable pair, resolved independently.
+    const root = mkdtempSync(join(tmpdir(), "rennet-app-spill-durable-"));
+    scratch.push(root);
+    const server = await serverWith({
+      dispatch: () => async () => ({ blob: "w".repeat(50_000) }),
+      sessionFor: (threadId) => (threadId === THREAD ? "rev-1" : undefined),
+      spillOwnerFor: (threadId) => (threadId === THREAD ? { sessionId: "s1", root } : undefined),
+    });
+    const answer = await call(server.addressFor(THREAD).url, "app_session_list", {});
+    const envelope = JSON.parse(blocks(answer)[0]?.text ?? "{}") as {
+      truncated: boolean;
+      path: string;
+    };
+    expect(envelope.truncated).toBe(true);
+    // Under "s1" — the durable session id — never under the review id "rev-1", which is
+    // exactly the bug: reusing the review id here would either miss this directory or (if
+    // treated as if it were the session id) leave the file where archiving "s1" never looks.
+    expect(envelope.path).toContain(".rennet/context/s1/tool-results/");
+    expect(envelope.path).not.toContain("rev-1");
+    expect(existsSync(envelope.path)).toBe(true);
+
+    // Archiving "s1" — the real purge path a session's own archive takes — removes it.
+    expect(purgeSessionContext(root, "s1")).toBe(true);
+    expect(existsSync(envelope.path)).toBe(false);
+  });
 });
 
 describe("sweeping stale spilled tool results (item 1's fallback-tier sweep)", () => {
   it("removes only entries older than the age bound, in the fallback tool-results directory", async () => {
     const dir = mkdtempSync(join(tmpdir(), "rennet-app-sweep-"));
     scratch.push(dir);
-    // No sessionFor/rootForSession here, so the spill falls to `<stateDir>/tool-results`; this
-    // test drives its own dir instead of the OS temp dir so the sweep boundary is provable.
+    // No spillOwnerFor here, so the spill falls to `<stateDir>/tool-results`; this test
+    // drives its own dir instead of the OS temp dir so the sweep boundary is provable.
     const explicit = await serverWith({
       dispatch: () => async () => ({ blob: "q".repeat(50_000) }),
       stateDir: dir,

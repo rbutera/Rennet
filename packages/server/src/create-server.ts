@@ -1588,15 +1588,33 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       dispatch: () => dispatch,
       // Which review a thread is bound to, so a tool call that names no session gets the
       // thread's own. The bindings file is the one place that mapping lives; a stale read
-      // is not possible because it is read per call, not captured.
+      // is not possible because it is read per call, not captured. NOTE this is a REVIEW id
+      // (the T3 thread binding's own `sessionId` field is keyed on `reviewId` — `chat.ts`
+      // `bindReviewThread`), which is exactly right for this stamp and exactly wrong to reuse
+      // for a spill's directory (below; Codex re-review, P2).
       sessionFor: (threadId) =>
         readBindings(dataDir).find((row) => row.kind === "session" && row.threadId === threadId)
           ?.sessionId,
-      // The session's bound workspace root, so item 1's oversized-result spill lands under
-      // that session's own context directory rather than a bare state-dir fallback. Late-bound
-      // the same way: `boundRootForSession` is declared far below this line, but this lambda's
-      // BODY only runs once a call arrives, well after composition finishes.
-      rootForSession: (sessionId) => boundRootForSession(sessionId),
+      // Where item 1's oversized-result spill lands (corrected by Codex's re-review, P2):
+      // resolved through the SAME review→session mapping every other durable read uses
+      // (`sessionIdForReview`, `boundRootForSession`), never through `sessionFor`'s review
+      // id directly. `sessionFor` above answers "which review", not "which session" — the
+      // two conflated meant a review bound to session `s1` spilled to the fallback tier
+      // (`sessionStore` has no row keyed on a review id) and archiving `s1` never reclaimed
+      // it. Late-bound, same as `sessionFor` above: `service`, `sessionIdForReview` and
+      // `boundRootForSession` are declared far below this line, but this lambda's BODY only
+      // runs once a call arrives, well after composition finishes.
+      spillOwnerFor: (threadId) => {
+        const reviewId = readBindings(dataDir).find(
+          (row) => row.kind === "session" && row.threadId === threadId,
+        )?.sessionId;
+        if (reviewId === undefined) return undefined;
+        const review = service.reviewById(reviewId);
+        if (review === null) return undefined;
+        const sessionId = sessionIdForReview(review);
+        const root = boundRootForSession(sessionId);
+        return root === undefined ? undefined : { sessionId, root };
+      },
       stateDir: sidecarBaseDir(dataDir),
     }).catch((error: unknown) => {
       appMcpServer = null;
