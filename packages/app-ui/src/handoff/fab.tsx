@@ -166,6 +166,12 @@ export function ExitFab({ mode, open, onToggle, reviewing = false, ready = true 
 
   // A retrospective review offers no exit (law 10) — the FAB does not exist for it.
   if (!modeHasExits(mode)) return null;
+  // NOTHING while the boards are being written. A disabled pill reading "Reviewing the
+  // change" was Rennet narrating itself in the corner the frame's sphere already
+  // animates, and it stood where the running generation's own control (the Cancel chip,
+  // `workspace-header.tsx`) now sits. The exit appears when there is something to exit
+  // from; `justReady` still pops the glyph on that arrival.
+  if (reviewing) return null;
 
   const label = mode === "teammate-pr" ? "Write Review" : "Continue";
   // The prototype rests on PenLine for every scenario. Writing the review IS the pen,
@@ -181,33 +187,21 @@ export function ExitFab({ mode, open, onToggle, reviewing = false, ready = true 
         ref={fabAnchorRef}
         variant="default"
         onClick={onToggle}
-        aria-label={
-          reviewing ? "Reviewing the change" : !ready ? "Review interrupted" : accessibleName
-        }
-        disabled={reviewing || !ready}
-        aria-busy={reviewing}
+        aria-label={ready ? accessibleName : "Review interrupted"}
+        disabled={!ready}
         aria-pressed={open}
         data-open={open || undefined}
         className={cn(
           "pointer-events-auto absolute right-6 bottom-6 h-12 gap-2 rounded-full px-5 font-semibold shadow-lg transition-all duration-200 hover:bg-primary/90 disabled:opacity-100",
-          reviewing &&
-            "border border-primary/30 bg-primary/10 text-primary shadow-[0_0_20px_color-mix(in_oklab,var(--color-primary)_20%,transparent)]",
           open && "pointer-events-none scale-75 opacity-0",
         )}
       >
-        {/* NO SPINNER. While Rennet writes the boards the FAB says so by being
-            unavailable and by naming what it is waiting on — the frame's own sphere
-            is where the working state is animated, and a second spinner beside it
-            was Rennet narrating itself twice. `aria-busy` and the name carry the
-            fact; the glyph stays the glyph. */}
         <Icon
           icon={justReady ? Check : glyph}
           className="size-4.5 shrink-0 motion-safe:animate-in motion-safe:zoom-in-50"
         />
-        {compact && !reviewing ? null : (
-          <span>{reviewing ? "Reviewing the change" : !ready ? "Review interrupted" : label}</span>
-        )}
-        {count > 0 && !reviewing && (
+        {compact ? null : <span>{ready ? label : "Review interrupted"}</span>}
+        {count > 0 && (
           <span
             ref={pipRef}
             data-pip="exit"

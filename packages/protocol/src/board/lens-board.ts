@@ -145,6 +145,25 @@ export function generationIdForDispatch(patchsetId: string, dispatchId: string):
   return `gen:${patchsetId}:dispatch:${dispatchId}`;
 }
 
+const GENERATION_PREFIX = "gen:";
+const DISPATCH_INFIX = ":dispatch:";
+
+/**
+ * The patchset a generation id was minted under — the inverse of the two constructors
+ * above, and `undefined` for an id neither of them made.
+ *
+ * A board being WRITTEN has no `patchset_id` on its `code_ref` elements: the host stamps
+ * them once, at settle, and a seat is never told the id. The live projection still has to
+ * cite something, and the generation it is drafting into already names the patchset.
+ */
+export function patchsetIdOfGeneration(generation: string): string | undefined {
+  if (!generation.startsWith(GENERATION_PREFIX)) return undefined;
+  const rest = generation.slice(GENERATION_PREFIX.length);
+  const dispatchAt = rest.indexOf(DISPATCH_INFIX);
+  const patchsetId = dispatchAt === -1 ? rest : rest.slice(0, dispatchAt);
+  return patchsetId.length > 0 ? patchsetId : undefined;
+}
+
 // ── The fold-line projection, shared by the two readers of a board ───────────
 //
 // A board's sections are DERIVED from its elements: the top-level `section` elements, in

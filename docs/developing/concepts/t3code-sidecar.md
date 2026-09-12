@@ -349,8 +349,10 @@ between the reviewer and their boards.
 - The **workspace header** (`board/workspace-header.tsx`) carries the generation-wide
   retry for a failed or cancelled preparation, with its reason. While the generation is
   still running it renders no header at all — the frame's Rennet sphere animates the
-  working state and the component renders one floating Cancel chip under the titlebar —
-  and once nothing is being prepared it renders nothing.
+  working state and the component renders one floating Cancel chip in the bottom-right
+  corner, the slot Continue takes once the boards are ready (the two never coexist, and
+  the chip must not sit over the transcript drawer's Close) — and once nothing is being
+  prepared it renders nothing.
 - The **board itself** renders each element as the seat writes it, through the same
   per-lens `board.read` seam the settled workspace uses. While the lane is unsettled the
   board says so in three independent ways: the rail entry shows its seat working, the

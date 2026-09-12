@@ -27,25 +27,22 @@ afterEach(() => {
 });
 
 describe("ExitFab", () => {
-  it("cannot advance during review and becomes actionable when ready", async () => {
+  it("does not exist while the boards are being written, and appears when they are ready", async () => {
     let toggled = 0;
     const r = mount(
       <ExitFab mode="own-branch" reviewing open={false} onToggle={() => toggled++} />,
     );
-    const reviewing = r.getByRole("button", { name: "Reviewing the change" });
-    await r.user.click(reviewing);
-    expect(toggled).toBe(0);
-    // …and it says so WITHOUT a spinner of its own. The frame animates the working state
-    // once, in the corner slot's sphere; a second spinner here was Rennet narrating
-    // itself twice. The fact still reaches assistive tech — the name and `aria-busy` are
-    // what carry it, which is why they are asserted beside the absence.
-    expect(reviewing.querySelector('[role="status"]')).toBeNull();
-    expect(reviewing.getAttribute("aria-busy")).toBe("true");
-    expect((reviewing as HTMLButtonElement).disabled).toBe(true);
-    // The glyph is still there: unavailable, not empty.
-    expect(reviewing.querySelector("svg")).toBeTruthy();
+    // NOTHING in the corner: not a disabled pill, not a "Reviewing the change" label. The
+    // frame's sphere animates the working state once, and the running generation's own
+    // control (the Cancel chip) stands in this slot until there is something to exit from.
+    expect(r.container.querySelector("button")).toBeNull();
+    expect(r.container.textContent).not.toContain("Reviewing the change");
     r.rerender(<ExitFab mode="own-branch" open={false} onToggle={() => toggled++} />);
-    await r.user.click(r.getByRole("button", { name: "Continue" }));
+    const ready = r.getByRole("button", { name: "Continue" });
+    // The arrival pops the glyph to a check — the transition still fires off a mount that
+    // rendered nothing, because the component stayed mounted with `reviewing` true.
+    expect(ready.querySelector("svg")).toBeTruthy();
+    await r.user.click(ready);
     expect(toggled).toBe(1);
   });
 

@@ -25,7 +25,7 @@ import { SourceChips } from "./design-meta";
 import { DesignCapabilityGrid } from "./design-structure";
 import { GenerationSwitcher } from "./generation-switcher";
 import { BoardElementsProvider, useBoardPatchsetId } from "./kinds/element-context";
-import { LENS_LABEL, waitingOnLine } from "./lens-seats";
+import { LENS_LABEL, seatHoldsSelection, waitingOnLine } from "./lens-seats";
 import { liveBoards, useLensDrafts } from "./live-draft";
 import { Section } from "./section";
 
@@ -192,8 +192,14 @@ export function LensBoardView({
   // which is also what a lens with NO lane reads as during capture — that one has
   // nothing to say and should still fall back.
   const seatWaiting = seats[lens].register === "waiting" && seats[lens].seated;
+  // A WORKING seat whose first element has not arrived holds it for the same reason —
+  // `seatHoldsSelection` is the one rule, shared with the rail, so the lit tab and the
+  // board under it never name two different lenses (Rai, 2026-09-12: Flagged clicked
+  // mid-draft opened Design's absence).
   const effectiveLens: LensKind =
-    selected.status === "missing" && liveByLens[lens] === undefined && !seatWaiting
+    selected.status === "missing" &&
+    liveByLens[lens] === undefined &&
+    !seatHoldsSelection(seats[lens])
       ? fallbackLens
       : lens;
 

@@ -64,13 +64,17 @@ export function WorkspaceHeader({ slug }: { readonly slug: string }) {
   const failed = preparation.status === "failed";
   const cancelled = preparation.status === "cancelled";
 
-  // RUNNING: one control, floating, and nothing else. `top-16` clears the session top
-  // bar (min-h-14, with its own pills on this edge) as well as the 40px corner-slot row,
-  // so it never lands under the drag strip, the pill, or the History/Map/Diff rail, and
-  // `right-6` puts it on the FAB's column — the two things the reviewer can do
-  // to a running review share one edge. `app-region-no-drag` is explicit: on darwin this
-  // chip sits just below a drag region, and a control that does not opt out of one never
-  // receives its own clicks.
+  // RUNNING: one control, floating, and nothing else. It sits in the EXIT's corner —
+  // `right-6 bottom-6`, the slot `handoff/fab.tsx` uses for Continue — because the two
+  // never coexist: Continue is absent while the boards are being written, and this chip
+  // is absent once they are. One corner, one thing the reviewer can do to the review at
+  // a time. It used to float at `top-16 right-6`, which is exactly where the seat
+  // transcript drawer's header puts its Close (the drawer is right-aligned inside the
+  // board region), so opening a transcript mid-draft put Cancel over Close (Rai,
+  // 2026-09-12). `absolute`, not `fixed`: both workspaces are `relative` columns filling
+  // the outlet, and the outlet — not the window — is what the dock sits beside.
+  // `app-region-no-drag` is explicit: a control that does not opt out of a drag region
+  // never receives its own clicks.
   if (active) {
     return (
       <button
@@ -79,7 +83,7 @@ export function WorkspaceHeader({ slug }: { readonly slug: string }) {
         aria-label="Cancel board generation"
         disabled={cancel.pending}
         onClick={() => void cancel.mutate({ sessionId: session.id })}
-        className="app-region-no-drag fixed top-16 right-6 z-40 flex h-8 items-center rounded-full border border-line/60 bg-surface/70 px-3 font-medium text-ink-soft text-sm backdrop-blur-md transition-colors hover:text-ink disabled:opacity-60"
+        className="app-region-no-drag absolute right-6 bottom-6 z-40 flex h-8 items-center rounded-full border border-line/60 bg-surface/70 px-3 font-medium text-ink-soft text-sm backdrop-blur-md transition-colors hover:text-ink disabled:opacity-60"
       >
         Cancel
       </button>

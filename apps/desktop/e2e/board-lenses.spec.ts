@@ -566,20 +566,16 @@ test("review activity and code evidence remain usable across navigation", async 
     await expect(
       page.getByText("Noise reviews what remains once the other lenses have finished."),
     ).toBeVisible();
-    const reviewing = page.getByRole("button", { name: "Reviewing the change", exact: true });
-    await expect(reviewing).toBeDisabled();
-    // The motion claim is the computed animation under each media preference below; the
-    // arc's geometry is a visual choice, not a behaviour, and is not pinned here.
-    const orbit = reviewing.locator("svg.animate-spin");
-    await page.emulateMedia({ reducedMotion: "no-preference" });
-    await expect
-      .poll(() => orbit.evaluate((element) => getComputedStyle(element).animationName))
-      .not.toBe("none");
-    await page.emulateMedia({ reducedMotion: "reduce" });
-    await expect
-      .poll(() => orbit.evaluate((element) => getComputedStyle(element).animationName))
-      .toBe("none");
-    await page.emulateMedia({ reducedMotion: "no-preference" });
+    // No Continue while the boards are being written — not disabled, ABSENT. The corner
+    // holds the running generation's one control instead, and nothing there narrates
+    // "Reviewing the change" (the frame's sphere carries the working state).
+    await expect(page.getByRole("button", { name: "Continue", exact: true })).toHaveCount(0);
+    await expect(
+      page.getByRole("button", { name: "Reviewing the change", exact: true }),
+    ).toHaveCount(0);
+    await expect(
+      page.getByRole("button", { name: "Cancel board generation", exact: true }),
+    ).toBeVisible();
     await tabs.getByRole("tab", { name: /^Sequence(?:,|$)/ }).click();
     await expect(
       board.getByRole("heading", { level: 1, name: "Sequence", exact: true }),
@@ -691,6 +687,10 @@ test("review activity and code evidence remain usable across navigation", async 
     await sessionRow.click();
     await expect(sessionRow.getByRole("status", { name: "Review ready" })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Continue", exact: true })).toBeEnabled();
+    // …and the chip has left the corner it was keeping for the exit.
+    await expect(
+      page.getByRole("button", { name: "Cancel board generation", exact: true }),
+    ).toHaveCount(0);
     await tabs.getByRole("tab", { name: /^Design(?:,|$)/ }).click();
     const section = board.locator('[data-kind="board-section"]').first();
     const toggle = section.getByRole("button", { name: "Toggle Widget value", exact: true });

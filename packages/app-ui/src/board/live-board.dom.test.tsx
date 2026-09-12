@@ -227,7 +227,13 @@ describe("the review opens on its boards, with no waiting stage in front of them
     if (!region) throw new Error("the workspace has no board region");
     expect(cancel.contains(region)).toBe(false);
     expect(region.contains(cancel)).toBe(false);
-    expect(cancel.className).toContain("fixed");
+    // In the EXIT's corner (`right-6 bottom-6`, where `handoff/fab.tsx` puts Continue
+    // once the boards are ready), not under the titlebar: `top-16 right-6` is where the
+    // seat transcript drawer's header puts its Close, and the chip sat on top of it.
+    expect(cancel.className).toContain("absolute");
+    expect(cancel.className).toContain("right-6");
+    expect(cancel.className).toContain("bottom-6");
+    expect(cancel.className).not.toContain("top-16");
     // No preparation SCREEN survives anywhere.
     expect(document.querySelector('[data-screen="session-preparation"]')).toBeNull();
   });
@@ -276,6 +282,67 @@ describe("the review opens on its boards, with no waiting stage in front of them
     expect(
       tabOf("sequence")?.querySelector('[data-testid="lens-working"]')?.getAttribute("data-voices"),
     ).toBe("1");
+  });
+});
+
+describe("the corner while the boards are being written", () => {
+  it("offers Cancel where Continue will be, and no Continue at all, until the generation settles", async () => {
+    const live = liveBridge({
+      preparation: { status: "drafting", reviewId: REVIEW.id, lanes: DRAFTING },
+      boards: { sequence: at(FIXTURE_BOARDS.gen1?.sequence) },
+    });
+    open(live, "?lens=sequence");
+    await waitFor(() => expect(document.querySelector("article[data-lens=sequence]")).toBeTruthy());
+
+    // ONE corner, one control. The Cancel chip is here; the exit is not — not disabled,
+    // not labelled "Reviewing the change", simply absent (Rai, 2026-09-12).
+    const cancel = document.querySelector('[data-testid="preparation-cancel"]');
+    if (!cancel) throw new Error("a drafting generation offers no way to cancel it");
+    expect(cancel.className).toContain("bottom-6");
+    expect(document.querySelector('button[aria-label="Continue"]')).toBeNull();
+    expect(document.body.textContent).not.toContain("Reviewing the change");
+
+    // The daemon settles the generation: its row loses `preparation`. The app's own
+    // `session.list` poll carries the change — nothing here re-renders the tree.
+    live.setLanes(SETTLED);
+    live.setPreparation(undefined);
+    await waitFor(
+      () => expect(document.querySelector('button[aria-label="Continue"]')).toBeTruthy(),
+      { timeout: 4_000 },
+    );
+    // …and the chip has left the corner it was keeping for the exit.
+    expect(document.querySelector('[data-testid="preparation-cancel"]')).toBeNull();
+    // The settle rides the 400ms `session.list` poll; under a full gate's contention the
+    // default 5s budget is what timed out, not the transition.
+  }, 15_000);
+
+  it("keeps the lens the reviewer clicked while its seat is still writing, instead of falling back to Design", async () => {
+    // Design settled (a real board), Flagged running with no durable board and no element
+    // yet. Before this held, both the rail and the board view fell back to the first
+    // settled sibling: Flagged never lit, and Design's board (or its "no spec found for
+    // this branch" absence) rendered under a tab the reviewer had just clicked.
+    const live = liveBridge({
+      preparation: { status: "drafting", reviewId: REVIEW.id, lanes: DRAFTING },
+      boards: { design: at(FIXTURE_BOARDS.gen1?.design) },
+    });
+    const history = memoryHistory("/s/sess-live?lens=design");
+    const { user } = mount(<RennetRouterApp bridge={live.bridge} history={history} />);
+    await waitFor(() => expect(document.querySelector("article[data-lens=design]")).toBeTruthy());
+    expect(tabOf("design")?.getAttribute("aria-selected")).toBe("true");
+
+    const flagged = document.querySelector<HTMLButtonElement>('[data-lens="flagged"]');
+    if (!flagged) throw new Error("Flagged tab missing");
+    await user.click(flagged);
+
+    // Flagged is the default lens, so the canonical address carries no `?lens` at all.
+    await waitFor(() => expect(history.history.at(-1)).toBe("/s/sess-live"));
+    // The tab the reviewer clicked is the tab that is lit…
+    await waitFor(() => expect(tabOf("flagged")?.getAttribute("aria-selected")).toBe("true"));
+    expect(tabOf("design")?.getAttribute("aria-selected")).toBe("false");
+    // …and the board under it is Flagged's own account of being written, not Design's.
+    expect(document.querySelector("article[data-lens=design]")).toBeNull();
+    expect(document.querySelector('[data-kind="board-in-progress"]')).toBeTruthy();
+    expect(document.body.textContent).not.toContain("no spec found");
   });
 });
 

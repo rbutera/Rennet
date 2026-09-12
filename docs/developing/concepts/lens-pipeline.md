@@ -792,10 +792,11 @@ observation.
 No header narrates the preparation. The frame's Rennet mark — the sphere in the
 sidebar lockup, or the floating orb in the corner slot when the sidebar is
 collapsed — animates while any review is being prepared or any round is
-regenerating, and a floating Cancel button under the titlebar is the running
+regenerating, and a floating Cancel chip in the bottom-right corner is the running
 generation's only other chrome. A header returns for a terminal state, carrying
-the reason and Retry. Continue names “Reviewing the change” and cannot advance
-until the review is ready. The same session's sidebar row stays animated when the user
+the reason and Retry. Continue does not exist while the boards are being written:
+the Cancel chip stands in its corner, and Continue appears there once the review
+is ready. The same session's sidebar row stays animated when the user
 navigates away. Completion becomes a check and then an unread dot until opened;
 failure retains its reason. Initial preparation and post-round regeneration
 project their durable state into this presentation rather than relying on the
