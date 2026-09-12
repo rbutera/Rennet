@@ -137,6 +137,10 @@ export default defineConfig({
                     label: "Settings and setup",
                     link: "/developing/guides/settings-and-setup/",
                   },
+                  {
+                    label: "Marketing screenshots",
+                    link: "/developing/guides/marketing-screenshots/",
+                  },
                 ],
               },
               {

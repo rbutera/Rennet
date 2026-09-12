@@ -974,8 +974,18 @@ a[href^="http"]:not(.button)::after {
   margin: 0;
   border: 1px solid var(--line-strong);
   border-radius: 14px;
-  background: #ece8df;
+  background: var(--surface);
   box-shadow: var(--shadow);
+}
+/* The frame holds a light and a dark capture of the app; the site scheme picks one. */
+.shot-dark {
+  display: none;
+}
+:root[data-scheme="dark"] .shot-light {
+  display: none;
+}
+:root[data-scheme="dark"] .shot-dark {
+  display: block;
 }
 .window-bar {
   display: grid;
@@ -983,7 +993,7 @@ a[href^="http"]:not(.button)::after {
   min-height: 48px;
   align-items: center;
   padding: 0 18px;
-  border-bottom: 1px solid #ddd7c9;
+  border-bottom: 1px solid var(--line-strong);
   color: var(--rn-ink-faint);
   font-size: 11px;
 }
@@ -1016,7 +1026,7 @@ a[href^="http"]:not(.button)::after {
   bottom: 12px;
   padding: 6px 10px;
   border-radius: 6px;
-  background: rgb(255 255 255 / 90%);
+  background: var(--surface-strong);
   color: var(--ink-soft);
   font-size: 11px;
 }

@@ -41,8 +41,9 @@ reviews, and **Developing Rennet** for people who build Rennet.
   [T3 Code sidecar](./developing/concepts/t3code-sidecar.md),
   [the WSL daemon](./developing/concepts/wsl-daemon.md),
   and [design doctrine](./developing/concepts/design-doctrine.md)
-- Guides: [repository bootstrap](./developing/guides/repository-bootstrap.md)
-  and [settings and setup](./developing/guides/settings-and-setup.md)
+- Guides: [repository bootstrap](./developing/guides/repository-bootstrap.md),
+  [settings and setup](./developing/guides/settings-and-setup.md),
+  and [marketing screenshots](./developing/guides/marketing-screenshots.md)
 - Plans: [board rebuild plan](./developing/plans/board-rebuild-plan.md),
   [performance audit (2026-08-31)](./developing/plans/perf-audit-2026-08-31.md),
   and [token efficiency plan (#737)](./developing/plans/token-efficiency-737.md)

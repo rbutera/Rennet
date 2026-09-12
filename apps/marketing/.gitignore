@@ -2,6 +2,8 @@
 dist/
 # generated types
 .astro/
+# raw 2x captures from `pnpm nx run rennet-marketing:screenshots`; public/product holds the optimised output
+.screenshots-raw/
 
 # dependencies
 node_modules/

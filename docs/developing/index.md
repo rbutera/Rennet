@@ -54,6 +54,7 @@ Read these pages in order when you need the whole system:
 | Asks, living drafts, or an exit | [Hand off and the exits](./concepts/handoff-and-exits.md) |
 | Coding-agent rounds and successor patchsets | [Hand off and the exits](./concepts/handoff-and-exits.md) and [Delta and generations](./concepts/delta-rereview-and-lineage.md) |
 | Repository discovery or settings | [Repository bootstrap](./guides/repository-bootstrap.md) and [settings and setup](./guides/settings-and-setup.md) |
+| The product images on rennet.dev | [Marketing screenshots](./guides/marketing-screenshots.md) |
 | Interface behavior | [Design doctrine](./concepts/design-doctrine.md) and [the lens pipeline](./concepts/lens-pipeline.md) |
 | Dependencies or build configuration | [Dependency standard](./reference/dependency-standard.md) and [monorepo map](./reference/monorepo-map.md) |
 | How long a stage takes, and on which harness | [Benchmarks](./reference/benchmarks.md) |
