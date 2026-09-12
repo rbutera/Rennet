@@ -2714,3 +2714,39 @@ describe("round.dispatch mints onto the session the reads answer (the call site,
     );
   }, 30_000);
 });
+
+describe("the app-tools listener at daemon launch (session-thread-briefing 3.4)", () => {
+  const dirs: string[] = [];
+  const shutdowns: (() => void)[] = [];
+
+  afterEach(() => {
+    for (const shutdown of shutdowns.splice(0)) shutdown();
+    for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("is bound and answering before createRennetServer resolves", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "rennet-app-listener-"));
+    dirs.push(dataDir);
+    const server = await createRennetServer({ dataDir, env: {} });
+    shutdowns.push(server.shutdown);
+
+    // Eager (#849): the url a session bind is about to hand a thread has to exist by then,
+    // and a bind that had to START a listener would pay for it on the reviewer's first
+    // message. The port record is written by the listener once it is listening.
+    const record = join(dataDir, "t3", "app-server.json");
+    expect(existsSync(record)).toBe(true);
+    const port = (JSON.parse(readFileSync(record, "utf8")) as { port: number }).port;
+    expect(port).toBeGreaterThan(0);
+
+    // And it is a socket that answers, not a number in a file: this request reaches the
+    // listener and is refused on the BEARER — there is no sidecar in this test, so the
+    // daemon's bearer is empty and matches nothing, which is the honest answer. A listener
+    // that had not started would throw here (connection refused) instead of answering 401.
+    const answer = await fetch(`http://127.0.0.1:${port}/threads/thread-1`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: "Bearer whatever" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "ping" }),
+    });
+    expect(answer.status).toBe(401);
+  }, 20_000);
+});

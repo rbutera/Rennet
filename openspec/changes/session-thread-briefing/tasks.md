@@ -73,7 +73,7 @@ grep -n "board.read" packages/protocol/src/commands/index.ts     # present; NOT 
   base dir. Every collection-carrying result capped per design (`BOARD_READ_TOOL_ELEMENT_CAP`,
   `SESSION_LIST_TOOL_CAP`, `TRANSCRIPT_TOOL_ROW_CAP`, `EVIDENCE_TOOL_BYTES_CAP`) with an honest
   marker and a cursor; a row per cap in `board-tool-surface.measure.test.ts`. `dispatch` late-bound.
-- [ ] 3.4 Tests: `tools/list` equals `buildAppTools`' names; **positive control** — a fixture
+- [x] 3.4 Tests: `tools/list` equals `buildAppTools`' names; **positive control** — a fixture
   registry with `board.read` flipped off loses the tool; `app_ask_stage` reaches dispatch with
   `author.kind === "orchestrator"` and the session id; a call without the bearer is refused.
   `create-server.ts` starts the listener at daemon launch (eager, #849). Cluster gate green. Commit.
