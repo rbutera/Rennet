@@ -233,7 +233,14 @@ describe("code selections retain immutable range identity", () => {
     startLine: 9,
     endLine: 10,
   };
-  function codeLayer(sent: AnchoredAskInput[], lens?: string) {
+  /** `wrapper` mirrors what really renders the attribute: the board is an `<article
+   *  data-lens>` (`board-view.tsx`), the seat transcript drawer an `<aside data-lens>`. */
+  function codeLayer(
+    sent: AnchoredAskInput[],
+    lens?: string,
+    wrapper: "article" | "aside" = "article",
+  ) {
+    const Wrapper = wrapper;
     return mount(
       <AnchoredAskProvider
         value={async (input) => {
@@ -241,7 +248,7 @@ describe("code selections retain immutable range identity", () => {
         }}
       >
         <ProseSelectionLayer>
-          <div {...(lens === undefined ? {} : { "data-lens": lens })}>
+          <Wrapper {...(lens === undefined ? {} : { "data-lens": lens })}>
             <span
               data-code-patchset="ps-reviewed"
               data-code-path="old-name.ts"
@@ -258,7 +265,7 @@ describe("code selections retain immutable range identity", () => {
             >
               removed two
             </span>
-          </div>
+          </Wrapper>
         </ProseSelectionLayer>
       </AnchoredAskProvider>,
     );
@@ -302,6 +309,18 @@ describe("code selections retain immutable range identity", () => {
     await view.user.click(view.getByText("Explain"));
     expect(sent[0]?.lens).toBeUndefined();
     // Not vacuous: the same click DID carry the range, so the ask itself went out.
+    expect(sent[0]?.codeRef).toEqual(codeRef);
+  });
+
+  it("carries no lens for a span highlighted in a seat transcript, not the board's", async () => {
+    // The seat-transcript drawer is an `<aside data-lens>`, so a bare `closest("[data-lens]")`
+    // labelled a span from a seat's scrollback as having come from that lens's BOARD. It did
+    // not, and the thread would go looking on the board for a line that is not there.
+    const sent: AnchoredAskInput[] = [];
+    const view = codeLayer(sent, "flagged", "aside");
+    selectCode(view);
+    await view.user.click(view.getByText("Explain"));
+    expect(sent[0]?.lens).toBeUndefined();
     expect(sent[0]?.codeRef).toEqual(codeRef);
   });
 

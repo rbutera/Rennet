@@ -13,7 +13,14 @@ import { MemoryBridge } from "../test/memory-bridge";
 import { anchoredAskText, ReviewAnchoredAskProvider, useAnchoredAsk } from "./anchored-ask";
 import { useAskLog } from "./ask-log";
 
-function Send({ threadId }: { readonly threadId: string }) {
+function Send({
+  threadId,
+  anchored = false,
+}: {
+  readonly threadId: string;
+  /** Send the shape a board Explain really sends: a code reference and its board. */
+  readonly anchored?: boolean;
+}) {
   const send = useAnchoredAsk();
   return (
     <button
@@ -25,6 +32,18 @@ function Send({ threadId }: { readonly threadId: string }) {
           excerpt: "`rawCall()` [source](packages/core/src/a.ts)",
           target: "finding-1",
           generation: "gen-2",
+          ...(anchored
+            ? {
+                lens: "flagged",
+                codeRef: {
+                  patchsetId: "ps-1",
+                  path: "packages/core/src/a.ts",
+                  side: "head",
+                  startLine: 12,
+                  endLine: 18,
+                } as const,
+              }
+            : {}),
         })
       }
     >
@@ -262,6 +281,44 @@ describe("ReviewAnchoredAskProvider (t3-lens-threads 4.2)", () => {
     expect(useRennetStore.getState().ui.chatOpen).toBe(true);
   });
 
+  // WHAT THE PROVIDER ACTUALLY SENDS (session-thread-briefing review 6a). The label is
+  // built by `anchoredAskText`, but the provider decides WHICH fields reach it — and it
+  // destructures them one by one, so dropping `lens`, `target` and `generation` from that
+  // call left every DOM test in this file green while the thread stopped being told where
+  // any span came from. This asserts the `chat.t3Send` text on the wire.
+  it("sends the Anchor line, with the board and the lines, on the real command", async () => {
+    const threadId = useRennetStore
+      .getState()
+      .reviewActions.addQuoteComment("rawCall() source", "Explain this passage.", "explain", {
+        target: "finding-1",
+        generation: "gen-2",
+      });
+    const sends: CommandInput<"chat.t3Send">[] = [];
+    const bridge = new MemoryBridge({
+      "chat.t3Send": (input) => {
+        sends.push(input);
+        return { status: "sent", threadId: "t3-thread-1" };
+      },
+    });
+    const view = mount(
+      <BridgeProvider bridge={bridge}>
+        <ReviewAnchoredAskProvider reviewId="review-1">
+          <Send threadId={threadId} anchored />
+        </ReviewAnchoredAskProvider>
+      </BridgeProvider>,
+    );
+    await act(async () => view.user.click(view.getByText("Anchored send")));
+
+    const text = sends[0]?.text ?? "";
+    expect(text).toContain(
+      "Anchor: the flagged board, element finding-1, generation gen-2 — packages/core/src/a.ts lines 12–18 (head side).",
+    );
+    // Immediately above the reference it labels, which is what the briefing tells the
+    // thread to read — a position assertion, not two membership checks.
+    expect(text).toContain("(head side).\nCode reference: ");
+    expect(text.indexOf("Anchor:")).toBeLessThan(text.indexOf("Code reference:"));
+  });
+
   it("caps a long cited span with an honest truncation marker", () => {
     const long = "x".repeat(2_000);
     const text = anchoredAskText({ question: "why?", excerpt: long });
@@ -344,5 +401,36 @@ describe("anchoredAskText labels the code reference", () => {
     const label = text.slice(text.indexOf("Anchor:"), text.indexOf("Code reference:"));
     expect(label.length).toBeLessThan(450);
     expect(label).toContain("…");
+  });
+
+  // The bounds are declared in BYTES and were enforced in UTF-16 units: `slice(240)` on a
+  // CJK path emitted 720 bytes, and the turn text is billed to the reviewer's own
+  // subscription, so an over-by-3× bound is spend they cannot see. An ASCII fixture cannot
+  // see it either, which is why there was one and the bug shipped.
+  it("measures its bounds in bytes, for CJK and for emoji", () => {
+    const bytes = (text: string) => new TextEncoder().encode(text).length;
+    const cjkPath = `src/${"目録".repeat(400)}.ts`;
+    const text = anchoredAskText({
+      question: "なぜ",
+      excerpt: `${"説明".repeat(1_000)}`,
+      codeRef: { ...ref, path: cjkPath },
+      lens: "🚩".repeat(40),
+      target: "要素".repeat(80),
+      generation: "世代".repeat(80),
+    });
+    const label = text.slice(text.indexOf("Anchor:"), text.indexOf("Code reference:"));
+    // Path 240 + lens 32 + target 96 + generation 96, plus the fixed words and the line
+    // range. Under UTF-16 slicing this label alone ran past 1,300 bytes.
+    expect(bytes(label)).toBeLessThan(600);
+    // The excerpt keeps its own 600-byte bound, MARKER INCLUDED — `slice(600) + "…"` was
+    // over by the marker's bytes every single time, on ASCII too.
+    const about = text.slice(
+      text.indexOf("About this: ") + "About this: ".length,
+      text.indexOf("\n\nAnchor:"),
+    );
+    expect(bytes(about)).toBeLessThanOrEqual(600);
+    expect(about).toContain("(truncated)");
+    // Cut at CODE POINTS: no surrogate half, so no replacement character anywhere.
+    expect(text).not.toContain("\uFFFD");
   });
 });

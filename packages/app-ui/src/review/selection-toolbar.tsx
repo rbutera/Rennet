@@ -49,9 +49,17 @@ function elementOfRange(range: Range): Element | null {
  * labelled line above an Explain's `Code reference`, so the thread knows the span came from
  * the Flagged board rather than from a bare file. A selection on the diff has no board and
  * gets none.
+ *
+ * Scoped to the ARTICLE, not to any `[data-lens]` ancestor: the seat-transcript drawer is an
+ * `<aside data-lens>` (`seat-transcript-drawer.tsx`), so a span highlighted in a seat's
+ * transcript would otherwise be labelled as having come from that lens's BOARD. It did not —
+ * it came from the seat's own scrollback, which is a different claim, and the thread would
+ * go and read the board looking for a line that is not on it.
  */
 function lensOfRange(range: Range): string | undefined {
-  return elementOfRange(range)?.closest("[data-lens]")?.getAttribute("data-lens") ?? undefined;
+  return (
+    elementOfRange(range)?.closest("article[data-lens]")?.getAttribute("data-lens") ?? undefined
+  );
 }
 
 export function codeRefOfRange(range: Range): CodeRef | undefined {
