@@ -847,6 +847,56 @@ describe("loadProjectDetail — the row measures against the resolved primary re
     expect(row?.additions).toBe(1);
   });
 
+  it("measures against the winning ref's tip, not a tag that shares its name", async () => {
+    // `origin/main` as a SHORT NAME is ambiguous: git checks `refs/tags/<name>` before
+    // `refs/remotes/<name>`, so a tag literally called `origin/main` answers for it. The
+    // resolver reads `refs/remotes/origin/main` fully qualified and hands back its tip
+    // OID; a row that re-resolved the short name would measure against the stale tag and
+    // count the sibling's commit as this branch's own.
+    const origin = scratchDirectory("rennet-row-tag-origin-");
+    const repo = scratchDirectory("rennet-row-tag-");
+    const sibling = scratchDirectory("rennet-row-tag-sibling-");
+    runGit(origin, "init", "-q", "--bare", "-b", "main");
+    runGit(repo, "init", "-q", "-b", "main");
+    runGit(repo, "config", "user.email", "rennet@example.test");
+    runGit(repo, "config", "user.name", "Rai");
+    runGit(repo, "remote", "add", "origin", origin);
+    writeFileSync(join(repo, "base.txt"), "base\n");
+    runGit(repo, "add", "base.txt");
+    runGit(repo, "commit", "-qm", "base");
+    runGit(repo, "push", "-q", "origin", "main");
+    const staleTip = runGit(repo, "rev-parse", "HEAD");
+
+    runGit(sibling, "clone", "-q", origin, sibling);
+    runGit(sibling, "config", "user.email", "sibling@example.test");
+    runGit(sibling, "config", "user.name", "Sibling");
+    writeFileSync(join(sibling, "sibling.txt"), "sibling\n");
+    runGit(sibling, "add", "sibling.txt");
+    runGit(sibling, "commit", "-qm", "a sibling lane landed");
+    runGit(sibling, "push", "-q", "origin", "main");
+    runGit(repo, "fetch", "-q", "origin");
+
+    // The branch is cut from the remote-tracking ref, named in full so the tag created
+    // next cannot have decided this too.
+    runGit(repo, "checkout", "-q", "-b", "feat/cut-from-origin", "refs/remotes/origin/main");
+    writeFileSync(join(repo, "own.txt"), "own\n");
+    runGit(repo, "add", "own.txt");
+    runGit(repo, "commit", "-qm", "the branch's own work");
+    runGit(repo, "checkout", "-q", "main");
+    runGit(repo, "tag", "origin/main", staleTip);
+    // The fixture contains the shape: the short name now answers with the OLD commit.
+    expect(runGit(repo, "rev-parse", "origin/main")).toBe(staleTip);
+    expect(runGit(repo, "rev-parse", "refs/remotes/origin/main")).not.toBe(staleTip);
+
+    const detail = await loadProjectDetail(depsWith(execaGit, [repo]), repoProject(repo));
+    const row = detail.locals.find((local) => local.branch === "feat/cut-from-origin");
+
+    expect(row).toBeDefined();
+    expect(row?.ahead).toBe(1);
+    expect(row?.behind).toBe(0);
+    expect(row?.changedFiles).toBe(1);
+  });
+
   it("keeps null/null for a repository with no ref naming the primary branch", async () => {
     const repo = scratchDirectory("rennet-row-no-primary-");
     runGit(repo, "init", "-q", "-b", "trunk");
