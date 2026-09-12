@@ -247,6 +247,74 @@ describe("what a call carries into dispatch", () => {
     expect((recorder.calls[0] as Dispatched)[1]).toEqual({ sessionId: "session-other" });
   });
 
+  // ── Round 5, item 2 ─────────────────────────────────────────────────────────
+  // Every exposed row OUTSIDE `ask.*` takes a `reviewId`, and only `sessionId` was stamped —
+  // so a thread asking about its OWN review had to supply an id it was never told, and the
+  // only route was `app_session_list` plus a match on the branch name. That is the
+  // many-repos-one-branch mapping defect exactly: two repos in one workspace both have
+  // `main`, the list answers two rows, the thread picks the one it read first, and it then
+  // reports the WRONG repository's board under the right repository's name. Nothing errors.
+  it("fills the reviewId a call omitted with the review the thread is bound to", async () => {
+    const recorder = recordingDispatch(() => ({ board: { elements: [] } }));
+    const server = await serverWith({
+      dispatch: () => recorder.dispatch,
+      sessionFor: (threadId) => (threadId === THREAD ? "review-alpha" : undefined),
+    });
+    await call(server.addressFor(THREAD).url, "app_board_read", {
+      generation: "g",
+      lens: "noise",
+    });
+    expect((recorder.calls[0] as Dispatched)[1]).toEqual({
+      reviewId: "review-alpha",
+      generation: "g",
+      lens: "noise",
+    });
+  });
+
+  it("never overrules a reviewId the model named — another review is reachable on purpose", async () => {
+    const recorder = recordingDispatch(() => ({ board: { elements: [] } }));
+    const server = await serverWith({
+      dispatch: () => recorder.dispatch,
+      sessionFor: () => "review-alpha",
+    });
+    await call(server.addressFor(THREAD).url, "app_board_read", {
+      reviewId: "review-beta",
+      generation: "g",
+      lens: "noise",
+    });
+    expect((recorder.calls[0] as Dispatched)[1]).toMatchObject({ reviewId: "review-beta" });
+  });
+
+  it("two repos on one branch resolve to their OWN boards, because the address decides", async () => {
+    // The fixture that makes the defect visible at all: a single-repo fixture cannot see it.
+    // Two threads, two reviews, one branch name — and each thread's board read reaches the
+    // review its own address names, with neither call naming a review id.
+    const boards: Record<string, unknown> = {
+      "review-alpha": { board: { lens: "noise", elements: [{ id: "alpha-1" }] } },
+      "review-beta": { board: { lens: "noise", elements: [{ id: "beta-1" }] } },
+    };
+    const reviews: Record<string, string> = {
+      "thread-alpha": "review-alpha",
+      "thread-beta": "review-beta",
+    };
+    const server = await serverWith({
+      dispatch: () => async (_name, input) =>
+        boards[(input as { reviewId?: string }).reviewId ?? ""] ?? { board: null },
+      sessionFor: (threadId) => reviews[threadId],
+    });
+    const readFrom = async (threadId: string): Promise<string> => {
+      const answer = await call(server.addressFor(threadId).url, "app_board_read", {
+        generation: "g",
+        lens: "noise",
+      });
+      return blocks(answer)[0]?.text ?? "";
+    };
+    expect(await readFrom("thread-alpha")).toContain("alpha-1");
+    expect(await readFrom("thread-alpha")).not.toContain("beta-1");
+    expect(await readFrom("thread-beta")).toContain("beta-1");
+    expect(await readFrom("thread-beta")).not.toContain("alpha-1");
+  });
+
   it("stamps an authored row's author even when the model claims to be the reviewer", async () => {
     const recorder = recordingDispatch();
     const server = await serverWith({ dispatch: () => recorder.dispatch });

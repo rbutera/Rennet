@@ -712,9 +712,21 @@ function shapeOf(commandId: CommandName): Record<string, unknown> | undefined {
  *
  * - `author` — a row that carries one (`ask.quoteReply`) records who spoke, and the model
  *   naming itself `"user"` would put its words in the reviewer's mouth in a durable log.
- * - `sessionId` — filled only when the model left it out and the thread's own review is
- *   known. Never overwritten: asking about another review is exactly what `app_session_list`
- *   and `app_review_load` are for.
+ * - `sessionId` and `reviewId` — filled only when the model left the field out and the
+ *   thread's own review is known. Never overwritten: asking about another review is exactly
+ *   what `app_session_list` and `app_review_load` are for.
+ *
+ * `reviewId` is the one the whole surface turns on, and it was missing. Every exposed row
+ * outside `ask.*` takes a `reviewId` — `board.read`, `patchset.readSpan`,
+ * `review.deltaDigest`, `round.dispatch`, all of them — so a thread asking about its OWN
+ * review had to supply an id it was never told, and the only way to find one was
+ * `app_session_list` and a match on the branch name. That is the many-repos-one-branch
+ * mapping defect exactly: two repositories in one workspace both have `main`, the list gives
+ * two rows, and the thread picks whichever it happened to read first. It then reports the
+ * wrong repository's board under the right repository's name, and nothing errors.
+ *
+ * So the ADDRESS answers it, as the address answers `author`: the thread id maps to the
+ * review it was bound for, which is a stored fact and not a guess.
  */
 export function stampedArguments(input: {
   readonly commandId: CommandName;
@@ -725,12 +737,14 @@ export function stampedArguments(input: {
   if (shape === undefined) return input.args;
   const next = { ...input.args };
   if (Object.hasOwn(shape, "author")) next.author = "orchestrator";
-  if (
-    Object.hasOwn(shape, "sessionId") &&
-    next.sessionId === undefined &&
-    input.sessionId !== undefined
-  ) {
-    next.sessionId = input.sessionId;
+  // Both identity fields carry the SAME id: the T3 thread binding is keyed on the review id
+  // (`dispatch/chat.ts`'s `bindReviewThread` writes `{ kind: "session", sessionId: reviewId }`),
+  // so `options.sessionFor(threadId)` answers "which review", and the rows that call it
+  // `sessionId` are naming the same thing.
+  for (const field of ["sessionId", "reviewId"] as const) {
+    if (Object.hasOwn(shape, field) && next[field] === undefined && input.sessionId !== undefined) {
+      next[field] = input.sessionId;
+    }
   }
   return next;
 }

@@ -804,9 +804,25 @@ export const SESSION_BRIEFING_REVIEW_FLOOR_BYTES = 1_024;
 /** The heading the review's own lines sit under, so the append is attributable in a log. */
 const SESSION_BRIEFING_HEADER = "## This review";
 
+/** Byte bound on the interpolated review id (a uuid) and repository label. */
+export const SESSION_BRIEFING_REVIEW_ID_MAX_BYTES = 64;
+export const SESSION_BRIEFING_REPOSITORY_MAX_BYTES = 120;
+
 /** Which capture the review is of, and the identity a reviewer would recognise it by. */
 export interface SessionBriefingPatchset {
   readonly kind: "branch" | "pr";
+  /**
+   * The review id every `app_*` tool takes as `reviewId` — named here because the thread
+   * otherwise had to FIND it, and the only way to find one was `app_session_list` plus a
+   * match on the branch name. Two repositories in one workspace both have `main`, so that
+   * match picks whichever row it read first and the thread then reads the wrong
+   * repository's board under the right repository's name. The tool surface stamps this id
+   * for a call that omits it; naming it here is what lets the thread talk about the review
+   * at all — quote it, or hand it to a tool that wants it explicitly.
+   */
+  readonly reviewId: string;
+  /** `owner/name` when the forge knows it, else the checkout's directory name. */
+  readonly repository?: string;
   /** The branch under review. Present on a branch capture; the head branch of a PR when known. */
   readonly branch?: string;
   /** The pull-request number, on a `pr` capture. */
@@ -878,8 +894,12 @@ export function renderSessionBriefing(input: SessionBriefingInput): string {
           branch === undefined ? "" : ` on \`${branch}\``
         }`
       : `branch \`${branch ?? "(unnamed)"}\``;
+  const repository =
+    patchset.repository === undefined
+      ? ""
+      : ` in \`${capBytes(patchset.repository, SESSION_BRIEFING_REPOSITORY_MAX_BYTES)}\``;
   const lines = [
-    `- Patchset: ${subject} — base ${capBytes(patchset.baseOid, SESSION_BRIEFING_OID_MAX_BYTES)} → head ${capBytes(patchset.headOid, SESSION_BRIEFING_OID_MAX_BYTES)}. Read the change with \`${capBytes(patchset.diffCommand, SESSION_BRIEFING_DIFF_COMMAND_MAX_BYTES)}\`.`,
+    `- Patchset: ${subject}${repository} — review \`${capBytes(patchset.reviewId, SESSION_BRIEFING_REVIEW_ID_MAX_BYTES)}\`, base ${capBytes(patchset.baseOid, SESSION_BRIEFING_OID_MAX_BYTES)} → head ${capBytes(patchset.headOid, SESSION_BRIEFING_OID_MAX_BYTES)}. Read the change with \`${capBytes(patchset.diffCommand, SESSION_BRIEFING_DIFF_COMMAND_MAX_BYTES)}\`. Every \`app_*\` tool takes that review id; a call that omits it gets this one.`,
     ...(input.contextDir === undefined
       ? []
       : [

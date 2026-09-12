@@ -161,6 +161,12 @@ describe("bindReviewThread creates the session thread briefed and tooled", () =>
     expect(create?.instructions).toContain("You are this review's conversation");
     expect(create?.instructions).toContain("## This review");
     expect(create?.instructions).toContain("feat/session-thread-briefing");
+    // WHICH REVIEW and WHICH REPOSITORY (round 5, item 2). Every `app_*` row outside
+    // `ask.*` takes a `reviewId`, and the thread was never told one — so it had to find it
+    // through `app_session_list` and a branch-name match, which is the many-repos-one-branch
+    // defect: two repos in one workspace both have `main`.
+    expect(create?.instructions).toContain("review `rev-1`");
+    expect(create?.instructions).toContain("in `checkout`");
     expect(create?.instructions).toContain(`git diff ${"a".repeat(40)}...${"b".repeat(40)}`);
     expect(Buffer.byteLength(create?.instructions ?? "", "utf8")).toBeLessThanOrEqual(
       SESSION_BRIEFING_MAX_BYTES,
@@ -379,6 +385,7 @@ describe("the real briefing fits, with its tool line intact", () => {
       briefing: fixed,
       patchset: {
         kind: "branch",
+        reviewId: "rev-1",
         branch: "feat/session-thread-briefing-c4",
         baseOid: "a".repeat(40),
         headOid: "b".repeat(40),

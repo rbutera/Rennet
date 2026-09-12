@@ -3,7 +3,12 @@ import { existsSync } from "node:fs";
 import { basename } from "node:path";
 import { reviewedDiffCommand, sessionContextRelativeDir } from "@rennet/core";
 import { renderSessionBriefing, type SessionBriefingPatchset } from "@rennet/prompts";
-import { parseCommandInput, parseCommandOutput, type Review } from "@rennet/protocol";
+import {
+  forgeRepositorySlug,
+  parseCommandInput,
+  parseCommandOutput,
+  type Review,
+} from "@rennet/protocol";
 import { appToolNames } from "../agent-tools";
 import { sessionContextDir } from "../context-files";
 import type { SessionThreadCreation, ThreadBinding } from "../t3/threads";
@@ -70,13 +75,32 @@ export async function bindReviewThread(
   });
 }
 
-/** Which capture this is, in the identity a reviewer would recognise it by. */
+/**
+ * Which capture this is, in the identity a reviewer would recognise it by — and WHICH
+ * REPOSITORY and WHICH REVIEW, which the thread cannot work without.
+ *
+ * Every exposed `app_*` row outside `ask.*` takes a `reviewId`, and the thread was never
+ * told one: the only way to find it was `app_session_list` and a match on the branch name.
+ * Two repositories in one workspace both have `main`, so that match resolves to whichever
+ * row was read first and the thread reports the wrong repository's board under the right
+ * repository's name, silently. Naming both here, and stamping the id on a call that omits
+ * it (`stampedArguments`), is the answer: an identity carried from the review, never
+ * re-derived from a branch.
+ */
 function briefingPatchset(rt: DispatchRuntime, review: Review): SessionBriefingPatchset {
   const patchset = rt.activePatchsetOf(review);
   const repository = patchset.repository;
   const branch = repository.headRef;
+  // `owner/name` when the forge knows it — a PR review carries the real identity — else the
+  // checkout's own directory name, which is what a reviewer calls a local branch review.
+  const label =
+    review.postTarget === undefined
+      ? basename(review.repositoryRoot)
+      : forgeRepositorySlug(review.postTarget.repo);
   return {
     kind: review.postTarget === undefined ? "branch" : "pr",
+    reviewId: review.id,
+    ...(label === "" ? {} : { repository: label }),
     ...(branch === undefined ? {} : { branch }),
     ...(review.postTarget === undefined ? {} : { prNumber: review.postTarget.number }),
     baseOid: repository.baseOid,
