@@ -13,7 +13,8 @@ reviews, and **Developing Rennet** for people who build Rennet.
 - [Start here](./using/index.md)
 - Concepts: [product and vision](./using/concepts/product-and-vision.md) and
   [common questions](./using/concepts/common-questions.md)
-- Guides: [getting started](./using/guides/getting-started.md),
+- Guides: [installing Rennet](./using/guides/install-rennet.md),
+  [getting started](./using/guides/getting-started.md),
   [installing a coding harness](./using/guides/install-a-coding-harness.md),
   [the onboarding tour](./using/guides/onboarding-tour.md),
   [connecting to GitHub](./using/guides/github-auth.md),

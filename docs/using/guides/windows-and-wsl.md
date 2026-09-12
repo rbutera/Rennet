@@ -39,7 +39,7 @@ flowchart LR
   app --> repo[C:\\dev\\repo]
 ```
 
-- Windows 10 or 11 on x64.
+- Windows 10 or 11 on x64, with Rennet [installed from the release page](./install-rennet.md).
 - Git installed on the host.
 - Claude Code or Codex installed on the host. Install both for Dual Harness.
 - A supported editor for line-targeted file opening.
