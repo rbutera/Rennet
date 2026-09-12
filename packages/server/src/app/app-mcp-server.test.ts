@@ -359,6 +359,21 @@ describe("what a call carries into dispatch", () => {
     expect(Buffer.byteLength(text, "utf8")).toBeLessThan(2_200);
     expect(text).toContain("elided");
   });
+
+  // Round 5, item 9: the cap was a raw byte subarray, so a CJK or emoji refusal was cut
+  // mid-sequence and `toString` rendered the remainder as U+FFFD — a replacement character
+  // in a message the model is meant to act on.
+  it("cuts a non-ASCII refusal at a code point, never mid-sequence", async () => {
+    const server = await serverWith({
+      dispatch: () => async () => {
+        throw new Error("漢".repeat(2_000));
+      },
+    });
+    const answer = await call(server.addressFor(THREAD).url, "app_projects_list", {});
+    const text = blocks(answer)[0]?.text ?? "";
+    expect(text).toContain("elided");
+    expect(text).not.toContain("\uFFFD");
+  });
 });
 
 describe("paging a collection-carrying result", () => {

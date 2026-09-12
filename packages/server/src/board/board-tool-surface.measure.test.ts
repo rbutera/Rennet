@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { outputSchemaFor } from "@rennet/adapters";
@@ -730,7 +730,7 @@ async function callOverWire(
   // caller, but a probe that wants to prove the CEILING counts the envelope — not just the
   // bare result — has to send an id whose own size is part of what gets measured, since
   // `{jsonrpc, id, result}` is the complete wire body and `id` is the caller's to pick.
-  requestId = 1,
+  requestId: number | string = 1,
 ): Promise<{ readonly status: number; readonly text: string; readonly wireBytes: number }> {
   const response = await fetch(server.addressFor(MEASURE_THREAD).url, {
     method: "POST",
@@ -1006,6 +1006,124 @@ describe("what the session thread's app tools cost (session-thread-briefing)", (
         answer.wireBytes,
         `emoji/CJK success's complete wire body is ${answer.wireBytes} B, over the 8,192 B universal ceiling`,
       ).toBeLessThanOrEqual(8_192);
+    } finally {
+      await server.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // ── Round 5, item 6 (Codex): the FIXED envelope has to fit too ─────────────────────
+  //
+  // The shrink loop gave up when `head` reached zero and returned the candidate ANYWAY, so an
+  // envelope whose fixed parts were already over budget rode the wire: an 8,000-byte request
+  // id reproduced 8,499 B, a long spill path 8,599 B. Both of those parts are the CALLER's,
+  // not Rennet's to shrink — the id is echoed in every response and the path is where the
+  // result had to be written — so the honest answer is a reply whose size Rennet does control:
+  // a bounded JSON-RPC error with `id: null`.
+  it("answers a bounded `id: null` error when the request's own id leaves no room (round 5)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "app-tool-ceiling-bigid-"));
+    const server = await startAppMcpServer({
+      bearer: () => MEASURE_BEARER,
+      dispatch: () => async () => ({ blob: "x".repeat(20_000) }),
+      stateDir: dir,
+    });
+    try {
+      const tools = buildAppTools(async () => undefined);
+      const tool = tools.find((candidate) => candidate.commandId === "projects.list");
+      if (tool === undefined) throw new Error("projects.list is no longer agent-exposed");
+      // A 8,000-byte JSON-RPC id. Legal (the spec allows a string id of any length) and the
+      // caller's to pick, so the ceiling has to survive it.
+      const answer = await callOverWire(server, tool.name, `${"i".repeat(8_000)}`);
+      expect(answer.status).toBe(200);
+      const body = JSON.parse(answer.text) as {
+        id: unknown;
+        error?: { message?: string };
+        result?: unknown;
+      };
+      // `id: null` — echoing an 8,000-byte id is the thing that cannot fit.
+      expect(body.id).toBeNull();
+      expect(body.result).toBeUndefined();
+      expect(body.error?.message).toContain("cannot be answered within");
+      expect(body.error?.message).toContain("short request id");
+      console.info(`round 5 oversized request id: ${answer.wireBytes} B`);
+      expect(
+        answer.wireBytes,
+        `the oversized-id reply is ${answer.wireBytes} B, over the 8,192 B universal ceiling`,
+      ).toBeLessThanOrEqual(8_192);
+    } finally {
+      await server.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("answers a bounded `id: null` error when the SPILL PATH leaves no room (round 5)", async () => {
+    // The other fixed part. A deep bound root — a worktree under a long home, under a long
+    // project name — makes the tier-1 relative path long; the `stateDir` fallback tier can be
+    // longer still. Either way the path is in the envelope and Rennet cannot shorten it.
+    const deep = join(
+      tmpdir(),
+      `app-tool-ceiling-deep-${"a".repeat(120)}`,
+      "b".repeat(200),
+      "c".repeat(200),
+      "d".repeat(200),
+    );
+    mkdirSync(deep, { recursive: true });
+    try {
+      const server = await startAppMcpServer({
+        bearer: () => MEASURE_BEARER,
+        dispatch: () => async () => ({ blob: "x".repeat(20_000) }),
+        stateDir: deep,
+      });
+      try {
+        const tools = buildAppTools(async () => undefined);
+        const tool = tools.find((candidate) => candidate.commandId === "projects.list");
+        if (tool === undefined) throw new Error("projects.list is no longer agent-exposed");
+        // A 7,400-byte id plus a ~750-byte path: neither alone is fatal, together they are,
+        // which is the point — the budget is on the envelope, not on any one field.
+        const answer = await callOverWire(server, tool.name, `${"i".repeat(7_400)}`);
+        expect(answer.status).toBe(200);
+        const body = JSON.parse(answer.text) as { id: unknown; error?: { message?: string } };
+        expect(body.id).toBeNull();
+        expect(body.error?.message).toContain("cannot be answered within");
+        console.info(`round 5 oversized spill path: ${answer.wireBytes} B`);
+        expect(
+          answer.wireBytes,
+          `the oversized-path reply is ${answer.wireBytes} B, over the 8,192 B universal ceiling`,
+        ).toBeLessThanOrEqual(8_192);
+      } finally {
+        await server.close();
+      }
+    } finally {
+      rmSync(deep, { recursive: true, force: true });
+    }
+  });
+
+  it("still answers a NORMALLY-sized id with a spill envelope, not a refusal (round 5 control)", async () => {
+    // The control for both above: the `id: null` arm is the last resort, and an ordinary
+    // oversized result still gets its envelope with the head, the path and the cursor.
+    const dir = mkdtempSync(join(tmpdir(), "app-tool-ceiling-normal-"));
+    const server = await startAppMcpServer({
+      bearer: () => MEASURE_BEARER,
+      dispatch: () => async () => ({ blob: "x".repeat(20_000) }),
+      stateDir: dir,
+    });
+    try {
+      const tools = buildAppTools(async () => undefined);
+      const tool = tools.find((candidate) => candidate.commandId === "projects.list");
+      if (tool === undefined) throw new Error("projects.list is no longer agent-exposed");
+      const answer = await callOverWire(server, tool.name, 42);
+      const body = JSON.parse(answer.text) as {
+        id: unknown;
+        result?: { content?: { text?: string }[] };
+      };
+      expect(body.id).toBe(42);
+      const envelope = JSON.parse(body.result?.content?.[0]?.text ?? "{}") as {
+        truncated?: boolean;
+        head?: string;
+      };
+      expect(envelope.truncated).toBe(true);
+      expect((envelope.head ?? "").length).toBeGreaterThan(100);
+      expect(answer.wireBytes).toBeLessThanOrEqual(8_192);
     } finally {
       await server.close();
       rmSync(dir, { recursive: true, force: true });
