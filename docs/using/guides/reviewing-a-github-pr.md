@@ -97,8 +97,9 @@ produced it:
 - **A span of board prose** — highlight it and choose **Comment** or **Request
   Changes**; the quoted span becomes the ask's provenance.
 - **A conclusion you reached in chat** — stage it from the board, the line, or the
-  span it belongs to. Chat never stages on your behalf, and a suggested action is
-  not silently staged.
+  span it belongs to, or ask the thread to stage it for you. An ask the thread
+  stages names the thread as its author and waits in the basket with the rest;
+  nothing is sent until you take an exit.
 
 Each finding keeps its controls together. **Request This Change** stages its
 proposed fix. **Dismiss** removes it from the open set, and **Undo** restores the

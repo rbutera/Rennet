@@ -694,6 +694,95 @@ the SDK has already swept its pending requests during cleanup. This uses the pro
 lifecycle rather than a retry or an additional timeout; sibling threads keep running.
 
 
+## The session thread's briefing
+
+A review's own conversation is one thread in this sidecar too, bound by `bindReviewThread`
+in `dispatch/chat.ts`. It is created with two things a seat's thread does not carry: a
+briefing, and the address of Rennet's app tools.
+
+```mermaid
+flowchart LR
+  bind["bindReviewThread"] -->|"instructions + rennet_app + council selection"| create["thread.create"]
+  create --> thread[("The session thread")]
+  thread -->|"every turn, whoever starts it"| session["Provider session"]
+  composer["The reviewer's composer"] --> thread
+  explain["Explain, a hand-off"] --> thread
+  session -->|"Claude: systemPrompt.append"| claude["claude"]
+  session -->|"Codex: developer instructions"| codex["codex"]
+```
+
+**The briefing rides the THREAD, not the turn.** Most turns on this thread are started by
+T3's own composer — the reviewer typing — which Rennet does not author, and a provider
+session is built on the thread's first turn, so a per-turn field would brief the two turns
+Rennet sends (Explain, the hand-off) and leave the reviewer's own questions bare.
+`thread.create` therefore carries an optional `instructions` and an optional `mcpServers`,
+both persisted on the thread record and read when a provider session starts. Claude takes
+the instructions as `systemPrompt: { preset: "claude_code", append }`; Codex has no
+system-prompt append, so the same text lands after T3's own developer-instruction blocks,
+or the surface would lie by provider. Nothing else in either option set changes, so the
+user's own settings, MCP servers and `CLAUDE.md` still inherit. The pair is written into
+the provider session's runtime payload as well, so a session recovered after a daemon
+restart — through a turn, a feedback upload, an interrupt, any path — resumes briefed
+rather than silently bare.
+
+**The briefing is a map under 4,096 bytes, and it carries no content.** The fixed text is
+`session-briefing.md` in `@rennet/prompts`; `renderSessionBriefing` splices the dynamic
+lines — the patchset (branch or pull request, base and head oids, the exact `git diff`
+command), the session's context directory when one exists, and the names of the tools
+actually attached — and enforces `SESSION_BRIEFING_MAX_BYTES` with an honest truncation
+marker. No board, no diff, no file inventory: an append is a prefix, re-read on every round
+trip of every turn for the life of the thread, so the rule that no prompt carries context
+inline binds harder here than anywhere else. The thread reads what it decides it needs,
+through its tools and through the checkout it is already standing in.
+
+**It forbids nothing.** The thread can do everything the reviewer can — read and run the
+checkout, edit it, drive Rennet through the app tools. The briefing carries no "never", no
+"do not commit", no "do not push". What it does is STEER: when the reviewer wants a change
+made, stage an ask, because a staged ask is what Rennet tracks, receipts and carries out
+through an exit. An ask the thread stages lands in the reviewer's composer with the thread
+as its author, and the reviewer sends or unstages it like any other.
+
+**The model comes from the council.** The bind resolves the `orchestrator-chat` job the
+same way a board seat resolves its own, and passes the resulting selection to
+`thread.create`. The sidecar's `DEFAULT_MODEL` is the fallback for the case where no
+installed provider answers that job, and the daemon log says when it was used.
+
+## The app-tools server
+
+The thread drives Rennet itself through `rennet_app`, a second loopback Streamable-HTTP MCP
+listener the daemon owns, built the way [the board server](#the-board-server) below is:
+bound to `127.0.0.1`, hand-rolled protocol, answers as `application/json`. It is passed on
+the thread's `mcpServers` at create, so every turn holds it.
+
+Its tool list is `buildAppTools(dispatch)` — a projection of the command registry's
+`AGENT_EXPOSED` rows, never a hand-written list. Exposing a command to the thread is a flag
+on its registry row, and un-flagging one makes the tool vanish from the thread. Which rows
+carry the flag, and why each does, is [the exposure
+reference](../reference/command-menu-exposure.md).
+
+Identity rides the address path rather than the credential: the thread id is in the url the
+thread was created with, which is how an ask the thread stages is stamped with the thread
+as its author and with the session it belongs to. The credential is the same shape as the
+board server's — the sidecar's process bearer, placed in its environment under
+`RENNET_APP_BEARER` and named on the thread's server entry as `bearerTokenEnvVar`, so only
+the variable's NAME is ever serialised. The listener remembers its port beside the
+sidecar's own state, because a url that moved under a live thread would be refused by the
+adapter as a different server.
+
+**A tool result is billed like a prompt, and worse.** It sits in the conversation prefix
+and is re-read on every remaining round trip of the turn, so every result on this server is
+bounded: 8 kB per call. Over that, the envelope carries the first 2 kB as a `head` and the
+full result goes to a file — under `.rennet/context/<sessionId>/tool-results/` in the
+review's own checkout, named in the envelope as a path RELATIVE to the thread's working
+directory, so the thread opens it with the same tools it reads code with. When the call
+resolves no session or no root to write into, the file lands in the daemon's state
+directory instead (`<stateDir>/tool-results/`, swept at daemon start of anything older
+than 24 hours) and the envelope names it absolutely. A result carrying a collection
+declares its cap in the result itself, with an honest marker saying how many rows were
+elided and a cursor for the next page. The thread reads the file or asks for the next page
+when it wants the rest — the same progressive disclosure the seats get, applied to the
+answers rather than the questions.
+
 ## The board server
 
 A lens seat writes its board by CALLING TOOLS, and the tools live on a second listener the
@@ -1793,6 +1882,8 @@ enumeration, so a large delta costs the turn nothing and the file stays complete
 - `packages/server/src/t3/client.ts`: the daemon-side RPC client, the one Rennet module importing `effect` and `@t3tools/contracts`.
 - `packages/server/src/t3/threads.ts`: the (repository root, session id) and (repository root, generation id, seat) → thread bindings, `seatThreadTitle`, and the seat → board target and seat → voice tables.
 - `packages/server/src/board/board-mcp-server.ts`: the loopback MCP board server — lanes, per-seat addresses, liveness and revocation, and the MCP wire; `board/board-credentials.ts` is the leaf the sidecar spawn shares with it (the variable name, the server name, the seat-token derivation); `board/seat-address.ts` maps a seat thread onto its lane's board. `create-server.ts` starts the listener on the first lane and closes it on shutdown.
+- `packages/server/src/app/app-mcp-server.ts`: the loopback MCP app-tools server (`rennet_app`) the session thread holds, with `app/app-credentials.ts` as the leaf the sidecar spawn shares with it; `packages/server/src/agent-tools.ts` projects the registry's `AGENT_EXPOSED` rows into its tool list, and `create-server.ts` starts the listener with the daemon.
+- `packages/prompts/src/prompts/session-briefing.md` and `renderSessionBriefing` in `packages/prompts/src/prompt-contracts.ts`: the session thread's briefing and its byte ceiling; `dispatch/chat.ts`'s `bindReviewThread` renders it and passes it, the `rennet_app` entry and the council's `orchestrator-chat` selection to `createThread`.
 - `packages/server/src/t3/latest-event.ts`: the pure thread → `LaneLatest` projector; `t3/board-receipt.ts`: its board arm, which reads a board call back as a receipt; `t3/seat-progress.ts`: the throttled subscription that feeds a lane.
 - `packages/server/src/runtime/lens-draft-hub.ts`: the board element stream's fold and its `board.draft` snapshot; `runtime/lens-pipeline.ts` opens each lane with the observer that feeds it, `runtime/rounds.ts` stamps the generation and records `first-element`, and `ws-listener.ts` fans the `lensDraft` frame out per connection class.
 - `packages/adapters/src/t3-seat-turn.ts`: the seat leg (`createT3SeatTurn`); `council-seat-turn.ts` routes board jobs to it when the seam is present, and `runtime/rounds.ts` builds the seam per generation.
