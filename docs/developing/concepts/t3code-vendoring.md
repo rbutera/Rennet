@@ -154,6 +154,20 @@ sent upstream when it is general. The fold that brings an upstreamed change in
 removes its row. `pnpm t3:check-ledger` fails the gate on any unlogged
 difference, and warns on a row whose file no longer differs.
 
+The rows are mostly one seam repeated across the hops a field has to survive.
+A turn carries an output schema and its caller's MCP servers; a THREAD carries
+an `instructions` append and its own MCP servers, because every turn on a Rennet
+session thread — the composer's included, which Rennet does not author — runs
+under the review's briefing, and a provider session is fixed on the thread's
+first turn. So the same pair is logged on the two contract modules, the decider,
+the provider command reactor, the provider service, the projector, the
+projection pipeline, its two persistence layers and the snapshot query that
+reads a thread back, `ws.ts`, both adapters and
+the Codex developer instructions and session runtime, plus the tests that cover
+each. Each row says why the field exists there rather than repeating the seam,
+and every one is marked upstreamable: the briefing append is one object field on
+a preset system prompt, not a new path through T3's code.
+
 ## Licence notes
 
 The snapshot is MIT. Its dependency tree adds three items to Rennet's licence

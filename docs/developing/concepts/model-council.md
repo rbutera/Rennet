@@ -34,6 +34,13 @@ a single-turn classifier for landed coding rounds, not another full board drafte
 the successor patchset id, durable asks, and exact worker receipt. The host builds
 and verifies the report board from its classification.
 
+`orchestrator-chat` is the session thread's job: the review's own conversation,
+the thread the chat column shows. `bindReviewThread` resolves it the way a board
+lane resolves a seat and passes the resulting selection when it creates the
+thread, so the harness and model answering the reviewer come from the same
+tables and the same overrides as everything else. The sidecar's own default is
+the fallback for a host with no installed provider for the job.
+
 Every model path in the product resolves through the council.
 
 ## Availability tables
@@ -152,8 +159,11 @@ their assignment tables.
 | Flagged Second Seat | `lens-draft-flagged` |
 
 `REVIEW_ROLE_CATALOGUE` in `packages/core/src/model-council-roles.ts` is the
-source of truth for that list. Orchestrator, Confirmation, Adjudication and
-Post-Process have no production model work, so they offer no controls. Legacy
+source of truth for that list. Confirmation, Adjudication and Post-Process have
+no production model work, so they offer no controls. The Orchestrator role has
+no control either: `orchestrator-chat` routes the session thread from the
+availability tables, and the welcome's orchestrator choice reaches it by
+enabling that harness on the host rather than by writing a role override. Legacy
 overrides for those jobs remain readable in saved settings but do not affect
 dispatch. A registered council job alone does not make a setting active.
 

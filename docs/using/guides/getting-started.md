@@ -15,9 +15,10 @@ If Rennet is not on this machine yet, [install it](./install-rennet.md) first.
 On a new client with no projects, Rennet opens a full-window welcome. It
 introduces the review model, applies appearance choices immediately, shows the
 tools detected in this environment, and lets you choose the orchestrator and
-Dual Harness mode. The orchestrator choice routes the chat thread a review runs
-on: the model council reads it to pick the harness and model that answer you in
-the chat column. Dual Harness starts on when both Claude Code and Codex are
+Dual Harness mode. The orchestrator is the chat thread a review runs on — the
+one in the chat column — and choosing it enables that harness for reviews on
+this machine; the model council picks the model the thread answers on from
+what is enabled. Dual Harness starts on when both Claude Code and Codex are
 available.
 
 If neither harness is detected, install [Claude Code or Codex](./install-a-coding-harness.md)
