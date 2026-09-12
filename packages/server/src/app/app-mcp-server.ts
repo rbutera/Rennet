@@ -538,7 +538,8 @@ export async function startAppMcpServer(options: StartAppMcpServerOptions): Prom
     // The tool surface's own pagination, not the command's: taken off here so the command
     // never sees a field it does not declare.
     const cursor = typeof raw.cursor === "number" && Number.isInteger(raw.cursor) ? raw.cursor : 0;
-    const { cursor: _cursor, ...rest } = raw;
+    const rest: Record<string, unknown> = { ...raw };
+    delete rest.cursor;
     const args = stampedArguments({
       commandId: tool.commandId,
       args: rest,

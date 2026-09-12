@@ -226,14 +226,14 @@ describe("what a call carries into dispatch", () => {
   });
 
   it("reads the dispatch late, so a listener bound before dispatch exists still serves", async () => {
-    let dispatch: ((name: CommandName, input: unknown) => Promise<unknown>) | undefined;
+    // Exactly the composition root's shape: a slot filled below, read only when a call
+    // arrives. Bound at daemon launch (#849), when `dispatch` does not exist yet.
+    const late: { dispatch?: (name: CommandName, input: unknown) => Promise<unknown> } = {};
     const server = await serverWith({
-      // Exactly the composition root's shape: a `let` assigned below, read only when a call
-      // arrives. Bound at daemon launch (#849), when `dispatch` does not exist yet.
-      dispatch: () => dispatch as NonNullable<typeof dispatch>,
+      dispatch: () => late.dispatch as NonNullable<typeof late.dispatch>,
     });
     const seen: string[] = [];
-    dispatch = async (name) => {
+    late.dispatch = async (name) => {
       seen.push(name);
       return { sessions: [] };
     };
