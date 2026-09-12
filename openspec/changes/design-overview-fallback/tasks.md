@@ -1,8 +1,8 @@
 ## 1. The related-context context file
 
-- [ ] 1.1 Add `packages/core/src/board/related-context-file.ts`: `RELATED_CONTEXT_FILE = "related-context.md"`, `RELATED_CONTEXT_MAX_ITEMS = 20`, `RELATED_CONTEXT_MAX_BYTES = 65_536`, and `relatedContextFile(items, opts?)` returning a `SessionContextFile` or `undefined` for no items; one region per item in dossier order with id, tracker, title, state, url, provenance, body, and acceptance criteria under a subheading; a closing line naming the dropped count when either bound is hit. Export from `packages/core/src/board/index.ts`.
-- [ ] 1.2 Add `relatedContextRefsFile(refs)` in the same module for the past-ceiling case: one line per extracted ref with its URL and provenance, opening with a line that says retrieval had not finished and the seat may fetch a GitHub ref with `gh issue view`.
-- [ ] 1.3 Tests: bounds hold and the truncation line names the count (positive control: 21 items, the 21st absent and the line present); zero items gives `undefined`; acceptance criteria render under their own subheading; the bytes are deterministic for the same items.
+- [x] 1.1 Add `packages/core/src/board/related-context-file.ts`: `RELATED_CONTEXT_FILE = "related-context.md"`, `RELATED_CONTEXT_MAX_ITEMS = 20`, `RELATED_CONTEXT_MAX_BYTES = 65_536`, and `relatedContextFile(items, opts?)` returning a `SessionContextFile` or `undefined` for no items; one region per item in dossier order with id, tracker, title, state, url, provenance, body, and acceptance criteria under a subheading; a closing line naming the dropped count when either bound is hit. Export from `packages/core/src/board/index.ts`.
+- [x] 1.2 Add `relatedContextRefsFile(refs)` in the same module for the past-ceiling case: one line per extracted ref with its URL and provenance, opening with a line that says retrieval had not finished and the seat may fetch a GitHub ref with `gh issue view`.
+- [x] 1.3 Tests: bounds hold and the truncation line names the count (positive control: 21 items, the 21st absent and the line present); zero items gives `undefined`; acceptance criteria render under their own subheading; the bytes are deterministic for the same items.
 
 ## 2. The lane waits, bounded, and names the file to Design
 
@@ -12,10 +12,10 @@
 
 ## 3. The prompt
 
-- [ ] 3.1 Rewrite the "When there is no specification" section of `packages/prompts/src/prompts/design.md` as design D1 and D4: the three sources in order, the documentation file rule and the `git diff --name-status` command, the document shape with its two fixed stats, the intro's opening sentence, `inferred: false` for decisions the sources state, acceptance criteria as `requirement` with the file-and-id source, and `settle_absent` only when all three sources are empty with a note naming them.
-- [ ] 3.2 `index.test.ts`: assert the section names `related-context.md`, the `Format` and `Specification` stats, the opening sentence, the `git diff --name-status` command, and that `settle_absent` is conditioned on all three being empty; keep the existing assertions green (the search, the tie, "not an empty board, not a placeholder").
+- [x] 3.1 Rewrite the "When there is no specification" section of `packages/prompts/src/prompts/design.md` as design D1 and D4: the three sources in order, the documentation file rule and the task layer's diff command with `--name-status`, the document shape with its two fixed stats, the intro's opening sentence, `inferred: false` for decisions the sources state, acceptance criteria as `requirement` with the file-and-id source, and `settle_absent` only when all three sources are empty with a note naming them.
+- [x] 3.2 `index.test.ts`: assert the section names `related-context.md`, the `Format` and `Specification` stats, the opening sentence, the `--name-status` diff rule, and that `settle_absent` is conditioned on all three being empty; keep the existing assertions green (the search, the tie, "not an empty board, not a placeholder").
 - [x] 3.3 Prove the Design lint rules resolve `pr.md` and `related-context.md` as `source.path` under the bound root on a fixture board that quotes both; if a rule reads only patchset paths, widen it to the context directory in the same task.
-- [ ] 3.4 State the prompt's size before and after in the PR description.
+- [x] 3.4 State the prompt's size before and after in the PR description.
 
 ## 4. Drive and fixtures
 

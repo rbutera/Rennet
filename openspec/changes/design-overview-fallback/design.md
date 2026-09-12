@@ -29,7 +29,7 @@ Non-Goals:
 The prompt's "When there is no specification" section keeps its first paragraph — repositories without a spec workflow are ordinary; an unfinished search is not an absence; read the commit messages and `pr.md` before concluding — and then, instead of directing the seat to `settle_absent`, directs it to draft an overview from three sources in a fixed order:
 
 1. The reviewed pull request's title and description, from `pr.md`.
-2. Documentation the branch adds or modifies: every `.md`, `.mdx`, `.rst` or `.txt` file and every file under a `docs/` directory that the change index lists as added or modified, read at the reviewed tree. When the change index is truncated, the seat runs `git diff --name-status <range> -- '*.md' '*.mdx' 'docs/'` itself; the prompt names the command.
+2. Documentation the branch adds or modifies: every `.md`, `.mdx`, `.rst` or `.txt` file and every file under a `docs/` directory that the change index lists as added or modified, read at the reviewed tree. When the change index is cut short, the seat runs the task layer's diff command with `--name-status -- '*.md' '*.mdx' 'docs/'`; the prompt says so, and never carries a range of its own, because a working-tree review diffs the pinned reviewed tree rather than `base..head`.
 3. Related issues, from `related-context.md`.
 
 `settle_absent` is called only when all three are empty: no `pr.md` listed, no documentation file in the change, and `related-context.md` absent or listing no item. The note names the three as looked for.
