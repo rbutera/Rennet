@@ -60,6 +60,61 @@ describe("AskBasket", () => {
     expect(r.getByText(/“This reads clean\.”/)).toBeTruthy();
   });
 
+  // ── Round 5, item 4 ─────────────────────────────────────────────────────────
+  // The session thread can stage an ask, the durable log has recorded WHO since the app
+  // tools shipped (stamped server-side from the call's own address), and no surface read it:
+  // app-ui's own `StagedAsk` did not declare `author`, so the field arrived in every
+  // `hydrateAsks` projection at runtime and reached no pixel — while the spec and three doc
+  // pages said the reviewer sees it. These pin the fact on the object.
+  it("names the chat thread on an ask the thread staged", () => {
+    act(() =>
+      store().reviewActions.stageAsk({
+        id: "a1",
+        anchor: "src/auth.ts:12",
+        type: "request-change",
+        body: "Retry the refresh before failing the request.",
+        author: { kind: "orchestrator", id: "thread-1" },
+      }),
+    );
+    const r = mount(<AskBasket />);
+    expect(r.getByText("From the chat thread")).toBeTruthy();
+  });
+
+  it("says nothing about authorship on the reviewer's own ask — the default needs no label", () => {
+    // The control: the label is a fact about an ask that has one, not chrome on every row.
+    stage("src/auth.ts:12", "request-change");
+    const r = mount(<AskBasket />);
+    expect(r.queryByText("From the chat thread")).toBeNull();
+    expect(r.container.querySelector("[data-ask-author]")).toBeNull();
+  });
+
+  it("carries `author` through the projection hydration, which is how it arrives in production", () => {
+    // The renderer reads the slice, and the slice is REPLACED wholesale by `ask.read`'s
+    // projection — so a type that dropped the field on the way in would leave the two tests
+    // above passing over a locally-staged ask and failing over a real one.
+    act(() =>
+      store().reviewActions.hydrateAsks({
+        stagedAsks: {
+          a1: {
+            id: "a1",
+            anchor: "src/auth.ts:12",
+            type: "comment",
+            body: "From the thread.",
+            author: { kind: "orchestrator", id: "thread-1" },
+          },
+        },
+        findingDispositions: {},
+        lineComments: {},
+        quoteThreads: {},
+        retired: {},
+        verdictOverride: null,
+      }),
+    );
+    expect(store().review.stagedAsks.a1?.author?.kind).toBe("orchestrator");
+    const r = mount(<AskBasket />);
+    expect(r.getByText("From the chat thread")).toBeTruthy();
+  });
+
   it("shows only the body stratum when every ask is prose", () => {
     stage("One prose ask.");
     stage("Two prose asks.");

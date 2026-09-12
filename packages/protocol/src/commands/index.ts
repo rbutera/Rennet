@@ -1786,18 +1786,46 @@ const definitions = {
   },
 } as const;
 
-/** The #465 v1 agent inventory — the only rows the orchestrator's app tools expose
- * today, mapped by inspection of the resolution's list against the commands that
- * actually exist. `projects.add` needs a DiscoveryResult it cannot fabricate, so its
- * two prerequisites are exposed with it: `repository.choose` (grant/obtain the path)
- * and `project.discover` (read-only discovery → the DiscoveryResult). Without them
- * the add-project tool was uncompletable. `navigate` (#480) stays UNEXPOSED and
- * unregistered: it is a client-locus command, and the dispatch table's compile-time
- * exhaustiveness guard would force a HOST handler for it — that is client execution.
- * C11 landed the command menu without it and no command by that name exists. The
- * `session.*` READS exist (host-locus) but stay UNEXPOSED to the agent — they are
- * client-surface reads, not app tools. None invented. */
+/** The agent inventory — the rows the session thread's `rennet_app` tools expose,
+ * decided PER ROW for that thread's job (`session-thread-briefing` D4) and never
+ * derived from a blanket rule. `buildAppTools` and the app-tools MCP server iterate
+ * this flag, so adding a row here IS adding a tool; the row-by-row rationale lives in
+ * `docs/developing/reference/command-menu-exposure.md`.
+ *
+ * The #465 v1 set (the acts) is the second group below. `projects.add` needs a
+ * DiscoveryResult it cannot fabricate, so its two prerequisites are exposed with it:
+ * `repository.choose` (grant/obtain the path) and `project.discover` (read-only
+ * discovery → the DiscoveryResult). Without them the add-project tool was
+ * uncompletable. `navigate` (#480) stays UNEXPOSED and unregistered: it is a
+ * client-locus command, and the dispatch table's compile-time exhaustiveness guard
+ * would force a HOST handler for it — that is client execution. C11 landed the command
+ * menu without it and no command by that name exists.
+ *
+ * `session-thread-briefing` adds two groups. The READS are what the thread needs to
+ * know which review the reviewer means and what its boards concluded — a workspace maps
+ * many repos onto one identity, so the thread resolves a branch by LISTING sessions and
+ * loading one, never by assuming the session it is bound to. The ACTS are the paths
+ * Rennet tracks and receipts: an ask the reviewer sends, a composed handoff, a drafted
+ * PR body, a dispatched round. The thread is steered toward them by its briefing and
+ * forbidden nothing (Rule Zero) — it keeps every capability its harness has.
+ *
+ * Deliberately still out: `ask.retire`/`ask.restore` and `ask.dismissFinding` (the
+ * reviewer's own ledger acts), `review.regenerate` and `review.refine` (model spend the
+ * reviewer commissions), and every `publish.*` row — nothing another human can see gets
+ * published without Rai clicking post. None invented. */
 const AGENT_EXPOSED = new Set<string>([
+  // ── Reads: what the reviewer is looking at (session-thread-briefing D4) ──
+  "board.read",
+  "session.list",
+  "review.load",
+  "patchset.readEvidence",
+  "patchset.readSpan",
+  "ask.read",
+  "session.rounds",
+  "session.transcript",
+  "review.deltaDigest",
+  "review.symbolLookup",
+  // ── The #465 v1 acts ────────────────────────────────────────────────────
   "ask.stage",
   "repository.choose",
   "project.discover",
@@ -1811,6 +1839,13 @@ const AGENT_EXPOSED = new Set<string>([
   "settings.setRepoVisibility",
   "settings.resetRepoValue",
   "settings.pinRepoValue",
+  // ── Acts through the paths Rennet tracks (session-thread-briefing D4) ────
+  "ask.unstage",
+  "ask.edit",
+  "ask.quoteReply",
+  "review.handoff.compose",
+  "review.draftPrBody",
+  "round.dispatch",
 ]);
 
 /**

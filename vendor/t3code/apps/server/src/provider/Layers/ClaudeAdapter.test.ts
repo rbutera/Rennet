@@ -408,6 +408,51 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("appends the thread's briefing to the preset system prompt", () => {
+    const harness = makeHarness();
+    const instructions = "You are the orchestrator of a Rennet review of feat/x.";
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+        instructions,
+      });
+
+      // `append`, not a replacement: the preset, the user's settings and their
+      // CLAUDE.md all stay.
+      assert.deepEqual(harness.getLastCreateQueryInput()?.options.systemPrompt, {
+        type: "preset",
+        preset: "claude_code",
+        append: instructions,
+      });
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("leaves the preset system prompt alone when the thread has no briefing", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      assert.deepEqual(harness.getLastCreateQueryInput()?.options.systemPrompt, {
+        type: "preset",
+        preset: "claude_code",
+      });
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("refuses a turn whose output schema differs from its session's", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {

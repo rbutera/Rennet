@@ -1,6 +1,15 @@
+import { randomUUID } from "node:crypto";
 import { basename } from "node:path";
-import { parseCommandInput, parseCommandOutput } from "@rennet/protocol";
-import type { ThreadBinding } from "../t3/threads";
+import { reviewedDiffCommand, sessionContextRelativeDir } from "@rennet/core";
+import { renderSessionBriefing, type SessionBriefingPatchset } from "@rennet/prompts";
+import {
+  forgeRepositorySlug,
+  parseCommandInput,
+  parseCommandOutput,
+  type Review,
+} from "@rennet/protocol";
+import { appToolNames } from "../agent-tools";
+import type { SessionThreadCreation, ThreadBinding } from "../t3/threads";
 import type { CommandHandler, DispatchRuntime } from "./runtime";
 
 /**
@@ -42,12 +51,158 @@ export async function bindReviewThread(
   const sidecar = rt.deps.t3Sidecar;
   if (!sidecar) throw new Error("this daemon has no T3 Code sidecar composed");
   const review = rt.requireReviewById(reviewId);
+  const workspace = await boundWorkspaceInput(rt, reviewId);
+  // Minted HERE, before the create, because the app-tools url names the thread in its path
+  // and both have to ride the same `thread.create` (T3 mints thread ids client-side, so
+  // this is its own convention, not a workaround). Discarded unread when the binding
+  // already exists: an existing thread keeps the id, the briefing and the servers it was
+  // created with, for its whole life.
+  const threadId = randomUUID();
   return sidecar.threadFor({
     repositoryRoot: review.repositoryRoot,
     key: { kind: "session", sessionId: reviewId },
     title: basename(review.repositoryRoot) || "review",
-    ...(await boundWorkspaceInput(rt, reviewId)),
+    threadId,
+    ...workspace,
+    // LAZY, and that is the point: almost every bind finds an existing row, and resolving
+    // this reads a prompt file, renders the briefing, awaits the app listener and asks the
+    // council what this host has installed. `bindThread` invokes it only when it is really
+    // about to create a thread — so an ordinary `chat.t3Send` pays none of it, and the "no
+    // installed provider" line lands in the log once per thread rather than once per send.
+    creation: () => sessionThreadCreation(rt, review, threadId, workspace.worktreePath),
   });
+}
+
+/**
+ * Which capture this is, in the identity a reviewer would recognise it by — and WHICH
+ * REPOSITORY and WHICH REVIEW, which the thread cannot work without.
+ *
+ * Every exposed `app_*` row outside `ask.*` takes a `reviewId`, and the thread was never
+ * told one: the only way to find it was `app_session_list` and a match on the branch name.
+ * Two repositories in one workspace both have `main`, so that match resolves to whichever
+ * row was read first and the thread reports the wrong repository's board under the right
+ * repository's name, silently. Naming both here, and stamping the id on a call that omits
+ * it (`stampedArguments`), is the answer: an identity carried from the review, never
+ * re-derived from a branch.
+ */
+function briefingPatchset(rt: DispatchRuntime, review: Review): SessionBriefingPatchset {
+  const patchset = rt.activePatchsetOf(review);
+  const repository = patchset.repository;
+  const branch = repository.headRef;
+  // `owner/name` when the forge knows it — a PR review carries the real identity — else the
+  // checkout's own directory name, which is what a reviewer calls a local branch review.
+  const label =
+    review.postTarget === undefined
+      ? basename(review.repositoryRoot)
+      : forgeRepositorySlug(review.postTarget.repo);
+  return {
+    kind: review.postTarget === undefined ? "branch" : "pr",
+    reviewId: review.id,
+    ...(label === "" ? {} : { repository: label }),
+    ...(branch === undefined ? {} : { branch }),
+    ...(review.postTarget === undefined ? {} : { prNumber: review.postTarget.number }),
+    baseOid: repository.baseOid,
+    headOid: repository.headOid,
+    // The core's own derivation, never a second one: a working-tree capture and a range
+    // capture take different commands, and the seats already read this one.
+    diffCommand: reviewedDiffCommand(repository),
+  };
+}
+
+/**
+ * The session's context directory as the THREAD can open it — ALWAYS, for a session thread.
+ *
+ * It used to be gated on `existsSync`, and that gate could only ever be false. The thread is
+ * created by the warm bind in `review.capture` (#849), the directory is written when a
+ * generation drafts, and a thread's instructions are FIXED AT CREATE — so the check ran
+ * before the writer every single time, and no freshly captured review's thread was ever told
+ * the path. It would have been told about a directory only on a thread created after a
+ * drafting run, which is the case that does not happen. A test that mkdirs and then binds
+ * cannot see this: the ordering is the defect.
+ *
+ * The path is deterministic from the session id, so naming it needs no filesystem at all —
+ * and the sentence says when it appears, which is the honest way to name a path that is not
+ * there yet.
+ *
+ * RELATIVE, for the reason every other prompt's context pointer is (create-server's
+ * `writeReviewContext`, review finding 4): the thread's cwd IS this root, and a WSL-locus
+ * review runs its turns inside the distro where the daemon's own absolute path names
+ * nothing.
+ */
+function briefingContextDir(rt: DispatchRuntime, review: Review): string {
+  return sessionContextRelativeDir(rt.deps.reviewContextSessionId?.(review) ?? review.id);
+}
+
+/**
+ * The three things a SESSION thread is created with beyond its cwd, assembled in the one
+ * place a session thread is ever created (session-thread-briefing 4.1): the briefing, the
+ * app-tools server, and the council's routing.
+ *
+ * EVERY failure here degrades rather than costing the reviewer their thread, and the word
+ * "every" is load-bearing: it is a promise about four separate things that can throw, and
+ * a promise that guards two of them is worse than no promise, because the next reader
+ * believes it. A listener that could not bind means no tools — and the briefing then SAYS
+ * none are attached, which is true — rather than no conversation. A council with no
+ * installed provider means the sidecar's default model with a line in the daemon log. A
+ * review whose active patchset is missing, or a prompt file that cannot be read, means no
+ * briefing, with the tools and the selection still attached. A bare thread is what every
+ * session had before this change, so the worst case is the old behaviour, named.
+ */
+async function sessionThreadCreation(
+  rt: DispatchRuntime,
+  review: Review,
+  threadId: string,
+  /** The tree this thread's turns run in — which harness the council may route to is a
+   *  property of the checkout, exactly as it is for a seat. */
+  worktreePath: string | undefined,
+): Promise<SessionThreadCreation> {
+  const seam = rt.deps.sessionThread;
+  if (seam === undefined) return {};
+  const warn = rt.deps.warn ?? console.warn;
+  let app: Awaited<ReturnType<typeof seam.appServerFor>> | undefined;
+  try {
+    app = await seam.appServerFor(threadId);
+  } catch (error) {
+    warn(
+      `rennet: review ${review.id}'s thread gets no Rennet app tools: ${describeThreadError(error)}`,
+    );
+  }
+  const selection = await seam.modelSelection(worktreePath ?? review.repositoryRoot);
+  if (selection === undefined) {
+    warn(
+      `rennet: no installed provider answers the council's orchestrator-chat job; review ${review.id}'s thread opens on the sidecar's default model`,
+    );
+  }
+  const servers =
+    app === undefined
+      ? {}
+      : {
+          mcpServers: { [app.name]: { url: app.url, bearerTokenEnvVar: app.bearerTokenEnvVar } },
+        };
+  const model = selection === undefined ? {} : { modelSelection: selection };
+  let briefing: string;
+  try {
+    // Both of these throw: `activePatchsetOf` refuses a review whose active id names no
+    // patchset ("The active patchset is missing"), and `briefingText` is a file read off
+    // the shipped prompts directory. Neither is a reason to deny the reviewer a thread.
+    const patchset = briefingPatchset(rt, review);
+    const fixed = await seam.briefingText();
+    briefing = renderSessionBriefing({
+      briefing: fixed,
+      patchset,
+      contextDir: briefingContextDir(rt, review),
+      // HOW MANY tools the server actually serves and what it is called — never the
+      // names, which the harness's own `tools/list` delivers with a description each. No
+      // listener answered above ⇒ no tools, and the line says so.
+      ...(app === undefined
+        ? {}
+        : { tools: { count: appToolNames().length, serverName: app.name } }),
+    });
+  } catch (error) {
+    warn(`rennet: review ${review.id}'s thread gets no briefing: ${describeThreadError(error)}`);
+    return { ...servers, ...model };
+  }
+  return { instructions: briefing, ...servers, ...model };
 }
 
 /** A thrown thing as a sentence a reviewer can read. Same shape as `t3/threads.ts`. */

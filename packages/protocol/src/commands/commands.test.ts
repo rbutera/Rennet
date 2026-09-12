@@ -167,21 +167,43 @@ const ABSORBED_IDS = [
   "worktrees.remove",
 ] as const;
 
-// The #465 v1 agent inventory, mapped by inspection (the session.* reads exist but stay
-// unexposed; no navigate command exists yet). Mirrors AGENT_EXPOSED in index.ts so an
-// exposure edit is deliberate.
+// The agent inventory: the rows the session thread's `rennet_app` tools expose. Mirrors
+// AGENT_EXPOSED in index.ts so an exposure edit is deliberate — a row added there and not
+// here (or here and not there) reddens the two assertions below, in both directions.
 // `repository.choose` + `project.discover` are the add-project prerequisites (the
 // tool cannot fabricate a DiscoveryResult); `navigate` stays out (a client-locus row
-// would force a host dispatch handler, and C11 shipped the menu without one). Kept sorted — the invariant
+// would force a host dispatch handler, and C11 shipped the menu without one).
+// `session-thread-briefing` D4 added the ten reads the thread needs to know which review
+// the reviewer means (`session.list` → `review.load` → `board.read`, plus the patchset,
+// ask, round and symbol reads) and the six acts on the paths Rennet tracks and receipts
+// (ask edit/unstage/quote-reply, handoff compose, PR-body draft, round dispatch). Every
+// `publish.*` row and the reviewer's own ledger acts stay out; the rationale per row is in
+// `docs/developing/reference/command-menu-exposure.md`. Kept sorted — the invariant
 // test compares against the alphabetically sorted list of agent-exposed ids.
 const AGENT_INVENTORY = [
+  "ask.edit",
+  "ask.quoteReply",
+  "ask.read",
   "ask.stage",
+  "ask.unstage",
+  "board.read",
+  "patchset.readEvidence",
+  "patchset.readSpan",
   "project.discover",
   "projects.add",
   "projects.list",
   "repository.choose",
   "review.capture",
+  "review.deltaDigest",
+  "review.draftPrBody",
+  "review.handoff.compose",
+  "review.load",
   "review.openPr",
+  "review.symbolLookup",
+  "round.dispatch",
+  "session.list",
+  "session.rounds",
+  "session.transcript",
   "settings.get",
   "settings.pinRepoValue",
   "settings.resetRepoValue",

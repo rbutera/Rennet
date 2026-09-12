@@ -60,7 +60,7 @@ reviews, and **Developing Rennet** for people who build Rennet.
   [how Rennet consumes `@wboard/*`](./developing/reference/whiteboard-consumption.md),
   [protocol compatibility](./developing/reference/protocol-compatibility.md),
   [Codex app-server integration](./developing/reference/codex-app-server.md),
-  [command menu exposure](./developing/reference/command-menu-exposure.md),
+  [command exposure](./developing/reference/command-menu-exposure.md),
   [reactive streams](./developing/reference/reactive-streams.md),
   and [benchmarks](./developing/reference/benchmarks.md)
 - Spec formats (survey for the Design lens):

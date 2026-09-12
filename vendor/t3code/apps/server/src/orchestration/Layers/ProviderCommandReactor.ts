@@ -12,6 +12,7 @@ import {
   type RuntimeMode,
   type TurnId,
   type TurnMcpServers,
+  normalizeTurnMcpServers,
 } from "@t3tools/contracts";
 import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
 import { isTemporaryWorktreeBranch, WORKTREE_BRANCH_PREFIX } from "@t3tools/shared/git";
@@ -482,6 +483,18 @@ const make = Effect.gen(function* () {
     );
   });
 
+  /** The servers a turn actually runs with: the THREAD's set is the session's
+   * base — every turn on the thread gets it, including the ones the thread's
+   * creator does not author — and a turn's own set rides alongside. The adapter
+   * fixes the union when the session process is created and compares every
+   * later turn against it, so the same union has to be computed for the start
+   * and for the turn. An empty union is the same fact as no servers. */
+  const unionThreadAndTurnMcpServers = (
+    threadServers: TurnMcpServers | undefined,
+    turnServers: TurnMcpServers | undefined,
+  ): TurnMcpServers | undefined =>
+    normalizeTurnMcpServers({ ...(threadServers ?? {}), ...(turnServers ?? {}) });
+
   const resolveThread = Effect.fnUntraced(function* (threadId: ThreadId) {
     return yield* projectionSnapshotQuery
       .getThreadDetailById(threadId, { activityKinds: [] })
@@ -535,6 +548,8 @@ const make = Effect.gen(function* () {
       return yield* Effect.die(new Error(`Thread '${threadId}' was not found in read model.`));
     }
 
+    const sessionInstructions = thread.instructions;
+    const sessionMcpServers = unionThreadAndTurnMcpServers(thread.mcpServers, options?.mcpServers);
     const desiredRuntimeMode = thread.runtimeMode;
     const requestedModelSelection = options?.modelSelection;
     const resolveActiveSession = (threadId: ThreadId) =>
@@ -680,8 +695,12 @@ const make = Effect.gen(function* () {
           modelSelection: desiredModelSelection,
           ...(input?.resumeCursor !== undefined ? { resumeCursor: input.resumeCursor } : {}),
           runtimeMode: desiredRuntimeMode,
+          // The thread's briefing is a session-level fact: the provider fixes
+          // its system prompt when the session process is created, and every
+          // turn on the thread — the reviewer's own included — runs under it.
+          ...(sessionInstructions !== undefined ? { instructions: sessionInstructions } : {}),
           ...(options?.outputSchema !== undefined ? { outputSchema: options.outputSchema } : {}),
-          ...(options?.mcpServers !== undefined ? { mcpServers: options.mcpServers } : {}),
+          ...(sessionMcpServers !== undefined ? { mcpServers: sessionMcpServers } : {}),
         })
         .pipe(Effect.tap(() => refreshWorkspaceSnapshot));
 
@@ -846,6 +865,22 @@ const make = Effect.gen(function* () {
           : requestedModelSelection
         : input.modelSelection;
 
+    // The set THIS turn is checked against, once it reaches a live session.
+    // Only computed when the turn itself asks for something: a composer turn
+    // (T3's own web UI, no `mcpServers` of its own) supplies `undefined` here
+    // so the adapter's "a turn that asks for nothing rides whatever the
+    // session holds" rule applies. Materialising the thread's own set as an
+    // explicit ask instead would make a LATER composer turn compare against
+    // a live session the thread's set alone never described — a prior turn on
+    // the same thread can have joined its own server to the union the
+    // session actually started on, and `differingTurnMcpServerNames` would
+    // then see that server as missing and refuse the turn. A turn that DOES
+    // ask for something is still checked against thread ∪ turn, matching the
+    // merge rule at session start.
+    const turnMcpServers =
+      input.mcpServers !== undefined
+        ? unionThreadAndTurnMcpServers(thread.mcpServers, input.mcpServers)
+        : undefined;
     return {
       threadId: input.threadId,
       ...(normalizedInput ? { input: normalizedInput } : {}),
@@ -853,7 +888,14 @@ const make = Effect.gen(function* () {
       ...(modelForTurn !== undefined ? { modelSelection: modelForTurn } : {}),
       ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
       ...(input.outputSchema !== undefined ? { outputSchema: input.outputSchema } : {}),
-      ...(input.mcpServers !== undefined ? { mcpServers: input.mcpServers } : {}),
+      // The thread's briefing still travels on every turn regardless: a live
+      // session ignores it (its system prompt is already fixed), and a
+      // session RECOVERED by `sendTurn` gets it from `ProviderService`'s own
+      // persisted read of the thread record now, so this is a redundant
+      // courtesy rather than the only path, kept for a binding persisted
+      // before that read existed.
+      ...(thread.instructions !== undefined ? { instructions: thread.instructions } : {}),
+      ...(turnMcpServers !== undefined ? { mcpServers: turnMcpServers } : {}),
     };
   });
 

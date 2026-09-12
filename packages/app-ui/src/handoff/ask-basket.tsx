@@ -46,6 +46,15 @@ function AskRow({ ask }: { ask: StagedAsk }) {
       </Badge>
       <div className="min-w-0 flex-1">
         <p className="text-sm text-foreground">{ask.body}</p>
+        {ask.author?.kind === "orchestrator" ? (
+          // WHO staged it, as a fact about the ask and nothing more — no explanation of the
+          // machinery that produced it, and nothing on a reviewer-staged ask, which is the
+          // default and needs no label to say so. The durable log has carried this since the
+          // app tools shipped and no surface read it.
+          <p className="mt-1 text-xs text-muted-foreground" data-ask-author="orchestrator">
+            From the chat thread
+          </p>
+        ) : null}
         {lineAnchor ? (
           <p className="mt-1 font-mono text-xs text-muted-foreground">
             {lineAnchor.path}:{lineAnchor.line}

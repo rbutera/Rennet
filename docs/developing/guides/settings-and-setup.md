@@ -224,8 +224,10 @@ forge sign-in step.
 
 **Edit Mappings** on a host card opens the [Model Council](../concepts/model-council.md)'s
 role-to-model table for that machine. The dialog is **honest-present**: the council's
-assignment tables are static and always available, so it lists Lens Drafters and
-Flagged Second Seat with a real model and effort on a fresh install — never a blank waiting on a backend. Values
+assignment tables are static and always available, so it lists Lens Drafters,
+Flagged Second Seat and Orchestrator with a real model and effort on a fresh install — never a blank waiting on a backend.
+Orchestrator is the row the welcome's orchestrator choice writes; it routes the
+review's chat thread. Values
 come from `settings.get`, which resolves the tables live rather than shipping the
 surface its own copy.
 
