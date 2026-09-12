@@ -17,6 +17,7 @@ import {
   inlineContextViolation,
   type LintContext,
   type LintTarget,
+  RELATED_CONTEXT_FILE,
 } from "@rennet/core";
 import {
   INVESTIGATE_PARTIAL_FILE,
@@ -28,6 +29,7 @@ import {
   type BoardTarget,
   boardToolsByName,
   type CouncilHarnessId,
+  type DossierItem,
   type DraftBoard,
   findingRefKey,
   type GenerationPhaseTiming,
@@ -67,6 +69,8 @@ import {
   LENS_RETRY_BUDGET,
   type LensPipelineDeps,
   lensRetryBudget,
+  RELATED_CONTEXT_WAIT_MS,
+  RELATED_CONTEXT_WAITING,
   REPAIR_TARGET_KINDS,
   ROUND_CONTEXT_FILE,
   ROUND_EVIDENCE_FILE,
@@ -5701,6 +5705,213 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     });
     expect(written.map(({ name }) => name)).not.toContain("design-sources.md");
     for (const turn of turns) expect(turn.prompt, turn.seat).not.toContain("design-sources.md");
+  });
+
+  // ── design-overview-fallback D3: the Design lane's bounded related-context wait ──
+  //
+  // Retrieval is already running when a review opens. The Design seat is the ONE seat the
+  // dossier is any use to, and only when the host located no specification — so the file
+  // is written late, inside the lane, and the two deterministic Design paths never touch
+  // it. These tests execute that condition rather than asserting it: the spy is the
+  // control.
+  describe("`related-context.md` — the related issues, to the Design seat alone (D3)", () => {
+    const DOSSIER: readonly DossierItem[] = [
+      {
+        id: "gh:rbutera/rennet#461",
+        tracker: "github",
+        title: "Related context retrieval",
+        state: "open",
+        body: "Fetch the issues a branch references so a review can read the intent.",
+        url: "https://github.com/rbutera/rennet/issues/461",
+        provenance: "branch-name",
+        fetchedAt: "2026-09-12T00:00:00.000Z",
+        acceptanceCriteria: "The dossier is bounded and deterministic.",
+      },
+    ];
+
+    const promptsFor = (turns: SeatCapture[]) => (seat: string) =>
+      turns.find((turn) => turn.seat === seat)?.prompt ?? "";
+
+    it("writes the dossier as `related-context.md` and names it to the DESIGN seat only", async () => {
+      const turns: SeatCapture[] = [];
+      const written: SessionContextFile[] = [];
+      await runLensPipeline({
+        ...boardSeats(turns, (prompt, seat) => cleanBody(lensFromPrompt(prompt, seat))),
+        relatedContext: async () => DOSSIER,
+        relatedRefs: () => [{ label: "#461", provenance: "branch-name" }],
+        repoRoot: "/pr-worktree",
+        deltaPacket: PACKET,
+        lintContextFor,
+        readPrompt,
+        whiteboard: fakeWhiteboard([]),
+        boardIdFor: (lens) => `board:${lens}`,
+        writeContext: (files) => {
+          written.push(...files);
+          return ".rennet/context/s1";
+        },
+      });
+      const file = written.find(({ name }) => name === RELATED_CONTEXT_FILE);
+      // The ITEMS file, not the refs fallback: retrieval answered inside the ceiling.
+      expect(file?.body).toContain("gh:rbutera/rennet#461");
+      expect(file?.body).toContain("Related context retrieval");
+      expect(file?.body).toContain("Acceptance criteria");
+      expect(file?.body).not.toContain("had NOT finished");
+      const promptFor = promptsFor(turns);
+      expect(promptFor("design")).toContain(`.rennet/context/s1/${RELATED_CONTEXT_FILE}`);
+      expect(promptFor("design")).toContain(file?.readWhen ?? "READ-WHEN-MISSING");
+      // The bodies ride the FILE. A prompt that carried the issue text would be the
+      // inlining this whole design exists to refuse.
+      expect(promptFor("design")).not.toContain("Fetch the issues a branch references");
+      for (const seat of ["sequence", "decisions", "flagged-claude", "noise"]) {
+        expect(promptFor(seat), seat).not.toContain(RELATED_CONTEXT_FILE);
+      }
+    });
+
+    it("never calls `relatedContext` when the host LOCATED a specification", async () => {
+      // D6: the host-located path does not wait. The spy is the assertion — a lane that
+      // called it and then discarded the file would still fail here.
+      const turns: SeatCapture[] = [];
+      const written: SessionContextFile[] = [];
+      let calls = 0;
+      await runLensPipeline({
+        ...boardSeats(turns, (prompt, seat) => cleanBody(lensFromPrompt(prompt, seat))),
+        designSources: [
+          {
+            format: "openspec" as const,
+            role: "proposal",
+            path: "openspec/changes/ws/proposal.md",
+          },
+        ],
+        assembleDesignBoard: () => undefined,
+        relatedContext: async () => {
+          calls += 1;
+          return DOSSIER;
+        },
+        relatedRefs: () => [{ label: "#461", provenance: "branch-name" }],
+        repoRoot: "/pr-worktree",
+        deltaPacket: PACKET,
+        lintContextFor,
+        readPrompt,
+        whiteboard: fakeWhiteboard([]),
+        boardIdFor: (lens) => `board:${lens}`,
+        writeContext: (files) => {
+          written.push(...files);
+          return ".rennet/context/s1";
+        },
+      });
+      expect(calls).toBe(0);
+      expect(written.map(({ name }) => name)).not.toContain(RELATED_CONTEXT_FILE);
+      for (const turn of turns) expect(turn.prompt, turn.seat).not.toContain(RELATED_CONTEXT_FILE);
+    });
+
+    it("never calls `relatedContext` when the ASSEMBLER produced the Design board", async () => {
+      // The other half of D6. The assembler settles the lane with no model turn at all, so
+      // there is no seat to hand a file to and nothing to wait for.
+      const turns: SeatCapture[] = [];
+      const written: SessionContextFile[] = [];
+      let calls = 0;
+      await runLensPipeline({
+        ...boardSeats(turns, (prompt, seat) => cleanBody(lensFromPrompt(prompt, seat))),
+        assembleDesignBoard: () => cleanBody(lensFromPrompt("", "design")) as DraftBoard,
+        relatedContext: async () => {
+          calls += 1;
+          return DOSSIER;
+        },
+        relatedRefs: () => [{ label: "#461", provenance: "branch-name" }],
+        repoRoot: "/pr-worktree",
+        deltaPacket: PACKET,
+        lintContextFor,
+        readPrompt,
+        whiteboard: fakeWhiteboard([]),
+        boardIdFor: (lens) => `board:${lens}`,
+        writeContext: (files) => {
+          written.push(...files);
+          return ".rennet/context/s1";
+        },
+      });
+      // The Design seat never ran — the assembler's board is the lane's outcome.
+      expect(turns.map((turn) => turn.seat)).not.toContain("design");
+      expect(calls).toBe(0);
+      expect(written.map(({ name }) => name)).not.toContain(RELATED_CONTEXT_FILE);
+    });
+
+    it("opens the Design seat on the REFS file once the ceiling passes, and says it was waiting", async () => {
+      // Retrieval that never settles. The lane must not hang: past
+      // `RELATED_CONTEXT_WAIT_MS` it writes what the extractor already knew — the refs and
+      // their URLs, with a line saying retrieval had not finished — and opens the seat.
+      vi.useFakeTimers();
+      try {
+        const turns: SeatCapture[] = [];
+        const written: SessionContextFile[] = [];
+        const notes: { lens: LensKind; text: string }[] = [];
+        const run = runLensPipeline({
+          ...boardSeats(turns, (prompt, seat) => cleanBody(lensFromPrompt(prompt, seat))),
+          relatedContext: () => new Promise<undefined>(() => undefined),
+          relatedRefs: () => [
+            {
+              label: "#461",
+              url: "https://github.com/rbutera/rennet/issues/461",
+              provenance: "branch-name",
+            },
+          ],
+          onLensLaneNote: (lens, text) => notes.push({ lens, text }),
+          repoRoot: "/pr-worktree",
+          deltaPacket: PACKET,
+          lintContextFor,
+          readPrompt,
+          whiteboard: fakeWhiteboard([]),
+          boardIdFor: (lens) => `board:${lens}`,
+          writeContext: (files) => {
+            written.push(...files);
+            return ".rennet/context/s1";
+          },
+        });
+        // THE POSITIVE CONTROL, inline: one millisecond short of the ceiling the Design
+        // seat has NOT opened. Without it the assertion below is satisfied by a lane that
+        // never waited at all.
+        await vi.advanceTimersByTimeAsync(RELATED_CONTEXT_WAIT_MS - 1);
+        expect(turns.map((turn) => turn.seat)).not.toContain("design");
+        // …and the lane said what it was doing while the reviewer watched it not move.
+        expect(notes).toContainEqual({ lens: "design", text: RELATED_CONTEXT_WAITING });
+
+        await vi.advanceTimersByTimeAsync(2);
+        await run;
+        expect(turns.map((turn) => turn.seat)).toContain("design");
+        const file = written.find(({ name }) => name === RELATED_CONTEXT_FILE);
+        expect(file?.body).toContain("had NOT finished");
+        expect(file?.body).toContain("https://github.com/rbutera/rennet/issues/461");
+        // Not the dossier renderer: there is no dossier.
+        expect(file?.body).not.toContain("Acceptance criteria");
+        expect(promptsFor(turns)("design")).toContain(`.rennet/context/s1/${RELATED_CONTEXT_FILE}`);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("writes no file when retrieval answers with nothing and the branch has no refs", async () => {
+      // Spec scenario 3. An empty dossier is a real answer, not a timeout, and a prompt
+      // must never name a file that was not written.
+      const turns: SeatCapture[] = [];
+      const written: SessionContextFile[] = [];
+      await runLensPipeline({
+        ...boardSeats(turns, (prompt, seat) => cleanBody(lensFromPrompt(prompt, seat))),
+        relatedContext: async () => [],
+        relatedRefs: () => [],
+        repoRoot: "/pr-worktree",
+        deltaPacket: PACKET,
+        lintContextFor,
+        readPrompt,
+        whiteboard: fakeWhiteboard([]),
+        boardIdFor: (lens) => `board:${lens}`,
+        writeContext: (files) => {
+          written.push(...files);
+          return ".rennet/context/s1";
+        },
+      });
+      expect(turns.map((turn) => turn.seat)).toContain("design");
+      expect(written.map(({ name }) => name)).not.toContain(RELATED_CONTEXT_FILE);
+      for (const turn of turns) expect(turn.prompt, turn.seat).not.toContain(RELATED_CONTEXT_FILE);
+    });
   });
 
   // #867: 25 of 26 measured seat turns opened by re-deriving the change's shape with

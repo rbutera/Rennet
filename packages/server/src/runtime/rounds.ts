@@ -285,6 +285,22 @@ export function createRegenerationLanes(
       });
       emit(snapshot());
     },
+    /**
+     * A LANE-level line for something the HOST is doing on this lane's behalf, before the
+     * lane has a seat thread of its own (design-overview-fallback D3).
+     *
+     * {@link progress} cannot carry it: it is addressed by SEAT and drops a publication
+     * for a seat with no entry, which is every lane between `running` and its first
+     * thread binding. Same field, same wire shape, same rule — only a RUNNING lane has
+     * something in flight, so any other state drops the note exactly as `progress` does,
+     * and the seat's own first line replaces it the moment there is one.
+     */
+    note(lens: LensKind, latest: LaneLatest): void {
+      const current = lanes.get(lens);
+      if (current?.status !== "running") return;
+      lanes.set(lens, { ...current, latest });
+      emit(snapshot());
+    },
     /** A lens board's draft landed. The lane reads `drafted`, NOT `done`: the delta
      *  verdict is not known yet, and a settled lane without its verdict is exactly the
      *  in-between state the union refuses to represent. */
@@ -645,6 +661,12 @@ export interface RoundInput {
    *  written as `design-sources.md` and named to the Design seat so a seat that runs
    *  because the assembler declined opens on the files rather than on a search for them. */
   readonly designSources?: readonly LocatedDesignSource[];
+  /** The dossier related-context retrieval stored for this review, as the promise the
+   *  review-open kick already holds. The DESIGN lane joins it — bounded — only when it is
+   *  about to open its seat with no located specification (design-overview-fallback D3). */
+  readonly relatedContext?: LensPipelineDeps["relatedContext"];
+  /** The zero-cost refs the extractor finds in the same inputs, for the past-ceiling file. */
+  readonly relatedRefs?: LensPipelineDeps["relatedRefs"];
   readonly lintContextFor: (lens: LintTarget) => LintContext;
   /** The deterministic Design fast path, when this review's branch carries an OpenSpec
    *  change: a host-side board build with no model turn. Absent ⇒ the Design seat runs. */
@@ -1566,6 +1588,8 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
       council: councilContextFor(installed, deps.councilOverrides),
       ...(input.prPaper === undefined ? {} : { prPaper: input.prPaper }),
       ...(input.designSources === undefined ? {} : { designSources: input.designSources }),
+      ...(input.relatedContext === undefined ? {} : { relatedContext: input.relatedContext }),
+      ...(input.relatedRefs === undefined ? {} : { relatedRefs: input.relatedRefs }),
       ...(t3Seam === undefined ? {} : { t3: t3Seam }),
       // This generation's lanes on the daemon's loopback board server. Without it the
       // pipeline's lane-opening loop is unreachable in production — the guard reads
@@ -1635,6 +1659,15 @@ export function createRoundsRuntime(deps: RoundsRuntimeDeps): RoundsRuntime {
       // takes it out of `waiting`, which is why the pipeline calls it per lane rather
       // than letting kickoff speak for all five (#865).
       ...(lanes === undefined ? {} : { onLensLaneStart: (lens: LensKind) => lanes.running(lens) }),
+      // A lane-level line for a host-side wait (design-overview-fallback D3). The Design
+      // lane's related-context wait happens before its seat thread exists, so there is no
+      // seat for `progress` to key on; `note` puts the same `latest` on the lane itself.
+      ...(lanes === undefined
+        ? {}
+        : {
+            onLensLaneNote: (lens: LensKind, text: string) =>
+              lanes.note(lens, { kind: "text", text, at: Date.now() }),
+          }),
       ...(persistBoardMeta === undefined && lanes === undefined
         ? {}
         : {

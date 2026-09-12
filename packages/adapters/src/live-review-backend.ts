@@ -6,6 +6,7 @@ import {
   councilContextFor,
   escapePath,
   type HarnessPort,
+  type RelatedRef,
   type ReviewPipelineResult,
 } from "@rennet/core";
 import type {
@@ -43,6 +44,7 @@ import { type ResolvedBase, resolveBaseRef } from "./project-snapshot-source";
 import type { ProjectSnapshotStore } from "./project-snapshot-store";
 import {
   execaGhFor,
+  extractRefs,
   type GhRunner,
   RELATED_CONTEXT_ENRICH_SCHEMA,
   retrieveRelatedContext,
@@ -327,18 +329,14 @@ export interface RelatedContextKickDeps {
 export async function runRelatedContextRetrieval(
   review: Review,
   deps: RelatedContextKickDeps,
-): Promise<void> {
+): Promise<readonly DossierItem[] | undefined> {
   try {
     const patchset = activePatchset(review);
     const repoKey = repoKeyOf(review);
     const dossierStore = new DossierStore(deps.store);
-    const dossierKey = {
-      target: review.postTarget
-        ? `pr-${review.postTarget.number}`
-        : (patchset.repository.headRef ?? "local"),
-      patchsetRef: patchset.id,
-    };
-    if (dossierStore.load(repoKey, dossierKey)) return;
+    const dossierKey = relatedContextDossierKey(review);
+    const stored = dossierStore.load(repoKey, dossierKey);
+    if (stored) return stored;
 
     // Honest availability (review P2): BOTH harnesses are resolved, each failure
     // isolated to its own resolver, and the council sees exactly what resolved.
@@ -390,9 +388,121 @@ export async function runRelatedContextRetrieval(
       },
     );
     dossierStore.save(repoKey, dossierKey, result.items, result.raw);
+    return result.items;
   } catch (error) {
     deps.onError?.(error);
+    return undefined;
   }
+}
+
+/**
+ * The ONE dossier key related context is stored and read under, for a review.
+ *
+ * Two readers now: the kick above, and the Design lane's fallback read when the daemon
+ * restarted between the review's open and its board drafting, so the in-memory promise
+ * `create-server.ts` holds is gone. One definition, because two spellings of the same key
+ * is a silent miss — the lane would read an empty store and write the refs file over a
+ * dossier that is on disk.
+ *
+ * The target names the REPOSITORY-scoped thing under review (the pull request, or the
+ * head ref), never the project: a workspace maps many repos to one identity.
+ */
+export function relatedContextDossierKey(review: Review): {
+  readonly target: string;
+  readonly patchsetRef: string;
+} {
+  const patchset = activePatchset(review);
+  return {
+    target: review.postTarget
+      ? `pr-${review.postTarget.number}`
+      : (patchset.repository.headRef ?? "local"),
+    patchsetRef: patchset.id,
+  };
+}
+
+/**
+ * Whatever the dossier store already holds for this review, or `undefined`.
+ *
+ * Fail-safe like every other read on this path: a missing, unreadable or malformed
+ * record is an honest absence, and a review whose active patchset has gone is too.
+ */
+export function loadRelatedContextDossier(
+  review: Review,
+  store: ProjectSnapshotStore,
+): readonly DossierItem[] | undefined {
+  try {
+    return (
+      new DossierStore(store).load(repoKeyOf(review), relatedContextDossierKey(review)) ?? undefined
+    );
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The ZERO-COST half of retrieval: the refs the deterministic extractor finds in text the
+ * host already has (the branch name, the commit subjects, the PR title and body), mapped
+ * into core's `RelatedRef`.
+ *
+ * This is what the Design lane writes when retrieval has not settled by its ceiling — no
+ * `gh`, no tracker endpoint, no model turn, no egress at all. The mapping lives here
+ * because `core` cannot import `adapters`, and it is the extractor's union that has to be
+ * flattened into the three facts the file renders.
+ *
+ * A bare `#12` is resolved against the review's POST TARGET, which is the repository the
+ * review will be published to — not the project's open path, which in a many-repo
+ * workspace names whichever repo came first. No post target ⇒ no URL, and the label stays
+ * the bare `#12` the author actually wrote.
+ *
+ * A tracker key gets a URL only when the configured endpoint gives one that a browser can
+ * open: JIRA's `<base>/browse/<KEY>`. Linear's configured base is a GraphQL endpoint and
+ * the issue's own URL only comes back with the fetch, so a Linear key carries none rather
+ * than a link that 404s.
+ */
+export function extractRelatedRefs(
+  review: Review,
+  trackerConfig?: TrackerConfig,
+): readonly RelatedRef[] {
+  let patchset: Patchset;
+  try {
+    patchset = activePatchset(review);
+  } catch {
+    return [];
+  }
+  const intent = patchset.intent;
+  const refs = extractRefs(
+    {
+      ...(patchset.repository.headRef ? { branchName: patchset.repository.headRef } : {}),
+      commitMessages: intent?.commitSubjects ?? [],
+      ...(intent?.prTitle ? { prTitle: intent.prTitle } : {}),
+      ...(intent?.prBody ? { prBody: intent.prBody } : {}),
+    },
+    {
+      jiraPrefixes: trackerConfig?.jira?.projectPrefixes ?? [],
+      linearPrefixes: trackerConfig?.linear?.projectPrefixes ?? [],
+    },
+  );
+  const jiraBase = trackerConfig?.jira?.baseUrl?.replace(/\/+$/, "");
+  return refs.map((ref): RelatedRef => {
+    if (ref.kind === "github") {
+      const repo = ref.repo ?? review.postTarget?.repo;
+      const label = ref.repo
+        ? `${ref.repo.owner}/${ref.repo.name}#${ref.number}`
+        : `#${ref.number}`;
+      return {
+        label,
+        ...(repo
+          ? { url: `https://github.com/${repo.owner}/${repo.name}/issues/${ref.number}` }
+          : {}),
+        provenance: ref.provenance.source,
+      };
+    }
+    return {
+      label: ref.key,
+      ...(ref.tracker === "jira" && jiraBase ? { url: `${jiraBase}/browse/${ref.key}` } : {}),
+      provenance: ref.provenance.source,
+    };
+  });
 }
 
 /** The outcome of the snapshot-on-open generation, for honest reporting/telemetry. */

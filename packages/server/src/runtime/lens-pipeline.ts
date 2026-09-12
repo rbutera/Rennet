@@ -35,6 +35,9 @@ import {
   type Omission,
   overridesForHarness,
   type RegisterLintContext,
+  type RelatedRef,
+  relatedContextFile,
+  relatedContextRefsFile,
   reviewedDiffCommand,
   type SiblingCitations,
   stampDeltas,
@@ -62,6 +65,7 @@ import {
   type CouncilModel,
   type CouncilOverrides,
   type CouncilResolveContext,
+  type DossierItem,
   type DraftBoard,
   DraftBoardSchema,
   type DraftElement,
@@ -955,6 +959,57 @@ export function lensRetryBudget(lens: LintTarget, boardAttempt: number): number 
   return boardAttempt <= 0 ? first : repeat;
 }
 
+/**
+ * The CEILING on the Design lane's wait for related-context retrieval
+ * (design-overview-fallback D3) — 120 s.
+ *
+ * The context directory is written before a seat starts, so a file the Design seat is to
+ * read has to exist at open. Retrieval is already running (it is kicked at review open);
+ * on an ordinary branch it is a few `gh` fetches — 15 s apiece at most, from
+ * `GITHUB_REQUEST_TIMEOUT_MS` — plus one light-tier council turn, and the lane continues
+ * the MOMENT it settles. This is not a delay, it is the bound: a hung tracker endpoint or
+ * a stalled model turn must not hold the slowest lane open indefinitely.
+ *
+ * 120 s is a CHOSEN bound, not a measurement. Task 4.3 records what retrieval actually
+ * takes on the drives so a later change can tighten it from a number.
+ *
+ * Only the seat path waits, and only when the host located no specification: a
+ * host-located Design lane and the deterministic assembler never call retrieval at all.
+ */
+export const RELATED_CONTEXT_WAIT_MS = 120_000;
+
+/** The lane's own line while it waits. One sentence, naming the fact, not the machinery. */
+export const RELATED_CONTEXT_WAITING = "waiting for related issues";
+
+/** What {@link raceCeiling} yields when the ceiling won. Distinct from `undefined`, which
+ *  is retrieval ANSWERING with nothing — the two write different files. */
+const CEILING = Symbol("related-context-ceiling");
+
+/**
+ * `promise`, or {@link CEILING} after `ms`.
+ *
+ * ONE `setTimeout`, always cleared: a fake clock can advance it, and the real one does not
+ * keep a 120 s handle alive behind a lane that finished in two. A rejection is folded to
+ * `undefined` — this is a wait for garnish, and a lane that cannot open because retrieval
+ * threw is the spinner D3 refuses.
+ */
+async function raceCeiling<T>(
+  promise: Promise<T>,
+  ms: number,
+): Promise<T | undefined | typeof CEILING> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise.catch(() => undefined),
+      new Promise<typeof CEILING>((resolve) => {
+        timer = setTimeout(() => resolve(CEILING), ms);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
 // ── Per-phase timing (#725 D4 / #726 D8) ──
 
 /** What ran a seat — the Council routes per job, so this is read off the resolution, never
@@ -1177,6 +1232,34 @@ export interface LensPipelineDeps {
    * found rather than searching for them. Absent ⇒ the seat's own investigation.
    */
   readonly designSources?: readonly LocatedDesignSource[];
+  /**
+   * The dossier related-context retrieval stored for this review — the issues and pull
+   * requests the host already fetched from this branch's refs (design-overview-fallback
+   * D3). Resolves with the items, or `undefined` when retrieval failed or stored nothing.
+   *
+   * Called by the DESIGN lane ONLY, and only when it is about to open its seat with no
+   * located specification ({@link designSources} undefined and {@link assembleDesignBoard}
+   * having produced no board). It is awaited against {@link RELATED_CONTEXT_WAIT_MS}, and
+   * whatever it yields is written as `related-context.md` in the Design seat's own file
+   * set. Absent ⇒ the lane writes no related-context file and waits for nothing.
+   *
+   * Never a second retrieval: the composition root hands over the promise the review-open
+   * kick already holds, so joining it costs nothing and a lane that joins late resolves
+   * immediately.
+   */
+  readonly relatedContext?: () => Promise<readonly DossierItem[] | undefined>;
+  /**
+   * The refs the deterministic extractor finds in the same inputs retrieval reads — zero
+   * cost, no egress — for the case where the wait above hits its ceiling.
+   *
+   * Separate from {@link relatedContext} because the two answer different questions and
+   * only one of them can be computed synchronously: a ref list is pure string logic over
+   * the branch name, the commit subjects and the PR paper, and the mapping from the
+   * extractor's union lives in `@rennet/adapters` (core cannot import adapters, and this
+   * pipeline should not learn the extractor's shape). Absent ⇒ past the ceiling the lane
+   * writes nothing rather than an empty file.
+   */
+  readonly relatedRefs?: () => readonly RelatedRef[];
   /** The PR worktree the drafter sessions are rooted at (D1). */
   readonly repoRoot: string;
   /**
@@ -1271,6 +1354,17 @@ export interface LensPipelineDeps {
    * waiting for the citations its board is the complement of (#865, D16c).
    */
   readonly onLensLaneStart?: (lens: LensKind) => void;
+  /**
+   * A LANE-level line, for something the HOST is doing on a running lane's behalf before
+   * that lane has a seat thread to speak for it (design-overview-fallback D3).
+   *
+   * The lanes tracker's `progress` keys by SEAT and drops a publication for a seat it has
+   * no entry for, which is exactly the state the Design lane is in while it waits for
+   * related-context retrieval: running, with nothing in flight it could name. One line,
+   * one existing wire field (`latest` on a running lane) — not a new state — so a wait the
+   * reviewer would otherwise read as a stalled lane says what it is.
+   */
+  readonly onLensLaneNote?: (lens: LensKind, text: string) => void;
   /**
    * The durable home for a board's validation metadata (finding 3): the document
    * opening and validation blemishes the whiteboard event log cannot carry.
@@ -2114,6 +2208,48 @@ export async function runLensPipeline(deps: LensPipelineDeps): Promise<LensPipel
       ? seatContext
       : { dir: contextDir, files: [...seatFiles, ...designOnlyFiles] };
 
+  /**
+   * `related-context.md`, written LATE and only for a Design seat that is about to run
+   * without a located specification (design-overview-fallback D3).
+   *
+   * Late, and not up here with `pr.md` and `design-sources.md`, because the condition is
+   * not knowable here: D3 waits only when `designSources` is undefined AND the assembler
+   * produced no board, and the assembler's answer is computed inside the Design lane. So
+   * the lane calls this, and the host-located path and the assembler path never do — which
+   * is the spec's "the host-located and assembler paths SHALL NOT wait", executed rather
+   * than asserted.
+   *
+   * It goes through the SAME sink: `context.add` replaces by name and re-writes the whole
+   * set, so the `README.md` index lists this file beside the others, which is how the
+   * Design prompt comes to name it at all. The returned ref extends the Design seat's own
+   * `files` list, exactly as `pr.md` extends it above.
+   *
+   * `undefined` ⇒ nothing changed: no `relatedContext` dep, no items and no refs, or no
+   * context writer at all. A prompt never names a file that was not written.
+   */
+  const relatedContextForDesign = async (): Promise<DrafterContextRef | undefined> => {
+    const retrieval = deps.relatedContext?.();
+    if (retrieval === undefined) return undefined;
+    // Said before the await, because it is true at that instant and the lane has no seat
+    // thread yet to say anything else. On the ordinary branch retrieval has already
+    // settled and this line is replaced by the seat's own within a tick.
+    deps.onLensLaneNote?.("design", RELATED_CONTEXT_WAITING);
+    const settled = await raceCeiling(retrieval, RELATED_CONTEXT_WAIT_MS);
+    // Past the ceiling — or retrieval answered with nothing at all — the file carries the
+    // refs the extractor already found, with their URLs and a line saying retrieval had
+    // not finished, so the seat can fetch one itself. Retrieval answering with an EMPTY
+    // dossier is a real answer: `relatedContextFile([])` is `undefined` and no file is
+    // written, which is the "branch with no refs writes no file" scenario.
+    const file =
+      settled === CEILING || settled === undefined
+        ? relatedContextRefsFile(deps.relatedRefs?.() ?? [])
+        : relatedContextFile(settled);
+    if (file === undefined) return undefined;
+    const dir = context.add([file]);
+    if (dir === undefined) return undefined;
+    return { dir, files: [...seatFiles, ...designOnlyFiles, file] };
+  };
+
   // Every lens board exists BEFORE any seat thread does (`board-tool-authoring`): empty,
   // `drafting`, addressable. Two things follow, and both are the point. A lane that writes
   // nothing settles over a board that was already there rather than over a missing one; and
@@ -2199,6 +2335,11 @@ export async function runLensPipeline(deps: LensPipelineDeps): Promise<LensPipel
       lens === "design" ? designContext : seatContext,
       reportBoard,
       derivedMembers,
+      // Only when there is something to join. A pipeline with no `relatedContext` dep must
+      // reach its Design seat in exactly the ticks it did before D3 existed — an `await`
+      // that always resolves `undefined` is still an await, and the lane-ordering tests
+      // read microtask timing.
+      lens === "design" && deps.relatedContext !== undefined ? relatedContextForDesign : undefined,
     );
     // The lane is done, whichever way it went: revoke its seats' addresses now rather than
     // on a liveness timeout (D8). A settled lane whose credentials still worked would let
@@ -3151,6 +3292,8 @@ async function runLensBoard(
   context: DrafterContextRef | undefined,
   reportBoard?: DraftBoard,
   derivedMembers?: readonly ChangedRegion[],
+  /** Design only, and only on the model path: the bounded related-context wait (D3). */
+  relatedContextForDesign?: () => Promise<DrafterContextRef | undefined>,
 ): Promise<LensBoardOutcome> {
   const clock = deps.now ?? Date.now;
   const spans = createSeatSpans(clock);
@@ -3167,6 +3310,7 @@ async function runLensBoard(
       context,
       reportBoard,
       derivedMembers,
+      relatedContextForDesign,
     );
   } finally {
     const emit = deps.onPhaseTiming;
@@ -3251,6 +3395,13 @@ async function draftLensBoard(
   reportBoard?: DraftBoard,
   /** The regions the host places on a DERIVED board before its seat's first turn (D16). */
   derivedMembers?: readonly ChangedRegion[],
+  /**
+   * Design only: write `related-context.md` and hand back the Design seat's extended
+   * context ref (design-overview-fallback D3). Supplied by the caller for the Design lane
+   * and called ONLY on the model path with no located specification, so the host-located
+   * and assembler paths never wait and never retrieve.
+   */
+  relatedContextForDesign?: () => Promise<DrafterContextRef | undefined>,
 ): Promise<LensBoardOutcome> {
   // The lane its seats write into, opened empty and `drafting` before any seat thread
   // existed (task 3.1). There is no board without one: a seat writes through tools, so a
@@ -3271,7 +3422,6 @@ async function draftLensBoard(
     await deps.readPrompt(LENS_PROMPT_FILES[lens]),
     Object.fromEntries(partials),
   );
-  const basePrompt = renderDrafterPrompt(promptText, deps.deltaPacket, context);
 
   // #725 D4 — this lane's repair budget for this whole-board attempt.
   const retryCap = lensRetryBudget(lens, deps.boardAttempt ?? 0);
@@ -3308,6 +3458,25 @@ async function draftLensBoard(
       assembledDesign = undefined;
     }
   }
+  // The Design lane's related-context wait (D3), HERE and nowhere else — after the
+  // assembler has declined and only when the host located no specification. Both
+  // conditions are read at the one point where both answers exist: `designSources` is a
+  // dep, `assembledDesign` is what the line above just computed. A Design board that the
+  // assembler produced, or a seat that opens on `design-sources.md`, reaches this line
+  // with one of the two false and never touches retrieval.
+  //
+  // The file lands through the pipeline's one context sink, so the seat's prompt names it
+  // off the same README index as `pr.md`. `undefined` back means nothing was written —
+  // no dep, no items, no refs — and the seat opens on exactly the context it would have.
+  const lensContext =
+    lens === "design" &&
+    assembledDesign === undefined &&
+    deps.designSources === undefined &&
+    relatedContextForDesign !== undefined
+      ? ((await relatedContextForDesign()) ?? context)
+      : context;
+  const basePrompt = renderDrafterPrompt(promptText, deps.deltaPacket, lensContext);
+
   if (assembledDesign !== undefined) {
     draft = { board: assembledDesign, attempts: 0 };
   } else if (lens === "flagged") {
@@ -3323,7 +3492,7 @@ async function draftLensBoard(
     const compiled = await runFlaggedReviewCompile(deps, council, lane, {
       reviewPromptText,
       compilePromptText: promptText,
-      context,
+      context: lensContext,
       retryCap,
       wrapSeat: spans.wrap,
     });
