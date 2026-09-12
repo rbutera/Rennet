@@ -16,7 +16,7 @@
 
 import { type CSSProperties, type JSX, useEffect, useRef, useState } from "react";
 import { RennetBrandMark } from "../brand-mark";
-import { createSphereEngine, type LiquidSphereState, type SphereEngine } from "./engine";
+import type { LiquidSphereState, SphereEngine } from "./engine";
 
 export type { LiquidSphereState };
 
@@ -33,13 +33,18 @@ export interface LiquidSphereProps {
 /** Which of the two paths rendered. Mirrored onto `data-liquid-sphere`. */
 type RenderPath = "live" | "static";
 
-/** True when the user has asked the OS for reduced motion. Never throws. */
-function prefersReducedMotion(): boolean {
+/** The OS reduced-motion query, or null where matchMedia is missing. Never throws. */
+function reducedMotionQuery(): MediaQueryList | null {
   try {
-    return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    return window.matchMedia("(prefers-reduced-motion: reduce)");
   } catch {
-    return false;
+    return null;
   }
+}
+
+/** True when the user has asked the OS for reduced motion. */
+function prefersReducedMotion(): boolean {
+  return reducedMotionQuery()?.matches ?? false;
 }
 
 /**
@@ -68,6 +73,56 @@ function canRenderLive(): boolean {
   return hasWebGL();
 }
 
+/**
+ * Run the frame loop for a built engine, only while its canvas is both on screen and
+ * in a visible document. Returns the stop function. Stopping is a cancelled rAF and
+ * nothing else: the engine clamps its own delta, so a resume after any pause takes one
+ * 50 ms step rather than jumping the motion forward by the whole gap.
+ */
+function run(live: SphereEngine, mount: HTMLElement): () => void {
+  let raf = 0;
+  let onScreen = true;
+  let documentVisible = document.visibilityState === "visible";
+
+  const tick = () => {
+    live.frame();
+    raf = requestAnimationFrame(tick);
+  };
+  const sync = () => {
+    const shouldRun = onScreen && documentVisible;
+    if (shouldRun && raf === 0) raf = requestAnimationFrame(tick);
+    else if (!shouldRun && raf !== 0) {
+      cancelAnimationFrame(raf);
+      raf = 0;
+    }
+  };
+
+  const onVisibilityChange = () => {
+    documentVisible = document.visibilityState === "visible";
+    sync();
+  };
+  document.addEventListener("visibilitychange", onVisibilityChange);
+
+  const observer =
+    typeof IntersectionObserver === "function"
+      ? new IntersectionObserver((entries) => {
+          onScreen = entries.some((entry) => entry.isIntersecting);
+          sync();
+        })
+      : null;
+  observer?.observe(mount);
+
+  // Draw from the first frame rather than waiting for the observer's opening
+  // callback, which is async and would blank a mark that is already on screen.
+  sync();
+
+  return () => {
+    document.removeEventListener("visibilitychange", onVisibilityChange);
+    observer?.disconnect();
+    if (raf !== 0) cancelAnimationFrame(raf);
+  };
+}
+
 export function LiquidSphere({ size, state, title, className }: LiquidSphereProps): JSX.Element {
   const host = useRef<HTMLDivElement | null>(null);
   const engine = useRef<SphereEngine | null>(null);
@@ -75,6 +130,7 @@ export function LiquidSphere({ size, state, title, className }: LiquidSphereProp
   // because the engine is built once: every later change reaches it through the two
   // small effects below, which is what keeps the blend eased and the phases continuous.
   const initial = useRef({ size, state });
+  const latest = useRef({ size, state });
   const [path, setPath] = useState<RenderPath>(() => (canRenderLive() ? "live" : "static"));
 
   useEffect(() => {
@@ -82,64 +138,43 @@ export function LiquidSphere({ size, state, title, className }: LiquidSphereProp
     const mount = host.current;
     if (!mount) return;
 
-    let live: SphereEngine;
-    try {
-      live = createSphereEngine(initial.current);
-    } catch {
-      // The probe said yes and the real context still refused. Same landing as the
-      // other two causes: the static mark, no throw.
-      setPath("static");
-      return;
-    }
-    engine.current = live;
-    mount.appendChild(live.canvas);
+    // three.js arrives on its own chunk, after first paint. The static mark is
+    // already the fallback, so until the engine exists the root simply stays
+    // empty-but-sized for the few frames the import takes; `cancelled` covers an
+    // unmount that lands before it resolves.
+    let cancelled = false;
+    let live: SphereEngine | null = null;
+    let stop: (() => void) | null = null;
 
-    // The loop burns GPU on every frame it draws, so it runs only while this canvas is
-    // both on screen and in a visible document. Stopping is a cancelled rAF and nothing
-    // else: the engine clamps its own delta, so a resume after any pause takes one
-    // 50 ms step rather than jumping the motion forward by the whole gap.
-    let raf = 0;
-    let onScreen = true;
-    let documentVisible = document.visibilityState === "visible";
-
-    const tick = () => {
-      live.frame();
-      raf = requestAnimationFrame(tick);
-    };
-    const sync = () => {
-      const shouldRun = onScreen && documentVisible;
-      if (shouldRun && raf === 0) raf = requestAnimationFrame(tick);
-      else if (!shouldRun && raf !== 0) {
-        cancelAnimationFrame(raf);
-        raf = 0;
-      }
-    };
-
-    const onVisibilityChange = () => {
-      documentVisible = document.visibilityState === "visible";
-      sync();
-    };
-    document.addEventListener("visibilitychange", onVisibilityChange);
-
-    const observer =
-      typeof IntersectionObserver === "function"
-        ? new IntersectionObserver((entries) => {
-            onScreen = entries.some((entry) => entry.isIntersecting);
-            sync();
-          })
-        : null;
-    observer?.observe(mount);
-
-    // Draw from the first frame rather than waiting for the observer's opening
-    // callback, which is async and would blank a mark that is already on screen.
-    sync();
+    import("./engine")
+      .then(({ createSphereEngine }) => {
+        if (cancelled) return;
+        try {
+          live = createSphereEngine(initial.current);
+        } catch {
+          // The probe said yes and the real context still refused. Same landing as
+          // the other two causes: the static mark, no throw.
+          setPath("static");
+          return;
+        }
+        engine.current = live;
+        // Props may have moved on while the chunk loaded.
+        live.setSize(latest.current.size);
+        live.setTarget(latest.current.state);
+        mount.appendChild(live.canvas);
+        stop = run(live, mount);
+      })
+      .catch(() => {
+        if (!cancelled) setPath("static");
+      });
 
     return () => {
-      document.removeEventListener("visibilitychange", onVisibilityChange);
-      observer?.disconnect();
-      if (raf !== 0) cancelAnimationFrame(raf);
-      live.canvas.remove();
-      live.dispose();
+      cancelled = true;
+      stop?.();
+      if (live) {
+        live.canvas.remove();
+        live.dispose();
+      }
       engine.current = null;
     };
     // `path` ONLY. Adding `size` or `state` here would tear the engine down and build a
@@ -147,9 +182,20 @@ export function LiquidSphere({ size, state, title, className }: LiquidSphereProp
     // blend and the continuous phases exist to avoid.
   }, [path]);
 
+  // Reduced motion can change while we are mounted (System Settings, a profile
+  // switch). Follow it both ways: to static at once, and back to live on release.
   useEffect(() => {
+    const query = reducedMotionQuery();
+    if (!query) return;
+    const onChange = () => setPath(query.matches || !hasWebGL() ? "static" : "live");
+    query.addEventListener("change", onChange);
+    return () => query.removeEventListener("change", onChange);
+  }, []);
+
+  useEffect(() => {
+    latest.current = { size, state };
     engine.current?.setSize(size);
-  }, [size]);
+  }, [size, state]);
 
   useEffect(() => {
     engine.current?.setTarget(state);

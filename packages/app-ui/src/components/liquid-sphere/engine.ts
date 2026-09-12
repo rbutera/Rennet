@@ -79,9 +79,30 @@ export interface SphereEngineOptions {
  * Build a sphere engine. Throws if the browser refuses a WebGL context; the caller
  * treats that as "render the static mark instead".
  */
-export function createSphereEngine({ size, state }: SphereEngineOptions): SphereEngine {
+export function createSphereEngine(options: SphereEngineOptions): SphereEngine {
   const renderer = new WebGLRenderer({ antialias: true, alpha: true, premultipliedAlpha: false });
-  renderer.setPixelRatio(Math.min(globalThis.devicePixelRatio || 1, 2));
+  try {
+    return buildSphereEngine(renderer, options);
+  } catch (error) {
+    // Anything after the context exists (the environment map, a shader compile) can
+    // still throw. Hand the context back before rethrowing so a failed build does not
+    // hold one of the browser's few live contexts for the life of the page.
+    renderer.dispose();
+    renderer.forceContextLoss();
+    throw error;
+  }
+}
+
+/** Clamp the display's ratio: 3x panels cost 9x the pixels for no visible gain at 24 px. */
+function pixelRatio(): number {
+  return Math.min(globalThis.devicePixelRatio || 1, 2);
+}
+
+function buildSphereEngine(
+  renderer: WebGLRenderer,
+  { size, state }: SphereEngineOptions,
+): SphereEngine {
+  renderer.setPixelRatio(pixelRatio());
   renderer.setSize(size, size);
   renderer.setClearColor(0x000000, 0);
   renderer.toneMapping = ACESFilmicToneMapping;
@@ -258,6 +279,8 @@ export function createSphereEngine({ size, state }: SphereEngineOptions): Sphere
   return {
     canvas: renderer.domElement,
     setSize(next) {
+      // Re-read the ratio: the window may have moved to a display with a different one.
+      renderer.setPixelRatio(pixelRatio());
       renderer.setSize(next, next);
       const wanted = segmentsForSize(next);
       if (wanted === segments) return;

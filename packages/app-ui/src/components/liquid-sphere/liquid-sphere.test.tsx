@@ -98,7 +98,7 @@ describe("LiquidSphere fallback", () => {
     }
   });
 
-  it("lands on the static mark when the renderer refuses the context the probe found", () => {
+  it("lands on the static mark when the renderer refuses the context the probe found", async () => {
     const media = stubMatchMedia(false);
     const probe = stubWebGLProbe();
     // three.js logs the refusal before rethrowing; the component catches the throw, and
@@ -109,7 +109,10 @@ describe("LiquidSphere fallback", () => {
       // The probe said yes — this is the path the previous test proves is skipped.
       expect(probe.getContext).toHaveBeenCalled();
       // …and the refusal landed on the static mark instead of throwing into the tree.
-      expect(root(container)?.getAttribute("data-liquid-sphere")).toBe("static");
+      // three.js loads on its own chunk, so the refusal, and the landing, are a tick away.
+      await vi.waitFor(() => {
+        expect(root(container)?.getAttribute("data-liquid-sphere")).toBe("static");
+      });
       expect(container.querySelector("canvas")).toBeNull();
       expect(container.querySelector("svg")).not.toBeNull();
     } finally {
