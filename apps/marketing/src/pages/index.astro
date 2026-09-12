@@ -3,6 +3,7 @@ import "@fontsource-variable/fraunces/wght.css";
 import "@fontsource-variable/geist/wght.css";
 import "@fontsource-variable/newsreader/wght.css";
 import logoWhite from "../../../../brand/exports/logo/svg/lockup-horizontal-white.svg?url";
+import Capture from "../components/Capture.astro";
 import CategoryStatement from "../components/CategoryStatement.astro";
 import "../styles/global.css";
 
@@ -19,14 +20,6 @@ const diffLines = [
   ["+", 68, "add"],
   ["-", 54, "remove"],
   [" ", 87, "plain"],
-];
-
-const lenses = [
-  ["Spec", "Read the change against what it promised."],
-  ["Sequence", "Follow the work in the order it builds on itself."],
-  ["Decisions", "See the judgment calls hidden inside the change."],
-  ["Flagged", "Work through what the models flagged, and where they disagree."],
-  ["Noise", "Keep generated churn out of your way."],
 ];
 ---
 
@@ -83,6 +76,7 @@ const lenses = [
       </a>
       <nav aria-label="Primary navigation">
         <a href="#workflows">Workflows</a>
+        <a href="#lenses">Lenses</a>
         <a href="https://docs.rennet.dev">Docs</a>
         <a href={githubUrl}>GitHub</a>
         <a class="button nav-download" href={downloadUrl} aria-label="Download Rennet for macOS or Windows">Download</a>
@@ -286,17 +280,73 @@ const lenses = [
         </div>
       </section>
 
-      <section class="product section shell">
+      <section class="lenses section shell" id="lenses">
+        <div class="section-heading">
+          <h2>Five angles.<br />One complete review.</h2>
+          <p>Four lens boards carry the reading: what the branch promised, how it builds, what it decided, and what the models flagged. A fifth, Noise, keeps lockfile and import-order churn out of your way. Every board cites the lines it read, and the cited code opens right under the sentence that cites it. Below, the shipped app reviewing a fixture branch that adds per-organisation rate limiting to a small service called atlas.</p>
+        </div>
+      </section>
+
+      <section class="showcase section shell" id="design">
+        <div class="showcase-copy">
+          <p class="showcase-label">Design</p>
+          <h2>Start from what the branch promised.</h2>
+          <p>The Design lens reads the branch against its spec. On atlas it finds the OpenSpec change for rate limiting and lays out each requirement as the SHALL, its trigger-and-outcome scenarios, and trace chips into the code and tests that answer it. Open a chip and the cited span opens beneath the requirement, so the promise and the lines that keep it sit together on one screen.</p>
+        </div>
+        <Capture name="lens-design" label="Design" alt="The Design lens showing the requirement 'Requests are limited per organisation': the SHALL sentence, two trigger-and-outcome scenarios, trace chips for the spec, bucket, middleware and test files, and the cited take function from src/rate-limit/bucket.ts revealed beneath them. The conversation pane on the left holds the reviewer's questions about the branch." />
+      </section>
+
+      <section class="showcase flip section shell" id="sequence">
+        <div class="showcase-copy">
+          <p class="showcase-label">Sequence</p>
+          <h2>Read the work in the order it builds.</h2>
+          <p>The Sequence lens walks the change as steps, each a paragraph over the code it explains. Step two here is the token bucket: <code>take</code> is a pure function over the bucket, the policy and the clock, refilled from elapsed time on every read, which is why there is no timer anywhere in the branch. The annotation under the span names the clamps that keep it silent, the burst cap and the guard against a clock that went backwards. You still read the code; the board tells you which part to read next.</p>
+        </div>
+        <Capture name="lens-sequence" label="Sequence" alt="The Sequence lens at its second step, 'The bucket: refill on read, then take one token', with the take function from src/rate-limit/bucket.ts shown as highlighted TypeScript beneath the prose and an annotation about its Math.min and Math.max clamps under the code." />
+      </section>
+
+      <section class="showcase section shell" id="decisions">
+        <div class="showcase-copy">
+          <p class="showcase-label">Decisions</p>
+          <h2>See the judgment calls hidden inside the change.</h2>
+          <p>Five judgment calls inside this branch: two stated by the proposal, three inferred from the code and marked as such. Each carries its rationale, the alternatives not taken, and the evidence. The first is one refill-on-read bucket per organisation, chosen over a fixed window that lets twice the limit through at the edge and a sliding log that costs storage per request, cited to the exact lines of <code>bucket.ts</code>. The lens surfaces the call; whether it was the right one is yours to decide.</p>
+        </div>
+        <Capture name="lens-decisions" label="Decisions" alt="The Decisions lens from its title: 'Five judgment calls inside the change', then the first decision, 'One refill-on-read bucket', with its rationale, two alternatives not taken, evidence chips for bucket.ts, and the cited bucket code revealed beneath." />
+      </section>
+
+      <section class="showcase flip section shell" id="flagged">
+        <div class="showcase-copy">
+          <p class="showcase-label">Flagged</p>
+          <h2>Work through what the models flagged, and where they disagree.</h2>
+          <p>Three open findings on this branch, one high. Claude and Codex both raised it, a Redis outage that removes every limit and leaves one log line per request as its only trace, and they disagree on how serious it is; the board says so with a severity split rather than averaging them, and it marks the shared-store race further down as Claude's alone. Each finding cites its lines and carries a lifted fix, and the actions are yours: dismiss it, discuss it, or request the change. Rennet flags; the verdict is yours.</p>
+        </div>
+        <Capture name="lens-flagged" label="Flagged" alt="The Flagged lens from its title: three open findings, one high. The high finding, 'A Redis outage removes every limit, and the only trace is one log line per request', is open with a 'severity split' badge, its lifted fix, the Dismiss, Discuss and Request This Change actions, and the failOpen wrapper from src/rate-limit/store.ts cited beneath." />
+      </section>
+
+      <section class="product section shell" id="diff">
         <div class="section-heading">
           <h2>The code never disappears.</h2>
-          <p>Move from overview to evidence without losing your place. Rennet changes the reading order, not the need to read.</p>
+          <p>Every citation on a board points into the same built-in Diff view: the changed-files rail with its counts, the hunk in place with the app's own highlighting, and a marker on any line you have staged something against. Here it is open on the middleware, with the reviewer's request change sitting on the 429 lines. Move from overview to evidence without losing your place; Rennet changes the reading order, not the need to read.</p>
         </div>
-        <figure class="product-frame">
-          <div class="window-bar"><span class="traffic"><i></i><i></i><i></i></span><span>atlas · feat/rate-limiting</span><span>Sequence</span></div>
-          <img class="shot-light" src="/product/lens-sequence-light.png" alt="Rennet reviewing a feature branch: the Sequence lens explains the token bucket step of per-organisation rate limiting with the cited TypeScript shown beneath it, while the conversation pane beside it holds the reviewer's questions about the branch and the orchestrator's answers" width="1536" height="1024" loading="lazy" />
-          <img class="shot-dark" src="/product/lens-sequence-dark.png" alt="The same review in the dark theme" width="1536" height="1024" loading="lazy" />
-          <figcaption>A fixture branch reviewed in the shipped app</figcaption>
-        </figure>
+        <Capture name="diff-viewer" label="Diff" alt="Rennet's built-in Diff view on src/rate-limit/middleware.ts, a 37-line added file shown as highlighted TypeScript, with a rail of every changed file and its line counts on the right and two comment markers on lines 31 and 32 where a request change is staged." />
+      </section>
+
+      <section class="showcase section shell" id="explain">
+        <div class="showcase-copy">
+          <p class="showcase-label">Explain and Request Changes</p>
+          <h2>Select a range. Ask about it, or ask for it to change.</h2>
+          <p>Highlight any lines on a board or in the diff and the selection toolbar offers Comment, Request Changes and Explain. Explain puts the question to the conversation beside the review, about exactly those lines. Request Changes stages an ask against them that the next work order carries, citation and all. Here the reviewer has selected the <code>failOpen</code> wrapper under the high finding, where the lifted fix says to count fail-open decisions and mark the response.</p>
+        </div>
+        <Capture name="explain-request-changes" label="Flagged" alt="The Flagged lens with the failOpen function selected in the cited store.ts code and a selection toolbar floating above it offering Comment, Request Changes and Explain. The high finding's fix and its Dismiss, Discuss and Request This Change actions are visible above the selection." />
+      </section>
+
+      <section class="showcase flip section shell" id="handoff">
+        <div class="showcase-copy">
+          <p class="showcase-label">Hand-off and pull request</p>
+          <h2>Your calls become a work order. The delta comes back to you.</h2>
+          <p>Every request change you stage lands in the Changes lane with its cited lines and its comment thread. Dispatch Round hands the whole set to your own coding agent as one work order, citations included. When the round is back, Rennet re-reads the branch and shows you the delta by its shape: the sections the round touched open, the ones that carried forward stay folded, and every ask is checked against the round's diff rather than the worker's word. When nothing is left to ask, you push the branch and open the pull request, in your own words and under your own name.</p>
+        </div>
+        <Capture name="handoff-changes" label="Changes" alt="The hand-off lane in its Changes state: one staged request change, 'Answer the 429 through json(response, 429, { error: rate limit exceeded }) so the envelope in docs/api.md holds', with its cited lines from src/rate-limit/middleware.ts revealed, its comment thread and an empty reply box, and a gold Dispatch Round button beneath." />
       </section>
 
       <section class="shells section shell">
@@ -304,13 +354,6 @@ const lenses = [
           <h2>One app. A window or a tab. Any of your machines.</h2>
           <p>Run Rennet as the desktop app or open it as a browser tab served straight from your own machine — both are the full product, no read-only mode, no feature in only one. Review from another computer or your phone by pairing it over Tailscale. There is still no hosted anything: the remote device talks straight to your machine, and it never sees a path on it.</p>
         </div>
-      </section>
-
-      <section class="lenses section shell">
-        <div><h2>Five angles.<br />One complete review.</h2><p>Change altitude without losing the decision or its evidence.</p></div>
-        <ol>
-          {lenses.map(([name, description]) => <li><h3>{name}</h3><p>{description}</p></li>)}
-        </ol>
       </section>
 
       <section class="truth section shell">

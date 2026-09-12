@@ -575,7 +575,6 @@ a[href^="http"]:not(.button)::after {
 .section-heading p,
 .conversation-copy p,
 .intelligence-copy p,
-.lenses > div > p,
 .truth p {
   max-width: 64ch;
   margin: 0;
@@ -1031,35 +1030,55 @@ a[href^="http"]:not(.button)::after {
   font-size: 11px;
 }
 
+/* The lens story: an opener, then one showcase per lens and per acting surface, each a
+   capture beside its copy. Sides alternate with .flip so the eye zigzags down the page;
+   under 1000px every showcase stacks copy over capture. */
 .lenses {
+  padding-bottom: clamp(56px, 6vw, 96px);
+}
+.lenses .section-heading {
+  margin-bottom: 0;
+}
+.lenses .section-heading h2 {
+  max-width: 10ch;
+}
+.showcase {
   display: grid;
-  grid-template-columns: 0.75fr 1.25fr;
-  gap: 10vw;
+  grid-template-columns: minmax(280px, 0.72fr) minmax(0, 1.28fr);
+  gap: clamp(40px, 6vw, 96px);
+  align-items: center;
 }
-.lenses > div > p {
-  margin-top: 30px;
+.showcase.flip .showcase-copy {
+  order: 2;
 }
-.lenses ol {
-  margin: 0;
-  padding: 0;
-  border-top: 1px solid var(--ink);
-  list-style: none;
+.showcase-label {
+  margin: 0 0 18px;
+  color: var(--gold);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
-.lenses li {
-  display: grid;
-  grid-template-columns: 0.4fr 0.6fr;
-  gap: 24px;
-  align-items: baseline;
-  padding: 26px 0;
-  border-bottom: 1px solid var(--line-strong);
+.showcase-copy h2 {
+  max-width: 14ch;
+  font-size: clamp(2rem, 3.2vw, 3.6rem);
+  line-height: 1.04;
 }
-.lenses h3 {
-  margin: 0;
-  font-size: clamp(1.5rem, 2.5vw, 2.8rem);
-}
-.lenses li p {
-  margin: 0;
+.showcase-copy p:not(.showcase-label) {
+  max-width: 44ch;
+  margin: 26px 0 0;
   color: var(--ink-soft);
+  font-family: var(--prose);
+  font-size: clamp(1.05rem, 1.35vw, 1.25rem);
+  line-height: 1.5;
+}
+.showcase-copy code {
+  font-family: var(--code);
+  font-size: 0.86em;
+  color: var(--ink);
+}
+.showcase .product-frame {
+  min-width: 0;
 }
 
 .truth {
@@ -1226,7 +1245,7 @@ a[href^="http"]:not(.button)::after {
   .conversation,
   .dual-review,
   .intelligence,
-  .lenses,
+  .showcase,
   .truth,
   .objections {
     grid-template-columns: 1fr;
@@ -1237,10 +1256,21 @@ a[href^="http"]:not(.button)::after {
   .conversation,
   .dual-review,
   .intelligence,
-  .lenses,
   .truth,
   .objections {
     gap: 64px;
+  }
+
+  .showcase {
+    gap: 40px;
+  }
+
+  .showcase.flip .showcase-copy {
+    order: 0;
+  }
+
+  .showcase-copy p:not(.showcase-label) {
+    max-width: 64ch;
   }
 
   .section-heading {
@@ -1390,7 +1420,6 @@ a[href^="http"]:not(.button)::after {
   .section-heading p,
   .conversation-copy p,
   .intelligence-copy p,
-  .lenses > div > p,
   .truth p {
     font-size: 17px;
   }
@@ -1503,13 +1532,18 @@ a[href^="http"]:not(.button)::after {
 
   .product-frame figcaption {
     position: absolute;
-    right: 10px;
-    bottom: 10px;
+    right: 8px;
+    bottom: 8px;
+    padding: 4px 8px;
+    font-size: 10px;
   }
 
-  .lenses li {
-    grid-template-columns: 1fr;
-    gap: 7px;
+  .showcase-copy p:not(.showcase-label) {
+    font-size: 17px;
+  }
+
+  .showcase-copy h2 {
+    font-size: clamp(2rem, 9.5vw, 2.6rem);
   }
 
   .truth {
