@@ -73,13 +73,15 @@ serialized diff: the capture cap is 2 MB, far above what a prompt can carry, and
 re-sending the whole diff every turn is what used to kill a lens on a large
 branch. What the drafter cites is what it actually read.
 
-The RSP noise seat is the one runner that still receives hunk lines, because its
-validator culls its groups against the offered hunk ids. That payload is compact
-JSON under a 256 KiB bound on the whole text: whole hunks in offered order until
-the next would cross it, then a marker carrying the count of hunks left out. A
-hunk the seat was not shown cannot be grouped and falls through to normal review;
-the marker says so rather than pretending the seat can find it. The payload is
-re-sent on each of its retries, so the bound is per attempt.
+The RSP noise seat reads its offer from the checkout, like every other seat. Its
+offered manifest is written to `noise-offer.json` as changed regions — each a
+path, a side, and a 1-based line range, with no hunk ids and no line bodies — and
+the prompt names that file. The seat reads the lines it groups from `git diff`, so
+the size of the change never reaches its prompt. When the runner culls a group, it
+resolves the cited region back to a hunk id off an internal map; that id is an
+internal key and never reaches the model in either direction. This replaces the
+256 KiB inline payload that rode every retry (#737) and had to count the hunks it
+dropped — a region file has nothing to drop.
 
 Ownership marks do not appear until dispatch supplies the rules, and openspec
 artifacts enter at path grain with the full parse running where the artifact

@@ -526,8 +526,9 @@ Three things follow from the thread being persistent.
   bearer it can never resolve, and against a real local MCP server that is zero requests
   where omitting the key handshakes normally.
 
-  Nothing supplies a server yet — the field is carried, and the daemon's own board server
-  is the next change.
+  The daemon supplies its own loopback board MCP server on this field now — a seat writes
+  its board by calling that server's tools, described under [The board server](#the-board-server)
+  below.
 - **Spend is per turn, and its source matters.** Claude's SDK `usage` is already
   per-turn and covers the main agent loop. Its `modelUsage` and `total_cost_usd`
   accumulate across the query runtime, including subagent, sidechain and other query-pipeline

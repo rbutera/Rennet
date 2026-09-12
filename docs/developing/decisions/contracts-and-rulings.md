@@ -176,9 +176,11 @@ flowchart TB
   human --> composition["Orchestrator composition"]
 ```
 
-The engine owns capture, invalidation, carry, and ordering. Analysis jobs emit
-RSP documents that project onto the lens boards. Retrieval replies carry
-evidence, freshness, totals, cursors, and truncation state.
+The engine owns capture, invalidation, carry, and ordering. Lens seats write
+their boards by calling the board authoring tools; they carry no output schema
+and return no document. RSP documents now project only onto the round-report
+classification and the noise-document runner, not the lens boards. Retrieval
+replies carry evidence, freshness, totals, cursors, and truncation state.
 
 Track product work and unresolved decisions in
 [GitHub issues](https://github.com/rbutera/rennet/issues).

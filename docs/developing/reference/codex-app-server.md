@@ -128,14 +128,11 @@ table also stops before spawn because Codex retains nested transport and header
 fields while merging. When Rennet supplies no policy, it skips discovery and the
 child inherits the user's configured MCP servers and plugin behavior.
 
-The board-pipeline seats are the narrow exception: `lens-draft`,
-`lens-draft-flagged`, `lens-draft-noise`, `board-post-process`, and
-`round-report` request an explicitly empty policy, because they read and inspect
-the reviewed checkout through Codex's native tools and call no MCP tool. The
-rendered table disables all ambient entries without removing repository or shell
-capability — which is what those seats need, since investigating the change is
-the whole job. Other Codex utility jobs keep inheriting the user table. The
-app-server command does not accept `--ignore-user-config`.
+Rennet can also render an explicitly empty policy: the inline table disables
+every ambient entry without removing repository or shell capability, so the
+child keeps Codex's native tools with no MCP server enabled. The app-server
+command does not accept `--ignore-user-config`, so writing an empty table is the
+only way to reach that state.
 
 The installed-CLI control reads the current configured inventory and proves both
 the empty and loopback-only policies without starting a model turn:
@@ -143,11 +140,6 @@ the empty and loopback-only policies without starting a model turn:
 ```sh
 RENNET_CODEX_BIN=/path/to/codex pnpm nx run rennet-adapters:real-mcp-isolation
 ```
-
-The worker fan-out policy follows the harness selected by the Model Council.
-Codex partition workers default to 16 lanes with that empty policy; Claude
-partition workers keep their separate 12-lane default. A run that supplies an
-explicit concurrency overrides either default.
 
 ## Discovery
 

@@ -29,12 +29,12 @@ pnpm nx show project rennet-core --json
 pnpm nx show project rennet-desktop --json
 ```
 
-The production workspace contains four apps and nine packages:
+The production workspace contains four apps and ten packages:
 
 | Area | Projects |
 |---|---|
 | Apps | `rennet-desktop`, `rennet-docs`, `rennet-marketing`, `rennet-mobile` |
-| Product packages | `rennet-protocol`, `rennet-prompts`, `rennet-core`, `rennet-adapters`, `rennet-server`, `rennet-client`, `rennet-ui`, `rennet-app-ui`, `rennet-theme` |
+| Product packages | `rennet-protocol`, `rennet-prompts`, `rennet-core`, `rennet-adapters`, `rennet-server`, `rennet-client`, `rennet-ui`, `rennet-app-ui`, `rennet-t3-chat`, `rennet-theme` |
 
 `rennet-docs-content` represents the canonical Markdown library under `docs/`.
 The root `rennet` project owns repository-wide checks. Spikes have their own Nx
@@ -55,6 +55,7 @@ flowchart TD
   client["@rennet/client"]
   ui["@rennet/ui"]
   appui["@rennet/app-ui"]
+  t3chat["@rennet/t3-chat"]
   desktop["apps/desktop"]
   mobile["apps/mobile"]
 
@@ -74,9 +75,11 @@ flowchart TD
   appui --> protocol
   appui --> theme
   appui --> ui
+  t3chat --> protocol
   desktop --> server
   desktop --> client
   desktop --> appui
+  desktop --> t3chat
   mobile --> client
   mobile --> protocol
 ```
