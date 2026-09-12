@@ -15,7 +15,13 @@ import {
   removeSidecarClaim,
   spawnSidecar,
 } from "./sidecar";
-import { bindThread, sweepThreads, type ThreadBinding, type ThreadBindingKey } from "./threads";
+import {
+  bindThread,
+  type SessionThreadCreation,
+  sweepThreads,
+  type ThreadBinding,
+  type ThreadBindingKey,
+} from "./threads";
 
 export interface T3SidecarSupervisorOptions {
   readonly dataDir: string;
@@ -98,12 +104,12 @@ export interface T3SidecarSupervisor {
      * Absent ⇒ the client mints one, which is what every caller but the session bind wants.
      */
     readonly threadId?: string;
-    /** The session briefing, appended to the provider's system prompt. Session binds only. */
-    readonly instructions?: string;
-    /** The thread's base MCP servers — Rennet's app tools. Session binds only. */
-    readonly mcpServers?: Readonly<
-      Record<string, { readonly url: string; readonly bearerTokenEnvVar?: string }>
-    >;
+    /**
+     * What a SESSION thread is created with beyond its cwd — briefing, app tools, the
+     * council's selection — resolved only if a thread is actually created. Session binds
+     * only; see `bindThread`.
+     */
+    readonly creation?: () => Promise<SessionThreadCreation>;
   }) => Promise<ThreadBinding>;
   /**
    * Archiving a session is the pruning act: delete every thread bound to any of these
@@ -240,8 +246,7 @@ export function createT3SidecarSupervisor(
       ...(input.worktreePath === undefined ? {} : { worktreePath: input.worktreePath }),
       ...(input.branch === undefined ? {} : { branch: input.branch }),
       ...(input.threadId === undefined ? {} : { threadId: input.threadId }),
-      ...(input.instructions === undefined ? {} : { instructions: input.instructions }),
-      ...(input.mcpServers === undefined ? {} : { mcpServers: input.mcpServers }),
+      ...(input.creation === undefined ? {} : { creation: input.creation }),
     });
 
   // ONE sweep at a time (review finding 2). The bindings file is a read-modify-write over a

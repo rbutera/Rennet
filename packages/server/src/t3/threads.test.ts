@@ -537,8 +537,10 @@ describe("a thread is created with the briefing only when it is the session's", 
       title: "t",
       modelSelection: SELECTION,
       threadId: "t-1",
-      instructions: "## This review\n- Patchset: branch `main`",
-      mcpServers: APP_SERVER,
+      creation: async () => ({
+        instructions: "## This review\n- Patchset: branch `main`",
+        mcpServers: APP_SERVER,
+      }),
     });
     // The id the CALLER minted, because the app-tools url above already names it: a create
     // that minted its own would hand the thread an address pointing at another thread.
@@ -578,6 +580,37 @@ describe("a thread is created with the briefing only when it is the session's", 
     expect(inputs[0]?.mcpServers).toBeUndefined();
   });
 
+  it("does not resolve the creation inputs when the binding already exists", async () => {
+    // The cost this thunk exists to avoid. Every `chat.t3Send` binds, and almost every bind
+    // finds the row below — while resolving these reads a prompt file, renders the briefing,
+    // awaits the app listener's address and asks the council what this host has installed,
+    // which can block on harness discovery. As plain fields all of that ran on every send
+    // and was thrown away; the "no installed provider" warning was logged every time too.
+    let resolved = 0;
+    const creation = async () => {
+      resolved += 1;
+      return { instructions: "## This review", mcpServers: APP_SERVER };
+    };
+    const bind = () =>
+      bindThread({
+        dataDir,
+        client,
+        repositoryRoot: REPO_A,
+        key: { kind: "session", sessionId: "review-a" },
+        title: "t",
+        modelSelection: SELECTION,
+        threadId: "t-1",
+        creation,
+      });
+    await bind();
+    expect(resolved).toBe(1);
+    await bind();
+    await bind();
+    // Still one: two more binds found the row and never asked.
+    expect(resolved).toBe(1);
+    expect(inputs).toHaveLength(1);
+  });
+
   it("refuses by name when a seat or round bind is handed the session's pair", async () => {
     for (const key of [
       { kind: "seat", generationId: "gen-a", seat: "design" },
@@ -591,7 +624,7 @@ describe("a thread is created with the briefing only when it is the session's", 
           key,
           title: "t",
           modelSelection: SELECTION,
-          instructions: "you are this review's conversation",
+          creation: async () => ({ instructions: "you are this review's conversation" }),
         }),
       ).rejects.toThrow(/carries no session briefing/);
       await expect(
@@ -602,7 +635,7 @@ describe("a thread is created with the briefing only when it is the session's", 
           key,
           title: "t",
           modelSelection: SELECTION,
-          mcpServers: APP_SERVER,
+          creation: async () => ({ mcpServers: APP_SERVER }),
         }),
       ).rejects.toThrow(/no thread-level MCP servers/);
     }

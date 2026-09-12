@@ -6,8 +6,7 @@ import { renderSessionBriefing, type SessionBriefingPatchset } from "@rennet/pro
 import { parseCommandInput, parseCommandOutput, type Review } from "@rennet/protocol";
 import { appToolNames } from "../agent-tools";
 import { sessionContextDir } from "../context-files";
-import type { ModelSelection } from "../t3/client";
-import type { ThreadBinding } from "../t3/threads";
+import type { SessionThreadCreation, ThreadBinding } from "../t3/threads";
 import type { CommandHandler, DispatchRuntime } from "./runtime";
 
 /**
@@ -62,7 +61,12 @@ export async function bindReviewThread(
     title: basename(review.repositoryRoot) || "review",
     threadId,
     ...workspace,
-    ...(await sessionThreadCreation(rt, review, threadId, workspace.worktreePath)),
+    // LAZY, and that is the point: almost every bind finds an existing row, and resolving
+    // this reads a prompt file, renders the briefing, awaits the app listener and asks the
+    // council what this host has installed. `bindThread` invokes it only when it is really
+    // about to create a thread — so an ordinary `chat.t3Send` pays none of it, and the "no
+    // installed provider" line lands in the log once per thread rather than once per send.
+    creation: () => sessionThreadCreation(rt, review, threadId, workspace.worktreePath),
   });
 }
 
@@ -105,10 +109,14 @@ function briefingContextDir(rt: DispatchRuntime, review: Review, root: string): 
  * place a session thread is ever created (session-thread-briefing 4.1): the briefing, the
  * app-tools server, and the council's routing.
  *
- * Every failure here degrades rather than costing the reviewer their thread. A listener
- * that could not bind means no tools — and the briefing then SAYS none are attached, which
- * is true — rather than no conversation; a council with no installed provider means the
- * sidecar's default model with a line in the daemon log. A bare thread is what every
+ * EVERY failure here degrades rather than costing the reviewer their thread, and the word
+ * "every" is load-bearing: it is a promise about four separate things that can throw, and
+ * a promise that guards two of them is worse than no promise, because the next reader
+ * believes it. A listener that could not bind means no tools — and the briefing then SAYS
+ * none are attached, which is true — rather than no conversation. A council with no
+ * installed provider means the sidecar's default model with a line in the daemon log. A
+ * review whose active patchset is missing, or a prompt file that cannot be read, means no
+ * briefing, with the tools and the selection still attached. A bare thread is what every
  * session had before this change, so the worst case is the old behaviour, named.
  */
 async function sessionThreadCreation(
@@ -116,13 +124,7 @@ async function sessionThreadCreation(
   review: Review,
   threadId: string,
   worktreePath: string | undefined,
-): Promise<{
-  readonly instructions?: string;
-  readonly mcpServers?: Readonly<
-    Record<string, { readonly url: string; readonly bearerTokenEnvVar?: string }>
-  >;
-  readonly modelSelection?: ModelSelection;
-}> {
+): Promise<SessionThreadCreation> {
   const seam = rt.deps.sessionThread;
   if (seam === undefined) return {};
   const warn = rt.deps.warn ?? console.warn;
@@ -140,22 +142,34 @@ async function sessionThreadCreation(
       `rennet: no installed provider answers the council's orchestrator-chat job; review ${review.id}'s thread opens on the sidecar's default model`,
     );
   }
-  const contextDir = briefingContextDir(rt, review, worktreePath ?? review.repositoryRoot);
-  const briefing = renderSessionBriefing({
-    briefing: await seam.briefingText(),
-    patchset: briefingPatchset(rt, review),
-    ...(contextDir === undefined ? {} : { contextDir }),
-    // The names the server ACTUALLY serves — the same registry projection `buildAppTools`
-    // makes — and none at all when no listener answered above.
-    toolNames: app === undefined ? [] : appToolNames(),
-  });
-  return {
-    instructions: briefing,
-    ...(app === undefined
+  const servers =
+    app === undefined
       ? {}
-      : { mcpServers: { [app.name]: { url: app.url, bearerTokenEnvVar: app.bearerTokenEnvVar } } }),
-    ...(selection === undefined ? {} : { modelSelection: selection }),
-  };
+      : {
+          mcpServers: { [app.name]: { url: app.url, bearerTokenEnvVar: app.bearerTokenEnvVar } },
+        };
+  const model = selection === undefined ? {} : { modelSelection: selection };
+  let briefing: string;
+  try {
+    // Both of these throw: `activePatchsetOf` refuses a review whose active id names no
+    // patchset ("The active patchset is missing"), and `briefingText` is a file read off
+    // the shipped prompts directory. Neither is a reason to deny the reviewer a thread.
+    const patchset = briefingPatchset(rt, review);
+    const fixed = await seam.briefingText();
+    const contextDir = briefingContextDir(rt, review, worktreePath ?? review.repositoryRoot);
+    briefing = renderSessionBriefing({
+      briefing: fixed,
+      patchset,
+      ...(contextDir === undefined ? {} : { contextDir }),
+      // The tool names the server ACTUALLY serves, and none at all when no listener
+      // answered above.
+      toolNames: app === undefined ? [] : appToolNames(),
+    });
+  } catch (error) {
+    warn(`rennet: review ${review.id}'s thread gets no briefing: ${describeThreadError(error)}`);
+    return { ...servers, ...model };
+  }
+  return { instructions: briefing, ...servers, ...model };
 }
 
 /** A thrown thing as a sentence a reviewer can read. Same shape as `t3/threads.ts`. */

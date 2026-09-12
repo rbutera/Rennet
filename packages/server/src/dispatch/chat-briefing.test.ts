@@ -109,8 +109,12 @@ function fixture(
   const captured$ = options.review ?? review(1);
   const t3Sidecar = {
     start: () => undefined,
-    threadFor: async (input: Captured) => {
-      captured.push(input);
+    // Stands in for `bindThread`, which invokes the creation thunk ONLY when it is really
+    // about to create a thread (session-thread-briefing, nit 7). Recording the RESOLVED
+    // values is what keeps these assertions about what `thread.create` receives; recording
+    // the thunk would assert that a function was passed, which is not the same claim.
+    threadFor: async (input: Captured & { readonly creation?: () => Promise<Captured> }) => {
+      captured.push({ ...input, ...(await input.creation?.()) });
       return {
         kind: "session" as const,
         repositoryRoot,
@@ -236,6 +240,41 @@ describe("bindReviewThread creates the session thread briefed and tooled", () =>
     expect(f.captured[0]?.mcpServers).toBeUndefined();
     expect(f.captured[0]?.instructions).toContain("none attached");
     expect(f.warnings.join("\n")).toContain("EADDRINUSE");
+  });
+
+  it("still opens the thread, tooled and routed, when the review has no active patchset", async () => {
+    // `activePatchsetOf` THROWS ("The active patchset is missing") — the function's own
+    // comment promises "every failure here degrades", and this was one of two that did not.
+    // A review in that state is already broken; denying it a conversation is how a reviewer
+    // loses the one surface that could tell them so.
+    const broken = { ...review(1), activePatchsetId: "ps-gone" };
+    const f = fixture({ review: broken });
+    await bindReviewThread(f.rt, "rev-1");
+    expect(f.captured[0]?.instructions).toBeUndefined();
+    expect(f.captured[0]?.mcpServers).toBeDefined();
+    expect(f.captured[0]?.modelSelection).toBe(SELECTION);
+    expect(f.warnings.join("\n")).toContain("no briefing");
+  });
+
+  it("still opens the thread when the briefing's prompt file cannot be read", async () => {
+    // The other one: `briefingText` is a file read off the shipped prompts directory.
+    const f = fixture({
+      sessionThread: {
+        briefingText: () => {
+          throw new Error("ENOENT: prompts/session-briefing.md");
+        },
+        appServerFor: async (threadId) => ({
+          name: "rennet_app",
+          url: `http://127.0.0.1:4311/threads/${threadId}`,
+          bearerTokenEnvVar: "RENNET_APP_BEARER",
+        }),
+        modelSelection: async () => SELECTION,
+      },
+    });
+    await bindReviewThread(f.rt, "rev-1");
+    expect(f.captured[0]?.instructions).toBeUndefined();
+    expect(f.captured[0]?.mcpServers).toBeDefined();
+    expect(f.warnings.join("\n")).toContain("ENOENT");
   });
 
   it("creates the thread bare when no briefing was composed, exactly as before the change", async () => {
