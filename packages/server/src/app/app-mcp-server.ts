@@ -484,7 +484,10 @@ export function refusalText(error: unknown): string {
   // CJK or emoji refusal and `toString` renders the remainder as U+FFFD, so the model is
   // handed a replacement character in a message it is meant to act on. Same helper the
   // ceiling's own shrink loop uses, for the same reason.
-  return `${headAtCodePointBoundary(message, REFUSAL_TEXT_CAP)}\n… and ${utf8(message) - REFUSAL_TEXT_CAP} more bytes of this refusal, elided.`;
+  // The count is what was actually dropped: the kept prefix can be shorter than the cap
+  // after backing off a multibyte boundary, and a stated number must match the bytes.
+  const kept = headAtCodePointBoundary(message, REFUSAL_TEXT_CAP);
+  return `${kept}\n… and ${utf8(message) - utf8(kept)} more bytes of this refusal, elided.`;
 }
 
 // ── The universal ceiling (item 1, both reviewers) ───────────────────────────────

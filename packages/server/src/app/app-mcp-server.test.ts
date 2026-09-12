@@ -373,6 +373,13 @@ describe("what a call carries into dispatch", () => {
     const text = blocks(answer)[0]?.text ?? "";
     expect(text).toContain("elided");
     expect(text).not.toContain("\uFFFD");
+    // The stated count matches the bytes actually dropped: 2,000 × 3 B = 6,000 B in, the
+    // cap backs off to a code point at 1,998 B kept, so 4,002 B are gone — not the cap's
+    // own arithmetic (6,000 − 2,000 = 4,000).
+    const kept = text.split("\n… and ")[0] ?? "";
+    const omitted = Number(/and (\d+) more bytes/.exec(text)?.[1]);
+    expect(omitted).toBe(6_000 - Buffer.byteLength(kept, "utf8"));
+    expect(omitted).toBe(4_002);
   });
 });
 
