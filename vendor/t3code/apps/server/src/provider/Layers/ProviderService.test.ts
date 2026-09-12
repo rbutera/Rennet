@@ -1207,6 +1207,85 @@ routing.layer("ProviderServiceLive routing", (it) => {
       }),
   );
 
+  it.effect(
+    "keeps a second recovery's servers as what the prior recovery actually started, not the original thread payload",
+    () =>
+      Effect.gen(function* () {
+        const provider = yield* ProviderService.ProviderService;
+        const threadId = asThreadId("thread-feedback-recover-double");
+        const instructions = "You are the orchestrator of a Rennet review of feat/x.";
+        const appServer = {
+          app: {
+            url: "http://127.0.0.1:7391/app/threads/thread-feedback-recover-double",
+            bearerTokenEnvVar: "RENNET_APP_BEARER",
+          },
+        };
+        const boardServer = {
+          board: {
+            url: "http://127.0.0.1:7391/board/design",
+            bearerTokenEnvVar: "RENNET_BOARD_TOKEN",
+          },
+        };
+
+        yield* provider.startSession(threadId, {
+          provider: CODEX_DRIVER,
+          providerInstanceId: codexInstanceId,
+          threadId,
+          cwd: "/tmp/feedback-project-double-recover",
+          runtimeMode: "full-access",
+          instructions,
+          mcpServers: appServer,
+        });
+
+        // First recovery: a turn asks for its own server on top of the
+        // thread's. The recovered session itself starts on the union
+        // correctly (`effectiveMcpServers` is computed and passed to
+        // `adapter.startSession` either way) -- the bug is in what gets
+        // PERSISTED afterwards for the NEXT recovery to read back.
+        yield* routing.codex.stopSession(threadId);
+        routing.codex.startSession.mockClear();
+
+        yield* provider.sendTurn({
+          threadId,
+          input: "pull in the design board too",
+          attachments: [],
+          mcpServers: boardServer,
+        });
+
+        assert.strictEqual(routing.codex.startSession.mock.calls.length, 1);
+        const firstRecoveryInput = routing.codex.startSession.mock.calls[0]?.[0];
+        assert.deepEqual(
+          (firstRecoveryInput as { mcpServers?: unknown } | undefined)?.mcpServers,
+          { ...appServer, ...boardServer },
+        );
+
+        // Second recovery, through a path (feedback upload) that carries
+        // NEITHER the thread's briefing nor any turn-specific server on its
+        // own input. It has to read back the set the FIRST recovery's
+        // session actually held -- app AND board -- rather than the
+        // original thread-level payload alone: `upsertSessionBinding` after
+        // the first recovery used to omit `instructions`/`mcpServers`
+        // entirely, and the directory's merge keeps a key it was never
+        // given, so the persisted binding quietly reverted to the thread's
+        // bare `app` server and this recovery lost `board` silently.
+        yield* routing.codex.stopSession(threadId);
+        routing.codex.startSession.mockClear();
+
+        yield* provider.uploadFeedback({ threadId });
+
+        assert.strictEqual(routing.codex.startSession.mock.calls.length, 1);
+        const secondRecoveryInput = routing.codex.startSession.mock.calls[0]?.[0];
+        assert.equal(
+          (secondRecoveryInput as { instructions?: unknown } | undefined)?.instructions,
+          instructions,
+        );
+        assert.deepEqual(
+          (secondRecoveryInput as { mcpServers?: unknown } | undefined)?.mcpServers,
+          { ...appServer, ...boardServer },
+        );
+      }),
+  );
+
   it.effect("rejects feedback for providers that do not support uploads", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService.ProviderService;

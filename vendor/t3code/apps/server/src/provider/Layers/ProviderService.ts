@@ -568,6 +568,18 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       yield* upsertSessionBinding(
         { ...resumed, providerInstanceId: bindingInstanceId },
         input.binding.threadId,
+        {
+          // The EFFECTIVE values this session was just (re)started with, not
+          // `input`'s own fields: `toRuntimePayloadFromSession` rebuilds the
+          // whole runtime payload from `extra` alone, so omitting these here
+          // silently erased whatever a PRIOR recovery had persisted. A
+          // second recovery (say, through `uploadFeedback`, which carries
+          // neither) must still see the turn-specific server an earlier
+          // `sendTurn` recovery folded in, not fall back to the thread's own
+          // bare set.
+          ...(effectiveInstructions !== undefined ? { instructions: effectiveInstructions } : {}),
+          ...(effectiveMcpServers !== undefined ? { mcpServers: effectiveMcpServers } : {}),
+        },
       );
       yield* analytics.record("provider.session.recovered", {
         provider: resumed.provider,
