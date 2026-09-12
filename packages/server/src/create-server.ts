@@ -369,6 +369,7 @@ import {
   type SeatKind,
   seatThreadTitle,
   sweepIfArchived,
+  type ThreadBinding,
 } from "./t3/threads";
 import { QUIET_WORK_BRANCH_STATE, readWorkBranchState } from "./work-branch-state";
 import { worktreeClaimsIn } from "./worktree-claims";
@@ -3750,22 +3751,14 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   // The handoff exit (t3-lens-threads 4.3): a composed work order runs as ONE turn on the
   // review's bound T3 thread. One engine, no switch — the review is what names the thread,
   // and the thread is keyed on the review's REPOSITORY ROOT, never a project id.
-  const runHandoffTurn = async (input: HandoffTurnInput): Promise<RoundWorkerTurnOutcome> => {
-    // The work order runs in the session's bound workspace, the same tree its seats read and
-    // the same one the round's turn takes — the binding is half the thread's key, so this is
-    // also what keeps chat, handoff and round on ONE thread. Bound here if nothing has.
-    const bound = await boundWorkspaceForReview(input.reviewId);
-    return runHandoffTurnOnThread(
-      bound === undefined
-        ? input
-        : {
-            ...input,
-            worktreePath: bound.root,
-            ...(bound.branch === undefined ? {} : { branch: bound.branch }),
-          },
-      t3Sidecar,
-    );
-  };
+  // The work order runs on the thread the DISPATCH bound (`dispatch/review.ts`, through
+  // `bindReviewThread`), in the session's bound workspace that bind resolved — which is the
+  // same tree its seats read and the round's turn takes. This wrapper no longer binds
+  // anything: binding here was a second creation path for the review's own conversation, and
+  // whichever path ran first decided whether the thread was ever briefed.
+  const runHandoffTurn = async (
+    input: HandoffTurnInput & { readonly binding: ThreadBinding },
+  ): Promise<RoundWorkerTurnOutcome> => runHandoffTurnOnThread(input, t3Sidecar);
   // B4 broadcast wiring (reconciliation 7, recorded): board events ride the EXISTING
   // WS push path — the runtime's store-append hook feeds `wsListener.broadcastBoardEvent`
   // (late-bound: `wsListener` is assigned below, read only when a board event fires), which

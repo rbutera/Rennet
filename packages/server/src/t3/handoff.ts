@@ -64,6 +64,25 @@ export interface T3HandoffInput {
  * (round-worker-thread). `operationId` is the durable round the thread belongs to, and
  * `title` is what the reviewer reads in the thread list.
  */
+/**
+ * The review handoff's turn, on a thread SOMEONE ELSE BOUND.
+ *
+ * It used to bind for itself, on the same `{ kind: "session" }` key the chat dock uses —
+ * and that made it a SECOND creation path for the review's own thread. Whoever got there
+ * first decided what the thread was: a handoff run before the dock had ever been opened
+ * created it with no briefing, no app tools and no council selection, and
+ * `findOrCreateBinding` then handed that bare thread back for the rest of its life, because
+ * a thread's instructions and MCP servers are fixed at create. Nothing failed; the
+ * reviewer's conversation was simply blank about Rennet, forever, depending on which button
+ * they pressed first.
+ *
+ * So the binding ARRIVES here. `dispatch/review.ts` binds through `bindReviewThread` — the
+ * one assembly point, which knows how to create it briefed — and hands the result over.
+ */
+export interface T3HandoffTurnInput extends T3HandoffInput {
+  readonly binding: ThreadBinding;
+}
+
 export interface T3RoundTurnInput extends T3HandoffInput {
   readonly sessionId: string;
   readonly operationId: string;
@@ -169,7 +188,7 @@ export function lastAssistantText(thread: OrchestrationThread, turnId?: string):
 async function runTurnOnBoundThread(
   binding: ThreadBinding,
   input: T3HandoffInput,
-  deps: T3HandoffDeps,
+  deps: Pick<T3HandoffDeps, "client">,
 ): Promise<T3HandoffTurnOutcome> {
   const client = await deps.client();
   const start = await client.startTurn({
@@ -237,17 +256,10 @@ async function runTurnOnBoundThread(
 }
 
 export async function runHandoffTurn(
-  input: T3HandoffInput,
-  deps: T3HandoffDeps,
+  input: T3HandoffTurnInput,
+  deps: Pick<T3HandoffDeps, "client">,
 ): Promise<T3HandoffTurnOutcome> {
-  const binding = await deps.threadFor({
-    repositoryRoot: input.repoRoot,
-    key: { kind: "session", sessionId: input.reviewId },
-    title: basename(input.repoRoot) || "review",
-    ...(input.worktreePath === undefined ? {} : { worktreePath: input.worktreePath }),
-    ...(input.branch === undefined ? {} : { branch: input.branch }),
-  });
-  return runTurnOnBoundThread(binding, input, deps);
+  return runTurnOnBoundThread(input.binding, input, deps);
 }
 
 /**

@@ -296,11 +296,34 @@ export function reviewHandlers(rt: DispatchRuntime) {
         [workOrderContextFile(bundle.tasks)],
       );
       const releaseContext = deps.holdSessionContext?.(contextSessionId);
+      // THE ONE CREATION PATH, before the turn (session-thread-briefing 4.1). The handoff
+      // runs on the review's own thread — the same `{ kind: "session" }` key the chat dock
+      // binds — and it used to bind that thread itself, with none of the three things a
+      // session thread is supposed to carry. Whichever path ran first decided the thread
+      // for its whole life, so a reviewer who composed a handoff before ever opening the
+      // dock got a conversation that knew nothing about Rennet, permanently and silently.
+      // Binding here means the briefed create always wins; when the dock got there first
+      // this reads the existing row and costs an object.
+      let binding: Awaited<ReturnType<typeof bindReviewThread>>;
+      try {
+        binding = await bindReviewThread(rt, review.id);
+      } catch (error) {
+        // A FAILED BIND IS A REPORTED STATE (#872), the same answer `chat.t3Session` and
+        // `chat.t3Send` give for the identical condition. No thread means no turn, and the
+        // reviewer gets the daemon's own sentence — a deleted bound workspace reads nothing
+        // like a sidecar that will not start, and only one of those is worth retrying.
+        releaseContext?.();
+        return parseCommandOutput(name, {
+          status: "unavailable",
+          reason: describeThreadError(error),
+        });
+      }
       const turn = await deps
         .runHandoffTurn({
           repoRoot: review.repositoryRoot,
           prompt: bundle.prompt,
           reviewId: review.id,
+          binding,
         })
         .finally(() => releaseContext?.());
       if (turn.status === "failed") {

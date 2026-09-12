@@ -14,6 +14,7 @@ import { appToolNames, buildAppTools } from "../agent-tools";
 import type { ModelSelection } from "../t3/client";
 import type { T3SidecarSupervisor } from "../t3/supervisor";
 import { bindReviewThread } from "./chat";
+import { reviewHandlers } from "./review";
 import { createDispatchRuntime, type DispatchDeps } from "./runtime";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -96,8 +97,13 @@ function fixture(
     readonly review?: Review;
     readonly sessionThread?: DispatchDeps["sessionThread"] | null;
     readonly boundRoot?: string;
+    /** The repository the fixture allows; defaults to {@link REPOSITORY_ROOT}. */
+    readonly repositoryRoot?: string;
+    /** Anything else a caller's command path needs (the hand-off turn, for one). */
+    readonly extraDeps?: Record<string, unknown>;
   } = {},
 ) {
+  const repositoryRoot = options.repositoryRoot ?? REPOSITORY_ROOT;
   const captured: Captured[] = [];
   const warnings: string[] = [];
   const captured$ = options.review ?? review(1);
@@ -107,7 +113,7 @@ function fixture(
       captured.push(input);
       return {
         kind: "session" as const,
-        repositoryRoot: REPOSITORY_ROOT,
+        repositoryRoot,
         sessionId: "rev-1",
         projectId: "proj-1",
         threadId: input.threadId ?? "thread-1",
@@ -126,7 +132,7 @@ function fixture(
   };
   const rt = createDispatchRuntime({
     service: { reviewById: (id: string) => (id === captured$.id ? captured$ : undefined) },
-    allowedRoots: new Set<string>([REPOSITORY_ROOT]),
+    allowedRoots: new Set<string>([repositoryRoot]),
     t3Sidecar,
     warn: (message: string) => warnings.push(message),
     ...(options.boundRoot === undefined
@@ -135,6 +141,7 @@ function fixture(
     ...(options.sessionThread === null
       ? {}
       : { sessionThread: options.sessionThread ?? sessionThread }),
+    ...(options.extraDeps ?? {}),
   } as unknown as DispatchDeps);
   return { captured, warnings, rt };
 }
@@ -342,5 +349,77 @@ describe("the real briefing fits, with its tool line intact", () => {
     // ...and the fixed prose survives WHOLE. `capBytes` is the renderer's last resort and it
     // ends the text with a bare "…", which would eat the closing register guidance silently.
     expect(rendered.startsWith(fixed.trimEnd())).toBe(true);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// session-thread-briefing 4.1 — ONE CREATION PATH, PROVEN FROM THE OTHER DOOR.
+//
+// `bindReviewThread` is only "the ONE place a session thread is created" if nothing else
+// creates one. `runHandoffTurn` did: it bound the same `{ kind: "session" }` key itself,
+// with no threadId, no instructions, no servers and no selection. A reviewer who composed
+// and ran a hand-off before ever opening the chat dock got a thread created bare — and
+// `findOrCreateBinding` returns the existing row forever after, so the conversation stayed
+// blank about Rennet for the life of the review. Nothing failed and nothing was logged.
+//
+// This drives the REAL `review.handoff.run` command on a review whose thread does not exist
+// yet, and asserts the create it produced. The positive control is the pre-bind itself:
+// delete it from `dispatch/review.ts` and this reddens.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("a hand-off on a review with no thread yet creates a briefed one", () => {
+  it("binds through the one assembly point before the turn, and hands the turn that binding", async () => {
+    const root = mkdtempSync(join(tmpdir(), "rennet-handoff-bind-"));
+    try {
+      const captured$ = { ...review(1), repositoryRoot: root };
+      const patchset = captured$.patchsets[0];
+      if (patchset === undefined) throw new Error("fixture has no patchset");
+      captured$.patchsets[0] = { ...patchset, repository: { ...patchset.repository, root } };
+      const handoffs: { readonly binding: { readonly threadId: string } }[] = [];
+      const f = fixture({
+        review: captured$,
+        repositoryRoot: root,
+        extraDeps: {
+          runHandoffTurn: async (input: { binding: { threadId: string } }) => {
+            handoffs.push(input);
+            // A failed turn ends the command before the delta recapture, which is not what
+            // this is about: the bind happens before the turn either way.
+            return { status: "failed", reason: "stopped after the bind", filesTouched: [] };
+          },
+          setRepositoryDirty: () => undefined,
+        },
+      });
+      const review$ = reviewHandlers(f.rt);
+      const composed = (await review$["review.handoff.compose"]({
+        commandId: "22222222-2222-4222-8222-222222222222",
+        reviewId: "rev-1",
+        dispositions: [],
+      })) as { bundle: unknown };
+      const out = await review$["review.handoff.run"]({
+        commandId: "33333333-3333-4333-8333-333333333333",
+        reviewId: "rev-1",
+        bundle: composed.bundle,
+      });
+      // The command reached the turn (not refused for a stale bundle), and the turn ran on
+      // a thread somebody else created.
+      expect(out).toMatchObject({ status: "failed" });
+      expect(handoffs).toHaveLength(1);
+
+      // ...and that somebody is `bindReviewThread`: exactly one create, carrying all three.
+      expect(f.captured).toHaveLength(1);
+      const create = f.captured[0];
+      expect(create?.key.kind).toBe("session");
+      expect(create?.instructions).toContain("## This review");
+      expect(create?.mcpServers).toEqual({
+        rennet_app: {
+          url: `http://127.0.0.1:4311/threads/${create?.threadId}`,
+          bearerTokenEnvVar: "RENNET_APP_BEARER",
+        },
+      });
+      expect(create?.modelSelection).toBe(SELECTION);
+      // The turn ran on that exact thread rather than on one it made for itself.
+      expect(handoffs[0]?.binding.threadId).toBe(create?.threadId);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });

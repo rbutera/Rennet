@@ -84,6 +84,7 @@ import {
 import type { SettingsComposition } from "../settings";
 import type { ModelSelection } from "../t3/client";
 import type { T3SidecarSupervisor } from "../t3/supervisor";
+import type { ThreadBinding } from "../t3/threads";
 import type { WorkBranchState } from "../work-branch-state";
 
 /**
@@ -344,6 +345,16 @@ export interface DispatchDeps {
     /** The composed bundle's ordered, verbatim work-order prompt (issue #72). */
     prompt: string;
     readonly reviewId: string;
+    /**
+     * The review's thread, ALREADY BOUND by the caller through `bindReviewThread`.
+     *
+     * The handoff used to bind for itself on the same `{ kind: "session" }` key, which made
+     * it a second creation path: a handoff run before the dock was ever opened created the
+     * review's conversation with no briefing, no app tools and no council selection, and
+     * kept it that way for the thread's life. The binding now travels, so the one assembly
+     * point is the only thing that ever creates it.
+     */
+    readonly binding: ThreadBinding;
   }) => Promise<HandoffTurnOutcome>;
   /**
    * The handoff-bundle composer (issue #72, Model Council M24): the light-tier
