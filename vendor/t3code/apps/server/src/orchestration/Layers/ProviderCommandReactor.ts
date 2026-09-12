@@ -12,6 +12,7 @@ import {
   type RuntimeMode,
   type TurnId,
   type TurnMcpServers,
+  normalizeTurnMcpServers,
 } from "@t3tools/contracts";
 import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
 import { isTemporaryWorktreeBranch, WORKTREE_BRANCH_PREFIX } from "@t3tools/shared/git";
@@ -482,6 +483,18 @@ const make = Effect.gen(function* () {
     );
   });
 
+  /** The servers a turn actually runs with: the THREAD's set is the session's
+   * base — every turn on the thread gets it, including the ones the thread's
+   * creator does not author — and a turn's own set rides alongside. The adapter
+   * fixes the union when the session process is created and compares every
+   * later turn against it, so the same union has to be computed for the start
+   * and for the turn. An empty union is the same fact as no servers. */
+  const unionThreadAndTurnMcpServers = (
+    threadServers: TurnMcpServers | undefined,
+    turnServers: TurnMcpServers | undefined,
+  ): TurnMcpServers | undefined =>
+    normalizeTurnMcpServers({ ...(threadServers ?? {}), ...(turnServers ?? {}) });
+
   const resolveThread = Effect.fnUntraced(function* (threadId: ThreadId) {
     return yield* projectionSnapshotQuery
       .getThreadDetailById(threadId, { activityKinds: [] })
@@ -535,6 +548,8 @@ const make = Effect.gen(function* () {
       return yield* Effect.die(new Error(`Thread '${threadId}' was not found in read model.`));
     }
 
+    const sessionInstructions = thread.instructions;
+    const sessionMcpServers = unionThreadAndTurnMcpServers(thread.mcpServers, options?.mcpServers);
     const desiredRuntimeMode = thread.runtimeMode;
     const requestedModelSelection = options?.modelSelection;
     const resolveActiveSession = (threadId: ThreadId) =>
@@ -680,8 +695,12 @@ const make = Effect.gen(function* () {
           modelSelection: desiredModelSelection,
           ...(input?.resumeCursor !== undefined ? { resumeCursor: input.resumeCursor } : {}),
           runtimeMode: desiredRuntimeMode,
+          // The thread's briefing is a session-level fact: the provider fixes
+          // its system prompt when the session process is created, and every
+          // turn on the thread — the reviewer's own included — runs under it.
+          ...(sessionInstructions !== undefined ? { instructions: sessionInstructions } : {}),
           ...(options?.outputSchema !== undefined ? { outputSchema: options.outputSchema } : {}),
-          ...(options?.mcpServers !== undefined ? { mcpServers: options.mcpServers } : {}),
+          ...(sessionMcpServers !== undefined ? { mcpServers: sessionMcpServers } : {}),
         })
         .pipe(Effect.tap(() => refreshWorkspaceSnapshot));
 
@@ -846,6 +865,7 @@ const make = Effect.gen(function* () {
           : requestedModelSelection
         : input.modelSelection;
 
+    const turnMcpServers = unionThreadAndTurnMcpServers(thread.mcpServers, input.mcpServers);
     return {
       threadId: input.threadId,
       ...(normalizedInput ? { input: normalizedInput } : {}),
@@ -853,7 +873,11 @@ const make = Effect.gen(function* () {
       ...(modelForTurn !== undefined ? { modelSelection: modelForTurn } : {}),
       ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
       ...(input.outputSchema !== undefined ? { outputSchema: input.outputSchema } : {}),
-      ...(input.mcpServers !== undefined ? { mcpServers: input.mcpServers } : {}),
+      // Both travel so a session RECOVERED for this turn starts on the thread's
+      // briefing and the thread's servers, not on whatever this one turn asked
+      // for. A live session already holds them.
+      ...(thread.instructions !== undefined ? { instructions: thread.instructions } : {}),
+      ...(turnMcpServers !== undefined ? { mcpServers: turnMcpServers } : {}),
     };
   });
 

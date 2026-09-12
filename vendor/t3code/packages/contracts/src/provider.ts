@@ -1,5 +1,5 @@
 import * as Schema from "effect/Schema";
-import { TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { TrimmedNonEmptyString, TrimmedString } from "./baseSchemas.ts";
 import {
   ApprovalRequestId,
   EventId,
@@ -63,6 +63,11 @@ export const ProviderSessionStartInput = Schema.Struct({
   approvalPolicy: Schema.optional(ProviderApprovalPolicy),
   sandboxMode: Schema.optional(ProviderSandboxMode),
   runtimeMode: RuntimeMode,
+  /** The thread's briefing, appended to the provider's own system prompt for
+      the whole life of the session. Every provider fixes its system prompt when
+      the session process is created, so this is a session-level fact read off
+      the THREAD rather than off the turn that happened to open the session. */
+  instructions: Schema.optional(TrimmedString),
   /** JSON Schema for a structured turn result, for adapters whose runtime
       fixes the output contract when the session is created (Claude's SDK
       `outputFormat` is a query-construction option). */
@@ -89,6 +94,11 @@ export const ProviderSendTurnInput = Schema.Struct({
   ),
   modelSelection: Schema.optional(ModelSelection),
   interactionMode: Schema.optional(ProviderInteractionMode),
+  /** The thread's briefing, carried so a session RECOVERED for this turn starts
+      on it. `ProviderService` re-decodes this input and strips undeclared keys,
+      so the field has to be here to survive the hop, exactly like `mcpServers`.
+      No adapter reads it off a turn: a live session already holds it. */
+  instructions: Schema.optional(TrimmedString),
   /** JSON Schema for this turn's structured result. */
   outputSchema: Schema.optional(Schema.Unknown),
   /** The MCP servers this turn expects. `ProviderService` re-decodes this input

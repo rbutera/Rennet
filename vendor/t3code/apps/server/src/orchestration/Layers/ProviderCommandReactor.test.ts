@@ -593,6 +593,102 @@ describe("ProviderCommandReactor", () => {
     expect(thread?.session?.runtimeMode).toBe("approval-required");
   });
 
+  it("starts a briefed thread's session on the thread's instructions and servers", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    const instructions = "You are the orchestrator of a Rennet review of feat/x.";
+
+    // A session thread's turns are started by the user's own composer, which
+    // carries no briefing and no servers of its own. Both are read off the
+    // THREAD or the turn runs bare.
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("cmd-thread-create-briefed"),
+        threadId: ThreadId.make("thread-briefed"),
+        projectId: asProjectId("project-1"),
+        title: "Briefed thread",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        branch: null,
+        worktreePath: null,
+        instructions,
+        mcpServers: {
+          rennet_app: {
+            url: "http://127.0.0.1:7391/app/threads/thread-briefed",
+            bearerTokenEnvVar: "RENNET_APP_BEARER",
+          },
+        },
+        createdAt: now,
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-briefed"),
+        threadId: ThreadId.make("thread-briefed"),
+        message: {
+          messageId: asMessageId("user-message-briefed"),
+          role: "user",
+          text: "what branch am I reviewing?",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        // The turn brings a server of its own, so the session gets the UNION
+        // and a later turn is compared against the union, not against either
+        // half.
+        mcpServers: {
+          board: { url: "http://127.0.0.1:7391/board/design" },
+        },
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.startSession.mock.calls.length === 1);
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+
+    expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({
+      instructions,
+      mcpServers: {
+        rennet_app: {
+          url: "http://127.0.0.1:7391/app/threads/thread-briefed",
+          bearerTokenEnvVar: "RENNET_APP_BEARER",
+        },
+        board: { url: "http://127.0.0.1:7391/board/design" },
+      },
+    });
+    // And on the turn, so a session recovered for it after a restart starts
+    // briefed rather than bare.
+    expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
+      instructions,
+      mcpServers: {
+        rennet_app: {
+          url: "http://127.0.0.1:7391/app/threads/thread-briefed",
+          bearerTokenEnvVar: "RENNET_APP_BEARER",
+        },
+        board: { url: "http://127.0.0.1:7391/board/design" },
+      },
+    });
+
+    // The thread the projection reads back carries them too: the pair has to
+    // survive the SQL row or a daemon restart forgets the briefing.
+    const readModel = await harness.readModel();
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-briefed"));
+    expect(thread?.instructions).toBe(instructions);
+    expect(thread?.mcpServers).toEqual({
+      rennet_app: {
+        url: "http://127.0.0.1:7391/app/threads/thread-briefed",
+        bearerTokenEnvVar: "RENNET_APP_BEARER",
+      },
+    });
+  });
+
   effectIt.effect("retains a turn dispatched immediately after start until activation", () =>
     Effect.gen(function* () {
       const activation = yield* Deferred.make<void>();

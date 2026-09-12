@@ -23,7 +23,7 @@ grep -n "board.read" packages/protocol/src/commands/index.ts     # present; NOT 
   shapes) and the `thread.created` event gain optional `instructions` (TrimmedString) and
   `mcpServers` (`TurnMcpServers`); the thread projection carries both. Contract test: decodes with
   and without; a raw credential still has nowhere to live. Ledger row.
-- [ ] 1.2 `apps/server/src/orchestration/decider.ts` + `Layers/ProviderCommandReactor.ts`: persist
+- [x] 1.2 `apps/server/src/orchestration/decider.ts` + `Layers/ProviderCommandReactor.ts`: persist
   both on the thread; when a provider session starts for a thread, `ProviderSessionStartInput`
   carries the thread's `instructions` and the union of the thread's and the turn's `mcpServers`.
   `ProviderService.ts` recovery reads the thread's pair the way it reads the persisted turn's

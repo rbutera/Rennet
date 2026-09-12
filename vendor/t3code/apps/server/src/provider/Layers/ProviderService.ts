@@ -427,6 +427,13 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
      * with the wrong tools or refuses it.
      */
     readonly mcpServers?: TurnMcpServers;
+    /**
+     * The THREAD's briefing, carried on the turn for the same reason again: a
+     * provider fixes its system prompt when the session process is created, so
+     * a session recovered without it runs every turn after the restart
+     * unbriefed — the thread would silently stop being what it was created as.
+     */
+    readonly instructions?: string;
   }) {
     const bindingInstanceId = yield* requireBindingInstanceId(input.operation, input.binding);
     yield* Effect.annotateCurrentSpan({
@@ -481,6 +488,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           runtimeMode: input.binding.runtimeMode ?? "full-access",
           ...(input.outputSchema !== undefined ? { outputSchema: input.outputSchema } : {}),
           ...(input.mcpServers !== undefined ? { mcpServers: input.mcpServers } : {}),
+          ...(input.instructions !== undefined ? { instructions: input.instructions } : {}),
         })
         .pipe(Effect.onError(() => clearMcpSession(input.binding.threadId)));
       if (resumed.provider !== adapter.provider) {
@@ -519,6 +527,8 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     readonly outputSchema?: unknown;
     /** Carried into a recovered session; see `recoverSessionForThread`. */
     readonly mcpServers?: TurnMcpServers;
+    /** Carried into a recovered session; see `recoverSessionForThread`. */
+    readonly instructions?: string;
   }) {
     const bindingOption = yield* directory.getBinding(input.threadId);
     const binding = Option.getOrUndefined(bindingOption);
@@ -557,6 +567,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       operation: input.operation,
       ...(input.outputSchema !== undefined ? { outputSchema: input.outputSchema } : {}),
       ...(input.mcpServers !== undefined ? { mcpServers: input.mcpServers } : {}),
+      ...(input.instructions !== undefined ? { instructions: input.instructions } : {}),
     });
     return {
       adapter: recovered.adapter,
@@ -826,6 +837,9 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           // the MCP servers the turn expects.
           ...(input.outputSchema !== undefined ? { outputSchema: input.outputSchema } : {}),
           ...(input.mcpServers !== undefined ? { mcpServers: input.mcpServers } : {}),
+          // ...and on the thread's briefing, which the reactor puts on every
+          // turn precisely so a recovery has it.
+          ...(input.instructions !== undefined ? { instructions: input.instructions } : {}),
         });
       }
       metricProvider = routed.adapter.provider;

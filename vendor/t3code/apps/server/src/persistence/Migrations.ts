@@ -9,6 +9,7 @@
  */
 
 import * as Migrator from "effect/unstable/sql/Migrator";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as Effect from "effect/Effect";
 
 // Import all migrations statically
@@ -136,6 +137,43 @@ export interface RunMigrationsOptions {
 }
 
 /**
+ * Columns this fork adds, applied after the migrator rather than as a migration.
+ *
+ * The migrator runs every migration whose id is GREATER than the highest id
+ * recorded in `effect_sql_migrations` and skips the rest silently. So a fork
+ * that takes an id takes it from upstream: pick 45 and upstream's own 45 is
+ * skipped forever on any database that ran ours; pick 900 and every future
+ * upstream migration is skipped. Neither fails loudly. Adding the columns here
+ * instead leaves upstream's id space untouched, and the statements are
+ * idempotent, so this is safe on every start and on a partially migrated
+ * database (a table that does not exist yet is left alone; the next full run
+ * finds it).
+ */
+const applyForkColumnAdditions = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  const columns = yield* sql<{ readonly name: string }>`
+    PRAGMA table_info(projection_threads)
+  `;
+  // Zero rows means the table is not there yet (a partially migrated database
+  // in a test), which is not this step's business: the next full run finds it.
+  if (columns.length === 0) {
+    return;
+  }
+  if (!columns.some((column) => column.name === "instructions")) {
+    yield* sql`
+      ALTER TABLE projection_threads
+      ADD COLUMN instructions TEXT
+    `;
+  }
+  if (!columns.some((column) => column.name === "mcp_servers_json")) {
+    yield* sql`
+      ALTER TABLE projection_threads
+      ADD COLUMN mcp_servers_json TEXT
+    `;
+  }
+});
+
+/**
  * Run all pending migrations.
  *
  * Creates the migrations tracking table (effect_sql_migrations) if it doesn't exist,
@@ -153,5 +191,6 @@ export const runMigrations = Effect.fn("runMigrations")(function* ({
   yield* migrations.length === 0
     ? Effect.logDebug("Database schema is current")
     : Effect.log("Migrations ran successfully").pipe(Effect.annotateLogs({ migrations }));
+  yield* applyForkColumnAdditions;
   return executedMigrations;
 });

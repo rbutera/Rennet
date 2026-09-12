@@ -1634,6 +1634,60 @@ routing.layer("ProviderServiceLive routing", (it) => {
     }),
   );
 
+  it.effect("recovers a stale claudeAgent session on the thread's briefing and servers", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      // What the reactor puts on every turn of a briefed thread: the thread's
+      // own briefing and the union of the thread's servers with the turn's.
+      const instructions = "You are the orchestrator of a Rennet review of feat/x.";
+      const mcpServers = {
+        rennet_app: {
+          url: "http://127.0.0.1:7391/app/threads/thread-claude-briefed",
+          bearerTokenEnvVar: "RENNET_APP_BEARER",
+        },
+      };
+
+      const initial = yield* provider.startSession(asThreadId("thread-claude-briefed"), {
+        provider: ProviderDriverKind.make("claudeAgent"),
+        providerInstanceId: claudeAgentInstanceId,
+        threadId: asThreadId("thread-claude-briefed"),
+        cwd: "/tmp/project-claude-briefed",
+        runtimeMode: "full-access",
+        instructions,
+        mcpServers,
+      });
+
+      // A provider fixes its system prompt when the session process is created.
+      // A recovery that dropped the briefing would run every turn after a
+      // daemon restart unbriefed — the thread silently stops being what it was
+      // created as, and nothing errors. `ProviderSendTurnInput` is re-decoded
+      // here and strips any key it does not declare, so this also proves the
+      // field survives that hop.
+      yield* routing.claude.stopAll();
+      routing.claude.startSession.mockClear();
+      routing.claude.sendTurn.mockClear();
+
+      yield* provider.sendTurn({
+        threadId: initial.threadId,
+        input: "what branch am I reviewing?",
+        attachments: [],
+        instructions,
+        mcpServers,
+      });
+
+      assert.equal(routing.claude.startSession.mock.calls.length, 1);
+      const resumedStartInput = routing.claude.startSession.mock.calls[0]?.[0];
+      assert.equal(
+        (resumedStartInput as { instructions?: unknown } | undefined)?.instructions,
+        instructions,
+      );
+      assert.deepEqual(
+        (resumedStartInput as { mcpServers?: unknown } | undefined)?.mcpServers,
+        mcpServers,
+      );
+    }),
+  );
+
   it.effect("lists no sessions after adapter runtime clears", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService.ProviderService;
