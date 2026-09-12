@@ -47,7 +47,7 @@ import {
 } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { normalizeOutputSchema } from "@rennet/adapters";
 import { type CommandName, commands } from "@rennet/protocol";
 import { z } from "zod";
@@ -512,35 +512,85 @@ function writeSpillFile(
   return path;
 }
 
+/** The MCP `content` items a tool result carries: text blocks, in the wire's own order. */
+type ToolContentBlock = { readonly type: "text"; readonly text: string };
+
 /**
- * The universal ceiling: whatever `shapeAppToolResult` (or any other per-command shaping)
- * produced, this is the LAST word on whether it rides inline.
+ * The COMPLETE `tools/call` result object the wire actually serialises — `content` (and
+ * `isError` when the call failed) — never the bare inner text {@link applyResultCeiling}
+ * used to measure before this fix (both reviewers' P1). JSON escaping (quotes, backslashes,
+ * control bytes) and the `{"type":"text","text":...}` wrapper both add bytes a raw-text
+ * measurement misses entirely: an 8,023 B quote-heavy inner payload serialised to 16,068 B
+ * once wrapped, and a refusal carrying 2,000 NUL characters — each escaping to the six-byte
+ * `\u0000` — serialised to 12,054 B with no ceiling in front of it at all.
+ */
+function toolResultOf(
+  result: AppToolResult,
+  isError: boolean,
+): { readonly content: readonly ToolContentBlock[]; readonly isError?: true } {
+  return {
+    content: [
+      { type: "text", text: result.text },
+      ...(result.marker === undefined ? [] : [{ type: "text" as const, text: result.marker }]),
+    ],
+    ...(isError ? { isError: true as const } : {}),
+  };
+}
+
+/**
+ * The universal ceiling: whatever `shapeAppToolResult` (or any other per-command shaping,
+ * or a dispatch refusal) produced, this is the LAST word on whether it rides inline —
+ * measured on the COMPLETE serialised `tools/call` result object, not the inner text (both
+ * reviewers' P1). A success and a refusal take the EXACT same path through here: `isError`
+ * only changes one field of the wrapper this function builds, never whether the ceiling
+ * applies — a refusal that blows the budget spills exactly like an oversized success would.
  *
  * Only four commands declared their own cap before item 1 — every other exposed command's
  * complete serialised result went straight to the model, unbounded (`ask.read` alone
- * reproduced 144,611 bytes with 400 staged asks). So this runs on EVERY result, paged or
- * not: under {@link APP_TOOL_RESULT_MAX_BYTES}, the result is returned unchanged; over it,
- * `spill` is handed the complete text-plus-marker body to write wherever it decides (the
- * two tiers above), and the call gets back a small envelope naming where the rest is and
- * carrying a head-sized sample inline, never a silent truncation.
+ * reproduced 144,611 bytes with 400 staged asks). So this runs on EVERY result: under
+ * {@link APP_TOOL_RESULT_MAX_BYTES}, the wrapped result is returned unchanged; over it,
+ * `spill` is handed the complete text-plus-marker body to write wherever it decides (the two
+ * tiers above), and the call gets back a small envelope naming where the rest is and
+ * carrying a head-sized sample inline — but the REPLACEMENT envelope is itself measured the
+ * same way, because escaping the sample can inflate it too: `head` shrinks at a UTF-8
+ * code-point boundary, one measured iteration at a time, until the whole wrapped envelope
+ * fits, never computed from the raw byte count alone.
  */
 export function applyResultCeiling(
   result: AppToolResult,
   spill: (body: string) => string,
-): AppToolResult {
+  isError = false,
+): { readonly content: readonly ToolContentBlock[]; readonly isError?: true } {
+  const full = toolResultOf(result, isError);
+  const fullBytes = utf8(JSON.stringify(full));
+  if (fullBytes <= APP_TOOL_RESULT_MAX_BYTES) return full;
+
   const body = result.marker === undefined ? result.text : `${result.text}\n\n${result.marker}`;
   const bytes = utf8(body);
-  if (bytes <= APP_TOOL_RESULT_MAX_BYTES) return result;
   const path = spill(body);
-  const head = headAtCodePointBoundary(result.text, RESULT_HEAD_BYTES);
-  const envelope = {
-    truncated: true,
-    bytes,
-    path,
-    head,
-    note: `The complete ${bytes}-byte result did not fit this call's ${APP_TOOL_RESULT_MAX_BYTES}-byte budget, so it was written whole to the path above; read it with your own tools for the rest. \`head\` is this result's own first bytes, not a separate summary.`,
-  };
-  return { text: JSON.stringify(envelope) };
+
+  // Shrink `head` until the REPLACEMENT envelope's own complete serialisation fits too:
+  // escaping (quotes, backslashes, control bytes) can expand a raw byte up to sixfold
+  // (`\u0000`), so this is MEASURED on the wrapped wire object every pass, never computed
+  // analytically from the raw head length.
+  let headBytes = RESULT_HEAD_BYTES;
+  for (;;) {
+    const head = headAtCodePointBoundary(result.text, headBytes);
+    const envelope = {
+      truncated: true,
+      bytes,
+      path,
+      head,
+      note: `The complete ${bytes}-byte result did not fit this call's ${APP_TOOL_RESULT_MAX_BYTES}-byte budget, so it was written whole to the path above; read it with your own tools for the rest. \`head\` is this result's own first bytes, not a separate summary.`,
+    };
+    const candidate = toolResultOf({ text: JSON.stringify(envelope) }, isError);
+    const candidateBytes = utf8(JSON.stringify(candidate));
+    if (candidateBytes <= APP_TOOL_RESULT_MAX_BYTES || headBytes === 0) return candidate;
+    // Escaping only ever ADDS bytes, so trimming the overage straight off the raw head byte
+    // count is always enough progress to terminate — never less, occasionally more, and a
+    // second pass at a smaller `head` costs nothing here.
+    headBytes = Math.max(0, headBytes - (candidateBytes - APP_TOOL_RESULT_MAX_BYTES));
+  }
 }
 
 /**
@@ -729,27 +779,31 @@ export async function startAppMcpServer(options: StartAppMcpServerOptions): Prom
         author: { kind: "orchestrator", id: threadId },
       });
       const shaped = shapeAppToolResult(tool.commandId, output, cursor);
-      // The universal ceiling (item 1): whatever shape the command's own paging gave this
-      // result, it still answers to ONE byte budget before it reaches the model. Under the
-      // budget, `bounded` is `shaped` unchanged; over it, `bounded` is a small spill envelope
-      // and the marker (if any) is folded into the spilled file, not carried separately.
-      const bounded = applyResultCeiling(shaped, (body) =>
-        writeSpillFile(options, threadId, tool.name, body),
-      );
+      // The universal ceiling (item 1) measured on the COMPLETE serialised `tools/call`
+      // result (both reviewers' P1), not the inner text: whatever shape the command's own
+      // paging gave this result, it still answers to ONE byte budget as it will actually
+      // ride the wire. Under the budget, the wrapped result rides inline unchanged; over
+      // it, `applyResultCeiling` returns a small spill envelope and the marker (if any) is
+      // folded into the spilled file, not carried separately.
       return {
-        result: {
-          content: [
-            { type: "text", text: bounded.text },
-            ...(bounded.marker === undefined ? [] : [{ type: "text", text: bounded.marker }]),
-          ],
-        },
+        result: applyResultCeiling(shaped, (body) =>
+          writeSpillFile(options, threadId, tool.name, body),
+        ),
       };
     } catch (error) {
       // A refusal is the model's to answer inside the same turn, so it comes back as a tool
       // result marked `isError`, never as a JSON-RPC error — a protocol error is the
-      // client's problem and would not reach the thread as words it can act on.
+      // client's problem and would not reach the thread as words it can act on. It takes the
+      // SAME ceiling as a success (both reviewers' P1): `refusalText`'s own cap holds an
+      // ordinary refusal well under budget, but a pathological one (control characters that
+      // each escape to several bytes) can still blow it once wrapped, so this spills exactly
+      // like an oversized success would rather than riding the wire unbounded.
       return {
-        result: { content: [{ type: "text", text: refusalText(error) }], isError: true },
+        result: applyResultCeiling(
+          { text: refusalText(error) },
+          (body) => writeSpillFile(options, threadId, tool.name, body),
+          true,
+        ),
       };
     }
   };

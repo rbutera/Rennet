@@ -117,6 +117,36 @@ const blocks = (answer: RpcAnswer): { type: string; text: string }[] =>
 const call = async (url: string, name: string, args: Record<string, unknown>): Promise<RpcAnswer> =>
   rpc(url, { jsonrpc: "2.0", id: 9, method: "tools/call", params: { name, arguments: args } });
 
+/**
+ * A `tools/call`, but measuring the COMPLETE raw HTTP response body — the exact bytes the
+ * wire sends, before this test's own JSON.parse — rather than re-deriving a byte count from
+ * a value already round-tripped through the parser (both reviewers' P1: JSON escaping and
+ * the `content` wrapper both add bytes an inner-text measurement never sees).
+ */
+async function callRawBytes(
+  url: string,
+  name: string,
+  args: Record<string, unknown>,
+): Promise<{ readonly status: number; readonly text: string; readonly bytes: number }> {
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      accept: "application/json, text/event-stream",
+      "mcp-protocol-version": "2025-06-18",
+      authorization: `Bearer ${currentBearer}`,
+    },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 9,
+      method: "tools/call",
+      params: { name, arguments: args },
+    }),
+  });
+  const text = await response.text();
+  return { status: response.status, text, bytes: Buffer.byteLength(text, "utf8") };
+}
+
 const listTools = async (url: string): Promise<{ name: string; inputSchema: unknown }[]> => {
   const answer = await rpc(url, { jsonrpc: "2.0", id: 2, method: "tools/list" });
   return result(answer).tools as { name: string; inputSchema: unknown }[];
@@ -447,6 +477,78 @@ describe("paging a collection-carrying result", () => {
     );
     const spilled = readFileSync(envelope.path, "utf8");
     expect(spilled).toContain('"a399"');
+  });
+
+  // ── Codex re-review, P1 ───────────────────────────────────────────────────────
+  it("spills on the COMPLETE wire result even when the inner text alone would fit (JSON-escaping overhead, Codex P1)", async () => {
+    // A payload that is almost entirely quote characters: JSON.stringify(output) already
+    // escapes each one once (the "inner text" `shapeAppToolResult` hands back), and this
+    // count is tuned so THAT text lands just under the 8 kB ceiling — the ceiling this test
+    // exists to prove is not the last word. Wrapping that text as this call's `content`
+    // block escapes every one of its backslashes and quotes a SECOND time, which is what
+    // pushed Codex's own probe from an 8,023 B inner payload to a 16,068 B wire result.
+    const quotes = '"'.repeat(4_000);
+    const server = await serverWith({ dispatch: () => async () => ({ blob: quotes }) });
+    const innerText = JSON.stringify({ blob: quotes });
+    expect(
+      Buffer.byteLength(innerText, "utf8"),
+      "the inner text must itself sit under the ceiling, or this probes nothing about wrapping overhead",
+    ).toBeLessThanOrEqual(APP_TOOL_RESULT_MAX_BYTES);
+    const naiveWireBytes = Buffer.byteLength(
+      JSON.stringify({ content: [{ type: "text", text: innerText }] }),
+      "utf8",
+    );
+    expect(
+      naiveWireBytes,
+      "the wrapped-and-escaped result must itself exceed the ceiling, or this probes nothing",
+    ).toBeGreaterThan(APP_TOOL_RESULT_MAX_BYTES);
+
+    const raw = await callRawBytes(server.addressFor(THREAD).url, "app_session_list", {});
+    expect(raw.status).toBe(200);
+    // The fix: the COMPLETE response the wire actually sent never exceeds the ceiling,
+    // where measuring only `innerText` (the old, buggy comparison) would have missed this
+    // entirely and shipped ~16 kB.
+    expect(
+      raw.bytes,
+      `the complete wire result was ${raw.bytes} B, over the ${APP_TOOL_RESULT_MAX_BYTES} B ceiling`,
+    ).toBeLessThanOrEqual(APP_TOOL_RESULT_MAX_BYTES);
+    const body = JSON.parse(raw.text) as { result: { content: { type: string; text: string }[] } };
+    const envelope = JSON.parse(body.result.content[0]?.text ?? "{}") as {
+      truncated: boolean;
+      bytes: number;
+      path: string;
+    };
+    expect(envelope.truncated).toBe(true);
+    // The spilled file on disk holds the untruncated inner text, exactly as before.
+    expect(readFileSync(envelope.path, "utf8")).toBe(innerText);
+  });
+
+  it("a dispatch refusal takes the same ceiling as a success — a pathological error message spills instead of riding the wire unbounded (Codex P1)", async () => {
+    // Escapes sixfold (`\x00`, six bytes for one raw byte) — Codex's own probe: 2,000 NUL
+    // characters answered 12,054 B with no ceiling in front of the error path at all.
+    const server = await serverWith({
+      dispatch: () => async () => {
+        throw new Error("\x00".repeat(2_000));
+      },
+    });
+    const raw = await callRawBytes(server.addressFor(THREAD).url, "app_session_list", {});
+    expect(raw.status).toBe(200);
+    expect(
+      raw.bytes,
+      `an error result was ${raw.bytes} B, over the ${APP_TOOL_RESULT_MAX_BYTES} B ceiling`,
+    ).toBeLessThanOrEqual(APP_TOOL_RESULT_MAX_BYTES);
+    const body = JSON.parse(raw.text) as {
+      result: { content: { type: string; text: string }[]; isError?: boolean };
+    };
+    // Still marked as a refusal — spilling an oversized error must not silently turn it into
+    // a success the model reads as an answer.
+    expect(body.result.isError).toBe(true);
+    const envelope = JSON.parse(body.result.content[0]?.text ?? "{}") as {
+      truncated: boolean;
+      path: string;
+    };
+    expect(envelope.truncated).toBe(true);
+    expect(readFileSync(envelope.path, "utf8")).toBe("\x00".repeat(2_000));
   });
 
   it("spills under the session's own context directory when the thread's session and bound root both resolve", async () => {
