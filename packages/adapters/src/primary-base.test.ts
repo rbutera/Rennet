@@ -31,6 +31,16 @@ function repository(): string {
   return root;
 }
 
+/** Whether a ref resolves in this clone — `rev-parse --verify --quiet` exits 1 if not. */
+function resolves(root: string, ref: string): boolean {
+  try {
+    git(root, "rev-parse", "--verify", "--quiet", ref);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function commit(root: string, path: string, body: string): string {
   writeFileSync(join(root, path), body);
   git(root, "add", path);
@@ -134,17 +144,60 @@ describe("resolvePrimaryBase", () => {
     expect(resolved).toEqual({ baseRef: null });
   });
 
-  it("names the primary from origin/HEAD, then from the main/master pair", async () => {
+  it("names the primary from origin/HEAD when the caller has no name", async () => {
     const { root } = staleLocalMain();
     git(root, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main");
-    expect((await resolvePrimaryBase(execaGit, root)).baseRef).toBe("origin/main");
 
-    // With no `origin/HEAD` the conventional names are probed in order, and `master`
-    // answers for a clone that never had a `main`.
+    expect((await resolvePrimaryBase(execaGit, root)).baseRef).toBe("origin/main");
+  });
+
+  it("probes main then master when there is no origin/HEAD", async () => {
+    // `master` answers for a clone that never had a `main` — the pair is tried in order.
     const legacy = repository();
     commit(legacy, "base.txt", "base\n");
     git(legacy, "branch", "-m", "main", "master");
+
     expect((await resolvePrimaryBase(execaGit, legacy)).baseRef).toBe("master");
+  });
+
+  it("falls through to main/master when origin/HEAD points at a branch that is gone", async () => {
+    // `symbolic-ref --short` prints a DANGLING target and exits 0, so `origin/HEAD` can
+    // name a branch no ref resolves — the shape a clone is left in when the primary
+    // branch is renamed on the forge. Answering `master` here would end the probe at a
+    // name with no candidates, and the caller would lose a base it can plainly see.
+    const { root } = staleLocalMain();
+    git(root, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/master");
+    expect(git(root, "symbolic-ref", "--short", "refs/remotes/origin/HEAD")).toBe("origin/master");
+    expect(resolves(root, "refs/remotes/origin/master")).toBe(false);
+
+    const resolved = await resolvePrimaryBase(execaGit, root);
+
+    expect(resolved.baseRef).toBe("origin/main");
+  });
+
+  it("answers no ref for a caller name of HEAD, which names no branch", async () => {
+    // The live caller passes `project?.primaryBranch ?? "HEAD"`. Taken as a name it
+    // would build `refs/remotes/origin/HEAD`, which resolves in any ordinary clone, and
+    // the base would become origin's default tip instead of the caller's own fallback.
+    const { root } = staleLocalMain();
+    git(root, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main");
+
+    const resolved = await resolvePrimaryBase(execaGit, root, { primaryBranch: "HEAD" });
+
+    expect(resolved).toEqual({ baseRef: null });
+  });
+
+  it("reports the winner's own tip beside the merge-base", async () => {
+    // The row measures against the tip OID, not the short name: a TAG named `origin/main`
+    // outranks the remote-tracking ref when git re-resolves that short name.
+    const { root, localTip, remoteTip } = staleLocalMain();
+    git(root, "checkout", "-qb", "feat/cut-early", localTip);
+    const head = commit(root, "early.txt", "early\n");
+
+    const resolved = await resolvePrimaryBase(execaGit, root, { primaryBranch: "main", head });
+
+    expect(resolved.baseTipOid).toBe(remoteTip);
+    expect(resolved.baseOid).toBe(localTip);
   });
 
   it("bases a branch cut from the fresher spelling at that spelling's tip", async () => {

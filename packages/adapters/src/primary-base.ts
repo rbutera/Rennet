@@ -1,4 +1,4 @@
-import type { GitExec } from "./git-range-diff";
+import { type GitExec, isAncestor } from "./git-range-diff";
 
 /**
  * The one place a local surface turns "the primary branch" into a commit
@@ -28,6 +28,17 @@ export interface PrimaryBaseResolution {
    * keeps saying it cannot measure).
    */
   readonly baseRef: string | null;
+  /**
+   * The winning ref's own tip OID — present exactly when `baseRef` is non-null.
+   *
+   * A caller that MEASURES against the primary branch (the New Chat row's ahead/behind
+   * and diffstat) uses this rather than the short name: `origin/main` as a short name is
+   * ambiguous — a tag of that literal name resolves ahead of the remote-tracking ref in
+   * git's disambiguation order — so re-resolving the name could measure against a ref the
+   * resolver never picked. The OID was read from the fully-qualified ref here and cannot
+   * be re-resolved to something else.
+   */
+  readonly baseTipOid?: string;
   /** `merge-base <winner> <head>`; present only when the caller supplied a head. */
   readonly baseOid?: string;
 }
@@ -69,9 +80,24 @@ async function readRemotes(git: GitExec, root: string): Promise<string[]> {
 }
 
 /**
- * The primary branch's NAME (not a ref). The caller's own answer wins; otherwise
- * `origin/HEAD`'s target names it, and failing that the conventional pair is probed
- * in order — the same fallback the working-tree capture used before this resolver.
+ * `HEAD` is not a branch name — git refuses to create a branch called that — so a caller
+ * passing it is saying "I have no name for the primary branch", not naming one. Taken as a
+ * name it would build `refs/remotes/origin/HEAD`, which resolves in any ordinary clone, and
+ * the base would silently become origin's default tip instead of the caller's own fallback.
+ */
+const NOT_A_BRANCH_NAME = "HEAD";
+
+/**
+ * The primary branch's NAMES (not refs), in probe order. The caller's own answer wins
+ * alone — a project that records `main` must never fall through to `master` — and
+ * otherwise `origin/HEAD`'s target is tried first, then the conventional pair.
+ *
+ * `origin/HEAD` goes IN FRONT of the pair rather than replacing it because
+ * `symbolic-ref` reports a dangling target happily: a clone whose `origin/HEAD` still
+ * points at `refs/remotes/origin/master` after the branch was renamed prints `master`
+ * and exits 0, and nothing named `master` resolves. Keeping the pair behind it makes the
+ * caller-less probe at least as capable as the working-tree capture's old fallback,
+ * which tried `origin/HEAD`, then `main`, then `master` in one list.
  */
 async function primaryNames(
   git: GitExec,
@@ -79,7 +105,9 @@ async function primaryNames(
   primaryBranch: string | undefined,
 ): Promise<string[]> {
   const named = primaryBranch?.trim();
-  if (named !== undefined && named.length > 0) return [named];
+  if (named !== undefined && named.length > 0) {
+    return named === NOT_A_BRANCH_NAME ? [] : [named];
+  }
   const originHead = (
     await git(root, ["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"], {
       reject: false,
@@ -87,25 +115,12 @@ async function primaryNames(
   ).trim();
   // `origin/HEAD` prints `origin/<name>`, and the name itself may contain slashes.
   const slash = originHead.indexOf("/");
-  if (slash > 0) return [originHead.slice(slash + 1)];
-  return [...FALLBACK_PRIMARY_NAMES];
-}
-
-/** Whether `maybeAncestor` is contained in `descendant` (`merge-base --is-ancestor`). */
-async function isAncestor(
-  git: GitExec,
-  root: string,
-  maybeAncestor: string,
-  descendant: string,
-): Promise<boolean> {
-  // The answer is the exit code: 0 = yes, 1 = no. `reject: true` turns "no" into a
-  // throw, which is the only way to read it through a stdout-shaped runner.
-  try {
-    await git(root, ["merge-base", "--is-ancestor", maybeAncestor, descendant], { reject: true });
-    return true;
-  } catch {
-    return false;
-  }
+  const derived = slash > 0 ? originHead.slice(slash + 1) : "";
+  const names =
+    derived.length > 0 && derived !== NOT_A_BRANCH_NAME
+      ? [derived, ...FALLBACK_PRIMARY_NAMES]
+      : [...FALLBACK_PRIMARY_NAMES];
+  return [...new Set(names)];
 }
 
 /**
@@ -115,13 +130,19 @@ async function isAncestor(
  * each moved past the other (diverged), the remote-tracking one wins, because the
  * remote is what a pull request opens against.
  */
-async function pickNewest(git: GitExec, root: string, candidates: Candidate[]): Promise<Candidate> {
+async function pickNewest(
+  git: GitExec,
+  root: string,
+  // The highest-priority candidate is a SEPARATE parameter, so "there is at least one"
+  // is a fact the type carries and the fallback below needs no cast to state.
+  first: Candidate,
+  rest: readonly Candidate[],
+): Promise<Candidate> {
   // Two spellings at the same commit are the same answer; name the higher-priority one.
-  const distinct: Candidate[] = [];
-  for (const candidate of candidates) {
+  const distinct: Candidate[] = [first];
+  for (const candidate of rest) {
     if (!distinct.some((kept) => kept.oid === candidate.oid)) distinct.push(candidate);
   }
-  const first = distinct[0] as Candidate;
   if (distinct.length === 1) return first;
   for (const candidate of distinct) {
     let contained = false;
@@ -148,6 +169,9 @@ async function pickNewest(git: GitExec, root: string, candidates: Candidate[]): 
  * wins. With a `head`, `baseOid` is the merge-base of the winner and that head, so a
  * branch that already contains the primary branch's newest commits is based where it
  * LEFT the primary branch rather than at an older tip.
+ *
+ * A `primaryBranch` of `HEAD` names no branch and yields no candidates, so the answer is
+ * `{ baseRef: null }` and the caller's own verbatim fallback runs.
  */
 export async function resolvePrimaryBase(
   git: GitExec,
@@ -169,14 +193,16 @@ export async function resolvePrimaryBase(
         return oid === null ? null : { ...spec, oid };
       }),
     );
-    const candidates = resolved.filter((candidate): candidate is Candidate => candidate !== null);
-    if (candidates.length === 0) continue;
-    const winner = await pickNewest(git, root, candidates);
-    if (options.head === undefined) return { baseRef: winner.short };
+    const [first, ...rest] = resolved.filter(
+      (candidate): candidate is Candidate => candidate !== null,
+    );
+    if (first === undefined) continue;
+    const winner = await pickNewest(git, root, first, rest);
+    if (options.head === undefined) return { baseRef: winner.short, baseTipOid: winner.oid };
     // The winner's OID rather than its name: the ref was just read, and a merge-base
     // against the exact commit cannot be re-resolved to something else mid-capture.
     const baseOid = (await git(root, ["merge-base", winner.oid, options.head])).trim();
-    return { baseRef: winner.short, baseOid };
+    return { baseRef: winner.short, baseTipOid: winner.oid, baseOid };
   }
   return { baseRef: null };
 }
