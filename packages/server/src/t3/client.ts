@@ -57,6 +57,16 @@ export interface CreateThreadInput {
   readonly projectId: string;
   readonly title: string;
   readonly modelSelection: ModelSelection;
+  /**
+   * The thread's id, MINTED BY THE CALLER (session-thread-briefing 4.1).
+   *
+   * T3 mints thread ids client-side — `thread.create` carries the id rather than returning
+   * one — so a caller that needs to know the id BEFORE the create is allowed to name it.
+   * The session bind needs exactly that: the app-tools server's url carries the thread id
+   * in its path (`/threads/<id>`), and that url has to be on the create command that also
+   * carries it. Omitted ⇒ a fresh uuid, which is what every other caller wants.
+   */
+  readonly threadId?: string;
   /** Defaults to T3's full access, the posture Rule Zero mandates. */
   readonly runtimeMode?: RuntimeMode;
   /**
@@ -386,7 +396,7 @@ export async function connectT3(options: T3ClientOptions): Promise<T3Client> {
       return creating;
     },
     createThread: async (input) => {
-      const threadId = ThreadId.make(randomUUID());
+      const threadId = ThreadId.make(input.threadId ?? randomUUID());
       await dispatch({
         type: "thread.create",
         ...stamp(),

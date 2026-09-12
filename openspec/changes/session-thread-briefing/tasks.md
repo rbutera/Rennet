@@ -83,7 +83,7 @@ grep -n "board.read" packages/protocol/src/commands/index.ts     # present; NOT 
 
 ## 4. Bind — briefing, tools, and the council on the session thread
 
-- [ ] 4.1 `packages/server/src/dispatch/chat.ts` `bindReviewThread`: resolve the patchset facts and
+- [x] 4.1 `packages/server/src/dispatch/chat.ts` `bindReviewThread`: resolve the patchset facts and
   the context directory for the review, render the briefing, and pass `instructions`, the
   `rennet_app` server entry, and the council's `orchestrator-chat` selection (through the seam
   `resolveBoardSeatDetails` uses; `DEFAULT_MODEL` only when no installed provider answers, logged).

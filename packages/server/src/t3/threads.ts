@@ -351,6 +351,24 @@ export interface BindThreadInput {
   readonly worktreePath?: string;
   /** The branch that workspace has checked out; absent for a detached PR snapshot. */
   readonly branch?: string;
+  /**
+   * The id to create the thread WITH, when the caller already had to know it
+   * (session-thread-briefing 4.1). Only a `session` bind uses it: the app-tools url names
+   * the thread in its path, so the caller mints the id, builds the address, and hands both
+   * to the same create. Ignored when the binding already exists — an existing thread keeps
+   * the id, the briefing and the servers it was created with, for its whole life.
+   */
+  readonly threadId?: string;
+  /**
+   * The session briefing, appended to the provider's system prompt for every turn on this
+   * thread (session-thread-briefing). A SESSION thread only — see the refusal in
+   * {@link findOrCreateBinding}.
+   */
+  readonly instructions?: string;
+  /** The thread's base MCP servers — Rennet's app tools. A SESSION thread only. */
+  readonly mcpServers?: Readonly<
+    Record<string, { readonly url: string; readonly bearerTokenEnvVar?: string }>
+  >;
 }
 
 /** One creation per (data dir, repository root, key) in flight at a time. */
@@ -398,6 +416,18 @@ export function bindThread(input: BindThreadInput): Promise<ThreadBinding> {
 }
 
 async function findOrCreateBinding(input: BindThreadInput): Promise<ThreadBinding> {
+  // The briefing and the app tools belong to the REVIEW'S OWN conversation and to nothing
+  // else (session-thread-briefing, t3code-chat-surface spec). A seat carries its own
+  // briefing as the first turn of its lane and its own per-turn board address; a round
+  // thread is a coding agent's transcript. Passing the session's pair to either would put
+  // Rennet's app tools — `ask.stage`, `round.dispatch` — on a thread whose job is to draft
+  // a board, and would bill the append on every one of its turns. A programming error, so
+  // it is refused by name rather than silently dropped.
+  if (input.key.kind !== "session" && (input.instructions ?? input.mcpServers) !== undefined) {
+    throw new Error(
+      `bindThread: a ${input.key.kind} thread carries no session briefing and no thread-level MCP servers`,
+    );
+  }
   const keyRoot = keyRootOf(input);
   const existing = findBinding(input.dataDir, keyRoot, input.key);
   if (existing) return existing;
@@ -431,8 +461,11 @@ async function findOrCreateBinding(input: BindThreadInput): Promise<ThreadBindin
     projectId,
     title: input.title,
     modelSelection: input.modelSelection,
+    ...(input.threadId === undefined ? {} : { threadId: input.threadId }),
     ...(input.worktreePath === undefined ? {} : { worktreePath: input.worktreePath }),
     ...(input.branch === undefined ? {} : { branch: input.branch }),
+    ...(input.instructions === undefined ? {} : { instructions: input.instructions }),
+    ...(input.mcpServers === undefined ? {} : { mcpServers: input.mcpServers }),
   });
   const binding: ThreadBinding = {
     // The KEY root, which is the bound workspace when there is one — see `keyRootOf`.

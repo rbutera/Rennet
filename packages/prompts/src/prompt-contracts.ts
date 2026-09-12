@@ -942,9 +942,8 @@ export function boundedReviewLines(lines: readonly string[], maxBytes: number): 
  *
  * Exported because two agents are pointed at the same directory and must be told the same
  * thing — the lens seats through `lens-pipeline.ts`'s `renderContextReference`, and the
- * session thread through its briefing. The daemon-side copy imports this one (cluster 4) so
- * the pair cannot drift; until it does, `renderContextReference` renders the same shape as
- * this, kept in sync by hand rather than by import.
+ * session thread through its briefing. Both call THIS function, so an edit here reaches
+ * both and neither can drift; there is no second copy of the sentence to keep in step.
  */
 export function renderContextDirectorySentence(dir: string): string {
   return `Your session's context directory is \`${dir}/\`; its \`README.md\` indexes every file there — what each holds and when to read it. Nothing is sent to you inline: read a file with your own tools when its line says to.`;

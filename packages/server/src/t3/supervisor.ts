@@ -92,6 +92,18 @@ export interface T3SidecarSupervisor {
     readonly worktreePath?: string;
     /** The branch that workspace has checked out; absent for a detached PR snapshot. */
     readonly branch?: string;
+    /**
+     * The id to create the thread with, minted by the caller because it had to know it
+     * first (session-thread-briefing 4.1): the app-tools url names the thread in its path.
+     * Absent ⇒ the client mints one, which is what every caller but the session bind wants.
+     */
+    readonly threadId?: string;
+    /** The session briefing, appended to the provider's system prompt. Session binds only. */
+    readonly instructions?: string;
+    /** The thread's base MCP servers — Rennet's app tools. Session binds only. */
+    readonly mcpServers?: Readonly<
+      Record<string, { readonly url: string; readonly bearerTokenEnvVar?: string }>
+    >;
   }) => Promise<ThreadBinding>;
   /**
    * Archiving a session is the pruning act: delete every thread bound to any of these
@@ -227,6 +239,9 @@ export function createT3SidecarSupervisor(
       ...(input.sessionId === undefined ? {} : { sessionId: input.sessionId }),
       ...(input.worktreePath === undefined ? {} : { worktreePath: input.worktreePath }),
       ...(input.branch === undefined ? {} : { branch: input.branch }),
+      ...(input.threadId === undefined ? {} : { threadId: input.threadId }),
+      ...(input.instructions === undefined ? {} : { instructions: input.instructions }),
+      ...(input.mcpServers === undefined ? {} : { mcpServers: input.mcpServers }),
     });
 
   // ONE sweep at a time (review finding 2). The bindings file is a read-modify-write over a

@@ -73,6 +73,7 @@ import {
   type PullRequestState,
   sha256Hex,
 } from "@rennet/protocol";
+import type { AppThreadServer } from "../app/app-mcp-server";
 import { deepLinkFor, type RaisedAttention } from "../attention-planner";
 import type { ResolvedForgePullRequestDestination } from "../forge-submission";
 import type { LandWorkBranchOutcome } from "../land-work-branch";
@@ -81,6 +82,7 @@ import {
   type ReviewIntelligenceSession,
 } from "../review-intelligence-session";
 import type { SettingsComposition } from "../settings";
+import type { ModelSelection } from "../t3/client";
 import type { T3SidecarSupervisor } from "../t3/supervisor";
 import type { WorkBranchState } from "../work-branch-state";
 
@@ -128,6 +130,31 @@ export interface DispatchDeps {
   readonly boundWorkspaceForReview?: (
     reviewId: string,
   ) => Promise<{ readonly root: string; readonly branch?: string } | undefined>;
+  /**
+   * What a SESSION thread is created with, beyond its cwd (session-thread-briefing 4.1):
+   * the briefing's fixed text, Rennet's app-tools address, and the council's routing for
+   * the `orchestrator-chat` job. Three host facts `bindReviewThread` assembles into one
+   * `createThread`; the review's own half (the patchset, the context directory, the tool
+   * names) it resolves itself, so the assembly stays in one readable place.
+   *
+   * Absent ⇒ this composition stood up no briefing (a hermetic `createServer` in a test),
+   * and the session thread is created bare on the sidecar's default model, exactly as
+   * every thread was before this change.
+   */
+  readonly sessionThread?: {
+    /** The briefing's fixed half — `SESSION_BRIEFING_FILE` off the shipped prompts dir. */
+    readonly briefingText: () => string | Promise<string>;
+    /**
+     * The app-tools `mcpServers` entry for one thread id. Rejects when the listener could
+     * not be bound, which the bind reports as "no tools attached" rather than as no thread.
+     */
+    readonly appServerFor: (threadId: string) => Promise<AppThreadServer>;
+    /**
+     * The council's `orchestrator-chat` selection, or `undefined` when no installed
+     * provider answers the job — the one case the bind logs and falls to the default.
+     */
+    readonly modelSelection: () => Promise<ModelSelection | undefined>;
+  };
   /**
    * Where a background failure this layer cannot report to a caller goes (#872): today the
    * capture-time chat-thread bind, which is fire-and-forget by design and therefore has no
