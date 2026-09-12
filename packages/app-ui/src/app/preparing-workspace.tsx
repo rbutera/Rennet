@@ -9,14 +9,15 @@ import { readSessionQuery } from "../routes/url";
 //
 // While capture runs there is no review id yet, so `board.read` has nothing to ask for.
 // That is not a reason to show a different screen: it is the same board view, with the
-// same rail above it, saying honestly that no board has arrived. The capture step is
-// named in the workspace header over the boards, exactly as it is once the review exists.
+// same rail above it, saying honestly that no board has arrived. `WorkspaceHeader` draws
+// no header while capture runs — the frame's sphere carries the working state — so what
+// it contributes here is the floating Cancel chip, exactly as once the review exists.
 //
 // This replaces `preparation-bench.tsx`, which was a SEPARATE STAGE the boards later took
-// over from. Its three parts each have a home now: the slab and the two-beat capture rail
-// became `WorkspaceHeader`, the five readers became the rail's per-lens stops plus the
-// seat widget above the selected board, and the boards it appended below itself are the
-// workspace.
+// over from. Its parts each have a home now: the five readers became the rail's per-lens
+// stops plus the seat widget above the selected board, the boards it appended below
+// itself are the workspace, and its slab is gone — the account it used to give of a
+// running generation is the mark in the corner slot and one way to stop.
 //
 // The only thing it renders that the review workspace does not is nothing at all — every
 // difference is the empty review id flowing through the same components.

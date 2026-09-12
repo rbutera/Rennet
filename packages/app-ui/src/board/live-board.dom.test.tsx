@@ -201,8 +201,8 @@ beforeEach(() => {
 describe("the review opens on its boards, with no waiting stage in front of them", () => {
   it("puts the board view on screen while capture is still running", async () => {
     // 5.2. The review does not exist yet — capture is resolving the repository — and the
-    // board view is ALREADY the surface, with the capture step named in the workspace's
-    // own header. Before this there was a whole separate screen here.
+    // board view is ALREADY the surface. Before this there was a whole separate screen
+    // here; then a header describing the step; now the boards and one way to stop.
     const live = liveBridge({
       review: false,
       preparation: { status: "capturing", step: "resolving-repository" },
@@ -212,23 +212,22 @@ describe("the review opens on its boards, with no waiting stage in front of them
     await waitFor(() =>
       expect(document.querySelector('[data-kind="lens-board-view"]')).toBeTruthy(),
     );
-    // The two named beats, in the workspace header, over the boards.
-    const header = document.querySelector('[data-testid="workspace-header"]');
-    expect(header?.getAttribute("data-status")).toBe("capturing");
-    expect(
-      header?.querySelector('[data-beat="resolving-repository"]')?.getAttribute("data-state"),
-    ).toBe("active");
-    expect(
-      header?.querySelector('[data-beat="capturing-change"]')?.getAttribute("data-state"),
-    ).toBe("waiting");
-    expect(header?.textContent).toContain("Cancel");
-    // POSITION, not membership: the header comes BEFORE the board region in the document,
-    // and the board region is not inside it — that is what "over the boards" means, and a
-    // pair of `toContain` checks would be satisfied by a header that swallowed the board.
+    // NOTHING describes the machinery across the top of the boards any more: no slab, no
+    // spinner, no named beats. While capture runs the workspace offers the one thing the
+    // frame's sphere cannot — a way to stop it.
+    expect(document.querySelector('[data-testid="workspace-header"]')).toBeNull();
+    const cancel = document.querySelector('[data-testid="preparation-cancel"]');
+    if (!cancel) throw new Error("a running capture offers no way to cancel it");
+    expect(cancel.getAttribute("aria-label")).toBe("Cancel board generation");
+    expect(cancel.textContent).toBe("Cancel");
+    // POSITION, not membership: the chip FLOATS over the board region rather than
+    // displacing it — it is not an ancestor of the board, and the board is not inside it.
+    // A pair of `toContain` checks would be satisfied by a chip that swallowed the board.
     const region = document.querySelector('[data-region="board"]');
-    if (!header || !region) throw new Error("the workspace has no header or no board region");
-    expect(header.compareDocumentPosition(region) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(header.contains(region)).toBe(false);
+    if (!region) throw new Error("the workspace has no board region");
+    expect(cancel.contains(region)).toBe(false);
+    expect(region.contains(cancel)).toBe(false);
+    expect(cancel.className).toContain("fixed");
     // No preparation SCREEN survives anywhere.
     expect(document.querySelector('[data-screen="session-preparation"]')).toBeNull();
   });

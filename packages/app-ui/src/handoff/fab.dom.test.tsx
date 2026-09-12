@@ -32,8 +32,18 @@ describe("ExitFab", () => {
     const r = mount(
       <ExitFab mode="own-branch" reviewing open={false} onToggle={() => toggled++} />,
     );
-    await r.user.click(r.getByRole("button", { name: "Reviewing the change" }));
+    const reviewing = r.getByRole("button", { name: "Reviewing the change" });
+    await r.user.click(reviewing);
     expect(toggled).toBe(0);
+    // …and it says so WITHOUT a spinner of its own. The frame animates the working state
+    // once, in the corner slot's sphere; a second spinner here was Rennet narrating
+    // itself twice. The fact still reaches assistive tech — the name and `aria-busy` are
+    // what carry it, which is why they are asserted beside the absence.
+    expect(reviewing.querySelector('[role="status"]')).toBeNull();
+    expect(reviewing.getAttribute("aria-busy")).toBe("true");
+    expect((reviewing as HTMLButtonElement).disabled).toBe(true);
+    // The glyph is still there: unavailable, not empty.
+    expect(reviewing.querySelector("svg")).toBeTruthy();
     r.rerender(<ExitFab mode="own-branch" open={false} onToggle={() => toggled++} />);
     await r.user.click(r.getByRole("button", { name: "Continue" }));
     expect(toggled).toBe(1);

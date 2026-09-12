@@ -55,8 +55,19 @@ describe("state 3 — the floating chip layer (C20 §5)", () => {
     expect(slot.getAttribute("data-owner")).toBe("floating");
     expect(slot.className).toContain("fixed");
     expect(slot.className).toContain("rounded-full");
-    // The pill is translucent backing plus the toggle — never a control under a light.
+    // The pill is translucent backing plus the orb and the toggle — never a control
+    // under a light.
     expect(slot.className).toContain("backdrop-blur-md");
+    // THE ORB (state 3): the app's working state, floating over the full-bleed view —
+    // with no sidebar and no chat header, this pill is the only chrome left, so it is
+    // where the mark lives. 24px centred in the 32px pill: the row centres its items,
+    // which is the only thing happy-dom can be asked (it computes no layout).
+    const sphere = slot.querySelector("[data-liquid-sphere]");
+    if (!sphere) throw new Error("the floating pill has no sphere");
+    expect((sphere as HTMLElement).style.height).toBe("24px");
+    expect(slot.className).toContain("h-8");
+    expect(slot.className).toContain("items-center");
+    expect(sphere.getAttribute("aria-label")).toBe("Rennet");
     // It belongs to the LAYOUT: it is NOT inside the session top bar, so a takeover
     // route with the sidebar collapsed still has a corner slot and a drag region.
     expect(slot.closest('[data-slot="session-top-bar"]')).toBeNull();
@@ -330,7 +341,9 @@ describe("state 3 — the floating chip layer (C20 §5)", () => {
     );
     // Drive the app to the drafting workspace and take a real element off the BOARD — the
     // thing that has to be reachable — rather than a container chosen by class.
-    const widget = await findByTestId("workspace-header");
+    // The drafting workspace no longer carries a header — the running state is the
+    // floating Cancel chip — so THAT is what says the app reached this surface.
+    const widget = await findByTestId("preparation-cancel");
     const board = container.ownerDocument.querySelector('[data-kind="lens-board-view"]');
     if (!board) throw new Error("the workspace did not render a board view");
     const region = container.ownerDocument.querySelector("[data-floating-chrome]");
