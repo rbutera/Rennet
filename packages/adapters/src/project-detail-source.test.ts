@@ -790,6 +790,10 @@ describe("loadProjectDetail — live remote PRs (B2)", () => {
 });
 
 describe("loadProjectDetail — the row measures against the resolved primary ref", () => {
+  // Real git on a cold disk under a busy gate exceeds vitest's 5 s default (the full
+  // `pnpm check` timed these out at 5000 ms while other suites were running); the same
+  // room `git-capture.test.ts` and `primary-base.test.ts` give themselves.
+  vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 });
   const scratch: string[] = [];
   const runGit = (cwd: string, ...args: string[]): string =>
     execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
