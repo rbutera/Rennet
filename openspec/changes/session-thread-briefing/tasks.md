@@ -67,7 +67,7 @@ grep -n "board.read" packages/protocol/src/commands/index.ts     # present; NOT 
 - [x] 3.2 `packages/server/src/app/app-credentials.ts` (leaf, like `board-credentials.ts`):
   `APP_MCP_SERVER_NAME = "rennet_app"`, `APP_BEARER_ENV_VAR = "RENNET_APP_BEARER"`; `t3/sidecar.ts`
   places the bearer in the sidecar's environment beside the board bearer.
-- [ ] 3.3 `packages/server/src/app/app-mcp-server.ts`: loopback Streamable-HTTP listener serving
+- [x] 3.3 `packages/server/src/app/app-mcp-server.ts`: loopback Streamable-HTTP listener serving
   `tools/list` from `buildAppTools(dispatch)` (schemas through `normalizeOutputSchema`) and
   `tools/call` by dispatch, thread identity from the address path, port remembered in the sidecar
   base dir. Every collection-carrying result capped per design (`BOARD_READ_TOOL_ELEMENT_CAP`,

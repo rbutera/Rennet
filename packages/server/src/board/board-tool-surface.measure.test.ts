@@ -3,6 +3,7 @@ import { BoardWriter } from "@rennet/core";
 import type { Author, BoardTarget } from "@rennet/protocol";
 import { boardToolsByName } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
+import { servedAppToolCatalog, shapeAppToolResult } from "../app/app-mcp-server";
 import { boardOutputSchema } from "../runtime/lens-pipeline";
 import { describeOutcome, servedToolCatalog } from "./board-mcp-server";
 
@@ -505,5 +506,172 @@ describe("what a board's tool RESULTS cost on a 1,252-element board (#871)", () 
     expect(large["unheld id"]).toContain("This board holds no");
     expect(large["removal receipt"]).toContain("removed");
     expect(large.finish).toContain("to fix");
+  });
+});
+
+// ── What the SESSION THREAD's app tools cost (session-thread-briefing 3.3) ────
+
+/**
+ * The other tool surface a turn can carry, measured on the same terms as the board's.
+ *
+ * The session thread holds `rennet_app`: the whole `exposure.agent` projection, served over
+ * loopback MCP. Two costs, and they are different animals:
+ *
+ * - the CATALOG is fixed at the provider session's construction and sits in the prefix for
+ *   the thread's life — one price, paid on every turn of that thread;
+ * - a RESULT is billed like a prompt and is re-read on every remaining round trip of the
+ *   turn it lands in (#871), which is why every collection-carrying result is paged.
+ *
+ * Both operands are the real ones: `servedAppToolCatalog` is what `tools/list` answers with,
+ * and `shapeAppToolResult` is the function the wire calls — not a rebuild of either. The
+ * board fixture is the REAL `BoardWriter`'s 1,252-element Noise board, the same one #871 was
+ * sighted on. The session, transcript and evidence fixtures are synthetic rows shaped like
+ * their projections; what they carry is the BOUND, which holds whatever the rows are,
+ * because the byte budget is measured on the rows as serialized.
+ *
+ * What this CANNOT catch: how many calls a turn makes. Paging bounds one result, not a model
+ * that pages through a 1,252-element board twenty times. Only a live drive shows that.
+ */
+
+/**
+ * The declared ceiling on ONE app-tool result. Larger than the board server's 4 kB, and
+ * deliberately: a board READ's payload is the board the reviewer asked about, where a board
+ * WRITE's result is an id. It is `PAGE_TOOL_BYTES_CAP` (16 kB) plus the JSON envelope around
+ * the page and the marker sentence — the same shape of declared, larger envelope
+ * `write_board` carries for answering for a whole batch.
+ */
+const APP_TOOL_RESULT_CEILING = 20_000;
+
+/**
+ * How much a paged result may grow when the COLLECTION grows tenfold.
+ *
+ * Measured between two fixtures that both saturate the page, not between a three-row answer
+ * and a full one: a small collection comes back whole, so "3 rows → 400 rows" measures the
+ * page filling up, which is the cap working rather than a leak. What must not move is the
+ * page itself, and the only thing in it that legitimately grows is the marker's own totals
+ * ("of 1,252" → "of 12,520") — a few bytes.
+ */
+const APP_GROWTH_CEILING = 1.02;
+
+const noiseBoardOf = (regions: number) => {
+  const all = regionsFor(regions);
+  const writer = new BoardWriter({
+    target: "noise",
+    author: { kind: "lens-agent", id: "lens:noise:claudeAgent" },
+    lint: { regions: all, files: new Map(all.map((r) => [r.path, 200])), patchsetId: "ps-1" },
+  });
+  writer.placeMembers("noise_verdict", all);
+  return writer.board();
+};
+
+const sessionRows = (count: number) =>
+  Array.from({ length: count }, (_, index) => ({
+    id: `session-${index}`,
+    projectId: "project-1",
+    title: `Review the authentication refresh path, attempt ${index}`,
+    updatedAt: "2026-09-12T10:00:00.000Z",
+    pinned: false,
+    archived: false,
+    branch: `feat/branch-number-${index}`,
+    repositoryRoot: `/Users/someone/dev/repo-${index}`,
+  }));
+
+const transcriptRows = (count: number) =>
+  Array.from({ length: count }, (_, index) => ({
+    id: `row-${index}`,
+    kind: index % 2 === 0 ? "user" : "assistant",
+    at: "2026-09-12T10:00:00.000Z",
+    text: `Turn number ${index}: ${"the round said something about the change. ".repeat(4)}`,
+  }));
+
+/** Every app-tool result that carries a collection, at one scale, through the real shaper. */
+function appResults(scale: { regions: number; rows: number }): Record<string, string> {
+  const shaped = (id: Parameters<typeof shapeAppToolResult>[0], output: unknown): string => {
+    const result = shapeAppToolResult(id, output);
+    return result.marker === undefined ? result.text : `${result.text}\n${result.marker}`;
+  };
+  return {
+    "board.read": shaped("board.read", { board: noiseBoardOf(scale.regions) }),
+    "session.list": shaped("session.list", { sessions: sessionRows(scale.rows) }),
+    "session.transcript": shaped("session.transcript", {
+      trail: { branch: "feat/x" },
+      rows: transcriptRows(scale.rows),
+    }),
+    "patchset.readEvidence": shaped("patchset.readEvidence", {
+      path: "src/auth.ts",
+      counterparts: [],
+      patch: `@@ -1,4 +1,4 @@\n${"-const a = 1;\n+const a = 2;\n".repeat(scale.rows * 8)}`,
+    }),
+  };
+}
+
+describe("what the session thread's app tools cost (session-thread-briefing)", () => {
+  it("prices the catalog the thread's every turn carries", () => {
+    const catalog = servedAppToolCatalog(async () => undefined);
+    const rows = catalog
+      .map((tool) => ({ name: tool.name, size: bytes(tool) }))
+      .sort((a, b) => b.size - a.size);
+    const total = bytes(catalog);
+    console.info(
+      [`app tool catalog: ${catalog.length} tools, ${total} B`]
+        .concat(rows.slice(0, 5).map((row) => `  ${row.name.padEnd(30)} ${row.size}`))
+        .join("\n"),
+    );
+    // Measured 2026-09-12: 29 tools, 12,929 B — the whole `exposure.agent` projection, fixed
+    // at the provider session's construction and re-read on every turn of the thread. The
+    // bound is set just above it so a row that grows the surface materially trips this and
+    // the PR that adds it has to say so. Re-run the test rather than copy the number forward.
+    expect(total, `the app tool catalog is ${total} B across ${catalog.length} tools`).toBeLessThan(
+      16_000,
+    );
+    // The heaviest row is the one with a whole nested payload in its input (`projects.add`
+    // takes a DiscoveryResult). Named so a reader can see where the surface's bytes are.
+    expect(rows[0]?.name).toBe("app_projects_add");
+  });
+
+  it("bounds every paged result and stops it growing with the collection", () => {
+    // Three scales: one that fits (nothing is paged), one that pages, and one whose
+    // collection is TEN TIMES the second's. The bound is proved between the last two.
+    const whole = appResults({ regions: 3, rows: 3 });
+    const paged = appResults({ regions: NOISE_REGIONS_LARGE, rows: 400 });
+    const tenfold = appResults({ regions: NOISE_REGIONS_LARGE * 10, rows: 4_000 });
+
+    console.info(
+      ["app result             whole    paged   10x collection  growth"]
+        .concat(
+          Object.keys(paged).map((key) => {
+            const fits = textBytes(whole[key] ?? "");
+            const one = textBytes(paged[key] ?? "");
+            const ten = textBytes(tenfold[key] ?? "");
+            return `${key.padEnd(22)} ${String(fits).padStart(5)}  ${String(one).padStart(7)}  ${String(ten).padStart(14)}  ${(ten / one).toFixed(2)}x`;
+          }),
+        )
+        .join("\n"),
+    );
+
+    for (const [key, text] of Object.entries(paged)) {
+      expect(
+        textBytes(text),
+        `the ${key} result is ${textBytes(text)} B on the paged fixture`,
+      ).toBeLessThan(APP_TOOL_RESULT_CEILING);
+      const ten = textBytes(tenfold[key] ?? "");
+      expect(
+        ten / textBytes(text),
+        `the ${key} result grew ${(ten / textBytes(text)).toFixed(2)}x when its collection grew tenfold`,
+      ).toBeLessThan(APP_GROWTH_CEILING);
+    }
+
+    // The operand guard: the fixtures really are the sizes claimed, the paged results really
+    // were paged, and the small one really was not. Without it these assertions would pass
+    // over four identical small answers.
+    expect(noiseBoardOf(NOISE_REGIONS_LARGE).elements.length).toBeGreaterThan(1_000);
+    for (const [key, text] of Object.entries(paged)) {
+      expect(text, `the ${key} result did not page`).toContain("cursor:");
+    }
+    for (const [key, text] of Object.entries(whole)) {
+      expect(text, `the ${key} fixture was paged when it should have fitted`).not.toContain(
+        "cursor:",
+      );
+    }
   });
 });
