@@ -1786,6 +1786,19 @@ bytes. Every one of them is now **constant in the material**: the enumeration ca
 prompts needed (the digest's ten-hunk "and N more", among them) are gone with the
 enumeration, so a large delta costs the turn nothing and the file stays complete.
 
+Two more are written for the Design seat alone, and named in its prompt alone.
+`design-sources.md` carries the format and one line per artifact when the host located
+this branch's specification — the paths, never the text. `related-context.md` carries
+the issues and pull requests the host found linked to this branch, rendered from the
+dossier related-context retrieval already stored: one region per item with its id,
+tracker, title, state, URL, provenance, bounded body and acceptance criteria, under
+declared bounds of 20 items and 64 KiB, ending on a line naming the dropped count when
+a bound is hit. It is written only when the seat will run without a located
+specification, and only when there are items; past the lane's wait ceiling it carries
+the deterministically extracted refs and their URLs instead, with a line saying
+retrieval had not finished. The lane logic behind both is in
+[the lens pipeline](./lens-pipeline.md#how-the-design-lane-ends).
+
 ## Code map
 
 - `packages/server/src/t3/sidecar.ts`: claim, probe, free port, provider seeding, environment, spawn, adopt, stop.

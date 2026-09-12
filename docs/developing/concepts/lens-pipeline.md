@@ -176,7 +176,8 @@ and calls board regeneration through this runtime.
    named in the Design prompt alone, and the prompt tells the seat those files are the
    specification, so it renders them rather than searching for them. A branch with no
    specification in any of those formats writes no such file and runs the seat, which
-   searches the checkout for itself.
+   searches the checkout for itself and, when that search ends empty, drafts an overview
+   from what the branch does say — described under *The Design lens* below.
 
    A verified report arrives before any lens turn starts and
    opens that boundary, after which all five lens lanes run
@@ -941,7 +942,8 @@ patchset id, durable asks, the worker's identity, and the round's evidence
 manifest; full raw payloads stay behind a context tool. Items are structured (id, tracker, title, state, bounded body,
 acceptance criteria, URL, provenance, fetched-at) and cited by id, which is
 how ticket citations reach boards. Like every other input, it reaches a seat as
-a file the prompt names, never as an interpolation. Standing project background is not fetched
+a file the prompt names, never as an interpolation — for the Design lane, as the
+`related-context.md` described under [The Design lens](#the-design-lens). Standing project background is not fetched
 for the drafter: a drafter that wants it reads the repository it is standing in.
 Cosmetic project facts (the logo) never enter agent context. When no tracker is
 configured, the dossier carries what the forge itself supplies and the review
@@ -999,10 +1001,11 @@ A board says what it does not know as plainly as what it does.
 - A drafting seat that fails renders as **failed**, never as empty. The
   surface distinguishes a lens that ran and found nothing from a lens that did
   not run.
-- A Design seat that looked for this branch's specification and found none returns
-  `no-spec`. That is a successful **absent** lane, not a failed drafter and not an
-  empty board; the other four lenses continue normally, and the finished board views
-  carry no Design tab.
+- A Design seat that looked for this branch's specification, found none, and had no
+  pull request description, documentation change or related issue to draft an overview
+  from returns `no-spec`. That is a successful **absent** lane, not a failed drafter and
+  not an empty board; the other four lenses continue normally, and the finished board
+  views carry no Design tab.
 - An element the validation loop could not make pass leaves a trace, never a
   silent hole. If it was dropped, the omission names it with a reason (the
   honest-omission exit); unresolved board-level or schema violations ride
@@ -1109,17 +1112,75 @@ commit message, pull request text, or task line that connects them — so a read
 check the link instead of trusting it. One specification per board; a neighbouring
 change that merely sorts first is not this branch's.
 
-When the repository holds no specification for this branch, the seat returns
-`{ "absence": "no-spec" }` and drafts nothing. The lane settles **absent**, not
-failed: a branch without a spec workflow is an ordinary branch. Design keeps its
-place on the rail and its board says "No spec found for this branch." — a stated
-result rather than a gap, and rather than an empty board, which would be a lie about
-what the repository holds. The tab stays because a lens that vanished as it settled
-would move the reviewer's selection out from under them. Design's older `no-material`
-absence stays readable for generations recorded before this change; nothing settles
-it now.
+### How the Design lane ends
 
-The resulting board is a structured composition, not a Markdown viewer. Its header
+```mermaid
+flowchart TD
+  capture[Reviewed patchset] --> located{Host located a specification?}
+  located -- yes --> assembler{Assembler renders it?}
+  assembler -- yes --> host[Board assembled on the host, no model turn]
+  assembler -- no --> rendered[Seat renders the files design-sources.md names]
+  located -- no --> search{Seat finds a specification in the checkout?}
+  search -- yes --> drafted[Seat drafts from the specification it found]
+  search -- no --> material{Pull request body, branch documentation, or a linked issue?}
+  material -- yes --> overview[Seat drafts an overview from those sources]
+  material -- no --> absent[Absent: no-spec]
+```
+
+Four of those endings are a board and the fifth is a stated absence. The branch that
+carries no specification is the common case, and it still has material: what the author
+wrote on the pull request, the documentation the branch itself changes, and the issues
+it links.
+
+So when the search ends empty the seat drafts an **overview** from three sources, in
+this order: the pull request's title and description as the host wrote them to `pr.md`,
+the documentation the branch adds or modifies (every `.md`, `.mdx`, `.rst` or `.txt`
+file and every file under a `docs/` directory the change index lists, read at the
+reviewed tree), and the related issues in `related-context.md`. The board says what it
+is: its stats read `Format: Overview` and `Specification: none found`, its intro opens
+with the sentence "No specification was found for this branch; this overview is drafted
+from" and the sources it used, and each section's source chip names the file it was read
+from. A decision appears only where a source states one, marked `inferred: false` and
+carrying that source; an issue's acceptance criteria appear as requirement rows whose
+`shall` is the tracker's own text and whose source is the item's id. The overview
+carries no capability, requirement or task count — those count a specification, and
+there is none — and it infers nothing from code. It is model-drafted only: there is no
+host assembler for a pull request body, because a description is prose rather than a
+document with obligations. A one-line body makes a one-section overview, which is the
+honest board for a one-line body.
+
+`related-context.md` is how the issues reach that seat. Related-context retrieval
+already runs at review open and stores a bounded dossier for the review target and
+patchset; the host renders that dossier into the session's context directory as one
+region per item in dossier order — id, tracker, title, state, URL, provenance, bounded
+body, and acceptance criteria when the tracker carries them — under declared bounds of
+20 items and 64 KiB, ending on a line naming the dropped count when either bound is hit.
+No items, no file. Like `pr.md` and `design-sources.md`, it is named in the Design
+prompt alone.
+
+The Design lane waits for that retrieval, bounded, and only on the path that needs it:
+the host located no specification and the assembler produced no board. It continues the
+moment retrieval settles, which on an ordinary branch is a few `gh` fetches and one
+light-tier council turn. The ceiling is 120 seconds; past it the file carries the
+deterministically extracted refs with their URLs and a line saying retrieval had not
+finished, so the seat can fetch a GitHub ref itself. While the lane waits its latest
+event reads "waiting for related issues", so the delay is visible on the preparation
+surface rather than silent. The host-located and assembler paths never wait.
+
+The residual absence is the branch that has none of the three — no pull request paper,
+no documentation change, no related issue. Then the seat returns
+`{ "absence": "no-spec" }` and drafts nothing, and its note names the three sources it
+looked for. The lane settles **absent**, not failed: a branch without a spec workflow is
+an ordinary branch. Design keeps its place on the rail and its board says "No spec found
+for this branch." — a stated result rather than a gap, and rather than an empty board,
+which would be a lie about what the repository holds. The tab stays because a lens that
+vanished as it settled would move the reviewer's selection out from under them. Design's
+older `no-material` absence stays readable for generations recorded before this change;
+nothing settles it now.
+
+### The board it renders
+
+The spec-backed board is a structured composition, not a Markdown viewer. Its header
 names the source set, displays the format, and reports capability, requirement, and
 task counts read from those files. Each stat appears once. Header source chips list
 every rendered file exactly once in reading order, and their first named source

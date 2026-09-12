@@ -326,7 +326,7 @@ returns to its board. Reloading the URL opens the same selection.
 
 | Board | Question |
 |---|---|
-| Design | What was this change supposed to do, according to its own specification? |
+| Design | What was this change supposed to do, according to its specification or its author? |
 | Sequence | In what order should I read the implementation? |
 | Decisions | Which implementation choices need explanation? |
 | Flagged | Where did automated analysis find a problem or a disagreement? |
@@ -338,17 +338,19 @@ words, or the reason it failed — rather than leaving a gap where a tab used to
 be. Reviewing a proposal before any code exists gives you a Design board and four
 lenses that say they found nothing to draft.
 
-Design reads the specification the branch was written against. When the branch
+Design reads the specification the branch was written against, when it has one. When the branch
 itself touches one in a format Rennet parses — an OpenSpec change, a Kiro
 feature, BMAD documents, a superpowers spec or plan, an ADR or a grill-me
 `CONTEXT.md` — Rennet renders that specification's own text straight onto the
 board, with no model turn and nothing sent to a provider. Otherwise a model
 reader looks through the checkout where specifications live, using the branch's
 own commit messages and pull request body as the clue, and it cites the line
-that ties the document to the branch so you can check the link. Repositories
-without a spec workflow are ordinary, and Rennet says so plainly: the Design
-board reads "No spec found for this branch.", which is a result rather than a
-gap.
+that ties the document to the branch so you can check the link. When there is no
+specification at all, the Design board is an overview drafted from the pull request
+description, the documentation the branch adds or changes, and the issues it links. The
+board labels itself an overview rather than a specification, and every part of it names
+the file it was read from. Only a branch with none of those three reads "No spec found
+for this branch.", which is a result rather than a gap.
 
 The board drafter writes each title and short intro. Design uses a wider
 structured measure for specification content. Sequence, Decisions, Flagged, and Noise use a

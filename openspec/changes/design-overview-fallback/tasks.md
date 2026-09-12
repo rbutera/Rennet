@@ -25,7 +25,7 @@
 
 ## 5. Documentation
 
-- [ ] 5.1 `docs/developing/concepts/lens-pipeline.md`, "The Design lens": the overview arm, the file, the bounded wait, the residual absence.
-- [ ] 5.2 `docs/using/guides/getting-started.md`, the Design paragraph; `docs/using/concepts/common-questions.md` and `docs/using/index.md` where they say what Design reads.
-- [ ] 5.3 `docs/developing/concepts/t3code-sidecar.md`: `related-context.md` in the seat context file list.
+- [x] 5.1 `docs/developing/concepts/lens-pipeline.md`, "The Design lens": the overview arm, the file, the bounded wait, the residual absence.
+- [x] 5.2 `docs/using/guides/getting-started.md`, the Design paragraph; `docs/using/concepts/common-questions.md` and `docs/using/index.md` where they say what Design reads.
+- [x] 5.3 `docs/developing/concepts/t3code-sidecar.md`: `related-context.md` in the seat context file list.
 - [ ] 5.4 `pnpm check` green, and the drives in section 4 as the positive control.
