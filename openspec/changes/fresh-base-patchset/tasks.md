@@ -17,6 +17,6 @@
 
 ## 4. Documentation
 
-- [ ] 4.1 `docs/using/guides/getting-started.md`: the two sentences about a local branch's numbers and what a branch row captures say the measurement is against the newest of the clone's spellings of the primary branch (`origin/main` or `main`, whichever is ahead), in the guide's voice, without narrating the old behaviour
-- [ ] 4.2 `docs/developing/concepts/architecture-overview.md`: the capture step names the resolved primary base rather than "the merge-base"
+- [x] 4.1 `docs/using/guides/getting-started.md`: the two sentences about a local branch's numbers and what a branch row captures say the measurement is against the newest of the clone's spellings of the primary branch (`origin/main` or `main`, whichever is ahead), in the guide's voice, without narrating the old behaviour
+- [x] 4.2 `docs/developing/concepts/architecture-overview.md`: the capture step names the resolved primary base rather than "the merge-base"
 - [ ] 4.3 The cost sentence goes in the PR description, delivered by the orchestrator: nothing a session sends changes; capture runs a few more local `rev-parse` / `merge-base --is-ancestor` calls
