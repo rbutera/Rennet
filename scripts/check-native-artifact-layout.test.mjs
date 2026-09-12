@@ -7,7 +7,9 @@ import { createPackage } from "@electron/asar";
 import {
   assertNoHarnessSdkPlatformArtifacts,
   findHarnessSdkPlatformArtifacts,
+  forbiddenHarnessSdkPatterns,
   harnessSdkPlatformArtifactPattern,
+  toRelativePosixPath,
 } from "./check-native-artifact-layout.mjs";
 
 const roots = [];
@@ -72,12 +74,23 @@ describe("harness SDK platform artifact detection", () => {
     await assert.rejects(assertNoHarnessSdkPlatformArtifacts(root), /claude-agent-sdk-win32-x64/);
   });
 
-  it("flags the main package's vendored binary (forge strips it too)", async () => {
+  it("flags the main package's vendored directory (forge strips it too)", async () => {
     const root = appRoot();
     writeFileAt(root, "node_modules/@anthropic-ai/claude-agent-sdk/vendor/claude", "vendored");
     await assert.rejects(
       assertNoHarnessSdkPlatformArtifacts(root),
       /@anthropic-ai\/claude-agent-sdk\/vendor/,
+    );
+  });
+
+  it("flags a main-package cli/claude binary outside vendor/ (isolates the third matcher)", async () => {
+    const root = appRoot();
+    // bin/claude is caught ONLY by the cli|claude matcher, not the /vendor rule: deleting
+    // that matcher must redden this test.
+    writeFileAt(root, "node_modules/@anthropic-ai/claude-agent-sdk/bin/claude", "bin");
+    await assert.rejects(
+      assertNoHarnessSdkPlatformArtifacts(root),
+      /@anthropic-ai\/claude-agent-sdk\/bin\/claude/,
     );
   });
 
@@ -151,6 +164,52 @@ describe("harness SDK platform artifact detection", () => {
     writeFileAt(root, "Rennet.app/Contents/Resources/bin/claude", "unrelated launcher");
     assert.deepEqual(await findHarnessSdkPlatformArtifacts(root), []);
     await assertNoHarnessSdkPlatformArtifacts(root);
+  });
+
+  it("does NOT flag a claude-agent-sdk-* dir that is not an OS platform package", async () => {
+    const root = appRoot();
+    // The pattern is anchored to darwin/linux/win32, so a docs/examples dir does not trip it.
+    writeFileAt(root, "assets/claude-agent-sdk-examples/readme.txt", "example");
+    assert.equal(
+      harnessSdkPlatformArtifactPattern.test("assets/claude-agent-sdk-examples/x"),
+      false,
+    );
+    assert.deepEqual(await findHarnessSdkPlatformArtifacts(root), []);
+    await assertNoHarnessSdkPlatformArtifacts(root);
+  });
+
+  it("normalises Windows backslash asar entries before matching", () => {
+    const windowsEntry = "\\node_modules\\@anthropic-ai\\claude-agent-sdk-win32-x64\\claude.exe";
+    const normalised = toRelativePosixPath(windowsEntry);
+    assert.equal(normalised, "node_modules/@anthropic-ai/claude-agent-sdk-win32-x64/claude.exe");
+    // The raw backslash form matches no pattern; the normalised form must.
+    assert.equal(
+      forbiddenHarnessSdkPatterns.some((pattern) => pattern.test(windowsEntry)),
+      false,
+    );
+    assert.equal(
+      forbiddenHarnessSdkPatterns.some((pattern) => pattern.test(normalised)),
+      true,
+    );
+  });
+
+  it("treats a symlinked *.asar as could-not-check (never green)", async () => {
+    const root = appRoot();
+    // Build the asar source OUTSIDE root (its own appRoot() temp) so the only thing under
+    // root is the symlink; otherwise a stray platform dir would redden this for a filesystem
+    // match rather than the symlinked-asar path under test.
+    const source = join(appRoot(), "asar-source");
+    mkdirSync(join(source, "node_modules/@anthropic-ai/claude-agent-sdk-darwin-arm64"), {
+      recursive: true,
+    });
+    writeFileSync(
+      join(source, "node_modules/@anthropic-ai/claude-agent-sdk-darwin-arm64/claude"),
+      "binary",
+    );
+    const payload = join(appRoot(), "payload.bin");
+    await createPackage(source, payload);
+    symlinkSync(payload, join(root, "Rennet.app.asar"));
+    await assert.rejects(assertNoHarnessSdkPlatformArtifacts(root), /cannot verify symlinked asar/);
   });
 
   it("throws (never green) when the packaged app root is missing", async () => {

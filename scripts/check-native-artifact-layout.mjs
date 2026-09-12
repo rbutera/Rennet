@@ -88,9 +88,10 @@ export async function assertNativeArtifactLayout(root, platformArchitectures) {
 // node_modules, a copied asset, a future change to the packager ignore list). The main
 // package's own JS bundle (e.g. sdk.mjs, cli.js) is intentionally NOT matched.
 export const forbiddenHarnessSdkPatterns = [
-  // a per-platform package directory and everything inside it (trailing hyphen keeps this
-  // from matching the main claude-agent-sdk package)
-  /(?:^|\/)claude-agent-sdk-[^/]+(?:\/|$)/,
+  // a per-platform package directory and everything inside it. Anchored to a known OS token
+  // (darwin/linux/win32) so it matches every arch and -musl variant without also flagging an
+  // unrelated dir like claude-agent-sdk-examples, and never the main claude-agent-sdk package.
+  /(?:^|\/)claude-agent-sdk-(?:darwin|linux|win32)[^/]*(?:\/|$)/,
   // the main package's vendored payload directory
   /(?:^|\/)@anthropic-ai\/claude-agent-sdk\/vendor(?:\/|$)/,
   // a `cli`/`claude` executable vendored anywhere inside the main package
@@ -99,6 +100,14 @@ export const forbiddenHarnessSdkPatterns = [
 
 // Kept as a named export for direct reference (the per-platform binary shape).
 export const harnessSdkPlatformArtifactPattern = forbiddenHarnessSdkPatterns[0];
+
+// @electron/asar builds its entry list with node:path.join, so on Windows the entries use
+// backslashes and carry a leading separator, while the forbidden patterns above are written
+// with `/`. Normalise before matching so a Windows package is checked as strictly as a POSIX
+// one; without this the win32 post-package check would silently pass.
+export function toRelativePosixPath(entryPath) {
+  return entryPath.replace(/\\/g, "/").replace(/^\/+/, "");
+}
 
 function matchesForbiddenHarnessSdk(relativePath) {
   return forbiddenHarnessSdkPatterns.some((pattern) => pattern.test(relativePath));
@@ -123,8 +132,17 @@ async function collectFilesystemMatches(root, relativePath, isRoot, asarRelative
       matches.push(childRelative);
       continue;
     }
-    // Never follow symlinks (avoids loops); a matching symlink is already caught above.
-    if (entry.isSymbolicLink()) continue;
+    if (entry.isSymbolicLink()) {
+      // Never follow symlinks (avoids loops); a matching one is already caught above. But a
+      // symlinked *.asar cannot be enumerated without following it, so treat it as
+      // could-not-check rather than reading it as clean.
+      if (entry.name.endsWith(".asar")) {
+        throw new Error(
+          `cannot verify symlinked asar ${childRelative}: refusing to follow a symlink`,
+        );
+      }
+      continue;
+    }
     if (entry.isDirectory()) {
       matches.push(
         ...(await collectFilesystemMatches(
@@ -157,7 +175,7 @@ async function collectAsarMatches(packagedAppRoot, asarRelativePath) {
     throw new Error(`cannot verify ${asarRelativePath}: @electron/asar has no listPackage`);
   }
   return listPackage(join(packagedAppRoot, asarRelativePath))
-    .map((internalPath) => internalPath.replace(/^\/+/, ""))
+    .map(toRelativePosixPath)
     .filter((internalPath) => matchesForbiddenHarnessSdk(internalPath))
     .map((internalPath) => `${asarRelativePath} > ${internalPath}`);
 }

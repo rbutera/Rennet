@@ -23,9 +23,10 @@ const HARNESS_SDK_FILE_EXCLUSIONS = [
   /\/node_modules\/@anthropic-ai\/claude-agent-sdk\/vendor\//,
   /\/node_modules\/@anthropic-ai\/claude-agent-sdk\/.*\/(?:cli|claude)(?:\.exe)?$/,
   // The per-platform packages: exclude each whole directory (its only real payload is the
-  // vendored `claude` executable). The trailing hyphen keeps this from matching the main
+  // vendored `claude` executable). Anchored to a known OS token so it covers every arch and
+  // -musl variant without flagging an unrelated claude-agent-sdk-* dir, and never the main
   // @anthropic-ai/claude-agent-sdk package handled by the two patterns above.
-  /\/node_modules\/@anthropic-ai\/claude-agent-sdk-[^/]+\//,
+  /\/node_modules\/@anthropic-ai\/claude-agent-sdk-(?:darwin|linux|win32)[^/]*\//,
 ];
 
 // Signing is CONDITIONAL on the presence of an Apple Developer ID identity in the
