@@ -14,7 +14,7 @@
 
 - [ ] 3.1 Rewrite the "When there is no specification" section of `packages/prompts/src/prompts/design.md` as design D1 and D4: the three sources in order, the documentation file rule and the `git diff --name-status` command, the document shape with its two fixed stats, the intro's opening sentence, `inferred: false` for decisions the sources state, acceptance criteria as `requirement` with the file-and-id source, and `settle_absent` only when all three sources are empty with a note naming them.
 - [ ] 3.2 `index.test.ts`: assert the section names `related-context.md`, the `Format` and `Specification` stats, the opening sentence, the `git diff --name-status` command, and that `settle_absent` is conditioned on all three being empty; keep the existing assertions green (the search, the tie, "not an empty board, not a placeholder").
-- [ ] 3.3 Prove the Design lint rules resolve `pr.md` and `related-context.md` as `source.path` under the bound root on a fixture board that quotes both; if a rule reads only patchset paths, widen it to the context directory in the same task.
+- [x] 3.3 Prove the Design lint rules resolve `pr.md` and `related-context.md` as `source.path` under the bound root on a fixture board that quotes both; if a rule reads only patchset paths, widen it to the context directory in the same task.
 - [ ] 3.4 State the prompt's size before and after in the PR description.
 
 ## 4. Drive and fixtures

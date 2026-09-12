@@ -4281,6 +4281,141 @@ describe("Design source navigation grounding", () => {
   });
 });
 
+// ── The Design overview's sources are context files (design-overview-fallback D5) ──
+//
+// When the host located no specification, the Design seat drafts an overview from
+// `pr.md` and `related-context.md` — files under the bound root's
+// `.rennet/context/<sessionId>/`, not paths the patchset touches. The discovery
+// rules that would reject them (`design-source-known`, `design-decision-stated`,
+// `requirement-source-known`) all begin `if (ctx.artifacts === undefined) return []`,
+// and nothing in production ever sets `ctx.artifacts` (`buildLintContextFor` in
+// `packages/server/src/runtime/round-collation.ts` builds every lint context and
+// declares `lens`, `regions`, `files`, `baseFiles`, `patchsetId` only). So the
+// overview's context-file sources pass, with no new arm in any rule.
+//
+// The second test is the positive control: the SAME board under a context that DOES
+// carry a located specification's artifacts makes all three fire. Without it the
+// first test would pass for a board of any shape, because the rules are switched off.
+describe("the Design overview's context-file sources (design-overview-fallback D5)", () => {
+  const PR_PAPER = ".rennet/context/sess-7/pr.md";
+  const RELATED = ".rennet/context/sess-7/related-context.md";
+  const SOURCE_RULES = ["design-source-known", "requirement-source-known"];
+
+  /** An overview board exactly as design.md's "no specification" section shapes it. */
+  const overviewBoard = () =>
+    board(
+      [
+        el("s-author", "section", {
+          title: "What the author says",
+          children: ["p-author", "d-author"],
+          sources: [{ path: PR_PAPER }],
+        }),
+        el("p-author", "prose", {
+          markdown: "The branch replaces the polling timer with a subscription.",
+        }),
+        el("d-author", "decision", {
+          statement: "Subscribe to the tracker instead of polling it on a timer.",
+          why: "The pull request description says the timer caused the duplicate fetches.",
+          evidence: [],
+          alternatives: [],
+          inferred: false,
+          source: { path: PR_PAPER, label: "PR description" },
+        }),
+        el("s-issues", "section", {
+          title: "Related issues",
+          children: ["r-criterion"],
+          sources: [{ path: RELATED }],
+        }),
+        el("r-criterion", "requirement", {
+          shall: "The reviewer sees one fetch per patchset.",
+          capability: "github#12",
+          trace: [],
+          source: { path: RELATED, label: "github#12" },
+        }),
+      ],
+      {
+        document: {
+          title: "Replace the polling timer",
+          introMarkdown:
+            "No specification was found for this branch; this overview is drafted from the pull request description and one related issue.",
+          measure: "structured",
+          sources: [{ path: PR_PAPER }, { path: RELATED }],
+          stats: [
+            { label: "Format", value: "Overview" },
+            { label: "Specification", value: "none found" },
+            { label: "Sources", value: "2" },
+            { label: "Related issues", value: "1" },
+          ],
+        },
+      },
+    );
+
+  /** What production builds: no `artifacts`, no `artifactCandidates`. */
+  const overviewCtx = ctx({
+    lens: "design" as LensKind,
+    files: new Map([["src/tracker.ts", 120]]),
+  });
+
+  it("lints clean: `pr.md` and `related-context.md` resolve as source paths", () => {
+    // Asserted in full rather than filtered to the source rules: a rule the overview
+    // shape cannot satisfy would have to be widened to the context directory, and an
+    // equality assertion is what notices one arriving later.
+    expect(lint(overviewBoard(), overviewCtx)).toEqual([]);
+  });
+
+  it("lints clean at `finish`, where the settlement rules also run", () => {
+    // `lint` runs DRAFT_LINT_RULES, which is the registry minus SETTLEMENT_RULES; the
+    // seat's board faces the finish tier too, so ask that tier the same question.
+    expect(lintTier(overviewBoard(), overviewCtx, "finish")).toEqual([]);
+    expect(lintTier(overviewBoard(), overviewCtx, "boundary")).toEqual([]);
+    // The tier is actually asking something: an empty board fails the same call.
+    expect(rulesHit(lintTier(board([]), overviewCtx, "finish"))).toContain("board-has-material");
+  });
+
+  const specPath = "openspec/changes/replace-polling/proposal.md";
+  /** A located specification, which is what switches the discovery rules on. */
+  const locatedCtx = ctx({
+    lens: "design" as LensKind,
+    files: new Map([
+      ["src/tracker.ts", 120],
+      [specPath, 40],
+    ]),
+    artifacts: [
+      {
+        candidate: "replace-polling",
+        path: specPath,
+        text: "The reviewer SHALL see one fetch per patchset.",
+      },
+    ],
+    artifactCandidates: [{ id: "replace-polling", paths: [specPath] }],
+  });
+
+  it("positive control: the same board under a located specification rejects both paths", () => {
+    const hit = rulesHit(lint(overviewBoard(), locatedCtx));
+    for (const ruleId of SOURCE_RULES) expect(hit).toContain(ruleId);
+  });
+
+  it("positive control: `design-decision-stated` is off without a discovered bundle", () => {
+    // The overview's own decision carries `inferred: false`, so this rule could not
+    // fire on it either way. Drop that field to ask the rule directly: it fires
+    // under a located specification and is silent on the overview path, because it
+    // sits inside the same `ctx.artifacts === undefined` gate as the source rules.
+    const unstated = board(
+      overviewBoard().elements.map((element) =>
+        element.id === "d-author"
+          ? ({
+              ...element,
+              data: { ...element.data, inferred: undefined },
+            } as DraftElement)
+          : element,
+      ),
+    );
+
+    expect(rulesHit(lint(unstated, locatedCtx))).toContain("design-decision-stated");
+    expect(rulesHit(lint(unstated, overviewCtx))).not.toContain("design-decision-stated");
+  });
+});
+
 // ── kind-allowlist (S1 residue at lint scope) ────────────────────────────────
 
 describe("kind-allowlist (per-lens kinds)", () => {
