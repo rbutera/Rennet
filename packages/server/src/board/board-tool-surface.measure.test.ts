@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { outputSchemaFor } from "@rennet/adapters";
@@ -9,9 +9,10 @@ import { describe, expect, it } from "vitest";
 import { buildAppTools } from "../agent-tools";
 import {
   APP_TOOL_RESULT_MAX_BYTES,
-  applyResultCeiling,
+  type AppMcpServer,
   servedAppToolCatalog,
   shapeAppToolResult,
+  startAppMcpServer,
 } from "../app/app-mcp-server";
 import { boardOutputSchema } from "../runtime/lens-pipeline";
 import { describeOutcome, servedToolCatalog } from "./board-mcp-server";
@@ -696,6 +697,42 @@ function fixtureFor(commandId: CommandName): unknown {
   return LARGE_FIXTURES[commandId] ?? GENERIC_LARGE_BLOB;
 }
 
+const MEASURE_BEARER = "board-tool-surface measure bearer";
+const MEASURE_THREAD = "measure-thread";
+
+/**
+ * One `tools/call`, over the REAL wire (a test-gap fix, both reviewers' P1's own point):
+ * measuring `shapeAppToolResult` and `applyResultCeiling` directly — the buggy version of
+ * this test — rebuilds exactly the pair `applyResultCeiling` composes internally, so a
+ * regression in how they are WIRED TOGETHER (item 1's own defect: the ceiling measuring the
+ * inner text instead of the complete `content` envelope) could never fail this measurement,
+ * only the assertion an unrelated wire-level test happened to also carry. Driving the actual
+ * HTTP listener and reading the actual response body is what makes a future regression here
+ * red.
+ */
+async function callOverWire(
+  server: AppMcpServer,
+  name: string,
+): Promise<{ readonly status: number; readonly text: string; readonly wireBytes: number }> {
+  const response = await fetch(server.addressFor(MEASURE_THREAD).url, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      accept: "application/json, text/event-stream",
+      "mcp-protocol-version": "2025-06-18",
+      authorization: `Bearer ${MEASURE_BEARER}`,
+    },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: { name, arguments: {} },
+    }),
+  });
+  const text = await response.text();
+  return { status: response.status, text, wireBytes: Buffer.byteLength(text, "utf8") };
+}
+
 describe("what the session thread's app tools cost (session-thread-briefing)", () => {
   it("prices the catalog the thread's every turn carries", () => {
     const catalog = servedAppToolCatalog(async () => undefined);
@@ -723,8 +760,20 @@ describe("what the session thread's app tools cost (session-thread-briefing)", (
     expect(rows[0]?.name).toBe("app_ask_stage");
   });
 
-  it("bounds EVERY agent-exposed command's per-call result to APP_TOOL_RESULT_MAX_BYTES, spilling the full result to a file when it doesn't fit (item 1)", () => {
+  it("bounds EVERY agent-exposed command's complete wire result to APP_TOOL_RESULT_MAX_BYTES, spilling the full result to a file when it doesn't fit (item 1)", async () => {
+    // A test-gap fix (Codex, second reviewer): the version this replaces called
+    // `shapeAppToolResult` and `applyResultCeiling` directly — the exact pair the wire's own
+    // `callTool` composes — so a regression in how those two are WIRED TOGETHER (item 1's
+    // own defect: the ceiling comparing `result.text` instead of the complete serialised
+    // `{content, isError?}` object) could never make this measurement red; it would only
+    // fail an unrelated assertion in a different file. This version drives the real HTTP
+    // listener, for every exposed tool, and measures the exact response bytes the wire sent.
     const dir = mkdtempSync(join(tmpdir(), "app-tool-ceiling-"));
+    const server = await startAppMcpServer({
+      bearer: () => MEASURE_BEARER,
+      dispatch: () => async (commandId: CommandName) => fixtureFor(commandId),
+      stateDir: dir,
+    });
     try {
       const tools = buildAppTools(async () => undefined);
       // The operand guard: this really is the whole `AGENT_EXPOSED` surface, not a stale
@@ -732,48 +781,66 @@ describe("what the session thread's app tools cost (session-thread-briefing)", (
       // and says so, rather than silently exercising a smaller population than the task.
       expect(tools.length, "the agent-exposed command count moved — update this fixture").toBe(29);
 
-      const rows = tools.map((tool) => {
-        const shaped = shapeAppToolResult(tool.commandId, fixtureFor(tool.commandId));
-        // The exact body `applyResultCeiling` spills (its own composition, joined with
-        // `\n\n` when a marker is present) — not a hand-rolled concatenation, so this
-        // count can never drift from what production actually writes to disk.
-        const body =
-          shaped.marker === undefined ? shaped.text : `${shaped.text}\n\n${shaped.marker}`;
-        const rawBytes = textBytes(body);
-        let spilled: string | undefined;
-        const bounded = applyResultCeiling(shaped, (body) => {
-          const path = join(dir, `${tool.name}.json`);
-          writeFileSync(path, body);
-          spilled = path;
-          return path;
+      const rows: {
+        readonly name: string;
+        readonly commandId: CommandName;
+        readonly wireBytes: number;
+        readonly spilled: string | undefined;
+      }[] = [];
+      for (const tool of tools) {
+        const answer = await callOverWire(server, tool.name);
+        expect(answer.status, `${tool.name} returned HTTP ${answer.status}`).toBe(200);
+        const body = JSON.parse(answer.text) as {
+          result?: { content?: { type: string; text: string }[] };
+        };
+        const contentText = body.result?.content?.[0]?.text ?? "{}";
+        const envelope = JSON.parse(contentText) as { truncated?: boolean; path?: string };
+        rows.push({
+          name: tool.name,
+          commandId: tool.commandId,
+          wireBytes: answer.wireBytes,
+          spilled: envelope.truncated === true ? envelope.path : undefined,
         });
-        return { name: tool.name, rawBytes, boundedBytes: textBytes(bounded.text), spilled };
-      });
+      }
 
+      const maxWireBytes = Math.max(...rows.map((row) => row.wireBytes));
       console.info(
-        ["app tool                          raw B    per-call B  spilled"]
+        ["app tool                          wire B  spilled"]
           .concat(
             [...rows]
-              .sort((a, b) => b.rawBytes - a.rawBytes)
+              .sort((a, b) => b.wireBytes - a.wireBytes)
               .map(
                 (row) =>
-                  `${row.name.padEnd(34)} ${String(row.rawBytes).padStart(7)}  ${String(row.boundedBytes).padStart(10)}  ${row.spilled === undefined ? "no" : "yes"}`,
+                  `${row.name.padEnd(34)} ${String(row.wireBytes).padStart(7)}  ${row.spilled === undefined ? "no" : "yes"}`,
               ),
           )
+          .concat([`max complete-result bytes across all ${rows.length} tools: ${maxWireBytes}`])
           .join("\n"),
       );
 
       for (const row of rows) {
+        // The LITERAL 8,192, not the exported `APP_TOOL_RESULT_MAX_BYTES` constant: a future
+        // edit that raised the constant without meaning to raise the ceiling would move the
+        // two together, and comparing against the constant would stay green over a real
+        // regression. This is what a change to the constant is required to notice (pinned
+        // again, standalone, below).
         expect(
-          row.boundedBytes,
-          `${row.name}'s per-call result is ${row.boundedBytes} B, over the ${APP_TOOL_RESULT_MAX_BYTES} B universal ceiling`,
-        ).toBeLessThanOrEqual(APP_TOOL_RESULT_MAX_BYTES);
+          row.wireBytes,
+          `${row.name}'s complete wire result is ${row.wireBytes} B, over the 8,192 B universal ceiling`,
+        ).toBeLessThanOrEqual(8_192);
         if (row.spilled !== undefined) {
+          // The exact body production actually wrote — `shapeAppToolResult` is the real
+          // per-command shaping function the wire calls before the ceiling ever runs, not a
+          // rebuild of the ceiling itself, so this still checks the spilled file is the
+          // FULL result rather than trusting the envelope's own `bytes` field.
+          const shaped = shapeAppToolResult(row.commandId, fixtureFor(row.commandId));
+          const rawBody =
+            shaped.marker === undefined ? shaped.text : `${shaped.text}\n\n${shaped.marker}`;
           const onDisk = readFileSync(row.spilled, "utf8");
           expect(
             textBytes(onDisk),
-            `${row.name}'s spilled file should hold its FULL ${row.rawBytes} B result, not a truncated copy`,
-          ).toBe(row.rawBytes);
+            `${row.name}'s spilled file should hold its FULL result, not a truncated copy`,
+          ).toBe(textBytes(rawBody));
         }
       }
 
@@ -798,8 +865,18 @@ describe("what the session thread's app tools cost (session-thread-briefing)", (
         "at least one command running only the generic fallback should also have spilled — otherwise the ceiling only ever fires for the named seven",
       ).toBe(true);
     } finally {
+      await server.close();
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  it("pins APP_TOOL_RESULT_MAX_BYTES to the literal 8,192 every measurement above is checked against (item 1)", () => {
+    // The test above asserts every tool's complete wire result against the LITERAL `8_192`,
+    // deliberately never this constant, so a change that raises the constant cannot also
+    // silently raise what the test above accepts. This assertion is what makes THAT change
+    // visible: it fails the moment the constant and the literal disagree, which is the only
+    // place in this file the constant is checked against anything but itself.
+    expect(APP_TOOL_RESULT_MAX_BYTES).toBe(8_192);
   });
 
   it("positive control: ask.read's own #871-shaped fixture exceeds the ceiling on its own, unceilinged (item 1)", () => {
