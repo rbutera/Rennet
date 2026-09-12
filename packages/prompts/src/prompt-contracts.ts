@@ -762,12 +762,13 @@ export const SESSION_BRIEFING_MAX_BYTES = 4_096;
  * The dynamic lines get what is left, so a fixed text that grows past this eats the
  * patchset line's room rather than the ceiling's.
  *
- * It is deliberately loose enough that a copy edit does not trip it: a pin the shipped
- * file sits ten bytes under fails for a reworded sentence, which teaches whoever meets it
- * that the number is noise. A render with 2,816 B of fixed text still leaves ~1,260 B for
- * the review's lines, which is more than they have ever needed.
+ * It is deliberately loose enough that a copy edit does not trip it. The previous value was
+ * 2,816 against a 2,806-byte file — ten bytes of slack, which is a pin that fails for a
+ * reworded sentence and teaches whoever meets it that the number is noise (its own docstring
+ * said so). 3,000 leaves a paragraph of room and still guarantees the review's lines ~1,080 B,
+ * which is more than they have ever needed: the whole render is 3,739 B of 4,096 today.
  */
-export const SESSION_BRIEFING_FIXED_MAX_BYTES = 2_816;
+export const SESSION_BRIEFING_FIXED_MAX_BYTES = 3_000;
 
 /** Byte bound on ONE interpolated ref — a branch name or a pull-request label. */
 export const SESSION_BRIEFING_REF_MAX_BYTES = 120;
@@ -804,9 +805,25 @@ export const SESSION_BRIEFING_REVIEW_FLOOR_BYTES = 1_024;
 /** The heading the review's own lines sit under, so the append is attributable in a log. */
 const SESSION_BRIEFING_HEADER = "## This review";
 
+/** Byte bound on the interpolated review id (a uuid) and repository label. */
+export const SESSION_BRIEFING_REVIEW_ID_MAX_BYTES = 64;
+export const SESSION_BRIEFING_REPOSITORY_MAX_BYTES = 120;
+
 /** Which capture the review is of, and the identity a reviewer would recognise it by. */
 export interface SessionBriefingPatchset {
   readonly kind: "branch" | "pr";
+  /**
+   * The review id every `app_*` tool takes as `reviewId` — named here because the thread
+   * otherwise had to FIND it, and the only way to find one was `app_session_list` plus a
+   * match on the branch name. Two repositories in one workspace both have `main`, so that
+   * match picks whichever row it read first and the thread then reads the wrong
+   * repository's board under the right repository's name. The tool surface stamps this id
+   * for a call that omits it; naming it here is what lets the thread talk about the review
+   * at all — quote it, or hand it to a tool that wants it explicitly.
+   */
+  readonly reviewId: string;
+  /** `owner/name` when the forge knows it, else the checkout's directory name. */
+  readonly repository?: string;
   /** The branch under review. Present on a branch capture; the head branch of a PR when known. */
   readonly branch?: string;
   /** The pull-request number, on a `pr` capture. */
@@ -847,8 +864,8 @@ export interface SessionBriefingInput {
  * Render the session thread's briefing: the fixed map, then this review's own lines.
  *
  * What travels is an IDENTITY and paths — the capture's kind, its branch or pull-request
- * number, its base and head oids, the one diff command, the context directory, the tool
- * names. No diff, no hunk, no board, no inventory, no file body: the thread stands in the
+ * number, its repository, its review id, its base and head oids, the one diff command, the
+ * context directory, and how many tools are attached on which server. No diff, no hunk, no board, no inventory, no file body: the thread stands in the
  * checkout and holds Rennet's tools, so it reads what it decides it needs. The rendering
  * therefore does not grow with the change — a ninety-five-file review and a one-file
  * review on the same oids render the same bytes, which is what the briefing test pins.
@@ -878,12 +895,21 @@ export function renderSessionBriefing(input: SessionBriefingInput): string {
           branch === undefined ? "" : ` on \`${branch}\``
         }`
       : `branch \`${branch ?? "(unnamed)"}\``;
+  const repository =
+    patchset.repository === undefined
+      ? ""
+      : ` in \`${capBytes(patchset.repository, SESSION_BRIEFING_REPOSITORY_MAX_BYTES)}\``;
   const lines = [
-    `- Patchset: ${subject} — base ${capBytes(patchset.baseOid, SESSION_BRIEFING_OID_MAX_BYTES)} → head ${capBytes(patchset.headOid, SESSION_BRIEFING_OID_MAX_BYTES)}. Read the change with \`${capBytes(patchset.diffCommand, SESSION_BRIEFING_DIFF_COMMAND_MAX_BYTES)}\`.`,
+    `- Patchset: ${subject}${repository} — review \`${capBytes(patchset.reviewId, SESSION_BRIEFING_REVIEW_ID_MAX_BYTES)}\`, base ${capBytes(patchset.baseOid, SESSION_BRIEFING_OID_MAX_BYTES)} → head ${capBytes(patchset.headOid, SESSION_BRIEFING_OID_MAX_BYTES)}. Read the change with \`${capBytes(patchset.diffCommand, SESSION_BRIEFING_DIFF_COMMAND_MAX_BYTES)}\`. Every \`app_*\` tool takes that review id; a call that omits it gets this one.`,
     ...(input.contextDir === undefined
       ? []
       : [
-          `- ${renderContextDirectorySentence(capBytes(input.contextDir.replace(/\/$/, ""), SESSION_BRIEFING_CONTEXT_DIR_MAX_BYTES))}`,
+          // The seats' own sentence, plus WHEN the directory appears. A session thread is
+          // created at capture, before any generation has drafted, and its instructions are
+          // fixed at create — so for most of the threads that read this the directory does
+          // not exist yet, and a sentence that only described a directory already there
+          // would be wrong for exactly the reviewer who just opened a review.
+          `- ${renderContextDirectorySentence(capBytes(input.contextDir.replace(/\/$/, ""), SESSION_BRIEFING_CONTEXT_DIR_MAX_BYTES))} It appears once the lens boards have been drafted for this review; before that there is nothing there to read.`,
         ]),
     renderSessionBriefingTools(input.tools),
   ];

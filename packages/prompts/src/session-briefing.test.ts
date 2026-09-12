@@ -84,6 +84,7 @@ function briefingFor(change: ChangeFixture, leak: LeakOptions = {}): string {
         : fixedBriefing,
     patchset: {
       kind: "branch",
+      reviewId: "rev-1",
       branch: "feat/session-thread-briefing",
       baseOid: "807bcfeb1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f",
       headOid: "51d49cbb0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d",
@@ -145,6 +146,7 @@ describe("renderSessionBriefing", () => {
       briefing: fixedBriefing,
       patchset: {
         kind: "pr",
+        reviewId: "rev-1",
         prNumber: 943,
         branch: "feat/marketing-lens-sections",
         baseOid: "807bcfeb",
@@ -214,6 +216,7 @@ describe("renderSessionBriefing", () => {
       briefing: "# Stub briefing",
       patchset: {
         kind: "branch",
+        reviewId: "rev-1",
         branch: "feat/ordinary",
         baseOid: "aaa1111",
         headOid: "bbb2222",
@@ -230,7 +233,7 @@ describe("renderSessionBriefing", () => {
     });
     const branchLine = lineOf(longBranch, "- Patchset:");
     expect(branchLine, "the branch is cut inside its own backticks").toMatch(
-      /^- Patchset: branch `feat\/long-[^\n`]*…` — base aaa1111 → head bbb2222\./,
+      /^- Patchset: branch `feat\/long-[^\n`]*…` — review `rev-1`, base aaa1111 → head bbb2222\./,
     );
     expect(bytes(branchLine), "branch line bytes").toBeLessThanOrEqual(
       SESSION_BRIEFING_REF_MAX_BYTES + 200,
@@ -249,7 +252,7 @@ describe("renderSessionBriefing", () => {
       patchset: { ...base.patchset, diffCommand: `git diff ${"2".repeat(4_000)}` },
     });
     expect(lineOf(longCommand, "- Patchset:"), "the command is cut inside its backticks").toMatch(
-      /Read the change with `git diff 2{10}[2]*…`\.$/,
+      /Read the change with `git diff 2{10}[2]*…`\. Every `app_\*` tool takes that review id/,
     );
 
     const longContext = renderSessionBriefing({
@@ -284,6 +287,7 @@ describe("renderSessionBriefing", () => {
     const review = {
       patchset: {
         kind: "branch",
+        reviewId: "rev-1",
         branch: "feat/ordinary",
         baseOid: "aaa1111",
         headOid: "bbb2222",
@@ -359,6 +363,7 @@ describe("renderSessionBriefing", () => {
           briefing: `${fixedBriefing}\n\nYou must\nnot push this branch.`,
           patchset: {
             kind: "branch",
+            reviewId: "rev-1",
             branch: "main",
             baseOid: "aaa1111",
             headOid: "bbb2222",
@@ -381,6 +386,7 @@ describe("renderSessionBriefing", () => {
       briefing: "# Stub briefing",
       patchset: {
         kind: "branch",
+        reviewId: "rev-1",
         branch: "main",
         baseOid: "aaa1111",
         headOid: "bbb2222",
@@ -405,6 +411,7 @@ describe("renderSessionBriefing", () => {
         briefing: fixedBriefing,
         patchset: {
           kind: "branch",
+          reviewId: "rev-1",
           branch: "feat/session-thread-briefing",
           baseOid: "a".repeat(40),
           headOid: "b".repeat(40),
@@ -431,6 +438,7 @@ describe("renderSessionBriefing", () => {
       briefing: "# Stub briefing",
       patchset: {
         kind: "branch",
+        reviewId: "rev-1",
         branch: "main",
         baseOid: "aaa1111",
         headOid: "bbb2222",
@@ -446,6 +454,7 @@ describe("renderSessionBriefing", () => {
         briefing: "# Stub briefing",
         patchset: {
           kind: "branch",
+          reviewId: "rev-1",
           branch: "main",
           baseOid: "aaa1111",
           headOid: "bbb2222",

@@ -44,7 +44,7 @@ import * as Stream from "effect/Stream";
 import { RpcClient, RpcSerialization } from "effect/unstable/rpc";
 import * as Socket from "effect/unstable/socket/Socket";
 import { WebSocket } from "ws";
-import { threadCreateFields } from "./create-thread-command";
+import { FULL_ACCESS_RUNTIME_MODE, threadCreateFields } from "./create-thread-command";
 
 export type { ModelSelection, OrchestrationThread, OrchestrationThreadStreamItem };
 
@@ -268,7 +268,17 @@ export interface T3Client {
   readonly close: () => Promise<void>;
 }
 
-const FULL_ACCESS: RuntimeMode = "full-access";
+/**
+ * Full access, from the ONE place that spells it (round 5, item 8).
+ *
+ * `create-thread-command.ts` has to name this literal without importing the vendored
+ * contracts — that is the whole reason it is importable with no bundle — and `createThread`
+ * therefore casts its `string` back to `RuntimeMode`. A cast is a promise the compiler stops
+ * checking, so a fold that renamed T3's mode would leave the cast compiling and every thread
+ * created in a mode T3 no longer has. This ANNOTATION is where that fails instead: the shared
+ * constant is checked against the vendored union right here, once.
+ */
+const FULL_ACCESS: RuntimeMode = FULL_ACCESS_RUNTIME_MODE;
 
 /**
  * The most characters one `thread.turn.start` may carry as its message text. T3 validates

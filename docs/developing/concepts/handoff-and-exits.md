@@ -256,7 +256,7 @@ Everything gathers as **asks**: typed messages carrying an anchor, text, an
 intent, and an exit lane, minted from findings, code-line comments, quote
 threads, or plain conversation, each with provenance back to its source.
 
-**Staging is the reviewer's to send.** An ask is minted where the reviewer decides
+**Sending is the reviewer's.** An ask is minted where the reviewer decides
 one: a finding's control, a code-line comment, a highlighted span of board prose,
 or a conclusion reached in the review's own conversation — its
 [T3 Code thread](./t3code-sidecar.md), which fills the chat slot

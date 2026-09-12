@@ -82,11 +82,18 @@ export const EVIDENCE_TOOL_BYTES_CAP = 16 * 1024;
  * An element count is not a byte count: a board element is a sentence or a whole finding,
  * so 200 of them is anywhere from 8 kB to 90 kB, and a cap that admits 90 kB into the
  * conversation prefix is not a cap. So a page stops at whichever bound it reaches first,
- * and the marker names the cursor either way. Set to the same 16 kB the evidence read
- * declares, because it is the same question asked of a different payload: how much of one
- * answer may sit in the prefix and be re-read on every remaining round trip of the turn.
+ * and the marker names the cursor either way.
+ *
+ * 5 kB, and the number is chosen AGAINST {@link APP_TOOL_RESULT_MAX_BYTES} rather than for
+ * its own sake. It used to be the evidence read's 16 kB, which is DOUBLE the universal
+ * ceiling — so every page that actually filled its byte budget was immediately over the
+ * ceiling and spilled to a file, and paging existed only to decide how much got written to
+ * disk. A page has to be able to ride INLINE, which is the whole point of paging a
+ * collection instead of spilling it: this leaves room for the JSON-RPC envelope, the
+ * marker's own sentence and the escaping, with the head-room the ceiling's shrink loop needs
+ * if a page does go over.
  */
-export const PAGE_TOOL_BYTES_CAP = EVIDENCE_TOOL_BYTES_CAP;
+export const PAGE_TOOL_BYTES_CAP = 5 * 1024;
 
 /**
  * The universal ceiling on EVERY exposed command's complete serialised result (item 1, both
@@ -472,9 +479,12 @@ export function shapeAppToolResult(
 /** A refusal, held to the same byte discipline as everything else a result carries. */
 export function refusalText(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
-  return utf8(message) <= REFUSAL_TEXT_CAP
-    ? message
-    : `${Buffer.from(message, "utf8").subarray(0, REFUSAL_TEXT_CAP).toString("utf8")}\n… and ${utf8(message) - REFUSAL_TEXT_CAP} more bytes of this refusal, elided.`;
+  if (utf8(message) <= REFUSAL_TEXT_CAP) return message;
+  // At a CODE POINT boundary (round 5, item 9): a raw byte subarray cuts mid-sequence on a
+  // CJK or emoji refusal and `toString` renders the remainder as U+FFFD, so the model is
+  // handed a replacement character in a message it is meant to act on. Same helper the
+  // ceiling's own shrink loop uses, for the same reason.
+  return `${headAtCodePointBoundary(message, REFUSAL_TEXT_CAP)}\n… and ${utf8(message) - REFUSAL_TEXT_CAP} more bytes of this refusal, elided.`;
 }
 
 // ── The universal ceiling (item 1, both reviewers) ───────────────────────────────
@@ -578,6 +588,24 @@ function wireBytes(requestId: unknown, result: unknown): number {
 }
 
 /**
+ * What the ceiling decided: a bounded tool result, or — when the envelope's FIXED parts do
+ * not fit on their own — that this call cannot be answered inside the budget at all.
+ *
+ * The second arm exists because two of those fixed parts are not Rennet's to shrink: the
+ * caller's own JSON-RPC `id`, which is echoed in every response, and the path the result had
+ * to be written to. An 8,000-byte request id reproduced an 8,499-byte reply and a long spill
+ * path an 8,599-byte one, both returned anyway because a spent `head` was read as "done"
+ * (round 5, item 6, Codex). The wire answers this arm with `id: null`, which is the only
+ * reply whose size Rennet actually controls.
+ */
+export type CeilingOutcome =
+  | {
+      readonly kind: "result";
+      readonly result: { readonly content: readonly ToolContentBlock[]; readonly isError?: true };
+    }
+  | { readonly kind: "unanswerable"; readonly message: string };
+
+/**
  * The universal ceiling: whatever `shapeAppToolResult` (or any other per-command shaping,
  * or a dispatch refusal) produced, this is the LAST word on whether it rides inline —
  * measured on the COMPLETE JSON-RPC reply body the wire sends, `{jsonrpc, id, result}`, not
@@ -604,10 +632,10 @@ export function applyResultCeiling(
   spill: (body: string) => string,
   requestId: unknown,
   isError = false,
-): { readonly content: readonly ToolContentBlock[]; readonly isError?: true } {
+): CeilingOutcome {
   const full = toolResultOf(result, isError);
   const fullBytes = wireBytes(requestId, full);
-  if (fullBytes <= APP_TOOL_RESULT_MAX_BYTES) return full;
+  if (fullBytes <= APP_TOOL_RESULT_MAX_BYTES) return { kind: "result", result: full };
 
   const body = result.marker === undefined ? result.text : `${result.text}\n\n${result.marker}`;
   const bytes = utf8(body);
@@ -625,7 +653,14 @@ export function applyResultCeiling(
   const locationNote = pathIsAbsolute
     ? "it was written whole to the path above"
     : "it was written whole to the path above, relative to your working directory";
+  // The note is the only PROSE in the envelope, so it is the second thing to give up after
+  // `head` — and giving it up is what makes the fixed part of the envelope fit at all when
+  // the caller's own `id` or the spill path is enormous (round 5, item 6, Codex: an 8,000-byte
+  // request id reproduced an 8,499-byte reply, and a long spill path an 8,599-byte one, both
+  // returned because `headBytes === 0` was treated as "done" regardless of the total).
+  const shortNote = `The complete ${bytes}-byte result did not fit; ${locationNote}.`;
   let headBytes = RESULT_HEAD_BYTES;
+  let terse = false;
   for (;;) {
     const head = headAtCodePointBoundary(result.text, headBytes);
     const envelope = {
@@ -633,15 +668,42 @@ export function applyResultCeiling(
       bytes,
       path,
       head,
-      note: `The complete ${bytes}-byte result did not fit this call's ${APP_TOOL_RESULT_MAX_BYTES}-byte budget, so ${locationNote}; read it with your own tools for the rest. \`head\` is this result's own first bytes, not a separate summary.`,
+      // The PAGING CURSOR, when the per-command shaping produced one. It was folded into
+      // the spilled FILE and dropped from the reply, so a thread whose board page both
+      // paged and spilled was told where the bytes are and NOT how to ask for the next
+      // page — and the only way back was to guess a cursor. The shrink loop below
+      // re-measures the whole wrapped body on every pass, so carrying it here cannot push
+      // the envelope over: it costs `head` bytes, which is what `head` is for.
+      ...(result.marker === undefined ? {} : { marker: result.marker }),
+      note: terse
+        ? shortNote
+        : `The complete ${bytes}-byte result did not fit this call's ${APP_TOOL_RESULT_MAX_BYTES}-byte budget, so ${locationNote}; read it with your own tools for the rest. \`head\` is this result's own first bytes, not a separate summary.`,
     };
     const candidate = toolResultOf({ text: JSON.stringify(envelope) }, isError);
     const candidateBytes = wireBytes(requestId, candidate);
-    if (candidateBytes <= APP_TOOL_RESULT_MAX_BYTES || headBytes === 0) return candidate;
-    // Escaping only ever ADDS bytes, so trimming the overage straight off the raw head byte
-    // count is always enough progress to terminate — never less, occasionally more, and a
-    // second pass at a smaller `head` costs nothing here.
-    headBytes = Math.max(0, headBytes - (candidateBytes - APP_TOOL_RESULT_MAX_BYTES));
+    if (candidateBytes <= APP_TOOL_RESULT_MAX_BYTES) return { kind: "result", result: candidate };
+    if (headBytes > 0) {
+      // Escaping only ever ADDS bytes, so trimming the overage straight off the raw head byte
+      // count is always enough progress to terminate — never less, occasionally more, and a
+      // second pass at a smaller `head` costs nothing here.
+      headBytes = Math.max(0, headBytes - (candidateBytes - APP_TOOL_RESULT_MAX_BYTES));
+      continue;
+    }
+    if (!terse) {
+      terse = true;
+      continue;
+    }
+    // No `head`, no prose, and the envelope STILL does not fit: the fixed part alone is over
+    // budget, which means the caller's own JSON-RPC `id` or the spill path is. Returning the
+    // oversized reply anyway — which is what `headBytes === 0` used to do — puts bytes in the
+    // conversation prefix that this whole function exists to bound, and it does it on the one
+    // path where nothing downstream re-measures. So say so instead, inside the budget.
+    return {
+      kind: "unanswerable",
+      // Bounded by construction: fixed prose and one number. It names the two things that can
+      // cause this, because both are the caller's to change.
+      message: `this ${bytes}-byte result cannot be answered within the ${APP_TOOL_RESULT_MAX_BYTES}-byte reply budget: this call's own request id and the path the result was written to leave no room for an answer — call again with a short request id`,
+    };
   }
 }
 
@@ -698,9 +760,21 @@ function shapeOf(commandId: CommandName): Record<string, unknown> | undefined {
  *
  * - `author` — a row that carries one (`ask.quoteReply`) records who spoke, and the model
  *   naming itself `"user"` would put its words in the reviewer's mouth in a durable log.
- * - `sessionId` — filled only when the model left it out and the thread's own review is
- *   known. Never overwritten: asking about another review is exactly what `app_session_list`
- *   and `app_review_load` are for.
+ * - `sessionId` and `reviewId` — filled only when the model left the field out and the
+ *   thread's own review is known. Never overwritten: asking about another review is exactly
+ *   what `app_session_list` and `app_review_load` are for.
+ *
+ * `reviewId` is the one the whole surface turns on, and it was missing. Every exposed row
+ * outside `ask.*` takes a `reviewId` — `board.read`, `patchset.readSpan`,
+ * `review.deltaDigest`, `round.dispatch`, all of them — so a thread asking about its OWN
+ * review had to supply an id it was never told, and the only way to find one was
+ * `app_session_list` and a match on the branch name. That is the many-repos-one-branch
+ * mapping defect exactly: two repositories in one workspace both have `main`, the list gives
+ * two rows, and the thread picks whichever it happened to read first. It then reports the
+ * wrong repository's board under the right repository's name, and nothing errors.
+ *
+ * So the ADDRESS answers it, as the address answers `author`: the thread id maps to the
+ * review it was bound for, which is a stored fact and not a guess.
  */
 export function stampedArguments(input: {
   readonly commandId: CommandName;
@@ -711,12 +785,14 @@ export function stampedArguments(input: {
   if (shape === undefined) return input.args;
   const next = { ...input.args };
   if (Object.hasOwn(shape, "author")) next.author = "orchestrator";
-  if (
-    Object.hasOwn(shape, "sessionId") &&
-    next.sessionId === undefined &&
-    input.sessionId !== undefined
-  ) {
-    next.sessionId = input.sessionId;
+  // Both identity fields carry the SAME id: the T3 thread binding is keyed on the review id
+  // (`dispatch/chat.ts`'s `bindReviewThread` writes `{ kind: "session", sessionId: reviewId }`),
+  // so `options.sessionFor(threadId)` answers "which review", and the rows that call it
+  // `sessionId` are naming the same thing.
+  for (const field of ["sessionId", "reviewId"] as const) {
+    if (Object.hasOwn(shape, field) && next[field] === undefined && input.sessionId !== undefined) {
+      next[field] = input.sessionId;
+    }
   }
   return next;
 }
@@ -804,7 +880,15 @@ export async function startAppMcpServer(options: StartAppMcpServerOptions): Prom
     // has to count. `handleMessage` already refused a notification (no id) before this is
     // ever reached, so a real id is always in hand here.
     requestId: unknown,
-  ): Promise<{ readonly result?: unknown; readonly error?: { code: number; message: string } }> => {
+  ): Promise<{
+    readonly result?: unknown;
+    readonly error?: { code: number; message: string };
+    /**
+     * Answer with `id: null` (round 5, item 6): the ONE case where echoing the caller's own
+     * id is what breaks the ceiling, so the reply cannot carry it.
+     */
+    readonly withoutId?: true;
+  }> => {
     const record = (params ?? {}) as { name?: unknown; arguments?: unknown };
     const tool = toolFor(record.name);
     if (tool === undefined) {
@@ -843,13 +927,17 @@ export async function startAppMcpServer(options: StartAppMcpServerOptions): Prom
       // ride the wire. Under the budget, the wrapped result rides inline unchanged; over
       // it, `applyResultCeiling` returns a small spill envelope and the marker (if any) is
       // folded into the spilled file, not carried separately.
-      return {
-        result: applyResultCeiling(
-          shaped,
-          (body) => writeSpillFile(options, threadId, tool.name, body),
-          requestId,
-        ),
-      };
+      const bounded = applyResultCeiling(
+        shaped,
+        (body) => writeSpillFile(options, threadId, tool.name, body),
+        requestId,
+      );
+      return bounded.kind === "result"
+        ? { result: bounded.result }
+        : {
+            error: { code: JSON_RPC_INVALID_PARAMS, message: bounded.message },
+            withoutId: true,
+          };
     } catch (error) {
       // A refusal is the model's to answer inside the same turn, so it comes back as a tool
       // result marked `isError`, never as a JSON-RPC error — a protocol error is the
@@ -858,14 +946,18 @@ export async function startAppMcpServer(options: StartAppMcpServerOptions): Prom
       // ordinary refusal well under budget, but a pathological one (control characters that
       // each escape to several bytes) can still blow it once wrapped, so this spills exactly
       // like an oversized success would rather than riding the wire unbounded.
-      return {
-        result: applyResultCeiling(
-          { text: refusalText(error) },
-          (body) => writeSpillFile(options, threadId, tool.name, body),
-          requestId,
-          true,
-        ),
-      };
+      const bounded = applyResultCeiling(
+        { text: refusalText(error) },
+        (body) => writeSpillFile(options, threadId, tool.name, body),
+        requestId,
+        true,
+      );
+      return bounded.kind === "result"
+        ? { result: bounded.result }
+        : {
+            error: { code: JSON_RPC_INVALID_PARAMS, message: bounded.message },
+            withoutId: true,
+          };
     }
   };
 
@@ -920,8 +1012,16 @@ export async function startAppMcpServer(options: StartAppMcpServerOptions): Prom
         return reply({ tools: servedAppToolCatalog(options.dispatch()) });
       case "tools/call": {
         const answered = await callTool(threadId, message.params, id);
-        return answered.error === undefined
-          ? reply(answered.result)
+        if (answered.error === undefined) return reply(answered.result);
+        // `id: null` when echoing the id is what would break the ceiling — the same canonical
+        // shape the invalid-request arm above uses, and the only reply whose size Rennet
+        // controls when the caller's own id is enormous (round 5, item 6).
+        return answered.withoutId === true
+          ? {
+              jsonrpc: "2.0",
+              id: null,
+              error: { code: answered.error.code, message: answered.error.message },
+            }
           : fail(answered.error.code, answered.error.message);
       }
       default:

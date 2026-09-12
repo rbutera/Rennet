@@ -1,11 +1,14 @@
 import { randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
 import { basename } from "node:path";
 import { reviewedDiffCommand, sessionContextRelativeDir } from "@rennet/core";
 import { renderSessionBriefing, type SessionBriefingPatchset } from "@rennet/prompts";
-import { parseCommandInput, parseCommandOutput, type Review } from "@rennet/protocol";
+import {
+  forgeRepositorySlug,
+  parseCommandInput,
+  parseCommandOutput,
+  type Review,
+} from "@rennet/protocol";
 import { appToolNames } from "../agent-tools";
-import { sessionContextDir } from "../context-files";
 import type { SessionThreadCreation, ThreadBinding } from "../t3/threads";
 import type { CommandHandler, DispatchRuntime } from "./runtime";
 
@@ -70,13 +73,32 @@ export async function bindReviewThread(
   });
 }
 
-/** Which capture this is, in the identity a reviewer would recognise it by. */
+/**
+ * Which capture this is, in the identity a reviewer would recognise it by — and WHICH
+ * REPOSITORY and WHICH REVIEW, which the thread cannot work without.
+ *
+ * Every exposed `app_*` row outside `ask.*` takes a `reviewId`, and the thread was never
+ * told one: the only way to find it was `app_session_list` and a match on the branch name.
+ * Two repositories in one workspace both have `main`, so that match resolves to whichever
+ * row was read first and the thread reports the wrong repository's board under the right
+ * repository's name, silently. Naming both here, and stamping the id on a call that omits
+ * it (`stampedArguments`), is the answer: an identity carried from the review, never
+ * re-derived from a branch.
+ */
 function briefingPatchset(rt: DispatchRuntime, review: Review): SessionBriefingPatchset {
   const patchset = rt.activePatchsetOf(review);
   const repository = patchset.repository;
   const branch = repository.headRef;
+  // `owner/name` when the forge knows it — a PR review carries the real identity — else the
+  // checkout's own directory name, which is what a reviewer calls a local branch review.
+  const label =
+    review.postTarget === undefined
+      ? basename(review.repositoryRoot)
+      : forgeRepositorySlug(review.postTarget.repo);
   return {
     kind: review.postTarget === undefined ? "branch" : "pr",
+    reviewId: review.id,
+    ...(label === "" ? {} : { repository: label }),
     ...(branch === undefined ? {} : { branch }),
     ...(review.postTarget === undefined ? {} : { prNumber: review.postTarget.number }),
     baseOid: repository.baseOid,
@@ -88,20 +110,27 @@ function briefingPatchset(rt: DispatchRuntime, review: Review): SessionBriefingP
 }
 
 /**
- * The session's context directory as the THREAD can open it, or nothing when none has been
- * written yet (a chat-only session that has never drafted a board).
+ * The session's context directory as the THREAD can open it — ALWAYS, for a session thread.
+ *
+ * It used to be gated on `existsSync`, and that gate could only ever be false. The thread is
+ * created by the warm bind in `review.capture` (#849), the directory is written when a
+ * generation drafts, and a thread's instructions are FIXED AT CREATE — so the check ran
+ * before the writer every single time, and no freshly captured review's thread was ever told
+ * the path. It would have been told about a directory only on a thread created after a
+ * drafting run, which is the case that does not happen. A test that mkdirs and then binds
+ * cannot see this: the ordering is the defect.
+ *
+ * The path is deterministic from the session id, so naming it needs no filesystem at all —
+ * and the sentence says when it appears, which is the honest way to name a path that is not
+ * there yet.
  *
  * RELATIVE, for the reason every other prompt's context pointer is (create-server's
  * `writeReviewContext`, review finding 4): the thread's cwd IS this root, and a WSL-locus
  * review runs its turns inside the distro where the daemon's own absolute path names
- * nothing. The existence check runs against the daemon-side absolute path; the sentence
- * carries the relative one.
+ * nothing.
  */
-function briefingContextDir(rt: DispatchRuntime, review: Review, root: string): string | undefined {
-  const sessionId = rt.deps.reviewContextSessionId?.(review) ?? review.id;
-  return existsSync(sessionContextDir(root, sessionId))
-    ? sessionContextRelativeDir(sessionId)
-    : undefined;
+function briefingContextDir(rt: DispatchRuntime, review: Review): string {
+  return sessionContextRelativeDir(rt.deps.reviewContextSessionId?.(review) ?? review.id);
 }
 
 /**
@@ -123,6 +152,8 @@ async function sessionThreadCreation(
   rt: DispatchRuntime,
   review: Review,
   threadId: string,
+  /** The tree this thread's turns run in — which harness the council may route to is a
+   *  property of the checkout, exactly as it is for a seat. */
   worktreePath: string | undefined,
 ): Promise<SessionThreadCreation> {
   const seam = rt.deps.sessionThread;
@@ -156,11 +187,10 @@ async function sessionThreadCreation(
     // the shipped prompts directory. Neither is a reason to deny the reviewer a thread.
     const patchset = briefingPatchset(rt, review);
     const fixed = await seam.briefingText();
-    const contextDir = briefingContextDir(rt, review, worktreePath ?? review.repositoryRoot);
     briefing = renderSessionBriefing({
       briefing: fixed,
       patchset,
-      ...(contextDir === undefined ? {} : { contextDir }),
+      contextDir: briefingContextDir(rt, review),
       // HOW MANY tools the server actually serves and what it is called — never the
       // names, which the harness's own `tools/list` delivers with a description each. No
       // listener answered above ⇒ no tools, and the line says so.

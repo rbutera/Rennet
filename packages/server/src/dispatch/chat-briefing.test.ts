@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -161,6 +161,12 @@ describe("bindReviewThread creates the session thread briefed and tooled", () =>
     expect(create?.instructions).toContain("You are this review's conversation");
     expect(create?.instructions).toContain("## This review");
     expect(create?.instructions).toContain("feat/session-thread-briefing");
+    // WHICH REVIEW and WHICH REPOSITORY (round 5, item 2). Every `app_*` row outside
+    // `ask.*` takes a `reviewId`, and the thread was never told one — so it had to find it
+    // through `app_session_list` and a branch-name match, which is the many-repos-one-branch
+    // defect: two repos in one workspace both have `main`.
+    expect(create?.instructions).toContain("review `rev-1`");
+    expect(create?.instructions).toContain("in `checkout`");
     expect(create?.instructions).toContain(`git diff ${"a".repeat(40)}...${"b".repeat(40)}`);
     expect(Buffer.byteLength(create?.instructions ?? "", "utf8")).toBeLessThanOrEqual(
       SESSION_BRIEFING_MAX_BYTES,
@@ -184,24 +190,39 @@ describe("bindReviewThread creates the session thread briefed and tooled", () =>
     );
   });
 
-  it("names the session's context directory, relative to the thread's cwd, only when one exists", async () => {
+  // ── Round 5, item 3 ─────────────────────────────────────────────────────────
+  // The sentence used to be gated on `existsSync`, and the gate could only ever be false.
+  // The thread is created by the WARM BIND in `review.capture` (#849); the directory is
+  // written when a generation drafts; instructions are FIXED AT CREATE. So the check ran
+  // before the writer every single time and no freshly captured review's thread was ever
+  // told the path — it could only have been told on a thread created after a drafting run,
+  // which is the case that does not happen.
+  //
+  // The test that missed it mkdir'd and THEN bound, which asserts the gate works and says
+  // nothing about the order production runs in. The ordering IS the defect, so the case
+  // below is the ordering.
+  it("names the context directory at CAPTURE, before any generation has written it", async () => {
     const root = mkdtempSync(join(tmpdir(), "rennet-briefing-ctx-"));
     try {
-      const before = fixture({ boundRoot: root });
-      await bindReviewThread(before.rt, "rev-1");
-      // Nothing written yet — a chat-only session — so the sentence is absent rather than
-      // pointing at a directory the thread would open and find missing.
-      expect(before.captured[0]?.instructions).not.toContain("context directory");
+      // Capture-time bind: the directory does not exist, and will not for minutes.
+      const f = fixture({ boundRoot: root });
+      await bindReviewThread(f.rt, "rev-1");
+      expect(existsSync(join(root, sessionContextRelativeDir("rev-1")))).toBe(false);
+      const instructions = f.captured[0]?.instructions ?? "";
+      // RELATIVE (review finding 4): the thread's cwd is this root, and a WSL-locus review
+      // runs its turns inside the distro, where the daemon's absolute path names nothing.
+      expect(instructions).toContain(`\`${sessionContextRelativeDir("rev-1")}/\``);
+      expect(instructions).not.toContain(root);
+      // ...and it says WHEN, because a path that is not there yet described as though it
+      // were is the kind of true-sentence-wrong-moment this briefing cannot afford.
+      expect(instructions).toContain("once the lens boards have been drafted");
 
+      // Now the generation writes it, and the thread that already exists is UNCHANGED —
+      // which is why the path had to be on the create in the first place.
       mkdirSync(join(root, sessionContextRelativeDir("rev-1")), { recursive: true });
       const after = fixture({ boundRoot: root });
       await bindReviewThread(after.rt, "rev-1");
-      // RELATIVE (review finding 4): the thread's cwd is this root, and a WSL-locus review
-      // runs its turns inside the distro, where the daemon's absolute path names nothing.
-      expect(after.captured[0]?.instructions).toContain(
-        `\`${sessionContextRelativeDir("rev-1")}/\``,
-      );
-      expect(after.captured[0]?.instructions).not.toContain(root);
+      expect(after.captured[0]?.instructions).toBe(instructions);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -379,6 +400,7 @@ describe("the real briefing fits, with its tool line intact", () => {
       briefing: fixed,
       patchset: {
         kind: "branch",
+        reviewId: "rev-1",
         branch: "feat/session-thread-briefing-c4",
         baseOid: "a".repeat(40),
         headOid: "b".repeat(40),
