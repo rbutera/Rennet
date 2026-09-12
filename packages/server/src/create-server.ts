@@ -183,7 +183,7 @@ import {
   verifyFlaggedReview,
   workOrderContextFileFrom,
 } from "@rennet/core";
-import type { PromptContextFile } from "@rennet/prompts";
+import { type PromptContextFile, SESSION_BRIEFING_FILE } from "@rennet/prompts";
 import type {
   CodingHarnessSelection,
   ComposedHandoffBundle,
@@ -358,9 +358,10 @@ import {
   type T3HandoffTurnOutcome,
   type T3TurnCheckpointRead,
 } from "./t3/handoff";
+import { resolveSessionThreadModel } from "./t3/orchestrator-chat";
 import { resolveProviderBinaries } from "./t3/resolve-provider-binaries";
 import { type SeatThreadWatch, watchSeatThread } from "./t3/seat-progress";
-import { sidecarBaseDir } from "./t3/sidecar";
+import { readSeededProviderBinaries, sidecarBaseDir } from "./t3/sidecar";
 import { createT3SidecarSupervisor } from "./t3/supervisor";
 import {
   readBindings,
@@ -368,6 +369,7 @@ import {
   type SeatKind,
   seatThreadTitle,
   sweepIfArchived,
+  type ThreadBinding,
 } from "./t3/threads";
 import { QUIET_WORK_BRANCH_STATE, readWorkBranchState } from "./work-branch-state";
 import { worktreeClaimsIn } from "./worktree-claims";
@@ -3719,22 +3721,14 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   // The handoff exit (t3-lens-threads 4.3): a composed work order runs as ONE turn on the
   // review's bound T3 thread. One engine, no switch — the review is what names the thread,
   // and the thread is keyed on the review's REPOSITORY ROOT, never a project id.
-  const runHandoffTurn = async (input: HandoffTurnInput): Promise<RoundWorkerTurnOutcome> => {
-    // The work order runs in the session's bound workspace, the same tree its seats read and
-    // the same one the round's turn takes — the binding is half the thread's key, so this is
-    // also what keeps chat, handoff and round on ONE thread. Bound here if nothing has.
-    const bound = await boundWorkspaceForReview(input.reviewId);
-    return runHandoffTurnOnThread(
-      bound === undefined
-        ? input
-        : {
-            ...input,
-            worktreePath: bound.root,
-            ...(bound.branch === undefined ? {} : { branch: bound.branch }),
-          },
-      t3Sidecar,
-    );
-  };
+  // The work order runs on the thread the DISPATCH bound (`dispatch/review.ts`, through
+  // `bindReviewThread`), in the session's bound workspace that bind resolved — which is the
+  // same tree its seats read and the round's turn takes. This wrapper no longer binds
+  // anything: binding here was a second creation path for the review's own conversation, and
+  // whichever path ran first decided whether the thread was ever briefed.
+  const runHandoffTurn = async (
+    input: HandoffTurnInput & { readonly binding: ThreadBinding },
+  ): Promise<RoundWorkerTurnOutcome> => runHandoffTurnOnThread(input, t3Sidecar);
   // B4 broadcast wiring (reconciliation 7, recorded): board events ride the EXISTING
   // WS push path — the runtime's store-append hook feeds `wsListener.broadcastBoardEvent`
   // (late-bound: `wsListener` is assigned below, read only when a board event fires), which
@@ -5464,6 +5458,57 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // threads; the host resolves the bound root the wire never carries.
     purgeSessionContext: purgeContextForSession,
     boundWorkspaceForReview,
+    // What a SESSION thread is created with beyond its cwd (session-thread-briefing 4.1).
+    // `bindReviewThread` assembles these three with the review's own facts; the composition
+    // root is the only thing that can answer them, so they arrive as one dep rather than as
+    // a bind that reaches into the daemon's internals.
+    sessionThread: {
+      // Memoized by `createNodePromptReader`: the briefing is re-rendered on every bind and
+      // the prompt files ship beside the daemon, so this reads the file once per daemon.
+      briefingText: () => readPrompt(SESSION_BRIEFING_FILE),
+      appServerFor: async (threadId) => (await ensureAppMcpServer()).addressFor(threadId),
+      // The council's own routing for the job that has always named this thread, over an
+      // installed set that has to satisfy THREE things at once, because each of them vetoes
+      // a provider on its own:
+      //
+      //  1. the review's own locus-threaded probes — the SAME `adapter` / `codex.available`
+      //     pair every other council site resolves against. A WSL-locus review is answered
+      //     by the distro's harnesses, never the Windows host's;
+      //  2. the reviewer's enable choice for that host. Turning Codex off in Settings and
+      //     still getting a Codex conversation is the surface lying about its own switch;
+      //  3. what the RUNNING sidecar has a path for, read back off the settings it was
+      //     seeded with. The council may route the chat to Codex all it likes — a sidecar
+      //     with no `codex` binary cannot start a Codex session, and an ADOPTED sidecar's
+      //     binaries were resolved by a daemon this one never was.
+      //
+      // Nothing here is cached. It was, over a raw `resolveProviderBinaries` of its own, and
+      // that probe answers PARTIALLY on a transient failure — each harness is caught
+      // independently, so one bad moment for Codex discovery froze `{ claude }` for the
+      // daemon's whole life and quietly routed a stored Codex choice to Claude, with the
+      // cache-resetting `catch` never firing because nothing ever rejected. The per-repo
+      // probes underneath memoise where memoising is correct, and the bind resolves this
+      // once per THREAD (`creation` is a thunk), so there is nothing left to save.
+      modelSelection: (repoRoot) =>
+        resolveSessionThreadModel(repoRoot, {
+          // `turnRoot` by name as well as by value, because the locus-threading guard
+          // (`locus-harness-threading.test.ts`) enumerates these call sites by argument
+          // identifier: a WSL adapter BAKES its `--cd` at construction, so the root handed
+          // to the resolver is the tree every turn of that harness really runs in. This one
+          // arrives from `bindReviewThread` as the session's bound workspace.
+          claudeAvailable: async (turnRoot) => (await claudeAdapterForRepo(turnRoot)) !== null,
+          codexAvailable: async (turnRoot) => {
+            const locus = locusContextForRepo(turnRoot).locus;
+            return (await getCodexResolution(locus)).availability.available;
+          },
+          disabledHarnesses: (turnRoot) => {
+            const { locus } = locusContextForRepo(turnRoot);
+            const source = locus.kind === "wsl" ? `wsl:${locus.distro}` : "local";
+            return daemonSettingsStore.readState().config.hosts?.[source]?.disabledHarnesses ?? [];
+          },
+          sidecarBinaries: () => readSeededProviderBinaries(sidecarBaseDir(dataDir)),
+          overrides: councilOverrides,
+        }),
+    },
     // The ONE key a review's context files live under — the same id `purgeSessionContext`
     // is called with, so the handoff work order the dispatch writes is the one the archive
     // purges and the orphan sweep spares (review finding 1).

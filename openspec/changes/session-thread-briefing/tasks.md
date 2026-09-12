@@ -83,22 +83,32 @@ grep -n "board.read" packages/protocol/src/commands/index.ts     # present; NOT 
 
 ## 4. Bind — briefing, tools, and the council on the session thread
 
-- [ ] 4.1 `packages/server/src/dispatch/chat.ts` `bindReviewThread`: resolve the patchset facts and
+- [x] 4.1 `packages/server/src/dispatch/chat.ts` `bindReviewThread`: resolve the patchset facts and
   the context directory for the review, render the briefing, and pass `instructions`, the
   `rennet_app` server entry, and the council's `orchestrator-chat` selection (through the seam
   `resolveBoardSeatDetails` uses; `DEFAULT_MODEL` only when no installed provider answers, logged).
   Also point `lens-pipeline.ts`'s `renderContextReference` at `@rennet/prompts`'
   `renderContextDirectorySentence`, so the seat and the chat cannot drift on the one sentence
   that tells an agent what its context directory is.
-- [ ] 4.2 `threads.test.ts` / `chat.test.ts`: a session bind passes all three to `createThread`;
+- [x] 4.2 `threads.test.ts` / `chat.test.ts`: a session bind passes all three to `createThread`;
   a seat bind passes no instructions and no app server; the council-less case falls to the default
   and logs. **Positive control:** drop the `instructions` pass-through and the bind assertion
   reddens. Also assert at `bindReviewThread`'s mapping that a 95-file and a 1-file review render
   byte-identical briefings apart from the identity line, and that every `app_[a-z_]+` name in the
   briefing file appears in `buildAppTools`' names — the prompts package can only prove the
   renderer is deterministic over equal inputs, not that production hands it equal inputs.
-- [ ] 4.3 `packages/app-ui/src/review/anchored-ask.tsx`: `Code reference:` is preceded by one
+- [x] 4.3 `packages/app-ui/src/review/anchored-ask.tsx`: `Code reference:` is preceded by one
   labelled line (board, lens, path, lines) from the `CodeRef`; bounds unchanged; test updated.
+- [x] 4.4 (added, 2026-09-12) **The welcome's orchestrator choice must be real.**
+  `first-run-welcome.tsx` has always called `setRole({ roleId: "orchestrator", … })` against a
+  `REVIEW_ROLE_CATALOGUE` with no such row, so `reviewRoleJobId` answered `undefined`, the
+  assignment it reads off `settings.reviewRoles` was never there, and the write never
+  happened — while the `both` table routed `orchestrator-chat` to Claude whatever the reader
+  clicked, under copy saying "Codex will orchestrate reviews". Fixed through the council's
+  EXISTING role seam (Decision 5, no second setting): the `orchestrator` role joins the
+  catalogue over `orchestrator-chat`, which makes the welcome's write live and reaches
+  `resolveAssignment` through `taskOverridesFor`. Copy made true; `model-council.md`,
+  `settings-and-setup.md`, `CONTEXT.md` and `getting-started.md` say what is now the case.
   Cluster gate green. Commit.
 
 ## 5. Docs and glossary (definition of done)

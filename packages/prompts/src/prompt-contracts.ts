@@ -781,11 +781,18 @@ export const SESSION_BRIEFING_DIFF_COMMAND_MAX_BYTES = 200;
 /** Byte bound on the interpolated context-directory path. */
 export const SESSION_BRIEFING_CONTEXT_DIR_MAX_BYTES = 200;
 
-/** Byte bound on ONE interpolated tool name. */
-export const SESSION_BRIEFING_TOOL_NAME_MAX_BYTES = 60;
-
-/** How many tool names the briefing lists before the honest "…and N more" marker. */
-export const SESSION_BRIEFING_TOOL_NAME_CAP = 40;
+/**
+ * Byte bound on the interpolated MCP server name. TOML bare keys only, so this is loose.
+ *
+ * The briefing carries the tool COUNT and this name, never the names themselves. The
+ * harness's own `tools/list` already delivers every name with its description, so restating
+ * 29 of them in a system-prompt append is a restatement of something that travels
+ * separately — the same rule that keeps the output schema out of prompt text — and it is
+ * the worst possible place for one: an append is a prefix re-read on every round trip of
+ * every turn for the thread's life. It cost ~900 B of a 4,096 B ceiling and left 34 B of
+ * headroom, so two more `AGENT_EXPOSED` rows would have silently dropped the whole line.
+ */
+export const SESSION_BRIEFING_TOOL_SERVER_MAX_BYTES = 60;
 
 /**
  * The bytes the review's own lines keep whatever the fixed text costs. Enough for the
@@ -827,8 +834,13 @@ export interface SessionBriefingInput {
   readonly patchset: SessionBriefingPatchset;
   /** The session's `.rennet/context/<sessionId>` directory, when one has been written. */
   readonly contextDir?: string;
-  /** The tool names actually attached to this thread, in the order they are exposed. */
-  readonly toolNames: readonly string[];
+  /**
+   * The tools actually attached: HOW MANY, and the MCP server serving them. Deliberately
+   * not the names — see {@link SESSION_BRIEFING_TOOL_SERVER_MAX_BYTES}. Absent ⇒ the
+   * briefing says none are attached, which is what a thread whose listener could not bind
+   * actually holds.
+   */
+  readonly tools?: { readonly count: number; readonly serverName: string };
 }
 
 /**
@@ -873,7 +885,7 @@ export function renderSessionBriefing(input: SessionBriefingInput): string {
       : [
           `- ${renderContextDirectorySentence(capBytes(input.contextDir.replace(/\/$/, ""), SESSION_BRIEFING_CONTEXT_DIR_MAX_BYTES))}`,
         ]),
-    renderSessionBriefingTools(input.toolNames),
+    renderSessionBriefingTools(input.tools),
   ];
   const scaffold = `\n\n${SESSION_BRIEFING_HEADER}\n`;
   const overhead = utf8Bytes(scaffold);
@@ -942,24 +954,29 @@ export function boundedReviewLines(lines: readonly string[], maxBytes: number): 
  *
  * Exported because two agents are pointed at the same directory and must be told the same
  * thing — the lens seats through `lens-pipeline.ts`'s `renderContextReference`, and the
- * session thread through its briefing. The daemon-side copy imports this one (cluster 4) so
- * the pair cannot drift; until it does, `renderContextReference` renders the same shape as
- * this, kept in sync by hand rather than by import.
+ * session thread through its briefing. Both call THIS function, so an edit here reaches
+ * both and neither can drift; there is no second copy of the sentence to keep in step.
  */
 export function renderContextDirectorySentence(dir: string): string {
   return `Your session's context directory is \`${dir}/\`; its \`README.md\` indexes every file there — what each holds and when to read it. Nothing is sent to you inline: read a file with your own tools when its line says to.`;
 }
 
-/** The attached tool names, capped per name and in count, with an honest remainder. */
-function renderSessionBriefingTools(toolNames: readonly string[]): string {
-  if (toolNames.length === 0) {
+/**
+ * The attached tools as a COUNT and a server name — one short line whose length does not
+ * move with the size of the tool surface.
+ *
+ * It used to list every name, which is how the render reached 4,062 of 4,096 bytes: the
+ * list alone was ~900 B, and `boundedReviewLines` drops from the END, so two more exposed
+ * rows would have deleted this whole line and left the thread told nothing about its tools
+ * at all. The names were never this line's to carry — the harness delivers `tools/list`
+ * with a description per tool before the first turn runs.
+ */
+function renderSessionBriefingTools(
+  tools: { readonly count: number; readonly serverName: string } | undefined,
+): string {
+  if (tools === undefined || tools.count <= 0) {
     return "- Rennet tools on this thread: none attached.";
   }
-  const shown = toolNames
-    .slice(0, SESSION_BRIEFING_TOOL_NAME_CAP)
-    .map((name) => `\`${capBytes(name, SESSION_BRIEFING_TOOL_NAME_MAX_BYTES)}\``);
-  const omitted = toolNames.length - shown.length;
-  return `- Rennet tools on this thread: ${shown.join(", ")}${
-    omitted > 0 ? `, …and ${omitted} more attached but not listed here` : ""
-  }.`;
+  const server = capBytes(tools.serverName, SESSION_BRIEFING_TOOL_SERVER_MAX_BYTES);
+  return `- Rennet tools on this thread: ${tools.count} \`app_*\` tools on the \`${server}\` MCP server; your own tool list names and describes each one.`;
 }

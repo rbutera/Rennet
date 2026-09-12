@@ -19,6 +19,16 @@ import type { ThreadBinding, ThreadBindingKey } from "./threads";
 
 const START = { previousTurnId: "turn-0", requestedAt: "2026-09-03T10:00:00.000Z" };
 
+/** The review's thread as `bindReviewThread` hands it over — the handoff no longer binds. */
+const BINDING: ThreadBinding = {
+  kind: "session",
+  repositoryRoot: "/repos/a",
+  sessionId: "rv-1",
+  projectId: "p",
+  threadId: "t1",
+  createdAt: "now",
+};
+
 const thread = (
   state: "completed" | "error" | "interrupted",
   messages: OrchestrationThread["messages"] = [],
@@ -57,7 +67,7 @@ function stubs(
 }
 
 describe("runHandoffTurn", () => {
-  it("binds the review's thread on (repoRoot, reviewId), sends the work order as the turn, and returns T3's diff", async () => {
+  it("runs on the thread it was HANDED, sends the work order as the turn, and returns T3's diff", async () => {
     const assistant = [
       { role: "user", text: "do it" },
       { role: "assistant", text: "Done: renamed x." },
@@ -68,15 +78,17 @@ describe("runHandoffTurn", () => {
       thread: thread("completed", assistant),
     });
     const outcome = await runHandoffTurn(
-      { repoRoot: "/repos/a", prompt: "WORK ORDER", reviewId: "rv-1" },
-      { client: async () => client, threadFor },
+      { repoRoot: "/repos/a", prompt: "WORK ORDER", reviewId: "rv-1", binding: BINDING },
+      { client: async () => client },
     );
-    expect(threadFor).toHaveBeenCalledWith({
-      repositoryRoot: "/repos/a",
-      key: { kind: "session", sessionId: "rv-1" },
-      title: "a",
-    });
-    expect(startTurn).toHaveBeenCalledWith({ threadId: "t1", text: "WORK ORDER" });
+    // It BINDS NOTHING. Binding here was a second creation path for the review's own
+    // conversation: whichever of the dock and the handoff got there first decided whether
+    // the thread was ever briefed, and `findOrCreateBinding` handed that answer back for
+    // the thread's life. `dispatch/review.ts` binds through `bindReviewThread` now, and the
+    // handoff is given the result — which is why this function no longer takes `threadFor`
+    // at all, and why this assertion is on the ABSENCE.
+    expect(threadFor).not.toHaveBeenCalled();
+    expect(startTurn).toHaveBeenCalledWith({ threadId: BINDING.threadId, text: "WORK ORDER" });
     // The wait is scoped to this start: the review's thread keeps its earlier handoffs.
     expect(client.waitForTurnSettled).toHaveBeenCalledWith("t1", { after: START });
     expect(outcome).toEqual({
@@ -91,13 +103,13 @@ describe("runHandoffTurn", () => {
   });
 
   it("reports a failed or interrupted turn as failed with T3's reason, keeping the diff it did produce", async () => {
-    const { client, threadFor } = stubs(
+    const { client } = stubs(
       { turnId: "turn-1", state: "error", thread: thread("error", [], "provider crashed") },
       { diff: "partial", files: [{ path: "a" }] },
     );
     const outcome = await runHandoffTurn(
-      { repoRoot: "/repos/a", prompt: "x", reviewId: "rv-1" },
-      { client: async () => client, threadFor },
+      { repoRoot: "/repos/a", prompt: "x", reviewId: "rv-1", binding: BINDING },
+      { client: async () => client },
     );
     expect(outcome).toEqual({
       status: "failed",
@@ -114,15 +126,15 @@ describe("runHandoffTurn", () => {
     expect(
       (
         await runHandoffTurn(
-          { repoRoot: "/repos/a", prompt: "x", reviewId: "rv-1" },
-          { client: async () => interrupted.client, threadFor: interrupted.threadFor },
+          { repoRoot: "/repos/a", prompt: "x", reviewId: "rv-1", binding: BINDING },
+          { client: async () => interrupted.client },
         )
       ).status,
     ).toBe("failed");
   });
 
   it("carries per-turn main-loop usage without subtracting the previous handoff", async () => {
-    const { client, threadFor } = stubs({
+    const { client } = stubs({
       turnId: "turn-2",
       state: "completed",
       thread: thread("completed"),
@@ -135,8 +147,8 @@ describe("runHandoffTurn", () => {
       },
     });
     const outcome = await runHandoffTurn(
-      { repoRoot: "/repos/a", prompt: "x", reviewId: "rv-1" },
-      { client: async () => client, threadFor },
+      { repoRoot: "/repos/a", prompt: "x", reviewId: "rv-1", binding: BINDING },
+      { client: async () => client },
     );
     expect(outcome).toMatchObject({
       status: "completed",
@@ -146,8 +158,8 @@ describe("runHandoffTurn", () => {
     const bare = stubs({ turnId: "turn-1", state: "completed", thread: thread("completed") });
     expect(
       await runHandoffTurn(
-        { repoRoot: "/repos/a", prompt: "x", reviewId: "rv-1" },
-        { client: async () => bare.client, threadFor: bare.threadFor },
+        { repoRoot: "/repos/a", prompt: "x", reviewId: "rv-1", binding: BINDING },
+        { client: async () => bare.client },
       ),
     ).not.toHaveProperty("usage");
   });
@@ -157,7 +169,7 @@ describe("runHandoffTurn", () => {
   // the throw as "the turn changed nothing" — losing the diff AND the checkpoint handle a
   // revert needs, over a round that had genuinely committed. So the read WAITS.
   it("waits for a checkpoint that lands after the turn settles, and keeps its diff", async () => {
-    const { client, threadFor } = stubs({
+    const { client } = stubs({
       turnId: "turn-1",
       state: "completed",
       thread: thread("completed"),
@@ -167,8 +179,14 @@ describe("runHandoffTurn", () => {
     );
     const sleep = vi.fn(async () => undefined);
     const outcome = await runHandoffTurn(
-      { repoRoot: "/repos/a", prompt: "x", reviewId: "rv-1", checkpointWait: { sleep } },
-      { client: async () => client, threadFor },
+      {
+        repoRoot: "/repos/a",
+        prompt: "x",
+        reviewId: "rv-1",
+        binding: BINDING,
+        checkpointWait: { sleep },
+      },
+      { client: async () => client },
     );
     expect(sleep).toHaveBeenCalledTimes(1);
     // Delete the wait and this reddens to `turnDiff: ""` with no checkpoint — which is
@@ -186,7 +204,7 @@ describe("runHandoffTurn", () => {
   // checkpoint — as the code did before Codex #817-2 — is the "lie in the UI" family: spend and
   // a moved branch the receipt cannot see. So the honest outcome is FAILED, naming thread+turn.
   it("fails a completed turn whose checkpoint never arrives, naming the thread and turn", async () => {
-    const { client, threadFor } = stubs({
+    const { client } = stubs({
       turnId: "turn-1",
       state: "completed",
       thread: thread("completed"),
@@ -199,9 +217,10 @@ describe("runHandoffTurn", () => {
         repoRoot: "/repos/a",
         prompt: "x",
         reviewId: "rv-1",
+        binding: BINDING,
         checkpointWait: { waitMs: 0, sleep: async () => undefined },
       },
-      { client: async () => client, threadFor },
+      { client: async () => client },
     );
     expect(outcome.status).toBe("failed");
     expect(outcome).toMatchObject({ turnDiff: "", filesTouched: [] });
@@ -214,7 +233,7 @@ describe("runHandoffTurn", () => {
   // A read FAILURE (an RPC error, a disconnected sidecar) is NOT a late checkpoint: it must not
   // be retried into silence, and it fails at once rather than after the whole 10s wait.
   it("fails immediately on a non-not-ready read error, without retrying the wait", async () => {
-    const { client, threadFor } = stubs({
+    const { client } = stubs({
       turnId: "turn-1",
       state: "completed",
       thread: thread("completed"),
@@ -224,8 +243,14 @@ describe("runHandoffTurn", () => {
     );
     const sleep = vi.fn(async () => undefined);
     const outcome = await runHandoffTurn(
-      { repoRoot: "/repos/a", prompt: "x", reviewId: "rv-1", checkpointWait: { sleep } },
-      { client: async () => client, threadFor },
+      {
+        repoRoot: "/repos/a",
+        prompt: "x",
+        reviewId: "rv-1",
+        binding: BINDING,
+        checkpointWait: { sleep },
+      },
+      { client: async () => client },
     );
     // No retry: a hard read error is not a not-yet-written checkpoint.
     expect(sleep).not.toHaveBeenCalled();
@@ -426,5 +451,50 @@ describe("readRoundTurnCheckpoint", () => {
       new Error("sidecar socket closed"),
     );
     await expect(read(stubs)).rejects.toThrow("sidecar socket closed");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// session-thread-briefing 4.1 — THE HANDOFF RUNS ON THE BRIEFED THREAD.
+//
+// The handoff is not a thread of its own: `runHandoffTurn` binds `{ kind: "session" }`, the
+// same key the chat dock binds, so from cluster 4 onward its turn lands on a thread that was
+// created with `instructions` and with the `rennet_app` server. Both providers FIX their MCP
+// configuration when the session process is created and refuse a later turn that asks for a
+// DIFFERENT set — by name — so a handoff that brought its own servers would have to agree
+// with the thread's, and one that brings NONE rides whatever the session holds.
+//
+// It brings none, and this is the assertion that keeps it that way: the exact `startTurn`
+// input, with no `mcpServers` key at all. Add one here and the vendored reactor compares it
+// against (thread ∪ turn) — the union rule cluster 1 landed — which is a comparison this
+// turn currently never has to pass.
+//
+// WHAT THIS CANNOT CATCH: the union rule itself. That is the vendored
+// `ProviderCommandReactor` / `ClaudeAdapter` suite's, with its own positive control; from
+// here the only visible fact is what Rennet sends.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("a handoff turn on a briefed session thread", () => {
+  it("starts with no mcpServers of its own, so the thread's set is the only one in play", async () => {
+    const { client, startTurn } = stubs({
+      turnId: "turn-1",
+      state: "completed",
+      thread: thread("completed", [
+        { role: "assistant", text: "Done." },
+      ] as unknown as OrchestrationThread["messages"]),
+    });
+    const outcome = await runHandoffTurn(
+      { repoRoot: "/repos/a", prompt: "WORK ORDER", reviewId: "rv-1", binding: BINDING },
+      { client: async () => client },
+    );
+    // The turn went out and settled — the refusal this guards against would have been a
+    // failed start, not a quiet omission.
+    expect(outcome.status).toBe("completed");
+    // `stubs`' `startTurn` declares no parameters, so its recorded calls are typed empty —
+    // the cast reads the argument the implementation really received.
+    const calls = startTurn.mock.calls as unknown as readonly (readonly unknown[])[];
+    const sent = calls[0]?.[0] as Record<string, unknown> | undefined;
+    expect(sent).toBeDefined();
+    expect(Object.keys(sent ?? {}).sort()).toEqual(["text", "threadId"]);
+    expect(sent?.mcpServers).toBeUndefined();
   });
 });

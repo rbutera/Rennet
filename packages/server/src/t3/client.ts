@@ -44,6 +44,7 @@ import * as Stream from "effect/Stream";
 import { RpcClient, RpcSerialization } from "effect/unstable/rpc";
 import * as Socket from "effect/unstable/socket/Socket";
 import { WebSocket } from "ws";
+import { threadCreateFields } from "./create-thread-command";
 
 export type { ModelSelection, OrchestrationThread, OrchestrationThreadStreamItem };
 
@@ -57,6 +58,16 @@ export interface CreateThreadInput {
   readonly projectId: string;
   readonly title: string;
   readonly modelSelection: ModelSelection;
+  /**
+   * The thread's id, MINTED BY THE CALLER (session-thread-briefing 4.1).
+   *
+   * T3 mints thread ids client-side — `thread.create` carries the id rather than returning
+   * one — so a caller that needs to know the id BEFORE the create is allowed to name it.
+   * The session bind needs exactly that: the app-tools server's url carries the thread id
+   * in its path (`/threads/<id>`), and that url has to be on the create command that also
+   * carries it. Omitted ⇒ a fresh uuid, which is what every other caller wants.
+   */
+  readonly threadId?: string;
   /** Defaults to T3's full access, the posture Rule Zero mandates. */
   readonly runtimeMode?: RuntimeMode;
   /**
@@ -386,22 +397,20 @@ export async function connectT3(options: T3ClientOptions): Promise<T3Client> {
       return creating;
     },
     createThread: async (input) => {
-      const threadId = ThreadId.make(randomUUID());
+      // The fields come from `./create-thread-command`, which needs no vendored bundle and
+      // is therefore the only place this assembly can be TESTED: this file's own suite is
+      // bundle-gated. What it protects is the caller-minted id — the session bind puts that
+      // id in the `rennet_app` url's path, so a create that quietly minted its own would
+      // hand the thread an address pointing at another conversation.
+      const fields = threadCreateFields(input, () => randomUUID());
+      const threadId = ThreadId.make(fields.threadId);
       await dispatch({
         type: "thread.create",
         ...stamp(),
+        ...fields,
         threadId,
-        projectId: ProjectId.make(input.projectId),
-        title: input.title,
-        modelSelection: input.modelSelection,
-        runtimeMode: input.runtimeMode ?? FULL_ACCESS,
-        interactionMode: "default",
-        // The session's bound workspace: T3 resolves cwd as `worktreePath ?? project.workspaceRoot`,
-        // so an absent binding still means the project root, exactly as before.
-        branch: input.branch ?? null,
-        worktreePath: input.worktreePath ?? null,
-        ...(input.instructions === undefined ? {} : { instructions: input.instructions }),
-        ...(input.mcpServers === undefined ? {} : { mcpServers: input.mcpServers }),
+        projectId: ProjectId.make(fields.projectId),
+        runtimeMode: fields.runtimeMode as RuntimeMode,
       });
       return threadId;
     },

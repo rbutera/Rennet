@@ -18,6 +18,12 @@ import {
   welcomeParticleIdleAnimation,
 } from "./first-run-welcome";
 
+// The `settings.reviewRoles` rows this stage reads its assignment off. It is a FIXTURE, and
+// it was the only place the `orchestrator` row existed: `REVIEW_ROLE_CATALOGUE` carried no
+// such role, so the write these tests watch go out never went out in production
+// (session-thread-briefing 4.4). app-ui may not import `@rennet/core`, so the row's real
+// existence is pinned where the catalogue lives — `orchestrator-chat.test.ts` in server
+// asserts `reviewRoleJobId("orchestrator")` resolves to the council's `orchestrator-chat`.
 const ROLES: readonly ReviewRoleMapping[] = [
   {
     id: "orchestrator",
@@ -725,7 +731,7 @@ describe("FirstRunWelcome", () => {
     const before = checks;
     installed = true;
     fireEvent.click(screen.getByRole("button", { name: "Check again" }));
-    await screen.findByText("Codex will orchestrate reviews.");
+    await screen.findByText("Codex will run the review conversation.");
     expect(checks).toBe(before + 1);
     expect(screen.getByRole("button", { name: /^Continue$/ })).toBeTruthy();
   });

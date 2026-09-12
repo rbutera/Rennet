@@ -1388,11 +1388,18 @@ function ReviewSetupStage({
           <aside className="my-3.5 flex items-center gap-3 border-l-[3px] border-accent-fill bg-surface px-4 py-[13px] [&>svg]:text-accent">
             <Icon icon={ShieldCheck} />
             <div className="grid gap-0.5">
+              {/* What the choice ACTUALLY does (session-thread-briefing 4.4): it enables the
+                  harness and routes the council's `orchestrator-chat` job, which is the
+                  review's own conversation — the thread in the chat column. It does not move
+                  the lens seats, which route from the council's tables, so "orchestrate
+                  reviews" was more than the write can deliver. */}
               <strong className="text-xs">
-                {orchestrator === "claude" ? "Claude Code" : "Codex"} will orchestrate reviews.
+                {orchestrator === "claude" ? "Claude Code" : "Codex"} will run the review
+                conversation.
               </strong>
               <span className="text-2xs text-ink-faint">
-                You can change this per environment later in Settings.
+                The thread in the chat column. Lens seats route on their own — change either in
+                Settings → Environments.
               </span>
             </div>
           </aside>
