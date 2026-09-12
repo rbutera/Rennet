@@ -45,7 +45,7 @@ grep -n "board.read" packages/protocol/src/commands/index.ts     # present; NOT 
 - [x] 2.1 `packages/prompts/src/prompts/session-briefing.md`: the fixed text per design (role,
   what it can do — everything — and the steer toward staging, Explain's `Code reference`, finding
   and reading a review, and its own short register — no shared partial, because splicing
-  `reader-voice.md` (2,846 B) under the 4,096-byte ceiling leaves no room for the review's lines
+  `reader-voice.md` (2,847 B) under the 4,096-byte ceiling leaves no room for the review's lines
   and its ground rules tell a writer not to name lenses or boards). A test asserts the file
   contains no "never", "do not commit", "do not push" or "must not" sentence (**positive
   control:** add one, it reddens). Exported as `SESSION_BRIEFING_FILE`; the manifest test covers
@@ -87,10 +87,16 @@ grep -n "board.read" packages/protocol/src/commands/index.ts     # present; NOT 
   the context directory for the review, render the briefing, and pass `instructions`, the
   `rennet_app` server entry, and the council's `orchestrator-chat` selection (through the seam
   `resolveBoardSeatDetails` uses; `DEFAULT_MODEL` only when no installed provider answers, logged).
+  Also point `lens-pipeline.ts`'s `renderContextReference` at `@rennet/prompts`'
+  `renderContextDirectorySentence`, so the seat and the chat cannot drift on the one sentence
+  that tells an agent what its context directory is.
 - [ ] 4.2 `threads.test.ts` / `chat.test.ts`: a session bind passes all three to `createThread`;
   a seat bind passes no instructions and no app server; the council-less case falls to the default
   and logs. **Positive control:** drop the `instructions` pass-through and the bind assertion
-  reddens.
+  reddens. Also assert at `bindReviewThread`'s mapping that a 95-file and a 1-file review render
+  byte-identical briefings apart from the identity line, and that every `app_[a-z_]+` name in the
+  briefing file appears in `buildAppTools`' names — the prompts package can only prove the
+  renderer is deterministic over equal inputs, not that production hands it equal inputs.
 - [ ] 4.3 `packages/app-ui/src/review/anchored-ask.tsx`: `Code reference:` is preceded by one
   labelled line (board, lens, path, lines) from the `CodeRef`; bounds unchanged; test updated.
   Cluster gate green. Commit.

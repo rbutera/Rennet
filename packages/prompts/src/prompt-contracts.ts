@@ -759,8 +759,13 @@ export const SESSION_BRIEFING_MAX_BYTES = 4_096;
  * The budget for the fixed half (`SESSION_BRIEFING_FILE`), pinned by the manifest test.
  * The dynamic lines get what is left, so a fixed text that grows past this eats the
  * patchset line's room rather than the ceiling's.
+ *
+ * It is deliberately loose enough that a copy edit does not trip it: a pin the shipped
+ * file sits ten bytes under fails for a reworded sentence, which teaches whoever meets it
+ * that the number is noise. A render with 2,816 B of fixed text still leaves ~1,260 B for
+ * the review's lines, which is more than they have ever needed.
  */
-export const SESSION_BRIEFING_FIXED_MAX_BYTES = 2_560;
+export const SESSION_BRIEFING_FIXED_MAX_BYTES = 2_816;
 
 /** Byte bound on ONE interpolated ref — a branch name or a pull-request label. */
 export const SESSION_BRIEFING_REF_MAX_BYTES = 120;
@@ -779,6 +784,13 @@ export const SESSION_BRIEFING_TOOL_NAME_MAX_BYTES = 60;
 
 /** How many tool names the briefing lists before the honest "…and N more" marker. */
 export const SESSION_BRIEFING_TOOL_NAME_CAP = 40;
+
+/**
+ * The bytes the review's own lines keep whatever the fixed text costs. Enough for the
+ * patchset line (≤ ~600 B with every field at its cap) and the context sentence, so an
+ * oversized fixed text cannot be what deletes the identity of the change under review.
+ */
+export const SESSION_BRIEFING_REVIEW_FLOOR_BYTES = 1_024;
 
 /** The heading the review's own lines sit under, so the append is attributable in a log. */
 const SESSION_BRIEFING_HEADER = "## This review";
@@ -827,9 +839,18 @@ export interface SessionBriefingInput {
  * therefore does not grow with the change — a ninety-five-file review and a one-file
  * review on the same oids render the same bytes, which is what the briefing test pins.
  *
- * Every interpolation is capped at its call site, and the lines are then joined under the
- * budget the fixed text leaves, with `boundedJoin`'s honest marker. The patchset line is
- * first because it is the line the thread cannot work without.
+ * Every interpolation is capped at its call site, and the OUTPUT is capped too: the return
+ * is at most `SESSION_BRIEFING_MAX_BYTES` for ANY input, including a fixed text that is
+ * already over the ceiling on its own. Three rules make that hold, in this order:
+ *
+ *  1. the review's lines keep `SESSION_BRIEFING_REVIEW_FLOOR_BYTES` whatever the fixed text
+ *     costs — the patchset line is first, because it is the line the thread cannot work
+ *     without, and a fixed text that grew must not be what silently deletes it;
+ *  2. the omission marker's own bytes are RESERVED before a line is dropped, so the honest
+ *     "…n more omitted" can never be what pushes the result over;
+ *  3. the fixed text is capped last, with its own marker. That is a programming error — the
+ *     manifest test pins the shipped file at `SESSION_BRIEFING_FIXED_MAX_BYTES` — but the
+ *     renderer holds the ceiling rather than trusting a caller to have read the pin.
  */
 export function renderSessionBriefing(input: SessionBriefingInput): string {
   const { patchset } = input;
@@ -848,15 +869,83 @@ export function renderSessionBriefing(input: SessionBriefingInput): string {
     ...(input.contextDir === undefined
       ? []
       : [
-          // The same sentence the lens seats get (`renderContextReference`): the directory
-          // is indexed by its own README and nothing in it is sent inline.
-          `- Your session's context directory is \`${capBytes(input.contextDir.replace(/\/$/, ""), SESSION_BRIEFING_CONTEXT_DIR_MAX_BYTES)}/\`; its \`README.md\` indexes every file there — what each holds and when to read it. Nothing is sent to you inline: read a file with your own tools.`,
+          `- ${renderContextDirectorySentence(capBytes(input.contextDir.replace(/\/$/, ""), SESSION_BRIEFING_CONTEXT_DIR_MAX_BYTES))}`,
         ]),
     renderSessionBriefingTools(input.toolNames),
   ];
-  const head = `${input.briefing.trimEnd()}\n\n${SESSION_BRIEFING_HEADER}\n`;
-  const budget = Math.max(0, SESSION_BRIEFING_MAX_BYTES - utf8Bytes(head));
-  return `${head}${boundedJoin(lines, budget, "review lines")}`;
+  const scaffold = `\n\n${SESSION_BRIEFING_HEADER}\n`;
+  const overhead = utf8Bytes(scaffold);
+  const fixed = input.briefing.trimEnd();
+  // The review's lines get what the fixed text leaves, but never less than their floor —
+  // otherwise an oversized fixed text deletes the patchset line and the briefing stops
+  // saying which change it is about.
+  const reviewBudget = Math.max(
+    SESSION_BRIEFING_REVIEW_FLOOR_BYTES,
+    SESSION_BRIEFING_MAX_BYTES - overhead - utf8Bytes(fixed),
+  );
+  const review = boundedReviewLines(lines, reviewBudget);
+  // Whatever the review's lines actually spent is what the fixed text may have. Capping it
+  // is the last resort, and it carries its own marker rather than ending mid-sentence.
+  const head = capBytes(
+    fixed,
+    Math.max(0, SESSION_BRIEFING_MAX_BYTES - overhead - utf8Bytes(review)),
+  );
+  return `${head}${scaffold}${review}`;
+}
+
+/**
+ * Join the review's lines under `maxBytes` — INCLUDING the omission marker, which is the
+ * half `boundedJoin` leaves out: it appends its marker after the budget is already spent,
+ * so a caller that treats its return as bounded is over by the marker's own bytes. Here the
+ * marker is made room for, dropping already-kept lines from the end until it fits, and the
+ * count in it stays true as that happens.
+ *
+ * Exported so that contract is executable. It is NOT reachable through
+ * `renderSessionBriefing` today: the briefing has three lines whose capped maximum is about
+ * 900 B, against a review floor of 1,024 B, so the marker always fits without dropping
+ * anything. The drop loop is what keeps that true if a fourth line is added or the floor
+ * moves — and a test that can only exercise it directly is the honest way to pin it.
+ */
+export function boundedReviewLines(lines: readonly string[], maxBytes: number): string {
+  const marker = (omitted: number): string =>
+    `- … ${omitted} more review ${omitted === 1 ? "line" : "lines"} omitted (byte cap)`;
+  const kept: string[] = [];
+  let bytes = 0;
+  let omitted = 0;
+  for (const line of lines) {
+    const size = utf8Bytes(kept.length === 0 ? line : `\n${line}`);
+    // Once one line is over budget the rest are omitted too, so the lines that DO appear
+    // are a prefix of the list and the first one is always the patchset.
+    if (omitted > 0 || bytes + size > maxBytes) {
+      omitted += 1;
+      continue;
+    }
+    kept.push(line);
+    bytes += size;
+  }
+  if (omitted === 0) return kept.join("\n");
+  while (kept.length > 0 && bytes + utf8Bytes(`\n${marker(omitted)}`) > maxBytes) {
+    const dropped = kept.pop() as string;
+    bytes -= utf8Bytes(kept.length === 0 ? dropped : `\n${dropped}`);
+    omitted += 1;
+  }
+  const text = kept.length === 0 ? marker(omitted) : `${kept.join("\n")}\n${marker(omitted)}`;
+  // A budget smaller than the marker itself: cut it rather than return more than asked for.
+  return utf8Bytes(text) <= maxBytes ? text : capBytes(text, maxBytes);
+}
+
+/**
+ * The sentence that points an agent at its session context directory: an index it opens
+ * itself, and nothing from it sent inline.
+ *
+ * Exported because two agents are pointed at the same directory and must be told the same
+ * thing — the lens seats through `lens-pipeline.ts`'s `renderContextReference`, and the
+ * session thread through its briefing. The daemon-side copy imports this one (cluster 4) so
+ * the pair cannot drift; until it does, `renderContextReference` renders the same shape as
+ * this, kept in sync by hand rather than by import.
+ */
+export function renderContextDirectorySentence(dir: string): string {
+  return `Your session's context directory is \`${dir}/\`; its \`README.md\` indexes every file there — what each holds and when to read it. Nothing is sent to you inline: read a file with your own tools when its line says to.`;
 }
 
 /** The attached tool names, capped per name and in count, with an honest remainder. */

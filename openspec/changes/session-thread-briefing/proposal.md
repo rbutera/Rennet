@@ -68,7 +68,7 @@ Rule Zero: a capable agent is the product, and every tool this needs is already 
   exact `git diff` command); where the boards are read (`board_read`) and what the context
   directory is; what the app tools do and why staging an ask — to the draft PR or the round
   submission — is the path Rennet tracks; what an Explain's `Code reference` is; its own short
-  register, no shared partial (Rai, 2026-09-12: `reader-voice.md` is 2,846 B against a 4,096-byte
+  register, no shared partial (Rai, 2026-09-12: `reader-voice.md` is 2,847 B against a 4,096-byte
   ceiling, and it is written for board prose). It carries no board, no diff,
   no inventory — session-context-files' "no prompt carries context inline" holds for the append
   exactly as for a prompt, and harder: an append is a prefix re-billed on every turn.

@@ -3,12 +3,15 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
+  boundedReviewLines,
   renderSessionBriefing,
   SESSION_BRIEFING_FILE,
   SESSION_BRIEFING_MAX_BYTES,
+  SESSION_BRIEFING_REF_MAX_BYTES,
   SESSION_BRIEFING_TOOL_NAME_CAP,
   type SessionBriefingInput,
 } from "./index.js";
+import { prohibitions } from "./test/prohibitions.js";
 
 const srcDir = dirname(fileURLToPath(import.meta.url));
 const fixedBriefing = readFileSync(join(srcDir, SESSION_BRIEFING_FILE), "utf8");
@@ -100,7 +103,7 @@ describe("renderSessionBriefing", () => {
 
     // The ceiling covers the WHOLE append, because the append is a prefix re-read on every
     // round trip of every turn for the thread's life. Measured with the shipped fixed text:
-    // 2,550 B fixed + 738 B of review lines = 3,288 B, 808 B under the ceiling.
+    // 2,789 B fixed + 760 B of review lines = 3,549 B, 547 B under the ceiling.
     expect(bytes(rendered), "rendered briefing bytes").toBeLessThanOrEqual(
       SESSION_BRIEFING_MAX_BYTES,
     );
@@ -145,16 +148,23 @@ describe("renderSessionBriefing", () => {
     expect(bytes(rendered)).toBeLessThanOrEqual(SESSION_BRIEFING_MAX_BYTES);
   });
 
-  it("renders the same bytes for a ninety-five-file change as for a one-file change", () => {
+  it("is deterministic: two inputs that differ only in the change behind them render the same bytes", () => {
     const small = briefingFor(changeFixture(1));
     const large = briefingFor(changeFixture(95));
 
     expect(large).toBe(small);
     expect(bytes(large), "bytes for 95 files").toBe(bytes(small));
 
-    // Positive control. The assertion above is constructed from two inputs the mapping
-    // makes identical, so on its own it could not fail — which is the first of the three
-    // green lies. Let one size-dependent fact through the SAME mapping and it reddens.
+    // What this proves and what it does not. `briefingFor` is THIS FILE's mapping, so the
+    // two inputs are identical by construction and the renderer is what is under test:
+    // determinism over equal inputs, no hidden dependence on anything ambient. The claim
+    // that PRODUCTION puts nothing change-derived into a `SessionBriefingInput` is a claim
+    // about `bindReviewThread`'s mapping, which does not exist yet — cluster 4 asserts it
+    // there (tasks.md 4.2), over a real 95-file and a real 1-file review.
+    //
+    // Positive control for the assertion above, which would otherwise be satisfied by two
+    // equal strings and could not fail: let one size-dependent fact through the SAME
+    // mapping and the equality reddens.
     const leaky = briefingFor(changeFixture(95), { leakInventory: true });
     expect(leaky).not.toBe(briefingFor(changeFixture(1), { leakInventory: true }));
   });
@@ -183,41 +193,166 @@ describe("renderSessionBriefing", () => {
     // are pinned below; paraphrase is what review is for.
   });
 
-  it("caps every interpolation and says honestly what it left out", () => {
-    const rendered = renderSessionBriefing({
-      briefing: fixedBriefing,
+  it("caps each interpolated field inside its own line, with its own marker", () => {
+    // One oversized field at a time. A single all-oversized fixture cannot tell a cap that
+    // works from a cap that is missing: the over-long line simply vanishes wholesale and
+    // the join's omission marker satisfies any "something was cut" assertion. So each case
+    // asserts its LINE SURVIVES, its byte bound holds, and the cut is inside that field.
+    const base = {
+      briefing: "# Stub briefing",
       patchset: {
         kind: "branch",
-        branch: `feat/${"long-".repeat(2_000)}end`,
-        baseOid: "0".repeat(4_000),
-        headOid: "1".repeat(4_000),
-        diffCommand: `git diff ${"2".repeat(4_000)}`,
+        branch: "feat/ordinary",
+        baseOid: "aaa1111",
+        headOid: "bbb2222",
+        diffCommand: "git diff aaa1111...bbb2222",
       },
-      contextDir: `.rennet/context/${"deep/".repeat(2_000)}`,
-      toolNames: Array.from({ length: 500 }, (_unused, index) => `app_${"x".repeat(300)}_${index}`),
-    });
+      toolNames: ["app_board_read"],
+    } as const satisfies SessionBriefingInput;
+    const lineOf = (rendered: string, prefix: string): string =>
+      rendered.split("\n").find((line) => line.startsWith(prefix)) ?? "";
 
-    expect(bytes(rendered), "a pathological input still fits").toBeLessThanOrEqual(
-      SESSION_BRIEFING_MAX_BYTES,
+    const longBranch = renderSessionBriefing({
+      ...base,
+      patchset: { ...base.patchset, branch: `feat/${"long-".repeat(2_000)}end` },
+    });
+    const branchLine = lineOf(longBranch, "- Patchset:");
+    expect(branchLine, "the branch is cut inside its own backticks").toMatch(
+      /^- Patchset: branch `feat\/long-[^\n`]*…` — base aaa1111 → head bbb2222\./,
     );
-    // Fitting is not enough: the patchset line is the one line the thread cannot work
-    // without, and the per-field caps are what keep it. Without them the line runs past
-    // the whole budget and `boundedJoin` drops it — the briefing would still fit, and
-    // would no longer say which change it is about. (Control: remove the diff-command
-    // cap in `renderSessionBriefing` and these two assertions redden while the byte
-    // assertion above stays green, which is why they are separate.)
-    expect(rendered, "the patchset line survives").toContain("- Patchset: branch `feat/long-");
-    expect(rendered, "the base oid survives").toContain("base 0000");
-    // Every cut carries its marker, so nothing reads as complete when it is not.
-    expect(rendered).toContain("…");
-    // Either the tool list was cut at its count cap and said so, or the whole line went
-    // over the remaining budget and `boundedJoin` said that instead. Both are honest; the
-    // one thing that may not happen is a silent truncation.
+    expect(bytes(branchLine), "branch line bytes").toBeLessThanOrEqual(
+      SESSION_BRIEFING_REF_MAX_BYTES + 200,
+    );
+
+    const longOids = renderSessionBriefing({
+      ...base,
+      patchset: { ...base.patchset, baseOid: "0".repeat(4_000), headOid: "1".repeat(4_000) },
+    });
+    expect(lineOf(longOids, "- Patchset:"), "both oids are cut in place").toMatch(
+      /base 0{10}[0…]*… → head 1{10}[1…]*…\./,
+    );
+
+    const longCommand = renderSessionBriefing({
+      ...base,
+      patchset: { ...base.patchset, diffCommand: `git diff ${"2".repeat(4_000)}` },
+    });
+    expect(lineOf(longCommand, "- Patchset:"), "the command is cut inside its backticks").toMatch(
+      /Read the change with `git diff 2{10}[2]*…`\.$/,
+    );
+
+    const longContext = renderSessionBriefing({
+      ...base,
+      contextDir: `.rennet/context/${"deep/".repeat(2_000)}`,
+    });
+    const contextLine = lineOf(longContext, "- Your session's");
+    expect(contextLine, "the path is cut inside its own backticks").toMatch(
+      /^- Your session's context directory is `\.rennet\/context\/(deep\/)+[^`]*…\/`;/,
+    );
+    expect(contextLine, "and the rest of the sentence survives the cut").toContain(
+      "indexes every file there",
+    );
+
+    const longToolNames = renderSessionBriefing({
+      ...base,
+      toolNames: [`app_${"x".repeat(300)}`, "app_board_read"],
+    });
+    const toolLine = lineOf(longToolNames, "- Rennet tools");
+    expect(toolLine, "each name is cut inside its own backticks").toMatch(/`app_x+…`/);
+    expect(toolLine).toContain("`app_board_read`");
+  });
+
+  it("holds the ceiling for a fixed text that is already over it", () => {
+    // The append is the whole thing the provider is handed, so the CEILING is on the
+    // return value, not on the parts. Three cases, chosen at and past the edge Codex
+    // reproduced: a fixed text that fits, one that fits only until the review's lines are
+    // added (3,950 B), and one over the ceiling on its own (5,000 B).
+    const review = {
+      patchset: {
+        kind: "branch",
+        branch: "feat/ordinary",
+        baseOid: "aaa1111",
+        headOid: "bbb2222",
+        diffCommand: "git diff aaa1111...bbb2222",
+      },
+      contextDir: ".rennet/context/ses_01HZ",
+      toolNames: [...TOOL_NAMES],
+    } as const satisfies Omit<SessionBriefingInput, "briefing">;
+
+    for (const fixedBytes of [2_816, 3_950, 5_000]) {
+      const rendered = renderSessionBriefing({
+        ...review,
+        briefing: `# Stub briefing\n\n${"x".repeat(fixedBytes - 18)}`,
+      });
+      expect(bytes(rendered), `${fixedBytes} B of fixed text`).toBeLessThanOrEqual(
+        SESSION_BRIEFING_MAX_BYTES,
+      );
+      // …and the patchset line is still there, because the review's lines keep their floor
+      // whatever the fixed text costs. A ceiling held by deleting the identity of the
+      // change under review is not the ceiling this test is about.
+      expect(rendered, `${fixedBytes} B keeps the patchset line`).toContain(
+        "- Patchset: branch `feat/ordinary`",
+      );
+    }
+
+    // The last resort: a fixed text with no room left is cut, and says so rather than
+    // ending mid-word. This is a programming error the manifest pin catches first.
+    const oversized = renderSessionBriefing({ ...review, briefing: "y".repeat(9_000) });
+    expect(bytes(oversized)).toBeLessThanOrEqual(SESSION_BRIEFING_MAX_BYTES);
+    expect(oversized, "the fixed text carries its own marker").toMatch(/y+…\n\n## This review/);
+
+    // What these cases CANNOT catch: the marker-reservation path inside the join. With
+    // three lines whose capped maximum is ~900 B against a 1,024 B floor, the marker always
+    // fits and nothing is ever dropped to make room for it, whatever the fixed text does.
+    // That contract is pinned directly below instead of pretended at here.
+  });
+
+  it("keeps the omission marker inside the budget it was given", () => {
+    // `boundedJoin` (the older helper beside it) appends its marker AFTER the budget is
+    // spent, so its return is over by the marker's own bytes. This is the half that fixes
+    // it, and it is tested directly because `renderSessionBriefing` cannot reach it today.
+    // The third line is long enough not to fit, which is what makes an omission happen at
+    // all; the first two are what the marker then has to find room beside.
+    const lines = ["- one 1111111111", "- two 2222222222", `- three ${"3".repeat(200)}`];
+    const marker = "- … 1 more review line omitted (byte cap)";
+    // A budget that fits the first two lines but leaves less than the marker needs: the
+    // join has to give a line back and re-count. (Control: delete the `while` loop in
+    // `boundedReviewLines` and this byte assertion reddens — measured, not assumed.)
+    const budget = bytes(`${lines[0]}\n${lines[1]}`) + bytes(`\n${marker}`) - 4;
+    const joined = boundedReviewLines(lines, budget);
+
+    expect(bytes(joined), "the join respects the budget it was given").toBeLessThanOrEqual(budget);
+    expect(joined, "the first line always survives").toContain(lines[0] as string);
+    expect(joined, "and the count is true after the drop").toContain(
+      "- … 2 more review lines omitted (byte cap)",
+    );
+    // A budget too small even for the marker returns something inside it, not a marker.
+    expect(bytes(boundedReviewLines(lines, 12)), "a tiny budget").toBeLessThanOrEqual(12);
+    // Nothing omitted, nothing said: the marker is not decoration.
+    expect(boundedReviewLines(lines, 10_000)).toBe(lines.join("\n"));
+  });
+
+  it("forbids nothing, in the RENDERED briefing and not only in the file", () => {
+    // The requirement is about what the thread is told, which is the render — the file is
+    // half of it and the review's lines are the other half.
+    const rendered = briefingFor(changeFixture(95));
+    expect(prohibitions(rendered), "the rendered briefing forbids nothing").toEqual([]);
+    // Control: the detector fires on the rendered text, not just on a doctored file.
     expect(
-      rendered.includes("more attached but not listed here") ||
-        rendered.includes("omitted (byte cap)"),
-      "an honest marker for what was left out",
-    ).toBe(true);
+      prohibitions(
+        renderSessionBriefing({
+          briefing: `${fixedBriefing}\n\nYou must\nnot push this branch.`,
+          patchset: {
+            kind: "branch",
+            branch: "main",
+            baseOid: "aaa1111",
+            headOid: "bbb2222",
+            diffCommand: "git diff aaa1111...bbb2222",
+          },
+          toolNames: [...TOOL_NAMES],
+        }),
+      ),
+      "a prohibition wrapped across a line break is still a prohibition",
+    ).toHaveLength(1);
   });
 
   it("lists the tool-name cap's worth and counts the remainder", () => {

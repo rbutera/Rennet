@@ -18,6 +18,7 @@ import {
   WRITE_WITH_TOOLS_MARKER,
   WRITE_WITH_TOOLS_PARTIAL_FILE,
 } from "./index.js";
+import { prohibitions } from "./test/prohibitions.js";
 
 const srcDir = dirname(fileURLToPath(import.meta.url));
 
@@ -33,24 +34,6 @@ const partials = Object.fromEntries(
     readFileSync(join(srcDir, file), "utf8"),
   ]),
 );
-
-/**
- * The prohibition shapes Decision 3 rules out of the session briefing: a "never", a
- * "do not commit", a "do not push", a "must not". Returned as the matched sentences so a
- * failure names what crept in, and so the assertion has something to be controlled with.
- */
-const PROHIBITION_PATTERNS = [
-  /\bnever\b/i,
-  /\bdo not commit\b/i,
-  /\bdo not push\b/i,
-  /\bmust not\b/i,
-];
-
-function prohibitions(text: string): string[] {
-  return text
-    .split(/(?<=[.!?])\s+|\n/)
-    .filter((sentence) => PROHIBITION_PATTERNS.some((pattern) => pattern.test(sentence)));
-}
 
 describe("lens prompt manifest", () => {
   it("carries a non-empty prompt file for every drafting lens", () => {
@@ -500,7 +483,7 @@ describe("lens prompt manifest", () => {
     expect(text).not.toMatch(/"type"\s*:/);
 
     // The briefing carries its OWN short register and no shared partial (Rai, 2026-09-12):
-    // `reader-voice.md` is 2,846 B of board-prose guidance against a 4,096 B ceiling that
+    // `reader-voice.md` is 2,847 B of board-prose guidance against a 4,096 B ceiling that
     // also has to hold the review's lines, and its ground rules tell a writer not to name
     // lenses or boards — which is the opposite of what this thread does for the reviewer.
     // So the file carries no marker at all, and this asserts that for EVERY partial the
@@ -518,12 +501,17 @@ describe("lens prompt manifest", () => {
     // Decision 3: the briefing forbids nothing.
     expect(prohibitions(text), "the briefing forbids nothing").toEqual([]);
     // Positive control, one per pattern: each phrase is proven able to fire. Without this
-    // the assertion above passes for a file that simply never matched anything.
+    // the assertion above passes for a file that simply never matched anything. The last
+    // one is wrapped MID-PHRASE across a line break, the way every sentence in these
+    // hard-wrapped files is — the detector's first version split on `\n` and could not see
+    // it, which left three of its four patterns dead while the test read as four checks.
     for (const sentence of [
       "Never edit the checkout.",
       "Do not commit anything.",
       "Do not push this branch.",
       "You must not open the pull request.",
+      "Don't touch the base branch.",
+      "You really must\nnot open the pull request without asking.",
     ]) {
       expect(prohibitions(`${text}\n${sentence}\n`), sentence).toHaveLength(1);
     }

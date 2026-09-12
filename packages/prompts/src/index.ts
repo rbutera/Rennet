@@ -74,12 +74,13 @@ export const ROUND_REPORT_FILE = "prompts/report.md";
  * `SESSION_BRIEFING_MAX_BYTES`.
  *
  * It carries its own short register and NO shared partial (Rai, 2026-09-12). Splicing
- * `reader-voice.md` here would put 2,846 B of board-prose guidance under a 4,096 B ceiling
+ * `reader-voice.md` here would put 2,847 B of board-prose guidance under a 4,096 B ceiling
  * that also has to hold the review's own lines, and its ground rules tell a writer not to
  * name lenses or boards — which is what this thread does for the reviewer all day.
  *
- * Measured 2026-09-12: the file is 2,550 B and renders to 3,288 B beside a reference
- * review's patchset, context and tool lines — 808 B of headroom.
+ * Measured 2026-09-12: the file is 2,789 B and renders to 3,549 B beside a reference
+ * review's patchset, context and tool lines — 547 B of headroom. The renderer holds the
+ * 4,096 B ceiling for any input, including a fixed text already over it on its own.
  */
 export const SESSION_BRIEFING_FILE = "prompts/session-briefing.md";
 
