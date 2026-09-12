@@ -69,6 +69,14 @@ export interface T3SidecarSupervisor {
    * no sidecar for a call to have come from.
    */
   readonly boardBearer: () => string;
+  /**
+   * The app-tools server's process bearer as it stands in the CURRENT sidecar's
+   * environment (`session-thread-briefing`), or an empty string before one is running.
+   * A reader for the same reason {@link T3SidecarSupervisor.boardBearer} is: a respawn
+   * replaces the environment every harness child inherits, and a listener holding the old
+   * bearer would refuse every tool call the session thread made while it ran and billed.
+   */
+  readonly appBearer: () => string;
   /** The daemon's own RPC client over the sidecar socket, connected on first use. */
   readonly client: () => Promise<T3Client>;
   /** The T3 thread bound to (repository root, key), created on first use. */
@@ -299,6 +307,7 @@ export function createT3SidecarSupervisor(
     // exits, so between a crash and the next `ensure()` this is empty and no bearer
     // matches — which is honest: there is no sidecar for a call to have come from.
     boardBearer: () => running?.boardBearer ?? "",
+    appBearer: () => running?.appBearer ?? "",
     client,
     threadFor,
     forgetSession,

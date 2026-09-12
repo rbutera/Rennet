@@ -64,7 +64,7 @@ grep -n "board.read" packages/protocol/src/commands/index.ts     # present; NOT 
   `review.symbolLookup`, `ask.unstage`, `ask.edit`, `ask.quoteReply`, `review.handoff.compose`,
   `review.draftPrBody`, `round.dispatch`); the exposure doc table gains each row with its
   rationale.
-- [ ] 3.2 `packages/server/src/app/app-credentials.ts` (leaf, like `board-credentials.ts`):
+- [x] 3.2 `packages/server/src/app/app-credentials.ts` (leaf, like `board-credentials.ts`):
   `APP_MCP_SERVER_NAME = "rennet_app"`, `APP_BEARER_ENV_VAR = "RENNET_APP_BEARER"`; `t3/sidecar.ts`
   places the bearer in the sidecar's environment beside the board bearer.
 - [ ] 3.3 `packages/server/src/app/app-mcp-server.ts`: loopback Streamable-HTTP listener serving

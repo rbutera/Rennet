@@ -35,6 +35,7 @@ import { createServer } from "node:net";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
+import { APP_BEARER_ENV_VAR } from "../app/app-credentials";
 import { BOARD_BEARER_ENV_VAR } from "../board/board-credentials";
 import { isRunning } from "../process-state";
 
@@ -81,6 +82,16 @@ const credentialsSchema = z.object({
    * sidecar rather than adopting one whose seats could never reach a board.
    */
   boardBearer: z.string().optional(),
+  /**
+   * The daemon's app-tools bearer (`session-thread-briefing`), minted at spawn beside the
+   * board bearer and placed in the sidecar's environment under `RENNET_APP_BEARER` — the
+   * credential every call onto the session thread's `rennet_app` server must carry.
+   *
+   * Optional for the same reason `boardBearer` is: a sidecar spawned before the app-tools
+   * server existed has none, and {@link adoptSidecar} refuses to adopt that sidecar rather
+   * than adopting one whose session threads would 401 on every tool call they made.
+   */
+  appBearer: z.string().optional(),
 });
 export type SidecarCredentials = z.infer<typeof credentialsSchema>;
 
@@ -274,23 +285,26 @@ function logTail(path: string, bytes = 2_000): string {
 /**
  * Drop every T3 knob the parent shell may carry, then set exactly what the sidecar needs.
  *
- * `boardBearer` is the one credential that travels by environment, because it is the only
- * way it can: a caller-supplied MCP server names an environment VARIABLE on the turn and
- * the harness child reads its value out of the environment it inherited from here. It is
- * therefore on no argument list, and a parent shell's own value for that name is dropped
- * rather than trusted.
+ * `boardBearer` and `appBearer` are the two credentials that travel by environment,
+ * because it is the only way they can: a caller-supplied MCP server names an environment
+ * VARIABLE on the turn and the harness child reads its value out of the environment it
+ * inherited from here. They are therefore on no argument list, and a parent shell's own
+ * value for either name is dropped rather than trusted.
  */
 export function sidecarEnvironment(
   env: NodeJS.ProcessEnv,
   boardBearer?: string,
+  appBearer?: string,
 ): NodeJS.ProcessEnv {
   const cleaned: NodeJS.ProcessEnv = {};
   for (const [key, value] of Object.entries(env)) {
-    if (key.startsWith("T3CODE_") || key === BOARD_BEARER_ENV_VAR) continue;
+    if (key.startsWith("T3CODE_")) continue;
+    if (key === BOARD_BEARER_ENV_VAR || key === APP_BEARER_ENV_VAR) continue;
     cleaned[key] = value;
   }
   cleaned.T3CODE_TELEMETRY_ENABLED = "false";
   if (boardBearer !== undefined) cleaned[BOARD_BEARER_ENV_VAR] = boardBearer;
+  if (appBearer !== undefined) cleaned[APP_BEARER_ENV_VAR] = appBearer;
   return cleaned;
 }
 
@@ -393,6 +407,12 @@ export interface RunningSidecar {
    * what the daemon's board listener must accept.
    */
   readonly boardBearer: string;
+  /**
+   * The app-tools server's process bearer, as it stands in this sidecar's environment.
+   * Every harness child the sidecar starts inherits it under `RENNET_APP_BEARER`, so it is
+   * what the daemon's `rennet_app` listener must accept.
+   */
+  readonly appBearer: string;
   /** The child when this daemon spawned it; absent when adopted from a previous daemon. */
   readonly child?: ChildProcess;
 }
@@ -418,6 +438,13 @@ export async function spawnSidecar(options: SpawnSidecarOptions): Promise<Runnin
   // that file's permissions do not already give.
   const boardBearer =
     readSidecarCredentials(baseDir)?.boardBearer ?? randomBytes(32).toString("base64url");
+  // The app-tools server's process bearer, minted and reused on exactly the same terms:
+  // a session thread's url is fixed when its provider session is created, and a turn whose
+  // MCP servers differ from the ones its session was opened with is refused by name. A
+  // SEPARATE secret from the board's — they open different listeners, and one leaking is
+  // not a reason for the other to open.
+  const appBearer =
+    readSidecarCredentials(baseDir)?.appBearer ?? randomBytes(32).toString("base64url");
   const logFd = openSync(join(baseDir, "sidecar.log"), "a");
   let child: ChildProcess;
   try {
@@ -426,7 +453,7 @@ export async function spawnSidecar(options: SpawnSidecarOptions): Promise<Runnin
       sidecarArgs(options.bundlePath, port, baseDir),
       {
         cwd: baseDir,
-        env: sidecarEnvironment(options.env, boardBearer),
+        env: sidecarEnvironment(options.env, boardBearer, appBearer),
         stdio: ["ignore", logFd, logFd, "pipe"],
       },
     );
@@ -494,7 +521,12 @@ export async function spawnSidecar(options: SpawnSidecarOptions): Promise<Runnin
   }
   const origin = `http://127.0.0.1:${port}`;
   const exchanged = await exchangeBootstrapToken(origin, bootstrapToken);
-  const credentials: SidecarCredentials = { bootstrapToken, boardBearer, ...exchanged };
+  const credentials: SidecarCredentials = {
+    bootstrapToken,
+    boardBearer,
+    appBearer,
+    ...exchanged,
+  };
   writeSidecarCredentials(baseDir, credentials);
   const claim: SidecarClaim = {
     pid: child.pid,
@@ -505,7 +537,7 @@ export async function spawnSidecar(options: SpawnSidecarOptions): Promise<Runnin
     startedAt: new Date().toISOString(),
   };
   writeSidecarClaim(options.dataDir, claim);
-  return { claim, origin, environment, credentials, boardBearer, child };
+  return { claim, origin, environment, credentials, boardBearer, appBearer, child };
 }
 
 /**
@@ -528,6 +560,11 @@ export async function adoptSidecar(
   // addressed them. Refused here for the same reason a snapshot mismatch is: this daemon
   // cannot use it, and a respawn is the honest answer rather than a seat that 401s.
   if (stored.boardBearer === undefined) return null;
+  // And a sidecar spawned before the app-tools server existed carries no
+  // `RENNET_APP_BEARER`, so its session threads could never reach an app tool however the
+  // daemon addressed them. Same refusal, same reason: a respawn is honest where a thread
+  // that 401s on every call it makes is not.
+  if (stored.appBearer === undefined) return null;
   let credentials = stored;
   if (!(await verifyAccessToken(origin, stored.accessToken))) {
     try {
@@ -543,6 +580,7 @@ export async function adoptSidecar(
     environment: verdict.environment,
     credentials,
     boardBearer: credentials.boardBearer ?? stored.boardBearer,
+    appBearer: credentials.appBearer ?? stored.appBearer,
   };
 }
 
