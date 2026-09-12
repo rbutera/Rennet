@@ -77,58 +77,105 @@ export async function assertNativeArtifactLayout(root, platformArchitectures) {
   }
 }
 
-// A harness platform binary must NEVER reach the packaged app. The Claude adapter depends
-// on @anthropic-ai/claude-agent-sdk (a production dependency), whose per-platform package
+// Harness SDK artifacts that must NEVER reach the packaged app. The Claude adapter depends
+// on @anthropic-ai/claude-agent-sdk (a production dependency); its per-platform package
 // @anthropic-ai/claude-agent-sdk-<platform> carries a ~270 MB `claude` executable as its
-// only real payload. Rennet spawns the user's OWN installed binary via
-// pathToClaudeCodeExecutable, so a bundled copy is dead weight AND a bundled harness binary,
-// which CLAUDE.md forbids. This pattern matches any file inside such a per-platform package
-// directory; the main @anthropic-ai/claude-agent-sdk package (no trailing hyphen) is not
-// matched here (its own vendored binaries are stripped by forge.config.cjs). It mirrors the
-// packaging verification `find <out> -path '*claude-agent-sdk-*' -type f`.
-export const harnessSdkPlatformArtifactPattern = /(?:^|\/)claude-agent-sdk-[^/]+\//;
+// only real payload, and the main package can vendor its own CLI binary too. Rennet spawns
+// the user's OWN installed binary via pathToClaudeCodeExecutable, so a bundled copy is dead
+// weight AND a bundled harness binary, which CLAUDE.md forbids. These mirror the
+// HARNESS_SDK_FILE_EXCLUSIONS in forge.config.cjs, expressed as an assertion at the packaged
+// output so the guard holds by ANY route the exclusions might miss (a staged sidecar
+// node_modules, a copied asset, a future change to the packager ignore list). The main
+// package's own JS bundle (e.g. sdk.mjs, cli.js) is intentionally NOT matched.
+export const forbiddenHarnessSdkPatterns = [
+  // a per-platform package directory and everything inside it (trailing hyphen keeps this
+  // from matching the main claude-agent-sdk package)
+  /(?:^|\/)claude-agent-sdk-[^/]+(?:\/|$)/,
+  // the main package's vendored payload directory
+  /(?:^|\/)@anthropic-ai\/claude-agent-sdk\/vendor(?:\/|$)/,
+  // a `cli`/`claude` executable vendored anywhere inside the main package
+  /(?:^|\/)@anthropic-ai\/claude-agent-sdk\/.*\/(?:cli|claude)(?:\.exe)?$/,
+];
 
-async function collectMatchingFiles(root, pattern, relativePath, isRoot) {
+// Kept as a named export for direct reference (the per-platform binary shape).
+export const harnessSdkPlatformArtifactPattern = forbiddenHarnessSdkPatterns[0];
+
+function matchesForbiddenHarnessSdk(relativePath) {
+  return forbiddenHarnessSdkPatterns.some((pattern) => pattern.test(relativePath));
+}
+
+async function collectFilesystemMatches(root, relativePath, isRoot, asarRelativePaths) {
   let entries;
   try {
     entries = await readdir(root, { withFileTypes: true });
   } catch (error) {
-    if (isRoot) {
-      throw new Error(`packaged app directory ${root} is missing or unreadable`, { cause: error });
-    }
-    return [];
+    // A traversal failure must NEVER read as "clean": that fails toward shipping the binary.
+    // Surface it so the packaging verify goes could-not-check rather than silently green.
+    const label = isRoot ? "packaged app directory" : "packaged directory";
+    throw new Error(`${label} ${root} is unreadable`, { cause: error });
   }
   const matches = [];
   for (const entry of entries) {
     const childRelative = relativePath === "" ? entry.name : `${relativePath}/${entry.name}`;
-    if (entry.isDirectory()) {
-      // Skip symlinks (never descended: entry.isDirectory() is false for them), matching
-      // `find <out> -type f`, which reports real files by their real path and cannot loop.
-      matches.push(
-        ...(await collectMatchingFiles(join(root, entry.name), pattern, childRelative, false)),
-      );
-    } else if (entry.isFile() && pattern.test(childRelative)) {
+    if (matchesForbiddenHarnessSdk(childRelative)) {
+      // Report by path and do not descend: this catches a matching file, a symlinked binary,
+      // and a symlinked or real package directory alike, and the whole subtree is forbidden.
       matches.push(childRelative);
+      continue;
+    }
+    // Never follow symlinks (avoids loops); a matching symlink is already caught above.
+    if (entry.isSymbolicLink()) continue;
+    if (entry.isDirectory()) {
+      matches.push(
+        ...(await collectFilesystemMatches(
+          join(root, entry.name),
+          childRelative,
+          false,
+          asarRelativePaths,
+        )),
+      );
+    } else if (entry.isFile() && entry.name.endsWith(".asar")) {
+      // An asar is an archive, so a forbidden path can hide inside it; enumerate it below.
+      asarRelativePaths.push(childRelative);
     }
   }
   return matches;
 }
 
+async function collectAsarMatches(packagedAppRoot, asarRelativePath) {
+  let asar;
+  try {
+    asar = await import("@electron/asar");
+  } catch (error) {
+    // An asar exists but we cannot read it: could-not-check, never green.
+    throw new Error(`cannot verify ${asarRelativePath}: @electron/asar is not resolvable`, {
+      cause: error,
+    });
+  }
+  const listPackage = asar.listPackage ?? asar.default?.listPackage;
+  if (typeof listPackage !== "function") {
+    throw new Error(`cannot verify ${asarRelativePath}: @electron/asar has no listPackage`);
+  }
+  return listPackage(join(packagedAppRoot, asarRelativePath))
+    .map((internalPath) => internalPath.replace(/^\/+/, ""))
+    .filter((internalPath) => matchesForbiddenHarnessSdk(internalPath))
+    .map((internalPath) => `${asarRelativePath} > ${internalPath}`);
+}
+
 export async function findHarnessSdkPlatformArtifacts(packagedAppRoot) {
-  const found = await collectMatchingFiles(
-    packagedAppRoot,
-    harnessSdkPlatformArtifactPattern,
-    "",
-    true,
-  );
-  return found.sort();
+  const asarRelativePaths = [];
+  const matches = await collectFilesystemMatches(packagedAppRoot, "", true, asarRelativePaths);
+  for (const asarRelativePath of asarRelativePaths) {
+    matches.push(...(await collectAsarMatches(packagedAppRoot, asarRelativePath)));
+  }
+  return matches.sort();
 }
 
 export async function assertNoHarnessSdkPlatformArtifacts(packagedAppRoot) {
   const offenders = await findHarnessSdkPlatformArtifacts(packagedAppRoot);
   if (offenders.length > 0) {
     throw new Error(
-      `packaged app ships harness SDK platform artifacts that must be stripped at package time: ${offenders.join(", ")}`,
+      `packaged app ships harness SDK artifacts that must be stripped at package time: ${offenders.join(", ")}`,
     );
   }
 }
