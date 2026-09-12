@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type CommandName, commands } from "@rennet/protocol";
@@ -6,7 +6,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildAppTools } from "../agent-tools";
 import type { DispatchContext } from "../dispatch";
 import { APP_BEARER_ENV_VAR, APP_MCP_SERVER_NAME } from "./app-credentials";
-import { type AppMcpServer, startAppMcpServer } from "./app-mcp-server";
+import {
+  APP_TOOL_RESULT_MAX_BYTES,
+  type AppMcpServer,
+  startAppMcpServer,
+  sweepStaleAppToolResults,
+} from "./app-mcp-server";
 
 /**
  * The daemon's loopback app-tools server (`session-thread-briefing` 3.3/3.4).
@@ -329,7 +334,7 @@ describe("paging a collection-carrying result", () => {
     });
   });
 
-  it("pages the evidence read by bytes, with the cursor as a byte offset", async () => {
+  it("pages the evidence read by bytes, cursor a byte offset — and the FULL page spills, since a page (16 kB) already exceeds the universal ceiling (8 kB, item 1)", async () => {
     const patch = "+".repeat(40_000);
     const server = await serverWith({
       dispatch: () => async () => ({ patch, path: "src/a.ts", counterparts: [] }),
@@ -337,12 +342,31 @@ describe("paging a collection-carrying result", () => {
     const answer = await call(server.addressFor(THREAD).url, "app_patchset_readEvidence", {
       ref: { path: "src/a.ts" },
     });
-    const served = JSON.parse(blocks(answer)[0]?.text ?? "{}") as { patch: string };
+    // One block: the universal ceiling replaced the two (page + page-marker) blocks with one
+    // spill envelope, since 16 kB of paged patch text is already over the 8 kB ceiling.
+    expect(blocks(answer)).toHaveLength(1);
+    const envelope = JSON.parse(blocks(answer)[0]?.text ?? "{}") as {
+      truncated: boolean;
+      bytes: number;
+      path: string;
+      note: string;
+    };
+    expect(envelope.truncated).toBe(true);
+    expect(envelope.note).toContain("path");
+    expect(Buffer.byteLength(blocks(answer)[0]?.text ?? "", "utf8")).toBeLessThanOrEqual(
+      APP_TOOL_RESULT_MAX_BYTES,
+    );
+    // The spilled file holds the COMPLETE result: the correctly-paged patch (the paging
+    // logic itself is unchanged, only where the bytes end up) plus its honest marker.
+    const spilled = readFileSync(envelope.path, "utf8");
+    expect(Buffer.byteLength(spilled, "utf8")).toBe(envelope.bytes);
+    const [json, marker] = spilled.split("\n\n");
+    const served = JSON.parse(json ?? "{}") as { patch: string };
     expect(Buffer.byteLength(served.patch, "utf8")).toBe(16 * 1024);
-    expect(blocks(answer)[1]?.text).toContain(`cursor: ${16 * 1024}`);
+    expect(marker).toContain(`cursor: ${16 * 1024}`);
   });
 
-  it("caps a page by BYTES when the elements are large, and still moves the cursor", async () => {
+  it("caps a page by BYTES when the elements are large, still moves the cursor, and spills the (still oversized) page", async () => {
     // Ten elements would be under the count cap; each is ~4 kB, so the byte budget is what
     // stops this page. A count cap alone would have admitted 200 of these — 800 kB into the
     // conversation prefix, re-read on every remaining round trip of the turn.
@@ -368,12 +392,112 @@ describe("paging a collection-carrying result", () => {
       generation: "g",
       lens: "noise",
     });
-    const served = JSON.parse(blocks(answer)[0]?.text ?? "{}") as {
-      board: { elements: unknown[] };
+    // The 16 kB page-byte budget still stopped this well short of all 40 elements — but the
+    // result (still well over the 8 kB universal ceiling) now spills rather than riding
+    // inline, exactly like the evidence page above.
+    expect(blocks(answer)).toHaveLength(1);
+    const envelope = JSON.parse(blocks(answer)[0]?.text ?? "{}") as {
+      truncated: boolean;
+      bytes: number;
+      path: string;
     };
+    expect(envelope.truncated).toBe(true);
+    const spilled = readFileSync(envelope.path, "utf8");
+    const [json, marker] = spilled.split("\n\n");
+    const served = JSON.parse(json ?? "{}") as { board: { elements: unknown[] } };
     expect(served.board.elements.length).toBeLessThan(10);
-    expect(Buffer.byteLength(blocks(answer)[0]?.text ?? "", "utf8")).toBeLessThan(20_000);
-    expect(blocks(answer)[1]?.text).toContain("page budget");
+    expect(marker).toContain("page budget");
+  });
+
+  // ── Both reviewers' cluster-3 finding 1 ─────────────────────────────────────
+  it("the universal ceiling spills EVERY exposed command's oversized result, not only the four with their own paging", async () => {
+    // `ask.read` had no cap at all before item 1 — this is its shape, just made large.
+    const stagedAsks = Object.fromEntries(
+      Array.from({ length: 400 }, (_, index) => [
+        `a${index}`,
+        { id: `a${index}`, anchor: `src/x.ts:${index}`, type: "comment", body: "x".repeat(300) },
+      ]),
+    );
+    const server = await serverWith({
+      dispatch: () => async () => ({
+        projection: {
+          stagedAsks,
+          findingDispositions: {},
+          lineComments: {},
+          quoteThreads: {},
+          retired: {},
+          verdictOverride: null,
+        },
+      }),
+    });
+    const answer = await call(server.addressFor(THREAD).url, "app_ask_read", {
+      sessionId: "s1",
+    });
+    expect(blocks(answer)).toHaveLength(1);
+    const envelope = JSON.parse(blocks(answer)[0]?.text ?? "{}") as {
+      truncated: boolean;
+      bytes: number;
+      path: string;
+      head: string;
+    };
+    expect(envelope.truncated).toBe(true);
+    expect(envelope.bytes).toBeGreaterThan(100_000);
+    expect(Buffer.byteLength(blocks(answer)[0]?.text ?? "", "utf8")).toBeLessThanOrEqual(
+      APP_TOOL_RESULT_MAX_BYTES,
+    );
+    const spilled = readFileSync(envelope.path, "utf8");
+    expect(spilled).toContain('"a399"');
+  });
+
+  it("spills under the session's own context directory when the thread's session and bound root both resolve", async () => {
+    const root = mkdtempSync(join(tmpdir(), "rennet-app-spill-root-"));
+    scratch.push(root);
+    const server = await serverWith({
+      dispatch: () => async () => ({ note: "big", blob: "z".repeat(50_000) }),
+      sessionFor: (threadId) => (threadId === THREAD ? "session-spill" : undefined),
+      rootForSession: (sessionId) => (sessionId === "session-spill" ? root : undefined),
+    });
+    const answer = await call(server.addressFor(THREAD).url, "app_session_list", {});
+    const envelope = JSON.parse(blocks(answer)[0]?.text ?? "{}") as {
+      truncated: boolean;
+      path: string;
+    };
+    expect(envelope.truncated).toBe(true);
+    // Under the bound root, not a bare temp/state directory — the same place the rest of
+    // this session's context files live.
+    expect(envelope.path.startsWith(root)).toBe(true);
+    expect(envelope.path).toContain(".rennet/context/session-spill/tool-results/");
+    const spilled = readFileSync(envelope.path, "utf8");
+    expect(spilled).toContain("z".repeat(50_000));
+  });
+});
+
+describe("sweeping stale spilled tool results (item 1's fallback-tier sweep)", () => {
+  it("removes only entries older than the age bound, in the fallback tool-results directory", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "rennet-app-sweep-"));
+    scratch.push(dir);
+    // No sessionFor/rootForSession here, so the spill falls to `<stateDir>/tool-results`; this
+    // test drives its own dir instead of the OS temp dir so the sweep boundary is provable.
+    const explicit = await serverWith({
+      dispatch: () => async () => ({ blob: "q".repeat(50_000) }),
+      stateDir: dir,
+    });
+    const first = await call(explicit.addressFor(THREAD).url, "app_session_list", {});
+    const envelope = JSON.parse(blocks(first)[0]?.text ?? "{}") as { path: string };
+    expect(envelope.path.startsWith(join(dir, "tool-results"))).toBe(true);
+
+    // Fresh — a 24h sweep leaves it.
+    expect(sweepStaleAppToolResults(dir, 24 * 60 * 60 * 1000)).toBe(0);
+    expect(readFileSync(envelope.path, "utf8").length).toBeGreaterThan(0);
+
+    // "Now" pushed far enough past the file's mtime that a 24h bound calls it stale.
+    const removed = sweepStaleAppToolResults(
+      dir,
+      24 * 60 * 60 * 1000,
+      Date.now() + 25 * 60 * 60 * 1000,
+    );
+    expect(removed).toBe(1);
+    expect(() => readFileSync(envelope.path, "utf8")).toThrow();
   });
 });
 
@@ -389,11 +513,37 @@ describe("the address, the bearer and the port", () => {
       (await rpc(url, { jsonrpc: "2.0", id: 1, method: "tools/list" }, { bearer: "guessed" }))
         .status,
     ).toBe(401);
+    // `tools/list` never dispatches — it only reads `options.dispatch()` for the function
+    // reference to serve the catalog, and never invokes it — so an assertion about the
+    // dispatch pinned to `tools/list` probes is vacuous even when auth is fully broken
+    // (item 5, both reviewers). Drive an actual `tools/call` attempt with each bad bearer.
+    const callParams = { name: "app_session_list", arguments: {} };
+    expect(
+      (
+        await rpc(
+          url,
+          { jsonrpc: "2.0", id: 1, method: "tools/call", params: callParams },
+          { bearer: null },
+        )
+      ).status,
+    ).toBe(401);
+    expect(
+      (
+        await rpc(
+          url,
+          { jsonrpc: "2.0", id: 1, method: "tools/call", params: callParams },
+          { bearer: "guessed" },
+        )
+      ).status,
+    ).toBe(401);
     // Not one call reached the dispatch behind those refusals.
     expect(dispatch).not.toHaveBeenCalled();
-    // And the same request with the right bearer works, so the two above failed on the
+    // And the same request with the right bearer works, so the refusals above failed on the
     // bearer and not on the request.
-    expect((await rpc(url, { jsonrpc: "2.0", id: 1, method: "tools/list" })).status).toBe(200);
+    expect(
+      (await rpc(url, { jsonrpc: "2.0", id: 1, method: "tools/call", params: callParams })).status,
+    ).toBe(200);
+    expect(dispatch).toHaveBeenCalledTimes(1);
   });
 
   it("reads the bearer per call, so a respawned sidecar's children are not locked out", async () => {
@@ -452,9 +602,9 @@ describe("evidence paging ends at a complete UTF-8 code point (item 2, Codex P2)
     // `EVIDENCE_TOOL_BYTES_CAP` is 16 kB (16384). A raw byte-offset cut lands mid-`€`
     // (a 3-byte UTF-8 sequence starting at offset 16383), which decodes each half of the
     // split sequence as a replacement character (`�`) — corrupting both pages. This first
-    // page (16383 bytes of paged patch text) is well within a plain inline reply here
-    // (the universal ceiling lands in a later commit), so the paging fix is visible
-    // directly in the reply.
+    // page (16383 bytes of paged patch text) is itself over the universal ceiling (item 1,
+    // 8 kB), so it spills — the paging fix is visible in the spilled file's content, exactly
+    // as it would be inline for a smaller fixture.
     const patch = `${"x".repeat(16_383)}€after`;
     const server = await serverWith({
       dispatch: () => async () => ({ patch, path: "src/a.ts", counterparts: [] }),
@@ -462,7 +612,13 @@ describe("evidence paging ends at a complete UTF-8 code point (item 2, Codex P2)
     const answer = await call(server.addressFor(THREAD).url, "app_patchset_readEvidence", {
       ref: { path: "src/a.ts" },
     });
-    const served = JSON.parse(blocks(answer)[0]?.text ?? "{}") as { patch: string };
+    const envelope = JSON.parse(blocks(answer)[0]?.text ?? "{}") as {
+      truncated: boolean;
+      path: string;
+    };
+    expect(envelope.truncated).toBe(true);
+    const [json, marker] = readFileSync(envelope.path, "utf8").split("\n\n");
+    const served = JSON.parse(json ?? "{}") as { patch: string };
     expect(served.patch).not.toContain("�");
     // The whole 16383-byte run of `x` came through, and the cut backed off BEFORE `€`
     // entirely (a complete code point never starts a page split) rather than admitting a
@@ -470,13 +626,12 @@ describe("evidence paging ends at a complete UTF-8 code point (item 2, Codex P2)
     expect(served.patch).toBe("x".repeat(16_383));
     expect(served.patch).not.toContain("€");
 
-    const marker = blocks(answer)[1]?.text ?? "";
-    const cursorMatch = /cursor: (\d+)/.exec(marker);
+    const cursorMatch = /cursor: (\d+)/.exec(marker ?? "");
     expect(cursorMatch?.[1]).toBe("16383");
 
-    // The second, much smaller page (`€after`, 8 bytes) proves the byte the first page
-    // could not safely include is exactly where the second page starts, with the
-    // multibyte character whole again.
+    // The second, much smaller page (`€after`, 8 bytes) rides inline — no spill needed —
+    // and proves the byte the first page could not safely include is exactly where the
+    // second page starts, with the multibyte character whole again.
     const second = await call(server.addressFor(THREAD).url, "app_patchset_readEvidence", {
       ref: { path: "src/a.ts" },
       cursor: Number(cursorMatch?.[1]),

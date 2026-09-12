@@ -221,7 +221,11 @@ import {
   serializeDossier,
   sha256Hex,
 } from "@rennet/protocol";
-import { type AppMcpServer, startAppMcpServer } from "./app/app-mcp-server";
+import {
+  type AppMcpServer,
+  startAppMcpServer,
+  sweepStaleAppToolResults,
+} from "./app/app-mcp-server";
 import { createBenchmarkRecording } from "./benchmark-store";
 import {
   BOARD_MCP_SERVER_NAME,
@@ -1588,6 +1592,11 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       sessionFor: (threadId) =>
         readBindings(dataDir).find((row) => row.kind === "session" && row.threadId === threadId)
           ?.sessionId,
+      // The session's bound workspace root, so item 1's oversized-result spill lands under
+      // that session's own context directory rather than a bare state-dir fallback. Late-bound
+      // the same way: `boundRootForSession` is declared far below this line, but this lambda's
+      // BODY only runs once a call arrives, well after composition finishes.
+      rootForSession: (sessionId) => boundRootForSession(sessionId),
       stateDir: sidecarBaseDir(dataDir),
     }).catch((error: unknown) => {
       appMcpServer = null;
@@ -3448,6 +3457,11 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       ),
     },
   );
+  // The app-tools spill's OWN fallback-tier sweep (item 1): a tool result that spilled
+  // because no session had resolved yet for the thread lands under the sidecar's base dir,
+  // outside every root `sweepOrphanedSessionContext` just covered above, so it needs its own
+  // age-based reclaim rather than an incarnation-stamped one.
+  sweepStaleAppToolResults(sidecarBaseDir(dataDir));
   // The worktree zoo's last rites (session-bound-workspace 5.5): one session now binds to one
   // workspace, so the per-round and per-review worktrees earlier versions left under the data
   // dir are removed here, once, and nothing recreates them. Fire and forget — a sweep must

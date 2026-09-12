@@ -1,9 +1,18 @@
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { outputSchemaFor } from "@rennet/adapters";
 import { BoardWriter } from "@rennet/core";
-import type { Author, BoardTarget } from "@rennet/protocol";
+import type { Author, BoardTarget, CommandName } from "@rennet/protocol";
 import { boardToolsByName } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
-import { servedAppToolCatalog, shapeAppToolResult } from "../app/app-mcp-server";
+import { buildAppTools } from "../agent-tools";
+import {
+  APP_TOOL_RESULT_MAX_BYTES,
+  applyResultCeiling,
+  servedAppToolCatalog,
+  shapeAppToolResult,
+} from "../app/app-mcp-server";
 import { boardOutputSchema } from "../runtime/lens-pipeline";
 import { describeOutcome, servedToolCatalog } from "./board-mcp-server";
 
@@ -533,26 +542,6 @@ describe("what a board's tool RESULTS cost on a 1,252-element board (#871)", () 
  * that pages through a 1,252-element board twenty times. Only a live drive shows that.
  */
 
-/**
- * The declared ceiling on ONE app-tool result. Larger than the board server's 4 kB, and
- * deliberately: a board READ's payload is the board the reviewer asked about, where a board
- * WRITE's result is an id. It is `PAGE_TOOL_BYTES_CAP` (16 kB) plus the JSON envelope around
- * the page and the marker sentence — the same shape of declared, larger envelope
- * `write_board` carries for answering for a whole batch.
- */
-const APP_TOOL_RESULT_CEILING = 20_000;
-
-/**
- * How much a paged result may grow when the COLLECTION grows tenfold.
- *
- * Measured between two fixtures that both saturate the page, not between a three-row answer
- * and a full one: a small collection comes back whole, so "3 rows → 400 rows" measures the
- * page filling up, which is the cap working rather than a leak. What must not move is the
- * page itself, and the only thing in it that legitimately grows is the marker's own totals
- * ("of 1,252" → "of 12,520") — a few bytes.
- */
-const APP_GROWTH_CEILING = 1.02;
-
 const noiseBoardOf = (regions: number) => {
   const all = regionsFor(regions);
   const writer = new BoardWriter({
@@ -584,25 +573,127 @@ const transcriptRows = (count: number) =>
     text: `Turn number ${index}: ${"the round said something about the change. ".repeat(4)}`,
   }));
 
-/** Every app-tool result that carries a collection, at one scale, through the real shaper. */
-function appResults(scale: { regions: number; rows: number }): Record<string, string> {
-  const shaped = (id: Parameters<typeof shapeAppToolResult>[0], output: unknown): string => {
-    const result = shapeAppToolResult(id, output);
-    return result.marker === undefined ? result.text : `${result.text}\n${result.marker}`;
-  };
-  return {
-    "board.read": shaped("board.read", { board: noiseBoardOf(scale.regions) }),
-    "session.list": shaped("session.list", { sessions: sessionRows(scale.rows) }),
-    "session.transcript": shaped("session.transcript", {
-      trail: { branch: "feat/x" },
-      rows: transcriptRows(scale.rows),
-    }),
-    "patchset.readEvidence": shaped("patchset.readEvidence", {
-      path: "src/auth.ts",
-      counterparts: [],
-      patch: `@@ -1,4 +1,4 @@\n${"-const a = 1;\n+const a = 2;\n".repeat(scale.rows * 8)}`,
-    }),
-  };
+// ── Large, plausible fixtures for the universal ceiling (item 1, both reviewers' finding
+// 1): only four commands (`board.read`, `session.list`, `session.transcript`,
+// `patchset.readEvidence`) ever bounded their result — every OTHER exposed command fell
+// through `shapeAppToolResult`'s default branch to a raw, unbounded `JSON.stringify(output)`.
+// The sighting was `ask.read` on a 400-ask projection: 144,611 B, riding the wire whole.
+// `APP_TOOL_RESULT_MAX_BYTES` (8,192 B) now bounds the COMPLETE serialised result of EVERY
+// exposed command, behind whichever per-command paging above already ran; over the ceiling,
+// `applyResultCeiling` spills the full result to a file and returns an honest envelope. This
+// section prices all 29, not a chosen four.
+
+/** A 400-entry `stagedAsks` projection — `ask.read`'s own #871-shaped sighting. */
+function stagedAsksOf(count: number): Record<string, unknown> {
+  return Object.fromEntries(
+    Array.from({ length: count }, (_, index) => [
+      `ask-${index}`,
+      {
+        id: `ask-${index}`,
+        anchor: `src/file-${index % 40}.ts:${index + 1}`,
+        type: "comment",
+        body: `Consider tightening the error handling here — ask ${index} of a long projection that must not ride the wire unbounded.`,
+      },
+    ]),
+  );
+}
+
+/** A rounds ledger with real-sized diffs (#571's round-diff surface), not empty rows. */
+function roundLedgerOf(count: number): unknown[] {
+  return Array.from({ length: count }, (_, index) => ({
+    reviewId: "review-1",
+    id: `round-${index}`,
+    startedAt: "2026-09-12T10:00:00.000Z",
+    workerCommitRange: { from: `oid-${index}-a`, to: `oid-${index}-b` },
+    boardGeneration: `gen-${index}`,
+    reportBoard: `board-${index}`,
+    outcome: "completed",
+    // ~1.25 KB of diff per round × 40 rounds ≈ 50 KB.
+    diff: `diff --git a/src/file-${index}.ts b/src/file-${index}.ts\n${"+const line = 1;\n".repeat(80)}`,
+    changedPaths: [`src/file-${index}.ts`],
+  }));
+}
+
+/** A composed handoff bundle's task list — shared by `review.handoff.compose` and
+ *  `round.dispatch`'s `workOrder` (the ORDERING CONTRACT: compose once, run that bundle). */
+function handoffTasksOf(count: number): unknown[] {
+  return Array.from({ length: count }, (_, index) => ({
+    title: `Task ${index}: address the reviewer's asks on file-${index}.ts`,
+    sourceDispositions: [`disposition-${index}`],
+    asks: [
+      {
+        path: `src/file-${index}.ts`,
+        type: "comment",
+        instruction: `Address ask ${index}: tighten validation and add a regression test.`,
+        context: "the surrounding function, three lines of context above and below",
+        id: `ask-${index}`,
+      },
+    ],
+  }));
+}
+
+const handoffBundle = {
+  reviewId: "review-1",
+  patchsetId: "ps-1",
+  tasks: handoffTasksOf(30),
+  prompt: "Work the following tasks in order, one commit per task.",
+  digest: "digest-abc123",
+  composed: true,
+  traceMap: {},
+};
+
+/**
+ * The commands this task named explicit large fixtures for, keyed by `CommandName`. Every
+ * OTHER exposed command (settings, pairing-free acts, `projects.list`, etc.) is priced
+ * against {@link GENERIC_LARGE_BLOB} instead — not because any of them would really return
+ * this shape, but because the point of the universal ceiling is that it catches an oversized
+ * result from ANY of the 29 rows, not only ones a fixture author remembered to name. If the
+ * ceiling only worked for the seven named here, this file would have reproduced the exact
+ * defect it is fixing: coverage as an allowlist.
+ */
+const LARGE_FIXTURES: Partial<Record<CommandName, unknown>> = {
+  "board.read": { board: noiseBoardOf(NOISE_REGIONS_LARGE) },
+  "session.list": { sessions: sessionRows(400) },
+  "session.transcript": { trail: { branch: "feat/x" }, rows: transcriptRows(400) },
+  "patchset.readEvidence": {
+    path: "src/auth.ts",
+    counterparts: [],
+    // ~200 KB of unified diff text.
+    patch: `@@ -1,4 +1,4 @@\n${"-const a = 1;\n+const a = 2;\n".repeat(8_000)}`,
+  },
+  "ask.read": {
+    projection: {
+      stagedAsks: stagedAsksOf(400),
+      findingDispositions: {},
+      lineComments: {},
+      quoteThreads: {},
+      retired: {},
+      verdictOverride: null,
+    },
+  },
+  "session.rounds": { records: roundLedgerOf(40) },
+  "review.handoff.compose": { bundle: handoffBundle },
+  "round.dispatch": { workOrder: handoffBundle, dispatched: true },
+};
+
+const GENERIC_LARGE_BLOB = {
+  note: "a generic large payload, standing in for any exposed command's real output",
+  blob: "x".repeat(40_000),
+};
+
+const NAMED_LARGE_FIXTURE_TOOLS = [
+  "app_board_read",
+  "app_session_list",
+  "app_session_transcript",
+  "app_patchset_readEvidence",
+  "app_ask_read",
+  "app_session_rounds",
+  "app_review_handoff_compose",
+  "app_round_dispatch",
+];
+
+function fixtureFor(commandId: CommandName): unknown {
+  return LARGE_FIXTURES[commandId] ?? GENERIC_LARGE_BLOB;
 }
 
 describe("what the session thread's app tools cost (session-thread-briefing)", () => {
@@ -617,61 +708,115 @@ describe("what the session thread's app tools cost (session-thread-briefing)", (
         .concat(rows.slice(0, 5).map((row) => `  ${row.name.padEnd(30)} ${row.size}`))
         .join("\n"),
     );
-    // Measured 2026-09-12: 29 tools, 12,929 B — the whole `exposure.agent` projection, fixed
+    // Measured 2026-09-12: 29 tools, 13,070 B — the whole `exposure.agent` projection, fixed
     // at the provider session's construction and re-read on every turn of the thread. The
     // bound is set just above it so a row that grows the surface materially trips this and
     // the PR that adds it has to say so. Re-run the test rather than copy the number forward.
     expect(total, `the app tool catalog is ${total} B across ${catalog.length} tools`).toBeLessThan(
       16_000,
     );
-    // The heaviest row is the one with a whole nested payload in its input (`projects.add`
-    // takes a DiscoveryResult). Named so a reader can see where the surface's bytes are.
-    expect(rows[0]?.name).toBe("app_projects_add");
+    // The heaviest row is `ask.stage`'s: its input embeds the whole `StagedAskSchema`, which
+    // (item 4, both reviewers' finding 4) gained an optional `author` field so a client's
+    // own claim of authorship can be told apart from the server's stamp — a few more bytes
+    // of schema than `projects.add`'s `DiscoveryResult` payload, the previous heaviest row.
+    // Named so a reader can see where the surface's bytes are.
+    expect(rows[0]?.name).toBe("app_ask_stage");
   });
 
-  it("bounds every paged result and stops it growing with the collection", () => {
-    // Three scales: one that fits (nothing is paged), one that pages, and one whose
-    // collection is TEN TIMES the second's. The bound is proved between the last two.
-    const whole = appResults({ regions: 3, rows: 3 });
-    const paged = appResults({ regions: NOISE_REGIONS_LARGE, rows: 400 });
-    const tenfold = appResults({ regions: NOISE_REGIONS_LARGE * 10, rows: 4_000 });
+  it("bounds EVERY agent-exposed command's per-call result to APP_TOOL_RESULT_MAX_BYTES, spilling the full result to a file when it doesn't fit (item 1)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "app-tool-ceiling-"));
+    try {
+      const tools = buildAppTools(async () => undefined);
+      // The operand guard: this really is the whole `AGENT_EXPOSED` surface, not a stale
+      // local list — if a row is ever added to or removed from that set, this count moves
+      // and says so, rather than silently exercising a smaller population than the task.
+      expect(tools.length, "the agent-exposed command count moved — update this fixture").toBe(29);
 
-    console.info(
-      ["app result             whole    paged   10x collection  growth"]
-        .concat(
-          Object.keys(paged).map((key) => {
-            const fits = textBytes(whole[key] ?? "");
-            const one = textBytes(paged[key] ?? "");
-            const ten = textBytes(tenfold[key] ?? "");
-            return `${key.padEnd(22)} ${String(fits).padStart(5)}  ${String(one).padStart(7)}  ${String(ten).padStart(14)}  ${(ten / one).toFixed(2)}x`;
-          }),
-        )
-        .join("\n"),
-    );
+      const rows = tools.map((tool) => {
+        const shaped = shapeAppToolResult(tool.commandId, fixtureFor(tool.commandId));
+        // The exact body `applyResultCeiling` spills (its own composition, joined with
+        // `\n\n` when a marker is present) — not a hand-rolled concatenation, so this
+        // count can never drift from what production actually writes to disk.
+        const body =
+          shaped.marker === undefined ? shaped.text : `${shaped.text}\n\n${shaped.marker}`;
+        const rawBytes = textBytes(body);
+        let spilled: string | undefined;
+        const bounded = applyResultCeiling(shaped, (body) => {
+          const path = join(dir, `${tool.name}.json`);
+          writeFileSync(path, body);
+          spilled = path;
+          return path;
+        });
+        return { name: tool.name, rawBytes, boundedBytes: textBytes(bounded.text), spilled };
+      });
 
-    for (const [key, text] of Object.entries(paged)) {
-      expect(
-        textBytes(text),
-        `the ${key} result is ${textBytes(text)} B on the paged fixture`,
-      ).toBeLessThan(APP_TOOL_RESULT_CEILING);
-      const ten = textBytes(tenfold[key] ?? "");
-      expect(
-        ten / textBytes(text),
-        `the ${key} result grew ${(ten / textBytes(text)).toFixed(2)}x when its collection grew tenfold`,
-      ).toBeLessThan(APP_GROWTH_CEILING);
-    }
-
-    // The operand guard: the fixtures really are the sizes claimed, the paged results really
-    // were paged, and the small one really was not. Without it these assertions would pass
-    // over four identical small answers.
-    expect(noiseBoardOf(NOISE_REGIONS_LARGE).elements.length).toBeGreaterThan(1_000);
-    for (const [key, text] of Object.entries(paged)) {
-      expect(text, `the ${key} result did not page`).toContain("cursor:");
-    }
-    for (const [key, text] of Object.entries(whole)) {
-      expect(text, `the ${key} fixture was paged when it should have fitted`).not.toContain(
-        "cursor:",
+      console.info(
+        ["app tool                          raw B    per-call B  spilled"]
+          .concat(
+            [...rows]
+              .sort((a, b) => b.rawBytes - a.rawBytes)
+              .map(
+                (row) =>
+                  `${row.name.padEnd(34)} ${String(row.rawBytes).padStart(7)}  ${String(row.boundedBytes).padStart(10)}  ${row.spilled === undefined ? "no" : "yes"}`,
+              ),
+          )
+          .join("\n"),
       );
+
+      for (const row of rows) {
+        expect(
+          row.boundedBytes,
+          `${row.name}'s per-call result is ${row.boundedBytes} B, over the ${APP_TOOL_RESULT_MAX_BYTES} B universal ceiling`,
+        ).toBeLessThanOrEqual(APP_TOOL_RESULT_MAX_BYTES);
+        if (row.spilled !== undefined) {
+          const onDisk = readFileSync(row.spilled, "utf8");
+          expect(
+            textBytes(onDisk),
+            `${row.name}'s spilled file should hold its FULL ${row.rawBytes} B result, not a truncated copy`,
+          ).toBe(row.rawBytes);
+        }
+      }
+
+      // The operand guard: every command this task named an explicit large fixture for
+      // really did exceed the ceiling and really did spill (proving the fixtures are large
+      // enough to exercise the path, not accidentally small), AND at least one command
+      // running only the GENERIC fallback also spilled — proving the ceiling is universal
+      // rather than an allowlist of the seven names above (both reviewers' finding 1).
+      const spilledNames = new Set(
+        rows.filter((row) => row.spilled !== undefined).map((row) => row.name),
+      );
+      for (const name of NAMED_LARGE_FIXTURE_TOOLS) {
+        expect(spilledNames.has(name), `${name}'s named large fixture should have spilled`).toBe(
+          true,
+        );
+      }
+      const genericSpilled = rows.some(
+        (row) => row.spilled !== undefined && !NAMED_LARGE_FIXTURE_TOOLS.includes(row.name),
+      );
+      expect(
+        genericSpilled,
+        "at least one command running only the generic fallback should also have spilled — otherwise the ceiling only ever fires for the named seven",
+      ).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  it("positive control: ask.read's own #871-shaped fixture exceeds the ceiling on its own, unceilinged (item 1)", () => {
+    // Proves the assertion above is not vacuous: the RAW shaper output (no
+    // `applyResultCeiling` in front of it) for the exact fixture #871 was sighted on really
+    // does blow through `APP_TOOL_RESULT_MAX_BYTES` by itself. Delete `applyResultCeiling`
+    // from the wire path in `callTool` and the "bounds EVERY…" test above reddens on this
+    // exact row — this is what proves that redness, without editing production code to watch
+    // it happen.
+    const raw = shapeAppToolResult("ask.read", LARGE_FIXTURES["ask.read"]);
+    expect(
+      raw.marker,
+      "ask.read has no paging of its own — every byte rides the default branch",
+    ).toBeUndefined();
+    expect(
+      textBytes(raw.text),
+      "the ask.read fixture must itself exceed the ceiling for the ceiling to be doing real work",
+    ).toBeGreaterThan(APP_TOOL_RESULT_MAX_BYTES);
   });
 });

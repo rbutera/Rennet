@@ -30,7 +30,15 @@
 // (the server→client stream) is answered `405`, which the transport also permits.
 
 import { createHash, timingSafeEqual } from "node:crypto";
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import {
   createServer,
   type Server as HttpServer,
@@ -38,11 +46,13 @@ import {
   type ServerResponse,
 } from "node:http";
 import type { AddressInfo } from "node:net";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { normalizeOutputSchema } from "@rennet/adapters";
 import { type CommandName, commands } from "@rennet/protocol";
 import { z } from "zod";
 import { type AppTool, type AppToolDispatch, buildAppTools } from "../agent-tools";
+import { writeRunScopedContext } from "../context-files";
 import { APP_BEARER_ENV_VAR, APP_MCP_SERVER_NAME } from "./app-credentials";
 
 export { APP_BEARER_ENV_VAR, APP_MCP_SERVER_NAME } from "./app-credentials";
@@ -77,6 +87,23 @@ export const EVIDENCE_TOOL_BYTES_CAP = 16 * 1024;
  * answer may sit in the prefix and be re-read on every remaining round trip of the turn.
  */
 export const PAGE_TOOL_BYTES_CAP = EVIDENCE_TOOL_BYTES_CAP;
+
+/**
+ * The universal ceiling on EVERY exposed command's complete serialised result (item 1, both
+ * reviewers): only four commands declared a cap above, so every other command fell straight
+ * through to a raw, unbounded `JSON.stringify(output)` — `ask.read` alone reproduced a
+ * 144,611-byte result with 400 staged asks, and nothing here noticed. Now every result, paged
+ * or not, answers to ONE ceiling after whatever per-command shaping already ran: under it, a
+ * result rides inline exactly as before; over it, the complete result is written to a file
+ * and the call gets back an honest envelope instead — never a silent truncation.
+ */
+export const APP_TOOL_RESULT_MAX_BYTES = 8_192;
+
+/** How much of the oversized result's own text still rides inline, inside the envelope. */
+const RESULT_HEAD_BYTES = 2_048;
+
+/** Disambiguates two spill files minted in the same process within the same millisecond. */
+let spillSeq = 0;
 
 /**
  * How much of a refusal comes back. A dispatch refusal is a Zod error over a command
@@ -131,6 +158,14 @@ export interface StartAppMcpServerOptions {
    * legitimately ask about another review (that is what `app_session_list` is for).
    */
   readonly sessionFor?: (threadId: string) => string | undefined;
+  /**
+   * The session's bound workspace root, when the daemon knows it (item 1). Used ONLY to
+   * decide WHERE an oversized result spills — under that session's own
+   * `.rennet/context/<sessionId>/tool-results/`, alongside every other file the session's
+   * turns already read from — rather than the sidecar's bare state-dir fallback. Absent, or
+   * the thread's session unresolved: the fallback tier is used instead, never a refusal.
+   */
+  readonly rootForSession?: (sessionId: string) => string | undefined;
   /** The interface to bind. Loopback, and there is no option that is not. */
   readonly host?: "127.0.0.1" | "::1";
   /**
@@ -432,6 +467,119 @@ export function refusalText(error: unknown): string {
     : `${Buffer.from(message, "utf8").subarray(0, REFUSAL_TEXT_CAP).toString("utf8")}\n… and ${utf8(message) - REFUSAL_TEXT_CAP} more bytes of this refusal, elided.`;
 }
 
+// ── The universal ceiling (item 1, both reviewers) ───────────────────────────────
+
+/** `text` cut to at most `maxBytes`, ending at a complete UTF-8 code point (reuses item 2's). */
+function headAtCodePointBoundary(text: string, maxBytes: number): string {
+  const buffer = Buffer.from(text, "utf8");
+  if (buffer.length <= maxBytes) return text;
+  return buffer.subarray(0, codePointFloor(buffer, maxBytes)).toString("utf8");
+}
+
+/**
+ * Where an oversized result's complete body is written, so the envelope can point at it.
+ *
+ * Two tiers, tried in order:
+ *
+ *   1. The thread's own session's context directory, `.rennet/context/<sessionId>/tool-
+ *      results/`, via `writeRunScopedContext` — the same directory the rest of that
+ *      session's turns already read files from, purged with it at archive. Used only when
+ *      BOTH `sessionFor` and `rootForSession` resolve for this call's thread; neither
+ *      overrules the other, they simply gate whether this tier applies.
+ *   2. `<stateDir>/tool-results/` (the sidecar's own base dir, or the OS temp dir when no
+ *      `stateDir` was given — a test's ephemeral server, never the daemon). Nothing purges
+ *      this tier per-session, which is why {@link sweepStaleAppToolResults} exists: swept by
+ *      AGE at daemon start rather than at archive.
+ */
+function writeSpillFile(
+  options: StartAppMcpServerOptions,
+  threadId: string,
+  toolName: string,
+  body: string,
+): string {
+  spillSeq += 1;
+  const name = `${toolName}-${Date.now()}-${spillSeq}.json`;
+  const sessionId = options.sessionFor?.(threadId);
+  const root = sessionId === undefined ? undefined : options.rootForSession?.(sessionId);
+  if (sessionId !== undefined && root !== undefined) {
+    const written = writeRunScopedContext(root, sessionId, `tool-results/${name}`, body);
+    return join(root, written.path);
+  }
+  const dir = join(options.stateDir ?? tmpdir(), "tool-results");
+  mkdirSync(dir, { recursive: true });
+  const path = join(dir, name);
+  writeFileSync(path, body);
+  return path;
+}
+
+/**
+ * The universal ceiling: whatever `shapeAppToolResult` (or any other per-command shaping)
+ * produced, this is the LAST word on whether it rides inline.
+ *
+ * Only four commands declared their own cap before item 1 — every other exposed command's
+ * complete serialised result went straight to the model, unbounded (`ask.read` alone
+ * reproduced 144,611 bytes with 400 staged asks). So this runs on EVERY result, paged or
+ * not: under {@link APP_TOOL_RESULT_MAX_BYTES}, the result is returned unchanged; over it,
+ * `spill` is handed the complete text-plus-marker body to write wherever it decides (the
+ * two tiers above), and the call gets back a small envelope naming where the rest is and
+ * carrying a head-sized sample inline, never a silent truncation.
+ */
+export function applyResultCeiling(
+  result: AppToolResult,
+  spill: (body: string) => string,
+): AppToolResult {
+  const body = result.marker === undefined ? result.text : `${result.text}\n\n${result.marker}`;
+  const bytes = utf8(body);
+  if (bytes <= APP_TOOL_RESULT_MAX_BYTES) return result;
+  const path = spill(body);
+  const head = headAtCodePointBoundary(result.text, RESULT_HEAD_BYTES);
+  const envelope = {
+    truncated: true,
+    bytes,
+    path,
+    head,
+    note: `The complete ${bytes}-byte result did not fit this call's ${APP_TOOL_RESULT_MAX_BYTES}-byte budget, so it was written whole to the path above; read it with your own tools for the rest. \`head\` is this result's own first bytes, not a separate summary.`,
+  };
+  return { text: JSON.stringify(envelope) };
+}
+
+/**
+ * The daemon-start sweep for the FALLBACK spill tier (item 1): a result that spilled before
+ * a session had resolved for its thread lands under the sidecar's base dir, outside every
+ * root the session-context purge covers, so nothing else ever reclaims it. Age-based, not
+ * incarnation-stamped, because a fallback spill carries no session id to check a store
+ * against — swept only when it is older than `maxAgeMs`, never by a liveness check.
+ *
+ * Returns how many files were removed. Never throws: an absent or unreadable directory is
+ * the ordinary case (no fallback spill ever happened) and not this sweep's problem.
+ */
+export function sweepStaleAppToolResults(
+  stateDir: string,
+  maxAgeMs = 24 * 60 * 60 * 1000,
+  now: number = Date.now(),
+): number {
+  const dir = join(stateDir, "tool-results");
+  let entries: readonly string[];
+  try {
+    entries = readdirSync(dir);
+  } catch {
+    return 0;
+  }
+  let removed = 0;
+  for (const entry of entries) {
+    const path = join(dir, entry);
+    try {
+      if (now - statSync(path).mtimeMs > maxAgeMs) {
+        unlinkSync(path);
+        removed += 1;
+      }
+    } catch {
+      // Already gone, or unreadable — not this sweep's problem.
+    }
+  }
+  return removed;
+}
+
 // ── Stamping the caller ─────────────────────────────────────────────────────────
 
 /** The shape of a Zod object's `.shape`, when the row's args is one. */
@@ -581,11 +729,18 @@ export async function startAppMcpServer(options: StartAppMcpServerOptions): Prom
         author: { kind: "orchestrator", id: threadId },
       });
       const shaped = shapeAppToolResult(tool.commandId, output, cursor);
+      // The universal ceiling (item 1): whatever shape the command's own paging gave this
+      // result, it still answers to ONE byte budget before it reaches the model. Under the
+      // budget, `bounded` is `shaped` unchanged; over it, `bounded` is a small spill envelope
+      // and the marker (if any) is folded into the spilled file, not carried separately.
+      const bounded = applyResultCeiling(shaped, (body) =>
+        writeSpillFile(options, threadId, tool.name, body),
+      );
       return {
         result: {
           content: [
-            { type: "text", text: shaped.text },
-            ...(shaped.marker === undefined ? [] : [{ type: "text", text: shaped.marker }]),
+            { type: "text", text: bounded.text },
+            ...(bounded.marker === undefined ? [] : [{ type: "text", text: bounded.marker }]),
           ],
         },
       };
