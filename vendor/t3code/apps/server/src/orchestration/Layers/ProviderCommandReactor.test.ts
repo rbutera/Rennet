@@ -640,12 +640,8 @@ describe("ProviderCommandReactor", () => {
         },
         interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
         runtimeMode: "approval-required",
-        // The turn brings a server of its own, so the session gets the UNION
-        // and a later turn is compared against the union, not against either
-        // half.
-        mcpServers: {
-          board: { url: "http://127.0.0.1:7391/board/design" },
-        },
+        // No mcpServers here: this is the composer's own turn, and the
+        // composer never supplies any of its own.
         createdAt: now,
       }),
     );
@@ -660,21 +656,18 @@ describe("ProviderCommandReactor", () => {
           url: "http://127.0.0.1:7391/app/threads/thread-briefed",
           bearerTokenEnvVar: "RENNET_APP_BEARER",
         },
-        board: { url: "http://127.0.0.1:7391/board/design" },
       },
     });
-    // And on the turn, so a session recovered for it after a restart starts
-    // briefed rather than bare.
-    expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
-      instructions,
-      mcpServers: {
-        rennet_app: {
-          url: "http://127.0.0.1:7391/app/threads/thread-briefed",
-          bearerTokenEnvVar: "RENNET_APP_BEARER",
-        },
-        board: { url: "http://127.0.0.1:7391/board/design" },
-      },
-    });
+    // And the briefing rides on the turn too, so a session recovered for it
+    // after a restart starts briefed rather than bare. The composer supplied
+    // no servers of its own, so the turn carries none either: the adapter's
+    // "a turn that asks for nothing rides whatever the session holds" rule
+    // is what serves it, not an explicit (and here redundant) thread-only set.
+    const sentTurn = harness.sendTurn.mock.calls[0]?.[0] as
+      | { instructions?: unknown; mcpServers?: unknown }
+      | undefined;
+    expect(sentTurn?.instructions).toBe(instructions);
+    expect(sentTurn?.mcpServers).toBeUndefined();
 
     // The thread the projection reads back carries them too: the pair has to
     // survive the SQL row or a daemon restart forgets the briefing.
@@ -687,6 +680,100 @@ describe("ProviderCommandReactor", () => {
         bearerTokenEnvVar: "RENNET_APP_BEARER",
       },
     });
+  });
+
+  it("does not force the thread-only set on a later composer turn once a turn-specific server has joined the live session", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    // The thread carries its own server. The FIRST turn additionally brings
+    // one of its own (a seat-style per-turn address), so the session that
+    // turn starts holds the union of both.
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("cmd-thread-create-union"),
+        threadId: ThreadId.make("thread-union"),
+        projectId: asProjectId("project-1"),
+        title: "Union thread",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        branch: null,
+        worktreePath: null,
+        mcpServers: {
+          rennet_app: { url: "http://127.0.0.1:7391/app/threads/thread-union" },
+        },
+        createdAt: now,
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-union-first"),
+        threadId: ThreadId.make("thread-union"),
+        message: {
+          messageId: asMessageId("user-message-union-first"),
+          role: "user",
+          text: "first turn, brings its own server",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        mcpServers: {
+          board: { url: "http://127.0.0.1:7391/board/design" },
+        },
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.startSession.mock.calls.length === 1);
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+
+    expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({
+      mcpServers: {
+        rennet_app: { url: "http://127.0.0.1:7391/app/threads/thread-union" },
+        board: { url: "http://127.0.0.1:7391/board/design" },
+      },
+    });
+
+    // A SECOND turn — the composer's own, like T3's web UI sends — supplies
+    // no servers of its own. The live session already holds the union above;
+    // materialising the thread-only set as this turn's explicit ask would
+    // make `differingTurnMcpServerNames` see `board` as missing and refuse
+    // the turn, even though nothing about the session actually changed.
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-union-second"),
+        threadId: ThreadId.make("thread-union"),
+        message: {
+          messageId: asMessageId("user-message-union-second"),
+          role: "user",
+          text: "second turn, bare composer input",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 2);
+    // Still just the one session: the bare turn did not trigger a restart.
+    expect(harness.startSession.mock.calls.length).toBe(1);
+
+    const secondTurn = harness.sendTurn.mock.calls[1]?.[0] as
+      | { mcpServers?: unknown }
+      | undefined;
+    // Not the thread-only set, and not the union either: nothing, so the
+    // adapter's "asks for nothing rides whatever the session holds" rule is
+    // what serves it.
+    expect(secondTurn?.mcpServers).toBeUndefined();
   });
 
   effectIt.effect("retains a turn dispatched immediately after start until activation", () =>

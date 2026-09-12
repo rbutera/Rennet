@@ -865,7 +865,22 @@ const make = Effect.gen(function* () {
           : requestedModelSelection
         : input.modelSelection;
 
-    const turnMcpServers = unionThreadAndTurnMcpServers(thread.mcpServers, input.mcpServers);
+    // The set THIS turn is checked against, once it reaches a live session.
+    // Only computed when the turn itself asks for something: a composer turn
+    // (T3's own web UI, no `mcpServers` of its own) supplies `undefined` here
+    // so the adapter's "a turn that asks for nothing rides whatever the
+    // session holds" rule applies. Materialising the thread's own set as an
+    // explicit ask instead would make a LATER composer turn compare against
+    // a live session the thread's set alone never described — a prior turn on
+    // the same thread can have joined its own server to the union the
+    // session actually started on, and `differingTurnMcpServerNames` would
+    // then see that server as missing and refuse the turn. A turn that DOES
+    // ask for something is still checked against thread ∪ turn, matching the
+    // merge rule at session start.
+    const turnMcpServers =
+      input.mcpServers !== undefined
+        ? unionThreadAndTurnMcpServers(thread.mcpServers, input.mcpServers)
+        : undefined;
     return {
       threadId: input.threadId,
       ...(normalizedInput ? { input: normalizedInput } : {}),
@@ -873,9 +888,12 @@ const make = Effect.gen(function* () {
       ...(modelForTurn !== undefined ? { modelSelection: modelForTurn } : {}),
       ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
       ...(input.outputSchema !== undefined ? { outputSchema: input.outputSchema } : {}),
-      // Both travel so a session RECOVERED for this turn starts on the thread's
-      // briefing and the thread's servers, not on whatever this one turn asked
-      // for. A live session already holds them.
+      // The thread's briefing still travels on every turn regardless: a live
+      // session ignores it (its system prompt is already fixed), and a
+      // session RECOVERED by `sendTurn` gets it from `ProviderService`'s own
+      // persisted read of the thread record now, so this is a redundant
+      // courtesy rather than the only path, kept for a binding persisted
+      // before that read existed.
       ...(thread.instructions !== undefined ? { instructions: thread.instructions } : {}),
       ...(turnMcpServers !== undefined ? { mcpServers: turnMcpServers } : {}),
     };
