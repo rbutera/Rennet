@@ -8,8 +8,8 @@
     },
     {
       "path": "README.md",
-      "bytes": 6399,
-      "sha256": "956feb9de681415c7cd56ab52aa3c312ffaeffa92ef7a1d5b1a4c385c0ce694f"
+      "bytes": 6552,
+      "sha256": "f9fc2a54be18af6e18a89a9ffe9a93064c30c35f9e832a854bed39b555f030f3"
     },
     {
       "path": "brand.json",
@@ -536,25 +536,30 @@
     },
     {
       "path": "exports/sphere/mark-resting-1024.png",
-      "bytes": 182097,
-      "sha256": "1cd83cc7e0774b7fdc6a78645a07bfe9e0fb632d0064a59f6c09e543b4ef386e",
+      "bytes": 182397,
+      "sha256": "8f9edecc6063f5a3ff894fbc7bd0615628e437ce27119f72f0ad0e70d9e126ec",
       "dimensions": "1024x1024"
     },
     {
       "path": "exports/sphere/mark-working-1024.png",
-      "bytes": 258951,
-      "sha256": "06e0d7be0ec0c55bfa0f71bf0ebb8c1d321b3b07ee6551ce457432e23917b762",
+      "bytes": 258801,
+      "sha256": "bb61fad0dafe32e839725967ec37fe19b5b5d2c948e0e6cbca818dcee1862749",
       "dimensions": "1024x1024"
+    },
+    {
+      "path": "exports/sphere/resting-loop-512.webm",
+      "bytes": 911356,
+      "sha256": "2ffbfa656e1c81bb0368de16b37db668e7b4d85dda0eb3cdd0cbf3f9c994d567"
+    },
+    {
+      "path": "exports/sphere/working-loop-256.webp",
+      "bytes": 1540788,
+      "sha256": "164bb1a77d7997823b851ef36eae5c730b24f3f6b23b8a7f222afc1bebeac3a8"
     },
     {
       "path": "exports/sphere/working-loop-512.webm",
       "bytes": 1230107,
-      "sha256": "fcdfa98e7721765b67e27b1b9710709ed3b1a8827625e7d8949224ac5bcfd980"
-    },
-    {
-      "path": "exports/sphere/working-loop-512.webp",
-      "bytes": 4198870,
-      "sha256": "882be389251f2e42317d224966c7f31433fee6deef09b86f81318b3ea8150f6e"
+      "sha256": "d10614aefba0071814369aadd2d32def1877cc84dcaf9c82266010f54ff0d8b5"
     },
     {
       "path": "exports/tray/rennet.ico",
@@ -673,8 +678,8 @@
     },
     {
       "path": "scripts/gen-mark-svgs.py",
-      "bytes": 5882,
-      "sha256": "91c261513f5efa5da6211738611802ede46feb16bb6e0d7707b9931fa25e167b"
+      "bytes": 5881,
+      "sha256": "d3fd663b647f3644df93aca161fe6d8041898e487e578147440a038085e797e1"
     },
     {
       "path": "scripts/gen-tray-icons.mjs",
@@ -683,13 +688,13 @@
     },
     {
       "path": "scripts/rasterise-svg.mjs",
-      "bytes": 1283,
-      "sha256": "331d115a1375a697bb1cf10599fc895dc73d6d9f5136d726047abfe07c1a370c"
+      "bytes": 1302,
+      "sha256": "a992a1406cd1329d28dded974b292ce6c2bb56a206f5b27ae745fe8ec381a7d5"
     },
     {
       "path": "scripts/render-sphere.mjs",
-      "bytes": 16237,
-      "sha256": "11496e70f2f75f6ed95deaf664f480c57fe3fdb1c3d9c94c5f240957a4f11d5d"
+      "bytes": 17925,
+      "sha256": "485b91b9ee52e4ff9206f102faef1376ba346f716be8988d600671b185e41e6c"
     },
     {
       "path": "sources/liquid-sphere/index.html",

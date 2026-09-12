@@ -57,7 +57,7 @@ afterEach(() => {
 });
 
 describe("forge.config.cjs signing", () => {
-  it("packages the white-on-black brand icon for the packaging platform", () => {
+  it("packages the colour brand icon for the packaging platform", () => {
     const { packagerConfig } = loadConfig({});
     // The product picks the icon by `process.platform` (win32 → the `.ico` export dir,
     // else the macOS `.icns` dir). Key the expectation the same way so this asserts the

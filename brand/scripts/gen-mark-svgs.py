@@ -4,7 +4,7 @@
 Writes three committed sources under brand/sources/:
   mark-sphere.svg        the colour mark: a resting-state frame as gradients on a wobbly disc
   mark-ridged.svg        the monochrome mark: the working-state silhouette, one fill
-  mark-ridged-small.svg  the same silhouette with fewer, deeper ridges for 16-32 px
+  mark-ridged-small.svg  the same silhouette with fewer, deeper ridges below 48 px
 
 The ridge function is the one in brand/sources/liquid-sphere/index.html, so the
 silhouette is the shader's outline, not a drawing of it.

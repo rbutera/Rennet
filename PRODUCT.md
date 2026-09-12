@@ -60,7 +60,7 @@ For another person's pull request, the review preview posts as a batched GitHub 
 
 The product name is **Rennet**. The name describes the job: making code digestible.
 
-The mark is a shallow cheese wheel whose right edge breaks into smaller pieces. Authoritative sources and exports live in [`brand/`](brand/).
+The mark is a liquid sphere: a warm gradient body that ripples while Rennet is working and settles when it is done. Authoritative sources and exports live in [`brand/`](brand/).
 
 Product and marketing language must be direct and specific. Lead with the reviewer's responsibility and attention limit. Do not promise generic productivity, use fear-based security language, or describe Rennet as an autonomous reviewer.
 
