@@ -1,6 +1,6 @@
 import { isRepoRelativePath, receiptFor } from "@rennet/core";
 import { type AskEventBody, parseCommandInput, parseCommandOutput } from "@rennet/protocol";
-import type { CommandHandler, DispatchRuntime } from "./runtime";
+import type { CommandHandler, DispatchContext, DispatchRuntime } from "./runtime";
 
 /**
  * Ingestion path safety (B11 P2 finding 9 — privacy). A code anchor's path and a line-comment
@@ -54,7 +54,7 @@ export function applyWrite(
 
 export function askHandlers(rt: DispatchRuntime) {
   return {
-    "ask.stage": async (rawInput) => {
+    "ask.stage": async (rawInput, ctx?: DispatchContext) => {
       const name = "ask.stage" as const;
       const input = parseCommandInput(name, rawInput);
       // Privacy at ingestion (finding 9): a code-anchored ask's path must be repo-relative,
@@ -63,10 +63,18 @@ export function askHandlers(rt: DispatchRuntime) {
       if (input.ask.codeRef !== undefined) {
         assertRepoRelative(input.ask.codeRef.path, "a canonical code reference path");
       }
-      return parseCommandOutput(
-        name,
-        applyWrite(rt, input.sessionId, { kind: "stage", ask: input.ask }),
-      );
+      // WHO staged it, from the address — NEVER from whatever the input carried in
+      // `ask.author` (both reviewers' cluster-3 finding 4). `ctx.author` is set only by the
+      // app-tools MCP server, stamped from the thread the call arrived on
+      // (`app-mcp-server.ts`); every other caller (the reviewer's own loopback/projected
+      // connection) carries no `ctx.author` at all, so its asks stage with no author — the
+      // default the schema already treats as "the reviewer".
+      const author =
+        ctx?.author?.kind === "orchestrator"
+          ? { kind: "orchestrator" as const, id: ctx.author.id }
+          : undefined;
+      const ask = { ...input.ask, author };
+      return parseCommandOutput(name, applyWrite(rt, input.sessionId, { kind: "stage", ask }));
     },
     "ask.unstage": async (rawInput) => {
       const name = "ask.unstage" as const;
