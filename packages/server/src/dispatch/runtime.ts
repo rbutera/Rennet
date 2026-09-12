@@ -23,6 +23,7 @@ import type {
   AnchorSpan,
   AskOccurrence,
   AskProjection,
+  Author,
   BenchmarkRun,
   ComposedHandoffBundle,
   DeltaDigestResult,
@@ -790,6 +791,17 @@ export interface DispatchContext {
    * connections (which cannot register a push token).
    */
   deviceId?: string;
+  /**
+   * WHO is making this call, when the transport knows and the caller is not the reviewer
+   * at the keyboard (`session-thread-briefing`). The app-tools MCP server stamps
+   * `{ kind: "orchestrator", id: <threadId> }` from the address the call arrived on — never
+   * from anything the model sent — so a handler that records an author records the thread's,
+   * and a model that names itself the user changes nothing.
+   *
+   * Absent for every loopback and projected client call: the reviewer's own acts are
+   * authored by the reviewer, which is what the ask log already assumes.
+   */
+  author?: Author;
 }
 
 /** One command handler: the re-seated body of a former `switch` arm, keyed by command id. */

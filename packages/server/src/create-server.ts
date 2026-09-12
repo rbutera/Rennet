@@ -221,6 +221,11 @@ import {
   serializeDossier,
   sha256Hex,
 } from "@rennet/protocol";
+import {
+  type AppMcpServer,
+  startAppMcpServer,
+  sweepStaleAppToolResults,
+} from "./app/app-mcp-server";
 import { createBenchmarkRecording } from "./benchmark-store";
 import {
   BOARD_MCP_SERVER_NAME,
@@ -355,8 +360,15 @@ import {
 } from "./t3/handoff";
 import { resolveProviderBinaries } from "./t3/resolve-provider-binaries";
 import { type SeatThreadWatch, watchSeatThread } from "./t3/seat-progress";
+import { sidecarBaseDir } from "./t3/sidecar";
 import { createT3SidecarSupervisor } from "./t3/supervisor";
-import { roundThreadTitle, type SeatKind, seatThreadTitle, sweepIfArchived } from "./t3/threads";
+import {
+  readBindings,
+  roundThreadTitle,
+  type SeatKind,
+  seatThreadTitle,
+  sweepIfArchived,
+} from "./t3/threads";
 import { QUIET_WORK_BRANCH_STATE, readWorkBranchState } from "./work-branch-state";
 import { worktreeClaimsIn } from "./worktree-claims";
 import { startWsListener, type WsListener } from "./ws-listener";
@@ -1542,6 +1554,77 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       });
     return boardMcpServer;
   };
+
+  /**
+   * The daemon's loopback app-tools server (`session-thread-briefing`): `rennet_app`, the
+   * whole `exposure.agent` projection served to the review's session thread.
+   *
+   * ── THE SEAM ──────────────────────────────────────────────────────────────────
+   * `ensureAppMcpServer()` is what the session bind reaches for (`dispatch/chat.ts`
+   * `bindReviewThread`, cluster 4): await it, call `addressFor(threadId)`, and spread the
+   * result into `createThread({ mcpServers: { [name]: { url, bearerTokenEnvVar } } })`. It
+   * lives beside `ensureBoardMcpServer` because it is the same kind of thing — a listener
+   * the composition root owns and a bind addresses — and a bind that had to reach further
+   * than this for it would be a bind that started one.
+   *
+   * Started EAGERLY, unlike the board server: a board listener has nothing to serve until a
+   * generation opens a lane, while a session thread can be bound the moment a review is
+   * captured, and the url it is created with has to exist by then. Eager is also the house
+   * rule (#849, "almost nothing should be lazy in rennet"). The port is remembered in the
+   * sidecar's own base dir — a deterministic path, so this needs no running sidecar — and a
+   * restarted daemon comes back on the url its live threads were created with.
+   *
+   * A FAILED start is not memoised, so a transient bind failure costs one attempt rather
+   * than the app tools for the daemon's whole life; it does not fail the daemon either.
+   */
+  let appMcpServer: Promise<AppMcpServer> | null = null;
+  const ensureAppMcpServer = (): Promise<AppMcpServer> => {
+    appMcpServer ??= startAppMcpServer({
+      // The CURRENT sidecar's bearer, read per call for the reason the board server's is:
+      // a respawn replaces the environment every harness child inherits.
+      bearer: () => t3Sidecar.appBearer(),
+      // Late-bound, and this is why the option exists: `dispatch` is assigned far below this
+      // line and this listener binds before it. Read only when a call arrives.
+      dispatch: () => dispatch,
+      // Which review a thread is bound to, so a tool call that names no session gets the
+      // thread's own. The bindings file is the one place that mapping lives; a stale read
+      // is not possible because it is read per call, not captured. NOTE this is a REVIEW id
+      // (the T3 thread binding's own `sessionId` field is keyed on `reviewId` — `chat.ts`
+      // `bindReviewThread`), which is exactly right for this stamp and exactly wrong to reuse
+      // for a spill's directory (below; Codex re-review, P2).
+      sessionFor: (threadId) =>
+        readBindings(dataDir).find((row) => row.kind === "session" && row.threadId === threadId)
+          ?.sessionId,
+      // Where item 1's oversized-result spill lands (corrected by Codex's re-review, P2):
+      // resolved through the SAME review→session mapping every other durable read uses
+      // (`sessionIdForReview`, `boundRootForSession`), never through `sessionFor`'s review
+      // id directly. `sessionFor` above answers "which review", not "which session" — the
+      // two conflated meant a review bound to session `s1` spilled to the fallback tier
+      // (`sessionStore` has no row keyed on a review id) and archiving `s1` never reclaimed
+      // it. Late-bound, same as `sessionFor` above: `service`, `sessionIdForReview` and
+      // `boundRootForSession` are declared far below this line, but this lambda's BODY only
+      // runs once a call arrives, well after composition finishes.
+      spillOwnerFor: (threadId) => {
+        const reviewId = readBindings(dataDir).find(
+          (row) => row.kind === "session" && row.threadId === threadId,
+        )?.sessionId;
+        if (reviewId === undefined) return undefined;
+        const review = service.reviewById(reviewId);
+        if (review === null) return undefined;
+        const sessionId = sessionIdForReview(review);
+        const root = boundRootForSession(sessionId);
+        return root === undefined ? undefined : { sessionId, root };
+      },
+      stateDir: sidecarBaseDir(dataDir),
+    }).catch((error: unknown) => {
+      appMcpServer = null;
+      throw error;
+    });
+    return appMcpServer;
+  };
+  // Start it NOW (#849). Awaited near the end of composition, so `createRennetServer` does
+  // not resolve while the address a bind is about to ask for is still unbound.
+  const appMcpServerReady = ensureAppMcpServer();
 
   const resolveT3SeatRuntime = async (input: {
     /** The REPOSITORY the generation belongs to: the T3 project, and half the binding key. */
@@ -3392,6 +3475,11 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       ),
     },
   );
+  // The app-tools spill's OWN fallback-tier sweep (item 1): a tool result that spilled
+  // because no session had resolved yet for the thread lands under the sidecar's base dir,
+  // outside every root `sweepOrphanedSessionContext` just covered above, so it needs its own
+  // age-based reclaim rather than an incarnation-stamped one.
+  sweepStaleAppToolResults(sidecarBaseDir(dataDir));
   // The worktree zoo's last rites (session-bound-workspace 5.5): one session now binds to one
   // workspace, so the per-round and per-review worktrees earlier versions left under the data
   // dir are removed here, once, and nothing recreates them. Fire and forget — a sweep must
@@ -6255,6 +6343,14 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       : undefined,
   });
 
+  // The app-tools listener, bound before this function resolves: a session bind asks it for
+  // the url a thread is created with, and an unbound listener would hand out a dead one. A
+  // failure does NOT fail the daemon — the thread opens without its tools, which the reviewer
+  // sees as a chat that cannot read the boards, and the log says why.
+  await appMcpServerReady.catch((error: unknown) => {
+    console.error("The app-tools MCP server could not start", error);
+  });
+
   void (async () => {
     // A captured review need not belong to a persisted Project. Rehydrate the exact roots owned
     // by durable rounds before recovery starts, just as repository.choose granted them before the
@@ -6294,6 +6390,11 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       .catch(() => {
         // A listener that never started, or one whose close threw, must not take the rest
         // of the shutdown sequence with it.
+      });
+    void appMcpServer
+      ?.then((server) => server.close())
+      .catch(() => {
+        // Same: a listener that never started must not stop the shutdown sequence.
       });
     void wsListener?.close();
   };

@@ -108,21 +108,28 @@ its bound at the call site. The renderer is node-free; the daemon resolves the f
 Authentication is the process bearer in the sidecar's environment, under `RENNET_APP_BEARER`,
 named on the thread's `mcpServers` entry as `bearerTokenEnvVar`; there is no per-thread token
 because the thread's identity rides the address path (`/threads/<threadId>`), which is what
-`ask.stage` uses to stamp the author (`{ kind: "orchestrator" }` — the author kind
-`protocol/board/schema.ts:49` already carries) and the session. `dispatch` is late-bound the way
-`wsListener` is. The listener's port is remembered in the sidecar's base dir, like the board
-server's, so a restarted daemon comes back on the url a live session was created with — the url
-is fixed on the thread and a different one would be refused.
+`callTool` stamps into `ctx.author` (`{ kind: "orchestrator", id: threadId }`) on every
+dispatch — and which `ask.stage`'s handler is the one command that actually records: it stamps
+`StagedAsk.author` from `ctx.author` server-side, overriding anything the model put in the input,
+so a durable ask staged over this address always carries the thread's identity and never one a
+client could name for itself. `dispatch` is late-bound the way `wsListener` is. The listener's
+port is remembered in the sidecar's base dir, like the board server's, so a restarted daemon
+comes back on the url a live session was created with — the url is fixed on the thread and a
+different one would be refused.
 
 **The read and act rows join `AGENT_EXPOSED`.** Lines in `protocol/commands/index.ts`, one per
 row, each with its rationale in `command-menu-exposure.md`: reads — `board.read`, `session.list`,
 `review.load`, `patchset.readEvidence`, `patchset.readSpan`, `ask.read`, `session.rounds`,
 `session.transcript`, `review.deltaDigest`, `review.symbolLookup`; acts — `ask.unstage`, `ask.edit`,
-`ask.quoteReply`, `review.handoff.compose`, `review.draftPrBody`, `round.dispatch`. Every result
-that carries a collection declares a cap with an honest marker and a cursor:
+`ask.quoteReply`, `review.handoff.compose`, `review.draftPrBody`, `round.dispatch`. Four results
+that carry a collection declare their own cap with an honest marker and a cursor:
 `BOARD_READ_TOOL_ELEMENT_CAP` (200), `SESSION_LIST_TOOL_CAP` (50), `TRANSCRIPT_TOOL_ROW_CAP` (100),
-`EVIDENCE_TOOL_BYTES_CAP` (16 kB). Rows in `board-tool-surface.measure.test.ts` pin each per-call
-ceiling.
+`EVIDENCE_TOOL_BYTES_CAP` (16 kB). Behind those, EVERY exposed command's complete serialised
+result answers to one universal ceiling, `APP_TOOL_RESULT_MAX_BYTES` (8 kB): under it a result
+rides unchanged, over it the full result spills to a file under the session's context directory
+(or a swept fallback directory when no session resolves yet) and the reply becomes an envelope
+naming the path. Rows in `board-tool-surface.measure.test.ts` iterate every exposed command
+against large fixtures and pin both the per-command and the universal ceiling.
 
 **The council routes the session thread.** `bindReviewThread` resolves `orchestrator-chat` through
 the same seam `resolveBoardSeatDetails` uses (provider + model + effort → `modelSelection(...)`),

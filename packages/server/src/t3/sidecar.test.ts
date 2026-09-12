@@ -120,6 +120,18 @@ describe("t3 sidecar: spawn, claim, credentials", () => {
     expect(readSidecarCredentials(running.claim.baseDir)?.boardBearer).toBe(running.boardBearer);
   }, 20_000);
 
+  it("puts the app-tools bearer in the environment too, minted apart from the board's", async () => {
+    const f = fixture();
+    const running = await start(f);
+    const dump = JSON.parse(readFileSync(join(running.claim.baseDir, "fake-spawn.json"), "utf8"));
+    expect(dump.env.RENNET_APP_BEARER).toBe(running.appBearer);
+    expect(running.appBearer.length).toBeGreaterThan(20);
+    expect(JSON.stringify(dump.argv)).not.toContain(running.appBearer);
+    // Two listeners, two secrets: one leaking is not a reason for the other to open.
+    expect(running.appBearer).not.toBe(running.boardBearer);
+    expect(readSidecarCredentials(running.claim.baseDir)?.appBearer).toBe(running.appBearer);
+  }, 20_000);
+
   it("reuses the recorded board bearer when it respawns on the same base dir", async () => {
     const f = fixture();
     const first = await start(f);
@@ -131,6 +143,11 @@ describe("t3 sidecar: spawn, claim, credentials", () => {
     expect(second.boardBearer).toBe(first.boardBearer);
     const dump = JSON.parse(readFileSync(join(second.claim.baseDir, "fake-spawn.json"), "utf8"));
     expect(dump.env.RENNET_BOARD_BEARER).toBe(first.boardBearer);
+    // Same rule for the app-tools bearer, for the same reason: a session thread's url is
+    // fixed when its provider session is created, and a turn naming a different one is
+    // refused by name.
+    expect(second.appBearer).toBe(first.appBearer);
+    expect(dump.env.RENNET_APP_BEARER).toBe(first.appBearer);
   }, 30_000);
 
   it("seeds provider binaries into settings.json without clobbering the user's other keys", async () => {
@@ -183,6 +200,25 @@ describe("t3 sidecar: adoption, stale claims, stop", () => {
     const first = await start(f);
     const adopted = await adoptSidecar(f.dataDir, "abc123");
     expect(adopted?.boardBearer).toBe(first.boardBearer);
+  }, 20_000);
+
+  it("an adopted sidecar carries the app-tools bearer forward", async () => {
+    const f = fixture();
+    const first = await start(f);
+    const adopted = await adoptSidecar(f.dataDir, "abc123");
+    expect(adopted?.appBearer).toBe(first.appBearer);
+  }, 20_000);
+
+  it("refuses to adopt a sidecar that carries no app-tools bearer", async () => {
+    const f = fixture();
+    const first = await start(f);
+    const file = join(first.claim.baseDir, "rennet-credentials.json");
+    const { appBearer, ...withoutBearer } = JSON.parse(readFileSync(file, "utf8"));
+    expect(appBearer).toBeDefined();
+    writeFileSync(file, JSON.stringify(withoutBearer));
+    // Its harness children inherited an environment with no `RENNET_APP_BEARER`, so the
+    // session thread's every tool call would 401. Refused, not adopted.
+    expect(await adoptSidecar(f.dataDir, "abc123")).toBeNull();
   }, 20_000);
 
   it("refuses to adopt a sidecar that carries no board bearer", async () => {
@@ -270,6 +306,27 @@ describe("t3 sidecar: environment", () => {
     expect(sidecarEnvironment(parent)).toEqual({
       PATH: "/bin",
       T3CODE_TELEMETRY_ENABLED: "false",
+    });
+  });
+
+  it("sets the app-tools bearer beside it, on the same terms", () => {
+    const parent = {
+      PATH: "/bin",
+      RENNET_BOARD_BEARER: "from-the-users-shell",
+      RENNET_APP_BEARER: "also-from-the-users-shell",
+    };
+    expect(sidecarEnvironment(parent, "board-secret", "app-secret")).toEqual({
+      PATH: "/bin",
+      T3CODE_TELEMETRY_ENABLED: "false",
+      RENNET_BOARD_BEARER: "board-secret",
+      RENNET_APP_BEARER: "app-secret",
+    });
+    // A board bearer and no app bearer leaves the app name absent, never inherited: a
+    // daemon with no app-tools listener must not be reachable with the user's own value.
+    expect(sidecarEnvironment(parent, "board-secret")).toEqual({
+      PATH: "/bin",
+      T3CODE_TELEMETRY_ENABLED: "false",
+      RENNET_BOARD_BEARER: "board-secret",
     });
   });
 });

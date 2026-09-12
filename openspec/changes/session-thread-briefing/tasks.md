@@ -61,22 +61,22 @@ grep -n "board.read" packages/protocol/src/commands/index.ts     # present; NOT 
 
 ## 3. The app-tools server — `rennet_app`
 
-- [ ] 3.1 `packages/protocol/src/commands/index.ts`: the read and act rows named in design join
+- [x] 3.1 `packages/protocol/src/commands/index.ts`: the read and act rows named in design join
   `AGENT_EXPOSED` (`board.read`, `session.list`, `review.load`, `patchset.readEvidence`,
   `patchset.readSpan`, `ask.read`, `session.rounds`, `session.transcript`, `review.deltaDigest`,
   `review.symbolLookup`, `ask.unstage`, `ask.edit`, `ask.quoteReply`, `review.handoff.compose`,
   `review.draftPrBody`, `round.dispatch`); the exposure doc table gains each row with its
   rationale.
-- [ ] 3.2 `packages/server/src/app/app-credentials.ts` (leaf, like `board-credentials.ts`):
+- [x] 3.2 `packages/server/src/app/app-credentials.ts` (leaf, like `board-credentials.ts`):
   `APP_MCP_SERVER_NAME = "rennet_app"`, `APP_BEARER_ENV_VAR = "RENNET_APP_BEARER"`; `t3/sidecar.ts`
   places the bearer in the sidecar's environment beside the board bearer.
-- [ ] 3.3 `packages/server/src/app/app-mcp-server.ts`: loopback Streamable-HTTP listener serving
+- [x] 3.3 `packages/server/src/app/app-mcp-server.ts`: loopback Streamable-HTTP listener serving
   `tools/list` from `buildAppTools(dispatch)` (schemas through `normalizeOutputSchema`) and
   `tools/call` by dispatch, thread identity from the address path, port remembered in the sidecar
   base dir. Every collection-carrying result capped per design (`BOARD_READ_TOOL_ELEMENT_CAP`,
   `SESSION_LIST_TOOL_CAP`, `TRANSCRIPT_TOOL_ROW_CAP`, `EVIDENCE_TOOL_BYTES_CAP`) with an honest
   marker and a cursor; a row per cap in `board-tool-surface.measure.test.ts`. `dispatch` late-bound.
-- [ ] 3.4 Tests: `tools/list` equals `buildAppTools`' names; **positive control** — a fixture
+- [x] 3.4 Tests: `tools/list` equals `buildAppTools`' names; **positive control** — a fixture
   registry with `board.read` flipped off loses the tool; `app_ask_stage` reaches dispatch with
   `author.kind === "orchestrator"` and the session id; a call without the bearer is refused.
   `create-server.ts` starts the listener at daemon launch (eager, #849). Cluster gate green. Commit.
