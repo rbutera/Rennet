@@ -22,7 +22,7 @@ const REVIEW_ID = "review-1";
 const TARGET = {
   repo: { forge: "github", owner: "acme", name: "widget" },
 } satisfies ForgePrSubmissionTarget;
-const DESTINATION = { remoteName: "origin", target: TARGET };
+const DESTINATION = { remoteName: "origin", remotes: ["origin"], target: TARGET };
 const OWN_BRANCH_REVIEW = {
   id: REVIEW_ID,
   repositoryRoot: "/repo",

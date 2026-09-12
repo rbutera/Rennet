@@ -651,7 +651,11 @@ export async function captureBranchPatchset(input: {
     locus: input.locus,
     baseOid,
     headOid,
-    baseRef: primary.baseRef ?? input.base,
+    // Only the resolved COMMIT is taken from the resolver. `baseRef` stays the name the
+    // caller passed, because this patchset's `baseRef` is what the own-branch pull request
+    // opens against, and a forge has no idea what `origin/main` means — GitHub answers 422
+    // for a `base` that is not one of its branches (fresh-base-patchset D4).
+    baseRef: input.base,
     headRef: input.head,
     source: "local-branch",
     projectSnapshotId: await input.resolveProjectSnapshotId(root, baseOid),

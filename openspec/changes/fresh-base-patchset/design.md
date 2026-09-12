@@ -34,7 +34,7 @@ The resolver reads refs and never writes one. The local-review-capture spec's fi
 
 ### D4 — Wire, identity and the round path are untouched
 
-`baseRef` and `baseOid` keep their meaning and their position on `patchset.repository`. Identity for a working-tree capture already hashes the sanitized tree and the diff bytes rather than the OIDs, and for a range capture the pinned pair is the identity, so a capture that resolves the same commits produces the same patchset. The round path's successor capture (`captureLandedBranchPatchset`) receives its base OID explicitly from the prior patchset and does not resolve one. `ensureProjectSnapshotPin` still pins the repo map at whatever `baseOid` the resolver produced.
+`baseRef` and `baseOid` keep their meaning and their position on `patchset.repository`. The branch-range capture takes only the resolved COMMIT from the resolver and keeps recording the name it was handed (`main`), because that `baseRef` is what an own-branch pull request opens against and a forge only knows its own branches; the working-tree capture still records the winning ref's spelling, and the publish seam — the one place that knows the repository's remotes — strips a leading `<remote>/` before the submission reaches the forge. Identity for a working-tree capture already hashes the sanitized tree and the diff bytes rather than the OIDs, and for a range capture the pinned pair is the identity, so a capture that resolves the same commits produces the same patchset. The round path's successor capture (`captureLandedBranchPatchset`) receives its base OID explicitly from the prior patchset and does not resolve one. `ensureProjectSnapshotPin` still pins the repo map at whatever `baseOid` the resolver produced.
 
 ## Risks / Trade-offs
 

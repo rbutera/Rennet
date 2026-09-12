@@ -15,6 +15,37 @@ export type ForgePrSubmissionResolver = (
 export interface ResolvedForgePullRequestDestination {
   readonly remoteName: string;
   readonly target: ForgePrSubmissionTarget;
+  /**
+   * Every remote configured in this clone (`git remote`), read while the destination was
+   * being resolved because that is the only place on the publish path holding a git handle
+   * for the repository's locus. It exists for `forgeBaseBranch` below: a patchset's
+   * `baseRef` can be a remote-tracking spelling, and only the repository knows which
+   * leading segment is a remote name rather than the first part of a branch name.
+   */
+  readonly remotes: readonly string[];
+}
+
+/**
+ * The branch name a forge will accept as a pull request's base, from a patchset's
+ * recorded `baseRef`.
+ *
+ * A local capture records the spelling it measured against, which may be a
+ * remote-tracking ref (`origin/main`). A forge only knows its own branches: GitHub
+ * answers 422 for `base: "origin/main"` and GitLab the same for `target_branch`. Strip
+ * one leading `<remote>/` when `<remote>` is a remote of this repository — and only
+ * then, so a genuine branch called `origin/thing` in a clone with no remote named
+ * `origin` survives intact. Longest remote name first, so nested spellings resolve the
+ * same way twice.
+ */
+export function forgeBaseBranch(baseRef: string, remotes: readonly string[]): string {
+  const byLength = [...remotes].sort((left, right) => right.length - left.length);
+  for (const remote of byLength) {
+    const prefix = `${remote}/`;
+    if (remote.length > 0 && baseRef.startsWith(prefix) && baseRef.length > prefix.length) {
+      return baseRef.slice(prefix.length);
+    }
+  }
+  return baseRef;
 }
 
 export async function resolveForgePullRequestDestination(input: {
@@ -27,8 +58,14 @@ export async function resolveForgePullRequestDestination(input: {
   });
   if (remote === null) return null;
 
+  const remotes = (await input.git(input.repoRoot, ["remote"], { reject: false }))
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+
   return {
     remoteName: remote.name,
+    remotes: remotes.includes(remote.name) ? remotes : [...remotes, remote.name],
     target: {
       repo: {
         forge: forgeForRemoteHost(remote.identity.host),
