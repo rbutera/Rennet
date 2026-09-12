@@ -446,3 +446,42 @@ describe("the address, the bearer and the port", () => {
     expect(second.addressFor(THREAD).url).toBe(address.url);
   });
 });
+
+describe("evidence paging ends at a complete UTF-8 code point (item 2, Codex P2)", () => {
+  it("does not split a multibyte character across the page boundary", async () => {
+    // `EVIDENCE_TOOL_BYTES_CAP` is 16 kB (16384). A raw byte-offset cut lands mid-`€`
+    // (a 3-byte UTF-8 sequence starting at offset 16383), which decodes each half of the
+    // split sequence as a replacement character (`�`) — corrupting both pages. This first
+    // page (16383 bytes of paged patch text) is well within a plain inline reply here
+    // (the universal ceiling lands in a later commit), so the paging fix is visible
+    // directly in the reply.
+    const patch = `${"x".repeat(16_383)}€after`;
+    const server = await serverWith({
+      dispatch: () => async () => ({ patch, path: "src/a.ts", counterparts: [] }),
+    });
+    const answer = await call(server.addressFor(THREAD).url, "app_patchset_readEvidence", {
+      ref: { path: "src/a.ts" },
+    });
+    const served = JSON.parse(blocks(answer)[0]?.text ?? "{}") as { patch: string };
+    expect(served.patch).not.toContain("�");
+    // The whole 16383-byte run of `x` came through, and the cut backed off BEFORE `€`
+    // entirely (a complete code point never starts a page split) rather than admitting a
+    // truncated half of it.
+    expect(served.patch).toBe("x".repeat(16_383));
+    expect(served.patch).not.toContain("€");
+
+    const marker = blocks(answer)[1]?.text ?? "";
+    const cursorMatch = /cursor: (\d+)/.exec(marker);
+    expect(cursorMatch?.[1]).toBe("16383");
+
+    // The second, much smaller page (`€after`, 8 bytes) proves the byte the first page
+    // could not safely include is exactly where the second page starts, with the
+    // multibyte character whole again.
+    const second = await call(server.addressFor(THREAD).url, "app_patchset_readEvidence", {
+      ref: { path: "src/a.ts" },
+      cursor: Number(cursorMatch?.[1]),
+    });
+    const servedSecond = JSON.parse(blocks(second)[0]?.text ?? "{}") as { patch: string };
+    expect(servedSecond.patch).toBe("€after");
+  });
+});

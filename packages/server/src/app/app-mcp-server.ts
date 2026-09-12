@@ -318,6 +318,25 @@ function pageMarker(
   return `Served ${shown} — ${result.total - result.next} elided by ${why}. Call ${toolName} again with cursor: ${result.next} for the rest.`;
 }
 
+/**
+ * The largest index ≤ `end` that does not split a UTF-8 code point — back off while the
+ * byte at the candidate boundary is a continuation byte (`10xxxxxx`, i.e.
+ * `(byte & 0xC0) === 0x80`). No forward sequence-length arithmetic needed: walking backward
+ * off any mid-sequence byte always lands on the sequence's leading byte or the position
+ * right after the prior complete character.
+ *
+ * Fixes a real corruption (Codex P2, item 2): evidence paging split bytes before decoding,
+ * so a page boundary landing inside a multibyte character (`'x'.repeat(16383) + '€after'`
+ * cut mid-`€`) decoded BOTH sides to replacement characters — the model lost the character
+ * entirely, on either page. Ending each page at a complete code point and reporting that
+ * adjusted byte cursor keeps every character whole, on whichever page it falls in.
+ */
+function codePointFloor(buffer: Buffer, end: number): number {
+  let index = end;
+  while (index > 0 && ((buffer[index] ?? 0) & 0xc0) === 0x80) index -= 1;
+  return index;
+}
+
 /** A byte page over one string (the evidence read's patch text). */
 function pageText(
   toolName: string,
@@ -327,7 +346,14 @@ function pageText(
 ): { readonly text: string; readonly marker?: string } {
   const buffer = Buffer.from(text, "utf8");
   const start = Math.max(0, Math.min(cursor, buffer.length));
-  const end = Math.min(start + EVIDENCE_TOOL_BYTES_CAP, buffer.length);
+  const rawEnd = Math.min(start + EVIDENCE_TOOL_BYTES_CAP, buffer.length);
+  // End at a complete code point, not a raw byte offset (item 2): a split multibyte
+  // character decodes as replacement characters on both sides of the cut. `floored > start`
+  // guards a pathological page whose whole budget lands inside one long code-point run —
+  // unreachable for the byte-sized caps here, but a page of zero bytes would be a
+  // collection the model can never advance past, which is worse than one split character.
+  const floored = codePointFloor(buffer, rawEnd);
+  const end = floored > start ? floored : rawEnd;
   const slice = buffer.subarray(start, end).toString("utf8");
   if (start === 0 && end === buffer.length) return { text: slice };
   const marker =
