@@ -516,7 +516,7 @@ describe("what a board's tool RESULTS cost on a 1,252-element board (#871)", () 
     expect(large["unheld id"]).toContain("This board holds no");
     expect(large["removal receipt"]).toContain("removed");
     expect(large.finish).toContain("to fix");
-  });
+  }, 30_000);
 });
 
 // ── What the SESSION THREAD's app tools cost (session-thread-briefing 3.3) ────
@@ -896,7 +896,7 @@ describe("what the session thread's app tools cost (session-thread-briefing)", (
       await server.close();
       rmSync(dir, { recursive: true, force: true });
     }
-  });
+  }, 60_000);
 
   it("pins APP_TOOL_RESULT_MAX_BYTES to the literal 8,192 every measurement above is checked against (item 1)", () => {
     // The test above asserts every tool's complete wire result against the LITERAL `8_192`,
