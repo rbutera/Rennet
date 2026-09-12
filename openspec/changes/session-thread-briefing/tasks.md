@@ -106,7 +106,7 @@ grep -n "board.read" packages/protocol/src/commands/index.ts     # present; NOT 
 - [x] 5.1 `docs/using/guides/getting-started.md:437`: the thread can use Rennet as you do and is
   steered toward staging asks, which is what Rennet tracks. Line 17's "choose the orchestrator"
   now true: say what it routes.
-- [ ] 5.2 `CONTEXT.md`: Ask, App tools, Orchestrator harness entries corrected per design.
+- [x] 5.2 `CONTEXT.md`: Ask, App tools, Orchestrator harness entries corrected per design.
 - [ ] 5.3 `docs/developing/concepts/t3code-sidecar.md`: "The session thread's briefing" and "The
   app-tools server" sections; `t3code-vendoring.md` names the new ledger rows;
   `docs/developing/concepts/model-council.md` names `orchestrator-chat` as the chat's job;

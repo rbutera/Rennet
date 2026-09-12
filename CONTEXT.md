@@ -58,7 +58,7 @@ This file defines the terms shared by the product, documentation, and code. It c
 
 ## Session targets
 
-- **Session**: one continuous conversation with the orchestrator and everything hanging off it — its threads, its claim, and at most one review once a target binds. The one chat travels with the reviewer across every surface; it never splits per surface. Sessions nest under projects in the sidebar. Once boards exist the target is locked: a new target means a new session.
+- **Session**: one continuous conversation and everything hanging off it — its threads, its claim, and at most one review once a target binds. That conversation is the **session thread**: one thread in the T3 Code sidecar, briefed on the review it belongs to and holding Rennet's app tools. The one chat travels with the reviewer across every surface; it never splits per surface. Sessions nest under projects in the sidebar. Once boards exist the target is locked: a new target means a new session.
   _Avoid_: chat (as the entity name), thread (for the whole session)
 - **Claim**: a session's hold on its review target, taken when the session starts. A branch and its pull request are one claimed thing; claimed targets leave the New chat list. Released only by archiving the session.
 - **Review target**: the thing a session reviews — your branch, your PR, or a teammate PR. Every surface names a target with these three terms and no synonyms.
@@ -105,7 +105,7 @@ This file defines the terms shared by the product, documentation, and code. It c
 - **Successor account**: the comparison of a reviewed patchset with its successor after a coding-agent handoff.
   _Avoid_: delta re-review
 - **Board-native data**: content a human authors on the board — marks, groupings, arrangement, notes — which the orchestrator composes from.
-- **Ask**: the staged unit of the hand-off: a typed message carrying an anchor, text, intent, and exit lane, minted from a finding, comment, thread, or conversation, with provenance to its source. Staged by the orchestrator; the receipt is the undo.
+- **Ask**: the staged unit of the hand-off: a typed message carrying an anchor, text, intent, and exit lane, minted from a finding, comment, thread, or conversation, with provenance to its source. Staged by the reviewer or by the session thread; the receipt is the undo.
   _Avoid_: disposition, staged item
 - **Exit**: one of the review's terminal actions — post the GitHub review, dispatch a work-order round, or push and open the pull request. Work orders exist only on one's own branch.
 - **Round**: one dispatched work order and its returned successor patchset. Rounds serialize; each mints a new generation of boards, drafted delta-aware.
@@ -117,9 +117,9 @@ This file defines the terms shared by the product, documentation, and code. It c
 
 ## Commands
 
-- **Command**: one entry in the app's command registry — a named operation with typed arguments and a label, declared once and exposed selectively to the sidebar, the command menu, and the orchestrator. The one vocabulary of things Rennet can be told to do.
+- **Command**: one entry in the app's command registry — a named operation with typed arguments and a label, declared once and exposed selectively to the sidebar, the command menu, and the session thread. The one vocabulary of things Rennet can be told to do.
   _Avoid_: action (as the registry term)
-- **App tools**: the commands exposed to the orchestrator as tools, letting it drive Rennet itself from the conversation. Distinct from the whiteboard authoring tools, which author board content.
+- **App tools**: the commands exposed to the session thread as tools, letting it drive Rennet itself from the conversation. The set is decided per row, on the command registry. Distinct from the whiteboard authoring tools, which author board content.
   _Avoid_: app-control tools
 
 ## Settings
@@ -128,7 +128,7 @@ This file defines the terms shared by the product, documentation, and code. It c
 - **Settings ladder**: the precedence order a setting resolves through — builtin, detected, global, repo. The highest layer offering a value is effective, and every contribution stays visible as provenance.
 - **Client settings**: preferences and client-local continuity of the machine a person views Rennet on — appearance, keybindings, welcome completion, coach marks, and last-used project. They follow the viewer, apply to whatever it views, and sit outside the settings ladder.
 - **Daemon settings**: a source's machine-local settings, read by that source's Rennet host. They form the global rung of the settings ladder for projects on that source.
-- **Orchestrator harness**: the coding harness a source uses for the interactive orchestrator conversation. A source with both Claude and Codex detected has an explicit preferred orchestrator harness.
+- **Orchestrator harness**: the coding harness a source uses for its session threads. Chosen in the welcome — a source with both Claude and Codex detected has an explicit preferred orchestrator harness — and read by the model council's `orchestrator-chat` job, which resolves the harness and model a session thread runs on.
 - **Dual Harness**: a per-source review mode available when Claude and Codex are both detected. It runs one seat per provider for review roles that define a second seat; it does not run every model job twice.
 
 ## Desktop presence
